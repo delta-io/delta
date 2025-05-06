@@ -21,6 +21,7 @@ import java.util.concurrent.TimeUnit
 
 import org.apache.spark.sql.delta.metric.IncrementMetric
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, FileAction}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader.{CDC_TYPE_COLUMN_NAME, CDC_TYPE_NOT_CDC, CDC_TYPE_UPDATE_POSTIMAGE, CDC_TYPE_UPDATE_PREIMAGE}
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
@@ -179,7 +180,7 @@ case class UpdateCommand(
         // Keep everything from the resolved target except a new TahoeFileIndex
         // that only involves the affected files instead of all files.
         val newTarget = DeltaTableUtils.replaceFileIndex(target, fileIndex)
-        val data = Dataset.ofRows(sparkSession, newTarget)
+        val data = DataFrameUtils.ofRows(sparkSession, newTarget)
         val incrUpdatedCountExpr = IncrementMetric(TrueLiteral, metrics("numUpdatedRows"))
         val pathsToRewrite =
           withStatusCode("DELTA", UpdateCommand.FINDING_TOUCHED_FILES_MSG) {
@@ -351,7 +352,7 @@ case class UpdateCommand(
       spark, txn, "update", rootPath, inputLeafFiles.map(_.path), nameToAddFileMap)
     val newTarget = DeltaTableUtils.replaceFileIndex(target, baseRelation.location)
     val (targetDf, finalOutput, finalUpdateExpressions) = UpdateCommand.preserveRowTrackingColumns(
-      targetDfWithoutRowTrackingColumns = Dataset.ofRows(spark, newTarget),
+      targetDfWithoutRowTrackingColumns = DataFrameUtils.ofRows(spark, newTarget),
       snapshot = txn.snapshot,
       targetOutput = target.output,
       updateExpressions)

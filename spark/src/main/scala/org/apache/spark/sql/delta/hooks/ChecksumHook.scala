@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta.hooks
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.{DeltaLog, OptimisticTransactionImpl, RecordChecksum, Snapshot}
+import org.apache.spark.sql.delta.{DeltaLog, DeltaTransaction, RecordChecksum, Snapshot}
 import org.apache.spark.sql.delta.actions.Action
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -40,10 +40,10 @@ object ChecksumHook extends PostCommitHook with DeltaLogging {
 
   override def run(
       spark: SparkSession,
-      txn: OptimisticTransactionImpl,
+      txn: DeltaTransaction,
       committedVersion: Long,
       postCommitSnapshot: Snapshot,
-      committedActions: Seq[Action]): Unit = {
+      committedActions: Iterator[Action]): Unit = {
     // Only write the checksum if the postCommitSnapshot matches the version that was committed.
     if (postCommitSnapshot.version != committedVersion) return
     logInfo(
@@ -55,7 +55,7 @@ object ChecksumHook extends PostCommitHook with DeltaLogging {
 
   private def writeChecksum(
       spark: SparkSession,
-      txn: OptimisticTransactionImpl,
+      txn: DeltaTransaction,
       postCommitSnapshot: Snapshot): Unit = {
     WriteChecksum(spark, txn.deltaLog, txn.txnId, postCommitSnapshot)
   }

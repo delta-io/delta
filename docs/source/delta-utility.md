@@ -516,13 +516,6 @@ CONVERT TO DELTA iceberg.`<path-to-table>` NO STATISTICS
 
   - Converting Iceberg merge-on-read tables that have experienced updates, deletions, or merges is not supported.
 
-## Convert a Delta table to a Parquet table
-
-You can easily convert a Delta table back to a Parquet table using the following steps:
-
-1. If you have performed <Delta> operations that can change the data files (for example, `delete` or `merge`), run [vacuum](#delta-vacuum) with retention of 0 hours to delete all data files that do not belong to the latest version of the table.
-#. Delete the `_delta_log` directory in the table directory.
-
 <a id="restore-delta-table"></a>
 
 ## Restore a Delta table to an earlier state

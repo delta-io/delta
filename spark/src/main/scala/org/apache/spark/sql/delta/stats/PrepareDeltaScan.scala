@@ -31,6 +31,7 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.planning.PhysicalOperation
 import org.apache.spark.sql.catalyst.plans.logical._
@@ -99,6 +100,7 @@ trait PrepareDeltaScanBase extends Rule[LogicalPlan]
       spark,
       fileIndex.deltaLog,
       fileIndex.path,
+      fileIndex.catalogTableOpt,
       preparedScan,
       fileIndex.versionToUse)
   }
@@ -342,6 +344,7 @@ case class PreparedDeltaFileIndex(
     override val spark: SparkSession,
     override val deltaLog: DeltaLog,
     override val path: Path,
+    catalogTableOpt: Option[CatalogTable],
     preparedScan: DeltaScan,
     versionScanned: Option[Long])
   extends TahoeFileIndexWithSnapshotDescriptor(spark, deltaLog, path, preparedScan.scannedSnapshot)

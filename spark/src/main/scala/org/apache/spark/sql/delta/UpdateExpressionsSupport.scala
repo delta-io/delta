@@ -112,7 +112,9 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
       case Literal(nul, NullType) => Literal(nul, dataType)
       case otherExpr =>
         (fromExpression.dataType, dataType) match {
-          case (ArrayType(_: StructType, _), to @ ArrayType(toEt: StructType, toContainsNull)) =>
+          case (ArrayType(fromEt: StructType, fromNullable),
+              to @ ArrayType(toEt: StructType, toNullable))
+              if !(DataTypeUtils.sameType(fromEt, toEt) && fromNullable == toNullable) =>
             fromExpression match {
               // If fromExpression is an array function returning an array, cast the
               // underlying array first and then perform the function on the transformed array.
@@ -158,7 +160,7 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
                   castIfNeeded(
                   GetArrayItem(fromExpression, i), toEt, castingBehavior, columnName)
                 val transformLambdaFunc = {
-                  val elementVar = NamedLambdaVariable("elementVar", toEt, toContainsNull)
+                  val elementVar = NamedLambdaVariable("elementVar", toEt, toNullable)
                   val indexVar = NamedLambdaVariable("indexVar", IntegerType, false)
                   LambdaFunction(structConverter(elementVar, indexVar), Seq(elementVar, indexVar))
                 }

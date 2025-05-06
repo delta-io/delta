@@ -22,7 +22,9 @@ import java.io.Closeable
 import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumnInfo}
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaLog, DeltaTableUtils}
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata}
 import org.apache.spark.sql.delta.implicits._
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -169,6 +171,25 @@ object SkippingEligibleDataType {
   def unapply(f: StructField): Option[DataType] = unapply(f.dataType)
 }
 
+/**
+ * An extractor that matches expressions that are eligible for data skipping predicates.
+ *
+ * @return A tuple of 1) column name referenced in the expression, 2) date type for the
+ *         expression, 3) [[DataSkippingPredicateBuilder]] that builds the data skipping
+ *         predicate for the expression, if the given expression is eligible.
+ *         Otherwise, return None.
+ */
+abstract class GenericSkippingEligibleExpression() {
+
+  def unapply(arg: Expression): Option[(Seq[String], DataType, DataSkippingPredicateBuilder)] = {
+    arg match {
+      case SkippingEligibleColumn(c, dt) =>
+        Some((c, dt, DataSkippingPredicateBuilder.ColumnBuilder))
+      case _ => None
+    }
+  }
+}
+
 private[delta] object DataSkippingReader {
 
   /** Default number of cols for which we should collect stats */
@@ -219,6 +240,13 @@ trait DataSkippingReaderBase
 
   private def useStats = spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_STATS_SKIPPING)
 
+  private lazy val limitPartitionLikeFiltersToClusteringColumns = spark.sessionState.conf.getConf(
+    DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_CLUSTERING_COLUMNS_ONLY)
+  private lazy val additionalPartitionLikeFilterSupportedExpressions =
+    spark.sessionState.conf.getConf(
+        DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_ADDITIONAL_SUPPORTED_EXPRESSIONS)
+      .toSet.flatMap((exprs: String) => exprs.split(","))
+
   /** Returns a DataFrame expression to obtain a list of files with parsed statistics. */
   private def withStatsInternal0: DataFrame = {
     allFiles.withColumn("stats", from_json(col("stats"), statsSchema))
@@ -265,6 +293,8 @@ trait DataSkippingReaderBase
       protected val dataSkippingType: DeltaDataSkippingType)
   {
     protected val statsProvider: StatsProvider = new StatsProvider(getStatsColumnOpt)
+
+    object SkippingEligibleExpression extends GenericSkippingEligibleExpression()
 
     // Main function for building data filters.
     def apply(dataFilter: Expression): Option[DataSkippingPredicate] =
@@ -391,6 +421,10 @@ trait DataSkippingReaderBase
      * NOTE: The skipping predicate does *NOT* need to worry about missing stats columns (which also
      * manifest as NULL). That case is handled separately by `verifyStatsForFilter` (which disables
      * skipping for any file that lacks the needed stats columns).
+     *
+     * @return An optional data skipping predicate, if this function returns None, then this means
+     * that the dataFilter Expression is not eligible for data skipping, i.e. we cannot skip any
+     * files.
      */
     private[stats] def constructDataFilters(dataFilter: Expression):
         Option[DataSkippingPredicate] = dataFilter match {
@@ -680,7 +714,8 @@ trait DataSkippingReaderBase
 
       // Don't attempt partition-like skipping on any unknown expressions: there's no way to
       // guarantee it's safe to do so.
-      case _ => false
+      case _ => additionalPartitionLikeFilterSupportedExpressions.contains(
+        expr.getClass.getCanonicalName)
     }
 
     /**
@@ -699,6 +734,7 @@ trait DataSkippingReaderBase
      *  CAST(a AS DATE) = '2024-09-11' -> CAST(parsed_stats[minValues][a] AS DATE) = '2024-09-11'
      *
      * @param expr    The expression to rewrite.
+     * @param clusteringColumnPaths The logical paths to the clustering columns in the table.
      * @return        If the expression is safe to rewrite, return the rewritten expression and a
      *                set of referenced attributes (with both the logical path to the column and the
      *                column type).
@@ -717,7 +753,8 @@ trait DataSkippingReaderBase
       // to have the same min-max values).
       case SkippingEligibleColumn(c, SkippingEligibleDataType(dt))
         if dt != TimestampType && dt != TimestampNTZType &&
-          clusteringColumnPaths.exists(SchemaUtils.areLogicalNamesEqual(_, c.reverse)) =>
+          (!limitPartitionLikeFiltersToClusteringColumns ||
+            clusteringColumnPaths.exists(SchemaUtils.areLogicalNamesEqual(_, c.reverse))) =>
         // Only rewrite the expression if all stats are collected for this column.
         val minStatsCol = StatsColumn(MIN, c, dt)
         val maxStatsCol = StatsColumn(MAX, c, dt)
@@ -859,23 +896,6 @@ trait DataSkippingReaderBase
       case _: Literal => true
       case _ if e.children.nonEmpty => e.children.forall(areAllLeavesLiteral)
       case _ => false
-    }
-
-    /**
-     * An extractor that matches expressions that are eligible for data skipping predicates.
-     *
-     * @return A tuple of 1) column name referenced in the expression, 2) date type for the
-     *         expression, 3) [[DataSkippingPredicateBuilder]] that builds the data skipping
-     *         predicate for the expression, if the given expression is eligible.
-     *         Otherwise, return None.
-     */
-    object SkippingEligibleExpression {
-      def unapply(arg: Expression)
-          : Option[(Seq[String], DataType, DataSkippingPredicateBuilder)] = arg match {
-        case SkippingEligibleColumn(c, dt) =>
-          Some((c, dt, DataSkippingPredicateBuilder.ColumnBuilder))
-        case _ => None
-      }
     }
   }
 
@@ -1211,14 +1231,16 @@ trait DataSkippingReaderBase
     import DeltaTableUtils._
     val partitionColumns = metadata.partitionColumns
 
-    // For data skipping, avoid using the filters that involve subqueries.
-
-    val (subqueryFilters, flatFilters) = filters.partition {
-      case f => containsSubquery(f)
+    // For data skipping, avoid using the filters that either:
+    // 1. involve subqueries.
+    // 2. are non-deterministic.
+    var (ineligibleFilters, eligibleFilters) = filters.partition {
+      case f => containsSubquery(f) || !f.deterministic
     }
 
-    val (partitionFilters, dataFilters) = flatFilters
-        .partition(isPredicatePartitionColumnsOnly(_, partitionColumns, spark))
+
+    val (partitionFilters, dataFilters) = eligibleFilters
+      .partition(isPredicatePartitionColumnsOnly(_, partitionColumns, spark))
 
     if (dataFilters.isEmpty) recordDeltaOperation(deltaLog, "delta.skipping.partition") {
       // When there are only partition filters we can scan allFiles
@@ -1235,7 +1257,7 @@ trait DataSkippingReaderBase
         dataFilters = ExpressionSet(Nil),
         partitionLikeDataFilters = ExpressionSet(Nil),
         rewrittenPartitionLikeDataFilters = Set.empty,
-        unusedFilters = ExpressionSet(subqueryFilters),
+        unusedFilters = ExpressionSet(ineligibleFilters),
         scanDurationMs = System.currentTimeMillis() - startTime,
         dataSkippingType =
           getCorrectDataSkippingType(DeltaDataSkippingType.partitionFilteringOnlyV1)
@@ -1312,7 +1334,7 @@ trait DataSkippingReaderBase
         dataFilters = ExpressionSet(skippingFilters.map(_._1)),
         partitionLikeDataFilters = ExpressionSet(partitionLikeFilters.map(_._1)),
         rewrittenPartitionLikeDataFilters = partitionLikeFilters.map(_._2.expr.expr).toSet,
-        unusedFilters = ExpressionSet(unusedFilters.map(_._1) ++ subqueryFilters),
+        unusedFilters = ExpressionSet(unusedFilters.map(_._1) ++ ineligibleFilters),
         scanDurationMs = System.currentTimeMillis() - startTime,
         dataSkippingType = getCorrectDataSkippingType(dataSkippingType)
       )

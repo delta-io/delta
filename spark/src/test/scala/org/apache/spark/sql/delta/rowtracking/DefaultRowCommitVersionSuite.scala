@@ -35,6 +35,8 @@ class DefaultRowCommitVersionSuite extends QueryTest
   with SharedSparkSession
   with ParquetTest
   with RowIdTestUtils {
+  import testImplicits._
+
   def expectedCommitVersionsForAllFiles(deltaLog: DeltaLog): Map[String, Long] = {
     val commitVersionForFiles = mutable.Map.empty[String, Long]
     deltaLog.getChanges(startVersion = 0).foreach { case (commitVersion, actions) =>

@@ -28,6 +28,7 @@ import scala.collection.mutable
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{DeltaFileOperations, JsonUtils, Utils => DeltaUtils}
@@ -957,6 +958,10 @@ case class RemoveFile(
 
   @JsonIgnore
   override def getFileSize: Long = size.getOrElse(0L)
+
+  /** Only for testing. */
+  @JsonIgnore
+  private [delta] def isDVTombstone: Boolean = DeletionVectorDescriptor.isDeletionVectorPath(new Path(path))
 
 }
 // scalastyle:on

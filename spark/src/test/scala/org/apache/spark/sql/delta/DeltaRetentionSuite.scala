@@ -508,136 +508,323 @@ class DeltaRetentionSuite extends QueryTest
   }
 
   test("Metadata cleanup respects requireCheckpointProtectionBeforeVersion") {
-    // Commits should be cleaned up to the latest checkpoint.
-    testRequireCheckpointProtectionBeforeVersion(
-      createNumCommitsOutsideRetentionPeriod = 8,
-      createNumCommitsWithinRetentionPeriod = 8,
-      createCheckpoints = Set(6, 8),
-      requireCheckpointProtectionBeforeVersion = 2,
-      expectedCommitsAfterCleanup = Range.inclusive(8, 15).toSet,
-      // Α checkpoint is automatically created every 10 commits.
-      expectedCheckpointsAfterCleanup = Set(8, 10))
+    withSQLConf(
+        DeltaSQLConf.ALLOW_METADATA_CLEANUP_WHEN_ALL_PROTOCOLS_SUPPORTED.key -> "false",
+        DeltaSQLConf.ALLOW_METADATA_CLEANUP_CHECKPOINT_EXISTENCE_CHECK_DISABLED.key -> "true") {
+      // Commits should be cleaned up to the latest checkpoint.
+      testRequireCheckpointProtectionBeforeVersion(
+        createNumCommitsOutsideRetentionPeriod = 8,
+        createNumCommitsWithinRetentionPeriod = 8,
+        createCheckpoints = Set(6, 8),
+        requireCheckpointProtectionBeforeVersion = 2,
+        expectedCommitsAfterCleanup = (8 to 15),
+        // Α checkpoint is automatically created every 10 commits.
+        expectedCheckpointsAfterCleanup = Set(8, 10))
 
-    // Commits should be cleaned up to the latest checkpoint.
-    testRequireCheckpointProtectionBeforeVersion(
-      createNumCommitsOutsideRetentionPeriod = 8,
-      createNumCommitsWithinRetentionPeriod = 8,
-      createCheckpoints = Set(6, 8),
-      requireCheckpointProtectionBeforeVersion = 6,
-      expectedCommitsAfterCleanup = Range.inclusive(8, 15).toSet,
-      // Α checkpoint is automatically created every 10 commits.
-      expectedCheckpointsAfterCleanup = Set(8, 10))
+      // Commits should be cleaned up to the latest checkpoint.
+      testRequireCheckpointProtectionBeforeVersion(
+        createNumCommitsOutsideRetentionPeriod = 8,
+        createNumCommitsWithinRetentionPeriod = 8,
+        createCheckpoints = Set(6, 8),
+        requireCheckpointProtectionBeforeVersion = 6,
+        expectedCommitsAfterCleanup = (8 to 15),
+        // Α checkpoint is automatically created every 10 commits.
+        expectedCheckpointsAfterCleanup = Set(8, 10))
 
-    // Commits should be cleaned up to the latest checkpoint.
-    testRequireCheckpointProtectionBeforeVersion(
-      createNumCommitsOutsideRetentionPeriod = 8,
-      createNumCommitsWithinRetentionPeriod = 8,
-      createCheckpoints = Set(6, 8),
-      requireCheckpointProtectionBeforeVersion = 7,
-      expectedCommitsAfterCleanup = Range.inclusive(8, 15).toSet,
-      // Α checkpoint is automatically created every 10 commits.
-      expectedCheckpointsAfterCleanup = Set(8, 10))
+      // Commits should be cleaned up to the latest checkpoint.
+      testRequireCheckpointProtectionBeforeVersion(
+        createNumCommitsOutsideRetentionPeriod = 8,
+        createNumCommitsWithinRetentionPeriod = 8,
+        createCheckpoints = Set(6, 8),
+        requireCheckpointProtectionBeforeVersion = 7,
+        expectedCommitsAfterCleanup = (8 to 15),
+        // Α checkpoint is automatically created every 10 commits.
+        expectedCheckpointsAfterCleanup = Set(8, 10))
 
-    // Commits should be cleaned up to the latest checkpoint.
-    testRequireCheckpointProtectionBeforeVersion(
-      createNumCommitsOutsideRetentionPeriod = 8,
-      createNumCommitsWithinRetentionPeriod = 8,
-      createCheckpoints = Set(6, 8),
-      requireCheckpointProtectionBeforeVersion = 8,
-      expectedCommitsAfterCleanup = Range.inclusive(8, 15).toSet,
-      // Α checkpoint is automatically created every 10 commits.
-      expectedCheckpointsAfterCleanup = Set(8, 10))
+      // Commits should be cleaned up to the latest checkpoint.
+      testRequireCheckpointProtectionBeforeVersion(
+        createNumCommitsOutsideRetentionPeriod = 8,
+        createNumCommitsWithinRetentionPeriod = 8,
+        createCheckpoints = Set(6, 8),
+        requireCheckpointProtectionBeforeVersion = 8,
+        expectedCommitsAfterCleanup = (8 to 15),
+        // Α checkpoint is automatically created every 10 commits.
+        expectedCheckpointsAfterCleanup = Set(8, 10))
 
-    // Commits should be cleaned up to the checkpoint 10.
-    testRequireCheckpointProtectionBeforeVersion(
-      createNumCommitsOutsideRetentionPeriod = 10,
-      createNumCommitsWithinRetentionPeriod = 10,
-      createCheckpoints = Set(6, 8),
-      requireCheckpointProtectionBeforeVersion = 9,
-      expectedCommitsAfterCleanup = Range.inclusive(10, 19).toSet,
-      // Α checkpoint is automatically created every 10 commits.
-      expectedCheckpointsAfterCleanup = Set(10))
+      // Commits should be cleaned up to the checkpoint 10.
+      testRequireCheckpointProtectionBeforeVersion(
+        createNumCommitsOutsideRetentionPeriod = 10,
+        createNumCommitsWithinRetentionPeriod = 10,
+        createCheckpoints = Set(6, 8),
+        requireCheckpointProtectionBeforeVersion = 9,
+        expectedCommitsAfterCleanup = (10 to 19),
+        // Α checkpoint is automatically created every 10 commits.
+        expectedCheckpointsAfterCleanup = Set(10))
 
-    // Checkpoint 8 is within the retention period.
-    // Cleanup should be skipped.
-    testRequireCheckpointProtectionBeforeVersion(
-      createNumCommitsOutsideRetentionPeriod = 8,
-      createNumCommitsWithinRetentionPeriod = 8,
-      createCheckpoints = Set(6, 8),
-      requireCheckpointProtectionBeforeVersion = 9,
-      expectedCommitsAfterCleanup = Range.inclusive(0, 15).toSet,
-      // Α checkpoint is automatically created every 10 commits.
-      expectedCheckpointsAfterCleanup = Set(6, 8, 10))
+      // Checkpoint 8 is within the retention period.
+      // Cleanup should be skipped.
+      testRequireCheckpointProtectionBeforeVersion(
+        createNumCommitsOutsideRetentionPeriod = 8,
+        createNumCommitsWithinRetentionPeriod = 8,
+        createCheckpoints = Set(6, 8),
+        requireCheckpointProtectionBeforeVersion = 9,
+        expectedCommitsAfterCleanup = (0 to 15),
+        // Α checkpoint is automatically created every 10 commits.
+        expectedCheckpointsAfterCleanup = Set(6, 8, 10))
 
-    // Cleanup should be skipped.
-    testRequireCheckpointProtectionBeforeVersion(
-      createNumCommitsOutsideRetentionPeriod = 8,
-      createNumCommitsWithinRetentionPeriod = 8,
-      createCheckpoints = Set(6, 8),
-      requireCheckpointProtectionBeforeVersion = 20,
-      expectedCommitsAfterCleanup = Range.inclusive(0, 15).toSet,
-      // Α checkpoint is automatically created every 10 commits.
-      expectedCheckpointsAfterCleanup = Set(6, 8, 10))
+      // Cleanup should be skipped.
+      testRequireCheckpointProtectionBeforeVersion(
+        createNumCommitsOutsideRetentionPeriod = 8,
+        createNumCommitsWithinRetentionPeriod = 8,
+        createCheckpoints = Set(6, 8),
+        requireCheckpointProtectionBeforeVersion = 20,
+        expectedCommitsAfterCleanup = (0 to 15),
+        // Α checkpoint is automatically created every 10 commits.
+        expectedCheckpointsAfterCleanup = Set(6, 8, 10))
 
-    // With multiple checkpoints (8, 12, 14) within the retention period.
-    // None of these should be cleaned up.
-    testRequireCheckpointProtectionBeforeVersion(
-      createNumCommitsOutsideRetentionPeriod = 8,
-      createNumCommitsWithinRetentionPeriod = 8,
-      createCheckpoints = Set(6, 8, 12, 14),
-      requireCheckpointProtectionBeforeVersion = 8,
-      expectedCommitsAfterCleanup = Range.inclusive(8, 15).toSet,
-      // Α checkpoint is automatically created every 10 commits.
-      expectedCheckpointsAfterCleanup = Set(8, 10, 12, 14))
+      // With multiple checkpoints (8, 12, 14) within the retention period.
+      // None of these should be cleaned up.
+      testRequireCheckpointProtectionBeforeVersion(
+        createNumCommitsOutsideRetentionPeriod = 8,
+        createNumCommitsWithinRetentionPeriod = 8,
+        createCheckpoints = Set(6, 8, 12, 14),
+        requireCheckpointProtectionBeforeVersion = 8,
+        expectedCommitsAfterCleanup = (8 to 15),
+        // Α checkpoint is automatically created every 10 commits.
+        expectedCheckpointsAfterCleanup = Set(8, 10, 12, 14))
 
-    // With multiple checkpoints (8, 12, 14) within the retention period.
-    // requireCheckpointProtectionBeforeVersion = 9 is within the retention period.
-    // Cleanup should be skipped.
-    testRequireCheckpointProtectionBeforeVersion(
-      createNumCommitsOutsideRetentionPeriod = 8,
-      createNumCommitsWithinRetentionPeriod = 8,
-      createCheckpoints = Set(6, 8, 12, 14),
-      requireCheckpointProtectionBeforeVersion = 9,
-      expectedCommitsAfterCleanup = Range.inclusive(0, 15).toSet,
-      // Α checkpoint is automatically created every 10 commits.
-      expectedCheckpointsAfterCleanup = Set(6, 8, 10, 12, 14))
+      // With multiple checkpoints (8, 12, 14) within the retention period.
+      // requireCheckpointProtectionBeforeVersion = 9 is within the retention period.
+      // Cleanup should be skipped.
+      testRequireCheckpointProtectionBeforeVersion(
+        createNumCommitsOutsideRetentionPeriod = 8,
+        createNumCommitsWithinRetentionPeriod = 8,
+        createCheckpoints = Set(6, 8, 12, 14),
+        requireCheckpointProtectionBeforeVersion = 9,
+        expectedCommitsAfterCleanup = (0 to 15),
+        // Α checkpoint is automatically created every 10 commits.
+        expectedCheckpointsAfterCleanup = Set(6, 8, 10, 12, 14))
 
-    // Corner cases.
-    testRequireCheckpointProtectionBeforeVersion(
-      createNumCommitsOutsideRetentionPeriod = 2,
-      createNumCommitsWithinRetentionPeriod = 14,
-      createCheckpoints = Set(1),
-      requireCheckpointProtectionBeforeVersion = 0,
-      expectedCommitsAfterCleanup = Range.inclusive(2, 15).toSet,
-      // Α checkpoint is automatically created every 10 commits.
-      expectedCheckpointsAfterCleanup = Set(10))
+      // Corner cases.
+      testRequireCheckpointProtectionBeforeVersion(
+        createNumCommitsOutsideRetentionPeriod = 2,
+        createNumCommitsWithinRetentionPeriod = 14,
+        createCheckpoints = Set(1),
+        requireCheckpointProtectionBeforeVersion = 0,
+        expectedCommitsAfterCleanup = (2 to 15),
+        // Α checkpoint is automatically created every 10 commits.
+        expectedCheckpointsAfterCleanup = Set(10))
 
-    testRequireCheckpointProtectionBeforeVersion(
-      createNumCommitsOutsideRetentionPeriod = 2,
-      createNumCommitsWithinRetentionPeriod = 14,
-      createCheckpoints = Set(1),
-      requireCheckpointProtectionBeforeVersion = 1,
-      expectedCommitsAfterCleanup = Range.inclusive(2, 15).toSet,
-      // Α checkpoint is automatically created every 10 commits.
-      expectedCheckpointsAfterCleanup = Set(10))
+      testRequireCheckpointProtectionBeforeVersion(
+        createNumCommitsOutsideRetentionPeriod = 2,
+        createNumCommitsWithinRetentionPeriod = 14,
+        createCheckpoints = Set(1),
+        requireCheckpointProtectionBeforeVersion = 1,
+        expectedCommitsAfterCleanup = (2 to 15),
+        // Α checkpoint is automatically created every 10 commits.
+        expectedCheckpointsAfterCleanup = Set(10))
 
-    testRequireCheckpointProtectionBeforeVersion(
-      createNumCommitsOutsideRetentionPeriod = 2,
-      createNumCommitsWithinRetentionPeriod = 14,
-      createCheckpoints = Set(1),
-      requireCheckpointProtectionBeforeVersion = 2,
-      expectedCommitsAfterCleanup = Range.inclusive(2, 15).toSet,
-      // Α checkpoint is automatically created every 10 commits.
-      expectedCheckpointsAfterCleanup = Set(10))
+      testRequireCheckpointProtectionBeforeVersion(
+        createNumCommitsOutsideRetentionPeriod = 2,
+        createNumCommitsWithinRetentionPeriod = 14,
+        createCheckpoints = Set(1),
+        requireCheckpointProtectionBeforeVersion = 2,
+        expectedCommitsAfterCleanup = (2 to 15),
+        // Α checkpoint is automatically created every 10 commits.
+        expectedCheckpointsAfterCleanup = Set(10))
 
-    testRequireCheckpointProtectionBeforeVersion(
-      createNumCommitsOutsideRetentionPeriod = 2,
-      createNumCommitsWithinRetentionPeriod = 14,
-      createCheckpoints = Set(1),
-      requireCheckpointProtectionBeforeVersion = 3,
-      expectedCommitsAfterCleanup = Range.inclusive(0, 15).toSet,
-      // Α checkpoint is automatically created every 10 commits.
-      expectedCheckpointsAfterCleanup = Set(1, 10))
+      testRequireCheckpointProtectionBeforeVersion(
+        createNumCommitsOutsideRetentionPeriod = 2,
+        createNumCommitsWithinRetentionPeriod = 14,
+        createCheckpoints = Set(1),
+        requireCheckpointProtectionBeforeVersion = 3,
+        expectedCommitsAfterCleanup = (0 to 15),
+        // Α checkpoint is automatically created every 10 commits.
+        expectedCheckpointsAfterCleanup = Set(1, 10))
+    }
+  }
+
+  test("Cleanup is allowed if a checkpoint already exists at the boundary") {
+    withSQLConf(DeltaSQLConf.ALLOW_METADATA_CLEANUP_WHEN_ALL_PROTOCOLS_SUPPORTED.key -> "false") {
+      testRequireCheckpointProtectionBeforeVersion(
+        createNumCommitsOutsideRetentionPeriod = 8,
+        createNumCommitsWithinRetentionPeriod = 8,
+        // Metadata cleanup should attempt to clean before version 8.
+        createCheckpoints = Set(0, 8),
+        requireCheckpointProtectionBeforeVersion = 10,
+        unsupportedFeatureStartVersion = Some(8),
+        expectedCommitsAfterCleanup = (8 to 15),
+        expectedCheckpointsAfterCleanup = Set(8, 10))
+    }
+  }
+
+  test("Metadata cleanup protocol validation positive tests.") {
+    withSQLConf(
+        DeltaSQLConf.ALLOW_METADATA_CLEANUP_CHECKPOINT_EXISTENCE_CHECK_DISABLED.key -> "true") {
+      // In all tests below, we cannot satisfy the version requirement and thus fallback
+      // to protocol validations. We identify we support all features and proceed to
+      // metadata cleanup.
+      testRequireCheckpointProtectionBeforeVersion(
+        createNumCommitsOutsideRetentionPeriod = 8,
+        createNumCommitsWithinRetentionPeriod = 8,
+        createCheckpoints = Set(8),
+        requireCheckpointProtectionBeforeVersion = 10,
+        expectedCommitsAfterCleanup = (8 to 15),
+        expectedCheckpointsAfterCleanup = Set(8, 10))
+
+      // The protocol contains unsupported feature but at requireCheckpointProtectionBeforeVersion.
+      testRequireCheckpointProtectionBeforeVersion(
+        createNumCommitsOutsideRetentionPeriod = 8,
+        createNumCommitsWithinRetentionPeriod = 8,
+        createCheckpoints = Set(8),
+        requireCheckpointProtectionBeforeVersion = 10,
+        unsupportedFeatureStartVersion = Some(10),
+        expectedCommitsAfterCleanup = (8 to 15),
+        expectedCheckpointsAfterCleanup = Set(8, 10))
+
+      // The protocol contains unsupported feature but after
+      // requireCheckpointProtectionBeforeVersion.
+      testRequireCheckpointProtectionBeforeVersion(
+        createNumCommitsOutsideRetentionPeriod = 8,
+        createNumCommitsWithinRetentionPeriod = 8,
+        createCheckpoints = Set(8),
+        requireCheckpointProtectionBeforeVersion = 10,
+        unsupportedFeatureStartVersion = Some(11),
+        expectedCommitsAfterCleanup = (8 to 15),
+        expectedCheckpointsAfterCleanup = Set(8, 10))
+
+      // The protocol contains unsupported feature before requireCheckpointProtectionBeforeVersion
+      // but right after the boundary version where the cleanup ends.
+      testRequireCheckpointProtectionBeforeVersion(
+        createNumCommitsOutsideRetentionPeriod = 8,
+        createNumCommitsWithinRetentionPeriod = 8,
+        // Metadata cleanup should attempt to clean before version 8.
+        createCheckpoints = Set(0, 8),
+        requireCheckpointProtectionBeforeVersion = 10,
+        unsupportedFeatureStartVersion = Some(9),
+        expectedCommitsAfterCleanup = (8 to 15),
+        expectedCheckpointsAfterCleanup = Set(8, 10))
+
+      // Other corner cases.
+      testRequireCheckpointProtectionBeforeVersion(
+        createNumCommitsOutsideRetentionPeriod = 8,
+        createNumCommitsWithinRetentionPeriod = 8,
+        createCheckpoints = Set(1),
+        requireCheckpointProtectionBeforeVersion = 10,
+        expectedCommitsAfterCleanup = (8 to 15),
+        // This is a bit weird. Cleanup should had created a checkpoint at 8.
+        expectedCheckpointsAfterCleanup = Set(10))
+
+      testRequireCheckpointProtectionBeforeVersion(
+        createNumCommitsOutsideRetentionPeriod = 8,
+        createNumCommitsWithinRetentionPeriod = 8,
+        createCheckpoints = Set(0),
+        requireCheckpointProtectionBeforeVersion = 10,
+        expectedCommitsAfterCleanup = (8 to 15),
+        // This is a bit weird. Cleanup should had created a checkpoint at 8.
+        expectedCheckpointsAfterCleanup = Set(10))
+    }
+  }
+
+  test("Metadata cleanup protocol validation negative tests.") {
+    withSQLConf(
+        DeltaSQLConf.ALLOW_METADATA_CLEANUP_CHECKPOINT_EXISTENCE_CHECK_DISABLED.key -> "true") {
+      // In all tests below, we cannot satisfy the version requirement and thus fallback
+      // to protocol validations. We should detect the start version version includes a
+      // non-supported feature and skip the cleanup.
+      testRequireCheckpointProtectionBeforeVersion(
+        createNumCommitsOutsideRetentionPeriod = 8,
+        createNumCommitsWithinRetentionPeriod = 8,
+        createCheckpoints = Set(8),
+        requireCheckpointProtectionBeforeVersion = 10,
+        // Unsupported feature in the first version.
+        unsupportedFeatureStartVersion = Some(0),
+        unsupportedFeatureEndVersion = Some(1),
+        expectedCommitsAfterCleanup = (0 to 15),
+        expectedCheckpointsAfterCleanup = Set(8, 10))
+
+      testRequireCheckpointProtectionBeforeVersion(
+        createNumCommitsOutsideRetentionPeriod = 8,
+        createNumCommitsWithinRetentionPeriod = 8,
+        createCheckpoints = Set(0, 8),
+        requireCheckpointProtectionBeforeVersion = 10,
+        // Unsupported feature right before the boundary version where the cleanup ends.
+        unsupportedFeatureStartVersion = Some(7),
+        expectedCommitsAfterCleanup = (0 to 15),
+        expectedCheckpointsAfterCleanup = Set(0, 8, 10))
+
+      testRequireCheckpointProtectionBeforeVersion(
+        createNumCommitsOutsideRetentionPeriod = 8,
+        createNumCommitsWithinRetentionPeriod = 8,
+        createCheckpoints = Set(8),
+        requireCheckpointProtectionBeforeVersion = 10,
+        // Unsupported feature in intermediate versions.
+        unsupportedFeatureStartVersion = Some(4),
+        unsupportedFeatureEndVersion = Some(7),
+        expectedCommitsAfterCleanup = (0 to 15),
+        expectedCheckpointsAfterCleanup = Set(8, 10))
+
+      testRequireCheckpointProtectionBeforeVersion(
+        createNumCommitsOutsideRetentionPeriod = 8,
+        createNumCommitsWithinRetentionPeriod = 8,
+        createCheckpoints = Set(8),
+        requireCheckpointProtectionBeforeVersion = 10,
+        // Unsupported feature in dropped at the boundary version.
+        unsupportedFeatureStartVersion = Some(4),
+        unsupportedFeatureEndVersion = Some(8),
+        expectedCommitsAfterCleanup = (0 to 15),
+        expectedCheckpointsAfterCleanup = Set(8, 10))
+
+      // The protocol contains unsupported feature before requireCheckpointProtectionBeforeVersion
+      // but at the boundary version where the cleanup ends.
+      testRequireCheckpointProtectionBeforeVersion(
+        createNumCommitsOutsideRetentionPeriod = 8,
+        createNumCommitsWithinRetentionPeriod = 8,
+        // Metadata cleanup should attempt to clean before version 8.
+        createCheckpoints = Set(0, 8),
+        requireCheckpointProtectionBeforeVersion = 10,
+        unsupportedFeatureStartVersion = Some(8),
+        expectedCommitsAfterCleanup = (0 to 15),
+        expectedCheckpointsAfterCleanup = Set(0, 8, 10))
+
+      testRequireCheckpointProtectionBeforeVersion(
+        createNumCommitsOutsideRetentionPeriod = 8,
+        createNumCommitsWithinRetentionPeriod = 8,
+        // Metadata cleanup should attempt to clean before version 8.
+        createCheckpoints = Set(0, 8),
+        requireCheckpointProtectionBeforeVersion = 10,
+        // Make sure we correctly validate the protocol of the checkpoint version.
+        unsupportedFeature = TestUnsupportedWriterFeature,
+        unsupportedFeatureStartVersion = Some(8),
+        expectedCommitsAfterCleanup = (0 to 15),
+        expectedCheckpointsAfterCleanup = Set(0, 8, 10))
+    }
+  }
+
+  test("Metadata cleanup protocol validation with incomplete CRCs.") {
+    withSQLConf(
+        DeltaSQLConf.ALLOW_METADATA_CLEANUP_CHECKPOINT_EXISTENCE_CHECK_DISABLED.key -> "true") {
+      // We fall back to protocol validations which cannot be completed due to missing
+      // protocol in one of the CRCs.
+      testRequireCheckpointProtectionBeforeVersion(
+        createNumCommitsOutsideRetentionPeriod = 8,
+        createNumCommitsWithinRetentionPeriod = 8,
+        createCheckpoints = Set(8),
+        requireCheckpointProtectionBeforeVersion = 10,
+        incompleteCRCVersion = Some(3),
+        expectedCommitsAfterCleanup = (0 to 15),
+        expectedCheckpointsAfterCleanup = Set(8, 10))
+
+      // Similar to above but a CRC file is missing.
+      testRequireCheckpointProtectionBeforeVersion(
+        createNumCommitsOutsideRetentionPeriod = 8,
+        createNumCommitsWithinRetentionPeriod = 8,
+        createCheckpoints = Set(8),
+        requireCheckpointProtectionBeforeVersion = 10,
+        missingCRCVersion = Some(3),
+        expectedCommitsAfterCleanup = (0 to 15),
+        expectedCheckpointsAfterCleanup = Set(8, 10))
+    }
   }
 }
 

@@ -17,29 +17,39 @@
 package io.delta.kernel.internal.replay;
 
 import static io.delta.kernel.internal.replay.LogReplayUtils.assertLogFilesBelongToTable;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Predicate;
-import io.delta.kernel.internal.TableFeatures;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.checkpoints.SidecarFile;
+import io.delta.kernel.internal.checksum.CRCInfo;
+import io.delta.kernel.internal.checksum.ChecksumReader;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
+import io.delta.kernel.internal.metrics.ScanMetrics;
+import io.delta.kernel.internal.metrics.SnapshotMetrics;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.snapshot.SnapshotHint;
+import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.DomainMetadataUtils;
+import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
+import io.delta.kernel.utils.FileStatus;
 import java.io.IOException;
 import java.io.UncheckedIOException;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Replays a history of actions, resolving them to produce the current state of the table. The
@@ -56,6 +66,8 @@ import java.util.Optional;
  * ColumnarBatch}s
  */
 public class LogReplay {
+
+  private static final Logger logger = LoggerFactory.getLogger(LogReplay.class);
 
   //////////////////////////
   // Static Schema Fields //
@@ -103,6 +115,11 @@ public class LogReplay {
         .add(REMOVEFILE_FIELD_NAME, REMOVE_FILE_SCHEMA);
   }
 
+  /** Read schema when searching only for AddFiles */
+  public static StructType getAddReadSchema(boolean shouldReadStats) {
+    return new StructType().add(ADDFILE_FIELD_NAME, getAddSchema(shouldReadStats));
+  }
+
   public static int ADD_FILE_ORDINAL = 0;
   public static int ADD_FILE_PATH_ORDINAL = AddFile.SCHEMA_WITHOUT_STATS.indexOf("path");
   public static int ADD_FILE_DV_ORDINAL = AddFile.SCHEMA_WITHOUT_STATS.indexOf("deletionVector");
@@ -118,22 +135,37 @@ public class LogReplay {
   private final Path dataPath;
   private final LogSegment logSegment;
   private final Tuple2<Protocol, Metadata> protocolAndMetadata;
-  private final Lazy<Map<String, DomainMetadata>> domainMetadataMap;
+  private final Lazy<Map<String, DomainMetadata>> activeDomainMetadataMap;
+  private final CrcInfoContext crcInfoContext;
 
   public LogReplay(
       Path logPath,
       Path dataPath,
-      long snapshotVersion,
       Engine engine,
       LogSegment logSegment,
-      Optional<SnapshotHint> snapshotHint) {
+      Optional<SnapshotHint> snapshotHint,
+      SnapshotMetrics snapshotMetrics) {
+
     assertLogFilesBelongToTable(logPath, logSegment.allLogFilesUnsorted());
 
+    // Ignore the snapshot hint whose version is larger than the snapshot version.
+    if (snapshotHint.isPresent() && snapshotHint.get().getVersion() > logSegment.getVersion()) {
+      snapshotHint = Optional.empty();
+    }
+
+    this.crcInfoContext = new CrcInfoContext(engine);
     this.dataPath = dataPath;
     this.logSegment = logSegment;
-    this.protocolAndMetadata = loadTableProtocolAndMetadata(engine, snapshotHint, snapshotVersion);
+    Optional<SnapshotHint> newerSnapshotHint =
+        crcInfoContext.maybeGetNewerSnapshotHintAndUpdateCache(
+            engine, logSegment, snapshotHint, logSegment.getVersion());
+    this.protocolAndMetadata =
+        snapshotMetrics.loadInitialDeltaActionsTimer.time(
+            () ->
+                loadTableProtocolAndMetadata(
+                    engine, logSegment, newerSnapshotHint, logSegment.getVersion()));
     // Lazy loading of domain metadata only when needed
-    this.domainMetadataMap = new Lazy<>(() -> loadDomainMetadataMap(engine));
+    this.activeDomainMetadataMap = new Lazy<>(() -> loadDomainMetadataMap(engine));
   }
 
   /////////////////
@@ -152,8 +184,20 @@ public class LogReplay {
     return loadLatestTransactionVersion(engine, applicationId);
   }
 
-  public Map<String, DomainMetadata> getDomainMetadataMap() {
-    return domainMetadataMap.get();
+  /* Returns map for all active domain metadata. */
+  public Map<String, DomainMetadata> getActiveDomainMetadataMap() {
+    return activeDomainMetadataMap.get();
+  }
+
+  public long getVersion() {
+    return logSegment.getVersion();
+  }
+
+  /** Returns the crc info for the current snapshot if it is cached */
+  public Optional<CRCInfo> getCurrentCrcInfo() {
+    return crcInfoContext
+        .getLastSeenCrcInfo()
+        .filter(crcInfo -> crcInfo.getVersion() == getVersion());
   }
 
   /**
@@ -170,19 +214,42 @@ public class LogReplay {
    * </ol>
    */
   public CloseableIterator<FilteredColumnarBatch> getAddFilesAsColumnarBatches(
-      Engine engine, boolean shouldReadStats, Optional<Predicate> checkpointPredicate) {
+      Engine engine,
+      boolean shouldReadStats,
+      Optional<Predicate> checkpointPredicate,
+      ScanMetrics scanMetrics) {
+    // We do not need to look at any `remove` files from the checkpoints. Skip the column to save
+    // I/O. Note that we are still going to process the row groups. Adds and removes are randomly
+    // scattered through checkpoint part files, so row group push down is unlikely to be useful.
     final CloseableIterator<ActionWrapper> addRemoveIter =
         new ActionsIterator(
             engine,
-            logSegment.allLogFilesReversed(),
+            getLogReplayFiles(logSegment),
             getAddRemoveReadSchema(shouldReadStats),
+            getAddReadSchema(shouldReadStats),
             checkpointPredicate);
-    return new ActiveAddFilesIterator(engine, addRemoveIter, dataPath);
+    return new ActiveAddFilesIterator(engine, addRemoveIter, dataPath, scanMetrics);
   }
 
   ////////////////////
   // Helper Methods //
   ////////////////////
+
+  // For now we always read log compaction files. Plumb an option through to here if we ever want to
+  // make it configurable
+  private boolean readLogCompactionFiles = true;
+
+  /**
+   * Get the files to use for this log replay, can be configured for example to use or not use log
+   * compaction files
+   */
+  private List<FileStatus> getLogReplayFiles(LogSegment logSegment) {
+    if (readLogCompactionFiles) {
+      return logSegment.allFilesWithCompactionsReversed();
+    } else {
+      return logSegment.allLogFilesReversed();
+    }
+  }
 
   /**
    * Returns the latest Protocol and Metadata from the delta files in the `logSegment`. Does *not*
@@ -193,9 +260,12 @@ public class LogReplay {
    * use the P and/or M from the hint.
    */
   protected Tuple2<Protocol, Metadata> loadTableProtocolAndMetadata(
-      Engine engine, Optional<SnapshotHint> snapshotHint, long snapshotVersion) {
+      Engine engine,
+      LogSegment logSegment,
+      Optional<SnapshotHint> snapshotHint,
+      long snapshotVersion) {
 
-    // Exit early if the hint already has the info we need
+    // Exit early if the hint already has the info we need.
     if (snapshotHint.isPresent() && snapshotHint.get().getVersion() == snapshotVersion) {
       return new Tuple2<>(snapshotHint.get().getProtocol(), snapshotHint.get().getMetadata());
     }
@@ -206,7 +276,7 @@ public class LogReplay {
     try (CloseableIterator<ActionWrapper> reverseIter =
         new ActionsIterator(
             engine,
-            logSegment.allLogFilesReversed(),
+            getLogReplayFiles(logSegment),
             PROTOCOL_METADATA_READ_SCHEMA,
             Optional.empty())) {
       while (reverseIter.hasNext()) {
@@ -249,8 +319,7 @@ public class LogReplay {
 
               if (protocol != null) {
                 // Stop since we have found the latest Protocol and Metadata.
-                TableFeatures.validateReadSupportedTable(
-                    protocol, dataPath.toString(), Optional.of(metadata));
+                TableFeatures.validateKernelCanReadTheTable(protocol, dataPath.toString());
                 return new Tuple2<>(protocol, metadata);
               }
 
@@ -278,20 +347,17 @@ public class LogReplay {
 
     if (protocol == null) {
       throw new IllegalStateException(
-          String.format("No protocol found at version %s", logSegment.version));
+          String.format("No protocol found at version %s", logSegment.getVersion()));
     }
 
     throw new IllegalStateException(
-        String.format("No metadata found at version %s", logSegment.version));
+        String.format("No metadata found at version %s", logSegment.getVersion()));
   }
 
   private Optional<Long> loadLatestTransactionVersion(Engine engine, String applicationId) {
     try (CloseableIterator<ActionWrapper> reverseIter =
         new ActionsIterator(
-            engine,
-            logSegment.allLogFilesReversed(),
-            SET_TRANSACTION_READ_SCHEMA,
-            Optional.empty())) {
+            engine, getLogReplayFiles(logSegment), SET_TRANSACTION_READ_SCHEMA, Optional.empty())) {
       while (reverseIter.hasNext()) {
         final ColumnarBatch columnarBatch = reverseIter.next().getColumnarBatch();
         assert (columnarBatch.getSchema().equals(SET_TRANSACTION_READ_SCHEMA));
@@ -314,6 +380,28 @@ public class LogReplay {
   }
 
   /**
+   * Loads the domain metadata map, either from CRC info (if available) or from the transaction log.
+   *
+   * @param engine The engine to use for loading from log when necessary
+   * @return A map of domain names to their metadata
+   */
+  private Map<String, DomainMetadata> loadDomainMetadataMap(Engine engine) {
+    // First try to load from CRC info if available
+    Optional<CRCInfo> currentCrcInfo = getCurrentCrcInfo();
+    if (currentCrcInfo.isPresent() && currentCrcInfo.get().getDomainMetadata().isPresent()) {
+      return currentCrcInfo.get().getDomainMetadata().get().stream()
+          .collect(Collectors.toMap(DomainMetadata::getDomain, Function.identity()));
+    }
+    // TODO https://github.com/delta-io/delta/issues/4454: Incrementally load domain metadata from
+    // CRC when current CRC is not available.
+    // Fall back to loading from the log
+    logger.info("No domain metadata available in CRC info, loading from log");
+    return loadDomainMetadataMapFromLog(engine).entrySet().stream()
+        .filter(entry -> !entry.getValue().isRemoved())
+        .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+  }
+
+  /**
    * Retrieves a map of domainName to {@link DomainMetadata} from the log files.
    *
    * <p>Loading domain metadata requires an additional round of log replay so this is done lazily
@@ -325,11 +413,11 @@ public class LogReplay {
    *     DomainMetadata} objects.
    * @throws UncheckedIOException if an I/O error occurs while closing the iterator.
    */
-  private Map<String, DomainMetadata> loadDomainMetadataMap(Engine engine) {
+  private Map<String, DomainMetadata> loadDomainMetadataMapFromLog(Engine engine) {
     try (CloseableIterator<ActionWrapper> reverseIter =
         new ActionsIterator(
             engine,
-            logSegment.allLogFilesReversed(),
+            getLogReplayFiles(logSegment),
             DOMAIN_METADATA_READ_SCHEMA,
             Optional.empty() /* checkpointPredicate */)) {
       Map<String, DomainMetadata> domainMetadataMap = new HashMap<>();
@@ -346,6 +434,91 @@ public class LogReplay {
       return domainMetadataMap;
     } catch (IOException ex) {
       throw new UncheckedIOException("Could not close iterator", ex);
+    }
+  }
+
+  /**
+   * Encapsulates CRC-related functionality and state for the LogReplay. This includes caching CRC
+   * info and extracting snapshot hints from CRC files.
+   *
+   * <p>This class uses {@code maybeGetNewerSnapshotHintAndUpdateCache} to calculate a {@code
+   * SnapshotHint} and also exposes a {@code getLastSeenCrcInfo} method. Their relationship is:
+   *
+   * <ul>
+   *   <li>We want to find the latest {@code SnapshotHint} to use during log replay for Protocol and
+   *       Metadata loading
+   *   <li>If we are not provided a SnapshotHint for this version, or are provided a stale hint, we
+   *       will try to read the latest seen (by file listing) CRC file (if it exists). If so, we
+   *       read it, cache it, and create a newer hint.
+   *   <li>Then, when {@code getLastSeenCrcInfo} is called, we will either use the cached CRCInfo
+   *       that we have already read, parsed, and cached; or, if it was never cached (because the
+   *       hint was sufficiently new) we will read it, parse it, and cache it for the first time
+   * </ul>
+   */
+  private class CrcInfoContext {
+    private final Engine engine;
+    private Optional<CRCInfo> cachedLastSeenCrcInfo;
+
+    CrcInfoContext(Engine engine) {
+      this.engine = requireNonNull(engine);
+      this.cachedLastSeenCrcInfo = Optional.empty();
+    }
+
+    /** Returns the CRC info persisted in the logSegment's lastSeenChecksum File */
+    public Optional<CRCInfo> getLastSeenCrcInfo() {
+      if (!cachedLastSeenCrcInfo.isPresent()) {
+        cachedLastSeenCrcInfo =
+            logSegment
+                .getLastSeenChecksum()
+                .flatMap(crcFile -> ChecksumReader.getCRCInfo(engine, crcFile));
+      }
+      return cachedLastSeenCrcInfo;
+    }
+
+    /**
+     * Attempts to build a newer snapshot hint from CRC that can be used for loading table state
+     * more efficiently. When CRC is read, updates the internal cache.
+     *
+     * @param engine The engine used to read CRC files
+     * @param logSegment The log segment containing checksum information
+     * @param snapshotHint Existing snapshot hint, if any
+     * @param snapshotVersion Target snapshot version
+     * @return An updated snapshot hint if a newer CRC file was found, otherwise the original hint
+     */
+    public Optional<SnapshotHint> maybeGetNewerSnapshotHintAndUpdateCache(
+        Engine engine,
+        LogSegment logSegment,
+        Optional<SnapshotHint> snapshotHint,
+        long snapshotVersion) {
+
+      // Snapshot hint's version is current so we could use it in loading P&M.
+      // No need to read crc.
+      if (snapshotHint.isPresent() && snapshotHint.get().getVersion() == snapshotVersion) {
+        return snapshotHint;
+      }
+
+      // Prefer reading hint over CRC to save 1 io, only read crc if it is newer than snapshot hint.
+      long crcReadLowerBound = snapshotHint.map(SnapshotHint::getVersion).orElse(-1L) + 1;
+
+      Optional<CRCInfo> crcInfoOpt =
+          logSegment
+              .getLastSeenChecksum()
+              .filter(
+                  checksum ->
+                      FileNames.getFileVersion(new Path(checksum.getPath())) >= crcReadLowerBound)
+              .flatMap(checksum -> ChecksumReader.getCRCInfo(engine, checksum));
+
+      if (!crcInfoOpt.isPresent()) {
+        return snapshotHint;
+      }
+
+      CRCInfo crcInfo = crcInfoOpt.get();
+      this.cachedLastSeenCrcInfo = Optional.of(crcInfo);
+      checkArgument(
+          crcInfo.getVersion() >= crcReadLowerBound && crcInfo.getVersion() <= snapshotVersion);
+      // We found a CRCInfo of a version (a) older than the one we are looking for (snapshotVersion)
+      // but (b) newer than the current hint. Use this CRCInfo to create a new hint, and return.
+      return Optional.of(SnapshotHint.fromCrcInfo(crcInfo));
     }
   }
 }

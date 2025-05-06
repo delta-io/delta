@@ -22,6 +22,7 @@ import io.delta.kernel.internal.data.DelegateRow;
 import io.delta.kernel.types.*;
 import java.util.Collections;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * An abstract base class for Delta Log actions that are backed by a {@link Row}. This design is to
@@ -34,24 +35,28 @@ public abstract class RowBackedAction {
   /** The underlying {@link Row} that represents an action and contains all its field values. */
   protected final Row row;
 
-  protected RowBackedAction(Row row, StructType expectedSchema) {
-    checkArgument(
-        row.getSchema().equals(expectedSchema),
-        "Expected row schema: %s, found: %s",
-        expectedSchema,
-        row.getSchema());
-
+  protected RowBackedAction(Row row) {
     this.row = row;
   }
 
   /**
-   * Returns the index of the field with the given name in the full schema of the row. Throws an
-   * {@link IllegalArgumentException} if the field is not found.
+   * Returns the index of the field with the given name in the schema of the row. Throws an {@link
+   * IllegalArgumentException} if the field is not found.
    */
   protected int getFieldIndex(String fieldName) {
     int index = row.getSchema().indexOf(fieldName);
     checkArgument(index >= 0, "Field '%s' not found in schema: %s", fieldName, row.getSchema());
     return index;
+  }
+
+  /**
+   * Returns the index of the field with the given name in the schema of the row, or {@link
+   * Optional#empty()} if the field is not found. This should be used when the underlying row may or
+   * may not contain that field.
+   */
+  protected Optional<Integer> getFieldIndexOpt(String fieldName) {
+    int index = row.getSchema().indexOf(fieldName);
+    return index >= 0 ? Optional.of(index) : Optional.empty();
   }
 
   /**

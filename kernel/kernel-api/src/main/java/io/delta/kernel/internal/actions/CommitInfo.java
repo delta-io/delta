@@ -18,6 +18,7 @@ package io.delta.kernel.internal.actions;
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 import static io.delta.kernel.internal.util.VectorUtils.stringStringMapValue;
+import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.toMap;
 
 import io.delta.kernel.data.ColumnVector;
@@ -125,22 +126,14 @@ public class CommitInfo {
       boolean isBlindAppend,
       String txnId,
       Map<String, String> operationMetrics) {
-    this.inCommitTimestamp = inCommitTimestamp;
+    this.inCommitTimestamp = requireNonNull(inCommitTimestamp);
     this.timestamp = timestamp;
-    this.engineInfo = engineInfo;
-    this.operation = operation;
-    this.operationParameters = Collections.unmodifiableMap(operationParameters);
+    this.engineInfo = requireNonNull(engineInfo);
+    this.operation = requireNonNull(operation);
+    this.operationParameters = Collections.unmodifiableMap(requireNonNull(operationParameters));
     this.isBlindAppend = isBlindAppend;
-    this.txnId = txnId;
-    this.operationMetrics = operationMetrics;
-  }
-
-  public Optional<Long> getInCommitTimestamp() {
-    return inCommitTimestamp;
-  }
-
-  public void setInCommitTimestamp(Optional<Long> inCommitTimestamp) {
-    this.inCommitTimestamp = inCommitTimestamp;
+    this.txnId = requireNonNull(txnId);
+    this.operationMetrics = Collections.unmodifiableMap(requireNonNull(operationMetrics));
   }
 
   public long getTimestamp() {
@@ -153,6 +146,30 @@ public class CommitInfo {
 
   public String getOperation() {
     return operation;
+  }
+
+  public Map<String, String> getOperationParameters() {
+    return operationParameters;
+  }
+
+  public boolean getIsBlindAppend() {
+    return isBlindAppend;
+  }
+
+  public String getTxnId() {
+    return txnId;
+  }
+
+  public Optional<Long> getInCommitTimestamp() {
+    return inCommitTimestamp;
+  }
+
+  public Map<String, String> getOperationMetrics() {
+    return operationMetrics;
+  }
+
+  public void setInCommitTimestamp(Optional<Long> inCommitTimestamp) {
+    this.inCommitTimestamp = inCommitTimestamp;
   }
 
   /**

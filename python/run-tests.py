@@ -37,6 +37,9 @@ def test(root_dir, package):
         try:
             cmd = ["spark-submit",
                    "--driver-class-path=%s" % extra_class_path,
+                   "--repositories",
+                   ("https://maven-central.storage-download.googleapis.com/maven2/,"
+                       "https://repo1.maven.org/maven2/"),
                    "--packages", package, test_file]
             print("Running tests in %s\n=============" % test_file)
             print("Command: %s" % str(cmd))

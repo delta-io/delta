@@ -242,7 +242,8 @@ object SchemaMergingUtils {
         // If type widening is enabled and the type can be widened, it takes precedence over
         // keepExistingType.
         case (current: AtomicType, update: AtomicType)
-          if typeWideningMode.shouldWidenType(fromType = current, toType = update) => update
+          if typeWideningMode.getWidenedType(fromType = current, toType = update).isDefined =>
+            typeWideningMode.getWidenedType(fromType = current, toType = update).get
 
         // Simply keeps the existing type for primitive types
         case (current, _) if keepExistingType => current

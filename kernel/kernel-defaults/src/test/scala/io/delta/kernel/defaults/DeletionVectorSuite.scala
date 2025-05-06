@@ -16,8 +16,8 @@
 package io.delta.kernel.defaults
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
-
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
+
 import org.apache.hadoop.conf.Configuration
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -26,15 +26,13 @@ class DeletionVectorSuite extends AnyFunSuite with TestUtils {
   test("end-to-end usage: reading a table with dv") {
     checkTable(
       path = getTestResourceFilePath("basic-dv-no-checkpoint"),
-      expectedAnswer = (2L until 10L).map(TestRow(_))
-    )
+      expectedAnswer = (2L until 10L).map(TestRow(_)))
   }
 
   test("end-to-end usage: reading a table with dv with checkpoint") {
     checkTable(
       path = getTestResourceFilePath("basic-dv-with-checkpoint"),
-      expectedAnswer = (0L until 500L).filter(_ % 11 != 0).map(TestRow(_))
-    )
+      expectedAnswer = (0L until 500L).filter(_ % 11 != 0).map(TestRow(_)))
   }
 
   test("end-to-end usage: reading partitioned dv table with checkpoint") {
@@ -42,28 +40,26 @@ class DeletionVectorSuite extends AnyFunSuite with TestUtils {
     // Set the batch size small enough so there will be multiple batches
     conf.setInt("delta.kernel.default.parquet.reader.batch-size", 2)
 
-    val expectedResult = (0 until 50).map(x => (x%10, x, s"foo${x % 5}"))
-      .filter{ case (_, col1, _) =>
+    val expectedResult = (0 until 50).map(x => (x % 10, x, s"foo${x % 5}"))
+      .filter { case (_, col1, _) =>
         !(col1 % 2 == 0 && col1 < 30)
       }
 
     checkTable(
       path = goldenTablePath("dv-partitioned-with-checkpoint"),
       expectedAnswer = expectedResult.map(TestRow.fromTuple(_)),
-      engine = defaultEngine
-    )
+      engine = defaultEngine)
   }
 
   test(
     "end-to-end usage: reading partitioned dv table with checkpoint with columnMappingMode=name") {
-    val expectedResult = (0 until 50).map(x => (x%10, x, s"foo${x % 5}"))
-      .filter{ case (_, col1, _) =>
+    val expectedResult = (0 until 50).map(x => (x % 10, x, s"foo${x % 5}"))
+      .filter { case (_, col1, _) =>
         !(col1 % 2 == 0 && col1 < 30)
       }
     checkTable(
       path = goldenTablePath("dv-with-columnmapping"),
-      expectedAnswer = expectedResult.map(TestRow.fromTuple(_))
-    )
+      expectedAnswer = expectedResult.map(TestRow.fromTuple(_)))
   }
 
   // TODO detect corrupted DV checksum

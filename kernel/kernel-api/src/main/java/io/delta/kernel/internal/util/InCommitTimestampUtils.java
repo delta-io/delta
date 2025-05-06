@@ -17,9 +17,12 @@ package io.delta.kernel.internal.util;
 
 import static io.delta.kernel.internal.TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED;
 
+import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.TableConfig;
+import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.Metadata;
 import java.util.HashMap;
 import java.util.Map;
@@ -49,11 +52,34 @@ public class InCommitTimestampUtils {
           TableConfig.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.getKey(),
           Long.toString(inCommitTimestamp));
 
-      Metadata newMetadata = metadata.withNewConfiguration(enablementTrackingProperties);
+      Metadata newMetadata = metadata.withMergedConfiguration(enablementTrackingProperties);
       return Optional.of(newMetadata);
     } else {
       return Optional.empty();
     }
+  }
+
+  /**
+   * Tries to extract the inCommitTimestamp from the commitInfo action in the given ColumnarBatch.
+   * When inCommitTimestamp is enabled, the commitInfo action is always the first action in the
+   * delta file. This function assumes that this batch is the leading batch of a single delta file
+   * and attempts to extract the commitInfo action from the first row. If the commitInfo action is
+   * not present or does not contain an inCommitTimestamp, this function returns an empty Optional.
+   */
+  public static Optional<Long> tryExtractInCommitTimestamp(
+      ColumnarBatch firstActionsBatchFromSingleDelta) {
+    final int commitInfoOrdinal =
+        firstActionsBatchFromSingleDelta.getSchema().indexOf("commitInfo");
+    if (commitInfoOrdinal == -1) {
+      return Optional.empty();
+    }
+    ColumnVector commitInfoVector =
+        firstActionsBatchFromSingleDelta.getColumnVector(commitInfoOrdinal);
+    // CommitInfo is always the first action in the batch when inCommitTimestamp is enabled.
+    int expectedRowIdOfCommitInfo = 0;
+    CommitInfo commitInfo =
+        CommitInfo.fromColumnVector(commitInfoVector, expectedRowIdOfCommitInfo);
+    return commitInfo != null ? commitInfo.getInCommitTimestamp() : Optional.empty();
   }
 
   /** Returns true if the current transaction implicitly/explicitly enables ICT. */
@@ -71,7 +97,7 @@ public class InCommitTimestampUtils {
     boolean isICTCurrentlyEnabled =
         IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(currentTransactionMetadata);
     boolean wasICTEnabledInReadSnapshot =
-        readSnapshot.getVersion(engine) != -1
+        readSnapshot.getVersion() != -1
             && IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(readSnapshot.getMetadata());
     return isICTCurrentlyEnabled && !wasICTEnabledInReadSnapshot;
   }

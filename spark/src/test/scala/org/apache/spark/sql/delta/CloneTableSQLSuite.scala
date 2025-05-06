@@ -31,6 +31,12 @@ import org.apache.spark.util.Utils
 class CloneTableSQLSuite extends CloneTableSuiteBase
   with DeltaColumnMappingTestUtils
 {
+
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    disableDeletionVectors(spark.conf)
+  }
+
   // scalastyle:off argcount
   override protected def cloneTable(
       source: String,
@@ -346,7 +352,7 @@ object CloneTableSQLTestUtils {
 }
 
 class CloneTableScalaDeletionVectorSuite
-    extends CloneTableSQLSuite
+    extends CloneTableScalaSuite
     with DeltaSQLCommandTest
     with DeltaExcludedTestMixin
     with DeletionVectorsTestUtils {
@@ -365,16 +371,6 @@ class CloneTableScalaDeletionVectorSuite
   override def beforeAll(): Unit = {
     super.beforeAll()
     enableDeletionVectors(spark.conf)
-  }
-
-  override protected def uniqueFileActionGroupBy(action: FileAction): String = {
-    val filePath = action.pathAsUri.toString
-    val dvId = action match {
-      case add: AddFile => Option(add.deletionVector).map(_.uniqueId).getOrElse("")
-      case remove: RemoveFile => Option(remove.deletionVector).map(_.uniqueId).getOrElse("")
-      case _ => ""
-    }
-    filePath + dvId
   }
 
   testAllClones("Cloning table with persistent DVs") { (source, target, isShallow) =>

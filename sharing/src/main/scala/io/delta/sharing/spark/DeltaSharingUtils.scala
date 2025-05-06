@@ -45,6 +45,7 @@ object DeltaSharingUtils extends Logging {
       TimestampNTZTableFeature.name,
       TypeWideningPreviewTableFeature.name,
       TypeWideningTableFeature.name,
+      VariantTypePreviewTableFeature.name,
       VariantTypeTableFeature.name
     )
 
@@ -55,6 +56,7 @@ object DeltaSharingUtils extends Logging {
       TimestampNTZTableFeature.name,
       TypeWideningPreviewTableFeature.name,
       TypeWideningTableFeature.name,
+      VariantTypePreviewTableFeature.name,
       VariantTypeTableFeature.name
     )
 

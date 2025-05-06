@@ -18,6 +18,7 @@ package io.delta.kernel.internal;
 import io.delta.kernel.exceptions.InvalidConfigurationValueException;
 import io.delta.kernel.exceptions.UnknownConfigurationException;
 import io.delta.kernel.internal.actions.Metadata;
+import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.*;
 import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
 import java.util.*;
@@ -33,6 +34,77 @@ public class TableConfig<T> {
   //////////////////
   // TableConfigs //
   //////////////////
+
+  /**
+   * Whether this Delta table is append-only. Files can't be deleted, or values can't be updated.
+   */
+  public static final TableConfig<Boolean> APPEND_ONLY_ENABLED =
+      new TableConfig<>(
+          "delta.appendOnly",
+          "false",
+          Boolean::valueOf,
+          value -> true,
+          "needs to be a boolean.",
+          true);
+
+  /**
+   * Enable change data feed output. When enabled, DELETE, UPDATE, and MERGE INTO operations will
+   * need to do additional work to output their change data in an efficiently readable format.
+   */
+  public static final TableConfig<Boolean> CHANGE_DATA_FEED_ENABLED =
+      new TableConfig<>(
+          "delta.enableChangeDataFeed",
+          "false",
+          Boolean::valueOf,
+          value -> true,
+          "needs to be a boolean.",
+          true);
+
+  public static final TableConfig<String> CHECKPOINT_POLICY =
+      new TableConfig<>(
+          "delta.checkpointPolicy",
+          "classic",
+          v -> v,
+          value -> value.equals("classic") || value.equals("v2"),
+          "needs to be a string and one of 'classic' or 'v2'.",
+          true);
+
+  /** Whether commands modifying this Delta table are allowed to create new deletion vectors. */
+  public static final TableConfig<Boolean> DELETION_VECTORS_CREATION_ENABLED =
+      new TableConfig<>(
+          "delta.enableDeletionVectors",
+          "false",
+          Boolean::valueOf,
+          value -> true,
+          "needs to be a boolean.",
+          true);
+
+  /**
+   * Whether widening the type of an existing column or field is allowed, either manually using
+   * ALTER TABLE CHANGE COLUMN or automatically if automatic schema evolution is enabled.
+   */
+  public static final TableConfig<Boolean> TYPE_WIDENING_ENABLED =
+      new TableConfig<>(
+          "delta.enableTypeWidening",
+          "false",
+          Boolean::valueOf,
+          value -> true,
+          "needs to be a boolean.",
+          true);
+
+  /**
+   * Indicates whether Row Tracking is enabled on the table. When this flag is turned on, all rows
+   * are guaranteed to have Row IDs and Row Commit Versions assigned to them, and writers are
+   * expected to preserve them by materializing them to hidden columns in the data files.
+   */
+  public static final TableConfig<Boolean> ROW_TRACKING_ENABLED =
+      new TableConfig<>(
+          "delta.enableRowTracking",
+          "false",
+          Boolean::valueOf,
+          value -> true,
+          "needs to be a boolean.",
+          true);
 
   /**
    * The shortest duration we have to keep logically deleted data files around before deleting them
@@ -170,11 +242,79 @@ public class TableConfig<T> {
           "needs to be a boolean.",
           true);
 
+  /**
+   * The number of columns to collect stats on for data skipping. A value of -1 means collecting
+   * stats for all columns.
+   *
+   * <p>For Struct types, all leaf fields count individually toward this limit in depth-first order.
+   * For example, if a table has columns a, b.c, b.d, and e, then the first three indexed columns
+   * would be a, b.c, and b.d. Map and array types are not supported for statistics collection.
+   */
+  public static final TableConfig<Integer> DATA_SKIPPING_NUM_INDEXED_COLS =
+      new TableConfig<>(
+          "delta.dataSkippingNumIndexedCols",
+          "32",
+          Integer::valueOf,
+          value -> value >= -1,
+          "needs to be larger than or equal to -1.",
+          true);
+
+  /**
+   * Table property that enables modifying the table in accordance with the Delta-Iceberg Writer
+   * Compatibility V1 ({@code icebergCompatWriterV1}) protocol.
+   */
+  public static final TableConfig<Boolean> ICEBERG_WRITER_COMPAT_V1_ENABLED =
+      new TableConfig<>(
+          "delta.enableIcebergWriterCompatV1",
+          "false",
+          Boolean::valueOf,
+          value -> true,
+          "needs to be a boolean.",
+          true);
+
+  public static class UniversalFormats {
+
+    /**
+     * The value that enables uniform exports to Iceberg for {@linkplain
+     * TableConfig#UNIVERSAL_FORMAT_ENABLED_FORMATS}.
+     *
+     * <p>{@link #ICEBERG_COMPAT_V2_ENABLED but also be set to true} to fully enable this feature.
+     */
+    public static final String FORMAT_ICEBERG = "iceberg";
+    /**
+     * The value to use to enable uniform exports to Hudi for {@linkplain
+     * TableConfig#UNIVERSAL_FORMAT_ENABLED_FORMATS}.
+     */
+    public static final String FORMAT_HUDI = "hudi";
+  }
+
+  private static final Collection<String> ALLOWED_UNIFORM_FORMATS =
+      Collections.unmodifiableList(
+          Arrays.asList(UniversalFormats.FORMAT_HUDI, UniversalFormats.FORMAT_ICEBERG));
+
+  /** Table config that allows for translation of Delta metadata to other table formats metadata. */
+  public static final TableConfig<Set<String>> UNIVERSAL_FORMAT_ENABLED_FORMATS =
+      new TableConfig<>(
+          "delta.universalFormat.enabledFormats",
+          null,
+          TableConfig::parseStringSet,
+          value -> ALLOWED_UNIFORM_FORMATS.containsAll(value),
+          String.format("each value must in the the set: %s", ALLOWED_UNIFORM_FORMATS),
+          true);
+
   /** All the valid properties that can be set on the table. */
   private static final Map<String, TableConfig<?>> VALID_PROPERTIES =
       Collections.unmodifiableMap(
           new HashMap<String, TableConfig<?>>() {
             {
+              addConfig(this, APPEND_ONLY_ENABLED);
+              addConfig(this, CHANGE_DATA_FEED_ENABLED);
+              addConfig(this, CHECKPOINT_POLICY);
+              addConfig(this, DELETION_VECTORS_CREATION_ENABLED);
+              addConfig(this, TYPE_WIDENING_ENABLED);
+              addConfig(this, ROW_TRACKING_ENABLED);
+              addConfig(this, LOG_RETENTION);
+              addConfig(this, EXPIRED_LOG_CLEANUP_ENABLED);
               addConfig(this, TOMBSTONE_RETENTION);
               addConfig(this, CHECKPOINT_INTERVAL);
               addConfig(this, IN_COMMIT_TIMESTAMPS_ENABLED);
@@ -182,7 +322,10 @@ public class TableConfig<T> {
               addConfig(this, IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP);
               addConfig(this, COLUMN_MAPPING_MODE);
               addConfig(this, ICEBERG_COMPAT_V2_ENABLED);
+              addConfig(this, ICEBERG_WRITER_COMPAT_V1_ENABLED);
               addConfig(this, COLUMN_MAPPING_MAX_COLUMN_ID);
+              addConfig(this, DATA_SKIPPING_NUM_INDEXED_COLS);
+              addConfig(this, UNIVERSAL_FORMAT_ENABLED_FORMATS);
             }
           });
 
@@ -191,32 +334,46 @@ public class TableConfig<T> {
   ///////////////////////////
 
   /**
-   * Validates that the given properties have the delta prefix in the key name, and they are in the
-   * set of valid properties. The caller should get the validated configurations and store the case
-   * of the property name defined in TableConfig.
+   * Validates that the given new properties that the txn is trying to update in table. Properties
+   * that have `delta.` prefix in the key name should be in valid list and are editable. The caller
+   * is expected to store the returned properties in the table metadata after further validation
+   * from a protocol point of view. The returned properties will have the key's case normalized as
+   * defined in its {@link TableConfig}.
    *
-   * @param configurations the properties to validate
+   * @param newProperties the properties to validate
    * @throws InvalidConfigurationValueException if any of the properties are invalid
    * @throws UnknownConfigurationException if any of the properties are unknown
    */
-  public static Map<String, String> validateProperties(Map<String, String> configurations) {
-    Map<String, String> validatedConfigurations = new HashMap<>();
-    for (Map.Entry<String, String> kv : configurations.entrySet()) {
+  public static Map<String, String> validateDeltaProperties(Map<String, String> newProperties) {
+    Map<String, String> validatedProperties = new HashMap<>();
+    for (Map.Entry<String, String> kv : newProperties.entrySet()) {
       String key = kv.getKey().toLowerCase(Locale.ROOT);
       String value = kv.getValue();
-      if (key.startsWith("delta.") && VALID_PROPERTIES.containsKey(key)) {
+
+      boolean isTableFeatureOverrideKey =
+          key.startsWith(TableFeatures.SET_TABLE_FEATURE_SUPPORTED_PREFIX);
+      boolean isTableConfigKey = key.startsWith("delta.");
+      // TableFeature override properties validation is handled separately in TransactionBuilder.
+      boolean shouldValidateProperties = isTableConfigKey && !isTableFeatureOverrideKey;
+      if (shouldValidateProperties) {
+        // If it is a delta table property, make sure it is a supported property and editable
+        if (!VALID_PROPERTIES.containsKey(key)) {
+          throw DeltaErrors.unknownConfigurationException(kv.getKey());
+        }
+
         TableConfig<?> tableConfig = VALID_PROPERTIES.get(key);
-        if (tableConfig.editable) {
-          tableConfig.validate(value);
-          validatedConfigurations.put(tableConfig.getKey(), value);
-        } else {
+        if (!tableConfig.editable) {
           throw DeltaErrors.cannotModifyTableProperty(kv.getKey());
         }
+
+        tableConfig.validate(value);
+        validatedProperties.put(tableConfig.getKey(), value);
       } else {
-        throw DeltaErrors.unknownConfigurationException(kv.getKey());
+        // allow unknown properties to be set (and preserve their original case!)
+        validatedProperties.put(kv.getKey(), value);
       }
     }
-    return validatedConfigurations;
+    return validatedProperties;
   }
 
   private static void addConfig(HashMap<String, TableConfig<?>> configs, TableConfig<?> config) {
@@ -285,5 +442,18 @@ public class TableConfig<T> {
     if (!validator.test(parsedValue)) {
       throw DeltaErrors.invalidConfigurationValueException(key, value, helpMessage);
     }
+  }
+
+  private static Set<String> parseStringSet(String value) {
+    if (value == null || value.isEmpty()) {
+      return Collections.emptySet();
+    }
+    String[] formats = value.split(",");
+    Set<String> config = new HashSet<>();
+
+    for (String format : formats) {
+      config.add(format.trim());
+    }
+    return config;
   }
 }

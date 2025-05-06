@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.sources
 import java.util.concurrent.ConcurrentHashMap
 
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.DeltaOperations.StreamingUpdate
 import org.apache.spark.sql.delta.actions.{FileAction, Metadata, Protocol, SetTransaction}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys

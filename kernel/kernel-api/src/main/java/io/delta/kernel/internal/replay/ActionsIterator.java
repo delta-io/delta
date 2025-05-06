@@ -44,7 +44,11 @@ import java.util.stream.Collectors;
  * iterator of (ColumnarBatch, isFromCheckpoint) tuples, where the schema of the ColumnarBatch
  * semantically represents actions (or, a subset of action fields) parsed from the Delta Log.
  *
- * <p>Users must pass in a `readSchema` to select which actions and sub-fields they want to consume.
+ * <p>Users must pass in a `deltaReadSchema` to select which actions and sub-fields they want to
+ * consume.
+ *
+ * <p>Users can also pass in an optional `checkpointReadSchema` if it is different from
+ * `deltaReadSchema`.
  */
 public class ActionsIterator implements CloseableIterator<ActionWrapper> {
   private final Engine engine;
@@ -60,7 +64,14 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
    */
   private final LinkedList<DeltaLogFile> filesList;
 
-  private final StructType readSchema;
+  /** Schema used for reading delta files. */
+  private final StructType deltaReadSchema;
+
+  /**
+   * Schema to be used for reading checkpoint files. Checkpoint files can be Parquet or JSON in the
+   * case of v2 checkpoints.
+   */
+  private final StructType checkpointReadSchema;
 
   private final boolean schemaContainsAddOrRemoveFiles;
 
@@ -77,16 +88,26 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
   public ActionsIterator(
       Engine engine,
       List<FileStatus> files,
-      StructType readSchema,
+      StructType deltaReadSchema,
+      Optional<Predicate> checkpointPredicate) {
+    this(engine, files, deltaReadSchema, deltaReadSchema, checkpointPredicate);
+  }
+
+  public ActionsIterator(
+      Engine engine,
+      List<FileStatus> files,
+      StructType deltaReadSchema,
+      StructType checkpointReadSchema,
       Optional<Predicate> checkpointPredicate) {
     this.engine = engine;
     this.checkpointPredicate = checkpointPredicate;
     this.filesList = new LinkedList<>();
     this.filesList.addAll(
-        files.stream().map(DeltaLogFile::forCommitOrCheckpoint).collect(Collectors.toList()));
-    this.readSchema = readSchema;
+        files.stream().map(DeltaLogFile::forFileStatus).collect(Collectors.toList()));
+    this.deltaReadSchema = deltaReadSchema;
+    this.checkpointReadSchema = checkpointReadSchema;
     this.actionsIter = Optional.empty();
-    this.schemaContainsAddOrRemoveFiles = LogReplay.containsAddOrRemoveFileActions(readSchema);
+    this.schemaContainsAddOrRemoveFiles = LogReplay.containsAddOrRemoveFileActions(deltaReadSchema);
   }
 
   @Override
@@ -105,7 +126,8 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
 
   /**
    * @return a tuple of (ColumnarBatch, isFromCheckpoint), where ColumnarBatch conforms to the
-   *     instance {@link #readSchema}.
+   *     instance {@link #deltaReadSchema} or {@link #checkpointReadSchema} (the latter when when
+   *     isFromCheckpoint=true).
    */
   @Override
   public ActionWrapper next() {
@@ -176,9 +198,9 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
       FileStatus file, String fileName) throws IOException {
     // If the sidecars may contain the current action, read sidecars from the top-level v2
     // checkpoint file(to be read later).
-    StructType modifiedReadSchema = readSchema;
+    StructType modifiedReadSchema = checkpointReadSchema;
     if (schemaContainsAddOrRemoveFiles) {
-      modifiedReadSchema = LogReplay.withSidecarFileSchema(readSchema);
+      modifiedReadSchema = LogReplay.withSidecarFileSchema(checkpointReadSchema);
     }
 
     long checkpointVersion = checkpointVersion(file.getPath());
@@ -195,7 +217,8 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
       checkpointPredicateIncludingSidecars = checkpointPredicate;
     }
     final CloseableIterator<ColumnarBatch> topLevelIter;
-    StructType finalModifiedReadSchema = modifiedReadSchema;
+    StructType finalReadSchema = modifiedReadSchema;
+
     if (fileName.endsWith(".parquet")) {
       topLevelIter =
           wrapEngineExceptionThrowsIO(
@@ -204,11 +227,11 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
                       .getParquetHandler()
                       .readParquetFiles(
                           singletonCloseableIterator(file),
-                          finalModifiedReadSchema,
+                          finalReadSchema,
                           checkpointPredicateIncludingSidecars),
               "Reading parquet log file `%s` with readSchema=%s and predicate=%s",
               file,
-              modifiedReadSchema,
+              finalReadSchema,
               checkpointPredicateIncludingSidecars);
     } else if (fileName.endsWith(".json")) {
       topLevelIter =
@@ -218,11 +241,11 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
                       .getJsonHandler()
                       .readJsonFiles(
                           singletonCloseableIterator(file),
-                          finalModifiedReadSchema,
+                          finalReadSchema,
                           checkpointPredicateIncludingSidecars),
               "Reading JSON log file `%s` with readSchema=%s and predicate=%s",
               file,
-              modifiedReadSchema,
+              finalReadSchema,
               checkpointPredicateIncludingSidecars);
     } else {
       throw new IOException("Unrecognized top level v2 checkpoint file format: " + fileName);
@@ -298,27 +321,13 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
         case COMMIT:
           {
             final long fileVersion = FileNames.deltaVersion(nextFilePath);
-            // We can not read multiple JSON files in parallel (like the checkpoint files),
-            // because each one has a different version, and we need to associate the
-            // version with actions read from the JSON file for further optimizations later
-            // on (faster metadata & protocol loading in subsequent runs by remembering
-            // the version of the last version where the metadata and protocol are found).
-            final CloseableIterator<ColumnarBatch> dataIter =
-                wrapEngineExceptionThrowsIO(
-                    () ->
-                        engine
-                            .getJsonHandler()
-                            .readJsonFiles(
-                                singletonCloseableIterator(nextFile), readSchema, Optional.empty()),
-                    "Reading JSON log file `%s` with readSchema=%s",
-                    nextFile,
-                    readSchema);
-
-            return combine(
-                dataIter,
-                false /* isFromCheckpoint */,
-                fileVersion,
-                Optional.of(nextFile.getModificationTime()) /* timestamp */);
+            return readCommitOrCompactionFile(fileVersion, nextFile);
+          }
+        case LOG_COMPACTION:
+          {
+            // use end version as this is like a mini checkpoint, and that's what checkpoints do
+            final long fileVersion = FileNames.logCompactionVersions(nextFilePath)._2;
+            return readCommitOrCompactionFile(fileVersion, nextFile);
           }
         case CHECKPOINT_CLASSIC:
         case V2_CHECKPOINT_MANIFEST:
@@ -344,10 +353,11 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
                     () ->
                         engine
                             .getParquetHandler()
-                            .readParquetFiles(checkpointFiles, readSchema, checkpointPredicate),
+                            .readParquetFiles(
+                                checkpointFiles, deltaReadSchema, checkpointPredicate),
                     "Reading checkpoint sidecars [%s] with readSchema=%s and predicate=%s",
                     checkpointFiles,
-                    readSchema,
+                    deltaReadSchema,
                     checkpointPredicate);
 
             long version = checkpointVersion(nextFilePath);
@@ -361,21 +371,74 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     }
   }
 
-  /** Take input (iterator<T>, boolean) and produce an iterator<T, boolean>. */
+  private CloseableIterator<ActionWrapper> readCommitOrCompactionFile(
+      long fileVersion, FileStatus nextFile) throws IOException {
+    // We can not read multiple JSON files in parallel (like the checkpoint files),
+    // because each one has a different version, and we need to associate the
+    // version with actions read from the JSON file for further optimizations later
+    // on (faster metadata & protocol loading in subsequent runs by remembering
+    // the version of the last version where the metadata and protocol are found).
+    final CloseableIterator<ColumnarBatch> dataIter =
+        wrapEngineExceptionThrowsIO(
+            () ->
+                engine
+                    .getJsonHandler()
+                    .readJsonFiles(
+                        singletonCloseableIterator(nextFile), deltaReadSchema, Optional.empty()),
+            "Reading JSON log file `%s` with readSchema=%s",
+            nextFile,
+            deltaReadSchema);
+
+    return combine(
+        dataIter,
+        false /* isFromCheckpoint */,
+        fileVersion,
+        Optional.of(nextFile.getModificationTime()) /* timestamp */);
+  }
+
+  /**
+   * Takes an input iterator of actions read from the file and metadata about the file read, and
+   * combines it to return an Iterator<ActionWrapper>. The timestamp in the ActionWrapper is only
+   * set when the input file is not a Checkpoint. The timestamp will be set to be the
+   * inCommitTimestamp of the delta file when available, otherwise it will be the modification time
+   * of the file.
+   */
   private CloseableIterator<ActionWrapper> combine(
       CloseableIterator<ColumnarBatch> fileReadDataIter,
       boolean isFromCheckpoint,
       long version,
       Optional<Long> timestamp) {
+    // For delta files, we want to use the inCommitTimestamp from commitInfo
+    // as the commit timestamp for the file.
+    // Since CommitInfo should be the first action in the delta when inCommitTimestamp is
+    // enabled, we will read the first batch and try to extract the timestamp from it.
+    // We also ensure that rewoundFileReadDataIter is identical to the original
+    // fileReadDataIter before any data was consumed.
+    final CloseableIterator<ColumnarBatch> rewoundFileReadDataIter;
+    Optional<Long> inCommitTimestampOpt = Optional.empty();
+    if (!isFromCheckpoint && fileReadDataIter.hasNext()) {
+      ColumnarBatch firstBatch = fileReadDataIter.next();
+      rewoundFileReadDataIter = singletonCloseableIterator(firstBatch).combine(fileReadDataIter);
+      inCommitTimestampOpt = InCommitTimestampUtils.tryExtractInCommitTimestamp(firstBatch);
+    } else {
+      rewoundFileReadDataIter = fileReadDataIter;
+    }
+    final Optional<Long> finalResolvedCommitTimestamp =
+        inCommitTimestampOpt.isPresent() ? inCommitTimestampOpt : timestamp;
+
     return new CloseableIterator<ActionWrapper>() {
       @Override
       public boolean hasNext() {
-        return fileReadDataIter.hasNext();
+        return rewoundFileReadDataIter.hasNext();
       }
 
       @Override
       public ActionWrapper next() {
-        return new ActionWrapper(fileReadDataIter.next(), isFromCheckpoint, version, timestamp);
+        return new ActionWrapper(
+            rewoundFileReadDataIter.next(),
+            isFromCheckpoint,
+            version,
+            finalResolvedCommitTimestamp);
       }
 
       @Override

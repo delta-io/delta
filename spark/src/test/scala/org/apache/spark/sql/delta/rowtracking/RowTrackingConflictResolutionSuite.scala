@@ -74,7 +74,8 @@ class RowTrackingConflictResolutionSuite extends QueryTest
   /** Add Row tracking table feature support. */
   private def activateRowTracking(): Unit = {
     require(!latestSnapshot.protocol.isFeatureSupported(RowTrackingFeature))
-    deltaLog.upgradeProtocol(Action.supportedProtocolVersion())
+    deltaLog.upgradeProtocol(Action.supportedProtocolVersion(
+      featuresToExclude = Seq(CatalogOwnedTableFeature)))
   }
 
   // Add 'numRecords' records to the table.
@@ -115,7 +116,10 @@ class RowTrackingConflictResolutionSuite extends QueryTest
 
       val txn = deltaLog.startTransaction()
       deltaLog.startTransaction().commit(
-        Seq(Action.supportedProtocolVersion(), addFile("other_path")), DeltaOperations.ManualUpdate)
+        Seq(
+          Action.supportedProtocolVersion(featuresToExclude = Seq(CatalogOwnedTableFeature)),
+          addFile("other_path")
+        ), DeltaOperations.ManualUpdate)
       txn.commit(Seq(addFile(filePath)), DeltaOperations.ManualUpdate)
 
       assertRowIdsAreValid(deltaLog)
@@ -180,7 +184,8 @@ class RowTrackingConflictResolutionSuite extends QueryTest
       f2,
       f3,
       f4,
-      Action.supportedProtocolVersion().withFeature(RowTrackingFeature)
+      Action.supportedProtocolVersion(
+        featuresToExclude = Seq(CatalogOwnedTableFeature)).withFeature(RowTrackingFeature)
     )
 
     log.startTransaction().commit(setupActions, ManualUpdate)

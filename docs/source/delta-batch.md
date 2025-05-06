@@ -1246,7 +1246,7 @@ spark.read.table(...) \
   .withColumn("birthDate", col("birthDate").cast("date")) \
   .write \
   .format("delta") \
-  .mode("overwrite")
+  .mode("overwrite") \
   .option("overwriteSchema", "true") \
   .saveAsTable(...)
 ```

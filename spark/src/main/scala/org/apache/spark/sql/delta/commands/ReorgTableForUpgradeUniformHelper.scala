@@ -19,8 +19,8 @@ package org.apache.spark.sql.delta.commands
 // scalastyle:off import.ordering.noEmptyLine
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaConfig, DeltaConfigs, DeltaErrors, DeltaOperations, Snapshot}
-import org.apache.spark.sql.delta.IcebergCompat.{getEnabledVersion, getIcebergCompatVersionConfigForValidVersion}
+import org.apache.spark.sql.delta.{DeletionVectorsTableFeature, DeltaConfigs, DeltaErrors, DeltaOperations, IcebergCompatBase, Snapshot}
+import org.apache.spark.sql.delta.IcebergCompat.{getEnabledVersion, getForVersion}
 import org.apache.spark.sql.delta.UniversalFormat.{icebergEnabled, ICEBERG_FORMAT}
 import org.apache.spark.sql.delta.actions.{AddFile, Protocol}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
@@ -37,15 +37,15 @@ import org.apache.spark.sql.functions.col
  */
 trait ReorgTableForUpgradeUniformHelper extends DeltaLogging {
 
-  private val versionChangesRequireRewrite: Map[Int, Set[Int]] =
-    Map(0 -> Set(2), 1 -> Set(2), 2 -> Set(2))
+  private val rewriteCheckTable: Map[Int, Set[Int]] =
+    Map(0 -> Set(2, 3), 1 -> Set(2, 3), 2 -> Set(2, 3), 3 -> Set(2, 3))
 
   /**
-   * Helper function to check if the table data may need to be rewritten to be iceberg compatible.
-   * Only if not all addFiles has the tag, Rewriting would be performed.
+   * Check if the given pair of (old_version, new_version) should trigger a rewrite check.
+   * NOTE: Actual rewrite only happens when not all addFiles has tags with newVersion.
    */
-  private def reorgMayNeedRewrite(oldVersion: Int, newVersion: Int): Boolean = {
-    versionChangesRequireRewrite.getOrElse(oldVersion, Set.empty[Int]).contains(newVersion)
+  private def shallCheckRewrite(oldVersion: Int, newVersion: Int): Boolean = {
+    rewriteCheckTable.getOrElse(oldVersion, Set.empty[Int]).contains(newVersion)
   }
 
   /**
@@ -54,42 +54,38 @@ trait ReorgTableForUpgradeUniformHelper extends DeltaLogging {
   def optimizeByReorg(sparkSession: SparkSession): Seq[Row]
 
   /**
-   * Helper function to update the table icebergCompat properties.
-   * We can not use AlterTableSetPropertiesDeltaCommand here because we don't allow customer to
-   * change icebergCompatVersion by using Alter Table command.
+   * Enable the new IcebergCompat on the table by updating table conf.
    */
   private def enableIcebergCompat(
-      target: DeltaTableV2,
-      currIcebergCompatVersionOpt: Option[Int],
-      targetVersionDeltaConfig: DeltaConfig[Option[Boolean]]): Unit = {
-    var enableIcebergCompatConf = Map(
-      targetVersionDeltaConfig.key -> "true",
-      DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key -> "false",
-      DeltaConfigs.COLUMN_MAPPING_MODE.key -> "name"
-    )
-    if (currIcebergCompatVersionOpt.nonEmpty) {
-      val currIcebergCompatVersionDeltaConfig = getIcebergCompatVersionConfigForValidVersion(
-        currIcebergCompatVersionOpt.get)
-      enableIcebergCompatConf ++= Map(currIcebergCompatVersionDeltaConfig.key -> "false")
+      table: DeltaTableV2,
+      currentCompatVersion: Option[Int],
+      compatToEnable: IcebergCompatBase): Unit = {
+    var newConf: Map[String, String] = Map(
+      compatToEnable.config.key -> "true",
+      DeltaConfigs.COLUMN_MAPPING_MODE.key -> "name") ++
+      currentCompatVersion.map(getForVersion(_).config.key -> "false") // Disable old IcebergCompat
+
+    if (compatToEnable.incompatibleTableFeatures.contains(DeletionVectorsTableFeature)) {
+      newConf += DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key -> "false"
     }
 
-    val alterConfTxn = target.startTransaction()
+    val alterConfTxn = table.startTransaction()
 
     if (alterConfTxn.protocol.minWriterVersion < 7) {
-      enableIcebergCompatConf += Protocol.MIN_WRITER_VERSION_PROP -> "7"
+      newConf += Protocol.MIN_WRITER_VERSION_PROP -> "7"
     }
     if (alterConfTxn.protocol.minReaderVersion < 3) {
-      enableIcebergCompatConf += Protocol.MIN_READER_VERSION_PROP -> "3"
+      newConf += Protocol.MIN_READER_VERSION_PROP -> "3"
     }
 
     val metadata = alterConfTxn.metadata
     val newMetadata = metadata.copy(
       description = metadata.description,
-      configuration = metadata.configuration ++ enableIcebergCompatConf)
+      configuration = metadata.configuration ++ newConf)
     alterConfTxn.updateMetadata(newMetadata)
     alterConfTxn.commit(
       Nil,
-      DeltaOperations.UpgradeUniformProperties(enableIcebergCompatConf)
+      DeltaOperations.UpgradeUniformProperties(newConf)
     )
   }
 
@@ -131,13 +127,13 @@ trait ReorgTableForUpgradeUniformHelper extends DeltaLogging {
    *
    * * There are six possible write combinations:
    * | CurrentIcebergCompatVersion | TargetIcebergCompatVersion | Required steps|
-   * | --------------- | --------------- | --------------- |
-   * |      None       |         1       |   1, 3          |
-   * |      None       |         2       |   1, 2, 3       |
-   * |      1          |         1       |   3             |
-   * |      1          |         2       |   1, 2, 3       |
-   * |      2          |         1       |   1, 3          |
-   * |      2          |         2       |   2, 3          |
+   * | --------------------------- | -------------------------- | ------------- |
+   * |      None                   |         1                  |   1, 3        |
+   * |      None                   |         2+                 |   1, 2, 3     |
+   * |      1                      |         1                  |   3           |
+   * |      1                      |         2+                 |   1, 2, 3     |
+   * |      2+                     |         1                  |   1, 3        |
+   * |      2+                     |         2+                 |   2, 3        |
    */
   private def doRewrite(
       target: DeltaTableV2,
@@ -146,15 +142,14 @@ trait ReorgTableForUpgradeUniformHelper extends DeltaLogging {
 
     val snapshot = target.update()
     val currIcebergCompatVersionOpt = getEnabledVersion(snapshot.metadata)
-    val targetVersionDeltaConfig = getIcebergCompatVersionConfigForValidVersion(
-      targetIcebergCompatVersion)
-    val versionChangeMayNeedRewrite = reorgMayNeedRewrite(
+    val targetIcebergCompatObject = getForVersion(targetIcebergCompatVersion)
+    val mayNeedRewrite = shallCheckRewrite(
       currIcebergCompatVersionOpt.getOrElse(0), targetIcebergCompatVersion)
 
     // Step 1: Update the table properties to enable the target iceberg compat version
     val didUpdateIcebergCompatVersion =
       if (!currIcebergCompatVersionOpt.contains(targetIcebergCompatVersion)) {
-        enableIcebergCompat(target, currIcebergCompatVersionOpt, targetVersionDeltaConfig)
+        enableIcebergCompat(target, currIcebergCompatVersionOpt, targetIcebergCompatObject)
         logInfo(log"Update table ${MDC(DeltaLogKeys.TABLE_NAME, target.tableIdentifier)} " +
           log"to iceberg compat version = " +
           log"${MDC(DeltaLogKeys.VERSION, targetIcebergCompatVersion)} successfully.")
@@ -170,7 +165,7 @@ trait ReorgTableForUpgradeUniformHelper extends DeltaLogging {
     // The table needs to be rewritten if:
     //   1. The target iceberg compat version requires rewrite.
     //   2. Not all addFile have ICEBERG_COMPAT_VERSION=targetVersion tag
-    val (metricsOpt, didRewrite) = if (versionChangeMayNeedRewrite && !allAddFilesHaveTag) {
+    val (metricsOpt, didRewrite) = if (mayNeedRewrite && !allAddFilesHaveTag) {
       logInfo(log"Reorg Table ${MDC(DeltaLogKeys.TABLE_NAME, target.tableIdentifier)} to " +
         log"iceberg compat version = ${MDC(DeltaLogKeys.VERSION, targetIcebergCompatVersion)} " +
         log"need rewrite data files.")
@@ -191,7 +186,7 @@ trait ReorgTableForUpgradeUniformHelper extends DeltaLogging {
     val updatedSnapshot = target.deltaLog.update()
     val (numOfAddFiles, numOfAddFilesWithIcebergCompatTag) = getNumOfAddFiles(
       targetIcebergCompatVersion, target, updatedSnapshot)
-    if (versionChangeMayNeedRewrite && numOfAddFilesWithIcebergCompatTag != numOfAddFiles) {
+    if (mayNeedRewrite && numOfAddFilesWithIcebergCompatTag != numOfAddFiles) {
       throw DeltaErrors.icebergCompatReorgAddFileTagsMissingException(
         updatedSnapshot.version,
         targetIcebergCompatVersion,
@@ -215,7 +210,7 @@ trait ReorgTableForUpgradeUniformHelper extends DeltaLogging {
       "targetIcebergCompatVersion" -> targetIcebergCompatVersion.toString,
       "metrics" -> metricsOpt.toString,
       "didUpdateIcebergCompatVersion" -> didUpdateIcebergCompatVersion.toString,
-      "needRewrite" -> versionChangeMayNeedRewrite.toString,
+      "needRewrite" -> mayNeedRewrite.toString,
       "didRewrite" -> didRewrite.toString,
       "numOfAddFilesBefore" -> numOfAddFilesBefore.toString,
       "numOfAddFilesWithIcebergCompatTagBefore" -> numOfAddFilesWithTagBefore.toString,

@@ -73,9 +73,7 @@ public class KernelSnapshotWrapper implements io.delta.standalone.Snapshot {
      */
     @Override
     public long getVersion() {
-        // WARNING: getVersion in SnapshotImpl currently doesn't use the engine so we can
-        // pass null, but if this changes this code could break
-        return kernelSnapshot.getVersion(null);
+        return kernelSnapshot.getVersion();
     }
 
     /**

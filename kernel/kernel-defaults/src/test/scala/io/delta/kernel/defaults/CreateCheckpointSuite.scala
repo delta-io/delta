@@ -15,29 +15,30 @@
  */
 package io.delta.kernel.defaults
 
-import io.delta.golden.GoldenTableUtils.goldenTablePath
-import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
-import io.delta.kernel.Table
-import org.apache.commons.io.FileUtils
-import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.Path
+import java.io.File
 
+import io.delta.golden.GoldenTableUtils.goldenTablePath
+import io.delta.kernel.Table
+import io.delta.kernel.defaults.engine.DefaultEngine
+import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
+import io.delta.kernel.engine.Engine
+import io.delta.kernel.exceptions.{CheckpointAlreadyExistsException, TableNotFoundException}
+
+import org.apache.spark.sql.delta.{DeltaLog, VersionNotFoundException}
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, RemoveFile}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.{DeltaLog, VersionNotFoundException}
+
+import org.apache.commons.io.FileUtils
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.types.{IntegerType, StructType}
 import org.scalatest.funsuite.AnyFunSuite
-import java.io.File
-
-import io.delta.kernel.defaults.engine.DefaultEngine
-import io.delta.kernel.engine.Engine
-import io.delta.kernel.exceptions.{CheckpointAlreadyExistsException, TableNotFoundException}
 
 /**
  * Test suite for `io.delta.kernel.Table.checkpoint(engine, version)`
  */
-class CreateCheckpointSuite extends DeltaTableWriteSuiteBase {
+class CreateCheckpointSuite extends CheckpointSuiteBase {
 
   ///////////
   // Tests //
@@ -69,7 +70,6 @@ class CreateCheckpointSuite extends DeltaTableWriteSuiteBase {
       }
     }
   }
-
 
   Seq(true, false).foreach { includeRemoves =>
     Seq(
@@ -152,7 +152,8 @@ class CreateCheckpointSuite extends DeltaTableWriteSuiteBase {
            |  'delta.minReaderVersion' = '1',
            |  'delta.minWriterVersion' = '2'
            |)
-           |""".stripMargin) // makes the latest table version 16
+           |""".stripMargin
+      ) // makes the latest table version 16
 
       // before creating checkpoint, read and save the expected results using Spark
       val expResults = readUsingSpark(tablePath)
@@ -252,7 +253,15 @@ class CreateCheckpointSuite extends DeltaTableWriteSuiteBase {
 
         // version 0
         addFiles(
-          "file1", "file2", "file3", "file4", "file5", "file6", "file7", "file8", "file9")
+          "file1",
+          "file2",
+          "file3",
+          "file4",
+          "file5",
+          "file6",
+          "file7",
+          "file8",
+          "file9")
 
         val now = System.currentTimeMillis()
         removeFile("file8", deletionTimestamp = 1) // set delete time very old
@@ -263,7 +272,15 @@ class CreateCheckpointSuite extends DeltaTableWriteSuiteBase {
 
         // add few more files - version 5
         addFiles(
-          "file10", "file11", "file12", "file13", "file14", "file15", "file16", "file17", "file18")
+          "file10",
+          "file11",
+          "file12",
+          "file13",
+          "file14",
+          "file15",
+          "file16",
+          "file17",
+          "file18")
 
         // delete some files again
         removeFile("file3", deletionTimestamp = now - millisPerDays(9))
@@ -345,19 +362,40 @@ class CreateCheckpointSuite extends DeltaTableWriteSuiteBase {
 
   test("try create a checkpoint on a unsupported table feature table") {
     withTempDirAndEngine { (tablePath, tc) =>
-      copyTable("dv-with-columnmapping", tablePath)
+      spark.sql(s"CREATE TABLE delta.`$tablePath` (name STRING, age INT) USING delta " +
+        "TBLPROPERTIES ('delta.constraints.checks' = 'name IS NOT NULL')")
+
+      for (_ <- 0 to 3) {
+        spark.sql(s"INSERT INTO delta.`$tablePath` VALUES ('John Doe', 30), ('Bob Johnson', 35)")
+      }
 
       val ex2 = intercept[Exception] {
-        kernelCheckpoint(tc, tablePath, checkpointVersion = 5)
+        kernelCheckpoint(tc, tablePath, checkpointVersion = 4)
       }
-      assert(ex2.getMessage.contains("Unsupported Delta writer feature") &&
-        ex2.getMessage.contains("writer table feature \"deletionVectors\""))
+      assert(ex2.getMessage.contains("requires writer table feature \"[checkConstraints]\" " +
+        "which is unsupported by this version of Delta Kernel"))
     }
   }
 
-  ////////////////////
-  // Helper methods //
-  ///////////////////
+  test("create a checkpoint on a table with deletion vectors") {
+    withTempDirAndEngine { (tablePath, tc) =>
+      copyTable("dv-with-columnmapping", tablePath)
+
+      // before creating checkpoint, read and save the expected results using Spark
+      val expResults = readUsingSpark(tablePath)
+      assert(expResults.size === 35)
+
+      val checkpointVersion = 15
+      kernelCheckpoint(tc, tablePath, checkpointVersion)
+      verifyResults(tablePath, expResults, checkpointVersion)
+    }
+  }
+}
+
+/**
+ *  Helper methods for suites that do checkpoint operations
+ */
+trait CheckpointSuiteBase extends DeltaTableWriteSuiteBase {
   def addData(path: String, alternateBetweenAddsAndRemoves: Boolean, numberIter: Int): Unit = {
     Seq.range(0, numberIter).foreach { version =>
       if (version % 2 == 1 && alternateBetweenAddsAndRemoves) {

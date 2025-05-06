@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.typewidening
 
-import org.apache.spark.sql.delta.{DeltaInsertIntoTest, DeltaUnsupportedOperationException, IcebergCompat, IcebergCompatV1, IcebergCompatV2}
+import org.apache.spark.sql.delta.{DeltaInsertIntoTest, DeltaUnsupportedOperationException, IcebergCompatBase, IcebergCompatV1, IcebergCompatV2}
 import org.apache.spark.sql.delta.DeltaErrors.toSQLType
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.scalatest.GivenWhenThen
@@ -47,7 +47,7 @@ trait TypeWideningUniformTests extends QueryTest
     supportedTestCases.diff(icebergSupportedTestCases) ++ alterTableOnlySupportedTestCases
 
   /** Helper to enable Uniform with Iceberg compatibility on the given table. */
-  private def enableIcebergUniform(tableName: String, compat: IcebergCompat): Unit =
+  private def enableIcebergUniform(tableName: String, compat: IcebergCompatBase): Unit =
     sql(
       s"""
          |ALTER TABLE $tableName SET TBLPROPERTIES (
@@ -59,7 +59,7 @@ trait TypeWideningUniformTests extends QueryTest
 
   /** Helper to check that the given function violates Uniform compatibility with type widening. */
   private def checkIcebergCompatViolation(
-      compat: IcebergCompat,
+      compat: IcebergCompatBase,
       fromType: DataType,
       toType: DataType)(f: => Unit): Unit = {
     Given(s"iceberg compat ${compat.getClass.getSimpleName}")

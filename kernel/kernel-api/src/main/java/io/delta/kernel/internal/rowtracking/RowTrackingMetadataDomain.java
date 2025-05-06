@@ -26,6 +26,8 @@ public final class RowTrackingMetadataDomain extends JsonMetadataDomain {
 
   public static final String DOMAIN_NAME = "delta.rowTracking";
 
+  public static final long MISSING_ROW_ID_HIGH_WATERMARK = -1L;
+
   /**
    * Creates an instance of {@link RowTrackingMetadataDomain} from a JSON configuration string.
    *

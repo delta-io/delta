@@ -15,10 +15,11 @@
  */
 package io.delta.kernel.internal.metadatadomain
 
-import io.delta.kernel.internal.rowtracking.RowTrackingMetadataDomain
-import org.scalatest.funsuite.AnyFunSuite
-
 import java.util.Optional
+
+import io.delta.kernel.internal.rowtracking.RowTrackingMetadataDomain
+
+import org.scalatest.funsuite.AnyFunSuite
 
 class JsonMetadataDomainSuite extends AnyFunSuite {
 

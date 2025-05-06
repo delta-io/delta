@@ -21,20 +21,28 @@ import java.util.concurrent.TimeUnit
 
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
+import org.apache.spark.sql.delta.util.FileNames
 
 import org.apache.spark.util.ManualClock
 
 trait CheckpointProtectionTestUtilsMixin
     extends DeltaSQLCommandTest { self: DeltaRetentionSuiteBase =>
 
+  // scalastyle:off argcount
   def testRequireCheckpointProtectionBeforeVersion(
       createNumCommitsOutsideRetentionPeriod: Int,
       createNumCommitsWithinRetentionPeriod: Int,
       createCheckpoints: Set[Int],
       requireCheckpointProtectionBeforeVersion: Int,
       additionalFeatureToEnable: Option[TableFeature] = None,
-      expectedCommitsAfterCleanup: Set[Int],
+      unsupportedFeature: TableFeature = TestUnsupportedNoHistoryProtectionReaderWriterFeature,
+      unsupportedFeatureStartVersion: Option[Long] = None,
+      unsupportedFeatureEndVersion: Option[Long] = None,
+      incompleteCRCVersion: Option[Long] = None,
+      missingCRCVersion: Option[Long] = None,
+      expectedCommitsAfterCleanup: Seq[Int],
       expectedCheckpointsAfterCleanup: Set[Int]): Unit = {
+    // scalastyle:on argcount
     withTempDir { dir =>
       val currentTime = System.currentTimeMillis()
       val clock = new ManualClock(currentTime)
@@ -44,6 +52,9 @@ trait CheckpointProtectionTestUtilsMixin
       val additionalFeatureEnablement =
         additionalFeatureToEnable.map(f => s"delta.feature.${f.name} = 'supported',")
           .getOrElse("")
+      val featureEnablement = s"delta.feature.${unsupportedFeature.name} = 'supported'"
+      val featureEnablementAtCreateTable =
+        if (unsupportedFeatureStartVersion.exists(_ == 0)) s"$featureEnablement," else ""
 
       // Commit 0.
       sql(
@@ -51,15 +62,33 @@ trait CheckpointProtectionTestUtilsMixin
            |TBLPROPERTIES (
            |delta.feature.${CheckpointProtectionTableFeature.name} = 'supported',
            |$additionalFeatureEnablement
+           |${featureEnablementAtCreateTable}
            |$propertyKey = $requireCheckpointProtectionBeforeVersion
            |)""".stripMargin)
       if (createCheckpoints.contains(0)) deltaLog.checkpoint(deltaLog.update())
+      setModificationTime(deltaLog, startTime = currentTime, version = 0, dayNum = 0, fs)
+
+      def createCommit(version: Int): Unit = {
+        if (unsupportedFeatureStartVersion.exists(_ == version)) {
+          sql(s"ALTER TABLE delta.`${deltaLog.dataPath}` SET TBLPROPERTIES ($featureEnablement)")
+        } else if (unsupportedFeatureEndVersion.exists(_ == version)) {
+          sql(
+            s"""ALTER TABLE delta.`${deltaLog.dataPath}`
+               |DROP FEATURE ${unsupportedFeature.name}
+               |""".stripMargin)
+        } else {
+          spark.range(version, version + 1)
+            .write
+            .format("delta")
+            .mode("append")
+            .save(dir.getCanonicalPath)
+        }
+        if (createCheckpoints.contains(version)) deltaLog.checkpoint(deltaLog.update())
+      }
 
       // Rest createNumCommitsOutsideRetentionPeriod - 1 commits.
-      (1 to createNumCommitsOutsideRetentionPeriod - 1).foreach { n =>
-        spark.range(n, n + 1).write.format("delta").mode("append").save(dir.getCanonicalPath)
-        if (createCheckpoints.contains(n)) deltaLog.checkpoint(deltaLog.update())
-
+      for (n <- 1 to createNumCommitsOutsideRetentionPeriod - 1) {
+        createCommit(n)
         setModificationTime(deltaLog, startTime = currentTime, version = n, dayNum = 0, fs)
       }
 
@@ -69,11 +98,9 @@ trait CheckpointProtectionTestUtilsMixin
 
       // Commits within retention period.
       val daysToAdvance = TimeUnit.MILLISECONDS.toDays(millisToAdvance).toInt
-      (0 to createNumCommitsWithinRetentionPeriod - 1)
-        .foreach { n =>
+      for (n <- 0 to createNumCommitsWithinRetentionPeriod - 1) {
           val m = createNumCommitsOutsideRetentionPeriod + n
-          spark.range(m, m + 1).write.format("delta").mode("append").save(dir.getCanonicalPath)
-          if (createCheckpoints.contains(m)) deltaLog.checkpoint(deltaLog.update())
+          createCommit(m)
 
           // Advance the timestamp of the commit/checkpoint we just created.
           setModificationTime(
@@ -85,10 +112,20 @@ trait CheckpointProtectionTestUtilsMixin
             fs)
         }
 
+      incompleteCRCVersion.foreach { version =>
+        val checksumFilePath = FileNames.checksumFile(deltaLog.logPath, version)
+        removeProtocolAndMetadataFromChecksumFile(checksumFilePath)
+      }
+
+      missingCRCVersion.foreach { version =>
+        val checksumFilePath = FileNames.checksumFile(deltaLog.logPath, version)
+        (new File(checksumFilePath.toUri)).delete()
+      }
+
       deltaLog.cleanUpExpiredLogs(deltaLog.update())
 
       val logPath = new File(deltaLog.logPath.toUri)
-      assert(getDeltaVersions(logPath) === expectedCommitsAfterCleanup)
+      assert(getDeltaVersions(logPath).toSeq.sorted === expectedCommitsAfterCleanup.sorted)
       assert(getCheckpointVersions(logPath) === expectedCheckpointsAfterCleanup)
     }
   }
