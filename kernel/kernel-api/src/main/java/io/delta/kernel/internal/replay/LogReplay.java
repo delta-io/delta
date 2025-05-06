@@ -135,7 +135,7 @@ public class LogReplay {
   private final Path dataPath;
   private final LogSegment logSegment;
   private final Tuple2<Protocol, Metadata> protocolAndMetadata;
-  private final Lazy<Map<String, DomainMetadata>> domainMetadataMap;
+  private final Lazy<Map<String, DomainMetadata>> activeDomainMetadataMap;
   private final CrcInfoContext crcInfoContext;
 
   public LogReplay(
@@ -165,7 +165,7 @@ public class LogReplay {
                 loadTableProtocolAndMetadata(
                     engine, logSegment, newerSnapshotHint, logSegment.getVersion()));
     // Lazy loading of domain metadata only when needed
-    this.domainMetadataMap = new Lazy<>(() -> loadDomainMetadataMap(engine));
+    this.activeDomainMetadataMap = new Lazy<>(() -> loadDomainMetadataMap(engine));
   }
 
   /////////////////
@@ -184,8 +184,9 @@ public class LogReplay {
     return loadLatestTransactionVersion(engine, applicationId);
   }
 
-  public Map<String, DomainMetadata> getDomainMetadataMap() {
-    return domainMetadataMap.get();
+  /* Returns map for all active domain metadata. */
+  public Map<String, DomainMetadata> getActiveDomainMetadataMap() {
+    return activeDomainMetadataMap.get();
   }
 
   public long getVersion() {
@@ -380,8 +381,6 @@ public class LogReplay {
 
   /**
    * Loads the domain metadata map, either from CRC info (if available) or from the transaction log.
-   * Note that when loading from CRC info, tombstones (removed domains) are not preserved, while
-   * they are preserved when loading from the transaction log.
    *
    * @param engine The engine to use for loading from log when necessary
    * @return A map of domain names to their metadata
@@ -397,7 +396,9 @@ public class LogReplay {
     // CRC when current CRC is not available.
     // Fall back to loading from the log
     logger.info("No domain metadata available in CRC info, loading from log");
-    return loadDomainMetadataMapFromLog(engine);
+    return loadDomainMetadataMapFromLog(engine).entrySet().stream()
+        .filter(entry -> !entry.getValue().isRemoved())
+        .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
   }
 
   /**

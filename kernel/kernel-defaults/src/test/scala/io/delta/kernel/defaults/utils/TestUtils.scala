@@ -822,11 +822,9 @@ trait TestUtils extends Assertions with SQLHelper {
           assert(fileSizeHistogram == FileSizeHistogram.createDefaultHistogram)
         }
       }
-      // CRC does not store tombstones.
       assert(
         crcInfo.getDomainMetadata === Optional.of(
-          snapshot.asInstanceOf[SnapshotImpl].getDomainMetadataMap.values().asScala
-            .filterNot(_.isRemoved)
+          snapshot.asInstanceOf[SnapshotImpl].getActiveDomainMetadataMap.values().asScala
             .toSet
             .asJava),
         "Domain metadata in checksum should match snapshot")
