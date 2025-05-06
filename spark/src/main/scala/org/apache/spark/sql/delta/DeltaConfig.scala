@@ -308,7 +308,7 @@ trait DeltaConfigsBase extends DeltaLogging {
   /**
    * For configs accepting an interval, we require the user specified string must obey:
    *
-   * - Doesn't use months or years, since an internal like this is not deterministic.
+   * - Doesn't use months or years, since an interval like this is not deterministic.
    * - The microseconds parsed from the string value must be a non-negative value.
    *
    * The method returns whether a [[CalendarInterval]] satisfies the requirements.
