@@ -282,7 +282,7 @@ class DeltaColumnRenameSuite extends QueryTest
           "values ('str3', struct('str1.3', -1), map('k3', 'v3'), array(3, 33))")
       }
 
-      assertException("NOT NULL constraint violated for column: b.c1") {
+      assertException("CHECK constraint  ((b IS NULL) OR (b.c1 IS NOT NULL)) violated") {
         spark.sql("insert into t1 " +
           "values ('str3', struct(null, 3), map('k3', 'v3'), array(3, 33))")
       }
