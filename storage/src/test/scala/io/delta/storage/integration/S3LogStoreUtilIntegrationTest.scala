@@ -43,10 +43,6 @@ class S3LogStoreUtilIntegrationTest extends AnyFunSuite {
   }
   private val maxKeys = 2
   private val configuration = new Configuration()
-  configuration.set( // for local testing only
-    "fs.s3a.aws.credentials.provider",
-    "com.amazonaws.auth.profile.ProfileCredentialsProvider",
-  )
   configuration.set("fs.s3a.paging.maximum", maxKeys.toString)
 
   private def touch(key: String) {
