@@ -20,7 +20,6 @@ import java.util.{Collections, List => JList, Optional}
 
 import scala.collection.JavaConverters._
 
-import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.test.MockFileSystemClientUtils
 import io.delta.kernel.utils.FileStatus
 
@@ -347,12 +346,6 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils {
     // scalastyle:on line.size.limit
     assert(logSegment.toString === expectedToString)
   }
-
-  def deltaFileStatus(v: Long): FileStatus =
-    FileStatus.of(FileNames.deltaFile(logPath, v), v, v * 10)
-
-  def logCompactionStatus(s: Long, e: Long): FileStatus =
-    FileStatus.of(FileNames.logCompactionPath(logPath, s, e).toString, s, s * 10)
 
   private def parseExpectedString(expected: String): JList[FileStatus] = {
     expected.split(",").map(_.trim).map { item =>
