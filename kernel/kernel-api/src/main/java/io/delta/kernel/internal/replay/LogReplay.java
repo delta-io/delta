@@ -184,9 +184,7 @@ public class LogReplay {
     return loadLatestTransactionVersion(engine, applicationId);
   }
 
-  /*
-   * Returns map for all active domain metadata.
-   **/
+  /* Returns map for all active domain metadata. */
   public Map<String, DomainMetadata> getActiveDomainMetadataMap() {
     return activeDomainMetadataMap.get();
   }
