@@ -235,7 +235,9 @@ trait RowIdTestUtils extends RowTrackingTestUtils with DeltaSQLCommandTest {
   }
 
   def checkRowTrackingMarkedAsPreservedForCommit(log: DeltaLog)(operation: => Unit): Unit = {
-    assert(rowTrackingMarkedAsPreservedForCommit(log)(operation))
+    assert(rowTrackingMarkedAsPreservedForCommit(log) {
+      operation
+    })
   }
 
   /**
