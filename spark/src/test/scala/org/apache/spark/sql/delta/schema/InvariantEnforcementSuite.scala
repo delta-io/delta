@@ -511,6 +511,37 @@ class InvariantEnforcementSuite extends QueryTest
     expectedError = "The element type of the field s.arr contains a NOT NULL constraint.",
     data = Row(Row(1, Seq(Row("myName", null)))))
 
+  def testDisabledNotNullConstraints(
+      testName: String,
+      schemaString: String,
+      data: Row): Unit = {
+    testQuietly(testName) {
+      val nullTable = "nullTbl"
+      withTable(nullTable) {
+        sql(s"CREATE TABLE $nullTable ($schemaString) USING delta")
+
+        intercept[DeltaInvariantViolationException] {
+          spark.createDataFrame(
+            Seq(data).asJava,
+            spark.table(nullTable).schema
+          ).write.mode("append").format("delta").saveAsTable(nullTable)
+        }
+
+        withSQLConf(("spark.databricks.delta.constraints.implicitNotNull.enabled", "false")) {
+          spark.createDataFrame(
+            Seq(data).asJava,
+            spark.table(nullTable).schema
+          ).write.mode("append").format("delta").saveAsTable(nullTable)
+        }
+      }
+    }
+  }
+
+  testDisabledNotNullConstraints(
+    "Can insert null values into non-nullable fields",
+    "s struct<name:string,mailbox:string NOT NULL>",
+    Row(null)
+  )
 
   // Helper function to construct the full test name as "RuntimeRepalceable: func"
   private def testReplaceableExpr(targetFunc: String, testTags: org.scalatest.Tag*)
