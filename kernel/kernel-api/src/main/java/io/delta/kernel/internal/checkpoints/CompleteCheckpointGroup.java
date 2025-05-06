@@ -17,15 +17,14 @@
 package io.delta.kernel.internal.checkpoints;
 
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
-import io.delta.kernel.utils.FileStatus;
-import java.util.AbstractMap;
-import java.util.Map;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.checkpoints.CheckpointInstance.CheckpointFormat;
-
+import io.delta.kernel.utils.FileStatus;
+import java.util.AbstractMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -39,13 +38,10 @@ public class CompleteCheckpointGroup {
         .collect(Collectors.groupingBy(c -> c))
         .entrySet()
         .stream()
-        .map(entry ->
-          new AbstractMap.SimpleEntry<>(entry.getKey(), tryCreateFrom(entry.getValue()))
-        )
+        .map(
+            entry -> new AbstractMap.SimpleEntry<>(entry.getKey(), tryCreateFrom(entry.getValue())))
         .filter(entry -> entry.getValue().isPresent())
-        .map(entry ->
-          new AbstractMap.SimpleEntry<>(entry.getKey(), entry.getValue().get())
-        )
+        .map(entry -> new AbstractMap.SimpleEntry<>(entry.getKey(), entry.getValue().get()))
         .max(Map.Entry.comparingByKey())
         .map(Map.Entry::getValue);
   }
@@ -73,18 +69,20 @@ public class CompleteCheckpointGroup {
 
     final CheckpointInstance first = checkpoints.get(0);
 
-    checkpoints.forEach(x -> {
-      checkArgument(x.version == first.version, "All checkpoints must have the same version");
-      checkArgument(x.format == first.format, "All checkpoints must have the same format");
-      checkArgument(x.fileStatus.isPresent(), "All checkpoints must have a file status");
+    checkpoints.forEach(
+        x -> {
+          checkArgument(x.version == first.version, "All checkpoints must have the same version");
+          checkArgument(x.format == first.format, "All checkpoints must have the same format");
+          checkArgument(x.fileStatus.isPresent(), "All checkpoints must have a file status");
 
-      if (x.format == CheckpointFormat.MULTI_PART) {
-        checkArgument(x.partNum.isPresent(), "All multi-part checkpoints must have partNum");
-        checkArgument(x.numParts.isPresent(), "All multi-part checkpoints must have numParts");
-        checkArgument(x.numParts.get().equals(first.numParts.get()),
-            "All multi-part checkpoints must have the same numParts");
-      }
-    });
+          if (x.format == CheckpointFormat.MULTI_PART) {
+            checkArgument(x.partNum.isPresent(), "All multi-part checkpoints must have partNum");
+            checkArgument(x.numParts.isPresent(), "All multi-part checkpoints must have numParts");
+            checkArgument(
+                x.numParts.get().equals(first.numParts.get()),
+                "All multi-part checkpoints must have the same numParts");
+          }
+        });
 
     if (first.format == CheckpointFormat.CLASSIC || first.format == CheckpointFormat.V2) {
       checkArgument(
@@ -106,10 +104,7 @@ public class CompleteCheckpointGroup {
   }
 
   public List<FileStatus> getFileStatuses() {
-    return checkpoints
-        .stream()
-        .map(x -> x.fileStatus.get())
-        .collect(Collectors.toList());
+    return checkpoints.stream().map(x -> x.fileStatus.get()).collect(Collectors.toList());
   }
 
   /** Requires: All input checkpoints are valid multi-part checkpoints. */
@@ -119,15 +114,11 @@ public class CompleteCheckpointGroup {
 
     checkArgument(checkpoints.size() == expectedNumParts);
 
-    final Set<Integer> actualPartNums = checkpoints
-        .stream()
-        .map(x -> x.partNum.get())
-        .collect(Collectors.toSet());
+    final Set<Integer> actualPartNums =
+        checkpoints.stream().map(x -> x.partNum.get()).collect(Collectors.toSet());
 
-    final Set<Integer> expectedPartNums = IntStream
-        .rangeClosed(1, expectedNumParts)
-        .boxed()
-        .collect(Collectors.toSet());
+    final Set<Integer> expectedPartNums =
+        IntStream.rangeClosed(1, expectedNumParts).boxed().collect(Collectors.toSet());
 
     checkArgument(
         actualPartNums.equals(expectedPartNums),

@@ -108,32 +108,33 @@ public class CheckpointInstance implements Comparable<CheckpointInstance> {
     return version < other.version;
   }
 
-//  public List<Path> getCorrespondingFiles(Path path) {
-//    if (this == CheckpointInstance.MAX_VALUE) {
-//      throw new IllegalStateException("Can't get files for CheckpointVersion.MaxValue.");
-//    }
-//
-//    // This is safe because the only way to construct a V2 CheckpointInstance is with the path.
-//    if (format == CheckpointFormat.V2) {
-//      return Collections.singletonList(filePath.get());
-//    }
-//
-//    return numParts
-//        .map(parts -> FileNames.checkpointFileWithParts(path, version, parts))
-//        .orElseGet(
-//            () -> Collections.singletonList(FileNames.checkpointFileSingular(path, version)));
-//  }
+  //  public List<Path> getCorrespondingFiles(Path path) {
+  //    if (this == CheckpointInstance.MAX_VALUE) {
+  //      throw new IllegalStateException("Can't get files for CheckpointVersion.MaxValue.");
+  //    }
+  //
+  //    // This is safe because the only way to construct a V2 CheckpointInstance is with the path.
+  //    if (format == CheckpointFormat.V2) {
+  //      return Collections.singletonList(filePath.get());
+  //    }
+  //
+  //    return numParts
+  //        .map(parts -> FileNames.checkpointFileWithParts(path, version, parts))
+  //        .orElseGet(
+  //            () -> Collections.singletonList(FileNames.checkpointFileSingular(path, version)));
+  //  }
 
   /**
    * Comparison rules:
+   *
    * <ol>
    *   <li>1. A CheckpointInstance with higher version is greater than the one with lower version.
    *   <li>2. CheckpointInstance with a V2 checkpoint is greater than a classic checkpoint (to
-   *          filter avoid selecting the compatibility file) or a Multi-part checkpoint.
+   *       filter avoid selecting the compatibility file) or a Multi-part checkpoint.
    *   <li>3. For CheckpointInstances with same version, a Multi-part checkpoint is greater than a
-   *          Single part checkpoint.
+   *       Single part checkpoint.
    *   <li>4. For Multi-part CheckpointInstance corresponding to same version, the one with more
-   *          parts is greater than the one with fewer parts.
+   *       parts is greater than the one with fewer parts.
    *   <li>5. For V2 checkpoints, use the file path to break ties
    * </ol>
    */

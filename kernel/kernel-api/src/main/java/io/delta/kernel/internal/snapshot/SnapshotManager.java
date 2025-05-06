@@ -247,31 +247,40 @@ public class SnapshotManager {
     logger.info("Loading log segment for version {}", versionToLoadStr);
 
     ////////////////////////////////////////////////////////////////////////////////////////////////
-    // Step 1: Find the latest checkpoint version. If $versionToLoadOpt is empty, use the version //
-    //         referenced by the _LAST_CHECKPOINT file. If $versionToLoad is present, search for  //
-    //         the previous latest complete checkpoint at or before $versionToLoad.               //
+    // Step 1: If $versionToLoadOpt is present, search for the latest complete checkpoint at or   //
+    //         before that version. Else, look up the checkpoint version in the _last_checkpoint  //
+    //         file.                                                                              //
     ////////////////////////////////////////////////////////////////////////////////////////////////
 
-    final Tuple2<Optional<Long>, Optional<CompleteCheckpointGroup>>
-        lastCheckpointVersionOrStartCompleteCheckpoint = getStartListVersionOrStartCompleteCheckpoint(engine, versionToLoadOpt);
+    final Optional<CompleteCheckpointGroup> latestCompleteCheckpointGroupOpt =
+        versionToLoadOpt.flatMap(v -> getLatestCompleteCheckpointAtOrBeforeVersion(engine, v));
+
+    final Optional<Long> lastCheckpointFileCheckpointVersionOpt =
+        latestCompleteCheckpointGroupOpt.isPresent() ? Optional.empty() :
+            getLastCheckpointFileCheckpointVersion(engine);
 
     /////////////////////////////////////////////////////////////////
     // Step 2: Determine the actual version to start listing from. //
     /////////////////////////////////////////////////////////////////
 
-    final long listFromStartVersion =
-        startListVersionOrStartCompleteCheckpoint
-            ._1.map(lastCheckpoint
-            .map(
-                version -> {
-                  logger.info("Found a complete checkpoint at version {}.", version);
-                  return version;
-                })
-            .orElseGet(
-                () -> {
-                  logger.warn("Cannot find a complete checkpoint. Listing from version 0.");
-                  return 0L;
-                });
+    final long listFromStartVersion;
+
+    if (latestCompleteCheckpointGroupOpt.isPresent()) {
+      listFromStartVersion = latestCompleteCheckpointGroupOpt.get().version;
+      logger.info(
+          "Searched and found a complete checkpoint at version {}.",
+          listFromStartVersion);
+    } else {
+      if (lastCheckpointFileCheckpointVersionOpt.isPresent()) {
+        listFromStartVersion = lastCheckpointFileCheckpointVersionOpt.get();
+        logger.info(
+            "List from checkpoint version {} from _last_checkpoint file.",
+            listFromStartVersion);)
+      } else {
+        listFromStartVersion = 0L;
+        logger.warn("Cannot find a complete checkpoint. Listing from version 0.");
+      }
+    }
 
     /////////////////////////////////////////////////////////////////
     // Step 3: List the files from $startVersion to $versionToLoad //
@@ -306,6 +315,11 @@ public class SnapshotManager {
     ////////////////////////////////////////////////////////////////////////
 
     if (listedFileStatuses.isEmpty()) {
+      if (latestCompleteCheckpointGroupOpt.isPresent()) {
+        throw new RuntimeException("Found a complete checkpoint but now can't find any")
+      } else if (lastCheckpointFileCheckpointVersionOpt.isPresent()) {
+
+      }
       if (startCheckpointVersionOpt.isPresent()) {
         // We either (a) determined this checkpoint version from the _LAST_CHECKPOINT file, or (b)
         // found the last complete checkpoint before our versionToLoad. In either case, we didn't
@@ -532,50 +546,31 @@ public class SnapshotManager {
   // getLogSegment utils //
   /////////////////////////
 
-  /**
-   * If there is a target version to load, then look for the latest complete checkpoint at or before
-   * that target version and return Tuple2(Empty, Some(completeCheckpoint)).
-   *
-   * If there is no target version to load, then read the _last_checkpoint file that points to some
-   * checkpoint version v. If the file exists, return Tuple2(Some(v), Empty). Else, return
-   * Tuple2(Empty, Empty)
-   */
-  private Tuple2<Optional<Long>, Optional<CompleteCheckpointGroup>>
-      getLastCheckpointFileVersionOrLastCompleteCheckpoint(Engine engine, Optional<Long> versionToLoadOpt) {
-    return versionToLoadOpt
+  private Optional<CompleteCheckpointGroup> getLatestCompleteCheckpointAtOrBeforeVersion(
+      Engine engine, long versionToLoad) {
+    final long startTimeMillis = System.currentTimeMillis();
+
+    return Checkpointer.findLastCompleteCheckpointBefore(engine, logPath, versionToLoad + 1)
         .map(
-            versionToLoad -> {
+            checkpoint -> {
+              checkArgument(
+                  checkpoint.version <= versionToLoad,
+                  "Last complete checkpoint version %s was not <= targetVersion %s",
+                  checkpoint.version,
+                  versionToLoad);
+
               logger.info(
-                  "Finding last complete checkpoint at or before version {}", versionToLoad);
-              final long startTimeMillis = System.currentTimeMillis();
-              final Optional<CompleteCheckpointGroup> completeCheckpointGroup = Checkpointer
-                  .findLastCompleteCheckpointBefore(engine, logPath, versionToLoad + 1)
-                  .map(
-                      checkpoint -> {
-                        checkArgument(
-                            checkpoint.version <= versionToLoad,
-                            "Last complete checkpoint version %s was not <= targetVersion %s",
-                            checkpoint.version,
-                            versionToLoad);
+                  "{}: Took {}ms to find last complete checkpoint <= targetVersion {}",
+                  tablePath,
+                  System.currentTimeMillis() - startTimeMillis,
+                  versionToLoad);
 
-                        logger.info(
-                            "{}: Took {}ms to find last complete checkpoint <= targetVersion {}",
-                            tablePath,
-                            System.currentTimeMillis() - startTimeMillis,
-                            versionToLoad);
-
-                        return checkpoint;
-                      });
-              return new Tuple2<>(Optional.<Long>empty(), completeCheckpointGroup);
-            })
-        .orElseGet(
-            () -> {
-              final Optional<Long> lastCheckpointVersionOpt = new Checkpointer(logPath)
-                  .readLastCheckpointFile(engine) // Optional<CheckpointData>
-                  .map(x -> x.version);
-
-              return new Tuple2<>(lastCheckpointVersionOpt, Optional.empty());
+              return checkpoint;
             });
+  }
+
+  private Optional<Long> getLastCheckpointFileCheckpointVersion(Engine engine) {
+    return new Checkpointer(logPath).readLastCheckpointFile(engine).map(x -> x.version);
   }
 
   private void logDebugFileStatuses(String varName, List<FileStatus> fileStatuses) {
