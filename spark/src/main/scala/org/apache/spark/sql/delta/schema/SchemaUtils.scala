@@ -163,23 +163,68 @@ object SchemaUtils extends DeltaLogging {
   }
 
   /**
-   * Converts StringType to CHAR/VARCHAR if that is the true type as per the metadata
-   * and also strips this metadata from fields.
+   * A char(x)/varchar(x) related types are internally stored as string type with the constraint
+   * information stored in the metadata. For example:
+   *  + char(10) -> (string, char_varchar_metadata = "char(10)")
+   *  + array[varchar(10)]
+   *    -> (array[string], char_varchar_metadata = "array[varchar(10)]")
+   * This method converts the string + metadata representation to the actual type.
+   *  + (string, metadata = "char(10)") -> (char(10), char_varchar_metadata = "")
+   *  + (array[string], metadata = "array[varchar(10)]")
+   *    -> (array[varchar(10)], char_varchar_metadata = "")
    */
-  def getRawSchemaWithoutCharVarcharMetadata(schema: StructType): StructType = {
-    val fields = schema.map { field =>
-      val rawField = CharVarcharUtils.getRawType(field.metadata)
-        .map(dt => field.copy(dataType = dt))
-        .getOrElse(field)
-      val throwAwayAttrRef = AttributeReference(
-        rawField.name,
-        rawField.dataType,
-        nullable = rawField.nullable,
-        rawField.metadata)()
-      val cleanedMetadata = CharVarcharUtils.cleanAttrMetadata(throwAwayAttrRef).metadata
-      rawField.copy(metadata = cleanedMetadata)
+  private def getRawFieldWithoutCharVarcharMetadata(field: StructField): StructField = {
+    val rawField = CharVarcharUtils.getRawType(field.metadata)
+      .map(dt => field.copy(dataType = dt))
+      .getOrElse(field)
+    val throwAwayAttrRef = AttributeReference(
+      rawField.name,
+      rawField.dataType,
+      nullable = rawField.nullable,
+      rawField.metadata)()
+    val cleanedMetadata = CharVarcharUtils.cleanAttrMetadata(throwAwayAttrRef).metadata
+    rawField.copy(metadata = cleanedMetadata)
+  }
+
+  /**
+   * Sets a data type to a field in a char/varchar-safe manner. A char(x)/varchar(x) related types
+   * consists of two parts: a string-based type and the constraint information stored in the
+   * metadata. Simply setting the data type will lead to unexpected results.
+   *
+   * For example, an array[varchar(10)] type is internally represented as
+   * (array[string], char_varchar_metadata = "array[varchar(10)]"). If we convert it into a string
+   * simply by setting the data type part, the metadata part will still be there, and the type will
+   * still stay as varchar(10).
+   *
+   * This method first converts the field into its raw type without the metadata part, then sets the
+   * data type to the new data type, and finally converts it back to the original representation.
+   *
+   * In the above example, this methods will convert the array[varchar(10)] representation into
+   * (array[varchar(10)], char_varchar_metadata = ""), set the data type to string
+   * (string, char_varchar_metadata = ""), and finally convert it back to
+   * (string, char_varchar_metadata = ""), which happens to be the same.
+   */
+  def setFieldDataTypeCharVarcharSafe(field: StructField, newDataType: DataType): StructField = {
+    val byPassCharVarcharToStringFix =
+      SparkSession.active.conf.get(DeltaSQLConf.DELTA_BYPASS_CHARVARCHAR_TO_STRING_FIX)
+    // Convert the field into its raw type without the metadata part
+    val rawField = if (byPassCharVarcharToStringFix) {
+      field
+    } else {
+      getRawFieldWithoutCharVarcharMetadata(field)
     }
-    StructType(fields)
+
+    // Set the new data type
+    val rawFieldWithNewDataType = rawField.copy(dataType = newDataType)
+
+    // Convert it back to the original representation
+    if (byPassCharVarcharToStringFix) {
+      rawFieldWithNewDataType
+    } else {
+      val throwAwayStructType = StructType(Seq(rawFieldWithNewDataType))
+      CharVarcharUtils.replaceCharVarcharWithStringInSchema(throwAwayStructType)
+        .head
+    }
   }
 
   /**
@@ -1064,6 +1109,43 @@ def normalizeColumnNamesInDataType(
       case e: AnalysisException =>
         Some(e.message)
     }
+  }
+
+  /**
+   * Copy the nested data type between two data types in a char/varchar safe manner.
+   * See documentation of [[getRawFieldWithoutCharVarcharMetadata]] and
+   * [[setFieldDataTypeCharVarcharSafe]] for more context.
+   *
+   * This method uses [[getRawFieldWithoutCharVarcharMetadata]] on both the source and
+   * target fields to ensure that the metadata information is included in the data type
+   * before changing the data type. For example, to convert from a varchar(1) to varchar(10),
+   * we first change their representation:
+   *
+   * Source: (string, char_varchar_metadata = "varchar(1)")
+   *  -> (varchar(1), char_varchar_metadata = "")
+   * Target: (string, char_varchar_metadata = "varchar(10)")
+   *  -> (varchar(10), char_varchar_metadata = "")
+   *
+   * Then, we change the data type of the target:
+   * (varchar(1), char_varchar_metadata = "") -> (varchar(10), char_varchar_metadata = "")
+   *
+   * Finally, we set the metadata back to the target field:
+   * (varchar(10), char_varchar_metadata = "") -> (string, char_varchar_metadata = "varchar(10)")
+   */
+  def changeFieldDataTypeCharVarcharSafe(
+      fromField: StructField,
+      toField: StructField,
+      resolver: Resolver): StructField = {
+    val (safeFromField, safeToField) =
+      if (SparkSession.active.conf.get(DeltaSQLConf.DELTA_BYPASS_CHARVARCHAR_TO_STRING_FIX)) {
+        (fromField, toField)
+      } else {
+        (getRawFieldWithoutCharVarcharMetadata(fromField),
+         getRawFieldWithoutCharVarcharMetadata(toField))
+      }
+    val newDataType = SchemaUtils.changeDataType(
+      safeFromField.dataType, safeToField.dataType, resolver)
+    setFieldDataTypeCharVarcharSafe(fromField, newDataType)
   }
 
   /**
