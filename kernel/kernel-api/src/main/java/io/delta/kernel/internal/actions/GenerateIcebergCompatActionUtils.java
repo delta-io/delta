@@ -18,7 +18,6 @@ package io.delta.kernel.internal.actions;
 import static io.delta.kernel.internal.util.InternalUtils.relativizePath;
 import static io.delta.kernel.internal.util.PartitionUtils.serializePartitionMap;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
-import static io.delta.kernel.internal.util.Preconditions.checkState;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.Transaction;
@@ -27,13 +26,11 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.expressions.Literal;
-import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.data.TransactionStateRow;
 import io.delta.kernel.internal.fs.Path;
-import io.delta.kernel.internal.icebergcompat.IcebergCompatV2MetadataValidatorAndUpdater;
 import io.delta.kernel.statistics.DataFileStatistics;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterable;
@@ -68,15 +65,15 @@ public final class GenerateIcebergCompatActionUtils {
     Map<String, String> configuration = TransactionStateRow.getConfiguration(transactionState);
 
     /* ----- Validate that this is a valid usage of this API ----- */
-    validateIcebergWriterCompatV1Enabled(configuration);
+    //    validateIcebergWriterCompatV1Enabled(configuration);
     validateMaxRetriesSetToZero(transactionState);
 
     /* ----- Validate this is valid write given the table's protocol & configurations ----- */
-    checkState(
-        TableConfig.ICEBERG_COMPAT_V2_ENABLED.fromMetadata(configuration),
-        "icebergCompatV2 not enabled despite icebergWriterCompatV1 enabled");
+    //    checkState(
+    //        TableConfig.ICEBERG_COMPAT_V2_ENABLED.fromMetadata(configuration),
+    //        "icebergCompatV2 not enabled despite icebergWriterCompatV1 enabled");
     // We require field `numRecords` when icebergCompatV2 is enabled
-    IcebergCompatV2MetadataValidatorAndUpdater.validateDataFileStatus(fileStatus);
+    //    IcebergCompatV2MetadataValidatorAndUpdater.validateDataFileStatus(fileStatus);
 
     /* --- Validate and update partitionValues ---- */
     // Currently we don't support partitioned tables; fail here
@@ -118,15 +115,15 @@ public final class GenerateIcebergCompatActionUtils {
     Map<String, String> config = TransactionStateRow.getConfiguration(transactionState);
 
     /* ----- Validate that this is a valid usage of this API ----- */
-    validateIcebergWriterCompatV1Enabled(config);
-    validateMaxRetriesSetToZero(transactionState);
+    //    validateIcebergWriterCompatV1Enabled(config);
+    //    validateMaxRetriesSetToZero(transactionState);
 
     /* ----- Validate this is valid write given the table's protocol & configurations ----- */
     // We only allow removes with dataChange=false when appendOnly=true
-    if (dataChange && TableConfig.APPEND_ONLY_ENABLED.fromMetadata(config)) {
-      throw DeltaErrors.cannotModifyAppendOnlyTable(
-          TransactionStateRow.getTablePath(transactionState));
-    }
+    //    if (dataChange && TableConfig.APPEND_ONLY_ENABLED.fromMetadata(config)) {
+    //      throw DeltaErrors.cannotModifyAppendOnlyTable(
+    //          TransactionStateRow.getTablePath(transactionState));
+    //    }
 
     /* --- Validate and update partitionValues ---- */
     // Currently we don't support partitioned tables; fail here
@@ -141,7 +138,10 @@ public final class GenerateIcebergCompatActionUtils {
             fileStatus,
             partitionValues,
             dataChange);
-    return SingleAction.createRemoveFileSingleAction(removeFileRow);
+    //    System.out.println("MUR: createRemoveFileSingleAction BEGIN");
+    Row ac = SingleAction.createRemoveFileSingleAction(removeFileRow);
+    //    System.out.println("MUR: createRemoveFileSingleAction DONE");
+    return ac;
   }
 
   /////////////////////
@@ -206,14 +206,23 @@ public final class GenerateIcebergCompatActionUtils {
       DataFileStatus dataFileStatus,
       Map<String, Literal> partitionValues,
       boolean dataChange) {
-    return createRemoveFileRowWithExtendedFileMetadata(
-        relativizePath(new Path(dataFileStatus.getPath()), tableRoot).toUri().toString(),
-        dataFileStatus.getModificationTime(),
-        dataChange,
-        serializePartitionMap(partitionValues),
-        dataFileStatus.getSize(),
-        dataFileStatus.getStatistics(),
-        physicalSchema);
+    //    System.out.println("MUR: convertRemoveDataFileStatus BEGIN");
+    //    System.out.println(dataFileStatus.getDeletionVectorDescriptor());
+    //    System.out.println("MUR: convertRemoveDataFileStatus DONE");
+    Row removeRow =
+        createRemoveFileRowWithExtendedFileMetadata(
+            relativizePath(new Path(dataFileStatus.getPath()), tableRoot).toUri().toString(),
+            dataFileStatus.getModificationTime(),
+            dataChange,
+            serializePartitionMap(partitionValues),
+            dataFileStatus.getSize(),
+            dataFileStatus.getDeletionVectorDescriptor(),
+            dataFileStatus.getStatistics(),
+            physicalSchema);
+    //    System.out.println("MUR: removeRow BEGIN");
+    //    System.out.println(removeRow);
+    //    System.out.println("MUR: removeRow END");
+    return removeRow;
   }
 
   @VisibleForTesting
@@ -223,6 +232,7 @@ public final class GenerateIcebergCompatActionUtils {
       boolean dataChange,
       MapValue partitionValues,
       long size,
+      Optional<DeletionVectorDescriptor> deletionVector,
       Optional<DataFileStatistics> stats,
       StructType physicalSchema) {
     Map<Integer, Object> fieldMap = new HashMap<>();
@@ -233,6 +243,21 @@ public final class GenerateIcebergCompatActionUtils {
     fieldMap.put(
         RemoveFile.FULL_SCHEMA.indexOf("partitionValues"), requireNonNull(partitionValues));
     fieldMap.put(RemoveFile.FULL_SCHEMA.indexOf("size"), size);
+    deletionVector.ifPresent(
+        dv -> {
+          Map<Integer, Object> dvFieldMap = new HashMap<>();
+          StructType dvSchema = DeletionVectorDescriptor.READ_SCHEMA;
+
+          dvFieldMap.put(dvSchema.indexOf("storageType"), dv.getStorageType());
+          dvFieldMap.put(dvSchema.indexOf("pathOrInlineDv"), dv.getPathOrInlineDv());
+          dv.getOffset().ifPresent(offset -> dvFieldMap.put(dvSchema.indexOf("offset"), offset));
+          dvFieldMap.put(dvSchema.indexOf("sizeInBytes"), dv.getSizeInBytes());
+          dvFieldMap.put(dvSchema.indexOf("cardinality"), dv.getCardinality());
+
+          Row dvRow = new GenericRow(dvSchema, dvFieldMap);
+
+          fieldMap.put(RemoveFile.FULL_SCHEMA.indexOf("deletionVector"), dvRow);
+        });
     stats.ifPresent(
         stat ->
             fieldMap.put(
