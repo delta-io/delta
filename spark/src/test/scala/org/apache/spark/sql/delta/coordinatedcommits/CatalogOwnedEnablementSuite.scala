@@ -84,9 +84,9 @@ class CatalogOwnedEnablementSuite
     // Insert initial data to the table
     spark.sql(s"INSERT INTO $tableName VALUES 1") // commit 1
     spark.sql(s"INSERT INTO $tableName VALUES 2") // commit 2
-    val log = DeltaLog.forTable(spark, new TableIdentifier(table = tableName))
+    val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(tableName))
     validateCatalogOwnedCompleteEnablement(
-      snapshot = log.unsafeVolatileSnapshot,
+      snapshot = snapshot,
       expectEnabled = createCatalogOwnedTableAtInit)
   }
 
@@ -104,7 +104,7 @@ class CatalogOwnedEnablementSuite
     }
   }
 
-  test("Catalog-Owned: ALTER TABLE should be blocked if attempts to disable ICT") {
+  test("ALTER TABLE should be blocked if attempts to disable ICT") {
     withRandomTable(createCatalogOwnedTableAtInit = true) { tableName =>
       val error = interceptWithUnwrapping[DeltaIllegalArgumentException] {
         spark.sql(s"ALTER TABLE $tableName SET TBLPROPERTIES ('$ICT_ENABLED_KEY' = 'false')")
@@ -117,7 +117,7 @@ class CatalogOwnedEnablementSuite
     }
   }
 
-  test("Catalog-Owned: ALTER TABLE should be blocked if attempts to unset ICT") {
+  test("ALTER TABLE should be blocked if attempts to unset ICT") {
     withRandomTable(createCatalogOwnedTableAtInit = true) { tableName =>
       val error = interceptWithUnwrapping[DeltaIllegalArgumentException] {
         spark.sql(s"ALTER TABLE $tableName UNSET TBLPROPERTIES ('$ICT_ENABLED_KEY')")
@@ -130,8 +130,7 @@ class CatalogOwnedEnablementSuite
     }
   }
 
-  test("Catalog-Owned: ALTER TABLE should be blocked if attempts to" +
-    " downgrade Catalog-Owned") {
+  test("ALTER TABLE should be blocked if attempts to downgrade Catalog-Owned") {
     withRandomTable(createCatalogOwnedTableAtInit = true)  { tableName =>
       val error = intercept[DeltaTableFeatureException] {
         spark.sql(s"ALTER TABLE $tableName DROP FEATURE '${CatalogOwnedTableFeature.name}'")
@@ -144,7 +143,7 @@ class CatalogOwnedEnablementSuite
     }
   }
 
-  test("Catalog-Owned: Upgrade should be blocked since it is not supported yet") {
+  test("Upgrade should be blocked since it is not supported yet") {
     withRandomTable(
       // Do not enable Catalog-Owned at the beginning when creating table
       createCatalogOwnedTableAtInit = false
@@ -154,6 +153,32 @@ class CatalogOwnedEnablementSuite
           s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')")
       }
       assert(error.getMessage.contains("Upgrading to CatalogOwned table is not yet supported."))
+    }
+  }
+
+  test("Dropping CatalogOwned dependent features should be blocked") {
+    withRandomTable(createCatalogOwnedTableAtInit = true) { tableName =>
+      val error1 = intercept[DeltaTableFeatureException] {
+        spark.sql(s"ALTER TABLE $tableName DROP FEATURE '${InCommitTimestampTableFeature.name}'")
+      }
+      checkError(
+        error1,
+        "DELTA_FEATURE_DROP_DEPENDENT_FEATURE",
+        sqlState = "55000",
+        parameters = Map(
+          "feature" -> InCommitTimestampTableFeature.name,
+          "dependentFeatures" -> CatalogOwnedTableFeature.name))
+
+      val error2 = intercept[DeltaTableFeatureException] {
+        spark.sql(s"ALTER TABLE $tableName DROP FEATURE '${VacuumProtocolCheckTableFeature.name}'")
+      }
+      checkError(
+        error2,
+        "DELTA_FEATURE_DROP_DEPENDENT_FEATURE",
+        sqlState = "55000",
+        parameters = Map(
+          "feature" -> VacuumProtocolCheckTableFeature.name,
+          "dependentFeatures" -> CatalogOwnedTableFeature.name))
     }
   }
 
@@ -185,7 +210,7 @@ class CatalogOwnedEnablementSuite
         CoordinatedCommitsStats(
           coordinatedCommitsType = CoordinatedCommitType.FS_TO_CO_UPGRADE_COMMIT.toString,
           // catalogTable is not available for FS_TO_CO_UPGRADE_COMMIT
-          commitCoordinatorName = "CATALOG_EMPTY",
+          commitCoordinatorName = "CATALOG_MISSING",
           commitCoordinatorConf = Map.empty))
     }
   }

@@ -1037,7 +1037,7 @@ abstract class CommitCoordinatorSuiteBase
         val commitStatsUsageLogs4 = filterUsageRecords(usageLogs4, "delta.commit.stats")
         val commitStats4 = JsonUtils.fromJson[CommitStats](commitStatsUsageLogs4.head.blob)
         assert(commitStats4.coordinatedCommitsInfo ===
-          CoordinatedCommitsStats(FS_COMMIT.toString, "", Map.empty))
+          CoordinatedCommitsStats(FS_COMMIT.toString, "NONE", Map.empty))
 
         // Now transfer the table to another commit-coordinator
         // [upgradeExistingTable = false] Commit-5
