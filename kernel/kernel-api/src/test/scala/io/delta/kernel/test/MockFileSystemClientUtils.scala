@@ -37,16 +37,24 @@ trait MockFileSystemClientUtils extends MockEngineUtils {
   val dataPath = new Path("/fake/path/to/table/")
   val logPath = new Path(dataPath, "_delta_log")
 
+  /** Delta file status where the timestamp = 10*version */
+  def deltaFileStatus(v: Long): FileStatus =
+    FileStatus.of(FileNames.deltaFile(logPath, v), v, v * 10)
+
+  /** Compaction file status where the timestamp = 10*startVersion */
+  def logCompactionStatus(s: Long, e: Long): FileStatus =
+    FileStatus.of(FileNames.logCompactionPath(logPath, s, e).toString, s, s * 10)
+
   /** Delta file statuses where the timestamp = 10*version */
   def deltaFileStatuses(deltaVersions: Seq[Long]): Seq[FileStatus] = {
     assert(deltaVersions.size == deltaVersions.toSet.size)
-    deltaVersions.map(v => FileStatus.of(FileNames.deltaFile(logPath, v), v, v * 10))
+    deltaVersions.map(deltaFileStatus)
   }
 
-  /** Compaction file statuses where the timestamp = 10*version */
+  /** Compaction file statuses where the timestamp = 10*startVersion */
   def compactedFileStatuses(compactedVersions: Seq[(Long, Long)]): Seq[FileStatus] = {
     compactedVersions.map { case (s, e) =>
-      FileStatus.of(FileNames.logCompactionPath(logPath, s, e).toString, s, s * 10)
+      logCompactionStatus(s, e)
     }
   }
 

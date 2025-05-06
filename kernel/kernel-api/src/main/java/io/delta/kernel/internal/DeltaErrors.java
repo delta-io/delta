@@ -233,6 +233,10 @@ public final class DeltaErrors {
         tablePath, "Must provide a new schema to write to a new table.");
   }
 
+  public static KernelException requireSchemaForReplaceTable() {
+    return new KernelException("Must provide a new schema for REPLACE TABLE");
+  }
+
   public static KernelException tableAlreadyExists(String tablePath, String message) {
     return new TableAlreadyExistsException(tablePath, message);
   }

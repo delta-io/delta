@@ -16,7 +16,7 @@
 
 package io.delta.kernel.internal.snapshot
 
-import java.util.{Collections, Optional}
+import java.util.{Collections, List => JList, Optional}
 
 import scala.collection.JavaConverters._
 
@@ -31,6 +31,7 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils {
   private val deltaFs11List = deltaFileStatuses(Seq(11)).toList.asJava
   private val deltaFs12List = deltaFileStatuses(Seq(12)).toList.asJava
   private val deltasFs11To12List = deltaFileStatuses(Seq(11, 12)).toList.asJava
+  private val compactionFs3To5List = compactedFileStatuses(Seq((3, 5))).toList.asJava
   private val badJsonsList = Collections.singletonList(
     FileStatus.of(s"${logPath.toString}/gibberish.json", 1, 1))
   private val badCheckpointsList = Collections.singletonList(
@@ -344,6 +345,108 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils {
         |}""".stripMargin
     // scalastyle:on line.size.limit
     assert(logSegment.toString === expectedToString)
+  }
+
+  private def parseExpectedString(expected: String): JList[FileStatus] = {
+    expected.split(",").map(_.trim).map { item =>
+      if (item.contains("-")) {
+        // compaction file contains a -
+        val parts = item.split("-").map(_.trim.toLong)
+        logCompactionStatus(parts(0), parts(1))
+      } else {
+        // delta file does not
+        deltaFileStatus(item.toLong)
+      }
+    }.toList.asJava
+  }
+
+  private def testCompactionCase(
+      deltas: Seq[Long],
+      compactions: Seq[(Long, Long)],
+      expected: String): Unit = {
+    val version = deltas.max
+    val deltas_list = deltaFileStatuses(deltas).toList.asJava
+    val compactions_list = compactedFileStatuses(compactions).toList.asJava
+    val segment = new LogSegment(
+      logPath,
+      version,
+      deltas_list,
+      compactions_list,
+      Collections.emptyList(),
+      Optional.empty(),
+      1)
+    val expectedFiles = parseExpectedString(expected)
+    assert(segment.allFilesWithCompactionsReversed() === expectedFiles)
+  }
+
+  test("allFilesWithCompactionsReversed -- 3 - 5 in middle") {
+    testCompactionCase(
+      Seq.range(0, 7),
+      Seq((3, 5)),
+      "6, 3-5, 2, 1, 0")
+  }
+
+  test("allFilesWithCompactionsReversed -- 3 - 5 at start") {
+    testCompactionCase(
+      Seq.range(3, 8),
+      Seq((3, 5)),
+      "7, 6, 3-5")
+  }
+
+  test("allFilesWithCompactionsReversed -- 3 - 5 at end") {
+    testCompactionCase(
+      Seq.range(0, 6),
+      Seq((3, 5)),
+      "3-5, 2, 1, 0")
+  }
+
+  test("allFilesWithCompactionsReversed -- 3 - 5 at second to last") {
+    testCompactionCase(
+      Seq.range(2, 7),
+      Seq((3, 5)),
+      "6, 3-5, 2")
+  }
+
+  test("allFilesWithCompactionsReversed -- 3 - 5, and 7 - 9") {
+    testCompactionCase(
+      Seq.range(1, 11),
+      Seq((3, 5), (7, 9)),
+      "10, 7-9, 6, 3-5, 2, 1")
+  }
+
+  test("allFilesWithCompactionsReversed -- 3 - 5, and 4 - 8 (overlap)") {
+    testCompactionCase(
+      Seq.range(2, 11),
+      Seq((3, 5), (4, 8)),
+      "10, 9, 4-8, 3, 2")
+  }
+
+  test("allFilesWithCompactionsReversed -- 3 - 5, whole range") {
+    testCompactionCase(
+      Seq.range(3, 6),
+      Seq((3, 5)),
+      "3-5")
+  }
+
+  test("allFilesWithCompactionsReversed -- consecutive compactions") {
+    testCompactionCase(
+      Seq.range(0, 13),
+      Seq((3, 5), (6, 8), (9, 11)),
+      "12, 9-11, 6-8, 3-5, 2, 1, 0")
+  }
+
+  test("allFilesWithCompactionsReversed -- contained range") {
+    testCompactionCase(
+      Seq.range(1, 12),
+      Seq((2, 10), (4, 8)),
+      "11, 2-10, 1")
+  }
+
+  test("allFilesWithCompactionsReversed -- complex ranges") {
+    testCompactionCase(
+      Seq.range(0, 21),
+      Seq((1, 3), (1, 5), (7, 10), (11, 14), (11, 12), (16, 20), (18, 20)),
+      "16-20, 15, 11-14, 7-10, 6, 1-5, 0")
   }
 
 }

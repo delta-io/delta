@@ -35,6 +35,7 @@ import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl, TableImpl}
 import io.delta.kernel.internal.checksum.{ChecksumReader, ChecksumWriter, CRCInfo}
 import io.delta.kernel.internal.data.ScanStateRow
 import io.delta.kernel.internal.fs.{Path => KernelPath}
+import io.delta.kernel.internal.stats.FileSizeHistogram
 import io.delta.kernel.internal.util.FileNames.checksumFile
 import io.delta.kernel.internal.util.Utils
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
@@ -798,26 +799,36 @@ trait TestUtils extends Assertions with SQLHelper {
    * Verify checksum data matches the expected values in the snapshot.
    * @param snapshot Snapshot to verify the checksum against
    */
-  protected def verifyChecksumForSnapshot(snapshot: Snapshot): Unit = {
+  protected def verifyChecksumForSnapshot(
+      snapshot: Snapshot,
+      expectEmptyTable: Boolean = false): Unit = {
     val logPath = snapshot.asInstanceOf[SnapshotImpl].getLogPath
-    val crcInfo = ChecksumReader.getCRCInfo(
+    val crcInfoOpt = ChecksumReader.getCRCInfo(
       defaultEngine,
       FileStatus.of(checksumFile(
         logPath,
         snapshot.getVersion).toString))
-    assert(crcInfo.isPresent)
-    // TODO: check metadata, protocol and file size.
     assert(
-      crcInfo.get().getNumFiles === collectScanFileRows(snapshot.getScanBuilder.build()).size,
-      "Number of files in checksum should match snapshot")
-    // CRC does not store tombstones.
-    assert(
-      crcInfo.get().getDomainMetadata === Optional.of(
-        snapshot.asInstanceOf[SnapshotImpl].getActiveDomainMetadataMap.values().asScala
-          .filterNot(_.isRemoved)
-          .toSet
-          .asJava),
-      "Domain metadata in checksum should match snapshot")
+      crcInfoOpt.isPresent,
+      s"CRC information should be present for version ${snapshot.getVersion}")
+    crcInfoOpt.toScala.foreach { crcInfo =>
+      // TODO: check metadata, protocol and file size.
+      assert(
+        crcInfo.getNumFiles === collectScanFileRows(snapshot.getScanBuilder.build()).size,
+        "Number of files in checksum should match snapshot")
+      if (expectEmptyTable) {
+        assert(crcInfo.getTableSizeBytes == 0)
+        crcInfo.getFileSizeHistogram.toScala.foreach { fileSizeHistogram =>
+          assert(fileSizeHistogram == FileSizeHistogram.createDefaultHistogram)
+        }
+      }
+      assert(
+        crcInfo.getDomainMetadata === Optional.of(
+          snapshot.asInstanceOf[SnapshotImpl].getActiveDomainMetadataMap.values().asScala
+            .toSet
+            .asJava),
+        "Domain metadata in checksum should match snapshot")
+    }
   }
 
   /**
@@ -826,7 +837,7 @@ trait TestUtils extends Assertions with SQLHelper {
    * 1. The initial checksum exists and is correct
    * 2. After deleting the checksum file, it can be regenerated with the same content
    */
-  def verifyChecksum(tablePath: String): Unit = {
+  def verifyChecksum(tablePath: String, expectEmptyTable: Boolean = false): Unit = {
     val currentSnapshot = latestSnapshot(tablePath, defaultEngine)
     val checksumVersion = currentSnapshot.getVersion
 
