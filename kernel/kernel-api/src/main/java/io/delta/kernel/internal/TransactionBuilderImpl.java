@@ -19,6 +19,7 @@ import static io.delta.kernel.internal.DeltaErrors.requiresSchemaForNewTable;
 import static io.delta.kernel.internal.DeltaErrors.tableAlreadyExists;
 import static io.delta.kernel.internal.TransactionImpl.DEFAULT_READ_VERSION;
 import static io.delta.kernel.internal.TransactionImpl.DEFAULT_WRITE_VERSION;
+import static io.delta.kernel.internal.util.ColumnMapping.getColumnMappingMode;
 import static io.delta.kernel.internal.util.ColumnMapping.isColumnMappingModeEnabled;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames;
@@ -54,6 +55,7 @@ import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 import java.util.*;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -61,16 +63,17 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   private static final Logger logger = LoggerFactory.getLogger(TransactionBuilderImpl.class);
 
   private final long currentTimeMillis = System.currentTimeMillis();
-  private final TableImpl table;
   private final String engineInfo;
   private final Operation operation;
-  private Optional<StructType> schema = Optional.empty();
   private Optional<List<String>> partitionColumns = Optional.empty();
   private Optional<List<Column>> clusteringColumns = Optional.empty();
   private Optional<SetTransaction> setTxnOpt = Optional.empty();
   private Optional<Map<String, String>> tableProperties = Optional.empty();
   private Optional<Set<String>> unsetTablePropertiesKeys = Optional.empty();
   private boolean needDomainMetadataSupport = false;
+
+  protected final TableImpl table;
+  protected Optional<StructType> schema = Optional.empty();
 
   /**
    * Number of retries for concurrent write exceptions to resolve conflicts and retry commit. In
@@ -183,13 +186,16 @@ public class TransactionBuilderImpl implements TransactionBuilder {
 
   @Override
   public Transaction build(Engine engine) {
+    if (operation == Operation.REPLACE_TABLE) {
+      throw new UnsupportedOperationException("REPLACE TABLE is not yet supported");
+    }
     SnapshotImpl snapshot;
     try {
       snapshot = (SnapshotImpl) table.getLatestSnapshot(engine);
       if (operation == Operation.CREATE_TABLE) {
         throw new TableAlreadyExistsException(table.getPath(engine), "Operation = CREATE_TABLE");
       }
-      return buildTransactionInternal(engine, false /* isNewTableDef */, Optional.of(snapshot));
+      return buildTransactionInternal(engine, false /* isCreateOrReplace */, Optional.of(snapshot));
     } catch (TableNotFoundException tblf) {
       String tablePath = table.getPath(engine);
       logger.info("Table {} doesn't exist yet. Trying to create a new table.", tablePath);
@@ -262,6 +268,17 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     if (isCreateOrReplace) {
       // For a new table definition start with an empty initial metadata
       baseMetadata = getInitialMetadata();
+      // In the case of Replace table there are a few delta-specific properties we want to preserve
+      if (latestSnapshot.isPresent()) { // replace = isCreateOrReplace && latestSnapshot.isPresent
+        Map<String, String> propertiesToPreserve =
+            latestSnapshot.get().getMetadata().getConfiguration().entrySet().stream()
+                .filter(
+                    e ->
+                        ReplaceTableTransactionBuilderImpl.TABLE_PROPERTY_KEYS_TO_PRESERVE.contains(
+                            e.getKey()))
+                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+        baseMetadata = baseMetadata.withMergedConfiguration(propertiesToPreserve);
+      }
     } else {
       // Otherwise, use the existing table metadata
       baseMetadata = latestSnapshot.get().getMetadata();
@@ -300,6 +317,20 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       // needs instead of the entire SnapshotImpl class. This should also let us avoid creating
       // this fake empty initial snapshot.
       latestSnapshot = Optional.of(getInitialEmptySnapshot(engine, baseMetadata, baseProtocol));
+    }
+
+    // Block this for now - in a future PR we will enable this
+    if (operation == Operation.REPLACE_TABLE) {
+      if (getColumnMappingMode(newMetadata.orElse(baseMetadata).getConfiguration())
+          != ColumnMappingMode.NONE) {
+        throw new UnsupportedOperationException(
+            "REPLACE TABLE is not yet supported with column mapping");
+      }
+      if (newProtocol.orElse(baseProtocol).supportsFeature(TableFeatures.ROW_TRACKING_W_FEATURE)) {
+        // Block this for now to be safe, we will return to this in the future
+        throw new UnsupportedOperationException(
+            "REPLACE TABLE is not yet supported on row tracking tables");
+      }
     }
 
     return new TransactionImpl(
@@ -621,7 +652,6 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     return new LogReplay(
         table.getLogPath(),
         table.getDataPath(),
-        -1,
         engine,
         LogSegment.empty(table.getLogPath()),
         Optional.empty(),

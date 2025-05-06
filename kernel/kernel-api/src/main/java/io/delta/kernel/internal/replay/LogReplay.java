@@ -42,6 +42,7 @@ import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
+import io.delta.kernel.utils.FileStatus;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.*;
@@ -134,13 +135,12 @@ public class LogReplay {
   private final Path dataPath;
   private final LogSegment logSegment;
   private final Tuple2<Protocol, Metadata> protocolAndMetadata;
-  private final Lazy<Map<String, DomainMetadata>> domainMetadataMap;
+  private final Lazy<Map<String, DomainMetadata>> activeDomainMetadataMap;
   private final CrcInfoContext crcInfoContext;
 
   public LogReplay(
       Path logPath,
       Path dataPath,
-      long snapshotVersion,
       Engine engine,
       LogSegment logSegment,
       Optional<SnapshotHint> snapshotHint,
@@ -149,7 +149,7 @@ public class LogReplay {
     assertLogFilesBelongToTable(logPath, logSegment.allLogFilesUnsorted());
 
     // Ignore the snapshot hint whose version is larger than the snapshot version.
-    if (snapshotHint.isPresent() && snapshotHint.get().getVersion() > snapshotVersion) {
+    if (snapshotHint.isPresent() && snapshotHint.get().getVersion() > logSegment.getVersion()) {
       snapshotHint = Optional.empty();
     }
 
@@ -158,14 +158,14 @@ public class LogReplay {
     this.logSegment = logSegment;
     Optional<SnapshotHint> newerSnapshotHint =
         crcInfoContext.maybeGetNewerSnapshotHintAndUpdateCache(
-            engine, logSegment, snapshotHint, snapshotVersion);
+            engine, logSegment, snapshotHint, logSegment.getVersion());
     this.protocolAndMetadata =
         snapshotMetrics.loadInitialDeltaActionsTimer.time(
             () ->
                 loadTableProtocolAndMetadata(
-                    engine, logSegment, newerSnapshotHint, snapshotVersion));
+                    engine, logSegment, newerSnapshotHint, logSegment.getVersion()));
     // Lazy loading of domain metadata only when needed
-    this.domainMetadataMap = new Lazy<>(() -> loadDomainMetadataMap(engine));
+    this.activeDomainMetadataMap = new Lazy<>(() -> loadDomainMetadataMap(engine));
   }
 
   /////////////////
@@ -184,8 +184,9 @@ public class LogReplay {
     return loadLatestTransactionVersion(engine, applicationId);
   }
 
-  public Map<String, DomainMetadata> getDomainMetadataMap() {
-    return domainMetadataMap.get();
+  /* Returns map for all active domain metadata. */
+  public Map<String, DomainMetadata> getActiveDomainMetadataMap() {
+    return activeDomainMetadataMap.get();
   }
 
   public long getVersion() {
@@ -223,7 +224,7 @@ public class LogReplay {
     final CloseableIterator<ActionWrapper> addRemoveIter =
         new ActionsIterator(
             engine,
-            logSegment.allLogFilesReversed(),
+            getLogReplayFiles(logSegment),
             getAddRemoveReadSchema(shouldReadStats),
             getAddReadSchema(shouldReadStats),
             checkpointPredicate);
@@ -233,6 +234,22 @@ public class LogReplay {
   ////////////////////
   // Helper Methods //
   ////////////////////
+
+  // For now we always read log compaction files. Plumb an option through to here if we ever want to
+  // make it configurable
+  private boolean readLogCompactionFiles = true;
+
+  /**
+   * Get the files to use for this log replay, can be configured for example to use or not use log
+   * compaction files
+   */
+  private List<FileStatus> getLogReplayFiles(LogSegment logSegment) {
+    if (readLogCompactionFiles) {
+      return logSegment.allFilesWithCompactionsReversed();
+    } else {
+      return logSegment.allLogFilesReversed();
+    }
+  }
 
   /**
    * Returns the latest Protocol and Metadata from the delta files in the `logSegment`. Does *not*
@@ -259,7 +276,7 @@ public class LogReplay {
     try (CloseableIterator<ActionWrapper> reverseIter =
         new ActionsIterator(
             engine,
-            logSegment.allLogFilesReversed(),
+            getLogReplayFiles(logSegment),
             PROTOCOL_METADATA_READ_SCHEMA,
             Optional.empty())) {
       while (reverseIter.hasNext()) {
@@ -340,10 +357,7 @@ public class LogReplay {
   private Optional<Long> loadLatestTransactionVersion(Engine engine, String applicationId) {
     try (CloseableIterator<ActionWrapper> reverseIter =
         new ActionsIterator(
-            engine,
-            logSegment.allLogFilesReversed(),
-            SET_TRANSACTION_READ_SCHEMA,
-            Optional.empty())) {
+            engine, getLogReplayFiles(logSegment), SET_TRANSACTION_READ_SCHEMA, Optional.empty())) {
       while (reverseIter.hasNext()) {
         final ColumnarBatch columnarBatch = reverseIter.next().getColumnarBatch();
         assert (columnarBatch.getSchema().equals(SET_TRANSACTION_READ_SCHEMA));
@@ -367,8 +381,6 @@ public class LogReplay {
 
   /**
    * Loads the domain metadata map, either from CRC info (if available) or from the transaction log.
-   * Note that when loading from CRC info, tombstones (removed domains) are not preserved, while
-   * they are preserved when loading from the transaction log.
    *
    * @param engine The engine to use for loading from log when necessary
    * @return A map of domain names to their metadata
@@ -417,7 +429,7 @@ public class LogReplay {
     try (CloseableIterator<ActionWrapper> reverseIter =
         new ActionsIterator(
             engine,
-            logSegment.allLogFilesReversed(),
+            getLogReplayFiles(logSegment),
             DOMAIN_METADATA_READ_SCHEMA,
             Optional.empty() /* checkpointPredicate */)) {
       Map<String, DomainMetadata> domainMetadataMap = new HashMap<>();
