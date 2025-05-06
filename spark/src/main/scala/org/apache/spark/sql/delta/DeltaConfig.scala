@@ -128,14 +128,15 @@ trait DeltaConfigsBase extends DeltaLogging {
   /**
    * A global default value set as a SQLConf will overwrite the default value of a DeltaConfig.
    * For example, user can run:
-   *   set spark.databricks.delta.properties.defaults.randomPrefixLength = 5
+   *   set spark.delta.properties.defaults.randomPrefixLength = 5
    * This setting will be populated to a Delta table during its creation time and overwrites
    * the default value of delta.randomPrefixLength.
    *
    * We accept these SQLConfs as strings and only perform validation in DeltaConfig. All the
    * DeltaConfigs set in SQLConf should adopt the same prefix.
    */
-  val sqlConfPrefix = "spark.databricks.delta.properties.defaults."
+  val sqlConfPrefix = "spark.delta.properties.defaults."
+  val deprecatedSqlConfPrefix = "spark.databricks.delta.properties.defaults."
 
   private val entries = new HashMap[String, DeltaConfig[_]]
 
@@ -230,7 +231,29 @@ trait DeltaConfigsBase extends DeltaLogging {
       .filter { case (_, config) => shouldCopyFunc(config.key) }
       .flatMap { case (_, config) =>
         val sqlConfKey = sqlConfPrefix + config.key.stripPrefix("delta.")
-        Option(sqlConfs.getConfString(sqlConfKey, null)).map(config(_))
+        val sqlConf = Option(sqlConfs.getConfString(sqlConfKey, null)).map(config(_))
+        val deprecatedSqlConfKey = deprecatedSqlConfPrefix + config.key.stripPrefix("delta.")
+        val deprecatedSqlConf = Option(sqlConfs.getConfString(deprecatedSqlConfKey, null))
+          .map(config(_))
+        (sqlConf, deprecatedSqlConf) match {
+          case (Some(default), Some(deprecatedDefault)) =>
+            (default, deprecatedDefault) match {
+              case (`deprecatedDefault`, _) => Some(config(deprecatedDefault))
+              case _ =>
+                logConsole(
+                  s"""
+                     |Ambiguous values,
+                     |you are setting property $sqlConfKey to $default and
+                     |deprecated property $deprecatedSqlConfKey to $deprecatedDefault
+                     |while $default is not equal to $deprecatedDefault
+                     |""".stripMargin.linesIterator.mkString(" ").trim)
+                throw DeltaErrors.ambiguousConfigurationKeysException(
+                  sqlConfKey, default, deprecatedSqlConfKey, deprecatedDefault)
+            }
+          case (Some(default), None) => Some(config(default))
+          case (None, Some(default)) => Some(config(default))
+          case (None, None) => None
+        }
       }
 
     // Table features configured in session must be merged manually because there's no

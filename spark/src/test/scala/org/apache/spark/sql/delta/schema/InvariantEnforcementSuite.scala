@@ -453,34 +453,39 @@ class InvariantEnforcementSuite extends QueryTest
       expectedError: String,
       data: Row): Unit = {
     testQuietly(testName) {
-      val nullTable = "nullTbl"
-      withTable(nullTable) {
-        // Try creating the table with the check enabled first, which should fail, then create it
-        // for real with the check off which should succeed.
-        if (expectedError != null) {
-          val ex = intercept[AnalysisException] {
+      val confKeys = Array("spark.delta.constraints.allowUnenforcedNotNull.enabled",
+                           "spark.databricks.delta.constraints.allowUnenforcedNotNull.enabled")
+      for (i <- 0 until confKeys.size) {
+        val nullTable = s"nullTbl_$i"
+        withTable(nullTable) {
+          // Try creating the table with the check enabled first, which should fail, then create it
+          // for real with the check off which should succeed.
+          if (expectedError != null) {
+            val ex = intercept[AnalysisException] {
+              sql(s"CREATE TABLE $nullTable ($schemaString) USING delta")
+            }
+            assert(ex.getMessage.contains(expectedError))
+          }
+          withSQLConf((confKeys(i), "true")) {
             sql(s"CREATE TABLE $nullTable ($schemaString) USING delta")
           }
-          assert(ex.getMessage.contains(expectedError))
-        }
-        withSQLConf(("spark.databricks.delta.constraints.allowUnenforcedNotNull.enabled", "true")) {
-          sql(s"CREATE TABLE $nullTable ($schemaString) USING delta")
-        }
 
-        // Once we've created the table, writes should succeed even if they violate the constraint.
-        spark.createDataFrame(
-          Seq(data).asJava,
-          spark.table(nullTable).schema
-        ).write.mode("append").format("delta").saveAsTable(nullTable)
+          // Once we've created the table,
+          // writes should succeed even if they violate the constraint.
+          spark.createDataFrame(
+            Seq(data).asJava,
+            spark.table(nullTable).schema
+          ).write.mode("append").format("delta").saveAsTable(nullTable)
 
-        if (expectedError != null) {
-          val ex = intercept[AnalysisException] {
+          if (expectedError != null) {
+            val ex = intercept[AnalysisException] {
+              sql(s"REPLACE TABLE $nullTable ($schemaString) USING delta")
+            }
+            assert(ex.getMessage.contains(expectedError))
+          }
+          withSQLConf((confKeys(i), "true")) {
             sql(s"REPLACE TABLE $nullTable ($schemaString) USING delta")
           }
-          assert(ex.getMessage.contains(expectedError))
-        }
-        withSQLConf(("spark.databricks.delta.constraints.allowUnenforcedNotNull.enabled", "true")) {
-          sql(s"REPLACE TABLE $nullTable ($schemaString) USING delta")
         }
       }
     }
