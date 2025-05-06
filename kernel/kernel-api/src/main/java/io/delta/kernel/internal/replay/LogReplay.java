@@ -165,7 +165,12 @@ public class LogReplay {
                 loadTableProtocolAndMetadata(
                     engine, logSegment, newerSnapshotHint, logSegment.getVersion()));
     // Lazy loading of domain metadata only when needed
-    this.activeDomainMetadataMap = new Lazy<>(() -> loadDomainMetadataMap(engine));
+    this.activeDomainMetadataMap =
+        new Lazy<>(
+            () ->
+                loadDomainMetadataMap(engine).entrySet().stream()
+                    .filter(entry -> !entry.getValue().isRemoved())
+                    .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue)));
   }
 
   /////////////////
@@ -399,16 +404,18 @@ public class LogReplay {
           .collect(Collectors.toMap(DomainMetadata::getDomain, Function.identity()));
     }
 
-    Map<String, DomainMetadata> domainMetadataMapFromLog =
+    Map<String, DomainMetadata> finalDomainMetadataMap =
         loadDomainMetadataMapFromLog(engine, Optional.of(lastSeenCrcInfo.getVersion() + 1));
-    lastSeenCrcInfo.getDomainMetadata().get().stream()
+    lastSeenCrcInfo
+        .getDomainMetadata()
+        .get()
         .forEach(
             domainMetadataInCrc -> {
-              if (!domainMetadataMapFromLog.containsKey(domainMetadataInCrc.getDomain())) {
-                domainMetadataMapFromLog.put(domainMetadataInCrc.getDomain(), domainMetadataInCrc);
+              if (!finalDomainMetadataMap.containsKey(domainMetadataInCrc.getDomain())) {
+                finalDomainMetadataMap.put(domainMetadataInCrc.getDomain(), domainMetadataInCrc);
               }
             });
-    return domainMetadataMapFromLog;
+    return finalDomainMetadataMap;
   }
 
   /**
