@@ -15,29 +15,18 @@
  */
 package io.delta.kernel.internal.rowtracking;
 
-import static java.util.Collections.singletonMap;
-
 import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
-import java.util.Optional;
-import java.util.Set;
-import java.util.UUID;
+import java.util.*;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /** A collection of helper methods for working with materialized row tracking columns. */
 public final class MaterializedRowTrackingColumn {
-
-  private final String materializedColumnNameProperty;
-  private final String materializedColumnNamePrefix;
-
-  private MaterializedRowTrackingColumn(String property, String prefix) {
-    this.materializedColumnNameProperty = property;
-    this.materializedColumnNamePrefix = prefix;
-  }
 
   /** Static instance for the materialized row ID column. */
   public static final MaterializedRowTrackingColumn ROW_ID =
@@ -48,6 +37,14 @@ public final class MaterializedRowTrackingColumn {
   public static final MaterializedRowTrackingColumn ROW_COMMIT_VERSION =
       new MaterializedRowTrackingColumn(
           "delta.rowTracking.materializedRowCommitVersionColumnName", "_row-commit-version-col-");
+
+  private final String materializedColumnNameProperty;
+  private final String materializedColumnNamePrefix;
+
+  private MaterializedRowTrackingColumn(String property, String prefix) {
+    this.materializedColumnNameProperty = property;
+    this.materializedColumnNamePrefix = prefix;
+  }
 
   /** Returns the configuration property name associated with this materialized column. */
   public String getMaterializedColumnNameProperty() {
@@ -65,46 +62,60 @@ public final class MaterializedRowTrackingColumn {
   }
 
   /**
-   * Assigns a materialized row tracking column name to the metadata configuration if row tracking
-   * is enabled and the column name has not been assigned yet.
+   * Validates that the materialized column names for ROW_ID and ROW_COMMIT_VERSION do not conflict
+   * with any existing logical or physical column names in the table's schema.
    *
-   * @param metadata The current Metadata of the table.
-   * @return An Optional containing updated metadata if the column name was assigned;
-   *     Optional.empty() otherwise.
+   * @param metadata The current {@link Metadata} of the table.
    */
-  public Optional<Metadata> assignMaterializedColumnNameIfNeeded(Metadata metadata) {
-    boolean isRowTrackingEnabled = TableConfig.ROW_TRACKING_ENABLED.fromMetadata(metadata);
-    boolean isMaterializedColumnNameAssigned =
-        metadata.getConfiguration().containsKey(materializedColumnNameProperty);
-
-    if (isRowTrackingEnabled && !isMaterializedColumnNameAssigned) {
-      return Optional.of(
-          metadata.withMergedConfiguration(
-              singletonMap(materializedColumnNameProperty, generateMaterializedColumnName())));
-    } else {
-      return Optional.empty();
-    }
-  }
-
-  /**
-   * Validates that the materialized column name does not conflict with any existing column names in
-   * the schema.
-   *
-   * @param metadata The current Metadata of the table.
-   */
-  public void throwIfColumnNameConflictsWithSchema(Metadata metadata) {
+  public static void throwIfColumnNamesConflictWithSchema(Metadata metadata) {
     StructType schema = metadata.getSchema();
     Set<String> logicalColNames =
         schema.fields().stream().map(StructField::getName).collect(Collectors.toSet());
     Set<String> physicalColNames =
         schema.fields().stream().map(ColumnMapping::getPhysicalName).collect(Collectors.toSet());
 
-    Optional.ofNullable(metadata.getConfiguration().get(materializedColumnNameProperty))
-        .ifPresent(
+    Stream.of(ROW_ID, ROW_COMMIT_VERSION)
+        .map(column -> metadata.getConfiguration().get(column.getMaterializedColumnNameProperty()))
+        .filter(Objects::nonNull)
+        .forEach(
             columnName -> {
               if (logicalColNames.contains(columnName) || physicalColNames.contains(columnName)) {
                 throw DeltaErrors.conflictWithReservedInternalColumnName(columnName);
               }
             });
+  }
+
+  /**
+   * Assigns materialized column names for ROW_ID and ROW_COMMIT_VERSION if row tracking is enabled
+   * and the column names have not been assigned yet.
+   *
+   * @param metadata The current Metadata of the table.
+   * @return An Optional containing updated metadata if any assignments occurred; Optional.empty()
+   *     otherwise.
+   */
+  public static Optional<Metadata> assignMaterializedColumnNamesIfNeeded(Metadata metadata) {
+    // No assignment if row tracking is disabled
+    if (!TableConfig.ROW_TRACKING_ENABLED.fromMetadata(metadata)) {
+      return Optional.empty();
+    }
+
+    Map<String, String> configsToAdd = new HashMap<>();
+
+    Stream.of(ROW_ID, ROW_COMMIT_VERSION)
+        .filter(
+            column ->
+                !metadata
+                    .getConfiguration()
+                    .containsKey(column.getMaterializedColumnNameProperty()))
+        .forEach(
+            column -> {
+              configsToAdd.put(
+                  column.getMaterializedColumnNameProperty(),
+                  column.generateMaterializedColumnName());
+            });
+
+    return configsToAdd.isEmpty()
+        ? Optional.empty()
+        : Optional.of(metadata.withMergedConfiguration(configsToAdd));
   }
 }

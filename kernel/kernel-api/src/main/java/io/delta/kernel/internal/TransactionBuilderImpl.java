@@ -43,6 +43,7 @@ import io.delta.kernel.internal.metrics.SnapshotMetrics;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.rowtracking.MaterializedRowTrackingColumn;
+import io.delta.kernel.internal.rowtracking.RowTracking;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.snapshot.SnapshotHint;
 import io.delta.kernel.internal.tablefeatures.TableFeature;
@@ -444,14 +445,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
 
     /* ----- 5: Update the METADATA with materialized row tracking column name if applicable----- */
     Optional<Metadata> rowTrackingMetadata =
-        MaterializedRowTrackingColumn.ROW_ID.assignMaterializedColumnNameIfNeeded(
-            newMetadata.orElse(baseMetadata));
-    if (rowTrackingMetadata.isPresent()) {
-      newMetadata = rowTrackingMetadata;
-    }
-
-    rowTrackingMetadata =
-        MaterializedRowTrackingColumn.ROW_COMMIT_VERSION.assignMaterializedColumnNameIfNeeded(
+        MaterializedRowTrackingColumn.assignMaterializedColumnNamesIfNeeded(
             newMetadata.orElse(baseMetadata));
     if (rowTrackingMetadata.isPresent()) {
       newMetadata = rowTrackingMetadata;
@@ -605,18 +599,10 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     // 1. Enabling requires backfilling row IDs/commit versions, which is not supported in Kernel
     // 2. Disabling is irreversible in Kernel (re-enabling not supported)
     if (!isCreateOrReplace) {
-      boolean oldRowTrackingEnabledValue =
-          TableConfig.ROW_TRACKING_ENABLED.fromMetadata(oldMetadata);
-      boolean newRowTrackingEnabledValue =
-          TableConfig.ROW_TRACKING_ENABLED.fromMetadata(newMetadata);
-      if (oldRowTrackingEnabledValue != newRowTrackingEnabledValue) {
-        throw DeltaErrors.cannotToggleRowTrackingOnExistingTable();
-      }
+      RowTracking.throwIfRowTrackingToggled(oldMetadata, newMetadata);
     }
 
-    MaterializedRowTrackingColumn.ROW_ID.throwIfColumnNameConflictsWithSchema(newMetadata);
-    MaterializedRowTrackingColumn.ROW_COMMIT_VERSION.throwIfColumnNameConflictsWithSchema(
-        newMetadata);
+    MaterializedRowTrackingColumn.throwIfColumnNamesConflictWithSchema(newMetadata);
   }
 
   private SnapshotImpl getInitialEmptySnapshot(

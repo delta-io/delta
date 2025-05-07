@@ -20,6 +20,7 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.SnapshotImpl;
+import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.utils.CloseableIterable;
@@ -197,6 +198,17 @@ public class RowTracking {
     }
 
     return nonRowTrackingDomainMetadatas;
+  }
+
+  /**
+   * Throws an exception if row tracking enablement is toggled between the old and the new metadata.
+   */
+  public static void throwIfRowTrackingToggled(Metadata oldMetadata, Metadata newMetadata) {
+    boolean oldRowTrackingEnabledValue = TableConfig.ROW_TRACKING_ENABLED.fromMetadata(oldMetadata);
+    boolean newRowTrackingEnabledValue = TableConfig.ROW_TRACKING_ENABLED.fromMetadata(newMetadata);
+    if (oldRowTrackingEnabledValue != newRowTrackingEnabledValue) {
+      throw DeltaErrors.cannotToggleRowTrackingOnExistingTable();
+    }
   }
 
   /**
