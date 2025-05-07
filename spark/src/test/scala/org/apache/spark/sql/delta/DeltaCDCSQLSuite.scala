@@ -118,11 +118,14 @@ class DeltaCDCSQLSuite extends DeltaCDCSuiteBase with DeltaColumnMappingTestUtil
     Unbounded,
     EndingVersion("null"),
     EndingVersion("0"),
-    EndingTimestamp(dateFormat.format(new Date(1)))))
-  testNullRangeBoundary(StartingVersion("null"), end)
+    EndingTimestamp(dateFormat.format(new Date(1)))
+  )) {
+    testNullRangeBoundary(StartingVersion("null"), end)
+  }
 
-  for (start <- Seq(StartingVersion("0"), StartingTimestamp(dateFormat.format(new Date(1)))))
-  testNullRangeBoundary(start, EndingVersion("null"))
+  for (start <- Seq(StartingVersion("0"), StartingTimestamp(dateFormat.format(new Date(1))))) {
+    testNullRangeBoundary(start, EndingVersion("null"))
+  }
 
   test("select individual column should push down filters") {
     val tblName = "tbl"
