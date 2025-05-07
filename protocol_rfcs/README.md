@@ -25,7 +25,7 @@ Here is the history of all the RFCs propose/accepted/rejected since Feb 6, 2024,
 | 2025-03-13    | [checkpoint-protection.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/checkpoint-protection.md)                 | https://github.com/delta-io/delta/issues/4152 | Checkpoint Protection |
 | 2025-03-18    | [iceberg-writer-compat-v1.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/iceberg-writer-compat-v1.md)           | https://github.com/delta-io/delta/issues/4284 | IcebergWriterCompatV1                  |
 | 2025-05-06    | [variant-shredding.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/variant-shredding.md)                         | https://github.com/delta-io/delta/issues/4032 | Variant Shredding                      |
-
+| 2025-05-07    | [table-redirect.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/table-redirect.md)                   | https://github.com/delta-io/delta/issues/3705 | Table Redirect
 ### Accepted RFCs
 
 | Date proposed | Date accepted | RFC file | Github issue | RFC title |
