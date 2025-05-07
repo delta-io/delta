@@ -408,7 +408,7 @@ public class LogReplay {
         loadDomainMetadataMapFromLog(engine, Optional.of(lastSeenCrcInfo.getVersion() + 1));
     // Add domains from the CRC that don't exist in the incremental log data
     // - If a domain is updated to the newer versions or removed, it will exist in
-    // finalDomainMetadataMap, use the one in the map
+    // finalDomainMetadataMap, use the one in the map.
     // - If a domain is only in the CRC file, use the one from CRC.
     lastSeenCrcInfo
         .getDomainMetadata()
