@@ -411,9 +411,7 @@ public final class DeltaErrors {
   }
 
   public static KernelException cannotToggleRowTrackingOnExistingTable() {
-    return new KernelException(
-        "Enabling or disabling row tracking is only supported when creating a new table. "
-            + "This operation is currently not supported on existing tables");
+    return new KernelException("Row tracking support cannot be changed once the table is created.");
   }
 
   public static KernelException cannotModifyAppendOnlyTable(String tablePath) {

@@ -499,9 +499,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
           .commit(engine, emptyIterable())
       }
       assert(
-        e.getMessage.contains(
-          "Enabling or disabling row tracking is only supported when creating a new table. "
-            + "This operation is currently not supported on existing tables"))
+        e.getMessage.contains("Row tracking support cannot be changed once the table is created"))
 
       // It's okay to continue setting it disabled on an existing table; it will be a no-op
       createTxn(engine, tablePath, tableProperties = ROW_TRACKING_DISABLED_PROP)
@@ -520,9 +518,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
           .commit(engine, emptyIterable())
       }
       assert(
-        e.getMessage.contains(
-          "Enabling or disabling row tracking is only supported when creating a new table. "
-            + "This operation is currently not supported on existing tables"))
+        e.getMessage.contains("Row tracking support cannot be changed once the table is created"))
 
       // It's okay to continue setting it enabled on an existing table; it will be a no-op
       createTxn(engine, tablePath, tableProperties = ROW_TRACKING_ENABLED_PROP)
