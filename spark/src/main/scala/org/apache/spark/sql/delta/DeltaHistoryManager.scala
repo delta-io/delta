@@ -327,8 +327,7 @@ class DeltaHistoryManager(
       throw DeltaErrors.TimestampEarlierThanCommitRetentionException(timestamp, commitTs, tsString)
     } else if (commit.version == latestVersion && !canReturnLastCommit) {
       if (commit.timestamp < time) {
-        throw DeltaErrors.TemporallyUnstableInputException(
-          timestamp, commitTs, tsString, commit.version)
+        throw DeltaErrors.timestampGreaterThanLatestCommit(timestamp, commitTs, tsString)
       }
     }
     commit

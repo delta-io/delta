@@ -368,17 +368,31 @@ trait DeltaTimeTravelTests extends QueryTest
         .select($"ts".cast("string")).as[String].collect()
         .map(i => s"'$i'")
 
-      val e1 = intercept[AnalysisException] {
+      val e1 = intercept[DeltaErrors.TemporallyUnstableInputException] {
         sql(s"select count(*) from ${timestampAsOf(tblName, ts(0))}").collect()
       }
-      assert(e1.getMessage.contains("VERSION AS OF 0"))
-      assert(e1.getMessage.contains("TIMESTAMP AS OF '2018-10-24 14:14:18'"))
+      checkError(
+        e1,
+        "DELTA_TIMESTAMP_GREATER_THAN_COMMIT",
+        sqlState = "42816",
+        parameters = Map(
+          "providedTimestamp" -> "2018-10-24 14:24:18.0",
+          "tableName" -> "2018-10-24 14:14:18.0",
+          "maximumTimestamp" -> "2018-10-24 14:14:18")
+      )
 
-      val e2 = intercept[AnalysisException] {
+      val e2 = intercept[DeltaErrors.TemporallyUnstableInputException] {
         sql(s"select count(*) from ${timestampAsOf(tblName, start + 10.minutes)}").collect()
       }
-      assert(e2.getMessage.contains("VERSION AS OF 0"))
-      assert(e2.getMessage.contains("TIMESTAMP AS OF '2018-10-24 14:14:18'"))
+      checkError(
+        e2,
+        "DELTA_TIMESTAMP_GREATER_THAN_COMMIT",
+        sqlState = "42816",
+        parameters = Map(
+          "providedTimestamp" -> "2018-10-24 14:24:18.0",
+          "tableName" -> "2018-10-24 14:14:18.0",
+          "maximumTimestamp" -> "2018-10-24 14:14:18")
+      )
 
       checkAnswer(
         sql(s"select count(*) from ${timestampAsOf(tblName, "'2018-10-24 14:14:18'")}"),
