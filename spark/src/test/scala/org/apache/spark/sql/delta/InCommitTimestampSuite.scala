@@ -654,7 +654,7 @@ class InCommitTimestampSuite
           catalogTableOpt = None,
           canReturnLastCommit = false)
       }
-      assert(e.getMessage.contains("The provided timestamp:") && e.getMessage.contains("is after"))
+      assert(e.getMessage.contains("The provided timestamp") && e.getMessage.contains("is after"))
     }
   }
 
