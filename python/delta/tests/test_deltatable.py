@@ -153,17 +153,27 @@ class DeltaTableTestsMixin:
 
         # String expressions in merge condition and dicts
         reset_table()
-        dt.merge(source, "key = k") \
+        merge_output = dt.merge(source, "key = k") \
             .whenMatchedUpdate(set={"value": "v + 0"}) \
             .whenNotMatchedInsert(values={"key": "k", "value": "v + 0"}) \
             .whenNotMatchedBySourceUpdate(set={"value": "value + 0"}) \
             .execute()
+        self.__checkAnswer(merge_output,
+                           ([Row(6,  # affected rows
+                                 4,  # updated rows (a and b in WHEN MATCHED
+                                     # and c and d in WHEN NOT MATCHED BY SOURCE)
+                                 0,  # deleted rows
+                                 2)]),  # inserted rows (e and f)
+                           StructType([StructField('num_affected_rows', LongType(), False),
+                                        StructField('num_updated_rows', LongType(), False),
+                                        StructField('num_deleted_rows', LongType(), False),
+                                        StructField('num_inserted_rows', LongType(), False)]))
         self.__checkAnswer(dt.toDF(),
                            ([('a', -1), ('b', 0), ('c', 3), ('d', 4), ('e', -5), ('f', -6)]))
 
         # Column expressions in merge condition and dicts
         reset_table()
-        dt.merge(source, expr("key = k")) \
+        merge_output = dt.merge(source, expr("key = k")) \
             .whenMatchedUpdate(set={"value": col("v") + 0}) \
             .whenNotMatchedInsert(values={"key": "k", "value": col("v") + 0}) \
             .whenNotMatchedBySourceUpdate(set={"value": col("value") + 0}) \

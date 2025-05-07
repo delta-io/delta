@@ -751,7 +751,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
   test("Compaction after checkpoint") {
     testWithCheckpoints(
-      deltaVersions = 0L until 5L,
+      deltaVersions = 0L until 6L,
       checkpointVersions = Seq(2),
       multiCheckpointVersions = Seq.empty,
       compactionVersions = Seq((3, 5)))
@@ -759,7 +759,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
   test("Compaction starting before checkpoint") {
     testWithCheckpoints(
-      deltaVersions = 0L until 5L,
+      deltaVersions = 0L until 6L,
       checkpointVersions = Seq(2),
       multiCheckpointVersions = Seq.empty,
       compactionVersions = Seq((1, 5)))

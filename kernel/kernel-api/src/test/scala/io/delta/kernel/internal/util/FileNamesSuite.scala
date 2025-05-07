@@ -19,6 +19,7 @@ import scala.collection.JavaConverters._
 
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.FileNames._
+import io.delta.kernel.utils.FileStatus
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -167,5 +168,26 @@ class FileNamesSuite extends AnyFunSuite {
   test("is commit file") {
     assert(isCommitFile(commitNormal))
     assert(isCommitFile(commitUUID))
+  }
+
+  test("determineFileType correctly identifies delta log file types") {
+    // Test commit file detection
+    val commitFile = FileStatus.of("/path/00000000000000000001.json", 100, 1000)
+    assert(FileNames.determineFileType(commitFile) === DeltaLogFileType.COMMIT)
+
+    // Test checkpoint file detection
+    val checkpointFile = FileStatus.of("/path/00000000000000000002.checkpoint.parquet", 100, 1000)
+    assert(FileNames.determineFileType(checkpointFile) === DeltaLogFileType.CHECKPOINT)
+
+    // Test checksum file detection
+    val checksumFile = FileStatus.of("/path/00000000000000000003.crc", 100, 1000)
+    assert(FileNames.determineFileType(checksumFile) === DeltaLogFileType.CHECKSUM)
+
+    // Test exception for unknown file type
+    val unknownFile = FileStatus.of("/path/unknown_file.txt", 100, 1000)
+    val exception = intercept[IllegalStateException] {
+      FileNames.determineFileType(unknownFile)
+    }
+    assert(exception.getMessage.contains("Unexpected file type"))
   }
 }

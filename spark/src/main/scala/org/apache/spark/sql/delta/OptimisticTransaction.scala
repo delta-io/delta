@@ -1843,9 +1843,9 @@ trait OptimisticTransactionImpl extends DeltaTransaction
           CatalogOwnedTableUtils.getCatalogName(
             spark,
             identifier = ct.identifier)
-        }.getOrElse("CATALOG_EMPTY")
+        }.getOrElse("CATALOG_MISSING")
       } else {
-        metadataToUse.coordinatedCommitsCoordinatorName.getOrElse("")
+        metadataToUse.coordinatedCommitsCoordinatorName.getOrElse("NONE")
       },
       // For Catalog-Owned table, the coordinator conf for UC-CC is [[Map.empty]]
       // so we don't distinguish between CO/CC here.
