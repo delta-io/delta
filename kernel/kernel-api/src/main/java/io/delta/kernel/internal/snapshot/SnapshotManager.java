@@ -256,8 +256,9 @@ public class SnapshotManager {
         versionToLoadOpt.flatMap(v -> getLatestCompleteCheckpointAtOrBeforeVersion(engine, v));
 
     final Optional<Long> lastCheckpointFileCheckpointVersionOpt =
-        latestCompleteCheckpointGroupOpt.isPresent() ? Optional.empty() :
-            getLastCheckpointFileCheckpointVersion(engine);
+        latestCompleteCheckpointGroupOpt.isPresent()
+            ? Optional.empty()
+            : getLastCheckpointFileCheckpointVersion(engine);
 
     /////////////////////////////////////////////////////////////////
     // Step 2: Determine the actual version to start listing from. //
@@ -269,15 +270,12 @@ public class SnapshotManager {
       // +1 because we have already found the latest complete checkpoint! No need to list from
       // *that same* version again.
       listFromStartVersion = latestCompleteCheckpointGroupOpt.get().version + 1;
-      logger.info(
-          "Searched and found a complete checkpoint at version {}.",
-          listFromStartVersion);
+      logger.info("Searched and found a complete checkpoint at version {}.", listFromStartVersion);
     } else {
       if (lastCheckpointFileCheckpointVersionOpt.isPresent()) {
         listFromStartVersion = lastCheckpointFileCheckpointVersionOpt.get();
         logger.info(
-            "List from checkpoint version {} from _last_checkpoint file.",
-            listFromStartVersion);
+            "List from checkpoint version {} from _last_checkpoint file.", listFromStartVersion);
       } else {
         listFromStartVersion = 0L;
         logger.warn("Cannot find a complete checkpoint. Listing from version 0.");
@@ -381,8 +379,8 @@ public class SnapshotManager {
               listedCheckpointInstances, notLaterThanCheckpoint);
     }
 
-    if (lastCheckpointFileCheckpointVersionOpt.isPresent() &&
-        !latestCompleteCheckpointGroupOpt.isPresent()) {
+    if (lastCheckpointFileCheckpointVersionOpt.isPresent()
+        && !latestCompleteCheckpointGroupOpt.isPresent()) {
       // Error case: _last_checkpoint file points to some checkpoint version, but we couldn't find a
       // complete checkpoint after listing from that version!
       throw DeltaErrors.missingCheckpoint(

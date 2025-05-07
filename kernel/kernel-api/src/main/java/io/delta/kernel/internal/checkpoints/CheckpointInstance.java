@@ -108,22 +108,6 @@ public class CheckpointInstance implements Comparable<CheckpointInstance> {
     return version < other.version;
   }
 
-  //  public List<Path> getCorrespondingFiles(Path path) {
-  //    if (this == CheckpointInstance.MAX_VALUE) {
-  //      throw new IllegalStateException("Can't get files for CheckpointVersion.MaxValue.");
-  //    }
-  //
-  //    // This is safe because the only way to construct a V2 CheckpointInstance is with the path.
-  //    if (format == CheckpointFormat.V2) {
-  //      return Collections.singletonList(filePath.get());
-  //    }
-  //
-  //    return numParts
-  //        .map(parts -> FileNames.checkpointFileWithParts(path, version, parts))
-  //        .orElseGet(
-  //            () -> Collections.singletonList(FileNames.checkpointFileSingular(path, version)));
-  //  }
-
   /**
    * Comparison rules:
    *
