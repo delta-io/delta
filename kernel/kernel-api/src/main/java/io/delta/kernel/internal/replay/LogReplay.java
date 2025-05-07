@@ -406,6 +406,10 @@ public class LogReplay {
 
     Map<String, DomainMetadata> finalDomainMetadataMap =
         loadDomainMetadataMapFromLog(engine, Optional.of(lastSeenCrcInfo.getVersion() + 1));
+    // Add domains from the CRC that don't exist in the incremental log data
+    // - If a domain is updated to the newer versions or removed, it will exist in
+    // finalDomainMetadataMap, use the one in the map
+    // - If a domain is only in the CRC file, use the one from CRC.
     lastSeenCrcInfo
         .getDomainMetadata()
         .get()
@@ -426,7 +430,9 @@ public class LogReplay {
    * #loadTableProtocolAndMetadata}.
    *
    * @param engine The engine used to process the log files.
-   * @param minLogVersion the minimum log version to read
+   * @param minLogVersion The minimum log version to read (inclusive). When provided, only reads log
+   *     files * starting from this version. When not provided, reads the entire log. * For
+   *     incremental loading from crc, this is typically set to (crc version + 1).
    * @return A map where the keys are domain names and the values are the corresponding {@link
    *     DomainMetadata} objects.
    * @throws UncheckedIOException if an I/O error occurs while closing the iterator.

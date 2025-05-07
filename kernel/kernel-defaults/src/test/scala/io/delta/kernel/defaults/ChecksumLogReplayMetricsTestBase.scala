@@ -153,7 +153,6 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite {
       loadSnapshotFieldsCheckMetrics(
         table,
         engine,
-        // 10.checkpoint found, so use it and combined with 11.crc
         expJsonVersionsRead = Seq(11),
         expParquetVersionsRead = Seq(10),
         expParquetReadSetSizes = getExpectedCheckpointReadSize(Seq(1)),
