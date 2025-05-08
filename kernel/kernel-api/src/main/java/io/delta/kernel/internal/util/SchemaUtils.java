@@ -101,18 +101,27 @@ public class SchemaUtils {
    * </ul>
    */
   public static void validateUpdatedSchema(
-      StructType currentSchema,
-      StructType newSchema,
-      Set<String> currentPartitionColumns,
+      Metadata currentMetadata,
+      Metadata newMetadata,
       Set<String> clusteringColumnPhysicalNames,
-      Metadata newMetadata) {
+      boolean allowNewNonNullFields) {
     checkArgument(
         isColumnMappingModeEnabled(
             ColumnMapping.getColumnMappingMode(newMetadata.getConfiguration())),
         "Cannot validate updated schema when column mapping is disabled");
-    validateSchema(newSchema, true /*columnMappingEnabled*/);
-    validatePartitionColumns(newSchema, new ArrayList<>(currentPartitionColumns));
-    validateSchemaEvolution(currentSchema, newSchema, newMetadata, clusteringColumnPhysicalNames);
+    validateSchema(newMetadata.getSchema(), true /*columnMappingEnabled*/);
+    validatePartitionColumns(
+        newMetadata.getSchema(), new ArrayList<>(newMetadata.getPartitionColNames()));
+    int currentMaxFieldId =
+        Integer.parseInt(
+            currentMetadata.getConfiguration().getOrDefault(COLUMN_MAPPING_MAX_COLUMN_ID_KEY, "0"));
+    validateSchemaEvolution(
+        currentMetadata.getSchema(),
+        newMetadata.getSchema(),
+        ColumnMapping.getColumnMappingMode(newMetadata.getConfiguration()),
+        clusteringColumnPhysicalNames,
+        currentMaxFieldId,
+        allowNewNonNullFields);
   }
 
   /**
@@ -426,21 +435,25 @@ public class SchemaUtils {
   private static void validateSchemaEvolution(
       StructType currentSchema,
       StructType newSchema,
-      Metadata metadata,
-      Set<String> clusteringColumnPhysicalNames) {
-    ColumnMappingMode columnMappingMode =
-        ColumnMapping.getColumnMappingMode(metadata.getConfiguration());
-    switch (columnMappingMode) {
+      ColumnMappingMode cmMode,
+      Set<String> clusteringColumnPhysicalNames,
+      int currentMaxFieldId,
+      boolean allowNewNonNullFields) {
+    switch (cmMode) {
       case ID:
       case NAME:
-        validateSchemaEvolutionById(currentSchema, newSchema, clusteringColumnPhysicalNames);
+        validateSchemaEvolutionById(
+            currentSchema,
+            newSchema,
+            clusteringColumnPhysicalNames,
+            currentMaxFieldId,
+            allowNewNonNullFields);
         return;
       case NONE:
         throw new UnsupportedOperationException(
             "Schema evolution without column mapping is not supported");
       default:
-        throw new UnsupportedOperationException(
-            "Unknown column mapping mode: " + columnMappingMode);
+        throw new UnsupportedOperationException("Unknown column mapping mode: " + cmMode);
     }
   }
 
@@ -449,14 +462,18 @@ public class SchemaUtils {
    * fields
    */
   private static void validateSchemaEvolutionById(
-      StructType currentSchema, StructType newSchema, Set<String> clusteringColumnPhysicalNames) {
+      StructType currentSchema,
+      StructType newSchema,
+      Set<String> clusteringColumnPhysicalNames,
+      int oldMaxFieldId,
+      boolean allowNewNonNullFields) {
     Map<Integer, StructField> currentFieldsById = fieldsById(currentSchema);
     Map<Integer, StructField> updatedFieldsById = fieldsById(newSchema);
     SchemaChanges schemaChanges = computeSchemaChangesById(currentFieldsById, updatedFieldsById);
     validatePhysicalNameConsistency(schemaChanges.updatedFields());
     // Validates that the updated schema does not contain breaking changes in terms of types and
     // nullability
-    validateUpdatedSchemaCompatibility(schemaChanges);
+    validateUpdatedSchemaCompatibility(schemaChanges, oldMaxFieldId, allowNewNonNullFields);
     validateClusteringColumnsNotDropped(
         schemaChanges.removedFields(), clusteringColumnPhysicalNames);
     // ToDo Potentially validate IcebergCompatV2 nested IDs
@@ -480,11 +497,20 @@ public class SchemaUtils {
    *
    * <p>ToDo: Prevent moving fields outside of their containing struct
    */
-  private static void validateUpdatedSchemaCompatibility(SchemaChanges schemaChanges) {
+  private static void validateUpdatedSchemaCompatibility(
+      SchemaChanges schemaChanges, int oldMaxFieldId, boolean allowNewNonNullFields) {
     for (StructField addedField : schemaChanges.addedFields()) {
-      if (!addedField.isNullable()) {
+      if (!allowNewNonNullFields && !addedField.isNullable()) {
         throw new KernelException(
             String.format("Cannot add non-nullable field %s", addedField.getName()));
+      }
+      int colId = getColumnId(addedField);
+      if (colId <= oldMaxFieldId) {
+        throw new IllegalArgumentException(
+            String.format(
+                "Cannot add a new column with a fieldId <= maxFieldId. Found field: %s with"
+                    + "fieldId=%s. Current maxFieldId in the table is: %s",
+                addedField, colId, oldMaxFieldId));
       }
     }
 

@@ -482,6 +482,9 @@ class SchemaUtilsSuite extends AnyFunSuite {
   ///////////////////////////////////////////////////////////////////////////
   // validateUpdatedSchema
   ///////////////////////////////////////////////////////////////////////////
+
+  // TODO update these tests based on the changes you made
+
   test("validateUpdatedSchema fails when column mapping is disabled") {
     val current = new StructType().add(new StructField("id", IntegerType.INTEGER, true))
     val updated = current.add(new StructField("data", StringType.STRING, true))
@@ -489,11 +492,11 @@ class SchemaUtilsSuite extends AnyFunSuite {
     val e = intercept[IllegalArgumentException] {
       val tblProperties = Map(COLUMN_MAPPING_MODE_KEY -> "none")
       validateUpdatedSchema(
-        current,
-        updated,
+        metadata(current, properties = tblProperties),
+        metadata(updated),
         emptySet(),
-        emptySet(),
-        metadata(current, properties = tblProperties))
+        false // allowNewNonNullFields
+      )
     }
 
     assert(e.getMessage == "Cannot validate updated schema when column mapping is disabled")
@@ -686,11 +689,10 @@ class SchemaUtilsSuite extends AnyFunSuite {
     forAll(updatedSchemaHasDuplicateColumnId) { (schemaBefore, schemaAfter) =>
       val e = intercept[IllegalArgumentException] {
         validateUpdatedSchema(
-          schemaBefore,
-          schemaAfter,
+          metadata(schemaBefore),
+          metadata(schemaAfter),
           emptySet(),
-          emptySet(),
-          metadata(schemaBefore))
+          false /* allowNewNonNullFields */ )
       }
 
       assert(e.getMessage.matches("Field duplicate_id with id .* already exists"))
@@ -740,11 +742,10 @@ class SchemaUtilsSuite extends AnyFunSuite {
   test("validateUpdatedSchema succeeds with valid ID and physical name") {
     forAll(validUpdatedSchemas) { (schemaBefore, schemaAfter) =>
       validateUpdatedSchema(
-        schemaBefore,
-        schemaAfter,
+        metadata(schemaBefore),
+        metadata(schemaAfter),
         emptySet(),
-        emptySet(),
-        metadata(schemaBefore))
+        false /* allowNewNonNullFields */ )
     }
   }
 
@@ -931,11 +932,10 @@ class SchemaUtilsSuite extends AnyFunSuite {
   test("validateUpdatedSchema succeeds when adding field") {
     forAll(validateAddedFields) { (schemaBefore, schemaAfter) =>
       validateUpdatedSchema(
-        schemaBefore,
-        schemaAfter,
+        metadata(schemaBefore),
+        metadata(schemaAfter),
         emptySet(),
-        emptySet(),
-        metadata(schemaBefore))
+        false /* allowNewNonNullFields */ )
     }
   }
 
@@ -970,11 +970,10 @@ class SchemaUtilsSuite extends AnyFunSuite {
   test("validateUpdatedSchema succeeds when updating field metadata") {
     forAll(validateMetadataChange) { (schemaBefore, schemaAfter) =>
       validateUpdatedSchema(
-        schemaBefore,
-        schemaAfter,
+        metadata(schemaBefore),
+        metadata(schemaAfter),
         emptySet(),
-        emptySet(),
-        metadata(schemaBefore))
+        false /* allowNewNonNullFields */ )
     }
   }
 
@@ -1022,11 +1021,10 @@ class SchemaUtilsSuite extends AnyFunSuite {
     forAll(evolutionCases) { (schemaBefore, schemaAfter) =>
       val e = intercept[T] {
         validateUpdatedSchema(
-          schemaBefore,
-          schemaAfter,
+          metadata(schemaBefore, tableProperties),
+          metadata(schemaAfter),
           emptySet(),
-          emptySet(),
-          metadata(schemaBefore, tableProperties))
+          false /* allowNewNonNullFields */ )
       }
 
       assert(e.getMessage.matches(expectedMessage))
