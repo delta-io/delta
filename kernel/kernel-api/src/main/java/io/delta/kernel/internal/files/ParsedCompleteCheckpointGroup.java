@@ -20,10 +20,10 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.internal.annotation.VisibleForTesting;
-import io.delta.kernel.internal.files.ParsedLogFile2.CheckpointFile;
-import io.delta.kernel.internal.files.ParsedLogFile2.ClassicCheckpointFile;
-import io.delta.kernel.internal.files.ParsedLogFile2.MultipartCheckpointFile;
-import io.delta.kernel.internal.files.ParsedLogFile2.V2CheckpointFile;
+import io.delta.kernel.internal.files.ParsedLogFile.CheckpointFile;
+import io.delta.kernel.internal.files.ParsedLogFile.ClassicCheckpointFile;
+import io.delta.kernel.internal.files.ParsedLogFile.MultipartCheckpointFile;
+import io.delta.kernel.internal.files.ParsedLogFile.V2CheckpointFile;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;

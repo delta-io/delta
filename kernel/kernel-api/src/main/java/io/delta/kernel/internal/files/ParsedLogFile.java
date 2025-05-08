@@ -20,7 +20,7 @@ import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.utils.FileStatus;
 
-public abstract class ParsedLogFile2 {
+public abstract class ParsedLogFile {
 
   ///////////////////////////////////////
   // Static enums, fields, and methods //
@@ -33,7 +33,7 @@ public abstract class ParsedLogFile2 {
     CHECKSUM
   }
 
-  public static ParsedLogFile2 forFileStatus(FileStatus fileStatus) {
+  public static ParsedLogFile forFileStatus(FileStatus fileStatus) {
     final String path = fileStatus.getPath();
 
     if (FileNames.isCommitFile(path)) {
@@ -62,7 +62,7 @@ public abstract class ParsedLogFile2 {
   private final long version;
   private final Category category;
 
-  protected ParsedLogFile2(FileStatus fileStatus, long version, Category category) {
+  protected ParsedLogFile(FileStatus fileStatus, long version, Category category) {
     this.fileStatus = fileStatus;
     this.version = version;
     this.category = category;
@@ -84,7 +84,7 @@ public abstract class ParsedLogFile2 {
   // Deltas //
   ////////////
 
-  public abstract static class DeltaFile extends ParsedLogFile2 {
+  public abstract static class DeltaFile extends ParsedLogFile {
     protected DeltaFile(FileStatus fileStatus, long version) {
       super(fileStatus, version, Category.DELTA);
     }
@@ -104,7 +104,7 @@ public abstract class ParsedLogFile2 {
   // Checkpoints //
   /////////////////
 
-  public abstract static class CheckpointFile extends ParsedLogFile2 {
+  public abstract static class CheckpointFile extends ParsedLogFile {
     protected CheckpointFile(FileStatus fileStatus, long version) {
       super(fileStatus, version, Category.CHECKPOINT);
     }
@@ -180,7 +180,7 @@ public abstract class ParsedLogFile2 {
   // Other //
   ///////////
 
-  public static class LogCompactionFile extends ParsedLogFile2 {
+  public static class LogCompactionFile extends ParsedLogFile {
     private static LogCompactionFile create(FileStatus fileStatus) {
       final Tuple2<Long, Long> startEnd = FileNames.logCompactionVersions(fileStatus.getPath());
       return new LogCompactionFile(fileStatus, startEnd._1, startEnd._2);
@@ -204,7 +204,7 @@ public abstract class ParsedLogFile2 {
     }
   }
 
-  public static class ChecksumFile extends ParsedLogFile2 {
+  public static class ChecksumFile extends ParsedLogFile {
     private static ChecksumFile create(FileStatus fileStatus) {
       return new ChecksumFile(fileStatus, FileNames.checksumVersion(fileStatus.getPath()));
     }
