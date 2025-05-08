@@ -483,8 +483,6 @@ class SchemaUtilsSuite extends AnyFunSuite {
   // validateUpdatedSchema
   ///////////////////////////////////////////////////////////////////////////
 
-  // TODO update these tests based on the changes you made
-
   test("validateUpdatedSchema fails when column mapping is disabled") {
     val current = new StructType().add(new StructField("id", IntegerType.INTEGER, true))
     val updated = current.add(new StructField("data", StringType.STRING, true))
@@ -493,7 +491,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
       val tblProperties = Map(COLUMN_MAPPING_MODE_KEY -> "none")
       validateUpdatedSchema(
         metadata(current, properties = tblProperties),
-        metadata(updated),
+        metadata(updated, properties = tblProperties),
         emptySet(),
         false // allowNewNonNullFields
       )
@@ -767,7 +765,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
             .add(
               "renamed_id",
               IntegerType.INTEGER,
-              false,
+              true,
               fieldMetadata(id = 2, physicalName = "id"))
             .add(
               "required_field",
@@ -790,10 +788,23 @@ class SchemaUtilsSuite extends AnyFunSuite {
           false),
         arrayName = "renamed_array")))
 
-  test("validateUpdatedSchema fails when non-nullable field is added") {
+  test("validateUpdatedSchema fails when non-nullable field is added with " +
+    "allowNewNonNullFields=false") {
     assertSchemaEvolutionFailure[KernelException](
       nonNullableFieldAdded,
-      "Cannot add non-nullable field required_field")
+      "Cannot add non-nullable field required_field",
+      allowNewNonNullFields = false)
+  }
+
+  test("validateUpdatedSchema succeeds when non-nullable field is added with " +
+    "allowNewNonNullFields=true") {
+    forAll(nonNullableFieldAdded) { (schemaBefore, schemaAfter) =>
+      validateUpdatedSchema(
+        metadata(schemaBefore),
+        metadata(schemaAfter),
+        emptySet(),
+        true /* allowNewNonNullFields */ )
+    }
   }
 
   private val existingFieldNullabilityTightened = Table(
@@ -833,10 +844,19 @@ class SchemaUtilsSuite extends AnyFunSuite {
           false),
         arrayName = "renamed_array")))
 
-  test("validateUpdatedSchema fails when existing nullability is tightened") {
+  test("validateUpdatedSchema fails when existing nullability is tightened with " +
+    "allowNewNonNullFields=false") {
     assertSchemaEvolutionFailure[KernelException](
       existingFieldNullabilityTightened,
       "Cannot tighten the nullability of existing field id")
+  }
+
+  test("validateUpdatedSchema fails when existing nullability is tightened with " +
+    "allowNewNonNullFields=true") {
+    assertSchemaEvolutionFailure[KernelException](
+      existingFieldNullabilityTightened,
+      "Cannot tighten the nullability of existing field id",
+      allowNewNonNullFields = true)
   }
 
   private val invalidTypeChange = Table(
@@ -977,6 +997,54 @@ class SchemaUtilsSuite extends AnyFunSuite {
     }
   }
 
+  private val underMaxColIdFieldAdded = Table(
+    ("schemaBefore", "schemaWithUnderMaxFieldIdAdded"),
+    (
+      primitiveSchema,
+      primitiveSchema.add(
+        "required_field",
+        IntegerType.INTEGER,
+        true,
+        fieldMetadata(0, "required_field"))),
+    // Map with struct key where under max col-id field is added
+    (
+      mapWithStructKey,
+      mapWithStructKey(
+        new MapType(
+          new StructType()
+            .add(
+              "renamed_id",
+              IntegerType.INTEGER,
+              true,
+              fieldMetadata(id = 2, physicalName = "id"))
+            .add(
+              "required_field",
+              IntegerType.INTEGER,
+              true,
+              fieldMetadata(id = 0, physicalName = "required_field")),
+          IntegerType.INTEGER,
+          false),
+        fieldMetadata(id = 1, physicalName = "map"))),
+    // Struct of array of structs where under max col-id field is added
+    (
+      structWithArrayOfStructs,
+      structWithArrayOfStructs(
+        arrayType = new ArrayType(
+          new StructType().add(
+            "renamed_id",
+            IntegerType.INTEGER,
+            fieldMetadata(4, "id"))
+            .add("required_field", IntegerType.INTEGER, true, fieldMetadata(0, "required_field")),
+          false),
+        arrayName = "renamed_array")))
+
+  test("validateUpdatedSchema fails when a new field with a fieldId < maxColId is added") {
+    assertSchemaEvolutionFailure[IllegalArgumentException](
+      underMaxColIdFieldAdded,
+      "Cannot add a new column with a fieldId <= maxFieldId. Found field: .* with"
+        + "fieldId=0. Current maxFieldId in the table is: .*")
+  }
+
   private def mapWithStructKey(
       mapType: DataType =
         mapWithStructKey.get("map").getDataType,
@@ -1017,14 +1085,15 @@ class SchemaUtilsSuite extends AnyFunSuite {
       evolutionCases: TableFor2[StructType, StructType],
       expectedMessage: String,
       tableProperties: Map[String, String] =
-        Map(ColumnMapping.COLUMN_MAPPING_MODE_KEY -> "id"))(implicit classTag: ClassTag[T]) {
+        Map(ColumnMapping.COLUMN_MAPPING_MODE_KEY -> "id"),
+      allowNewNonNullFields: Boolean = false)(implicit classTag: ClassTag[T]) {
     forAll(evolutionCases) { (schemaBefore, schemaAfter) =>
       val e = intercept[T] {
         validateUpdatedSchema(
           metadata(schemaBefore, tableProperties),
-          metadata(schemaAfter),
+          metadata(schemaAfter, tableProperties),
           emptySet(),
-          false /* allowNewNonNullFields */ )
+          allowNewNonNullFields)
       }
 
       assert(e.getMessage.matches(expectedMessage))
@@ -1035,6 +1104,9 @@ class SchemaUtilsSuite extends AnyFunSuite {
       schema: StructType,
       properties: Map[String, String] =
         Map(ColumnMapping.COLUMN_MAPPING_MODE_KEY -> "id")): Metadata = {
+    val tblProperties = properties ++
+      Map(ColumnMapping.COLUMN_MAPPING_MAX_COLUMN_ID_KEY ->
+        ColumnMapping.findMaxColumnId(schema).toString)
     new Metadata(
       "id",
       Optional.empty(), /* name */
@@ -1044,7 +1116,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
       schema,
       VectorUtils.buildArrayValue(util.Arrays.asList(), StringType.STRING), // partitionColumns
       Optional.empty(), // createdTime
-      stringStringMapValue(properties.asJava) // configurationMap
+      stringStringMapValue(tblProperties.asJava) // configurationMap
     )
   }
 
