@@ -974,7 +974,7 @@ class DeltaTableTestsMixin:
             from pyspark.sql.column import _to_seq  # type: ignore[attr-defined]
         except ImportError:
             # Spark 4
-            from pyspark.sql.classic.column import _to_seq  # type: ignore[import-not-found, no-redef]
+            from pyspark.sql.classic.column import _to_seq  # type: ignore
 
         with self.table("testTable"):
             tableBuilder = DeltaTable.create(self.spark).tableName("testTable") \
