@@ -20,7 +20,10 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.internal.annotation.VisibleForTesting;
-import io.delta.kernel.internal.files.ParsedLogFile.ParsedLogType;
+import io.delta.kernel.internal.files.ParsedLogFile2.CheckpointFile;
+import io.delta.kernel.internal.files.ParsedLogFile2.ClassicCheckpointFile;
+import io.delta.kernel.internal.files.ParsedLogFile2.MultipartCheckpointFile;
+import io.delta.kernel.internal.files.ParsedLogFile2.V2CheckpointFile;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
@@ -34,7 +37,7 @@ public class ParsedCompleteCheckpointGroup {
   ///////////////////////////////////////
 
   public static Optional<ParsedCompleteCheckpointGroup> tryCreateFrom(
-      List<ParsedCheckpointFile> checkpointFiles) {
+      List<CheckpointFile> checkpointFiles) {
     requireNonNull(checkpointFiles, "checkpointFiles is null");
 
     try {
@@ -49,10 +52,9 @@ public class ParsedCompleteCheckpointGroup {
   ///////////////////////////////
 
   private final long version;
-  private final ParsedLogType elementType;
-  private final List<ParsedCheckpointFile> checkpointFiles;
+  private final List<CheckpointFile> checkpointFiles;
 
-  private ParsedCompleteCheckpointGroup(List<ParsedCheckpointFile> checkpointFiles) {
+  private ParsedCompleteCheckpointGroup(List<CheckpointFile> checkpointFiles) {
     ///////////////////////
     // Input validations //
     ///////////////////////
@@ -60,17 +62,16 @@ public class ParsedCompleteCheckpointGroup {
     requireNonNull(checkpointFiles, "checkpointFiles is null");
     checkArgument(!checkpointFiles.isEmpty(), "checkpointFiles cannot be empty");
 
-    final ParsedCheckpointFile first = checkpointFiles.get(0);
+    final CheckpointFile first = checkpointFiles.get(0);
 
-    if (first.getType() == ParsedLogType.CHECKPOINT_CLASSIC
-        || first.getType() == ParsedLogType.V2_CHECKPOINT_MANIFEST) {
+    if (first instanceof ClassicCheckpointFile || first instanceof V2CheckpointFile) {
       checkArgument(
           checkpointFiles.size() == 1,
           "Classic and V2 checkpoint group must have exactly one checkpoint file");
-    } else if (first.getType() == ParsedLogType.MULTIPART_CHECKPOINT) {
+    } else if (first instanceof MultipartCheckpointFile) {
       validateMultiPartVersions(checkpointFiles);
     } else {
-      throw new IllegalArgumentException("Unknown checkpoint format: " + first.getType());
+      throw new IllegalArgumentException("Unknown checkpoint format: " + first);
     }
 
     ////////////////////////////////
@@ -78,7 +79,6 @@ public class ParsedCompleteCheckpointGroup {
     ////////////////////////////////
 
     this.version = first.getVersion();
-    this.elementType = first.getType();
     this.checkpointFiles = checkpointFiles;
   }
 
@@ -86,21 +86,21 @@ public class ParsedCompleteCheckpointGroup {
     return version;
   }
 
-  public ParsedLogType getElementType() {
-    return elementType;
-  }
-
-  public List<ParsedCheckpointFile> getCheckpointFiles() {
+  public List<CheckpointFile> getCheckpointFiles() {
     return checkpointFiles;
   }
 
-  /** Assumes: only called with MULTIPART_CHECKPOINT files */
+  /** Assumes: At the very least, the first checkpoint file is a multi-part checkpoint. */
   @VisibleForTesting
-  public static void validateMultiPartVersions(List<ParsedCheckpointFile> checkpointFiles) {
+  public static void validateMultiPartVersions(List<CheckpointFile> checkpointFiles) {
     final Set<Integer> actualPartNums = new HashSet<>();
 
-    // We do NOT expect this to throw -- we expect all checkpointFiles to be MULTIPART_CHECKPOINT
-    final ParsedMultiPartCheckpointFile first = castToMultiPartOrThrow(checkpointFiles.get(0));
+    if (!(checkpointFiles.get(0) instanceof MultipartCheckpointFile)) {
+      throw new IllegalArgumentException(
+          "Expected first checkpoint file to be a multi-part checkpoint file");
+    }
+
+    final MultipartCheckpointFile first = (MultipartCheckpointFile) checkpointFiles.get(0);
 
     checkArgument(
         first.getNumParts() == checkpointFiles.size(),
@@ -108,7 +108,12 @@ public class ParsedCompleteCheckpointGroup {
 
     checkpointFiles.forEach(
         x -> {
-          final ParsedMultiPartCheckpointFile multiPartCheckpoint = castToMultiPartOrThrow(x);
+          if (!(x instanceof MultipartCheckpointFile)) {
+            throw new IllegalArgumentException(
+                "Expected all checkpoint files to be multi-part checkpoint files");
+          }
+
+          final MultipartCheckpointFile multiPartCheckpoint = (MultipartCheckpointFile) x;
 
           checkArgument(
               multiPartCheckpoint.getVersion() == first.getVersion(),
@@ -129,15 +134,5 @@ public class ParsedCompleteCheckpointGroup {
         "Expected part numbers %s, but got %s",
         expectedPartNums,
         actualPartNums);
-  }
-
-  private static ParsedMultiPartCheckpointFile castToMultiPartOrThrow(
-      ParsedCheckpointFile checkpoint) {
-    if (checkpoint instanceof ParsedMultiPartCheckpointFile) {
-      return (ParsedMultiPartCheckpointFile) checkpoint;
-    } else {
-      throw new ClassCastException(
-          "Cannot cast to ParsedMultiPartCheckpointFile: " + checkpoint.getType());
-    }
   }
 }
