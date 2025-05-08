@@ -60,6 +60,9 @@ public class StructField {
   private final DataType dataType;
   private final boolean nullable;
   private final FieldMetadata metadata;
+  // A list of preivious types that this field held. Only applicable to
+  // fields for BasePrimitiveType. Higher indexed elements are new types.
+  private final List<BasePrimitiveType> previousTypes = new ArrayList<>();
 
   public StructField(String name, DataType dataType, boolean nullable) {
     this(name, dataType, nullable, FieldMetadata.empty());
@@ -73,6 +76,16 @@ public class StructField {
     FieldMetadata collationMetadata = fetchCollationMetadata();
     this.metadata =
         new FieldMetadata.Builder().fromMetadata(metadata).fromMetadata(collationMetadata).build();
+  }
+
+  public StructField(String name, DataType dataType, boolean nullable, FieldMetadata metadata) {
+    this.name = name;
+    this.dataType = dataType;
+    this.nullable = nullable;
+
+    FieldMetadata collationMetadata = fetchCollationMetadata();
+    this.metadata =
+            new FieldMetadata.Builder().fromMetadata(metadata).fromMetadata(collationMetadata).build();
   }
 
   /** @return the name of this field */
@@ -104,6 +117,10 @@ public class StructField {
     return !isMetadataColumn();
   }
 
+  public List<BasePrimitiveType> getPreviousTypes() {
+    return new ArrayList<>(previousTypes);
+  }
+
   @Override
   public String toString() {
     return String.format(
@@ -122,12 +139,13 @@ public class StructField {
     return nullable == that.nullable
         && name.equals(that.name)
         && dataType.equals(that.dataType)
-        && metadata.equals(that.metadata);
+        && metadata.equals(that.metadata)
+            && previousTypes.equals(that.previousTypes);
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(name, dataType, nullable, metadata);
+    return Objects.hash(name, dataType, nullable, metadata, previousTypes);
   }
 
   public StructField withNewMetadata(FieldMetadata metadata) {
