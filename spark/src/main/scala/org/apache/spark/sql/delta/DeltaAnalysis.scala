@@ -430,8 +430,8 @@ class DeltaAnalysis(session: SparkSession)
               )
             case tUnstable: TemporallyUnstableInputException =>
               throw DeltaErrors.restoreTimestampGreaterThanLatestException(
-                tUnstable.userTimestamp.toString,
-                tUnstable.commitTs.toString
+                tUnstable.userTs.toString,
+                tUnstable.lastCommitTs.toString
               )
           }
           // TODO: Fetch the table version from deltaLog.update().version to guarantee freshness.

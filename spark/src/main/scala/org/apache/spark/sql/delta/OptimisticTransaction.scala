@@ -67,7 +67,8 @@ import org.apache.spark.util.{Clock, Utils}
 
 object CoordinatedCommitType extends Enumeration {
   type CoordinatedCommitType = Value
-  val FS_COMMIT, CC_COMMIT, FS_TO_CC_UPGRADE_COMMIT, CC_TO_FS_DOWNGRADE_COMMIT = Value
+  val FS_COMMIT, CC_COMMIT, CO_COMMIT,
+    FS_TO_CC_UPGRADE_COMMIT, FS_TO_CO_UPGRADE_COMMIT, CC_TO_FS_DOWNGRADE_COMMIT = Value
 }
 
 case class CoordinatedCommitsStats(
@@ -1806,19 +1807,49 @@ trait OptimisticTransactionImpl extends DeltaTransaction
   def createCoordinatedCommitsStats(): CoordinatedCommitsStats = {
     val (coordinatedCommitsType, metadataToUse) =
       readSnapshotTableCommitCoordinatorClientOpt match {
+        // TODO: Capture the CO -> FS downgrade case when we start
+        //       supporting downgrade for CO.
+        case Some(_) if snapshot.isCatalogOwned =>                             // CO commit
+          (CoordinatedCommitType.CO_COMMIT, snapshot.metadata)
         case Some(_) if metadata.coordinatedCommitsCoordinatorName.isEmpty =>  // CC -> FS
           (CoordinatedCommitType.CC_TO_FS_DOWNGRADE_COMMIT, snapshot.metadata)
+        // Only the 0th commit to a table can be a FS -> CO upgrade for now.
+        // Upgrading an existing FS table to CO through ALTER TABLE is not supported yet.
+        case None if this.newProtocol.exists(_.readerAndWriterFeatureNames
+            .contains(CatalogOwnedTableFeature.name)) =>                       // FS -> CO
+          (CoordinatedCommitType.FS_TO_CO_UPGRADE_COMMIT, metadata)
         case None if metadata.coordinatedCommitsCoordinatorName.isDefined =>   // FS -> CC
           (CoordinatedCommitType.FS_TO_CC_UPGRADE_COMMIT, metadata)
         case Some(_) =>                                                        // CC commit
           (CoordinatedCommitType.CC_COMMIT, snapshot.metadata)
         case None =>                                                           // FS commit
           (CoordinatedCommitType.FS_COMMIT, snapshot.metadata)
+        // Errors out in rest of the cases.
+        case _ =>
+          throw new IllegalStateException(
+            "Unexpected state found when trying " +
+            s"to generate CoordinatedCommitsStats for table ${deltaLog.logPath}. " +
+            s"$readSnapshotTableCommitCoordinatorClientOpt, " +
+            s"$metadata, $snapshot, $catalogTable")
       }
     CoordinatedCommitsStats(
-      coordinatedCommitsType.toString,
-      metadataToUse.coordinatedCommitsCoordinatorName.getOrElse(""),
-      metadataToUse.coordinatedCommitsCoordinatorConf)
+      coordinatedCommitsType = coordinatedCommitsType.toString,
+      commitCoordinatorName = if (Set(CoordinatedCommitType.CO_COMMIT,
+        CoordinatedCommitType.FS_TO_CO_UPGRADE_COMMIT).contains(coordinatedCommitsType)) {
+        // The catalog for FS -> CO upgrade commit would be
+        // "CATALOG_EMPTY" because `catalogTable` is not available
+        // for the 0th FS commit.
+        catalogTable.flatMap { ct =>
+          CatalogOwnedTableUtils.getCatalogName(
+            spark,
+            identifier = ct.identifier)
+        }.getOrElse("CATALOG_MISSING")
+      } else {
+        metadataToUse.coordinatedCommitsCoordinatorName.getOrElse("NONE")
+      },
+      // For Catalog-Owned table, the coordinator conf for UC-CC is [[Map.empty]]
+      // so we don't distinguish between CO/CC here.
+      commitCoordinatorConf = metadataToUse.coordinatedCommitsCoordinatorConf)
   }
 
   /**

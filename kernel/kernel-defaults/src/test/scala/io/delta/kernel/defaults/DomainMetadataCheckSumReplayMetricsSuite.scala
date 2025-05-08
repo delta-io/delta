@@ -49,7 +49,7 @@ class DomainMetadataCheckSumReplayMetricsSuite extends ChecksumLogReplayMetricsT
   // Domain metadata requires reading checkpoint files twice:
   // 1. First read happens during loading Protocol & Metadata in snapshot construction.
   // 2. Second read happens specifically for domain metadata loading.
-  override protected def getExpectedCheckpointReadVersions(sizes: Seq[Long]): Seq[Long] = {
+  override protected def getExpectedCheckpointReadSize(sizes: Seq[Long]): Seq[Long] = {
     // we read each checkpoint file twice: once for P&M and once for domain metadata
     sizes.flatMap(size => Seq(size, size))
   }
@@ -69,8 +69,24 @@ class DomainMetadataCheckSumReplayMetricsSuite extends ChecksumLogReplayMetricsT
         expJsonVersionsRead = Seq(readVersion),
         expParquetVersionsRead = Seq(checkpointVersion),
         expParquetReadSetSizes = Seq(1),
-        expChecksumReadSet = Seq(readVersion, checkpointVersion),
+        expChecksumReadSet = Seq(checkpointVersion),
         readVersion = readVersion)
+    }
+  }
+
+  test("read domain metadata fro checksum even if snapshot hint exists") {
+    withTableWithCrc { (table, _, engine) =>
+      val readVersion = 11
+      // Get snapshot to produce a snapshot hit at version 11.
+      table.getLatestSnapshot(engine)
+
+      loadSnapshotFieldsCheckMetrics(
+        table,
+        engine,
+        expJsonVersionsRead = Nil,
+        expParquetVersionsRead = Nil,
+        expParquetReadSetSizes = Seq(),
+        expChecksumReadSet = Seq(readVersion))
     }
   }
 

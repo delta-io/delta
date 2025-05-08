@@ -958,6 +958,52 @@ class DeltaCDCScalaSuite extends DeltaCDCSuiteBase {
     }
   }
 
+  private def testNullRangeBoundary(start: Boundary, end: Boundary): Unit = {
+    test(s"range boundary cannot be null - start=$start end=$end") {
+      val tblName = "tbl"
+      withTable(tblName) {
+        createTblWithThreeVersions(tblName = Some(tblName))
+
+        val expectedError = (start, end) match {
+          case (StartingVersion(null), _) => "DELTA_VERSION_INVALID"
+          case (StartingTimestamp(null), _) => "DELTA_TIMESTAMP_INVALID"
+          case (_, EndingVersion(null)) => "DELTA_VERSION_INVALID"
+          case (_, EndingTimestamp(null)) => "DELTA_TIMESTAMP_INVALID"
+        }
+        val expectedErrorParameters = expectedError match {
+          case "DELTA_VERSION_INVALID" => Map("version" -> "null")
+          case "DELTA_TIMESTAMP_INVALID" => Map("expr" -> "NULL")
+        }
+
+        checkError(
+          intercept[DeltaAnalysisException] {
+            cdcRead(new TableName(tblName), start, end)
+          },
+          expectedError,
+          parameters = expectedErrorParameters)
+      }
+    }
+  }
+
+  for {
+    start <- Seq(StartingVersion("0"), StartingTimestamp(dateFormat.format(new Date(1))))
+    end <- Seq(EndingVersion(null), EndingTimestamp(null))
+  } {
+    testNullRangeBoundary(start, end)
+  }
+
+  for {
+    start <- Seq(StartingVersion(null), StartingTimestamp(null))
+    end <- Seq(
+      Unbounded,
+      EndingVersion(null),
+      EndingTimestamp(null),
+      EndingVersion("0"),
+      EndingTimestamp(dateFormat.format(new Date(1))))
+  } {
+    testNullRangeBoundary(start, end)
+  }
+
   test("filters should be pushed down") {
     val tblName = "tbl"
     withTable(tblName) {

@@ -38,12 +38,15 @@ class ParquetColumnReaders {
   public static Converter createConverter(
       int initialBatchSize, DataType typeFromClient, Type typeFromFile) {
     if (typeFromClient instanceof StructType) {
+      checkArgument(typeFromFile instanceof GroupType, "cannot be cast to GroupType");
       return new RowColumnReader(
           initialBatchSize, (StructType) typeFromClient, (GroupType) typeFromFile);
     } else if (typeFromClient instanceof ArrayType) {
+      checkArgument(typeFromFile instanceof GroupType, "cannot be cast to GroupType");
       return new ArrayColumnReader(
           initialBatchSize, (ArrayType) typeFromClient, (GroupType) typeFromFile);
     } else if (typeFromClient instanceof MapType) {
+      checkArgument(typeFromFile instanceof GroupType, "cannot be cast to GroupType");
       return new MapColumnReader(
           initialBatchSize, (MapType) typeFromClient, (GroupType) typeFromFile);
     } else if (typeFromClient instanceof StringType || typeFromClient instanceof BinaryType) {

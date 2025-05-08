@@ -1522,6 +1522,13 @@ trait DeltaErrorsSuiteBase
       checkError(e, "DELTA_TIMESTAMP_INVALID", "42816", Map("expr" -> expr.sql))
     }
     {
+      val version = "null"
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.versionInvalid(version)
+      }
+      checkError(e, "DELTA_VERSION_INVALID", "42815", Map("version" -> version))
+    }
+    {
       val e = intercept[DeltaAnalysisException] {
         throw DeltaErrors.notADeltaSourceException("sample")
       }
@@ -2148,6 +2155,12 @@ trait DeltaErrorsSuiteBase
         throw DeltaErrors.unrecognizedColumnChange("change1")
       }
       checkError(e, "DELTA_UNRECOGNIZED_COLUMN_CHANGE", "42601", Map("otherClass" -> "change1"))
+    }
+    {
+      val e = intercept[DeltaIllegalArgumentException] {
+        throw DeltaErrors.nullRangeBoundaryInCDCRead()
+      }
+      checkError(e, "DELTA_CDC_READ_NULL_RANGE_BOUNDARY", "22004", Map.empty[String, String])
     }
     {
       val e = intercept[DeltaIllegalArgumentException] {
