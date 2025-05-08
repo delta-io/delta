@@ -558,7 +558,13 @@ class IcebergWriterCompatV1Suite extends DeltaTableWriteSuiteBase with ColumnMap
 
   test("legacy table features allowed with icebergWriterCompatV1 if inactive") {
     val tblProperties =
-      Seq("invariants", "changeDataFeed", "checkConstraints", "identityColumns", "generatedColumns", "typeWidening")
+      Seq(
+        "invariants",
+        "changeDataFeed",
+        "checkConstraints",
+        "identityColumns",
+        "generatedColumns",
+        "typeWidening")
         .map(tableFeature => s"delta.feature.$tableFeature" -> "supported")
         .toMap
 
