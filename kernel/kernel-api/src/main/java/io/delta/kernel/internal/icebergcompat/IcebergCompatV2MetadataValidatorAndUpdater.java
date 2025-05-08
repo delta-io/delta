@@ -180,7 +180,7 @@ public class IcebergCompatV2MetadataValidatorAndUpdater
         if (inputContext.newProtocol.supportsFeature(TYPE_WIDENING_RW_FEATURE)) {
           // TODO: Currently Kernel has no support for writing with type widening. When it is
           //  supported extend this to allow a whitelist of supported type widening in Iceberg
-          throw DeltaErrors.unsupportedTableFeature(TYPE_WIDENING_RW_FEATURE.featureName());
+          return;
         } else if (inputContext.newProtocol.supportsFeature(TYPE_WIDENING_PREVIEW_TABLE_FEATURE)) {
           throw DeltaErrors.unsupportedTableFeature(
               TYPE_WIDENING_PREVIEW_TABLE_FEATURE.featureName());
