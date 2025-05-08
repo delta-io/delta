@@ -177,7 +177,7 @@ trait MetadataCleanup extends DeltaLogging {
     if (checkpointProtectionVersion <= 0) return true
 
     def versionGreaterOrEqualToThreshold(file: FileStatus): Boolean =
-      getDeltaFileOrCheckpointVersion(file.getPath) >= checkpointProtectionVersion - 1
+      getDeltaFileChecksumOrCheckpointVersion(file.getPath) >= checkpointProtectionVersion - 1
 
     val expiredDeltaLogs = listExpiredDeltaLogs(fileCutOffTime)
     expiredDeltaLogs.isEmpty || expiredDeltaLogs.exists(versionGreaterOrEqualToThreshold)
