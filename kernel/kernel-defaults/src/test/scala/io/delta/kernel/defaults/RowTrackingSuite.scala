@@ -52,8 +52,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
       schema: StructType = testSchema,
       extraProps: Map[String, String] = Map.empty): Unit = {
     val tableProps = Map(TableConfig.ROW_TRACKING_ENABLED.getKey -> "true") ++ extraProps
-    createTxn(engine, tablePath, isNewTable = true, schema, tableProperties = tableProps)
-      .commit(engine, emptyIterable())
+    createEmptyTable(engine, tablePath, schema = schema, tableProperties = tableProps)
   }
 
   private def verifyBaseRowIDs(
@@ -456,15 +455,6 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
   private val ROW_TRACKING_ENABLED_PROP = Map(TableConfig.ROW_TRACKING_ENABLED.getKey -> "true")
   private val ROW_TRACKING_DISABLED_PROP = Map(TableConfig.ROW_TRACKING_ENABLED.getKey -> "false")
 
-  private def assertRowTrackingEnabledProp(
-      engine: Engine,
-      tablePath: String,
-      expectedValue: Boolean): Unit = {
-    val table = TableImpl.forPath(engine, tablePath)
-    val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-    assertMetadataProp(snapshot, TableConfig.ROW_TRACKING_ENABLED, expectedValue)
-  }
-
   test("row tracking can be enabled/disabled on new table") {
     withTempDirAndEngine { (tablePath, engine) =>
       createTxn(
@@ -473,7 +463,9 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
         isNewTable = true,
         schema = testSchema,
         tableProperties = ROW_TRACKING_ENABLED_PROP).commit(engine, emptyIterable())
-      assertRowTrackingEnabledProp(engine, tablePath, expectedValue = true)
+      val snapshot =
+        TableImpl.forPath(engine, tablePath).getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      assertMetadataProp(snapshot, TableConfig.ROW_TRACKING_ENABLED, true)
     }
 
     withTempDirAndEngine { (tablePath, engine) =>
@@ -483,7 +475,9 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
         isNewTable = true,
         schema = testSchema,
         tableProperties = ROW_TRACKING_DISABLED_PROP).commit(engine, emptyIterable())
-      assertRowTrackingEnabledProp(engine, tablePath, expectedValue = false)
+      val snapshot =
+        TableImpl.forPath(engine, tablePath).getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      assertMetadataProp(snapshot, TableConfig.ROW_TRACKING_ENABLED, false)
     }
   }
 

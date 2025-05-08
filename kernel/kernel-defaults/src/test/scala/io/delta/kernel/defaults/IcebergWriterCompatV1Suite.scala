@@ -474,6 +474,12 @@ class IcebergWriterCompatV1Suite extends DeltaTableWriteSuiteBase with ColumnMap
     // We throw an error earlier for variant for some reason
     expectedErrorMessage = "Kernel doesn't support writing data of type: variant")
 
+  testIncompatibleTableFeature(
+    "rowTracking",
+    tablePropertiesToEnable = Map("delta.enableRowTracking" -> "true"),
+    expectedErrorMessage =
+      "Table features [rowTracking] are incompatible with icebergWriterCompatV1")
+
   // deletionVectors is blocked by both icebergCompatV2 and icebergWriterCompatV1; since the
   // icebergCompatV2 checks are executed first as part of ICEBERG_COMPAT_V2_ENABLED.postProcess we
   // hit that error message first
@@ -500,7 +506,7 @@ class IcebergWriterCompatV1Suite extends DeltaTableWriteSuiteBase with ColumnMap
 
   testIncompatibleTableFeature(
     "rowTracking inactive",
-    tablePropertiesToEnable = Map(TableConfig.ROW_TRACKING_ENABLED.getKey -> "true"),
+    tablePropertiesToEnable = Map("delta.feature.rowTracking" -> "supported"),
     expectedErrorMessage =
       "Table features [rowTracking] are incompatible with icebergWriterCompatV1")
 

@@ -131,6 +131,7 @@ class TableFeaturesSuite extends AnyFunSuite {
     ("typeWidening", testMetadata(tblProps = Map("delta.enableTypeWidening" -> "false")), false),
     // Disable this until we have support to enable row tracking through metadata
     ("rowTracking", testMetadata(tblProps = Map("delta.enableRowTracking" -> "true")), true),
+    ("rowTracking", testMetadata(tblProps = Map("delta.enableRowTracking" -> "false")), false),
     (
       "deletionVectors",
       testMetadata(tblProps = Map("delta.enableDeletionVectors" -> "true")),
