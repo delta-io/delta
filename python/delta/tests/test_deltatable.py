@@ -157,7 +157,7 @@ class DeltaTableTestsMixin:
             .whenNotMatchedBySourceUpdate(set={"value": "value + 0"}) \
             .execute()
         self.__checkAnswer(merge_output,
-                           ([Row(6,  # affected rows
+                           ([Row(6,  # type: ignore[call-overload]
                                  4,  # updated rows (a and b in WHEN MATCHED
                                      # and c and d in WHEN NOT MATCHED BY SOURCE)
                                  0,  # deleted rows
@@ -540,7 +540,7 @@ class DeltaTableTestsMixin:
             [Row("Overwrite")],
             StructType([StructField("operationParameters.mode", StringType(), True)]))
 
-    def test_cdc(self):
+    def test_cdc(self) -> None:
         self.spark.range(0, 5).write.format("delta").save(self.tempFile)
         deltaTable = DeltaTable.forPath(self.spark, self.tempFile)
         # Enable Change Data Feed
@@ -971,10 +971,10 @@ class DeltaTableTestsMixin:
 
     def test_verify_paritionedBy_compatibility(self) -> None:
         try:
-            from pyspark.sql.column import _to_seq  # type: ignore[import-not-found]
+            from pyspark.sql.column import _to_seq  # type: ignore[attr-defined]
         except ImportError:
             # Spark 4
-            from pyspark.sql.classic.column import _to_seq  # type: ignore
+            from pyspark.sql.classic.column import _to_seq  # type: ignore[attr-defined]
 
         with self.table("testTable"):
             tableBuilder = DeltaTable.create(self.spark).tableName("testTable") \
