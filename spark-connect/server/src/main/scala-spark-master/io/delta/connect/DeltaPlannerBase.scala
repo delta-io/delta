@@ -19,19 +19,20 @@ package org.apache.spark.sql.connect.delta
 import io.delta.connect.proto
 import io.delta.tables.DeltaTable
 
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.connect.planner.SparkConnectPlanner
 
 /**
  * Base trait for the planner plugins of Delta Connect.
  */
 trait DeltaPlannerBase {
   protected def transformDeltaTable(
-      spark: SparkSession, deltaTable: proto.DeltaTable): DeltaTable = {
-    deltaTable.getAccessTypeCase match {
+      planner: SparkConnectPlanner, deltaTable: proto.DeltaTable): DeltaTable = {
+     deltaTable.getAccessTypeCase match {
       case proto.DeltaTable.AccessTypeCase.PATH =>
-        DeltaTable.forPath(spark, deltaTable.getPath.getPath, deltaTable.getPath.getHadoopConfMap)
+        DeltaTable.forPath(
+          planner.session, deltaTable.getPath.getPath, deltaTable.getPath.getHadoopConfMap)
       case proto.DeltaTable.AccessTypeCase.TABLE_OR_VIEW_NAME =>
-        DeltaTable.forName(spark, deltaTable.getTableOrViewName)
+        DeltaTable.forName(planner.session, deltaTable.getTableOrViewName)
     }
   }
 }

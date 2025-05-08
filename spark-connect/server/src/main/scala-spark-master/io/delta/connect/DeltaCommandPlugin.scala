@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.connect.delta
 
+import scala.collection.JavaConverters._
+
 import com.google.protobuf
 import io.delta.connect.proto
 
@@ -39,10 +41,67 @@ class DeltaCommandPlugin extends CommandPlugin with DeltaPlannerBase {
 
   private def process(command: proto.DeltaCommand, planner: SparkConnectPlanner): Unit = {
     command.getCommandTypeCase match {
-      // TODO(long.vu): Add support for Clone once we fix shading of
-      // StreamObserver in SparkConnectPlanner.
+      case proto.DeltaCommand.CommandTypeCase.CLONE_TABLE =>
+        processCloneTable(planner, command.getCloneTable)
+      case proto.DeltaCommand.CommandTypeCase.VACUUM_TABLE =>
+        processVacuumTable(planner, command.getVacuumTable)
+      case proto.DeltaCommand.CommandTypeCase.UPGRADE_TABLE_PROTOCOL =>
+        processUpgradeTableProtocol(planner, command.getUpgradeTableProtocol)
+      case proto.DeltaCommand.CommandTypeCase.GENERATE =>
+        processGenerate(planner, command.getGenerate)
       case _ =>
         throw InvalidPlanInput(s"${command.getCommandTypeCase}")
     }
+  }
+
+
+  private def processCloneTable(
+      planner: SparkConnectPlanner, cloneTable: proto.CloneTable): Unit = {
+    val deltaTable = transformDeltaTable(planner, cloneTable.getTable)
+    if (cloneTable.hasVersion) {
+      deltaTable.cloneAtVersion(
+        cloneTable.getVersion,
+        cloneTable.getTarget,
+        cloneTable.getIsShallow,
+        cloneTable.getReplace,
+        cloneTable.getPropertiesMap.asScala.toMap
+      )
+    } else if (cloneTable.hasTimestamp) {
+      deltaTable.cloneAtTimestamp(
+        cloneTable.getTimestamp,
+        cloneTable.getTarget,
+        cloneTable.getIsShallow,
+        cloneTable.getReplace,
+        cloneTable.getPropertiesMap.asScala.toMap
+      )
+    } else {
+      deltaTable.clone(
+        cloneTable.getTarget,
+        cloneTable.getIsShallow,
+        cloneTable.getReplace,
+        cloneTable.getPropertiesMap.asScala.toMap
+      )
+    }
+  }
+
+  private def processVacuumTable(planner: SparkConnectPlanner, vacuum: proto.VacuumTable): Unit = {
+    val deltaTable = transformDeltaTable(planner, vacuum.getTable)
+    if (vacuum.hasRetentionHours) {
+      deltaTable.vacuum(vacuum.getRetentionHours)
+    } else {
+      deltaTable.vacuum()
+    }
+  }
+
+  private def processUpgradeTableProtocol(
+      planner: SparkConnectPlanner, upgradeTableProtocol: proto.UpgradeTableProtocol): Unit = {
+    val deltaTable = transformDeltaTable(planner, upgradeTableProtocol.getTable)
+    deltaTable.upgradeTableProtocol(
+      upgradeTableProtocol.getReaderVersion, upgradeTableProtocol.getWriterVersion)
+  }
+
+  private def processGenerate(planner: SparkConnectPlanner, generate: proto.Generate): Unit = {
+    val deltaTable = transformDeltaTable(planner, generate.getTable)
+    deltaTable.generate(generate.getMode)
   }
 }

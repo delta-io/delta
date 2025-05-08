@@ -27,6 +27,9 @@ option java_package = "io.delta.connect.proto";
 message DeltaCommand {
   oneof command_type {
     CloneTable clone_table = 1;
+    VacuumTable vacuum_table = 2;
+    UpgradeTableProtocol upgrade_table_protocol = 3;
+    Generate generate = 4;
   }
 }
 
@@ -56,4 +59,36 @@ message CloneTable {
   // (Required) User-defined table properties that override properties with the same key in the
   // source table.
   map<string, string> properties = 7;
+}
+
+// Command that deletes files and directories in the table that are not needed by the table for
+// maintaining older versions up to the given retention threshold
+message VacuumTable {
+  // (Required) The Delta table to vacuum.
+  DeltaTable table = 1;
+
+  // (Optional) Number of hours retain history for. If not specified, then the default retention
+  // period will be used.
+  optional double retention_hours = 2;
+}
+
+// Command to updates the protocol version of the table so that new features can be used.
+message UpgradeTableProtocol {
+  // (Required) The Delta table to upgrade the protocol of.
+  DeltaTable table = 1;
+
+  // (Required) The minimum required reader protocol version.
+  int32 reader_version = 2;
+
+  // (Required) The minimum required writer protocol version.
+  int32 writer_version = 3;
+}
+
+// Command that generates manifest files for a given Delta table.
+message Generate {
+  // (Required) The Delta table to generate the manifest files for.
+  DeltaTable table = 1;
+
+  // (Required) The type of manifest file to be generated.
+  string mode = 2;
 }
