@@ -436,9 +436,9 @@ class DeltaTable private[tables](
       target: String,
       isShallow: Boolean,
       replace: Boolean,
-      version: Option[Int],
-      timestamp: Option[String],
-      properties: Map[String, String]): DeltaTable = {
+      properties: Map[String, String],
+      versionAsOf: Option[Int] = None,
+      timestampAsOf: Option[String] = None): DeltaTable = {
     val clone = proto.CloneTable
       .newBuilder()
       .setTable(table)
@@ -446,8 +446,8 @@ class DeltaTable private[tables](
       .setIsShallow(isShallow)
       .setReplace(replace)
       .putAllProperties(properties.asJava)
-    version.foreach(clone.setVersion)
-    timestamp.foreach(clone.setTimestamp)
+    versionAsOf.foreach(clone.setVersion)
+    timestampAsOf.foreach(clone.setTimestamp)
     val command = proto.DeltaCommand.newBuilder().setCloneTable(clone).build()
     execute(command)
     DeltaTable.forPath(sparkSession, target)
@@ -480,7 +480,7 @@ class DeltaTable private[tables](
       isShallow: Boolean,
       replace: Boolean,
       properties: Map[String, String]): DeltaTable = {
-    executeClone(target, isShallow, replace, version = None, timestamp = None, properties)
+    executeClone(target, isShallow, replace, properties, versionAsOf = None, timestampAsOf = None)
   }
 
   /**
@@ -571,7 +571,7 @@ class DeltaTable private[tables](
       isShallow: Boolean,
       replace: Boolean,
       properties: Map[String, String]): DeltaTable = {
-    executeClone(target, isShallow, replace, version = Some(version), timestamp = None, properties)
+    executeClone(target, isShallow, replace, properties, versionAsOf = Some(version), timestampAsOf = None)
   }
 
   /**
@@ -675,7 +675,7 @@ class DeltaTable private[tables](
       replace: Boolean,
       properties: Map[String, String]): DeltaTable = {
     executeClone(
-      target, isShallow, replace, version = None, timestamp = Some(timestamp), properties)
+      target, isShallow, replace, properties, versionAsOf = None, timestampAsOf = Some(timestamp))
   }
 
   /**

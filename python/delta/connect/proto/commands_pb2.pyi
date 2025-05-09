@@ -215,7 +215,7 @@ global___CloneTable = CloneTable
 
 class VacuumTable(google.protobuf.message.Message):
     """Command that deletes files and directories in the table that are not needed by the table for
-    maintaining older versions up to the given retention threshold
+    maintaining older versions up to the given retention threshold.
     """
 
     DESCRIPTOR: google.protobuf.descriptor.Descriptor
