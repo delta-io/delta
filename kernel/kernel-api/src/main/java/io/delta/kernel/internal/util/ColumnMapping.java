@@ -131,6 +131,14 @@ public class ColumnMapping {
     return field.getMetadata().getLong(COLUMN_MAPPING_ID_KEY).intValue();
   }
 
+  public static boolean hasColumnId(StructField field) {
+    return field.getMetadata().contains(COLUMN_MAPPING_ID_KEY);
+  }
+
+  public static boolean hasPhysicalName(StructField field) {
+    return field.getMetadata().contains(COLUMN_MAPPING_PHYSICAL_NAME_KEY);
+  }
+
   public static void verifyColumnMappingChange(
       Map<String, String> oldConfig, Map<String, String> newConfig, boolean isNewTable) {
     ColumnMappingMode oldMappingMode = getColumnMappingMode(oldConfig);
@@ -208,14 +216,6 @@ public class ColumnMapping {
       maxColumnId = findMaxColumnId(field, maxColumnId);
     }
     return maxColumnId;
-  }
-
-  static boolean hasColumnId(StructField field) {
-    return field.getMetadata().contains(COLUMN_MAPPING_ID_KEY);
-  }
-
-  static boolean hasPhysicalName(StructField field) {
-    return field.getMetadata().contains(COLUMN_MAPPING_PHYSICAL_NAME_KEY);
   }
 
   private static int findMaxColumnId(StructField field, int maxColumnId) {
@@ -468,6 +468,15 @@ public class ColumnMapping {
       AtomicInteger maxColumnId,
       boolean isNewTable,
       boolean useColumnIdForPhysicalName) {
+    if (hasColumnId(field) ^ hasPhysicalName(field)) {
+      // If a connector is providing column mapping metadata in the given schema we require it to be
+      // complete
+      throw new IllegalArgumentException(
+          String.format(
+              "Both columnId and physicalName must be present if one is present. "
+                  + "Found this field with incomplete column mapping metadata: %s",
+              field));
+    }
     if (!hasColumnId(field)) {
       field =
           field.withNewMetadata(
