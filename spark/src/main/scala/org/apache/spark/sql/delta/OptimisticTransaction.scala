@@ -806,9 +806,10 @@ trait OptimisticTransactionImpl extends DeltaTransaction
       CoordinatedCommitsUtils.getExplicitICTConfigurations(snapshot.metadata.configuration)
     val oldMappingMode = snapshot.metadata.columnMappingMode
     val newMappingMode = metadata.columnMappingMode
-    if (oldMappingMode == newMappingMode &&
-       spark.conf.get(DeltaSQLConf.REUSE_COLUMN_METADATA_DURING_REPLACE_TABLE)
-    ) {
+    val shouldReuseColumnMetadataForReplaceTable =
+      spark.conf.get(DeltaSQLConf.REUSE_COLUMN_METADATA_DURING_REPLACE_TABLE)
+
+    if (oldMappingMode == newMappingMode && shouldReuseColumnMetadataForReplaceTable) {
       isOverwritingSchema = true
     }
     // Update the metadata.
