@@ -366,7 +366,7 @@ object TableFeature {
       RowTrackingFeature,
       InCommitTimestampTableFeature,
       VariantTypeTableFeature,
-      VariantShreddingTableFeature,
+      VariantShreddingPreviewTableFeature,
       CoordinatedCommitsTableFeature,
       CheckpointProtectionTableFeature)
     if (DeltaUtils.isTesting && testingFeaturesEnabled) {
@@ -624,8 +624,9 @@ object VariantTypeTableFeature extends ReaderWriterFeature(name = "variantType-p
   }
 }
 
-object VariantShreddingTableFeature extends ReaderWriterFeature(name = "variantShredding-preview")
-  with FeatureAutomaticallyEnabledByMetadata {
+object VariantShreddingPreviewTableFeature
+    extends ReaderWriterFeature(name = "variantShredding-preview")
+    with FeatureAutomaticallyEnabledByMetadata {
   override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
 
   override def metadataRequiresFeatureToBeEnabled(
