@@ -26,21 +26,23 @@ import io.delta.connect.spark.{proto => spark_proto}
 import io.delta.tables.DeltaTable
 
 import org.apache.spark.SparkConf
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.{Dataset, QueryTest, Row, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.ResolvedTable
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
 import org.apache.spark.sql.connect.config.Connect
 import org.apache.spark.sql.connect.delta.ImplicitProtoConversions._
-import org.apache.spark.sql.connect.planner.{SparkConnectPlanner, SparkConnectPlanTest}
+import org.apache.spark.sql.connect.planner.{SparkConnectPlanTest, SparkConnectPlanner}
 import org.apache.spark.sql.connect.service.{SessionHolder, SparkConnectService}
-import org.apache.spark.sql.delta.{DataFrameUtils, DeltaHistory, DeltaLog}
+import org.apache.spark.sql.delta.{DataFrameUtils, DeltaConfigs, DeltaHistory, DeltaLog}
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.commands.{DescribeDeltaDetailCommand, DescribeDeltaHistory}
+import org.apache.spark.sql.delta.hooks.GenerateSymlinkManifest
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import org.apache.spark.sql.delta.util.FileNames
+import org.apache.spark.sql.delta.util.{DeltaFileOperations, FileNames}
 import org.apache.spark.sql.functions._
 
 class DeltaConnectPlannerSuite
@@ -51,6 +53,11 @@ class DeltaConnectPlannerSuite
   protected override def sparkConf: SparkConf = {
     super.sparkConf
       .set(Connect.CONNECT_EXTENSIONS_RELATION_CLASSES.key, classOf[DeltaRelationPlugin].getName)
+      .set(Connect.CONNECT_EXTENSIONS_COMMAND_CLASSES.key, classOf[DeltaCommandPlugin].getName)
+  }
+
+  private def createSparkCommand(command: proto.DeltaCommand.Builder): spark_proto.Command = {
+    spark_proto.Command.newBuilder().setExtension(protobuf.Any.pack(command.build())).build()
   }
 
   private def createSparkRelation(relation: proto.DeltaRelation.Builder): spark_proto.Relation = {
@@ -299,7 +306,7 @@ class DeltaConnectPlannerSuite
       spark.range(start = 0, end = 2000, step = 1, numPartitions = 2)
         .write.format("delta").mode("append").save(dir.getAbsolutePath)
 
-      val log = DeltaLog.forTable(spark, dir)
+      val deltaLog = DeltaLog.forTable(spark, dir)
       val input = createSparkRelation(
         proto.DeltaRelation
           .newBuilder()
@@ -310,7 +317,7 @@ class DeltaConnectPlannerSuite
                   proto.DeltaTable.Path.newBuilder().setPath(dir.getAbsolutePath)
                 )
               )
-              .setTimestamp(getTimestampForVersion(log, version = 0))
+              .setTimestamp(getTimestampForVersion(deltaLog, version = 0))
           )
       )
 
@@ -452,6 +459,172 @@ class DeltaConnectPlannerSuite
         spark.read.table(tableName),
         Seq.tabulate(1000)(i => Row(i, if (i % 2 == 0) i + 1 else i))
       )
+    }
+  }
+
+  test("clone - shallow") {
+    withTempDir { targetDir =>
+      val sourceTableName = "source_table"
+      withTable(sourceTableName) {
+        spark.range(end = 1000).write.format("delta").saveAsTable(sourceTableName)
+
+        transform(createSparkCommand(
+          proto.DeltaCommand.newBuilder()
+            .setCloneTable(
+              proto.CloneTable.newBuilder()
+                .setTable(proto.DeltaTable.newBuilder().setTableOrViewName(sourceTableName))
+                .setTarget(targetDir.getAbsolutePath)
+                .setIsShallow(true)
+                .setReplace(true)
+            )
+        ))
+
+        // Check that we have successfully cloned the table.
+        checkAnswer(
+          spark.read.format("delta").load(targetDir.getAbsolutePath),
+          spark.read.table(sourceTableName))
+
+        // Check that a shallow clone was performed.
+        val deltaLog = DeltaLog.forTable(spark, targetDir)
+        deltaLog.update().allFiles.collect().foreach { f =>
+          assert(f.pathAsUri.isAbsolute)
+        }
+      }
+    }
+  }
+
+  test("vacuum - without retention hours argument") {
+    val tableName = "test_table"
+
+    def runVacuum(): Unit = {
+      transform(createSparkCommand(
+        proto.DeltaCommand.newBuilder()
+          .setVacuumTable(
+            proto.VacuumTable.newBuilder()
+              .setTable(proto.DeltaTable.newBuilder().setTableOrViewName(tableName))
+          )
+      ))
+    }
+
+    def setRetentionInterval(retentionInterval: String): Unit = {
+      spark.sql(
+        s"""ALTER TABLE $tableName
+           |SET TBLPROPERTIES (
+           |  '${DeltaConfigs.TOMBSTONE_RETENTION.key}' = '$retentionInterval'
+           |)""".stripMargin
+      )
+    }
+
+    withTable(tableName) {
+      // Set up a Delta table with an untracked file.
+      spark.range(1000).write.format("delta").saveAsTable(tableName)
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+      val tempFile =
+        new File(DeltaFileOperations.absolutePath(deltaLog.dataPath.toString, "abc.parquet").toUri)
+      tempFile.createNewFile()
+
+      // Run a vacuum with the untracked file still within the retention period.
+      setRetentionInterval(retentionInterval = "1000 hours")
+      runVacuum()
+      assert(tempFile.exists())
+
+      // Run a vacuum with the untracked file outside of the retention period.
+      setRetentionInterval(retentionInterval = "0 hours")
+      runVacuum()
+      assert(!tempFile.exists())
+    }
+  }
+
+  test("vacuum - with retention hours argument") {
+    val tableName = "test_table"
+
+    def runVacuum(retentionHours: Float): Unit = {
+      transform(createSparkCommand(
+        proto.DeltaCommand.newBuilder()
+          .setVacuumTable(
+            proto.VacuumTable.newBuilder()
+              .setTable(proto.DeltaTable.newBuilder().setTableOrViewName(tableName))
+              .setRetentionHours(retentionHours)
+          )
+      ))
+    }
+
+    withTable(tableName) {
+      // Set up a Delta table with an untracked file.
+      spark.range(1000).write.format("delta").saveAsTable(tableName)
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+      val tempFile =
+        new File(DeltaFileOperations.absolutePath(deltaLog.dataPath.toString, "abc.parquet").toUri)
+      tempFile.createNewFile()
+
+      // Run a vacuum with the untracked file still within the retention period.
+      runVacuum(retentionHours = 1000.0f)
+      assert(tempFile.exists())
+
+      // Run a vacuum with the untracked file outside of the retention period.
+      withSQLConf(DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false") {
+        runVacuum(retentionHours = 0.0f)
+      }
+      assert(!tempFile.exists())
+    }
+  }
+
+  test("upgrade table protocol") {
+    val tableName = "test_table"
+    withTable(tableName) {
+      // Create a Delta table with protocol version (1, 1).
+      val oldReaderVersion = 1
+      val oldWriterVersion = 1
+      spark.range(1000)
+        .write
+        .format("delta")
+        .option(DeltaConfigs.MIN_READER_VERSION.key, oldReaderVersion)
+        .option(DeltaConfigs.MIN_WRITER_VERSION.key, oldWriterVersion)
+        .saveAsTable(tableName)
+
+      // Check that protocol version is as expected, before we upgrade it.
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+      val oldProtocol = deltaLog.update().protocol
+      assert(oldProtocol.minReaderVersion === oldReaderVersion)
+      assert(oldProtocol.minWriterVersion === oldWriterVersion)
+
+      // Use Delta Connect to upgrade the protocol of the table.
+      val newReaderVersion = 2
+      val newWriterVersion = 5
+      transform(createSparkCommand(
+        proto.DeltaCommand.newBuilder()
+          .setUpgradeTableProtocol(
+            proto.UpgradeTableProtocol.newBuilder()
+              .setTable(proto.DeltaTable.newBuilder().setTableOrViewName(tableName))
+              .setReaderVersion(newReaderVersion)
+              .setWriterVersion(newWriterVersion)
+          )
+      ))
+
+      // Check that protocol version is as expected, after we have upgraded it.
+      val newProtocol = deltaLog.update().protocol
+      assert(newProtocol.minReaderVersion === newReaderVersion)
+      assert(newProtocol.minWriterVersion === newWriterVersion)
+    }
+  }
+
+  test("generate manifest") {
+    withTempDir { dir =>
+      spark.range(1000).write.format("delta").mode("overwrite").save(dir.getAbsolutePath)
+
+      val manifestFile = new File(dir, GenerateSymlinkManifest.MANIFEST_LOCATION)
+      assert(!manifestFile.exists())
+      transform(createSparkCommand(
+        proto.DeltaCommand.newBuilder()
+          .setGenerate(
+            proto.Generate.newBuilder()
+              .setTable(
+                proto.DeltaTable.newBuilder()
+                  .setPath(proto.DeltaTable.Path.newBuilder().setPath(dir.getAbsolutePath)))
+              .setMode("symlink_format_manifest"))))
+
+      assert(manifestFile.exists())
+
     }
   }
 
