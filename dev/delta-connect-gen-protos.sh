@@ -72,7 +72,7 @@ for f in `find gen/proto/python/delta/connect -name "*.py*"`; do
     sed \
       -e 's/import spark.connect./import pyspark.sql.connect.proto./g' \
       -e "s/DESCRIPTOR, 'spark.connect/DESCRIPTOR, 'pyspark.sql.connect.proto/g" \
-      -e 's/from delta.connect import/from delta.connect.proto import/g' \
+      -e 's/from spark.connect import/from pyspark.sql.connect.proto import/g' \
       -e "s/DESCRIPTOR, 'delta.connect/DESCRIPTOR, 'delta.connect.proto/g" \
       -e 's/from delta.connect import/from delta.connect.proto import/g' \
       $f > $f.tmp
