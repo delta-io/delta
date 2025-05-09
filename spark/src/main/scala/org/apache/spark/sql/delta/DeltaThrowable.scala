@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.SparkThrowable
+import org.apache.spark.{QueryContext, SparkThrowable}
 
 /**
  * The trait for all exceptions of Delta code path.

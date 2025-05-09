@@ -257,7 +257,7 @@ class DeltaLogActionUtilsSuite extends AnyFunSuite with MockFileSystemClientUtil
     ).toInMemoryList.asScala
 
     assert(commitFiles.forall(fs => FileNames.isCommitFile(fs.getPath)))
-    assert(extractVersions(commitFiles) == Seq(10, 11, 12, 13, 14, 15, 16, 17))
+    assert(extractVersions(commitFiles.toSeq) == Seq(10, 11, 12, 13, 14, 15, 16, 17))
 
     val checkpointFiles = listDeltaLogFilesAsIter(
       createMockFSListFromEngine(checkpointsAndDeltas),
@@ -269,7 +269,7 @@ class DeltaLogActionUtilsSuite extends AnyFunSuite with MockFileSystemClientUtil
     ).toInMemoryList.asScala
 
     assert(checkpointFiles.forall(fs => FileNames.isCheckpointFile(fs.getPath)))
-    assert(extractVersions(checkpointFiles) == Seq(10, 14, 14, 17))
+    assert(extractVersions(checkpointFiles.toSeq) == Seq(10, 14, 14, 17))
   }
 
   test("listDeltaLogFiles: mustBeRecreatable") {
