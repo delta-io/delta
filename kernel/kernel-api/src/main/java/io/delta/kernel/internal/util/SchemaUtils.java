@@ -24,6 +24,7 @@ import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.DeltaErrors;
+import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.skipping.StatsSchemaHelper;
 import io.delta.kernel.types.*;
@@ -95,6 +96,7 @@ public class SchemaUtils {
    *   <li>Column names contain only valid characters
    *   <li>Data types are supported
    *   <li>Physical column name consistency is preserved in the new schema
+   *   <li>If IcebergWriterCompatV1 is enabled, that map struct keys have not changed
    *   <li>ToDo: No new non-nullable fields are added or no tightening of nullable fields
    *   <li>ToDo: Nested IDs for array/map types are preserved in the new schema for IcebergCompatV2
    *   <li>ToDo: No type changes
@@ -113,6 +115,7 @@ public class SchemaUtils {
     validateSchema(newSchema, true /*columnMappingEnabled*/);
     validatePartitionColumns(newSchema, new ArrayList<>(currentPartitionColumns));
     validateSchemaEvolution(currentSchema, newSchema, newMetadata, clusteringColumnPhysicalNames);
+    validateNoMapStructKeyChanges(currentSchema, newSchema, newMetadata.getConfiguration());
   }
 
   /**
@@ -646,6 +649,49 @@ public class SchemaUtils {
       validateSupportedType(((MapType) dataType).getValueType());
     } else {
       throw unsupportedDataType(dataType);
+    }
+  }
+
+  /**
+   * If IcebergWriterCompatV1 is enabled, we need to ensure that map struct keys don't change. This
+   * validates that
+   */
+  private static void validateNoMapStructKeyChanges(
+      StructType currentSchema, StructType newSchema, Map<String, String> configuration) {
+    if (TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.fromMetadata(configuration)) {
+      // do the check if the feature is enabled now
+      List<Tuple2<List<String>, StructField>> columnPathToMaps =
+          filterRecursively(
+              currentSchema,
+              true, /* recurseIntoMapOrArrayElements, need to check maps inside arrays */
+              false, /* stopOnFirstMatch */
+              sf -> {
+                DataType dataType = sf.getDataType();
+                return (dataType instanceof MapType)
+                    && ((MapType) dataType).getKeyField().getDataType() instanceof StructType;
+              });
+      Map<Integer, StructField> updatedFieldsById = fieldsById(newSchema);
+      for (Tuple2<List<String>, StructField> pathAndField : columnPathToMaps) {
+        StructField newMap = updatedFieldsById.get(getColumnId(pathAndField._2));
+        if (newMap != null) {
+          // if the map was removed, that's okay, so only check if newMap is not null
+          DataType newDataType = newMap.getDataType();
+          if (newDataType instanceof MapType) {
+            // This check doesn't block changing the whole type, so if it's not a Map, don't bother
+            // to check anything
+            StructField currentStructKey = ((MapType) pathAndField._2.getDataType()).getKeyField();
+            // cast is safe, we filtered for this
+            StructType currentKeyType = (StructType) currentStructKey.getDataType();
+            StructField newStructKey = ((MapType) newDataType).getKeyField();
+            if (!currentKeyType.equals(newStructKey.getDataType())) {
+              throw new KernelException(
+                  String.format(
+                      "Cannot change the type key of Map field %s from %s to %s",
+                      pathAndField._2.getName(), currentKeyType, newStructKey.getDataType()));
+            }
+          }
+        }
+      }
     }
   }
 }
