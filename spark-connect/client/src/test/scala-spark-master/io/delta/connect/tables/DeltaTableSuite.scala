@@ -222,7 +222,7 @@ class DeltaTableSuite extends DeltaQueryTest with RemoteSparkSession {
       spark.range(10).write.format("delta").save(srcDir)
 
       val srcTable = io.delta.tables.DeltaTable.forPath(spark, srcDir)
-      srcTable.clone(dstDir)
+      srcTable.clone(dstDir, true)
 
       checkAnswer(
         spark.read.format("delta").load(dstDir),
@@ -252,7 +252,7 @@ class DeltaTableSuite extends DeltaQueryTest with RemoteSparkSession {
 
       val srcTable = io.delta.tables.DeltaTable.forPath(spark, srcDir)
 
-      srcTable.cloneAtVersion(1, dstDir)
+      srcTable.cloneAtVersion(1, dstDir, true)
 
       checkAnswer(
         spark.read.format("delta").load(dstDir),

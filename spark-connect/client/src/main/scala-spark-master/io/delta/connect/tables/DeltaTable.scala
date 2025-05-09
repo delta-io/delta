@@ -524,23 +524,6 @@ class DeltaTable private[tables](
   }
 
   /**
-   * Clone a DeltaTable to a given destination to mirror the existing table's data and metadata.
-   *
-   * An example would be
-   * {{{
-   *   io.delta.tables.DeltaTable.clone(
-   *     "/some/path/to/table")
-   * }}}
-   *
-   * @param target The path or table name to create the clone.
-   *
-   * @since 4.0.0
-   */
-  def clone(target: String): DeltaTable = {
-    clone(target, isShallow = false)
-  }
-
-  /**
    * Clone a DeltaTable at a specific version to a given destination to mirror the existing
    * table's data and metadata at that version.
    *
@@ -619,26 +602,6 @@ class DeltaTable private[tables](
    */
   def cloneAtVersion(version: Int, target: String, isShallow: Boolean): DeltaTable = {
     cloneAtVersion(version, target, isShallow, replace = false)
-  }
-
-  /**
-   * Clone a DeltaTable at a specific version to a given destination to mirror the existing
-   * table's data and metadata at that version.
-   *
-   * An example would be
-   * {{{
-   *   io.delta.tables.DeltaTable.cloneAtVersion(
-   *     5,
-   *     "/some/path/to/table")
-   * }}}
-   *
-   * @param version The version of this table to clone from.
-   * @param target The path or table name to create the clone.
-   *
-   * @since 4.0.0
-   */
-  def cloneAtVersion(version: Int, target: String): DeltaTable = {
-    cloneAtVersion(version, target, isShallow = false)
   }
 
   /**
@@ -727,28 +690,6 @@ class DeltaTable private[tables](
    */
   def cloneAtTimestamp(timestamp: String, target: String, isShallow: Boolean): DeltaTable = {
     cloneAtTimestamp(timestamp, target, isShallow, replace = false)
-  }
-
-  /**
-   * Clone a DeltaTable at a specific timestamp to a given destination to mirror the existing
-   * table's data and metadata at that timestamp.
-   *
-   * Timestamp can be of the format yyyy-MM-dd or yyyy-MM-dd HH:mm:ss.
-   *
-   * An example would be
-   * {{{
-   *   io.delta.tables.DeltaTable.cloneAtTimestamp(
-   *     "2019-01-01",
-   *     "/some/path/to/table")
-   * }}}
-   *
-   * @param timestamp The timestamp of this table to clone from.
-   * @param target The path or table name to create the clone.
-   *
-   * @since 4.0.0
-   */
-  def cloneAtTimestamp(timestamp: String, target: String): DeltaTable = {
-    cloneAtTimestamp(timestamp, target, isShallow = false)
   }
 
   /**
