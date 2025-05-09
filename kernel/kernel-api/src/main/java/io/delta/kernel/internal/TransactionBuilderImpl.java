@@ -580,7 +580,9 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     IcebergUniversalFormatMetadataValidatorAndUpdater.validate(newMetadata);
 
     // Validate the conditions for schema evolution and the updated schema if applicable
-    if (schema.isPresent() && !isCreateOrReplace) {
+    if (schema.isPresent()
+        && !isCreateOrReplace
+        && !oldMetadata.getSchema().equals(newMetadata.getSchema())) {
       ColumnMappingMode updatedMappingMode =
           ColumnMapping.getColumnMappingMode(newMetadata.getConfiguration());
       ColumnMappingMode currentMappingMode =
