@@ -129,8 +129,9 @@ trait ColumnMappingSuiteBase extends VectorTestUtils {
       metadata: Metadata,
       isNewTable: Boolean = true,
       enableIcebergCompatV2: Boolean = true,
-      enableIcebergWriterCompatV1: Boolean = false): Unit = {
-    var fieldId: Long = 0L
+      enableIcebergWriterCompatV1: Boolean = false,
+      initialFieldId: Long = 0L): Unit = {
+    var fieldId: Long = initialFieldId
 
     def nextFieldId: Long = {
       fieldId += 1

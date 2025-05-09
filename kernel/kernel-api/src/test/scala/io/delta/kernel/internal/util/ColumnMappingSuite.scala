@@ -626,6 +626,35 @@ class ColumnMappingSuite extends AnyFunSuite with ColumnMappingSuiteBase {
     }
   }
 
+  test("both id and physical name must be provided if one is provided") {
+    val schemaWithoutPhysicalName = new StructType()
+      .add(
+        new StructField(
+          "col1",
+          StringType.STRING,
+          true,
+          FieldMetadata.builder()
+            .putLong(ColumnMapping.COLUMN_MAPPING_ID_KEY, 0)
+            .build()))
+    val schemaWithoutId = new StructType()
+      .add(
+        new StructField(
+          "col1",
+          StringType.STRING,
+          true,
+          FieldMetadata.builder()
+            .putString(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, "physical-name-col1")
+            .build()))
+
+    Seq(schemaWithoutId, schemaWithoutPhysicalName).foreach { schema =>
+      val e = intercept[IllegalArgumentException] {
+        updateColumnMappingMetadataIfNeeded(testMetadata(schema).withColumnMappingEnabled(), true)
+      }
+      assert(e.getMessage.contains(
+        "Both columnId and physicalName must be present if one is present"))
+    }
+  }
+
   /**
    * A struct type with all necessary CM info won't cause metadata change by
    * [[updateColumnMappingMetadataIfNeeded]]
