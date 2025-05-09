@@ -131,14 +131,6 @@ public class ColumnMapping {
     return field.getMetadata().getLong(COLUMN_MAPPING_ID_KEY).intValue();
   }
 
-  public static boolean hasColumnId(StructField field) {
-    return field.getMetadata().contains(COLUMN_MAPPING_ID_KEY);
-  }
-
-  public static boolean hasPhysicalName(StructField field) {
-    return field.getMetadata().contains(COLUMN_MAPPING_PHYSICAL_NAME_KEY);
-  }
-
   public static void verifyColumnMappingChange(
       Map<String, String> oldConfig, Map<String, String> newConfig, boolean isNewTable) {
     ColumnMappingMode oldMappingMode = getColumnMappingMode(oldConfig);
@@ -216,6 +208,14 @@ public class ColumnMapping {
       maxColumnId = findMaxColumnId(field, maxColumnId);
     }
     return maxColumnId;
+  }
+
+  static boolean hasColumnId(StructField field) {
+    return field.getMetadata().contains(COLUMN_MAPPING_ID_KEY);
+  }
+
+  static boolean hasPhysicalName(StructField field) {
+    return field.getMetadata().contains(COLUMN_MAPPING_PHYSICAL_NAME_KEY);
   }
 
   private static int findMaxColumnId(StructField field, int maxColumnId) {

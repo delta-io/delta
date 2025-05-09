@@ -493,7 +493,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
         metadata(current, properties = tblProperties),
         metadata(updated, properties = tblProperties),
         emptySet(),
-        false // allowNewNonNullFields
+        false // allowNewRequiredFields
       )
     }
 
@@ -690,7 +690,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
           metadata(schemaBefore),
           metadata(schemaAfter),
           emptySet(),
-          false /* allowNewNonNullFields */ )
+          false /* allowNewRequiredFields */ )
       }
 
       assert(e.getMessage.matches("Field duplicate_id with id .* already exists"))
@@ -743,7 +743,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
         metadata(schemaBefore),
         metadata(schemaAfter),
         emptySet(),
-        false /* allowNewNonNullFields */ )
+        false /* allowNewRequiredFields */ )
     }
   }
 
@@ -789,21 +789,21 @@ class SchemaUtilsSuite extends AnyFunSuite {
         arrayName = "renamed_array")))
 
   test("validateUpdatedSchema fails when non-nullable field is added with " +
-    "allowNewNonNullFields=false") {
+    "allowNewRequiredFields=false") {
     assertSchemaEvolutionFailure[KernelException](
       nonNullableFieldAdded,
       "Cannot add non-nullable field required_field",
-      allowNewNonNullFields = false)
+      allowNewRequiredFields = false)
   }
 
   test("validateUpdatedSchema succeeds when non-nullable field is added with " +
-    "allowNewNonNullFields=true") {
+    "allowNewRequiredFields=true") {
     forAll(nonNullableFieldAdded) { (schemaBefore, schemaAfter) =>
       validateUpdatedSchema(
         metadata(schemaBefore),
         metadata(schemaAfter),
         emptySet(),
-        true /* allowNewNonNullFields */ )
+        true /* allowNewRequiredFields */ )
     }
   }
 
@@ -845,18 +845,18 @@ class SchemaUtilsSuite extends AnyFunSuite {
         arrayName = "renamed_array")))
 
   test("validateUpdatedSchema fails when existing nullability is tightened with " +
-    "allowNewNonNullFields=false") {
+    "allowNewRequiredFields=false") {
     assertSchemaEvolutionFailure[KernelException](
       existingFieldNullabilityTightened,
       "Cannot tighten the nullability of existing field id")
   }
 
   test("validateUpdatedSchema fails when existing nullability is tightened with " +
-    "allowNewNonNullFields=true") {
+    "allowNewRequiredFields=true") {
     assertSchemaEvolutionFailure[KernelException](
       existingFieldNullabilityTightened,
       "Cannot tighten the nullability of existing field id",
-      allowNewNonNullFields = true)
+      allowNewRequiredFields = true)
   }
 
   private val invalidTypeChange = Table(
@@ -955,7 +955,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
         metadata(schemaBefore),
         metadata(schemaAfter),
         emptySet(),
-        false /* allowNewNonNullFields */ )
+        false /* allowNewRequiredFields */ )
     }
   }
 
@@ -993,7 +993,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
         metadata(schemaBefore),
         metadata(schemaAfter),
         emptySet(),
-        false /* allowNewNonNullFields */ )
+        false /* allowNewRequiredFields */ )
     }
   }
 
@@ -1002,10 +1002,10 @@ class SchemaUtilsSuite extends AnyFunSuite {
     (
       primitiveSchema,
       primitiveSchema.add(
-        "required_field",
+        "too_low_field_id_field",
         IntegerType.INTEGER,
         true,
-        fieldMetadata(0, "required_field"))),
+        fieldMetadata(0, "too_low_field_id_field"))),
     // Map with struct key where under max col-id field is added
     (
       mapWithStructKey,
@@ -1018,12 +1018,12 @@ class SchemaUtilsSuite extends AnyFunSuite {
               true,
               fieldMetadata(id = 2, physicalName = "id"))
             .add(
-              "required_field",
+              "too_low_field_id_field",
               IntegerType.INTEGER,
               true,
-              fieldMetadata(id = 0, physicalName = "required_field")),
+              fieldMetadata(id = 0, physicalName = "too_low_field_id_field")),
           IntegerType.INTEGER,
-          false),
+          true),
         fieldMetadata(id = 1, physicalName = "map"))),
     // Struct of array of structs where under max col-id field is added
     (
@@ -1034,8 +1034,8 @@ class SchemaUtilsSuite extends AnyFunSuite {
             "renamed_id",
             IntegerType.INTEGER,
             fieldMetadata(4, "id"))
-            .add("required_field", IntegerType.INTEGER, true, fieldMetadata(0, "required_field")),
-          false),
+            .add("too_low_field_id_field", IntegerType.INTEGER, true, fieldMetadata(0, "too_low_field_id_field")),
+          true),
         arrayName = "renamed_array")))
 
   test("validateUpdatedSchema fails when a new field with a fieldId < maxColId is added") {
@@ -1086,14 +1086,14 @@ class SchemaUtilsSuite extends AnyFunSuite {
       expectedMessage: String,
       tableProperties: Map[String, String] =
         Map(ColumnMapping.COLUMN_MAPPING_MODE_KEY -> "id"),
-      allowNewNonNullFields: Boolean = false)(implicit classTag: ClassTag[T]) {
+    allowNewRequiredFields: Boolean = false)(implicit classTag: ClassTag[T]) {
     forAll(evolutionCases) { (schemaBefore, schemaAfter) =>
       val e = intercept[T] {
         validateUpdatedSchema(
           metadata(schemaBefore, tableProperties),
           metadata(schemaAfter, tableProperties),
           emptySet(),
-          allowNewNonNullFields)
+          allowNewRequiredFields)
       }
 
       assert(e.getMessage.matches(expectedMessage))

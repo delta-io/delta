@@ -611,7 +611,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
           oldMetadata,
           newMetadata,
           clusteringColumnPhysicalNames,
-          false /* allowNewNonNullFields*/);
+          false /* allowNewRequiredFields*/);
     }
   }
 
