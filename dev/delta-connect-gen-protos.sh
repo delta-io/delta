@@ -71,6 +71,7 @@ for f in `find gen/proto/python/delta/connect -name "*.py*"`; do
   if [[ $f == *_pb2.py || $f == *_pb2_grpc.py ]]; then
     sed \
       -e 's/import spark.connect./import pyspark.sql.connect.proto./g' \
+      -e "s/DESCRIPTOR, 'spark.connect/DESCRIPTOR, 'pyspark.sql.connect.proto/g" \
       -e 's/from delta.connect import/from delta.connect.proto import/g' \
       -e "s/DESCRIPTOR, 'delta.connect/DESCRIPTOR, 'delta.connect.proto/g" \
       -e 's/from delta.connect import/from delta.connect.proto import/g' \
