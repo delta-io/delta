@@ -14,7 +14,9 @@
  * limitations under the License.
  */
 
-class DeltaVariantSuite
+package org.apache.spark.sql.delta
+
+class DeltaVariantShreddingSuite
   extends QueryTest
     with SharedSparkSession
     with DeltaSQLCommandTest
