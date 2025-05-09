@@ -1761,9 +1761,98 @@ class DeltaColumnMappingSuite extends QueryTest
         sql(s"ALTER TABLE t1 RENAME COLUMN b to a")
         val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
         assert(log.update().metadata.configuration("delta.columnMapping.maxColumnId") == "2")
-        sql(replaceExternalTblCmd)
-        // Replace table starts assigning field id from previous maxColumnId.
-        assert(log.update().metadata.configuration("delta.columnMapping.maxColumnId") == "3")
+        withSQLConf(DeltaSQLConf.REUSE_COLUMN_METADATA_DURING_REPLACE_TABLE.key -> "true") {
+          sql(replaceExternalTblCmd)
+          // Replace table doesn't reassign field id if column is unchanged
+          assert(log.update().metadata.configuration("delta.columnMapping.maxColumnId") == "2")
+        }
+        withSQLConf(DeltaSQLConf.REUSE_COLUMN_METADATA_DURING_REPLACE_TABLE.key -> "false") {
+          sql(replaceExternalTblCmd)
+          // Replace table starts assigning field id from previous maxColumnId.
+          assert(log.update().metadata.configuration("delta.columnMapping.maxColumnId") == "3")
+        }
+      }
+    }
+  }
+
+  test("replace delta table will reuse the field id only when column name and type unchanged") {
+    withTempDir { dir =>
+      withTable("t1") {
+        sql(s"""
+          |CREATE TABLE t1 (a long, b int)
+          |USING DELTA
+          |LOCATION '${dir.getCanonicalPath}'
+          |TBLPROPERTIES('delta.columnMapping.mode'='name')""".stripMargin)
+
+        // Check field IDs before replacement
+        val logBefore = DeltaLog.forTable(spark, dir.getCanonicalPath)
+        val colABefore = logBefore.update().metadata.schema.fields.find(_.name == "a").get
+        val colBBefore = logBefore.update().metadata.schema.fields.find(_.name == "b").get
+        assert(colABefore.metadata.getLong("delta.columnMapping.id") === 1L)
+        assert(colBBefore.metadata.getLong("delta.columnMapping.id") === 2L)
+
+        withSQLConf(DeltaSQLConf.REUSE_COLUMN_METADATA_DURING_REPLACE_TABLE.key -> "true") {
+          sql(s"""
+            |REPLACE TABLE t1 (a long, b long)
+            |USING DELTA
+            |LOCATION '${dir.getCanonicalPath}'
+            |TBLPROPERTIES('delta.columnMapping.mode'='name')""".stripMargin)
+        }
+
+        // Check field IDs after replacement
+        val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
+        val colA = log.update().metadata.schema.fields.find(_.name == "a").get
+        val colB = log.update().metadata.schema.fields.find(_.name == "b").get
+        assert(colA.metadata.getLong("delta.columnMapping.id") === 1L)
+        assert(colABefore.metadata.getString("delta.columnMapping.physicalName")
+          === colA.metadata.getString("delta.columnMapping.physicalName"))
+
+        assert(colB.metadata.getLong("delta.columnMapping.id") === 3L)
+        assert(colBBefore.metadata.getString("delta.columnMapping.physicalName")
+          !== colB.metadata.getString("delta.columnMapping.physicalName"))
+
+      }
+    }
+  }
+
+  test("replace delta table will not reuse the field id when name mapping mode changed") {
+    withSQLConf(DeltaSQLConf.REUSE_COLUMN_METADATA_DURING_REPLACE_TABLE.key -> "true") {
+      Seq("id", "none").foreach { updatedNameMapping =>
+        withTempDir { dir =>
+          withTable("t1") {
+            sql(s"""
+              |CREATE TABLE t1 (a long, b int)
+              |USING DELTA
+              |LOCATION '${dir.getCanonicalPath}'
+              |TBLPROPERTIES('delta.columnMapping.mode'='name')""".stripMargin)
+
+            // Check field IDs before replacement
+            val logBefore = DeltaLog.forTable(spark, dir.getCanonicalPath)
+            val colABefore = logBefore.update().metadata.schema.fields.find(_.name == "a").get
+            val colBBefore = logBefore.update().metadata.schema.fields.find(_.name == "b").get
+            assert(colABefore.metadata.getLong("delta.columnMapping.id") === 1L)
+            assert(colBBefore.metadata.getLong("delta.columnMapping.id") === 2L)
+
+            // Replace table with different mapping mode
+            sql(s"""
+              |REPLACE TABLE t1 (a long, b long)
+              |USING DELTA
+              |LOCATION '${dir.getCanonicalPath}'
+              |TBLPROPERTIES('delta.columnMapping.mode'='$updatedNameMapping')""".stripMargin)
+
+            val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
+            val colA = log.update().metadata.schema.fields.find(_.name == "a").get
+            val colB = log.update().metadata.schema.fields.find(_.name == "b").get
+
+            if (updatedNameMapping == "id") {
+              assert(colA.metadata.getLong("delta.columnMapping.id") === 3L)
+              assert(colB.metadata.getLong("delta.columnMapping.id") === 4L)
+            } else {
+              assert(!colA.metadata.contains("delta.columnMapping.id"))
+              assert(!colB.metadata.contains("delta.columnMapping.id"))
+            }
+          }
+        }
       }
     }
   }

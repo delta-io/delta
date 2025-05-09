@@ -337,7 +337,8 @@ trait OptimisticTransactionImpl extends DeltaTransaction
   private var isCreatingNewTable: Boolean = false
 
   // Whether this transaction is overwriting the existing schema (i.e. overwriteSchema = true).
-  // When overwriting schema (and data) of a table, `isCreatingNewTable` should not be true.
+  // When overwriting schema (and data) of a table, `isCreatingNewTable` should not be true,
+  // except for config REUSE_COLUMN_METADATA_DURING_REPLACE_TABLE is set to true.
   private var isOverwritingSchema: Boolean = false
 
   // Whether this is a transaction that can select any new protocol, potentially downgrading
@@ -803,6 +804,13 @@ trait OptimisticTransactionImpl extends DeltaTransaction
       CoordinatedCommitsUtils.getExplicitCCConfigurations(snapshot.metadata.configuration)
     val existingICTConfs =
       CoordinatedCommitsUtils.getExplicitICTConfigurations(snapshot.metadata.configuration)
+    val oldMappingMode = snapshot.metadata.columnMappingMode
+    val newMappingMode = metadata.columnMappingMode
+    if (oldMappingMode == newMappingMode &&
+       spark.conf.get(DeltaSQLConf.REUSE_COLUMN_METADATA_DURING_REPLACE_TABLE)
+    ) {
+      isOverwritingSchema = true
+    }
     // Update the metadata.
     updateMetadataForNewTable(metadata)
     // Ignore the [[CatalogOwnedTableFeature]] if we are replacing an existing table.
