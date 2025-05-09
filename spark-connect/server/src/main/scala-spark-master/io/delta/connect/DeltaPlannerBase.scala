@@ -27,7 +27,7 @@ import org.apache.spark.sql.connect.planner.SparkConnectPlanner
 trait DeltaPlannerBase {
   protected def transformDeltaTable(
       planner: SparkConnectPlanner, deltaTable: proto.DeltaTable): DeltaTable = {
-     deltaTable.getAccessTypeCase match {
+    deltaTable.getAccessTypeCase match {
       case proto.DeltaTable.AccessTypeCase.PATH =>
         DeltaTable.forPath(
           planner.session, deltaTable.getPath.getPath, deltaTable.getPath.getHadoopConfMap)

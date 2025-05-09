@@ -67,6 +67,15 @@ class DeltaTable private[tables](
    */
   def toDF: Dataset[Row] = df
 
+  /**
+   * Helper method for the vacuum APIs.
+   *
+   * @param retentionHours The retention threshold in hours. Files required by the table for
+   *                       reading versions earlier than this will be preserved and the
+   *                       rest of them will be deleted.
+   *
+   * @since 4.0.0
+   */
   private def executeVacuum(retentionHours: Option[Double]): DataFrame = {
     val vacuum = proto.VacuumTable
       .newBuilder()

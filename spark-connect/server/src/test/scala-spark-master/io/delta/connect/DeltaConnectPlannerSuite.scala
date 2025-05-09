@@ -306,7 +306,7 @@ class DeltaConnectPlannerSuite
       spark.range(start = 0, end = 2000, step = 1, numPartitions = 2)
         .write.format("delta").mode("append").save(dir.getAbsolutePath)
 
-      val log = DeltaLog.forTable(spark, dir)
+      val deltaLog = DeltaLog.forTable(spark, dir)
       val input = createSparkRelation(
         proto.DeltaRelation
           .newBuilder()
@@ -317,7 +317,7 @@ class DeltaConnectPlannerSuite
                   proto.DeltaTable.Path.newBuilder().setPath(dir.getAbsolutePath)
                 )
               )
-              .setTimestamp(getTimestampForVersion(log, version = 0))
+              .setTimestamp(getTimestampForVersion(deltaLog, version = 0))
           )
       )
 
@@ -484,9 +484,9 @@ class DeltaConnectPlannerSuite
           spark.read.format("delta").load(targetDir.getAbsolutePath),
           spark.read.table(sourceTableName))
 
-        // Check that a shallow clone was performed
-        val log = DeltaLog.forTable(spark, targetDir)
-        log.update().allFiles.collect().foreach { f =>
+        // Check that a shallow clone was performed.
+        val deltaLog = DeltaLog.forTable(spark, targetDir)
+        deltaLog.update().allFiles.collect().foreach { f =>
           assert(f.pathAsUri.isAbsolute)
         }
       }
@@ -518,9 +518,9 @@ class DeltaConnectPlannerSuite
     withTable(tableName) {
       // Set up a Delta table with an untracked file.
       spark.range(1000).write.format("delta").saveAsTable(tableName)
-      val log = DeltaLog.forTable(spark, TableIdentifier(tableName))
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
       val tempFile =
-        new File(DeltaFileOperations.absolutePath(log.dataPath.toString, "abc.parquet").toUri)
+        new File(DeltaFileOperations.absolutePath(deltaLog.dataPath.toString, "abc.parquet").toUri)
       tempFile.createNewFile()
 
       // Run a vacuum with the untracked file still within the retention period.
@@ -552,9 +552,9 @@ class DeltaConnectPlannerSuite
     withTable(tableName) {
       // Set up a Delta table with an untracked file.
       spark.range(1000).write.format("delta").saveAsTable(tableName)
-      val log = DeltaLog.forTable(spark, TableIdentifier(tableName))
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
       val tempFile =
-        new File(DeltaFileOperations.absolutePath(log.dataPath.toString, "abc.parquet").toUri)
+        new File(DeltaFileOperations.absolutePath(deltaLog.dataPath.toString, "abc.parquet").toUri)
       tempFile.createNewFile()
 
       // Run a vacuum with the untracked file still within the retention period.
@@ -585,8 +585,8 @@ class DeltaConnectPlannerSuite
       // Check that protocol version is as expected, before we upgrade it.
       val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
       val oldProtocol = deltaLog.update().protocol
-      assert(oldProtocol.minReaderVersion == oldReaderVersion)
-      assert(oldProtocol.minWriterVersion == oldWriterVersion)
+      assert(oldProtocol.minReaderVersion === oldReaderVersion)
+      assert(oldProtocol.minWriterVersion === oldWriterVersion)
 
       // Use Delta Connect to upgrade the protocol of the table.
       val newReaderVersion = 2
@@ -603,8 +603,8 @@ class DeltaConnectPlannerSuite
 
       // Check that protocol version is as expected, after we have upgraded it.
       val newProtocol = deltaLog.update().protocol
-      assert(newProtocol.minReaderVersion == newReaderVersion)
-      assert(newProtocol.minWriterVersion == newWriterVersion)
+      assert(newProtocol.minReaderVersion === newReaderVersion)
+      assert(newProtocol.minWriterVersion === newWriterVersion)
     }
   }
 
@@ -622,7 +622,9 @@ class DeltaConnectPlannerSuite
                 proto.DeltaTable.newBuilder()
                   .setPath(proto.DeltaTable.Path.newBuilder().setPath(dir.getAbsolutePath)))
               .setMode("symlink_format_manifest"))))
+
       assert(manifestFile.exists())
+
     }
   }
 

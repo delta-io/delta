@@ -62,22 +62,27 @@ class DeltaTableSuite extends DeltaQueryTest with RemoteSparkSession {
   }
 
   ignore("vacuum") {
-    withTempPath { dir =>
-      testData.write.format("delta").save(dir.getAbsolutePath)
-      val table = io.delta.tables.DeltaTable.forPath(spark, dir.getAbsolutePath)
+    Seq("true", "false").foreach{ deltaFormatCheckEnabled =>
+      withSQLConf(
+        "spark.databricks.delta.formatCheck.cache.enabled" -> deltaFormatCheckEnabled) {
+          withTempPath { dir =>
+          testData.write.format("delta").save(dir.getAbsolutePath)
+          val table = io.delta.tables.DeltaTable.forPath(spark, dir.getAbsolutePath)
 
-      // create a uncommitted file.
-      val notCommittedFile = "notCommittedFile.json"
-      val file = new File(dir, notCommittedFile)
-      FileUtils.write(file, "gibberish")
-      // set to ancient time so that the file is eligible to be vacuumed.
-      file.setLastModified(0)
-      assert(file.exists())
+          // create a uncommitted file.
+          val notCommittedFile = "notCommittedFile.json"
+          val file = new File(dir, notCommittedFile)
+          FileUtils.write(file, "gibberish")
+          // set to ancient time so that the file is eligible to be vacuumed.
+          file.setLastModified(0)
+          assert(file.exists())
 
-      table.vacuum()
+          table.vacuum()
 
-      val file2 = new File(dir, notCommittedFile)
-      assert(!file2.exists())
+          val file2 = new File(dir, notCommittedFile)
+          assert(!file2.exists())
+        }
+      }
     }
   }
 
