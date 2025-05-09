@@ -16,6 +16,12 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils, TestsStatistics}
+
+import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.test.SharedSparkSession
+
 class DeltaVariantShreddingSuite
   extends QueryTest
     with SharedSparkSession
