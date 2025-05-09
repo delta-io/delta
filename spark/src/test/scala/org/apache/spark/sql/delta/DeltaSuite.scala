@@ -1428,6 +1428,32 @@ class DeltaSuite extends QueryTest
     }
   }
 
+  test("configurable snapshot reconstruction partition size") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+
+      // Make sure exact partition number isn't set as that takes precedence
+      val originalPartitions = spark.conf.getOption(DeltaSQLConf.DELTA_SNAPSHOT_PARTITIONS.key)
+      spark.conf.unset(DeltaSQLConf.DELTA_SNAPSHOT_PARTITIONS.key)
+
+      try {
+        withSQLConf(DeltaSQLConf.DELTA_SNAPSHOT_PARTITION_BYTES.key -> "1tb") {
+          spark.range(10).write.format("delta").save(path)
+          assert(DeltaLog.forTable(spark, path).snapshot.stateDS.rdd.getNumPartitions == 1)
+        }
+
+        val fileSize = DeltaLog.forTable(spark, path).snapshot.fileIndices.map(_.sizeInBytes).sum
+        DeltaLog.clearCache()
+
+        withSQLConf(DeltaSQLConf.DELTA_SNAPSHOT_PARTITION_BYTES.key -> "1") {
+          assert(DeltaLog.forTable(spark, path).snapshot.stateDS.rdd.getNumPartitions == fileSize + 1)
+        }
+      } finally {
+        originalPartitions.foreach(spark.conf.set(DeltaSQLConf.DELTA_SNAPSHOT_PARTITIONS.key, _))
+      }
+    }
+  }
+
   testQuietly("SC-8810: skip deleted file") {
     withSQLConf(
       ("spark.sql.files.ignoreMissingFiles", "true")) {
