@@ -44,8 +44,9 @@ import org.apache.spark.storage.BlockId
 private[spark] class TestClientForDeltaFormatSharing(
     profileProvider: DeltaSharingProfileProvider,
     timeoutInSeconds: Int = 120,
-    numRetries: Int = 10,
+    numRetries: Int = 3,
     maxRetryDuration: Long = Long.MaxValue,
+    retrySleepInterval: Long = 1000,
     sslTrustAll: Boolean = false,
     forStreaming: Boolean = false,
     responseFormat: String = DeltaSharingRestClient.RESPONSE_FORMAT_DELTA,
@@ -67,6 +68,7 @@ private[spark] class TestClientForDeltaFormatSharing(
     TimestampNTZTableFeature,
     TypeWideningPreviewTableFeature,
     TypeWideningTableFeature,
+    VariantTypePreviewTableFeature,
     VariantTypeTableFeature
   ).map(_.name)
 
@@ -100,7 +102,8 @@ private[spark] class TestClientForDeltaFormatSharing(
     while (iterator.hasNext) {
       linesBuilder += iterator.next()
     }
-    if (table.name.contains("shared_parquet_table")) {
+    if (table.name.contains("shared_parquet_table") &&
+      responseFormat.contains(DeltaSharingRestClient.RESPONSE_FORMAT_PARQUET)) {
       val lines = linesBuilder.result()
       val protocol = JsonUtils.fromJson[SingleAction](lines(0)).protocol
       val metadata = JsonUtils.fromJson[SingleAction](lines(1)).metaData
@@ -168,7 +171,8 @@ private[spark] class TestClientForDeltaFormatSharing(
     while (iterator.hasNext) {
       linesBuilder += iterator.next()
     }
-    if (table.name.contains("shared_parquet_table")) {
+    if (table.name.contains("shared_parquet_table") &&
+      responseFormat.contains(DeltaSharingRestClient.RESPONSE_FORMAT_PARQUET)) {
       val lines = linesBuilder.result()
       val protocol = JsonUtils.fromJson[SingleAction](lines(0)).protocol
       val metadata = JsonUtils.fromJson[SingleAction](lines(1)).metaData

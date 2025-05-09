@@ -18,7 +18,9 @@ package io.delta.kernel.internal;
 import static java.lang.String.format;
 
 import io.delta.kernel.exceptions.*;
+import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.actions.DomainMetadata;
+import io.delta.kernel.internal.tablefeatures.TableFeature;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.DataFileStatus;
@@ -28,10 +30,16 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 /** Contains methods to create user-facing Delta exceptions. */
 public final class DeltaErrors {
   private DeltaErrors() {}
+
+  public static KernelException missingCheckpoint(String tablePath, long checkpointVersion) {
+    return new InvalidTableException(
+        tablePath, String.format("Missing checkpoint at version %s", checkpointVersion));
+  }
 
   public static KernelException versionBeforeFirstAvailableCommit(
       String tablePath, long versionToLoad, long earliestVersion) {
@@ -44,7 +52,7 @@ public final class DeltaErrors {
     return new KernelException(message);
   }
 
-  public static KernelException versionAfterLatestCommit(
+  public static KernelException versionToLoadAfterLatestCommit(
       String tablePath, long versionToLoad, long latestVersion) {
     String message =
         String.format(
@@ -116,17 +124,12 @@ public final class DeltaErrors {
   }
 
   public static KernelException endVersionNotFound(
-      String tablePath, long endVersionRequested, Optional<Long> latestAvailableVersion) {
+      String tablePath, long endVersionRequested, long latestAvailableVersion) {
     String message =
         String.format(
             "%s: Requested table changes ending with endVersion=%d but no log file found for "
-                + "version %d%s",
-            tablePath,
-            endVersionRequested,
-            endVersionRequested,
-            latestAvailableVersion
-                .map(version -> String.format(". Latest available version is %d", version))
-                .orElse(""));
+                + "version %d. Latest available version is %d",
+            tablePath, endVersionRequested, endVersionRequested, latestAvailableVersion);
     return new KernelException(message);
   }
 
@@ -140,7 +143,6 @@ public final class DeltaErrors {
   }
 
   /* ------------------------ PROTOCOL EXCEPTIONS ----------------------------- */
-
   public static KernelException unsupportedReaderProtocol(
       String tablePath, int tableReaderVersion) {
     String message =
@@ -148,16 +150,6 @@ public final class DeltaErrors {
             "Unsupported Delta protocol reader version: table `%s` requires reader version %s "
                 + "which is unsupported by this version of Delta Kernel.",
             tablePath, tableReaderVersion);
-    return new KernelException(message);
-  }
-
-  public static KernelException unsupportedReaderFeature(
-      String tablePath, Set<String> unsupportedFeatures) {
-    String message =
-        String.format(
-            "Unsupported Delta reader features: table `%s` requires reader table features [%s] "
-                + "which is unsupported by this version of Delta Kernel.",
-            tablePath, String.join(", ", unsupportedFeatures));
     return new KernelException(message);
   }
 
@@ -171,12 +163,32 @@ public final class DeltaErrors {
     return new KernelException(message);
   }
 
-  public static KernelException unsupportedWriterFeature(String tablePath, String writerFeature) {
+  public static KernelException unsupportedTableFeature(String feature) {
+    String message =
+        String.format(
+            "Unsupported Delta table feature: table requires feature \"%s\" "
+                + "which is unsupported by this version of Delta Kernel.",
+            feature);
+    return new KernelException(message);
+  }
+
+  public static KernelException unsupportedReaderFeatures(
+      String tablePath, Set<String> readerFeatures) {
+    String message =
+        String.format(
+            "Unsupported Delta reader features: table `%s` requires reader table features [%s] "
+                + "which is unsupported by this version of Delta Kernel.",
+            tablePath, String.join(", ", readerFeatures));
+    return new KernelException(message);
+  }
+
+  public static KernelException unsupportedWriterFeatures(
+      String tablePath, Set<String> writerFeatures) {
     String message =
         String.format(
             "Unsupported Delta writer feature: table `%s` requires writer table feature \"%s\" "
                 + "which is unsupported by this version of Delta Kernel.",
-            tablePath, writerFeature);
+            tablePath, writerFeatures);
     return new KernelException(message);
   }
 
@@ -189,6 +201,10 @@ public final class DeltaErrors {
 
   public static KernelException unsupportedDataType(DataType dataType) {
     return new KernelException("Kernel doesn't support writing data of type: " + dataType);
+  }
+
+  public static KernelException unsupportedStatsDataType(DataType dataType) {
+    return new KernelException("Kernel doesn't support writing stats data of type: " + dataType);
   }
 
   public static KernelException unsupportedPartitionDataType(String colName, DataType dataType) {
@@ -217,6 +233,10 @@ public final class DeltaErrors {
         tablePath, "Must provide a new schema to write to a new table.");
   }
 
+  public static KernelException requireSchemaForReplaceTable() {
+    return new KernelException("Must provide a new schema for REPLACE TABLE");
+  }
+
   public static KernelException tableAlreadyExists(String tablePath, String message) {
     return new TableAlreadyExistsException(tablePath, message);
   }
@@ -229,12 +249,95 @@ public final class DeltaErrors {
     return new KernelException(format(msgT, tablePath, tableSchema, dataSchema));
   }
 
-  public static KernelException missingNumRecordsStatsForIcebergCompatV2(
-      DataFileStatus dataFileStatus) {
+  public static KernelException statsTypeMismatch(
+      String fieldName, DataType expected, DataType actual) {
+    String msgFormat =
+        "Type mismatch for field '%s' when writing statistics: expected %s, but found %s";
+    return new KernelException(format(msgFormat, fieldName, expected, actual));
+  }
+
+  public static KernelException columnNotFoundInSchema(Column column, StructType tableSchema) {
+    return new KernelException(
+        format("Column '%s' was not found in the table schema: %s", column, tableSchema));
+  }
+
+  public static KernelException overlappingTablePropertiesSetAndUnset(Set<String> violatingKeys) {
+    return new KernelException(
+        format(
+            "Cannot set and unset the same table property in the same transaction. "
+                + "Properties set and unset: %s",
+            violatingKeys));
+  }
+
+  /// Start: icebergCompat exceptions
+  public static KernelException icebergCompatMissingNumRecordsStats(
+      String compatVersion, DataFileStatus dataFileStatus) {
     throw new KernelException(
         format(
-            "Iceberg V2 compatibility requires statistics.\n DataFileStatus: %s", dataFileStatus));
+            "%s compatibility requires 'numRecords' statistic.\n DataFileStatus: %s",
+            compatVersion, dataFileStatus));
   }
+
+  public static KernelException icebergCompatIncompatibleVersionEnabled(
+      String compatVersion, String incompatibleIcebergCompatVersion) {
+    throw new KernelException(
+        format(
+            "%s: Only one IcebergCompat version can be enabled. Incompatible version enabled: %s",
+            compatVersion, incompatibleIcebergCompatVersion));
+  }
+
+  public static KernelException icebergCompatUnsupportedTypeColumns(
+      String compatVersion, List<DataType> dataTypes) {
+    throw new KernelException(
+        format("%s does not support the data types: %s.", compatVersion, dataTypes));
+  }
+
+  public static KernelException icebergCompatUnsupportedTypePartitionColumn(
+      String compatVersion, DataType dataType) {
+    throw new KernelException(
+        format(
+            "%s does not support the data type '%s' for a partition column.",
+            compatVersion, dataType));
+  }
+
+  public static KernelException icebergCompatIncompatibleTableFeatures(
+      String compatVersion, Set<TableFeature> incompatibleFeatures) {
+    throw new KernelException(
+        format(
+            "Table features %s are incompatible with %s.",
+            incompatibleFeatures.stream()
+                .map(TableFeature::featureName)
+                .collect(Collectors.toList()),
+            compatVersion));
+  }
+
+  public static KernelException icebergCompatRequiredFeatureMissing(
+      String compatVersion, String feature) {
+    throw new KernelException(
+        format("%s: requires the feature '%s' to be enabled.", compatVersion, feature));
+  }
+
+  public static KernelException enablingIcebergWriterCompatV1OnExistingTable(String key) {
+    return new KernelException(
+        String.format(
+            "Cannot enable %s on an existing table. "
+                + "Enablement is only supported upon table creation.",
+            key));
+  }
+
+  public static KernelException icebergWriterCompatInvalidPhysicalName(List<String> invalidFields) {
+    return new KernelException(
+        String.format(
+            "IcebergWriterCompatV1 requires column mapping field physical names be equal to "
+                + "'col-[fieldId]', but this is not true for the following fields %s",
+            invalidFields));
+  }
+
+  public static KernelException disablingIcebergWriterCompatV1OnExistingTable(String key) {
+    return new KernelException(
+        String.format("Disabling %s on an existing table is not allowed.", key));
+  }
+  // End: icebergCompat exceptions
 
   public static KernelException partitionColumnMissingInData(
       String tablePath, String partitionColumn) {
@@ -291,6 +394,26 @@ public final class DeltaErrors {
                 + "Attempted domainMetadata: %s. Winning domainMetadata: %s",
             domainMetadataAttempt.getDomain(), domainMetadataAttempt, winningDomainMetadata);
     return new ConcurrentWriteException(message);
+  }
+
+  public static KernelException missingNumRecordsStatsForRowTracking() {
+    return new KernelException(
+        "Cannot write to a rowTracking-supported table without 'numRecords' statistics. "
+            + "Connectors are expected to populate the number of records statistics when "
+            + "writing to a Delta table with 'rowTracking' table feature supported.");
+  }
+
+  public static KernelException rowTrackingSupportedWithDomainMetadataUnsupported() {
+    return new KernelException(
+        "Feature 'rowTracking' is supported and depends on feature 'domainMetadata',"
+            + " but 'domainMetadata' is unsupported");
+  }
+
+  public static KernelException cannotModifyAppendOnlyTable(String tablePath) {
+    return new KernelException(
+        String.format(
+            "Cannot modify append-only table. Table `%s` has configuration %s=true.",
+            tablePath, TableConfig.APPEND_ONLY_ENABLED.getKey()));
   }
 
   /* ------------------------ HELPER METHODS ----------------------------- */

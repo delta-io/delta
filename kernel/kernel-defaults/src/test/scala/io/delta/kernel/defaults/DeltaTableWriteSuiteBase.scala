@@ -15,41 +15,44 @@
  */
 package io.delta.kernel.defaults
 
-import com.fasterxml.jackson.databind.ObjectMapper
+import java.io.File
+import java.nio.file.{Files, Paths}
+import java.util.Collections.emptyMap
+import java.util.Optional
+
+import scala.collection.JavaConverters._
+import scala.collection.immutable.{ListMap, Seq}
+
 import io.delta.golden.GoldenTableUtils.goldenTablePath
-import io.delta.kernel.defaults.engine.DefaultEngine
-import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
-import io.delta.kernel.engine.Engine
-import io.delta.kernel.internal.actions.{Metadata, Protocol, SingleAction}
-import io.delta.kernel.internal.fs.{Path => DeltaPath}
-import io.delta.kernel.internal.util.FileNames
-import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
-import io.delta.kernel.internal.{SnapshotImpl, TableConfig, TableImpl}
-import io.delta.kernel.utils.FileStatus
 import io.delta.kernel.{Meta, Operation, Table, Transaction, TransactionBuilder, TransactionCommitResult}
+import io.delta.kernel.Operation.MANUAL_UPDATE
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector, FilteredColumnarBatch, Row}
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
-import io.delta.kernel.expressions.Literal
+import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
+import io.delta.kernel.engine.Engine
+import io.delta.kernel.expressions.{Column, Literal}
 import io.delta.kernel.expressions.Literal.ofInt
-import io.delta.kernel.internal.util.Clock
+import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
+import io.delta.kernel.internal.{SnapshotImpl, TableConfig, TableImpl}
+import io.delta.kernel.internal.actions.{Metadata, Protocol, SingleAction}
+import io.delta.kernel.internal.fs.{Path => DeltaPath}
+import io.delta.kernel.internal.util.{Clock, FileNames, VectorUtils}
 import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
+import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
+import io.delta.kernel.statistics.DataFileStatistics
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.StructType
+import io.delta.kernel.utils.{CloseableIterable, CloseableIterator, DataFileStatus, FileStatus}
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
-import io.delta.kernel.utils.CloseableIterator
-import io.delta.kernel.Operation.CREATE_TABLE
+
+import org.apache.spark.sql.delta.VersionNotFoundException
+
+import com.fasterxml.jackson.databind.ObjectMapper
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
-import org.apache.spark.sql.delta.VersionNotFoundException
 import org.scalatest.funsuite.AnyFunSuite
-
-import java.io.File
-import java.nio.file.{Files, Paths}
-import java.util.Optional
-import scala.collection.JavaConverters._
-import scala.collection.immutable.{ListMap, Seq}
 
 /**
  * Common utility methods for write test suites.
@@ -83,22 +86,42 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     batchSize = 876,
     numBatches = 7)
 
+  val testClusteringColumns = List(new Column("part1"), new Column("part2"))
+  val dataClusteringBatches1 = generateData(
+    testPartitionSchema,
+    partitionCols = Seq.empty,
+    partitionValues = Map.empty,
+    batchSize = 200,
+    numBatches = 3)
+
+  val dataClusteringBatches2 = generateData(
+    testPartitionSchema,
+    partitionCols = Seq.empty,
+    partitionValues = Map.empty,
+    batchSize = 456,
+    numBatches = 5)
+
   def verifyLastCheckpointMetadata(tablePath: String, checkpointAt: Long, expSize: Long): Unit = {
     val filePath = f"$tablePath/_delta_log/_last_checkpoint"
 
     val source = scala.io.Source.fromFile(filePath)
-    val result = try source.getLines().mkString(",") finally source.close()
+    val result =
+      try source.getLines().mkString(",")
+      finally source.close()
 
     assert(result === s"""{"version":$checkpointAt,"size":$expSize}""")
   }
 
-  /** Helper method to remove the delta files before the given version, to make sure the read is
+  /**
+   * Helper method to remove the delta files before the given version, to make sure the read is
    * using a checkpoint as base for state reconstruction.
    */
   def deleteDeltaFilesBefore(tablePath: String, beforeVersion: Long): Unit = {
     Seq.range(0, beforeVersion).foreach { version =>
       val filePath = new Path(f"$tablePath/_delta_log/$version%020d.json")
-      new Path(tablePath).getFileSystem(new Configuration()).delete(filePath, false /* recursive */)
+      new Path(tablePath).getFileSystem(new Configuration()).delete(
+        filePath,
+        false /* recursive */ )
     }
 
     // try to query a version < beforeVersion
@@ -135,14 +158,16 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
   }
 
   def checkpointIfReady(
-    engine: Engine,
-    tablePath: String,
-    result: TransactionCommitResult,
-    expSize: Long): Unit = {
-    if (result.isReadyForCheckpoint) {
-      Table.forPath(engine, tablePath).checkpoint(engine, result.getVersion)
-      verifyLastCheckpointMetadata(tablePath, checkpointAt = result.getVersion, expSize)
-    }
+      engine: Engine,
+      tablePath: String,
+      result: TransactionCommitResult,
+      expSize: Long): Unit = {
+    result.getPostCommitHooks.forEach(hook => {
+      if (hook.getType == PostCommitHookType.CHECKPOINT) {
+        hook.threadSafeInvoke(engine)
+        verifyLastCheckpointMetadata(tablePath, checkpointAt = result.getVersion, expSize)
+      }
+    })
   }
 
   /**
@@ -150,9 +175,10 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
    * ordinal if it is not null and the consumer returns a value, otherwise return null.
    */
   def readCommitFile(
-    engine: Engine,
-    tablePath: String,
-    version: Long, consumer: Row => Option[Any]): Option[Any] = {
+      engine: Engine,
+      tablePath: String,
+      version: Long,
+      consumer: Row => Option[Any]): Option[Any] = {
     val table = Table.forPath(engine, tablePath)
     val logPath = new DeltaPath(table.getPath(engine), "_delta_log")
     val file = FileStatus.of(FileNames.deltaFile(logPath, version), 0, 0)
@@ -174,43 +200,65 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     Option.empty
   }
 
+  def getMetadata(engine: Engine, tablePath: String): Metadata = {
+    Table.forPath(engine, tablePath).getLatestSnapshot(engine)
+      .asInstanceOf[SnapshotImpl].getMetadata
+  }
+
+  def getProtocol(engine: Engine, tablePath: String): Protocol = {
+    Table.forPath(engine, tablePath).getLatestSnapshot(engine)
+      .asInstanceOf[SnapshotImpl].getProtocol
+  }
+
   /**
    *  Helper method to read the Metadata from the commit file of the given version if it is not
    *  null, otherwise return null.
+   *  TODO: get rid of this and use getMetadata instead
    */
   def getMetadataActionFromCommit(
-    engine: Engine, table: Table, version: Long): Option[Row] = {
-    readCommitFile(engine, table.getPath(engine), version, (row) => {
-      val ord = row.getSchema.indexOf("metaData")
-      if (!row.isNullAt(ord)) {
-        Option(row.getStruct(ord))
-      } else {
-        Option.empty
-      }
-    }).map{ case metadata: Row => Some(metadata)}.getOrElse(Option.empty)
+      engine: Engine,
+      table: Table,
+      version: Long): Option[Row] = {
+    readCommitFile(
+      engine,
+      table.getPath(engine),
+      version,
+      (row) => {
+        val ord = row.getSchema.indexOf("metaData")
+        if (!row.isNullAt(ord)) {
+          Option(row.getStruct(ord))
+        } else {
+          Option.empty
+        }
+      }).map { case metadata: Row => Some(metadata) }.getOrElse(Option.empty)
   }
 
   /**
    *  Helper method to read the Protocol from the commit file of the given version if it is not
    *  null, otherwise return null.
+   *  TODO: get rid of this and use getProtocol instead
    */
   def getProtocolActionFromCommit(engine: Engine, table: Table, version: Long): Option[Row] = {
-    readCommitFile(engine, table.getPath(engine), version, (row) => {
-      val ord = row.getSchema.indexOf("protocol")
-      if (!row.isNullAt(ord)) {
-        Some(row.getStruct(ord))
-      } else {
-        Option.empty
-      }
-    }).map{ case protocol: Row => Some(protocol)}.getOrElse(Option.empty)
+    readCommitFile(
+      engine,
+      table.getPath(engine),
+      version,
+      (row) => {
+        val ord = row.getSchema.indexOf("protocol")
+        if (!row.isNullAt(ord)) {
+          Some(row.getStruct(ord))
+        } else {
+          Option.empty
+        }
+      }).map { case protocol: Row => Some(protocol) }.getOrElse(Option.empty)
   }
 
   def generateData(
-    schema: StructType,
-    partitionCols: Seq[String],
-    partitionValues: Map[String, Literal],
-    batchSize: Int,
-    numBatches: Int): Seq[FilteredColumnarBatch] = {
+      schema: StructType,
+      partitionCols: Seq[String],
+      partitionValues: Map[String, Literal],
+      batchSize: Int,
+      numBatches: Int): Seq[FilteredColumnarBatch] = {
     val partitionValuesSchemaCase =
       casePreservingPartitionColNames(partitionCols.asJava, partitionValues.asJava)
 
@@ -240,10 +288,10 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
   }
 
   def stageData(
-    state: Row,
-    partitionValues: Map[String, Literal],
-    data: Seq[FilteredColumnarBatch])
-  : CloseableIterator[Row] = {
+      state: Row,
+      partitionValues: Map[String, Literal],
+      data: Seq[FilteredColumnarBatch])
+      : CloseableIterator[Row] = {
     val physicalDataIter = Transaction.transformLogicalData(
       defaultEngine,
       state,
@@ -262,63 +310,146 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     Transaction.generateAppendActions(defaultEngine, state, writeResultIter, writeContext)
   }
 
+  // scalastyle:off argcount
   def createTxn(
-    engine: Engine = defaultEngine,
-    tablePath: String,
-    isNewTable: Boolean = false,
-    schema: StructType = null,
-    partCols: Seq[String] = null,
-    tableProperties: Map[String, String] = null,
-    clock: Clock = () => System.currentTimeMillis): Transaction = {
+      engine: Engine = defaultEngine,
+      tablePath: String,
+      isNewTable: Boolean = false,
+      schema: StructType = null,
+      partCols: Seq[String] = null,
+      tableProperties: Map[String, String] = null,
+      clock: Clock = () => System.currentTimeMillis,
+      withDomainMetadataSupported: Boolean = false,
+      maxRetries: Int = -1,
+      clusteringColsOpt: Option[List[Column]] = None,
+      logCompactionInterval: Int = 10): Transaction = {
+    // scalastyle:on argcount
 
     var txnBuilder = createWriteTxnBuilder(
       TableImpl.forPath(engine, tablePath, clock))
 
     if (isNewTable) {
       txnBuilder = txnBuilder.withSchema(engine, schema)
-        .withPartitionColumns(engine, partCols.asJava)
+      if (partCols != null) {
+        txnBuilder = txnBuilder.withPartitionColumns(engine, partCols.asJava)
+      }
+    }
+
+    if (clusteringColsOpt.isDefined) {
+      txnBuilder = txnBuilder.withClusteringColumns(engine, clusteringColsOpt.get.asJava)
     }
 
     if (tableProperties != null) {
       txnBuilder = txnBuilder.withTableProperties(engine, tableProperties.asJava)
     }
 
+    if (withDomainMetadataSupported) {
+      txnBuilder = txnBuilder.withDomainMetadataSupported()
+    }
+
+    if (maxRetries >= 0) {
+      txnBuilder = txnBuilder.withMaxRetries(maxRetries)
+    }
+
+    txnBuilder = txnBuilder.withLogCompactionInverval(logCompactionInterval)
+
     txnBuilder.build(engine)
   }
 
-  def commitAppendData(
-    engine: Engine = defaultEngine,
-    txn: Transaction,
-    data: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])]): TransactionCommitResult = {
+  def getAppendActions(
+      txn: Transaction,
+      data: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])]): CloseableIterable[Row] = {
 
-    val txnState = txn.getTransactionState(engine)
+    val txnState = txn.getTransactionState(defaultEngine)
 
     val actions = data.map { case (partValues, partData) =>
       stageData(txnState, partValues, partData)
     }
 
-    val combineActions = inMemoryIterable(actions.reduceLeft(_ combine _))
-    txn.commit(engine, combineActions)
+    actions.reduceLeftOption(_ combine _) match {
+      case Some(combinedActions) =>
+        inMemoryIterable(combinedActions)
+      case None =>
+        emptyIterable[Row]
+    }
+  }
+
+  def commitAppendData(
+      engine: Engine = defaultEngine,
+      txn: Transaction,
+      data: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])]): TransactionCommitResult = {
+    commitTransaction(txn, engine, getAppendActions(txn, data))
+  }
+
+  /** Utility to create table, with no data */
+  def createEmptyTable(
+      engine: Engine = defaultEngine,
+      tablePath: String,
+      schema: StructType,
+      partCols: Seq[String] = Seq.empty,
+      clock: Clock = () => System.currentTimeMillis,
+      tableProperties: Map[String, String] = null,
+      clusteringColsOpt: Option[List[Column]] = None): TransactionCommitResult = {
+
+    appendData(
+      engine,
+      tablePath,
+      isNewTable = true,
+      schema,
+      partCols,
+      data = Seq.empty,
+      clock,
+      tableProperties,
+      clusteringColsOpt)
+  }
+
+  /** Update an existing table - metadata only changes (no data changes) */
+  def updateTableMetadata(
+      engine: Engine = defaultEngine,
+      tablePath: String,
+      schema: StructType = null, // non-null schema means schema change
+      clock: Clock = () => System.currentTimeMillis,
+      tableProperties: Map[String, String] = null,
+      clusteringColsOpt: Option[List[Column]] = None): TransactionCommitResult = {
+    appendData(
+      engine,
+      tablePath,
+      isNewTable = false,
+      schema,
+      Seq.empty,
+      data = Seq.empty,
+      clock,
+      tableProperties,
+      clusteringColsOpt)
   }
 
   def appendData(
-    engine: Engine = defaultEngine,
-    tablePath: String,
-    isNewTable: Boolean = false,
-    schema: StructType = null,
-    partCols: Seq[String] = null,
-    data: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])],
-    clock: Clock = () => System.currentTimeMillis,
-    tableProperties: Map[String, String] = null): TransactionCommitResult = {
+      engine: Engine = defaultEngine,
+      tablePath: String,
+      isNewTable: Boolean = false,
+      schema: StructType = null,
+      partCols: Seq[String] = null,
+      data: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])],
+      clock: Clock = () => System.currentTimeMillis,
+      tableProperties: Map[String, String] = null,
+      clusteringColsOpt: Option[List[Column]] = None): TransactionCommitResult = {
 
-    val txn = createTxn(engine, tablePath, isNewTable, schema, partCols, tableProperties, clock)
+    val txn = createTxn(
+      engine,
+      tablePath,
+      isNewTable,
+      schema,
+      partCols,
+      tableProperties,
+      clock,
+      clusteringColsOpt = clusteringColsOpt)
     commitAppendData(engine, txn, data)
   }
 
   def assertMetadataProp(
-    snapshot: SnapshotImpl,
-    key: TableConfig[_ <: Any],
-    expectedValue: Any): Unit = {
+      snapshot: SnapshotImpl,
+      key: TableConfig[_ <: Any],
+      expectedValue: Any): Unit = {
     assert(key.fromMetadata(snapshot.getMetadata) == expectedValue)
   }
 
@@ -335,25 +466,34 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
   }
 
   def setTablePropAndVerify(
-    engine: Engine,
-    tablePath: String,
-    isNewTable: Boolean = true,
-    key: TableConfig[_ <: Any], value: String, expectedValue: Any,
-    clock: Clock = () => System.currentTimeMillis): Unit = {
+      engine: Engine,
+      tablePath: String,
+      isNewTable: Boolean = true,
+      key: TableConfig[_ <: Any],
+      value: String,
+      expectedValue: Any,
+      clock: Clock = () => System.currentTimeMillis): Unit = {
 
     val table = Table.forPath(engine, tablePath)
 
     createTxn(
       engine,
       tablePath,
-      isNewTable, testSchema, Seq.empty, tableProperties = Map(key.getKey -> value), clock)
+      isNewTable,
+      testSchema,
+      Seq.empty,
+      tableProperties = Map(key.getKey -> value),
+      clock)
       .commit(engine, emptyIterable())
 
     val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
     assertMetadataProp(snapshot, key, expectedValue)
   }
 
-  def verifyWrittenContent(path: String, expSchema: StructType, expData: Seq[TestRow]): Unit = {
+  protected def verifyWrittenContent(
+      path: String,
+      expSchema: StructType,
+      expData: Seq[TestRow]): Unit = {
     val actSchema = tableSchema(path)
     assert(actSchema === expSchema)
 
@@ -370,11 +510,10 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
   }
 
   def verifyCommitInfo(
-    tablePath: String,
-    version: Long,
-    partitionCols: Seq[String] = Seq.empty,
-    isBlindAppend: Boolean = true,
-    operation: Operation = CREATE_TABLE): Unit = {
+      tablePath: String,
+      version: Long,
+      partitionCols: Seq[String] = Seq.empty,
+      operation: Operation = MANUAL_UPDATE): Unit = {
     val row = spark.sql(s"DESCRIBE HISTORY delta.`$tablePath`")
       .filter(s"version = $version")
       .select(
@@ -388,23 +527,29 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     assert(row.getAs[Long]("version") === version)
     assert(row.getAs[Long]("partitionBy") ===
       (if (partitionCols == null) null else OBJ_MAPPER.writeValueAsString(partitionCols.asJava)))
-    assert(row.getAs[Boolean]("isBlindAppend") === isBlindAppend)
+    // For now we've hardcoded isBlindAppend=false, once we support more precise setting of this
+    // field we should update this check
+    assert(!row.getAs[Boolean]("isBlindAppend"))
     assert(row.getAs[Seq[String]]("engineInfo") ===
       "Kernel-" + Meta.KERNEL_VERSION + "/" + testEngineInfo)
     assert(row.getAs[String]("operation") === operation.getDescription)
   }
 
   def verifyCommitResult(
-    result: TransactionCommitResult,
-    expVersion: Long,
-    expIsReadyForCheckpoint: Boolean): Unit = {
+      result: TransactionCommitResult,
+      expVersion: Long,
+      expIsReadyForCheckpoint: Boolean): Unit = {
     assert(result.getVersion === expVersion)
-    assert(result.isReadyForCheckpoint === expIsReadyForCheckpoint)
+    assertCheckpointReadiness(result, expIsReadyForCheckpoint)
   }
 
+  // TODO: Change this to use the table metadata and protocol and
+  // not rely on DESCRIBE which adds some properties based on the protocol.
   def verifyTableProperties(
-    tablePath: String,
-    expProperties: ListMap[String, Any], minReaderVersion: Int, minWriterVersion: Int): Unit = {
+      tablePath: String,
+      expProperties: ListMap[String, Any],
+      minReaderVersion: Int,
+      minWriterVersion: Int): Unit = {
     val resultProperties = spark.sql(s"DESCRIBE EXTENDED delta.`$tablePath`")
       .filter("col_name = 'Table Properties'")
       .select("data_type")
@@ -420,5 +565,44 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     builder.append(s"delta.minWriterVersion=$minWriterVersion")
     builder.append("]")
     checkAnswer(resultProperties, Seq(builder.toString()).map(TestRow(_)))
+  }
+
+  def assertCheckpointReadiness(
+      txnResult: TransactionCommitResult,
+      isReadyForCheckpoint: Boolean): Unit = {
+    assert(
+      txnResult.getPostCommitHooks
+        .stream()
+        .anyMatch(hook => hook.getType == PostCommitHookType.CHECKPOINT) === isReadyForCheckpoint)
+  }
+
+  /**
+   * Commit transaction, all child suites should use this instead of txn.commit
+   * directly and could override it for specific test cases (e.g. commit and write CRC).
+   */
+  protected def commitTransaction(
+      txn: Transaction,
+      engine: Engine,
+      dataActions: CloseableIterable[Row]): TransactionCommitResult = {
+    txn.commit(engine, dataActions)
+  }
+
+  protected def generateDataFileStatus(
+      tablePath: String,
+      fileName: String,
+      fileSize: Long = 1000,
+      includeStats: Boolean = true): DataFileStatus = {
+    val filePath = defaultEngine.getFileSystemClient.resolvePath(tablePath + "/" + fileName)
+    new DataFileStatus(
+      filePath,
+      fileSize,
+      10,
+      if (includeStats) {
+        Optional.of(new DataFileStatistics(
+          100,
+          emptyMap(),
+          emptyMap(),
+          emptyMap()))
+      } else Optional.empty())
   }
 }

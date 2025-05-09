@@ -438,8 +438,9 @@ class DeletionVectorsSuite extends QueryTest
           val expectedDVFileCount = targetDVFileSize match {
             // Each AddFile will have its own DV file
             case 2 => numFilesWithDVs
-            // Each DV size is about 34bytes according the latest format.
-            case 200 => numFilesWithDVs / (200 / 34).floor.toInt
+            // Each DV size is about 34bytes according the latest format, plus 4 bytes for
+            // checksum and another 4 bytes for data length.
+            case 200 => (numFilesWithDVs.toDouble / (200 / (34 + 4 + 4)).toDouble).ceil.toInt
             // Expect all DVs in one file
             case 2000000 => 1
             case default =>

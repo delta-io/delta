@@ -62,6 +62,8 @@ trait DeltaCommand extends DeltaLogging {
     } catch {
       case e: ParseException =>
         throw DeltaErrors.failedRecognizePredicate(predicate, e)
+      case e: NullPointerException if predicate == null =>
+        throw DeltaErrors.failedRecognizePredicate("NULL", e)
     }
   }
 

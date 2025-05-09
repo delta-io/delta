@@ -122,6 +122,23 @@ trait TypeWideningInsertSchemaEvolutionTests
       Seq(1, 2).toDF("a").select($"a".cast(ShortType)))
   }
 
+  test("INSERT - type widening is triggered when schema evolution is enabled via option") {
+    val tableName = "type_widening_insert_into_table"
+    withTable(tableName) {
+      sql(s"CREATE TABLE $tableName (a short) USING DELTA")
+      Seq(1, 2).toDF("a")
+        .write
+        .format("delta")
+        .mode("append")
+        .option("mergeSchema", "true")
+        .insertInto(tableName)
+
+      val result = spark.read.format("delta").table(tableName)
+      assert(result.schema("a").dataType === IntegerType)
+      checkAnswer(result, Seq(1, 2).toDF("a"))
+    }
+  }
+
   /**
    * Short-hand to create a logical plan to insert into the table. This captures the state of the
    * table at the time the method is called, e.p. the type widening property value that will be used
@@ -144,7 +161,7 @@ trait TypeWideningInsertSchemaEvolutionTests
     // Enabling type widening after analysis doesn't impact the insert operation: the data is
     // already cast to conform to the current schema.
     enableTypeWidening(tempPath, enabled = true)
-    Dataset.ofRows(spark, insert).collect()
+    DataFrameUtils.ofRows(spark, insert).collect()
     assert(readDeltaTable(tempPath).schema == new StructType().add("a", ShortType))
     checkAnswer(readDeltaTable(tempPath), Row(1))
   }
@@ -156,7 +173,7 @@ trait TypeWideningInsertSchemaEvolutionTests
     // table while type widening is actually disabled during execution. We do actually widen the
     // table schema in that case because `short` and `int` are both stored as INT32 in parquet.
     enableTypeWidening(tempPath, enabled = false)
-    Dataset.ofRows(spark, insert).collect()
+    DataFrameUtils.ofRows(spark, insert).collect()
     assert(readDeltaTable(tempPath).schema == new StructType().add("a", IntegerType))
     checkAnswer(readDeltaTable(tempPath), Row(1))
   }
@@ -168,8 +185,7 @@ trait TypeWideningInsertSchemaEvolutionTests
     insertData = TestData("a int, b int", Seq("""{ "a": 1, "b": 4 }""")),
     expectedResult = ExpectedResult.Success(new StructType()
       .add("a", IntegerType)
-      .add("b", IntegerType, nullable = true,
-        metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType)))
+      .add("b", IntegerType))
   )
 
   testInserts("top-level type evolution with column upcast")(
@@ -179,8 +195,7 @@ trait TypeWideningInsertSchemaEvolutionTests
     insertData = TestData("a int, b int, c short", Seq("""{ "a": 1, "b": 5, "c": 6 }""")),
     expectedResult = ExpectedResult.Success(new StructType()
       .add("a", IntegerType)
-      .add("b", IntegerType, nullable = true,
-        metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType))
+      .add("b", IntegerType)
       .add("c", IntegerType))
   )
 
@@ -191,8 +206,7 @@ trait TypeWideningInsertSchemaEvolutionTests
     insertData = TestData("a int, b int, c int", Seq("""{ "a": 1, "b": 4, "c": 5 }""")),
     expectedResult = ExpectedResult.Success(new StructType()
       .add("a", IntegerType)
-      .add("b", IntegerType, nullable = true,
-        metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType))
+      .add("b", IntegerType)
       .add("c", IntegerType)),
     // SQL INSERT by name doesn't support schema evolution.
     excludeInserts = insertsSQL.intersect(insertsByName)
@@ -212,20 +226,9 @@ trait TypeWideningInsertSchemaEvolutionTests
       .add("key", IntegerType)
       .add("s", new StructType()
         .add("x", ShortType)
-        .add("y", IntegerType, nullable = true,
-          metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType)))
-      .add("m", MapType(StringType, IntegerType), nullable = true,
-        metadata = typeWideningMetadata(
-          version = 1,
-          from = ShortType,
-          to = IntegerType,
-          path = Seq("value")))
-      .add("a", ArrayType(IntegerType), nullable = true,
-        metadata = typeWideningMetadata(
-          version = 1,
-          from = ShortType,
-          to = IntegerType,
-          path = Seq("element"))))
+        .add("y", IntegerType))
+      .add("m", MapType(StringType, IntegerType))
+      .add("a", ArrayType(IntegerType)))
   )
 
 
@@ -242,21 +245,10 @@ trait TypeWideningInsertSchemaEvolutionTests
       .add("key", IntegerType)
       .add("s", new StructType()
         .add("x", ShortType)
-        .add("y", IntegerType, nullable = true,
-          metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType))
+        .add("y", IntegerType)
         .add("z", IntegerType))
-      .add("m", MapType(StringType, IntegerType), nullable = true,
-        metadata = typeWideningMetadata(
-          version = 1,
-          from = ShortType,
-          to = IntegerType,
-          path = Seq("value")))
-      .add("a", ArrayType(IntegerType), nullable = true,
-        metadata = typeWideningMetadata(
-          version = 1,
-          from = ShortType,
-          to = IntegerType,
-          path = Seq("element"))))
+      .add("m", MapType(StringType, IntegerType))
+      .add("a", ArrayType(IntegerType)))
   )
 
 
@@ -273,8 +265,7 @@ trait TypeWideningInsertSchemaEvolutionTests
       .add("key", IntegerType)
       .add("s", new StructType()
         .add("x", IntegerType)
-        .add("y", IntegerType, nullable = true,
-          metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType))))
+        .add("y", IntegerType)))
   )
 
   // Interestingly, we introduced a special case to handle schema evolution / casting for structs
@@ -293,8 +284,7 @@ trait TypeWideningInsertSchemaEvolutionTests
       .add("key", IntegerType)
       .add("a", ArrayType(new StructType()
         .add("x", IntegerType)
-        .add("y", IntegerType, nullable = true,
-          metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType)))))
+        .add("y", IntegerType))))
   )
 
   // maps now allow type evolution for INSERT by position and name in SQL and dataframe.
@@ -312,7 +302,6 @@ trait TypeWideningInsertSchemaEvolutionTests
       // Type evolution was applied in the map.
       .add("m", MapType(StringType, new StructType()
         .add("x", IntegerType)
-        .add("y", IntegerType, nullable = true,
-          metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType)))))
+        .add("y", IntegerType))))
   )
 }

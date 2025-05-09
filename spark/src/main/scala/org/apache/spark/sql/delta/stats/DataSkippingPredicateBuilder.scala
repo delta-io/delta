@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.stats
 
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.stats.DeltaStatistics.{MAX, MIN}
 
 import org.apache.spark.sql.Column

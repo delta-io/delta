@@ -87,8 +87,10 @@ public final class StructType extends DataType {
     return fields.size();
   }
 
+  /** @return the index of the field with the given name, or -1 if not found */
   public int indexOf(String fieldName) {
-    return fieldNames.indexOf(fieldName);
+    Tuple2<StructField, Integer> fieldAndOrdinal = nameToFieldAndOrdinal.get(fieldName);
+    return fieldAndOrdinal != null ? fieldAndOrdinal._2 : -1;
   }
 
   public StructField get(String fieldName) {

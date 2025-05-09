@@ -1762,8 +1762,30 @@ class DeltaColumnMappingSuite extends QueryTest
         val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
         assert(log.update().metadata.configuration("delta.columnMapping.maxColumnId") == "2")
         sql(replaceExternalTblCmd)
-        // Configuration after replacing existing table should be like the table has started new.
-        assert(log.update().metadata.configuration("delta.columnMapping.maxColumnId") == "1")
+        // Replace table starts assigning field id from previous maxColumnId.
+        assert(log.update().metadata.configuration("delta.columnMapping.maxColumnId") == "3")
+      }
+    }
+  }
+
+  test("restore Delta table with name column mapping enabled") {
+    withTempDir { dir =>
+      withTable("t1") {
+        sql(s"""
+               |CREATE OR REPLACE TABLE t1 (a long)
+               |USING DELTA
+               |LOCATION '${dir.getCanonicalPath}'
+               |TBLPROPERTIES('delta.columnMapping.mode'='name')""".stripMargin)
+        // Add column and drop the old one to increment max column ID
+        sql(s"ALTER TABLE t1 ADD COLUMN (b long)")
+        sql(s"ALTER TABLE t1 DROP COLUMN a")
+        sql(s"ALTER TABLE t1 RENAME COLUMN b to a")
+        val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
+        assert(log.update().metadata.configuration("delta.columnMapping.maxColumnId") == "2")
+        sql(s"RESTORE TABLE t1 TO VERSION AS OF 0")
+        // Restore should not reduce the max field id,
+        // but it should also not give out new field ids to the restored schema.
+        assert(log.update().metadata.configuration("delta.columnMapping.maxColumnId") == "2")
       }
     }
   }
@@ -1947,13 +1969,8 @@ class DeltaColumnMappingSuite extends QueryTest
                |TBLPROPERTIES('${DeltaConfigs.COLUMN_MAPPING_MODE.key}'='none')
                |""".stripMargin)
         }
-        val condition = "DELTA_INVALID_CHARACTERS_IN_COLUMN_NAMES"
-        checkError(
-          e,
-          condition,
-          parameters = DeltaThrowableHelper
-            .getParameterNames(condition, errorSubClass = null)
-            .zip(invalidColumns).toMap
+        checkError(e, "DELTA_INVALID_CHARACTERS_IN_COLUMN_NAMES", "42K05",
+          Map("invalidColumnNames" -> invalidColumns.mkString(", "))
         )
       }
     }
@@ -2092,5 +2109,76 @@ class DeltaColumnMappingSuite extends QueryTest
         }
       }
     }
+  }
+
+  test("Illegal null value specified for delta.columnMapping.mode option") {
+    withTempPath { tempPath =>
+      val ex = intercept[DeltaIllegalArgumentException] {
+        spark.range(10).write.mode("overwrite").format("delta").
+          option("delta.columnMapping.mode", null).save(tempPath.toString)
+      }
+      val supportedModes = DeltaColumnMapping.supportedModes.map(_.name).toSeq.mkString(", ")
+      assert(ex.getErrorClass === "DELTA_MODE_NOT_SUPPORTED")
+      assert(ex.getMessage.contains("Specified mode 'null' is not supported. " +
+        s"Supported modes are: $supportedModes"))
+    }
+  }
+
+  test("enabling column mapping disallowed if column mapping metadata already exists") {
+    withSQLConf(
+      // enabling this fixes the issue of committing invalid metadata in the first place
+      DeltaSQLConf.DELTA_COLUMN_MAPPING_STRIP_METADATA.key -> "false"
+    ) {
+      withTempDir { dir =>
+        val path = dir.getCanonicalPath
+        val deltaLog = DeltaLog.forTable(spark, path)
+        deltaLog.withNewTransaction(catalogTableOpt = None) { txn =>
+          val schema =
+            new StructType().add("id", IntegerType, true, withIdAndPhysicalName(0, "col-0"))
+          val metadata = actions.Metadata(
+            name = "test_table",
+            schemaString = schema.json,
+            configuration = Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> NoMapping.name)
+          )
+          txn.updateMetadata(metadata)
+          txn.commit(Seq.empty, DeltaOperations.ManualUpdate)
+
+          // Enabling the config will disallow enabling column mapping.
+          withSQLConf(DeltaSQLConf
+            .DELTA_COLUMN_MAPPING_DISALLOW_ENABLING_WHEN_METADATA_ALREADY_EXISTS.key
+            -> "true") {
+            val e = intercept[DeltaColumnMappingUnsupportedException] {
+              alterTableWithProps(
+                s"delta.`$path`",
+                Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> NameMapping.name))
+            }
+            assert(e.getErrorClass ==
+            "DELTA_ENABLING_COLUMN_MAPPING_DISALLOWED_WHEN_COLUMN_MAPPING_METADATA_ALREADY_EXISTS")
+          }
+
+          // Disabling the config will allow enabling column mapping.
+          withSQLConf(DeltaSQLConf
+              .DELTA_COLUMN_MAPPING_DISALLOW_ENABLING_WHEN_METADATA_ALREADY_EXISTS.key
+            -> "false") {
+            alterTableWithProps(
+              s"delta.`$path`",
+              Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> NameMapping.name))
+          }
+        }
+      }
+    }
+  }
+
+  test("unit test physical name assigning is case-insensitive") {
+    val schema = new StructType()
+      .add("A", IntegerType)
+      .add("b", IntegerType)
+    val fieldPathToPhysicalName = Map(Seq("a") -> "x", Seq("b") -> "y")
+    val schemaWithPhysicalNames = DeltaColumnMapping.setPhysicalNames(
+      schema = schema,
+      fieldPathToPhysicalName = fieldPathToPhysicalName)
+    assert(DeltaColumnMapping.getLogicalNameToPhysicalNameMap(schemaWithPhysicalNames) === Map(
+      Seq("A") -> Seq("x"),
+      Seq("b") -> Seq("y")))
   }
 }

@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.GeneratedAsIdentityType.GeneratedByDefault
-import org.apache.spark.sql.delta.sources.DeltaSourceUtils
+import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 
 import org.apache.spark.sql.{AnalysisException, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -207,7 +207,7 @@ trait IdentityColumnSyncSuiteBase
   }
 
   test("alter table sync identity - deleting high watermark rows followed by sync identity" +
-    " brings down the highWatermark") {
+    " brings down the highWatermark only with a flag") {
     for (generatedAsIdentityType <- GeneratedAsIdentityType.values) {
       val tblName = getRandomTableName
       withTable(tblName) {
@@ -220,8 +220,22 @@ trait IdentityColumnSyncSuiteBase
         checkAnswer(sql(s"SELECT max(id) FROM $tblName"), Row(41))
         sql(s"DELETE FROM $tblName WHERE value IN (0, 3, 4)")
         assert(highWaterMark(deltaLog.snapshot, "id") === 41L)
-        sql(s"ALTER TABLE $tblName ALTER COLUMN id SYNC IDENTITY")
-        assert(highWaterMark(deltaLog.snapshot, "id") === 21L)
+        // Unless this flag is enabled, the high watermark is not updated if it is lower
+        // than the previous high watermark.
+        withSQLConf(
+            DeltaSQLConf.DELTA_IDENTITY_ALLOW_SYNC_IDENTITY_TO_LOWER_HIGH_WATER_MARK.key -> "false"
+        ) {
+          sql(s"ALTER TABLE $tblName ALTER COLUMN id SYNC IDENTITY")
+          assert(highWaterMark(deltaLog.update(), "id") === 41L)
+        }
+        // With the flag enabled, the high watermark is updated even if it is lower,
+        // than the previous high watermark, as long as it is higher than the defined start.
+        withSQLConf(
+            DeltaSQLConf.DELTA_IDENTITY_ALLOW_SYNC_IDENTITY_TO_LOWER_HIGH_WATER_MARK.key -> "true"
+        ) {
+          sql(s"ALTER TABLE $tblName ALTER COLUMN id SYNC IDENTITY")
+          assert(highWaterMark(deltaLog.update(), "id") === 21L)
+        }
         sql(s"INSERT INTO $tblName(value) VALUES (8)")
         checkAnswer(sql(s"SELECT max(id) FROM $tblName"), Row(31))
         checkAnswer(sql(s"SELECT COUNT(DISTINCT id) == COUNT(*) FROM $tblName"), Row(true))
@@ -272,6 +286,348 @@ trait IdentityColumnSyncSuiteBase
       }
       assert(ex.getMessage.contains(
         "ALTER TABLE ALTER COLUMN SYNC IDENTITY cannot be called on non IDENTITY columns."))
+    }
+  }
+
+  for (positiveStep <- DeltaTestUtils.BOOLEAN_DOMAIN)
+  test(s"SYNC IDENTITY on table with bad water mark. positiveStep = $positiveStep") {
+    val tblName = getRandomTableName
+    withTable(tblName) {
+      val incrementBy = if (positiveStep)  48 else -48
+      createTableWithIdColAndIntValueCol(
+        tblName,
+        GeneratedByDefault,
+        startsWith = Some(100),
+        incrementBy = Some(incrementBy)
+      )
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tblName))
+
+      // Insert data that don't respect the start.
+      if (positiveStep) {
+        sql(s"INSERT INTO $tblName(id, value) VALUES (4, 4)")
+      } else {
+        sql(s"INSERT INTO $tblName(id, value) VALUES (196, 196)")
+      }
+      forceBadWaterMark(deltaLog)
+      val badWaterMark = highWaterMark(deltaLog.snapshot, "id")
+
+      // Even though the candidate high water mark and the existing high water mark is invalid,
+      // we don't want to prevent updates to the high water mark as this would lead to us
+      // generating the same values over and over.
+      sql(s"ALTER TABLE $tblName ALTER COLUMN id SYNC IDENTITY")
+      val newHighWaterMark = highWaterMark(deltaLog.update(), colName = "id")
+      assert(newHighWaterMark !== badWaterMark,
+        "Sync identity should update the high water mark based on the data.")
+      if (positiveStep) {
+        assert(newHighWaterMark > badWaterMark)
+      } else {
+        assert(newHighWaterMark < badWaterMark)
+      }
+    }
+  }
+
+  for {
+    allowExplicitInsert <- DeltaTestUtils.BOOLEAN_DOMAIN
+    allowLoweringHighWatermarkForSyncIdentity <- DeltaTestUtils.BOOLEAN_DOMAIN
+  } test(s"IdentityColumn.updateToValidHighWaterMark - allowExplicitInsert = $allowExplicitInsert,"
+    + s" allowLoweringHighWatermarkForSyncIdentity = $allowLoweringHighWatermarkForSyncIdentity") {
+    /**
+     * Unit test for the updateToValidHighWaterMark function by creating a StructField with the
+     * specified start, step, and existing high water mark. After calling the function, we verify
+     * the StructField's metadata has the expect high water mark.
+     */
+    def testUpdateToValidHighWaterMark(
+        start: Long,
+        step: Long,
+        allowExplicitInsert: Boolean,
+        allowLoweringHighWatermarkForSyncIdentity: Boolean,
+        existingHighWaterMark: Option[Long],
+        candidateHighWaterMark: Long,
+        expectedHighWaterMark: Option[Long]): Unit = {
+      /** Creates a MetadataBuilder for Struct Metadata. */
+      def getMetadataBuilder(highWaterMarkOpt: Option[Long]): MetadataBuilder = {
+        var metadataBuilder = new MetadataBuilder()
+          .putLong(DeltaSourceUtils.IDENTITY_INFO_START, start)
+          .putLong(DeltaSourceUtils.IDENTITY_INFO_STEP, step)
+          .putBoolean(DeltaSourceUtils.IDENTITY_INFO_ALLOW_EXPLICIT_INSERT, allowExplicitInsert)
+
+        highWaterMarkOpt match {
+          case Some(oldHighWaterMark) =>
+            metadataBuilder = metadataBuilder.putLong(
+              DeltaSourceUtils.IDENTITY_INFO_HIGHWATERMARK, oldHighWaterMark)
+          case None => ()
+        }
+        metadataBuilder
+      }
+
+      val initialStructField = StructField(
+        name = "id",
+        LongType,
+        nullable = false,
+        metadata = getMetadataBuilder(existingHighWaterMark).build())
+      val (updatedStructField, _) =
+        IdentityColumn.updateToValidHighWaterMark(
+          initialStructField, candidateHighWaterMark, allowLoweringHighWatermarkForSyncIdentity)
+      val expectedMetadata = getMetadataBuilder(expectedHighWaterMark).build()
+      assert(updatedStructField.metadata === expectedMetadata)
+    }
+
+    // existingHighWaterMark = None, positive step
+    testUpdateToValidHighWaterMark(
+      start = 1L,
+      step = 3L,
+      allowExplicitInsert = allowExplicitInsert,
+      allowLoweringHighWatermarkForSyncIdentity = allowLoweringHighWatermarkForSyncIdentity,
+      existingHighWaterMark = None,
+      candidateHighWaterMark = 2L,
+      expectedHighWaterMark = Some(4L) // rounded up
+    )
+    testUpdateToValidHighWaterMark(
+      start = 1L,
+      step = 3L,
+      allowExplicitInsert = allowExplicitInsert,
+      allowLoweringHighWatermarkForSyncIdentity = allowLoweringHighWatermarkForSyncIdentity,
+      existingHighWaterMark = None,
+      candidateHighWaterMark = 0L,
+      expectedHighWaterMark = None // below start
+    )
+    testUpdateToValidHighWaterMark(
+      start = 1L,
+      step = 3L,
+      allowExplicitInsert = allowExplicitInsert,
+      allowLoweringHighWatermarkForSyncIdentity = allowLoweringHighWatermarkForSyncIdentity,
+      existingHighWaterMark = None,
+      candidateHighWaterMark = 1L,
+      expectedHighWaterMark = Some(1L) // equal to start
+    )
+    testUpdateToValidHighWaterMark(
+      start = 1L,
+      step = 3L,
+      allowExplicitInsert = allowExplicitInsert,
+      allowLoweringHighWatermarkForSyncIdentity = allowLoweringHighWatermarkForSyncIdentity,
+      existingHighWaterMark = None,
+      candidateHighWaterMark = 7L,
+      expectedHighWaterMark = Some(7L) // respects start and step
+    )
+
+    // existingHighWaterMark = None, negative step
+    testUpdateToValidHighWaterMark(
+      start = 1L,
+      step = -3L,
+      allowExplicitInsert = allowExplicitInsert,
+      allowLoweringHighWatermarkForSyncIdentity = allowLoweringHighWatermarkForSyncIdentity,
+      existingHighWaterMark = None,
+      candidateHighWaterMark = -1L,
+      expectedHighWaterMark = Some(-2L) // rounded up
+    )
+    testUpdateToValidHighWaterMark(
+      start = 1L,
+      step = -3L,
+      allowExplicitInsert = allowExplicitInsert,
+      allowLoweringHighWatermarkForSyncIdentity = allowLoweringHighWatermarkForSyncIdentity,
+      existingHighWaterMark = None,
+      candidateHighWaterMark = 2L,
+      expectedHighWaterMark = None // above start
+    )
+    testUpdateToValidHighWaterMark(
+      start = 1L,
+      step = -3L,
+      allowExplicitInsert = allowExplicitInsert,
+      allowLoweringHighWatermarkForSyncIdentity = allowLoweringHighWatermarkForSyncIdentity,
+      existingHighWaterMark = None,
+      candidateHighWaterMark = 1L,
+      expectedHighWaterMark = Some(1L) // equal to start
+    )
+    testUpdateToValidHighWaterMark(
+      start = 1L,
+      step = -3L,
+      allowExplicitInsert = allowExplicitInsert,
+      allowLoweringHighWatermarkForSyncIdentity = allowLoweringHighWatermarkForSyncIdentity,
+      existingHighWaterMark = None,
+      candidateHighWaterMark = -5L,
+      expectedHighWaterMark = Some(-5L) // respects start and step
+    )
+
+    // existingHighWaterMark = Some, positive step
+    testUpdateToValidHighWaterMark(
+      start = 1L,
+      step = 3L,
+      allowExplicitInsert = allowExplicitInsert,
+      allowLoweringHighWatermarkForSyncIdentity = allowLoweringHighWatermarkForSyncIdentity,
+      existingHighWaterMark = Some(4L),
+      candidateHighWaterMark = 5L,
+      expectedHighWaterMark = Some(7L) // rounded up
+    )
+    testUpdateToValidHighWaterMark(
+      start = 1L,
+      step = 3L,
+      allowExplicitInsert = allowExplicitInsert,
+      allowLoweringHighWatermarkForSyncIdentity = allowLoweringHighWatermarkForSyncIdentity,
+      existingHighWaterMark = Some(4L),
+      candidateHighWaterMark = 0L,
+      expectedHighWaterMark = Some(4L) // below start, preserve existing high watermark
+    )
+    testUpdateToValidHighWaterMark(
+      start = 1L,
+      step = 3L,
+      allowExplicitInsert = allowExplicitInsert,
+      allowLoweringHighWatermarkForSyncIdentity = allowLoweringHighWatermarkForSyncIdentity,
+      existingHighWaterMark = Some(-5L),
+      candidateHighWaterMark = -2L,
+      expectedHighWaterMark = Some(-2L) // below start, bad existing water mark, update to candidate
+    )
+    testUpdateToValidHighWaterMark(
+      start = 1L,
+      step = 3L,
+      allowExplicitInsert = allowExplicitInsert,
+      allowLoweringHighWatermarkForSyncIdentity = allowLoweringHighWatermarkForSyncIdentity,
+      existingHighWaterMark = Some(-5L),
+      candidateHighWaterMark = 0L,
+      expectedHighWaterMark = Some(1L) // below start, bad existing water mark, update rounded up
+    )
+
+    testUpdateToValidHighWaterMark(
+      start = 1L,
+      step = 3L,
+      allowExplicitInsert = allowExplicitInsert,
+      allowLoweringHighWatermarkForSyncIdentity = allowLoweringHighWatermarkForSyncIdentity,
+      existingHighWaterMark = Some(-5L),
+      candidateHighWaterMark = -9L,
+      expectedHighWaterMark = if (allowLoweringHighWatermarkForSyncIdentity) {
+        // below start, bad existing water mark, allow lowering, rounded down
+        Some(-8L)
+      } else {
+        // below start, bad existing water mark, keep existing
+        Some(-5L)
+      }
+    )
+    testUpdateToValidHighWaterMark(
+      start = 1L,
+      step = 3L,
+      allowExplicitInsert = allowExplicitInsert,
+      allowLoweringHighWatermarkForSyncIdentity = allowLoweringHighWatermarkForSyncIdentity,
+      existingHighWaterMark = Some(4L),
+      candidateHighWaterMark = 1L,
+      expectedHighWaterMark = if (allowLoweringHighWatermarkForSyncIdentity) {
+        Some(1L) // allow lowering
+      } else {
+        Some(4L) // below existing high watermark
+      }
+    )
+    testUpdateToValidHighWaterMark(
+      start = 1L,
+      step = 3L,
+      allowExplicitInsert = allowExplicitInsert,
+      allowLoweringHighWatermarkForSyncIdentity = allowLoweringHighWatermarkForSyncIdentity,
+      existingHighWaterMark = Some(4L),
+      candidateHighWaterMark = 7L,
+      expectedHighWaterMark = Some(7L) // respects start and step
+    )
+
+    // existingHighWaterMark = Some, negative step
+    testUpdateToValidHighWaterMark(
+      start = 1L,
+      step = -3L,
+      allowExplicitInsert = allowExplicitInsert,
+      allowLoweringHighWatermarkForSyncIdentity = allowLoweringHighWatermarkForSyncIdentity,
+      existingHighWaterMark = Some(-2L),
+      candidateHighWaterMark = -3L,
+      expectedHighWaterMark = Some(-5L) // rounded up
+    )
+    testUpdateToValidHighWaterMark(
+      start = 1L,
+      step = -3L,
+      allowExplicitInsert = allowExplicitInsert,
+      allowLoweringHighWatermarkForSyncIdentity = allowLoweringHighWatermarkForSyncIdentity,
+      existingHighWaterMark = Some(-2L),
+      candidateHighWaterMark = 2L,
+      expectedHighWaterMark = Some(-2L) // above start, preserve existing high water mark
+    )
+    testUpdateToValidHighWaterMark(
+      start = 1L,
+      step = -3L,
+      allowExplicitInsert = allowExplicitInsert,
+      allowLoweringHighWatermarkForSyncIdentity = allowLoweringHighWatermarkForSyncIdentity,
+      existingHighWaterMark = Some(7L),
+      candidateHighWaterMark = 4L,
+      expectedHighWaterMark = Some(4L) // above start, bad existing water mark, update to candidate
+    )
+    testUpdateToValidHighWaterMark(
+      start = 1L,
+      step = -3L,
+      allowExplicitInsert = allowExplicitInsert,
+      allowLoweringHighWatermarkForSyncIdentity = allowLoweringHighWatermarkForSyncIdentity,
+      existingHighWaterMark = Some(7L),
+      candidateHighWaterMark = 6L,
+      expectedHighWaterMark = Some(4L) // above start, bad existing water mark, update rounded down
+    )
+    testUpdateToValidHighWaterMark(
+      start = 1L,
+      step = -3L,
+      allowExplicitInsert = allowExplicitInsert,
+      allowLoweringHighWatermarkForSyncIdentity = allowLoweringHighWatermarkForSyncIdentity,
+      existingHighWaterMark = Some(7L),
+      candidateHighWaterMark = 11L,
+      expectedHighWaterMark = if (allowLoweringHighWatermarkForSyncIdentity) {
+        // above start, bad existing water mark, allow lowering, rounded down
+        Some(10L)
+      } else {
+        // above start, bad existing water mark, keep existing
+        Some(7L)
+      }
+    )
+    testUpdateToValidHighWaterMark(
+      start = 1L,
+      step = -3L,
+      allowExplicitInsert = allowExplicitInsert,
+      allowLoweringHighWatermarkForSyncIdentity = allowLoweringHighWatermarkForSyncIdentity,
+      existingHighWaterMark = Some(-2L),
+      candidateHighWaterMark = 1L,
+      expectedHighWaterMark = if (allowLoweringHighWatermarkForSyncIdentity) {
+        Some(1L) // allow lowering
+      } else {
+        Some(-2L) // higher than high watermark
+      }
+    )
+    testUpdateToValidHighWaterMark(
+      start = 1L,
+      step = -3L,
+      allowExplicitInsert = allowExplicitInsert,
+      allowLoweringHighWatermarkForSyncIdentity = allowLoweringHighWatermarkForSyncIdentity,
+      existingHighWaterMark = Some(-2L),
+      candidateHighWaterMark = -5L,
+      expectedHighWaterMark = Some(-5L) // respects start and step
+    )
+  }
+
+  test("IdentityColumn.roundToNext") {
+    val posStart = 7L
+    val negStart = -7L
+    val posLargeStart = Long.MaxValue - 10000
+    val negLargeStart = Long.MinValue + 10000
+    for (start <- Seq(posStart, negStart, posLargeStart, negLargeStart)) {
+      assert(IdentityColumn.roundToNext(start = start, step = 3L, value = start) === start)
+      assert(IdentityColumn.roundToNext(
+        start = start, step = 3L, value = start + 5L) === start + 6L)
+      assert(IdentityColumn.roundToNext(
+        start = start, step = 3L, value = start + 6L) === start + 6L)
+      assert(IdentityColumn.roundToNext(
+        start = start, step = 3L, value = start - 5L) === start - 3L) // bad watermark
+      assert(IdentityColumn.roundToNext(
+        start = start, step = 3L, value = start - 7L) === start - 6L) // bad watermark
+      assert(IdentityColumn.roundToNext(
+        start = start, step = 3L, value = start - 6L) === start - 6L) // bad watermark
+      assert(IdentityColumn.roundToNext(start = start, step = -3L, value = start) === start)
+      assert(IdentityColumn.roundToNext(
+        start = start, step = -3L, value = start - 5L) === start - 6L)
+      assert(IdentityColumn.roundToNext(
+        start = start, step = -3L, value = start - 6L) === start - 6L)
+      assert(IdentityColumn.roundToNext(
+        start = start, step = -3L, value = start + 5L) === start + 3L) // bad watermark
+      assert(IdentityColumn.roundToNext(
+        start = start, step = -3L, value = start + 7L) === start + 6L) // bad watermark
+      assert(IdentityColumn.roundToNext(
+        start = start, step = -3L, value = start + 6L) === start + 6L) // bad watermark
     }
   }
 }

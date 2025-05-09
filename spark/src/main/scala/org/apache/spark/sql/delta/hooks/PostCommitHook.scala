@@ -43,10 +43,10 @@ trait PostCommitHook {
    */
   def run(
     spark: SparkSession,
-    txn: OptimisticTransactionImpl,
+    txn: DeltaTransaction,
     committedVersion: Long,
     postCommitSnapshot: Snapshot,
-    committedActions: Seq[Action]): Unit
+    committedActions: Iterator[Action]): Unit
 
   /**
    * Handle any error caused while running the hook. By default, all errors are ignored as

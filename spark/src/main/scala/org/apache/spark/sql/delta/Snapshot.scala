@@ -23,7 +23,7 @@ import scala.collection.mutable
 
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.Action.logSchema
-import org.apache.spark.sql.delta.coordinatedcommits.{CommitCoordinatorClient, CommitCoordinatorProvider, CoordinatedCommitsUsageLogs, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CommitCoordinatorClient, CommitCoordinatorProvider, CoordinatedCommitsUsageLogs, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
@@ -59,6 +59,12 @@ trait SnapshotDescriptor {
 
   protected[delta] def numOfFilesIfKnown: Option[Long]
   protected[delta] def sizeInBytesIfKnown: Option[Long]
+
+  /** Whether the table has [[CatalogOwnedTableFeature]] enabled */
+  def isCatalogOwned: Boolean = {
+    version >= 0 &&
+      protocol.readerAndWriterFeatureNames.contains(CatalogOwnedTableFeature.name)
+  }
 }
 
 /**
@@ -368,7 +374,8 @@ class Snapshot(
 
   /** All unexpired tombstones. */
   def tombstones: Dataset[RemoveFile] = {
-    stateDS.where("remove IS NOT NULL").select(col("remove").as[RemoveFile])
+    // Temporary workarround for SPARK-51356.
+    stateDS.where("remove IS NOT NULL").map(_.remove)
   }
 
   def deltaFileSizeInBytes(): Long = deltaFileIndexOpt.map(_.sizeInBytes).getOrElse(0L)
@@ -384,7 +391,7 @@ class Snapshot(
    * checksum file. If the checksum file is not present or if the protocol or metadata is missing
    * this will return None.
    */
-  protected def getProtocolMetadataAndIctFromCrc():
+  protected def getProtocolMetadataAndIctFromCrc(checksumOpt: Option[VersionChecksum]):
     Option[Array[ReconstructedProtocolMetadataAndICT]] = {
       if (!spark.sessionState.conf.getConf(
           DeltaSQLConf.USE_PROTOCOL_AND_METADATA_FROM_CHECKSUM_ENABLED)) {
@@ -431,7 +438,7 @@ class Snapshot(
       Array[ReconstructedProtocolMetadataAndICT] = {
     import implicits._
 
-    getProtocolMetadataAndIctFromCrc().foreach { protocolMetadataAndIctFromCrc =>
+    getProtocolMetadataAndIctFromCrc(checksumOpt).foreach { protocolMetadataAndIctFromCrc =>
       return protocolMetadataAndIctFromCrc
     }
 
@@ -577,6 +584,15 @@ class Snapshot(
       },
     domainMetadata = checksumOpt.flatMap(_.domainMetadata)
       .orElse(Option.when(_computedStateTriggered)(domainMetadata)),
+    numDeletedRecordsOpt = checksumOpt.flatMap(_.numDeletedRecordsOpt)
+      .orElse(Option.when(_computedStateTriggered)(numDeletedRecordsOpt).flatten)
+      .filter(_ => deletionVectorsReadableAndMetricsEnabled),
+    numDeletionVectorsOpt = checksumOpt.flatMap(_.numDeletionVectorsOpt)
+      .orElse(Option.when(_computedStateTriggered)(numDeletionVectorsOpt).flatten)
+      .filter(_ => deletionVectorsReadableAndMetricsEnabled),
+    deletedRecordCountsHistogramOpt = checksumOpt.flatMap(_.deletedRecordCountsHistogramOpt)
+      .orElse(Option.when(_computedStateTriggered)(deletedRecordCountsHistogramOpt).flatten)
+      .filter(_ => deletionVectorsReadableAndHistogramEnabled),
     histogramOpt = checksumOpt.flatMap(_.histogramOpt)
   )
 
@@ -632,7 +648,12 @@ class Snapshot(
    *   if the delta file for the current version is not found after backfilling.
    */
   def ensureCommitFilesBackfilled(catalogTableOpt: Option[CatalogTable]): Unit = {
-    val tableCommitCoordinatorClient = getTableCommitCoordinatorForWrites.getOrElse {
+    val tableCommitCoordinatorClientOpt = if (isCatalogOwned) {
+      CatalogOwnedTableUtils.populateTableCommitCoordinatorFromCatalog(spark, catalogTableOpt, this)
+    } else {
+      getTableCommitCoordinatorForWrites
+    }
+    val tableCommitCoordinatorClient = tableCommitCoordinatorClientOpt.getOrElse {
       return
     }
     val minUnbackfilledVersion = DeltaCommitFileProvider(this).minUnbackfilledVersion

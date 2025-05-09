@@ -94,6 +94,56 @@ public abstract class DeltaEndToEndTableTestSuite {
             nonPartitionedLargeTablePath);
     }
 
+    /** Tests fix for https://github.com/delta-io/delta/issues/3977 */
+    @Test
+    public void testWriteFromDatagenTableToDeltaTypeWithBytesType() throws Exception {
+        final StreamTableEnvironment tableEnv = setupTableEnvAndDeltaCatalog(false);
+        final String targetTablePath = TEMPORARY_FOLDER.newFolder().getAbsolutePath();
+        final String datagenSourceDDL = ""
+            + "CREATE TABLE source_table ("
+            + " id BIGINT,"
+            + " binary_data BYTES"
+            + ") WITH ("
+            + " 'connector' = 'datagen',"
+            + " 'fields.id.kind' = 'sequence',"
+            + " 'fields.id.start' = '1',"
+            + " 'fields.id.end' = '8',"
+            + " 'number-of-rows' = '8'," // this makes the source BOUNDED
+            + " 'fields.binary_data.kind' = 'random',"
+            + " 'fields.binary_data.length' = '16'"
+            + ")";
+        final String deltaSinkDDL = String.format(""
+                + "CREATE TABLE target_table ("
+                + " id BIGINT,"
+                + " binary_data BYTES"
+                + ") WITH ("
+                + " 'connector' = 'delta',"
+                + " 'table-path' = '%s'"
+                + ")",
+            targetTablePath);
+
+        // Stage 1: Create the source and validate it
+
+        tableEnv.executeSql(datagenSourceDDL).await();
+
+        final List<Row> sourceRows =
+            DeltaTestUtils.readTableResult(tableEnv.executeSql("SELECT * FROM source_table"));
+
+        assertThat(sourceRows).hasSize(8);
+
+        // Stage 2: Create the sink and insert into it and validate it
+
+        tableEnv.executeSql(deltaSinkDDL).await();
+
+        // If our fix for issue #3977 did not work, then this would have thrown an exception.
+        tableEnv.executeSql("INSERT INTO target_table SELECT * FROM source_table").await();
+
+        final List<Row> targetRows =
+            DeltaTestUtils.readTableResult(tableEnv.executeSql("SELECT * FROM target_table"));
+
+        assertThat(targetRows).hasSize(8);
+    }
+
     @Test
     public void shouldReadAndWriteDeltaTable() throws Exception {
 

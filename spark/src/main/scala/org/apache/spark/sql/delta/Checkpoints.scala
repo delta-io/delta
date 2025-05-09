@@ -25,12 +25,14 @@ import scala.util.Try
 import scala.util.control.NonFatal
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.{Action, CheckpointMetadata, Metadata, SidecarFile, SingleAction}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.{DeltaFileOperations, DeltaLogGroupingIterator, FileNames}
+import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.FileNames._
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.conf.Configuration
@@ -279,7 +281,7 @@ trait Checkpoints extends DeltaLogging {
           data = Map("exception" -> e.getMessage(), "stackTrace" -> e.getStackTrace())
         )
         logWarning(log"Error when writing checkpoint-related files", e)
-        val throwError = Utils.isTesting ||
+        val throwError = DeltaUtils.isTesting ||
           spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CHECKPOINT_THROW_EXCEPTION_WHEN_FAILED)
         if (throwError) throw e
     }
@@ -362,7 +364,7 @@ trait Checkpoints extends DeltaLogging {
     //
     // Sample directory structure with a gap if we don't backfill commit files:
     // _delta_log/
-    //   _commits/
+    //   _staged_commits/
     //     00017.$uuid.json
     //     00018.$uuid.json
     //   00015.json
@@ -1080,7 +1082,7 @@ object Checkpoints
       // overrides the final path even if it already exists. So we use exists here to handle that
       // case.
       // TODO: Remove isTesting and fs.exists check after fixing LocalFS
-      if (Utils.isTesting && fs.exists(finalPath)) {
+      if (DeltaUtils.isTesting && fs.exists(finalPath)) {
         false
       } else {
         fs.rename(tempPath, finalPath)

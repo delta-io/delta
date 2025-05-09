@@ -21,6 +21,7 @@ import java.util.Locale
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.actions.CommitInfo
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
 import org.apache.spark.sql.delta.sources.{DeltaSink, DeltaSQLConf}
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
 import org.apache.commons.io.FileUtils
@@ -71,7 +72,8 @@ abstract class DeltaSinkTest
 
 class DeltaSinkSuite
   extends DeltaSinkTest
-  with DeltaColumnMappingTestUtils {
+  with DeltaColumnMappingTestUtils
+  with CoordinatedCommitsBaseSuite  {
 
   import testImplicits._
 
@@ -615,6 +617,14 @@ class DeltaSinkSuite
     }
   }
 
+}
+
+class DeltaSinkWithCoordinatedCommitsBatch1Suite extends DeltaSinkSuite {
+  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(1)
+}
+
+class DeltaSinkWithCoordinatedCommitsBatch100Suite extends DeltaSinkSuite {
+  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(100)
 }
 
 abstract class DeltaSinkColumnMappingSuiteBase extends DeltaSinkSuite

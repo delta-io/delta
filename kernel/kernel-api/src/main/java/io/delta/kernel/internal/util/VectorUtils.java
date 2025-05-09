@@ -15,12 +15,11 @@
  */
 package io.delta.kernel.internal.util;
 
-import static io.delta.kernel.internal.util.Preconditions.checkArgument;
-
 import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
+import io.delta.kernel.internal.data.GenericColumnVector;
 import io.delta.kernel.internal.data.StructRow;
 import io.delta.kernel.types.*;
 import java.util.ArrayList;
@@ -71,31 +70,6 @@ public final class VectorUtils {
   }
 
   /**
-   * Creates an {@link ArrayValue} from list of strings. The type {@code array(string)} is a common
-   * occurrence in Delta Log schema. We don't have any non-string array type in Delta Log. If we end
-   * up needing to support other types, we can make this generic.
-   *
-   * @param values list of strings
-   * @return an {@link ArrayValue} with the given values of type {@link StringType}
-   */
-  public static ArrayValue stringArrayValue(List<String> values) {
-    if (values == null) {
-      return null;
-    }
-    return new ArrayValue() {
-      @Override
-      public int getSize() {
-        return values.size();
-      }
-
-      @Override
-      public ColumnVector getElements() {
-        return stringVector(values);
-      }
-    };
-  }
-
-  /**
    * Creates a {@link MapValue} from map of string keys and string values. The type {@code
    * map(string -> string)} is a common occurrence in Delta Log schema.
    *
@@ -117,51 +91,43 @@ public final class VectorUtils {
 
       @Override
       public ColumnVector getKeys() {
-        return stringVector(keys);
+        return buildColumnVector(keys, StringType.STRING);
       }
 
       @Override
       public ColumnVector getValues() {
-        return stringVector(values);
+        return buildColumnVector(values, StringType.STRING);
       }
     };
   }
 
-  /**
-   * Utility method to create a {@link ColumnVector} for given list of strings.
-   *
-   * @param values list of strings
-   * @return a {@link ColumnVector} with the given values of type {@link StringType}
-   */
-  public static ColumnVector stringVector(List<String> values) {
-    return new ColumnVector() {
-      @Override
-      public DataType getDataType() {
-        return StringType.STRING;
-      }
-
+  /** Creates an {@link ArrayValue} from list of objects. */
+  public static ArrayValue buildArrayValue(List<?> values, DataType dataType) {
+    if (values == null) {
+      return null;
+    }
+    return new ArrayValue() {
       @Override
       public int getSize() {
         return values.size();
       }
 
       @Override
-      public void close() {
-        // no-op
-      }
-
-      @Override
-      public boolean isNullAt(int rowId) {
-        checkArgument(rowId >= 0 && rowId < values.size(), "Invalid rowId: %s", rowId);
-        return values.get(rowId) == null;
-      }
-
-      @Override
-      public String getString(int rowId) {
-        checkArgument(rowId >= 0 && rowId < values.size(), "Invalid rowId: %s", rowId);
-        return values.get(rowId);
+      public ColumnVector getElements() {
+        return buildColumnVector(values, dataType);
       }
     };
+  }
+
+  /**
+   * Utility method to create a {@link ColumnVector} for given list of object, the object should be
+   * primitive type or an Row instance.
+   *
+   * @param values list of strings
+   * @return a {@link ColumnVector} with the given values type.
+   */
+  public static ColumnVector buildColumnVector(List<?> values, DataType dataType) {
+    return new GenericColumnVector(values, dataType);
   }
 
   /**

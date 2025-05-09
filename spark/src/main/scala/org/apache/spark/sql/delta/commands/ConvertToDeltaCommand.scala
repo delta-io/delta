@@ -341,7 +341,7 @@ abstract class ConvertToDeltaCommandBase(
           if (partitionSchema.isDefined) {
             throw DeltaErrors.partitionSchemaInIcebergTables
           }
-          ConvertUtils.getIcebergTable(spark, target.targetDir, None, None)
+          ConvertUtils.getIcebergTable(spark, target.targetDir, None, None, collectStats)
         case other =>
           throw DeltaErrors.convertNonParquetTablesException(tableIdentifier, other)
       }

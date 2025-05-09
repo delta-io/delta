@@ -31,7 +31,7 @@ import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, FileAction, Remo
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, DeltaFileOperations, FileNames, JsonUtils}
+import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, DeltaFileOperations, FileNames, JsonUtils, Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.DeltaFileOperations.tryDeleteNonRecursive
 import org.apache.spark.sql.delta.util.FileNames._
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
@@ -41,6 +41,7 @@ import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.internal.MDC
 import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql.{Column, DataFrame, Dataset, Encoder, SparkSession}
+import org.apache.spark.sql.catalyst.catalog.CatalogTableType
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
 import org.apache.spark.sql.functions.{col, count, lit, replace, startswith, substr, sum}
@@ -131,6 +132,8 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
     }
     val relativizeIgnoreError =
       spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_RELATIVIZE_IGNORE_ERROR)
+    val dvDiscoveryDisabled = DeltaUtils.isTesting && spark.sessionState.conf.getConf(
+      DeltaSQLConf.FAST_DROP_FEATURE_DV_DISCOVERY_IN_VACUUM_DISABLED)
 
     val canonicalizedBasePath = SparkPath.fromPathString(basePath).urlEncoded
     snapshot.stateDS.mapPartitions { actions =>
@@ -148,7 +151,8 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
               fa,
               fs,
               reservoirBase,
-              relativizeIgnoreError
+              relativizeIgnoreError,
+              dvDiscoveryDisabled
             )
           case _ => Nil
         }
@@ -241,6 +245,14 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
       val snapshot = table.update()
       deltaLog.protocolWrite(snapshot.protocol)
 
+      // Vacuum can break clones by removing files that clones still references for managed tables
+      // eventually the catalog should track this dependency to avoid breaking clones
+      // but for now we block running vacuum on catalog owned managed tables.
+      if (table.catalogTable.exists(_.tableType == CatalogTableType.MANAGED)
+        && snapshot.isCatalogOwned) {
+        throw DeltaErrors.deltaCannotVacuumManagedTable()
+      }
+
       val snapshotTombstoneRetentionMillis = DeltaLog.tombstoneRetentionMillis(snapshot.metadata)
       val retentionMillis = retentionHours.map(h => TimeUnit.HOURS.toMillis(math.round(h)))
       val deleteBeforeTimestamp = retentionMillis match {
@@ -284,7 +296,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
           try {
             val timestamp = new Timestamp(deleteBeforeTimestamp)
             val commit = new DeltaHistoryManager(deltaLog).getActiveCommitAtTime(
-              timestamp, canReturnLastCommit = true, mustBeRecreatable = false)
+              timestamp, table.catalogTable, canReturnLastCommit = true, mustBeRecreatable = false)
             Some(commit.version)
           } catch {
             case ex: DeltaErrors.TimestampEarlierThanCommitRetentionException => None
@@ -535,7 +547,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
     // The start and the end commit versions give the range of commit files we want to look into
     // to get the list of eligible files for deletion.
     val eligibleStartCommitVersion = math.min(
-      deltaLog.update().version,
+      snapshot.version,
       latestCommitVersionOutsideOfRetentionWindowAsOfLastVacuumOpt
         .map(_ + 1).getOrElse(earliestCommitVersion))
     val eligibleEndCommitVersion = latestCommitVersionOutsideOfRetentionWindow
@@ -765,7 +777,7 @@ trait VacuumCommandImpl extends DeltaCommand {
   protected def setCommitClock(deltaLog: DeltaLog, version: Long) = {
     // This is done to make sure that the commit timestamp reflects the one provided by the clock
     // object.
-    if (Utils.isTesting) {
+    if (DeltaUtils.isTesting) {
       val fs = deltaLog.logPath.getFileSystem(deltaLog.newDeltaHadoopConf())
       val filePath = DeltaCommitFileProvider(deltaLog.update()).deltaFile(version)
       if (fs.exists(filePath)) {
@@ -864,7 +876,8 @@ trait VacuumCommandImpl extends DeltaCommand {
       action: FileAction,
       fs: FileSystem,
       basePath: Path,
-      relativizeIgnoreError: Boolean
+      relativizeIgnoreError: Boolean,
+      dvDiscoveryDisabled: Boolean
   ): Seq[String] = {
     val paths = getActionRelativePath(action, fs, basePath, relativizeIgnoreError)
       .map {
@@ -873,7 +886,7 @@ trait VacuumCommandImpl extends DeltaCommand {
       }.getOrElse(Seq.empty)
 
     val deletionVectorPath =
-      getDeletionVectorRelativePathAndSize(action).map(_._1)
+      if (dvDiscoveryDisabled) None else getDeletionVectorRelativePathAndSize(action).map(_._1)
 
     paths ++ deletionVectorPath.toSeq
   }

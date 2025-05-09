@@ -20,7 +20,8 @@ import java.io.File
 import java.util.Locale
 
 import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
-import org.apache.spark.sql.delta.actions.{FileAction, Metadata, Protocol, SetTransaction, SingleAction, TableFeatureProtocolUtils}
+import org.apache.spark.sql.delta.DataFrameUtils
+import org.apache.spark.sql.delta.actions.{AddFile, FileAction, Metadata, Protocol, RemoveFile, SetTransaction, SingleAction, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands._
@@ -48,7 +49,8 @@ trait CloneTableSuiteBase extends QueryTest
   with DeltaColumnMappingTestUtils
   with DeltaSQLCommandTest
   with CoordinatedCommitsBaseSuite
-  with CoordinatedCommitsTestUtils {
+  with CoordinatedCommitsTestUtils
+  with DeletionVectorsTestUtils {
 
   protected val TAG_HAS_SHALLOW_CLONE = new Tag("SHALLOW CLONE")
   protected val TAG_MODIFY_PROTOCOL = new Tag("CHANGES PROTOCOL")
@@ -93,7 +95,15 @@ trait CloneTableSuiteBase extends QueryTest
   }
 
   // Extracted function so it can be overriden in subclasses.
-  protected def uniqueFileActionGroupBy(action: FileAction): String = action.pathAsUri.toString
+  protected def uniqueFileActionGroupBy(action: FileAction): String = {
+    val filePath = action.pathAsUri.toString
+    val dvId = action match {
+      case add: AddFile => Option(add.deletionVector).map(_.uniqueId).getOrElse("")
+      case remove: RemoveFile => Option(remove.deletionVector).map(_.uniqueId).getOrElse("")
+      case _ => ""
+    }
+    filePath + dvId
+  }
 
   import testImplicits._
   // scalastyle:off
@@ -167,8 +177,8 @@ trait CloneTableSuiteBase extends QueryTest
         } else {
           None
         }
-      val deltaTable = DeltaTableV2(spark, sourceLog.dataPath, None, None, timeTravelSpec)
-      val sourceData = Dataset.ofRows(
+      val deltaTable = DeltaTableV2(spark, sourceLog.dataPath, timeTravelOpt = timeTravelSpec)
+      val sourceData = DataFrameUtils.ofRows(
         spark,
         LogicalRelation(sourceLog.createRelation(
           snapshotToUseOpt = Some(deltaTable.initialSnapshot),
@@ -238,7 +248,7 @@ trait CloneTableSuiteBase extends QueryTest
       "A file was added and removed in the same commit")
 
     // Check whether the resulting datasets are the same
-    val targetDf = Dataset.ofRows(
+    val targetDf = DataFrameUtils.ofRows(
       spark,
       LogicalRelation(targetLog.createRelation()))
     checkAnswer(
@@ -748,7 +758,9 @@ trait CloneTableSuiteBase extends QueryTest
   }
 
   testAllClones("CLONE with table properties to disable DV") { (source, target, isShallow) =>
-    withSQLConf(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey -> "true") {
+    withSQLConf(
+        DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey -> "true",
+        DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS.key -> "true") {
       spark.range(10).write.format("delta").save(source)
       spark.sql(s"DELETE FROM delta.`$source` WHERE id = 1")
     }
@@ -829,7 +841,7 @@ trait CloneTableSuiteBase extends QueryTest
       val targetDeltaLog = DeltaLog.forTable(spark, target)
       val targetSnapshot = targetDeltaLog.update()
       assert(targetSnapshot.metadata.configuration ===
-        tblProperties ++ sourceSnapshot.metadata.configuration)
+        sourceSnapshot.metadata.configuration ++ tblProperties)
       // Check that the protocol has been upgraded.
       assert(StrictProtocolOrdering.fulfillsVersionRequirements(
         actual = targetSnapshot.protocol,

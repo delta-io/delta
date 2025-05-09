@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 import java.util.Date
 
+import org.apache.spark.sql.delta.DeltaTestUtils.modifyCommitTimestamp
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -98,6 +99,32 @@ class DeltaCDCSQLSuite extends DeltaCDCSuiteBase with DeltaColumnMappingTestUtil
     } else {
       sql(prefix + suffix)
     }
+  }
+
+  private def testNullRangeBoundary(start: Boundary, end: Boundary): Unit = {
+    test(s"range boundary cannot be null - start=$start end=$end") {
+      val tblName = "tbl"
+      withTable(tblName) {
+        createTblWithThreeVersions(tblName = Some(tblName))
+
+        checkError(intercept[DeltaIllegalArgumentException] {
+          cdcRead(new TableName(tblName), start, end)
+        }, "DELTA_CDC_READ_NULL_RANGE_BOUNDARY")
+      }
+    }
+  }
+
+  for (end <- Seq(
+    Unbounded,
+    EndingVersion("null"),
+    EndingVersion("0"),
+    EndingTimestamp(dateFormat.format(new Date(1)))
+  )) {
+    testNullRangeBoundary(StartingVersion("null"), end)
+  }
+
+  for (start <- Seq(StartingVersion("0"), StartingTimestamp(dateFormat.format(new Date(1))))) {
+    testNullRangeBoundary(start, EndingVersion("null"))
   }
 
   test("select individual column should push down filters") {
@@ -226,9 +253,9 @@ class DeltaCDCSQLSuite extends DeltaCDCSuiteBase with DeltaColumnMappingTestUtil
         val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tbl))
 
         val currentTime = new Date().getTime
-        modifyDeltaTimestamp(deltaLog, 0, currentTime - 100000)
-        modifyDeltaTimestamp(deltaLog, 1, currentTime)
-        modifyDeltaTimestamp(deltaLog, 2, currentTime + 100000)
+        modifyCommitTimestamp(deltaLog, 0, currentTime - 100000)
+        modifyCommitTimestamp(deltaLog, 1, currentTime)
+        modifyCommitTimestamp(deltaLog, 2, currentTime + 100000)
 
         val readDf = sql(s"SELECT * FROM table_changes('$tbl', 0, now())")
         checkCDCAnswer(

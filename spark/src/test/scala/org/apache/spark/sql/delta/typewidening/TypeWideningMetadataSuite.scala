@@ -16,12 +16,14 @@
 
 package org.apache.spark.sql.delta.typewidening
 
+import java.io.File
+
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.propertyKey
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.JsonUtils
 
-import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.types._
 
@@ -33,6 +35,7 @@ class TypeWideningMetadataSuite
     with TypeWideningTestMixin
     with TypeWideningMetadataTests
     with TypeWideningMetadataEndToEndTests
+    with TypeWideningLeakingMetadataTests
 
 /**
  * Tests covering the [[TypeWideningMetadata]] and [[TypeChange]] classes used to handle the
@@ -626,13 +629,7 @@ trait TypeWideningMetadataEndToEndTests {
         "name": "a",
         "type": "integer",
         "nullable": true,
-        "metadata": {
-          "delta.typeChanges": [{
-            "toType": "integer",
-            "fromType": "short",
-            "tableVersion": 1
-          }]
-        }
+        "metadata": {}
       }]}""".stripMargin)
 
   testTypeWideningMetadata("change top-level column type twice byte->short->int")(
@@ -645,17 +642,7 @@ trait TypeWideningMetadataEndToEndTests {
         "name": "a",
         "type": "integer",
         "nullable": true,
-        "metadata": {
-          "delta.typeChanges": [{
-            "toType": "short",
-            "fromType": "byte",
-            "tableVersion": 1
-          },{
-            "toType": "integer",
-            "fromType": "short",
-            "tableVersion": 2
-          }]
-        }
+        "metadata": {}
       }]}""".stripMargin)
 
   testTypeWideningMetadata("change type in map key and in struct in map value")(
@@ -675,26 +662,13 @@ trait TypeWideningMetadataEndToEndTests {
               "name": "b",
               "type": "short",
               "nullable": true,
-              "metadata": {
-                "delta.typeChanges": [{
-                  "toType": "short",
-                  "fromType": "byte",
-                  "tableVersion": 2
-                }]
-              }
+              "metadata": {}
             }]
           },
           "valueContainsNull": true
         },
         "nullable": true,
-        "metadata": {
-          "delta.typeChanges": [{
-            "toType": "integer",
-            "fromType": "byte",
-            "tableVersion": 1,
-            "fieldPath": "key"
-          }]
-        }
+        "metadata": {}
       }
     ]}""".stripMargin)
 
@@ -713,14 +687,7 @@ trait TypeWideningMetadataEndToEndTests {
           "containsNull": true
         },
         "nullable": true,
-        "metadata": {
-          "delta.typeChanges": [{
-            "toType": "short",
-            "fromType": "byte",
-            "tableVersion": 1,
-            "fieldPath": "element"
-          }]
-        }
+        "metadata": {}
       },
       {
         "name": "b",
@@ -732,13 +699,7 @@ trait TypeWideningMetadataEndToEndTests {
               "name": "c",
               "type": "integer",
               "nullable": true,
-              "metadata": {
-                "delta.typeChanges": [{
-                  "toType": "integer",
-                  "fromType": "short",
-                  "tableVersion": 2
-                }]
-              }
+              "metadata": {}
             }]
           },
           "containsNull": true
@@ -747,4 +708,42 @@ trait TypeWideningMetadataEndToEndTests {
         "metadata": { }
       }
     ]}""".stripMargin)
+}
+
+
+trait TypeWideningLeakingMetadataTests {
+    self: QueryTest with TypeWideningTestMixin =>
+
+  test("stream read from type widening does not leak metadata") {
+    val (t1, t2) = ("type_widening_table_1", "type_widening_table_2")
+    withTable(t1, t2) {
+      withTempDir { dir =>
+        sql(s"CREATE TABLE $t1 (part BYTE, value SHORT) USING DELTA PARTITIONED BY (part)")
+        sql(s"INSERT INTO $t1 VALUES (1, 1), (2, 2)")
+        // Change type of both partition and non-partition columns.
+        sql(s"ALTER TABLE $t1 CHANGE COLUMN part TYPE INT")
+        sql(s"ALTER TABLE $t1 CHANGE COLUMN value TYPE INT")
+        // Stream read from source table
+        val streamDf = spark.readStream.format("delta").table(t1)
+        // Should not contain type widening metadata
+        assert(streamDf.schema.forall(_.metadata.json == "{}"))
+
+        // Create and write to another table
+        val q = streamDf.writeStream
+          .partitionBy("part")
+          .trigger(org.apache.spark.sql.streaming.Trigger.AvailableNow())
+          .format("delta")
+          .option("checkpointLocation", new File(dir, "_checkpoint1").getCanonicalPath)
+          .toTable(t2)
+        q.awaitTermination()
+
+        // Check target table Delta log
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(t2))
+        assert(deltaLog.update().metadata.schema.forall(_.metadata.json == "{}"))
+
+        // Check target table data
+        checkAnswer(spark.table(t2), Seq(Row(1, 1), Row(2, 2)))
+      }
+    }
+  }
 }

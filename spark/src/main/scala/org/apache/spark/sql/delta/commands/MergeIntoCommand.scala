@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.commands
 import java.util.concurrent.TimeUnit
 
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.FileAction
 import org.apache.spark.sql.delta.commands.merge.{ClassicMergeExecutor, InsertOnlyMergeExecutor, MergeIntoMaterializeSourceReason}
 import org.apache.spark.sql.delta.files._
@@ -208,6 +209,7 @@ case class MergeIntoCommand(
     checkNonDeterministicSource(spark)
 
     // Metrics should be recorded before commit (where they are written to delta logs).
+    setOperationNumSourceRowsMetric()
     metrics("executionTimeMs").set(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime))
     deltaTxn.registerSQLMetrics(spark, metrics)
 

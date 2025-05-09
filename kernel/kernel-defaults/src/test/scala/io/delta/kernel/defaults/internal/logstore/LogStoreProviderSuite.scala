@@ -16,6 +16,7 @@
 package io.delta.kernel.defaults.internal.logstore
 
 import io.delta.storage._
+
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 import org.scalatest.funsuite.AnyFunSuite
@@ -36,8 +37,7 @@ class LogStoreProviderSuite extends AnyFunSuite {
     "abfs" -> classOf[AzureLogStore].getName,
     "adl" -> classOf[AzureLogStore].getName,
     "wasb" -> classOf[AzureLogStore].getName,
-    "wasbs" -> classOf[AzureLogStore].getName
-  ).foreach { case (scheme, logStoreClass) =>
+    "wasbs" -> classOf[AzureLogStore].getName).foreach { case (scheme, logStoreClass) =>
     test(s"get the default LogStore for scheme $scheme") {
       val logStore = LogStoreProvider.getLogStore(hadoopConf, scheme)
       assert(logStore.getClass.getName === logStoreClass)
@@ -62,8 +62,7 @@ class LogStoreProviderSuite extends AnyFunSuite {
     val hadoopConf = new Configuration()
     hadoopConf.set(LogStoreProvider.getLogStoreSchemeConfKey("fake"), "java.lang.String")
     val e = intercept[IllegalArgumentException](
-      LogStoreProvider.getLogStore(hadoopConf, "fake")
-    )
+      LogStoreProvider.getLogStore(hadoopConf, "fake"))
     assert(e.getMessage.contains(
       "Can not instantiate `LogStore` class (from config): %s".format("java.lang.String")))
   }

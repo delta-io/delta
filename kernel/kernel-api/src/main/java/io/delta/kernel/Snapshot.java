@@ -20,6 +20,7 @@ import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.types.StructType;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Represents the snapshot of a Delta table.
@@ -32,10 +33,9 @@ public interface Snapshot {
   /**
    * Get the version of this snapshot in the table.
    *
-   * @param engine {@link Engine} instance to use in Delta Kernel.
    * @return version of this snapshot in the Delta table
    */
-  long getVersion(Engine engine);
+  long getVersion();
 
   /**
    * Get the names of the partition columns in the Delta table at this snapshot.
@@ -43,10 +43,9 @@ public interface Snapshot {
    * <p>The partition column names are returned in the order they are defined in the Delta table
    * schema. If the table does not define any partition columns, this method returns an empty list.
    *
-   * @param engine {@link Engine} instance to use in Delta Kernel.
    * @return a list of partition column names, or an empty list if the table is not partitioned.
    */
-  List<String> getPartitionColumnNames(Engine engine);
+  List<String> getPartitionColumnNames();
 
   /**
    * Get the timestamp (in milliseconds since the Unix epoch) of the latest commit in this snapshot.
@@ -59,16 +58,22 @@ public interface Snapshot {
   /**
    * Get the schema of the table at this snapshot.
    *
-   * @param engine {@link Engine} instance to use in Delta Kernel.
    * @return Schema of the Delta table at this snapshot.
    */
-  StructType getSchema(Engine engine);
+  StructType getSchema();
+
+  /**
+   * Returns the configuration for the provided {@code domain} if it exists in the snapshot. Returns
+   * empty if the {@code domain} is not present in the snapshot.
+   *
+   * @return the configuration for the provided domain if it exists
+   */
+  Optional<String> getDomainMetadata(String domain);
 
   /**
    * Create a scan builder to construct a {@link Scan} to read data from this snapshot.
    *
-   * @param engine {@link Engine} instance to use in Delta Kernel.
    * @return an instance of {@link ScanBuilder}
    */
-  ScanBuilder getScanBuilder(Engine engine);
+  ScanBuilder getScanBuilder();
 }

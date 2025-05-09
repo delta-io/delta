@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.sources
 import java.util.concurrent.ConcurrentHashMap
 
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.DeltaOperations.StreamingUpdate
 import org.apache.spark.sql.delta.actions.{FileAction, Metadata, Protocol, SetTransaction}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
@@ -176,11 +177,17 @@ case class DeltaSink(
 
     if (canOverwriteSchema) return dataSchema
 
+    val typeWideningMode = if (canMergeSchema && TypeWidening.isEnabled(protocol, metadata)) {
+        TypeWideningMode.TypeEvolution(
+          uniformIcebergCompatibleOnly = UniversalFormat.icebergEnabled(metadata))
+      } else {
+        TypeWideningMode.NoTypeWidening
+      }
     SchemaMergingUtils.mergeSchemas(
       metadata.schema,
       dataSchema,
       allowImplicitConversions = true,
-      allowTypeWidening = canMergeSchema && TypeWidening.isEnabled(protocol, metadata)
+      typeWideningMode = typeWideningMode
     )
   }
 

@@ -37,6 +37,7 @@ class TightBoundsSuite
     with SharedSparkSession
     with DeletionVectorsTestUtils
     with DeltaSQLCommandTest {
+  import testImplicits._
 
   override def beforeAll(): Unit = {
     super.beforeAll()

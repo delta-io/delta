@@ -248,7 +248,8 @@ class DeltaLogSuite extends QueryTest
 
         log.store.write(
           FileNames.unsafeDeltaFile(log.logPath, 0L),
-          Iterator(Action.supportedProtocolVersion(), Metadata(), add)
+          Iterator(Action.supportedProtocolVersion(
+            featuresToExclude = Seq(CatalogOwnedTableFeature)), Metadata(), add)
             .map(a => JsonUtils.toJson(a.wrap)),
           overwrite = false,
           log.newDeltaHadoopConf())
@@ -277,7 +278,8 @@ class DeltaLogSuite extends QueryTest
 
         log.store.write(
           FileNames.unsafeDeltaFile(log.logPath, 0L),
-          Iterator(Action.supportedProtocolVersion(), Metadata(), add)
+          Iterator(Action.supportedProtocolVersion(
+            featuresToExclude = Seq(CatalogOwnedTableFeature)), Metadata(), add)
             .map(a => JsonUtils.toJson(a.wrap)),
           overwrite = false,
           log.newDeltaHadoopConf())
@@ -755,7 +757,7 @@ class DeltaLogSuite extends QueryTest
       val e = intercept[DeltaIOException] {
         log.createLogDirectoriesIfNotExists()
       }
-      checkError(e, "DELTA_CANNOT_CREATE_LOG_PATH")
+      checkError(e, "DELTA_CANNOT_CREATE_LOG_PATH", "42KD5", Map("path" -> log.logPath.toString))
       e.getCause match {
         case e: IOException =>
           assert(e.getMessage.contains("Parent path is not a directory"))

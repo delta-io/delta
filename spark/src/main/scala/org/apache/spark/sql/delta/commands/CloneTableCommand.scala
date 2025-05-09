@@ -282,11 +282,11 @@ case class CloneParquetSource(
 case class CloneIcebergSource(
   tableIdentifier: TableIdentifier,
   sparkTable: Option[Table],
-  tableSchema: Option[StructType],
+  deltaSnapshot: Option[Snapshot],
   spark: SparkSession) extends CloneConvertedSource(spark) {
 
   override lazy val convertTargetTable: ConvertTargetTable =
-    ConvertUtils.getIcebergTable(spark, tableIdentifier.table, sparkTable, tableSchema)
+    ConvertUtils.getIcebergTable(spark, tableIdentifier.table, sparkTable, deltaSnapshot)
 
   override def format: String = CloneSourceFormat.ICEBERG
 

@@ -21,6 +21,7 @@ import io.delta.kernel.defaults.utils.DefaultKernelTestUtils.getValueAsObject
 import io.delta.kernel.defaults.utils.TestUtils
 import io.delta.kernel.expressions.Column
 import io.delta.kernel.types._
+
 import org.scalatest.funsuite.AnyFunSuite
 
 class ImplicitCastExpressionSuite extends AnyFunSuite with TestUtils {
@@ -30,16 +31,13 @@ class ImplicitCastExpressionSuite extends AnyFunSuite with TestUtils {
     (ByteType.BYTE, LongType.LONG),
     (ByteType.BYTE, FloatType.FLOAT),
     (ByteType.BYTE, DoubleType.DOUBLE),
-
     (ShortType.SHORT, IntegerType.INTEGER),
     (ShortType.SHORT, LongType.LONG),
     (ShortType.SHORT, FloatType.FLOAT),
     (ShortType.SHORT, DoubleType.DOUBLE),
-
     (IntegerType.INTEGER, LongType.LONG),
     (IntegerType.INTEGER, FloatType.FLOAT),
     (IntegerType.INTEGER, DoubleType.DOUBLE),
-
     (LongType.LONG, FloatType.FLOAT),
     (LongType.LONG, DoubleType.DOUBLE),
     (FloatType.FLOAT, DoubleType.DOUBLE))

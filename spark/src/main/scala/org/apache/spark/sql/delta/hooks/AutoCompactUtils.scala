@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.hooks
 import scala.collection.mutable
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.{DeltaLog, OptimisticTransactionImpl, Snapshot}
+import org.apache.spark.sql.delta.{DeltaLog, DeltaTransaction, Snapshot}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.sources.DeltaSQLConf._
@@ -311,7 +311,7 @@ object AutoCompactUtils extends DeltaLogging {
    */
   def prepareAutoCompactRequest(
       spark: SparkSession,
-      txn: OptimisticTransactionImpl,
+      txn: DeltaTransaction,
       postCommitSnapshot: Snapshot,
       partitionsAddedToOpt: Option[PartitionKeySet],
       opType: String,
@@ -337,7 +337,7 @@ object AutoCompactUtils extends DeltaLogging {
    */
   def isQualifiedForAutoCompact(
       spark: SparkSession,
-      txn: OptimisticTransactionImpl): Boolean = {
+      txn: DeltaTransaction): Boolean = {
     // If txnExecutionTimeMs is empty, there is no transaction commit.
     if (txn.txnExecutionTimeMs.isEmpty) return false
     // If modified partitions only mode is not enabled, return true to avoid subsequent checking.

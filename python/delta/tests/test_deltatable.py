@@ -153,17 +153,27 @@ class DeltaTableTestsMixin:
 
         # String expressions in merge condition and dicts
         reset_table()
-        dt.merge(source, "key = k") \
+        merge_output = dt.merge(source, "key = k") \
             .whenMatchedUpdate(set={"value": "v + 0"}) \
             .whenNotMatchedInsert(values={"key": "k", "value": "v + 0"}) \
             .whenNotMatchedBySourceUpdate(set={"value": "value + 0"}) \
             .execute()
+        self.__checkAnswer(merge_output,
+                           ([Row(6,  # affected rows
+                                 4,  # updated rows (a and b in WHEN MATCHED
+                                     # and c and d in WHEN NOT MATCHED BY SOURCE)
+                                 0,  # deleted rows
+                                 2)]),  # inserted rows (e and f)
+                           StructType([StructField('num_affected_rows', LongType(), False),
+                                        StructField('num_updated_rows', LongType(), False),
+                                        StructField('num_deleted_rows', LongType(), False),
+                                        StructField('num_inserted_rows', LongType(), False)]))
         self.__checkAnswer(dt.toDF(),
                            ([('a', -1), ('b', 0), ('c', 3), ('d', 4), ('e', -5), ('f', -6)]))
 
         # Column expressions in merge condition and dicts
         reset_table()
-        dt.merge(source, expr("key = k")) \
+        merge_output = dt.merge(source, expr("key = k")) \
             .whenMatchedUpdate(set={"value": col("v") + 0}) \
             .whenNotMatchedInsert(values={"key": "k", "value": col("v") + 0}) \
             .whenNotMatchedBySourceUpdate(set={"value": col("value") + 0}) \
@@ -1151,16 +1161,19 @@ class DeltaTableTestsMixin:
         with self.assertRaises(TypeError):
             builder.property("1", 1)  # type: ignore[arg-type]
 
-    def test_protocolUpgrade(self) -> None:
+    def __create_df_for_feature_tests(self) -> DeltaTable:
         try:
-            self.spark.conf.set('spark.databricks.delta.minWriterVersion', '2')
             self.spark.conf.set('spark.databricks.delta.minReaderVersion', '1')
+            self.spark.conf.set('spark.databricks.delta.minWriterVersion', '2')
             self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3), ('d', 4)])
-            dt = DeltaTable.forPath(self.spark, self.tempFile)
-            dt.upgradeTableProtocol(1, 3)
+            return DeltaTable.forPath(self.spark, self.tempFile)
         finally:
-            self.spark.conf.unset('spark.databricks.delta.minWriterVersion')
             self.spark.conf.unset('spark.databricks.delta.minReaderVersion')
+            self.spark.conf.unset('spark.databricks.delta.minWriterVersion')
+
+    def test_protocolUpgrade(self) -> None:
+        dt = self.__create_df_for_feature_tests()
+        dt.upgradeTableProtocol(1, 3)
 
         # cannot downgrade once upgraded
         dt.upgradeTableProtocol(1, 2)
@@ -1189,14 +1202,7 @@ class DeltaTableTestsMixin:
             dt.upgradeTableProtocol(1, {})  # type: ignore[arg-type]
 
     def test_addFeatureSupport(self) -> None:
-        try:
-            self.spark.conf.set('spark.databricks.delta.minReaderVersion', '1')
-            self.spark.conf.set('spark.databricks.delta.minWriterVersion', '2')
-            self.__writeDeltaTable([('a', 1), ('b', 2), ('c', 3), ('d', 4)])
-            dt = DeltaTable.forPath(self.spark, self.tempFile)
-        finally:
-            self.spark.conf.unset('spark.databricks.delta.minReaderVersion')
-            self.spark.conf.unset('spark.databricks.delta.minWriterVersion')
+        dt = self.__create_df_for_feature_tests()
 
         # bad args
         with self.assertRaisesRegex(Py4JJavaError, "DELTA_UNSUPPORTED_FEATURES_IN_CONFIG"):
@@ -1223,6 +1229,73 @@ class DeltaTableTestsMixin:
         self.assertTrue(dt_details["minWriterVersion"] == 7, "DV requires writer version 7")
         self.assertEqual(sorted(dt_details["tableFeatures"]),
                          ["appendOnly", "deletionVectors", "invariants"])
+
+    def test_dropFeatureSupport(self) -> None:
+        # The expected results below are based on drop feature with history truncation.
+        # Fast drop feature, adds a writer feature when dropped. The relevant behavior is tested
+        # in the DeltaFastDropFeatureSuite.
+        self.spark.conf.set('spark.databricks.delta.tableFeatures.fastDropFeature.enabled', 'false')
+        dt = self.__create_df_for_feature_tests()
+
+        dt.addFeatureSupport("testRemovableWriter")
+        dt_details = dt.detail().collect()[0].asDict()
+        self.assertTrue(dt_details["minReaderVersion"] == 1)
+        self.assertTrue(dt_details["minWriterVersion"] == 7, "Should upgrade to table features")
+        self.assertEqual(sorted(dt_details["tableFeatures"]),
+                         ["appendOnly", "invariants", "testRemovableWriter"])
+
+        # Attempt truncating the history when dropping a feature that is not required.
+        # This verifies the truncateHistory option was correctly passed.
+        with self.assertRaisesRegex(Exception,
+                                    "DELTA_FEATURE_DROP_HISTORY_TRUNCATION_NOT_ALLOWED"):
+            dt.dropFeatureSupport("testRemovableWriter", True)
+
+        dt.dropFeatureSupport("testRemovableWriter")
+        dt_details = dt.detail().collect()[0].asDict()
+        self.assertTrue(dt_details["minReaderVersion"] == 1)
+        self.assertTrue(dt_details["minWriterVersion"] == 2, "Should return to legacy protocol")
+
+        dt.addFeatureSupport("testRemovableReaderWriter")
+        dt_details = dt.detail().collect()[0].asDict()
+        self.assertTrue(dt_details["minReaderVersion"] == 3, "Should upgrade to table features")
+        self.assertTrue(dt_details["minWriterVersion"] == 7, "Should upgrade to table features")
+        self.assertEqual(sorted(dt_details["tableFeatures"]),
+                         ["appendOnly", "invariants", "testRemovableReaderWriter"])
+
+        dt.dropFeatureSupport("testRemovableReaderWriter")
+        dt_details = dt.detail().collect()[0].asDict()
+        self.assertTrue(dt_details["minReaderVersion"] == 1, "Should return to legacy protocol")
+        self.assertTrue(dt_details["minWriterVersion"] == 2, "Should return to legacy protocol")
+
+        # Try to drop an unsupported feature.
+        with self.assertRaisesRegex(Exception, "DELTA_FEATURE_DROP_UNSUPPORTED_CLIENT_FEATURE"):
+            dt.dropFeatureSupport("__invalid_feature__")
+
+        # Try to drop a feature that is not present in the protocol.
+        with self.assertRaisesRegex(Exception, "DELTA_FEATURE_DROP_FEATURE_NOT_PRESENT"):
+            dt.dropFeatureSupport("testRemovableReaderWriter")
+
+        # Try to drop a non-removable feature.
+        with self.assertRaisesRegex(Exception, "DELTA_FEATURE_DROP_NONREMOVABLE_FEATURE"):
+            dt.dropFeatureSupport("testReaderWriter")
+
+        with self.assertRaisesRegex(ValueError, "featureName needs to be a string"):
+            dt.dropFeatureSupport(12345)  # type: ignore[arg-type]
+        with self.assertRaisesRegex(ValueError, "featureName needs to be a string"):
+            dt.dropFeatureSupport([12345])  # type: ignore[arg-type]
+        with self.assertRaisesRegex(ValueError, "featureName needs to be a string"):
+            dt.dropFeatureSupport({})  # type: ignore[arg-type]
+        with self.assertRaisesRegex(ValueError, "featureName needs to be a string"):
+            dt.dropFeatureSupport([])  # type: ignore[arg-type]
+
+        with self.assertRaisesRegex(ValueError, "truncateHistory needs to be a boolean"):
+            dt.dropFeatureSupport("testRemovableWriter", 12345)  # type: ignore[arg-type]
+        with self.assertRaisesRegex(ValueError, "truncateHistory needs to be a boolean"):
+            dt.dropFeatureSupport("testRemovableWriter", [12345])  # type: ignore[arg-type]
+        with self.assertRaisesRegex(ValueError, "truncateHistory needs to be a boolean"):
+            dt.dropFeatureSupport("testRemovableWriter", {})  # type: ignore[arg-type]
+        with self.assertRaisesRegex(ValueError, "truncateHistory needs to be a boolean"):
+            dt.dropFeatureSupport("testRemovableWriter", [])  # type: ignore[arg-type]
 
     def test_restore_to_version(self) -> None:
         self.__writeDeltaTable([('a', 1), ('b', 2)])

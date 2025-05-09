@@ -33,10 +33,10 @@ class FieldMetadataSuite extends AnyFunSuite {
   }
 
   test("retrieving key with wrong type throws exception") {
-    val longs : Seq[java.lang.Long] = Seq(1L, 2L, 3L)
-    val doubles : Seq[java.lang.Double] = Seq(1.0, 2.0, 3.0)
-    val booleans : Seq[java.lang.Boolean] = Seq(true, false, true)
-    val strings : Seq[java.lang.String] = Seq("a", "b", "c")
+    val longs: Seq[java.lang.Long] = Seq(1L, 2L, 3L)
+    val doubles: Seq[java.lang.Double] = Seq(1.0, 2.0, 3.0)
+    val booleans: Seq[java.lang.Boolean] = Seq(true, false, true)
+    val strings: Seq[java.lang.String] = Seq("a", "b", "c")
     val innerMeta = FieldMetadata.builder().putBoolean("key", true).build()
     val meta = FieldMetadata.builder()
       .putLong("longKey", 23L)
@@ -83,10 +83,10 @@ class FieldMetadataSuite extends AnyFunSuite {
   }
 
   test("retrieving key with correct type returns value") {
-    val longs : Seq[java.lang.Long] = Seq(1L, 2L, 3L)
-    val doubles : Seq[java.lang.Double] = Seq(1.0, 2.0, 3.0)
-    val booleans : Seq[java.lang.Boolean] = Seq(true, false, true)
-    val strings : Seq[java.lang.String] = Seq("a", "b", "c")
+    val longs: Seq[java.lang.Long] = Seq(1L, 2L, 3L)
+    val doubles: Seq[java.lang.Double] = Seq(1.0, 2.0, 3.0)
+    val booleans: Seq[java.lang.Boolean] = Seq(true, false, true)
+    val strings: Seq[java.lang.String] = Seq("a", "b", "c")
     val innerMeta = FieldMetadata.builder().putBoolean("key", true).build()
     val meta = FieldMetadata.builder()
       .putLong("longKey", 23L)

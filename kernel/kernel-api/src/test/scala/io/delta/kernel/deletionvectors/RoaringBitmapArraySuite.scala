@@ -17,6 +17,7 @@
 package io.delta.kernel.deletionvectors
 
 import io.delta.kernel.internal.deletionvectors.RoaringBitmapArray
+
 import org.scalatest.funsuite.AnyFunSuite
 
 class RoaringBitmapArraySuite extends AnyFunSuite {
@@ -67,7 +68,7 @@ class RoaringBitmapArraySuite extends AnyFunSuite {
 
   // TODO need to implement serialize to copy over tests
 
-  /**
+  /*
   final val BITMAP2_NUMBER = Int.MaxValue.toLong * 3L
 
   for (serializationFormat <- RoaringBitmapArrayFormat.values) {
@@ -91,5 +92,6 @@ class RoaringBitmapArraySuite extends AnyFunSuite {
     output.deserialize(buffer)
     assert(input === output)
   }
-  */
+   */
+
 }

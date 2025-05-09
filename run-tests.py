@@ -25,7 +25,7 @@ import argparse
 # Define groups of subprojects that can be tested separately from other groups.
 # As of now, we have only defined project groups in the SBT build, so these must match
 # the group names defined in build.sbt.
-valid_project_groups = ["spark", "kernel", "spark-python"]
+valid_project_groups = ["spark", "iceberg", "kernel", "spark-python"]
 
 
 def get_args():
@@ -208,6 +208,10 @@ def run_tests_in_docker(image_tag, test_group):
     test_parallelism = os.getenv("TEST_PARALLELISM_COUNT")
     if test_parallelism is not None:
         envs = envs + "-e TEST_PARALLELISM_COUNT=%s " % test_parallelism
+
+    disable_unidoc = os.getenv("DISABLE_UNIDOC")
+    if disable_unidoc is not None:
+        envs = envs + "-e DISABLE_UNIDOC=%s " % disable_unidoc
 
     cwd = os.getcwd()
     test_script = os.path.basename(__file__)

@@ -211,6 +211,9 @@ class DeltaHistoryManager(
         start,
         Some(end),
         deltaLog.newDeltaHadoopConf())
+      if (commits.isEmpty) {
+        throw DeltaErrors.noHistoryFound(deltaLog.logPath)
+      }
       lastCommitBeforeTimestamp(commits, time).getOrElse(commits.head)
     }
   }
@@ -226,6 +229,7 @@ class DeltaHistoryManager(
    */
   def getActiveCommitAtTime(
       timestamp: Timestamp,
+      catalogTableOpt: Option[CatalogTable],
       canReturnLastCommit: Boolean,
       mustBeRecreatable: Boolean = true,
       canReturnEarliestCommit: Boolean = false): Commit = {
@@ -235,7 +239,7 @@ class DeltaHistoryManager(
     } else {
       getEarliestDeltaFile(deltaLog)
     }
-    val snapshot = deltaLog.update()
+    val snapshot = deltaLog.update(catalogTableOpt = catalogTableOpt)
     val commitFileProvider = DeltaCommitFileProvider(snapshot)
     val latestVersion = snapshot.version
 
@@ -323,8 +327,7 @@ class DeltaHistoryManager(
       throw DeltaErrors.TimestampEarlierThanCommitRetentionException(timestamp, commitTs, tsString)
     } else if (commit.version == latestVersion && !canReturnLastCommit) {
       if (commit.timestamp < time) {
-        throw DeltaErrors.TemporallyUnstableInputException(
-          timestamp, commitTs, tsString, commit.version)
+        throw DeltaErrors.timestampGreaterThanLatestCommit(timestamp, commitTs, tsString)
       }
     }
     commit
@@ -337,6 +340,7 @@ class DeltaHistoryManager(
    */
   def checkVersionExists(
       version: Long,
+      catalogTableOpt: Option[CatalogTable],
       mustBeRecreatable: Boolean = true,
       allowOutOfRange: Boolean = false): Unit = {
     val earliest = if (mustBeRecreatable) {
@@ -344,7 +348,7 @@ class DeltaHistoryManager(
     } else {
       getEarliestDeltaFile(deltaLog)
     }
-    val latest = deltaLog.update().version
+    val latest = deltaLog.update(catalogTableOpt = catalogTableOpt).version
     if (version < earliest || ((version > latest) && !allowOutOfRange)) {
       throw VersionNotFoundException(version, earliest, latest)
     }
@@ -710,12 +714,19 @@ object DeltaHistoryManager extends DeltaLogging {
           startVersion,
           Some(math.min(startVersion + step, end)),
           conf.value)
-        lastCommitBeforeTimestamp(commits, time).getOrElse(commits.head)
+        if (commits.isEmpty) {
+          None
+        } else {
+          Some(lastCommitBeforeTimestamp(commits, time).getOrElse(commits.head))
+        }
       }
     }.collect()
 
     // Spark should return the commits in increasing order as well
-    val commitList = monotonizeCommitTimestamps(possibleCommits)
+    val commitList = monotonizeCommitTimestamps(possibleCommits.flatten)
+    if (commitList.isEmpty) {
+      throw DeltaErrors.noHistoryFound(new Path(logPath))
+    }
     lastCommitBeforeTimestamp(commitList, time).getOrElse(commitList.head)
   }
 

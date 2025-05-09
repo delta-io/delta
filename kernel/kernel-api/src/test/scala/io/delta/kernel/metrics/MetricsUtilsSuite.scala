@@ -19,6 +19,7 @@ import java.util.concurrent.Callable
 import java.util.function.Supplier
 
 import io.delta.kernel.internal.metrics.{Counter, Timer}
+
 import org.scalatest.funsuite.AnyFunSuite
 
 class MetricsUtilsSuite extends AnyFunSuite {
@@ -27,8 +28,10 @@ class MetricsUtilsSuite extends AnyFunSuite {
   // Timer tests //
   ////////////////
 
+  val NANOSECONDS_PER_MILLISECOND = 1000000
+
   def millisToNanos(millis: Long): Long = {
-    millis*1000000
+    millis * NANOSECONDS_PER_MILLISECOND
   }
 
   /**
@@ -37,29 +40,33 @@ class MetricsUtilsSuite extends AnyFunSuite {
    */
   def testTimer(incrementFx: (Long, Timer) => Unit): Unit = {
     val timer = new Timer()
+    // Verify initial values
     assert(timer.count == 0)
-    assert(timer.totalDuration == 0)
+    assert(timer.totalDurationNs == 0)
 
-    val incrementAmt1 = 0
-    val paddedEndTimeOp1 = incrementAmt1 + 5 // We pad each operation by 5ms
-    incrementFx(incrementAmt1, timer)
-    assert(timer.count == 1)
-    assert(timer.totalDuration >= millisToNanos(incrementAmt1) &&
-      timer.totalDuration < millisToNanos(paddedEndTimeOp1))
+    def incrementAndCheck(amtMillis: Long): Unit = {
+      val initialCount = timer.count()
+      val initialDuration = timer.totalDurationNs() // in nanoseconds
 
-    val incrementAmt2 = 20
-    val paddedEndTimeOp2 = paddedEndTimeOp1 + incrementAmt2 + 5 // 30
-    incrementFx(incrementAmt2, timer)
-    assert(timer.count == 2)
-    assert(timer.totalDuration >= millisToNanos(incrementAmt1 + incrementAmt2) &&
-      timer.totalDuration < millisToNanos(paddedEndTimeOp2))
+      val startTime = System.currentTimeMillis()
+      incrementFx(amtMillis, timer)
+      // upperLimitDuration is in milliseconds; we take the max of time elapsed vs the incrementAmt
+      val upperLimitDuration = Math.max(
+        // we pad by 1 due to rounding of nanoseconds to milliseconds for system time
+        System.currentTimeMillis() - startTime + 1,
+        amtMillis)
 
-    val incrementAmt3 = 50
-    val paddedEndTimeOp3 = paddedEndTimeOp2 + incrementAmt3 + 5 // 85
-    incrementFx(incrementAmt3, timer)
-    assert(timer.count == 3)
-    assert(timer.totalDuration >= millisToNanos(incrementAmt1 + incrementAmt2 + incrementAmt3) &&
-      timer.totalDuration < millisToNanos(paddedEndTimeOp3))
+      // check count
+      assert(timer.count == initialCount + 1)
+      // check lowerbound
+      assert(timer.totalDurationNs >= initialDuration + millisToNanos(amtMillis))
+      // check upperbound
+      assert(timer.totalDurationNs <= initialDuration + millisToNanos(upperLimitDuration))
+    }
+
+    incrementAndCheck(0)
+    incrementAndCheck(20)
+    incrementAndCheck(50)
   }
 
   test("Timer class") {
@@ -75,10 +82,11 @@ class MetricsUtilsSuite extends AnyFunSuite {
 
     // Using Timer.time(supplier)
     def supplier(amount: Long): Supplier[Long] = {
-      () => {
-        Thread.sleep(amount)
-        amount
-      }
+      () =>
+        {
+          Thread.sleep(amount)
+          amount
+        }
     }
     testTimer((amount, timer) => {
       timer.time(supplier(amount))
@@ -86,10 +94,11 @@ class MetricsUtilsSuite extends AnyFunSuite {
 
     // Using Timer.timeCallable
     def callable(amount: Long): Callable[Long] = {
-      () => {
-        Thread.sleep(amount)
-        amount
-      }
+      () =>
+        {
+          Thread.sleep(amount)
+          amount
+        }
     }
     testTimer((amount, timer) => {
       timer.timeCallable(callable(amount))
@@ -116,10 +125,11 @@ class MetricsUtilsSuite extends AnyFunSuite {
 
     // Using Timer.time(supplier)
     def supplier(amount: Long): Supplier[Long] = {
-      () => {
-        Thread.sleep(amount)
-        throw new RuntimeException()
-      }
+      () =>
+        {
+          Thread.sleep(amount)
+          throw new RuntimeException()
+        }
     }
     testTimer((amount, timer) => {
       catchException(() => timer.time(supplier(amount)))
@@ -127,10 +137,11 @@ class MetricsUtilsSuite extends AnyFunSuite {
 
     // Using Timer.timeCallable
     def callable(amount: Long): Callable[Long] = {
-      () => {
-        Thread.sleep(amount)
-        throw new RuntimeException()
-      }
+      () =>
+        {
+          Thread.sleep(amount)
+          throw new RuntimeException()
+        }
     }
     testTimer((amount, timer) => {
       catchException(() => timer.timeCallable(callable(amount)))
@@ -138,10 +149,11 @@ class MetricsUtilsSuite extends AnyFunSuite {
 
     // Using Timer.time(runnable)
     def runnable(amount: Long): Runnable = {
-      () => {
-        Thread.sleep(amount)
-        throw new RuntimeException()
-      }
+      () =>
+        {
+          Thread.sleep(amount)
+          throw new RuntimeException()
+        }
     }
     testTimer((amount, timer) => {
       catchException(() => timer.time(runnable(amount)))

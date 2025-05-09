@@ -89,6 +89,16 @@ trait DeltaRetentionSuiteBase extends QueryTest
     files.map(f => f.getName()).map(s => s.substring(0, s.indexOf(".")).toLong).toSet
   }
 
+  protected def getCrcFiles(dir: File): Seq[File] =
+    dir.listFiles().filter(f => FileNames.isChecksumFile(new Path(f.getCanonicalPath)))
+
+  protected def getCrcVersions(dir: File): Set[Long] =
+    getFileVersions(getCrcFiles(dir))
+
+  protected def getDeltaAndCrcFiles(dir: File): Seq[File] =
+    getDeltaFiles(dir) ++ getCrcFiles(dir)
+
+
   protected def getDeltaVersions(dir: File): Set[Long] = {
     val backfilledDeltaVersions = getFileVersions(getDeltaFiles(dir))
     val unbackfilledDeltaVersions = getUnbackfilledDeltaVersions(dir)

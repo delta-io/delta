@@ -223,13 +223,16 @@ class HadoopFileSystemDVStore(hadoopConf: Configuration)
           checksum = DeletionVectorStore.calculateChecksum(data))
 
         if (writtenBytes != dvRange.offset) {
-          recordDeltaEvent(
-            deltaLog = null,
-            opType = "delta.deletionVector.write.offsetMismatch",
+          deltaAssert(
+            writtenBytes == dvRange.offset,
+            name = "dv.write.offsetMismatch",
+            msg = s"Offset mismatch while writing deletion vector to file",
             data = Map(
               "path" -> path.path.toString,
               "reportedOffset" -> dvRange.offset,
-              "calculatedOffset" -> writtenBytes))
+              "calculatedOffset" -> writtenBytes)
+          )
+          throw DeltaErrors.deletionVectorSizeMismatch()
         }
 
         log.debug(s"Writing DV range to file: Path=${path.path}, Range=${dvRange}")

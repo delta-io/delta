@@ -16,10 +16,11 @@
 
 package io.delta.kernel.internal.util
 
-import io.delta.kernel.exceptions.KernelException
-import org.scalatest.funsuite.AnyFunSuite
-
 import scala.collection.JavaConverters._
+
+import io.delta.kernel.exceptions.KernelException
+
+import org.scalatest.funsuite.AnyFunSuite
 
 class JsonUtilsSuite extends AnyFunSuite {
   test("Parse Map[String, String] JSON - positive case") {

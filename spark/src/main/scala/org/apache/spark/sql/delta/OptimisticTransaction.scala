@@ -27,13 +27,14 @@ import scala.collection.mutable.{ArrayBuffer, HashSet}
 import scala.util.control.NonFatal
 
 import com.databricks.spark.util.TagDefinitions.TAG_LOG_STORE_CLASS
-import org.apache.spark.sql.delta.DeltaOperations.{ChangeColumn, CreateTable, Operation, ReplaceColumns, ReplaceTable, UpdateSchema}
+import org.apache.spark.sql.delta.ClassicColumnConversions._
+import org.apache.spark.sql.delta.DeltaOperations.{ChangeColumn, ChangeColumns, CreateTable, Operation, ReplaceColumns, ReplaceTable, UpdateSchema}
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
-import org.apache.spark.sql.delta.coordinatedcommits.{CoordinatedCommitsUtils, TableCommitCoordinatorClient}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.files._
 import org.apache.spark.sql.delta.hooks.{CheckpointHook, GenerateSymlinkManifest, HudiConverterHook, IcebergConverterHook, PostCommitHook, UpdateCatalogFactory}
 import org.apache.spark.sql.delta.hooks.ChecksumHook
@@ -48,6 +49,8 @@ import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, JsonUtils}
 import org.apache.spark.sql.util.ScalaExtensions._
 import io.delta.storage.commit._
 import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
+import org.apache.commons.lang3.NotImplementedException
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
@@ -64,7 +67,8 @@ import org.apache.spark.util.{Clock, Utils}
 
 object CoordinatedCommitType extends Enumeration {
   type CoordinatedCommitType = Value
-  val FS_COMMIT, CC_COMMIT, FS_TO_CC_UPGRADE_COMMIT, CC_TO_FS_DOWNGRADE_COMMIT = Value
+  val FS_COMMIT, CC_COMMIT, CO_COMMIT,
+    FS_TO_CC_UPGRADE_COMMIT, FS_TO_CO_UPGRADE_COMMIT, CC_TO_FS_DOWNGRADE_COMMIT = Value
 }
 
 case class CoordinatedCommitsStats(
@@ -250,7 +254,8 @@ object OptimisticTransaction {
  *
  * This trait is not thread-safe.
  */
-trait OptimisticTransactionImpl extends TransactionalWrite
+trait OptimisticTransactionImpl extends DeltaTransaction
+  with TransactionalWrite
   with SQLMetricsReporting
   with DeltaScanGenerator
   with RecordChecksum
@@ -263,9 +268,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   protected val incrementalCommitEnabled = deltaLog.incrementalCommitEnabled
   protected val shouldVerifyIncrementalCommit = deltaLog.shouldVerifyIncrementalCommit
 
-  val deltaLog: DeltaLog
-  val catalogTable: Option[CatalogTable]
-  val snapshot: Snapshot
   def clock: Clock = deltaLog.clock
 
   // This would be a quick operation if we already validated the checksum
@@ -276,8 +278,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   if (!incrementalCommitEnabled || shouldVerifyIncrementalCommit) {
     snapshot.validateChecksum(Map("context" -> "transactionInitialization"))
   }
-
-  protected def spark = SparkSession.active
 
   /** Tracks the appIds that have been seen by this transaction. */
   protected val readTxn = new ArrayBuffer[String]
@@ -315,7 +315,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   protected var newProtocol: Option[Protocol] = None
 
   /** The transaction start time. */
-  protected val txnStartNano = System.nanoTime()
+  private val txnStartNano = System.nanoTime()
 
   override val snapshotToScan: Snapshot = snapshot
 
@@ -332,9 +332,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   protected var commitEndNano = -1L;
 
   protected var commitInfo: CommitInfo = _
-
-  /** Whether the txn should trigger a checkpoint after the commit */
-  private[delta] var needsCheckpoint = false
 
   // Whether this transaction is creating a new table.
   private var isCreatingNewTable: Boolean = false
@@ -395,7 +392,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   def txnStartTimeNs: Long = txnStartNano
 
   /** Unique identifier for the transaction */
-  val txnId = UUID.randomUUID().toString
+  val txnId: String = UUID.randomUUID().toString
 
   /** Whether to check unsupported data type when updating the table schema */
   protected var checkUnsupportedDataType: Boolean =
@@ -455,17 +452,14 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   def precommitUpdateSchemaWithIdentityHighWaterMarks(): Unit = {
     if (updatedIdentityHighWaterMarks.nonEmpty) {
       val newSchema = IdentityColumn.updateSchema(
-        metadata.schema, updatedIdentityHighWaterMarks.toSeq)
+        deltaLog,
+        metadata.schema,
+        updatedIdentityHighWaterMarks.toSeq
+      )
       val updatedMetadata = metadata.copy(schemaString = newSchema.json)
       updateMetadataAfterWrite(updatedMetadata)
     }
   }
-
-  /** The set of distinct partitions that contain added files by current transaction. */
-  protected[delta] var partitionsAddedToOpt: Option[mutable.HashSet[Map[String, String]]] = None
-
-  /** True if this transaction is a blind append. This is only valid after commit. */
-  protected[delta] var isBlindAppend: Boolean = false
 
   /**
    * The logSegment of the snapshot prior to the commit.
@@ -474,10 +468,18 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   private[delta] var preCommitLogSegment: LogSegment =
     snapshot.logSegment.copy(checkpointProvider = snapshot.checkpointProvider)
 
-  // The commit-coordinator of a table shouldn't change. If it is changed by a concurrent commit,
-  // then it will be detected as a conflict and the transaction will anyway fail.
   private[delta] val readSnapshotTableCommitCoordinatorClientOpt:
-    Option[TableCommitCoordinatorClient] = snapshot.getTableCommitCoordinatorForWrites
+      Option[TableCommitCoordinatorClient] = {
+    if (snapshot.isCatalogOwned) {
+      // Catalog owned table's commit coordinator is always determined by the catalog.
+      CatalogOwnedTableUtils.populateTableCommitCoordinatorFromCatalog(
+        spark, catalogTable, snapshot)
+    } else {
+      // The commit-coordinator of a table shouldn't change. If it is changed by a concurrent
+      // commit, then it will be detected as a conflict and the transaction will anyway fail.
+      snapshot.getTableCommitCoordinatorForWrites
+    }
+  }
 
   /**
    * Generates a timestamp which is greater than the commit timestamp
@@ -721,6 +723,15 @@ trait OptimisticTransactionImpl extends TransactionalWrite
           .withFeatures(newFeaturesFromTableConf)
           .merge(newProtocolBeforeAddingFeatures))
     }
+    // For CatalogOwned table feature, we don't support the upgrade yet.
+    newProtocol.foreach { p =>
+      if (!isCreatingNewTable &&
+          p.readerAndWriterFeatureNames.contains(CatalogOwnedTableFeature.name) &&
+          !existingFeatureNames.contains(CatalogOwnedTableFeature.name)) {
+        throw new NotImplementedException("Upgrading to CatalogOwned table is not yet " +
+          s"supported. Please create a new table with the CatalogOwned table feature.")
+      }
+    }
 
     // We are done with protocol versions and features, time to remove related table properties.
     val configsWithoutProtocolProps =
@@ -779,6 +790,13 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   def updateMetadataForNewTableInReplace(metadata: Metadata): Unit = {
     assert(CoordinatedCommitsUtils.getExplicitCCConfigurations(metadata.configuration).isEmpty,
       "Command-specified Coordinated Commits configurations should have been blocked earlier.")
+    assert(!metadata.configuration.contains(UCCommitCoordinatorClient.UC_TABLE_ID_KEY),
+      "Command-specified Catalog-Owned table UUID (ucTableId) should have been blocked earlier.")
+    // Extract any existing ucTableId from the snapshot metadata.
+    val existingUCTableIdConf: Map[String, String] =
+      snapshot.metadata.configuration.filter { case (k, v) =>
+        k == UCCommitCoordinatorClient.UC_TABLE_ID_KEY
+      }
     // Extract the existing Coordinated Commits configurations and ICT dependency configurations
     // from the existing table metadata.
     val existingCCConfs =
@@ -787,16 +805,28 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       CoordinatedCommitsUtils.getExplicitICTConfigurations(snapshot.metadata.configuration)
     // Update the metadata.
     updateMetadataForNewTable(metadata)
+    // Ignore the [[CatalogOwnedTableFeature]] if we are replacing an existing table.
+    // This remove the default spark config for Catalog-Owned if being added above.
+    // Users are *NOT* allowed to create a Catalog-Owned table with REPLACE TABLE
+    // so it's fine to filter it out here.
+    newProtocol = newProtocol match {
+      case Some(protocol) =>
+        Some(CatalogOwnedTableUtils.filterOutCatalogOwnedTableFeature(protocol))
+      case None =>
+        newProtocol
+    }
     // Now the `txn.metadata` contains all the command-specified properties and all the default
     // properties. The latter might still contain Coordinated Commits configurations, so we need
     // to remove them and retain the Coordinated Commits configurations from the existing table.
     val newConfsWithoutCC = newMetadata.get.configuration --
       CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS
-    var newConfs: Map[String, String] = newConfsWithoutCC ++ existingCCConfs
+    var newConfs: Map[String, String] = newConfsWithoutCC ++ existingCCConfs ++
+      existingUCTableIdConf
     // We also need to retain the existing ICT dependency configurations, but only when the
-    // existing table does have Coordinated Commits configurations. Otherwise, we treat the ICT
-    // configurations the same as any other configurations, by merging them from the default.
-    if (existingCCConfs.nonEmpty) {
+    // existing table does have Coordinated Commits configurations or Catalog-Owned property.
+    // Otherwise, we treat the ICT configurations the same as any other configurations,
+    // by merging them from the default.
+    if (existingCCConfs.nonEmpty || existingUCTableIdConf.nonEmpty) {
       val newConfsWithoutICT = newConfs -- CoordinatedCommitsUtils.ICT_TABLE_PROPERTY_KEYS
       newConfs = newConfsWithoutICT ++ existingICTConfs
     }
@@ -813,6 +843,25 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   def updateMetadataForTableOverwrite(proposedNewMetadata: Metadata): Unit = {
     isOverwritingSchema = true
     updateMetadata(proposedNewMetadata)
+  }
+
+  /**
+   * Remove the 'EXISTS_DEFAULT' metadata key from the schema. This is used for new tables that are
+   * not re-using data files of existing tables (i.e. CREATE TABLE, REPLACE TABLE, CTAS). It is not
+   * used on code paths of commands that create new tables but re-use data files (i.e. CONVERT TO
+   * DELTA, CLONE) because we cannot assure that 'EXISTS_DEFAULT' values is actually not required
+   * without reading the data.
+   */
+  def removeExistsDefaultFromSchema(): Unit = {
+    if (spark.sessionState.conf.getConf(DeltaSQLConf.REMOVE_EXISTS_DEFAULT_FROM_SCHEMA)) {
+      if (newMetadata.isDefined) {
+        val schemaWithRemovedExistsDefaults =
+          SchemaUtils.removeExistsDefaultMetadata(newMetadata.get.schema)
+        if (schemaWithRemovedExistsDefaults != newMetadata.get.schema) {
+          newMetadata = newMetadata.map(_.copy(schemaString = schemaWithRemovedExistsDefaults.json))
+        }
+      }
+    }
   }
 
   protected def assertMetadata(metadata: Metadata): Unit = {
@@ -867,9 +916,11 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    * in the protocol but also be enabled. This method sets the flags required
    * to enable these pre-requisite features.
    */
-  private def getMetadataWithDependentFeaturesEnabled(metadata: Metadata): Metadata = {
-    DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.fromMetaData(metadata).map { _ =>
-      // coordinated-commits requires ICT to be enabled as per the spec.
+  private def getMetadataWithDependentFeaturesEnabled(
+      metadata: Metadata, protocols: Seq[Protocol]): Metadata = {
+    if (DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.fromMetaData(metadata).isDefined ||
+        protocols.exists(_.readerAndWriterFeatureNames.contains(CatalogOwnedTableFeature.name))) {
+      // coordinated-commits/catalog-owned require ICT to be enabled as per the spec.
       // If ICT is just in Protocol and not in Metadata,
       // then it is in a 'supported' state but not enabled.
       // In order to enable ICT, we have to set the table property in Metadata.
@@ -878,7 +929,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
           (DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key -> "true"))
       val configWithICT = metadata.configuration ++ ictEnablementConfigOpt
       metadata.copy(configuration = configWithICT)
-    }.getOrElse(metadata)
+    } else {
+      metadata
+    }
   }
 
   private def setNewProtocolWithFeaturesEnabledByMetadata(metadata: Metadata): Unit = {
@@ -1077,17 +1130,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     }
   }
 
-  /**
-   * Return the user-defined metadata for the operation.
-   */
-  def getUserMetadata(op: Operation): Option[String] = {
-    // option wins over config if both are set
-    op.userMetadata match {
-      case data @ Some(_) => data
-      case None => spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_USER_METADATA)
-    }
-  }
-
   def reportAutoCompactStatsError(e: Throwable): Unit = {
     recordDeltaEvent(deltaLog, "delta.collectStats", data = Map("message" -> e.getMessage))
     logError(e.getMessage)
@@ -1274,6 +1316,13 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       op: DeltaOperations.Operation,
       redirectConfig: TableRedirectConfiguration
   ): Unit = {
+    // If this transaction commits to the redirect destination location, then there is no
+    // need to validate the subsequent no-redirect rules.
+    val configuration = deltaLog.newDeltaHadoopConf()
+    val dataPath = snapshot.deltaLog.dataPath.toUri.getPath
+    val catalog = spark.sessionState.catalog
+    val isRedirectDest = redirectConfig.spec.isRedirectDest(catalog, configuration, dataPath)
+    if (isRedirectDest) return
     // Find all rules that match with the current application name.
     // If appName is not present, its no-redirect-rule are included.
     // If appName is present, includes its no-redirect-rule only when appName
@@ -1556,7 +1605,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     // If a feature requires another feature to be enabled, we enable the required
     // feature in the metadata (if needed) and add it to the protocol.
     // e.g. Coordinated Commits requires ICT and VacuumProtocolCheck to be enabled.
-    updateMetadataAndProtocolWithRequiredFeatures(newMetadata)
+    updateMetadataAndProtocolWithRequiredFeatures(newMetadata, newProtocol.toSeq)
 
     def recordCommitLargeFailure(ex: Throwable, op: DeltaOperations.Operation): Unit = {
       val coordinatedCommitsExceptionOpt = ex match {
@@ -1758,19 +1807,49 @@ trait OptimisticTransactionImpl extends TransactionalWrite
   def createCoordinatedCommitsStats(): CoordinatedCommitsStats = {
     val (coordinatedCommitsType, metadataToUse) =
       readSnapshotTableCommitCoordinatorClientOpt match {
+        // TODO: Capture the CO -> FS downgrade case when we start
+        //       supporting downgrade for CO.
+        case Some(_) if snapshot.isCatalogOwned =>                             // CO commit
+          (CoordinatedCommitType.CO_COMMIT, snapshot.metadata)
         case Some(_) if metadata.coordinatedCommitsCoordinatorName.isEmpty =>  // CC -> FS
           (CoordinatedCommitType.CC_TO_FS_DOWNGRADE_COMMIT, snapshot.metadata)
+        // Only the 0th commit to a table can be a FS -> CO upgrade for now.
+        // Upgrading an existing FS table to CO through ALTER TABLE is not supported yet.
+        case None if this.newProtocol.exists(_.readerAndWriterFeatureNames
+            .contains(CatalogOwnedTableFeature.name)) =>                       // FS -> CO
+          (CoordinatedCommitType.FS_TO_CO_UPGRADE_COMMIT, metadata)
         case None if metadata.coordinatedCommitsCoordinatorName.isDefined =>   // FS -> CC
           (CoordinatedCommitType.FS_TO_CC_UPGRADE_COMMIT, metadata)
         case Some(_) =>                                                        // CC commit
           (CoordinatedCommitType.CC_COMMIT, snapshot.metadata)
         case None =>                                                           // FS commit
           (CoordinatedCommitType.FS_COMMIT, snapshot.metadata)
+        // Errors out in rest of the cases.
+        case _ =>
+          throw new IllegalStateException(
+            "Unexpected state found when trying " +
+            s"to generate CoordinatedCommitsStats for table ${deltaLog.logPath}. " +
+            s"$readSnapshotTableCommitCoordinatorClientOpt, " +
+            s"$metadata, $snapshot, $catalogTable")
       }
     CoordinatedCommitsStats(
-      coordinatedCommitsType.toString,
-      metadataToUse.coordinatedCommitsCoordinatorName.getOrElse(""),
-      metadataToUse.coordinatedCommitsCoordinatorConf)
+      coordinatedCommitsType = coordinatedCommitsType.toString,
+      commitCoordinatorName = if (Set(CoordinatedCommitType.CO_COMMIT,
+        CoordinatedCommitType.FS_TO_CO_UPGRADE_COMMIT).contains(coordinatedCommitsType)) {
+        // The catalog for FS -> CO upgrade commit would be
+        // "CATALOG_EMPTY" because `catalogTable` is not available
+        // for the 0th FS commit.
+        catalogTable.flatMap { ct =>
+          CatalogOwnedTableUtils.getCatalogName(
+            spark,
+            identifier = ct.identifier)
+        }.getOrElse("CATALOG_MISSING")
+      } else {
+        metadataToUse.coordinatedCommitsCoordinatorName.getOrElse("NONE")
+      },
+      // For Catalog-Owned table, the coordinator conf for UC-CC is [[Map.empty]]
+      // so we don't distinguish between CO/CC here.
+      commitCoordinatorConf = metadataToUse.coordinatedCommitsCoordinatorConf)
   }
 
   /**
@@ -1896,12 +1975,14 @@ trait OptimisticTransactionImpl extends TransactionalWrite
    * The global `newMetadata` and `newProtocol` are updated with the new
    * metadata and protocol if needed.
    * @param metadataOpt The new metadata that is being set.
+   * @param protocols The new protocols that are being set.
    */
   protected def updateMetadataAndProtocolWithRequiredFeatures(
-      metadataOpt: Option[Metadata]): Unit = {
+      metadataOpt: Option[Metadata], protocols: Seq[Protocol]): Unit = {
     metadataOpt.foreach { m =>
       assertMetadata(m)
-      val metadataWithRequiredFeatureEnablementFlags = getMetadataWithDependentFeaturesEnabled(m)
+      val metadataWithRequiredFeatureEnablementFlags =
+        getMetadataWithDependentFeaturesEnabled(m, protocols)
       setNewProtocolWithFeaturesEnabledByMetadata(metadataWithRequiredFeatureEnablementFlags)
 
       // Also update `newMetadata` so that the behaviour later is consistent irrespective of whether
@@ -1936,15 +2017,17 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     // There be at most one metadata entry at this point.
     // Update the global `newMetadata` and `newProtocol` with any extra metadata and protocol
     // changes needed for pre-requisite features.
-    updateMetadataAndProtocolWithRequiredFeatures(metadataChanges.headOption)
+    val protocolActions = metadatasAndProtocols.collect { case p: Protocol => p }
+    val protocolChangesBeforeUpdate = newProtocol.toSeq ++ protocolActions
+    updateMetadataAndProtocolWithRequiredFeatures(
+      metadataChanges.headOption, protocolChangesBeforeUpdate)
 
     // A protocol change can be *explicit*, i.e. specified as a Protocol action as part of the
     // commit actions, or *implicit*. Implicit protocol changes are mostly caused by setting
     // new table properties that enable features that require a protocol upgrade. These implicit
     // changes are usually captured in newProtocol. In case there is more than one protocol action,
     // it is likely that it is due to a mix of explicit and implicit changes.
-    val protocolChanges =
-      newProtocol.toSeq ++ metadatasAndProtocols.collect { case p: Protocol => p }
+    val protocolChanges = newProtocol.toSeq ++ protocolActions
     if (protocolChanges.length > 1) {
       recordDeltaEvent(deltaLog, "delta.protocolCheck.multipleProtocolActions", data = Map(
         "protocolChanges" -> protocolChanges
@@ -1970,6 +2053,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
     val (protocolUpdate1, metadataUpdate1) =
       UniversalFormat.enforceInvariantsAndDependencies(
+        spark,
         // Note: if this txn has no protocol or metadata updates, then `prev` will equal `newest`.
         snapshot,
         newestProtocol = protocol, // Note: this will try to use `newProtocol`
@@ -2160,21 +2244,6 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       Map("fromProtocol" -> extract(fromProtocol), "toProtocol" -> extract(toProtocol))
     }
     recordDeltaEvent(deltaLog, opType, data = payload)
-  }
-
-  /**
-  * Default [[IsolationLevel]] as set in table metadata.
-  */
-  private[delta] def getDefaultIsolationLevel(): IsolationLevel = {
-    DeltaConfigs.ISOLATION_LEVEL.fromMetaData(metadata)
-  }
-
-  /**
-   * Sets needsCheckpoint if we should checkpoint the version that has just been committed.
-   */
-  protected def setNeedsCheckpoint(committedVersion: Long, postCommitSnapshot: Snapshot): Unit = {
-    def checkpointInterval = deltaLog.checkpointInterval(postCommitSnapshot.metadata)
-    needsCheckpoint = committedVersion != 0 && committedVersion % checkpointInterval == 0
   }
 
   private[delta] def isCommitLockEnabled: Boolean = {
@@ -2549,8 +2618,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       deltaLog,
       attemptVersion,
       actions = currentTransactionInfo.finalActionsToCommit,
-      metadata = currentTransactionInfo.metadata,
-      protocol = currentTransactionInfo.protocol,
+      metadataOpt = Some(currentTransactionInfo.metadata),
+      protocolOpt = Some(currentTransactionInfo.protocol),
       operationName = currentTransactionInfo.op.name,
       txnIdOpt = Some(currentTransactionInfo.txnId),
       previousVersionState = scala.Left(snapshot),
@@ -2681,7 +2750,8 @@ trait OptimisticTransactionImpl extends TransactionalWrite
     OptimisticTransaction.clearActive()
 
     try {
-      postCommitHooks.foreach(runPostCommitHook(_, version, postCommitSnapshot, committedActions))
+      postCommitHooks.foreach(
+        runPostCommitHook(_, version, postCommitSnapshot, committedActions.toIterator))
     } finally {
       activeCommit.foreach(OptimisticTransaction.setActive)
     }
@@ -2691,7 +2761,7 @@ trait OptimisticTransactionImpl extends TransactionalWrite
       hook: PostCommitHook,
       version: Long,
       postCommitSnapshot: Snapshot,
-      committedActions: Seq[Action]): Unit = {
+      committedActions: Iterator[Action]): Unit = {
     try {
       hook.run(spark, this, version, postCommitSnapshot, committedActions)
     } catch {
@@ -2755,6 +2825,9 @@ trait OptimisticTransactionImpl extends TransactionalWrite
 
     op match {
       case change: ChangeColumn if usesDefaults(change.newColumn) =>
+        throwError("WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED",
+          Array("ALTER TABLE"))
+      case changes: ChangeColumns if changes.columns.exists(c => usesDefaults(c.newColumn)) =>
         throwError("WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED",
           Array("ALTER TABLE"))
       case create: CreateTable if create.metadata.schema.fields.exists(usesDefaults) =>

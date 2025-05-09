@@ -15,34 +15,45 @@
  */
 package io.delta.kernel.defaults
 
+import scala.collection.JavaConverters._
+import scala.collection.immutable.Seq
+
 import io.delta.kernel._
+import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.internal.parquet.ParquetSuiteBase
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions._
 import io.delta.kernel.expressions.Literal
-import io.delta.kernel.internal.{SnapshotImpl, TableImpl, TransactionBuilderImpl, TransactionImpl}
-import io.delta.kernel.internal.actions.{DomainMetadata, Protocol, SingleAction}
-import io.delta.kernel.internal.util.Utils.toCloseableIterator
+import io.delta.kernel.internal.{SnapshotImpl, TableImpl, TransactionImpl}
+import io.delta.kernel.internal.actions.DomainMetadata
+import io.delta.kernel.internal.checksum.ChecksumReader
 import io.delta.kernel.internal.rowtracking.RowTrackingMetadataDomain
-import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
-import org.apache.hadoop.fs.Path
+import io.delta.kernel.utils.CloseableIterable
+import io.delta.kernel.utils.CloseableIterable.emptyIterable
+
 import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.RowId.{RowTrackingMetadataDomain => SparkRowTrackingMetadataDomain}
 import org.apache.spark.sql.delta.actions.{DomainMetadata => SparkDomainMetadata}
-import org.apache.spark.sql.delta.RowId.{
-  RowTrackingMetadataDomain => SparkRowTrackingMetadataDomain
-}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits.OptimisticTxnTestHelper
 
-import java.util.Collections
-import scala.collection.JavaConverters._
-import scala.collection.immutable.Seq
+import org.apache.hadoop.fs.Path
 
 class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
 
   private def assertDomainMetadata(
       snapshot: SnapshotImpl,
       expectedValue: Map[String, DomainMetadata]): Unit = {
-    assert(expectedValue === snapshot.getDomainMetadataMap.asScala)
+    // Check using internal API
+    assert(expectedValue === snapshot.getActiveDomainMetadataMap.asScala)
+    // Verify public API
+    expectedValue.foreach { case (key, domainMetadata) =>
+      snapshot.getDomainMetadata(key).toScala match {
+        case Some(config) =>
+          assert(!domainMetadata.isRemoved && config == domainMetadata.getConfiguration)
+        case None =>
+          assert(domainMetadata.isRemoved)
+      }
+    }
   }
 
   private def assertDomainMetadata(
@@ -52,18 +63,48 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
     // Get the latest snapshot of the table
     val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
     assertDomainMetadata(snapshot, expectedValue)
+    // verifyChecksum will check the domain metadata in CRC against the lastest snapshot.
+    val tablePath = table.getPath(engine)
+    verifyChecksum(tablePath)
+    // Delete CRC and reload snapshot from log.
+    deleteChecksumFileForTable(
+      tablePath.stripPrefix("file:"),
+      versions = Seq(snapshot.getVersion.toInt))
+    // Rebuild table to avoid loading domain metadata from cached crc info.
+    assertDomainMetadata(
+      Table.forPath(engine, tablePath).getLatestSnapshot(engine).asInstanceOf[SnapshotImpl],
+      expectedValue)
+    // Write CRC back so that subsequence operation could generate CRC incrementally.
+    table.checksum(engine, snapshot.getVersion)
   }
 
   private def createTxnWithDomainMetadatas(
       engine: Engine,
       tablePath: String,
-      domainMetadatas: Seq[DomainMetadata]): Transaction = {
+      domainMetadatas: Seq[DomainMetadata],
+      useInternalApi: Boolean = false): Transaction = {
 
     val txnBuilder = createWriteTxnBuilder(TableImpl.forPath(engine, tablePath))
-      .asInstanceOf[TransactionBuilderImpl]
-
+    if (domainMetadatas.nonEmpty && !useInternalApi) {
+      txnBuilder.withDomainMetadataSupported()
+    }
     val txn = txnBuilder.build(engine).asInstanceOf[TransactionImpl]
-    txn.addDomainMetadatas(domainMetadatas.asJava)
+
+    domainMetadatas.foreach { dm =>
+      if (dm.isRemoved) {
+        if (useInternalApi) {
+          txn.removeDomainMetadataInternal(dm.getDomain)
+        } else {
+          txn.removeDomainMetadata(dm.getDomain)
+        }
+      } else {
+        if (useInternalApi) {
+          txn.addDomainMetadataInternal(dm.getDomain, dm.getConfiguration)
+        } else {
+          txn.addDomainMetadata(dm.getDomain, dm.getConfiguration)
+        }
+      }
+    }
     txn
   }
 
@@ -71,36 +112,29 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
       engine: Engine,
       tablePath: String,
       domainMetadatas: Seq[DomainMetadata],
-      expectedValue: Map[String, DomainMetadata]): Unit = {
+      expectedValue: Map[String, DomainMetadata],
+      useInternalApi: Boolean = false): Unit = {
     // Create the transaction with domain metadata and commit
-    val txn = createTxnWithDomainMetadatas(engine, tablePath, domainMetadatas)
-    txn.commit(engine, emptyIterable())
+    val txn = createTxnWithDomainMetadatas(engine, tablePath, domainMetadatas, useInternalApi)
+    commitTransaction(txn, engine, emptyIterable())
 
     // Verify the final state includes the expected domain metadata
     val table = Table.forPath(engine, tablePath)
     assertDomainMetadata(table, engine, expectedValue)
   }
 
-  private def setDomainMetadataSupport(engine: Engine, tablePath: String): Unit = {
-    val protocol = new Protocol(
-      3, // minReaderVersion
-      7, // minWriterVersion
-      Collections.emptyList(), // readerFeatures
-      Seq("domainMetadata").asJava // writerFeatures
-    )
-
-    val protocolAction = SingleAction.createProtocolSingleAction(protocol.toRow)
-    val txn = createTxn(engine, tablePath, isNewTable = false, testSchema, Seq.empty)
-    txn.commit(engine, inMemoryIterable(toCloseableIterator(Seq(protocolAction).asJava.iterator())))
-  }
-
   private def createTableWithDomainMetadataSupported(engine: Engine, tablePath: String): Unit = {
     // Create an empty table
-    createTxn(engine, tablePath, isNewTable = true, testSchema, Seq.empty)
-      .commit(engine, emptyIterable())
-
-    // Set writer version and writer feature to support domain metadata
-    setDomainMetadataSupport(engine, tablePath)
+    commitTransaction(
+      createTxn(
+        engine,
+        tablePath,
+        isNewTable = true,
+        testSchema,
+        Seq.empty,
+        withDomainMetadataSupported = true),
+      engine,
+      emptyIterable())
   }
 
   private def validateDomainMetadataConflictResolution(
@@ -131,24 +165,22 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
     val txn1 = createTxnWithDomainMetadatas(engine, tablePath, currentTxn1DomainMetadatas)
 
     val txn2 = createTxnWithDomainMetadatas(engine, tablePath, winningTxn2DomainMetadatas)
-    txn2.commit(engine, emptyIterable())
+    commitTransaction(txn2, engine, emptyIterable())
 
     val txn3 = createTxnWithDomainMetadatas(engine, tablePath, winningTxn3DomainMetadatas)
-    txn3.commit(engine, emptyIterable())
+    commitTransaction(txn3, engine, emptyIterable())
 
     if (expectedConflict) {
       // We expect the commit of txn1 to fail because of the conflicting DM actions
       val ex = intercept[KernelException] {
-        txn1.commit(engine, emptyIterable())
+        commitTransaction(txn1, engine, emptyIterable())
       }
       assert(
         ex.getMessage.contains(
-          "A concurrent writer added a domainMetadata action for the same domain"
-        )
-      )
+          "A concurrent writer added a domainMetadata action for the same domain"))
     } else {
       // We expect the commit of txn1 to succeed
-      txn1.commit(engine, emptyIterable())
+      commitTransaction(txn1, engine, emptyIterable())
       // Verify the final state includes merged domain metadata
       val expectedMetadata =
         (winningTxn2DomainMetadatas ++ winningTxn3DomainMetadatas ++ currentTxn1DomainMetadatas)
@@ -158,13 +190,22 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
     }
   }
 
+  override def commitTransaction(
+      txn: Transaction,
+      engine: Engine,
+      dataActions: CloseableIterable[Row]): TransactionCommitResult = {
+    executeCrcSimple(txn.commit(engine, dataActions), engine)
+  }
+
   test("create table w/o domain metadata") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
 
       // Create an empty table
-      createTxn(engine, tablePath, isNewTable = true, testSchema, Seq.empty)
-        .commit(engine, emptyIterable())
+      commitTransaction(
+        createTxn(engine, tablePath, isNewTable = true, testSchema, Seq.empty),
+        engine,
+        emptyIterable())
 
       // Verify that the table doesn't have any domain metadata
       assertDomainMetadata(table, engine, Map.empty)
@@ -175,55 +216,36 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
     withTempDirAndEngine { (tablePath, engine) =>
       // Create an empty table
       // Its minWriterVersion is 2 and doesn't have 'domainMetadata' in its writerFeatures
-      createTxn(engine, tablePath, isNewTable = true, testSchema, Seq.empty)
-        .commit(engine, emptyIterable())
+      commitTransaction(
+        createTxn(
+          engine,
+          tablePath,
+          isNewTable = true,
+          testSchema,
+          Seq.empty),
+        engine,
+        emptyIterable())
 
       val dm1 = new DomainMetadata("domain1", "", false)
-      val txn1 = createTxnWithDomainMetadatas(engine, tablePath, List(dm1))
+      // We use the internal API because our public API will automatically upgrade the protocol
+      val txn1 = createTxnWithDomainMetadatas(engine, tablePath, List(dm1), useInternalApi = true)
 
       // We expect the commit to fail because the table doesn't support domain metadata
       val e = intercept[KernelException] {
-        txn1.commit(engine, emptyIterable())
+        commitTransaction(txn1, engine, emptyIterable())
       }
       assert(
         e.getMessage
           .contains(
             "Cannot commit DomainMetadata action(s) because the feature 'domainMetadata' "
-            + "is not supported on this table."
-          )
-      )
-
-      // Set writer version and writer feature to support domain metadata
-      setDomainMetadataSupport(engine, tablePath)
+              + "is not supported on this table."))
 
       // Commit domain metadata again and expect success
       commitDomainMetadataAndVerify(
         engine,
         tablePath,
         domainMetadatas = Seq(dm1),
-        expectedValue = Map("domain1" -> dm1)
-      )
-    }
-  }
-
-  test("multiple DomainMetadatas for the same domain should fail in single transaction") {
-    withTempDirAndEngine { (tablePath, engine) =>
-      createTableWithDomainMetadataSupported(engine, tablePath)
-
-      val dm1_1 = new DomainMetadata("domain1", """{"key1":"1"}""", false)
-      val dm2 = new DomainMetadata("domain2", "", false)
-      val dm1_2 = new DomainMetadata("domain1", """{"key1":"10"}"""", false)
-
-      val txn = createTxnWithDomainMetadatas(engine, tablePath, List(dm1_1, dm2, dm1_2))
-
-      val e = intercept[IllegalArgumentException] {
-        txn.commit(engine, emptyIterable())
-      }
-      assert(
-        e.getMessage.contains(
-          "Multiple actions detected for domain 'domain1' in single transaction"
-        )
-      )
+        expectedValue = Map("domain1" -> dm1))
     }
   }
 
@@ -241,8 +263,7 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
       Seq(
         (Seq(dm1), Map("domain1" -> dm1)),
         (Seq(dm2, dm3, dm1_2), Map("domain1" -> dm1_2, "domain2" -> dm2, "domain3" -> dm3)),
-        (Seq(dm3_2), Map("domain1" -> dm1_2, "domain2" -> dm2, "domain3" -> dm3_2))
-      ).foreach {
+        (Seq(dm3_2), Map("domain1" -> dm1_2, "domain2" -> dm2, "domain3" -> dm3_2))).foreach {
         case (domainMetadatas, expectedValue) =>
           commitDomainMetadataAndVerify(engine, tablePath, domainMetadatas, expectedValue)
       }
@@ -260,8 +281,7 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
         engine,
         tablePath,
         domainMetadatas = Seq(dm1, dm2),
-        expectedValue = Map("domain1" -> dm1, "domain2" -> dm2)
-      )
+        expectedValue = Map("domain1" -> dm1, "domain2" -> dm2))
 
       // Restart the table and verify the domain metadata
       val table2 = Table.forPath(engine, tablePath)
@@ -278,20 +298,21 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
       val dm2 = new DomainMetadata("domain2", "", false)
       val dm3 = new DomainMetadata("domain3", """{"key3":"3"}""", false)
       val dm1_2 = new DomainMetadata("domain1", """{"key1":"10"}""", false)
-      val dm3_2 = new DomainMetadata("domain3", """{"key3":"30"}""", true)
+      val dm3_2 = new DomainMetadata("domain3", """{"key3":"3"}""", true)
 
       Seq(
         (Seq(dm1), Map("domain1" -> dm1)),
         (Seq(dm2), Map("domain1" -> dm1, "domain2" -> dm2)),
         (Seq(dm3), Map("domain1" -> dm1, "domain2" -> dm2, "domain3" -> dm3)),
-        (Seq(dm1_2, dm3_2), Map("domain1" -> dm1_2, "domain2" -> dm2, "domain3" -> dm3_2))
-      ).foreach {
+        (
+          Seq(dm1_2, dm3_2),
+          Map("domain1" -> dm1_2, "domain2" -> dm2))).foreach {
         case (domainMetadatas, expectedValue) =>
           commitDomainMetadataAndVerify(engine, tablePath, domainMetadatas, expectedValue)
       }
 
       // Checkpoint the table
-      val latestVersion = table.getLatestSnapshot(engine).getVersion(engine)
+      val latestVersion = table.getLatestSnapshot(engine).getVersion()
       table.checkpoint(engine, latestVersion)
 
       // Verify that only the latest domain metadata is persisted in the checkpoint
@@ -299,8 +320,7 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
       assertDomainMetadata(
         table2,
         engine,
-        Map("domain1" -> dm1_2, "domain2" -> dm2, "domain3" -> dm3_2)
-      )
+        Map("domain1" -> dm1_2, "domain2" -> dm2))
     }
   }
 
@@ -326,14 +346,12 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
         currentTxn1DomainMetadatas = Seq(dm1),
         winningTxn2DomainMetadatas = Seq.empty,
         winningTxn3DomainMetadatas = Seq.empty,
-        expectedConflict = false
-      )
+        expectedConflict = false)
     }
   }
 
   test(
-    "Conflict resolution - three concurrent txns have DomainMetadata w/o conflicting domains"
-  ) {
+    "Conflict resolution - three concurrent txns have DomainMetadata w/o conflicting domains") {
     withTempDirAndEngine { (tablePath, engine) =>
       /**
        * Txn1: include DomainMetadata action for "domain1".
@@ -357,14 +375,12 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
         currentTxn1DomainMetadatas = Seq(dm1),
         winningTxn2DomainMetadatas = Seq(dm2),
         winningTxn3DomainMetadatas = Seq(dm3),
-        expectedConflict = false
-      )
+        expectedConflict = false)
     }
   }
 
   test(
-    "Conflict resolution - three concurrent txns have DomainMetadata w/ conflicting domains"
-  ) {
+    "Conflict resolution - three concurrent txns have DomainMetadata w/ conflicting domains") {
     withTempDirAndEngine { (tablePath, engine) =>
       /**
        * Txn1: include DomainMetadata action for "domain1".
@@ -388,14 +404,12 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
         currentTxn1DomainMetadatas = Seq(dm1),
         winningTxn2DomainMetadatas = Seq(dm2),
         winningTxn3DomainMetadatas = Seq(dm3),
-        expectedConflict = true
-      )
+        expectedConflict = true)
     }
   }
 
   test(
-    "Conflict resolution - three concurrent txns have DomainMetadata w/ conflict domains - 2"
-  ) {
+    "Conflict resolution - three concurrent txns have DomainMetadata w/ conflict domains - 2") {
     withTempDirAndEngine { (tablePath, engine) =>
       /**
        * Txn1: include DomainMetadata action for "domain1".
@@ -419,8 +433,7 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
         currentTxn1DomainMetadatas = Seq(dm1),
         winningTxn2DomainMetadatas = Seq(dm2),
         winningTxn3DomainMetadatas = Seq(dm3),
-        expectedConflict = true
-      )
+        expectedConflict = true)
     }
   }
 
@@ -433,9 +446,8 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
         spark.sql(s"CREATE TABLE $tbl (id LONG) USING delta LOCATION '$tablePath'")
         spark.sql(
           s"ALTER TABLE $tbl SET TBLPROPERTIES(" +
-          s"'delta.feature.domainMetadata' = 'enabled'," +
-          s"'delta.checkpointInterval' = '3')"
-        )
+            s"'delta.feature.domainMetadata' = 'enabled'," +
+            s"'delta.checkpointInterval' = '3')")
 
         // Manually commit domain metadata actions. This will create 02.json
         val deltaLog = DeltaLog.forTable(spark, new Path(tablePath))
@@ -445,9 +457,7 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
             List(
               SparkDomainMetadata("testDomain1", "{\"key1\":\"1\"}", removed = false),
               SparkDomainMetadata("testDomain2", "", removed = false),
-              SparkDomainMetadata("testDomain3", "", removed = false)
-            ): _*
-          )
+              SparkDomainMetadata("testDomain3", "", removed = false)): _*)
 
         // This will create 03.json and 03.checkpoint
         spark.range(0, 2).write.format("delta").mode("append").save(tablePath)
@@ -458,9 +468,7 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
           .commitManually(
             List(
               SparkDomainMetadata("testDomain1", "{\"key1\":\"10\"}", removed = false),
-              SparkDomainMetadata("testDomain2", "", removed = true)
-            ): _*
-          )
+              SparkDomainMetadata("testDomain2", "", removed = true)): _*)
 
         // Use Delta Kernel to read the table's domain metadata and verify the result.
         // We will need to read 1 checkpoint file and 1 log file to replay the table.
@@ -470,14 +478,12 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
         // testDomain3: "", removed = false                   (from 04.json)
 
         val dm1 = new DomainMetadata("testDomain1", """{"key1":"10"}""", false)
-        val dm2 = new DomainMetadata("testDomain2", "", true)
         val dm3 = new DomainMetadata("testDomain3", "", false)
 
-        val snapshot = latestSnapshot(tablePath).asInstanceOf[SnapshotImpl]
         assertDomainMetadata(
-          snapshot,
-          Map("testDomain1" -> dm1, "testDomain2" -> dm2, "testDomain3" -> dm3)
-        )
+          Table.forPath(defaultEngine, tablePath),
+          defaultEngine,
+          Map("testDomain1" -> dm1, "testDomain3" -> dm3))
       }
     })
   }
@@ -497,18 +503,16 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
           engine,
           tablePath,
           domainMetadatas = Seq(dm1, dm2, dm3),
-          expectedValue = Map("testDomain1" -> dm1, "testDomain2" -> dm2, "testDomain3" -> dm3)
-        )
+          expectedValue = Map("testDomain1" -> dm1, "testDomain2" -> dm2, "testDomain3" -> dm3))
 
         appendData(
           engine,
           tablePath,
-          data = Seq(Map.empty[String, Literal] -> dataBatches1)
-        )
+          data = Seq(Map.empty[String, Literal] -> dataBatches1))
 
         // Checkpoint the table so domain metadata is distributed to both checkpoint and log files
         val table = Table.forPath(engine, tablePath)
-        val latestVersion = table.getLatestSnapshot(engine).getVersion(engine)
+        val latestVersion = table.getLatestSnapshot(engine).getVersion()
         table.checkpoint(engine, latestVersion)
 
         // Manually commit two domain metadata actions
@@ -518,8 +522,7 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
           engine,
           tablePath,
           domainMetadatas = Seq(dm1_2, dm2_2),
-          expectedValue = Map("testDomain1" -> dm1_2, "testDomain2" -> dm2_2, "testDomain3" -> dm3)
-        )
+          expectedValue = Map("testDomain1" -> dm1_2, "testDomain3" -> dm3))
 
         // Use Spark to read the table's domain metadata and verify the result
         val deltaLog = DeltaLog.forTable(spark, new Path(tablePath))
@@ -535,11 +538,8 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
             "testDomain1" -> SparkDomainMetadata(
               "testDomain1",
               """{"key1":"10"}""",
-              removed = false
-            ),
-            "testDomain3" -> SparkDomainMetadata("testDomain3", "", removed = false)
-          )
-        )
+              removed = false),
+            "testDomain3" -> SparkDomainMetadata("testDomain3", "", removed = false)))
       }
     }
   }
@@ -559,7 +559,8 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
         engine,
         tablePath,
         domainMetadatas = Seq(dmAction),
-        expectedValue = Map(rowTrackingMetadataDomain.getDomainName -> dmAction)
+        expectedValue = Map(rowTrackingMetadataDomain.getDomainName -> dmAction),
+        useInternalApi = true // cannot commit system-controlled domains through public API
       )
 
       // Read the RowTrackingMetadataDomain from the table and verify
@@ -581,9 +582,8 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
         spark.sql(s"CREATE TABLE $tbl (id LONG) USING delta LOCATION '$tablePath'")
         spark.sql(
           s"ALTER TABLE $tbl SET TBLPROPERTIES(" +
-          s"'delta.feature.domainMetadata' = 'enabled'," +
-          s"'delta.feature.rowTracking' = 'supported')"
-        )
+            s"'delta.feature.domainMetadata' = 'enabled'," +
+            s"'delta.feature.rowTracking' = 'supported')")
 
         // Append 100 rows to the table, with fresh row IDs from 0 to 99
         // The `delta.rowTracking.rowIdHighWaterMark` should be 99
@@ -612,7 +612,8 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
           engine,
           tablePath,
           domainMetadatas = Seq(dmAction),
-          expectedValue = Map(dmAction.getDomain -> dmAction)
+          expectedValue = Map(dmAction.getDomain -> dmAction),
+          useInternalApi = true // cannot commit system-controlled domains through public API
         )
 
         // Use Spark to read the table's row tracking metadata domain and verify the result
@@ -620,6 +621,203 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
         val rowTrackingMetadataDomainRead =
           SparkRowTrackingMetadataDomain.fromSnapshot(deltaLog.snapshot)
         assert(rowTrackingMetadataDomainRead.exists(_.rowIdHighWaterMark === 10))
+      }
+    }
+  }
+
+  test("basic txn.addDomainMetadata API tests") {
+    // addDomainMetadata is tested thoroughly elsewhere in this suite, here we just test API
+    // specific behaviors
+
+    withTempDirAndEngine { (tablePath, engine) =>
+      createTableWithDomainMetadataSupported(engine, tablePath)
+
+      // Cannot set system-controlled domain metadata
+      Seq("delta.foo", "DELTA.foo").foreach { domain =>
+        val e = intercept[IllegalArgumentException] {
+          val txn = createWriteTxnBuilder(Table.forPath(engine, tablePath))
+            .build(engine)
+          txn.addDomainMetadata(domain, "misc config")
+        }
+        assert(e.getMessage.contains("Setting a system-controlled domain is not allowed"))
+      }
+    }
+
+    // Setting the same domain more than once uses the latest pair
+    withTempDirAndEngine { (tablePath, engine) =>
+      createTableWithDomainMetadataSupported(engine, tablePath)
+
+      val dm1_1 = new DomainMetadata("domain1", """{"key1":"1"}""", false)
+      val dm1_2 = new DomainMetadata("domain1", """{"key1":"10"}"""", false)
+
+      commitDomainMetadataAndVerify(engine, tablePath, List(dm1_1, dm1_2), Map("domain1" -> dm1_2))
+    }
+  }
+
+  test("updating domain metadata fails after transaction committed") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val txn = createTxn(engine, tablePath, isNewTable = true, testSchema, Seq.empty)
+      commitTransaction(txn, engine, emptyIterable())
+
+      intercept[IllegalStateException] {
+        txn.addDomainMetadata("domain", "config")
+      }
+      intercept[IllegalStateException] {
+        txn.removeDomainMetadata("domain")
+      }
+    }
+  }
+
+  test("basic txn.removeDomainMetadata API tests") {
+    // removeDomainMetadata is tested thoroughly elsewhere in this suite, here we just test API
+    // specific behaviors
+
+    withTempDirAndEngine { (tablePath, engine) =>
+      createTableWithDomainMetadataSupported(engine, tablePath)
+
+      // Cannot remove system-controlled domain metadata
+      Seq("delta.foo", "DELTA.foo").foreach { domain =>
+        val e = intercept[IllegalArgumentException] {
+          val txn = createWriteTxnBuilder(Table.forPath(engine, tablePath))
+            .build(defaultEngine)
+          txn.removeDomainMetadata(domain)
+        }
+
+        assert(e.getMessage.contains("Removing a system-controlled domain is not allowed"))
+      }
+    }
+
+    // Can remove same domain more than once in same txn
+    withTempDirAndEngine { (tablePath, engine) =>
+      createTableWithDomainMetadataSupported(engine, tablePath)
+
+      // Set up table with domain "domain1
+      val dm1 = new DomainMetadata("domain1", """{"key1":"1"}""", false)
+      commitDomainMetadataAndVerify(engine, tablePath, List(dm1), Map("domain1" -> dm1))
+
+      val dm1_removed = dm1.removed()
+      commitDomainMetadataAndVerify(
+        engine,
+        tablePath,
+        List(dm1_removed, dm1_removed, dm1_removed),
+        Map())
+    }
+  }
+
+  test("txn.removeDomainMetadata removing a non-existent domain") {
+    // Remove domain that does not exist and has never existed
+    withTempDirAndEngine { (tablePath, engine) =>
+      createTableWithDomainMetadataSupported(engine, tablePath)
+
+      intercept[DomainDoesNotExistException] {
+        val txn = createWriteTxnBuilder(Table.forPath(defaultEngine, tablePath))
+          .build(defaultEngine)
+        txn.removeDomainMetadata("foo")
+        commitTransaction(txn, defaultEngine, emptyIterable());
+      }
+    }
+
+    // Remove domain that exists as a tombstone
+    withTempDirAndEngine { (tablePath, engine) =>
+      createTableWithDomainMetadataSupported(engine, tablePath)
+
+      // Set up table with domain "domain1"
+      val dm1 = new DomainMetadata("domain1", """{"key1":"1"}""", false)
+      commitDomainMetadataAndVerify(engine, tablePath, List(dm1), Map("domain1" -> dm1))
+
+      // Remove domain1 so it exists as a tombstone
+      val dm1_removed = dm1.removed()
+      commitDomainMetadataAndVerify(
+        engine,
+        tablePath,
+        List(dm1_removed),
+        Map())
+
+      // Removing it again should fail since it doesn't exist
+      intercept[DomainDoesNotExistException] {
+        commitDomainMetadataAndVerify(
+          engine,
+          tablePath,
+          List(dm1_removed),
+          Map())
+      }
+    }
+  }
+
+  test("Using add and remove with the same domain in the same txn") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createTableWithDomainMetadataSupported(engine, tablePath)
+      // We forbid adding + removing a domain with the same identifier in a transaction to avoid
+      // any ambiguous behavior
+      // For example, is the expected behavior
+      // a) we don't write any domain metadata, and it's a no-op (remove cancels out the add)
+      // b) we remove the previous domain from the read snapshot, and add the new one as the current
+      //    domain metadata
+
+      {
+        val txn = createWriteTxnBuilder(Table.forPath(defaultEngine, tablePath))
+          .build(defaultEngine)
+        txn.addDomainMetadata("foo", "fake config")
+        val e = intercept[IllegalArgumentException] {
+          txn.removeDomainMetadata("foo")
+        }
+        assert(e.getMessage.contains("Cannot remove a domain that is added in this transaction"))
+      }
+      {
+        val txn = createWriteTxnBuilder(Table.forPath(defaultEngine, tablePath))
+          .build(defaultEngine)
+        txn.removeDomainMetadata("foo")
+        val e = intercept[IllegalArgumentException] {
+          txn.addDomainMetadata("foo", "fake config")
+        }
+        assert(e.getMessage.contains("Cannot add a domain that is removed in this transaction"))
+      }
+    }
+  }
+
+  test("basic snapshot.getDomainMetadataConfiguration API tests") {
+    // getDomainMetadataConfiguration is tested thoroughly elsewhere in this suite, here we just
+    // test the API directly to be safe
+
+    withTempDirAndEngine { (tablePath, engine) =>
+      createTableWithDomainMetadataSupported(engine, tablePath)
+
+      // Non-existent domain is not returned
+      assert(!latestSnapshot(tablePath).getDomainMetadata("foo").isPresent)
+
+      // Commit domain foo
+      val fooDm = new DomainMetadata("foo", "foo!", false)
+      commitDomainMetadataAndVerify(engine, tablePath, List(fooDm), Map("foo" -> fooDm))
+      assert( // Check here even though already verified in commitDomainMetadataAndVerify
+        latestSnapshot(tablePath).getDomainMetadata("foo").toScala.contains("foo!"))
+
+      // Remove domain foo (so tombstone exists but should not be returned)
+      val fooDm_removed = fooDm.removed()
+      commitDomainMetadataAndVerify(
+        engine,
+        tablePath,
+        List(fooDm_removed),
+        Map())
+      // Already checked in commitDomainMetadataAndVerify but check again
+      assert(!latestSnapshot(tablePath).getDomainMetadata("foo").isPresent)
+    }
+  }
+
+  test("removing a domain on a table without DomainMetadata support") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // Create table with legacy protocol
+      commitTransaction(
+        createTxn(
+          tablePath = tablePath,
+          isNewTable = true,
+          schema = testSchema,
+          partCols = Seq()),
+        engine,
+        emptyIterable())
+      intercept[IllegalStateException] {
+        val txn = createWriteTxnBuilder(Table.forPath(engine, tablePath))
+          .build(engine)
+        txn.removeDomainMetadata("foo")
       }
     }
   }

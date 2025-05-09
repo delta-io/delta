@@ -29,7 +29,7 @@ import org.apache.spark.sql.delta.sources.DeltaDataSource
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.FunctionIdentifier
 import org.apache.spark.sql.catalyst.analysis.{FunctionRegistryBase, NamedRelation, TableFunctionRegistry, UnresolvedLeafNode, UnresolvedRelation}
-import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression, ExpressionInfo, StringLiteral}
+import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression, ExpressionInfo, Literal, StringLiteral}
 import org.apache.spark.sql.catalyst.plans.logical.{LeafNode, LogicalPlan, UnaryNode}
 import org.apache.spark.sql.connector.catalog.V1Table
 import org.apache.spark.sql.execution.datasources.LogicalRelation
@@ -110,6 +110,9 @@ trait CDCStatementBase extends DeltaTableValueFunction {
 
   protected def getOptions: CaseInsensitiveStringMap = {
     def toDeltaOption(keyPrefix: String, value: Expression): (String, String) = {
+      if (value == Literal(null)) {
+        throw DeltaErrors.nullRangeBoundaryInCDCRead()
+      }
       val evaluated = DeltaTableValueFunctionsShims.evaluateTimeOption(value)
       value.dataType match {
         // We dont need to explicitly handle ShortType as it is parsed as IntegerType.

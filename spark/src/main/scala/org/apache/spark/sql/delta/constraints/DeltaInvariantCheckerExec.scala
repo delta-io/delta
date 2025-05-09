@@ -20,6 +20,7 @@ import scala.collection.mutable
 
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaIllegalStateException}
 import org.apache.spark.sql.delta.constraints.Constraints.{Check, NotNull}
+import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.util.AnalysisHelper
 
@@ -42,13 +43,24 @@ import org.apache.spark.sql.types.StructType
  */
 case class DeltaInvariantChecker(
     child: LogicalPlan,
-    deltaConstraints: Seq[Constraint]) extends UnaryNode {
+    deltaConstraints: Seq[CheckDeltaInvariant]) extends UnaryNode {
   assert(deltaConstraints.nonEmpty)
 
   override def output: Seq[Attribute] = child.output
 
   override protected def withNewChildInternal(newChild: LogicalPlan): DeltaInvariantChecker =
     copy(child = newChild)
+}
+
+object DeltaInvariantChecker {
+  def apply(
+      spark: SparkSession,
+      child: LogicalPlan,
+      constraints: Seq[Constraint]): DeltaInvariantChecker = {
+    val invariantChecks =
+      DeltaInvariantCheckerExec.buildInvariantChecks(child.output, constraints, spark)
+    DeltaInvariantChecker(child, invariantChecks)
+  }
 }
 
 object DeltaInvariantCheckerStrategy extends SparkStrategy {
@@ -65,26 +77,21 @@ object DeltaInvariantCheckerStrategy extends SparkStrategy {
  */
 case class DeltaInvariantCheckerExec(
     child: SparkPlan,
-    constraints: Seq[Constraint]) extends UnaryExecNode {
+    constraints: Seq[CheckDeltaInvariant]) extends UnaryExecNode {
 
   override def output: Seq[Attribute] = child.output
 
   override protected def doExecute(): RDD[InternalRow] = {
     if (constraints.isEmpty) return child.execute()
-    val invariantChecks =
-      DeltaInvariantCheckerExec.buildInvariantChecks(child.output, constraints, session)
 
     // Resolve current_date()/current_time() expressions.
     // We resolve currentTime for all invariants together to make sure we use the same timestamp.
-    val invariantsFakePlan = AnalysisHelper.FakeLogicalPlan(invariantChecks, Nil)
+    val invariantsFakePlan = AnalysisHelper.FakeLogicalPlan(constraints, Nil)
     val newInvariantsPlan = optimizer.ComputeCurrentTime(invariantsFakePlan)
-    val localOutput = child.output
+    val constraintsWithFixedTime = newInvariantsPlan.expressions.toArray
 
     child.execute().mapPartitionsInternal { rows =>
-      val boundRefs = newInvariantsPlan.expressions
-        .asInstanceOf[Seq[CheckDeltaInvariant]]
-        .map(_.withBoundReferences(localOutput))
-      val assertions = UnsafeProjection.create(boundRefs)
+      val assertions = UnsafeProjection.create(constraintsWithFixedTime, child.output)
       rows.map { row =>
         assertions(row)
         row
@@ -100,7 +107,15 @@ case class DeltaInvariantCheckerExec(
     copy(child = newChild)
 }
 
-object DeltaInvariantCheckerExec {
+object DeltaInvariantCheckerExec extends DeltaLogging {
+  def apply(
+      spark: SparkSession,
+      child: SparkPlan,
+      constraints: Seq[Constraint]): DeltaInvariantCheckerExec = {
+    val invariantChecks =
+      DeltaInvariantCheckerExec.buildInvariantChecks(child.output, constraints, spark)
+    DeltaInvariantCheckerExec(child, invariantChecks)
+  }
 
   // Specialized optimizer to run necessary rules so that the check expressions can be evaluated.
   object DeltaInvariantCheckerOptimizer
@@ -172,7 +187,7 @@ object DeltaInvariantCheckerExec {
           val wrappedPlan: LogicalPlan = ExpressionLogicalPlanWrapper(attributesExtracted)
           val analyzedLogicalPlan = spark.sessionState.analyzer.execute(wrappedPlan)
           val optimizedLogicalPlan = DeltaInvariantCheckerOptimizer.execute(analyzedLogicalPlan)
-          optimizedLogicalPlan match {
+          val resolvedExpr = optimizedLogicalPlan match {
             case ExpressionLogicalPlanWrapper(e) => e
             // This should never happen.
             case plan => throw new DeltaIllegalStateException(
@@ -181,9 +196,26 @@ object DeltaInvariantCheckerExec {
                 "Applying type casting resulted in a bad plan rather than a simple expression.\n" +
                s"Plan:${plan.prettyJson}\n"))
           }
+          // Cap the maximum length when logging an unresolved expression to avoid issues. This is a
+          // CHECK constraint expression and should be relatively simple.
+          val MAX_OUTPUT_LENGTH = 10 * 1024
+          deltaAssert(
+            resolvedExpr.resolved,
+            name = "invariant.unresolvedExpression",
+            msg = s"CHECK constraint child expression was not properly resolved",
+            data = Map(
+              "name" -> name,
+              "checkExpr" -> expr.treeString.take(MAX_OUTPUT_LENGTH),
+              "attributesExtracted" -> attributesExtracted.treeString.take(MAX_OUTPUT_LENGTH),
+              "analyzedLogicalPlan" -> analyzedLogicalPlan.treeString.take(MAX_OUTPUT_LENGTH),
+              "optimizedLogicalPlan" -> optimizedLogicalPlan.treeString.take(MAX_OUTPUT_LENGTH),
+              "resolvedExpr" -> resolvedExpr.treeString.take(MAX_OUTPUT_LENGTH)
+            )
+          )
+          resolvedExpr
       }
 
-      CheckDeltaInvariant(executableExpr, columnExtractors.toMap, constraint)
+      CheckDeltaInvariant(executableExpr, columnExtractors.toSeq, constraint)
     }
   }
 }

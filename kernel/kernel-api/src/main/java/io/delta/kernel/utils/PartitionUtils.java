@@ -50,14 +50,12 @@ public class PartitionUtils {
     requireNonNull(snapshot, "snapshot is null");
     requireNonNull(partitionPredicate, "partitionPredicate is null");
 
-    final Set<String> snapshotPartColNames =
-        new HashSet<>(snapshot.getPartitionColumnNames(engine));
+    final Set<String> snapshotPartColNames = new HashSet<>(snapshot.getPartitionColumnNames());
 
     io.delta.kernel.internal.util.PartitionUtils.validatePredicateOnlyOnPartitionColumns(
         partitionPredicate, snapshotPartColNames);
 
-    final Scan scan =
-        snapshot.getScanBuilder(engine).withFilter(engine, partitionPredicate).build();
+    final Scan scan = snapshot.getScanBuilder().withFilter(partitionPredicate).build();
 
     try (CloseableIterator<FilteredColumnarBatch> columnarBatchIter = scan.getScanFiles(engine)) {
       while (columnarBatchIter.hasNext()) {
