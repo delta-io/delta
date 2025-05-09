@@ -1034,7 +1034,11 @@ class SchemaUtilsSuite extends AnyFunSuite {
             "renamed_id",
             IntegerType.INTEGER,
             fieldMetadata(4, "id"))
-            .add("too_low_field_id_field", IntegerType.INTEGER, true, fieldMetadata(0, "too_low_field_id_field")),
+            .add(
+              "too_low_field_id_field",
+              IntegerType.INTEGER,
+              true,
+              fieldMetadata(0, "too_low_field_id_field")),
           true),
         arrayName = "renamed_array")))
 
@@ -1086,7 +1090,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
       expectedMessage: String,
       tableProperties: Map[String, String] =
         Map(ColumnMapping.COLUMN_MAPPING_MODE_KEY -> "id"),
-    allowNewRequiredFields: Boolean = false)(implicit classTag: ClassTag[T]) {
+      allowNewRequiredFields: Boolean = false)(implicit classTag: ClassTag[T]) {
     forAll(evolutionCases) { (schemaBefore, schemaAfter) =>
       val e = intercept[T] {
         validateUpdatedSchema(
