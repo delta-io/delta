@@ -13,11 +13,3 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-
-[tool.black]
-# When changing the version, we have to update
-# GitHub workflow version
-required-version = "23.12.1"
-line-length = 100
-target-version = ['py38']
-include = '\.pyi?$'

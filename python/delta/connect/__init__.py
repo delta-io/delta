@@ -14,10 +14,6 @@
 # limitations under the License.
 #
 
-[tool.black]
-# When changing the version, we have to update
-# GitHub workflow version
-required-version = "23.12.1"
-line-length = 100
-target-version = ['py38']
-include = '\.pyi?$'
+from delta.connect.tables import DeltaTable
+
+__all__ = ['DeltaTable']
