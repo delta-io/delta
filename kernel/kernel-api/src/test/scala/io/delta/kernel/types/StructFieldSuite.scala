@@ -18,26 +18,46 @@ package io.delta.kernel.types
 
 import java.util.ArrayList
 
+import io.delta.kernel.exceptions.KernelException
+import io.delta.kernel.types.StructField.{COLLATIONS_METADATA_KEY, TypeChange}
+
 import collection.JavaConverters._
 import org.scalatest.funsuite.AnyFunSuite
-
-import io.delta.kernel.types.StructField.{COLLATIONS_METADATA_KEY, TypeChange}
 
 /**
  * Test suite for [[StructField]] class.
  */
 class StructFieldSuite extends AnyFunSuite {
 
-
   // Test equality and hashcode
   test("equality and hashcode") {
-    val field1 = new StructField("field", LongType.LONG, true, FieldMetadata.empty(), Seq(new TypeChange(IntegerType.INTEGER, LongType.LONG)).asJava)
-    val field2 = new StructField("field", LongType.LONG, true, FieldMetadata.empty(), Seq(new TypeChange(IntegerType.INTEGER, LongType.LONG)).asJava)
+    val field1 = new StructField(
+      "field",
+      LongType.LONG,
+      true,
+      FieldMetadata.empty(),
+      Seq(new TypeChange(IntegerType.INTEGER, LongType.LONG)).asJava)
+    val field2 = new StructField(
+      "field",
+      LongType.LONG,
+      true,
+      FieldMetadata.empty(),
+      Seq(new TypeChange(IntegerType.INTEGER, LongType.LONG)).asJava)
     val field3 = new StructField("differentField", IntegerType.INTEGER, true)
     val field4 = new StructField("field", StringType.STRING, true)
     val field5 = new StructField("field", IntegerType.INTEGER, false)
-    val field6 = new StructField("field", IntegerType.INTEGER, true, FieldMetadata.builder().putBoolean("a", true).build(), Seq(new TypeChange(IntegerType.INTEGER, LongType.LONG)).asJava)
-    val field7 = new StructField("field", LongType.LONG, true, FieldMetadata.empty(), Seq(new TypeChange(IntegerType.INTEGER, StringType.STRING)).asJava)
+    val field6 = new StructField(
+      "field",
+      IntegerType.INTEGER,
+      true,
+      FieldMetadata.builder().putBoolean("a", true).build(),
+      Seq(new TypeChange(IntegerType.INTEGER, LongType.LONG)).asJava)
+    val field7 = new StructField(
+      "field",
+      LongType.LONG,
+      true,
+      FieldMetadata.empty(),
+      Seq(new TypeChange(IntegerType.INTEGER, StringType.STRING)).asJava)
 
     assert(field1 == field2)
     assert(field1.hashCode() == field2.hashCode())
@@ -47,6 +67,33 @@ class StructFieldSuite extends AnyFunSuite {
     assert(field1 != field5)
     assert(field1 != field6)
     assert(field1 != field7)
+  }
+
+  Seq(
+    new StructType(),
+    new ArrayType(LongType.LONG, false),
+    new MapType(LongType.LONG, LongType.LONG, false)).foreach { dataType =>
+    test(s"withType should throw exception with change types for nested types $dataType") {
+      val field = new StructField(
+        "field",
+        dataType,
+        true)
+      assertThrows[KernelException] {
+        field.withTypeChanges(Seq(new TypeChange(IntegerType.INTEGER, LongType.LONG)).asJava)
+      }
+    }
+
+    test(s"Constructor should throw exception with change types for nested types $dataType") {
+
+      assertThrows[KernelException] {
+        new StructField(
+          "field",
+          dataType,
+          true,
+          FieldMetadata.empty(),
+          Seq(new TypeChange(IntegerType.INTEGER, LongType.LONG)).asJava)
+      }
+    }
   }
 
   // Test metadata column detection
@@ -59,7 +106,8 @@ class StructFieldSuite extends AnyFunSuite {
     val metadataFieldName = "_metadata.custom"
     val metadataBuilder = FieldMetadata.builder()
     metadataBuilder.putBoolean("isMetadataColumn", true)
-    val metadataField = new StructField(metadataFieldName, LongType.LONG, false, metadataBuilder.build())
+    val metadataField =
+      new StructField(metadataFieldName, LongType.LONG, false, metadataBuilder.build())
 
     assert(metadataField.isMetadataColumn)
     assert(!metadataField.isDataColumn)
@@ -85,7 +133,11 @@ class StructFieldSuite extends AnyFunSuite {
 
   // Test type changes
   test("type changes") {
-    val originalField = new StructField("field", IntegerType.INTEGER, true, FieldMetadata.builder().putString("a", "b").build())
+    val originalField = new StructField(
+      "field",
+      IntegerType.INTEGER,
+      true,
+      FieldMetadata.builder().putString("a", "b").build())
     assert(originalField.getTypeChanges.isEmpty)
 
     val typeChanges = new ArrayList[TypeChange]()

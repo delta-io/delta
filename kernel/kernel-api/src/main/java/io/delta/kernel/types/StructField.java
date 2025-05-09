@@ -17,6 +17,7 @@
 package io.delta.kernel.types;
 
 import io.delta.kernel.annotation.Evolving;
+import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.internal.util.Tuple2;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -61,7 +62,9 @@ public class StructField {
   /**
    * Represents a type change for a field, containing the original and new primitive types.
    *
-   * @since 3.0.0
+   * <p>Type changes are actually persisted in metadata attached to StructFields but the rules for
+   * where the metadata is attached depend on if the change is for nested arrays/maps or primitive
+   * types.
    */
   public static class TypeChange {
     private final BasePrimitiveType from;
@@ -131,6 +134,12 @@ public class StructField {
     FieldMetadata collationMetadata = fetchCollationMetadata();
     this.metadata =
         new FieldMetadata.Builder().fromMetadata(metadata).fromMetadata(collationMetadata).build();
+    if (!this.typeChanges.isEmpty()
+        && (dataType instanceof MapType
+            || dataType instanceof StructType
+            || dataType instanceof ArrayType)) {
+      throw new KernelException("Type changes are not supported on nested types.");
+    }
   }
 
   /** @return the name of this field */
