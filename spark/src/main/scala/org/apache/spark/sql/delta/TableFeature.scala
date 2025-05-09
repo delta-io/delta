@@ -370,7 +370,7 @@ object TableFeature {
       InCommitTimestampTableFeature,
       VariantTypePreviewTableFeature,
       VariantTypeTableFeature,
-      VariantShreddingTableFeature,
+      VariantShreddingPreviewTableFeature,
       CatalogOwnedTableFeature,
       CoordinatedCommitsTableFeature,
       CheckpointProtectionTableFeature)
@@ -714,8 +714,9 @@ object VariantTypeTableFeature extends ReaderWriterFeature(name = "variantType")
   }
 }
 
-object VariantShreddingTableFeature extends ReaderWriterFeature(name = "variantShredding-preview")
-  with FeatureAutomaticallyEnabledByMetadata {
+object VariantShreddingPreviewTableFeature
+    extends ReaderWriterFeature(name = "variantShredding-preview")
+    with FeatureAutomaticallyEnabledByMetadata {
   override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
 
   override def metadataRequiresFeatureToBeEnabled(
