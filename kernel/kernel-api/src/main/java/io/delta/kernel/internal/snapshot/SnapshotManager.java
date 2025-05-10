@@ -247,39 +247,50 @@ public class SnapshotManager {
     logger.info("Loading log segment for version {}", versionToLoadStr);
 
     ////////////////////////////////////////////////////////////////////////////////////////////////
-    // Step 1: Find the latest checkpoint version. If $versionToLoadOpt is empty, use the version //
-    //         referenced by the _LAST_CHECKPOINT file. If $versionToLoad is present, search for  //
-    //         the previous latest complete checkpoint at or before $versionToLoad.               //
+    // Step 1: If $versionToLoadOpt is present, search for the latest complete checkpoint at or   //
+    //         before that version. Else, look up the checkpoint version in the _last_checkpoint  //
+    //         file.                                                                              //
     ////////////////////////////////////////////////////////////////////////////////////////////////
 
-    final Optional<Long> startCheckpointVersionOpt =
-        getStartCheckpointVersion(engine, versionToLoadOpt);
+    Optional<CompleteCheckpointGroup> latestCompleteCheckpointGroupOpt =
+        versionToLoadOpt.flatMap(v -> getLatestCompleteCheckpointAtOrBeforeVersion(engine, v));
+
+    final Optional<Long> lastCheckpointFileCheckpointVersionOpt =
+        latestCompleteCheckpointGroupOpt.isPresent()
+            ? Optional.empty()
+            : getLastCheckpointFileCheckpointVersion(engine);
 
     /////////////////////////////////////////////////////////////////
     // Step 2: Determine the actual version to start listing from. //
     /////////////////////////////////////////////////////////////////
 
-    final long listFromStartVersion =
-        startCheckpointVersionOpt
-            .map(
-                version -> {
-                  logger.info("Found a complete checkpoint at version {}.", version);
-                  return version;
-                })
-            .orElseGet(
-                () -> {
-                  logger.warn("Cannot find a complete checkpoint. Listing from version 0.");
-                  return 0L;
-                });
+    final long listFromStartVersion;
+
+    if (latestCompleteCheckpointGroupOpt.isPresent()) {
+      // +1 because we have already found the latest complete checkpoint! No need to list from
+      // *that same* version again.
+      listFromStartVersion = latestCompleteCheckpointGroupOpt.get().version + 1;
+      logger.info("Searched and found a complete checkpoint at version {}.", listFromStartVersion);
+    } else {
+      if (lastCheckpointFileCheckpointVersionOpt.isPresent()) {
+        listFromStartVersion = lastCheckpointFileCheckpointVersionOpt.get();
+        logger.info(
+            "List from checkpoint version {} from _last_checkpoint file.", listFromStartVersion);
+      } else {
+        listFromStartVersion = 0L;
+        logger.warn("Cannot find a complete checkpoint. Listing from version 0.");
+      }
+    }
 
     /////////////////////////////////////////////////////////////////
     // Step 3: List the files from $startVersion to $versionToLoad //
     /////////////////////////////////////////////////////////////////
 
-    Set<DeltaLogFileType> fileTypes =
-        new HashSet<>(
-            Arrays.asList(
-                DeltaLogFileType.COMMIT, DeltaLogFileType.CHECKPOINT, DeltaLogFileType.CHECKSUM));
+    final Set<DeltaLogFileType> fileTypes =
+        new HashSet<>(Arrays.asList(DeltaLogFileType.COMMIT, DeltaLogFileType.CHECKSUM));
+    if (!latestCompleteCheckpointGroupOpt.isPresent()) {
+      fileTypes.add(DeltaLogFileType.CHECKPOINT);
+    }
     if (USE_COMPACTED_FILES) {
       fileTypes.add(DeltaLogFileType.LOG_COMPACTION);
     }
@@ -305,12 +316,9 @@ public class SnapshotManager {
     ////////////////////////////////////////////////////////////////////////
 
     if (listedFileStatuses.isEmpty()) {
-      if (startCheckpointVersionOpt.isPresent()) {
-        // We either (a) determined this checkpoint version from the _LAST_CHECKPOINT file, or (b)
-        // found the last complete checkpoint before our versionToLoad. In either case, we didn't
-        // see the checkpoint file in the listing.
-        // TODO: throw a more specific error based on case (a) or (b)
-        throw DeltaErrors.missingCheckpoint(tablePath.toString(), startCheckpointVersionOpt.get());
+      if (lastCheckpointFileCheckpointVersionOpt.isPresent()) {
+        throw DeltaErrors.missingCheckpoint(
+            tablePath.toString(), lastCheckpointFileCheckpointVersionOpt.get());
       } else {
         // Either no files found OR no *delta* files found even when listing from 0. This means that
         // the delta table does not exist yet.
@@ -351,31 +359,36 @@ public class SnapshotManager {
     logDebugFileStatuses("listedCheckSumFileStatuses", listedChecksumFileStatuses);
 
     /////////////////////////////////////////////////////////////////////////////////////////////
-    // Step 6: Determine the latest complete checkpoint version. The intuition here is that we //
-    //         LISTed from the startingCheckpoint but may have found a newer complete          //
-    //         checkpoint.                                                                     //
+    // Step 6: Determine the latest complete checkpoint, if it wasn't found earlier in Step 1. //
+    //         The intuition here is that we LISTed either from 0 or from the _last_checkpoint //
+    //         file's checkpoint version, and we may have found a newer checkpoint file        //
+    //         statuses that we can to create a complete checkpoint.                           //
     /////////////////////////////////////////////////////////////////////////////////////////////
 
-    final List<CheckpointInstance> listedCheckpointInstances =
-        listedCheckpointFileStatuses.stream()
-            .map(f -> new CheckpointInstance(f.getPath()))
-            .collect(Collectors.toList());
+    if (!latestCompleteCheckpointGroupOpt.isPresent()) {
+      final List<CheckpointInstance> listedCheckpointInstances =
+          listedCheckpointFileStatuses.stream()
+              .map(CheckpointInstance::new)
+              .collect(Collectors.toList());
 
-    final CheckpointInstance notLaterThanCheckpoint =
-        versionToLoadOpt.map(CheckpointInstance::new).orElse(CheckpointInstance.MAX_VALUE);
+      final CheckpointInstance notLaterThanCheckpoint =
+          versionToLoadOpt.map(CheckpointInstance::new).orElse(CheckpointInstance.MAX_VALUE);
 
-    final Optional<CheckpointInstance> latestCompleteCheckpointOpt =
-        Checkpointer.getLatestCompleteCheckpointFromList(
-            listedCheckpointInstances, notLaterThanCheckpoint);
+      latestCompleteCheckpointGroupOpt =
+          CompleteCheckpointGroup.getLatestCompleteCheckpointGroup(
+              listedCheckpointInstances, notLaterThanCheckpoint);
+    }
 
-    if (!latestCompleteCheckpointOpt.isPresent() && startCheckpointVersionOpt.isPresent()) {
-      // In Step 1 we found a $startCheckpointVersion but now our LIST of the file system doesn't
-      // see it. This means that the checkpoint we thought should exist no longer does.
-      throw DeltaErrors.missingCheckpoint(tablePath.toString(), startCheckpointVersionOpt.get());
+    if (lastCheckpointFileCheckpointVersionOpt.isPresent()
+        && !latestCompleteCheckpointGroupOpt.isPresent()) {
+      // Error case: _last_checkpoint file points to some checkpoint version, but we couldn't find a
+      // complete checkpoint after listing from that version!
+      throw DeltaErrors.missingCheckpoint(
+          tablePath.toString(), lastCheckpointFileCheckpointVersionOpt.get());
     }
 
     final long latestCompleteCheckpointVersion =
-        latestCompleteCheckpointOpt.map(x -> x.version).orElse(-1L);
+        latestCompleteCheckpointGroupOpt.map(x -> x.version).orElse(-1L);
 
     logger.info("Latest complete checkpoint version: {}", latestCompleteCheckpointVersion);
 
@@ -433,13 +446,13 @@ public class SnapshotManager {
     /////////////////////////////////////////////
 
     // Check that we have found at least one checkpoint or delta file
-    if (!latestCompleteCheckpointOpt.isPresent() && deltasAfterCheckpoint.isEmpty()) {
+    if (!latestCompleteCheckpointGroupOpt.isPresent() && deltasAfterCheckpoint.isEmpty()) {
       throw new InvalidTableException(
           tablePath.toString(), "No complete checkpoint found and no delta files found");
     }
 
     // Check that, for a checkpoint at version N, there's a delta file at N, too.
-    if (latestCompleteCheckpointOpt.isPresent()
+    if (latestCompleteCheckpointGroupOpt.isPresent()
         && listedDeltaFileStatuses.stream()
             .map(x -> FileNames.deltaVersion(new Path(x.getPath())))
             .noneMatch(v -> v == latestCompleteCheckpointVersion)) {
@@ -491,35 +504,8 @@ public class SnapshotManager {
     ////////////////////////////////////////////////////////////////////////////////////////////
 
     final List<FileStatus> latestCompleteCheckpointFileStatuses =
-        latestCompleteCheckpointOpt
-            .map(
-                latestCompleteCheckpoint -> {
-                  final Set<Path> newCheckpointPaths =
-                      new HashSet<>(latestCompleteCheckpoint.getCorrespondingFiles(logPath));
-
-                  final List<FileStatus> newCheckpointFileStatuses =
-                      listedCheckpointFileStatuses.stream()
-                          .filter(f -> newCheckpointPaths.contains(new Path(f.getPath())))
-                          .collect(Collectors.toList());
-
-                  logDebugFileStatuses("newCheckpointFileStatuses", newCheckpointFileStatuses);
-
-                  if (newCheckpointFileStatuses.size() != newCheckpointPaths.size()) {
-                    final String msg =
-                        format(
-                            "Seems like the checkpoint is corrupted. Failed in getting the file "
-                                + "information for:\n%s\namong\n%s",
-                            newCheckpointPaths.stream()
-                                .map(Path::toString)
-                                .collect(Collectors.joining("\n - ")),
-                            listedCheckpointFileStatuses.stream()
-                                .map(FileStatus::getPath)
-                                .collect(Collectors.joining("\n - ")));
-                    throw new IllegalStateException(msg);
-                  }
-
-                  return newCheckpointFileStatuses;
-                })
+        latestCompleteCheckpointGroupOpt
+            .map(CompleteCheckpointGroup::getFileStatuses)
             .orElse(Collections.emptyList());
 
     //////////////////////////////////////////
@@ -558,40 +544,31 @@ public class SnapshotManager {
   // getLogSegment utils //
   /////////////////////////
 
-  /**
-   * Determine the starting checkpoint version that is at or before `versionToLoadOpt`. If no
-   * `versionToLoadOpt` is provided, will use the checkpoint pointed to by the _last_checkpoint
-   * file.
-   */
-  private Optional<Long> getStartCheckpointVersion(Engine engine, Optional<Long> versionToLoadOpt) {
-    return versionToLoadOpt
+  private Optional<CompleteCheckpointGroup> getLatestCompleteCheckpointAtOrBeforeVersion(
+      Engine engine, long versionToLoad) {
+    final long startTimeMillis = System.currentTimeMillis();
+
+    return Checkpointer.findLastCompleteCheckpointBefore(engine, logPath, versionToLoad + 1)
         .map(
-            versionToLoad -> {
+            checkpoint -> {
+              checkArgument(
+                  checkpoint.version <= versionToLoad,
+                  "Last complete checkpoint version %s was not <= targetVersion %s",
+                  checkpoint.version,
+                  versionToLoad);
+
               logger.info(
-                  "Finding last complete checkpoint at or before version {}", versionToLoad);
-              final long startTimeMillis = System.currentTimeMillis();
-              return Checkpointer.findLastCompleteCheckpointBefore(
-                      engine, logPath, versionToLoad + 1)
-                  .map(checkpointInstance -> checkpointInstance.version)
-                  .map(
-                      checkpointVersion -> {
-                        checkArgument(
-                            checkpointVersion <= versionToLoad,
-                            "Last complete checkpoint version %s was not <= targetVersion %s",
-                            checkpointVersion,
-                            versionToLoad);
+                  "{}: Took {}ms to find last complete checkpoint <= targetVersion {}",
+                  tablePath,
+                  System.currentTimeMillis() - startTimeMillis,
+                  versionToLoad);
 
-                        logger.info(
-                            "{}: Took {}ms to find last complete checkpoint <= targetVersion {}",
-                            tablePath,
-                            System.currentTimeMillis() - startTimeMillis,
-                            versionToLoad);
+              return checkpoint;
+            });
+  }
 
-                        return checkpointVersion;
-                      });
-            })
-        .orElseGet(
-            () -> new Checkpointer(logPath).readLastCheckpointFile(engine).map(x -> x.version));
+  private Optional<Long> getLastCheckpointFileCheckpointVersion(Engine engine) {
+    return new Checkpointer(logPath).readLastCheckpointFile(engine).map(x -> x.version);
   }
 
   private void logDebugFileStatuses(String varName, List<FileStatus> fileStatuses) {
