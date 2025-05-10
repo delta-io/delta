@@ -468,6 +468,15 @@ public class ColumnMapping {
       AtomicInteger maxColumnId,
       boolean isNewTable,
       boolean useColumnIdForPhysicalName) {
+    if (hasColumnId(field) ^ hasPhysicalName(field)) {
+      // If a connector is providing column mapping metadata in the given schema we require it to be
+      // complete
+      throw new IllegalArgumentException(
+          String.format(
+              "Both columnId and physicalName must be present if one is present. "
+                  + "Found this field with incomplete column mapping metadata: %s",
+              field));
+    }
     if (!hasColumnId(field)) {
       field =
           field.withNewMetadata(
