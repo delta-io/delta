@@ -304,7 +304,7 @@ public class TableFeatures {
 
     @Override
     public boolean hasKernelWriteSupport(Metadata metadata) {
-      return false; // TODO: yet to support it.
+      return true;
     }
   }
 

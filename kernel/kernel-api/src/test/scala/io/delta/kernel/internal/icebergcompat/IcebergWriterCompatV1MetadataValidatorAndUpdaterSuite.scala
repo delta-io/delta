@@ -265,8 +265,8 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
       "v2Checkpoint",
       "inCommitTimestamp",
       "clustering",
-      // "typeWidening", add this to this test once we support typeWidening
-      // "typeWidening-preview", add this to this test once we support typeWidening
+      "typeWidening",
+      "typeWidening-preview",
       "timestampNtz")
     val protocol = new Protocol(3, 7, readerFeatures.asJava, writerFeatures.asJava)
     val metadata = getCompatEnabledMetadata(cmTestSchema())
@@ -293,19 +293,6 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
       }
       assert(e.getMessage.contains(expectedErrorMessageContains))
     }
-  }
-
-  Seq("typeWidening", "typeWidening-preview").foreach {
-    unsupportedCompatibleFeature =>
-      test(s"cannot enable with compatible UNSUPPORTED feature $unsupportedCompatibleFeature") {
-        // We add this test here so that it will fail when we add Kernel support for these features
-        // When this happens -> add the feature to the test above
-        checkUnsupportedOrIncompatibleFeature(
-          unsupportedCompatibleFeature,
-          "Unsupported Delta table feature: table requires feature " +
-            s""""$unsupportedCompatibleFeature" which is unsupported by this version of """ +
-            "Delta Kernel")
-      }
   }
 
   Seq(
