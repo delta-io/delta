@@ -17,8 +17,10 @@
 package io.delta.kernel.types;
 
 import io.delta.kernel.annotation.Evolving;
+import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.internal.util.Tuple2;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 
@@ -48,7 +50,8 @@ public class StructField {
           METADATA_ROW_INDEX_COLUMN_NAME,
           LongType.LONG,
           false,
-          FieldMetadata.builder().putBoolean(IS_METADATA_COLUMN_KEY, true).build());
+          FieldMetadata.builder().putBoolean(IS_METADATA_COLUMN_KEY, true).build(),
+          Collections.emptyList());
 
   public static final String COLLATIONS_METADATA_KEY = "__COLLATIONS";
 
@@ -56,23 +59,87 @@ public class StructField {
   // Instance Fields / Methods
   ////////////////////////////////////////////////////////////////////////////////
 
+  /**
+   * Represents a type change for a field, containing the original and new primitive types.
+   *
+   * <p>Type changes are actually persisted in metadata attached to StructFields but the rules for
+   * where the metadata is attached depend on if the change is for nested arrays/maps or primitive
+   * types.
+   */
+  public static class TypeChange {
+    private final BasePrimitiveType from;
+    private final BasePrimitiveType to;
+
+    public TypeChange(BasePrimitiveType from, BasePrimitiveType to) {
+      this.from = Objects.requireNonNull(from, "from type cannot be null");
+      this.to = Objects.requireNonNull(to, "to type cannot be null");
+    }
+
+    public BasePrimitiveType getFrom() {
+      return from;
+    }
+
+    public BasePrimitiveType getTo() {
+      return to;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+      if (this == o) {
+        return true;
+      }
+      if (o == null || getClass() != o.getClass()) {
+        return false;
+      }
+      TypeChange that = (TypeChange) o;
+      return Objects.equals(from, that.from) && Objects.equals(to, that.to);
+    }
+
+    @Override
+    public int hashCode() {
+      return Objects.hash(from, to);
+    }
+
+    @Override
+    public String toString() {
+      return String.format("TypeChange(from=%s,to=%s)", from, to);
+    }
+  }
+
   private final String name;
   private final DataType dataType;
   private final boolean nullable;
   private final FieldMetadata metadata;
+  private final List<TypeChange> typeChanges;
 
   public StructField(String name, DataType dataType, boolean nullable) {
     this(name, dataType, nullable, FieldMetadata.empty());
   }
 
   public StructField(String name, DataType dataType, boolean nullable, FieldMetadata metadata) {
+    this(name, dataType, nullable, metadata, Collections.emptyList());
+  }
+
+  public StructField(
+      String name,
+      DataType dataType,
+      boolean nullable,
+      FieldMetadata metadata,
+      List<TypeChange> typeChanges) {
     this.name = name;
     this.dataType = dataType;
     this.nullable = nullable;
+    this.typeChanges = typeChanges == null ? Collections.emptyList() : typeChanges;
 
     FieldMetadata collationMetadata = fetchCollationMetadata();
     this.metadata =
         new FieldMetadata.Builder().fromMetadata(metadata).fromMetadata(collationMetadata).build();
+    if (!this.typeChanges.isEmpty()
+        && (dataType instanceof MapType
+            || dataType instanceof StructType
+            || dataType instanceof ArrayType)) {
+      throw new KernelException("Type changes are not supported on nested types.");
+    }
   }
 
   /** @return the name of this field */
@@ -95,6 +162,11 @@ public class StructField {
     return nullable;
   }
 
+  /** @return the list of type changes for this field */
+  public List<TypeChange> getTypeChanges() {
+    return Collections.unmodifiableList(typeChanges);
+  }
+
   public boolean isMetadataColumn() {
     return metadata.contains(IS_METADATA_COLUMN_KEY)
         && (boolean) metadata.get(IS_METADATA_COLUMN_KEY);
@@ -107,7 +179,8 @@ public class StructField {
   @Override
   public String toString() {
     return String.format(
-        "StructField(name=%s,type=%s,nullable=%s,metadata=%s)", name, dataType, nullable, metadata);
+        "StructField(name=%s,type=%s,nullable=%s,metadata=%s,typeChanges=%s)",
+        name, dataType, nullable, metadata, typeChanges);
   }
 
   @Override
@@ -122,16 +195,27 @@ public class StructField {
     return nullable == that.nullable
         && name.equals(that.name)
         && dataType.equals(that.dataType)
-        && metadata.equals(that.metadata);
+        && metadata.equals(that.metadata)
+        && Objects.equals(typeChanges, that.typeChanges);
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(name, dataType, nullable, metadata);
+    return Objects.hash(name, dataType, nullable, metadata, typeChanges);
   }
 
   public StructField withNewMetadata(FieldMetadata metadata) {
-    return new StructField(name, dataType, nullable, metadata);
+    return new StructField(name, dataType, nullable, metadata, typeChanges);
+  }
+
+  /**
+   * Creates a copy of this StructField with the specified type changes.
+   *
+   * @param typeChanges The list of type changes to set
+   * @return A new StructField with the same properties but with the specified type changes
+   */
+  public StructField withTypeChanges(List<TypeChange> typeChanges) {
+    return new StructField(name, dataType, nullable, metadata, typeChanges);
   }
 
   private List<Tuple2<String, String>> getNestedCollatedFields(DataType parent, String path) {
