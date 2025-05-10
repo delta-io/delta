@@ -241,6 +241,24 @@ object CatalogOwnedTableUtils {
   }
 
   /**
+   * Appends [[CatalogOwnedTableFeature]] to the provided protocol.
+   * This is used to ensure that the CatalogOwnedTableFeature is included in the protocol
+   * for specific DDL commands w/ default spark config of CatalogOwned, e.g., `CREATE LIKE`.
+   *
+   * @param protocol The protocol to append.
+   */
+  def appendCatalogOwnedTableFeature(protocol: Protocol): Protocol = {
+    /** Helper function to append CatalogOwnedTableFeature to the provided table features. */
+    def appendImpl(tableFeatures: Option[Set[String]]): Option[Set[String]] = {
+      tableFeatures.map(_ + CatalogOwnedTableFeature.name)
+    }
+    protocol.copy(
+      readerFeatures = appendImpl(tableFeatures = protocol.readerFeatures),
+      writerFeatures = appendImpl(tableFeatures = protocol.writerFeatures)
+    )
+  }
+
+  /**
    * Validates that the UC table ID is not present in the provided property (overrides).
    * Errors out if it is present.
    *
@@ -569,6 +587,20 @@ object CoordinatedCommitsUtils extends DeltaLogging {
    */
   def getExplicitICTConfigurations(properties: Map[String, String]): Map[String, String] = {
     properties.filter { case (k, _) => ICT_TABLE_PROPERTY_KEYS.contains(k) }
+  }
+
+  /**
+   * Fetches the SparkSession default configurations for ICT. The `withDefaultKey`
+   * flag controls whether the keys in the returned map should have the default prefix or not.
+   */
+  def getDefaultICTConfigurations(
+      spark: SparkSession, withDefaultKey: Boolean = false): Map[String, String] = {
+    ICT_TABLE_PROPERTY_CONFS.flatMap { conf =>
+      spark.conf.getOption(conf.defaultTablePropertyKey).map { value =>
+        val finalKey = if (withDefaultKey) conf.defaultTablePropertyKey else conf.key
+        finalKey -> value
+      }
+    }.toMap
   }
 
   /**
