@@ -89,6 +89,16 @@ trait DeltaRetentionSuiteBase extends QueryTest
     files.map(f => f.getName()).map(s => s.substring(0, s.indexOf(".")).toLong).toSet
   }
 
+  protected def getCrcFiles(dir: File): Seq[File] =
+    dir.listFiles().filter(f => FileNames.isChecksumFile(new Path(f.getCanonicalPath)))
+
+  protected def getCrcVersions(dir: File): Set[Long] =
+    getFileVersions(getCrcFiles(dir))
+
+  protected def getDeltaAndCrcFiles(dir: File): Seq[File] =
+    getDeltaFiles(dir) ++ getCrcFiles(dir)
+
+
   protected def getDeltaVersions(dir: File): Set[Long] = {
     val backfilledDeltaVersions = getFileVersions(getDeltaFiles(dir))
     val unbackfilledDeltaVersions = getUnbackfilledDeltaVersions(dir)
@@ -171,14 +181,21 @@ trait DeltaRetentionSuiteBase extends QueryTest
     }
     if (!checkpointOnly) {
       val deltaPath = new Path(log.logPath, new Path(f"$version%020d.json"))
+      val ts = day(startTime, dayNum) + version * 1000
       if (fs.exists(deltaPath)) {
         // Add some second offset so that we don't have files with same timestamps
-        fs.setTimes(deltaPath, day(startTime, dayNum) + version * 1000, 0)
+        fs.setTimes(deltaPath, ts, 0)
+      }
+      // Add the same timestamp for the crc file as well.
+      val crcPath = new Path(log.logPath, new Path(f"$version%020d.crc"))
+      if (fs.exists(crcPath)) {
+          // Add some second offset so that we don't have files with same timestamps
+          fs.setTimes(crcPath, ts, 0)
       }
       // Add the same timestamp for unbackfilled delta files as well
       fs.listStatus(FileNames.commitDirPath(log.logPath))
         .find(_.getPath.getName.startsWith(f"$version%020d"))
-        .foreach(f => fs.setTimes(f.getPath, day(startTime, dayNum) + version * 1000, 0))
+        .foreach(f => fs.setTimes(f.getPath, ts, 0))
     }
   }
 

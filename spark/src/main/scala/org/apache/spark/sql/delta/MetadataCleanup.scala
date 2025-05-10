@@ -141,8 +141,8 @@ trait MetadataCleanup extends DeltaLogging {
   }
 
   /** Helper function for getting the version of a checkpoint or a commit. */
-  def getDeltaFileOrCheckpointVersion(filePath: Path): Long = {
-    require(isCheckpointFile(filePath) || isDeltaFile(filePath))
+  def getDeltaFileChecksumOrCheckpointVersion(filePath: Path): Long = {
+    require(isCheckpointFile(filePath) || isDeltaFile(filePath) || isChecksumFile(filePath))
     getFileVersion(filePath)
   }
 
@@ -157,10 +157,10 @@ trait MetadataCleanup extends DeltaLogging {
     if (latestCheckpoint.isEmpty) return Iterator.empty
     val threshold = latestCheckpoint.get.version - 1L
     val files = store.listFrom(listingPrefix(logPath, 0), newDeltaHadoopConf())
-      .filter(f => isCheckpointFile(f) || isDeltaFile(f))
+      .filter(f => isCheckpointFile(f) || isDeltaFile(f) || isChecksumFile(f))
 
     new BufferingLogDeletionIterator(
-      files, fileCutOffTime, threshold, getDeltaFileOrCheckpointVersion)
+      files, fileCutOffTime, threshold, getDeltaFileChecksumOrCheckpointVersion)
   }
 
   /**
@@ -177,7 +177,7 @@ trait MetadataCleanup extends DeltaLogging {
     if (checkpointProtectionVersion <= 0) return true
 
     def versionGreaterOrEqualToThreshold(file: FileStatus): Boolean =
-      getDeltaFileOrCheckpointVersion(file.getPath) >= checkpointProtectionVersion - 1
+      getDeltaFileChecksumOrCheckpointVersion(file.getPath) >= checkpointProtectionVersion - 1
 
     val expiredDeltaLogs = listExpiredDeltaLogs(fileCutOffTime)
     expiredDeltaLogs.isEmpty || expiredDeltaLogs.exists(versionGreaterOrEqualToThreshold)

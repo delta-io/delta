@@ -44,7 +44,8 @@ class DeltaRetentionSuite extends QueryTest
   protected override def sparkConf: SparkConf = super.sparkConf
 
   override protected def getLogFiles(dir: File): Seq[File] =
-    getDeltaFiles(dir) ++ getUnbackfilledDeltaFiles(dir) ++ getCheckpointFiles(dir)
+    getDeltaFiles(dir) ++ getUnbackfilledDeltaFiles(dir) ++ getCheckpointFiles(dir)++
+      getCrcFiles(dir)
 
   test("delete expired logs") {
     withTempDir { tempDir =>
@@ -80,7 +81,7 @@ class DeltaRetentionSuite extends QueryTest
 
       log.checkpoint()
 
-      val expectedFiles = Seq("04.json", "04.checkpoint.parquet")
+      val expectedFiles = Seq("04.json", "04.checkpoint.parquet", "04.crc")
       // after checkpointing, the files should be cleared
       log.cleanUpExpiredLogs(log.snapshot)
       val afterCleanup = getLogFiles(logPath)
@@ -262,7 +263,7 @@ class DeltaRetentionSuite extends QueryTest
     }
   }
 
-  test("the checkpoint file for version 0 should be cleaned") {
+  test("the checkpoint and checksum for version 0 should be cleaned") {
     withTempDir { tempDir =>
       val clock = new ManualClock(getStartTimeForRetentionTest)
       val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
@@ -289,6 +290,9 @@ class DeltaRetentionSuite extends QueryTest
       initialFiles.foreach { file =>
         assert(!afterCleanup.contains(file))
       }
+      compareVersions(getCrcVersions(logPath), "checksum", Set(1))
+      compareVersions(getFileVersions(getDeltaFiles(logPath)), "commit", Set(1))
+      compareVersions(getFileVersions(getCheckpointFiles(logPath)), "checkpoint", Set(1))
     }
   }
 
