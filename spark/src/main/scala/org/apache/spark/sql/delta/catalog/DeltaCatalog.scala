@@ -520,6 +520,20 @@ class DeltaCatalog extends DelegatingCatalogExtension
 
   /** Checks if a table already exists for the provided identifier. */
   def getExistingTableIfExists(table: TableIdentifier): Option[CatalogTable] = {
+    try {
+      val loadedTable =
+        super.loadTable(Identifier.of(Array(table.database.getOrElse("")), table.table))
+      if (loadedTable.isInstanceOf[org.apache.spark.sql.connector.catalog.V1Table]) {
+        Some(loadedTable.asInstanceOf[org.apache.spark.sql.connector.catalog.V1Table].catalogTable)
+      } else {
+        getExistingTableIfExistsFromHMS(table)
+      }
+    } catch {
+      case _ => getExistingTableIfExistsFromHMS(table) // fallback to default
+    }
+  }
+
+  private def getExistingTableIfExistsFromHMS(table: TableIdentifier): Option[CatalogTable] = {
     // If this is a path identifier, we cannot return an existing CatalogTable. The Create command
     // will check the file system itself
     if (isPathIdentifier(table)) return None
