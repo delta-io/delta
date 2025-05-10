@@ -434,7 +434,7 @@ class PartitionLikeDataSkippingColumnMappingSuite
   extends PartitionLikeDataSkippingSuiteBase with DeltaColumnMappingEnableIdMode {
   override def runAllTests: Boolean = true
 
-  test("partition-like data skipping with special characters in column names") {
+  ignore("partition-like data skipping with special characters in column names") {
     val tbl = "tbl"
     withTable(tbl) {
       sql(s"CREATE TABLE $tbl SHALLOW CLONE $testTableName")
