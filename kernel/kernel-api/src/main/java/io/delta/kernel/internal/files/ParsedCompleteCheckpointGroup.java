@@ -69,7 +69,7 @@ public class ParsedCompleteCheckpointGroup {
           checkpointFiles.size() == 1,
           "Classic and V2 checkpoint group must have exactly one checkpoint file");
     } else if (first instanceof MultipartCheckpointFile) {
-      validateMultiPartVersions(checkpointFiles);
+      validateMultiPartCheckpoints(checkpointFiles);
     } else {
       throw new IllegalArgumentException("Unknown checkpoint format: " + first);
     }
@@ -92,7 +92,7 @@ public class ParsedCompleteCheckpointGroup {
 
   /** Assumes: At the very least, the first checkpoint file is a multi-part checkpoint. */
   @VisibleForTesting
-  public static void validateMultiPartVersions(List<CheckpointFile> checkpointFiles) {
+  public static void validateMultiPartCheckpoints(List<CheckpointFile> checkpointFiles) {
     final Set<Integer> actualPartNums = new HashSet<>();
 
     if (!(checkpointFiles.get(0) instanceof MultipartCheckpointFile)) {
