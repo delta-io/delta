@@ -19,6 +19,7 @@ package io.delta.kernel.internal.files;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.utils.FileStatus;
+import java.util.Objects;
 
 public abstract class ParsedLogFile {
 
@@ -28,8 +29,8 @@ public abstract class ParsedLogFile {
 
   public enum Category {
     DELTA,
-    LOG_COMPACTION,
     CHECKPOINT,
+    LOG_COMPACTION,
     CHECKSUM
   }
 
@@ -80,6 +81,24 @@ public abstract class ParsedLogFile {
     return category;
   }
 
+  /** NOTE: Children only need to override this if they have additional fields. */
+  @Override
+  public boolean equals(Object o) {
+    if (o == null || getClass() != o.getClass()) {
+      return false;
+    }
+    final ParsedLogFile that = (ParsedLogFile) o;
+    return version == that.version
+        && Objects.equals(fileStatus, that.fileStatus)
+        && category == that.category;
+  }
+
+  /** NOTE: Children only need to override this if they have additional fields. */
+  @Override
+  public int hashCode() {
+    return Objects.hash(fileStatus, version, category);
+  }
+
   ////////////
   // Deltas //
   ////////////
@@ -99,6 +118,8 @@ public abstract class ParsedLogFile {
       super(fileStatus, version);
     }
   }
+
+  // TODO: StagedCommitFile
 
   /////////////////
   // Checkpoints //
@@ -158,6 +179,23 @@ public abstract class ParsedLogFile {
     public boolean mayContainSidecarFiles() {
       return false;
     }
+
+    @Override
+    public boolean equals(Object o) {
+      if (o == null || getClass() != o.getClass()) {
+        return false;
+      }
+      if (!super.equals(o)) {
+        return false;
+      }
+      final MultipartCheckpointFile that = (MultipartCheckpointFile) o;
+      return part == that.part && numParts == that.numParts;
+    }
+
+    @Override
+    public int hashCode() {
+      return Objects.hash(super.hashCode(), part, numParts);
+    }
   }
 
   public static class V2CheckpointFile extends CheckpointFile {
@@ -201,6 +239,23 @@ public abstract class ParsedLogFile {
 
     public long getEndVersion() {
       return endVersion;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+      if (o == null || getClass() != o.getClass()) {
+        return false;
+      }
+      if (!super.equals(o)) {
+        return false;
+      }
+      final LogCompactionFile that = (LogCompactionFile) o;
+      return startVersion == that.startVersion && endVersion == that.endVersion;
+    }
+
+    @Override
+    public int hashCode() {
+      return Objects.hash(super.hashCode(), startVersion, endVersion);
     }
   }
 
