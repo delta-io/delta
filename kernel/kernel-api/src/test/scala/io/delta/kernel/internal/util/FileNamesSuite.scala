@@ -57,6 +57,12 @@ class FileNamesSuite extends AnyFunSuite {
     assert(getFileVersion(new Path(commitUUID)) == 22)
   }
 
+  test("multiPartCheckpointPartAndNumParts") {
+    val result = multiPartCheckpointPartAndNumParts(new Path(checkpointMultiPart))
+    assert(result._1 == 1)
+    assert(result._2 == 87)
+  }
+
   /////////////////////////////////////////
   // File path and prefix builders tests //
   /////////////////////////////////////////

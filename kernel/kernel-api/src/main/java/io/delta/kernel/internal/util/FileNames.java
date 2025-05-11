@@ -78,7 +78,7 @@ public final class FileNames {
 
   /** Example: 00000000000000000001.checkpoint.0000000020.0000000060.parquet */
   private static final Pattern MULTI_PART_CHECKPOINT_FILE_PATTERN =
-      Pattern.compile("(\\d+)\\.checkpoint\\.\\d+\\.\\d+\\.parquet");
+      Pattern.compile("(\\d+)\\.checkpoint\\.(\\d+)\\.(\\d+)\\.parquet");
 
   public static final String SIDECAR_DIRECTORY = "_sidecars";
 
