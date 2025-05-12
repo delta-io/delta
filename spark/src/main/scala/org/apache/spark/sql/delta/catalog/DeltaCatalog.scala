@@ -747,14 +747,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
 
       case (t, columnChanges) if classOf[ColumnChange].isAssignableFrom(t) =>
         // TODO: Theoretically we should be able to fetch the snapshot from a txn.
-        val snapshotSchema = table.initialSnapshot.schema
-        val schema = if (!spark.conf.get(DeltaSQLConf.DELTA_BYPASS_CHARVARCHAR_TO_STRING_FIX)) {
-          // Convert (StringType, metadata = 'VARCHAR(n)') into (VARCHAR(n), metadata = '')
-          // so that CHAR/VARCHAR to String conversion can be handled correctly.
-          SchemaUtils.getRawSchemaWithoutCharVarcharMetadata(snapshotSchema)
-        } else {
-          snapshotSchema
-        }
+        val schema = table.initialSnapshot.schema
         def getColumn(fieldNames: Seq[String])
             : DeltaChangeColumnSpec = {
           columnUpdates.getOrElseUpdate(fieldNames, {
@@ -800,8 +793,9 @@ class DeltaCatalog extends DelegatingCatalogExtension
           case dataType: UpdateColumnType =>
             val field = dataType.fieldNames()
             val spec = getColumn(field)
-            columnUpdates(field) = spec.copy(
-              newColumn = spec.newColumn.copy(dataType = dataType.newDataType()))
+            val newField = SchemaUtils.setFieldDataTypeCharVarcharSafe(
+              spec.newColumn, dataType.newDataType())
+            columnUpdates(field) = spec.copy(newColumn = newField)
 
           case position: UpdateColumnPosition =>
             val field = position.fieldNames()

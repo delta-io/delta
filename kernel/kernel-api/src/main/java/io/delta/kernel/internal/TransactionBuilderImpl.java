@@ -617,7 +617,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
           oldMetadata,
           newMetadata,
           clusteringColumnPhysicalNames,
-          false /* allowNewNonNullFields */);
+          false /* allowNewRequiredFields */);
     }
 
     // TODO what about (1) nested field ids and (2) physicalNames cannot be re-used...
@@ -647,7 +647,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
             // duplicate this check here
             emptySet() /* clusteringCols */,
             // We allow new non-null fields in REPLACE since we know all existing data is removed
-            true /* allowNewNonNullFields */);
+            true /* allowNewRequiredFields */);
       }
     }
   }

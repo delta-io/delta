@@ -104,7 +104,7 @@ public class SchemaUtils {
       Metadata currentMetadata,
       Metadata newMetadata,
       Set<String> clusteringColumnPhysicalNames,
-      boolean allowNewNonNullFields) {
+      boolean allowNewRequiredFields) {
     checkArgument(
         isColumnMappingModeEnabled(
             ColumnMapping.getColumnMappingMode(newMetadata.getConfiguration())),
@@ -121,7 +121,7 @@ public class SchemaUtils {
         ColumnMapping.getColumnMappingMode(newMetadata.getConfiguration()),
         clusteringColumnPhysicalNames,
         currentMaxFieldId,
-        allowNewNonNullFields);
+        allowNewRequiredFields);
   }
 
   /**
@@ -435,11 +435,11 @@ public class SchemaUtils {
   private static void validateSchemaEvolution(
       StructType currentSchema,
       StructType newSchema,
-      ColumnMappingMode cmMode,
+      ColumnMappingMode columnMappingMode,
       Set<String> clusteringColumnPhysicalNames,
       int currentMaxFieldId,
-      boolean allowNewNonNullFields) {
-    switch (cmMode) {
+      boolean allowNewRequiredFields) {
+    switch (columnMappingMode) {
       case ID:
       case NAME:
         validateSchemaEvolutionById(
@@ -447,13 +447,13 @@ public class SchemaUtils {
             newSchema,
             clusteringColumnPhysicalNames,
             currentMaxFieldId,
-            allowNewNonNullFields);
+            allowNewRequiredFields);
         return;
       case NONE:
         throw new UnsupportedOperationException(
             "Schema evolution without column mapping is not supported");
       default:
-        throw new UnsupportedOperationException("Unknown column mapping mode: " + cmMode);
+        throw new UnsupportedOperationException("Unknown column mapping mode: " + columnMappingMode);
     }
   }
 
@@ -466,14 +466,14 @@ public class SchemaUtils {
       StructType newSchema,
       Set<String> clusteringColumnPhysicalNames,
       int oldMaxFieldId,
-      boolean allowNewNonNullFields) {
+      boolean allowNewRequiredFields) {
     Map<Integer, StructField> currentFieldsById = fieldsById(currentSchema);
     Map<Integer, StructField> updatedFieldsById = fieldsById(newSchema);
     SchemaChanges schemaChanges = computeSchemaChangesById(currentFieldsById, updatedFieldsById);
     validatePhysicalNameConsistency(schemaChanges.updatedFields());
     // Validates that the updated schema does not contain breaking changes in terms of types and
     // nullability
-    validateUpdatedSchemaCompatibility(schemaChanges, oldMaxFieldId, allowNewNonNullFields);
+    validateUpdatedSchemaCompatibility(schemaChanges, oldMaxFieldId, allowNewRequiredFields);
     validateClusteringColumnsNotDropped(
         schemaChanges.removedFields(), clusteringColumnPhysicalNames);
     // ToDo Potentially validate IcebergCompatV2 nested IDs
@@ -498,9 +498,9 @@ public class SchemaUtils {
    * <p>ToDo: Prevent moving fields outside of their containing struct
    */
   private static void validateUpdatedSchemaCompatibility(
-      SchemaChanges schemaChanges, int oldMaxFieldId, boolean allowNewNonNullFields) {
+      SchemaChanges schemaChanges, int oldMaxFieldId, boolean allowNewRequiredFields) {
     for (StructField addedField : schemaChanges.addedFields()) {
-      if (!allowNewNonNullFields && !addedField.isNullable()) {
+      if (!allowNewRequiredFields && !addedField.isNullable()) {
         throw new KernelException(
             String.format("Cannot add non-nullable field %s", addedField.getName()));
       }
