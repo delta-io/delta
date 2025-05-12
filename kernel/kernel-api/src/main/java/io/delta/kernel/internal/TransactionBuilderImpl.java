@@ -620,8 +620,6 @@ public class TransactionBuilderImpl implements TransactionBuilder {
           false /* allowNewRequiredFields */);
     }
 
-    // TODO what about (1) nested field ids and (2) physicalNames cannot be re-used...
-
     // For replace table we need to do special validation in the case of fieldId re-use
     if (isCreateOrReplace && latestSnapshot.isPresent()) {
       // For now, we don't support changing column mapping mode during replace, in a future PR we

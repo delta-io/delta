@@ -210,11 +210,11 @@ public class ColumnMapping {
     return maxColumnId;
   }
 
-  public static boolean hasColumnId(StructField field) {
+  static boolean hasColumnId(StructField field) {
     return field.getMetadata().contains(COLUMN_MAPPING_ID_KEY);
   }
 
-  public static boolean hasPhysicalName(StructField field) {
+  static boolean hasPhysicalName(StructField field) {
     return field.getMetadata().contains(COLUMN_MAPPING_PHYSICAL_NAME_KEY);
   }
 

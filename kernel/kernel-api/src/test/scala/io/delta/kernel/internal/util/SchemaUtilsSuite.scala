@@ -789,7 +789,6 @@ class SchemaUtilsSuite extends AnyFunSuite {
         arrayName = "renamed_array")))
 
   test("validateUpdatedSchema fails when non-nullable field is added with " +
-
     "allowNewRequiredFields=false") {
     assertSchemaEvolutionFailure[KernelException](
       nonNullableFieldAdded,
@@ -853,7 +852,6 @@ class SchemaUtilsSuite extends AnyFunSuite {
   }
 
   test("validateUpdatedSchema fails when existing nullability is tightened with " +
-
     "allowNewRequiredFields=true") {
     assertSchemaEvolutionFailure[KernelException](
       existingFieldNullabilityTightened,
