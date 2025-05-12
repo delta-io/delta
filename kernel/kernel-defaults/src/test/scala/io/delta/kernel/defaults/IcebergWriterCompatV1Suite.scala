@@ -564,7 +564,8 @@ class IcebergWriterCompatV1Suite extends DeltaTableWriteSuiteBase with ColumnMap
         "checkConstraints",
         "identityColumns",
         "generatedColumns",
-        "typeWidening")
+        "typeWidening",
+        "typeWidening-preview")
         .map(tableFeature => s"delta.feature.$tableFeature" -> "supported")
         .toMap
 
