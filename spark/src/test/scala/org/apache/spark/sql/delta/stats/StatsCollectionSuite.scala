@@ -858,6 +858,21 @@ class StatsCollectionSuite
     }
   }
 
+  test("handle special nested characters in column name") {
+    withTable("t") {
+      sql(
+        s"create table t (`|` long, c struct<s struct<a int, b INT>, `s.a` int>) using delta " +
+          s"TBLPROPERTIES('delta.columnMapping.mode' = 'name')")
+      // Have this test to make sure there are no collisions with c.`s.a` and c.s.a.
+      sql(
+        s"ALTER TABLE t SET TBLPROPERTIES('delta.dataSkippingStatsColumns' = 'c')")
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier("t"))
+      val tblProperty = DeltaConfigs.DATA_SKIPPING_STATS_COLUMNS
+        .fromMetaData(deltaLog.update().metadata)
+      assert(tblProperty.get == "c")
+    }
+  }
+
   private def recordsScanned(df: DataFrame): Long = {
     val scan = df.queryExecution.executedPlan.find {
       case FileScanExecNode(_) => true
