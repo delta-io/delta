@@ -453,7 +453,8 @@ public class SchemaUtils {
         throw new UnsupportedOperationException(
             "Schema evolution without column mapping is not supported");
       default:
-        throw new UnsupportedOperationException("Unknown column mapping mode: " + columnMappingMode);
+        throw new UnsupportedOperationException(
+            "Unknown column mapping mode: " + columnMappingMode);
     }
   }
 
