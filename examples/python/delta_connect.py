@@ -57,7 +57,6 @@ def cleanup(spark):
 assert os.getenv("SPARK_REMOTE"), "Must point to Spark Connect server using SPARK_REMOTE"
 
 spark = SparkSession.builder \
-    .appName("delta_connect") \
     .remote(os.getenv("SPARK_REMOTE")) \
     .getOrCreate()
 
