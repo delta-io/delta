@@ -741,6 +741,48 @@ class DeltaConnectPlannerSuite
     }
   }
 
+  test("vacuum - without retention hours argument") {
+    val tableName = "test_table"
+
+    def runVacuum(): Unit = {
+      transform(createSparkCommand(
+        proto.DeltaCommand.newBuilder()
+          .setVacuumTable(
+            proto.VacuumTable.newBuilder()
+              .setTable(proto.DeltaTable.newBuilder().setTableOrViewName(tableName))
+          )
+      ))
+    }
+
+    def setRetentionInterval(retentionInterval: String): Unit = {
+      spark.sql(
+        s"""ALTER TABLE $tableName
+           |SET TBLPROPERTIES (
+           |  '${DeltaConfigs.TOMBSTONE_RETENTION.key}' = '$retentionInterval'
+           |)""".stripMargin
+      )
+    }
+
+    withTable(tableName) {
+      // Set up a Delta table with an untracked file.
+      spark.range(1000).write.format("delta").saveAsTable(tableName)
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+      val tempFile =
+        new File(DeltaFileOperations.absolutePath(deltaLog.dataPath.toString, "abc.parquet").toUri)
+      tempFile.createNewFile()
+
+      // Run a vacuum with the untracked file still within the retention period.
+      setRetentionInterval(retentionInterval = "1000 hours")
+      runVacuum()
+      assert(tempFile.exists())
+
+      // Run a vacuum with the untracked file outside of the retention period.
+      setRetentionInterval(retentionInterval = "0 hours")
+      runVacuum()
+      assert(!tempFile.exists())
+    }
+  }
+
   test("vacuum - with retention hours argument") {
     val tableName = "test_table"
 
