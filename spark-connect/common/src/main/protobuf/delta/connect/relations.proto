@@ -201,20 +201,3 @@ message Assignment {
   // (Required) Expression that produces the value to assign to the field.
   spark.connect.Expression value = 2;
 }
-
-
-// Command that optimizes the layout of a Delta table by either compacting small files or
-// by ordering the data. Allows specifying partition filters to limit the scope of the data
-// reorganization.
-//
-// Needs to be a Relation, as it returns a row containing the execution metrics.
-message OptimizeTable {
-  // (Required) The Delta table to optimize.
-  DeltaTable table = 1;
-
-  // (Optional) Partition filters that limit the operation to the files in the matched partitions.
-  repeated string partition_filters = 2;
-
-  // (Optional) Columns to z-order by. Compaction is performed when no z-order columns are provided.
-  repeated string zorder_columns = 3;
-}
