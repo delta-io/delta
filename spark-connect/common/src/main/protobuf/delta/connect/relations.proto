@@ -37,8 +37,7 @@ message DeltaRelation {
     IsDeltaTable is_delta_table = 6;
     DeleteFromTable delete_from_table = 7;
     UpdateTable update_table = 8;
-    MergeIntoTable merge_into_table = 9;
-    OptimizeTable optimize_table = 10;    
+    MergeIntoTable merge_into_table = 9;  
   }
 }
 
