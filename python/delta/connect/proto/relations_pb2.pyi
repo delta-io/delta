@@ -63,6 +63,7 @@ class DeltaRelation(google.protobuf.message.Message):
     DELETE_FROM_TABLE_FIELD_NUMBER: builtins.int
     UPDATE_TABLE_FIELD_NUMBER: builtins.int
     MERGE_INTO_TABLE_FIELD_NUMBER: builtins.int
+    OPTIMIZE_TABLE_FIELD_NUMBER: builtins.int
     @property
     def scan(self) -> global___Scan: ...
     @property
@@ -81,6 +82,8 @@ class DeltaRelation(google.protobuf.message.Message):
     def update_table(self) -> global___UpdateTable: ...
     @property
     def merge_into_table(self) -> global___MergeIntoTable: ...
+    @property
+    def optimize_table(self) -> global___OptimizeTable: ...
     def __init__(
         self,
         *,
@@ -93,6 +96,7 @@ class DeltaRelation(google.protobuf.message.Message):
         delete_from_table: global___DeleteFromTable | None = ...,
         update_table: global___UpdateTable | None = ...,
         merge_into_table: global___MergeIntoTable | None = ...,
+        optimize_table: global___OptimizeTable | None = ...,
     ) -> None: ...
     def HasField(
         self,
@@ -109,6 +113,8 @@ class DeltaRelation(google.protobuf.message.Message):
             b"is_delta_table",
             "merge_into_table",
             b"merge_into_table",
+            "optimize_table",
+            b"optimize_table",
             "relation_type",
             b"relation_type",
             "restore_table",
@@ -134,6 +140,8 @@ class DeltaRelation(google.protobuf.message.Message):
             b"is_delta_table",
             "merge_into_table",
             b"merge_into_table",
+            "optimize_table",
+            b"optimize_table",
             "relation_type",
             b"relation_type",
             "restore_table",
@@ -157,6 +165,7 @@ class DeltaRelation(google.protobuf.message.Message):
             "delete_from_table",
             "update_table",
             "merge_into_table",
+            "optimize_table",
         ]
         | None
     ): ...
@@ -727,3 +736,53 @@ class Assignment(google.protobuf.message.Message):
     ) -> None: ...
 
 global___Assignment = Assignment
+
+class OptimizeTable(google.protobuf.message.Message):
+    """Command that optimizes the layout of a Delta table by either compacting small files or
+    by ordering the data. Allows specifying partition filters to limit the scope of the data
+    reorganization.
+
+    Needs to be a Relation, as it returns a row containing the execution metrics.
+    """
+
+    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+
+    TABLE_FIELD_NUMBER: builtins.int
+    PARTITION_FILTERS_FIELD_NUMBER: builtins.int
+    ZORDER_COLUMNS_FIELD_NUMBER: builtins.int
+    @property
+    def table(self) -> delta.connect.proto.base_pb2.DeltaTable:
+        """(Required) The Delta table to optimize."""
+    @property
+    def partition_filters(
+        self,
+    ) -> google.protobuf.internal.containers.RepeatedScalarFieldContainer[builtins.str]:
+        """(Optional) Partition filters that limit the operation to the files in the matched partitions."""
+    @property
+    def zorder_columns(
+        self,
+    ) -> google.protobuf.internal.containers.RepeatedScalarFieldContainer[builtins.str]:
+        """(Optional) Columns to z-order by. Compaction is performed when no z-order columns are provided."""
+    def __init__(
+        self,
+        *,
+        table: delta.connect.proto.base_pb2.DeltaTable | None = ...,
+        partition_filters: collections.abc.Iterable[builtins.str] | None = ...,
+        zorder_columns: collections.abc.Iterable[builtins.str] | None = ...,
+    ) -> None: ...
+    def HasField(
+        self, field_name: typing_extensions.Literal["table", b"table"]
+    ) -> builtins.bool: ...
+    def ClearField(
+        self,
+        field_name: typing_extensions.Literal[
+            "partition_filters",
+            b"partition_filters",
+            "table",
+            b"table",
+            "zorder_columns",
+            b"zorder_columns",
+        ],
+    ) -> None: ...
+
+global___OptimizeTable = OptimizeTable

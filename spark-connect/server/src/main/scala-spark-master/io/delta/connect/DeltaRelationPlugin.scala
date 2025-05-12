@@ -82,7 +82,9 @@ class DeltaRelationPlugin extends RelationPlugin with DeltaPlannerBase {
       case proto.DeltaRelation.RelationTypeCase.UPDATE_TABLE =>
         transformUpdateTable(planner, relation.getUpdateTable)
       case proto.DeltaRelation.RelationTypeCase.MERGE_INTO_TABLE =>
-        transformMergeIntoTable(planner, relation.getMergeIntoTable)       
+        transformMergeIntoTable(planner, relation.getMergeIntoTable)
+      case proto.DeltaRelation.RelationTypeCase.OPTIMIZE_TABLE =>
+        transformOptimizeTable(planner, relation.getOptimizeTable)        
       case _ =>
         throw InvalidPlanInput(s"Unknown DeltaRelation ${relation.getRelationTypeCase}")
     }
@@ -274,6 +276,21 @@ class DeltaRelationPlugin extends RelationPlugin with DeltaPlannerBase {
     Assignment(
       key = planner.transformExpression(assignment.getField),
       value = planner.transformExpression(assignment.getValue))
+  }
+
+  private def transformOptimizeTable(
+      planner: SparkConnectPlanner, optimizeTable: proto.OptimizeTable): LogicalPlan = {
+    val deltaTable = transformDeltaTable(planner, optimizeTable.getTable)
+    var optimizeBuilder = deltaTable.optimize()
+    for (partitionFilter <- optimizeTable.getPartitionFiltersList.asScala) {
+      optimizeBuilder = optimizeBuilder.where(partitionFilter)
+    }
+    val df = if (optimizeTable.getZorderColumnsList.isEmpty) {
+      optimizeBuilder.executeCompaction()
+    } else {
+      optimizeBuilder.executeZOrderBy(optimizeTable.getZorderColumnsList.asScala.toSeq: _*)
+    }
+    df.queryExecution.commandExecuted
   }
 }
 
