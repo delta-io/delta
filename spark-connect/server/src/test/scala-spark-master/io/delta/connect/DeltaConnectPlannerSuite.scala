@@ -31,6 +31,7 @@ import org.apache.spark.sql.{Dataset, QueryTest, Row, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.ResolvedTable
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
+import org.apache.spark.sql.classic.{Dataset, DataFrame}
 import org.apache.spark.sql.connect.config.Connect
 import org.apache.spark.sql.connect.delta.ImplicitProtoConversions._
 import org.apache.spark.sql.connect.planner.{SparkConnectPlanTest, SparkConnectPlanner}
@@ -38,6 +39,7 @@ import org.apache.spark.sql.connect.service.{SessionHolder, SparkConnectService}
 import org.apache.spark.sql.delta.{DataFrameUtils, DeltaConfigs, DeltaHistory, DeltaLog}
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.commands.{DescribeDeltaDetailCommand, DescribeDeltaHistory}
+import org.apache.spark.sql.delta.commands.optimize.OptimizeMetrics
 import org.apache.spark.sql.delta.hooks.GenerateSymlinkManifest
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -49,6 +51,8 @@ class DeltaConnectPlannerSuite
   extends QueryTest
   with DeltaSQLCommandTest
   with SparkConnectPlanTest {
+    
+  import DeltaConnectPlannerSuite._
 
   protected override def sparkConf: SparkConf = {
     super.sparkConf
@@ -58,10 +62,6 @@ class DeltaConnectPlannerSuite
 
   private def createSparkCommand(command: proto.DeltaCommand.Builder): spark_proto.Command = {
     spark_proto.Command.newBuilder().setExtension(protobuf.Any.pack(command.build())).build()
-  }
-
-  private def createSparkRelation(relation: proto.DeltaRelation.Builder): spark_proto.Relation = {
-    spark_proto.Relation.newBuilder().setExtension(protobuf.Any.pack(relation.build())).build()
   }
 
   def createDummySessionHolder(session: SparkSession): SessionHolder = {
@@ -462,6 +462,255 @@ class DeltaConnectPlannerSuite
     }
   }
 
+    test("merge - insert only") {
+    val targetTableName = "target"
+    val sourceTableName = "source"
+    withTable(targetTableName, sourceTableName) {
+      spark.range(end = 100).select(col("id") as "key", col("id") as "value")
+        .write.format("delta").saveAsTable(targetTableName)
+
+      spark.range(end = 100)
+        .select(col("id") + 50 as "id")
+        .select(col("id") as "key", col("id") + 1000 as "value")
+        .write.format("delta").saveAsTable(sourceTableName)
+
+      val input = createSparkRelation(
+        proto.DeltaRelation.newBuilder()
+          .setMergeIntoTable(
+            proto.MergeIntoTable.newBuilder()
+              .setTarget(createSubqueryAlias(createScan(targetTableName), alias = "t"))
+              .setSource(createSubqueryAlias(createScan(sourceTableName), alias = "s"))
+              .setCondition(createExpression("t.key = s.key"))
+              .addNotMatchedActions(
+                proto.MergeIntoTable.Action.newBuilder()
+                  .setInsertAction(
+                    proto.MergeIntoTable.Action.InsertAction.newBuilder()
+                      .addAssignments(createAssignment(field = "t.key", value = "s.key"))
+                      .addAssignments(createAssignment(field = "t.value", value = "s.value"))
+                  )
+              )
+          )
+      )
+
+      val plan = transform(input)
+      val result = Dataset.ofRows(spark, plan).collect()
+      assert(result.length == 1)
+      assert(result.head.getLong(0) == 50) // num_affected_rows
+      assert(result.head.getLong(1) == 0) // num_updated_rows
+      assert(result.head.getLong(2) == 0) // num_deleted_rows
+      assert(result.head.getLong(3) == 50) // num_inserted_rows
+
+      checkAnswer(
+        spark.read.table(targetTableName),
+        Seq.tabulate(100)(i => Row(i, i)) ++ Seq.tabulate(50)(i => Row(i + 100, i + 1100))
+      )
+    }
+  }
+
+  test("merge - update only") {
+    val targetTableName = "target"
+    val sourceTableName = "source"
+    withTable(targetTableName, sourceTableName) {
+      spark.range(end = 100).select(col("id") as "key", col("id") as "value")
+        .write.format("delta").saveAsTable(targetTableName)
+
+      spark.range(end = 100)
+        .select(col("id") + 50 as "id")
+        .select(col("id") as "key", col("id") + 1000 as "value")
+        .write.format("delta").saveAsTable(sourceTableName)
+
+      val input = createSparkRelation(
+        proto.DeltaRelation.newBuilder()
+          .setMergeIntoTable(
+            proto.MergeIntoTable.newBuilder()
+              .setTarget(createSubqueryAlias(createScan(targetTableName), alias = "t"))
+              .setSource(createSubqueryAlias(createScan(sourceTableName), alias = "s"))
+              .setCondition(createExpression("t.key = s.key"))
+              .addMatchedActions(
+                proto.MergeIntoTable.Action.newBuilder()
+                  .setUpdateAction(
+                    proto.MergeIntoTable.Action.UpdateAction.newBuilder()
+                      .addAssignments(createAssignment(field = "t.key", value = "s.key"))
+                      .addAssignments(createAssignment(field = "t.value", value = "s.value"))
+                  )
+              )
+          )
+      )
+
+      val plan = transform(input)
+      val result = Dataset.ofRows(spark, plan).collect()
+      assert(result.length == 1)
+      assert(result.head.getLong(0) == 50) // num_affected_rows
+      assert(result.head.getLong(1) == 50) // num_updated_rows
+      assert(result.head.getLong(2) == 0) // num_deleted_rows
+      assert(result.head.getLong(3) == 0) // num_inserted_rows
+
+      checkAnswer(
+        spark.read.table(targetTableName),
+        Seq.tabulate(50)(i => Row(i, i)) ++ Seq.tabulate(50)(i => Row(i + 50, i + 1050))
+      )
+    }
+  }
+
+  test("merge - mixed") {
+    val targetTableName = "target"
+    val sourceTableName = "source"
+    withTable(targetTableName, sourceTableName) {
+      spark.range(end = 100).select(col("id") as "key", col("id") as "value")
+        .write.format("delta").saveAsTable(targetTableName)
+
+      spark.range(end = 100)
+        .select(col("id") + 50 as "id")
+        .select(col("id") as "key", col("id") + 1000 as "value")
+        .write.format("delta").saveAsTable(sourceTableName)
+
+      val input = createSparkRelation(
+        proto.DeltaRelation.newBuilder()
+          .setMergeIntoTable(
+            proto.MergeIntoTable.newBuilder()
+              .setTarget(createSubqueryAlias(createScan(targetTableName), alias = "t"))
+              .setSource(createSubqueryAlias(createScan(sourceTableName), alias = "s"))
+              .setCondition(createExpression("t.key = s.key"))
+              .addMatchedActions(
+                proto.MergeIntoTable.Action.newBuilder()
+                  .setUpdateStarAction(proto.MergeIntoTable.Action.UpdateStarAction.newBuilder())
+              )
+              .addNotMatchedActions(
+                proto.MergeIntoTable.Action.newBuilder()
+                  .setInsertStarAction(proto.MergeIntoTable.Action.InsertStarAction.newBuilder())
+              )
+              .addNotMatchedBySourceActions(
+                proto.MergeIntoTable.Action.newBuilder()
+                  .setCondition(createExpression("t.value < 25"))
+                  .setDeleteAction(proto.MergeIntoTable.Action.DeleteAction.newBuilder())
+              )
+          )
+      )
+
+      val plan = transform(input)
+      val result = Dataset.ofRows(spark, plan).collect()
+      assert(result.length == 1)
+      assert(result.head.getLong(0) == 125) // num_affected_rows
+      assert(result.head.getLong(1) == 50) // num_updated_rows
+      assert(result.head.getLong(2) == 25) // num_deleted_rows
+      assert(result.head.getLong(3) == 50) // num_inserted_rows
+
+      checkAnswer(
+        spark.read.table(targetTableName),
+        Seq.tabulate(25)(i => Row(25 + i, 25 + i)) ++
+          Seq.tabulate(50)(i => Row(i + 50, i + 1050)) ++
+          Seq.tabulate(50)(i => Row(i + 100, i + 1100))
+      )
+    }
+  }
+
+  test("merge - withSchemaEvolution") {
+    val targetTableName = "target"
+    val sourceTableName = "source"
+    withTable(targetTableName, sourceTableName) {
+      spark.range(end = 100).select(col("id") as "key", col("id") as "value")
+        .write.format("delta").saveAsTable(targetTableName)
+
+      spark.range(end = 100)
+        .select(col("id") + 50 as "id")
+        .select(col("id") as "key", col("id") + 1000 as "value", col("id") + 1 as "extracol")
+        .write.format("delta").saveAsTable(sourceTableName)
+
+      val input = createSparkRelation(
+        proto.DeltaRelation.newBuilder()
+          .setMergeIntoTable(
+            proto.MergeIntoTable.newBuilder()
+              .setTarget(createSubqueryAlias(createScan(targetTableName), alias = "t"))
+              .setSource(createSubqueryAlias(createScan(sourceTableName), alias = "s"))
+              .setCondition(createExpression("t.key = s.key"))
+              .addMatchedActions(
+                proto.MergeIntoTable.Action.newBuilder()
+                  .setUpdateStarAction(proto.MergeIntoTable.Action.UpdateStarAction.newBuilder())
+              )
+              .addNotMatchedActions(
+                proto.MergeIntoTable.Action.newBuilder()
+                  .setInsertStarAction(proto.MergeIntoTable.Action.InsertStarAction.newBuilder())
+              )
+              .addNotMatchedBySourceActions(
+                proto.MergeIntoTable.Action.newBuilder()
+                  .setCondition(createExpression("t.value < 25"))
+                  .setDeleteAction(proto.MergeIntoTable.Action.DeleteAction.newBuilder())
+              )
+              .setWithSchemaEvolution(true)
+          )
+      )
+
+
+      val plan = transform(input)
+      val result = Dataset.ofRows(spark, plan).collect()
+      assert(result.length === 1)
+      assert(result.head.getLong(0) === 125) // num_affected_rows
+      assert(result.head.getLong(1) === 50) // num_updated_rows
+      assert(result.head.getLong(2) === 25) // num_deleted_rows
+      assert(result.head.getLong(3) === 50) // num_inserted_rows
+
+      checkAnswer(
+        spark.read.table(targetTableName),
+        Seq.tabulate(25)(i => Row(25 + i, 25 + i, null)) ++
+          Seq.tabulate(50)(i => Row(i + 50, i + 1050, i + 51)) ++
+          Seq.tabulate(50)(i => Row(i + 100, i + 1100, i + 101))
+      )
+    }
+  }
+
+  test("merge with no withSchemaEvolution while the source's schema " +
+      "is different than the target's schema") {
+    val targetTableName = "target"
+    val sourceTableName = "source"
+    withTable(targetTableName, sourceTableName) {
+      spark.range(end = 100).select(col("id") as "key", col("id") as "value")
+        .write.format("delta").saveAsTable(targetTableName)
+
+      spark.range(end = 100)
+        .select(col("id") + 50 as "id")
+        .select(col("id") as "key", col("id") + 1000 as "value", col("id") + 1 as "extracol")
+        .write.format("delta").saveAsTable(sourceTableName)
+
+      val input = createSparkRelation(
+        proto.DeltaRelation.newBuilder()
+          .setMergeIntoTable(
+            proto.MergeIntoTable.newBuilder()
+              .setTarget(createSubqueryAlias(createScan(targetTableName), alias = "t"))
+              .setSource(createSubqueryAlias(createScan(sourceTableName), alias = "s"))
+              .setCondition(createExpression("t.key = s.key"))
+              .addMatchedActions(
+                proto.MergeIntoTable.Action.newBuilder()
+                  .setUpdateStarAction(proto.MergeIntoTable.Action.UpdateStarAction.newBuilder())
+              )
+              .addNotMatchedActions(
+                proto.MergeIntoTable.Action.newBuilder()
+                  .setInsertStarAction(proto.MergeIntoTable.Action.InsertStarAction.newBuilder())
+              )
+              .addNotMatchedBySourceActions(
+                proto.MergeIntoTable.Action.newBuilder()
+                  .setCondition(createExpression("t.value < 25"))
+                  .setDeleteAction(proto.MergeIntoTable.Action.DeleteAction.newBuilder())
+              )
+          )
+      )
+
+      val plan = transform(input)
+      val result = Dataset.ofRows(spark, plan).collect()
+      assert(result.length === 1)
+      assert(result.head.getLong(0) === 125) // num_affected_rows
+      assert(result.head.getLong(1) === 50) // num_updated_rows
+      assert(result.head.getLong(2) === 25) // num_deleted_rows
+      assert(result.head.getLong(3) === 50) // num_inserted_rows
+
+      checkAnswer(
+        spark.read.table(targetTableName),
+        Seq.tabulate(25)(i => Row(25 + i, 25 + i)) ++
+          Seq.tabulate(50)(i => Row(i + 50, i + 1050)) ++
+          Seq.tabulate(50)(i => Row(i + 100, i + 1100))
+      )
+    }
+  }
+
   test("clone - shallow") {
     withTempDir { targetDir =>
       val sourceTableName = "source_table"
@@ -491,6 +740,117 @@ class DeltaConnectPlannerSuite
         }
       }
     }
+  }
+
+   test("optimize - compaction") {
+    val tableName = "test_table"
+    withTable(tableName) {
+      spark.range(1000).select(col("id") % 3 as "key", col("id") as "val")
+        .write.format("delta").saveAsTable(tableName)
+
+      val plan = transform(createSparkRelation(
+        proto.DeltaRelation.newBuilder()
+          .setOptimizeTable(
+            proto.OptimizeTable.newBuilder()
+              .setTable(proto.DeltaTable.newBuilder().setTableOrViewName(tableName))
+          )
+      ))
+      assert(plan.columns.toSeq == Seq("path", "metrics"))
+      val df = Dataset.ofRows(spark, plan)
+
+      checkOptimizeMetrics(df)
+      checkOptimizeUsingHistory(tableName, expectedPredicates = Nil, expectedZorderCols = Nil)
+    }
+  }
+
+  test("optimize - compaction with partition filters") {
+    val tableName = "test_table"
+    withTable(tableName) {
+      spark.range(1000).select(col("id") % 3 as "key", col("id") as "val")
+        .write.partitionBy("key").format("delta").saveAsTable(tableName)
+
+      val plan = transform(createSparkRelation(
+        proto.DeltaRelation.newBuilder()
+          .setOptimizeTable(
+            proto.OptimizeTable.newBuilder()
+              .setTable(proto.DeltaTable.newBuilder().setTableOrViewName(tableName))
+              .addPartitionFilters("key = 1")
+          )
+      ))
+      assert(plan.columns.toSeq == Seq("path", "metrics"))
+      val df = Dataset.ofRows(spark, plan)
+
+      checkOptimizeMetrics(df)
+      checkOptimizeUsingHistory(
+        tableName, expectedPredicates = Seq("'key = 1"), expectedZorderCols = Nil)
+    }
+  }
+
+  test("optimize - z-order") {
+    val tableName = "test_table"
+    withTable(tableName) {
+      spark.range(1000).select(col("id") % 3 as "key", col("id") as "val")
+        .write.format("delta").saveAsTable(tableName)
+
+      val plan = transform(createSparkRelation(
+        proto.DeltaRelation.newBuilder()
+          .setOptimizeTable(
+            proto.OptimizeTable.newBuilder()
+              .setTable(proto.DeltaTable.newBuilder().setTableOrViewName(tableName))
+              .addZorderColumns("val")
+          )
+      ))
+      assert(plan.columns.toSeq == Seq("path", "metrics"))
+      val df = Dataset.ofRows(spark, plan)
+
+      checkOptimizeMetrics(df)
+      checkOptimizeUsingHistory(
+        tableName, expectedPredicates = Nil, expectedZorderCols = Seq("val"))
+    }
+  }
+
+  test("optimize - z-order with partition filters") {
+    val tableName = "test_table"
+    withTable(tableName) {
+      spark.range(1000).select(col("id") % 3 as "key", col("id") as "val")
+        .write.partitionBy("key").format("delta").saveAsTable(tableName)
+
+      val plan = transform(createSparkRelation(
+        proto.DeltaRelation.newBuilder()
+          .setOptimizeTable(
+            proto.OptimizeTable.newBuilder()
+              .setTable(proto.DeltaTable.newBuilder().setTableOrViewName(tableName))
+              .addPartitionFilters("key = 1")
+              .addZorderColumns("val")
+          )
+      ))
+      assert(plan.columns.toSeq == Seq("path", "metrics"))
+      val df = Dataset.ofRows(spark, plan)
+
+      checkOptimizeMetrics(df)
+      checkOptimizeUsingHistory(
+        tableName, expectedPredicates = Seq("'key = 1"), expectedZorderCols = Seq("val"))
+    }
+  }
+
+  private def checkOptimizeMetrics(df: DataFrame): Unit = {
+    import testImplicits._
+    val result = df.as[(String, OptimizeMetrics)].collect()
+    assert(result.length == 1)
+    val (_, metrics) = result.head
+    assert(metrics.numFilesRemoved > metrics.numFilesAdded)
+  }
+
+  private def checkOptimizeUsingHistory(
+      tableName: String, expectedPredicates: Seq[String], expectedZorderCols: Seq[String]): Unit = {
+    import testImplicits._
+    val (operation, operationParameters) = DeltaTable.forName(spark, tableName).history()
+      .select("operation", "operationParameters").as[(String, Map[String, String])].head()
+    assert(operation == "OPTIMIZE")
+    assert(operationParameters("predicate") ==
+      expectedPredicates.map(p => s"""\"($p)\"""").mkString(start = "[", sep = ",", end = "]"))
+    assert(operationParameters("zOrderBy") ==
+      expectedZorderCols.map(c => s"""\"$c\"""").mkString(start = "[", sep = ",", end = "]"))
   }
 
   test("vacuum - without retention hours argument") {
@@ -628,6 +988,19 @@ class DeltaConnectPlannerSuite
     }
   }
 
+  private def getTimestampForVersion(log: DeltaLog, version: Long): String = {
+    val file = new File(FileNames.unsafeDeltaFile(log.logPath, version).toUri)
+    val sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS")
+    sdf.format(file.lastModified())
+  }
+}
+
+object DeltaConnectPlannerSuite {
+
+  private def createSparkRelation(relation: proto.DeltaRelation.Builder): spark_proto.Relation = {
+    spark_proto.Relation.newBuilder().setExtension(protobuf.Any.pack(relation.build())).build()
+  }
+
   private def createScan(tableName: String): spark_proto.Relation = {
     createSparkRelation(
       proto.DeltaRelation.newBuilder()
@@ -636,6 +1009,17 @@ class DeltaConnectPlannerSuite
             .setTable(proto.DeltaTable.newBuilder().setTableOrViewName(tableName))
         )
     )
+  }
+
+  def createSubqueryAlias(
+      input: spark_proto.Relation, alias: String): spark_proto.Relation = {
+    spark_proto.Relation.newBuilder()
+      .setSubqueryAlias(
+        spark_proto.SubqueryAlias.newBuilder()
+          .setAlias(alias)
+          .setInput(input)
+      )
+      .build()
   }
 
   private def createExpression(expr: String): spark_proto.Expression = {
@@ -654,9 +1038,4 @@ class DeltaConnectPlannerSuite
       .build()
   }
 
-  private def getTimestampForVersion(log: DeltaLog, version: Long): String = {
-    val file = new File(FileNames.unsafeDeltaFile(log.logPath, version).toUri)
-    val sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS")
-    sdf.format(file.lastModified())
-  }
 }

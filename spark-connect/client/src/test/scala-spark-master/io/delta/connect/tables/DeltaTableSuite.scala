@@ -23,6 +23,7 @@ import org.apache.commons.io.FileUtils
 
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.functions.{col, lit}
+import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.test.DeltaQueryTest
 
 // TODO(hvanhovell) All tests here are temporary disabled. While the code compiles, we need to a
@@ -227,6 +228,118 @@ class DeltaTableSuite extends DeltaQueryTest with RemoteSparkSession {
       checkAnswer(
         spark.read.format("delta").load(dstDir),
         spark.read.format("delta").load(srcDir))
+    }
+  }
+
+  private def writeOptimizeTestData(path: String): Unit = {
+    testData
+      .withColumn("col1", col("value") % 7)
+      .withColumn("col2", col("value") % 27)
+      .withColumn("p", col("value") % 10)
+      .repartition(numPartitions = 4)
+      .write.partitionBy("p").format("delta").save(path)
+  }
+
+  private def checkOptimizeMetrics(
+      result: DataFrame, numFilesAdded: Long, numFilesRemoved: Long): Unit = {
+    val metrics = result.select("metrics.*").head()
+    assert(metrics.getLong(0) == numFilesAdded)
+    assert(metrics.getLong(1) == numFilesRemoved)
+  }
+
+  private def checkOptimizeHistory(
+      table: DeltaTable, expectedPredicates: Seq[String], expectedZorderCols: Seq[String]): Unit = {
+    val session = table.toDF.sparkSession
+    import session.implicits._
+
+    val (operation, operationParameters) = table.history()
+      .select("operation", "operationParameters")
+      .as[(String, Map[String, String])]
+      .head()
+    assert(operation == "OPTIMIZE")
+    assert(operationParameters("predicate") ==
+      expectedPredicates.map(p => s"""\"($p)\"""").mkString(start = "[", sep = ",", end = "]"))
+    assert(operationParameters("zOrderBy") ==
+      expectedZorderCols.map(c => s"""\"$c\"""").mkString(start = "[", sep = ",", end = "]"))
+  }
+
+  ignore("optimize - compaction") {
+    withTempPath { dir =>
+      val path = dir.getAbsolutePath
+
+      writeOptimizeTestData(path)
+
+      val numDataFilesPreCompaction =
+        spark.read.format("delta").load(path)
+          .select("_metadata.file_path")
+          .distinct().count()
+
+      val table = io.delta.tables.DeltaTable.forPath(spark, path)
+      val result = table.optimize().executeCompaction()
+
+      checkOptimizeMetrics(result, numFilesAdded = 10, numFilesRemoved = numDataFilesPreCompaction)
+      checkOptimizeHistory(table, expectedPredicates = Nil, expectedZorderCols = Nil)
+    }
+  }
+
+  ignore("optimize - compaction - with partition filter") {
+    withTempPath { dir =>
+      val path = dir.getAbsolutePath
+
+      writeOptimizeTestData(path)
+
+      val numDataFilesPreCompaction =
+        spark.read.format("delta").load(path)
+          .where("p = 2")
+          .select("_metadata.file_path")
+          .distinct().count()
+
+      val table = io.delta.tables.DeltaTable.forPath(spark, path)
+      val result = table.optimize().where("p = 2").executeCompaction()
+
+      checkOptimizeMetrics(result, numFilesAdded = 1, numFilesRemoved = numDataFilesPreCompaction)
+      checkOptimizeHistory(table, expectedPredicates = Seq("'p = 2"), expectedZorderCols = Nil)
+    }
+  }
+
+  ignore("optimize - zorder") {
+    withTempPath { dir =>
+      val path = dir.getAbsolutePath
+
+      writeOptimizeTestData(path)
+
+      val numDataFilesPreZOrder =
+        spark.read.format("delta").load(path)
+          .select("_metadata.file_path")
+          .distinct().count()
+
+      val table = io.delta.tables.DeltaTable.forPath(spark, path)
+      val result = table.optimize().executeZOrderBy("col1", "col2")
+
+      checkOptimizeMetrics(result, numFilesAdded = 10, numFilesRemoved = numDataFilesPreZOrder)
+      checkOptimizeHistory(
+        table, expectedPredicates = Nil, expectedZorderCols = Seq("col1", "col2"))
+    }
+  }
+
+  ignore("optimize - zorder - with partition filter") {
+    withTempPath { dir =>
+      val path = dir.getAbsolutePath
+
+      writeOptimizeTestData(path)
+
+      val numDataFilesPreZOrder =
+        spark.read.format("delta").load(path)
+          .where("p = 2")
+          .select("_metadata.file_path")
+          .distinct().count()
+
+      val table = io.delta.tables.DeltaTable.forPath(spark, path)
+      val result = table.optimize().where("p = 2").executeZOrderBy("col1", "col2")
+
+      checkOptimizeMetrics(result, numFilesAdded = 1, numFilesRemoved = numDataFilesPreZOrder)
+      checkOptimizeHistory(
+        table, expectedPredicates = Seq("'p = 2"), expectedZorderCols = Seq("col1", "col2"))
     }
   }
 
