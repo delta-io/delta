@@ -608,11 +608,10 @@ public class TransactionBuilderImpl implements TransactionBuilder {
               .collect(toSet());
 
       SchemaUtils.validateUpdatedSchema(
-          oldMetadata.getSchema(),
-          newMetadata.getSchema(),
-          oldMetadata.getPartitionColNames(),
+          oldMetadata,
+          newMetadata,
           clusteringColumnPhysicalNames,
-          newMetadata);
+          false /* allowNewRequiredFields*/);
     }
   }
 
