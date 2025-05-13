@@ -209,6 +209,8 @@ trait ColumnMappingSuiteBase extends VectorTestUtils {
       } else {
         "f."
       }
+      assert(innerStruct.get("f").getMetadata.getEntries
+        .get(COLUMN_MAPPING_NESTED_IDS_KEY) != null, s"${metadata.getSchema}")
       assertThat(innerStruct.get("f").getMetadata.getEntries
         .get(COLUMN_MAPPING_NESTED_IDS_KEY).asInstanceOf[FieldMetadata].getEntries)
         .hasSize(1)

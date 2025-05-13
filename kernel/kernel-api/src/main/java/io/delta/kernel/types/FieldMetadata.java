@@ -259,5 +259,9 @@ public final class FieldMetadata {
     public FieldMetadata build() {
       return new FieldMetadata(this.metadata);
     }
+
+    public FieldMetadata getMetadata(String key) {
+      return (FieldMetadata) metadata.get(key);
+    }
   }
 }

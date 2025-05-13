@@ -484,6 +484,7 @@ class ColumnMappingSuite extends AnyFunSuite with ColumnMappingSuiteBase {
         } else {
           "b."
         }
+        assert(metadata.getSchema.get("b").getMetadata.getMetadata(COLUMN_MAPPING_NESTED_IDS_KEY) != null, s"${metadata.getSchema}")
         // verify nested ids
         assertThat(metadata.getSchema.get("b").getMetadata.getEntries
           .get(COLUMN_MAPPING_NESTED_IDS_KEY).asInstanceOf[FieldMetadata].getEntries)
@@ -506,6 +507,48 @@ class ColumnMappingSuite extends AnyFunSuite with ColumnMappingSuiteBase {
       assertThat(metadata.getConfiguration).containsEntry(
         ColumnMapping.COLUMN_MAPPING_MAX_COLUMN_ID_KEY,
         if (enableIcebergCompatV2) "5" else "3")
+
+      // Requesting the same operation on the same schema shouldn't change anything
+      // as the schema already has the necessary column mapping info
+      assertNoOpOnUpdateColumnMappingMetadataRequest(
+        metadata.getSchema,
+        enableIcebergCompatV2,
+        isNewTable)
+  }
+
+  private def newFieldMetadata(i: Int, map: Map[String, String] = Map.empty[String, String]) = {
+    val subBuilder = FieldMetadata.builder()
+    map.foreach { case (k,v) => subBuilder.putString(k, v) }
+    FieldMetadata.builder()
+      .putLong(COLUMN_MAPPING_ID_KEY, i)
+      .putString(COLUMN_MAPPING_PHYSICAL_NAME_KEY, s"col-$i")
+      .putFieldMetadata(
+        COLUMN_MAPPING_NESTED_IDS_KEY, subBuilder.build())
+      .build()
+  }
+
+  runWithIcebergCompatComboForNewAndExistingTables(
+    "max column id on fully populated type.") {
+    (isNewTable, enableIcebergCompatV2, enableIcebergWriterCompatV1) =>
+      assume(enableIcebergCompatV2 && isNewTable)
+      val schema: StructType =
+        new StructType()
+          .add("l", new ArrayType(
+            new MapType(
+                  new StructField("key", StringType.STRING, false),
+                  new StructField("value", new StructType().add("leaf", StringType.STRING, false, newFieldMetadata(5)), false)),
+            /*nullable=*/ false),
+            newFieldMetadata(1, Map("col-1.element"-> "2","col-1.element.key" -> "3", "col-1.element.value" -> "4")))
+
+      var inputMetadata = testMetadata(schema).withColumnMappingEnabled("id")
+      inputMetadata = inputMetadata.withIcebergCompatV2Enabled
+       inputMetadata = inputMetadata.withIcebergWriterCompatV1Enabled
+      val metadata = updateColumnMappingMetadataIfNeeded(inputMetadata, isNewTable)
+        .orElseGet(() => fail("Metadata should not be empty"))
+
+      assertThat(metadata.getConfiguration).containsEntry(
+        ColumnMapping.COLUMN_MAPPING_MAX_COLUMN_ID_KEY,
+        "5")
 
       // Requesting the same operation on the same schema shouldn't change anything
       // as the schema already has the necessary column mapping info
