@@ -43,3 +43,22 @@ When Variant Shredding is supported (`writerFeatures` field of a table's `protoc
 When Variant type is supported (`readerFeatures` field of a table's `protocol` action contains `variantShredding`), readers:
 - must recognize and tolerate a `variant` data type in a Delta schema
 - must recognize and correctly process a parquet schema that is either unshredded (only `metadata` and `value` struct fields) or shredded (`metadata`, `value`, and `typed_value` struct fields) when reading a Variant data type from file.
+
+> ***Update the `Per-file Statistics` section***
+
+> After the description and examples starting from: `Per-column statistics record information for each column in the file and they are encoded, mirroring the schema of the actual data. For example, given the following data schema:`
+
+For a column of type Variant, any structure or type can be encoded for the per-column statistics. In a Parquet file, the statistics for a Variant column must have a schema that follows the [Parquet Variant Shredding specification](https://github.com/apache/parquet-format/blob/master/VariantShredding.md). In JSON format, the per-column statistics for a Variant column can be any JSON structure. For example, for a table with a single Variant column (`varCol: variant`) in its data schema, the JSON per-column statistics could have the form:
+
+```
+"stats": {
+  "minValues": {
+    "varCol": {
+      "a": "min-string"
+      "b": {
+        "c": 10
+      }
+    }
+  }
+}
+```
