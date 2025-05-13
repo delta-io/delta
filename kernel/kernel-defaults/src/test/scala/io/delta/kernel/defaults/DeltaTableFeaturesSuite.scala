@@ -318,7 +318,7 @@ class DeltaTableFeaturesSuite extends DeltaTableWriteSuiteBase {
   }
 
   /* ---- Start: type widening tests ---- */
-  test("only typeWidening feature is enabled when metadata supports it") {
+  test("only typeWidening feature is enabled when metadata supports it: new table") {
     withTempDirAndEngine { (tablePath, engine) =>
       createEmptyTable(
         engine,
@@ -337,6 +337,24 @@ class DeltaTableFeaturesSuite extends DeltaTableWriteSuiteBase {
         tableProperties = Map("delta.enableTypeWidening" -> "true"))
       val protocolV1 = getProtocol(engine, tablePath)
       assert(protocolV1 === protocolV0)
+    }
+  }
+
+  test("only typeWidening feature is enabled when new metadata supports it: existing table") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createEmptyTable(engine, tablePath = tablePath, schema = testSchema)
+      val protocolV0 = getProtocol(engine, tablePath)
+      assert(!protocolV0.supportsFeature(TableFeatures.TYPE_WIDENING_RW_PREVIEW_FEATURE))
+      assert(!protocolV0.supportsFeature(TableFeatures.TYPE_WIDENING_RW_FEATURE))
+
+      // try enabling type widening  and expect change in protocol
+      updateTableMetadata(
+        engine = engine,
+        tablePath = tablePath,
+        tableProperties = Map("delta.enableTypeWidening" -> "true"))
+      val protocolV1 = getProtocol(engine, tablePath)
+      assert(!protocolV1.supportsFeature(TableFeatures.TYPE_WIDENING_RW_PREVIEW_FEATURE))
+      assert(protocolV1.supportsFeature(TableFeatures.TYPE_WIDENING_RW_FEATURE))
     }
   }
 
