@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils, TestsStatistics}
 
+import org.apache.spark.SparkException
 import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.test.SharedSparkSession
@@ -62,6 +63,29 @@ class DeltaVariantShreddingSuite
         .readerAndWriterFeatures.contains(VariantShreddingPreviewTableFeature))
       checkAnswer(sql(s"select * from tbl"), Seq(Row(0, "1"), Row(1, "2"), Row(2, "3"), Row(3, "4"),
         Row(4, "5"), Row(5, "6"), Row(6, "7"), Row(7, "8"), Row(8, "9"), Row(9, "10")))
+    }
+  }
+
+  test("Set table property to invalid value") {
+    withTable("tbl") {
+      sql("CREATE TABLE tbl(s STRING, i INTEGER) USING DELTA")
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier("tbl"))
+      assert(!deltaLog.unsafeVolatileSnapshot.protocol
+        .isFeatureSupported(VariantShreddingPreviewTableFeature),
+        s"Table tbl contains ShreddedVariantTableFeature descriptor when its not supposed to"
+      )
+      checkError(
+        intercept[SparkException] {
+          sql(s"ALTER TABLE tbl " +
+            s"SET TBLPROPERTIES('${DeltaConfigs.ENABLE_VARIANT_SHREDDING.key}' = 'bla')")
+        },
+        "_LEGACY_ERROR_TEMP_2045",
+        parameters = Map(
+          "message" -> "For input string: \"bla\""
+        )
+      )
+      assert(!getProtocolForTable("tbl")
+        .readerAndWriterFeatures.contains(VariantShreddingPreviewTableFeature))
     }
   }
 }
