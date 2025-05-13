@@ -888,9 +888,7 @@ class ScanSuite extends AnyFunSuite with TestUtils
            |) USING delta
            |TBLPROPERTIES(
            |'delta.dataSkippingStatsColumns' = 'c1,c2,c3,c4,c5,c6,c9,c10',
-           |'delta.columnMapping.mode' = 'name',
-           |'delta.minReaderVersion' = '2',
-           |'delta.minWriterVersion' = '5'
+           |'delta.columnMapping.mode' = 'name'
            |)
            |""".stripMargin)
       spark.sql(s"alter table delta.`$tablePath` drop COLUMN c2")
