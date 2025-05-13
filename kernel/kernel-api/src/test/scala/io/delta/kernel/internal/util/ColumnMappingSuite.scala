@@ -519,57 +519,71 @@ class ColumnMappingSuite extends AnyFunSuite with ColumnMappingSuiteBase {
         isNewTable)
   }
 
-  private def newFieldMetadata(i: Int, map: Map[String, String] = Map.empty[String, String]) = {
-    val subBuilder = FieldMetadata.builder()
-    map.foreach { case (k, v) => subBuilder.putString(k, v) }
-    FieldMetadata.builder()
-      .putLong(COLUMN_MAPPING_ID_KEY, i)
-      .putString(COLUMN_MAPPING_PHYSICAL_NAME_KEY, s"col-$i")
-      .putFieldMetadata(
-        COLUMN_MAPPING_NESTED_IDS_KEY,
-        subBuilder.build())
-      .build()
-  }
-
-  runWithIcebergCompatComboForNewAndExistingTables(
-    "max column id on fully populated type.") {
-    (isNewTable, enableIcebergCompatV2, enableIcebergWriterCompatV1) =>
-      assume(enableIcebergCompatV2 && isNewTable)
-      val schema: StructType =
-        new StructType()
-          .add(
-            "l",
+  Seq(false, true).foreach { isNewTable =>
+    val baseSchema: StructType =
+      new StructType()
+        .add(
+          "l",
+          new ArrayType(
             new ArrayType(
               new MapType(
-                new StructField("key", StringType.STRING, false),
-                new StructField(
-                  "value",
-                  new StructType().add("leaf", StringType.STRING, false, newFieldMetadata(5)),
-                  false)),
-              /*nullable=*/ false),
-            newFieldMetadata(
-              1,
-              Map(
-                "col-1.element" -> "2",
-                "col-1.element.key" -> "3",
-                "col-1.element.value" -> "4")))
+                new ArrayType(StringType.STRING, /*nullable=*/false),
+                new MapType(StringType.STRING,
+                  new StructType().add("leaf", StringType.STRING, false, FieldMetadata.builder().putBoolean("k1", true).build()),
+                  /*valuesContainNull=*/false),
+                /*valuesContanNull= */ false),
+              /*nullableElements= */ false),
+            /*nullableElements=*/false),
+          /*nullable= */ false,
+          FieldMetadata.builder().putBoolean("k2", true).build())
+    Seq(
+      (baseSchema, 1, (md : Metadata)=>md.getSchema.get("l")),
+      (new StructType().add("p", baseSchema, /*nullable=*/false), 2,
+        (md : Metadata) => md.getSchema.get("p").getDataType.asInstanceOf[StructType].get("l"))) .foreach {
+      case (schemaToTest, base, getter) =>
 
-      var inputMetadata = testMetadata(schema).withColumnMappingEnabled("id")
-      inputMetadata = inputMetadata.withIcebergCompatV2Enabled
-      inputMetadata = inputMetadata.withIcebergWriterCompatV1Enabled
-      val metadata = updateColumnMappingMetadataIfNeeded(inputMetadata, isNewTable)
-        .orElseGet(() => fail("Metadata should not be empty"))
+      test(s"Deeply nested values don't assign more field IDs then necessary $isNewTable $base") {
 
-      assertThat(metadata.getConfiguration).containsEntry(
-        ColumnMapping.COLUMN_MAPPING_MAX_COLUMN_ID_KEY,
-        "5")
+        var inputMetadata = testMetadata(schemaToTest).withColumnMappingEnabled("id")
+        inputMetadata = inputMetadata.withIcebergCompatV2Enabled
+        inputMetadata = inputMetadata.withIcebergWriterCompatV1Enabled
+        val metadata = updateColumnMappingMetadataIfNeeded(inputMetadata, isNewTable)
+          .orElseGet(() => fail("Metadata should not be empty"))
+
+        assertThat(metadata.getConfiguration).containsEntry(
+          ColumnMapping.COLUMN_MAPPING_MAX_COLUMN_ID_KEY,
+          (base + 8).toString)
+      val prefix = s"col-$base"
+        // Values are offset by base.  All Ids are assigned in depth first order to StructField's first and then
+        // intermediate nested fields are added to metadata.
+      val nestedColumnMappingValues = FieldMetadata.builder()
+        .putLong(s"$prefix.element", base + 2)
+        .putLong(s"$prefix.element.element", base + 3)
+        .putLong(s"$prefix.element.element.key", base + 4)
+        .putLong(s"$prefix.element.element.key.element", base + 5)
+        .putLong(s"$prefix.element.element.value", base + 6)
+        .putLong(s"$prefix.element.element.value.key", base + 7)
+        .putLong(s"$prefix.element.element.value.value", base + 8).build()
+      val expectedMetadata = FieldMetadata.builder().putFieldMetadata(COLUMN_MAPPING_NESTED_IDS_KEY, nestedColumnMappingValues)
+        .putString("delta.columnMapping.physicalName", prefix)
+        .putLong("delta.columnMapping.id", base)
+        .putBoolean("k2", true).build()
+      val firstColumnMetadata = getter(metadata).getMetadata
+      assertThat(firstColumnMetadata.getMetadata(COLUMN_MAPPING_NESTED_IDS_KEY).getEntries).containsExactlyInAnyOrderEntriesOf(nestedColumnMappingValues.getEntries)
+      assertThat(firstColumnMetadata.getEntries).containsExactlyInAnyOrderEntriesOf(expectedMetadata.getEntries)
+
+        // TODO: It would be nice to have visitor pattern on schema so we can assert all metadata for nested fields
+        // are empty but this at least provides a sanity check.
+      assert(getter(metadata).getDataType.asInstanceOf[ArrayType].getElementField.getMetadata == FieldMetadata.empty())
 
       // Requesting the same operation on the same schema shouldn't change anything
       // as the schema already has the necessary column mapping info
       assertNoOpOnUpdateColumnMappingMetadataRequest(
         metadata.getSchema,
-        enableIcebergCompatV2,
+        /*enableIcebergCompatV2=*/true,
         isNewTable)
+  }
+  }
   }
 
   runWithIcebergCompatComboForNewAndExistingTables(
