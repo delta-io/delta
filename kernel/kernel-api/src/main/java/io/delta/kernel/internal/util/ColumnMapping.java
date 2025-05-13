@@ -574,6 +574,8 @@ public class ColumnMapping {
    * @param structField The field where to start from
    * @param path The current field path relative to the parent field (aka most recent ancestor with
    *     a StructField). An empty path indicates that there's no parent and we're at the root
+   * @param closestStructFieldParentMetadata The metadata builder of the closest struct field parent
+   *     where nested IDs will be stored
    * @return A new {@link StructField} with updated {@link FieldMetadata}
    */
   private static StructField transformSchema(
@@ -662,16 +664,14 @@ public class ColumnMapping {
    *
    * </blockquote>
    *
-   * @param field The current field where to update the COLUMN_MAPPING_NESTED_IDS_KEY
+   * @param field The FieldMetadata.Builder to update with nested IDs
    * @param key For a map this is <colName>.key or <colName>.value. For an array this is
    *     <colName>.element
    * @param currentFieldId The current maximum field id to increment and use for assignment
-   * @return A field with potentially updated {@link FieldMetadata}
    */
   private static void maybeUpdateFieldId(
       FieldMetadata.Builder field, String key, AtomicInteger currentFieldId) {
     // init the nested metadata that holds the nested ids
-    System.out.println("key: " + key);
     FieldMetadata nestedMetadata = field.getMetadata(COLUMN_MAPPING_NESTED_IDS_KEY);
     if (field.getMetadata(COLUMN_MAPPING_NESTED_IDS_KEY) == null) {
       field.putFieldMetadata(COLUMN_MAPPING_NESTED_IDS_KEY, FieldMetadata.empty());
@@ -687,13 +687,5 @@ public class ColumnMapping {
               .build();
       field.putFieldMetadata(COLUMN_MAPPING_NESTED_IDS_KEY, newNestedMeta);
     }
-    System.out.println("field:" + field.build());
-  }
-
-  private static FieldMetadata.Builder initNestedIdsMetadataBuilder(StructField field) {
-    if (hasNestedColumnIds(field)) {
-      return FieldMetadata.builder().fromMetadata(getNestedColumnIds(field));
-    }
-    return FieldMetadata.builder();
   }
 }
