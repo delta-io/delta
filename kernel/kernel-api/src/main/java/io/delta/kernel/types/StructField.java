@@ -1,5 +1,5 @@
 /*
- * Copyright (2023) The Delta Lake Project Authors.
+ * Copyright (2025) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -59,53 +59,6 @@ public class StructField {
   // Instance Fields / Methods
   ////////////////////////////////////////////////////////////////////////////////
 
-  /**
-   * Represents a type change for a field, containing the original and new primitive types.
-   *
-   * <p>Type changes are actually persisted in metadata attached to StructFields but the rules for
-   * where the metadata is attached depend on if the change is for nested arrays/maps or primitive
-   * types.
-   */
-  public static class TypeChange {
-    private final BasePrimitiveType from;
-    private final BasePrimitiveType to;
-
-    public TypeChange(BasePrimitiveType from, BasePrimitiveType to) {
-      this.from = Objects.requireNonNull(from, "from type cannot be null");
-      this.to = Objects.requireNonNull(to, "to type cannot be null");
-    }
-
-    public BasePrimitiveType getFrom() {
-      return from;
-    }
-
-    public BasePrimitiveType getTo() {
-      return to;
-    }
-
-    @Override
-    public boolean equals(Object o) {
-      if (this == o) {
-        return true;
-      }
-      if (o == null || getClass() != o.getClass()) {
-        return false;
-      }
-      TypeChange that = (TypeChange) o;
-      return Objects.equals(from, that.from) && Objects.equals(to, that.to);
-    }
-
-    @Override
-    public int hashCode() {
-      return Objects.hash(from, to);
-    }
-
-    @Override
-    public String toString() {
-      return String.format("TypeChange(from=%s,to=%s)", from, to);
-    }
-  }
-
   private final String name;
   private final DataType dataType;
   private final boolean nullable;
@@ -162,7 +115,11 @@ public class StructField {
     return nullable;
   }
 
-  /** @return the list of type changes for this field */
+  /**
+   * Returns the list of type changes for this field. A field can go through multiple type changes
+   * (e.g. int->long->decimal). Changes are ordered from least recent to most recent in the list
+   * (index 0 is the oldest change).
+   */
   public List<TypeChange> getTypeChanges() {
     return Collections.unmodifiableList(typeChanges);
   }

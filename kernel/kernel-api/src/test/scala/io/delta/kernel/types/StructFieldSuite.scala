@@ -19,7 +19,7 @@ package io.delta.kernel.types
 import java.util.ArrayList
 
 import io.delta.kernel.exceptions.KernelException
-import io.delta.kernel.types.StructField.{COLLATIONS_METADATA_KEY, TypeChange}
+import io.delta.kernel.types.StructField.COLLATIONS_METADATA_KEY
 
 import collection.JavaConverters._
 import org.scalatest.funsuite.AnyFunSuite
