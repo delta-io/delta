@@ -75,16 +75,9 @@ def get_local_package(package_name, use_spark_master):
     version = '0.0.0'
     with open(os.path.join(root_dir, "version.sbt")) as fd:
         version = fd.readline().split('"')[1]
-<<<<<<< HEAD
-    package = "io.delta:delta-spark_2.13:" + version
-    return package
-=======
 
-    if use_spark_master:
-        return f"io.delta:{package_name}_2.13:" + version
-    else:
-        return f"io.delta:{package_name}_2.12:" + version
->>>>>>> delta-io/master
+    return f"io.delta:{package_name}_2.13:" + version
+
 
 
 def run_cmd(cmd, throw_on_error=True, env=None, stream_output=False, print_cmd=True, **kwargs):
