@@ -296,7 +296,11 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
       assertColumnMapping(structType.get("a"), 1)
       assertColumnMapping(structType.get("map"), 4, "map")
       assert(structType.get("map").getMetadata.get(ColumnMapping.COLUMN_MAPPING_NESTED_IDS_KEY)
-        == FieldMetadata.builder().putLong("map.key", 5).putLong("map.value", 6).build())
+        == FieldMetadata.builder()
+          .putLong("map.key", 5)
+          .putLong("map.value", 6)
+          .putLong("map.value.element", 7)
+          .build())
     }
   }
 
