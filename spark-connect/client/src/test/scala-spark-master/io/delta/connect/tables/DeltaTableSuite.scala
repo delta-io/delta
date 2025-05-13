@@ -423,4 +423,52 @@ class DeltaTableSuite extends DeltaQueryTest with RemoteSparkSession {
       )
     }
   }
+
+
+  ignore("addFeatureSupport") {
+    withTempPath { dir =>
+      val path = dir.getAbsolutePath
+      testData.write.format("delta").save(path)
+      val table = DeltaTable.forPath(spark, path)
+      checkAnswer(
+        table.history().select("version", "operation"),
+        Seq(Row(0L, "WRITE"))
+      )
+      table.addFeatureSupport("testReaderWriter")
+      checkAnswer(
+        table.history().select("version", "operation"),
+        Seq(Row(0L, "WRITE"), Row(1L, "SET TBLPROPERTIES"))
+      )
+    }
+  }
+
+  ignore("dropFeatureSupport") {
+    withTempPath { dir =>
+      val path = dir.getAbsolutePath
+      testData.write.format("delta").save(path)
+      val table = DeltaTable.forPath(spark, path)
+      checkAnswer(
+        table.history().select("version", "operation"),
+        Seq(Row(0L, "WRITE"))
+      )
+
+      table.addFeatureSupport("testRemovableWriter")
+      checkAnswer(
+        table.history().select("version", "operation"),
+        Seq(Row(0L, "WRITE"), Row(1L, "SET TBLPROPERTIES"))
+      )
+
+      // Attempt truncating the history when dropping a feature that is not required.
+      // This verifies the truncateHistory option was correctly passed.
+      assert(intercept[Exception] {
+        table.dropFeatureSupport("testRemovableWriter", truncateHistory = true)
+      }.getMessage.contains("The particular feature does not require history truncation."))
+
+      table.dropFeatureSupport("testRemovableWriter")
+      checkAnswer(
+        table.history().select("version", "operation"),
+        Seq(Row(0L, "WRITE"), Row(1L, "SET TBLPROPERTIES"), Row(2L, "DROP FEATURE"))
+      )
+    }
+  }  
 }
