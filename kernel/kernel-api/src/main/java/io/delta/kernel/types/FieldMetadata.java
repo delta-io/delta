@@ -265,13 +265,13 @@ public final class FieldMetadata {
       if (null == value) {
         return null;
       }
-      if (!(value instanceof FieldMetadata)) {
-        throw new io.delta.kernel.exceptions.KernelException(
-            String.format(
-                "Expected '%s' to be of type 'FieldMetadata' but was '%s'",
-                value, value.getClass().getName()));
+      if (value instanceof FieldMetadata) {
+        return (FieldMetadata) value;
       }
-      return (FieldMetadata) value;
+      throw new io.delta.kernel.exceptions.KernelException(
+          String.format(
+              "Expected '%s' to be of type 'FieldMetadata' but was '%s'",
+              value, value.getClass().getName()));
     }
   }
 }
