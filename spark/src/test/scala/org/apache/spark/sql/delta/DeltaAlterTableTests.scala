@@ -1447,6 +1447,59 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
     }
   }
 
+  ddlTest("CHANGE COLUMN - set comment on a array/map/struct<varchar> column") {
+    val schema = """
+      |arr_v array<varchar(1)>,
+      |map_vv map<varchar(1), varchar(1)>,
+      |map_sv map<string, varchar(1)>,
+      |map_vs map<varchar(1), string>,
+      |struct_v struct<v: varchar(1)>""".stripMargin
+    def testCommentOnVarcharInContainer(
+      colName: String,
+      expectedType: String,
+      goodInsertValue: String,
+      badInsertValue: String
+    ): Unit = {
+      withDeltaTable(schema = schema) { tableName =>
+        sql(s"ALTER TABLE $tableName CHANGE COLUMN $colName COMMENT 'test comment'")
+        val expectedResult = Row(colName, expectedType, "test comment") :: Nil
+        checkAnswer(
+          sql(s"DESCRIBE $tableName").filter(s"col_name = '$colName'"),
+          expectedResult)
+        sql(s"INSERT into $tableName($colName) values ($goodInsertValue)")
+        val e = intercept[DeltaInvariantViolationException] {
+          sql(s"INSERT into $tableName($colName) values ($badInsertValue)")
+        }
+        assert(e.getMessage.contains("exceeds char/varchar type length limitation"))
+      }
+    }
+    testCommentOnVarcharInContainer(
+      colName = "arr_v",
+      expectedType = "array<string>",
+      goodInsertValue = "array('1')",
+      badInsertValue = "array('12')")
+    testCommentOnVarcharInContainer(
+      colName = "map_vv",
+      expectedType = "map<string,string>",
+      goodInsertValue = "map('1', '1')",
+      badInsertValue = "map('12', '12')")
+    testCommentOnVarcharInContainer(
+      colName = "map_sv",
+      expectedType = "map<string,string>",
+      goodInsertValue = "map('123', '1')",
+      badInsertValue = "map('123', '12')")
+    testCommentOnVarcharInContainer(
+      colName = "map_vs",
+      expectedType = "map<string,string>",
+      goodInsertValue = "map('1', '123')",
+      badInsertValue = "map('12', '123')")
+    testCommentOnVarcharInContainer(
+      colName = "struct_v",
+      expectedType = "struct<v:string>",
+      goodInsertValue = "named_struct('v', '1')",
+      badInsertValue = "named_struct('v', '12')")
+  }
+
   ddlTest("CHANGE COLUMN - set a default value for a varchar column") {
     withDeltaTable(schema = "v varchar(1)") { tableName =>
       sql(s"ALTER TABLE $tableName " +

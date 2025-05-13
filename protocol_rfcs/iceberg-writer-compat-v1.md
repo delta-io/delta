@@ -64,6 +64,13 @@ For `IcebergWriterCompatV1` writers must ensure:
 - [Iceberg Compatibility V2](#iceberg-compatibility-v2) is **enabled** on the table.
   - This means _all_ the conditions that [Iceberg Compatibility V2](#iceberg-compatibility-v2) imposes are met.
 
+- The writer **must** block *any* schema changes to a `struct` that is used as a `map` key.
+  - For example, if the schema contains `map MAP<STRUCT<s: STRING>, INT>`, then any schema change to `map.key` must be disallowed.
+  - Changes to the schema of the value are allowed.
+  - This matches Iceberg's behavior, which is documented
+    [here](https://iceberg.apache.org/docs/nightly/spark-ddl/#alter-table-add-column). In practice
+    Iceberg writers block any changes, not just column additions.
+
 - Any enabled features are in the [allowlist](#allowed-supported-list-of-features)
 
 - All [Disallowed features](#disallowed-features) are not supported and/or inactive (see below)

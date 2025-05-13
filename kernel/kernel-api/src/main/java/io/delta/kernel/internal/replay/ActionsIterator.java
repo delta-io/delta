@@ -321,29 +321,13 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
         case COMMIT:
           {
             final long fileVersion = FileNames.deltaVersion(nextFilePath);
-            // We can not read multiple JSON files in parallel (like the checkpoint files),
-            // because each one has a different version, and we need to associate the
-            // version with actions read from the JSON file for further optimizations later
-            // on (faster metadata & protocol loading in subsequent runs by remembering
-            // the version of the last version where the metadata and protocol are found).
-            final CloseableIterator<ColumnarBatch> dataIter =
-                wrapEngineExceptionThrowsIO(
-                    () ->
-                        engine
-                            .getJsonHandler()
-                            .readJsonFiles(
-                                singletonCloseableIterator(nextFile),
-                                deltaReadSchema,
-                                Optional.empty()),
-                    "Reading JSON log file `%s` with readSchema=%s",
-                    nextFile,
-                    deltaReadSchema);
-
-            return combine(
-                dataIter,
-                false /* isFromCheckpoint */,
-                fileVersion,
-                Optional.of(nextFile.getModificationTime()) /* timestamp */);
+            return readCommitOrCompactionFile(fileVersion, nextFile);
+          }
+        case LOG_COMPACTION:
+          {
+            // use end version as this is like a mini checkpoint, and that's what checkpoints do
+            final long fileVersion = FileNames.logCompactionVersions(nextFilePath)._2;
+            return readCommitOrCompactionFile(fileVersion, nextFile);
           }
         case CHECKPOINT_CLASSIC:
         case V2_CHECKPOINT_MANIFEST:
@@ -385,6 +369,31 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     } catch (IOException ex) {
       throw new UncheckedIOException(ex);
     }
+  }
+
+  private CloseableIterator<ActionWrapper> readCommitOrCompactionFile(
+      long fileVersion, FileStatus nextFile) throws IOException {
+    // We can not read multiple JSON files in parallel (like the checkpoint files),
+    // because each one has a different version, and we need to associate the
+    // version with actions read from the JSON file for further optimizations later
+    // on (faster metadata & protocol loading in subsequent runs by remembering
+    // the version of the last version where the metadata and protocol are found).
+    final CloseableIterator<ColumnarBatch> dataIter =
+        wrapEngineExceptionThrowsIO(
+            () ->
+                engine
+                    .getJsonHandler()
+                    .readJsonFiles(
+                        singletonCloseableIterator(nextFile), deltaReadSchema, Optional.empty()),
+            "Reading JSON log file `%s` with readSchema=%s",
+            nextFile,
+            deltaReadSchema);
+
+    return combine(
+        dataIter,
+        false /* isFromCheckpoint */,
+        fileVersion,
+        Optional.of(nextFile.getModificationTime()) /* timestamp */);
   }
 
   /**

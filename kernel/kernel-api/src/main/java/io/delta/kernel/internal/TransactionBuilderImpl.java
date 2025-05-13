@@ -326,6 +326,11 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         throw new UnsupportedOperationException(
             "REPLACE TABLE is not yet supported with column mapping");
       }
+      if (newProtocol.orElse(baseProtocol).supportsFeature(TableFeatures.ROW_TRACKING_W_FEATURE)) {
+        // Block this for now to be safe, we will return to this in the future
+        throw new UnsupportedOperationException(
+            "REPLACE TABLE is not yet supported on row tracking tables");
+      }
     }
 
     return new TransactionImpl(
@@ -603,11 +608,10 @@ public class TransactionBuilderImpl implements TransactionBuilder {
               .collect(toSet());
 
       SchemaUtils.validateUpdatedSchema(
-          oldMetadata.getSchema(),
-          newMetadata.getSchema(),
-          oldMetadata.getPartitionColNames(),
+          oldMetadata,
+          newMetadata,
           clusteringColumnPhysicalNames,
-          newMetadata);
+          false /* allowNewRequiredFields*/);
     }
   }
 

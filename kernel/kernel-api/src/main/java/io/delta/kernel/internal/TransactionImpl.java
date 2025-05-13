@@ -387,11 +387,6 @@ public class TransactionImpl implements Transaction {
     try (CloseableIterator<Row> userStageDataIter = dataActions.iterator()) {
       final CloseableIterator<Row> completeFileActionIter;
       if (isReplaceTable()) {
-        // For now, block RTAS; this will be unblocked in a follow-up PR
-        if (userStageDataIter.hasNext()) {
-          throw new UnsupportedOperationException(
-              "Inserting data is not yet supported with REPLACE");
-        }
         // If this is a replace table operation we need to internally generate the remove file
         // actions to reset the table state
         completeFileActionIter = getRemoveActionsForReplace(engine).combine(userStageDataIter);
@@ -684,16 +679,14 @@ public class TransactionImpl implements Transaction {
         // In the case of replace table we need to completely reset the table state by removing
         // any existing domain metadata
         readSnapshot
-            .getDomainMetadataMap()
+            .getActiveDomainMetadataMap()
             .forEach(
                 (domainName, domainMetadata) -> {
-                  if (!domainMetadata.isRemoved()) { // only care about active domains
-                    if (!domainsToAdd.containsKey(domainName)) {
-                      // We only need to remove the domain if it is not added (& thus overwritten)
-                      // in this current transaction. We cannot add and remove the same domain in
-                      // one transaction.
-                      removeDomain(domainName);
-                    }
+                  if (!domainsToAdd.containsKey(domainName)) {
+                    // We only need to remove the domain if it is not added (& thus overwritten)
+                    // in this current transaction. We cannot add and remove the same domain in
+                    // one transaction.
+                    removeDomain(domainName);
                   }
                 });
       }
@@ -708,19 +701,16 @@ public class TransactionImpl implements Transaction {
       }
 
       // Generate the tombstones for removed domains
-      Map<String, DomainMetadata> snapshotDomainMetadataMap = readSnapshot.getDomainMetadataMap();
+      Map<String, DomainMetadata> snapshotDomainMetadataMap =
+          readSnapshot.getActiveDomainMetadataMap();
       for (String domainName : domainsToRemove) {
         if (snapshotDomainMetadataMap.containsKey(domainName)) {
           // Note: we know domainName is not already in finalDomainMetadatas because we do not allow
           // removing and adding a domain with the same identifier in a single txn!
           DomainMetadata domainToRemove = snapshotDomainMetadataMap.get(domainName);
-          if (domainToRemove.isRemoved()) {
-            // If the domain is already removed we throw an error to avoid any inconsistencies or
-            // ambiguity. The snapshot read by the connector is inconsistent with the snapshot
-            // loaded here as the domain to remove no longer exists.
-            throw new DomainDoesNotExistException(
-                dataPath.toString(), domainName, readSnapshot.getVersion());
-          }
+          checkState(
+              !domainToRemove.isRemoved(),
+              "snapshotDomainMetadataMap should only contain active domain metadata");
           result.add(domainToRemove.removed());
         } else {
           // We must throw an error if the domain does not exist. Otherwise, there could be

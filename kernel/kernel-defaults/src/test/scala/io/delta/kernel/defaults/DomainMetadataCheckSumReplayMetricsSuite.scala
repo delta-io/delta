@@ -54,26 +54,6 @@ class DomainMetadataCheckSumReplayMetricsSuite extends ChecksumLogReplayMetricsT
     sizes.flatMap(size => Seq(size, size))
   }
 
-  // TODO: Remove to ChecksumLogReplayMetricsTestBase
-  // after incremental CRC loading for domain metadata implemented
-  test("checksum missing at read version and checkpoint version (readVersion - 1) " +
-    " => use checkpoint") {
-    withTableWithCrc { (table, tablePath, engine) =>
-      val checkpointVersion = 10
-      val readVersion = checkpointVersion + 1
-      deleteChecksumFileForTable(tablePath, Seq(readVersion))
-
-      loadSnapshotFieldsCheckMetrics(
-        table,
-        engine,
-        expJsonVersionsRead = Seq(readVersion),
-        expParquetVersionsRead = Seq(checkpointVersion),
-        expParquetReadSetSizes = Seq(1),
-        expChecksumReadSet = Seq(checkpointVersion),
-        readVersion = readVersion)
-    }
-  }
-
   test("read domain metadata fro checksum even if snapshot hint exists") {
     withTableWithCrc { (table, _, engine) =>
       val readVersion = 11

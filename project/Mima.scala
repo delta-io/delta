@@ -60,7 +60,11 @@ object Mima {
       0 -> "0.8.0",
       1 -> "1.2.1",
       2 -> "2.4.0",
+<<<<<<< HEAD
       3 -> "3.2.0"
+=======
+      3 -> "3.3.1"
+>>>>>>> delta-io/master
     )
     if (minor == 0) {  // 1.0.0 or 2.0.0 or 3.0.0 or 4.0.0
       lastVersionInMajorVersion.getOrElse(major - 1, {
@@ -81,7 +85,11 @@ object Mima {
       0 -> "0.6.0",
       1 -> "0.6.0",
       2 -> "0.6.0",
+<<<<<<< HEAD
       3 -> "3.2.0"
+=======
+      3 -> "3.3.1"
+>>>>>>> delta-io/master
     )
     if (minor == 0) {  // 1.0.0
       majorToLastMinorVersions.getOrElse(major - 1, {

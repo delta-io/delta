@@ -174,7 +174,9 @@ class IcebergConversionTransaction(
    *
    * e.g. OPTIMIZE
    */
-  class RewriteHelper(rewriter: RewriteFiles) extends TransactionHelper(rewriter) {
+  class RewriteHelper(
+      rewriter: RewriteFiles,
+      startingSnapshotId: Option[Long]) extends TransactionHelper(rewriter) {
 
     override def opType: String = "rewrite"
 
@@ -196,6 +198,7 @@ class IcebergConversionTransaction(
       if (removeBuffer.nonEmpty) {
         rewriter.rewriteFiles(removeBuffer.asJava, addBuffer.asJava, 0)
       }
+      startingSnapshotId.foreach(id => rewriter.validateFromSnapshot(id))
       super.commit()
     }
   }
@@ -277,7 +280,7 @@ class IcebergConversionTransaction(
   }
 
   def getRewriteHelper: RewriteHelper = {
-    val ret = new RewriteHelper(txn.newRewrite())
+    val ret = new RewriteHelper(txn.newRewrite(), startFromSnapshotId)
     fileUpdates += ret
     ret
   }
