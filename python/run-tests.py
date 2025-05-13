@@ -79,7 +79,6 @@ def get_local_package(package_name, use_spark_master):
     return f"io.delta:{package_name}_2.13:" + version
 
 
-
 def run_cmd(cmd, throw_on_error=True, env=None, stream_output=False, print_cmd=True, **kwargs):
     if print_cmd:
         print("### Executing cmd: " + " ".join(cmd))
