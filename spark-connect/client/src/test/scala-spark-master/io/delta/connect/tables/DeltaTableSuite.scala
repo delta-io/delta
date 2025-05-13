@@ -425,7 +425,7 @@ class DeltaTableSuite extends DeltaQueryTest with RemoteSparkSession {
   }
 
 
-  ignore("addFeatureSupport") {
+  test("addFeatureSupport") {
     withTempPath { dir =>
       val path = dir.getAbsolutePath
       testData.write.format("delta").save(path)
@@ -442,7 +442,7 @@ class DeltaTableSuite extends DeltaQueryTest with RemoteSparkSession {
     }
   }
 
-  ignore("dropFeatureSupport") {
+  test("dropFeatureSupport") {
     withTempPath { dir =>
       val path = dir.getAbsolutePath
       testData.write.format("delta").save(path)
