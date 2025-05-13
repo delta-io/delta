@@ -11,3 +11,4 @@
   repos-spark-packages: https://repos.spark-packages.org
   typesafe-releases: https://repo.typesafe.com/typesafe/releases/
   apache-snapshot: https://repository.apache.org/content/groups/snapshots/
+  spark-rc5: https://repository.apache.org/content/repositories/orgapachespark-1483/
