@@ -526,7 +526,15 @@ object StatisticsCollection extends DeltaCommand {
         transformSchema(schema, Some(columnName.head)) {
           case (`prefixPath`, struct @ StructType(_), _) =>
             val columnField = struct(columnName.head)
-            validateDataSkippingType(columnAttribute.name, columnField.dataType, visitedColumns)
+            // We need to figure out if the column is top-level column
+            // or a column inside a struct, we support collecting null count stats
+            // on nested columns part of a struct.
+            val fieldInsideStruct = prefixPath.size > 0
+            validateDataSkippingType(
+              columnAttribute.name,
+              columnField.dataType,
+              visitedColumns,
+              insideStruct = fieldInsideStruct)
             struct
           case (_, other, _) => other
         }
