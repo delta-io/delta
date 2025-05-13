@@ -25,13 +25,10 @@ import org.apache.spark.sql.Row
 import org.apache.spark.sql.functions.{col, lit}
 import org.apache.spark.sql.test.DeltaQueryTest
 
-// TODO(hvanhovell) All tests here are temporary disabled. While the code compiles, we need to a
-//  Spark PR to land (https://github.com/apache/spark/pull/49971), and make a couple of changes to
-//  make tests work. This will be done in a follow-up PR.
 class DeltaTableSuite extends DeltaQueryTest with RemoteSparkSession {
   private lazy val testData = spark.range(100).toDF("value")
 
-  ignore("forPath") {
+  test("forPath") {
     withTempPath { dir =>
       testData.write.format("delta").save(dir.getAbsolutePath)
       checkAnswer(
@@ -41,7 +38,7 @@ class DeltaTableSuite extends DeltaQueryTest with RemoteSparkSession {
     }
   }
 
-  ignore("forName") {
+  test("forName") {
     withTable("deltaTable") {
       testData.write.format("delta").saveAsTable("deltaTable")
       checkAnswer(
@@ -51,7 +48,7 @@ class DeltaTableSuite extends DeltaQueryTest with RemoteSparkSession {
     }
   }
 
-  ignore("as") {
+  test("as") {
     withTempPath { dir =>
       testData.write.format("delta").save(dir.getAbsolutePath)
       checkAnswer(
@@ -61,32 +58,27 @@ class DeltaTableSuite extends DeltaQueryTest with RemoteSparkSession {
     }
   }
 
-  ignore("vacuum") {
-    Seq("true", "false").foreach{ deltaFormatCheckEnabled =>
-      withSQLConf(
-        "spark.databricks.delta.formatCheck.cache.enabled" -> deltaFormatCheckEnabled) {
-          withTempPath { dir =>
-          testData.write.format("delta").save(dir.getAbsolutePath)
-          val table = io.delta.tables.DeltaTable.forPath(spark, dir.getAbsolutePath)
+  test("vacuum") {
+    withTempPath { dir =>
+      testData.write.format("delta").save(dir.getAbsolutePath)
+      val table = io.delta.tables.DeltaTable.forPath(spark, dir.getAbsolutePath)
 
-          // create a uncommitted file.
-          val notCommittedFile = "notCommittedFile.json"
-          val file = new File(dir, notCommittedFile)
-          FileUtils.write(file, "gibberish")
-          // set to ancient time so that the file is eligible to be vacuumed.
-          file.setLastModified(0)
-          assert(file.exists())
+      // create a uncommitted file.
+      val notCommittedFile = "notCommittedFile.json"
+      val file = new File(dir, notCommittedFile)
+      FileUtils.write(file, "gibberish")
+      // set to ancient time so that the file is eligible to be vacuumed.
+      file.setLastModified(0)
+      assert(file.exists())
 
-          table.vacuum()
+      table.vacuum()
 
-          val file2 = new File(dir, notCommittedFile)
-          assert(!file2.exists())
-        }
-      }
+      val file2 = new File(dir, notCommittedFile)
+      assert(!file2.exists())
     }
   }
 
-  ignore("history") {
+  test("history") {
     val session = spark
     import session.implicits._
 
@@ -102,7 +94,7 @@ class DeltaTableSuite extends DeltaQueryTest with RemoteSparkSession {
     }
   }
 
-  ignore("detail") {
+  test("detail") {
     val session = spark
     import session.implicits._
 
@@ -117,40 +109,40 @@ class DeltaTableSuite extends DeltaQueryTest with RemoteSparkSession {
     }
   }
 
-  ignore("isDeltaTable - path - with _delta_log dir") {
+  test("isDeltaTable - path - with _delta_log dir") {
     withTempPath { dir =>
       testData.write.format("delta").save(dir.getAbsolutePath)
       assert(DeltaTable.isDeltaTable(spark, dir.getAbsolutePath))
     }
   }
 
-  ignore("isDeltaTable - path - with empty _delta_log dir") {
+  test("isDeltaTable - path - with empty _delta_log dir") {
     withTempPath { dir =>
       new File(dir, "_delta_log").mkdirs()
       assert(!DeltaTable.isDeltaTable(spark, dir.getAbsolutePath))
     }
   }
 
-  ignore("isDeltaTable - path - with no _delta_log dir") {
+  test("isDeltaTable - path - with no _delta_log dir") {
     withTempPath { dir =>
       assert(!DeltaTable.isDeltaTable(spark, dir.getAbsolutePath))
     }
   }
 
-  ignore("isDeltaTable - path - with non-existent dir") {
+  test("isDeltaTable - path - with non-existent dir") {
     withTempPath { dir =>
       assert(!DeltaTable.isDeltaTable(spark, dir.getAbsolutePath))
     }
   }
 
-  ignore("isDeltaTable - with non-Delta table path") {
+  test("isDeltaTable - with non-Delta table path") {
     withTempPath { dir =>
       testData.write.format("parquet").mode("overwrite").save(dir.getAbsolutePath)
       assert(!DeltaTable.isDeltaTable(spark, dir.getAbsolutePath))
     }
   }
 
-  ignore("generate") {
+  test("generate") {
     withTempPath { dir =>
       val path = dir.getAbsolutePath
       testData.toDF().write.format("delta").save(path)
@@ -162,7 +154,7 @@ class DeltaTableSuite extends DeltaQueryTest with RemoteSparkSession {
     }
   }
 
-  ignore("delete") {
+  test("delete") {
     val session = spark
     import session.implicits._
     withTempPath { dir =>
@@ -182,7 +174,7 @@ class DeltaTableSuite extends DeltaQueryTest with RemoteSparkSession {
     }
   }
 
-  ignore("update") {
+  test("update") {
     val session = spark
     import session.implicits._
     withTempPath { dir =>
@@ -212,7 +204,7 @@ class DeltaTableSuite extends DeltaQueryTest with RemoteSparkSession {
     sdf.format(file.lastModified())
   }
 
-  ignore("clone") {
+  test("clone") {
     withTempPath { dir =>
       val baseDir = dir.getAbsolutePath
 
@@ -230,14 +222,15 @@ class DeltaTableSuite extends DeltaQueryTest with RemoteSparkSession {
     }
   }
 
-  ignore("cloneAtVersion/timestamp - with filesystem options") {
+  test("cloneAtVersion/timestamp - with filesystem options") {
     val session = spark
     import session.implicits._
     withTempPath { dir =>
       val baseDir = dir.getAbsolutePath
 
       val srcDir = new File(baseDir, "source").getCanonicalPath
-      val dstDir = new File(baseDir, "destination").getCanonicalPath
+      val dstDir1 = new File(baseDir, "destination1").getCanonicalPath
+      val dstDir2 = new File(baseDir, "destination2").getCanonicalPath
 
       val df1 = Seq(1, 2, 3).toDF("id")
       val df2 = Seq(4, 5).toDF("id")
@@ -252,22 +245,22 @@ class DeltaTableSuite extends DeltaQueryTest with RemoteSparkSession {
 
       val srcTable = io.delta.tables.DeltaTable.forPath(spark, srcDir)
 
-      srcTable.cloneAtVersion(1, dstDir, true)
+      srcTable.cloneAtVersion(1, dstDir1, true)
 
       checkAnswer(
-        spark.read.format("delta").load(dstDir),
+        spark.read.format("delta").load(dstDir1),
         df1.union(df2))
 
       val timestamp = getTimestampForVersion(srcDir, version = 0)
-      srcTable.cloneAtTimestamp(timestamp, dstDir, isShallow = true, replace = true)
+      srcTable.cloneAtTimestamp(timestamp, dstDir2, isShallow = true, replace = true)
 
       checkAnswer(
-        spark.read.format("delta").load(dstDir),
+        spark.read.format("delta").load(dstDir2),
         df1)
     }
   }
 
-  ignore("restore") {
+  test("restore") {
     val session = spark
     import session.implicits._
     withTempPath { dir =>
@@ -305,7 +298,7 @@ class DeltaTableSuite extends DeltaQueryTest with RemoteSparkSession {
     }
   }
 
-  ignore("upgradeTableProtocol") {
+  test("upgradeTableProtocol") {
     withTempPath { dir =>
       val path = dir.getAbsolutePath
       testData.write.format("delta").save(path)
