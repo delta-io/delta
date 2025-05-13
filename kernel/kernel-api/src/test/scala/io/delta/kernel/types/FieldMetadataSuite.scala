@@ -113,4 +113,31 @@ class FieldMetadataSuite extends AnyFunSuite {
     assertThat(meta.getMetadataArray("fieldMetadataArrayKey"))
       .isEqualTo(Seq(innerMeta).toArray)
   }
+
+  test("builder.getMetadata handles null correctly") {
+    val builder = FieldMetadata.builder()
+    assertThat(builder.getMetadata("non-existing")).isNull()
+  }
+
+  test("builder.getMetadata with wrong type throws KernelException") {
+    val builder = FieldMetadata.builder()
+      .putLong("longKey", 23L)
+      .putString("stringKey", "test")
+
+    assertThatThrownBy(() => builder.getMetadata("longKey"))
+      .isInstanceOf(classOf[io.delta.kernel.exceptions.KernelException])
+      .hasMessageContaining("Expected '23' to be of type 'FieldMetadata'")
+
+    assertThatThrownBy(() => builder.getMetadata("stringKey"))
+      .isInstanceOf(classOf[io.delta.kernel.exceptions.KernelException])
+      .hasMessageContaining("Expected 'test' to be of type 'FieldMetadata'")
+  }
+
+  test("builder.getMetadata with correct type returns value") {
+    val innerMeta = FieldMetadata.builder().putBoolean("key", true).build()
+    val builder = FieldMetadata.builder()
+      .putFieldMetadata("fieldMetadataKey", innerMeta)
+
+    assertThat(builder.getMetadata("fieldMetadataKey")).isEqualTo(innerMeta)
+  }
 }

@@ -556,9 +556,12 @@ public class ColumnMapping {
       newSchema =
           newSchema.add(
               transformSchema(
-                  startId, field, "",
-                  /** current column path */
-                  builder).withNewMetadata(builder.build()));
+                      startId,
+                      field,
+                      "",
+                      /** current column path */
+                      builder)
+                  .withNewMetadata(builder.build()));
     }
     return newSchema;
   }
@@ -579,16 +582,23 @@ public class ColumnMapping {
    * @return A new {@link StructField} with updated {@link FieldMetadata}
    */
   private static StructField transformSchema(
-      AtomicInteger currentFieldId, StructField structField, String path, FieldMetadata.Builder closestStructFieldParentMetadata) {
+      AtomicInteger currentFieldId,
+      StructField structField,
+      String path,
+      FieldMetadata.Builder closestStructFieldParentMetadata) {
     DataType dataType = structField.getDataType();
     if (dataType instanceof StructType) {
       StructType type = (StructType) dataType;
       List<StructField> fields =
           type.fields().stream()
-              .map(field -> {
-                FieldMetadata.Builder metadataBuilder = FieldMetadata.builder().fromMetadata(field.getMetadata());
-                return transformSchema(currentFieldId, field, getPhysicalName(field), metadataBuilder).withNewMetadata(metadataBuilder.build());
-              })
+              .map(
+                  field -> {
+                    FieldMetadata.Builder metadataBuilder =
+                        FieldMetadata.builder().fromMetadata(field.getMetadata());
+                    return transformSchema(
+                            currentFieldId, field, getPhysicalName(field), metadataBuilder)
+                        .withNewMetadata(metadataBuilder.build());
+                  })
               .collect(Collectors.toList());
       return new StructField(
           structField.getName(),
@@ -602,7 +612,11 @@ public class ColumnMapping {
       String elementPath = basePath + "." + type.getElementField().getName();
       maybeUpdateFieldId(closestStructFieldParentMetadata, elementPath, currentFieldId);
       StructField elementType =
-          transformSchema(currentFieldId, type.getElementField(), elementPath, closestStructFieldParentMetadata);
+          transformSchema(
+              currentFieldId,
+              type.getElementField(),
+              elementPath,
+              closestStructFieldParentMetadata);
       return new StructField(
           structField.getName(),
           new ArrayType(elementType),
@@ -614,11 +628,15 @@ public class ColumnMapping {
       String basePath = "".equals(path) ? getPhysicalName(structField) : path;
       String keyPath = basePath + "." + type.getKeyField().getName();
       maybeUpdateFieldId(closestStructFieldParentMetadata, keyPath, currentFieldId);
-      StructField key = transformSchema(currentFieldId, type.getKeyField(), keyPath, closestStructFieldParentMetadata);
+      StructField key =
+          transformSchema(
+              currentFieldId, type.getKeyField(), keyPath, closestStructFieldParentMetadata);
       // update value type metadata and recurse into value type
       String valuePath = basePath + "." + type.getValueField().getName();
       maybeUpdateFieldId(closestStructFieldParentMetadata, valuePath, currentFieldId);
-      StructField value = transformSchema(currentFieldId, type.getValueField(), valuePath, closestStructFieldParentMetadata);
+      StructField value =
+          transformSchema(
+              currentFieldId, type.getValueField(), valuePath, closestStructFieldParentMetadata);
       return new StructField(
           structField.getName(),
           new MapType(key, value),
