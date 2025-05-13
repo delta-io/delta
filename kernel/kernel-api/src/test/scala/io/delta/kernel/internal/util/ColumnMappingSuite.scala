@@ -527,7 +527,9 @@ class ColumnMappingSuite extends AnyFunSuite with ColumnMappingSuiteBase {
           new ArrayType(
             new ArrayType(
               new MapType(
-                new ArrayType(StringType.STRING, /*nullable=*/ false),
+                new ArrayType(
+                  StringType.STRING,
+                  /* nullable= */ false),
                 new MapType(
                   StringType.STRING,
                   new StructType().add(
@@ -535,16 +537,19 @@ class ColumnMappingSuite extends AnyFunSuite with ColumnMappingSuiteBase {
                     StringType.STRING,
                     false,
                     FieldMetadata.builder().putBoolean("k1", true).build()),
-                  /*valuesContainNull=*/ false),
-                /*valuesContanNull= */ false),
-              /*nullableElements= */ false),
-            /*nullableElements=*/ false),
-          /*nullable= */ false,
+                  /* valuesContainNull= */ false),
+                /* valuesContainNull= */ false),
+              /* nullableElements= */ false),
+            /* nullableElements= */ false),
+          /* nullable= */ false,
           FieldMetadata.builder().putBoolean("k2", true).build())
     Seq(
       (baseSchema, 1, (md: Metadata) => md.getSchema.get("l")),
       (
-        new StructType().add("p", baseSchema, /*nullable=*/ false),
+        new StructType().add(
+          "p",
+          baseSchema,
+          /* nullable= */ false),
         2,
         (md: Metadata) =>
           md.getSchema.get("p").getDataType.asInstanceOf[StructType].get("l"))).foreach {
@@ -562,8 +567,8 @@ class ColumnMappingSuite extends AnyFunSuite with ColumnMappingSuiteBase {
             ColumnMapping.COLUMN_MAPPING_MAX_COLUMN_ID_KEY,
             (base + 8).toString)
           val prefix = s"col-$base"
-          // Values are offset by base.  All Ids are assigned in depth first order to StructField's first and then
-          // intermediate nested fields are added to metadata.
+          // Values are offset by base.  All Ids are assigned in depth first order to
+          // StructField's first and then intermediate nested fields are added after.
           val nestedColumnMappingValues = FieldMetadata.builder()
             .putLong(s"$prefix.element", base + 2)
             .putLong(s"$prefix.element.element", base + 3)
@@ -585,7 +590,8 @@ class ColumnMappingSuite extends AnyFunSuite with ColumnMappingSuiteBase {
           assertThat(firstColumnMetadata.getEntries).containsExactlyInAnyOrderEntriesOf(
             expectedMetadata.getEntries)
 
-          // TODO: It would be nice to have visitor pattern on schema so we can assert all metadata for nested fields
+          // TODO: It would be nice to have visitor pattern on schema so we can assert
+          // all metadata for nested fields
           // are empty but this at least provides a sanity check.
           assert(getter(metadata).getDataType.asInstanceOf[
             ArrayType].getElementField.getMetadata == FieldMetadata.empty())
@@ -594,7 +600,7 @@ class ColumnMappingSuite extends AnyFunSuite with ColumnMappingSuiteBase {
           // as the schema already has the necessary column mapping info
           assertNoOpOnUpdateColumnMappingMetadataRequest(
             metadata.getSchema,
-            /*enableIcebergCompatV2=*/ true,
+            /* enableIcebergCompatV2= */ true,
             isNewTable)
         }
     }
