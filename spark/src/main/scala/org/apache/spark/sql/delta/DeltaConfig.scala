@@ -306,6 +306,13 @@ trait DeltaConfigsBase extends DeltaLogging {
   }
 
   /**
+   * Normalize the specified property key to its corresponding Delta config map key.
+   */
+  def normalizePropKey(propKey: String): String = {
+    propKey.toLowerCase(Locale.ROOT).stripPrefix("delta.")
+  }
+
+  /**
    * For configs accepting an interval, we require the user specified string must obey:
    *
    * - Doesn't use months or years, since an internal like this is not deterministic.
