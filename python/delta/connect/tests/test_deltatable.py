@@ -24,10 +24,13 @@ path_to_delta_connect_tests_folder = os.path.dirname(os.path.abspath(__file__))
 path_to_delta_folder = os.path.dirname(os.path.dirname(path_to_delta_connect_tests_folder))
 sys.path.append(path_to_delta_folder)
 
-from tests.test_deltatable import DeltaTableTestsMixin
 
+class DeltaTableTests(DeltaTestCase):
+    """
+    Tests for DeltaTable API using Spark Connect.
+    All tests are skipped until the APIs are implemented.
+    """
 
-class DeltaTableTests(DeltaTableTestsMixin, DeltaTestCase):
     @unittest.skip("delete has not been implemented yet")
     def test_delete(self):
         pass
