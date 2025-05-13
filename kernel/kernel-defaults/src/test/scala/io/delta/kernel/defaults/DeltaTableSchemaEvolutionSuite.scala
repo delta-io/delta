@@ -292,7 +292,8 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
         .withSchema(engine, newSchema)
         .build(engine).commit(engine, emptyIterable())
 
-      val structType = table.getLatestSnapshot(engine).getSchema
+      val latestSnapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      val structType = latestSnapshot.getSchema
       assertColumnMapping(structType.get("a"), 1)
       assertColumnMapping(structType.get("map"), 4, "map")
       assert(structType.get("map").getMetadata.get(ColumnMapping.COLUMN_MAPPING_NESTED_IDS_KEY)
@@ -301,6 +302,8 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
           .putLong("map.value", 6)
           .putLong("map.value.element", 7)
           .build())
+      val configuration = latestSnapshot.getMetadata.getConfiguration
+      assert(configuration.get(ColumnMapping.COLUMN_MAPPING_MAX_COLUMN_ID_KEY) == "7")
     }
   }
 

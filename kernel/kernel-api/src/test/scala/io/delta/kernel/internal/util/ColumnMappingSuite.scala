@@ -597,7 +597,8 @@ class ColumnMappingSuite extends AnyFunSuite with ColumnMappingSuiteBase {
             ArrayType].getElementField.getMetadata == FieldMetadata.empty())
 
           // Requesting the same operation on the same schema shouldn't change anything
-          // as the schema already has the necessary column mapping info
+          // as the schema already has the necessary column mapping info. This includes both
+          // IDs and maxFieldId.
           assertNoOpOnUpdateColumnMappingMetadataRequest(
             metadata.getSchema,
             /* enableIcebergCompatV2= */ true,
