@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils, TestsStatistics}
 
-import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.test.SharedSparkSession
 
@@ -51,5 +51,17 @@ class DeltaVariantShreddingSuite
         .readerAndWriterFeatures.contains(VariantShreddingPreviewTableFeature))
     }
     assert(DeltaConfigs.ENABLE_VARIANT_SHREDDING.key == "delta.enableVariantShredding")
+  }
+
+  test("Spark can read Delta tables with the shredding table feature") {
+    withTable("tbl") {
+      sql(s"CREATE TABLE tbl USING DELTA " +
+        s"TBLPROPERTIES('${DeltaConfigs.ENABLE_VARIANT_SHREDDING.key}' = 'true') " +
+        s"as select id i, (id + 1)::string s from range(10)")
+      assert(getProtocolForTable("tbl")
+        .readerAndWriterFeatures.contains(VariantShreddingPreviewTableFeature))
+      checkAnswer(sql(s"select * from tbl"), Seq(Row(0, "1"), Row(1, "2"), Row(2, "3"), Row(3, "4"),
+        Row(4, "5"), Row(5, "6"), Row(6, "7"), Row(7, "8"), Row(8, "9"), Row(9, "10")))
+    }
   }
 }
