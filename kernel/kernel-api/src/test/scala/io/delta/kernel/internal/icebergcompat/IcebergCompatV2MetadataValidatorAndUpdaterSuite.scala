@@ -21,7 +21,7 @@ import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.actions.{Metadata, Protocol}
 import io.delta.kernel.internal.icebergcompat.IcebergCompatV2MetadataValidatorAndUpdater.validateAndUpdateIcebergCompatV2Metadata
 import io.delta.kernel.internal.tablefeatures.TableFeature
-import io.delta.kernel.internal.tablefeatures.TableFeatures.{COLUMN_MAPPING_RW_FEATURE, DELETION_VECTORS_RW_FEATURE, ICEBERG_COMPAT_V2_W_FEATURE, TYPE_WIDENING_PREVIEW_TABLE_FEATURE, TYPE_WIDENING_RW_FEATURE}
+import io.delta.kernel.internal.tablefeatures.TableFeatures.{COLUMN_MAPPING_RW_FEATURE, DELETION_VECTORS_RW_FEATURE, ICEBERG_COMPAT_V2_W_FEATURE, TYPE_WIDENING_RW_FEATURE, TYPE_WIDENING_RW_PREVIEW_FEATURE}
 import io.delta.kernel.internal.util.ColumnMappingSuiteBase
 import io.delta.kernel.test.VectorTestUtils
 import io.delta.kernel.types._

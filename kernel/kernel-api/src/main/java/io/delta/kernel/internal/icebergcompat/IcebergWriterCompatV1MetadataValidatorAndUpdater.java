@@ -171,7 +171,7 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
               CLUSTERING_W_FEATURE,
               TIMESTAMP_NTZ_RW_FEATURE,
               TYPE_WIDENING_RW_FEATURE,
-              TYPE_WIDENING_PREVIEW_TABLE_FEATURE)
+              TYPE_WIDENING_RW_PREVIEW_FEATURE)
           .collect(toSet());
 
   /** Checks that all features supported in the protocol are in {@link #ALLOWED_TABLE_FEATURES} */

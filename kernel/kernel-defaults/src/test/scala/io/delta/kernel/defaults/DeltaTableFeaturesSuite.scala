@@ -317,6 +317,50 @@ class DeltaTableFeaturesSuite extends DeltaTableWriteSuiteBase {
     }
   }
 
+  /* ---- Start: type widening tests ---- */
+  test("only typeWidening feature is enabled when metadata supports it") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createEmptyTable(
+        engine,
+        tablePath = tablePath,
+        schema = testSchema,
+        tableProperties = Map("delta.enableTypeWidening" -> "true"))
+
+      val protocolV0 = getProtocol(engine, tablePath)
+      assert(!protocolV0.supportsFeature(TableFeatures.TYPE_WIDENING_RW_PREVIEW_FEATURE))
+      assert(protocolV0.supportsFeature(TableFeatures.TYPE_WIDENING_RW_FEATURE))
+
+      // try enabling type widening again and expect no change in protocol
+      updateTableMetadata(
+        engine = engine,
+        tablePath = tablePath,
+        tableProperties = Map("delta.enableTypeWidening" -> "true"))
+      val protocolV1 = getProtocol(engine, tablePath)
+      assert(protocolV1 === protocolV0)
+    }
+  }
+
+  test("typeWidening-preview in existing table is respected") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      spark.sql(s"CREATE TABLE delta.`$tablePath`(id INT) USING delta " +
+        s"TBLPROPERTIES ('delta.feature.typeWidening-preview' = 'supported')")
+
+      val protocolV0 = getProtocol(engine, tablePath)
+      require(protocolV0.supportsFeature(TableFeatures.TYPE_WIDENING_RW_PREVIEW_FEATURE))
+      require(!protocolV0.supportsFeature(TableFeatures.TYPE_WIDENING_RW_FEATURE))
+
+      // now through Kernel type enabling the type widening through table property
+      updateTableMetadata(
+        engine = engine,
+        tablePath = tablePath,
+        tableProperties = Map("delta.enableTypeWidening" -> "true"))
+      val protocolV1 = getProtocol(engine, tablePath)
+      assert(protocolV1.supportsFeature(TableFeatures.TYPE_WIDENING_RW_PREVIEW_FEATURE))
+      assert(!protocolV1.supportsFeature(TableFeatures.TYPE_WIDENING_RW_FEATURE))
+    }
+  }
+  /* ---- End: type widening tests ---- */
+
   ///////////////////////////////////////////////////////////////////////////
   // Helper methods
   ///////////////////////////////////////////////////////////////////////////
