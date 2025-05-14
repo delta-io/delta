@@ -23,6 +23,7 @@ import org.antlr.v4.runtime.ParserRuleContext
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.parser.{ParseException, ParserUtils}
 import org.apache.spark.sql.catalyst.trees.Origin
+import org.apache.spark.QueryContext
 
 class DeltaAnalysisException(
     errorClass: String,
@@ -60,6 +61,8 @@ class DeltaIllegalArgumentException(
   override def getMessageParameters: java.util.Map[String, String] = {
     DeltaThrowableHelper.getMessageParameters(errorClass, errorSubClass = null, messageParameters)
   }
+
+  override def getQueryContext: Array[QueryContext] = new Array(0);
 }
 
 class DeltaUnsupportedOperationException(
@@ -74,6 +77,8 @@ class DeltaUnsupportedOperationException(
   override def getMessageParameters: java.util.Map[String, String] = {
     DeltaThrowableHelper.getMessageParameters(errorClass, errorSubClass = null, messageParameters)
   }
+
+  override def getQueryContext: Array[QueryContext] = new Array(0);
 }
 
 class DeltaParseException(

@@ -27,8 +27,11 @@ import io.delta.tables.DeltaTable
 
 import org.apache.spark.SparkEnv
 import org.apache.spark.sql.{Dataset, Encoders, SparkSession}
+import org.apache.spark.sql.catalyst.analysis.UnresolvedStar
 import org.apache.spark.sql.catalyst.expressions.Literal
+import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.plans.logical._
+import org.apache.spark.sql.classic.Dataset
 import org.apache.spark.sql.connect.common.{DataTypeProtoConverter, InvalidPlanInput}
 import org.apache.spark.sql.connect.config.Connect
 import org.apache.spark.sql.connect.delta.DeltaRelationPlugin.{parseAnyFrom, parseRelationFrom}
@@ -63,45 +66,50 @@ class DeltaRelationPlugin extends RelationPlugin with DeltaPlannerBase {
       relation: proto.DeltaRelation, planner: SparkConnectPlanner): LogicalPlan = {
     relation.getRelationTypeCase match {
       case proto.DeltaRelation.RelationTypeCase.SCAN =>
-        transformScan(planner.session, relation.getScan)
+        transformScan(planner, relation.getScan)
       case proto.DeltaRelation.RelationTypeCase.DESCRIBE_HISTORY =>
-        transformDescribeHistory(planner.session, relation.getDescribeHistory)
+        transformDescribeHistory(planner, relation.getDescribeHistory)
       case proto.DeltaRelation.RelationTypeCase.DESCRIBE_DETAIL =>
-        transformDescribeDetail(planner.session, relation.getDescribeDetail)
+        transformDescribeDetail(planner, relation.getDescribeDetail)
       case proto.DeltaRelation.RelationTypeCase.CONVERT_TO_DELTA =>
-        transformConvertToDelta(planner.session, relation.getConvertToDelta)
+        transformConvertToDelta(planner, relation.getConvertToDelta)
       case proto.DeltaRelation.RelationTypeCase.RESTORE_TABLE =>
-        transformRestoreTable(planner.session, relation.getRestoreTable)
+        transformRestoreTable(planner, relation.getRestoreTable)
       case proto.DeltaRelation.RelationTypeCase.IS_DELTA_TABLE =>
         transformIsDeltaTable(planner.session, relation.getIsDeltaTable)
       case proto.DeltaRelation.RelationTypeCase.DELETE_FROM_TABLE =>
         transformDeleteFromTable(planner, relation.getDeleteFromTable)
       case proto.DeltaRelation.RelationTypeCase.UPDATE_TABLE =>
         transformUpdateTable(planner, relation.getUpdateTable)
+      case proto.DeltaRelation.RelationTypeCase.MERGE_INTO_TABLE =>
+        transformMergeIntoTable(planner, relation.getMergeIntoTable)
+      case proto.DeltaRelation.RelationTypeCase.OPTIMIZE_TABLE =>
+        transformOptimizeTable(planner, relation.getOptimizeTable)        
       case _ =>
         throw InvalidPlanInput(s"Unknown DeltaRelation ${relation.getRelationTypeCase}")
     }
   }
 
-  private def transformScan(spark: SparkSession, scan: proto.Scan): LogicalPlan = {
-    val deltaTable = transformDeltaTable(spark, scan.getTable)
+  private def transformScan(planner: SparkConnectPlanner, scan: proto.Scan): LogicalPlan = {
+    val deltaTable = transformDeltaTable(planner, scan.getTable)
     deltaTable.toDF.queryExecution.analyzed
   }
 
   private def transformDescribeHistory(
-      spark: SparkSession, describeHistory: proto.DescribeHistory): LogicalPlan = {
-    val deltaTable = transformDeltaTable(spark, describeHistory.getTable)
+      planner: SparkConnectPlanner, describeHistory: proto.DescribeHistory): LogicalPlan = {
+    val deltaTable = transformDeltaTable(planner, describeHistory.getTable)
     deltaTable.history().queryExecution.analyzed
   }
 
   private def transformDescribeDetail(
-      spark: SparkSession, describeDetail: proto.DescribeDetail): LogicalPlan = {
-    val deltaTable = transformDeltaTable(spark, describeDetail.getTable)
+      planner: SparkConnectPlanner, describeDetail: proto.DescribeDetail): LogicalPlan = {
+    val deltaTable = transformDeltaTable(planner, describeDetail.getTable)
     deltaTable.detail().queryExecution.analyzed
   }
 
   private def transformConvertToDelta(
-      spark: SparkSession, convertToDelta: proto.ConvertToDelta): LogicalPlan = {
+      planner: SparkConnectPlanner, convertToDelta: proto.ConvertToDelta): LogicalPlan = {
+    val spark = planner.session
     val tableIdentifier =
       spark.sessionState.sqlParser.parseTableIdentifier(convertToDelta.getIdentifier)
     val partitionSchema = if (convertToDelta.hasPartitionSchemaStruct) {
@@ -129,8 +137,8 @@ class DeltaRelationPlugin extends RelationPlugin with DeltaPlannerBase {
   }
 
   private def transformRestoreTable(
-      spark: SparkSession, restoreTable: proto.RestoreTable): LogicalPlan = {
-    val deltaTable = transformDeltaTable(spark, restoreTable.getTable)
+      planner: SparkConnectPlanner, restoreTable: proto.RestoreTable): LogicalPlan = {
+    val deltaTable = transformDeltaTable(planner, restoreTable.getTable)
     val df = if (restoreTable.hasVersion) {
       deltaTable.restoreToVersion(restoreTable.getVersion)
     } else if (restoreTable.hasTimestamp) {
@@ -173,11 +181,116 @@ class DeltaRelationPlugin extends RelationPlugin with DeltaPlannerBase {
       .queryExecution.commandExecuted
   }
 
+  private def transformMergeIntoTable(
+      planner: SparkConnectPlanner, protoMerge: proto.MergeIntoTable): LogicalPlan = {
+    val target = planner.transformRelation(protoMerge.getTarget)
+    val source = planner.transformRelation(protoMerge.getSource)
+    val condition = planner.transformExpression(protoMerge.getCondition)
+    val matchedActions = protoMerge.getMatchedActionsList.asScala
+      .map(transformMergeWhenMatchedAction(planner, _))
+    val notMatchedActions = protoMerge.getNotMatchedActionsList.asScala
+      .map(transformMergeWhenNotMatchedAction(planner, _))
+    val notMatchedBySourceActions = protoMerge.getNotMatchedBySourceActionsList.asScala
+      .map(transformMergeWhenNotMatchedBySourceAction(planner, _))
+    val withSchemaEvolution = protoMerge.getWithSchemaEvolution
+
+    val merge = DeltaMergeInto(
+      target,
+      source,
+      condition,
+      matchedActions.toSeq ++ notMatchedActions.toSeq ++ notMatchedBySourceActions.toSeq,
+      withSchemaEvolution
+    )
+    Dataset.ofRows(planner.session, merge).queryExecution.commandExecuted
+  }
+
+  private def transformMergeActionCondition(
+      planner: SparkConnectPlanner,
+      protoAction: proto.MergeIntoTable.Action): Option[Expression] = {
+    if (protoAction.hasCondition) {
+      Some(planner.transformExpression(protoAction.getCondition))
+    } else {
+      None
+    }
+  }
+
+  private def transformMergeWhenMatchedAction(
+      planner: SparkConnectPlanner,
+      protoAction: proto.MergeIntoTable.Action): DeltaMergeIntoMatchedClause = {
+    val condition = transformMergeActionCondition(planner, protoAction)
+
+    protoAction.getActionTypeCase match {
+      case proto.MergeIntoTable.Action.ActionTypeCase.DELETE_ACTION =>
+        DeltaMergeIntoMatchedDeleteClause(condition)
+      case proto.MergeIntoTable.Action.ActionTypeCase.UPDATE_ACTION =>
+        val actions = transformMergeAssignments(
+          planner, protoAction.getUpdateAction.getAssignmentsList.asScala.toSeq)
+        DeltaMergeIntoMatchedUpdateClause(condition, actions)
+      case proto.MergeIntoTable.Action.ActionTypeCase.UPDATE_STAR_ACTION =>
+        DeltaMergeIntoMatchedUpdateClause(condition, Seq(UnresolvedStar(None)))
+    }
+  }
+
+  private def transformMergeWhenNotMatchedAction(
+      planner: SparkConnectPlanner,
+      protoAction: proto.MergeIntoTable.Action): DeltaMergeIntoNotMatchedClause = {
+    val condition = transformMergeActionCondition(planner, protoAction)
+
+    protoAction.getActionTypeCase match {
+      case proto.MergeIntoTable.Action.ActionTypeCase.INSERT_ACTION =>
+        val actions = transformMergeAssignments(
+          planner, protoAction.getInsertAction.getAssignmentsList.asScala.toSeq)
+        DeltaMergeIntoNotMatchedInsertClause(condition, actions)
+      case proto.MergeIntoTable.Action.ActionTypeCase.INSERT_STAR_ACTION =>
+        DeltaMergeIntoNotMatchedInsertClause(condition, Seq(UnresolvedStar(None)))
+    }
+  }
+
+  private def transformMergeWhenNotMatchedBySourceAction(
+      planner: SparkConnectPlanner,
+      protoAction: proto.MergeIntoTable.Action): DeltaMergeIntoNotMatchedBySourceClause = {
+    val condition = transformMergeActionCondition(planner, protoAction)
+
+    protoAction.getActionTypeCase match {
+      case proto.MergeIntoTable.Action.ActionTypeCase.DELETE_ACTION =>
+        DeltaMergeIntoNotMatchedBySourceDeleteClause(condition)
+      case proto.MergeIntoTable.Action.ActionTypeCase.UPDATE_ACTION =>
+        val actions = transformMergeAssignments(
+          planner, protoAction.getUpdateAction.getAssignmentsList.asScala.toSeq)
+        DeltaMergeIntoNotMatchedBySourceUpdateClause(condition, actions)
+    }
+  }
+
+  private def transformMergeAssignments(
+      planner: SparkConnectPlanner,
+      protoAssignments: Seq[proto.Assignment]): Seq[Expression] = {
+    if (protoAssignments.isEmpty) {
+      Seq.empty
+    } else {
+      DeltaMergeIntoClause.toActions(protoAssignments.map(transformAssignment(planner, _)))
+    }
+  }
+
   private def transformAssignment(
       planner: SparkConnectPlanner, assignment: proto.Assignment): Assignment = {
     Assignment(
       key = planner.transformExpression(assignment.getField),
       value = planner.transformExpression(assignment.getValue))
+  }
+
+  private def transformOptimizeTable(
+      planner: SparkConnectPlanner, optimizeTable: proto.OptimizeTable): LogicalPlan = {
+    val deltaTable = transformDeltaTable(planner, optimizeTable.getTable)
+    var optimizeBuilder = deltaTable.optimize()
+    for (partitionFilter <- optimizeTable.getPartitionFiltersList.asScala) {
+      optimizeBuilder = optimizeBuilder.where(partitionFilter)
+    }
+    val df = if (optimizeTable.getZorderColumnsList.isEmpty) {
+      optimizeBuilder.executeCompaction()
+    } else {
+      optimizeBuilder.executeZOrderBy(optimizeTable.getZorderColumnsList.asScala.toSeq: _*)
+    }
+    df.queryExecution.commandExecuted
   }
 }
 

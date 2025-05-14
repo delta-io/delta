@@ -572,6 +572,20 @@ object CoordinatedCommitsUtils extends DeltaLogging {
   }
 
   /**
+   * Fetches the SparkSession default configurations for ICT. The `withDefaultKey`
+   * flag controls whether the keys in the returned map should have the default prefix or not.
+   */
+  def getDefaultICTConfigurations(
+      spark: SparkSession, withDefaultKey: Boolean = false): Map[String, String] = {
+    ICT_TABLE_PROPERTY_CONFS.flatMap { conf =>
+      spark.conf.getOption(conf.defaultTablePropertyKey).map { value =>
+        val finalKey = if (withDefaultKey) conf.defaultTablePropertyKey else conf.key
+        finalKey -> value
+      }
+    }.toMap
+  }
+
+  /**
    * Fetches the SparkSession default configurations for Coordinated Commits. The `withDefaultKey`
    * flag controls whether the keys in the returned map should have the default prefix or not.
    * For example, if property 'coordinatedCommits.commitCoordinator-preview' is set to 'dynamodb'

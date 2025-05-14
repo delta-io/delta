@@ -398,7 +398,22 @@ case class CreateDeltaTableCommand(
         // Remove 'EXISTS_DEFAULT' because it is not required for tables created with CREATE TABLE.
         txn.removeExistsDefaultFromSchema()
         protocol.foreach { protocol =>
-          txn.updateProtocol(protocol)
+          // For commands like CREATE LIKE, the `protocol` here may contain table features
+          // from source table. It will override the `newProtocol` being created in the above
+          // `txn.updateMetadataForNewTable`.
+          // In order to enable [[CatalogOwnedTableFeature]] for target table w/ default
+          // spark configuration of CatalogOwned enabled, we need to manually append
+          // [[CatalogOwnedTableFeature]] here to the existing source table protocol.
+          val finalizedProtocol = if (CatalogOwnedTableUtils.defaultCatalogOwnedEnabled(
+              spark = sparkSession)) {
+            val minCatalogOwnedProtocol = Protocol(
+              CatalogOwnedTableFeature.minReaderVersion,
+              CatalogOwnedTableFeature.minWriterVersion).withFeature(CatalogOwnedTableFeature)
+            protocol.merge(minCatalogOwnedProtocol)
+          } else {
+            protocol
+          }
+          txn.updateProtocol(finalizedProtocol)
         }
         ClusteredTableUtils.getDomainMetadataFromTransaction(
           ClusteredTableUtils.getClusterBySpecOptional(table), txn).toSeq
