@@ -507,7 +507,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
                 txnId.getAppId(), txnId.getVersion(), lastTxnVersion.get());
           }
         });
-    if (clusteringColumns.isPresent()
+    if (operation != Operation.REPLACE_TABLE && clusteringColumns.isPresent()
         && snapshot.getMetadata().getPartitionColumns().getSize() != 0) {
       throw new KernelException("Cannot set clustering columns on a partitioned table");
     }
