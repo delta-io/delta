@@ -114,8 +114,12 @@ public class SchemaUtils {
         "Cannot validate updated schema when column mapping is disabled");
     validateSchema(newSchema, true /*columnMappingEnabled*/);
     validatePartitionColumns(newSchema, new ArrayList<>(currentPartitionColumns));
-    validateSchemaEvolution(currentSchema, newSchema, newMetadata, clusteringColumnPhysicalNames);
-    validateNoMapStructKeyChanges(currentSchema, newSchema, newMetadata.getConfiguration());
+    validateSchemaEvolution(
+        currentSchema,
+        newSchema,
+        newMetadata,
+        clusteringColumnPhysicalNames,
+        newMetadata.getConfiguration());
   }
 
   /**
@@ -430,13 +434,15 @@ public class SchemaUtils {
       StructType currentSchema,
       StructType newSchema,
       Metadata metadata,
-      Set<String> clusteringColumnPhysicalNames) {
+      Set<String> clusteringColumnPhysicalNames,
+      Map<String, String> configuration) {
     ColumnMappingMode columnMappingMode =
         ColumnMapping.getColumnMappingMode(metadata.getConfiguration());
     switch (columnMappingMode) {
       case ID:
       case NAME:
-        validateSchemaEvolutionById(currentSchema, newSchema, clusteringColumnPhysicalNames);
+        validateSchemaEvolutionById(
+            currentSchema, newSchema, clusteringColumnPhysicalNames, configuration);
         return;
       case NONE:
         throw new UnsupportedOperationException(
@@ -452,7 +458,10 @@ public class SchemaUtils {
    * fields
    */
   private static void validateSchemaEvolutionById(
-      StructType currentSchema, StructType newSchema, Set<String> clusteringColumnPhysicalNames) {
+      StructType currentSchema,
+      StructType newSchema,
+      Set<String> clusteringColumnPhysicalNames,
+      Map<String, String> configuration) {
     Map<Integer, StructField> currentFieldsById = fieldsById(currentSchema);
     Map<Integer, StructField> updatedFieldsById = fieldsById(newSchema);
     SchemaChanges schemaChanges = computeSchemaChangesById(currentFieldsById, updatedFieldsById);
@@ -462,6 +471,7 @@ public class SchemaUtils {
     validateUpdatedSchemaCompatibility(schemaChanges);
     validateClusteringColumnsNotDropped(
         schemaChanges.removedFields(), clusteringColumnPhysicalNames);
+    validateNoMapStructKeyChanges(schemaChanges, newSchema, configuration);
     // ToDo Potentially validate IcebergCompatV2 nested IDs
   }
 
@@ -657,37 +667,29 @@ public class SchemaUtils {
    * validates that
    */
   private static void validateNoMapStructKeyChanges(
-      StructType currentSchema, StructType newSchema, Map<String, String> configuration) {
+      SchemaChanges schemaChanges, StructType newSchema, Map<String, String> configuration) {
     if (TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.fromMetadata(configuration)) {
       // do the check if the feature is enabled now
-      List<Tuple2<List<String>, StructField>> columnPathToMaps =
-          filterRecursively(
-              currentSchema,
-              true, /* recurseIntoMapOrArrayElements, need to check maps inside arrays */
-              false, /* stopOnFirstMatch */
-              sf -> {
-                DataType dataType = sf.getDataType();
-                return (dataType instanceof MapType)
-                    && ((MapType) dataType).getKeyField().getDataType() instanceof StructType;
-              });
-      Map<Integer, StructField> updatedFieldsById = fieldsById(newSchema);
-      for (Tuple2<List<String>, StructField> pathAndField : columnPathToMaps) {
-        StructField newMap = updatedFieldsById.get(getColumnId(pathAndField._2));
-        if (newMap != null) {
-          // if the map was removed, that's okay, so only check if newMap is not null
-          DataType newDataType = newMap.getDataType();
+      for (Tuple2<StructField, StructField> updatedFields : schemaChanges.updatedFields()) {
+        StructField existingField = updatedFields._1;
+        DataType existingDataType = existingField.getDataType();
+        if ((existingDataType instanceof MapType)
+            && ((MapType) existingDataType).getKeyField().getDataType() instanceof StructType) {
+          // we have a map with a struct key, check the new field
+          StructField newField = updatedFields._2;
+          DataType newDataType = newField.getDataType();
           if (newDataType instanceof MapType) {
             // This check doesn't block changing the whole type, so if it's not a Map, don't bother
             // to check anything
-            StructField currentStructKey = ((MapType) pathAndField._2.getDataType()).getKeyField();
-            // cast is safe, we filtered for this
+            StructField currentStructKey = ((MapType) existingDataType).getKeyField();
+            // cast is safe, we checked this above
             StructType currentKeyType = (StructType) currentStructKey.getDataType();
             StructField newStructKey = ((MapType) newDataType).getKeyField();
             if (!currentKeyType.equals(newStructKey.getDataType())) {
               throw new KernelException(
                   String.format(
                       "Cannot change the type key of Map field %s from %s to %s",
-                      pathAndField._2.getName(), currentKeyType, newStructKey.getDataType()));
+                      newField.getName(), currentKeyType, newStructKey.getDataType()));
             }
           }
         }
