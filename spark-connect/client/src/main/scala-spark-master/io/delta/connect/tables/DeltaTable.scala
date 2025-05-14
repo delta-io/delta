@@ -1271,7 +1271,7 @@ object DeltaTable {
    * this throws error if active SparkSession has not been set, that is,
    * `SparkSession.getActiveSession()` is empty.
    *
-   * @since 2.5.0
+   * @since 4.0.0
    */
   @Evolving
   def createIfNotExists(): DeltaTableBuilder = {
@@ -1286,7 +1286,7 @@ object DeltaTable {
    * Refer to [[DeltaTableBuilder]] for more details.
    *
    * @param spark sparkSession sparkSession passed by the user
-   * @since 2.5.0
+   * @since 4.0.0
    */
   @Evolving
   def createIfNotExists(spark: SparkSession): DeltaTableBuilder = {
@@ -1304,7 +1304,7 @@ object DeltaTable {
    * this throws error if active SparkSession has not been set, that is,
    * `SparkSession.getActiveSession()` is empty.
    *
-   * @since 2.5.0
+   * @since 4.0.0
    */
   @Evolving
   def replace(): DeltaTableBuilder = {
@@ -1319,7 +1319,7 @@ object DeltaTable {
    * Refer to [[DeltaTableBuilder]] for more details.
    *
    * @param spark sparkSession sparkSession passed by the user
-   * @since 2.5.0
+   * @since 4.0.0
    */
   @Evolving
   def replace(spark: SparkSession): DeltaTableBuilder = {
@@ -1337,7 +1337,7 @@ object DeltaTable {
    * this throws error if active SparkSession has not been set, that is,
    * `SparkSession.getActiveSession()` is empty.
    *
-   * @since 2.5.0
+   * @since 4.0.0
    */
   @Evolving
   def createOrReplace(): DeltaTableBuilder = {
@@ -1352,7 +1352,7 @@ object DeltaTable {
    * Refer to [[DeltaTableBuilder]] for more details.
    *
    * @param spark sparkSession sparkSession passed by the user.
-   * @since 2.5.0
+   * @since 4.0.0
    */
   @Evolving
   def createOrReplace(spark: SparkSession): DeltaTableBuilder = {
