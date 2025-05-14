@@ -16,9 +16,9 @@
 
 package io.delta.kernel.internal.types
 
-import org.scalatest.funsuite.AnyFunSuite
-
 import io.delta.kernel.types._
+
+import org.scalatest.funsuite.AnyFunSuite
 
 /** Test suite for the TypeWideningChecker class. */
 class TypeWideningCheckerSuite extends AnyFunSuite {
@@ -28,7 +28,8 @@ class TypeWideningCheckerSuite extends AnyFunSuite {
     assert(TypeWideningChecker.isWideningSupported(IntegerType.INTEGER, IntegerType.INTEGER))
     assert(TypeWideningChecker.isWideningSupported(StringType.STRING, StringType.STRING))
     assert(TypeWideningChecker.isWideningSupported(
-      new DecimalType(10, 2), new DecimalType(10, 2)))
+      new DecimalType(10, 2),
+      new DecimalType(10, 2)))
   }
 
   test("integer widening is supported") {
@@ -90,9 +91,13 @@ class TypeWideningCheckerSuite extends AnyFunSuite {
     assert(!TypeWideningChecker.isWideningSupported(new DecimalType(10, 2), new DecimalType(10, 1)))
     assert(!TypeWideningChecker.isWideningSupported(new DecimalType(10, 2), new DecimalType(9, 2)))
     assert(!TypeWideningChecker.isWideningSupported(
-      new DecimalType(10, 5), new DecimalType(12, 8))) // k1 < k2
+      new DecimalType(10, 5),
+      new DecimalType(12, 8)
+    )) // k1 < k2
     assert(!TypeWideningChecker.isWideningSupported(
-      new DecimalType(10, 5), new DecimalType(10, 3))) // scale decrease
+      new DecimalType(10, 5),
+      new DecimalType(10, 3)
+    )) // scale decrease
   }
 
   test("integer to decimal supported widening") {
@@ -104,21 +109,26 @@ class TypeWideningCheckerSuite extends AnyFunSuite {
       assert(TypeWideningChecker.isWideningSupported(t, new DecimalType(15, 3)))
     }
 
-
     // Test Long -> Decimal(20 + k1, k2) where k1 >= k2 >= 0
     assert(TypeWideningChecker.isWideningSupported(LongType.LONG, new DecimalType(20, 0)))
     assert(TypeWideningChecker.isWideningSupported(LongType.LONG, new DecimalType(25, 5)))
   }
 
   test("integer to Decimal unsupported widening") {
-     Seq(ByteType.BYTE, ShortType.SHORT, IntegerType.INTEGER) foreach { t =>
-       assert(!TypeWideningChecker.isWideningSupported(
-         t, new DecimalType(9, 0))) // precision < 10
-       assert(!TypeWideningChecker.isWideningSupported(
-         t, new DecimalType(12, 3))) // k1 < k2
-     }
+    Seq(ByteType.BYTE, ShortType.SHORT, IntegerType.INTEGER) foreach { t =>
+      assert(!TypeWideningChecker.isWideningSupported(
+        t,
+        new DecimalType(9, 0)
+      )) // precision < 10
+      assert(!TypeWideningChecker.isWideningSupported(
+        t,
+        new DecimalType(12, 3)
+      )) // k1 < k2
+    }
     assert(!TypeWideningChecker.isWideningSupported(
-      LongType.LONG, new DecimalType(19, 0))) // precision < 20
+      LongType.LONG,
+      new DecimalType(19, 0)
+    )) // precision < 20
   }
 
   test("unsupported widening") {
@@ -145,7 +155,8 @@ class TypeWideningCheckerSuite extends AnyFunSuite {
 
     // Decimal precision increase (without scale increase)
     assert(TypeWideningChecker.isIcebergV2Compatible(
-      new DecimalType(5, 2), new DecimalType(10, 2)))
+      new DecimalType(5, 2),
+      new DecimalType(10, 2)))
 
   }
 
@@ -157,17 +168,20 @@ class TypeWideningCheckerSuite extends AnyFunSuite {
 
     // Date to TimestampNTZ widening (not supported by Iceberg)
     assert(!TypeWideningChecker.isIcebergV2Compatible(
-      DateType.DATE, TimestampNTZType.TIMESTAMP_NTZ))
+      DateType.DATE,
+      TimestampNTZType.TIMESTAMP_NTZ))
 
     // Decimal scale increase (not supported by Iceberg)
     assert(!TypeWideningChecker.isIcebergV2Compatible(
-      new DecimalType(5, 2), new DecimalType(10, 5)))
+      new DecimalType(5, 2),
+      new DecimalType(10, 5)))
 
     // Integer to Decimal widening (not supported by Iceberg)
     assert(!TypeWideningChecker.isIcebergV2Compatible(ByteType.BYTE, new DecimalType(10, 0)))
     assert(!TypeWideningChecker.isIcebergV2Compatible(ShortType.SHORT, new DecimalType(12, 2)))
     assert(!TypeWideningChecker.isIcebergV2Compatible(
-      IntegerType.INTEGER, new DecimalType(15, 3)))
+      IntegerType.INTEGER,
+      new DecimalType(15, 3)))
     assert(!TypeWideningChecker.isIcebergV2Compatible(LongType.LONG, new DecimalType(20, 0)))
   }
 }
