@@ -302,8 +302,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
           clusteringColsOpt = Some(List(new Column("non-exist"))))
       }
       assert(
-        ex.getMessage.contains("Clustering columns and partition columns " +
-          "cannot coexist in a table"))
+        ex.getMessage.contains("Cannot set clustering columns on a partitioned table"))
     }
   }
 
