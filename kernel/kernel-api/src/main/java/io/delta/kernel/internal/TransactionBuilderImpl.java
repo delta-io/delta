@@ -492,7 +492,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
    * Validates that Kernel can write to the existing table with the latest snapshot as provided.
    * This means (1) Kernel supports the reader and writer protocol of the table (2) if a transaction
    * identifier has been provided in this txn builder, a concurrent write has not already committed
-   * this transaction.
+   * this transaction (3) Updating a partitioned table with clustering columns is not allowed.
    */
   protected void validateWriteToExistingTable(Engine engine, SnapshotImpl snapshot) {
     // Validate the table has no features that Kernel doesn't yet support writing into it.
