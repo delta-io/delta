@@ -65,7 +65,7 @@ setup(
     },
     install_requires=[
         # TODO update dependency once Spark preview is formally released
-        'pyspark @ https://dist.apache.org/repos/dist/dev/spark/v4.0.0-rc5-bin/pyspark-4.0.0.tar.gz',
+        'pyspark @ https://dist.apache.org/repos/dist/dev/spark/v4.0.0-rc6-bin/pyspark-4.0.0.tar.gz',
         # 'pyspark>=4.0.0',
         'importlib_metadata>=1.0.0',
     ],
