@@ -30,6 +30,9 @@ class DeltaTestCase(ReusedConnectTestCase):
     @classmethod
     def conf(cls) -> SparkConf:
         _conf = super(DeltaTestCase, cls).conf()
+        # Make sure we're removing any spark.master configuration
+        if _conf._jconf is not None:
+            _conf._jconf.remove("spark.master")
         _conf.set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
         _conf.set("spark.sql.catalog.spark_catalog",
                   "org.apache.spark.sql.delta.catalog.DeltaCatalog")

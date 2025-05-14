@@ -33,6 +33,14 @@ def test(root_dir, code_dir, packages):
                   f.endswith(".py") and not f.startswith("_")]
     extra_class_path = path.join(python_root_dir, path.join(code_dir, "testing"))
 
+    # Check if we're running Delta Connect tests and need to set special environment
+    is_connect_test = code_dir.endswith("connect")
+    env = None
+    
+    if is_connect_test:
+        env = os.environ.copy()
+        env["SPARK_CONNECT_TESTING_REMOTE"] = "local[4]"
+
     for test_file in test_files:
         try:
             cmd = ["spark-submit",
@@ -44,7 +52,7 @@ def test(root_dir, code_dir, packages):
                    "--packages", ",".join(packages), test_file]
             print("Running tests in %s\n=============" % test_file)
             print("Command: %s" % str(cmd))
-            run_cmd(cmd, stream_output=True)
+            run_cmd(cmd, stream_output=True, env=env)
         except:
             print("Failed tests in %s" % (test_file))
             raise
