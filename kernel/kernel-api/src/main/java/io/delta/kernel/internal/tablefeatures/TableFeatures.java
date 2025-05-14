@@ -187,7 +187,9 @@ public class TableFeatures {
   // Base class for variantType and variantType-preview features. Both features are same in terms
   // of behavior and given the feature is graduated, we will enable the `variantType` by default
   // if the metadata requirements are satisfied and the table doesn't already contain the
-  // `variantType-preview` feature.
+  // `variantType-preview` feature. Also to note, with this version of Kernel, one can't
+  // auto upgrade to `variantType-preview` with metadata requirements. It can only be set
+  // manually using `delta.feature.variantType-preview=supported` property.
   private static class VariantTypeTableFeatureBase extends TableFeature.ReaderWriterFeature {
     VariantTypeTableFeatureBase(String featureName) {
       super(featureName, /* minReaderVersion = */ 3, /* minWriterVersion = */ 7);
@@ -306,7 +308,9 @@ public class TableFeatures {
   // Base class for typeWidening and typeWidening-preview features. Both features are same in terms
   // of behavior and given the feature is graduated, we will enable the `typeWidening` by default
   // if the metadata requirements are satisfied and the table doesn't already contain the
-  // `typeWidening-preview` feature.
+  // `typeWidening-preview` feature. Also to note, with this version of Kernel, one can't
+  // auto upgrade to `typeWidening-preview` with metadata requirements. It can only be set
+  // manually using `delta.feature.typeWidening-preview=supported` property.
   private static class TypeWideningTableFeatureBase extends TableFeature.ReaderWriterFeature {
     TypeWideningTableFeatureBase(String featureName) {
       super(featureName, /* minReaderVersion = */ 3, /* minWriterVersion = */ 7);

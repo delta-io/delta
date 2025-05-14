@@ -15,7 +15,6 @@
  */
 package io.delta.kernel.internal.tablefeatures
 
-import java.util
 import java.util.{Collections, Optional}
 import java.util.Collections.{emptySet, singleton}
 import java.util.stream.Collectors.toList
@@ -185,7 +184,7 @@ class TableFeaturesSuite extends AnyFunSuite {
         val protocolWithPreviewFeature = new Protocol(3, 7)
           .withFeature(TableFeatures.getTableFeature(s"$feature-preview"))
 
-        val enable = TableFeatures.getTableFeature("typeWidening")
+        val enable = TableFeatures.getTableFeature(feature)
           .asInstanceOf[FeatureAutoEnabledByMetadata]
           .metadataRequiresFeatureToBeEnabled(
             protocolWithPreviewFeature,
