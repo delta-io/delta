@@ -84,9 +84,9 @@ class DeltaTableBuilderSuite extends DeltaQueryTest with RemoteSparkSession {
 
     // Verify generated columns
     generatedColumns.foreach { case (col, expr) =>
-      val field = schemaFields.find(_.name == col).getOrElse {
-        fail(s"Generated column $col not found in table schema")
-      }
+      val fieldOpt = schemaFields.find(_.name == col)
+      assert(fieldOpt.isDefined, s"Generated column $col not found in table schema")
+      val field = fieldOpt.get
       
       // Check if the metadata contains the generation expression key
       if (field.metadata.contains("delta.generationExpression")) {
@@ -98,9 +98,8 @@ class DeltaTableBuilderSuite extends DeltaQueryTest with RemoteSparkSession {
     
     // Verify identity columns - just check they exist for now, without strict metadata validation
     identityColumns.foreach { case (col, _) =>
-      val field = schemaFields.find(_.name == col).getOrElse {
-        fail(s"Identity column $col not found in table schema")
-      }
+      val fieldOpt = schemaFields.find(_.name == col)
+      assert(fieldOpt.isDefined, s"Identity column $col not found in table schema")
     }
   }
 

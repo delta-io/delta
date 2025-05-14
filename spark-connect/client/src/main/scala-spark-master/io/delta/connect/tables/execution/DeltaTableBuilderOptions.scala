@@ -34,4 +34,3 @@ case class CreateTableOptions(ifNotExists: Boolean) extends DeltaTableBuilderOpt
  * @param orCreate boolean whether to create the table if the table doesn't exist.
  */
 case class ReplaceTableOptions(orCreate: Boolean) extends DeltaTableBuilderOptions
-

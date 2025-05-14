@@ -969,7 +969,6 @@ class DeltaConnectPlannerSuite
     }
   }
 
-
   test("add table feature support") {
     val tableName = "test_table"
     withTable(tableName) {
