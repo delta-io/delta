@@ -186,19 +186,19 @@ class DeltaColumnBuilder private[tables](private val colName: String) {
 
     identityAllowExplicitInsert.foreach { allowExplicitInsert =>
       if (generationExpr.nonEmpty) {
-        throw new IllegalArgumentException(
+        throw DeltaTable.createAnalysisException(
           "IDENTITY column cannot be specified with a generated column expression.")
       }
 
       if (dataType != null && dataType != LongType) {
-        throw new IllegalArgumentException(
+        throw DeltaTable.createAnalysisException(
           s"DataType ${dataType.typeName} is not supported for IDENTITY columns.")
       }
 
       metadataBuilder.putBoolean("delta.identity.allowExplicitInsert", allowExplicitInsert)
       metadataBuilder.putLong("delta.identity.start", identityStart.get)
       if (identityStep.get == 0L) {
-        throw new IllegalArgumentException("IDENTITY column step cannot be 0.")
+        throw DeltaTable.createAnalysisException("IDENTITY column step cannot be 0.")
       }
       metadataBuilder.putLong("delta.identity.step", identityStep.get)
     }
@@ -208,7 +208,7 @@ class DeltaColumnBuilder private[tables](private val colName: String) {
     }
     val fieldMetadata = metadataBuilder.build()
     if (dataType == null) {
-      throw new IllegalArgumentException(s"The data type of the column $colName is not provided")
+      throw DeltaTable.createAnalysisException(s"The data type of the column $colName is not provided")
     }
     StructField(
       colName,

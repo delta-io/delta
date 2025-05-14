@@ -258,7 +258,7 @@ class DeltaTableBuilderSuite extends DeltaQueryTest with RemoteSparkSession {
   }
 
   test("test addColumn using columnBuilder, without dataType") {
-    val e = intercept[Exception] {
+    val e = intercept[AnalysisException] {
       DeltaTable.columnBuilder(spark, "value")
         .generatedAlwaysAs("true")
         .nullable(true)
@@ -282,7 +282,7 @@ class DeltaTableBuilderSuite extends DeltaQueryTest with RemoteSparkSession {
   test("create table - errors if already exists") {
     withTable("testTable") {
       spark.sql(s"CREATE TABLE testTable (c1 int) USING DELTA")
-      intercept[Exception] {
+      intercept[AnalysisException] {
         defaultCreateTableBuilder(ifNotExists = false, Some("testTable")).execute()
       }
     }
@@ -309,7 +309,7 @@ class DeltaTableBuilderSuite extends DeltaQueryTest with RemoteSparkSession {
   }
 
   test("replace table - errors if not exists") {
-    intercept[Exception] {
+    intercept[AnalysisException] {
       defaultReplaceTableBuilder(orCreate = false, Some("testTable")).execute()
     }
   }
@@ -342,14 +342,14 @@ class DeltaTableBuilderSuite extends DeltaQueryTest with RemoteSparkSession {
   }
 
   test("test no identifier and no location") {
-    val e = intercept[Exception] {
+    val e = intercept[AnalysisException] {
       io.delta.tables.DeltaTable.create(spark).addColumn("c1", "int").execute()
     }
     assert(e.getMessage.equals("Table name or location has to be specified"))
   }
 
   test("partitionedBy only should contain columns in the schema") {
-    val e = intercept[Exception] {
+    val e = intercept[AnalysisException] {
       io.delta.tables.DeltaTable.create(spark).tableName("testTable")
         .addColumn("c1", "int")
         .partitionedBy("c2")
@@ -361,13 +361,16 @@ class DeltaTableBuilderSuite extends DeltaQueryTest with RemoteSparkSession {
   test("errors if table name and location are different paths") {
     withTempPath { dir =>
       val path = dir.getAbsolutePath
+      // TODO: This should be an AnalysisException, but it ends up as an Exception in Spark 
+      // arising from the connect client attempting to enrich the exception with a Delta error code. 
       val e = intercept[Exception] {
         io.delta.tables.DeltaTable.create(spark).tableName(s"delta.`$path`")
           .addColumn("c1", "int")
           .location("src/test/resources/delta/non_generated_columns")
           .execute()
       }
-      assert(e.getMessage.contains("DELTA_CREATE_TABLE_IDENTIFIER_LOCATION_MISMATCH"))
+      val deltaErrorCode = "DELTA_CREATE_TABLE_IDENTIFIER_LOCATION_MISMATCH"
+      assert(e.getMessage.contains(deltaErrorCode))
     }
   }
 
@@ -384,7 +387,7 @@ class DeltaTableBuilderSuite extends DeltaQueryTest with RemoteSparkSession {
   test("errors if use parquet path as identifier") {
     withTempPath { dir =>
       val path = dir.getAbsolutePath
-      val e = intercept[Exception] {
+      val e = intercept[AnalysisException] {
         io.delta.tables.DeltaTable.create(spark).tableName(s"parquet.`$path`")
           .addColumn("c1", "int")
           .location(path)
@@ -431,16 +434,18 @@ class DeltaTableBuilderSuite extends DeltaQueryTest with RemoteSparkSession {
   }
 
   test("clusterBy only should contain columns in the schema") {
-    val e = intercept[Exception] {
+    val e = intercept[AnalysisException] {
       io.delta.tables.DeltaTable.create().tableName("testTable")
         .addColumn("c1", "int")
         .clusterBy("c2")
         .execute()
     }
-    assert(e.getMessage.contains("UNSUPPORTED_FEATURE.PARTITION_WITH_NESTED_COLUMN_IS_UNSUPPORTED"))
+    assert(e.getMessage.contains("`c2` is missing"))
   }
 
   test("partitionedBy and clusterBy cannot be used together") {
+    // TODO: This should be an AnalysisException, but it ends up as an Exception in Spark 
+    // arising from the connect client attempting to enrich the exception with a Delta error code.
     val e = intercept[Exception] {
       io.delta.tables.DeltaTable.create().tableName("testTable")
         .addColumn("c1", "int")
@@ -449,7 +454,8 @@ class DeltaTableBuilderSuite extends DeltaQueryTest with RemoteSparkSession {
         .clusterBy("c1")
         .execute()
     }
-    assert(e.getMessage.contains("DELTA_CLUSTER_BY_WITH_PARTITIONED_BY"))
+    val deltaErrorCode = "DELTA_CLUSTER_BY_WITH_PARTITIONED_BY"
+    assert(e.getMessage.contains(deltaErrorCode))
   }
 
   test("create table with identity columns") {

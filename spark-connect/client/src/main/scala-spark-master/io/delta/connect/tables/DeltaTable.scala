@@ -23,7 +23,7 @@ import io.delta.connect.spark.{proto => spark_proto}
 import io.delta.tables.execution.{CreateTableOptions, ReplaceTableOptions}
 
 import org.apache.spark.annotation.Evolving
-import org.apache.spark.sql.{functions, Column, DataFrame, Dataset, Row, SparkSession}
+import org.apache.spark.sql.{functions, AnalysisException, Column, DataFrame, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.encoders.AgnosticEncoders.PrimitiveBooleanEncoder
 import org.apache.spark.sql.connect.ColumnNodeToProtoConverter.toExpr
 import org.apache.spark.sql.connect.ConnectConversions._
@@ -1390,5 +1390,14 @@ object DeltaTable {
   @Evolving
   def columnBuilder(spark: SparkSession, colName: String): DeltaColumnBuilder = {
     new DeltaColumnBuilder(colName)
+  }
+
+  private[tables] def createAnalysisException(message: String): AnalysisException = {
+    // TODO: We should refactor this to use DeltaErrors. Until then, we need to use a dummy Spark
+    // error class to initialize the AnalysisException, which we then remove in the copy method.
+    new AnalysisException("ALL_PARTITION_COLUMNS_NOT_ALLOWED", Map("message" -> message)).copy(
+      message = message, 
+      errorClass = None,
+      messageParameters = Map.empty)
   }
 }
