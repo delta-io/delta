@@ -40,6 +40,7 @@ import io.delta.kernel.types.*;
  * </ul>
  */
 public class TypeWideningChecker {
+  private TypeWideningChecker() {}
 
   /**
    * Checks if a type change from sourceType to targetType is a supported widening operation.
