@@ -107,6 +107,7 @@ trait RemoteSparkSession extends BeforeAndAfterAll { self: Suite =>
       "org.apache.spark.sql.connect.delta.DeltaRelationPlugin"
     command += "--conf" += "spark.connect.extensions.command.classes=" +
       "org.apache.spark.sql.connect.delta.DeltaCommandPlugin"
+    // Spark submit requires a jar. We pick one we know exists.
     command += s"$sparkHome/jars/unused-1.0.0.jar"
 
     val builder = new ProcessBuilder(command.result(): _*)

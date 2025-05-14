@@ -98,77 +98,9 @@ class DeltaRelation(google.protobuf.message.Message):
         merge_into_table: global___MergeIntoTable | None = ...,
         optimize_table: global___OptimizeTable | None = ...,
     ) -> None: ...
-    def HasField(
-        self,
-        field_name: typing_extensions.Literal[
-            "convert_to_delta",
-            b"convert_to_delta",
-            "delete_from_table",
-            b"delete_from_table",
-            "describe_detail",
-            b"describe_detail",
-            "describe_history",
-            b"describe_history",
-            "is_delta_table",
-            b"is_delta_table",
-            "merge_into_table",
-            b"merge_into_table",
-            "optimize_table",
-            b"optimize_table",
-            "relation_type",
-            b"relation_type",
-            "restore_table",
-            b"restore_table",
-            "scan",
-            b"scan",
-            "update_table",
-            b"update_table",
-        ],
-    ) -> builtins.bool: ...
-    def ClearField(
-        self,
-        field_name: typing_extensions.Literal[
-            "convert_to_delta",
-            b"convert_to_delta",
-            "delete_from_table",
-            b"delete_from_table",
-            "describe_detail",
-            b"describe_detail",
-            "describe_history",
-            b"describe_history",
-            "is_delta_table",
-            b"is_delta_table",
-            "merge_into_table",
-            b"merge_into_table",
-            "optimize_table",
-            b"optimize_table",
-            "relation_type",
-            b"relation_type",
-            "restore_table",
-            b"restore_table",
-            "scan",
-            b"scan",
-            "update_table",
-            b"update_table",
-        ],
-    ) -> None: ...
-    def WhichOneof(
-        self, oneof_group: typing_extensions.Literal["relation_type", b"relation_type"]
-    ) -> (
-        typing_extensions.Literal[
-            "scan",
-            "describe_history",
-            "describe_detail",
-            "convert_to_delta",
-            "restore_table",
-            "is_delta_table",
-            "delete_from_table",
-            "update_table",
-            "merge_into_table",
-            "optimize_table",
-        ]
-        | None
-    ): ...
+    def HasField(self, field_name: typing_extensions.Literal["convert_to_delta", b"convert_to_delta", "delete_from_table", b"delete_from_table", "describe_detail", b"describe_detail", "describe_history", b"describe_history", "is_delta_table", b"is_delta_table", "merge_into_table", b"merge_into_table", "optimize_table", b"optimize_table", "relation_type", b"relation_type", "restore_table", b"restore_table", "scan", b"scan", "update_table", b"update_table"]) -> builtins.bool: ...
+    def ClearField(self, field_name: typing_extensions.Literal["convert_to_delta", b"convert_to_delta", "delete_from_table", b"delete_from_table", "describe_detail", b"describe_detail", "describe_history", b"describe_history", "is_delta_table", b"is_delta_table", "merge_into_table", b"merge_into_table", "optimize_table", b"optimize_table", "relation_type", b"relation_type", "restore_table", b"restore_table", "scan", b"scan", "update_table", b"update_table"]) -> None: ...
+    def WhichOneof(self, oneof_group: typing_extensions.Literal["relation_type", b"relation_type"]) -> typing_extensions.Literal["scan", "describe_history", "describe_detail", "convert_to_delta", "restore_table", "is_delta_table", "delete_from_table", "update_table", "merge_into_table", "optimize_table"] | None: ...
 
 global___DeltaRelation = DeltaRelation
 
@@ -186,9 +118,7 @@ class Scan(google.protobuf.message.Message):
         *,
         table: delta.connect.proto.base_pb2.DeltaTable | None = ...,
     ) -> None: ...
-    def HasField(
-        self, field_name: typing_extensions.Literal["table", b"table"]
-    ) -> builtins.bool: ...
+    def HasField(self, field_name: typing_extensions.Literal["table", b"table"]) -> builtins.bool: ...
     def ClearField(self, field_name: typing_extensions.Literal["table", b"table"]) -> None: ...
 
 global___Scan = Scan
@@ -209,9 +139,7 @@ class DescribeHistory(google.protobuf.message.Message):
         *,
         table: delta.connect.proto.base_pb2.DeltaTable | None = ...,
     ) -> None: ...
-    def HasField(
-        self, field_name: typing_extensions.Literal["table", b"table"]
-    ) -> builtins.bool: ...
+    def HasField(self, field_name: typing_extensions.Literal["table", b"table"]) -> builtins.bool: ...
     def ClearField(self, field_name: typing_extensions.Literal["table", b"table"]) -> None: ...
 
 global___DescribeHistory = DescribeHistory
@@ -230,9 +158,7 @@ class DescribeDetail(google.protobuf.message.Message):
         *,
         table: delta.connect.proto.base_pb2.DeltaTable | None = ...,
     ) -> None: ...
-    def HasField(
-        self, field_name: typing_extensions.Literal["table", b"table"]
-    ) -> builtins.bool: ...
+    def HasField(self, field_name: typing_extensions.Literal["table", b"table"]) -> builtins.bool: ...
     def ClearField(self, field_name: typing_extensions.Literal["table", b"table"]) -> None: ...
 
 global___DescribeDetail = DescribeDetail
@@ -264,33 +190,9 @@ class ConvertToDelta(google.protobuf.message.Message):
         partition_schema_string: builtins.str = ...,
         partition_schema_struct: pyspark.sql.connect.proto.types_pb2.DataType | None = ...,
     ) -> None: ...
-    def HasField(
-        self,
-        field_name: typing_extensions.Literal[
-            "partition_schema",
-            b"partition_schema",
-            "partition_schema_string",
-            b"partition_schema_string",
-            "partition_schema_struct",
-            b"partition_schema_struct",
-        ],
-    ) -> builtins.bool: ...
-    def ClearField(
-        self,
-        field_name: typing_extensions.Literal[
-            "identifier",
-            b"identifier",
-            "partition_schema",
-            b"partition_schema",
-            "partition_schema_string",
-            b"partition_schema_string",
-            "partition_schema_struct",
-            b"partition_schema_struct",
-        ],
-    ) -> None: ...
-    def WhichOneof(
-        self, oneof_group: typing_extensions.Literal["partition_schema", b"partition_schema"]
-    ) -> typing_extensions.Literal["partition_schema_string", "partition_schema_struct"] | None: ...
+    def HasField(self, field_name: typing_extensions.Literal["partition_schema", b"partition_schema", "partition_schema_string", b"partition_schema_string", "partition_schema_struct", b"partition_schema_struct"]) -> builtins.bool: ...
+    def ClearField(self, field_name: typing_extensions.Literal["identifier", b"identifier", "partition_schema", b"partition_schema", "partition_schema_string", b"partition_schema_string", "partition_schema_struct", b"partition_schema_struct"]) -> None: ...
+    def WhichOneof(self, oneof_group: typing_extensions.Literal["partition_schema", b"partition_schema"]) -> typing_extensions.Literal["partition_schema_string", "partition_schema_struct"] | None: ...
 
 global___ConvertToDelta = ConvertToDelta
 
@@ -320,36 +222,9 @@ class RestoreTable(google.protobuf.message.Message):
         version: builtins.int = ...,
         timestamp: builtins.str = ...,
     ) -> None: ...
-    def HasField(
-        self,
-        field_name: typing_extensions.Literal[
-            "table",
-            b"table",
-            "timestamp",
-            b"timestamp",
-            "version",
-            b"version",
-            "version_or_timestamp",
-            b"version_or_timestamp",
-        ],
-    ) -> builtins.bool: ...
-    def ClearField(
-        self,
-        field_name: typing_extensions.Literal[
-            "table",
-            b"table",
-            "timestamp",
-            b"timestamp",
-            "version",
-            b"version",
-            "version_or_timestamp",
-            b"version_or_timestamp",
-        ],
-    ) -> None: ...
-    def WhichOneof(
-        self,
-        oneof_group: typing_extensions.Literal["version_or_timestamp", b"version_or_timestamp"],
-    ) -> typing_extensions.Literal["version", "timestamp"] | None: ...
+    def HasField(self, field_name: typing_extensions.Literal["table", b"table", "timestamp", b"timestamp", "version", b"version", "version_or_timestamp", b"version_or_timestamp"]) -> builtins.bool: ...
+    def ClearField(self, field_name: typing_extensions.Literal["table", b"table", "timestamp", b"timestamp", "version", b"version", "version_or_timestamp", b"version_or_timestamp"]) -> None: ...
+    def WhichOneof(self, oneof_group: typing_extensions.Literal["version_or_timestamp", b"version_or_timestamp"]) -> typing_extensions.Literal["version", "timestamp"] | None: ...
 
 global___RestoreTable = RestoreTable
 
@@ -396,12 +271,8 @@ class DeleteFromTable(google.protobuf.message.Message):
         target: pyspark.sql.connect.proto.relations_pb2.Relation | None = ...,
         condition: pyspark.sql.connect.proto.expressions_pb2.Expression | None = ...,
     ) -> None: ...
-    def HasField(
-        self, field_name: typing_extensions.Literal["condition", b"condition", "target", b"target"]
-    ) -> builtins.bool: ...
-    def ClearField(
-        self, field_name: typing_extensions.Literal["condition", b"condition", "target", b"target"]
-    ) -> None: ...
+    def HasField(self, field_name: typing_extensions.Literal["condition", b"condition", "target", b"target"]) -> builtins.bool: ...
+    def ClearField(self, field_name: typing_extensions.Literal["condition", b"condition", "target", b"target"]) -> None: ...
 
 global___DeleteFromTable = DeleteFromTable
 
@@ -428,9 +299,7 @@ class UpdateTable(google.protobuf.message.Message):
         Must be an expression returning a boolean.
         """
     @property
-    def assignments(
-        self,
-    ) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[global___Assignment]:
+    def assignments(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[global___Assignment]:
         """(Optional) Set of assignments to apply to the rows matching the condition."""
     def __init__(
         self,
@@ -439,15 +308,8 @@ class UpdateTable(google.protobuf.message.Message):
         condition: pyspark.sql.connect.proto.expressions_pb2.Expression | None = ...,
         assignments: collections.abc.Iterable[global___Assignment] | None = ...,
     ) -> None: ...
-    def HasField(
-        self, field_name: typing_extensions.Literal["condition", b"condition", "target", b"target"]
-    ) -> builtins.bool: ...
-    def ClearField(
-        self,
-        field_name: typing_extensions.Literal[
-            "assignments", b"assignments", "condition", b"condition", "target", b"target"
-        ],
-    ) -> None: ...
+    def HasField(self, field_name: typing_extensions.Literal["condition", b"condition", "target", b"target"]) -> builtins.bool: ...
+    def ClearField(self, field_name: typing_extensions.Literal["assignments", b"assignments", "condition", b"condition", "target", b"target"]) -> None: ...
 
 global___UpdateTable = UpdateTable
 
@@ -480,20 +342,14 @@ class MergeIntoTable(google.protobuf.message.Message):
 
             ASSIGNMENTS_FIELD_NUMBER: builtins.int
             @property
-            def assignments(
-                self,
-            ) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[
-                global___Assignment
-            ]:
+            def assignments(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[global___Assignment]:
                 """(Optional) Set of assignments to apply."""
             def __init__(
                 self,
                 *,
                 assignments: collections.abc.Iterable[global___Assignment] | None = ...,
             ) -> None: ...
-            def ClearField(
-                self, field_name: typing_extensions.Literal["assignments", b"assignments"]
-            ) -> None: ...
+            def ClearField(self, field_name: typing_extensions.Literal["assignments", b"assignments"]) -> None: ...
 
         class UpdateStarAction(google.protobuf.message.Message):
             """Action that updates the target row by overwriting all columns."""
@@ -511,20 +367,14 @@ class MergeIntoTable(google.protobuf.message.Message):
 
             ASSIGNMENTS_FIELD_NUMBER: builtins.int
             @property
-            def assignments(
-                self,
-            ) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[
-                global___Assignment
-            ]:
+            def assignments(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[global___Assignment]:
                 """(Optional) Set of assignments to apply."""
             def __init__(
                 self,
                 *,
                 assignments: collections.abc.Iterable[global___Assignment] | None = ...,
             ) -> None: ...
-            def ClearField(
-                self, field_name: typing_extensions.Literal["assignments", b"assignments"]
-            ) -> None: ...
+            def ClearField(self, field_name: typing_extensions.Literal["assignments", b"assignments"]) -> None: ...
 
         class InsertStarAction(google.protobuf.message.Message):
             """Action that inserts the source row into the target by setting all columns."""
@@ -564,56 +414,9 @@ class MergeIntoTable(google.protobuf.message.Message):
             insert_action: global___MergeIntoTable.Action.InsertAction | None = ...,
             insert_star_action: global___MergeIntoTable.Action.InsertStarAction | None = ...,
         ) -> None: ...
-        def HasField(
-            self,
-            field_name: typing_extensions.Literal[
-                "action_type",
-                b"action_type",
-                "condition",
-                b"condition",
-                "delete_action",
-                b"delete_action",
-                "insert_action",
-                b"insert_action",
-                "insert_star_action",
-                b"insert_star_action",
-                "update_action",
-                b"update_action",
-                "update_star_action",
-                b"update_star_action",
-            ],
-        ) -> builtins.bool: ...
-        def ClearField(
-            self,
-            field_name: typing_extensions.Literal[
-                "action_type",
-                b"action_type",
-                "condition",
-                b"condition",
-                "delete_action",
-                b"delete_action",
-                "insert_action",
-                b"insert_action",
-                "insert_star_action",
-                b"insert_star_action",
-                "update_action",
-                b"update_action",
-                "update_star_action",
-                b"update_star_action",
-            ],
-        ) -> None: ...
-        def WhichOneof(
-            self, oneof_group: typing_extensions.Literal["action_type", b"action_type"]
-        ) -> (
-            typing_extensions.Literal[
-                "delete_action",
-                "update_action",
-                "update_star_action",
-                "insert_action",
-                "insert_star_action",
-            ]
-            | None
-        ): ...
+        def HasField(self, field_name: typing_extensions.Literal["action_type", b"action_type", "condition", b"condition", "delete_action", b"delete_action", "insert_action", b"insert_action", "insert_star_action", b"insert_star_action", "update_action", b"update_action", "update_star_action", b"update_star_action"]) -> builtins.bool: ...
+        def ClearField(self, field_name: typing_extensions.Literal["action_type", b"action_type", "condition", b"condition", "delete_action", b"delete_action", "insert_action", b"insert_action", "insert_star_action", b"insert_star_action", "update_action", b"update_action", "update_star_action", b"update_star_action"]) -> None: ...
+        def WhichOneof(self, oneof_group: typing_extensions.Literal["action_type", b"action_type"]) -> typing_extensions.Literal["delete_action", "update_action", "update_star_action", "insert_action", "insert_star_action"] | None: ...
 
     TARGET_FIELD_NUMBER: builtins.int
     SOURCE_FIELD_NUMBER: builtins.int
@@ -632,25 +435,13 @@ class MergeIntoTable(google.protobuf.message.Message):
     def condition(self) -> pyspark.sql.connect.proto.expressions_pb2.Expression:
         """(Required) Condition for a source row to match with a target row."""
     @property
-    def matched_actions(
-        self,
-    ) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[
-        global___MergeIntoTable.Action
-    ]:
+    def matched_actions(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[global___MergeIntoTable.Action]:
         """(Optional) Actions to apply when a source row matches a target row."""
     @property
-    def not_matched_actions(
-        self,
-    ) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[
-        global___MergeIntoTable.Action
-    ]:
+    def not_matched_actions(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[global___MergeIntoTable.Action]:
         """(Optional) Actions to apply when a source row does not match a target row."""
     @property
-    def not_matched_by_source_actions(
-        self,
-    ) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[
-        global___MergeIntoTable.Action
-    ]:
+    def not_matched_by_source_actions(self) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[global___MergeIntoTable.Action]:
         """(Optional) Actions to apply when a target row does not match a source row."""
     with_schema_evolution: builtins.bool
     """(Optional) Whether Schema Evolution is enabled for this command."""
@@ -662,50 +453,12 @@ class MergeIntoTable(google.protobuf.message.Message):
         condition: pyspark.sql.connect.proto.expressions_pb2.Expression | None = ...,
         matched_actions: collections.abc.Iterable[global___MergeIntoTable.Action] | None = ...,
         not_matched_actions: collections.abc.Iterable[global___MergeIntoTable.Action] | None = ...,
-        not_matched_by_source_actions: collections.abc.Iterable[global___MergeIntoTable.Action]
-        | None = ...,
+        not_matched_by_source_actions: collections.abc.Iterable[global___MergeIntoTable.Action] | None = ...,
         with_schema_evolution: builtins.bool | None = ...,
     ) -> None: ...
-    def HasField(
-        self,
-        field_name: typing_extensions.Literal[
-            "_with_schema_evolution",
-            b"_with_schema_evolution",
-            "condition",
-            b"condition",
-            "source",
-            b"source",
-            "target",
-            b"target",
-            "with_schema_evolution",
-            b"with_schema_evolution",
-        ],
-    ) -> builtins.bool: ...
-    def ClearField(
-        self,
-        field_name: typing_extensions.Literal[
-            "_with_schema_evolution",
-            b"_with_schema_evolution",
-            "condition",
-            b"condition",
-            "matched_actions",
-            b"matched_actions",
-            "not_matched_actions",
-            b"not_matched_actions",
-            "not_matched_by_source_actions",
-            b"not_matched_by_source_actions",
-            "source",
-            b"source",
-            "target",
-            b"target",
-            "with_schema_evolution",
-            b"with_schema_evolution",
-        ],
-    ) -> None: ...
-    def WhichOneof(
-        self,
-        oneof_group: typing_extensions.Literal["_with_schema_evolution", b"_with_schema_evolution"],
-    ) -> typing_extensions.Literal["with_schema_evolution"] | None: ...
+    def HasField(self, field_name: typing_extensions.Literal["_with_schema_evolution", b"_with_schema_evolution", "condition", b"condition", "source", b"source", "target", b"target", "with_schema_evolution", b"with_schema_evolution"]) -> builtins.bool: ...
+    def ClearField(self, field_name: typing_extensions.Literal["_with_schema_evolution", b"_with_schema_evolution", "condition", b"condition", "matched_actions", b"matched_actions", "not_matched_actions", b"not_matched_actions", "not_matched_by_source_actions", b"not_matched_by_source_actions", "source", b"source", "target", b"target", "with_schema_evolution", b"with_schema_evolution"]) -> None: ...
+    def WhichOneof(self, oneof_group: typing_extensions.Literal["_with_schema_evolution", b"_with_schema_evolution"]) -> typing_extensions.Literal["with_schema_evolution"] | None: ...
 
 global___MergeIntoTable = MergeIntoTable
 
@@ -728,12 +481,8 @@ class Assignment(google.protobuf.message.Message):
         field: pyspark.sql.connect.proto.expressions_pb2.Expression | None = ...,
         value: pyspark.sql.connect.proto.expressions_pb2.Expression | None = ...,
     ) -> None: ...
-    def HasField(
-        self, field_name: typing_extensions.Literal["field", b"field", "value", b"value"]
-    ) -> builtins.bool: ...
-    def ClearField(
-        self, field_name: typing_extensions.Literal["field", b"field", "value", b"value"]
-    ) -> None: ...
+    def HasField(self, field_name: typing_extensions.Literal["field", b"field", "value", b"value"]) -> builtins.bool: ...
+    def ClearField(self, field_name: typing_extensions.Literal["field", b"field", "value", b"value"]) -> None: ...
 
 global___Assignment = Assignment
 
@@ -754,14 +503,10 @@ class OptimizeTable(google.protobuf.message.Message):
     def table(self) -> delta.connect.proto.base_pb2.DeltaTable:
         """(Required) The Delta table to optimize."""
     @property
-    def partition_filters(
-        self,
-    ) -> google.protobuf.internal.containers.RepeatedScalarFieldContainer[builtins.str]:
+    def partition_filters(self) -> google.protobuf.internal.containers.RepeatedScalarFieldContainer[builtins.str]:
         """(Optional) Partition filters that limit the operation to the files in the matched partitions."""
     @property
-    def zorder_columns(
-        self,
-    ) -> google.protobuf.internal.containers.RepeatedScalarFieldContainer[builtins.str]:
+    def zorder_columns(self) -> google.protobuf.internal.containers.RepeatedScalarFieldContainer[builtins.str]:
         """(Optional) Columns to z-order by. Compaction is performed when no z-order columns are provided."""
     def __init__(
         self,
@@ -770,19 +515,7 @@ class OptimizeTable(google.protobuf.message.Message):
         partition_filters: collections.abc.Iterable[builtins.str] | None = ...,
         zorder_columns: collections.abc.Iterable[builtins.str] | None = ...,
     ) -> None: ...
-    def HasField(
-        self, field_name: typing_extensions.Literal["table", b"table"]
-    ) -> builtins.bool: ...
-    def ClearField(
-        self,
-        field_name: typing_extensions.Literal[
-            "partition_filters",
-            b"partition_filters",
-            "table",
-            b"table",
-            "zorder_columns",
-            b"zorder_columns",
-        ],
-    ) -> None: ...
+    def HasField(self, field_name: typing_extensions.Literal["table", b"table"]) -> builtins.bool: ...
+    def ClearField(self, field_name: typing_extensions.Literal["partition_filters", b"partition_filters", "table", b"table", "zorder_columns", b"zorder_columns"]) -> None: ...
 
 global___OptimizeTable = OptimizeTable

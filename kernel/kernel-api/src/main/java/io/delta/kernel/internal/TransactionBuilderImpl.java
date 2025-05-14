@@ -19,13 +19,13 @@ import static io.delta.kernel.internal.DeltaErrors.requiresSchemaForNewTable;
 import static io.delta.kernel.internal.DeltaErrors.tableAlreadyExists;
 import static io.delta.kernel.internal.TransactionImpl.DEFAULT_READ_VERSION;
 import static io.delta.kernel.internal.TransactionImpl.DEFAULT_WRITE_VERSION;
-import static io.delta.kernel.internal.util.ColumnMapping.getColumnMappingMode;
 import static io.delta.kernel.internal.util.ColumnMapping.isColumnMappingModeEnabled;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames;
 import static io.delta.kernel.internal.util.VectorUtils.buildArrayValue;
 import static io.delta.kernel.internal.util.VectorUtils.stringStringMapValue;
 import static java.util.Collections.emptyList;
+import static java.util.Collections.emptySet;
 import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.toSet;
 
@@ -300,7 +300,12 @@ public class TransactionBuilderImpl implements TransactionBuilder {
             : ClusteringUtils.getClusteringColumnsOptional(latestSnapshot.get());
     Tuple2<Optional<Protocol>, Optional<Metadata>> updatedProtocolAndMetadata =
         validateAndUpdateProtocolAndMetadata(
-            engine, baseMetadata, baseProtocol, isCreateOrReplace, existingClusteringCols);
+            engine,
+            baseMetadata,
+            baseProtocol,
+            isCreateOrReplace,
+            existingClusteringCols,
+            latestSnapshot);
     Optional<Protocol> newProtocol = updatedProtocolAndMetadata._1;
     Optional<Metadata> newMetadata = updatedProtocolAndMetadata._2;
 
@@ -321,11 +326,6 @@ public class TransactionBuilderImpl implements TransactionBuilder {
 
     // Block this for now - in a future PR we will enable this
     if (operation == Operation.REPLACE_TABLE) {
-      if (getColumnMappingMode(newMetadata.orElse(baseMetadata).getConfiguration())
-          != ColumnMappingMode.NONE) {
-        throw new UnsupportedOperationException(
-            "REPLACE TABLE is not yet supported with column mapping");
-      }
       if (newProtocol.orElse(baseProtocol).supportsFeature(TableFeatures.ROW_TRACKING_W_FEATURE)) {
         // Block this for now to be safe, we will return to this in the future
         throw new UnsupportedOperationException(
@@ -365,7 +365,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       Metadata baseMetadata,
       Protocol baseProtocol,
       boolean isCreateOrReplace,
-      Optional<List<Column>> existingClusteringCols) {
+      Optional<List<Column>> existingClusteringCols,
+      Optional<SnapshotImpl> latestSnapshot) {
     if (isCreateOrReplace) {
       checkArgument(!existingClusteringCols.isPresent());
     }
@@ -477,7 +478,11 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     // Now that all the config and schema changes have been made validate the old vs new metadata
     if (newMetadata.isPresent()) {
       validateMetadataChange(
-          existingClusteringCols, baseMetadata, newMetadata.get(), isCreateOrReplace);
+          existingClusteringCols,
+          baseMetadata,
+          newMetadata.get(),
+          isCreateOrReplace,
+          latestSnapshot);
     }
 
     return new Tuple2(newProtocol, newMetadata);
@@ -572,7 +577,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       Optional<List<Column>> existingClusteringCols,
       Metadata oldMetadata,
       Metadata newMetadata,
-      boolean isCreateOrReplace) {
+      boolean isCreateOrReplace,
+      Optional<SnapshotImpl> latestSnapshot) {
     ColumnMapping.verifyColumnMappingChange(
         oldMetadata.getConfiguration(), newMetadata.getConfiguration(), isCreateOrReplace);
     IcebergWriterCompatV1MetadataValidatorAndUpdater.validateIcebergWriterCompatV1Change(
@@ -611,7 +617,36 @@ public class TransactionBuilderImpl implements TransactionBuilder {
           oldMetadata,
           newMetadata,
           clusteringColumnPhysicalNames,
-          false /* allowNewRequiredFields*/);
+          false /* allowNewRequiredFields */);
+    }
+
+    // For replace table we need to do special validation in the case of fieldId re-use
+    if (isCreateOrReplace && latestSnapshot.isPresent()) {
+      // For now, we don't support changing column mapping mode during replace, in a future PR we
+      // will loosen this restriction
+      ColumnMappingMode oldMode =
+          ColumnMapping.getColumnMappingMode(latestSnapshot.get().getMetadata().getConfiguration());
+      ColumnMappingMode newMode =
+          ColumnMapping.getColumnMappingMode(newMetadata.getConfiguration());
+      if (oldMode != newMode) {
+        throw new UnsupportedOperationException(
+            String.format(
+                "Changing column mapping mode from %s to %s is not currently supported in Kernel "
+                    + "during REPLACE TABLE operations",
+                oldMode, newMode));
+      }
+
+      // We only need to check fieldId re-use when cmMode != none
+      if (newMode != ColumnMappingMode.NONE) {
+        SchemaUtils.validateUpdatedSchema(
+            latestSnapshot.get().getMetadata(),
+            newMetadata,
+            // We already validate clustering columns elsewhere for isCreateOrReplace no need to
+            // duplicate this check here
+            emptySet() /* clusteringCols */,
+            // We allow new non-null fields in REPLACE since we know all existing data is removed
+            true /* allowNewRequiredFields */);
+      }
     }
   }
 

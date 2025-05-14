@@ -129,6 +129,8 @@ trait CatalogOwnedTestBaseSuite
     try { f } finally {
       if (oldConfig.isDefined) {
         spark.conf.set(defaultCatalogOwnedFeatureEnabledKey, oldConfig.get)
+      } else {
+        spark.conf.unset(defaultCatalogOwnedFeatureEnabledKey)
       }
     }
   }

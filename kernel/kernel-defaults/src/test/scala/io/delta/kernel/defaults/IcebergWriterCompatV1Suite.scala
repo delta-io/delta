@@ -558,7 +558,14 @@ class IcebergWriterCompatV1Suite extends DeltaTableWriteSuiteBase with ColumnMap
 
   test("legacy table features allowed with icebergWriterCompatV1 if inactive") {
     val tblProperties =
-      Seq("invariants", "changeDataFeed", "checkConstraints", "identityColumns", "generatedColumns")
+      Seq(
+        "invariants",
+        "changeDataFeed",
+        "checkConstraints",
+        "identityColumns",
+        "generatedColumns",
+        "typeWidening",
+        "typeWidening-preview")
         .map(tableFeature => s"delta.feature.$tableFeature" -> "supported")
         .toMap
 
@@ -599,6 +606,7 @@ class IcebergWriterCompatV1Suite extends DeltaTableWriteSuiteBase with ColumnMap
       assert(protocol.supportsFeature(TableFeatures.CONSTRAINTS_W_FEATURE))
       assert(protocol.supportsFeature(TableFeatures.CHANGE_DATA_FEED_W_FEATURE))
       assert(protocol.supportsFeature(TableFeatures.INVARIANTS_W_FEATURE))
+      assert(protocol.supportsFeature(TableFeatures.TYPE_WIDENING_RW_FEATURE))
     }
   }
 
@@ -610,7 +618,8 @@ class IcebergWriterCompatV1Suite extends DeltaTableWriteSuiteBase with ColumnMap
       TableConfig.APPEND_ONLY_ENABLED.getKey -> "true", // appendOnly
       TableConfig.CHECKPOINT_POLICY.getKey -> "v2", // checkpointV2
       TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true", // inCommitTimestamp
-      TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey -> "true")
+      TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey -> "true",
+      TableConfig.TYPE_WIDENING_ENABLED.getKey -> "true")
     val schema = new StructType()
       .add("c1", IntegerType.INTEGER)
       .add("c2", TimestampNTZType.TIMESTAMP_NTZ) // timestampNtz
@@ -660,24 +669,13 @@ class IcebergWriterCompatV1Suite extends DeltaTableWriteSuiteBase with ColumnMap
       // assert(protocol.supportsFeature(TableFeatures.TIMESTAMP_NTZ_RW_FEATURE))
       assert(protocol.supportsFeature(TableFeatures.DOMAIN_METADATA_W_FEATURE))
       assert(protocol.supportsFeature(TableFeatures.INVARIANTS_W_FEATURE))
-      // TODO in the future add typeWidening and clustering once they are supported
+      assert(protocol.supportsFeature(TableFeatures.TYPE_WIDENING_RW_FEATURE))
+      // TODO in the future add clustering once they are supported
     }
   }
 
   /* -------------------- Enforcements blocked by icebergCompatV2 -------------------- */
   // We test the deletionVector checks above as part of blocked table feature tests
-
-  // We don't support typeWidening yet in Kernel or for icebergCompatV2; when we add support update
-  // these tests (only certain transforms allowed) and add to the above test for compatible table
-  // features
-
-  testIncompatibleUnsupportedTableFeature(
-    "typeWidening",
-    tablePropertiesToEnable = Map("delta.enableTypeWidening" -> "true"))
-
-  testIncompatibleUnsupportedTableFeature(
-    "typeWidening inactive",
-    tablePropertiesToEnable = Map("delta.feature.typeWidening" -> "supported"))
 
   // We cannot test enabling icebergCompatV1 since it is not a table feature in Kernel; This is
   // tested in the unit tests in IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
