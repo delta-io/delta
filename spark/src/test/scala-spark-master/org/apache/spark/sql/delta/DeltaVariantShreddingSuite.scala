@@ -16,12 +16,22 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils, TestsStatistics}
+import scala.collection.JavaConverters._
+
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkException
 import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils, TestsStatistics}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
+
+import org.apache.parquet.hadoop.ParquetFileReader
+import org.apache.parquet.hadoop.metadata.ParquetMetadata
+import org.apache.parquet.schema.{GroupType, MessageType, Type}
 
 class DeltaVariantShreddingSuite
   extends QueryTest
@@ -31,6 +41,51 @@ class DeltaVariantShreddingSuite
     with TestsStatistics {
 
   import testImplicits._
+
+  private def numShreddedFiles(path: String, validation: GroupType => Boolean = _ => true): Int = {
+    def listParquetFilesRecursively(dir: String): Seq[String] = {
+      val deltaLog = DeltaLog.forTable(spark, dir)
+      val files = deltaLog.snapshot.allFiles
+      files.collect().map { file: AddFile =>
+        file.absolutePath(deltaLog).toString
+      }
+    }
+
+    val parquetFiles = listParquetFilesRecursively(path)
+
+    def hasStructWithFieldNamesInternal(schema: List[Type], fieldNames: Set[String]): Boolean = {
+      schema.exists {
+        case group: GroupType if group.getFields.asScala.map(_.getName).toSet == fieldNames =>
+          true
+        case group: GroupType =>
+          hasStructWithFieldNamesInternal(group.getFields.asScala.toList, fieldNames)
+        case _ => false
+      }
+    }
+
+    def hasStructWithFieldNames(schema: MessageType, fieldNames: Set[String]): Boolean = {
+      schema.getFields.asScala.exists {
+        case group: GroupType if group.getFields.asScala.map(_.getName).toSet == fieldNames &&
+          validation(group) =>
+          true
+        case group: GroupType =>
+          hasStructWithFieldNamesInternal(group.getFields.asScala.toList, fieldNames)
+        case _ => false
+      }
+    }
+
+    val requiredFieldNames = Set("value", "metadata", "typed_value")
+    val conf = new Configuration()
+    parquetFiles.count { p =>
+      val reader = ParquetFileReader.open(conf, new Path(p))
+      val footer: ParquetMetadata = reader.getFooter
+      val isShredded =
+        hasStructWithFieldNames(footer.getFileMetaData().getSchema, requiredFieldNames)
+        hasStructWithFieldNames(footer.getFileMetaData().getSchema, requiredFieldNames)
+      reader.close()
+      isShredded
+    }
+  }
 
   test("variant shredding table property") {
     withTable("tbl") {
@@ -54,15 +109,43 @@ class DeltaVariantShreddingSuite
     assert(DeltaConfigs.ENABLE_VARIANT_SHREDDING.key == "delta.enableVariantShredding")
   }
 
-  test("Spark can read Delta tables with the shredding table feature") {
+  test("Spark can read shredded table containing the shredding table feature") {
     withTable("tbl") {
-      sql(s"CREATE TABLE tbl USING DELTA " +
-        s"TBLPROPERTIES('${DeltaConfigs.ENABLE_VARIANT_SHREDDING.key}' = 'true') " +
-        s"as select id i, (id + 1)::string s from range(10)")
-      assert(getProtocolForTable("tbl")
-        .readerAndWriterFeatures.contains(VariantShreddingPreviewTableFeature))
-      checkAnswer(sql(s"select * from tbl"), Seq(Row(0, "1"), Row(1, "2"), Row(2, "3"), Row(3, "4"),
-        Row(4, "5"), Row(5, "6"), Row(6, "7"), Row(7, "8"), Row(8, "9"), Row(9, "10")))
+      withTempDir { dir =>
+        val schema = "a int, b string, c decimal(15, 1)"
+        val df = spark.sql(
+          """
+            | select id i, case
+            | when id = 0 then parse_json('{"a": 1, "b": "2", "c": 3.3, "d": 4.4}')
+            | when id = 1 then parse_json('{"a": [1,2,3], "b": "hello", "c": {"x": 0}}')
+            | when id = 2 then parse_json('{"A": 1, "c": 1.23}')
+            | end v from range(0, 3, 1, 1)
+            |""".stripMargin)
+
+        sql("CREATE TABLE tbl (i long, v variant) USING DELTA " +
+          s"TBLPROPERTIES ('${DeltaConfigs.ENABLE_VARIANT_SHREDDING.key}' = 'true') " +
+          s"LOCATION '${dir.getAbsolutePath}'")
+        assert(getProtocolForTable("tbl")
+          .readerAndWriterFeatures.contains(VariantShreddingPreviewTableFeature))
+        withSQLConf(SQLConf.VARIANT_WRITE_SHREDDING_ENABLED.key -> true.toString,
+          SQLConf.VARIANT_ALLOW_READING_SHREDDED.key -> true.toString,
+          SQLConf.VARIANT_FORCE_SHREDDING_SCHEMA_FOR_TEST.key -> schema) {
+
+          df.write.format("delta").mode("append").saveAsTable("tbl")
+          // Make sure the actual parquet files are shredded
+          assert(numShreddedFiles(dir.getAbsolutePath, validation = { field: GroupType =>
+            field.getName == "v" && (field.getType("typed_value") match {
+              case t: GroupType =>
+                t.getFields.asScala.map(_.getName).toSet == Set("a", "b", "c")
+              case _ => false
+            })
+          }) == 1)
+          checkAnswer(
+            spark.read.format("delta").load(dir.getAbsolutePath).selectExpr("i", "to_json(v)"),
+            df.selectExpr("i", "to_json(v)").collect()
+          )
+        }
+      }
     }
   }
 
