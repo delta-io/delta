@@ -221,7 +221,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     checkArgument(
         isCreateOrReplace || latestSnapshot.isPresent(),
         "Existing snapshot must be provided if not defining a new table definition");
-    latestSnapshot.ifPresent(snapshot -> validateWriteToExistingTable(engine, snapshot));
+    latestSnapshot.ifPresent(
+        snapshot -> validateWriteToExistingTable(engine, snapshot, isCreateOrReplace));
     validateTransactionInputs(engine, isCreateOrReplace);
 
     boolean enablesDomainMetadataSupport =
@@ -494,7 +495,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
    * identifier has been provided in this txn builder, a concurrent write has not already committed
    * this transaction (3) Updating a partitioned table with clustering columns is not allowed.
    */
-  protected void validateWriteToExistingTable(Engine engine, SnapshotImpl snapshot) {
+  protected void validateWriteToExistingTable(
+      Engine engine, SnapshotImpl snapshot, boolean isCreateOrReplace) {
     // Validate the table has no features that Kernel doesn't yet support writing into it.
     TableFeatures.validateKernelCanWriteToTable(
         snapshot.getProtocol(), snapshot.getMetadata(), table.getPath(engine));
@@ -507,9 +509,13 @@ public class TransactionBuilderImpl implements TransactionBuilder {
                 txnId.getAppId(), txnId.getVersion(), lastTxnVersion.get());
           }
         });
-    if (operation != Operation.REPLACE_TABLE && clusteringColumns.isPresent()
+    if (!isCreateOrReplace
+        && clusteringColumns.isPresent()
         && snapshot.getMetadata().getPartitionColumns().getSize() != 0) {
-      throw new KernelException("Cannot set clustering columns on a partitioned table");
+      throw DeltaErrors.enablingClusteringOnPartitionedTableNotAllowed(
+          table.getPath(engine),
+          snapshot.getMetadata().getPartitionColNames(),
+          clusteringColumns.get());
     }
   }
 
