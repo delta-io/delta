@@ -48,7 +48,16 @@ When Variant type is supported (`readerFeatures` field of a table's `protocol` a
 
 > After the description and examples starting from: `Per-column statistics record information for each column in the file and they are encoded, mirroring the schema of the actual data. For example, given the following data schema:`
 
-For a column of type Variant, any structure or type can be encoded for the per-column statistics. In a Parquet file, the statistics for a Variant column must have a schema that follows the [Parquet Variant Shredding specification](https://github.com/apache/parquet-format/blob/master/VariantShredding.md). In JSON format, the per-column statistics for a Variant column can be any JSON structure. For example, for a table with a single Variant column (`varCol: variant`) in its data schema, the JSON per-column statistics could have the form:
+For a column of type Variant, any structure or type can be encoded for the per-column statistics.
+- The per-column statistics for a Variant column define the min and max values for paths within the Variant, and not the entire Variant value.
+- Stats should only be written for the leaves, packed into a Variant representation.
+- Stats should be written only if every row in the data file has the same data type for the leaf.
+- The structure and types in minValues and maxValues must be the same.
+- The decision about which Variant leaf columns to emit statistics for is determined by the implementation/client.
+
+In a Parquet file, the statistics for a Variant column must have a schema that follows the [Parquet Variant Shredding specification](https://github.com/apache/parquet-format/blob/master/VariantShredding.md).
+In JSON format, the per-column statistics for a Variant column can be any JSON structure.
+For example, for a table with a single Variant column (`varCol: variant`) in its data schema, the JSON per-column statistics could have the form:
 
 ```
 "stats": {
