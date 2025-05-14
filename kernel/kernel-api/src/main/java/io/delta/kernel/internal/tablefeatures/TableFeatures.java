@@ -183,20 +183,16 @@ public class TableFeatures {
     }
   }
 
-  public static final TableFeature VARIANT_RW_FEATURE = new VariantTypeTableFeature("variantType");
-  public static final TableFeature VARIANT_RW_PREVIEW_FEATURE =
-      new VariantTypeTableFeature("variantType-preview");
-
-  private static class VariantTypeTableFeature extends TableFeature.ReaderWriterFeature
-      implements FeatureAutoEnabledByMetadata {
-    VariantTypeTableFeature(String featureName) {
-      super(
-          /* featureName = */ featureName, /* minReaderVersion = */ 3, /* minWriterVersion = */ 7);
-    }
-
-    @Override
-    public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
-      return hasTypeColumn(metadata.getSchema(), VARIANT);
+  /* ---- Start: variantType ---- */
+  // Base class for variantType and variantType-preview features. Both features are same in terms
+  // of behavior and given the feature is graduated, we will enable the `variantType` by default
+  // if the metadata requirements are satisfied and the table doesn't already contain the
+  // `variantType-preview` feature. Also to note, with this version of Kernel, one can't
+  // auto upgrade to `variantType-preview` with metadata requirements. It can only be set
+  // manually using `delta.feature.variantType-preview=supported` property.
+  private static class VariantTypeTableFeatureBase extends TableFeature.ReaderWriterFeature {
+    VariantTypeTableFeatureBase(String featureName) {
+      super(featureName, /* minReaderVersion = */ 3, /* minWriterVersion = */ 7);
     }
 
     @Override
@@ -204,6 +200,28 @@ public class TableFeatures {
       return false; // TODO: yet to be implemented in Kernel
     }
   }
+
+  private static class VariantTypeTableFeature extends VariantTypeTableFeatureBase
+      implements FeatureAutoEnabledByMetadata {
+    VariantTypeTableFeature() {
+      super("variantType");
+    }
+
+    @Override
+    public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
+      return hasTypeColumn(metadata.getSchema(), VARIANT)
+          &&
+          // Don't automatically enable the stable feature if the preview feature is
+          // already supported, to avoid possibly breaking old clients that only
+          // support the preview feature.
+          !protocol.supportsFeature(VARIANT_RW_PREVIEW_FEATURE);
+    }
+  }
+
+  public static final TableFeature VARIANT_RW_FEATURE = new VariantTypeTableFeature();
+  public static final TableFeature VARIANT_RW_PREVIEW_FEATURE =
+      new VariantTypeTableFeatureBase("variantType-preview");
+  /* ---- End: variantType ---- */
 
   public static final TableFeature DOMAIN_METADATA_W_FEATURE = new DomainMetadataFeature();
 
@@ -286,27 +304,41 @@ public class TableFeatures {
     }
   }
 
-  public static final TableFeature TYPE_WIDENING_RW_FEATURE =
-      new TypeWideningTableFeature("typeWidening");
-  public static final TableFeature TYPE_WIDENING_PREVIEW_TABLE_FEATURE =
-      new TypeWideningTableFeature("typeWidening-preview");
-
-  private static class TypeWideningTableFeature extends TableFeature.ReaderWriterFeature
-      implements FeatureAutoEnabledByMetadata {
-    TypeWideningTableFeature(String featureName) {
+  /* ---- Start: type widening ---- */
+  // Base class for typeWidening and typeWidening-preview features. Both features are same in terms
+  // of behavior and given the feature is graduated, we will enable the `typeWidening` by default
+  // if the metadata requirements are satisfied and the table doesn't already contain the
+  // `typeWidening-preview` feature. Also to note, with this version of Kernel, one can't
+  // auto upgrade to `typeWidening-preview` with metadata requirements. It can only be set
+  // manually using `delta.feature.typeWidening-preview=supported` property.
+  private static class TypeWideningTableFeatureBase extends TableFeature.ReaderWriterFeature {
+    TypeWideningTableFeatureBase(String featureName) {
       super(featureName, /* minReaderVersion = */ 3, /* minWriterVersion = */ 7);
+    }
+  }
+
+  private static class TypeWideningTableFeature extends TypeWideningTableFeatureBase
+      implements FeatureAutoEnabledByMetadata {
+    TypeWideningTableFeature() {
+      super("typeWidening");
     }
 
     @Override
     public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
-      return TableConfig.TYPE_WIDENING_ENABLED.fromMetadata(metadata);
-    }
-
-    @Override
-    public boolean hasKernelWriteSupport(Metadata metadata) {
-      return true;
+      return TableConfig.TYPE_WIDENING_ENABLED.fromMetadata(metadata)
+          &&
+          // Don't automatically enable the stable feature if the preview feature is already
+          // supported, to
+          // avoid possibly breaking old clients that only support the preview feature.
+          !protocol.supportsFeature(TYPE_WIDENING_RW_PREVIEW_FEATURE);
     }
   }
+
+  public static final TableFeature TYPE_WIDENING_RW_FEATURE = new TypeWideningTableFeature();
+
+  public static final TableFeature TYPE_WIDENING_RW_PREVIEW_FEATURE =
+      new TypeWideningTableFeatureBase("typeWidening-preview");
+  /* ---- End: type widening ---- */
 
   public static final TableFeature IN_COMMIT_TIMESTAMP_W_FEATURE =
       new InCommitTimestampTableFeature();
@@ -414,7 +446,7 @@ public class TableFeatures {
               INVARIANTS_W_FEATURE,
               ROW_TRACKING_W_FEATURE,
               TIMESTAMP_NTZ_RW_FEATURE,
-              TYPE_WIDENING_PREVIEW_TABLE_FEATURE,
+              TYPE_WIDENING_RW_PREVIEW_FEATURE,
               TYPE_WIDENING_RW_FEATURE,
               VACUUM_PROTOCOL_CHECK_RW_FEATURE,
               VARIANT_RW_FEATURE,
