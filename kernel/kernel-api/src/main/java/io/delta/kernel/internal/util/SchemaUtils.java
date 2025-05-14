@@ -114,12 +114,7 @@ public class SchemaUtils {
         "Cannot validate updated schema when column mapping is disabled");
     validateSchema(newSchema, true /*columnMappingEnabled*/);
     validatePartitionColumns(newSchema, new ArrayList<>(currentPartitionColumns));
-    validateSchemaEvolution(
-        currentSchema,
-        newSchema,
-        newMetadata,
-        clusteringColumnPhysicalNames,
-        newMetadata.getConfiguration());
+    validateSchemaEvolution(currentSchema, newSchema, newMetadata, clusteringColumnPhysicalNames);
   }
 
   /**
@@ -434,15 +429,17 @@ public class SchemaUtils {
       StructType currentSchema,
       StructType newSchema,
       Metadata metadata,
-      Set<String> clusteringColumnPhysicalNames,
-      Map<String, String> configuration) {
+      Set<String> clusteringColumnPhysicalNames) {
     ColumnMappingMode columnMappingMode =
         ColumnMapping.getColumnMappingMode(metadata.getConfiguration());
     switch (columnMappingMode) {
       case ID:
       case NAME:
         validateSchemaEvolutionById(
-            currentSchema, newSchema, clusteringColumnPhysicalNames, configuration);
+            currentSchema,
+            newSchema,
+            clusteringColumnPhysicalNames,
+            TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.fromMetadata(metadata.getConfiguration()));
         return;
       case NONE:
         throw new UnsupportedOperationException(
@@ -461,17 +458,16 @@ public class SchemaUtils {
       StructType currentSchema,
       StructType newSchema,
       Set<String> clusteringColumnPhysicalNames,
-      Map<String, String> configuration) {
+      boolean icebergWriterCompatV1Enabled) {
     Map<Integer, StructField> currentFieldsById = fieldsById(currentSchema);
     Map<Integer, StructField> updatedFieldsById = fieldsById(newSchema);
     SchemaChanges schemaChanges = computeSchemaChangesById(currentFieldsById, updatedFieldsById);
     validatePhysicalNameConsistency(schemaChanges.updatedFields());
     // Validates that the updated schema does not contain breaking changes in terms of types and
     // nullability
-    validateUpdatedSchemaCompatibility(schemaChanges);
+    validateUpdatedSchemaCompatibility(schemaChanges, icebergWriterCompatV1Enabled);
     validateClusteringColumnsNotDropped(
         schemaChanges.removedFields(), clusteringColumnPhysicalNames);
-    validateNoMapStructKeyChanges(schemaChanges, newSchema, configuration);
     // ToDo Potentially validate IcebergCompatV2 nested IDs
   }
 
@@ -493,7 +489,8 @@ public class SchemaUtils {
    *
    * <p>ToDo: Prevent moving fields outside of their containing struct
    */
-  private static void validateUpdatedSchemaCompatibility(SchemaChanges schemaChanges) {
+  private static void validateUpdatedSchemaCompatibility(
+      SchemaChanges schemaChanges, boolean icebergWriterCompatV1Enabled) {
     for (StructField addedField : schemaChanges.addedFields()) {
       if (!addedField.isNullable()) {
         throw new KernelException(
@@ -504,7 +501,7 @@ public class SchemaUtils {
     for (Tuple2<StructField, StructField> updatedFields : schemaChanges.updatedFields()) {
       // ToDo: See if recursion can be avoided by incorporating map key/value and array element
       // updates in updatedFields
-      validateFieldCompatibility(updatedFields._1, updatedFields._2);
+      validateFieldCompatibility(updatedFields._1, updatedFields._2, icebergWriterCompatV1Enabled);
     }
   }
 
@@ -513,7 +510,8 @@ public class SchemaUtils {
    * modified, dropped, or added fields to structs. Validates that a field's nullability is not
    * tightened
    */
-  private static void validateFieldCompatibility(StructField existingField, StructField newField) {
+  private static void validateFieldCompatibility(
+      StructField existingField, StructField newField, boolean icebergWriterCompatV1Enabled) {
     if (existingField.isNullable() && !newField.isNullable()) {
       throw new KernelException(
           String.format(
@@ -534,7 +532,8 @@ public class SchemaUtils {
       for (StructField newNestedField : newStruct.fields()) {
         StructField existingNestedField = existingNestedFields.get(getColumnId(newNestedField));
         if (existingNestedField != null) {
-          validateFieldCompatibility(existingNestedField, newNestedField);
+          validateFieldCompatibility(
+              existingNestedField, newNestedField, icebergWriterCompatV1Enabled);
         }
       }
     } else if (existingField.getDataType() instanceof MapType
@@ -542,15 +541,36 @@ public class SchemaUtils {
       MapType existingMapType = (MapType) existingField.getDataType();
       MapType newMapType = (MapType) newField.getDataType();
 
-      validateFieldCompatibility(existingMapType.getKeyField(), newMapType.getKeyField());
-      validateFieldCompatibility(existingMapType.getValueField(), newMapType.getValueField());
+      if (icebergWriterCompatV1Enabled
+          && existingMapType.getKeyType() instanceof StructType
+          && newMapType.getKeyType() instanceof StructType) {
+        // Enforce that we don't change map struct keys. This is a requirement for
+        // IcebergWriterCompatV1
+        StructType currentKeyType = (StructType) existingMapType.getKeyType();
+        StructType newKeyType = (StructType) newMapType.getKeyType();
+        if (!currentKeyType.equals(newKeyType)) {
+          throw new KernelException(
+              String.format(
+                  "Cannot change the type key of Map field %s from %s to %s",
+                  newField.getName(), currentKeyType, newKeyType));
+        }
+      }
+
+      validateFieldCompatibility(
+          existingMapType.getKeyField(), newMapType.getKeyField(), icebergWriterCompatV1Enabled);
+      validateFieldCompatibility(
+          existingMapType.getValueField(),
+          newMapType.getValueField(),
+          icebergWriterCompatV1Enabled);
     } else if (existingField.getDataType() instanceof ArrayType
         && newField.getDataType() instanceof ArrayType) {
       ArrayType existingArrayType = (ArrayType) existingField.getDataType();
       ArrayType newArrayType = (ArrayType) newField.getDataType();
 
       validateFieldCompatibility(
-          existingArrayType.getElementField(), newArrayType.getElementField());
+          existingArrayType.getElementField(),
+          newArrayType.getElementField(),
+          icebergWriterCompatV1Enabled);
     } else if (!existingField.getDataType().equivalent(newField.getDataType())) {
       throw new KernelException(
           String.format(
@@ -659,41 +679,6 @@ public class SchemaUtils {
       validateSupportedType(((MapType) dataType).getValueType());
     } else {
       throw unsupportedDataType(dataType);
-    }
-  }
-
-  /**
-   * If IcebergWriterCompatV1 is enabled, we need to ensure that map struct keys don't change. This
-   * validates that
-   */
-  private static void validateNoMapStructKeyChanges(
-      SchemaChanges schemaChanges, StructType newSchema, Map<String, String> configuration) {
-    if (TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.fromMetadata(configuration)) {
-      // do the check if the feature is enabled now
-      for (Tuple2<StructField, StructField> updatedFields : schemaChanges.updatedFields()) {
-        StructField existingField = updatedFields._1;
-        DataType existingDataType = existingField.getDataType();
-        if ((existingDataType instanceof MapType)
-            && ((MapType) existingDataType).getKeyField().getDataType() instanceof StructType) {
-          // we have a map with a struct key, check the new field
-          StructField newField = updatedFields._2;
-          DataType newDataType = newField.getDataType();
-          if (newDataType instanceof MapType) {
-            // This check doesn't block changing the whole type, so if it's not a Map, don't bother
-            // to check anything
-            StructField currentStructKey = ((MapType) existingDataType).getKeyField();
-            // cast is safe, we checked this above
-            StructType currentKeyType = (StructType) currentStructKey.getDataType();
-            StructField newStructKey = ((MapType) newDataType).getKeyField();
-            if (!currentKeyType.equals(newStructKey.getDataType())) {
-              throw new KernelException(
-                  String.format(
-                      "Cannot change the type key of Map field %s from %s to %s",
-                      newField.getName(), currentKeyType, newStructKey.getDataType()));
-            }
-          }
-        }
-      }
     }
   }
 }
