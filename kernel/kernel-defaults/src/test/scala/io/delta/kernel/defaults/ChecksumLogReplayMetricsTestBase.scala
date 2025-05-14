@@ -71,7 +71,7 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite {
   // Method to adjust list of versions of checkpoint file read.
   // For example, if crc is missing and P&M is loaded from checkpoint.
   // Domain metadata will load from checkpoint as well.
-  protected def getExpectedCheckpointReadVersions(versions: Seq[Long]): Seq[Long] = versions
+  protected def getExpectedCheckpointReadSize(size: Seq[Long]): Seq[Long] = size
 
   ///////////
   // Tests //
@@ -107,15 +107,15 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite {
         // Attempt to read 10.crc fails and read 10.checkpoint.parquet succeeds.
         expJsonVersionsRead = Nil,
         expParquetVersionsRead = Seq(10),
-        expParquetReadSetSizes = getExpectedCheckpointReadVersions(Seq(1)),
-        expChecksumReadSet = Seq(10),
+        expParquetReadSetSizes = getExpectedCheckpointReadSize(Seq(1)),
+        expChecksumReadSet = Nil,
         readVersion = 10)
     }
   }
 
   test(
     "checksum missing read version & the previous version, " +
-      "checkpoint exists the read version the previous version => use checkpoint") {
+      "checkpoint exists the read version and the previous version => use checkpoint") {
     withTableWithCrc { (table, tablePath, engine) =>
       val checkpointVersion = 10
       deleteChecksumFileForTable(tablePath, Seq(checkpointVersion, checkpointVersion + 1))
@@ -127,8 +127,8 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite {
         engine,
         expJsonVersionsRead = Seq(11),
         expParquetVersionsRead = Seq(10),
-        expParquetReadSetSizes = getExpectedCheckpointReadVersions(Seq(1)),
-        expChecksumReadSet = Seq(11),
+        expParquetReadSetSizes = getExpectedCheckpointReadSize(Seq(1)),
+        expChecksumReadSet = Nil,
         readVersion = 11)
     }
   }
@@ -143,6 +143,63 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite {
         expParquetReadSetSizes = Nil,
         expChecksumReadSet = Seq(10),
         readVersion = 10)
+    }
+  }
+
+  test("checksum not found at the read version, but found at a previous version") {
+    withTableWithCrc { (table, tablePath, engine) =>
+      deleteChecksumFileForTable(tablePath, Seq(10, 11, 5, 6))
+
+      loadSnapshotFieldsCheckMetrics(
+        table,
+        engine,
+        expJsonVersionsRead = Seq(11),
+        expParquetVersionsRead = Seq(10),
+        expParquetReadSetSizes = getExpectedCheckpointReadSize(Seq(1)),
+        expChecksumReadSet = Nil)
+
+      loadSnapshotFieldsCheckMetrics(
+        table,
+        engine,
+        // We find the checksum from crc at version 4, but still read commit files 5 and 6
+        // to find the P&M which could have been updated in version 5 and 6.
+        expJsonVersionsRead = Seq(6, 5),
+        expParquetVersionsRead = Nil,
+        expParquetReadSetSizes = Nil,
+        expChecksumReadSet = Seq(4),
+        readVersion = 6)
+
+      // now try to load version 3 and it should get P&M from checksum files only
+      loadSnapshotFieldsCheckMetrics(
+        table,
+        engine,
+        // We find the checksum from crc at version 3, so shouldn't read anything else
+        expJsonVersionsRead = Nil,
+        expParquetVersionsRead = Nil,
+        expParquetReadSetSizes = Nil,
+        expChecksumReadSet = Seq(3),
+        readVersion = 3)
+    }
+  }
+
+  test(
+    "checksum missing read version, " +
+      "both checksum and checkpoint exist the read version the previous version => use checksum") {
+    withTableWithCrc { (table, tablePath, engine) =>
+      val checkpointVersion = 10
+      val readVersion = checkpointVersion + 1
+      deleteChecksumFileForTable(tablePath, Seq(checkpointVersion + 1))
+
+      // 11.crc, missing, 10.crc and 10.checkpoint.parquet exist.
+      // read 10.crc and 11.json.
+      loadSnapshotFieldsCheckMetrics(
+        table,
+        engine,
+        expJsonVersionsRead = Seq(readVersion),
+        expParquetVersionsRead = Nil,
+        expParquetReadSetSizes = Nil,
+        expChecksumReadSet = Seq(checkpointVersion),
+        readVersion = readVersion)
     }
   }
 }

@@ -25,6 +25,7 @@ import static io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionC
 import static io.delta.kernel.internal.util.VectorUtils.buildArrayValue;
 import static io.delta.kernel.internal.util.VectorUtils.stringStringMapValue;
 import static java.util.Collections.emptyList;
+import static java.util.Collections.emptySet;
 import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.toSet;
 
@@ -54,6 +55,7 @@ import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 import java.util.*;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -61,16 +63,17 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   private static final Logger logger = LoggerFactory.getLogger(TransactionBuilderImpl.class);
 
   private final long currentTimeMillis = System.currentTimeMillis();
-  private final TableImpl table;
   private final String engineInfo;
   private final Operation operation;
-  private Optional<StructType> schema = Optional.empty();
   private Optional<List<String>> partitionColumns = Optional.empty();
   private Optional<List<Column>> clusteringColumns = Optional.empty();
   private Optional<SetTransaction> setTxnOpt = Optional.empty();
   private Optional<Map<String, String>> tableProperties = Optional.empty();
   private Optional<Set<String>> unsetTablePropertiesKeys = Optional.empty();
   private boolean needDomainMetadataSupport = false;
+
+  protected final TableImpl table;
+  protected Optional<StructType> schema = Optional.empty();
 
   /**
    * Number of retries for concurrent write exceptions to resolve conflicts and retry commit. In
@@ -183,13 +186,16 @@ public class TransactionBuilderImpl implements TransactionBuilder {
 
   @Override
   public Transaction build(Engine engine) {
+    if (operation == Operation.REPLACE_TABLE) {
+      throw new UnsupportedOperationException("REPLACE TABLE is not yet supported");
+    }
     SnapshotImpl snapshot;
     try {
       snapshot = (SnapshotImpl) table.getLatestSnapshot(engine);
       if (operation == Operation.CREATE_TABLE) {
         throw new TableAlreadyExistsException(table.getPath(engine), "Operation = CREATE_TABLE");
       }
-      return buildTransactionInternal(engine, false /* isNewTableDef */, Optional.of(snapshot));
+      return buildTransactionInternal(engine, false /* isCreateOrReplace */, Optional.of(snapshot));
     } catch (TableNotFoundException tblf) {
       String tablePath = table.getPath(engine);
       logger.info("Table {} doesn't exist yet. Trying to create a new table.", tablePath);
@@ -262,6 +268,17 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     if (isCreateOrReplace) {
       // For a new table definition start with an empty initial metadata
       baseMetadata = getInitialMetadata();
+      // In the case of Replace table there are a few delta-specific properties we want to preserve
+      if (latestSnapshot.isPresent()) { // replace = isCreateOrReplace && latestSnapshot.isPresent
+        Map<String, String> propertiesToPreserve =
+            latestSnapshot.get().getMetadata().getConfiguration().entrySet().stream()
+                .filter(
+                    e ->
+                        ReplaceTableTransactionBuilderImpl.TABLE_PROPERTY_KEYS_TO_PRESERVE.contains(
+                            e.getKey()))
+                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+        baseMetadata = baseMetadata.withMergedConfiguration(propertiesToPreserve);
+      }
     } else {
       // Otherwise, use the existing table metadata
       baseMetadata = latestSnapshot.get().getMetadata();
@@ -275,6 +292,22 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       // Otherwise, start with initial protocol for a new table
       baseProtocol = getInitialProtocol();
     }
+
+    // We use the existing clustering columns to validate schema evolution
+    Optional<List<Column>> existingClusteringCols =
+        isCreateOrReplace
+            ? Optional.empty()
+            : ClusteringUtils.getClusteringColumnsOptional(latestSnapshot.get());
+    Tuple2<Optional<Protocol>, Optional<Metadata>> updatedProtocolAndMetadata =
+        validateAndUpdateProtocolAndMetadata(
+            engine,
+            baseMetadata,
+            baseProtocol,
+            isCreateOrReplace,
+            existingClusteringCols,
+            latestSnapshot);
+    Optional<Protocol> newProtocol = updatedProtocolAndMetadata._1;
+    Optional<Metadata> newMetadata = updatedProtocolAndMetadata._2;
 
     // TODO should we do the validation in validateTransactionInputs and transform as part of
     //  generating the domain in the txn?
@@ -304,6 +337,15 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       // needs instead of the entire SnapshotImpl class. This should also let us avoid creating
       // this fake empty initial snapshot.
       latestSnapshot = Optional.of(getInitialEmptySnapshot(engine, baseMetadata, baseProtocol));
+    }
+
+    // Block this for now - in a future PR we will enable this
+    if (operation == Operation.REPLACE_TABLE) {
+      if (newProtocol.orElse(baseProtocol).supportsFeature(TableFeatures.ROW_TRACKING_W_FEATURE)) {
+        // Block this for now to be safe, we will return to this in the future
+        throw new UnsupportedOperationException(
+            "REPLACE TABLE is not yet supported on row tracking tables");
+      }
     }
 
     return new TransactionImpl(
@@ -338,7 +380,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       Metadata baseMetadata,
       Protocol baseProtocol,
       boolean isCreateOrReplace,
-      Optional<List<Column>> clusteringCols) {
+      Optional<List<Column>> existingClusteringCols,
+      Optional<SnapshotImpl> latestSnapshot) {
     if (isCreateOrReplace) {
       checkArgument(!clusteringCols.isPresent());
     }
@@ -449,7 +492,12 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     /* ----- 5: Validate the metadata change ----- */
     // Now that all the config and schema changes have been made validate the old vs new metadata
     if (newMetadata.isPresent()) {
-      validateMetadataChange(clusteringCols, baseMetadata, newMetadata.get(), isCreateOrReplace);
+      validateMetadataChange(
+          existingClusteringCols,
+          baseMetadata,
+          newMetadata.get(),
+          isCreateOrReplace,
+          latestSnapshot);
     }
 
     return new Tuple2(newProtocol, newMetadata);
@@ -551,7 +599,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       Optional<List<Column>> clusteringCols,
       Metadata oldMetadata,
       Metadata newMetadata,
-      boolean isCreateOrReplace) {
+      boolean isCreateOrReplace,
+      Optional<SnapshotImpl> latestSnapshot) {
     ColumnMapping.verifyColumnMappingChange(
         oldMetadata.getConfiguration(), newMetadata.getConfiguration(), isCreateOrReplace);
     IcebergWriterCompatV1MetadataValidatorAndUpdater.validateIcebergWriterCompatV1Change(
@@ -587,11 +636,39 @@ public class TransactionBuilderImpl implements TransactionBuilder {
               .collect(toSet());
 
       SchemaUtils.validateUpdatedSchema(
-          oldMetadata.getSchema(),
-          newMetadata.getSchema(),
-          oldMetadata.getPartitionColNames(),
+          oldMetadata,
+          newMetadata,
           clusteringColumnPhysicalNames,
-          newMetadata);
+          false /* allowNewRequiredFields */);
+    }
+
+    // For replace table we need to do special validation in the case of fieldId re-use
+    if (isCreateOrReplace && latestSnapshot.isPresent()) {
+      // For now, we don't support changing column mapping mode during replace, in a future PR we
+      // will loosen this restriction
+      ColumnMappingMode oldMode =
+          ColumnMapping.getColumnMappingMode(latestSnapshot.get().getMetadata().getConfiguration());
+      ColumnMappingMode newMode =
+          ColumnMapping.getColumnMappingMode(newMetadata.getConfiguration());
+      if (oldMode != newMode) {
+        throw new UnsupportedOperationException(
+            String.format(
+                "Changing column mapping mode from %s to %s is not currently supported in Kernel "
+                    + "during REPLACE TABLE operations",
+                oldMode, newMode));
+      }
+
+      // We only need to check fieldId re-use when cmMode != none
+      if (newMode != ColumnMappingMode.NONE) {
+        SchemaUtils.validateUpdatedSchema(
+            latestSnapshot.get().getMetadata(),
+            newMetadata,
+            // We already validate clustering columns elsewhere for isCreateOrReplace no need to
+            // duplicate this check here
+            emptySet() /* clusteringCols */,
+            // We allow new non-null fields in REPLACE since we know all existing data is removed
+            true /* allowNewRequiredFields */);
+      }
     }
   }
 
@@ -631,7 +708,6 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     return new LogReplay(
         table.getLogPath(),
         table.getDataPath(),
-        -1,
         engine,
         LogSegment.empty(table.getLogPath()),
         Optional.empty(),

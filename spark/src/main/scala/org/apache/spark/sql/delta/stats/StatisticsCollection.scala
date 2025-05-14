@@ -47,6 +47,7 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.parser.{AbstractSqlParser, AstBuilder, ParseException, ParserUtils}
 import org.apache.spark.sql.catalyst.parser.SqlBaseParser.MultipartIdentifierListContext
+import org.apache.spark.sql.catalyst.util.quoteIfNeeded
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.functions.lit
 import org.apache.spark.sql.internal.SQLConf
@@ -477,10 +478,18 @@ object StatisticsCollection extends DeltaCommand {
       insideStruct: Boolean = false): Unit = dataType match {
     case s: StructType =>
       s.foreach { field =>
-        validateDataSkippingType(name + "." + field.name, field.dataType, columnPaths,
-          insideStruct = true)
+        // we need to make sure we quote the field if needed otherwise we will not handle
+        // column names with special characters correctly.
+        validateDataSkippingType(name + "." +
+          quoteIfNeeded(field.name), field.dataType, columnPaths, insideStruct = true)
       }
-    case SkippingEligibleDataType(_) => columnPaths.append(name)
+    case SkippingEligibleDataType(_) =>
+      if (insideStruct) {
+        // If this is inside the struct we are already quoting the nested field name.
+        columnPaths.append(name)
+      } else {
+        columnPaths.append(quoteIfNeeded(name))
+      }
     case _ if insideStruct =>
       logWarning(s"Data skipping is not supported for column $name of type $dataType")
       columnPaths.append(name)
@@ -517,7 +526,15 @@ object StatisticsCollection extends DeltaCommand {
         transformSchema(schema, Some(columnName.head)) {
           case (`prefixPath`, struct @ StructType(_), _) =>
             val columnField = struct(columnName.head)
-            validateDataSkippingType(columnAttribute.name, columnField.dataType, visitedColumns)
+            // We need to figure out if the column is top-level column
+            // or a column inside a struct, we support collecting null count stats
+            // on nested columns part of a struct.
+            val fieldInsideStruct = prefixPath.size > 0
+            validateDataSkippingType(
+              columnAttribute.name,
+              columnField.dataType,
+              visitedColumns,
+              insideStruct = fieldInsideStruct)
             struct
           case (_, other, _) => other
         }

@@ -119,8 +119,7 @@ public class SnapshotImpl implements Snapshot {
 
   @Override
   public Optional<String> getDomainMetadata(String domain) {
-    return Optional.ofNullable(getDomainMetadataMap().get(domain))
-        .filter(dm -> !dm.isRemoved()) // only consider active domain metadatas (not tombstones)
+    return Optional.ofNullable(getActiveDomainMetadataMap().get(domain))
         .map(DomainMetadata::getConfiguration);
   }
 
@@ -153,12 +152,13 @@ public class SnapshotImpl implements Snapshot {
   /**
    * Get the domain metadata map from the log replay, which lazily loads and replays a history of
    * domain metadata actions, resolving them to produce the current state of the domain metadata.
+   * Only active domain metadata are included in this map.
    *
    * @return A map where the keys are domain names and the values are {@link DomainMetadata}
    *     objects.
    */
-  public Map<String, DomainMetadata> getDomainMetadataMap() {
-    return logReplay.getDomainMetadataMap();
+  public Map<String, DomainMetadata> getActiveDomainMetadataMap() {
+    return logReplay.getActiveDomainMetadataMap();
   }
 
   /** Returns the crc info for the current snapshot if the checksum file is read */

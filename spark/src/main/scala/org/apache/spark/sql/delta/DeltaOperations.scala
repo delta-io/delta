@@ -324,6 +324,8 @@ object DeltaOperations {
 
       var strMetrics = super.transformMetrics(metrics)
 
+      strMetrics += "numSourceRows" -> metrics("operationNumSourceRows").value.toString
+
       // We have to recalculate "numOutputRows" to avoid counting CDC rows
       if (metrics.contains("numTargetRowsInserted") &&
           metrics.contains("numTargetRowsUpdated") &&

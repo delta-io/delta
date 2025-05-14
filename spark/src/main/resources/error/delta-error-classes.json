@@ -359,6 +359,12 @@
     ],
     "sqlState" : "0AKDC"
   },
+  "DELTA_CDC_READ_NULL_RANGE_BOUNDARY" : {
+    "message" : [
+      "CDC read start/end parameters cannot be null. Please provide a valid version or timestamp."
+    ],
+    "sqlState" : "22004"
+  },
   "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_DATA_SCHEMA" : {
     "message" : [
       "Retrieving table changes between version <start> and <end> failed because of an incompatible data schema.",
@@ -3030,6 +3036,12 @@
       "A gap in the delta log between versions <startVersion> and <endVersion> was detected while trying to load version <versionToLoad>."
     ],
     "sqlState" : "KD00C"
+  },
+  "DELTA_VERSION_INVALID" : {
+    "message" : [
+      "The provided version (<version>) is not a valid version."
+    ],
+    "sqlState" : "42815"
   },
   "DELTA_VIOLATE_CONSTRAINT_WITH_VALUES" : {
     "message" : [

@@ -15,7 +15,6 @@
  */
 package io.delta.kernel.internal.tablefeatures
 
-import java.util
 import java.util.{Collections, Optional}
 import java.util.Collections.{emptySet, singleton}
 import java.util.stream.Collectors.toList
@@ -25,7 +24,7 @@ import scala.collection.JavaConverters._
 import io.delta.kernel.data.{ArrayValue, ColumnVector, MapValue}
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.actions.{Format, Metadata, Protocol}
-import io.delta.kernel.internal.tablefeatures.TableFeatures.{validateKernelCanReadTheTable, validateKernelCanWriteToTable, CLUSTERING_W_FEATURE, DOMAIN_METADATA_W_FEATURE, TABLE_FEATURES}
+import io.delta.kernel.internal.tablefeatures.TableFeatures.{validateKernelCanReadTheTable, validateKernelCanWriteToTable, CLUSTERING_W_FEATURE, DOMAIN_METADATA_W_FEATURE, TABLE_FEATURES, TYPE_WIDENING_RW_FEATURE}
 import io.delta.kernel.internal.util.InternalUtils.singletonStringColumnVector
 import io.delta.kernel.internal.util.VectorUtils.buildColumnVector
 import io.delta.kernel.types._
@@ -119,16 +118,10 @@ class TableFeaturesSuite extends AnyFunSuite {
     ("identityColumns", testMetadata(includeIdentityColumn = false), false),
     ("columnMapping", testMetadata(tblProps = Map("delta.columnMapping.mode" -> "id")), true),
     ("columnMapping", testMetadata(tblProps = Map("delta.columnMapping.mode" -> "none")), false),
-    (
-      "typeWidening-preview",
-      testMetadata(tblProps = Map("delta.enableTypeWidening" -> "true")),
-      true),
-    (
-      "typeWidening-preview",
-      testMetadata(tblProps = Map("delta.enableTypeWidening" -> "false")),
-      false),
     ("typeWidening", testMetadata(tblProps = Map("delta.enableTypeWidening" -> "true")), true),
     ("typeWidening", testMetadata(tblProps = Map("delta.enableTypeWidening" -> "false")), false),
+    ("variantType", testMetadata(includeVariantTypeCol = true), true),
+    ("variantType", testMetadata(includeVariantTypeCol = false), false),
     // Disable this until we have support to enable row tracking through metadata
     // ("rowTracking", testMetadata(tblProps = Map("delta.enableRowTracking" -> "true")), true),
     ("rowTracking", testMetadata(tblProps = Map("delta.enableRowTracking" -> "false")), false),
@@ -183,7 +176,24 @@ class TableFeaturesSuite extends AnyFunSuite {
     }
   }
 
-  test("row tracking enable throguh metadata property is not supported") {
+  Seq(
+    ("variantType", testMetadata(includeVariantTypeCol = true)),
+    ("typeWidening", testMetadata(tblProps = Map("delta.enableTypeWidening" -> "true")))).foreach {
+    case (feature, metadataEnablingFeature) =>
+      test("special handling of tables containing preview features: " + feature) {
+        val protocolWithPreviewFeature = new Protocol(3, 7)
+          .withFeature(TableFeatures.getTableFeature(s"$feature-preview"))
+
+        val enable = TableFeatures.getTableFeature(feature)
+          .asInstanceOf[FeatureAutoEnabledByMetadata]
+          .metadataRequiresFeatureToBeEnabled(
+            protocolWithPreviewFeature,
+            metadataEnablingFeature)
+        assert(!enable, "shouldn't enable non-preview feature")
+      }
+  }
+
+  test("row tracking enable through metadata property is not supported") {
     val tableFeature = TableFeatures.getTableFeature("rowTracking")
     val ex = intercept[UnsupportedOperationException] {
       tableFeature.asInstanceOf[FeatureAutoEnabledByMetadata]
@@ -238,6 +248,8 @@ class TableFeaturesSuite extends AnyFunSuite {
       "changeDataFeed",
       "timestampNtz",
       "identityColumns",
+      "typeWidening-preview",
+      "typeWidening",
       "icebergWriterCompatV1",
       "clustering")
 
@@ -504,13 +516,13 @@ class TableFeaturesSuite extends AnyFunSuite {
     testMetadata(includeTimestampNtzTypeCol = true))
 
   Seq("typeWidening", "typeWidening-preview").foreach { feature =>
-    checkWriteUnsupported(
+    checkWriteSupported(
       s"validateKernelCanWriteToTable: protocol 7 with $feature, " +
         s"metadata doesn't contains $feature",
       new Protocol(3, 7, singleton(feature), singleton(feature)),
       testMetadata())
 
-    checkWriteUnsupported(
+    checkWriteSupported(
       s"validateKernelCanWriteToTable: protocol 7 with $feature, " +
         s"metadata contains $feature",
       new Protocol(3, 7, singleton(feature), singleton(feature)),
