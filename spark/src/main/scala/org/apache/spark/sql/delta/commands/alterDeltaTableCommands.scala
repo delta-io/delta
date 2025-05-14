@@ -861,20 +861,11 @@ case class AlterTableChangeColumnDeltaCommand(
       }
 
       val transformedSchema = columnChanges.foldLeft(oldSchema)(transformSchemaOnce)
-      val newSchema = if (bypassCharVarcharToStringFix) {
-        transformedSchema
-      } else {
-        // Fields with type CHAR/VARCHAR had been converted from
-        // (StringType, metadata = 'VARCHAR(n)') into (VARCHAR(n), metadata = '')
-        // so that CHAR/VARCHAR to String conversion can be handled correctly. We should
-        // invert this conversion so that downstream operations are not affected.
-        CharVarcharUtils.replaceCharVarcharWithStringInSchema(transformedSchema)
-      }
 
       val newSchemaWithTypeWideningMetadata =
         TypeWideningMetadata.addTypeWideningMetadata(
           txn,
-          schema = newSchema,
+          schema = transformedSchema,
           oldSchema = metadata.schema)
 
       val metadataWithNewSchema = metadata.copy(
