@@ -286,21 +286,6 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
     }
   }
 
-  test("update a partitioned table with clustering columns should fail") {
-    withTempDirAndEngine { (tablePath, engine) =>
-      createEmptyTable(engine, tablePath, testPartitionSchema, partCols = testPartitionColumns)
-      val ex = intercept[KernelException] {
-        updateTableMetadata(
-          engine,
-          tablePath,
-          clusteringColsOpt = Some(List(new Column("non-exist"))))
-      }
-      assert(
-        ex.getMessage.contains("Clustering columns and partition columns " +
-          "cannot coexist in a table"))
-    }
-  }
-
   test("update a table with clustering columns doesn't exist in the table should fail") {
     withTempDirAndEngine { (tablePath, engine) =>
       createEmptyTable(engine, tablePath, testPartitionSchema)

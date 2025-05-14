@@ -383,7 +383,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       Optional<List<Column>> existingClusteringCols,
       Optional<SnapshotImpl> latestSnapshot) {
     if (isCreateOrReplace) {
-      checkArgument(!clusteringCols.isPresent());
+      checkArgument(!existingClusteringCols.isPresent());
     }
 
     Optional<Metadata> newMetadata = Optional.empty();
@@ -507,8 +507,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
    * Validates that Kernel can write to the existing table with the latest snapshot as provided.
    * This means (1) Kernel supports the reader and writer protocol of the table (2) if a transaction
    * identifier has been provided in this txn builder, a concurrent write has not already committed
-   * this transaction (3) if clustering columns are set, the table should not be a partitioned
-   * table.
+   * this transaction
    */
   protected void validateWriteToExistingTable(Engine engine, SnapshotImpl snapshot) {
     // Validate the table has no features that Kernel doesn't yet support writing into it.
@@ -523,12 +522,6 @@ public class TransactionBuilderImpl implements TransactionBuilder {
                 txnId.getAppId(), txnId.getVersion(), lastTxnVersion.get());
           }
         });
-
-    if (clusteringColumns.isPresent()
-        && snapshot.getMetadata().getPartitionColumns().getSize() != 0) {
-      throw new KernelException(
-          "Clustering columns and partition columns cannot coexist in a table");
-    }
   }
 
   /**
