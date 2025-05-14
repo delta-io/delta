@@ -117,8 +117,8 @@ public class StructField {
 
   /**
    * Returns the list of type changes for this field. A field can go through multiple type changes
-   * (e.g. {@code int->long->decimal}). Changes are ordered from least recent to most recent in the list
-   * (index 0 is the oldest change).
+   * (e.g. {@code int->long->decimal}). Changes are ordered from least recent to most recent in the
+   * list (index 0 is the oldest change).
    */
   public List<TypeChange> getTypeChanges() {
     return Collections.unmodifiableList(typeChanges);
