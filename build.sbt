@@ -325,6 +325,8 @@ lazy val connectClient = (project in file("spark-connect/client"))
       emptyValue = ()
     ).value,
     crossSparkSettings(),
+    // Required for testing table features
+    Test / envVars += ("DELTA_TESTING", "1"),
     libraryDependencies ++= Seq(
       "com.google.protobuf" % "protobuf-java" % protoVersion % "protobuf",
       "org.apache.spark" %% "spark-connect-client-jvm" % sparkVersion.value % "provided",

@@ -364,7 +364,7 @@ class DeltaTableBuilderSuite extends DeltaQueryTest with RemoteSparkSession {
       val e = intercept[Exception] {
         io.delta.tables.DeltaTable.create(spark).tableName(s"delta.`$path`")
           .addColumn("c1", "int")
-          .location("src/test/resources/delta/dbr_8_0_non_generated_columns")
+          .location("src/test/resources/delta/non_generated_columns")
           .execute()
       }
       assert(e.getMessage.contains("DELTA_CREATE_TABLE_IDENTIFIER_LOCATION_MISMATCH"))
@@ -394,7 +394,6 @@ class DeltaTableBuilderSuite extends DeltaQueryTest with RemoteSparkSession {
         e.getMessage == "Database 'parquet' not found" ||
         e.getMessage.contains("is not a valid name") ||
         e.getMessage.contains("schema `parquet` cannot be found")
-        || e.getMessage.contains("schema `main.parquet` cannot be found")
       )
     }
   }

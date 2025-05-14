@@ -1122,6 +1122,7 @@ class DeltaConnectPlannerSuite
                     )
                 )
                 .putAllProperties(tableProperties.asJava))))
+
         val table = spark.sessionState.catalog.getTableMetadata(TableIdentifier(tableName))
         val metadata = DeltaLog.forTable(spark, TableIdentifier(tableName)).snapshot.metadata
         
