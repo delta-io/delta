@@ -264,7 +264,7 @@ class InCommitTimestampSuite
   }
 
   test("CREATE OR REPLACE should not disable ICT") {
-    withoutCoordinatedCommitsDefaultTableProperties {
+    withoutDefaultCCTableFeature {
       withSQLConf(
         DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> false.toString
       ) {
@@ -654,7 +654,7 @@ class InCommitTimestampSuite
           catalogTableOpt = None,
           canReturnLastCommit = false)
       }
-      assert(e.getMessage.contains("The provided timestamp:") && e.getMessage.contains("is after"))
+      assert(e.getMessage.contains("The provided timestamp") && e.getMessage.contains("is after"))
     }
   }
 

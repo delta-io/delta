@@ -310,6 +310,7 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     Transaction.generateAppendActions(defaultEngine, state, writeResultIter, writeContext)
   }
 
+  // scalastyle:off argcount
   def createTxn(
       engine: Engine = defaultEngine,
       tablePath: String,
@@ -320,7 +321,9 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       clock: Clock = () => System.currentTimeMillis,
       withDomainMetadataSupported: Boolean = false,
       maxRetries: Int = -1,
-      clusteringCols: List[Column] = List.empty): Transaction = {
+      clusteringColsOpt: Option[List[Column]] = None,
+      logCompactionInterval: Int = 10): Transaction = {
+    // scalastyle:on argcount
 
     var txnBuilder = createWriteTxnBuilder(
       TableImpl.forPath(engine, tablePath, clock))
@@ -330,9 +333,10 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       if (partCols != null) {
         txnBuilder = txnBuilder.withPartitionColumns(engine, partCols.asJava)
       }
-      if (clusteringCols.nonEmpty) {
-        txnBuilder = txnBuilder.withClusteringColumns(engine, clusteringCols.asJava)
-      }
+    }
+
+    if (clusteringColsOpt.isDefined) {
+      txnBuilder = txnBuilder.withClusteringColumns(engine, clusteringColsOpt.get.asJava)
     }
 
     if (tableProperties != null) {
@@ -347,15 +351,16 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       txnBuilder = txnBuilder.withMaxRetries(maxRetries)
     }
 
+    txnBuilder = txnBuilder.withLogCompactionInverval(logCompactionInterval)
+
     txnBuilder.build(engine)
   }
 
-  def commitAppendData(
-      engine: Engine = defaultEngine,
+  def getAppendActions(
       txn: Transaction,
-      data: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])]): TransactionCommitResult = {
+      data: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])]): CloseableIterable[Row] = {
 
-    val txnState = txn.getTransactionState(engine)
+    val txnState = txn.getTransactionState(defaultEngine)
 
     val actions = data.map { case (partValues, partData) =>
       stageData(txnState, partValues, partData)
@@ -363,11 +368,17 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
 
     actions.reduceLeftOption(_ combine _) match {
       case Some(combinedActions) =>
-        val combineActions = inMemoryIterable(combinedActions)
-        commitTransaction(txn, engine, combineActions)
+        inMemoryIterable(combinedActions)
       case None =>
-        commitTransaction(txn, engine, emptyIterable[Row])
+        emptyIterable[Row]
     }
+  }
+
+  def commitAppendData(
+      engine: Engine = defaultEngine,
+      txn: Transaction,
+      data: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])]): TransactionCommitResult = {
+    commitTransaction(txn, engine, getAppendActions(txn, data))
   }
 
   /** Utility to create table, with no data */
@@ -378,7 +389,7 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       partCols: Seq[String] = Seq.empty,
       clock: Clock = () => System.currentTimeMillis,
       tableProperties: Map[String, String] = null,
-      clusteringCols: List[Column] = List.empty): TransactionCommitResult = {
+      clusteringColsOpt: Option[List[Column]] = None): TransactionCommitResult = {
 
     appendData(
       engine,
@@ -389,7 +400,7 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       data = Seq.empty,
       clock,
       tableProperties,
-      clusteringCols)
+      clusteringColsOpt)
   }
 
   /** Update an existing table - metadata only changes (no data changes) */
@@ -398,7 +409,8 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       tablePath: String,
       schema: StructType = null, // non-null schema means schema change
       clock: Clock = () => System.currentTimeMillis,
-      tableProperties: Map[String, String] = null): TransactionCommitResult = {
+      tableProperties: Map[String, String] = null,
+      clusteringColsOpt: Option[List[Column]] = None): TransactionCommitResult = {
     appendData(
       engine,
       tablePath,
@@ -407,7 +419,8 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       Seq.empty,
       data = Seq.empty,
       clock,
-      tableProperties)
+      tableProperties,
+      clusteringColsOpt)
   }
 
   def appendData(
@@ -419,7 +432,7 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       data: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])],
       clock: Clock = () => System.currentTimeMillis,
       tableProperties: Map[String, String] = null,
-      clusteringCols: List[Column] = List.empty): TransactionCommitResult = {
+      clusteringColsOpt: Option[List[Column]] = None): TransactionCommitResult = {
 
     val txn = createTxn(
       engine,
@@ -429,7 +442,7 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       partCols,
       tableProperties,
       clock,
-      clusteringCols = clusteringCols)
+      clusteringColsOpt = clusteringColsOpt)
     commitAppendData(engine, txn, data)
   }
 
@@ -500,7 +513,6 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       tablePath: String,
       version: Long,
       partitionCols: Seq[String] = Seq.empty,
-      isBlindAppend: Boolean = true,
       operation: Operation = MANUAL_UPDATE): Unit = {
     val row = spark.sql(s"DESCRIBE HISTORY delta.`$tablePath`")
       .filter(s"version = $version")
@@ -515,7 +527,9 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     assert(row.getAs[Long]("version") === version)
     assert(row.getAs[Long]("partitionBy") ===
       (if (partitionCols == null) null else OBJ_MAPPER.writeValueAsString(partitionCols.asJava)))
-    assert(row.getAs[Boolean]("isBlindAppend") === isBlindAppend)
+    // For now we've hardcoded isBlindAppend=false, once we support more precise setting of this
+    // field we should update this check
+    assert(!row.getAs[Boolean]("isBlindAppend"))
     assert(row.getAs[Seq[String]]("engineInfo") ===
       "Kernel-" + Meta.KERNEL_VERSION + "/" + testEngineInfo)
     assert(row.getAs[String]("operation") === operation.getDescription)

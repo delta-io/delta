@@ -291,7 +291,7 @@ class DeltaMergeBuilder private(
    *
    * @since 0.3.0
    */
-  def execute(): Unit = improveUnsupportedOpError {
+  def execute(): DataFrame = improveUnsupportedOpError {
     val sparkSession = targetTable.toDF.sparkSession
     withActiveSession(sparkSession) {
       // Note: We are explicitly resolving DeltaMergeInto plan rather than going to through the

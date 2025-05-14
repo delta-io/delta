@@ -26,6 +26,7 @@ import io.delta.kernel.exceptions._
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.{SnapshotImpl, TableImpl, TransactionImpl}
 import io.delta.kernel.internal.actions.DomainMetadata
+import io.delta.kernel.internal.checksum.ChecksumReader
 import io.delta.kernel.internal.rowtracking.RowTrackingMetadataDomain
 import io.delta.kernel.utils.CloseableIterable
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
@@ -43,7 +44,7 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
       snapshot: SnapshotImpl,
       expectedValue: Map[String, DomainMetadata]): Unit = {
     // Check using internal API
-    assert(expectedValue === snapshot.getDomainMetadataMap.asScala)
+    assert(expectedValue === snapshot.getActiveDomainMetadataMap.asScala)
     // Verify public API
     expectedValue.foreach { case (key, domainMetadata) =>
       snapshot.getDomainMetadata(key).toScala match {
@@ -62,6 +63,19 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
     // Get the latest snapshot of the table
     val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
     assertDomainMetadata(snapshot, expectedValue)
+    // verifyChecksum will check the domain metadata in CRC against the lastest snapshot.
+    val tablePath = table.getPath(engine)
+    verifyChecksum(tablePath)
+    // Delete CRC and reload snapshot from log.
+    deleteChecksumFileForTable(
+      tablePath.stripPrefix("file:"),
+      versions = Seq(snapshot.getVersion.toInt))
+    // Rebuild table to avoid loading domain metadata from cached crc info.
+    assertDomainMetadata(
+      Table.forPath(engine, tablePath).getLatestSnapshot(engine).asInstanceOf[SnapshotImpl],
+      expectedValue)
+    // Write CRC back so that subsequence operation could generate CRC incrementally.
+    table.checksum(engine, snapshot.getVersion)
   }
 
   private def createTxnWithDomainMetadatas(
@@ -180,11 +194,7 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
       txn: Transaction,
       engine: Engine,
       dataActions: CloseableIterable[Row]): TransactionCommitResult = {
-    val result = txn.commit(engine, dataActions)
-    result.getPostCommitHooks
-      .stream()
-      .forEach(hook => hook.threadSafeInvoke(engine))
-    result
+    executeCrcSimple(txn.commit(engine, dataActions), engine)
   }
 
   test("create table w/o domain metadata") {
@@ -296,7 +306,7 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
         (Seq(dm3), Map("domain1" -> dm1, "domain2" -> dm2, "domain3" -> dm3)),
         (
           Seq(dm1_2, dm3_2),
-          Map("domain1" -> dm1_2, "domain2" -> dm2, "domain3" -> dm3_2))).foreach {
+          Map("domain1" -> dm1_2, "domain2" -> dm2))).foreach {
         case (domainMetadatas, expectedValue) =>
           commitDomainMetadataAndVerify(engine, tablePath, domainMetadatas, expectedValue)
       }
@@ -310,7 +320,7 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
       assertDomainMetadata(
         table2,
         engine,
-        Map("domain1" -> dm1_2, "domain2" -> dm2, "domain3" -> dm3_2))
+        Map("domain1" -> dm1_2, "domain2" -> dm2))
     }
   }
 
@@ -468,13 +478,12 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
         // testDomain3: "", removed = false                   (from 04.json)
 
         val dm1 = new DomainMetadata("testDomain1", """{"key1":"10"}""", false)
-        val dm2 = new DomainMetadata("testDomain2", "", true)
         val dm3 = new DomainMetadata("testDomain3", "", false)
 
-        val snapshot = latestSnapshot(tablePath).asInstanceOf[SnapshotImpl]
         assertDomainMetadata(
-          snapshot,
-          Map("testDomain1" -> dm1, "testDomain2" -> dm2, "testDomain3" -> dm3))
+          Table.forPath(defaultEngine, tablePath),
+          defaultEngine,
+          Map("testDomain1" -> dm1, "testDomain3" -> dm3))
       }
     })
   }
@@ -513,7 +522,7 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
           engine,
           tablePath,
           domainMetadatas = Seq(dm1_2, dm2_2),
-          expectedValue = Map("testDomain1" -> dm1_2, "testDomain2" -> dm2_2, "testDomain3" -> dm3))
+          expectedValue = Map("testDomain1" -> dm1_2, "testDomain3" -> dm3))
 
         // Use Spark to read the table's domain metadata and verify the result
         val deltaLog = DeltaLog.forTable(spark, new Path(tablePath))
@@ -691,7 +700,7 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
         engine,
         tablePath,
         List(dm1_removed, dm1_removed, dm1_removed),
-        Map("domain1" -> dm1_removed))
+        Map())
     }
   }
 
@@ -722,7 +731,7 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
         engine,
         tablePath,
         List(dm1_removed),
-        Map("domain1" -> dm1_removed))
+        Map())
 
       // Removing it again should fail since it doesn't exist
       intercept[DomainDoesNotExistException] {
@@ -730,7 +739,7 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
           engine,
           tablePath,
           List(dm1_removed),
-          Map("domain1" -> dm1_removed))
+          Map())
       }
     }
   }
@@ -788,7 +797,7 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
         engine,
         tablePath,
         List(fooDm_removed),
-        Map("foo" -> fooDm_removed))
+        Map())
       // Already checked in commitDomainMetadataAndVerify but check again
       assert(!latestSnapshot(tablePath).getDomainMetadata("foo").isPresent)
     }

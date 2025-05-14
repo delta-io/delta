@@ -40,7 +40,24 @@ public interface PostCommitHook {
      * transaction commits. This operation has a minimal latency with no requirement of reading
      * previous checkpoint or logs.
      */
-    CHECKSUM_SIMPLE
+    CHECKSUM_SIMPLE,
+
+    /**
+     * Writes a checksum file at the version committed by the transaction. This hook is present when
+     * CHECKSUM_SIMPLE is missing. It requires constructing table stats via full log replay, which
+     * can be expensive for large tables, with latency scaling based on log size. Unlike
+     * CHECKSUM_SIMPLE, this always performs a full table state construction rather than
+     * incrementally computing from a previous CRC.
+     */
+    CHECKSUM_FULL,
+
+    /**
+     * Writes a log compaction file that merges a range of commit JSON files into a single file.
+     * This hook is triggered on a configurable interval (e.g., every 10 commits) and reduces the
+     * number of small log files that need to be read when reconstructing the table state, thereby
+     * improving read performance.
+     */
+    LOG_COMPACTION
   }
 
   /** Invokes the post commit operation whose implementation must be thread safe. */

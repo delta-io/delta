@@ -59,6 +59,12 @@ trait SnapshotDescriptor {
 
   protected[delta] def numOfFilesIfKnown: Option[Long]
   protected[delta] def sizeInBytesIfKnown: Option[Long]
+
+  /** Whether the table has [[CatalogOwnedTableFeature]] enabled */
+  def isCatalogOwned: Boolean = {
+    version >= 0 &&
+      protocol.readerAndWriterFeatureNames.contains(CatalogOwnedTableFeature.name)
+  }
 }
 
 /**
@@ -288,11 +294,6 @@ class Snapshot(
     }
 
     ReconstructedProtocolMetadataAndICT(protocol, metadata, inCommitTimestamp)
-  }
-
-  def isCatalogOwned: Boolean = {
-    version >= 0 &&
-      protocol.readerAndWriterFeatures.exists(_.name == CatalogOwnedTableFeature.name)
   }
 
   /**

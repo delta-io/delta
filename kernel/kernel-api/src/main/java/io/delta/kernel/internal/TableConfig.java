@@ -369,8 +369,8 @@ public class TableConfig<T> {
         tableConfig.validate(value);
         validatedProperties.put(tableConfig.getKey(), value);
       } else {
-        // allow unknown properties to be set
-        validatedProperties.put(key, value);
+        // allow unknown properties to be set (and preserve their original case!)
+        validatedProperties.put(kv.getKey(), value);
       }
     }
     return validatedProperties;

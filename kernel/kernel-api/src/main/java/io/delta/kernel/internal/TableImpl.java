@@ -26,6 +26,7 @@ import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.checkpoints.Checkpointer;
+import io.delta.kernel.internal.checksum.ChecksumUtils;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.metrics.SnapshotReportImpl;
@@ -140,9 +141,20 @@ public class TableImpl implements Table {
   }
 
   @Override
+  public void checksum(Engine engine, long version) throws TableNotFoundException, IOException {
+    final SnapshotImpl snapshotToWriteCrcFile =
+        (SnapshotImpl) getSnapshotAsOfVersion(engine, version);
+    ChecksumUtils.computeStateAndWriteChecksum(engine, snapshotToWriteCrcFile);
+  }
+
+  @Override
   public TransactionBuilder createTransactionBuilder(
       Engine engine, String engineInfo, Operation operation) {
     return new TransactionBuilderImpl(this, engineInfo, operation);
+  }
+
+  public TransactionBuilder createReplaceTableTransactionBuilder(Engine engine, String engineInfo) {
+    return new ReplaceTableTransactionBuilderImpl(this, engineInfo);
   }
 
   public Clock getClock() {
@@ -182,12 +194,19 @@ public class TableImpl implements Table {
       long startVersion,
       long endVersion,
       Set<DeltaLogActionUtils.DeltaAction> actionSet) {
-    // Create a new action set that always contains protocol
+    // Create a new action set which is a super set of the requested actions.
+    // The extra actions are needed either for checks or to extract
+    // extra information. We will strip out the extra actions before
+    // returning the result.
     Set<DeltaLogActionUtils.DeltaAction> copySet = new HashSet<>(actionSet);
     copySet.add(DeltaLogActionUtils.DeltaAction.PROTOCOL);
-    // If protocol is not in the original requested actions we drop the column before returning
+    // commitInfo is needed to extract the inCommitTimestamp of delta files
+    copySet.add(DeltaLogActionUtils.DeltaAction.COMMITINFO);
+    // Determine whether the additional actions were in the original set.
     boolean shouldDropProtocolColumn =
         !actionSet.contains(DeltaLogActionUtils.DeltaAction.PROTOCOL);
+    boolean shouldDropCommitInfoColumn =
+        !actionSet.contains(DeltaLogActionUtils.DeltaAction.COMMITINFO);
 
     return getRawChanges(engine, startVersion, endVersion, copySet)
         .map(
@@ -200,11 +219,15 @@ public class TableImpl implements Table {
                   TableFeatures.validateKernelCanReadTheTable(protocol, getDataPath().toString());
                 }
               }
+              ColumnarBatch batchToReturn = batch;
               if (shouldDropProtocolColumn) {
-                return batch.withDeletedColumnAt(protocolIdx);
-              } else {
-                return batch;
+                batchToReturn = batchToReturn.withDeletedColumnAt(protocolIdx);
               }
+              int commitInfoIdx = batchToReturn.getSchema().indexOf("commitInfo");
+              if (shouldDropCommitInfoColumn) {
+                batchToReturn = batchToReturn.withDeletedColumnAt(commitInfoIdx);
+              }
+              return batchToReturn;
             });
   }
 

@@ -94,7 +94,7 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
       new Column(Array("NestedStruct", "aa")) -> Literal.ofString("z"),
       new Column(Array("NestedStruct", "ac", "aca")) -> Literal.ofInt(10)).asJava
 
-    val nullCounts = Map(
+    val nullCount = Map(
       new Column("ByteType") -> 1L,
       new Column("ShortType") -> 1L,
       new Column("IntegerType") -> 1L,
@@ -114,7 +114,7 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
       100,
       minValues,
       maxValues,
-      nullCounts.map { case (k, v) => (k, java.lang.Long.valueOf(v)) }.asJava)
+      nullCount.map { case (k, v) => (k, java.lang.Long.valueOf(v)) }.asJava)
 
     val expectedJson =
       """{
@@ -159,7 +159,7 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
         |      }
         |    }
         |  },
-        |  "nullCounts": {
+        |  "nullCount": {
         |    "ByteType": 1,
         |    "ShortType": 1,
         |    "IntegerType": 1,
@@ -217,7 +217,7 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
         |    "FloatType": "Infinity",
         |    "DoubleType": "NaN"
         |  },
-        |  "nullCounts": {}
+        |  "nullCount": {}
         |}""".stripMargin
 
     assert(areJsonNodesEqual(json, expectedJson))
@@ -247,7 +247,7 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
       new Column(Array("nested", "nestedCol1")) -> null,
       new Column(Array("nested", "nestedCol2")) -> Literal.ofString("zzz")).asJava
 
-    val nullCounts = Map(
+    val nullCount = Map(
       new Column("col1") -> 5L,
       new Column("col2") -> 0L,
       new Column(Array("nested", "nestedCol1")) -> 2L).map { case (k, v) =>
@@ -258,7 +258,7 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
       100,
       minValues,
       maxValues,
-      nullCounts)
+      nullCount)
 
     val expectedJson =
       """{
@@ -277,7 +277,7 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
         |      "nestedCol2": "zzz"
         |    }
         |  },
-        |  "nullCounts": {
+        |  "nullCount": {
         |    "col1": 5,
         |    "col2": 0,
         |    "nested": {
@@ -305,7 +305,7 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
         |  "numRecords": 50,
         |  "minValues": {"nested": {}},
         |  "maxValues": {"nested": {}},
-        |  "nullCounts": {"nested": {}}
+        |  "nullCount": {"nested": {}}
         |}""".stripMargin
     val json = stats.serializeAsJson(schema)
     assert(areJsonNodesEqual(json, expectedJson))
@@ -332,7 +332,7 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
         |    }
         |  },
         |  "maxValues": {"nested":{}},
-        |  "nullCounts": {"nested":{}}
+        |  "nullCount": {"nested":{}}
         |}""".stripMargin
     val json = stats.serializeAsJson(schema)
     assert(areJsonNodesEqual(json, expectedJson))

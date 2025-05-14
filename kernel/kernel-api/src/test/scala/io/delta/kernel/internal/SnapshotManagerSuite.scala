@@ -69,6 +69,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       logSegment: LogSegment,
       expectedVersion: Long,
       expectedDeltas: Seq[FileStatus],
+      expectedCompactions: Seq[FileStatus],
       expectedCheckpoints: Seq[FileStatus],
       expectedCheckpointVersion: Option[Long],
       expectedLastCommitTimestamp: Long): Unit = {
@@ -77,6 +78,8 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
     assert(logSegment.getVersion == expectedVersion)
     assert(expectedDeltas.map(f => (f.getPath, f.getSize, f.getModificationTime)) sameElements
       logSegment.getDeltas.asScala.map(f => (f.getPath, f.getSize, f.getModificationTime)))
+    assert(expectedCompactions.map(f => (f.getPath, f.getSize, f.getModificationTime)) sameElements
+      logSegment.getCompactions.asScala.map(f => (f.getPath, f.getSize, f.getModificationTime)))
 
     val expectedCheckpointStatuses = expectedCheckpoints
       .map(f => (f.getPath, f.getSize, f.getModificationTime)).sortBy(_._1)
@@ -117,7 +120,8 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       numParts: Int = -1,
       startCheckpoint: Optional[java.lang.Long] = Optional.empty(),
       versionToLoad: Optional[java.lang.Long] = Optional.empty(),
-      v2CheckpointSpec: Seq[(Long, Boolean, Int)] = Seq.empty): Unit = {
+      v2CheckpointSpec: Seq[(Long, Boolean, Int)] = Seq.empty,
+      compactionVersions: Seq[(Long, Long)] = Seq.empty): Unit = {
     val deltas = deltaFileStatuses(deltaVersions)
     val singularCheckpoints = singularCheckpointFileStatuses(checkpointVersions)
     val multiCheckpoints = multiCheckpointFileStatuses(multiCheckpointVersions, numParts)
@@ -155,9 +159,11 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
         }
       }.getOrElse((Seq.empty, Seq.empty))
 
+      val compactions = compactedFileStatuses(compactionVersions)
+
       val logSegment = snapshotManager.getLogSegmentForVersion(
         createMockFSListFromEngine(
-          listFromProvider(deltas ++ checkpointFiles)("/"),
+          listFromProvider(deltas ++ compactions ++ checkpointFiles)("/"),
           new MockSidecarParquetHandler(expectedSidecars),
           new MockSidecarJsonHandler(expectedSidecars)),
         versionToLoad)
@@ -175,11 +181,18 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
           multiCheckpointFileStatuses(Seq(v), numParts)
         }
       }.getOrElse(Seq.empty)
+      val expectedCompactions = compactedFileStatuses(
+        compactionVersions.filter { case (s, e) =>
+          // we can only use a compaction if it starts after the checkpoint and ends at or before
+          // the version we're trying to load
+          s > expectedCheckpointVersion.getOrElse(-1L) && e <= versionToLoad.orElse(Long.MaxValue)
+        })
 
       checkLogSegment(
         logSegment,
         expectedVersion = versionToLoad.orElse(deltaVersions.max),
         expectedDeltas = expectedDeltas,
+        expectedCompactions = expectedCompactions,
         expectedCheckpoints = expectedCheckpoints,
         expectedCheckpointVersion = expectedCheckpointVersion,
         expectedLastCommitTimestamp = versionToLoad.orElse(deltaVersions.max) * 10)
@@ -195,6 +208,19 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       checkpointVersions = Seq.empty,
       multiCheckpointVersions = Seq.empty,
       versionToLoad = versionToLoad)
+  }
+
+  /** Simple test with only json and compactions */
+  def testWithCompactionsNoCheckpoint(
+      deltaVersions: Seq[Long],
+      compactionVersions: Seq[(Long, Long)],
+      versionToLoad: Optional[java.lang.Long] = Optional.empty()): Unit = {
+    testWithCheckpoints(
+      deltaVersions,
+      checkpointVersions = Seq.empty,
+      multiCheckpointVersions = Seq.empty,
+      versionToLoad = versionToLoad,
+      compactionVersions = compactionVersions)
   }
 
   /**
@@ -416,6 +442,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
         logSegment,
         expectedVersion = 24,
         expectedDeltas = deltaFileStatuses(21L until 25L),
+        expectedCompactions = Seq.empty,
         expectedCheckpoints = singularCheckpointFileStatuses(Seq(20L)),
         expectedCheckpointVersion = Some(20),
         expectedLastCommitTimestamp = 240L)
@@ -687,6 +714,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
         expectedVersion = deltaVersions.max,
         expectedDeltas = deltaFileStatuses(
           deltaVersions.filter(_ > checkpointVersion.getOrElse(-1L))),
+        expectedCompactions = Seq.empty,
         expectedCheckpoints = checkpoints,
         expectedCheckpointVersion = checkpointVersion,
         expectedLastCommitTimestamp = deltaVersions.max * 10)
@@ -701,6 +729,48 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
     }.getMessage
 
     assert(exMsg.contains("Missing checkpoint at version 1"))
+  }
+
+  test("One compaction") {
+    testWithCompactionsNoCheckpoint(
+      deltaVersions = 0L until 5L,
+      compactionVersions = Seq((0, 4)))
+
+    testWithCompactionsNoCheckpoint(
+      deltaVersions = 0L until 5L,
+      compactionVersions = Seq((0, 4)),
+      versionToLoad = Optional.of(4))
+  }
+
+  test("Compaction extends too far") {
+    testWithCompactionsNoCheckpoint(
+      deltaVersions = 0L until 5L,
+      compactionVersions = Seq((3, 5)),
+      versionToLoad = Optional.of(4))
+  }
+
+  test("Compaction after checkpoint") {
+    testWithCheckpoints(
+      deltaVersions = 0L until 6L,
+      checkpointVersions = Seq(2),
+      multiCheckpointVersions = Seq.empty,
+      compactionVersions = Seq((3, 5)))
+  }
+
+  test("Compaction starting before checkpoint") {
+    testWithCheckpoints(
+      deltaVersions = 0L until 6L,
+      checkpointVersions = Seq(2),
+      multiCheckpointVersions = Seq.empty,
+      compactionVersions = Seq((1, 5)))
+  }
+
+  test("Compaction starting same as checkpoint") {
+    testWithCheckpoints(
+      deltaVersions = 0L until 5L,
+      checkpointVersions = Seq(2),
+      multiCheckpointVersions = Seq.empty,
+      compactionVersions = Seq((2, 5)))
   }
 }
 

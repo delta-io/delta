@@ -24,18 +24,23 @@ import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 
 import io.delta.golden.GoldenTableUtils
-import io.delta.kernel.{Scan, Snapshot, Table}
+import io.delta.kernel.{Scan, Snapshot, Table, TransactionCommitResult}
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector, FilteredColumnarBatch, MapValue, Row}
 import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.defaults.internal.data.vector.{DefaultGenericVector, DefaultStructVector}
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.expressions.{Column, Predicate}
-import io.delta.kernel.internal.InternalScanFileUtils
+import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
+import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl, TableImpl}
+import io.delta.kernel.internal.checksum.{ChecksumReader, ChecksumWriter, CRCInfo}
 import io.delta.kernel.internal.data.ScanStateRow
+import io.delta.kernel.internal.fs.{Path => KernelPath}
+import io.delta.kernel.internal.stats.FileSizeHistogram
+import io.delta.kernel.internal.util.FileNames.checksumFile
 import io.delta.kernel.internal.util.Utils
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.types._
-import io.delta.kernel.utils.CloseableIterator
+import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 
 import org.apache.spark.sql.delta.util.FileNames
 
@@ -743,8 +748,111 @@ trait TestUtils extends Assertions with SQLHelper {
     resource.getFile
   }
 
+  def checkpointFileExistsForTable(tablePath: String, versions: Int): Boolean =
+    Files.exists(
+      new File(FileNames.checkpointFileSingular(
+        new Path(s"$tablePath/_delta_log"),
+        versions).toString).toPath)
+
   def deleteChecksumFileForTable(tablePath: String, versions: Seq[Int]): Unit =
     versions.foreach(v =>
       Files.deleteIfExists(
         new File(FileNames.checksumFile(new Path(s"$tablePath/_delta_log"), v).toString).toPath))
+
+  def rewriteChecksumFileToExcludeDomainMetadata(
+      engine: Engine,
+      tablePath: String,
+      version: Long): Unit = {
+    val logPath = new KernelPath(s"$tablePath/_delta_log");
+    val crcInfo = ChecksumReader.getCRCInfo(
+      engine,
+      FileStatus.of(checksumFile(
+        logPath,
+        version).toString)).get()
+    // Delete it in hdfs.
+    engine.getFileSystemClient.delete(FileNames.checksumFile(
+      new Path(s"$tablePath/_delta_log"),
+      version).toString)
+    val crcWriter = new ChecksumWriter(logPath)
+    crcWriter.writeCheckSum(
+      engine,
+      new CRCInfo(
+        crcInfo.getVersion,
+        crcInfo.getMetadata,
+        crcInfo.getProtocol,
+        crcInfo.getTableSizeBytes,
+        crcInfo.getNumFiles,
+        crcInfo.getTxnId,
+        /* domainMetadata */ Optional.empty(),
+        crcInfo.getFileSizeHistogram))
+  }
+
+  def executeCrcSimple(result: TransactionCommitResult, engine: Engine): TransactionCommitResult = {
+    result.getPostCommitHooks
+      .stream()
+      .filter(hook => hook.getType == PostCommitHookType.CHECKSUM_SIMPLE)
+      .forEach(hook => hook.threadSafeInvoke(engine))
+    result
+  }
+
+  /**
+   * Verify checksum data matches the expected values in the snapshot.
+   * @param snapshot Snapshot to verify the checksum against
+   */
+  protected def verifyChecksumForSnapshot(
+      snapshot: Snapshot,
+      expectEmptyTable: Boolean = false): Unit = {
+    val logPath = snapshot.asInstanceOf[SnapshotImpl].getLogPath
+    val crcInfoOpt = ChecksumReader.getCRCInfo(
+      defaultEngine,
+      FileStatus.of(checksumFile(
+        logPath,
+        snapshot.getVersion).toString))
+    assert(
+      crcInfoOpt.isPresent,
+      s"CRC information should be present for version ${snapshot.getVersion}")
+    crcInfoOpt.toScala.foreach { crcInfo =>
+      // TODO: check metadata, protocol and file size.
+      assert(
+        crcInfo.getNumFiles === collectScanFileRows(snapshot.getScanBuilder.build()).size,
+        "Number of files in checksum should match snapshot")
+      if (expectEmptyTable) {
+        assert(crcInfo.getTableSizeBytes == 0)
+        crcInfo.getFileSizeHistogram.toScala.foreach { fileSizeHistogram =>
+          assert(fileSizeHistogram == FileSizeHistogram.createDefaultHistogram)
+        }
+      }
+      assert(
+        crcInfo.getDomainMetadata === Optional.of(
+          snapshot.asInstanceOf[SnapshotImpl].getActiveDomainMetadataMap.values().asScala
+            .toSet
+            .asJava),
+        "Domain metadata in checksum should match snapshot")
+    }
+  }
+
+  /**
+   * Ensure checksum is readable by CRC reader, matches snapshot data, and can be regenerated.
+   * This test verifies:
+   * 1. The initial checksum exists and is correct
+   * 2. After deleting the checksum file, it can be regenerated with the same content
+   */
+  def verifyChecksum(tablePath: String, expectEmptyTable: Boolean = false): Unit = {
+    val currentSnapshot = latestSnapshot(tablePath, defaultEngine)
+    val checksumVersion = currentSnapshot.getVersion
+
+    // Step 1: Verify initial checksum
+    verifyChecksumForSnapshot(currentSnapshot)
+
+    // Step 2: Delete and regenerate the checksum
+    defaultEngine.getFileSystemClient.delete(buildCrcPath(tablePath, checksumVersion).toString)
+    Table.forPath(defaultEngine, tablePath).checksum(defaultEngine, checksumVersion)
+
+    // Step 3: Verify regenerated checksum
+    verifyChecksumForSnapshot(currentSnapshot)
+  }
+
+  protected def buildCrcPath(basePath: String, version: Long): java.nio.file.Path = {
+    new File(FileNames.checksumFile(new Path(f"$basePath/_delta_log"), version).toString).toPath
+  }
 }

@@ -23,13 +23,18 @@ import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.lang.ListUtils;
 import io.delta.kernel.internal.util.FileNames;
+import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.utils.FileStatus;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class LogSegment {
 
@@ -38,8 +43,17 @@ public class LogSegment {
   //////////////////////////////////
 
   public static LogSegment empty(Path logPath) {
-    return new LogSegment(logPath, -1, Collections.emptyList(), Collections.emptyList(), -1);
+    return new LogSegment(
+        logPath,
+        -1,
+        Collections.emptyList(),
+        Collections.emptyList(),
+        Collections.emptyList(),
+        Optional.empty(),
+        -1);
   }
+
+  private static final Logger logger = LoggerFactory.getLogger(LogSegment.class);
 
   //////////////////////////////////
   // Member variables and methods //
@@ -48,11 +62,15 @@ public class LogSegment {
   private final Path logPath;
   private final long version;
   private final List<FileStatus> deltas;
+  private final List<FileStatus> compactions;
   private final List<FileStatus> checkpoints;
   private final Optional<Long> checkpointVersionOpt;
+  private final Optional<FileStatus> lastSeenChecksum;
   private final long lastCommitTimestamp;
   private final Lazy<List<FileStatus>> allFiles;
   private final Lazy<List<FileStatus>> allFilesReversed;
+  private final Lazy<List<FileStatus>> compactionsReversed;
+  private final Lazy<List<FileStatus>> allFilesWithCompactionsReversed;
 
   /**
    * Provides information around which files in the transaction log need to be read to create the
@@ -74,6 +92,8 @@ public class LogSegment {
    * @param logPath The path to the _delta_log directory
    * @param version The Snapshot version to generate
    * @param deltas The delta commit files (.json) to read
+   * @param compactions Any found log compactions files that can be used in place of some or all of
+   *     the deltas
    * @param checkpoints The checkpoint file(s) to read
    * @param lastCommitTimestamp The "unadjusted" timestamp of the last commit within this segment.
    *     By unadjusted, we mean that the commit timestamps may not necessarily be monotonically
@@ -83,7 +103,9 @@ public class LogSegment {
       Path logPath,
       long version,
       List<FileStatus> deltas,
+      List<FileStatus> compactions,
       List<FileStatus> checkpoints,
+      Optional<FileStatus> lastSeenChecksum,
       long lastCommitTimestamp) {
 
     ///////////////////////
@@ -92,13 +114,26 @@ public class LogSegment {
 
     requireNonNull(logPath, "logPath is null");
     requireNonNull(deltas, "deltas is null");
+    requireNonNull(compactions, "compactions is null");
     requireNonNull(checkpoints, "checkpoints is null");
+    requireNonNull(lastSeenChecksum, "lastSeenChecksum null");
     checkArgument(
         deltas.stream().allMatch(fs -> FileNames.isCommitFile(fs.getPath())),
         "deltas must all be actual delta (commit) files");
     checkArgument(
+        compactions.stream().allMatch(fs -> FileNames.isLogCompactionFile(fs.getPath())),
+        "compactions must all be actual log compaction files");
+    checkArgument(
         checkpoints.stream().allMatch(fs -> FileNames.isCheckpointFile(fs.getPath())),
         "checkpoints must all be actual checkpoint files");
+    checkArgument(
+        compactions.stream()
+            .allMatch(
+                fs -> {
+                  Tuple2<Long, Long> versions = FileNames.logCompactionVersions(fs.getPath());
+                  return versions._1 < versions._2;
+                }),
+        "compactions must have start version less than end version");
 
     this.checkpointVersionOpt =
         checkpoints.isEmpty()
@@ -110,6 +145,22 @@ public class LogSegment {
             .map(fs -> FileNames.checkpointVersion(new Path(fs.getPath())))
             .allMatch(v -> checkpointVersionOpt.get().equals(v)),
         "All checkpoint files must have the same version");
+
+    lastSeenChecksum.ifPresent(
+        checksumFile -> {
+          long checksumVersion = FileNames.checksumVersion(new Path(checksumFile.getPath()));
+          checkArgument(
+              checksumVersion <= version,
+              "checksum file's version should be less than or equal to logSegment's version");
+          checkpointVersionOpt.ifPresent(
+              checkpointVersion ->
+                  checkArgument(
+                      checksumVersion >= checkpointVersion,
+                      "checksum file's version %s should be greater than or equal to "
+                          + "checkpoint version %s",
+                      checksumVersion,
+                      checkpointVersion));
+        });
 
     if (version != -1) {
       checkArgument(!deltas.isEmpty() || !checkpoints.isEmpty(), "No files to read");
@@ -140,6 +191,20 @@ public class LogSegment {
                 String.format("Delta versions must be contiguous: %s", deltaVersions));
           }
         }
+
+        // Check that our compactions are in range
+        checkArgument(
+            compactions.stream()
+                .allMatch(
+                    fs -> {
+                      Tuple2<Long, Long> versions = FileNames.logCompactionVersions(fs.getPath());
+                      boolean checkpointVersionOkay =
+                          checkpointVersionOpt
+                              .map(checkpointVersion -> versions._1 > checkpointVersion)
+                              .orElse(true);
+                      return checkpointVersionOkay && versions._2 <= version;
+                    }),
+            "compactions must have start version > checkpointVersion AND end version <= version");
       } else {
         this.checkpointVersionOpt.ifPresent(
             checkpointVersion -> {
@@ -160,7 +225,9 @@ public class LogSegment {
     this.logPath = logPath;
     this.version = version;
     this.deltas = deltas;
+    this.compactions = compactions;
     this.checkpoints = checkpoints;
+    this.lastSeenChecksum = lastSeenChecksum;
     this.lastCommitTimestamp = lastCommitTimestamp;
 
     this.allFiles =
@@ -176,6 +243,33 @@ public class LogSegment {
                         Comparator.comparing((FileStatus a) -> new Path(a.getPath()).getName())
                             .reversed())
                     .collect(Collectors.toList()));
+
+    // we sort by the end version. since we work backward through the list, so this is the same as
+    // lexicographic, except when a compaction has a bigger range, which makes it "better", so we
+    // prefer it
+    this.compactionsReversed =
+        new Lazy<>(
+            () ->
+                compactions.stream()
+                    .sorted(
+                        Comparator.comparing(
+                                (FileStatus a) -> FileNames.logCompactionVersions(a.getPath())._2)
+                            .reversed())
+                    .collect(Collectors.toList()));
+
+    this.allFilesWithCompactionsReversed =
+        new Lazy<>(
+            () -> {
+              if (compactions.isEmpty()) {
+                return allFilesReversed.get();
+              } else {
+                LogCompactionResolver resolver =
+                    new LogCompactionResolver(allFilesReversed.get(), compactionsReversed.get());
+                return resolver.resolveFiles();
+              }
+            });
+
+    logger.debug("Created LogSegment: {}", this);
   }
 
   /////////////////
@@ -209,12 +303,34 @@ public class LogSegment {
     return deltas;
   }
 
+  public List<FileStatus> getCompactions() {
+    return compactions;
+  }
+
   public List<FileStatus> getCheckpoints() {
     return checkpoints;
   }
 
   public Optional<Long> getCheckpointVersionOpt() {
     return checkpointVersionOpt;
+  }
+
+  /**
+   * Returns the most recent checksum file encountered during log directory listing, if available.
+   *
+   * <p>Note: This checksum file's version is guaranteed to:
+   *
+   * <ul>
+   *   <li>Be less than or equal to the LogSegment version (enforced by constructor)
+   *   <li>Be greater than or equal to the checkpoint version if a checkpoint exists (filtered
+   *       during initialization)
+   * </ul>
+   *
+   * @return Optional containing the most recent valid checksum file encountered, or empty if none
+   *     found
+   */
+  public Optional<FileStatus> getLastSeenChecksum() {
+    return lastSeenChecksum;
   }
 
   public long getLastCommitTimestamp() {
@@ -237,6 +353,16 @@ public class LogSegment {
     return allFilesReversed.get();
   }
 
+  /**
+   * @return all files sorted in reverse order in this log segment, but omitting the deltas (.json)
+   *     files that are covered by log compaction files. This will include deltas (xxx.json) that
+   *     are not covered by a log compaction, compaction files (xxx.xxx.json), and checkpoints
+   *     (.checkpoint.parquet).
+   */
+  public List<FileStatus> allFilesWithCompactionsReversed() {
+    return allFilesWithCompactionsReversed.get();
+  }
+
   @Override
   public String toString() {
     return String.format(
@@ -245,6 +371,7 @@ public class LogSegment {
             + "  version=%d,\n"
             + "  deltas=[%s\n  ],\n"
             + "  checkpoints=[%s\n  ],\n"
+            + "  lastSeenChecksum=%s,\n"
             + "  checkpointVersion=%s,\n"
             + "  lastCommitTimestamp=%d\n"
             + "}",
@@ -252,6 +379,7 @@ public class LogSegment {
         version,
         formatList(deltas),
         formatList(checkpoints),
+        lastSeenChecksum.map(FileStatus::toString).orElse("None"),
         checkpointVersionOpt.map(String::valueOf).orElse("None"),
         lastCommitTimestamp);
   }
@@ -262,5 +390,86 @@ public class LogSegment {
     }
     return "\n    "
         + list.stream().map(FileStatus::toString).collect(Collectors.joining(",\n    "));
+  }
+
+  // Class to resolve the final list of deltas + log compactions to return
+  private class LogCompactionResolver {
+    // note that currentCompactionPos _always_ points to a valid compaction we'll be including, _or_
+    // past the end of the list of compactions (meaning we've consumed them all). The compaction
+    // pointed to will be added to the output when we hit a delta with a version equal to the low
+    // version of the compaction.
+    int currentCompactionPos = 0;
+    long currentCompactionHi = -1;
+    long currentCompactionLo = -1;
+    final List<FileStatus> compactionsReversed;
+
+    final Iterator<FileStatus> deltaIt;
+
+    LogCompactionResolver(List<FileStatus> allFilesReversed, List<FileStatus> compactionsReversed) {
+      this.deltaIt = allFilesReversed.iterator();
+      this.compactionsReversed = compactionsReversed;
+    }
+
+    // We have two lists, one of deltas and one of compactions. Each is sorted in DESCENDING
+    // order. Given this, resolves as follows:
+    // - set a "hi/lo" goalpost around the next compactions
+    // - for each delta, if its version is:
+    //   - greater than the current compaction high point, include it, move to next delta
+    //   - less than (but not equal to) the current compaction low point, skip it, move to next
+    //     delta
+    //   - equal to the current compaction low point, we're about to transition out of the
+    //     compaction, so, include the compaction, find the next compaction that has a high
+    //     point lower than our current low point and set that to the current compaction to
+    //     consider. This deals with overlapping compactions in a greedy way, ensuring we
+    //     ignore any overlapping compactions.
+    List<FileStatus> resolveFiles() {
+      ArrayList<FileStatus> ret = new ArrayList<FileStatus>();
+      setHiLo();
+      while (deltaIt.hasNext()) {
+        FileStatus currentDelta = deltaIt.next();
+        long deltaVersion = FileNames.deltaVersion(currentDelta.getPath());
+        if (deltaVersion == currentCompactionLo) {
+          // we're about to cross out of the compaction. insert the compaction and advance to the
+          // next compaction. We don't want to include this delta here.
+          ret.add(compactionsReversed.get(currentCompactionPos));
+          advanceCompactionPos();
+          setHiLo();
+        } else if (deltaVersion > currentCompactionHi) {
+          // this delta is not covered by the next compaction, include it.
+          ret.add(currentDelta);
+        }
+        // just skip the file if none of the above are true, it's covered by the current compaction
+      }
+      return ret;
+    }
+
+    // Advance the compaction pos until we're pointing a compaction that has a end lower than our
+    // current low mark (recall we move backwards through versions). This takes compactions in a
+    // greedy manner, and ensures we don't use any overlapping compactions.
+    private void advanceCompactionPos() {
+      currentCompactionPos += 1;
+      while (currentCompactionPos < compactionsReversed.size()) {
+        Tuple2<Long, Long> versions =
+            FileNames.logCompactionVersions(
+                compactionsReversed.get(currentCompactionPos).getPath());
+        if (versions._2 < currentCompactionLo) {
+          break;
+        }
+        currentCompactionPos += 1;
+      }
+    }
+
+    // Set the high/low position based on the current currentCompactionPos
+    private void setHiLo() {
+      if (currentCompactionPos < compactionsReversed.size()) {
+        Tuple2<Long, Long> versions =
+            FileNames.logCompactionVersions(
+                compactionsReversed.get(currentCompactionPos).getPath());
+        currentCompactionLo = versions._1;
+        currentCompactionHi = versions._2;
+      } else {
+        currentCompactionLo = currentCompactionHi = -1;
+      }
+    }
   }
 }

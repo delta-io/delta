@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 package io.delta.kernel.defaults
+
 import scala.collection.immutable.Seq
 import scala.language.implicitConversions
 
@@ -25,25 +26,21 @@ import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
 import io.delta.kernel.internal.SnapshotImpl
 import io.delta.kernel.internal.checksum.ChecksumReader
 import io.delta.kernel.internal.fs.Path
+import io.delta.kernel.internal.util.FileNames.checksumFile
 import io.delta.kernel.types.StructType
-import io.delta.kernel.utils.CloseableIterable
+import io.delta.kernel.utils.{CloseableIterable, FileStatus}
 
 /**
- * Test suite that run all tests in DeltaTableWritesSuite with CRC file written
- * after each delta commit. This test suite will verify that the written CRC files are valid.
+ * Trait to mixin into a test suite that extends [[DeltaTableWriteSuiteBase]] to run all the tests
+ * with CRC file written after each commit and verify the written CRC files are valid.
+ * Note, this requires the test suite uses [[commitTransaction]] and [[verifyWrittenContent]].
  */
-class DeltaTableWriteWithCrcSuite extends DeltaTableWritesSuite {
-
+trait DeltaTableWriteSuiteBaseWithCrc extends DeltaTableWriteSuiteBase {
   override def commitTransaction(
       txn: Transaction,
       engine: Engine,
       dataActions: CloseableIterable[Row]): TransactionCommitResult = {
-    val result = txn.commit(engine, dataActions)
-    result.getPostCommitHooks
-      .stream()
-      .filter(hook => hook.getType == PostCommitHookType.CHECKSUM_SIMPLE)
-      .forEach(hook => hook.threadSafeInvoke(engine))
-    result
+    executeCrcSimple(txn.commit(engine, dataActions), engine)
   }
 
   override def verifyWrittenContent(
@@ -51,22 +48,12 @@ class DeltaTableWriteWithCrcSuite extends DeltaTableWritesSuite {
       expSchema: StructType,
       expData: Seq[TestRow]): Unit = {
     super.verifyWrittenContent(path, expSchema, expData)
-    verifyChecksumValid(path)
-  }
-
-  /** Ensure checksum is readable by CRC reader. */
-  def verifyChecksumValid(
-      tablePath: String): Unit = {
-    val currentSnapshot = latestSnapshot(tablePath, defaultEngine)
-    val checksumVersion = currentSnapshot.getVersion
-    val crcInfo = ChecksumReader.getCRCInfo(
-      defaultEngine,
-      new Path(f"$tablePath/_delta_log/"),
-      checksumVersion,
-      checksumVersion)
-    assert(crcInfo.isPresent)
-    // TODO: check metadata, protocol, domain metadata and file size.
-    assert(crcInfo.get().getNumFiles
-      === collectScanFileRows(currentSnapshot.getScanBuilder.build()).size)
+    verifyChecksum(path, expectEmptyTable = expData.isEmpty)
   }
 }
+
+class DeltaTableWriteWithCrcSuite extends DeltaTableWritesSuite
+    with DeltaTableWriteSuiteBaseWithCrc {}
+
+class DeltaReplaceTableWithCrcSuite extends DeltaReplaceTableSuite
+    with DeltaTableWriteSuiteBaseWithCrc {}

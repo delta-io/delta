@@ -18,11 +18,14 @@ package io.delta.kernel.defaults.metrics
 import java.util.{Collections, Objects, Optional}
 
 import scala.collection.JavaConverters._
+import scala.collection.immutable.Seq
 
 import io.delta.kernel._
 import io.delta.kernel.data.Row
+import io.delta.kernel.defaults.DeltaTableWriteSuiteBase
 import io.delta.kernel.engine._
-import io.delta.kernel.internal.TableConfig
+import io.delta.kernel.expressions.Literal
+import io.delta.kernel.internal.{TableConfig, TableImpl}
 import io.delta.kernel.internal.actions.{GenerateIcebergCompatActionUtils, SingleAction}
 import io.delta.kernel.internal.data.TransactionStateRow
 import io.delta.kernel.internal.fs.Path
@@ -32,11 +35,11 @@ import io.delta.kernel.internal.util.Utils
 import io.delta.kernel.metrics.{FileSizeHistogramResult, SnapshotReport, TransactionMetricsResult, TransactionReport}
 import io.delta.kernel.types.{IntegerType, StructType}
 import io.delta.kernel.utils.{CloseableIterable, CloseableIterator, DataFileStatus}
-import io.delta.kernel.utils.CloseableIterable.inMemoryIterable
+import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 
 import org.scalatest.funsuite.AnyFunSuite
 
-class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
+class TransactionReportSuite extends DeltaTableWriteSuiteBase with MetricsReportTestUtils {
 
   /**
    * Creates a [[Transaction]] using `getTransaction`, requests actions to commit using
@@ -149,10 +152,15 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
 
     val (transactionReport, duration, snapshotReportOpt, exception) =
       getTransactionAndSnapshotReport(
-        engine =>
-          buildTransaction(
-            Table.forPath(engine, path).createTransactionBuilder(engine, engineInfo, operation),
-            engine),
+        engine => {
+          val txnBuilder = if (operation == Operation.REPLACE_TABLE) {
+            Table.forPath(engine, path).asInstanceOf[TableImpl]
+              .createReplaceTableTransactionBuilder(engine, engineInfo)
+          } else {
+            Table.forPath(engine, path).createTransactionBuilder(engine, engineInfo, operation)
+          }
+          buildTransaction(txnBuilder, engine)
+        },
         generateCommitActions,
         expectException,
         validateTransactionMetrics)
@@ -449,6 +457,63 @@ class TransactionReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         expectedBaseSnapshotVersion = 0,
         expectedNumAttempts = 6, // 1 first try + 6 retries
         buildTransaction = (builder, engine) => builder.withMaxRetries(5).build(engine))
+    }
+  }
+
+  Seq(true, false).foreach { includeData =>
+    test(s"TransactionReport: REPLACE a non-empty table, includeData=$includeData") {
+      withTempDir { tempDir =>
+        val path = tempDir.getCanonicalPath
+        // Set up a non-empty table at version 0 with add file size that we know
+        val txn = Table.forPath(defaultEngine, path)
+          .createTransactionBuilder(defaultEngine, "testEngineInfo", Operation.CREATE_TABLE)
+          .withSchema(defaultEngine, new StructType().add("col1", IntegerType.INTEGER))
+          .withDomainMetadataSupported()
+          .build(defaultEngine)
+        txn.addDomainMetadata("user-domain", "some config")
+        val result = txn.commit(
+          defaultEngine,
+          generateAppendActions(fileStatusIter1)(txn, defaultEngine))
+        // Write out the CRC so that we will have fileSizeHistogram in the next commit
+        result.getPostCommitHooks.asScala.foreach(_.threadSafeInvoke(defaultEngine))
+
+        def generateCommitActions: (Transaction, Engine) => CloseableIterable[Row] =
+          if (!includeData) {
+            case (_, _) => emptyIterable()
+          }
+          else {
+            generateAppendActions(fileStatusIter1)
+          }
+        val numAddFiles = if (includeData) 1 else 0
+        val expectedFileSizeHistogram = if (includeData) {
+          incrementFileSizeHistogram(
+            FileSizeHistogram.createDefaultHistogram(),
+            fileStatusIter1).captureFileSizeHistogramResult()
+        } else {
+          FileSizeHistogram.createDefaultHistogram().captureFileSizeHistogramResult()
+        }
+
+        // Check TransactionReport for REPLACE operation
+        checkTransactionReport(
+          generateCommitActions,
+          path,
+          expectException = false,
+          expectedBaseSnapshotVersion = 0,
+          expectedNumAddFiles = numAddFiles,
+          expectedNumRemoveFiles = 1,
+          // protocol, metadata, commitInfo, domainMetadata (tombstone)
+          expectedNumTotalActions = numAddFiles + 5,
+          expectedCommitVersion = Some(1),
+          expectedTotalRemoveFilesSizeInBytes = 100,
+          expectedTotalAddFilesSizeInBytes = 100 * numAddFiles,
+          expectedFileSizeHistogramResult = Some(expectedFileSizeHistogram),
+          buildTransaction = (transBuilder, engine) => {
+            transBuilder
+              .withSchema(engine, new StructType().add("id", IntegerType.INTEGER))
+              .build(engine)
+          },
+          operation = Operation.REPLACE_TABLE)
+      }
     }
   }
 

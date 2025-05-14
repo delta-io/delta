@@ -233,6 +233,10 @@ public final class DeltaErrors {
         tablePath, "Must provide a new schema to write to a new table.");
   }
 
+  public static KernelException requireSchemaForReplaceTable() {
+    return new KernelException("Must provide a new schema for REPLACE TABLE");
+  }
+
   public static KernelException tableAlreadyExists(String tablePath, String message) {
     return new TableAlreadyExistsException(tablePath, message);
   }
@@ -255,6 +259,14 @@ public final class DeltaErrors {
   public static KernelException columnNotFoundInSchema(Column column, StructType tableSchema) {
     return new KernelException(
         format("Column '%s' was not found in the table schema: %s", column, tableSchema));
+  }
+
+  public static KernelException overlappingTablePropertiesSetAndUnset(Set<String> violatingKeys) {
+    return new KernelException(
+        format(
+            "Cannot set and unset the same table property in the same transaction. "
+                + "Properties set and unset: %s",
+            violatingKeys));
   }
 
   /// Start: icebergCompat exceptions

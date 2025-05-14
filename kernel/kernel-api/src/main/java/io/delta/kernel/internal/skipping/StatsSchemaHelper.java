@@ -43,6 +43,12 @@ public class StatsSchemaHelper {
   // Public static fields and methods
   //////////////////////////////////////////////////////////////////////////////////
 
+  /* Delta statistics field names for file statistics */
+  public static final String NUM_RECORDS = "numRecords";
+  public static final String MIN = "minValues";
+  public static final String MAX = "maxValues";
+  public static final String NULL_COUNT = "nullCount";
+
   /**
    * Returns true if the given literal is skipping-eligible. Delta tracks min/max stats for a
    * limited set of data types and only literals of those types are skipping eligible.
@@ -208,12 +214,6 @@ public class StatsSchemaHelper {
   //////////////////////////////////////////////////////////////////////////////////
   // Private static fields and methods
   //////////////////////////////////////////////////////////////////////////////////
-
-  /* Delta statistics field names for file statistics */
-  private static final String NUM_RECORDS = "numRecords";
-  private static final String MIN = "minValues";
-  private static final String MAX = "maxValues";
-  private static final String NULL_COUNT = "nullCount";
 
   private static final Set<String> SKIPPING_ELIGIBLE_TYPE_NAMES =
       new HashSet<String>() {

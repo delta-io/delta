@@ -40,6 +40,7 @@ import io.delta.kernel.statistics.DataFileStatistics;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.*;
 import java.net.URI;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
@@ -242,6 +243,7 @@ public interface Transaction {
 
     boolean isIcebergCompatV2Enabled = isIcebergCompatV2Enabled(transactionState);
     URI tableRoot = new Path(getTablePath(transactionState)).toUri();
+    StructType physicalSchema = TransactionStateRow.getPhysicalSchema(transactionState);
     return fileStatusIter.map(
         dataFileStatus -> {
           if (isIcebergCompatV2Enabled) {
@@ -249,11 +251,13 @@ public interface Transaction {
           }
           AddFile addFileRow =
               AddFile.convertDataFileStatus(
-                  TransactionStateRow.getPhysicalSchema(transactionState),
+                  physicalSchema,
                   tableRoot,
                   dataFileStatus,
                   ((DataWriteContextImpl) dataWriteContext).getPartitionValues(),
-                  true /* dataChange */);
+                  true /* dataChange */,
+                  // TODO: populate tags in generateAppendActions
+                  Collections.emptyMap() /* tags */);
           return SingleAction.createAddFileSingleAction(addFileRow.toRow());
         });
   }

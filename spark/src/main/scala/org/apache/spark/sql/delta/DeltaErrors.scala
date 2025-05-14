@@ -498,6 +498,11 @@ trait DeltaErrorsBase
       pos = 0)
   }
 
+  /** Throwable used when a null 'start' or 'end' is provided in CDC reads. */
+  def nullRangeBoundaryInCDCRead(): Throwable = {
+    new DeltaIllegalArgumentException(errorClass = "DELTA_CDC_READ_NULL_RANGE_BOUNDARY")
+  }
+
   /**
    * Throwable used for invalid CDC 'start' and 'end' options, where end < start
    */
@@ -1260,17 +1265,17 @@ trait DeltaErrorsBase
   def cannotSpecifyBothFileListAndPatternString(): Throwable = {
     new DeltaIllegalArgumentException(
       errorClass = "DELTA_FILE_LIST_AND_PATTERN_STRING_CONFLICT",
-      messageParameters = null)
+      messageParameters = Array.empty)
   }
 
   def cannotUpdateArrayField(table: String, field: String): Throwable = {
     new DeltaAnalysisException(errorClass = "DELTA_CANNOT_UPDATE_ARRAY_FIELD",
-      messageParameters = Array(table, field))
+      messageParameters = Array(table, field, field))
   }
 
   def cannotUpdateMapField(table: String, field: String): Throwable = {
     new DeltaAnalysisException(errorClass = "DELTA_CANNOT_UPDATE_MAP_FIELD",
-      messageParameters = Array(table, field))
+      messageParameters = Array(table, field, field, field))
   }
 
   def cannotUpdateStructField(table: String, field: String): Throwable = {
@@ -1374,7 +1379,10 @@ trait DeltaErrorsBase
       path: Path, tableName: String, spark: SparkSession): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_CREATE_EXTERNAL_TABLE_WITHOUT_TXN_LOG",
-      messageParameters = Array(tableName, path.toString,
+      messageParameters = Array(
+        tableName,
+        path.toString,
+        new Path(path, "_delta_log").toString,
         generateDocsLinkOption(spark, "/index.html").getOrElse("-")))
   }
 
@@ -1440,7 +1448,7 @@ trait DeltaErrorsBase
   }
 
   def aggsNotSupportedException(op: String, cond: Expression): Throwable = {
-    val condStr = s"(condition = ${cond.sql})."
+    val condStr = s"(condition = ${cond.sql})"
     new DeltaAnalysisException(
       errorClass = "DELTA_AGGREGATION_NOT_SUPPORTED",
       messageParameters = Array(op, condStr)
@@ -1489,13 +1497,10 @@ trait DeltaErrorsBase
          """.stripMargin)
 
   def timestampGreaterThanLatestCommit(
-      userTimestamp: java.sql.Timestamp,
-      commitTs: java.sql.Timestamp,
-      timestampString: String): Throwable = {
-    new DeltaAnalysisException(
-      errorClass = "DELTA_TIMESTAMP_GREATER_THAN_COMMIT",
-      messageParameters = Array(s"$userTimestamp", s"$commitTs", timestampString)
-    )
+      userTs: java.sql.Timestamp,
+      lastCommitTs: java.sql.Timestamp,
+      maximumTsStr: String): Throwable = {
+    TemporallyUnstableInputException(userTs, lastCommitTs, maximumTsStr)
   }
 
   def timestampInvalid(expr: Expression): Throwable = {
@@ -1505,16 +1510,20 @@ trait DeltaErrorsBase
     )
   }
 
+  def versionInvalid(version: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_VERSION_INVALID",
+      messageParameters = Array(s"$version")
+    )
+  }
+
   case class TemporallyUnstableInputException(
-      userTimestamp: java.sql.Timestamp,
-      commitTs: java.sql.Timestamp,
-      timestampString: String,
-      commitVersion: Long) extends AnalysisException(
-    s"""The provided timestamp: $userTimestamp is after the latest commit timestamp of
-         |$commitTs. If you wish to query this version of the table, please either provide
-         |the version with "VERSION AS OF $commitVersion" or use the exact timestamp
-         |of the last commit: "TIMESTAMP AS OF '$timestampString'".
-       """.stripMargin)
+      userTs: java.sql.Timestamp,
+      lastCommitTs: java.sql.Timestamp,
+      maximumTsStr: String)
+    extends DeltaAnalysisException(
+      errorClass = "DELTA_TIMESTAMP_GREATER_THAN_COMMIT",
+      messageParameters = Array(s"$userTs", s"$lastCommitTs", maximumTsStr))
 
   def restoreVersionNotExistException(
       userVersion: Long,
@@ -1578,12 +1587,12 @@ trait DeltaErrorsBase
   def noRelationTable(tableIdent: Identifier): Throwable = {
     new DeltaNoSuchTableException(
       errorClass = "DELTA_NO_RELATION_TABLE",
-      messageParameters = Array(s"${tableIdent.quoted}"))
+      errorMessageParameters = Array(s"${tableIdent.quoted}"))
   }
 
   def provideOneOfInTimeTravel: Throwable = {
     new DeltaIllegalArgumentException(
-      errorClass = "DELTA_ONEOF_IN_TIMETRAVEL", messageParameters = null)
+      errorClass = "DELTA_ONEOF_IN_TIMETRAVEL", messageParameters = Array.empty)
   }
 
   def emptyCalendarInterval: Throwable = {
@@ -1776,7 +1785,7 @@ trait DeltaErrorsBase
 
   def metadataAbsentException(): Throwable = {
     new DeltaIllegalStateException(errorClass = "DELTA_METADATA_ABSENT",
-      messageParameters = Array(DeltaSQLConf.DELTA_COMMIT_VALIDATION_ENABLED.key))
+      messageParameters = Array.empty)
   }
 
   def metadataAbsentForExistingCatalogTable(tableName: String, tablePath: String): Throwable = {
@@ -2017,7 +2026,7 @@ trait DeltaErrorsBase
   def nonSinglePartNamespaceForCatalog(ident: String): Throwable = {
     new DeltaNoSuchTableException(
       errorClass = "DELTA_NON_SINGLE_PART_NAMESPACE_FOR_CATALOG",
-      messageParameters = Array(ident))
+      errorMessageParameters = Array(ident))
   }
 
   def indexLargerThanStruct(pos: Int, column: StructField, len: Int): Throwable = {
@@ -2242,13 +2251,13 @@ trait DeltaErrorsBase
   def foundInvalidCharsInColumnNames(invalidColumnNames: Seq[String]): Throwable =
     new DeltaAnalysisException(
       errorClass = "DELTA_INVALID_CHARACTERS_IN_COLUMN_NAMES",
-      messageParameters = invalidColumnNames.toArray)
+      messageParameters = Array(invalidColumnNames.mkString(", ")))
 
   def foundInvalidColumnNamesWhenRemovingColumnMapping(columnNames: Seq[String])
     : Throwable =
     new DeltaAnalysisException(
       errorClass = "DELTA_INVALID_COLUMN_NAMES_WHEN_REMOVING_COLUMN_MAPPING",
-      messageParameters = columnNames.toArray)
+      messageParameters = Array(columnNames.mkString(", ")))
 
   def foundViolatingConstraintsForColumnChange(
       columnName: String,
@@ -3713,6 +3722,12 @@ trait DeltaErrorsBase
       errorClass = "DELTA_UNSUPPORTED_VACUUM_ON_MANAGED_TABLE",
       messageParameters = Array.empty)
   }
+
+  def deltaCannotCreateCatalogOwnedTable(): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_UNSUPPORTED_CATALOG_OWNED_TABLE_CREATION",
+      messageParameters = Array.empty)
+  }
 }
 
 object DeltaErrors extends DeltaErrorsBase
@@ -3896,6 +3911,8 @@ class DeltaColumnMappingUnsupportedException(
     DeltaThrowableHelper.getMessage(errorClass, messageParameters))
     with DeltaThrowable {
   override def getErrorClass: String = errorClass
+  override def getMessageParameters: java.util.Map[String, String] =
+    DeltaThrowableHelper.getMessageParameters(errorClass, errorSubClass = null, messageParameters)
 }
 
 class DeltaFileNotFoundException(
@@ -3905,6 +3922,8 @@ class DeltaFileNotFoundException(
     DeltaThrowableHelper.getMessage(errorClass, messageParameters))
     with DeltaThrowable {
   override def getErrorClass: String = errorClass
+  override def getMessageParameters: java.util.Map[String, String] =
+    DeltaThrowableHelper.getMessageParameters(errorClass, errorSubClass = null, messageParameters)
 }
 
 class DeltaFileAlreadyExistsException(
@@ -3914,6 +3933,8 @@ class DeltaFileAlreadyExistsException(
     DeltaThrowableHelper.getMessage(errorClass, messageParameters))
     with DeltaThrowable {
   override def getErrorClass: String = errorClass
+  override def getMessageParameters: java.util.Map[String, String] =
+    DeltaThrowableHelper.getMessageParameters(errorClass, errorSubClass = null, messageParameters)
 }
 
 class DeltaIOException(
@@ -3924,6 +3945,8 @@ class DeltaIOException(
     DeltaThrowableHelper.getMessage(errorClass, messageParameters), cause)
     with DeltaThrowable {
   override def getErrorClass: String = errorClass
+  override def getMessageParameters: java.util.Map[String, String] =
+    DeltaThrowableHelper.getMessageParameters(errorClass, errorSubClass = null, messageParameters)
 }
 
 class DeltaIllegalStateException(
@@ -3935,10 +3958,8 @@ class DeltaIllegalStateException(
     with DeltaThrowable {
   override def getErrorClass: String = errorClass
 
-  override def getMessageParameters: java.util.Map[String, String] = {
-    DeltaThrowableHelper.getParameterNames(errorClass, null)
-      .zip(messageParameters).toMap.asJava
-  }
+  override def getMessageParameters: java.util.Map[String, String] =
+    DeltaThrowableHelper.getMessageParameters(errorClass, errorSubClass = null, messageParameters)
 }
 
 class DeltaIndexOutOfBoundsException(
@@ -3948,6 +3969,8 @@ class DeltaIndexOutOfBoundsException(
     DeltaThrowableHelper.getMessage(errorClass, messageParameters))
     with DeltaThrowable {
   override def getErrorClass: String = errorClass
+  override def getMessageParameters: java.util.Map[String, String] =
+    DeltaThrowableHelper.getMessageParameters(errorClass, errorSubClass = null, messageParameters)
 }
 
 /** Thrown when the protocol version of a table is greater than supported by this client. */
@@ -3973,9 +3996,15 @@ case class InvalidProtocolVersionException(
 class ProtocolDowngradeException(oldProtocol: Protocol, newProtocol: Protocol)
   extends RuntimeException(DeltaThrowableHelper.getMessage(
     errorClass = "DELTA_INVALID_PROTOCOL_DOWNGRADE",
-    messageParameters = Array(s"(${oldProtocol.simpleString})", s"(${newProtocol.simpleString})")
+    messageParameters = Array(oldProtocol.simpleString, newProtocol.simpleString)
   )) with DeltaThrowable {
   override def getErrorClass: String = "DELTA_INVALID_PROTOCOL_DOWNGRADE"
+  override def getMessageParameters: java.util.Map[String, String] = {
+    DeltaThrowableHelper.getMessageParameters(
+      "DELTA_INVALID_PROTOCOL_DOWNGRADE",
+      errorSubClass = null,
+      Array(oldProtocol.simpleString, newProtocol.simpleString))
+  }
 }
 
 class DeltaTableFeatureException(
@@ -3999,9 +4028,9 @@ class DeltaRuntimeException(
     with DeltaThrowable {
   override def getErrorClass: String = errorClass
 
-  override def getMessageParameters: java.util.Map[String, String] =
-    DeltaThrowableHelper.getParameterNames(errorClass, null)
-      .zip(messageParameters).toMap.asJava
+  override def getMessageParameters: java.util.Map[String, String] = {
+    DeltaThrowableHelper.getMessageParameters(errorClass, errorSubClass = null, messageParameters)
+  }
 }
 
 class DeltaSparkException(
@@ -4012,15 +4041,21 @@ class DeltaSparkException(
     DeltaThrowableHelper.getMessage(errorClass, messageParameters), cause)
     with DeltaThrowable {
   override def getErrorClass: String = errorClass
+  override def getMessageParameters: java.util.Map[String, String] =
+    DeltaThrowableHelper.getMessageParameters(errorClass, errorSubClass = null, messageParameters)
 }
 
 class DeltaNoSuchTableException(
     errorClass: String,
-    messageParameters: Array[String] = Array.empty)
+    errorMessageParameters: Array[String] = Array.empty)
   extends AnalysisException(
-    DeltaThrowableHelper.getMessage(errorClass, messageParameters))
+    DeltaThrowableHelper.getMessage(errorClass, errorMessageParameters))
     with DeltaThrowable {
   override def getErrorClass: String = errorClass
+  override def getMessageParameters: java.util.Map[String, String] = {
+    DeltaThrowableHelper
+      .getMessageParameters(errorClass, errorSubClass = null, errorMessageParameters)
+  }
 }
 
 class DeltaCommandUnsupportedWithDeletionVectorsException(
@@ -4063,11 +4098,11 @@ class DeltaTablePropertyValidationFailedException(
     messageParameters = subClass.messageParameters(table)))
     with DeltaThrowable {
 
-  override def getMessageParameters: java.util.Map[String, String] = {
-    DeltaThrowableHelper.getParameterNames(
+  override def getMessageParameters: java.util.Map[String, String] =
+    DeltaThrowableHelper.getMessageParameters(
       "DELTA_VIOLATE_TABLE_PROPERTY_VALIDATION_FAILED",
-      subClass.tag).zip(subClass.messageParameters(table)).toMap.asJava
-  }
+      subClass.tag,
+      subClass.messageParameters(table))
 
   override def getErrorClass: String =
     "DELTA_VIOLATE_TABLE_PROPERTY_VALIDATION_FAILED." + subClass.tag

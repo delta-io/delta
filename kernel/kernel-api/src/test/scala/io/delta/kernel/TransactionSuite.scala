@@ -124,8 +124,8 @@ class TransactionSuite extends AnyFunSuite with VectorTestUtils with MockEngineU
         }
 
       assert(actStats === Seq(
-        "{\"numRecords\":10,\"minValues\":{},\"maxValues\":{},\"nullCounts\":{}}",
-        "{\"numRecords\":20,\"minValues\":{},\"maxValues\":{},\"nullCounts\":{}}"))
+        "{\"numRecords\":10,\"minValues\":{},\"maxValues\":{},\"nullCount\":{}}",
+        "{\"numRecords\":20,\"minValues\":{},\"maxValues\":{},\"nullCount\":{}}"))
     }
   }
 
