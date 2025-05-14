@@ -552,12 +552,16 @@ public class ColumnMapping {
   private static StructType rewriteFieldIdsForIceberg(StructType schema, AtomicInteger startId) {
     StructType newSchema = new StructType();
     for (StructField field : schema.fields()) {
+      FieldMetadata.Builder builder = FieldMetadata.builder().fromMetadata(field.getMetadata());
       newSchema =
           newSchema.add(
               transformSchema(
-                  startId, field, ""
-                  /** current column path */
-                  ));
+                      startId,
+                      field,
+                      "",
+                      /** current column path */
+                      builder)
+                  .withNewMetadata(builder.build()));
     }
     return newSchema;
   }
@@ -573,16 +577,29 @@ public class ColumnMapping {
    * @param structField The field where to start from
    * @param path The current field path relative to the parent field (aka most recent ancestor with
    *     a StructField). An empty path indicates that there's no parent and we're at the root
+   * @param closestStructFieldParentMetadata The metadata builder of the closest struct field parent
+   *     where nested IDs will be stored. For StructFields this is the current field. For
+   *     map/arrays, it is the closest parent that is a struct field.
    * @return A new {@link StructField} with updated {@link FieldMetadata}
    */
   private static StructField transformSchema(
-      AtomicInteger currentFieldId, StructField structField, String path) {
+      AtomicInteger currentFieldId,
+      StructField structField,
+      String path,
+      FieldMetadata.Builder closestStructFieldParentMetadata) {
     DataType dataType = structField.getDataType();
     if (dataType instanceof StructType) {
       StructType type = (StructType) dataType;
       List<StructField> fields =
           type.fields().stream()
-              .map(field -> transformSchema(currentFieldId, field, getPhysicalName(field)))
+              .map(
+                  field -> {
+                    FieldMetadata.Builder metadataBuilder =
+                        FieldMetadata.builder().fromMetadata(field.getMetadata());
+                    return transformSchema(
+                            currentFieldId, field, getPhysicalName(field), metadataBuilder)
+                        .withNewMetadata(metadataBuilder.build());
+                  })
               .collect(Collectors.toList());
       return new StructField(
           structField.getName(),
@@ -594,9 +611,13 @@ public class ColumnMapping {
       String basePath = "".equals(path) ? getPhysicalName(structField) : path;
       // update element type metadata and recurse into element type
       String elementPath = basePath + "." + type.getElementField().getName();
-      structField = maybeUpdateFieldId(structField, elementPath, currentFieldId);
+      maybeUpdateFieldId(closestStructFieldParentMetadata, elementPath, currentFieldId);
       StructField elementType =
-          transformSchema(currentFieldId, type.getElementField(), elementPath);
+          transformSchema(
+              currentFieldId,
+              type.getElementField(),
+              elementPath,
+              closestStructFieldParentMetadata);
       return new StructField(
           structField.getName(),
           new ArrayType(elementType),
@@ -607,12 +628,16 @@ public class ColumnMapping {
       // update key type metadata and recurse into key type
       String basePath = "".equals(path) ? getPhysicalName(structField) : path;
       String keyPath = basePath + "." + type.getKeyField().getName();
-      structField = maybeUpdateFieldId(structField, keyPath, currentFieldId);
-      StructField key = transformSchema(currentFieldId, type.getKeyField(), keyPath);
+      maybeUpdateFieldId(closestStructFieldParentMetadata, keyPath, currentFieldId);
+      StructField key =
+          transformSchema(
+              currentFieldId, type.getKeyField(), keyPath, closestStructFieldParentMetadata);
       // update value type metadata and recurse into value type
       String valuePath = basePath + "." + type.getValueField().getName();
-      structField = maybeUpdateFieldId(structField, valuePath, currentFieldId);
-      StructField value = transformSchema(currentFieldId, type.getValueField(), valuePath);
+      maybeUpdateFieldId(closestStructFieldParentMetadata, valuePath, currentFieldId);
+      StructField value =
+          transformSchema(
+              currentFieldId, type.getValueField(), valuePath, closestStructFieldParentMetadata);
       return new StructField(
           structField.getName(),
           new MapType(key, value),
@@ -658,26 +683,20 @@ public class ColumnMapping {
    *
    * </blockquote>
    *
-   * @param field The current field where to update the COLUMN_MAPPING_NESTED_IDS_KEY
+   * @param fieldMetadataBuilder The FieldMetadata.Builder to update with nested IDs
    * @param key For a map this is <colName>.key or <colName>.value. For an array this is
    *     <colName>.element
    * @param currentFieldId The current maximum field id to increment and use for assignment
-   * @return A field with potentially updated {@link FieldMetadata}
    */
-  private static StructField maybeUpdateFieldId(
-      StructField field, String key, AtomicInteger currentFieldId) {
+  private static void maybeUpdateFieldId(
+      FieldMetadata.Builder fieldMetadataBuilder, String key, AtomicInteger currentFieldId) {
     // init the nested metadata that holds the nested ids
-    if (!field.getMetadata().contains(COLUMN_MAPPING_NESTED_IDS_KEY)) {
-      FieldMetadata.Builder nestedIdsBuilder = initNestedIdsMetadataBuilder(field);
-      FieldMetadata metadata =
-          FieldMetadata.builder()
-              .fromMetadata(field.getMetadata())
-              .putFieldMetadata(COLUMN_MAPPING_NESTED_IDS_KEY, nestedIdsBuilder.build())
-              .build();
-      field = field.withNewMetadata(metadata);
+    FieldMetadata nestedMetadata = fieldMetadataBuilder.getMetadata(COLUMN_MAPPING_NESTED_IDS_KEY);
+    if (fieldMetadataBuilder.getMetadata(COLUMN_MAPPING_NESTED_IDS_KEY) == null) {
+      fieldMetadataBuilder.putFieldMetadata(COLUMN_MAPPING_NESTED_IDS_KEY, FieldMetadata.empty());
+      nestedMetadata = fieldMetadataBuilder.getMetadata(COLUMN_MAPPING_NESTED_IDS_KEY);
     }
 
-    FieldMetadata nestedMetadata = field.getMetadata().getMetadata(COLUMN_MAPPING_NESTED_IDS_KEY);
     // assign an id to the nested element and update the metadata
     if (!nestedMetadata.contains(key)) {
       FieldMetadata newNestedMeta =
@@ -685,19 +704,7 @@ public class ColumnMapping {
               .fromMetadata(nestedMetadata)
               .putLong(key, currentFieldId.incrementAndGet())
               .build();
-      return field.withNewMetadata(
-          FieldMetadata.builder()
-              .fromMetadata(field.getMetadata())
-              .putFieldMetadata(COLUMN_MAPPING_NESTED_IDS_KEY, newNestedMeta)
-              .build());
+      fieldMetadataBuilder.putFieldMetadata(COLUMN_MAPPING_NESTED_IDS_KEY, newNestedMeta);
     }
-    return field;
-  }
-
-  private static FieldMetadata.Builder initNestedIdsMetadataBuilder(StructField field) {
-    if (hasNestedColumnIds(field)) {
-      return FieldMetadata.builder().fromMetadata(getNestedColumnIds(field));
-    }
-    return FieldMetadata.builder();
   }
 }

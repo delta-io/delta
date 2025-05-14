@@ -18,10 +18,10 @@ package io.delta.tables
 
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.connect.ConnectConversions._
-import org.apache.spark.sql.connect.test.{QueryTest, RemoteSparkSession}
 import org.apache.spark.sql.functions.{col, expr}
+import org.apache.spark.sql.test.DeltaQueryTest
 
-class DeltaMergeBuilderSuite extends QueryTest with RemoteSparkSession {
+class DeltaMergeBuilderSuite extends DeltaQueryTest with RemoteSparkSession {
   private def writeTargetTable(path: String): Unit = {
     val session = spark
     import session.implicits._
@@ -35,7 +35,7 @@ class DeltaMergeBuilderSuite extends QueryTest with RemoteSparkSession {
     Seq(("a", -1), ("b", 0), ("e", -5), ("f", -6)).toDF("k", "v")
   }
 
-  ignore("string expressions in merge conditions and assignments") {
+  test("string expressions in merge conditions and assignments") {
     withTempPath { dir =>
       val path = dir.getAbsolutePath
       writeTargetTable(path)
@@ -63,7 +63,7 @@ class DeltaMergeBuilderSuite extends QueryTest with RemoteSparkSession {
     }
   }
 
-  ignore("column expressions in merge conditions and assignments") {
+  test("column expressions in merge conditions and assignments") {
     withTempPath { dir =>
       val path = dir.getAbsolutePath
       writeTargetTable(path)
@@ -82,7 +82,7 @@ class DeltaMergeBuilderSuite extends QueryTest with RemoteSparkSession {
     }
   }
 
-  ignore("multiple when matched then update clauses") {
+  test("multiple when matched then update clauses") {
     withTempPath { dir =>
       val path = dir.getAbsolutePath
       writeTargetTable(path)
@@ -100,7 +100,7 @@ class DeltaMergeBuilderSuite extends QueryTest with RemoteSparkSession {
     }
   }
 
-  ignore("multiple when matched then delete clauses") {
+  test("multiple when matched then delete clauses") {
     withTempPath { dir =>
       val path = dir.getAbsolutePath
       writeTargetTable(path)
@@ -118,7 +118,7 @@ class DeltaMergeBuilderSuite extends QueryTest with RemoteSparkSession {
     }
   }
 
-  ignore("redundant when matched then update and delete clauses") {
+  test("redundant when matched then update and delete clauses") {
     withTempPath { dir =>
       val path = dir.getAbsolutePath
       writeTargetTable(path)
@@ -138,7 +138,7 @@ class DeltaMergeBuilderSuite extends QueryTest with RemoteSparkSession {
     }
   }
 
-  ignore("interleaved when matched then update and delete clauses") {
+  test("interleaved when matched then update and delete clauses") {
     withTempPath { dir =>
       val path = dir.getAbsolutePath
       writeTargetTable(path)
@@ -158,7 +158,7 @@ class DeltaMergeBuilderSuite extends QueryTest with RemoteSparkSession {
     }
   }
 
-  ignore("multiple when not matched then insert clauses") {
+  test("multiple when not matched then insert clauses") {
     withTempPath { dir =>
       val path = dir.getAbsolutePath
       writeTargetTable(path)
@@ -176,7 +176,7 @@ class DeltaMergeBuilderSuite extends QueryTest with RemoteSparkSession {
     }
   }
 
-  ignore("redundant when not matched then insert clauses") {
+  test("redundant when not matched then insert clauses") {
     withTempPath { dir =>
       val path = dir.getAbsolutePath
       writeTargetTable(path)
@@ -196,7 +196,7 @@ class DeltaMergeBuilderSuite extends QueryTest with RemoteSparkSession {
     }
   }
 
-  ignore("multiple when not matched by source then update clauses") {
+  test("multiple when not matched by source then update clauses") {
     withTempPath { dir =>
       val path = dir.getAbsolutePath
       writeTargetTable(path)
@@ -213,7 +213,7 @@ class DeltaMergeBuilderSuite extends QueryTest with RemoteSparkSession {
     }
   }
 
-  ignore("multiple when not matched by source then delete clauses") {
+  test("multiple when not matched by source then delete clauses") {
     withTempPath { dir =>
       val path = dir.getAbsolutePath
       writeTargetTable(path)
@@ -230,7 +230,7 @@ class DeltaMergeBuilderSuite extends QueryTest with RemoteSparkSession {
     }
   }
 
-  ignore("redundant when not matched by source then update and delete clauses") {
+  test("redundant when not matched by source then update and delete clauses") {
     withTempPath { dir =>
       val path = dir.getAbsolutePath
       writeTargetTable(path)
@@ -251,7 +251,7 @@ class DeltaMergeBuilderSuite extends QueryTest with RemoteSparkSession {
   }
 
 
-  ignore("interleaved when not matched by source then update and delete clauses") {
+  test("interleaved when not matched by source then update and delete clauses") {
     withTempPath { dir =>
       val path = dir.getAbsolutePath
       writeTargetTable(path)
@@ -270,7 +270,7 @@ class DeltaMergeBuilderSuite extends QueryTest with RemoteSparkSession {
     }
   }
 
-  ignore("string expressions in all conditions and assignments") {
+  test("string expressions in all conditions and assignments") {
     withTempPath { dir =>
       val path = dir.getAbsolutePath
       writeTargetTable(path)
@@ -291,7 +291,7 @@ class DeltaMergeBuilderSuite extends QueryTest with RemoteSparkSession {
     }
   }
 
-  ignore("column expressions in all conditions and assignments") {
+  test("column expressions in all conditions and assignments") {
     withTempPath { dir =>
       val path = dir.getAbsolutePath
       writeTargetTable(path)
@@ -312,7 +312,7 @@ class DeltaMergeBuilderSuite extends QueryTest with RemoteSparkSession {
     }
   }
 
-  ignore("no clause conditions and insertAll/updateAll + aliases") {
+  test("no clause conditions and insertAll/updateAll + aliases") {
     withTempPath { dir =>
       val path = dir.getAbsolutePath
       writeTargetTable(path)
@@ -330,7 +330,7 @@ class DeltaMergeBuilderSuite extends QueryTest with RemoteSparkSession {
     }
   }
 
-  ignore("string expressions in all clause conditions and insertAll/updateAll + aliases") {
+  test("string expressions in all clause conditions and insertAll/updateAll + aliases") {
     withTempPath { dir =>
       val path = dir.getAbsolutePath
       writeTargetTable(path)
@@ -348,7 +348,7 @@ class DeltaMergeBuilderSuite extends QueryTest with RemoteSparkSession {
     }
   }
 
-  ignore("column expressions in all clause conditions and insertAll/updateAll + aliases") {
+  test("column expressions in all clause conditions and insertAll/updateAll + aliases") {
     withTempPath { dir =>
       val path = dir.getAbsolutePath
       writeTargetTable(path)
@@ -366,7 +366,7 @@ class DeltaMergeBuilderSuite extends QueryTest with RemoteSparkSession {
     }
   }
 
-  ignore("automatic schema evolution") {
+  test("automatic schema evolution") {
     val session = spark
     import session.implicits._
 
@@ -391,7 +391,7 @@ class DeltaMergeBuilderSuite extends QueryTest with RemoteSparkSession {
     }
   }
 
-  ignore("merge with the withSchemaEvolution API") {
+  test("merge with the withSchemaEvolution API") {
     val session = spark
     import session.implicits._
 
@@ -415,7 +415,7 @@ class DeltaMergeBuilderSuite extends QueryTest with RemoteSparkSession {
     }
   }
 
-  ignore("merge with no withSchemaEvolution while the source's schema " +
+  test("merge with no withSchemaEvolution while the source's schema " +
       "is different than the target's schema") {
     val session = spark
     import session.implicits._
@@ -438,21 +438,18 @@ class DeltaMergeBuilderSuite extends QueryTest with RemoteSparkSession {
     }
   }
 
-  ignore("merge dataframe with many columns") {
+  test("merge dataframe with many columns") {
     withTempPath { dir =>
       val path = dir.getAbsolutePath
-      var df1 = spark.range(1).toDF
+      val id = col("id")
       val numColumns = 100
-      for (i <- 0 until numColumns) {
-        df1 = df1.withColumn(s"col$i", col("id"))
-      }
+      val cols1 = id +: Seq.tabulate(numColumns)(i => id.as(s"col$i"))
+      val df1 = spark.range(1).select(cols1: _*)
       df1.write.mode("overwrite").format("delta").save(path)
       val deltaTable = io.delta.tables.DeltaTable.forPath(spark, path)
 
-      var df2 = spark.range(1).toDF
-      for (i <- 0 until numColumns) {
-        df2 = df2.withColumn(s"col$i", col("id") + 1)
-      }
+      val cols2 = id +: Seq.tabulate(numColumns)(i => (id + 1).as(s"col$i"))
+      val df2 = spark.range(1).select(cols2: _*)
 
       deltaTable
         .as("t")
