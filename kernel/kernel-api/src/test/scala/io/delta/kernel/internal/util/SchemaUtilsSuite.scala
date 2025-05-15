@@ -24,6 +24,7 @@ import scala.collection.JavaConverters.mapAsJavaMapConverter
 import scala.reflect.ClassTag
 
 import io.delta.kernel.exceptions.KernelException
+import io.delta.kernel.internal.TableConfig
 import io.delta.kernel.internal.actions.{Format, Metadata}
 import io.delta.kernel.internal.types.DataTypeJsonSerDe
 import io.delta.kernel.internal.util.ColumnMapping.{COLUMN_MAPPING_ID_KEY, COLUMN_MAPPING_MODE_KEY, COLUMN_MAPPING_NESTED_IDS_KEY, COLUMN_MAPPING_PHYSICAL_NAME_KEY, ColumnMappingMode}
@@ -1250,5 +1251,77 @@ class SchemaUtilsSuite extends AnyFunSuite {
         assert(results.size === expectedColumns.size)
         assert(results === flattenedTestSchema.filterKeys(expectedColumns.contains))
       }
+  }
+
+  ///////////////////////////////////////////////////////////////////////////
+  // validateNoMapStructKeyChanges
+  ///////////////////////////////////////////////////////////////////////////
+
+  private val updatedSchemasWithChangedMaps = Table(
+    ("schemaBefore", "updatedSchemaWithChangedMapKey"),
+    // add a col
+    (
+      mapWithStructKey,
+      new StructType()
+        .add(
+          "map",
+          new MapType(
+            new StructType()
+              .add("id", IntegerType.INTEGER, true, fieldMetadata(id = 2, physicalName = "id"))
+              .add("id2", IntegerType.INTEGER, true, fieldMetadata(id = 3, physicalName = "id2")),
+            IntegerType.INTEGER,
+            false),
+          true,
+          fieldMetadata(id = 1, physicalName = "map"))),
+    (
+      new StructType()
+        .add(
+          "map",
+          new MapType(
+            new StructType()
+              .add("id", IntegerType.INTEGER, true, fieldMetadata(id = 2, physicalName = "id"))
+              .add("id2", IntegerType.INTEGER, true, fieldMetadata(id = 3, physicalName = "id2")),
+            IntegerType.INTEGER,
+            false),
+          true,
+          fieldMetadata(id = 1, physicalName = "map")),
+      mapWithStructKey),
+    (
+      new StructType()
+        .add(
+          "top_level_struct",
+          new StructType().add(
+            "map",
+            new MapType(
+              new StructType()
+                .add("id", IntegerType.INTEGER, true, fieldMetadata(id = 3, physicalName = "id")),
+              IntegerType.INTEGER,
+              false),
+            true,
+            fieldMetadata(2, "map")),
+          fieldMetadata(1, "top_level_struct")),
+      new StructType()
+        .add(
+          "top_level_struct",
+          new StructType().add(
+            "map",
+            new MapType(
+              new StructType()
+                .add("id", IntegerType.INTEGER, true, fieldMetadata(id = 3, physicalName = "id"))
+                .add("id2", IntegerType.INTEGER, true, fieldMetadata(id = 4, physicalName = "id")),
+              IntegerType.INTEGER,
+              false),
+            true,
+            fieldMetadata(2, "map")),
+          fieldMetadata(1, "top_level_struct"))))
+
+  test("validateNoMapStructKeyChanges fails when map struct changes") {
+    val tblProperties = Map(
+      TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey -> "true",
+      ColumnMapping.COLUMN_MAPPING_MODE_KEY -> "id")
+    assertSchemaEvolutionFailure[KernelException](
+      updatedSchemasWithChangedMaps,
+      "Cannot change the type key of Map field map from .*",
+      tableProperties = tblProperties)
   }
 }
