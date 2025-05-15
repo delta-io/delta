@@ -50,6 +50,7 @@ import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{QueryTest, Row, SparkSession}
+import org.apache.spark.sql.catalyst.{TableIdentifier => CatalystTableIdentifier}
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.ManualClock
 
@@ -87,6 +88,47 @@ class CoordinatedCommitsSuite
 
     val m4 = Metadata()
     assert(JCoordinatedCommitsUtils.getCoordinatorConf(m4) === Map.empty.asJava)
+  }
+
+  test("During ALTER, overriding Coordinated Commits configurations throws an exception.") {
+    registerBuilder(TrackingInMemoryCommitCoordinatorBuilder(1))
+    registerBuilder(InMemoryCommitCoordinatorBuilder(1))
+
+    withTempDir { tempDir =>
+      sql(s"CREATE TABLE delta.`${tempDir.getAbsolutePath}` (id LONG) USING delta TBLPROPERTIES " +
+        s"('${COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'tracking-in-memory', " +
+        s"'${COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '${JsonUtils.toJson(Map())}')")
+      val e = interceptWithUnwrapping[DeltaIllegalArgumentException] {
+        sql(s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` SET TBLPROPERTIES " +
+          s"('${COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'in-memory', " +
+          s"'${COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '${JsonUtils.toJson(Map())}')")
+      }
+      checkError(
+        e,
+        "DELTA_CANNOT_OVERRIDE_COORDINATED_COMMITS_CONFS",
+        sqlState = "42616",
+        parameters = Map("Command" -> "ALTER"))
+    }
+  }
+
+  test("During ALTER, unsetting Coordinated Commits configurations throws an exception.") {
+    registerBuilder(TrackingInMemoryCommitCoordinatorBuilder(1))
+
+    withTempDir { tempDir =>
+      sql(s"CREATE TABLE delta.`${tempDir.getAbsolutePath}` (id LONG) USING delta TBLPROPERTIES " +
+        s"('${COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'tracking-in-memory', " +
+        s"'${COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '${JsonUtils.toJson(Map())}')")
+      val e = interceptWithUnwrapping[DeltaIllegalArgumentException] {
+        sql(s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` UNSET TBLPROPERTIES " +
+          s"('${COORDINATED_COMMITS_COORDINATOR_NAME.key}', " +
+          s"'${COORDINATED_COMMITS_COORDINATOR_CONF.key}')")
+      }
+      checkError(
+        e,
+        "DELTA_CANNOT_UNSET_COORDINATED_COMMITS_CONFS",
+        sqlState = "42616",
+        parameters = Map[String, String]())
+    }
   }
 
   test("tableConf returned from registration API is recorded in deltaLog and passed " +
@@ -1627,60 +1669,8 @@ abstract class CommitCoordinatorSuiteBase
   //            Test coordinated-commits with DeltaLog.getChangeLogFile API ENDS             //
   /////////////////////////////////////////////////////////////////////////////////////////////
 
-  test("During ALTER, overriding Coordinated Commits configurations throws an exception.") {
-    if (isCatalogOwnedTest) {
-      // TODO: Implement similar tests for blocking alter table CatalogOwned specific properties.
-      cancel("Upgrade is not yet supported for catalog owned tables")
-    }
-    registerBuilder(TrackingInMemoryCommitCoordinatorBuilder(1))
-    registerBuilder(InMemoryCommitCoordinatorBuilder(1))
-
-    withTempDir { tempDir =>
-      sql(s"CREATE TABLE delta.`${tempDir.getAbsolutePath}` (id LONG) USING delta TBLPROPERTIES " +
-        s"('${COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'tracking-in-memory', " +
-        s"'${COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '${JsonUtils.toJson(Map())}')")
-      val e = interceptWithUnwrapping[DeltaIllegalArgumentException] {
-        sql(s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` SET TBLPROPERTIES " +
-          s"('${COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'in-memory', " +
-          s"'${COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '${JsonUtils.toJson(Map())}')")
-      }
-      checkError(
-        e,
-        "DELTA_CANNOT_OVERRIDE_COORDINATED_COMMITS_CONFS",
-        sqlState = "42616",
-        parameters = Map("Command" -> "ALTER"))
-    }
-  }
-
-  test("During ALTER, unsetting Coordinated Commits configurations throws an exception.") {
-    if (isCatalogOwnedTest) {
-      // TODO: Implement similar tests for blocking alter table CatalogOwned specific properties.
-      cancel("Upgrade is not yet supported for catalog owned tables")
-    }
-    registerBuilder(TrackingInMemoryCommitCoordinatorBuilder(1))
-
-    withTempDir { tempDir =>
-      sql(s"CREATE TABLE delta.`${tempDir.getAbsolutePath}` (id LONG) USING delta TBLPROPERTIES " +
-        s"('${COORDINATED_COMMITS_COORDINATOR_NAME.key}' = 'tracking-in-memory', " +
-        s"'${COORDINATED_COMMITS_COORDINATOR_CONF.key}' = '${JsonUtils.toJson(Map())}')")
-      val e = interceptWithUnwrapping[DeltaIllegalArgumentException] {
-        sql(s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` UNSET TBLPROPERTIES " +
-          s"('${COORDINATED_COMMITS_COORDINATOR_NAME.key}', " +
-          s"'${COORDINATED_COMMITS_COORDINATOR_CONF.key}')")
-      }
-      checkError(
-        e,
-        "DELTA_CANNOT_UNSET_COORDINATED_COMMITS_CONFS",
-        sqlState = "42616",
-        parameters = Map[String, String]())
-    }
-  }
-
-  test("During ALTER, overriding ICT configurations on (potential) Coordinated Commits tables " +
-      "throws an exception.") {
-    if (isCatalogOwnedTest) {
-      cancel("TODO: Implement this.")
-    }
+  test("During ALTER, overriding ICT configurations on (potential) Coordinated Commits " +
+      "or Catalog Owned tables throws an exception.") {
     registerBuilder(TrackingInMemoryCommitCoordinatorBuilder(1))
 
     // For a table that had Coordinated Commits enabled before the ALTER command.
@@ -1691,11 +1681,19 @@ abstract class CommitCoordinatorSuiteBase
         sql(s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` SET TBLPROPERTIES " +
           s"('${IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'false')")
       }
-      checkError(
+      if (isCatalogOwnedTest) {
+        checkError(
+          e,
+          "DELTA_CANNOT_MODIFY_CATALOG_OWNED_DEPENDENCIES",
+          sqlState = "42616",
+          parameters = Map[String, String]())
+      } else {
+        checkError(
         e,
         "DELTA_CANNOT_MODIFY_COORDINATED_COMMITS_DEPENDENCIES",
         sqlState = "42616",
         parameters = Map("Command" -> "ALTER"))
+      }
     }
 
     if (isCatalogOwnedTest) {
@@ -1722,9 +1720,6 @@ abstract class CommitCoordinatorSuiteBase
 
   test("During ALTER, unsetting ICT configurations on Coordinated Commits tables throws an " +
       "exception.") {
-    if (isCatalogOwnedTest) {
-      cancel("TODO: Implement this.")
-    }
     registerBuilder(TrackingInMemoryCommitCoordinatorBuilder(1))
 
     withTempDir { tempDir =>
@@ -1734,19 +1729,24 @@ abstract class CommitCoordinatorSuiteBase
         sql(s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` UNSET TBLPROPERTIES " +
           s"('${IN_COMMIT_TIMESTAMPS_ENABLED.key}')")
       }
-      checkError(
-        e,
-        "DELTA_CANNOT_MODIFY_COORDINATED_COMMITS_DEPENDENCIES",
-        sqlState = "42616",
-        parameters = Map("Command" -> "ALTER"))
+      if (isCatalogOwnedTest) {
+        checkError(
+          e,
+          "DELTA_CANNOT_MODIFY_CATALOG_OWNED_DEPENDENCIES",
+          sqlState = "42616",
+          parameters = Map[String, String]())
+      } else {
+        checkError(
+          e,
+          "DELTA_CANNOT_MODIFY_COORDINATED_COMMITS_DEPENDENCIES",
+          sqlState = "42616",
+          parameters = Map("Command" -> "ALTER"))
+      }
     }
   }
 
   test("During REPLACE, for non-CC tables, default CC configurations are ignored, but default " +
       "ICT confs are retained, and existing ICT confs are discarded") {
-    if (isCatalogOwnedTest) {
-      cancel("TODO: Implement this.")
-    }
     // Non-CC table, REPLACE with default CC and ICT confs => Non-CC, but with ICT confs.
     withTempDir { tempDir =>
       withoutDefaultCCTableFeature {
@@ -1777,23 +1777,35 @@ abstract class CommitCoordinatorSuiteBase
   }
 
   test("During REPLACE, for CC tables, existing CC and ICT configurations are both retained.") {
-    if (isCatalogOwnedTest) {
-      cancel("TODO: Implement this.")
-    }
     registerBuilder(TrackingInMemoryCommitCoordinatorBuilder(1))
 
-    withTempDir { tempDir =>
+    withTable("t1") {
+      if (isCatalogOwnedTest) {
+        sql(s"CREATE TABLE t1 (id LONG) USING delta")
+        sql(s"INSERT INTO t1 VALUES (0)")
+      } else {
+        withoutDefaultCCTableFeature {
+          sql(s"CREATE TABLE t1 (id LONG) USING delta")
+          sql(s"INSERT INTO t1 VALUES (0)")
+          sql(s"ALTER TABLE t1 SET TBLPROPERTIES " + propertiesString)
+        }
+      }
       withoutDefaultCCTableFeature {
-        sql(s"CREATE TABLE delta.`${tempDir.getAbsolutePath}` (id LONG) USING delta")
-        sql(s"INSERT INTO delta.`${tempDir.getAbsolutePath}` VALUES (0)")
-        sql(s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` SET TBLPROPERTIES " + propertiesString)
         // All three ICT configurations should be set because CC feature is enabled later.
-        // REPLACE with default CC confs => CC, and all ICT confs.
-        sql(s"REPLACE TABLE delta.`${tempDir.getAbsolutePath}` (id STRING) USING delta")
-        val snapshot = DeltaLog.forTable(spark, tempDir).unsafeVolatileSnapshot
-        assert(snapshot.tableCommitCoordinatorClientOpt.nonEmpty || snapshot.isCatalogOwned)
-        CoordinatedCommitsUtils.ICT_TABLE_PROPERTY_KEYS.foreach { key =>
-          assert(snapshot.metadata.configuration.contains(key))
+        // REPLACE w/o default CC confs => CC, and all ICT confs.
+        sql(s"REPLACE TABLE t1 (id STRING) USING delta")
+        val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, CatalystTableIdentifier("t1"))
+        if (isCatalogOwnedTest) {
+          assert(snapshot.isCatalogOwned)
+          // Only [[IN_COMMIT_TIMESTAMPS_ENABLED]] should be set for CatalogOwned
+          // since we don't support upgrade yet.
+          // TODO(Zihao): Please update the test once we support upgrade for CC tables.
+          assert(snapshot.metadata.configuration.contains(IN_COMMIT_TIMESTAMPS_ENABLED.key))
+        } else {
+          assert(snapshot.tableCommitCoordinatorClientOpt.nonEmpty)
+          CoordinatedCommitsUtils.ICT_TABLE_PROPERTY_KEYS.foreach { key =>
+            assert(snapshot.metadata.configuration.contains(key))
+          }
         }
       }
     }
@@ -1814,7 +1826,7 @@ abstract class CommitCoordinatorSuiteBase
 
   test("CREATE an external table in a location with an existing table works correctly.") {
     if (isCatalogOwnedTest) {
-      cancel("TODO: Implement this.")
+      cancel("Creating an external table is not yet supported for CatalogOwned.")
     }
     registerBuilder(TrackingInMemoryCommitCoordinatorBuilder(1))
 
