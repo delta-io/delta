@@ -43,6 +43,11 @@ def test(root_dir, code_dir, packages):
         env["SPARK_CONNECT_TESTING_REMOTE"] = "local[4]"
         # Prevent spark.master from being set, which conflicts with Spark Connect
         env["PYSPARK_SUBMIT_ARGS"] = "--remote=local[4] pyspark-shell"
+        # Set PYTHONPATH to include the testing directory for Connect tests
+        if "PYTHONPATH" in env:
+            env["PYTHONPATH"] = extra_class_path + os.pathsep + env["PYTHONPATH"]
+        else:
+            env["PYTHONPATH"] = extra_class_path
         # Use Python to run the tests directly instead of spark-submit
         cmd_base = ["python3"]
     else:
