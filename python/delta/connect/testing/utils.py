@@ -33,6 +33,8 @@ class DeltaTestCase(ReusedConnectTestCase):
     def setUpClass(cls):
         print("OS before setUpClass: ")
         pprint.pprint(dict(os.environ), width = 1)
+        if "MASTER" in os.environ:
+            del os.environ["MASTER"]
         super(DeltaTestCase, self).setUpClass()
         print("OS after setUpClass: ")
         pprint.pprint(dict(os.environ), width = 1)
