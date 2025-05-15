@@ -356,6 +356,8 @@ lazy val connectClient = (project in file("spark-connect/client"))
       // Return the location of the distribution directory.
       "-Ddelta.spark.home=" + distributionDir
     },
+    // Required for testing addFeatureSupport/dropFeatureSupport.
+    Test / envVars += ("DELTA_TESTING", "1"),
   )
 
 lazy val connectServer = (project in file("spark-connect/server"))
