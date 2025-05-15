@@ -90,8 +90,8 @@ class DeltaVariantShreddingSuite
   test("variant shredding table property") {
     withTable("tbl") {
       sql("CREATE TABLE tbl(s STRING, i INTEGER) USING DELTA")
-      val deltaLog = DeltaLog.forTable(spark, TableIdentifier("tbl"))
-      assert(!deltaLog.unsafeVolatileSnapshot.protocol
+      val (deltaLog, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier("tbl"))
+      assert(!snapshot.protocol
         .isFeatureSupported(VariantShreddingPreviewTableFeature),
         s"Table tbl contains ShreddedVariantTableFeature descriptor when its not supposed to"
       )
@@ -197,8 +197,8 @@ class DeltaVariantShreddingSuite
   test("Set table property to invalid value") {
     withTable("tbl") {
       sql("CREATE TABLE tbl(s STRING, i INTEGER) USING DELTA")
-      val deltaLog = DeltaLog.forTable(spark, TableIdentifier("tbl"))
-      assert(!deltaLog.unsafeVolatileSnapshot.protocol
+      val (deltaLog, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier("tbl"))
+      assert(!snapshot.protocol
         .isFeatureSupported(VariantShreddingPreviewTableFeature),
         s"Table tbl contains ShreddedVariantTableFeature descriptor when its not supposed to"
       )
