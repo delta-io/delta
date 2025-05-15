@@ -1037,14 +1037,13 @@ class DeltaTable private[tables](
  * @since 4.0.0
  */
 object DeltaTable {
-
   /**
    * Helper method to get the active SparkSession.
    * 
-   * @return The active SparkSession if one exists
-   * @throws IllegalArgumentException if no active SparkSession is found
+   * @return The active SparkSession if one exists.
+   * @throws IllegalArgumentException if no active SparkSession is found.
    */
-  private def getSparkSession(): SparkSession = {
+  private def getActiveSparkSession(): SparkSession = {
     SparkSession.getActiveSession.getOrElse {
       throw new IllegalArgumentException("Could not find active SparkSession") 
     }
@@ -1062,7 +1061,7 @@ object DeltaTable {
    * @since 4.0.0
    */
   def forPath(path: String): DeltaTable = {
-    forPath(getSparkSession(), path)
+    forPath(getActiveSparkSession(), path)
   }
 
   /**
@@ -1153,7 +1152,7 @@ object DeltaTable {
    * @since 4.0.0
    */
   def forName(tableOrViewName: String): DeltaTable = {
-    forName(getSparkSession(), tableOrViewName)
+    forName(getActiveSparkSession(), tableOrViewName)
   }
 
   /**
@@ -1224,7 +1223,7 @@ object DeltaTable {
    * @since 4.0.0
    */
   def isDeltaTable(identifier: String): Boolean = {
-    isDeltaTable(getSparkSession(), identifier)
+    isDeltaTable(getActiveSparkSession(), identifier)
   }
 
 /**
@@ -1242,7 +1241,7 @@ object DeltaTable {
    */
   @Evolving
   def create(): DeltaTableBuilder = {
-    create(getSparkSession())
+    create(getActiveSparkSession())
   }
 
   /**
@@ -1275,7 +1274,7 @@ object DeltaTable {
    */
   @Evolving
   def createIfNotExists(): DeltaTableBuilder = {
-    createIfNotExists(getSparkSession())
+    createIfNotExists(getActiveSparkSession())
   }
 
   /**
@@ -1308,7 +1307,7 @@ object DeltaTable {
    */
   @Evolving
   def replace(): DeltaTableBuilder = {
-    replace(getSparkSession())
+    replace(getActiveSparkSession())
   }
 
   /**
@@ -1341,7 +1340,7 @@ object DeltaTable {
    */
   @Evolving
   def createOrReplace(): DeltaTableBuilder = {
-    createOrReplace(getSparkSession())
+    createOrReplace(getActiveSparkSession())
   }
 
   /**
@@ -1395,9 +1394,11 @@ object DeltaTable {
   private[tables] def createAnalysisException(message: String): AnalysisException = {
     // TODO: We should refactor this to use DeltaErrors. Until then, we need to use a dummy Spark
     // error class to initialize the AnalysisException, which we then remove in the copy method.
-    new AnalysisException("ALL_PARTITION_COLUMNS_NOT_ALLOWED", Map("message" -> message)).copy(
-      message = message, 
-      errorClass = None,
-      messageParameters = Map.empty)
+    new AnalysisException(
+      errorClass = "ALL_PARTITION_COLUMNS_NOT_ALLOWED",
+      messageParameters = Map("message" -> message)).copy(
+        message = message, 
+        errorClass = None,
+        messageParameters = Map.empty)
   }
 }

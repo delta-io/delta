@@ -424,7 +424,6 @@ class DeltaTableSuite extends DeltaQueryTest with RemoteSparkSession {
     }
   }
 
-
   test("addFeatureSupport") {
     withTempPath { dir =>
       val path = dir.getAbsolutePath

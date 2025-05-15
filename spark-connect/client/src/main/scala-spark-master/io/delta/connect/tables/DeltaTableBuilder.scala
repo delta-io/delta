@@ -313,8 +313,8 @@ class DeltaTableBuilder private[tables](
   @Evolving
   def execute(): DeltaTable = {
     if (identifier.isEmpty && location.isEmpty) {
-      val message = "Table name or location has to be specified"
-      throw DeltaTable.createAnalysisException(message)
+      val exMessage = "Table name or location has to be specified"
+      throw DeltaTable.createAnalysisException(exMessage)
     }
 
     val mode = builderOption match {
