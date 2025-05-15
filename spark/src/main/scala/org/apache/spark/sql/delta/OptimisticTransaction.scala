@@ -27,6 +27,7 @@ import scala.collection.mutable.{ArrayBuffer, HashSet}
 import scala.util.control.NonFatal
 
 import com.databricks.spark.util.TagDefinitions.TAG_LOG_STORE_CLASS
+
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.DeltaOperations.{ChangeColumn, ChangeColumns, CreateTable, Operation, ReplaceColumns, ReplaceTable, UpdateSchema}
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
@@ -62,6 +63,7 @@ import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical.UnsetTableProperties
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.catalyst.util.{CharVarcharUtils, ResolveDefaultColumns}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{StructField, StructType}
 import org.apache.spark.util.{Clock, Utils}
 
@@ -939,6 +941,16 @@ trait OptimisticTransactionImpl extends DeltaTransaction
       Protocol.upgradeProtocolFromMetadataForExistingTable(spark, metadata, protocol)
     if (requiredProtocolOpt.isDefined) {
       newProtocol = requiredProtocolOpt
+    }
+  }
+
+  private def assertShreddingStateConsistent() = {
+    if (!DeltaConfigs.ENABLE_VARIANT_SHREDDING.fromMetaData(metadata)) {
+      val isVariantShreddingSchemaForced =
+        spark.sessionState.conf.getConf(SQLConf.VARIANT_FORCE_SHREDDING_SCHEMA_FOR_TEST).nonEmpty
+      if (isVariantShreddingSchemaForced) {
+        throw DeltaErrors.variantShreddingUnsupported()
+      }
     }
   }
 
@@ -2152,6 +2164,9 @@ trait OptimisticTransactionImpl extends DeltaTransaction
 
     val assertDeletionVectorWellFormed = getAssertDeletionVectorWellFormedFunc(spark, op)
     actions.foreach(assertDeletionVectorWellFormed)
+
+    // Make sure shredded writes are only performed if the shredding table property was set
+    assertShreddingStateConsistent()
 
     // Make sure this operation does not include default column values if the corresponding table
     // feature is not enabled.
