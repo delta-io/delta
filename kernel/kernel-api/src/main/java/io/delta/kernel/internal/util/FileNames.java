@@ -22,6 +22,7 @@ import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.utils.FileStatus;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -118,15 +119,24 @@ public final class FileNames {
    * upgrade.
    */
   public static long getFileVersion(Path path) {
-    if (isCheckpointFile(path.getName())) {
-      return checkpointVersion(path);
-    } else if (isCommitFile(path.getName())) {
-      return deltaVersion(path);
-    } else if (isChecksumFile(path.getName())) {
-      return checksumVersion(path);
+    Optional<Long> fileVersionOpt = getFileVersionOpt(path);
+    if (fileVersionOpt.isPresent()) {
+      return fileVersionOpt.get();
     } else {
       throw new IllegalArgumentException(
           String.format("Unexpected file type found in transaction log: %s", path));
+    }
+  }
+
+  public static Optional<Long> getFileVersionOpt(Path path) {
+    if (isCheckpointFile(path.getName())) {
+      return Optional.of(checkpointVersion(path));
+    } else if (isCommitFile(path.getName())) {
+      return Optional.of(deltaVersion(path));
+    } else if (isChecksumFile(path.getName())) {
+      return Optional.of(checksumVersion(path));
+    } else {
+      return Optional.empty();
     }
   }
 

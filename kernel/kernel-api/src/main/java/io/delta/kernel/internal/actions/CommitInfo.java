@@ -261,4 +261,9 @@ public class CommitInfo {
     logger.info("No commit info found for commit of version {}", version);
     return Optional.empty();
   }
+
+  public static long getRequiredInCommitTimestampFromFile(Engine engine, Path logPath, long version) {
+    return
+            getRequiredInCommitTimestamp(getCommitInfoOpt(engine, logPath, version), String.valueOf(version), logPath);
+  }
 }
