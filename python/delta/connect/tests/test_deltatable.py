@@ -52,6 +52,10 @@ class DeltaTableTests(DeltaTableTestsMixin, DeltaTestCase):
     def test_history(self):
         pass
 
+    @unittest.skip("cdc has not been implemented yet")
+    def test_cdc(self):
+        pass
+
     @unittest.skip("detail has not been implemented yet")
     def test_detail(self):
         pass
@@ -126,6 +130,14 @@ class DeltaTableTests(DeltaTableTestsMixin, DeltaTestCase):
 
     @unittest.skip("upgradeToProtocol has not been implemented yet")
     def test_protocolUpgrade(self):
+        pass
+
+    @unittest.skip("addFeatureSupport has not been implemented yet")
+    def test_addFeatureSupport(self):
+        pass
+
+    @unittest.skip("dropFeatureSupport has not been implemented yet")
+    def test_dropFeatureSupport(self):
         pass
 
     @unittest.skip("restoreToVersion has not been implemented yet")
