@@ -30,7 +30,6 @@ class DeltaTestCase(ReusedConnectTestCase):
 
     @classmethod
     def conf(cls) -> SparkConf:
-        print("before super" + _conf.toDebugString())
         _conf = super(DeltaTestCase, cls).conf()
         print("after super" + _conf.toDebugString())
         _conf.set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
