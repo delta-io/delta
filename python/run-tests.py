@@ -190,14 +190,14 @@ def run_delta_connect_codegen_python(root_dir):
 if __name__ == "__main__":
     print("##### Running python tests #####")
     root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    use_spark_master = os.getenv("USE_SOMETHING") or False
+    use_spark_master = os.getenv("USE_SPARK_MASTER") or False
     prepare(root_dir, use_spark_master)
     delta_spark_package = get_local_package("delta-spark", use_spark_master)
 
-    # run_python_style_checks(root_dir)
-    # run_mypy_tests(root_dir)
-    # run_pypi_packaging_tests(root_dir)
-    # test(root_dir, "delta", [delta_spark_package])
+    run_python_style_checks(root_dir)
+    run_mypy_tests(root_dir)
+    run_pypi_packaging_tests(root_dir)
+    test(root_dir, "delta", [delta_spark_package])
 
     # For versions 4.0+ run Delta Connect tests as well
     if use_spark_master:

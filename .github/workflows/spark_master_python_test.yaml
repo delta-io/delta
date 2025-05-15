@@ -90,5 +90,5 @@ jobs:
         run: |
           # We use the SBT version to choose our dependencies in our python packaging in setup.py
           echo 'ThisBuild / version := "4.0.0-SNAPSHOT"' > version.sbt
-          TEST_PARALLELISM_COUNT=4 USE_SOMETHING=true pipenv run python python/run-tests.py
+          TEST_PARALLELISM_COUNT=4 USE_SPARK_MASTER=true pipenv run python run-tests.py --group spark-python
         if: steps.git-diff.outputs.diff
