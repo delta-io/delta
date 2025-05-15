@@ -929,7 +929,6 @@ class DeltaTable private[tables](
     execute(command)
   }
 
-
   /**
    * Modify the protocol to add a supported feature, and if the table does not support table
    * features, upgrade the protocol automatically. In such a case when the provided feature is
@@ -1226,7 +1225,7 @@ object DeltaTable {
     isDeltaTable(getActiveSparkSession(), identifier)
   }
 
-/**
+  /**
    * :: Evolving ::
    *
    * Return an instance of [[DeltaTableBuilder]] to create a Delta table,

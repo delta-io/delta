@@ -97,7 +97,7 @@ class DeltaTableBuilderSuite extends DeltaQueryTest with RemoteSparkSession {
     }
     
     // Verify identity columns without detailed metadata validation
-    identityColumns.foreach { case (col, expectedIdentityDef) =>
+    identityColumns.foreach { case (col, _) =>
       val fieldOpt = schemaFields.find(_.name == col)
       assert(fieldOpt.isDefined, s"Identity column $col not found in table schema")
     }
@@ -179,8 +179,10 @@ class DeltaTableBuilderSuite extends DeltaQueryTest with RemoteSparkSession {
   }
 
   private def defaultTableBuilder(
-      builder: DeltaTableBuilder, tableName: Option[String], location: Option[String]
-      , clusterBy: Boolean = false): DeltaTableBuilder = {
+      builder: DeltaTableBuilder,
+      tableName: Option[String],
+      location: Option[String],
+      clusterBy: Boolean = false): DeltaTableBuilder = {
     var tableBuilder = builder
     if (tableName.nonEmpty) {
       tableBuilder = tableBuilder.tableName(tableName.get)
@@ -360,8 +362,9 @@ class DeltaTableBuilderSuite extends DeltaQueryTest with RemoteSparkSession {
   test("errors if table name and location are different paths") {
     withTempPath { dir =>
       val path = dir.getAbsolutePath
-      // TODO: This should be an AnalysisException, but it ends up as a Spark Exception.
-      // arising from the connect client attempting to enrich the exception with a Delta error code. 
+    // TODO: This should be an AnalysisException, but it ends up as a Spark Exception
+    // that arises from the Connect Client failing to enrich the exception with the Delta
+    // error class that we expect.
       val e = intercept[Exception] {
         io.delta.tables.DeltaTable.create(spark).tableName(s"delta.`$path`")
           .addColumn("c1", "int")
@@ -443,8 +446,9 @@ class DeltaTableBuilderSuite extends DeltaQueryTest with RemoteSparkSession {
   }
 
   test("partitionedBy and clusterBy cannot be used together") {
-    // TODO: This should be an AnalysisException, but it ends up as a Spark Exception.
-    // arising from the connect client attempting to enrich the exception with a Delta error code.
+    // TODO: This should be an AnalysisException, but it ends up as a Spark Exception
+    // that arises from the Connect Client failing to enrich the exception with the Delta
+    // error class that we expect.
     val e = intercept[Exception] {
       io.delta.tables.DeltaTable.create().tableName("testTable")
         .addColumn("c1", "int")
@@ -460,8 +464,6 @@ class DeltaTableBuilderSuite extends DeltaQueryTest with RemoteSparkSession {
   test("create table with identity columns") {
     withTempPath { dir =>
       val path = dir.getAbsolutePath
-      
-      // Create the table with identity columns
       DeltaTable.create(spark)
         .tableName("testTable")
         .addColumn(
@@ -525,9 +527,12 @@ class DeltaTableBuilderSuite extends DeltaQueryTest with RemoteSparkSession {
       val e = intercept[Exception] {
         spark.sql(s"INSERT INTO delta.`$path` (id1, id2, id3, id4) VALUES (10, 20, 30, 40)")
       }
-      assert(e.getMessage.toLowerCase.contains("identity") && 
-             e.getMessage.toLowerCase.contains("insert"), 
-             "Should error with message about identity column explicit insert")
+      // TODO: This should be an AnalysisException, but it ends up as a Spark Exception
+      // that arises from the Connect Client failing to enrich the exception with the Delta
+      // error class that we expect.
+      val deltaErrorClass = "DELTA_IDENTITY_COLUMNS_EXPLICIT_INSERT_NOT_SUPPORTED"
+      // Explicit inserts are never possible for a GENERATED ALWAYS identity column.
+      assert(e.getMessage.contains(deltaErrorClass))
     }
   }
 }
