@@ -190,4 +190,22 @@ public class InternalUtils {
     }
     return result;
   }
+
+  public static Tuple2<Long, Long> getNarrowSearchBoundsUsingExponentialSearch(
+          long target, long lowerBoundInclusive, long upperBoundExclusive, Function<Long, Long> keyToValueMapper, boolean reversed) {
+    final long iterationDirection = reversed ? -1 : 1;
+    long lowerBoundKey = lowerBoundInclusive;
+    long upperBoundKey;
+    long curKey = lowerBoundInclusive + 1;
+    for (long i = 0;  curKey < upperBoundExclusive; curKey = Math.round(lowerBoundInclusive + iterationDirection*Math.pow(2, i++))) {
+      long curValue = keyToValueMapper.apply(curKey);
+      if (curValue > target) {
+        break;
+      } else {
+        lowerBoundKey = curKey;
+      }
+    }
+    upperBoundKey = Math.min(curKey, upperBoundExclusive);
+    return reversed ? new Tuple2<>(upperBoundKey, lowerBoundKey)  : new Tuple2<>(lowerBoundKey, upperBoundKey);
+  }
 }

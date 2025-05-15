@@ -82,20 +82,20 @@ public final class DeltaHistoryManager {
 
     Commit placeholderEarliestCommit = new Commit(earliestVersion, -1L /* timestamp */);
     Commit ictEnablementCommit = getICTEnablementCommit(latestSnapshot, placeholderEarliestCommit);
-    Optional<Commit> result;
+    Commit searchResult;
     if (ictEnablementCommit.getTimestamp() <= timestamp) {
       // The target commit is in the ICT range.
       long latestSnapshotTimestamp = latestSnapshot.getTimestamp(engine);
       if (latestSnapshotTimestamp <= timestamp) {
         // We just proved we should use the latest snapshot
-        result = Optional.of(new Commit(latestSnapshot.getVersion(), latestSnapshotTimestamp));
+        searchResult = new Commit(latestSnapshot.getVersion(), latestSnapshotTimestamp);
       } else {
         // start ICT search over [earliest available ICT version, latestVersion)
         boolean ictEnabledForEntireWindow = (ictEnablementCommit.version <= earliestVersion);
         Commit searchWindowLowerBoundCommit =
             ictEnabledForEntireWindow ? placeholderEarliestCommit : ictEnablementCommit;
         try {
-          result =
+          searchResult =
               getActiveCommitAtTimeFromICTRange(
                   timestamp,
                   searchWindowLowerBoundCommit,
@@ -103,7 +103,6 @@ public final class DeltaHistoryManager {
                   engine,
                   latestSnapshot.getLogPath());
         } catch (IOException e) {
-          // TODO: proper error message.
           throw new RuntimeException(
               "There was an error while reading a historical commit while performing a timestamp"
                   + "based lookup. This can happen when the commit log is corrupted or when "
@@ -124,42 +123,35 @@ public final class DeltaHistoryManager {
         long ict =
             CommitInfo.getRequiredInCommitTimestampFromFile(
                 engine, logPath, placeholderEarliestCommit.getVersion());
-        result = Optional.of(new Commit(placeholderEarliestCommit.getVersion(), ict));
+        searchResult = new Commit(placeholderEarliestCommit.getVersion(), ict);
       } else {
         // start non-ICT linear search over [earliestVersion, ictEnablementVersion)
         List<Commit> commits = getCommits(engine, logPath, earliestVersion);
-        Commit commit =
+        searchResult =
             lastCommitBeforeOrAtTimestamp(commits, timestamp)
                 .orElse(
                     commits.get(0)); // This is only returned if canReturnEarliestCommit (see below)
-        result = Optional.of(commit);
       }
     }
 
-    if (!result.isPresent()) {
-      // TODO: proper error message.
-      throw new RuntimeException(String.format("No commit found at %s", logPath));
-    }
-    Commit commit = result.get();
-
     // If timestamp is before the earliest commit
-    if (commit.timestamp > timestamp && !canReturnEarliestCommit) {
+    if (searchResult.timestamp > timestamp && !canReturnEarliestCommit) {
       throw DeltaErrors.timestampBeforeFirstAvailableCommit(
           logPath.getParent().toString(), /* use dataPath */
           timestamp,
-          commit.timestamp,
-          commit.version);
+              searchResult.timestamp,
+              searchResult.version);
     }
     // If timestamp is after the last commit of the table
-    if (commit.timestamp < timestamp && !canReturnLastCommit) {
+    if (searchResult.timestamp < timestamp && !canReturnLastCommit) {
       throw DeltaErrors.timestampAfterLatestCommit(
           logPath.getParent().toString(), /* use dataPath */
           timestamp,
-          commit.timestamp,
-          commit.version);
+              searchResult.timestamp,
+              searchResult.version);
     }
 
-    return commit;
+    return searchResult;
   }
 
   private static long getInitialCommitVersionForICTSearch(
@@ -195,7 +187,7 @@ public final class DeltaHistoryManager {
     return pivotVersion;
   }
 
-  private static Optional<Commit> getActiveCommitAtTimeFromICTRange(
+  private static Commit getActiveCommitAtTimeFromICTRange(
       long searchTimestamp, Commit startCommit, Commit endCommit, Engine engine, Path logPath)
       throws IOException {
     // Find the pivot commit version. This should be pretty close to the target commit.
@@ -206,34 +198,18 @@ public final class DeltaHistoryManager {
     long lowerBoundVersion, upperBoundVersion;
     // In most cases, the target commit should be pretty close to the pivot commit.
     if (pivotICT == searchTimestamp) {
-      return Optional.of(new Commit(pivotVersion, pivotICT));
-    } else if (pivotICT < searchTimestamp) {
-      lowerBoundVersion = pivotVersion;
-      for (long i = 0; pivotICT + Math.pow(2, i) < endCommit.version; i++) {
-        long curVersion = pivotVersion + Math.round(Math.pow(2, i));
-        long ict = CommitInfo.getRequiredInCommitTimestampFromFile(engine, logPath, curVersion);
-        if (ict > searchTimestamp) {
-          break;
-        } else {
-          lowerBoundVersion = curVersion;
-        }
-      }
-      upperBoundVersion =
-          Math.min(endCommit.version - 1, pivotVersion + Math.round(Math.pow(2, 1)));
-    } else {
-      // Search left
-      upperBoundVersion = pivotVersion;
-      for (long i = 0; pivotICT - Math.pow(2, i) > startCommit.version; i++) {
-        long curVersion = pivotVersion - Math.round(Math.pow(2, i));
-        long ict = CommitInfo.getRequiredInCommitTimestampFromFile(engine, logPath, curVersion);
-        if (ict <= searchTimestamp) {
-          break;
-        } else {
-          upperBoundVersion = curVersion;
-        }
-      }
-      lowerBoundVersion = Math.max(startCommit.version, pivotVersion - Math.round(Math.pow(2, 1)));
+      return new Commit(pivotVersion, pivotICT);
     }
+    boolean searchLeft = pivotICT > searchTimestamp;
+    Tuple2<Long, Long> narrowerBounds =
+        InternalUtils.getNarrowSearchBoundsUsingExponentialSearch(
+            searchTimestamp,
+            startCommit.version,
+            endCommit.version,
+            version -> CommitInfo.getRequiredInCommitTimestampFromFile(engine, logPath, version),
+            searchLeft /* reversed */);
+    lowerBoundVersion = narrowerBounds._1;
+    upperBoundVersion = narrowerBounds._2;
     // Now we have a range of commits to search through. We can use binary search to find the
     // commit that is closest to the search timestamp.
     Tuple2<Long, Long> greatestLowerBound =
@@ -242,7 +218,7 @@ public final class DeltaHistoryManager {
             lowerBoundVersion,
             upperBoundVersion,
             version -> CommitInfo.getRequiredInCommitTimestampFromFile(engine, logPath, version));
-    return Optional.of(new Commit(greatestLowerBound._1, greatestLowerBound._2));
+    return new Commit(greatestLowerBound._1, greatestLowerBound._2);
   }
 
   private static Commit getICTEnablementCommit(
