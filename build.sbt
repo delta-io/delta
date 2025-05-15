@@ -325,8 +325,6 @@ lazy val connectClient = (project in file("spark-connect/client"))
       emptyValue = ()
     ).value,
     crossSparkSettings(),
-    // Required for testing addFeatureSupport/dropFeatureSupport.
-    Test / envVars += ("DELTA_TESTING", "1"),
     libraryDependencies ++= Seq(
       "com.google.protobuf" % "protobuf-java" % protoVersion % "protobuf",
       "org.apache.spark" %% "spark-connect-client-jvm" % sparkVersion.value % "provided",
@@ -410,6 +408,8 @@ lazy val connectServer = (project in file("spark-connect/server"))
       // needed for the client. Including it causes classpath problems.
       ExclusionRule("org.apache.spark", "spark-connect-shims_2.13")
     ),
+    // Required for testing addFeatureSupport/dropFeatureSupport.
+    Test / envVars += ("DELTA_TESTING", "1"),
   )
 
 lazy val spark = (project in file("spark"))
