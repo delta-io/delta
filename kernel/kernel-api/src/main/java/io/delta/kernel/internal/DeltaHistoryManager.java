@@ -139,16 +139,16 @@ public final class DeltaHistoryManager {
       throw DeltaErrors.timestampBeforeFirstAvailableCommit(
           logPath.getParent().toString(), /* use dataPath */
           timestamp,
-              searchResult.timestamp,
-              searchResult.version);
+          searchResult.timestamp,
+          searchResult.version);
     }
     // If timestamp is after the last commit of the table
     if (searchResult.timestamp < timestamp && !canReturnLastCommit) {
       throw DeltaErrors.timestampAfterLatestCommit(
           logPath.getParent().toString(), /* use dataPath */
           timestamp,
-              searchResult.timestamp,
-              searchResult.version);
+          searchResult.timestamp,
+          searchResult.version);
     }
 
     return searchResult;
@@ -160,8 +160,9 @@ public final class DeltaHistoryManager {
     // Fit a line through the start and end commits build a very rough linear model
     // targetCommit = startCommit.version + (searchTimestamp - startCommit.getTimestamp()) /
     // commitsPerMillisecond
-    long commitsPerMillisecond = (endCommit.getVersion() - startCommit.getVersion()) /
-            Math.max((endCommit.getTimestamp() - startCommit.getTimestamp()), 1);
+    long commitsPerMillisecond =
+        (endCommit.getVersion() - startCommit.getVersion())
+            / Math.max((endCommit.getTimestamp() - startCommit.getTimestamp()), 1);
     long approximateCommitVersion =
         startCommit.version
             + (searchTimestamp - startCommit.getTimestamp()) * commitsPerMillisecond;
