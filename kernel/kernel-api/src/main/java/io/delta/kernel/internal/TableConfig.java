@@ -302,6 +302,23 @@ public class TableConfig<T> {
           String.format("each value must in the the set: %s", ALLOWED_UNIFORM_FORMATS),
           true);
 
+  /**
+   * Table property that enables modifying the table in accordance with the Delta-Variant Shredding
+   * Preview protocol.
+   *
+   * @see <a
+   *     href="https://github.com/delta-io/delta/blob/master/protocol_rfcs/variant-shredding.md">
+   *     Delta-Variant Shredding Protocol</a>
+   */
+  public static final TableConfig<Boolean> VARIANT_SHREDDING_ENABLED =
+      new TableConfig<>(
+          "delta.enableVariantShredding",
+          "false",
+          Boolean::valueOf,
+          value -> true,
+          "needs to be a boolean.",
+          true);
+
   /** All the valid properties that can be set on the table. */
   private static final Map<String, TableConfig<?>> VALID_PROPERTIES =
       Collections.unmodifiableMap(

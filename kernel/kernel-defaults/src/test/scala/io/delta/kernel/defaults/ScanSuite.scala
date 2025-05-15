@@ -1590,7 +1590,8 @@ class ScanSuite extends AnyFunSuite with TestUtils
 
   Seq(
     "spark-variant-checkpoint",
-    "spark-variant-stable-feature-checkpoint").foreach { tableName =>
+    "spark-variant-stable-feature-checkpoint",
+    "spark-shredded-variant-preview-delta").foreach { tableName =>
     Seq(
       ("version 0 no predicate", None, Some(0), 2),
       ("latest version (has checkpoint) no predicate", None, None, 4),
