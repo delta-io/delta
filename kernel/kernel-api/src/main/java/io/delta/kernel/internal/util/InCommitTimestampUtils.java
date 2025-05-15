@@ -15,13 +15,12 @@
  */
 package io.delta.kernel.internal.util;
 
-import io.delta.kernel.data.ColumnVector;
-import io.delta.kernel.data.ColumnarBatch;
 import static io.delta.kernel.internal.TableConfig.*;
 
+import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.SnapshotImpl;
-import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.Metadata;
 import java.util.HashMap;
