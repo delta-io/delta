@@ -947,7 +947,8 @@ trait OptimisticTransactionImpl extends DeltaTransaction
   private def assertShreddingStateConsistent() = {
     if (!DeltaConfigs.ENABLE_VARIANT_SHREDDING.fromMetaData(metadata)) {
       val isVariantShreddingSchemaForced =
-        spark.sessionState.conf.getConf(SQLConf.VARIANT_FORCE_SHREDDING_SCHEMA_FOR_TEST).nonEmpty
+        spark.sessionState.conf
+          .getConfString("spark.sql.variant.forceShreddingSchemaForTest", "").nonEmpty
       if (isVariantShreddingSchemaForced) {
         throw DeltaErrors.variantShreddingUnsupported()
       }
