@@ -33,17 +33,45 @@ def test(root_dir, code_dir, packages):
                   f.endswith(".py") and not f.startswith("_")]
     extra_class_path = path.join(python_root_dir, path.join(code_dir, "testing"))
 
+    # Check if we're running Delta Connect tests and need to set special environment
+    is_connect_test = "connect" in code_dir
+    env = os.environ.copy()
+
+    if is_connect_test:
+        print("### Running Delta Connect tests - configuring Connect environment")
+        # Set the remote connection string for Spark Connect
+        env["SPARK_CONNECT_TESTING_REMOTE"] = "local[4]"
+        # Prevent spark.master from being set, which conflicts with Spark Connect
+        env["PYSPARK_SUBMIT_ARGS"] = "--remote=local[4] pyspark-shell"
+        # Set PYTHONPATH to include the testing directory for Connect tests
+        if "PYTHONPATH" in env:
+            env["PYTHONPATH"] = extra_class_path + os.pathsep + env["PYTHONPATH"]
+        else:
+            env["PYTHONPATH"] = extra_class_path
+        # Use Python to run the tests directly instead of spark-submit
+        cmd_base = ["python3"]
+    else:
+        # For regular tests, use spark-submit with the driver class path
+        cmd_base = ["spark-submit", "--driver-class-path=%s" % extra_class_path]
+
     for test_file in test_files:
         try:
-            cmd = ["spark-submit",
-                   "--driver-class-path=%s" % extra_class_path,
-                   "--repositories",
-                   ("https://maven-central.storage-download.googleapis.com/maven2/,"
-                       "https://repo1.maven.org/maven2/"),
-                   "--packages", ",".join(packages), test_file]
+            if is_connect_test:
+                # For Connect tests, run the test file directly with python
+                cmd = cmd_base + [test_file]
+            else:
+                # For regular tests, use spark-submit with the package dependencies
+                cmd = cmd_base + [
+                    "--repositories",
+                    ("https://maven-central.storage-download.googleapis.com/maven2/,"
+                     "https://repo1.maven.org/maven2/,"
+                     "https://repository.apache.org/content/repositories/orgapachespark-1480"),
+                    "--packages", ",".join(packages), test_file
+                ]
+
             print("Running tests in %s\n=============" % test_file)
             print("Command: %s" % str(cmd))
-            run_cmd(cmd, stream_output=True)
+            run_cmd(cmd, stream_output=True, env=env)
         except:
             print("Failed tests in %s" % (test_file))
             raise
@@ -201,3 +229,10 @@ if __name__ == "__main__":
     # For versions 4.0+ run Delta Connect tests as well
     if use_spark_master:
         run_delta_connect_codegen_python(root_dir)
+        # TODO: In the future, find a way to get these
+        # packages locally instead of downloading from Maven.
+        delta_connect_packages = ["com.google.protobuf:protobuf-java:3.25.1",
+                                  "org.apache.spark:spark-connect_2.13:4.0.0",
+                                  get_local_package("delta-connect-server", use_spark_master)]
+
+        test(root_dir, path.join("delta", "connect"), delta_connect_packages)
