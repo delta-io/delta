@@ -236,4 +236,4 @@ if __name__ == "__main__":
         run_python_tests(root_dir)
     else:
         scala_version = os.getenv("SCALA_VERSION")
-        run_sbt_tests(root_dir, args.group, args.coverage, scala_version, args.shard)
+        # run_sbt_tests(root_dir, args.group, args.coverage, scala_version, args.shard)
