@@ -27,7 +27,8 @@ class DeltaTestCase(ReusedConnectTestCase):
     """
     Test suite base for setting up a properly configured SparkSession for using Delta Connect.
     """
-        @classmethod
+
+    @classmethod
     def setUpClass(cls):
         print("OS before setUpClass: " + os.environ)
         if 'MASTER' in os.environ:
