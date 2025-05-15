@@ -59,8 +59,8 @@ def test(root_dir, code_dir, packages):
                 cmd = cmd_base + [
                     "--repositories",
                     ("https://maven-central.storage-download.googleapis.com/maven2/,"
-                    "https://repo1.maven.org/maven2/,"
-                    "https://repository.apache.org/content/repositories/orgapachespark-1480"),
+                     "https://repo1.maven.org/maven2/,"
+                     "https://repository.apache.org/content/repositories/orgapachespark-1480"),
                     "--packages", ",".join(packages), test_file
                 ]
 
