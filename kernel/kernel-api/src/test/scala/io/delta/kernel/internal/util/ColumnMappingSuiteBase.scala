@@ -186,11 +186,13 @@ trait ColumnMappingSuiteBase extends VectorTestUtils {
         .anySatisfy((k: AnyRef, v: AnyRef) => {
           assertThat(k).asString.startsWith(colBPrefix)
           assertThat(k).asString.endsWith(".key")
+          assert(k.asInstanceOf[String].count(_ == '.') == 1)
           assertThat(v).isEqualTo(nextFieldId)
         })
         .anySatisfy((k: AnyRef, v: AnyRef) => {
           assertThat(k).asString.startsWith(colBPrefix)
           assertThat(k).asString.endsWith(".value")
+          assert(k.asInstanceOf[String].count(_ == '.') == 1)
           assertThat(v).isEqualTo(nextFieldId)
         })
 
@@ -210,12 +212,17 @@ trait ColumnMappingSuiteBase extends VectorTestUtils {
       } else {
         "f."
       }
+      assert(
+        innerStruct.get("f").getMetadata.getEntries
+          .get(COLUMN_MAPPING_NESTED_IDS_KEY) != null,
+        s"${metadata.getSchema}")
       assertThat(innerStruct.get("f").getMetadata.getEntries
         .get(COLUMN_MAPPING_NESTED_IDS_KEY).asInstanceOf[FieldMetadata].getEntries)
         .hasSize(1)
         .anySatisfy((k: AnyRef, v: AnyRef) => {
           assertThat(k).asString.startsWith(colFPrefix)
           assertThat(k).asString.endsWith(".element")
+          assert(k.asInstanceOf[String].count(_ == '.') == 1)
           assertThat(v).isEqualTo(nextFieldId)
         })
     }
