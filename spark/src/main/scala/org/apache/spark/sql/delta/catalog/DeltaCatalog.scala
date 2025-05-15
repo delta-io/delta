@@ -55,7 +55,7 @@ import org.apache.spark.sql.connector.catalog.{DelegatingCatalogExtension, Ident
 import org.apache.spark.sql.connector.catalog.TableCapability._
 import org.apache.spark.sql.connector.catalog.TableChange._
 import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTransform, Literal, NamedReference, Transform}
-import org.apache.spark.sql.connector.write.{LogicalWriteInfo, V1Write, WriteBuilder}
+import org.apache.spark.sql.connector.write.{LogicalWriteInfo, SupportsTruncate, V1Write, WriteBuilder}
 import org.apache.spark.sql.execution.datasources.{DataSource, PartitioningUtils}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.sources.InsertableRelation
@@ -618,7 +618,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
     override def abortStagedChanges(): Unit = {}
 
     override def capabilities(): util.Set[TableCapability] = {
-      Set(V1_BATCH_WRITE).asJava
+      Set(V1_BATCH_WRITE, TRUNCATE).asJava
     }
 
     override def newWriteBuilder(info: LogicalWriteInfo): WriteBuilder = {
@@ -629,7 +629,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
     /*
      * WriteBuilder for creating a Delta table.
      */
-    private class DeltaV1WriteBuilder extends WriteBuilder {
+    private class DeltaV1WriteBuilder extends WriteBuilder with SupportsTruncate {
+      override def truncate(): this.type = this
       override def build(): V1Write = new V1Write {
         override def toInsertableRelation(): InsertableRelation = {
           new InsertableRelation {

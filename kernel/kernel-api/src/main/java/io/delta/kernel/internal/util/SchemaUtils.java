@@ -24,6 +24,7 @@ import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.DeltaErrors;
+import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.skipping.StatsSchemaHelper;
 import io.delta.kernel.types.*;
@@ -95,24 +96,35 @@ public class SchemaUtils {
    *   <li>Column names contain only valid characters
    *   <li>Data types are supported
    *   <li>Physical column name consistency is preserved in the new schema
+   *   <li>If IcebergWriterCompatV1 is enabled, that map struct keys have not changed
    *   <li>ToDo: No new non-nullable fields are added or no tightening of nullable fields
    *   <li>ToDo: Nested IDs for array/map types are preserved in the new schema for IcebergCompatV2
    *   <li>ToDo: No type changes
    * </ul>
    */
   public static void validateUpdatedSchema(
-      StructType currentSchema,
-      StructType newSchema,
-      Set<String> currentPartitionColumns,
+      Metadata currentMetadata,
+      Metadata newMetadata,
       Set<String> clusteringColumnPhysicalNames,
-      Metadata newMetadata) {
+      boolean allowNewRequiredFields) {
     checkArgument(
         isColumnMappingModeEnabled(
             ColumnMapping.getColumnMappingMode(newMetadata.getConfiguration())),
         "Cannot validate updated schema when column mapping is disabled");
-    validateSchema(newSchema, true /*columnMappingEnabled*/);
-    validatePartitionColumns(newSchema, new ArrayList<>(currentPartitionColumns));
-    validateSchemaEvolution(currentSchema, newSchema, newMetadata, clusteringColumnPhysicalNames);
+    validateSchema(newMetadata.getSchema(), true /*columnMappingEnabled*/);
+    validatePartitionColumns(
+        newMetadata.getSchema(), new ArrayList<>(newMetadata.getPartitionColNames()));
+    int currentMaxFieldId =
+        Integer.parseInt(
+            currentMetadata.getConfiguration().getOrDefault(COLUMN_MAPPING_MAX_COLUMN_ID_KEY, "0"));
+    validateSchemaEvolution(
+        currentMetadata.getSchema(),
+        newMetadata.getSchema(),
+        ColumnMapping.getColumnMappingMode(newMetadata.getConfiguration()),
+        clusteringColumnPhysicalNames,
+        currentMaxFieldId,
+        allowNewRequiredFields,
+        TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.fromMetadata(newMetadata.getConfiguration()));
   }
 
   /**
@@ -426,14 +438,21 @@ public class SchemaUtils {
   private static void validateSchemaEvolution(
       StructType currentSchema,
       StructType newSchema,
-      Metadata metadata,
-      Set<String> clusteringColumnPhysicalNames) {
-    ColumnMappingMode columnMappingMode =
-        ColumnMapping.getColumnMappingMode(metadata.getConfiguration());
+      ColumnMappingMode columnMappingMode,
+      Set<String> clusteringColumnPhysicalNames,
+      int currentMaxFieldId,
+      boolean allowNewRequiredFields,
+      boolean icebergWriterCompatV1Enabled) {
     switch (columnMappingMode) {
       case ID:
       case NAME:
-        validateSchemaEvolutionById(currentSchema, newSchema, clusteringColumnPhysicalNames);
+        validateSchemaEvolutionById(
+            currentSchema,
+            newSchema,
+            clusteringColumnPhysicalNames,
+            currentMaxFieldId,
+            allowNewRequiredFields,
+            icebergWriterCompatV1Enabled);
         return;
       case NONE:
         throw new UnsupportedOperationException(
@@ -449,14 +468,20 @@ public class SchemaUtils {
    * fields
    */
   private static void validateSchemaEvolutionById(
-      StructType currentSchema, StructType newSchema, Set<String> clusteringColumnPhysicalNames) {
+      StructType currentSchema,
+      StructType newSchema,
+      Set<String> clusteringColumnPhysicalNames,
+      int oldMaxFieldId,
+      boolean allowNewRequiredFields,
+      boolean icebergWriterCompatV1Enabled) {
     Map<Integer, StructField> currentFieldsById = fieldsById(currentSchema);
     Map<Integer, StructField> updatedFieldsById = fieldsById(newSchema);
     SchemaChanges schemaChanges = computeSchemaChangesById(currentFieldsById, updatedFieldsById);
     validatePhysicalNameConsistency(schemaChanges.updatedFields());
     // Validates that the updated schema does not contain breaking changes in terms of types and
     // nullability
-    validateUpdatedSchemaCompatibility(schemaChanges);
+    validateUpdatedSchemaCompatibility(
+        schemaChanges, oldMaxFieldId, allowNewRequiredFields, icebergWriterCompatV1Enabled);
     validateClusteringColumnsNotDropped(
         schemaChanges.removedFields(), clusteringColumnPhysicalNames);
     // ToDo Potentially validate IcebergCompatV2 nested IDs
@@ -480,18 +505,30 @@ public class SchemaUtils {
    *
    * <p>ToDo: Prevent moving fields outside of their containing struct
    */
-  private static void validateUpdatedSchemaCompatibility(SchemaChanges schemaChanges) {
+  private static void validateUpdatedSchemaCompatibility(
+      SchemaChanges schemaChanges,
+      int oldMaxFieldId,
+      boolean allowNewRequiredFields,
+      boolean icebergWriterCompatV1Enabled) {
     for (StructField addedField : schemaChanges.addedFields()) {
-      if (!addedField.isNullable()) {
+      if (!allowNewRequiredFields && !addedField.isNullable()) {
         throw new KernelException(
             String.format("Cannot add non-nullable field %s", addedField.getName()));
+      }
+      int colId = getColumnId(addedField);
+      if (colId <= oldMaxFieldId) {
+        throw new IllegalArgumentException(
+            String.format(
+                "Cannot add a new column with a fieldId <= maxFieldId. Found field: %s with"
+                    + "fieldId=%s. Current maxFieldId in the table is: %s",
+                addedField, colId, oldMaxFieldId));
       }
     }
 
     for (Tuple2<StructField, StructField> updatedFields : schemaChanges.updatedFields()) {
       // ToDo: See if recursion can be avoided by incorporating map key/value and array element
       // updates in updatedFields
-      validateFieldCompatibility(updatedFields._1, updatedFields._2);
+      validateFieldCompatibility(updatedFields._1, updatedFields._2, icebergWriterCompatV1Enabled);
     }
   }
 
@@ -500,7 +537,8 @@ public class SchemaUtils {
    * modified, dropped, or added fields to structs. Validates that a field's nullability is not
    * tightened
    */
-  private static void validateFieldCompatibility(StructField existingField, StructField newField) {
+  private static void validateFieldCompatibility(
+      StructField existingField, StructField newField, boolean icebergWriterCompatV1Enabled) {
     if (existingField.isNullable() && !newField.isNullable()) {
       throw new KernelException(
           String.format(
@@ -521,7 +559,8 @@ public class SchemaUtils {
       for (StructField newNestedField : newStruct.fields()) {
         StructField existingNestedField = existingNestedFields.get(getColumnId(newNestedField));
         if (existingNestedField != null) {
-          validateFieldCompatibility(existingNestedField, newNestedField);
+          validateFieldCompatibility(
+              existingNestedField, newNestedField, icebergWriterCompatV1Enabled);
         }
       }
     } else if (existingField.getDataType() instanceof MapType
@@ -529,15 +568,36 @@ public class SchemaUtils {
       MapType existingMapType = (MapType) existingField.getDataType();
       MapType newMapType = (MapType) newField.getDataType();
 
-      validateFieldCompatibility(existingMapType.getKeyField(), newMapType.getKeyField());
-      validateFieldCompatibility(existingMapType.getValueField(), newMapType.getValueField());
+      if (icebergWriterCompatV1Enabled
+          && existingMapType.getKeyType() instanceof StructType
+          && newMapType.getKeyType() instanceof StructType) {
+        // Enforce that we don't change map struct keys. This is a requirement for
+        // IcebergWriterCompatV1
+        StructType currentKeyType = (StructType) existingMapType.getKeyType();
+        StructType newKeyType = (StructType) newMapType.getKeyType();
+        if (!currentKeyType.equals(newKeyType)) {
+          throw new KernelException(
+              String.format(
+                  "Cannot change the type key of Map field %s from %s to %s",
+                  newField.getName(), currentKeyType, newKeyType));
+        }
+      }
+
+      validateFieldCompatibility(
+          existingMapType.getKeyField(), newMapType.getKeyField(), icebergWriterCompatV1Enabled);
+      validateFieldCompatibility(
+          existingMapType.getValueField(),
+          newMapType.getValueField(),
+          icebergWriterCompatV1Enabled);
     } else if (existingField.getDataType() instanceof ArrayType
         && newField.getDataType() instanceof ArrayType) {
       ArrayType existingArrayType = (ArrayType) existingField.getDataType();
       ArrayType newArrayType = (ArrayType) newField.getDataType();
 
       validateFieldCompatibility(
-          existingArrayType.getElementField(), newArrayType.getElementField());
+          existingArrayType.getElementField(),
+          newArrayType.getElementField(),
+          icebergWriterCompatV1Enabled);
     } else if (!existingField.getDataType().equivalent(newField.getDataType())) {
       throw new KernelException(
           String.format(
