@@ -29,7 +29,7 @@ class DeltaTestCase(ReusedSQLTestCase):
     """
 
     @classmethod
-    def setUpClass(cls):
+    def setUpClass(cls) -> None:
         if "MASTER" in os.environ:
             del os.environ["MASTER"]
         super(DeltaTestCase, cls).setUpClass()
