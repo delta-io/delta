@@ -269,7 +269,7 @@ public class LogReplay {
       LogSegment logSegment,
       Optional<SnapshotHint> snapshotHint,
       long snapshotVersion) {
-
+    long logReadCount = 0;
     // Exit early if the hint already has the info we need.
     if (snapshotHint.isPresent() && snapshotHint.get().getVersion() == snapshotVersion) {
       return new Tuple2<>(snapshotHint.get().getProtocol(), snapshotHint.get().getMetadata());
@@ -287,7 +287,7 @@ public class LogReplay {
       while (reverseIter.hasNext()) {
         final ActionWrapper nextElem = reverseIter.next();
         final long version = nextElem.getVersion();
-
+        logReadCount++;
         // Load this lazily (as needed). We may be able to just use the hint.
         ColumnarBatch columnarBatch = null;
 
@@ -343,6 +343,7 @@ public class LogReplay {
           if (metadata == null) {
             metadata = snapshotHint.get().getMetadata();
           }
+          logger.info("Loading Protocol and Metadata read {} logs", logReadCount);
           return new Tuple2<>(protocol, metadata);
         }
       }
@@ -396,11 +397,11 @@ public class LogReplay {
     Optional<CRCInfo> lastSeenCrcInfoOpt = crcInfoContext.getLastSeenCrcInfo();
     if (!lastSeenCrcInfoOpt.isPresent()
         || !lastSeenCrcInfoOpt.get().getDomainMetadata().isPresent()) {
-      logger.info("No domain metadata available in CRC info, loading from log");
       Map<String, DomainMetadata> domainMetadataMap =
           loadDomainMetadataMapFromLog(engine, Optional.empty());
       logger.info(
-          "{}: Loading domain metadata for version {} from logs took {}",
+          "{}:No domain metadata available in CRC info," +
+                  " loading domain metadata for version {} from logs took {}",
           dataPath.toString(),
           logSegment.getVersion(),
           System.currentTimeMillis() - startTimeMillis);
@@ -412,7 +413,7 @@ public class LogReplay {
           lastSeenCrcInfo.getDomainMetadata().get().stream()
               .collect(Collectors.toMap(DomainMetadata::getDomain, Function.identity()));
       logger.info(
-          "{}: Loading domain metadata for version {} from CRC took {}",
+          "{}:CRC for version {} found, loading domain metadata from CRC took {}",
           dataPath.toString(),
           logSegment.getVersion(),
           System.currentTimeMillis() - startTimeMillis);
@@ -460,7 +461,7 @@ public class LogReplay {
    */
   private Map<String, DomainMetadata> loadDomainMetadataMapFromLog(
       Engine engine, Optional<Long> minLogVersion) {
-    long actionsReadCount = 0;
+    long logReadCount = 0;
     try (CloseableIterator<ActionWrapper> reverseIter =
         new ActionsIterator(
             engine,
@@ -472,7 +473,7 @@ public class LogReplay {
         final ActionWrapper nextElem = reverseIter.next();
         final long version = nextElem.getVersion();
         final ColumnarBatch columnarBatch = nextElem.getColumnarBatch();
-        actionsReadCount++;
+        logReadCount++;
         assert (columnarBatch.getSchema().equals(DOMAIN_METADATA_READ_SCHEMA));
 
         final ColumnVector dmVector = columnarBatch.getColumnVector(0);
@@ -484,6 +485,13 @@ public class LogReplay {
           break;
         }
       }
+      logger.info(
+          "{}: Loading domain metadata from log for version {}, "
+              + "read {} actions, using crc version {}",
+          dataPath.toString(),
+          logSegment.getVersion(),
+          logReadCount,
+          minLogVersion.map(String::valueOf).orElse("N/A"));
       return domainMetadataMap;
     } catch (IOException ex) {
       throw new UncheckedIOException("Could not close iterator", ex);
