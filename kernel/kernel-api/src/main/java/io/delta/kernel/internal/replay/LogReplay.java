@@ -391,17 +391,30 @@ public class LogReplay {
    * @return A map of domain names to their metadata
    */
   private Map<String, DomainMetadata> loadDomainMetadataMap(Engine engine) {
+    long startTimeMillis = System.currentTimeMillis();
     // First try to load from CRC info if available
     Optional<CRCInfo> lastSeenCrcInfoOpt = crcInfoContext.getLastSeenCrcInfo();
     if (!lastSeenCrcInfoOpt.isPresent()
         || !lastSeenCrcInfoOpt.get().getDomainMetadata().isPresent()) {
       logger.info("No domain metadata available in CRC info, loading from log");
-      return loadDomainMetadataMapFromLog(engine, Optional.empty());
+      Map<String, DomainMetadata> domainMetadataMap =
+          loadDomainMetadataMapFromLog(engine, Optional.empty());
+      logger.info(
+          "{}: Loading domain metadata from logs took {}",
+          dataPath.toString(),
+          System.currentTimeMillis() - startTimeMillis);
+      return domainMetadataMap;
     }
     CRCInfo lastSeenCrcInfo = lastSeenCrcInfoOpt.get();
     if (lastSeenCrcInfo.getVersion() == logSegment.getVersion()) {
-      return lastSeenCrcInfo.getDomainMetadata().get().stream()
-          .collect(Collectors.toMap(DomainMetadata::getDomain, Function.identity()));
+      Map<String, DomainMetadata> domainMetadataMap =
+          lastSeenCrcInfo.getDomainMetadata().get().stream()
+              .collect(Collectors.toMap(DomainMetadata::getDomain, Function.identity()));
+      logger.info(
+          "{}: Loading domain metadata from CRC took {}",
+          dataPath.toString(),
+          System.currentTimeMillis() - startTimeMillis);
+      return domainMetadataMap;
     }
 
     Map<String, DomainMetadata> finalDomainMetadataMap =
@@ -419,6 +432,11 @@ public class LogReplay {
                 finalDomainMetadataMap.put(domainMetadataInCrc.getDomain(), domainMetadataInCrc);
               }
             });
+    logger.info(
+        "{}: Loading domain metadata from logs with crc version {} took {}",
+        dataPath.toString(),
+        lastSeenCrcInfo.getVersion(),
+        System.currentTimeMillis() - startTimeMillis);
     return finalDomainMetadataMap;
   }
 
@@ -439,6 +457,8 @@ public class LogReplay {
    */
   private Map<String, DomainMetadata> loadDomainMetadataMapFromLog(
       Engine engine, Optional<Long> minLogVersion) {
+    long startTimeMillis = System.currentTimeMillis();
+    long actionsReadCount = 0;
     try (CloseableIterator<ActionWrapper> reverseIter =
         new ActionsIterator(
             engine,
@@ -450,6 +470,7 @@ public class LogReplay {
         final ActionWrapper nextElem = reverseIter.next();
         final long version = nextElem.getVersion();
         final ColumnarBatch columnarBatch = nextElem.getColumnarBatch();
+        actionsReadCount++;
         assert (columnarBatch.getSchema().equals(DOMAIN_METADATA_READ_SCHEMA));
 
         final ColumnVector dmVector = columnarBatch.getColumnVector(0);
@@ -461,6 +482,14 @@ public class LogReplay {
           break;
         }
       }
+      logger.info(
+          "{}: Took {}ms to loading domain metadata from log for version {}, "
+              + "read {} actions, using crc version {}",
+          dataPath.toString(),
+          System.currentTimeMillis() - startTimeMillis,
+          logSegment.getVersion(),
+          actionsReadCount,
+          minLogVersion.map(String::valueOf).orElse("N/A"));
       return domainMetadataMap;
     } catch (IOException ex) {
       throw new UncheckedIOException("Could not close iterator", ex);
