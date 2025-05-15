@@ -149,6 +149,51 @@ class DeltaVariantShreddingSuite
     }
   }
 
+  test("Test shredding property controls shredded writes") {
+    val schema = "a int, b string, c decimal(15, 1)"
+    val df = spark.sql(
+      """
+        | select id i, case
+        | when id = 0 then parse_json('{"a": 1, "b": "2", "c": 3.3, "d": 4.4}')
+        | when id = 1 then parse_json('{"a": [1,2,3], "b": "hello", "c": {"x": 0}}')
+        | when id = 2 then parse_json('{"A": 1, "c": 1.23}')
+        | end v from range(0, 3, 1, 1)
+        |""".stripMargin)
+    // Table property not present or false
+    Seq("", s"TBLPROPERTIES ('${DeltaConfigs.ENABLE_VARIANT_SHREDDING.key}' = 'false') ")
+      .foreach { tblProperties =>
+      withTable("tbl") {
+        withTempDir { dir =>
+          sql("CREATE TABLE tbl (i long, v variant) USING DELTA " + tblProperties +
+            s"LOCATION '${dir.getAbsolutePath}'")
+          withSQLConf(SQLConf.VARIANT_WRITE_SHREDDING_ENABLED.key -> true.toString,
+            SQLConf.VARIANT_ALLOW_READING_SHREDDED.key -> true.toString,
+            SQLConf.VARIANT_FORCE_SHREDDING_SCHEMA_FOR_TEST.key -> schema) {
+
+            val e = intercept[DeltaSparkException] {
+              df.write.format("delta").mode("append").saveAsTable("tbl")
+            }
+            checkError(e, "DELTA_SHREDDING_TABLE_PROPERTY_DISABLED", parameters = Map())
+            assert(e.getMessage.contains(
+              "Attempted to write shredded Variants but the table does not support shredded " +
+                "writes. Consider setting the table property enableVariantShredding to true."))
+            assert(numShreddedFiles(dir.getAbsolutePath, validation = { field: GroupType =>
+              field.getName == "v" && (field.getType("typed_value") match {
+                case t: GroupType =>
+                  t.getFields.asScala.map(_.getName).toSet == Set("a", "b", "c")
+                case _ => false
+              })
+            }) == 0)
+            checkAnswer(
+              spark.read.format("delta").load(dir.getAbsolutePath).selectExpr("i", "to_json(v)"),
+              Seq()
+            )
+          }
+        }
+      }
+    }
+  }
+
   test("Set table property to invalid value") {
     withTable("tbl") {
       sql("CREATE TABLE tbl(s STRING, i INTEGER) USING DELTA")

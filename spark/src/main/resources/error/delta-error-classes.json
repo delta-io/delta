@@ -2974,6 +2974,12 @@
     ],
     "sqlState" : "0AKDC"
   },
+  "DELTA_SHREDDING_TABLE_PROPERTY_DISABLED" : {
+    "message" : [
+      "Attempted to write shredded Variants but the table does not support shredded writes. Consider setting the table property enableVariantShredding to true."
+    ],
+    "sqlState" : "0A000"
+  },
   "DELTA_UNSUPPORTED_TIME_TRAVEL_MULTIPLE_FORMATS" : {
     "message" : [
       "Cannot specify time travel in multiple formats."
