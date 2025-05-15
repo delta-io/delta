@@ -128,15 +128,15 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
     }
   }
 
-  /** Whether this merge statement has only MATCHED clauses. */
+  /** Whether this merge statement only has MATCHED clauses. */
   protected def isMatchedOnly: Boolean = notMatchedClauses.isEmpty && matchedClauses.nonEmpty &&
     notMatchedBySourceClauses.isEmpty
 
-  /** Whether this merge statement only has only insert (NOT MATCHED) clauses. */
+  /** Whether this merge statement only has insert (NOT MATCHED) clauses. */
   protected def isInsertOnly: Boolean = matchedClauses.isEmpty && notMatchedClauses.nonEmpty &&
     notMatchedBySourceClauses.isEmpty
 
-  /** Whether this merge statement only has only delete clauses. */
+  /** Whether this merge statement only has delete clauses. */
   protected lazy val isDeleteOnly: Boolean =
     matchedClauses.forall(_.isInstanceOf[DeltaMergeIntoMatchedDeleteClause]) &&
       notMatchedClauses.isEmpty &&
