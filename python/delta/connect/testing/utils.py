@@ -30,17 +30,20 @@ class DeltaTestCase(ReusedConnectTestCase):
 
     @classmethod
     def setUpClass(cls):
-        print("OS before setUpClass: " + os.environ)
+        print("OS before setUpClass: ")
+        print(os.Environ())
         if 'MASTER' in os.environ:
             del os.environ['MASTER']
         super(DeltaTestCase, self).setUpClass()
-        print("OS after setUpClass: " + os.environ)
+        print("OS after setUpClass: ")
+        print(os.Environ())
 
     @classmethod
     def conf(cls) -> SparkConf:
         _conf = super(DeltaTestCase, cls).conf()
         print("after super: " + _conf.toDebugString())
-        print("OS after super: " + os.environ)
+        print("OS after super: ")
+        print(os.Environ())
         _conf.set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
         _conf.set("spark.sql.catalog.spark_catalog",
                   "org.apache.spark.sql.delta.catalog.DeltaCatalog")
@@ -49,7 +52,8 @@ class DeltaTestCase(ReusedConnectTestCase):
         _conf.set("spark.connect.extensions.command.classes",
                   "org.apache.spark.sql.connect.delta.DeltaCommandPlugin")
         print("after everything: " + _conf.toDebugString())
-        print("OS after everything: " + os.environ)
+        print("OS after everything: ")
+        print(os.Environ())
         return _conf
 
     def setUp(self) -> None:
