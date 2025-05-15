@@ -208,4 +208,8 @@ if __name__ == "__main__":
                                   "org.apache.spark:spark-connect_2.13:4.0.0",
                                   get_local_package("delta-connect-server", use_spark_master)]
 
+        # Spark Connect will set SPARK_CONNECT_TESTING_REMOTE, and it does not allow MASTER
+        # to be set simultaneously, so we need to clear it.
+        if "MASTER" in os.environ:
+            del os.environ["MASTER"]
         test(root_dir, path.join("delta", "connect"), delta_connect_packages)

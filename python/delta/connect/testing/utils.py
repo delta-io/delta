@@ -30,21 +30,8 @@ class DeltaTestCase(ReusedConnectTestCase):
     """
 
     @classmethod
-    def setUpClass(cls):
-        print("OS before setUpClass: ")
-        pprint.pprint(dict(os.environ), width = 1)
-        if "MASTER" in os.environ:
-            del os.environ["MASTER"]
-        super(DeltaTestCase, cls).setUpClass()
-        print("OS after setUpClass: ")
-        pprint.pprint(dict(os.environ), width = 1)
-
-    @classmethod
     def conf(cls) -> SparkConf:
         _conf = super(DeltaTestCase, cls).conf()
-        print("after super: " + _conf.toDebugString())
-        print("OS after super: ")
-        pprint.pprint(dict(os.environ), width = 1)
         _conf.set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
         _conf.set("spark.sql.catalog.spark_catalog",
                   "org.apache.spark.sql.delta.catalog.DeltaCatalog")
@@ -52,13 +39,10 @@ class DeltaTestCase(ReusedConnectTestCase):
                   "org.apache.spark.sql.connect.delta.DeltaRelationPlugin")
         _conf.set("spark.connect.extensions.command.classes",
                   "org.apache.spark.sql.connect.delta.DeltaCommandPlugin")
-        print("after everything: " + _conf.toDebugString())
-        print("OS after everything: ")
-        pprint.pprint(dict(os.environ), width = 1)
         return _conf
 
     def setUp(self) -> None:
-        unittest.TestCase.setUp(self)
+        super(DeltaTestCase, self).setUp()
         self.tempPath = tempfile.mkdtemp()
         self.tempFile = os.path.join(self.tempPath, "tempFile")
 
