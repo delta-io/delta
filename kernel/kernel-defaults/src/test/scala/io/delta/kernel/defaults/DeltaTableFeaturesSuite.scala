@@ -317,6 +317,36 @@ class DeltaTableFeaturesSuite extends DeltaTableWriteSuiteBase {
     }
   }
 
+  test("read throws if the table contains unsupported table feature") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createEmptyTable(engine, tablePath, testSchema)
+      appendData(
+        engine,
+        tablePath,
+        isNewTable = false,
+        testSchema,
+        partCols = Seq.empty,
+        Seq(Map.empty[String, Literal] -> dataBatches1))
+
+      checkTable(tablePath, expectedAnswer = dataBatches1.flatMap(_.toTestRows))
+
+      // If test is running in intelliJ, set DELTA_TESTING=1 in env variables.
+      // This will enable the testReaderWriter feature in delta-spark. In CI jobs,
+      // build.sbt already has set and effective.
+      spark.sql("ALTER TABLE delta.`" + tablePath +
+        "` SET TBLPROPERTIES ('delta.feature.testReaderWriter' = 'supported')")
+
+      // try to read the table
+      val ex = intercept[KernelException] {
+        checkTable(
+          tablePath,
+          expectedAnswer = Seq.empty /* it doesn't matter as expect failure in reading */ )
+      }
+      assert(ex.getMessage.contains(
+        "feature \"testReaderWriter\" which is unsupported by this version of Delta Kernel"))
+    }
+  }
+
   /* ---- Start: type widening tests ---- */
   test("only typeWidening feature is enabled when metadata supports it: new table") {
     withTempDirAndEngine { (tablePath, engine) =>
