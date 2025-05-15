@@ -31,6 +31,18 @@ class DeltaTableTests(DeltaTestCase):
     All tests are skipped until the APIs are implemented.
     """
 
+    def test_spark_connect_config(self):
+        """Test to validate that Spark Connect setup is working correctly."""
+        # Create a simple DataFrame to verify Spark Connect works
+        df = self.spark.createDataFrame([(1, "a"), (2, "b")], ["id", "value"])
+        # Execute an action to validate the connection
+        count = df.count()
+        self.assertEqual(count, 2)
+        # Verify Delta extension is registered correctly
+        extensions = self.spark.sql("SHOW EXTENSIONS").collect()
+        self.assertTrue(any("DeltaSparkSessionExtension" in str(row) for row in extensions), 
+                       "Delta extension not found in extensions list")
+
     @unittest.skip("delete has not been implemented yet")
     def test_delete(self):
         pass

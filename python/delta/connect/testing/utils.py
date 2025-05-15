@@ -17,36 +17,42 @@
 import tempfile
 import shutil
 import os
+import unittest
 
 from pyspark import SparkConf
-from pyspark.testing.connectutils import ReusedConnectTestCase
+from pyspark.sql import SparkSession
 
 
-class DeltaTestCase(ReusedConnectTestCase):
+class DeltaTestCase(unittest.TestCase):
     """
     Test suite base for setting up a properly configured SparkSession for using Delta Connect.
     """
-
+    
     @classmethod
-    def conf(cls) -> SparkConf:
-        _conf = super(DeltaTestCase, cls).conf()
-        # Make sure we're removing any spark.master configuration
-        if _conf._jconf is not None:
-            _conf._jconf.remove("spark.master")
-        _conf.set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-        _conf.set("spark.sql.catalog.spark_catalog",
-                  "org.apache.spark.sql.delta.catalog.DeltaCatalog")
-        _conf.set("spark.connect.extensions.relation.classes",
-                  "org.apache.spark.sql.connect.delta.DeltaRelationPlugin")
-        _conf.set("spark.connect.extensions.command.classes",
-                  "org.apache.spark.sql.connect.delta.DeltaCommandPlugin")
-        return _conf
+    def setUpClass(cls):
+        remote = os.environ.get("SPARK_CONNECT_TESTING_REMOTE", "local[4]")
+        cls.spark = (
+            SparkSession.builder
+            .remote(remote)
+            .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+            .config("spark.sql.catalog.spark_catalog", 
+                   "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+            .config("spark.connect.extensions.relation.classes",
+                   "org.apache.spark.sql.connect.delta.DeltaRelationPlugin")
+            .config("spark.connect.extensions.command.classes",
+                   "org.apache.spark.sql.connect.delta.DeltaCommandPlugin")
+            .getOrCreate()
+        )
+    
+    @classmethod
+    def tearDownClass(cls):
+        if hasattr(cls, "spark") and cls.spark is not None:
+            cls.spark.stop()
+            cls.spark = None
 
     def setUp(self) -> None:
-        super(DeltaTestCase, self).setUp()
         self.tempPath = tempfile.mkdtemp()
         self.tempFile = os.path.join(self.tempPath, "tempFile")
 
     def tearDown(self) -> None:
-        super(DeltaTestCase, self).tearDown()
         shutil.rmtree(self.tempPath)

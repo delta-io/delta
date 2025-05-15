@@ -34,22 +34,36 @@ def test(root_dir, code_dir, packages):
     extra_class_path = path.join(python_root_dir, path.join(code_dir, "testing"))
 
     # Check if we're running Delta Connect tests and need to set special environment
-    is_connect_test = code_dir.endswith("connect")
-    env = None
+    is_connect_test = "connect" in code_dir
+    env = os.environ.copy()
 
     if is_connect_test:
-        env = os.environ.copy()
-        env["SPARK_CONNECT_TESTING_REMOTE"] = "local[4]"
+        print("### Running Delta Connect tests - configuring Connect environment")
+        # Set the remote connection string for Spark Connect
+        env["SPARK_CONNECT_TESTING_REMOTE"] = "local[4]" 
+        # Prevent spark.master from being set, which conflicts with Spark Connect
+        env["PYSPARK_SUBMIT_ARGS"] = "--remote=local[4] pyspark-shell"
+        # Use Python to run the tests directly instead of spark-submit
+        cmd_base = ["python3"]
+    else:
+        # For regular tests, use spark-submit with the driver class path
+        cmd_base = ["spark-submit", "--driver-class-path=%s" % extra_class_path]
 
     for test_file in test_files:
         try:
-            cmd = ["spark-submit",
-                   "--driver-class-path=%s" % extra_class_path,
-                   "--repositories",
-                   ("https://maven-central.storage-download.googleapis.com/maven2/,"
+            if is_connect_test:
+                # For Connect tests, run the test file directly with python
+                cmd = cmd_base + [test_file]
+            else:
+                # For regular tests, use spark-submit with the package dependencies
+                cmd = cmd_base + [
+                    "--repositories",
+                    ("https://maven-central.storage-download.googleapis.com/maven2/,"
                        "https://repo1.maven.org/maven2/,"
                        "https://repository.apache.org/content/repositories/orgapachespark-1480"),
-                   "--packages", ",".join(packages), test_file]
+                    "--packages", ",".join(packages), test_file
+                ]
+            
             print("Running tests in %s\n=============" % test_file)
             print("Command: %s" % str(cmd))
             run_cmd(cmd, stream_output=True, env=env)
