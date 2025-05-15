@@ -30,7 +30,9 @@ class DeltaTestCase(ReusedConnectTestCase):
 
     @classmethod
     def conf(cls) -> SparkConf:
+        print("before super" + _conf.toDebugString())
         _conf = super(DeltaTestCase, cls).conf()
+        print("after super" + _conf.toDebugString())
         _conf.set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
         _conf.set("spark.sql.catalog.spark_catalog",
                   "org.apache.spark.sql.delta.catalog.DeltaCatalog")
@@ -38,6 +40,7 @@ class DeltaTestCase(ReusedConnectTestCase):
                   "org.apache.spark.sql.connect.delta.DeltaRelationPlugin")
         _conf.set("spark.connect.extensions.command.classes",
                   "org.apache.spark.sql.connect.delta.DeltaCommandPlugin")
+        print("after everything" + _conf.toDebugString())
         return _conf
 
     def setUp(self) -> None:
