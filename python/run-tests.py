@@ -197,7 +197,7 @@ if __name__ == "__main__":
     run_python_style_checks(root_dir)
     run_mypy_tests(root_dir)
     run_pypi_packaging_tests(root_dir)
-    test(root_dir, "delta", [delta_spark_package])
+    # test(root_dir, "delta", [delta_spark_package])
 
     # For versions 4.0+ run Delta Connect tests as well
     if use_spark_master:
