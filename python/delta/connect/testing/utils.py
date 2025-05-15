@@ -17,6 +17,7 @@
 import tempfile
 import shutil
 import os
+import unittest
 
 from pyspark import SparkConf
 from pyspark.testing.connectutils import ReusedConnectTestCase
@@ -40,7 +41,7 @@ class DeltaTestCase(ReusedConnectTestCase):
         return _conf
 
     def setUp(self) -> None:
-        super(DeltaTestCase, self).setUp()
+        unittest.TestCase.setUp(self)
         self.tempPath = tempfile.mkdtemp()
         self.tempFile = os.path.join(self.tempPath, "tempFile")
 
