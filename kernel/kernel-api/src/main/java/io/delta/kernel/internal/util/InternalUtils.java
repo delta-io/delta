@@ -18,8 +18,6 @@ package io.delta.kernel.internal.util;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.Row;
-import io.delta.kernel.internal.DeltaHistoryManager;
-import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StringType;
@@ -172,7 +170,10 @@ public class InternalUtils {
   }
 
   public static Tuple2<Long, Long> greatestLowerBound(
-          long target, long lowerBoundInclusive, long upperBoundExclusive, Function<Long, Long> keyToValueMapper) {
+      long target,
+      long lowerBoundInclusive,
+      long upperBoundExclusive,
+      Function<Long, Long> keyToValueMapper) {
     long start = lowerBoundInclusive;
     long end = upperBoundExclusive;
     Tuple2<Long, Long> result = null;
@@ -192,12 +193,18 @@ public class InternalUtils {
   }
 
   public static Tuple2<Long, Long> getNarrowSearchBoundsUsingExponentialSearch(
-          long target, long lowerBoundInclusive, long upperBoundExclusive, Function<Long, Long> keyToValueMapper, boolean reversed) {
+      long target,
+      long lowerBoundInclusive,
+      long upperBoundExclusive,
+      Function<Long, Long> keyToValueMapper,
+      boolean reversed) {
     final long iterationDirection = reversed ? -1 : 1;
     long lowerBoundKey = lowerBoundInclusive;
     long upperBoundKey;
     long curKey = lowerBoundInclusive + 1;
-    for (long i = 0;  curKey < upperBoundExclusive; curKey = Math.round(lowerBoundInclusive + iterationDirection*Math.pow(2, i++))) {
+    for (long i = 0;
+        curKey < upperBoundExclusive;
+        curKey = Math.round(lowerBoundInclusive + iterationDirection * Math.pow(2, i++))) {
       long curValue = keyToValueMapper.apply(curKey);
       if (curValue > target) {
         break;
@@ -206,6 +213,8 @@ public class InternalUtils {
       }
     }
     upperBoundKey = Math.min(curKey, upperBoundExclusive);
-    return reversed ? new Tuple2<>(upperBoundKey, lowerBoundKey)  : new Tuple2<>(lowerBoundKey, upperBoundKey);
+    return reversed
+        ? new Tuple2<>(upperBoundKey, lowerBoundKey)
+        : new Tuple2<>(lowerBoundKey, upperBoundKey);
   }
 }
