@@ -24,9 +24,6 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.delta.kernel.data.*;
 import io.delta.kernel.defaults.engine.fileio.FileIO;
 import io.delta.kernel.defaults.engine.fileio.SeekableInputStream;
-import io.delta.kernel.defaults.internal.data.DefaultJsonRow;
-import io.delta.kernel.defaults.internal.data.DefaultRowBasedColumnarBatch;
-import io.delta.kernel.defaults.internal.json.JsonUtils;
 import io.delta.kernel.engine.JsonHandler;
 import io.delta.kernel.exceptions.KernelEngineException;
 import io.delta.kernel.expressions.Predicate;
@@ -75,7 +72,8 @@ public class DefaultJsonHandler implements JsonHandler {
         rows.add(null);
       }
     }
-    return new DefaultRowBasedColumnarBatch(outputSchema, rows);
+    return new io.delta.kernel.defaults.internal.data.DefaultRowBasedColumnarBatch(
+        outputSchema, rows);
   }
 
   @Override
@@ -133,7 +131,8 @@ public class DefaultJsonHandler implements JsonHandler {
           currentBatchSize++;
         } while (currentBatchSize < maxBatchSize && hasNext());
 
-        return new DefaultRowBasedColumnarBatch(physicalSchema, rows);
+        return new io.delta.kernel.defaults.internal.data.DefaultRowBasedColumnarBatch(
+            physicalSchema, rows);
       }
 
       private boolean tryOpenNextFile() throws IOException {
@@ -168,13 +167,17 @@ public class DefaultJsonHandler implements JsonHandler {
   @Override
   public void writeJsonFileAtomically(
       String filePath, CloseableIterator<Row> data, boolean overwrite) throws IOException {
-    fileIO.newOutputFile(filePath).writeAtomically(data.map(JsonUtils::rowToJson), overwrite);
+    fileIO
+        .newOutputFile(filePath)
+        .writeAtomically(
+            data.map(io.delta.kernel.defaults.internal.json.JsonUtils::rowToJson), overwrite);
   }
 
   private Row parseJson(String json, StructType readSchema) {
     try {
       final JsonNode jsonNode = objectReaderReadBigDecimals.readTree(json);
-      return new DefaultJsonRow((ObjectNode) jsonNode, readSchema);
+      return new io.delta.kernel.defaults.internal.data.DefaultJsonRow(
+          (ObjectNode) jsonNode, readSchema);
     } catch (JsonProcessingException ex) {
       throw new KernelEngineException(format("Could not parse JSON: %s", json), ex);
     }

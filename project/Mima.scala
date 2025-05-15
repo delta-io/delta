@@ -18,6 +18,8 @@ import com.typesafe.tools.mima.plugin.MimaPlugin.autoImport.{mimaBinaryIssueFilt
 import sbt._
 import sbt.Keys._
 
+// TODO - come back to this w.r.t. the changes in the PR?
+
 /**
  * Mima settings
  */
