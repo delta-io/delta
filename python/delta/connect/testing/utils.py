@@ -30,6 +30,14 @@ class DeltaTestCase(ReusedConnectTestCase):
     """
 
     @classmethod
+    def setUpClass(cls) -> None:
+        # Spark Connect will set SPARK_CONNECT_TESTING_REMOTE, and it does not allow MASTER
+        # to be set simultaneously, so we need to clear it.
+        if "MASTER" in os.environ:
+            del os.environ["MASTER"]
+        super(DeltaTestCase, cls).setUpClass()
+
+    @classmethod
     def conf(cls) -> SparkConf:
         _conf = super(DeltaTestCase, cls).conf()
         _conf.set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
@@ -42,7 +50,7 @@ class DeltaTestCase(ReusedConnectTestCase):
         return _conf
 
     def setUp(self) -> None:
-        super(DeltaTestCase, self).setUp()
+        unittest.TestCase.setUp(self)
         self.tempPath = tempfile.mkdtemp()
         self.tempFile = os.path.join(self.tempPath, "tempFile")
 
