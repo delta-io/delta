@@ -31,7 +31,7 @@ import io.delta.kernel.internal.tablefeatures.{TableFeature, TableFeatures}
 import io.delta.kernel.types.{IntegerType, StringType, StructType}
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
 
-class DeltaReplaceTableSuite extends DeltaTableWriteSuiteBase {
+trait DeltaReplaceTableSuiteBase extends DeltaTableWriteSuiteBase {
 
   /* -------- Test values to use -------- */
 
@@ -130,7 +130,7 @@ class DeltaReplaceTableSuite extends DeltaTableWriteSuiteBase {
 
   /* -------- Test methods -------- */
 
-  private def createInitialTable(
+  protected def createInitialTable(
       engine: Engine,
       tablePath: String,
       schema: StructType = testSchema,
@@ -158,12 +158,12 @@ class DeltaReplaceTableSuite extends DeltaTableWriteSuiteBase {
     checkTable(tablePath, dataToWrite.flatMap(_._2).flatMap(_.toTestRows))
   }
 
-  private def getReplaceTxnBuilder(engine: Engine, tablePath: String): TransactionBuilder = {
+  protected def getReplaceTxnBuilder(engine: Engine, tablePath: String): TransactionBuilder = {
     Table.forPath(engine, tablePath).asInstanceOf[TableImpl]
       .createReplaceTableTransactionBuilder(engine, testEngineInfo)
   }
 
-  private def getReplaceTransaction(
+  protected def getReplaceTransaction(
       engine: Engine,
       tablePath: String,
       schema: StructType = testSchema,
@@ -196,7 +196,7 @@ class DeltaReplaceTableSuite extends DeltaTableWriteSuiteBase {
     txn
   }
 
-  private def commitReplaceTable(
+  protected def commitReplaceTable(
       engine: Engine,
       tablePath: String,
       schema: StructType = testSchema,
@@ -221,7 +221,7 @@ class DeltaReplaceTableSuite extends DeltaTableWriteSuiteBase {
   }
 
   // scalastyle:off argcount
-  private def checkReplaceTable(
+  protected def checkReplaceTable(
       engine: Engine,
       tablePath: String,
       schema: StructType = testSchema,
@@ -288,6 +288,9 @@ class DeltaReplaceTableSuite extends DeltaTableWriteSuiteBase {
       .collect().last
     assert(row.getAs[String]("operation") == "REPLACE TABLE")
   }
+}
+
+class DeltaReplaceTableSuite extends DeltaReplaceTableSuiteBase {
 
   /* ----- ERROR CASES ------ */
 
@@ -699,37 +702,6 @@ class DeltaReplaceTableSuite extends DeltaTableWriteSuiteBase {
             TableFeatures.ICEBERG_COMPAT_V2_W_FEATURE,
             TableFeatures.ICEBERG_WRITER_COMPAT_V1,
             TableFeatures.COLUMN_MAPPING_RW_FEATURE))
-      }
-    }
-  }
-
-  /* ---------- Column mapping and schema related tests  ----------- */
-
-  // TODO re-enable this when adding support for column mapping in a future PR
-  ignore("Column mapping id mode can be enabled even if not previously enabled") {
-    // Enabling ID mode is usually blocked for existing tables
-    withTempDirAndEngine { (tablePath, engine) =>
-      createInitialTable(engine, tablePath)
-      checkReplaceTable(
-        engine,
-        tablePath,
-        tableProperties = Map(
-          TableConfig.COLUMN_MAPPING_MODE.getKey -> "id"))
-    }
-  }
-
-  // Column mapping support will come in a future PR
-  Seq("id", "name").foreach { cmMode =>
-    test(s"Column mapping mode $cmMode is blocked for now") {
-      withTempDirAndEngine { (tablePath, engine) =>
-        createInitialTable(engine, tablePath)
-        intercept[UnsupportedOperationException] {
-          commitReplaceTable(
-            engine,
-            tablePath,
-            tableProperties = Map(
-              TableConfig.COLUMN_MAPPING_MODE.getKey -> cmMode))
-        }
       }
     }
   }

@@ -53,7 +53,7 @@ val default_scala_version = settingKey[String]("Default Scala version")
 Global / default_scala_version := scala212
 
 val LATEST_RELEASED_SPARK_VERSION = "3.5.3"
-val SPARK_MASTER_VERSION = "4.0.0-SNAPSHOT"
+val SPARK_MASTER_VERSION = "4.0.1-SNAPSHOT"
 val sparkVersion = settingKey[String]("Spark version")
 spark / sparkVersion := getSparkVersion()
 connectCommon / sparkVersion := getSparkVersion()
@@ -230,7 +230,9 @@ def crossSparkSettings(): Seq[Setting[_]] = getSparkVersion() match {
       "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED",
       "-Dlog4j.configurationFile=log4j2_spark_master.properties"
     ),
-
+    // For Delta Connect tests we create a Spark Distribution from the classpath. For this to work
+    // dependencies on other modules need to be exposed as a JAR, and not as a directory of classes.
+    exportJars := true,
     // Java-/Scala-/Uni-Doc Settings
     // This isn't working yet against Spark Master.
     // 1) delta-spark on Spark Master uses JDK 17. delta-iceberg uses JDK 8 or 11. For some reason,
@@ -325,61 +327,35 @@ lazy val connectClient = (project in file("spark-connect/client"))
     crossSparkSettings(),
     libraryDependencies ++= Seq(
       "com.google.protobuf" % "protobuf-java" % protoVersion % "protobuf",
-
       "org.apache.spark" %% "spark-connect-client-jvm" % sparkVersion.value % "provided",
 
       // Test deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
-      "org.apache.spark" %% "spark-common-utils" % sparkVersion.value % "test",
-      "org.apache.spark" %% "spark-connect-client-jvm" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-connect-client-jvm" % sparkVersion.value % "test" classifier "tests"
     ),
-    (Test / javaOptions) += s"-Ddelta.test.home=" + file(".").getAbsoluteFile.getParentFile,
-    (Test / resourceGenerators) += Def.task {
-      val location = url("https://dist.apache.org/repos/dist/dev/spark/v4.0.0-rc4-bin/spark-4.0.0-bin-hadoop3.tgz")
-      val destDir = (Test / resourceManaged).value / "spark"
-      if (!destDir.exists()) {
-        IO.createDirectory(destDir)
-        val files = mutable.Buffer.empty[File]
-        Using(new BufferedInputStream(location.openStream())) { bi =>
-          Using(new GzipCompressorInputStream(bi)) { gi =>
-            Using(new TarArchiveInputStream(gi)) { ti =>
-              var entry = ti.getNextEntry
-              while (entry != null) {
-                val dest = destDir / entry.getName
-                if (entry.isDirectory) {
-                  dest.mkdirs()
-                } else {
-                  files += dest
-                  Using(Files.newOutputStream(dest.toPath)) { os =>
-                    IOUtils.copy(ti, os)
-                  }
-
-                  val perms = new util.HashSet[PosixFilePermission]()
-                  perms.add(PosixFilePermission.OWNER_EXECUTE)
-                  perms.add(PosixFilePermission.OWNER_READ)
-                  perms.add(PosixFilePermission.OWNER_WRITE)
-                  Files.setPosixFilePermissions(dest.toPath, perms)
-                }
-                entry = ti.getNextEntry
-              }
-            }
-          }
+    (Test / javaOptions) += {
+      // Create a (mini) Spark Distribution based on the server classpath.
+      val serverClassPath = (connectServer / Compile / fullClasspath).value
+      val distributionDir = crossTarget.value / "test-dist"
+      if (!distributionDir.exists()) {
+        val jarsDir = distributionDir / "jars"
+        IO.createDirectory(jarsDir)
+        // Create symlinks for all dependencies.
+        serverClassPath.distinct.foreach { entry =>
+          val jarFile = entry.data.toPath
+          val linkedJarFile = jarsDir / entry.data.getName
+          Files.createSymbolicLink(linkedJarFile.toPath, jarFile)
         }
-        files
-      } else {
-        destDir.get()
+        // Create a symlink for the log4j properties
+        val confDir = distributionDir / "conf"
+        IO.createDirectory(confDir)
+        val log4jProps = (spark / Test / resourceDirectory).value / "log4j2_spark_master.properties"
+        val linkedLog4jProps = confDir / "log4j2.properties"
+        Files.createSymbolicLink(linkedLog4jProps.toPath, log4jProps.toPath)
       }
-    }.taskValue,
-    (Test / resourceGenerators) += Def.task {
-      val src = url("https://repository.apache.org/content/repositories/orgapachespark-1480/org/apache/spark/spark-connect_2.13/4.0.0/spark-connect_2.13-4.0.0.jar")
-      val dest = (Test / resourceManaged).value / "spark-connect.jar"
-      if (!dest.exists()) {
-        src #> dest !;
-        Seq(dest)
-      } else {
-        dest.get()
-      }
-    }.taskValue
+      // Return the location of the distribution directory.
+      "-Ddelta.spark.home=" + distributionDir
+    },
   )
 
 lazy val connectServer = (project in file("spark-connect/server"))
@@ -423,6 +399,14 @@ lazy val connectServer = (project in file("spark-connect/server"))
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
       "org.apache.spark" %% "spark-hive" % sparkVersion.value % "test" classifier "tests",
       "org.apache.spark" %% "spark-connect" % sparkVersion.value % "test" classifier "tests",
+    ),
+    excludeDependencies ++= Seq(
+      // Exclude connect common because a properly shaded version of it is included in the
+      // spark-connect jar. Including it causes classpath problems.
+      ExclusionRule("org.apache.spark", "spark-connect-common_2.13"),
+      // Exclude connect shims because we have spark-core on the classpath. The shims are only
+      // needed for the client. Including it causes classpath problems.
+      ExclusionRule("org.apache.spark", "spark-connect-shims_2.13")
     ),
   )
 
@@ -715,6 +699,7 @@ lazy val storage = (project in file("storage"))
   .settings (
     name := "delta-storage",
     commonSettings,
+    exportJars := true,
     javaOnlyReleaseSettings,
     libraryDependencies ++= Seq(
       // User can provide any 2.x or 3.x version. We don't use any new fancy APIs. Watch out for

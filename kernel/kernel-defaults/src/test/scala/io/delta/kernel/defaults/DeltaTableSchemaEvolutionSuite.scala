@@ -292,11 +292,18 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
         .withSchema(engine, newSchema)
         .build(engine).commit(engine, emptyIterable())
 
-      val structType = table.getLatestSnapshot(engine).getSchema
+      val latestSnapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      val structType = latestSnapshot.getSchema
       assertColumnMapping(structType.get("a"), 1)
       assertColumnMapping(structType.get("map"), 4, "map")
       assert(structType.get("map").getMetadata.get(ColumnMapping.COLUMN_MAPPING_NESTED_IDS_KEY)
-        == FieldMetadata.builder().putLong("map.key", 5).putLong("map.value", 6).build())
+        == FieldMetadata.builder()
+          .putLong("map.key", 5)
+          .putLong("map.value", 6)
+          .putLong("map.value.element", 7)
+          .build())
+      val configuration = latestSnapshot.getMetadata.getConfiguration
+      assert(configuration.get(ColumnMapping.COLUMN_MAPPING_MAX_COLUMN_ID_KEY) == "7")
     }
   }
 
@@ -393,7 +400,7 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
                 .add(
                   "field_to_add",
                   IntegerType.INTEGER,
-                  fieldMetadataForColumn(6, "field_to_add")),
+                  fieldMetadataForColumn(7, "field_to_add")),
               true),
             false),
           true,
@@ -411,7 +418,7 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
       val updatedArrayValue = mapType.getValueField.getDataType.asInstanceOf[ArrayType]
       val updatedInnerStruct = updatedArrayValue.getElementType.asInstanceOf[StructType]
 
-      assertColumnMapping(updatedInnerStruct.get("field_to_add"), 6, "field_to_add")
+      assertColumnMapping(updatedInnerStruct.get("field_to_add"), 7, "field_to_add")
 
     }
   }
@@ -978,7 +985,12 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
               true),
             false),
           true,
-          fieldMetadataForMapColumn(4, "map", "map", 5, 6))
+          fieldMetadataForMapColumn(
+            2,
+            ColumnMapping.getPhysicalName(currentSchema.get("map")),
+            "map",
+            4,
+            5))
 
       assertSchemaEvolutionFails[KernelException](
         table,
