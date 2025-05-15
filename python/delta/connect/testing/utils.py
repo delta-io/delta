@@ -35,14 +35,14 @@ class DeltaTestCase(ReusedConnectTestCase):
         pprint.pprint(dict(os.environ), width = 1)
         super(DeltaTestCase, self).setUpClass()
         print("OS after setUpClass: ")
-        pprint.pprint(dict(os.environ), width = 1) 
+        pprint.pprint(dict(os.environ), width = 1)
 
     @classmethod
     def conf(cls) -> SparkConf:
         _conf = super(DeltaTestCase, cls).conf()
         print("after super: " + _conf.toDebugString())
         print("OS after super: ")
-        print(os.Environ())
+        pprint.pprint(dict(os.environ), width = 1)
         _conf.set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
         _conf.set("spark.sql.catalog.spark_catalog",
                   "org.apache.spark.sql.delta.catalog.DeltaCatalog")
@@ -52,7 +52,7 @@ class DeltaTestCase(ReusedConnectTestCase):
                   "org.apache.spark.sql.connect.delta.DeltaCommandPlugin")
         print("after everything: " + _conf.toDebugString())
         print("OS after everything: ")
-        print(os.Environ())
+        pprint.pprint(dict(os.environ), width = 1)
         return _conf
 
     def setUp(self) -> None:
