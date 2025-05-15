@@ -36,7 +36,7 @@ def test(root_dir, code_dir, packages):
     # Check if we're running Delta Connect tests and need to set special environment
     is_connect_test = code_dir.endswith("connect")
     env = None
-    
+
     if is_connect_test:
         env = os.environ.copy()
         env["SPARK_CONNECT_TESTING_REMOTE"] = "local[4]"
