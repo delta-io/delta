@@ -31,6 +31,7 @@ class DeltaTestCase(ReusedConnectTestCase):
     def setUpClass(cls) -> None:
         # Spark Connect will set SPARK_CONNECT_TESTING_REMOTE, and it does not allow MASTER
         # to be set simultaneously, so we need to clear it.
+        # TODO(long.vu): Find a cleaner way to clear "MASTER".
         if "MASTER" in os.environ:
             del os.environ["MASTER"]
         super(DeltaTestCase, cls).setUpClass()
