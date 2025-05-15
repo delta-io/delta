@@ -18,6 +18,8 @@ package io.delta.kernel.internal.util;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.Row;
+import io.delta.kernel.internal.DeltaHistoryManager;
+import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StringType;
@@ -31,6 +33,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 public class InternalUtils {
@@ -166,5 +169,25 @@ public class InternalUtils {
 
   public static Set<String> toLowerCaseSet(Collection<String> set) {
     return set.stream().map(String::toLowerCase).collect(Collectors.toSet());
+  }
+
+  public static Tuple2<Long, Long> greatestLowerBound(
+          long target, long lowerBoundInclusive, long upperBoundExclusive, Function<Long, Long> keyToValueMapper) {
+    long start = lowerBoundInclusive;
+    long end = upperBoundExclusive;
+    Tuple2<Long, Long> result = null;
+    while (start <= end) {
+      long curIndex = start + (end - start) / 2;
+      long curValue = keyToValueMapper.apply(curIndex);
+      if (curValue == target) {
+        return new Tuple2<>(curIndex, curValue);
+      } else if (curValue < target) {
+        result = new Tuple2<>(curIndex, curValue);
+        start = curIndex + 1;
+      } else {
+        end = curIndex - 1;
+      }
+    }
+    return result;
   }
 }
