@@ -343,7 +343,11 @@ public class LogReplay {
           if (metadata == null) {
             metadata = snapshotHint.get().getMetadata();
           }
-          logger.info("Loading Protocol and Metadata read {} logs", logReadCount);
+          logger.info(
+              "{}: Loading Protocol and Metadata read {} logs with snapshot hint at version {}",
+              dataPath.toString(),
+              logReadCount,
+              snapshotHint.map(hint -> String.valueOf(hint.getVersion())).orElse("N/A"));
           return new Tuple2<>(protocol, metadata);
         }
       }
@@ -400,8 +404,8 @@ public class LogReplay {
       Map<String, DomainMetadata> domainMetadataMap =
           loadDomainMetadataMapFromLog(engine, Optional.empty());
       logger.info(
-          "{}:No domain metadata available in CRC info," +
-                  " loading domain metadata for version {} from logs took {}",
+          "{}:No domain metadata available in CRC info,"
+              + " loading domain metadata for version {} from logs took {}",
           dataPath.toString(),
           logSegment.getVersion(),
           System.currentTimeMillis() - startTimeMillis);
