@@ -27,7 +27,6 @@ import scala.collection.mutable.{ArrayBuffer, HashSet}
 import scala.util.control.NonFatal
 
 import com.databricks.spark.util.TagDefinitions.TAG_LOG_STORE_CLASS
-
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.DeltaOperations.{ChangeColumn, ChangeColumns, CreateTable, Operation, ReplaceColumns, ReplaceTable, UpdateSchema}
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
@@ -944,6 +943,7 @@ trait OptimisticTransactionImpl extends DeltaTransaction
     }
   }
 
+  // Make sure shredded writes are only performed if the shredding table property was set.
   private def assertShreddingStateConsistent() = {
     if (!DeltaConfigs.ENABLE_VARIANT_SHREDDING.fromMetaData(metadata)) {
       val isVariantShreddingSchemaForced =
