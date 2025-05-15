@@ -17,6 +17,7 @@
 import tempfile
 import shutil
 import os
+import pprint
 import unittest
 
 from pyspark import SparkConf
@@ -31,12 +32,10 @@ class DeltaTestCase(ReusedConnectTestCase):
     @classmethod
     def setUpClass(cls):
         print("OS before setUpClass: ")
-        print(os.Environ())
-        if 'MASTER' in os.environ:
-            del os.environ['MASTER']
+        pprint.pprint(dict(os.environ), width = 1)
         super(DeltaTestCase, self).setUpClass()
         print("OS after setUpClass: ")
-        print(os.Environ())
+        pprint.pprint(dict(os.environ), width = 1) 
 
     @classmethod
     def conf(cls) -> SparkConf:
