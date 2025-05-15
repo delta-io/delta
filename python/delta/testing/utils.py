@@ -29,6 +29,12 @@ class DeltaTestCase(ReusedSQLTestCase):
     """
 
     @classmethod
+    def setUpClass(cls):
+        if "MASTER" in os.environ:
+            del os.environ["MASTER"]
+        super(DeltaTestCase, cls).setUpClass()
+
+    @classmethod
     def conf(cls) -> SparkConf:
         _conf = super(DeltaTestCase, cls).conf()
         _conf.set("spark.app.name", cls.__name__)
