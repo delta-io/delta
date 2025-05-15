@@ -405,7 +405,7 @@ public class LogReplay {
           loadDomainMetadataMapFromLog(engine, Optional.empty());
       logger.info(
           "{}:No domain metadata available in CRC info,"
-              + " loading domain metadata for version {} from logs took {}",
+              + " loading domain metadata for version {} from logs took {}ms",
           dataPath.toString(),
           logSegment.getVersion(),
           System.currentTimeMillis() - startTimeMillis);
@@ -417,7 +417,7 @@ public class LogReplay {
           lastSeenCrcInfo.getDomainMetadata().get().stream()
               .collect(Collectors.toMap(DomainMetadata::getDomain, Function.identity()));
       logger.info(
-          "{}:CRC for version {} found, loading domain metadata from CRC took {}",
+          "{}:CRC for version {} found, loading domain metadata from CRC took {}ms",
           dataPath.toString(),
           logSegment.getVersion(),
           System.currentTimeMillis() - startTimeMillis);
@@ -440,7 +440,7 @@ public class LogReplay {
               }
             });
     logger.info(
-        "{}: Loading domain metadata for version {} from logs with crc version {} took {}",
+        "{}: Loading domain metadata for version {} from logs with crc version {} took {}ms",
         dataPath.toString(),
         logSegment.getVersion(),
         lastSeenCrcInfo.getVersion(),
