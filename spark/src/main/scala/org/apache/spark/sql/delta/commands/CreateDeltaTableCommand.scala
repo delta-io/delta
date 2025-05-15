@@ -656,7 +656,8 @@ case class CreateDeltaTableCommand(
       clusterBy: Option[Seq[String]]
   ): DeltaOperations.Operation = operation match {
     // This is legacy saveAsTable behavior in Databricks Runtime
-    case TableCreationModes.Create if existingTableOpt.isDefined && query.isDefined =>
+    case TableCreationModes.Create if existingTableOpt.isDefined &&
+      query.isDefined && options.nonEmpty =>
       DeltaOperations.Write(mode, Option(table.partitionColumnNames), options.get.replaceWhere,
         options.flatMap(_.userMetadata)
       )
