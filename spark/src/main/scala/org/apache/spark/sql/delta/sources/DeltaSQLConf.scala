@@ -657,6 +657,18 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val FORCE_ALTER_TABLE_DATA_SCHEMA =
+    buildConf("schema.forceAlterTableDataSchema")
+      .internal()
+      .doc(
+        """
+          | This conf fix the schema in tableCatalog object and force an alter table
+          | schema command after upload the schema. As in spark project the schema is removed
+          | because delta is not a valid serDe configuration.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
   //////////////////////////////////////////////
   // DynamoDB Commit Coordinator-specific configs
   /////////////////////////////////////////////
