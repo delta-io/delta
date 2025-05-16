@@ -17,14 +17,18 @@
 package org.apache.spark.sql.delta
 
 import scala.collection.mutable
+import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.DeltaOperations.Operation
 import org.apache.spark.sql.delta.actions.{AddFile, CommitInfo, Metadata, Protocol}
 import org.apache.spark.sql.delta.hooks.PostCommitHook
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
+import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.catalog.{CatalogStatistics, CatalogTable}
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 
 /**
  * Represents a transaction that maps to a delta table commit.
@@ -32,7 +36,7 @@ import org.apache.spark.sql.catalyst.catalog.{CatalogStatistics, CatalogTable}
  * An instance of this trait tracks the reads and writes as well as accumulates additional
  * information such as statistics of a single table throughout the life of a transaction.
  */
-trait DeltaTransaction {
+trait DeltaTransaction extends DeltaLogging {
   val deltaLog: DeltaLog
   val catalogTable: Option[CatalogTable]
   val snapshot: Snapshot
@@ -91,4 +95,29 @@ trait DeltaTransaction {
     needsCheckpoint = committedVersion != 0 && committedVersion % checkpointInterval == 0
   }
 
+  /** Runs a post-commit hook, handling any exceptions that occur. */
+  protected def runPostCommitHook(
+      hook: PostCommitHook,
+      committedTransaction: CommittedTransaction): Unit = {
+    val version = committedTransaction.committedVersion
+    try {
+      hook.run(
+        spark,
+        committedTransaction,
+        committedTransaction.committedVersion,
+        committedTransaction.postCommitSnapshot,
+        committedTransaction.committedActions.toIterator)
+    } catch {
+      case NonFatal(e) =>
+        logWarning(log"Error when executing post-commit hook " +
+          log"${MDC(DeltaLogKeys.HOOK_NAME, hook.name)} " +
+          log"for commit ${MDC(DeltaLogKeys.VERSION, version)}", e)
+        recordDeltaEvent(deltaLog, "delta.commit.hook.failure", data = Map(
+          "hook" -> hook.name,
+          "version" -> version,
+          "exception" -> e.toString
+        ))
+        hook.handleError(spark, e, version)
+    }
+  }
 }
