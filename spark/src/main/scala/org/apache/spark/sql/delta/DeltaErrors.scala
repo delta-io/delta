@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.{FileNotFoundException, IOException}
 import java.nio.file.FileAlreadyExistsException
-import java.util.ConcurrentModificationException
+import java.util.{ConcurrentModificationException, UUID}
 
 import scala.collection.JavaConverters._
 
@@ -3727,6 +3727,25 @@ trait DeltaErrorsBase
     new DeltaUnsupportedOperationException(
       errorClass = "DELTA_UNSUPPORTED_CATALOG_OWNED_TABLE_CREATION",
       messageParameters = Array.empty)
+  }
+
+  def numRecordsMismatch(
+      operation: String,
+      numAddedRecords: Long,
+      numRemovedRecords: Long): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_NUM_RECORDS_MISMATCH",
+      messageParameters = Array(operation, numAddedRecords.toString, numRemovedRecords.toString)
+    )
+  }
+
+  def commandInvariantViolationException(
+      operation: String,
+      id: UUID): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_COMMAND_INVARIANT_VIOLATION",
+      messageParameters = Array(operation, id.toString)
+    )
   }
 }
 
