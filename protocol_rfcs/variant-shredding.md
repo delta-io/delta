@@ -52,7 +52,8 @@ When Variant type is supported (`readerFeatures` field of a table's `protocol` a
 
 - The `nullCount` stat for a Variant column is a LONG representing the nullcount for the Variant column itself (nullcount stats are not captured for individual paths within the Variant).
 - In JSON, the `minValues` and `maxValues` stats for a Variant column are [binary-encoded](https://github.com/apache/parquet-format/blob/master/VariantEncoding.md) Variant values, with the `metadata` and `value` columns serialized to strings using [z85](https://rfc.zeromq.org/spec/32/) encoding (see example below).
-- In Parquet, the `minValues` and `maxValues` stats for a Variant column are Parquet Variant columns, following the [Parquet Variant specification](https://github.com/apache/parquet-format/blob/master/VariantShredding.md).
+- In Parquet, the `minValues` and `maxValues` stats for a Variant column are Parquet Variant columns, following the Parquet Variant [encoding](https://github.com/apache/parquet-format/blob/master/VariantEncoding.md) and [shredding](https://github.com/apache/parquet-format/blob/master/VariantShredding.md) specifications.
+- In Parquet, the Variant `minValues` and `maxValues` stats are allowed to be shredded, but it is not required.
 - Each path in the Variant `minValues` (`maxValues`) value is the independently computed min (max) stat for the corresponding path in the file's Variant data, so e.g. `minValues.v:a` and `minValues.v:b` could come from different rows in the file.
 - Min/max stats may only be written for primitive (leaf) values, packed into a Variant representation.
 - Min/max stats may only be written for a path if that path has the same data type in every row of the data file.
