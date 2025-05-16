@@ -38,7 +38,6 @@ import io.delta.kernel.utils.FileStatus;
 import java.io.*;
 import java.nio.file.FileAlreadyExistsException;
 import java.util.*;
-import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -111,41 +110,8 @@ public class Checkpointer {
     }
   }
 
-  /**
-   * Given a list of checkpoint files, pick the latest complete checkpoint instance which is not
-   * later than `notLaterThan`.
-   */
-  public static Optional<CheckpointInstance> getLatestCompleteCheckpointFromList(
-      List<CheckpointInstance> instances, CheckpointInstance notLaterThan) {
-    final List<CheckpointInstance> completeCheckpoints =
-        instances.stream()
-            .filter(c -> c.isNotLaterThan(notLaterThan))
-            .collect(Collectors.groupingBy(c -> c))
-            .entrySet()
-            .stream()
-            .filter(
-                entry -> {
-                  final CheckpointInstance key = entry.getKey();
-                  final List<CheckpointInstance> inst = entry.getValue();
-
-                  if (key.numParts.isPresent()) {
-                    return inst.size() == entry.getKey().numParts.get();
-                  } else {
-                    return inst.size() == 1;
-                  }
-                })
-            .map(Map.Entry::getKey)
-            .collect(Collectors.toList());
-
-    if (completeCheckpoints.isEmpty()) {
-      return Optional.empty();
-    } else {
-      return Optional.of(Collections.max(completeCheckpoints));
-    }
-  }
-
   /** Find the last complete checkpoint before (strictly less than) a given version. */
-  public static Optional<CheckpointInstance> findLastCompleteCheckpointBefore(
+  public static Optional<CompleteCheckpointGroup> findLastCompleteCheckpointBefore(
       Engine engine, Path tableLogPath, long version) {
     return findLastCompleteCheckpointBeforeHelper(engine, tableLogPath, version)._1;
   }
@@ -154,8 +120,8 @@ public class Checkpointer {
    * Helper method for `findLastCompleteCheckpointBefore` which also return the number of files
    * searched. This helps in testing
    */
-  public static Tuple2<Optional<CheckpointInstance>, Long> findLastCompleteCheckpointBeforeHelper(
-      Engine engine, Path tableLogPath, long version) {
+  public static Tuple2<Optional<CompleteCheckpointGroup>, Long>
+      findLastCompleteCheckpointBeforeHelper(Engine engine, Path tableLogPath, long version) {
     CheckpointInstance upperBoundCheckpoint = new CheckpointInstance(version);
     logger.info("Try to find the last complete checkpoint before version {}", version);
 
@@ -205,13 +171,14 @@ public class Checkpointer {
             break;
           }
           if (validCheckpointFile(fileStatus)) {
-            checkpoints.add(new CheckpointInstance(fileStatus.getPath()));
+            checkpoints.add(new CheckpointInstance(fileStatus));
           }
           numberOfFilesSearched++;
         }
 
-        Optional<CheckpointInstance> latestCheckpoint =
-            getLatestCompleteCheckpointFromList(checkpoints, upperBoundCheckpoint);
+        Optional<CompleteCheckpointGroup> latestCheckpoint =
+            CompleteCheckpointGroup.getLatestCompleteCheckpointGroup(
+                checkpoints, upperBoundCheckpoint);
 
         if (latestCheckpoint.isPresent()) {
           logger.info(

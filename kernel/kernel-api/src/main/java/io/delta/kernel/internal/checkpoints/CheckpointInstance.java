@@ -15,11 +15,10 @@
  */
 package io.delta.kernel.internal.checkpoints;
 
-import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.Preconditions;
-import java.util.Collections;
-import java.util.List;
+import io.delta.kernel.internal.util.Tuple2;
+import io.delta.kernel.utils.FileStatus;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -45,39 +44,37 @@ public class CheckpointInstance implements Comparable<CheckpointInstance> {
   public static final CheckpointInstance MAX_VALUE = new CheckpointInstance(Long.MAX_VALUE);
 
   public final long version;
+  public final CheckpointFormat format;
+  public final Optional<FileStatus> fileStatus; // Guaranteed to be present for V2 checkpoints.
+  public final Optional<Integer> partNum;
   public final Optional<Integer> numParts;
 
-  public final CheckpointFormat format;
-
-  public final Optional<Path> filePath; // Guaranteed to be present for V2 checkpoints.
-
-  public CheckpointInstance(String path) {
+  public CheckpointInstance(FileStatus fileStatus) {
     Preconditions.checkArgument(
-        FileNames.isCheckpointFile(path), "not a valid checkpoint file name");
+        FileNames.isCheckpointFile(fileStatus.getPath()), "not a valid checkpoint file name");
 
-    String[] pathParts = getPathName(path).split("\\.");
+    this.fileStatus = Optional.of(fileStatus);
+    this.version = FileNames.checkpointVersion(fileStatus.getPath());
 
-    if (pathParts.length == 3 && pathParts[2].equals("parquet")) {
+    if (FileNames.isClassicCheckpointFile(fileStatus.getPath())) {
       // Classic checkpoint 00000000000000000010.checkpoint.parquet
-      this.version = Long.parseLong(pathParts[0]);
+      this.partNum = Optional.empty();
       this.numParts = Optional.empty();
       this.format = CheckpointFormat.CLASSIC;
-      this.filePath = Optional.empty();
-    } else if (pathParts.length == 5 && pathParts[4].equals("parquet")) {
+    } else if (FileNames.isMultiPartCheckpointFile(fileStatus.getPath())) {
       // Multi-part checkpoint 00000000000000000010.checkpoint.0000000001.0000000003.parquet
-      this.version = Long.parseLong(pathParts[0]);
-      this.numParts = Optional.of(Integer.parseInt(pathParts[3]));
+      final Tuple2<Integer, Integer> partAndNumParts =
+          FileNames.multiPartCheckpointPartAndNumParts(fileStatus.getPath());
+      this.partNum = Optional.of(partAndNumParts._1);
+      this.numParts = Optional.of(partAndNumParts._2);
       this.format = CheckpointFormat.MULTI_PART;
-      this.filePath = Optional.empty();
-    } else if (pathParts.length == 4
-        && (pathParts[3].equals("parquet") || pathParts[3].equals("json"))) {
+    } else if (FileNames.isV2CheckpointFile(fileStatus.getPath())) {
       // V2 checkpoint 00000000000000000010.checkpoint.UUID.(parquet|json)
-      this.version = Long.parseLong(pathParts[0]);
+      this.partNum = Optional.empty();
       this.numParts = Optional.empty();
       this.format = CheckpointFormat.V2;
-      this.filePath = Optional.of(new Path(path));
     } else {
-      throw new RuntimeException("Unrecognized checkpoint path format: " + getPathName(path));
+      throw new RuntimeException("Unrecognized checkpoint path format: " + fileStatus.getPath());
     }
   }
 
@@ -88,7 +85,8 @@ public class CheckpointInstance implements Comparable<CheckpointInstance> {
   public CheckpointInstance(long version, Optional<Integer> numParts) {
     this.version = version;
     this.numParts = numParts;
-    this.filePath = Optional.empty();
+    this.partNum = Optional.empty();
+    this.fileStatus = Optional.empty();
     if (numParts.orElse(0) == 0) {
       this.format = CheckpointFormat.CLASSIC;
     } else {
@@ -110,30 +108,19 @@ public class CheckpointInstance implements Comparable<CheckpointInstance> {
     return version < other.version;
   }
 
-  public List<Path> getCorrespondingFiles(Path path) {
-    if (this == CheckpointInstance.MAX_VALUE) {
-      throw new IllegalStateException("Can't get files for CheckpointVersion.MaxValue.");
-    }
-
-    // This is safe because the only way to construct a V2 CheckpointInstance is with the path.
-    if (format == CheckpointFormat.V2) {
-      return Collections.singletonList(filePath.get());
-    }
-
-    return numParts
-        .map(parts -> FileNames.checkpointFileWithParts(path, version, parts))
-        .orElseGet(
-            () -> Collections.singletonList(FileNames.checkpointFileSingular(path, version)));
-  }
-
   /**
-   * Comparison rules: 1. A CheckpointInstance with higher version is greater than the one with
-   * lower version. 2. A CheckpointInstance for a V2 checkpoint is greater than a classic checkpoint
-   * (to filter avoid selecting the compatibility file) or a multipart checkpoint. 3. For
-   * CheckpointInstances with same version, a Multi-part checkpoint is greater than a Single part
-   * checkpoint. 4. For Multi-part CheckpointInstance corresponding to same version, the one with
-   * more parts is greater than the one with fewer parts. 5. For V2 checkpoints, use the file path
-   * to break ties.
+   * Comparison rules:
+   *
+   * <ol>
+   *   <li>1. A CheckpointInstance with higher version is greater than the one with lower version.
+   *   <li>2. CheckpointInstance with a V2 checkpoint is greater than a classic checkpoint (to
+   *       filter avoid selecting the compatibility file) or a Multi-part checkpoint.
+   *   <li>3. For CheckpointInstances with same version, a Multi-part checkpoint is greater than a
+   *       Single part checkpoint.
+   *   <li>4. For Multi-part CheckpointInstance corresponding to same version, the one with more
+   *       parts is greater than the one with fewer parts.
+   *   <li>5. For V2 checkpoints, use the file path to break ties
+   * </ol>
    */
   @Override
   public int compareTo(CheckpointInstance that) {
@@ -154,7 +141,7 @@ public class CheckpointInstance implements Comparable<CheckpointInstance> {
       case MULTI_PART:
         return Long.compare(numParts.orElse(1), that.numParts.orElse(1));
       case V2:
-        return filePath.get().getName().compareTo(that.filePath.get().getName());
+        return fileStatus.get().getPath().compareTo(that.fileStatus.get().getPath());
       default:
         throw new IllegalStateException("Unexpected format: " + format);
     }
@@ -168,8 +155,8 @@ public class CheckpointInstance implements Comparable<CheckpointInstance> {
         + numParts
         + ", format="
         + format
-        + ", filePath="
-        + filePath
+        + ", fileStatus="
+        + fileStatus
         + "}";
   }
 
@@ -191,7 +178,7 @@ public class CheckpointInstance implements Comparable<CheckpointInstance> {
     // For V2 checkpoints, the filepath is included in the hash of the instance (as we consider
     // different UUID checkpoints to be different checkpoint instances. Otherwise, ignore
     // the filepath (which is empty) when hashing.
-    return Objects.hash(version, numParts, format, filePath);
+    return Objects.hash(version, numParts, format, fileStatus);
   }
 
   private String getPathName(String path) {
