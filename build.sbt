@@ -668,6 +668,8 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
     javafmtCheckSettings,
     scalafmtCheckSettings,
     Test / javaOptions ++= Seq("-ea"),
+    // This allows generating tables with unsupported test table features in delta-spark
+    Test / envVars += ("DELTA_TESTING", "1"),
     libraryDependencies ++= Seq(
       "org.apache.hadoop" % "hadoop-client-runtime" % hadoopVersion,
       "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5",

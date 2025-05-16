@@ -39,7 +39,8 @@ def test(root_dir, code_dir, packages):
                    "--driver-class-path=%s" % extra_class_path,
                    "--repositories",
                    ("https://maven-central.storage-download.googleapis.com/maven2/,"
-                       "https://repo1.maven.org/maven2/"),
+                       "https://repo1.maven.org/maven2/,"
+                       "https://repository.apache.org/content/repositories/orgapachespark-1480"),
                    "--packages", ",".join(packages), test_file]
             print("Running tests in %s\n=============" % test_file)
             print("Command: %s" % str(cmd))
@@ -201,3 +202,10 @@ if __name__ == "__main__":
     # For versions 4.0+ run Delta Connect tests as well
     if use_spark_master:
         run_delta_connect_codegen_python(root_dir)
+        # TODO: In the future, find a way to get these
+        # packages locally instead of downloading from Maven.
+        delta_connect_packages = ["com.google.protobuf:protobuf-java:3.25.1",
+                                  "org.apache.spark:spark-connect_2.13:4.0.0",
+                                  get_local_package("delta-connect-server", use_spark_master)]
+
+        test(root_dir, path.join("delta", "connect"), delta_connect_packages)

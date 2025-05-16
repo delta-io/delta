@@ -526,32 +526,6 @@ class StatsCollectionSuite
         )
       }
     }
-
-    test(s"Delta statistic column: invalid data type $invalidType in nested column") {
-      withTable(tableName1, tableName2) {
-        val columnName = "c2.c21"
-        val exceptOne = intercept[DeltaIllegalArgumentException] {
-          sql(
-            s"create table $tableName1 (c1 long, c2 STRUCT<c20:INT, c21:$invalidType>) " +
-              s"using delta TBLPROPERTIES('delta.dataSkippingStatsColumns' = 'c2.c21')"
-          )
-        }
-        assert(
-          exceptOne.getErrorClass == "DELTA_COLUMN_DATA_SKIPPING_NOT_SUPPORTED_TYPE" &&
-            exceptOne.getMessageParametersArray.toSeq == Seq(columnName, typename)
-        )
-        sql(s"create table $tableName2 (c1 long, c2 STRUCT<c20:INT, c21:$invalidType>) using delta")
-        val exceptThree = interceptWithUnwrapping[DeltaIllegalArgumentException] {
-          sql(
-            s"ALTER TABLE $tableName2 SET TBLPROPERTIES('delta.dataSkippingStatsColumns'='c2.c21')"
-          )
-        }
-        assert(
-          exceptThree.getErrorClass == "DELTA_COLUMN_DATA_SKIPPING_NOT_SUPPORTED_TYPE" &&
-          exceptThree.getMessageParametersArray.toSeq == Seq(columnName, typename)
-        )
-      }
-    }
   }
 
   test(s"Delta statistic column: mix case column name") {
@@ -855,6 +829,21 @@ class StatsCollectionSuite
         exception.getErrorClass == "DELTA_DUPLICATE_DATA_SKIPPING_COLUMNS" &&
         exception.getMessageParametersArray.toSeq == Seq(duplicatedColumns)
       )
+    }
+  }
+
+  test("handle special nested characters in column name") {
+    withTable("t") {
+      sql(
+        s"create table t (`|` long, c struct<s struct<a int, b INT>, `s.a` int>) using delta " +
+          s"TBLPROPERTIES('delta.columnMapping.mode' = 'name')")
+      // Have this test to make sure there are no collisions with c.`s.a` and c.s.a.
+      sql(
+        s"ALTER TABLE t SET TBLPROPERTIES('delta.dataSkippingStatsColumns' = 'c')")
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier("t"))
+      val tblProperty = DeltaConfigs.DATA_SKIPPING_STATS_COLUMNS
+        .fromMetaData(deltaLog.update().metadata)
+      assert(tblProperty.get == "c")
     }
   }
 
