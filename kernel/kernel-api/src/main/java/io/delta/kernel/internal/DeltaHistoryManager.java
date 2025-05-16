@@ -16,14 +16,18 @@
 package io.delta.kernel.internal;
 
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
+import static io.delta.kernel.internal.TableConfig.*;
 import static io.delta.kernel.internal.fs.Path.getName;
 
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.exceptions.TableNotFoundException;
+import io.delta.kernel.internal.actions.CommitInfo;
+import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.checkpoints.CheckpointInstance;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.FileNames;
+import io.delta.kernel.internal.util.InCommitTimestampUtils;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
@@ -63,6 +67,7 @@ public final class DeltaHistoryManager {
    */
   public static Commit getActiveCommitAtTimestamp(
       Engine engine,
+      SnapshotImpl latestSnapshot,
       Path logPath,
       long timestamp,
       boolean mustBeRecreatable,
@@ -75,32 +80,175 @@ public final class DeltaHistoryManager {
             ? getEarliestRecreatableCommit(engine, logPath)
             : getEarliestDeltaFile(engine, logPath);
 
-    // Search for the commit
-    List<Commit> commits = getCommits(engine, logPath, earliestVersion);
-    Commit commit =
-        lastCommitBeforeOrAtTimestamp(commits, timestamp)
-            .orElse(commits.get(0)); // This is only returned if canReturnEarliestCommit (see below)
+    Commit placeholderEarliestCommit = new Commit(earliestVersion, -1L /* timestamp */);
+    Commit ictEnablementCommit = getICTEnablementCommit(latestSnapshot, placeholderEarliestCommit);
+    Commit searchResult;
+    if (ictEnablementCommit.getTimestamp() <= timestamp) {
+      // The target commit is in the ICT range.
+      long latestSnapshotTimestamp = latestSnapshot.getTimestamp(engine);
+      if (latestSnapshotTimestamp <= timestamp) {
+        // We just proved we should use the latest snapshot
+        searchResult = new Commit(latestSnapshot.getVersion(), latestSnapshotTimestamp);
+      } else {
+        // start ICT search over [earliest available ICT version, latestVersion)
+        boolean ictEnabledForEntireWindow = (ictEnablementCommit.version <= earliestVersion);
+        long searchWindowLowerBound =
+            ictEnabledForEntireWindow
+                ? placeholderEarliestCommit.getVersion()
+                : ictEnablementCommit.getVersion();
+        try {
+          searchResult =
+              getActiveCommitAtTimeFromICTRange(
+                  timestamp,
+                  searchWindowLowerBound,
+                  new Commit(latestSnapshot.getVersion(), latestSnapshotTimestamp),
+                  engine,
+                  latestSnapshot.getLogPath());
+        } catch (IOException e) {
+          throw new RuntimeException(
+              "There was an error while reading a historical commit while performing a timestamp"
+                  + "based lookup. This can happen when the commit log is corrupted or when "
+                  + "there is a parallel operation like metadata cleanup that is deleting "
+                  + "commits. Please retry the query.",
+              e);
+        }
+      }
+    } else {
+      // ICT was NOT enabled as-of the requested time
+      if (ictEnablementCommit.version <= earliestVersion) {
+        // We're searching for a non-ICT time but the non-ICT commits are all missing.
+        // If `canReturnEarliestCommit` is `false`, we need the details of the
+        // earliest commit to populate the timestampBeforeFirstAvailableCommit
+        // error correctly.
+        // Else, when `canReturnEarliestCommit` is `true`, the earliest commit
+        // is the desired result.
+        long ict =
+            CommitInfo.getRequiredInCommitTimestampFromFile(
+                engine, logPath, placeholderEarliestCommit.getVersion());
+        searchResult = new Commit(placeholderEarliestCommit.getVersion(), ict);
+      } else {
+        // start non-ICT linear search over [earliestVersion, ictEnablementVersion)
+        List<Commit> commits = getCommits(engine, logPath, earliestVersion);
+        searchResult =
+            lastCommitBeforeOrAtTimestamp(commits, timestamp)
+                .orElse(
+                    commits.get(0)); // This is only returned if canReturnEarliestCommit (see below)
+      }
+    }
 
     // If timestamp is before the earliest commit
-    if (commit.timestamp > timestamp && !canReturnEarliestCommit) {
+    if (searchResult.timestamp > timestamp && !canReturnEarliestCommit) {
       throw DeltaErrors.timestampBeforeFirstAvailableCommit(
           logPath.getParent().toString(), /* use dataPath */
           timestamp,
-          commits.get(0).timestamp,
-          commits.get(0).version);
+          searchResult.timestamp,
+          searchResult.version);
     }
     // If timestamp is after the last commit of the table
-    if (commit == commits.get(commits.size() - 1)
-        && commit.timestamp < timestamp
-        && !canReturnLastCommit) {
+    if (searchResult.timestamp < timestamp && !canReturnLastCommit) {
       throw DeltaErrors.timestampAfterLatestCommit(
           logPath.getParent().toString(), /* use dataPath */
           timestamp,
-          commit.timestamp,
-          commit.version);
+          searchResult.timestamp,
+          searchResult.version);
     }
 
-    return commit;
+    return searchResult;
+  }
+
+  private static Optional<Long> getInitialCommitVersionForICTSearch(
+      long searchTimestamp, long startCommitVersion, Commit endCommit, Engine engine, Path logPath)
+      throws IOException {
+    long listingStartVersion = Math.max(startCommitVersion, endCommit.getVersion() - 1000);
+    try (CloseableIterator<Commit> commits =
+        listFrom(engine, logPath, listingStartVersion)
+            .takeWhile(
+                fs ->
+                    FileNames.getFileVersionOpt(new Path(fs.getPath())).orElse(-1L)
+                        < endCommit.getVersion())
+            .filter(fs -> FileNames.isCommitFile(getName(fs.getPath())))
+            .map(fs -> new Commit(FileNames.deltaVersion(fs.getPath()), fs.getModificationTime()))
+            .takeWhile(commit -> commit.getTimestamp() <= searchTimestamp)) {
+      if (commits.hasNext()) {
+        List<Commit> commitsList = commits.toInMemoryList();
+        return Optional.of(commitsList.get(commitsList.size() - 1).getVersion());
+      } else {
+        // All commits in the range have modTimes greater than the search timestamp.
+        return Optional.empty();
+      }
+    }
+  }
+
+  private static Commit getActiveCommitAtTimeFromICTRange(
+      long searchTimestamp,
+      long startCommitVersion,
+      Commit endCommitExclusive,
+      Engine engine,
+      Path logPath)
+      throws IOException {
+    // Find the pivot commit version. This should be pretty close to the target commit.
+    Optional<Long> pivotVersionOpt =
+        getInitialCommitVersionForICTSearch(
+            searchTimestamp, startCommitVersion, endCommitExclusive, engine, logPath);
+    long lowerBoundVersion = startCommitVersion,
+        upperBoundVersion = endCommitExclusive.getVersion();
+    if (pivotVersionOpt.isPresent()) {
+      // We have potentially narrowed down the search space using modTime.
+      long pivotVersion = pivotVersionOpt.get();
+      long pivotICT =
+          CommitInfo.getRequiredInCommitTimestampFromFile(engine, logPath, pivotVersion);
+      Commit pivotCommit = new Commit(pivotVersion, pivotICT);
+      // In most cases, the target commit should be pretty close to the pivot commit.
+      if (pivotICT == searchTimestamp) {
+        return pivotCommit;
+      }
+      boolean searchLeft = pivotICT > searchTimestamp;
+      Tuple2<Long, Long> narrowerBounds =
+          InCommitTimestampUtils.getNarrowSearchBoundsUsingExponentialSearch(
+              searchTimestamp,
+              pivotVersion,
+              searchLeft ? lowerBoundVersion : upperBoundVersion,
+              version -> CommitInfo.getRequiredInCommitTimestampFromFile(engine, logPath, version),
+              searchLeft /* reversed */);
+      lowerBoundVersion = narrowerBounds._1;
+      upperBoundVersion = narrowerBounds._2;
+      if (upperBoundVersion == lowerBoundVersion + 1) {
+        // We have a single commit in the range.
+        return pivotCommit;
+      }
+    }
+    // Now we have a range of commits to search through. We can use binary search to find the
+    // commit that is closest to the search timestamp.
+    Tuple2<Long, Long> greatestLowerBound =
+        InCommitTimestampUtils.greatestLowerBound(
+            searchTimestamp,
+            lowerBoundVersion,
+            upperBoundVersion,
+            version -> CommitInfo.getRequiredInCommitTimestampFromFile(engine, logPath, version));
+    return new Commit(greatestLowerBound._1, greatestLowerBound._2);
+  }
+
+  private static Commit getICTEnablementCommit(
+      SnapshotImpl snapshot, Commit placeholderEarliestCommit) {
+    Metadata metadata = snapshot.getMetadata();
+    if (!IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata)) {
+      // Pretend ICT will be enabled after the latest version and requested timestamp.
+      // This will force us to use the non-ICT search path.
+      return new Commit(snapshot.getVersion() + 1, Long.MAX_VALUE);
+    }
+    Optional<Long> enablementTimestampOpt =
+        IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.fromMetadata(metadata);
+    Optional<Long> enablementVersionOpt =
+        IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.fromMetadata(metadata);
+    if (enablementTimestampOpt.isPresent() && enablementVersionOpt.isPresent()) {
+      return new Commit(enablementVersionOpt.get(), enablementTimestampOpt.get());
+    } else if (!enablementTimestampOpt.isPresent() && !enablementVersionOpt.isPresent()) {
+      // This means that ICT has been enabled for the entire history.
+      return placeholderEarliestCommit;
+    } else {
+      throw new IllegalStateException(
+          "Both enablement version and timestamp should be present or absent together.");
+    }
   }
 
   /**
