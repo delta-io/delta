@@ -392,9 +392,9 @@ public class SchemaUtils {
   }
 
   /* Compute the SchemaChanges using field IDs */
-  static SchemaChanges computeSchemaChangesById(
-      Map<Integer, StructField> currentFieldIdToField,
-      Map<Integer, StructField> updatedFieldIdToField) {
+  static SchemaChanges computeSchemaChangesById(StructType currentSchema, StructType newSchema) {
+    Map<Integer, StructField> currentFieldIdToField = fieldsById(currentSchema);
+    Map<Integer, StructField> updatedFieldIdToField = fieldsById(newSchema);
     SchemaChanges.Builder schemaDiff = SchemaChanges.builder();
     for (Map.Entry<Integer, StructField> fieldInUpdatedSchema : updatedFieldIdToField.entrySet()) {
       StructField existingField = currentFieldIdToField.get(fieldInUpdatedSchema.getKey());
@@ -474,9 +474,7 @@ public class SchemaUtils {
       int oldMaxFieldId,
       boolean allowNewRequiredFields,
       boolean icebergWriterCompatV1Enabled) {
-    Map<Integer, StructField> currentFieldsById = fieldsById(currentSchema);
-    Map<Integer, StructField> updatedFieldsById = fieldsById(newSchema);
-    SchemaChanges schemaChanges = computeSchemaChangesById(currentFieldsById, updatedFieldsById);
+    SchemaChanges schemaChanges = computeSchemaChangesById(currentSchema, newSchema);
     validatePhysicalNameConsistency(schemaChanges.updatedFields());
     // Validates that the updated schema does not contain breaking changes in terms of types and
     // nullability
