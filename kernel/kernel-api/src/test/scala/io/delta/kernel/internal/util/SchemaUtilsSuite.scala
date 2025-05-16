@@ -34,6 +34,7 @@ import io.delta.kernel.types.{ArrayType, DataType, FieldMetadata, IntegerType, L
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.LongType.LONG
 import io.delta.kernel.types.TimestampType.TIMESTAMP
+
 import org.scalatest.funsuite.AnyFunSuite
 import org.scalatest.prop.TableDrivenPropertyChecks.forAll
 import org.scalatest.prop.TableFor2
@@ -325,8 +326,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
   // computeSchemaChangesById
   ///////////////////////////////////////////////////////////////////////////
   test("Compute schema changes with added columns") {
-    val fieldMappingBefore = newSchema((1,
-      new StructField("id", IntegerType.INTEGER, true)))
+    val fieldMappingBefore = newSchema((1, new StructField("id", IntegerType.INTEGER, true)))
 
     val fieldMappingAfter = newSchema(
       (1, new StructField("id", IntegerType.INTEGER, true)),
@@ -340,7 +340,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
     assert(schemaChanges.addedFields().get(0) == fieldMappingAfter.get("data"))
   }
 
-  private def newSchema(tuple: (Int, StructField)*) : StructType = {
+  private def newSchema(tuple: (Int, StructField)*): StructType = {
     val fields = tuple.map { case (id, field) =>
       addFieldId(id, field)
     }
@@ -375,7 +375,8 @@ class SchemaUtilsSuite extends AnyFunSuite {
   test("Compute schema changes with type changed columns") {
     val fieldMappingBefore = newSchema((1, new StructField("id", IntegerType.INTEGER, true)))
 
-    val fieldMappingAfter = newSchema((1, new StructField("promoted_to_long", LongType.LONG, true)));
+    val fieldMappingAfter =
+      newSchema((1, new StructField("promoted_to_long", LongType.LONG, true)));
 
     val schemaChanges = computeSchemaChangesById(fieldMappingBefore, fieldMappingAfter)
 
@@ -423,22 +424,26 @@ class SchemaUtilsSuite extends AnyFunSuite {
 
   test("Compute schema changes with moved fields") {
     val fieldMappingBefore = newSchema(
-      (1, new StructField(
-        "struct",
-        newSchema(
-          (4, new StructField("id", IntegerType.INTEGER, true)),
-          (5, new StructField("data", StringType.STRING, true))),
-        true)),
+      (
+        1,
+        new StructField(
+          "struct",
+          newSchema(
+            (4, new StructField("id", IntegerType.INTEGER, true)),
+            (5, new StructField("data", StringType.STRING, true))),
+          true)),
       (2, new StructField("id", IntegerType.INTEGER, true)),
       (3, new StructField("data", StringType.STRING, true)))
 
     val fieldMappingAfter = newSchema(
-      (1, new StructField(
-        "struct",
-        newSchema(
-          (5, new StructField("data", StringType.STRING, true)),
-          (4, new StructField("id", IntegerType.INTEGER, true))),
-        true)),
+      (
+        1,
+        new StructField(
+          "struct",
+          newSchema(
+            (5, new StructField("data", StringType.STRING, true)),
+            (4, new StructField("id", IntegerType.INTEGER, true))),
+          true)),
       (2, new StructField("id", IntegerType.INTEGER, true)),
       (3, new StructField("data", StringType.STRING, true)))
 
@@ -454,22 +459,26 @@ class SchemaUtilsSuite extends AnyFunSuite {
 
   test("Compute schema changes with field metadata changes") {
     val fieldMappingBefore = newSchema(
-      (1, new StructField(
-        "id",
-        IntegerType.INTEGER,
-        true,
-        FieldMetadata.builder().putString(
-          "metadata_col",
-          "metadata_val").build())))
+      (
+        1,
+        new StructField(
+          "id",
+          IntegerType.INTEGER,
+          true,
+          FieldMetadata.builder().putString(
+            "metadata_col",
+            "metadata_val").build())))
 
     val fieldMappingAfter = newSchema(
-      (1, new StructField(
-        "id",
-        IntegerType.INTEGER,
-        true,
-        FieldMetadata.builder().putString(
-          "metadata_col",
-          "updated_metadata_val").build())))
+      (
+        1,
+        new StructField(
+          "id",
+          IntegerType.INTEGER,
+          true,
+          FieldMetadata.builder().putString(
+            "metadata_col",
+            "updated_metadata_val").build())))
 
     val schemaChanges = computeSchemaChangesById(fieldMappingBefore, fieldMappingAfter)
 
