@@ -245,6 +245,7 @@ public class SnapshotManager {
 
     final String versionToLoadStr = versionToLoadOpt.map(String::valueOf).orElse("latest");
     logger.info("Loading log segment for version {}", versionToLoadStr);
+    final long logSegmentBuildingStartTimeMillis = System.currentTimeMillis();
 
     ////////////////////////////////////////////////////////////////////////////////////////////////
     // Step 1: Find the latest checkpoint version. If $versionToLoadOpt is empty, use the version //
@@ -254,6 +255,11 @@ public class SnapshotManager {
 
     final Optional<Long> startCheckpointVersionOpt =
         getStartCheckpointVersion(engine, versionToLoadOpt);
+
+    logger.info(
+        "{}: Took {}ms to find the start checkpoint version",
+        tablePath,
+        System.currentTimeMillis() - logSegmentBuildingStartTimeMillis);
 
     /////////////////////////////////////////////////////////////////
     // Step 2: Determine the actual version to start listing from. //
@@ -284,7 +290,7 @@ public class SnapshotManager {
       fileTypes.add(DeltaLogFileType.LOG_COMPACTION);
     }
 
-    final long startTimeMillis = System.currentTimeMillis();
+    final long listingStartTimeMillis = System.currentTimeMillis();
     final List<FileStatus> listedFileStatuses =
         DeltaLogActionUtils.listDeltaLogFilesAsIter(
                 engine,
@@ -298,7 +304,7 @@ public class SnapshotManager {
     logger.info(
         "{}: Took {}ms to list the files after starting checkpoint",
         tablePath,
-        System.currentTimeMillis() - startTimeMillis);
+        System.currentTimeMillis() - listingStartTimeMillis);
 
     ////////////////////////////////////////////////////////////////////////
     // Step 4: Perform some basic validations on the listed file statuses //
@@ -539,7 +545,10 @@ public class SnapshotManager {
     // Step 13: Construct the LogSegment and return. //
     ///////////////////////////////////////////////////
 
-    logger.info("Successfully constructed LogSegment at version {}", newVersion);
+    logger.info(
+        "Successfully constructed LogSegment at version {}, took {}ms",
+        newVersion,
+        System.currentTimeMillis() - logSegmentBuildingStartTimeMillis);
 
     final long lastCommitTimestamp =
         ListUtils.getLast(listedDeltaFileStatuses).getModificationTime();
