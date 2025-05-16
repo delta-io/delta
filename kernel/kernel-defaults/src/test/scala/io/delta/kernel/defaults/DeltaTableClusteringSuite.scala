@@ -46,7 +46,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
     """{"clusteringColumns":[["part1"],["part2"]]}""",
     false)
 
-  private def verifyClusteringDomainMetadata(
+  override def verifyClusteringDomainMetadata(
       snapshot: SnapshotImpl,
       expectedDomainMetadata: DomainMetadata = testingDomainMetadata): Unit = {
     assert(snapshot.getActiveDomainMetadataMap.get(ClusteringMetadataDomain.DOMAIN_NAME)

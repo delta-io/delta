@@ -804,7 +804,7 @@ trait TestUtils extends Assertions with SQLHelper {
   def verifyClusteringDomainMetadata(
       snapshot: SnapshotImpl,
       expectedDomainMetadata: DomainMetadata): Unit = {
-    assert(snapshot.getDomainMetadataMap.get(ClusteringMetadataDomain.DOMAIN_NAME)
+    assert(snapshot.getActiveDomainMetadataMap.get(ClusteringMetadataDomain.DOMAIN_NAME)
       == expectedDomainMetadata)
   }
 

@@ -66,7 +66,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   private final String engineInfo;
   private final Operation operation;
   private Optional<List<String>> partitionColumns = Optional.empty();
-  private Optional<List<Column>> clusteringColumns = Optional.empty();
+  private Optional<List<Column>> initialClusteringColumns = Optional.empty();
   private Optional<SetTransaction> setTxnOpt = Optional.empty();
   private Optional<Map<String, String>> tableProperties = Optional.empty();
   private Optional<Set<String>> unsetTablePropertiesKeys = Optional.empty();
@@ -74,6 +74,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
 
   protected final TableImpl table;
   protected Optional<StructType> schema = Optional.empty();
+  private Optional<List<Column>> physicalClusteringColumns = Optional.empty();
 
   /**
    * Number of retries for concurrent write exceptions to resolve conflicts and retry commit. In
@@ -132,7 +133,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
    */
   @Override
   public TransactionBuilder withClusteringColumns(Engine engine, List<Column> clusteringColumns) {
-    this.clusteringColumns = Optional.of(clusteringColumns);
+    this.initialClusteringColumns = Optional.of(clusteringColumns);
     return this;
   }
 
@@ -238,7 +239,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
             || schema.isPresent() // schema evolution
             || tableProperties.isPresent() // table properties updated
             || unsetTablePropertiesKeys.isPresent() // table properties unset
-            || clusteringColumns.isPresent() // clustering columns changed
+            || initialClusteringColumns.isPresent() // clustering columns changed
             || enablesDomainMetadataSupport; // domain metadata support added
 
     if (!needsMetadataOrProtocolUpdate) {
@@ -296,7 +297,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
 
     // We use the existing clustering columns to validate schema evolution
     Optional<List<Column>> existingClusteringCols =
-        isCreateOrReplace
+        isCreateOrReplace || initialClusteringColumns.isPresent()
             ? Optional.empty()
             : ClusteringUtils.getClusteringColumnsOptional(latestSnapshot.get());
     Tuple2<Optional<Protocol>, Optional<Metadata>> updatedProtocolAndMetadata =
@@ -307,28 +308,6 @@ public class TransactionBuilderImpl implements TransactionBuilder {
             isCreateOrReplace,
             existingClusteringCols,
             latestSnapshot);
-    Optional<Protocol> newProtocol = updatedProtocolAndMetadata._1;
-    Optional<Metadata> newMetadata = updatedProtocolAndMetadata._2;
-
-    // TODO should we do the validation in validateTransactionInputs and transform as part of
-    //  generating the domain in the txn?
-    StructType updatedSchema = schema.orElse(baseMetadata.getSchema());
-    Optional<List<Column>> casePreservingClusteringColumnsOpt =
-        clusteringColumns.map(
-            cols -> SchemaUtils.casePreservingEligibleClusterColumns(updatedSchema, cols));
-    // Fpr schema evolution validation, if new clustering columns are provided, use them. Otherwise,
-    // we use the
-    // existing clustering columns.
-    Optional<List<Column>> clusteringColsForValidation =
-        isCreateOrReplace
-            ? Optional.empty()
-            : (casePreservingClusteringColumnsOpt.isPresent()
-                ? casePreservingClusteringColumnsOpt
-                : ClusteringUtils.getClusteringColumnsOptional(latestSnapshot.get()));
-
-    Tuple2<Optional<Protocol>, Optional<Metadata>> updatedProtocolAndMetadata =
-        validateAndUpdateProtocolAndMetadata(
-            engine, baseMetadata, baseProtocol, isCreateOrReplace, clusteringColsForValidation);
     Optional<Protocol> newProtocol = updatedProtocolAndMetadata._1;
     Optional<Metadata> newMetadata = updatedProtocolAndMetadata._2;
 
@@ -359,7 +338,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         newProtocol.orElse(baseProtocol),
         newMetadata.orElse(baseMetadata),
         setTxnOpt,
-        casePreservingClusteringColumnsOpt,
+        physicalClusteringColumns,
         newMetadata.isPresent() || isCreateOrReplace /* shouldUpdateMetadata */,
         newProtocol.isPresent() || isCreateOrReplace /* shouldUpdateProtocol */,
         maxRetries,
@@ -373,7 +352,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
    * @param baseMetadata the starting metadata to update
    * @param baseProtocol the starting protocol to update
    * @param isCreateOrReplace whether we are defining a new table definition or not
-   * @param clusteringCols the updated or existing clustering columns for the table (if it exists)
+   * @param existingClusteringCols the updated or existing clustering columns for the table (if it
+   *     exists)
    * @return an updated protocol and metadata if any updates are necessary
    */
   protected Tuple2<Optional<Protocol>, Optional<Metadata>> validateAndUpdateProtocolAndMetadata(
@@ -420,7 +400,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     if (needDomainMetadataSupport) {
       manuallyEnabledFeatures.add(TableFeatures.DOMAIN_METADATA_W_FEATURE);
     }
-    if (clusteringColumns.isPresent()) {
+    if (initialClusteringColumns.isPresent()) {
       manuallyEnabledFeatures.add(TableFeatures.CLUSTERING_W_FEATURE);
     }
 
@@ -490,11 +470,25 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       newMetadata = columnMappingMetadata;
     }
 
-    /* ----- 5: Validate the metadata change ----- */
+    /* ----- 5: Derive the physical name of cluster columns if provided ----- */
+    // Get the physical names of clustering columns based on the updated schema.
+    // This is only done if clustering columns are explicitly set in this transaction.
+    StructType updatedSchema = newMetadata.orElse(baseMetadata).getSchema();
+    physicalClusteringColumns =
+        initialClusteringColumns.map(
+            cols -> SchemaUtils.casePreservingEligibleClusterColumns(updatedSchema, cols));
+
+    /* ----- 6: Validate the metadata change ----- */
     // Now that all the config and schema changes have been made validate the old vs new metadata
     if (newMetadata.isPresent()) {
+      // Use physicalClusteringColumns if clustering column is set in this txn,
+      // otherwise fallback to existingClusteringCols
+      Optional<List<Column>> effectiveClusteringCols =
+          physicalClusteringColumns.isPresent()
+              ? physicalClusteringColumns
+              : existingClusteringCols;
       validateMetadataChange(
-          existingClusteringCols,
+          effectiveClusteringCols,
           baseMetadata,
           newMetadata.get(),
           isCreateOrReplace,
@@ -525,12 +519,12 @@ public class TransactionBuilderImpl implements TransactionBuilder {
           }
         });
     if (!isCreateOrReplace
-        && clusteringColumns.isPresent()
+        && initialClusteringColumns.isPresent()
         && snapshot.getMetadata().getPartitionColumns().getSize() != 0) {
       throw DeltaErrors.enablingClusteringOnPartitionedTableNotAllowed(
           table.getPath(engine),
           snapshot.getMetadata().getPartitionColNames(),
-          clusteringColumns.get());
+          initialClusteringColumns.get());
     }
   }
 
@@ -556,7 +550,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       }
     } else {
       checkArgument(
-          !(partitionColumns.isPresent() && clusteringColumns.isPresent()),
+          !(partitionColumns.isPresent() && initialClusteringColumns.isPresent()),
           "Partition Columns and Clustering Columns cannot be set at the same time");
 
       // New table verify the given schema and partition columns
