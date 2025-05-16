@@ -352,8 +352,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
    * @param baseMetadata the starting metadata to update
    * @param baseProtocol the starting protocol to update
    * @param isCreateOrReplace whether we are defining a new table definition or not
-   * @param existingClusteringCols the updated or existing clustering columns for the table (if it
-   *     exists)
+   * @param existingClusteringCols the existing clustering columns for the table (if it exists)
    * @return an updated protocol and metadata if any updates are necessary
    */
   protected Tuple2<Optional<Protocol>, Optional<Metadata>> validateAndUpdateProtocolAndMetadata(
