@@ -26,6 +26,7 @@ import io.delta.kernel.internal.actions.Metadata;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Function;
 
 public class InCommitTimestampUtils {
 
@@ -97,5 +98,62 @@ public class InCommitTimestampUtils {
         readSnapshot.getVersion() != -1
             && IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(readSnapshot.getMetadata());
     return isICTCurrentlyEnabled && !wasICTEnabledInReadSnapshot;
+  }
+
+  public static Tuple2<Long, Long> greatestLowerBound(
+      long target,
+      long lowerBoundInclusive,
+      long upperBoundExclusive,
+      Function<Long, Long> indexToValueMapper) {
+    long start = lowerBoundInclusive;
+    long end = upperBoundExclusive;
+    Tuple2<Long, Long> result = null;
+    while (start <= end) {
+      long curIndex = start + (end - start) / 2;
+      long curValue = indexToValueMapper.apply(curIndex);
+      if (curValue == target) {
+        return new Tuple2<>(curIndex, curValue);
+      } else if (curValue < target) {
+        result = new Tuple2<>(curIndex, curValue);
+        start = curIndex + 1;
+      } else {
+        end = curIndex - 1;
+      }
+    }
+    return result;
+  }
+
+  public static Tuple2<Long, Long> getNarrowSearchBoundsUsingExponentialSearch(
+      long target,
+      long lowerBound,
+      long upperBound,
+      Function<Long, Long> indexToValueMapper,
+      boolean searchFromRightInclusive) {
+    final long iterationDirection = searchFromRightInclusive ? -1 : 1;
+    long lowerBoundIdx = lowerBound;
+    long upperBoundIdx = upperBound;
+    long searchStartEnd = searchFromRightInclusive ? upperBound : lowerBound;
+    long curIdx = searchStartEnd + iterationDirection;
+    for (long i = 1;
+         curIdx > lowerBound && curIdx < upperBound;
+         curIdx = Math.round(searchStartEnd + iterationDirection * (Math.pow(2, ++i) - 1))) {
+      long curValue = indexToValueMapper.apply(curIdx);
+      if (searchFromRightInclusive) {
+        if (curValue <= target) {
+          lowerBoundIdx = curIdx;
+          break;
+        } else {
+          upperBoundIdx = curIdx;
+        }
+      } else {
+        if (curValue > target) {
+          upperBoundIdx = curIdx;
+          break;
+        } else {
+          lowerBoundIdx = curIdx;
+        }
+      }
+    }
+    return new Tuple2<>(lowerBoundIdx, upperBoundIdx);
   }
 }
