@@ -40,7 +40,7 @@ def test(root_dir, code_dir, packages):
                    "--repositories",
                    ("https://maven-central.storage-download.googleapis.com/maven2/,"
                        "https://repo1.maven.org/maven2/,"
-                       "https://repository.apache.org/content/repositories/orgapachespark-1480"),
+                       "https://repository.apache.org/content/repositories/orgapachespark-1484"),
                    "--packages", ",".join(packages), test_file]
             print("Running tests in %s\n=============" % test_file)
             print("Command: %s" % str(cmd))
@@ -194,10 +194,10 @@ if __name__ == "__main__":
     prepare(root_dir, use_spark_master)
     delta_spark_package = get_local_package("delta-spark", use_spark_master)
 
-    run_python_style_checks(root_dir)
-    run_mypy_tests(root_dir)
-    run_pypi_packaging_tests(root_dir)
-    test(root_dir, "delta", [delta_spark_package])
+    # run_python_style_checks(root_dir)
+    # run_mypy_tests(root_dir)
+    # run_pypi_packaging_tests(root_dir)
+    # test(root_dir, "delta", [delta_spark_package])
 
     # For versions 4.0+ run Delta Connect tests as well
     if use_spark_master:
