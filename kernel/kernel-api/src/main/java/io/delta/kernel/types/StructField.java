@@ -175,6 +175,16 @@ public class StructField {
     return new StructField(name, dataType, nullable, metadata, typeChanges);
   }
 
+  /**
+   * Creates a copy of this StructField with the specified data type.
+   *
+   * @param newType The new type to use in the StructField.
+   * @return A new StructField with the same properties but with the specified data type.
+   */
+  public StructField withDataType(DataType newType) {
+    return new StructField(name, newType, nullable, metadata, typeChanges);
+  }
+
   private List<Tuple2<String, String>> getNestedCollatedFields(DataType parent, String path) {
     List<Tuple2<String, String>> nestedCollatedFields = new ArrayList<>();
     if (parent instanceof StringType) {
