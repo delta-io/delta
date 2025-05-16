@@ -362,9 +362,9 @@ class DeltaTableBuilderSuite extends DeltaQueryTest with RemoteSparkSession {
   test("errors if table name and location are different paths") {
     withTempPath { dir =>
       val path = dir.getAbsolutePath
-    // TODO: This should be an AnalysisException, but it ends up as a Spark Exception
-    // that arises from the Connect Client failing to enrich the exception with the Delta
-    // error class that we expect.
+      // TODO: This should be an AnalysisException, but it ends up as a Spark Exception
+      // that arises from the Connect Client failing to enrich the exception with the Delta
+      // error class that we expect.
       val e = intercept[Exception] {
         io.delta.tables.DeltaTable.create(spark).tableName(s"delta.`$path`")
           .addColumn("c1", "int")
@@ -419,25 +419,25 @@ class DeltaTableBuilderSuite extends DeltaQueryTest with RemoteSparkSession {
   }
 
   testCreateTableWithClusterBy("create_table_with_clusterBy") { table =>
-    val builder = io.delta.tables.DeltaTable.create()
+    val builder = DeltaTable.create(spark)
     defaultTableBuilder(builder, Some(table), None, true).execute()
   }
 
   testCreateTableWithClusterBy("replace_table_with_clusterBy") { table =>
     spark.sql(s"CREATE TABLE $table(c1 int) USING DELTA")
-    val builder = io.delta.tables.DeltaTable.replace()
+    val builder = DeltaTable.replace(spark)
     defaultTableBuilder(builder, Some(table), None, true).execute()
   }
 
   testCreateTableWithClusterBy("create_or_replace_table_with_clusterBy") { table =>
     spark.sql(s"CREATE TABLE $table(c1 int) USING DELTA")
-    val builder = io.delta.tables.DeltaTable.createOrReplace()
+    val builder = DeltaTable.createOrReplace(spark)
     defaultTableBuilder(builder, Some(table), None, true).execute()
   }
 
   test("clusterBy only should contain columns in the schema") {
     val e = intercept[AnalysisException] {
-      io.delta.tables.DeltaTable.create().tableName("testTable")
+      io.delta.tables.DeltaTable.create(spark).tableName("testTable")
         .addColumn("c1", "int")
         .clusterBy("c2")
         .execute()
@@ -450,7 +450,7 @@ class DeltaTableBuilderSuite extends DeltaQueryTest with RemoteSparkSession {
     // that arises from the Connect Client failing to enrich the exception with the Delta
     // error class that we expect.
     val e = intercept[Exception] {
-      io.delta.tables.DeltaTable.create().tableName("testTable")
+      io.delta.tables.DeltaTable.create(spark).tableName("testTable")
         .addColumn("c1", "int")
         .addColumn("c2", "int")
         .partitionedBy("c2")
@@ -531,8 +531,9 @@ class DeltaTableBuilderSuite extends DeltaQueryTest with RemoteSparkSession {
       // that arises from the Connect Client failing to enrich the exception with the Delta
       // error class that we expect.
       val deltaErrorClass = "DELTA_IDENTITY_COLUMNS_EXPLICIT_INSERT_NOT_SUPPORTED"
-      // Explicit inserts are never possible for a GENERATED ALWAYS identity column.
-      assert(e.getMessage.contains(deltaErrorClass))
+      assert(
+      e.getMessage.contains(deltaErrorClass),
+        "Explicit inserts are never possible for a GENERATED ALWAYS identity column.")
     }
   }
 }
