@@ -1799,7 +1799,6 @@ abstract class CommitCoordinatorSuiteBase
           assert(snapshot.isCatalogOwned)
           // Only [[IN_COMMIT_TIMESTAMPS_ENABLED]] should be set for CatalogOwned
           // since we don't support upgrade yet.
-          // TODO(Zihao): Please update the test once we support upgrade for CC tables.
           assert(snapshot.metadata.configuration.contains(IN_COMMIT_TIMESTAMPS_ENABLED.key))
         } else {
           assert(snapshot.tableCommitCoordinatorClientOpt.nonEmpty)
