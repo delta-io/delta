@@ -735,6 +735,8 @@ class DeltaTableHadoopOptionsSuite extends QueryTest
         table.dropFeatureSupport(TestRemovableReaderWriterFeature.name)
       }.getErrorClass === "DELTA_FEATURE_DROP_FEATURE_NOT_PRESENT")
 
+      table.addFeatureSupport(TestReaderWriterFeature.name)
+
       // Try to drop a non-removable feature.
       assert(intercept[DeltaTableFeatureException] {
         table.dropFeatureSupport(TestReaderWriterFeature.name)
