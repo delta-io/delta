@@ -135,8 +135,8 @@ public class InCommitTimestampUtils {
     long searchStartEnd = searchFromRightInclusive ? upperBound : lowerBound;
     long curIdx = searchStartEnd + iterationDirection;
     for (long i = 1;
-         curIdx > lowerBound && curIdx < upperBound;
-         curIdx = Math.round(searchStartEnd + iterationDirection * (Math.pow(2, ++i) - 1))) {
+        curIdx > lowerBound && curIdx < upperBound;
+        curIdx = Math.round(searchStartEnd + iterationDirection * (Math.pow(2, ++i) - 1))) {
       long curValue = indexToValueMapper.apply(curIdx);
       if (searchFromRightInclusive) {
         if (curValue <= target) {
