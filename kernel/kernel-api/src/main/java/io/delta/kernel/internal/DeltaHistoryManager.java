@@ -27,6 +27,7 @@ import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.checkpoints.CheckpointInstance;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.FileNames;
+import io.delta.kernel.internal.util.InCommitTimestampUtils;
 import io.delta.kernel.internal.util.InternalUtils;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.utils.CloseableIterator;
@@ -92,13 +93,13 @@ public final class DeltaHistoryManager {
       } else {
         // start ICT search over [earliest available ICT version, latestVersion)
         boolean ictEnabledForEntireWindow = (ictEnablementCommit.version <= earliestVersion);
-        Commit searchWindowLowerBoundCommit =
-            ictEnabledForEntireWindow ? placeholderEarliestCommit : ictEnablementCommit;
+        long searchWindowLowerBound =
+            ictEnabledForEntireWindow ? placeholderEarliestCommit.getVersion() : ictEnablementCommit.getVersion();
         try {
           searchResult =
               getActiveCommitAtTimeFromICTRange(
                   timestamp,
-                  searchWindowLowerBoundCommit,
+                  searchWindowLowerBound,
                   new Commit(latestSnapshot.getVersion(), latestSnapshotTimestamp),
                   engine,
                   latestSnapshot.getLogPath());
@@ -154,67 +155,65 @@ public final class DeltaHistoryManager {
     return searchResult;
   }
 
-  private static long getInitialCommitVersionForICTSearch(
-      long searchTimestamp, Commit startCommit, Commit endCommit, Engine engine, Path logPath)
+  private static Optional<Long> getInitialCommitVersionForICTSearch(
+      long searchTimestamp, long startCommitVersion, Commit endCommit, Engine engine, Path logPath)
       throws IOException {
-    // Fit a line through the start and end commits build a very rough linear model
-    // targetCommit = startCommit.version + (searchTimestamp - startCommit.getTimestamp()) /
-    // commitsPerMillisecond
-    long commitsPerMillisecond =
-        (endCommit.getVersion() - startCommit.getVersion())
-            / Math.max((endCommit.getTimestamp() - startCommit.getTimestamp()), 1);
-    long approximateCommitVersion =
-        startCommit.version
-            + (searchTimestamp - startCommit.getTimestamp()) * commitsPerMillisecond;
-    long listingStartVersion = Math.max(startCommit.version, approximateCommitVersion - 500);
-    final long pivotVersion;
+    long listingStartVersion = Math.max(startCommitVersion, endCommit.getVersion() - 1000);
     try (CloseableIterator<Commit> commits =
         listFrom(engine, logPath, listingStartVersion)
             .takeWhile(
                 fs ->
                     FileNames.getFileVersionOpt(new Path(fs.getPath())).orElse(-1L)
-                        <= listingStartVersion + 999L)
+                        < endCommit.getVersion())
             .filter(fs -> FileNames.isCommitFile(getName(fs.getPath())))
             .map(fs -> new Commit(FileNames.deltaVersion(fs.getPath()), fs.getModificationTime()))
             .takeWhile(commit -> commit.getTimestamp() <= searchTimestamp)) {
       if (commits.hasNext()) {
         List<Commit> commitsList = commits.toInMemoryList();
-        pivotVersion = commitsList.get(commitsList.size() - 1).getVersion();
+        return Optional.of(commitsList.get(commitsList.size() - 1).getVersion());
       } else {
         // All commits in the range have modTimes greater than the search timestamp.
-        pivotVersion = listingStartVersion;
+        return Optional.empty();
       }
     }
-    return pivotVersion;
   }
 
   private static Commit getActiveCommitAtTimeFromICTRange(
-      long searchTimestamp, Commit startCommit, Commit endCommit, Engine engine, Path logPath)
+      long searchTimestamp, long startCommitVersion, Commit endCommitExclusive, Engine engine, Path logPath)
       throws IOException {
     // Find the pivot commit version. This should be pretty close to the target commit.
-    long pivotVersion =
+    Optional<Long> pivotVersionOpt =
         getInitialCommitVersionForICTSearch(
-            searchTimestamp, startCommit, endCommit, engine, logPath);
-    long pivotICT = CommitInfo.getRequiredInCommitTimestampFromFile(engine, logPath, pivotVersion);
-    long lowerBoundVersion, upperBoundVersion;
-    // In most cases, the target commit should be pretty close to the pivot commit.
-    if (pivotICT == searchTimestamp) {
-      return new Commit(pivotVersion, pivotICT);
+            searchTimestamp, startCommitVersion, endCommitExclusive, engine, logPath);
+    long lowerBoundVersion = startCommitVersion, upperBoundVersion = endCommitExclusive.getVersion();
+    if (pivotVersionOpt.isPresent()) {
+      // We have potentially narrowed down the search space using modTime.
+      long pivotVersion = pivotVersionOpt.get();
+      long pivotICT = CommitInfo.getRequiredInCommitTimestampFromFile(engine, logPath, pivotVersion);
+      Commit pivotCommit = new Commit(pivotVersion, pivotICT);
+      // In most cases, the target commit should be pretty close to the pivot commit.
+      if (pivotICT == searchTimestamp) {
+        return pivotCommit;
+      }
+      boolean searchLeft = pivotICT > searchTimestamp;
+      Tuple2<Long, Long> narrowerBounds =
+              InCommitTimestampUtils.getNarrowSearchBoundsUsingExponentialSearch(
+                      searchTimestamp,
+                      pivotVersion,
+                      searchLeft ? lowerBoundVersion : upperBoundVersion,
+                      version -> CommitInfo.getRequiredInCommitTimestampFromFile(engine, logPath, version),
+                      searchLeft /* reversed */);
+      lowerBoundVersion = narrowerBounds._1;
+      upperBoundVersion = narrowerBounds._2;
+      if (upperBoundVersion == lowerBoundVersion + 1) {
+        // We have a single commit in the range.
+        return pivotCommit;
+      }
     }
-    boolean searchLeft = pivotICT > searchTimestamp;
-    Tuple2<Long, Long> narrowerBounds =
-        InternalUtils.getNarrowSearchBoundsUsingExponentialSearch(
-            searchTimestamp,
-            startCommit.version,
-            endCommit.version,
-            version -> CommitInfo.getRequiredInCommitTimestampFromFile(engine, logPath, version),
-            searchLeft /* reversed */);
-    lowerBoundVersion = narrowerBounds._1;
-    upperBoundVersion = narrowerBounds._2;
     // Now we have a range of commits to search through. We can use binary search to find the
     // commit that is closest to the search timestamp.
     Tuple2<Long, Long> greatestLowerBound =
-        InternalUtils.greatestLowerBound(
+          InCommitTimestampUtils.greatestLowerBound(
             searchTimestamp,
             lowerBoundVersion,
             upperBoundVersion,
