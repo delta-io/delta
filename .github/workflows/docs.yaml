@@ -18,7 +18,6 @@ jobs:
         with:
           activate-environment: anaconda-client-env
           environment-file: docs/apis/environment.yml
-          python-version: 3.9
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
