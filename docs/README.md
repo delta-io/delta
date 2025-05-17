@@ -1,12 +1,52 @@
-# Docs Generation Scripts
-This directory contains scripts to generate docs for `https://docs.delta.io/`
-including the API Docs for Scala, Java, and Python APIs.
+# Delta Docs
 
-## Setup Environment
+This folder contains all of the source code needed to generate the delta documentation site.
+
+## Getting started
+
+Install node v22.14.0 using [nvm](https://github.com/nvm-sh/nvm):
+
+```
+nvm install
+```
+
+Then, install [pnpm](https://pnpm.io/):
+
+```
+npm install --global corepack@latest
+corepack enable pnpm
+```
+
+Finally, install dependencies:
+
+```
+pnpm i
+```
+
+## Usage
+
+The docs site is build on [Astro](https://astro.build/). Using pnpm, you can run a variety of commands:
+
+| Command               | Description                                     |
+| --------------------- | ----------------------------------------------- |
+| `pnpm run lint`       | Run ESLint on the docs site code                |
+| `pnpm run format`     | Format docs site code using Prettier            |
+| `pnpm run dev`        | Start Astro in development mode                 |
+| `pnpm run build`      | Build the Astro site for production             |
+| `pnpm run build:apis` | Build API docs (runs apis/generate_api_docs.py) |
+| `pnpm run preview`    | Preview the built Astro site                    |
+| `pnpm run astro`      | Run Astro CLI                                   |
+
+## Building API docs
+
+API docs are built separately. Follow these steps to build API docs.
+
 ### Install Conda (Skip if you already installed it)
+
 Follow [Conda Download](https://www.anaconda.com/download/) to install Anaconda.
 
 ### Create an environment from environment file
+
 Follow [Create Environment From Environment file](https://docs.conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.html#create-env-from-file) to create a Conda environment from `/delta/docs/environment.yml` and activate the newly created `delta_docs` environment.
 
 ```
@@ -17,25 +57,15 @@ conda env create --name delta_docs --file=<absolute_path_to_delta_repo>/docs/env
 ```
 
 ### JDK Setup
+
 API doc generation needs JDK 1.8. Make sure to setup `JAVA_HOME` that points to JDK 1.8.
 
-### Set the Delta Lake version
-Set the version of Delta Lake release these docs are being generated for.
+### Building API docs
+
+Run the following command using pnpm to build API docs:
+
 ```
-export _DELTA_LAKE_RELEASE_VERSION_=3.3.0
+pnpm run build:apis
 ```
 
-### Generate docs
-Run the command from the `delta` repo root directory:
-```
-python3 docs/generate_docs.py --livehtml --api-docs
-```
-Above command will print a URL to preview the docs.
-
-### Skip generating API docs
-Above command generates API docs which take time. If you are just interested in the docs
-that go on https://docs.delta.io, use the following command.
-```
-python3 docs/generate_docs.py --livehtml
-```
-
+This will build API docs into `docs/public/api` which can then be served by Astro using either `pnpm run dev` or `pnpm run build && pnpm run preview`.
