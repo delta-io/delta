@@ -7,6 +7,7 @@ import eslintPluginAstro from "eslint-plugin-astro";
 export default [
   {
     ignores: [
+      "apis",
       "coverage",
       "**/public",
       "**/dist",
