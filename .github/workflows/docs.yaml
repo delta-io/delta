@@ -13,12 +13,6 @@ jobs:
 
       - uses: actions/checkout@v4
 
-      - name: Setup python environment
-        uses: conda-incubator/setup-miniconda@v3
-        with:
-          activate-environment: delta_docs
-          environment-file: docs/apis/environment.yml
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -44,7 +38,14 @@ jobs:
           cd docs
           pnpm format
 
+      - name: Setup python environment
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          activate-environment: delta_docs
+          environment-file: docs/apis/environment.yml
+
       - name: Generate API docs
+        shell: bash -el {0}
         run: python3 docs/apis/generate_api_docs.py
 
       - name: Generate Astro site
