@@ -16,7 +16,7 @@ jobs:
       - name: Setup python environment
         uses: conda-incubator/setup-miniconda@v3
         with:
-          activate-environment: anaconda-client-env
+          activate-environment: delta_docs
           environment-file: docs/apis/environment.yml
 
       - name: Setup Node.js
