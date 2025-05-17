@@ -30,19 +30,27 @@ jobs:
           version: "10.6.5"
 
       - name: Install node modules
-        run: pnpm install
+        run: |
+          cd docs
+          pnpm install
 
       - name: Lint docs files
-        run: pnpm lint
+        run: |
+          cd docs
+          pnpm lint
 
       - name: Check formatting of docs files
-        run: pnpm format
+        run: |
+          cd docs
+          pnpm format
 
       - name: Generate API docs
         run: python3 docs/apis/generate_api_docs.py
 
       - name: Generate Astro site
-        run: pnpm run build
+        run: |
+          cd docs
+          pnpm run build
 
       - name: Archive docs site build
         uses: actions/upload-artifact@v4
