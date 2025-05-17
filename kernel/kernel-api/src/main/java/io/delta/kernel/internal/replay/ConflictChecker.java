@@ -356,9 +356,7 @@ public class ConflictChecker {
         losingTxnId -> {
           for (int rowId = 0; rowId < txnVector.getSize(); rowId++) {
             SetTransaction winningTxn = SetTransaction.fromColumnVector(txnVector, rowId);
-            if (winningTxn != null
-                && winningTxn.getAppId().equals(losingTxnId.getAppId())
-                && winningTxn.getVersion() >= losingTxnId.getVersion()) {
+            if (winningTxn != null && winningTxn.getAppId().equals(losingTxnId.getAppId())) {
               throw DeltaErrors.concurrentTransaction(
                   losingTxnId.getAppId(), losingTxnId.getVersion(), winningTxn.getVersion());
             }
