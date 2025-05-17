@@ -171,12 +171,13 @@ Delta Lake stores Iceberg metadata under the table directory, using the followin
 You are able to read UniForm tables as Hudi tables in Apache Spark with the following steps:
 
 - See [Hudi documentation](https://hudi.apache.org/docs/quick-start-guide#spark-shellsql) for how to run Hudi on Apache Spark
-  <Tabs>
-    <TabItem label="Scala">
-      ```scala spark.read.format("hudi") .option("hoodie.metadata.enable",
-      "true") .load("PATH_TO_UNIFORM_TABLE_DIRECTORY") ```
-    </TabItem>
-  </Tabs>
+
+<Tabs>
+  <TabItem label="Scala">
+    ```scala spark.read.format("hudi") .option("hoodie.metadata.enable", "true")
+    .load("PATH_TO_UNIFORM_TABLE_DIRECTORY") ```
+  </TabItem>
+</Tabs>
 
 ## Delta and Iceberg/Hudi table versions
 
