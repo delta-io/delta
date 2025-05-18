@@ -168,6 +168,21 @@ class DeltaTableTests(DeltaTableTestsMixin, DeltaTestCase):
     def test_optimize_zorder_by_w_partition_filter(self):
         pass
 
+    @unittest.skip("create has not been implemented yet")
+    def test_create_table_with_cluster_by(self):
+        pass
+
+    @unittest.skip("create has not been implemented yet")
+    def test_replace_table_with_cluster_by(self):
+        pass
+
+    @unittest.skip("create has not been implemented yet")
+    def __test_table_with_cluster_by(self) -> None:
+        pass
+
+    @unittest.skip("create has not been implemented yet")
+    def test_cluster_by_bad_args(self) -> None:
+        pass
 
 if __name__ == "__main__":
     try:
