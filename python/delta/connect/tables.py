@@ -360,7 +360,6 @@ class DeltaTable(object):
         self._spark.client.execute_command(command)
         return DeltaTable.forName(self._spark, target)
 
-    clone.__doc__ = LocalDeltaTable.clone.__doc__
 
     def cloneAtVersion(
         self,
@@ -382,8 +381,6 @@ class DeltaTable(object):
         self._spark.client.execute_command(command)
         return DeltaTable.forName(self._spark, target)
 
-    cloneAtVersion.__doc__ = LocalDeltaTable.cloneAtVersion.__doc__
-
     def cloneAtTimestamp(
         self,
         timestamp: str,
@@ -403,8 +400,6 @@ class DeltaTable(object):
         ).command(session=self._spark.client)
         self._spark.client.execute_command(command)
         return DeltaTable.forName(self._spark, target)
-
-    cloneAtTimestamp.__doc__ = LocalDeltaTable.cloneAtTimestamp.__doc__
 
     def _to_proto(self) -> proto.DeltaTable:
         result = proto.DeltaTable()
@@ -795,8 +790,6 @@ class DeltaTableBuilder(object):
 
         self._clusteringColumns.extend(cols)
         return self
-
-    clusterBy.__doc__ = LocalDeltaTableBuilder.clusterBy.__doc__
 
     def property(self, key: str, value: str) -> "DeltaTableBuilder":
         if type(key) is not str or type(value) is not str:
