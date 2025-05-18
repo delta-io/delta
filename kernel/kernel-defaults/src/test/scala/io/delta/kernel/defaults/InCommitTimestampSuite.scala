@@ -685,7 +685,12 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
 
       // v1: Append data without ICT
       clock.setTime(startTime + 10000)
-      appendData(engine, tablePath, data = Seq(Map.empty[String, Literal] -> dataBatches1), clock = clock)
+      appendData(
+        engine,
+        tablePath,
+        data = Seq(Map.empty[String, Literal] -> dataBatches1),
+        clock = clock
+      )
 
       // v2: Enable ICT
       clock.setTime(startTime + 20000)
@@ -696,11 +701,17 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
         key = IN_COMMIT_TIMESTAMPS_ENABLED,
         value = "true",
         expectedValue = true,
-        clock = clock)
+        clock = clock
+      )
 
       // v3: Append data with ICT
       clock.setTime(startTime + 30000)
-      appendData(engine, tablePath, data = Seq(Map.empty[String, Literal] -> dataBatches2), clock = clock)
+      appendData(
+        engine,
+        tablePath,
+        data = Seq(Map.empty[String, Literal] -> dataBatches2),
+        clock = clock
+      )
 
       val ver2ICT = getInCommitTimestamp(engine, table, version = 2).get
       val ver3ICT = getInCommitTimestamp(engine, table, version = 3).get
@@ -733,7 +744,9 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
 
       // Test time travel by timestamp
       val midpoints = for (i <- 0 until 3) yield {
-        commits.get(i).getTimestamp + (commits.get(i + 1).getTimestamp - commits.get(i).getTimestamp) / 2
+        val curr = commits.get(i).getTimestamp
+        val next = commits.get(i + 1).getTimestamp
+        curr + (next - curr) / 2
       }
 
       // Verify correct versions returned for timestamps between versions
