@@ -16,8 +16,12 @@
 package io.delta.kernel.internal;
 
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
+import static io.delta.kernel.internal.TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED;
+import static io.delta.kernel.internal.TableConfig.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION;
 import static io.delta.kernel.internal.fs.Path.getName;
 
+import io.delta.kernel.Snapshot;
+import io.delta.kernel.Table;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.exceptions.TableNotFoundException;
@@ -31,6 +35,7 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.*;
+import java.util.Iterator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -46,6 +51,10 @@ public final class DeltaHistoryManager {
    * <p>If the timestamp is outside the range of [earliestCommit, latestCommit] then use parameters
    * {@code canReturnLastCommit} and {@code canReturnEarliestCommit} to control whether an exception
    * is thrown or the corresponding earliest/latest commit is returned.
+   *
+   * <p>If the table has In-Commit Timestamps (ICT) enabled, this method will use the ICT from the
+   * CommitInfo action as the timestamp for commits that have it. Otherwise, it will use the file
+   * modification time.
    *
    * @param engine instance of {@link Engine} to use
    * @param logPath the _delta_log path of the table
@@ -242,14 +251,132 @@ public final class DeltaHistoryManager {
    * Returns the commit version and timestamps of all commits starting from version {@code start}.
    * Guarantees that the commits returned have both monotonically increasing versions and
    * timestamps.
+   *
+   * <p>If the table has In-Commit Timestamps (ICT) enabled, this method will use the ICT from the
+   * CommitInfo action as the timestamp for commits that have it. Otherwise, it will use the file
+   * modification time.
    */
   private static List<Commit> getCommits(Engine engine, Path logPath, long start)
       throws TableNotFoundException {
-    CloseableIterator<Commit> commits =
-        listFrom(engine, logPath, start)
-            .filter(fs -> FileNames.isCommitFile(getName(fs.getPath())))
-            .map(fs -> new Commit(FileNames.deltaVersion(fs.getPath()), fs.getModificationTime()));
-    return monotonizeCommitTimestamps(commits);
+    return getCommitsInternal(engine, logPath, start);
+  }
+
+  /**
+   * Exposed for testing only. Returns commit versions and timestamps starting from {@code start}.
+   * Guarantees monotonically increasing versions and timestamps.
+   */
+  public static List<Commit> getCommitsForTests(Engine engine, Path logPath, long start)
+      throws TableNotFoundException {
+    return getCommitsInternal(engine, logPath, start);
+  }
+
+  /**
+   * Internal implementation that returns commit versions and timestamps. Uses ICT when available,
+   * otherwise falls back to file modification time.
+   */
+  private static List<Commit> getCommitsInternal(Engine engine, Path logPath, long start)
+      throws TableNotFoundException {
+    // First, check if we need to read the metadata to determine if ICT is enabled
+    boolean ictEnabled = false;
+    long ictEnablementVersion = -1;
+
+    try {
+      // Get the latest snapshot to check if ICT is enabled
+      Table table = Table.forPath(engine, logPath.getParent().toString());
+      Snapshot snapshot = table.getLatestSnapshot(engine);
+
+      if (snapshot instanceof SnapshotImpl) {
+        SnapshotImpl snapshotImpl = (SnapshotImpl) snapshot;
+        if (IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(snapshotImpl.getMetadata())) {
+          ictEnabled = true;
+
+          // Get the ICT enablement version if available
+          Optional<Long> enablementVersionOpt =
+              IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.fromMetadata(snapshotImpl.getMetadata());
+          if (enablementVersionOpt.isPresent()) {
+            ictEnablementVersion = enablementVersionOpt.get();
+          }
+        }
+      }
+    } catch (Exception e) {
+      // If we can't determine if ICT is enabled, assume it's not
+      logger.warn("Failed to determine if ICT is enabled, assuming it's not", e);
+    }
+
+    if (!ictEnabled) {
+      // ICT is not enabled, use file modification time
+      CloseableIterator<Commit> commits =
+          listFrom(engine, logPath, start)
+              .filter(fs -> FileNames.isCommitFile(getName(fs.getPath())))
+              .map(
+                  fs -> new Commit(FileNames.deltaVersion(fs.getPath()), fs.getModificationTime()));
+      return monotonizeCommitTimestamps(commits);
+    } else {
+      // ICT is enabled, use ICT for commits that have it
+      List<FileStatus> commitFiles = new ArrayList<>();
+      try (CloseableIterator<FileStatus> files =
+          listFrom(engine, logPath, start)
+              .filter(fs -> FileNames.isCommitFile(getName(fs.getPath())))) {
+        while (files.hasNext()) {
+          commitFiles.add(files.next());
+        }
+      } catch (IOException e) {
+        throw new RuntimeException("Could not close iterator", e);
+      }
+
+      List<Commit> commits = new ArrayList<>();
+      for (FileStatus fs : commitFiles) {
+        long version = FileNames.deltaVersion(fs.getPath());
+        long timestamp;
+
+        // Use ICT if this version is >= the enablement version
+        if (ictEnablementVersion == -1 || version >= ictEnablementVersion) {
+          try {
+            Optional<io.delta.kernel.internal.actions.CommitInfo> commitInfoOpt =
+                io.delta.kernel.internal.actions.CommitInfo.getCommitInfoOpt(
+                    engine, logPath, version);
+
+            if (commitInfoOpt.isPresent()
+                && commitInfoOpt.get().getInCommitTimestamp().isPresent()) {
+              timestamp = commitInfoOpt.get().getInCommitTimestamp().get();
+            } else {
+              // Fall back to file modification time if ICT is not available
+              timestamp = fs.getModificationTime();
+            }
+          } catch (Exception e) {
+            // Fall back to file modification time if we can't read the commit info
+            logger.warn(
+                "Failed to read ICT for version " + version + ", using file modification time", e);
+            timestamp = fs.getModificationTime();
+          }
+        } else {
+          // For versions before ICT was enabled, use file modification time
+          timestamp = fs.getModificationTime();
+        }
+
+        commits.add(new Commit(version, timestamp));
+      }
+
+      return monotonizeCommitTimestamps(
+          new CloseableIterator<Commit>() {
+            private Iterator<Commit> iterator = commits.iterator();
+
+            @Override
+            public boolean hasNext() {
+              return iterator.hasNext();
+            }
+
+            @Override
+            public Commit next() {
+              return iterator.next();
+            }
+
+            @Override
+            public void close() {
+              // Nothing to close
+            }
+          });
+    }
   }
 
   /**
