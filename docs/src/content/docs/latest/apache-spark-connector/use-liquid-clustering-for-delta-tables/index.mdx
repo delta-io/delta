@@ -44,15 +44,18 @@ To enable liquid clustering, add the `CLUSTER BY` phrase to a table creation sta
     LOCATION 'table_location'
     AS SELECT * FROM table1;
     ```
-
   </TabItem>
-
-<TabItem label="Python">
-  ```python # Create an empty table DeltaTable.create() .tableName("table1")
-  .addColumn("col0", dataType = "INT") .addColumn("col1", dataType = "STRING")
-  .clusterBy("col0") .execute() ```
-</TabItem>
-
+  <TabItem label="Python">
+    ```python
+    # Create an empty table
+    DeltaTable.create()
+      .tableName("table1")
+      .addColumn("col0", dataType = "INT")
+      .addColumn("col1", dataType = "STRING")
+      .clusterBy("col0")
+      .execute()
+    ```
+  </TabItem>
   <TabItem label="Scala">
     ```scala
     // Create an empty table
@@ -119,7 +122,11 @@ You must use a Delta writer client that supports `Clustering` and `DomainMetadat
 Use the `OPTIMIZE` command on your table, as in the following example:
 
 <Tabs>
-  <TabItem label="SQL">```sql OPTIMIZE table_name; ```</TabItem>
+  <TabItem label="SQL">
+    ```sql
+    OPTIMIZE table_name;
+    ```
+  </TabItem>
 </Tabs>
 
 Liquid clustering is incremental, meaning that data is only rewritten as necessary to accommodate data that needs to be clustered. Already clustered data files with different clustering columns are not rewritten.
@@ -129,7 +136,11 @@ Liquid clustering is incremental, meaning that data is only rewritten as necessa
 In Delta Lake 3.3 and above, you can force reclustering of all records in a table with the following syntax:
 
 <Tabs>
-  <TabItem label="SQL">```sql OPTIMIZE table_name FULL; ```</TabItem>
+  <TabItem label="SQL">
+    ```sql
+    OPTIMIZE table_name FULL;
+    ```
+  </TabItem>
 </Tabs>
 
 <Aside
@@ -149,7 +160,7 @@ You can read data in a clustered table using any Delta Lake client. For best que
 
 <Tabs>
   <TabItem label="SQL">
-    ```sql 
+    ```sql
     SELECT * FROM table_name WHERE clustering_column_name = "some_value";
     ```
   </TabItem>
@@ -161,7 +172,9 @@ You can change clustering columns for a table at any time by running an `ALTER T
 
 <Tabs>
   <TabItem label="SQL">
-    ```sql ALTER TABLE table_name CLUSTER BY (new_column1, new_column2); ```
+    ```sql
+    ALTER TABLE table_name CLUSTER BY (new_column1, new_column2);
+    ```
   </TabItem>
 </Tabs>
 
@@ -171,7 +184,9 @@ You can also turn off clustering by setting the columns to `NONE`, as in the fol
 
 <Tabs>
   <TabItem label="SQL">
-    ```sql ALTER TABLE table_name CLUSTER BY NONE; ```
+    ```sql
+    ALTER TABLE table_name CLUSTER BY NONE;
+    ```
   </TabItem>
 </Tabs>
 
@@ -182,7 +197,11 @@ Setting cluster columns to `NONE` does not rewrite data that has already been cl
 You can use `DESCRIBE DETAIL` commands to see the clustering columns for a table, as in the following examples:
 
 <Tabs>
-  <TabItem label="SQL">```sql DESCRIBE DETAIL table_name; ```</TabItem>
+  <TabItem label="SQL">
+    ```sql
+    DESCRIBE DETAIL table_name;
+    ```
+  </TabItem>
 </Tabs>
 
 ## Limitations

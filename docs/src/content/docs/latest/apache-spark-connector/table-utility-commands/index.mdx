@@ -35,7 +35,10 @@ You can remove files no longer referenced by a Delta table and are older than th
   <TabItem label="SQL">
     <Code code={`VACUUM eventsTable   -- This runs VACUUM in 'FULL' mode and deletes data files outside of the retention duration and all files in the table directory not referenced by the table.
 
-VACUUM eventsTable LITE -- This VACUUM in 'LITE' mode runs faster. -- Instead of finding all files in the table directory, \`VACUUM LITE\` uses the Delta transaction log to identify and remove files no longer referenced by any table versions within the retention duration. -- If \`VACUUM LITE\` cannot be completed because the Delta log has been pruned a \`DELTA_CANNOT_VACUUM_LITE\` exception is raised. -- This mode is available only in Delta 3.3 and above.
+VACUUM eventsTable LITE -- This VACUUM in 'LITE' mode runs faster.
+-- Instead of finding all files in the table directory, \`VACUUM LITE\` uses the Delta transaction log to identify and remove files no longer referenced by any table versions within the retention duration.
+-- If \`VACUUM LITE\` cannot be completed because the Delta log has been pruned a \`DELTA_CANNOT_VACUUM_LITE\` exception is raised.
+-- This mode is available only in Delta 3.3 and above.
 
 VACUUM '/data/events' -- vacuum files in path-based table
 
@@ -54,7 +57,8 @@ VACUUM eventsTable USING INVENTORY (select \* from inventoryTable) —- vacuum f
   <TabItem label="Python">
     <Code code={`from delta.tables import *
 
-deltaTable = DeltaTable.forPath(spark, pathToTable) # path-based tables, or deltaTable = DeltaTable.forName(spark, tableName) # Hive metastore-based tables
+deltaTable = DeltaTable.forPath(spark, pathToTable) # path-based tables, or
+deltaTable = DeltaTable.forName(spark, tableName) # Hive metastore-based tables
 
 deltaTable.vacuum() # vacuum files not required by versions older than the default retention period
 

@@ -48,7 +48,6 @@ You must explicitly enable row tracking using one of the following methods:
     -- Using a CLONE statement to copy configuration
     CREATE TABLE graduate CLONE student;
     ```
-
   </TabItem>
 </Tabs>
 
@@ -56,8 +55,8 @@ You must explicitly enable row tracking using one of the following methods:
 
 <Tabs>
   <TabItem label="SQL">
-    ```sql 
-    ALTER TABLE grade SET TBLPROPERTIES ('delta.enableRowTracking' = 'true'); 
+    ```sql
+    ALTER TABLE grade SET TBLPROPERTIES ('delta.enableRowTracking' = 'true');
     ```
   </TabItem>
 </Tabs>
