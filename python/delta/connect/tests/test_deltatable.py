@@ -92,6 +92,7 @@ class DeltaTableTests(DeltaTableTestsMixin, DeltaTestCase):
     def test_dropFeatureSupport(self):
         pass
 
+
 if __name__ == "__main__":
     try:
         import xmlrunner
