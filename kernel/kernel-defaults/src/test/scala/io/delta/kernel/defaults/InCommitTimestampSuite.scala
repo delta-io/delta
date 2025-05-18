@@ -689,8 +689,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
         engine,
         tablePath,
         data = Seq(Map.empty[String, Literal] -> dataBatches1),
-        clock = clock
-      )
+        clock = clock)
 
       // v2: Enable ICT
       clock.setTime(startTime + 20000)
@@ -701,8 +700,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
         key = IN_COMMIT_TIMESTAMPS_ENABLED,
         value = "true",
         expectedValue = true,
-        clock = clock
-      )
+        clock = clock)
 
       // v3: Append data with ICT
       clock.setTime(startTime + 30000)
@@ -710,8 +708,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
         engine,
         tablePath,
         data = Seq(Map.empty[String, Literal] -> dataBatches2),
-        clock = clock
-      )
+        clock = clock)
 
       val ver2ICT = getInCommitTimestamp(engine, table, version = 2).get
       val ver3ICT = getInCommitTimestamp(engine, table, version = 3).get
