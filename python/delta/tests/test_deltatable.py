@@ -21,6 +21,7 @@ import os
 from multiprocessing.pool import ThreadPool
 from typing import List, Set, Dict, Optional, Any, Callable, Union, Tuple
 
+from py4j.java_gateway import JavaObject
 from py4j.protocol import Py4JJavaError
 from pyspark.errors.exceptions.base import UnsupportedOperationException
 from pyspark.sql import DataFrame, Row
@@ -1490,7 +1491,7 @@ class DeltaTableTestsMixin:
         self.assertEqual('all', metrics.zOrderStats.strategyName)
         self.assertEqual(1, metrics.zOrderStats.numOutputCubes)  # one per each affected partition
 
-    def test_create_table_with_cluster_by(self):
+    def test_create_table_with_cluster_by(self) -> None:
         with self.table("test"):
             builder = DeltaTable.create(self.spark)
             self.__test_table_with_cluster_by(
@@ -1498,7 +1499,7 @@ class DeltaTableTestsMixin:
                 lambda builder: builder.clusterBy(["value2", "value"]),
                 expected=["value", "value2"])
 
-    def test_replace_table_with_cluster_by(self):
+    def test_replace_table_with_cluster_by(self) -> None:
         with self.table("test"):
             self.spark.sql("CREATE TABLE test (c1 int) USING DELTA")
             builder = DeltaTable.replace(self.spark)
@@ -1525,7 +1526,7 @@ class DeltaTableTestsMixin:
                                    nullables={"key", "value", "value2"},
                                    clusteringColumns=expected)
 
-    def test_cluster_by_bad_args(self):
+    def test_cluster_by_bad_args(self) -> None:
         builder = DeltaTable.create(self.spark).location(self.tempFile)
         # bad clusterBy col name
         with self.assertRaises(TypeError):
