@@ -649,6 +649,7 @@ class DeltaTableTestsMixin:
                               comments: Dict[str, str] = {},
                               properties: Dict[str, str] = {},
                               partitioningColumns: List[str] = [],
+                              clusteringColumns: List[str] = [],
                               tblComment: Optional[str] = None) -> None:
         fields = []
         for i in range(len(cols)):
@@ -676,6 +677,8 @@ class DeltaTableTestsMixin:
         self.assertEqual(actualComment, tblComment)
         partitionCols = tableDetails.partitionColumns
         self.assertEqual(sorted(partitionCols), sorted((partitioningColumns)))
+        clusterByCols = tableDetails.clusteringColumns
+        self.assertEqual(sorted(clusterByCols), sorted(clusteringColumns))
 
     def __verify_generated_column(self, tableName: str, deltaTable: DeltaTable) -> None:
         cmd = "INSERT INTO {table} (col1, col2) VALUES (1, 11)".format(table=tableName)
@@ -766,6 +769,7 @@ class DeltaTableTestsMixin:
                                        ["key", "value", "value2"],
                                        [StringType(), LongType(), IntegerType()],
                                        nullables={"key", "value", "value2"},
+                                       clusteringColumns=["value2", "value"],
                                        partitioningColumns=[])
 
             deltaTable = DeltaTable.replace(self.spark).tableName("test").addColumns(
@@ -778,6 +782,7 @@ class DeltaTableTestsMixin:
                                        ["key", "value", "value2"],
                                        [StringType(), LongType(), IntegerType()],
                                        nullables={"key", "value", "value2"},
+                                       clusteringColumns=["value2", "value"],
                                        partitioningColumns=[])
 
     def test_create_replace_table_with_no_spark_session_passed(self) -> None:
@@ -1484,6 +1489,53 @@ class DeltaTableTestsMixin:
         self.assertEqual(numDataFilesPreZOrder, metrics.totalConsideredFiles)
         self.assertEqual('all', metrics.zOrderStats.strategyName)
         self.assertEqual(1, metrics.zOrderStats.numOutputCubes)  # one per each affected partition
+
+    def test_create_table_with_cluster_by(self):
+        with self.table("test"):
+            builder = DeltaTable.create(self.spark)
+            self.__test_table_with_cluster_by(
+                builder,
+                lambda builder : builder.clusterBy(["value2", "value"]),
+                expected=["value", "value2"])
+
+    def test_replace_table_with_cluster_by(self):
+        with self.table("test"):
+            self.spark.sql("CREATE TABLE test (c1 int) USING DELTA")
+            builder = DeltaTable.replace(self.spark)
+            self.__test_table_with_cluster_by(
+                builder,
+                lambda builder : builder.clusterBy("value2", "value"),
+                expected=["value", "value2"])
+
+    # type: ignore[arg-type]
+    def __test_table_with_cluster_by(self,
+                                     builder: "JavaObject",
+                                     setClusterBy: Callable[["JavaObject"], None],
+                                     expected: List[str]) -> None:
+        df = self.spark.createDataFrame([('a', 1), ('b', 2), ('c', 3)], ["key", "value"])
+        builder = builder.tableName("test") \
+            .addColumns(df.schema) \
+            .addColumn("value2", dataType="int")
+        setClusterBy(builder)
+        deltaTable = builder.execute()
+        self.__verify_table_schema("test",
+                                   deltaTable.toDF().schema,
+                                   ["key", "value", "value2"],
+                                   [StringType(), LongType(), IntegerType()],
+                                   nullables={"key", "value", "value2"},
+                                   clusteringColumns=expected)
+
+    def test_cluster_by_bad_args(self):
+        builder = DeltaTable.create(self.spark).location(self.tempFile)
+        # bad clusterBy col name
+        with self.assertRaises(TypeError):
+            builder.clusterBy(1)  # type: ignore[call-overload]
+
+        with self.assertRaises(TypeError):
+            builder.clusterBy(1, "1")   # type: ignore[call-overload]
+
+        with self.assertRaises(TypeError):
+            builder.clusterBy([1])  # type: ignore[list-item]
 
     def __checkAnswer(self, df: DataFrame,
                       expectedAnswer: List[Any],
