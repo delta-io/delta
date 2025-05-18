@@ -14,11 +14,57 @@
 # limitations under the License.
 #
 
-from typing import Dict, Optional
+from typing import (
+    Any,
+    Dict,
+    Iterable,
+    List,
+    NoReturn,
+    Optional,
+    Tuple,
+    Union,
+    overload
+)
 
-from delta.connect.plan import DeltaScan
+from delta.connect._typing import (
+    ColumnMapping,
+    OptionalColumnMapping,
+    ExpressionOrColumn,
+    OptionalExpressionOrColumn
+)
+from delta.connect.plan import (
+    AddFeatureSupport,
+    Assignment,
+    CloneTable,
+    ConvertToDelta,
+    CreateDeltaTable,
+    DeleteAction,
+    DeleteFromTable,
+    DeltaScan,
+    DescribeHistory,
+    DescribeDetail,
+    DropFeatureSupport,
+    Generate,
+    InsertAction,
+    InsertStarAction,
+    IsDeltaTable,
+    MergeIntoTable,
+    OptimizeTable,
+    RestoreTable,
+    UpdateAction,
+    UpdateStarAction,
+    UpdateTable,
+    UpgradeTableProtocol,
+    Vacuum,
+)
 import delta.connect.proto as proto
-from delta.tables import DeltaTable as LocalDeltaTable
+from delta.tables import (
+    DeltaTable as LocalDeltaTable,
+    DeltaTableBuilder as LocalDeltaTableBuilder,
+    DeltaMergeBuilder as LocalDeltaMergeBuilder,
+    DeltaOptimizeBuilder as LocalDeltaOptimizeBuilder,
+    IdentityGenerator,
+)
 
 from pyspark.sql.connect import functions
 from pyspark.sql.connect.column import Column
@@ -27,7 +73,6 @@ from pyspark.sql.connect.plan import LogicalPlan, SubqueryAlias
 from pyspark.sql.connect.session import SparkSession
 from pyspark.sql.connect.types import pyspark_types_to_proto_types
 from pyspark.sql.types import DataType, StructField, StructType
-
 class DeltaTable(object):
     __doc__ = LocalDeltaTable.__doc__
 
