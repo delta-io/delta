@@ -1495,7 +1495,7 @@ class DeltaTableTestsMixin:
             builder = DeltaTable.create(self.spark)
             self.__test_table_with_cluster_by(
                 builder,
-                lambda builder : builder.clusterBy(["value2", "value"]),
+                lambda builder: builder.clusterBy(["value2", "value"]),
                 expected=["value", "value2"])
 
     def test_replace_table_with_cluster_by(self):
@@ -1504,7 +1504,7 @@ class DeltaTableTestsMixin:
             builder = DeltaTable.replace(self.spark)
             self.__test_table_with_cluster_by(
                 builder,
-                lambda builder : builder.clusterBy("value2", "value"),
+                lambda builder: builder.clusterBy("value2", "value"),
                 expected=["value", "value2"])
 
     # type: ignore[arg-type]
