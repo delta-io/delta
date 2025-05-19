@@ -15,17 +15,19 @@
  */
 package io.delta.kernel.internal.util;
 
-import static io.delta.kernel.internal.TableConfig.*;
+import static io.delta.kernel.internal.TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.SnapshotImpl;
+import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.Metadata;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Function;
 
 public class InCommitTimestampUtils {
 
@@ -45,9 +47,11 @@ public class InCommitTimestampUtils {
     if (didCurrentTransactionEnableICT(engine, metadata, readSnapshot) && commitVersion != 0) {
       Map<String, String> enablementTrackingProperties = new HashMap<>();
       enablementTrackingProperties.put(
-          IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.getKey(), Long.toString(commitVersion));
+          TableConfig.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.getKey(),
+          Long.toString(commitVersion));
       enablementTrackingProperties.put(
-          IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.getKey(), Long.toString(inCommitTimestamp));
+          TableConfig.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.getKey(),
+          Long.toString(inCommitTimestamp));
 
       Metadata newMetadata = metadata.withMergedConfiguration(enablementTrackingProperties);
       return Optional.of(newMetadata);
@@ -97,5 +101,40 @@ public class InCommitTimestampUtils {
         readSnapshot.getVersion() != -1
             && IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(readSnapshot.getMetadata());
     return isICTCurrentlyEnabled && !wasICTEnabledInReadSnapshot;
+  }
+
+  /**
+   * Finds the greatest lower bound of the target value in the range [lowerBoundInclusive,
+   * upperBoundExclusive) using binary search. The indexToValueMapper function is used to map the
+   * index to the corresponding value. Note that this function assumes that the values are sorted in
+   * ascending order and that the greatestLowerBound exists in the range.
+   *
+   * @param target The target value to find the greatest lower bound for.
+   * @param lowerBoundInclusive The lower bound of the search range (inclusive).
+   * @param upperBoundInclusive The upper bound of the search range (inclusive).
+   * @param indexToValueMapper A function that maps an index to its corresponding value.
+   * @return A tuple containing the index and the value of the greatest lower bound.
+   */
+  public static Tuple2<Long, Long> greatestLowerBound(
+      long target,
+      long lowerBoundInclusive,
+      long upperBoundInclusive,
+      Function<Long, Long> indexToValueMapper) {
+    long start = lowerBoundInclusive;
+    long end = upperBoundInclusive;
+    Tuple2<Long, Long> result = null;
+    while (start <= end) {
+      long curIndex = start + (end - start) / 2;
+      long curValue = indexToValueMapper.apply(curIndex);
+      if (curValue == target) {
+        return new Tuple2<>(curIndex, curValue);
+      } else if (curValue < target) {
+        result = new Tuple2<>(curIndex, curValue);
+        start = curIndex + 1;
+      } else {
+        end = curIndex - 1;
+      }
+    }
+    return result;
   }
 }

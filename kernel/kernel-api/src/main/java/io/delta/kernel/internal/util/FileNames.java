@@ -128,6 +128,10 @@ public final class FileNames {
     }
   }
 
+  /**
+   * Get the version of the checkpoint, checksum or delta file. Returns an empty optional if the
+   * file is not a checkpoint, checksum or delta file.
+   */
   public static Optional<Long> getFileVersionOpt(Path path) {
     if (isCheckpointFile(path.getName())) {
       return Optional.of(checkpointVersion(path));

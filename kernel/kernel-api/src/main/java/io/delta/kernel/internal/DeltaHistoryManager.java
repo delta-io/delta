@@ -157,37 +157,6 @@ public final class DeltaHistoryManager {
   }
 
   /**
-   * This method tries to guess the commit version which has an ICT timestamp less than or equal to
-   * {@code searchTimestamp}. TODO.
-   */
-  private static Optional<Long> getInitialCommitVersionForICTSearch(
-      long searchTimestamp,
-      long startCommitVersion,
-      long endCommitVersion,
-      Engine engine,
-      Path logPath)
-      throws IOException {
-    long listingStartVersion = Math.max(startCommitVersion, endCommitVersion - 999);
-    try (CloseableIterator<Commit> commits =
-        listFrom(engine, logPath, listingStartVersion)
-            .takeWhile(
-                fs ->
-                    FileNames.getFileVersionOpt(new Path(fs.getPath())).orElse(-1L)
-                        <= endCommitVersion)
-            .filter(fs -> FileNames.isCommitFile(getName(fs.getPath())))
-            .map(fs -> new Commit(FileNames.deltaVersion(fs.getPath()), fs.getModificationTime()))
-            .takeWhile(commit -> commit.getTimestamp() <= searchTimestamp)) {
-      if (commits.hasNext()) {
-        List<Commit> commitsList = commits.toInMemoryList();
-        return Optional.of(commitsList.get(commitsList.size() - 1).getVersion());
-      } else {
-        // All commits in the range have modTimes greater than the search timestamp.
-        return Optional.empty();
-      }
-    }
-  }
-
-  /**
    * Finds the commit with the latest in-commit timestamp that is less than or equal to the
    * searchTimestamp. All commits from `startCommitVersionInclusive` till
    * `endCommitVersionInclusive` must have ICT enabled. Also, this method assumes that we have
@@ -211,8 +180,18 @@ public final class DeltaHistoryManager {
     return new Commit(greatestLowerBound._1, greatestLowerBound._2);
   }
 
-  private static Commit getICTEnablementCommit(
-      SnapshotImpl snapshot, Commit placeholderEarliestCommit) {
+  /**
+   * Gets the commit that enabled in-commit timestamps.
+   *
+   * @param snapshot The latest snapshot of the table. This is used to determine when in-commit
+   *     timestamps were enabled.
+   * @param earliestCommit The earliest commit under consideration. If in-commit timestamps were
+   *     enabled for the entire history, this function will return this commit.
+   * @return The commit that enabled in-commit timestamps. If the table does not have in-commit
+   *     timestamps enabled, this will be the commit after the latest version. If in-commit
+   *     timestamps were enabled for the entire history, this will be `earliestCommit`.
+   */
+  private static Commit getICTEnablementCommit(SnapshotImpl snapshot, Commit earliestCommit) {
     Metadata metadata = snapshot.getMetadata();
     if (!IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata)) {
       // Pretend ICT will be enabled after the latest version and requested timestamp.
@@ -227,10 +206,13 @@ public final class DeltaHistoryManager {
       return new Commit(enablementVersionOpt.get(), enablementTimestampOpt.get());
     } else if (!enablementTimestampOpt.isPresent() && !enablementVersionOpt.isPresent()) {
       // This means that ICT has been enabled for the entire history.
-      return placeholderEarliestCommit;
+      return earliestCommit;
     } else {
       throw new IllegalStateException(
-          "Both enablement version and timestamp should be present or absent together.");
+          String.format(
+              "Both %s and %s should be present or absent together when inCommitTimestamp is enabled.",
+              IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.getKey(),
+              IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.getKey()));
     }
   }
 
