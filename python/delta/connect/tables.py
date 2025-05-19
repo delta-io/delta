@@ -233,6 +233,46 @@ class DeltaTable(object):
     forName.__func__.__doc__ = LocalDeltaTable.forName.__doc__
 
     @classmethod
+    def create(
+        cls, sparkSession: Optional[SparkSession] = None
+    ) -> "DeltaTableBuilder":
+        return DeltaTableBuilder(
+            sparkSession,
+            proto.CreateDeltaTable.Mode.MODE_CREATE)
+
+    create.__func__.__doc__ = LocalDeltaTable.create.__doc__
+
+    @classmethod
+    def createIfNotExists(
+        cls, sparkSession: Optional[SparkSession] = None
+    ) -> "DeltaTableBuilder":
+        return DeltaTableBuilder(
+            sparkSession,
+            proto.CreateDeltaTable.Mode.MODE_CREATE_IF_NOT_EXISTS)
+
+    createIfNotExists.__func__.__doc__ = LocalDeltaTable.createIfNotExists.__doc__
+
+    @classmethod
+    def replace(
+        cls, sparkSession: Optional[SparkSession] = None
+    ) -> "DeltaTableBuilder":
+        return DeltaTableBuilder(
+            sparkSession,
+            proto.CreateDeltaTable.Mode.MODE_REPLACE)
+
+    replace.__func__.__doc__ = LocalDeltaTable.replace.__doc__
+
+    @classmethod
+    def createOrReplace(
+        cls, sparkSession: Optional[SparkSession] = None
+    ) -> "DeltaTableBuilder":
+        return DeltaTableBuilder(
+            sparkSession,
+            proto.CreateDeltaTable.Mode.MODE_CREATE_OR_REPLACE)
+
+    createOrReplace.__func__.__doc__ = LocalDeltaTable.createOrReplace.__doc__
+
+    @classmethod
     def isDeltaTable(cls, sparkSession: SparkSession, identifier: str) -> bool:
         assert sparkSession is not None
 
