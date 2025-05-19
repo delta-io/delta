@@ -100,13 +100,24 @@ public class InCommitTimestampUtils {
     return isICTCurrentlyEnabled && !wasICTEnabledInReadSnapshot;
   }
 
+  /**
+   * Finds the greatest lower bound of the target value in the range [lowerBoundInclusive,
+   * upperBoundExclusive) using binary search. The indexToValueMapper function is used to map the
+   * index to the corresponding value. Note that this function assumes that the values are sorted in
+   * ascending order and that the greatestLowerBound exists in the range.
+   * @param target The target value to find the greatest lower bound for.
+   * @param lowerBoundInclusive The lower bound of the search range (inclusive).
+   * @param upperBoundInclusive The upper bound of the search range (inclusive).
+   * @param indexToValueMapper A function that maps an index to its corresponding value.
+   * @return A tuple containing the index and the value of the greatest lower bound.
+   */
   public static Tuple2<Long, Long> greatestLowerBound(
       long target,
       long lowerBoundInclusive,
-      long upperBoundExclusive,
+      long upperBoundInclusive,
       Function<Long, Long> indexToValueMapper) {
     long start = lowerBoundInclusive;
-    long end = upperBoundExclusive;
+    long end = upperBoundInclusive;
     Tuple2<Long, Long> result = null;
     while (start <= end) {
       long curIndex = start + (end - start) / 2;
@@ -124,34 +135,44 @@ public class InCommitTimestampUtils {
   }
 
   public static Tuple2<Long, Long> getNarrowSearchBoundsUsingExponentialSearch(
+          long target,
+          long lowerBound,
+          long upperBound,
+          Function<Long, Long> indexToValueMapper) {
+    long lowerBoundIdx = lowerBound;
+    long upperBoundIdx = upperBound;
+    long curIdx = lowerBound;
+    for (long i = 1;
+         curIdx < upperBound;
+         curIdx = Math.round(lowerBound + (Math.pow(2, ++i) - 1))) {
+      long curValue = indexToValueMapper.apply(curIdx);
+      if (curValue > target) {
+        upperBoundIdx = curIdx;
+        break;
+      } else {
+        lowerBoundIdx = curIdx;
+      }
+    }
+    return new Tuple2<>(lowerBoundIdx, upperBoundIdx);
+  }
+
+  public static Tuple2<Long, Long> getNarrowSearchBoundsUsingExponentialSearchExpandingLeft(
       long target,
       long lowerBound,
       long upperBound,
-      Function<Long, Long> indexToValueMapper,
-      boolean searchFromRightInclusive) {
-    final long iterationDirection = searchFromRightInclusive ? -1 : 1;
+      Function<Long, Long> indexToValueMapper) {
     long lowerBoundIdx = lowerBound;
     long upperBoundIdx = upperBound;
-    long searchStartEnd = searchFromRightInclusive ? upperBound : lowerBound;
-    long curIdx = searchStartEnd + iterationDirection;
+    long curIdx = upperBound;
     for (long i = 1;
-        curIdx > lowerBound && curIdx < upperBound;
-        curIdx = Math.round(searchStartEnd + iterationDirection * (Math.pow(2, ++i) - 1))) {
+        curIdx > lowerBound;
+        curIdx = Math.round(upperBound - (Math.pow(2, ++i) - 1))) {
       long curValue = indexToValueMapper.apply(curIdx);
-      if (searchFromRightInclusive) {
-        if (curValue <= target) {
-          lowerBoundIdx = curIdx;
-          break;
-        } else {
-          upperBoundIdx = curIdx;
-        }
+      if (curValue <= target) {
+        lowerBoundIdx = curIdx;
+        break;
       } else {
-        if (curValue > target) {
-          upperBoundIdx = curIdx;
-          break;
-        } else {
-          lowerBoundIdx = curIdx;
-        }
+        upperBoundIdx = curIdx;
       }
     }
     return new Tuple2<>(lowerBoundIdx, upperBoundIdx);
