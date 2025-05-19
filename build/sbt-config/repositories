@@ -11,5 +11,5 @@
   repos-spark-packages: https://repos.spark-packages.org
   typesafe-releases: https://repo.typesafe.com/typesafe/releases/
   apache-snapshot: https://repository.apache.org/content/groups/snapshots/
-  spark-rc6: https://repository.apache.org/content/repositories/orgapachespark-1484/
+  spark-rc7: https://repository.apache.org/content/repositories/orgapachespark-1485/
   delta-sharing-staging: https://oss.sonatype.org/content/repositories/iodelta-1213/

@@ -58,4 +58,4 @@ addSbtPlugin("com.lightbend.sbt" % "sbt-java-formatter" % "0.8.0")
 
 addSbtPlugin("org.scalameta" % "sbt-scalafmt" % "2.5.4")
 
-resolvers += "Apache Spark 4.0 RC6" at "https://repository.apache.org/content/repositories/orgapachespark-1484/"
+resolvers += "Apache Spark 4.0 RC7" at "https://repository.apache.org/content/repositories/orgapachespark-1485/"

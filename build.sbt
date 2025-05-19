@@ -221,7 +221,7 @@ def crossSparkSettings(): Seq[Setting[_]] = getSparkVersion() match {
     crossScalaVersions := Seq(scala213),
     targetJvm := "17",
     resolvers ++= Seq(
-      "Apache Spark 4.0 (RC6) Staging" at "https://repository.apache.org/content/repositories/orgapachespark-1484/"
+      "Apache Spark 4.0 (RC7) Staging" at "https://repository.apache.org/content/repositories/orgapachespark-1485/"
     ),
     Compile / unmanagedSourceDirectories += (Compile / baseDirectory).value / "src" / "main" / "scala-spark-master",
     Test / unmanagedSourceDirectories += (Test / baseDirectory).value / "src" / "test" / "scala-spark-master",
@@ -442,7 +442,7 @@ lazy val spark = (project in file("spark"))
     crossSparkSettings(),
     // TODO probably don't need this / clean up resolvers + versions
     resolvers ++= Seq(
-      "Apache Spark 4.0 (RC6) Staging" at "https://repository.apache.org/content/repositories/orgapachespark-1484/",
+      "Apache Spark 4.0 (RC7) Staging" at "https://repository.apache.org/content/repositories/orgapachespark-1485/",
       "Maven Central" at "https://repo1.maven.org/maven2/",
     ),
     libraryDependencies ++= Seq(
