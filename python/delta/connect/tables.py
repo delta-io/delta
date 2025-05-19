@@ -296,6 +296,8 @@ class DeltaTable(object):
         self._spark.client.execute_command(command)
         return DeltaTable.forName(self._spark, target)
 
+    clone.__doc__ = LocalDeltaTable.clone.__doc__
+
     def cloneAtVersion(
         self,
         version: int,
@@ -316,6 +318,8 @@ class DeltaTable(object):
         self._spark.client.execute_command(command)
         return DeltaTable.forName(self._spark, target)
 
+    cloneAtVersion.__doc__ = LocalDeltaTable.cloneAtVersion.__doc__
+
     def cloneAtTimestamp(
         self,
         timestamp: str,
@@ -335,6 +339,8 @@ class DeltaTable(object):
         ).command(session=self._spark.client)
         self._spark.client.execute_command(command)
         return DeltaTable.forName(self._spark, target)
+
+    cloneAtTimestamp.__doc__ = LocalDeltaTable.cloneAtTimestamp.__doc__
 
     def _to_proto(self) -> proto.DeltaTable:
         result = proto.DeltaTable()
