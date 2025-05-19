@@ -51,7 +51,8 @@ class CloneTableScalaSuite extends CloneTableSuiteBase
       table.cloneAtTimestamp(timestampAsOf.get,
         target, isShallow = isShallow, replace = isReplace, tableProperties)
     } else {
-      table.clone(target, isShallow = isShallow, replace = isReplace, tableProperties)
+      table.clone(target, isShallow = isShallow, replace = isReplace,
+        new java.util.HashMap[String, String](tableProperties.asJava))
     }
   }
   // scalastyle:on argcount
