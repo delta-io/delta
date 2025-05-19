@@ -777,6 +777,17 @@ public class TransactionImpl implements Transaction {
             ClusteringUtils.getClusteringDomainMetadata(clusteringColumnsOpt.get());
         addDomain(
             clusteringDomainMetadata.getDomain(), clusteringDomainMetadata.getConfiguration());
+      } else if (TableFeatures.isClusteringTableFeatureSupported(protocol)
+          && isReplaceTable()
+          && !clusteringColumnsOpt.isPresent()) {
+        // When clustering is in the writer features we require there to be a clustering domain
+        // metadata present; when the table is no longer a clustered table this means we must have
+        // a domain metadata with clusteringColumns=[]
+        DomainMetadata emptyClusteringDomainMetadata =
+            ClusteringUtils.getClusteringDomainMetadata(Collections.emptyList());
+        addDomain(
+            emptyClusteringDomainMetadata.getDomain(),
+            emptyClusteringDomainMetadata.getConfiguration());
       }
     }
   }
