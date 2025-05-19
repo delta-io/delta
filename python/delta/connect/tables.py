@@ -300,6 +300,29 @@ class DeltaTable(object):
 
     upgradeTableProtocol.__doc__ = LocalDeltaTable.upgradeTableProtocol.__doc__
 
+    def addFeatureSupport(self, featureName: str) -> None:
+        LocalDeltaTable._verify_type_str(featureName, "featureName")
+        command = AddFeatureSupport(
+            self._to_proto(),
+            featureName
+        ).command(session=self._spark.client)
+        self._spark.client.execute_command(command)
+
+    addFeatureSupport.__doc__ = LocalDeltaTable.addFeatureSupport.__doc__
+
+    def dropFeatureSupport(self, featureName: str, truncateHistory: Optional[bool] = None) -> None:
+        LocalDeltaTable._verify_type_str(featureName, "featureName")
+        if truncateHistory is not None:
+            LocalDeltaTable._verify_type_bool(truncateHistory, "truncateHistory")
+        command = DropFeatureSupport(
+            self._to_proto(),
+            featureName,
+            truncateHistory
+        ).command(session=self._spark.client)
+        self._spark.client.execute_command(command)
+
+    dropFeatureSupport.__doc__ = LocalDeltaTable.dropFeatureSupport.__doc__
+
     def restoreToVersion(self, version: int) -> DataFrame:
         LocalDeltaTable._verify_type_int(version, "version")
         plan = RestoreTable(self._to_proto(), version=version)
