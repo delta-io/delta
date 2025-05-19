@@ -317,6 +317,98 @@ class DeltaTableFeaturesSuite extends DeltaTableWriteSuiteBase {
     }
   }
 
+  test("read throws if the table contains unsupported table feature") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createEmptyTable(engine, tablePath, testSchema)
+      appendData(
+        engine,
+        tablePath,
+        isNewTable = false,
+        testSchema,
+        partCols = Seq.empty,
+        Seq(Map.empty[String, Literal] -> dataBatches1))
+
+      checkTable(tablePath, expectedAnswer = dataBatches1.flatMap(_.toTestRows))
+
+      // If test is running in intelliJ, set DELTA_TESTING=1 in env variables.
+      // This will enable the testReaderWriter feature in delta-spark. In CI jobs,
+      // build.sbt already has set and effective.
+      spark.sql("ALTER TABLE delta.`" + tablePath +
+        "` SET TBLPROPERTIES ('delta.feature.testReaderWriter' = 'supported')")
+
+      // try to read the table
+      val ex = intercept[KernelException] {
+        checkTable(
+          tablePath,
+          expectedAnswer = Seq.empty /* it doesn't matter as expect failure in reading */ )
+      }
+      assert(ex.getMessage.contains(
+        "feature \"testReaderWriter\" which is unsupported by this version of Delta Kernel"))
+    }
+  }
+
+  /* ---- Start: type widening tests ---- */
+  test("only typeWidening feature is enabled when metadata supports it: new table") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createEmptyTable(
+        engine,
+        tablePath = tablePath,
+        schema = testSchema,
+        tableProperties = Map("delta.enableTypeWidening" -> "true"))
+
+      val protocolV0 = getProtocol(engine, tablePath)
+      assert(!protocolV0.supportsFeature(TableFeatures.TYPE_WIDENING_RW_PREVIEW_FEATURE))
+      assert(protocolV0.supportsFeature(TableFeatures.TYPE_WIDENING_RW_FEATURE))
+
+      // try enabling type widening again and expect no change in protocol
+      updateTableMetadata(
+        engine = engine,
+        tablePath = tablePath,
+        tableProperties = Map("delta.enableTypeWidening" -> "true"))
+      val protocolV1 = getProtocol(engine, tablePath)
+      assert(protocolV1 === protocolV0)
+    }
+  }
+
+  test("only typeWidening feature is enabled when new metadata supports it: existing table") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createEmptyTable(engine, tablePath = tablePath, schema = testSchema)
+      val protocolV0 = getProtocol(engine, tablePath)
+      assert(!protocolV0.supportsFeature(TableFeatures.TYPE_WIDENING_RW_PREVIEW_FEATURE))
+      assert(!protocolV0.supportsFeature(TableFeatures.TYPE_WIDENING_RW_FEATURE))
+
+      // try enabling type widening  and expect change in protocol
+      updateTableMetadata(
+        engine = engine,
+        tablePath = tablePath,
+        tableProperties = Map("delta.enableTypeWidening" -> "true"))
+      val protocolV1 = getProtocol(engine, tablePath)
+      assert(!protocolV1.supportsFeature(TableFeatures.TYPE_WIDENING_RW_PREVIEW_FEATURE))
+      assert(protocolV1.supportsFeature(TableFeatures.TYPE_WIDENING_RW_FEATURE))
+    }
+  }
+
+  test("typeWidening-preview in existing table is respected") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      spark.sql(s"CREATE TABLE delta.`$tablePath`(id INT) USING delta " +
+        s"TBLPROPERTIES ('delta.feature.typeWidening-preview' = 'supported')")
+
+      val protocolV0 = getProtocol(engine, tablePath)
+      require(protocolV0.supportsFeature(TableFeatures.TYPE_WIDENING_RW_PREVIEW_FEATURE))
+      require(!protocolV0.supportsFeature(TableFeatures.TYPE_WIDENING_RW_FEATURE))
+
+      // now through Kernel type enabling the type widening through table property
+      updateTableMetadata(
+        engine = engine,
+        tablePath = tablePath,
+        tableProperties = Map("delta.enableTypeWidening" -> "true"))
+      val protocolV1 = getProtocol(engine, tablePath)
+      assert(protocolV1.supportsFeature(TableFeatures.TYPE_WIDENING_RW_PREVIEW_FEATURE))
+      assert(!protocolV1.supportsFeature(TableFeatures.TYPE_WIDENING_RW_FEATURE))
+    }
+  }
+  /* ---- End: type widening tests ---- */
+
   ///////////////////////////////////////////////////////////////////////////
   // Helper methods
   ///////////////////////////////////////////////////////////////////////////

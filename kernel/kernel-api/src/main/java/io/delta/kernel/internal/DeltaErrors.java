@@ -345,6 +345,15 @@ public final class DeltaErrors {
     return new KernelException(format(msgT, partitionColumn, tablePath));
   }
 
+  public static KernelException enablingClusteringOnPartitionedTableNotAllowed(
+      String tablePath, Set<String> partitionColNames, List<Column> clusteringCols) {
+    return new KernelException(
+        String.format(
+            "Cannot enable clustering on a partitioned table '%s'. "
+                + "Existing partition columns: '%s', Clustering columns: '%s'.",
+            tablePath, partitionColNames, clusteringCols));
+  }
+
   public static KernelException concurrentTransaction(
       String appId, long txnVersion, long lastUpdated) {
     return new ConcurrentTransactionException(appId, txnVersion, lastUpdated);

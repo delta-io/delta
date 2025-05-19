@@ -28,9 +28,9 @@ _sym_db = _symbol_database.Default()
 
 
 from delta.connect.proto import base_pb2 as delta_dot_connect_dot_base__pb2
-from spark.connect import expressions_pb2 as spark_dot_connect_dot_expressions__pb2
-from spark.connect import relations_pb2 as spark_dot_connect_dot_relations__pb2
-from spark.connect import types_pb2 as spark_dot_connect_dot_types__pb2
+from pyspark.sql.connect.proto import expressions_pb2 as spark_dot_connect_dot_expressions__pb2
+from pyspark.sql.connect.proto import relations_pb2 as spark_dot_connect_dot_relations__pb2
+from pyspark.sql.connect.proto import types_pb2 as spark_dot_connect_dot_types__pb2
 
 
 DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(

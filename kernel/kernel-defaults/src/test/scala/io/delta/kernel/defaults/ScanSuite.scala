@@ -888,9 +888,7 @@ class ScanSuite extends AnyFunSuite with TestUtils
            |) USING delta
            |TBLPROPERTIES(
            |'delta.dataSkippingStatsColumns' = 'c1,c2,c3,c4,c5,c6,c9,c10',
-           |'delta.columnMapping.mode' = 'name',
-           |'delta.minReaderVersion' = '2',
-           |'delta.minWriterVersion' = '5'
+           |'delta.columnMapping.mode' = 'name'
            |)
            |""".stripMargin)
       spark.sql(s"alter table delta.`$tablePath` drop COLUMN c2")
@@ -1590,7 +1588,8 @@ class ScanSuite extends AnyFunSuite with TestUtils
 
   Seq(
     "spark-variant-checkpoint",
-    "spark-variant-stable-feature-checkpoint").foreach { tableName =>
+    "spark-variant-stable-feature-checkpoint",
+    "spark-shredded-variant-preview-delta").foreach { tableName =>
     Seq(
       ("version 0 no predicate", None, Some(0), 2),
       ("latest version (has checkpoint) no predicate", None, None, 4),

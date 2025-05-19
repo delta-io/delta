@@ -42,6 +42,7 @@ import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.types._
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames
 
 import org.apache.hadoop.conf.Configuration
@@ -63,6 +64,9 @@ trait TestUtils extends Assertions with SQLHelper {
     .config("spark.master", "local")
     .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
     .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+    // Set this conf to empty string so that the golden tables generated
+    // using with the test-prefix (i.e. there is no DELTA_TESTING set) can still work
+    .config(DeltaSQLConf.TEST_DV_NAME_PREFIX.key, "")
     .getOrCreate()
 
   implicit class CloseableIteratorOps[T](private val iter: CloseableIterator[T]) {
