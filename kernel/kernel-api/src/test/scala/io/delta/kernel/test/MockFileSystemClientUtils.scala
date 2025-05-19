@@ -67,11 +67,22 @@ trait MockFileSystemClientUtils extends MockEngineUtils {
     FileStatus.of(FileNames.checksumFile(logPath, deltaVersion).toString, 10, 10)
   }
 
+  /** Classic checkpoint file status where the timestamp = 10*version */
+  def classicCheckpointFileStatus(v: Long): FileStatus = {
+    FileStatus.of(FileNames.checkpointFileSingular(logPath, v).toString, v, v * 10)
+  }
+
   /** Checkpoint file statuses where the timestamp = 10*version */
   def singularCheckpointFileStatuses(checkpointVersions: Seq[Long]): Seq[FileStatus] = {
     assert(checkpointVersions.size == checkpointVersions.toSet.size)
     checkpointVersions.map(v =>
       FileStatus.of(FileNames.checkpointFileSingular(logPath, v).toString, v, v * 10))
+  }
+
+  /** Multi-part checkpoint file status where the timestamp = 10*version */
+  def multiPartCheckpointFileStatus(version: Long, part: Integer, numParts: Integer): FileStatus = {
+    val path = FileNames.multiPartCheckpointFile(logPath, version, part, numParts)
+    FileStatus.of(path.toString, version, version * 10)
   }
 
   /** Checkpoint file statuses where the timestamp = 10*version */

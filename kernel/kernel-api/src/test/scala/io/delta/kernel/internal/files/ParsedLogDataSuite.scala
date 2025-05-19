@@ -127,7 +127,7 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils {
   }
 
   test("Correctly parses classic checkpoint file") {
-    val fileStatus = singularCheckpointFileStatuses(Seq(10)).head
+    val fileStatus = classicCheckpointFileStatus(10)
     val parsed = ParsedLogData.forFileStatus(fileStatus)
 
     assert(parsed.isInstanceOf[ParsedCheckpointData])
@@ -140,13 +140,9 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils {
   }
 
   test("Classic checkpoint file equality") {
-    val fileStatus1 = singularCheckpointFileStatuses(Seq(10)).head
-    val fileStatus2 = singularCheckpointFileStatuses(Seq(10)).head
-    val fileStatus3 = singularCheckpointFileStatuses(Seq(11)).head
-
-    val cp1 = ParsedLogData.forFileStatus(fileStatus1)
-    val cp2 = ParsedLogData.forFileStatus(fileStatus2)
-    val cp3 = ParsedLogData.forFileStatus(fileStatus3)
+    val cp1 = ParsedLogData.forFileStatus(classicCheckpointFileStatus(10))
+    val cp2 = ParsedLogData.forFileStatus(classicCheckpointFileStatus(10))
+    val cp3 = ParsedLogData.forFileStatus(classicCheckpointFileStatus(11))
 
     assert(cp1 == cp1)
     assert(cp1 == cp2)
@@ -203,7 +199,7 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils {
   }
 
   test("Correctly parses multi-part checkpoint file") {
-    val chkpt_15_1_3 = multiCheckpointFileStatuses(Seq(15), 3).head
+    val chkpt_15_1_3 = multiPartCheckpointFileStatus(15, 1, 3)
     val parsed = ParsedLogData
       .forFileStatus(chkpt_15_1_3)
       .asInstanceOf[ParsedMultiPartCheckpointData]
@@ -243,17 +239,11 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils {
   }
 
   test("Multi-part checkpoint file equality") {
-    val chkpt_15_1_3_a = multiCheckpointFileStatuses(Seq(15), 3).head
-    val chkpt_15_1_3_b = multiCheckpointFileStatuses(Seq(15), 3).head
-    val chkpt_15_2_3 = multiCheckpointFileStatuses(Seq(15), 3)(1)
-    val chkpt_15_1_4 = multiCheckpointFileStatuses(Seq(15), 4).head
-    val chkpt_16_1_3 = multiCheckpointFileStatuses(Seq(16), 3).head
-
-    val parsed_15_1_3_a = ParsedLogData.forFileStatus(chkpt_15_1_3_a)
-    val parsed_15_1_3_b = ParsedLogData.forFileStatus(chkpt_15_1_3_b)
-    val parsed_15_2_3 = ParsedLogData.forFileStatus(chkpt_15_2_3)
-    val parsed_15_1_4 = ParsedLogData.forFileStatus(chkpt_15_1_4)
-    val parsed_16_1_3 = ParsedLogData.forFileStatus(chkpt_16_1_3)
+    val parsed_15_1_3_a = ParsedLogData.forFileStatus(multiPartCheckpointFileStatus(15, 1, 3))
+    val parsed_15_1_3_b = ParsedLogData.forFileStatus(multiPartCheckpointFileStatus(15, 1, 3))
+    val parsed_15_2_3 = ParsedLogData.forFileStatus(multiPartCheckpointFileStatus(15, 2, 3))
+    val parsed_15_1_4 = ParsedLogData.forFileStatus(multiPartCheckpointFileStatus(15, 1, 4))
+    val parsed_16_1_3 = ParsedLogData.forFileStatus(multiPartCheckpointFileStatus(16, 1, 3))
 
     assert(parsed_15_1_3_a == parsed_15_1_3_a)
     assert(parsed_15_1_3_a == parsed_15_1_3_b)
