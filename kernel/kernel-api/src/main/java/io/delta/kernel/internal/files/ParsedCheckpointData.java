@@ -23,7 +23,9 @@ import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.utils.FileStatus;
 import java.util.Optional;
 
-public class ParsedCheckpointData extends ParsedLogData {
+public class ParsedCheckpointData extends ParsedLogData
+    implements Comparable<ParsedCheckpointData> {
+
   public static ParsedCheckpointData forFileStatus(FileStatus fileStatus) {
     final String path = fileStatus.getPath();
 
@@ -64,5 +66,52 @@ public class ParsedCheckpointData extends ParsedLogData {
       Optional<ColumnarBatch> inlineDataOpt) {
     super(version, type, fileStatusOpt, inlineDataOpt);
     checkArgument(type.category == ParsedLogCategory.CHECKPOINT, "Must be a checkpoint");
+  }
+
+  @Override
+  public int compareTo(ParsedCheckpointData that) {
+    // Compare versions.
+    if (version != that.version) {
+      return Long.compare(version, that.version);
+    }
+
+    // Compare types.
+    if (type != that.type) {
+      return Integer.compare(type.ordinal(), that.type.ordinal());
+    }
+
+    // Use type-specific tiebreakers if versions and types are the same.
+    switch (type) {
+      case CLASSIC_CHECKPOINT:
+      case V2_CHECKPOINT:
+        return getTieBreaker(that);
+      case MULTIPART_CHECKPOINT:
+        final ParsedMultiPartCheckpointData thisCasted = (ParsedMultiPartCheckpointData) this;
+        final ParsedMultiPartCheckpointData thatCasted = (ParsedMultiPartCheckpointData) that;
+        final int numPartsComparison = Long.compare(thisCasted.numParts, thatCasted.numParts);
+        if (numPartsComparison != 0) {
+          return numPartsComparison;
+        } else {
+          return getTieBreaker(that);
+        }
+      default:
+        throw new IllegalStateException("Unexpected type: " + type);
+    }
+  }
+
+  /**
+   * Here, we prefer inline data -- if the data is already stored in memory, we should read that
+   * instead of going to the cloud store to read a file status.
+   */
+  private int getTieBreaker(ParsedCheckpointData that) {
+    if (this.isInline() && that.isMaterialized()) {
+      return 1; // Prefer this
+    } else if (this.isMaterialized() && that.isInline()) {
+      return -1; // Prefer that
+    } else if (this.isMaterialized() && that.isMaterialized()) {
+      return this.getFileStatus().getPath().compareTo(that.getFileStatus().getPath());
+    } else {
+      return 0;
+    }
   }
 }
