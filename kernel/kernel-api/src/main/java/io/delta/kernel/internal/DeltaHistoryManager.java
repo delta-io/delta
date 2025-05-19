@@ -196,54 +196,13 @@ public final class DeltaHistoryManager {
       Engine engine,
       Path logPath)
       throws IOException {
-    // Find the pivot commit version. This should be pretty close to the target commit.
-    Optional<Long> pivotVersionOpt =
-        getInitialCommitVersionForICTSearch(
-            searchTimestamp, startCommitVersion, endCommitVersionInclusive, engine, logPath);
-    long lowerBoundVersionInclusive = startCommitVersion,
-        upperBoundVersionInclusive = endCommitVersionInclusive;
-    if (pivotVersionOpt.isPresent()) {
-      // We have potentially narrowed down the search space using modTime.
-      long pivotVersion = pivotVersionOpt.get();
-      long pivotICT =
-          CommitInfo.getRequiredInCommitTimestampFromFile(engine, logPath, pivotVersion);
-      Commit pivotCommit = new Commit(pivotVersion, pivotICT);
-      // In most cases, the target commit should be pretty close to the pivot commit.
-      if (pivotICT == searchTimestamp) {
-        return pivotCommit;
-      }
-      final Tuple2<Long, Long> narrowerBounds;
-      if (pivotICT < searchTimestamp) {
-        // We need to search in the right half of the range.
-        narrowerBounds =
-            InCommitTimestampUtils.getNarrowSearchBoundsUsingExponentialSearch(
-                searchTimestamp,
-                pivotVersion,
-                    upperBoundVersionInclusive,
-                version -> version == pivotVersion ? pivotICT : CommitInfo.getRequiredInCommitTimestampFromFile(engine, logPath, version));
-      } else {
-        // We need to search in the left half of the range.
-        narrowerBounds =
-            InCommitTimestampUtils.getNarrowSearchBoundsUsingExponentialSearchExpandingLeft(
-                searchTimestamp,
-                    lowerBoundVersionInclusive,
-                pivotVersion,
-                    version -> version == pivotVersion ? pivotICT : CommitInfo.getRequiredInCommitTimestampFromFile(engine, logPath, version));
-      }
-      lowerBoundVersionInclusive = narrowerBounds._1;
-      upperBoundVersionInclusive = narrowerBounds._2;
-      if (lowerBoundVersionInclusive == upperBoundVersionInclusive) {
-        // We have a single commit in the range.
-        return pivotCommit;
-      }
-    }
     // Now we have a range of commits to search through. We can use binary search to find the
     // commit that is closest to the search timestamp.
     Tuple2<Long, Long> greatestLowerBound =
         InCommitTimestampUtils.greatestLowerBound(
             searchTimestamp,
-                lowerBoundVersionInclusive,
-                upperBoundVersionInclusive,
+                startCommitVersionInclusive,
+                endCommitVersionInclusive,
             version -> CommitInfo.getRequiredInCommitTimestampFromFile(engine, logPath, version));
     return new Commit(greatestLowerBound._1, greatestLowerBound._2);
   }
