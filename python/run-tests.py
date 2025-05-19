@@ -40,7 +40,7 @@ def test(root_dir, code_dir, packages):
                    "--repositories",
                    ("https://maven-central.storage-download.googleapis.com/maven2/,"
                        "https://repo1.maven.org/maven2/,"
-                       "https://repository.apache.org/content/repositories/orgapachespark-1480"),
+                       "https://repository.apache.org/content/repositories/orgapachespark-1484"),
                    "--packages", ",".join(packages), test_file]
             print("Running tests in %s\n=============" % test_file)
             print("Command: %s" % str(cmd))

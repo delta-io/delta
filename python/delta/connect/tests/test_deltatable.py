@@ -28,50 +28,6 @@ from tests.test_deltatable import DeltaTableTestsMixin
 
 
 class DeltaTableTests(DeltaTableTestsMixin, DeltaTestCase):
-    @unittest.skip("delete has not been implemented yet")
-    def test_delete(self):
-        pass
-
-    @unittest.skip("generate has not been implemented yet")
-    def test_generate(self):
-        pass
-
-    @unittest.skip("update has not been implemented yet")
-    def test_update(self):
-        pass
-
-    @unittest.skip("merge has not been implemented yet")
-    def test_merge(self):
-        pass
-
-    @unittest.skip("merge has not been implemented yet")
-    def test_merge_with_inconsistent_sessions(self):
-        pass
-
-    @unittest.skip("history has not been implemented yet")
-    def test_history(self):
-        pass
-
-    @unittest.skip("cdc has not been implemented yet")
-    def test_cdc(self):
-        pass
-
-    @unittest.skip("detail has not been implemented yet")
-    def test_detail(self):
-        pass
-
-    @unittest.skip("vacuum has not been implemented yet")
-    def test_vacuum(self):
-        pass
-
-    @unittest.skip("convertToDelta has not been implemented yet")
-    def test_convertToDelta(self):
-        pass
-
-    @unittest.skip("isDeltaTable has not been implemented yet")
-    def test_isDeltaTable(self):
-        pass
-
     @unittest.skip("create has not been implemented yet")
     def test_create_table_with_existing_schema(self):
         pass
@@ -128,44 +84,12 @@ class DeltaTableTests(DeltaTableTestsMixin, DeltaTestCase):
     def test_delta_table_builder_with_bad_args(self):
         pass
 
-    @unittest.skip("upgradeToProtocol has not been implemented yet")
-    def test_protocolUpgrade(self):
-        pass
-
     @unittest.skip("addFeatureSupport has not been implemented yet")
     def test_addFeatureSupport(self):
         pass
 
     @unittest.skip("dropFeatureSupport has not been implemented yet")
     def test_dropFeatureSupport(self):
-        pass
-
-    @unittest.skip("restoreToVersion has not been implemented yet")
-    def test_restore_to_version(self):
-        pass
-
-    @unittest.skip("restoreToTimestamp has not been implemented yet")
-    def test_restore_to_timestamp(self):
-        pass
-
-    @unittest.skip("restore has not been implemented yet")
-    def test_restore_invalid_inputs(self):
-        pass
-
-    @unittest.skip("optimize has not been implemented yet")
-    def test_optimize(self):
-        pass
-
-    @unittest.skip("optimize has not been implemented yet")
-    def test_optimize_w_partition_filter(self):
-        pass
-
-    @unittest.skip("optimize has not been implemented yet")
-    def test_optimize_zorder_by(self):
-        pass
-
-    @unittest.skip("optimize has not been implemented yet")
-    def test_optimize_zorder_by_w_partition_filter(self):
         pass
 
 
