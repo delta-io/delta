@@ -161,7 +161,11 @@ public final class DeltaHistoryManager {
    * {@code searchTimestamp}. TODO.
    */
   private static Optional<Long> getInitialCommitVersionForICTSearch(
-      long searchTimestamp, long startCommitVersion, long endCommitVersion, Engine engine, Path logPath)
+      long searchTimestamp,
+      long startCommitVersion,
+      long endCommitVersion,
+      Engine engine,
+      Path logPath)
       throws IOException {
     long listingStartVersion = Math.max(startCommitVersion, endCommitVersion - 999);
     try (CloseableIterator<Commit> commits =
@@ -185,9 +189,9 @@ public final class DeltaHistoryManager {
 
   /**
    * Finds the commit with the latest in-commit timestamp that is less than or equal to the
-   * searchTimestamp. All commits from `startCommitVersionInclusive` till `endCommitVersionInclusive`
-   * must have ICT enabled. Also, this method assumes that we have already proven that
-   * `searchTimestamp` is in the given range.
+   * searchTimestamp. All commits from `startCommitVersionInclusive` till
+   * `endCommitVersionInclusive` must have ICT enabled. Also, this method assumes that we have
+   * already proven that `searchTimestamp` is in the given range.
    */
   private static Commit getActiveCommitAtTimeFromICTRange(
       long searchTimestamp,
@@ -201,8 +205,8 @@ public final class DeltaHistoryManager {
     Tuple2<Long, Long> greatestLowerBound =
         InCommitTimestampUtils.greatestLowerBound(
             searchTimestamp,
-                startCommitVersionInclusive,
-                endCommitVersionInclusive,
+            startCommitVersionInclusive,
+            endCommitVersionInclusive,
             version -> CommitInfo.getRequiredInCommitTimestampFromFile(engine, logPath, version));
     return new Commit(greatestLowerBound._1, greatestLowerBound._2);
   }

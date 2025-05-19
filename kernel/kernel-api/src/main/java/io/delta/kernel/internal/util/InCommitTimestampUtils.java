@@ -26,7 +26,6 @@ import io.delta.kernel.internal.actions.Metadata;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
-import java.util.function.Function;
 
 public class InCommitTimestampUtils {
 
