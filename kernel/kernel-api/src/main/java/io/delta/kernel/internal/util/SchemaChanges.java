@@ -52,10 +52,6 @@ class SchemaChanges {
     public StructField getFieldAfter() {
       return fieldAfter;
     }
-
-    Tuple2<StructField, StructField> asTuple() {
-      return new Tuple2<>(fieldBefore, fieldAfter);
-    }
   }
 
   private List<StructField> addedFields;
