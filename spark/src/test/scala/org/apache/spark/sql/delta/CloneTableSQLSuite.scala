@@ -29,6 +29,7 @@ import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.util.Utils
 
 class CloneTableSQLSuite extends CloneTableSuiteBase
+  with CloneTableSQLTestMixin
   with DeltaColumnMappingTestUtils
 {
 
@@ -36,34 +37,6 @@ class CloneTableSQLSuite extends CloneTableSuiteBase
     super.beforeAll()
     disableDeletionVectors(spark.conf)
   }
-
-  // scalastyle:off argcount
-  override protected def cloneTable(
-      source: String,
-      target: String,
-      isShallow: Boolean,
-      sourceIsTable: Boolean = false,
-      targetIsTable: Boolean = false,
-      targetLocation: Option[String] = None,
-      versionAsOf: Option[Long] = None,
-      timestampAsOf: Option[String] = None,
-      isCreate: Boolean = true,
-      isReplace: Boolean = false,
-      tableProperties: Map[String, String] = Map.empty): Unit = {
-    val commandSql = CloneTableSQLTestUtils.buildCloneSqlString(
-      source, target,
-      sourceIsTable,
-      targetIsTable,
-      "delta",
-      targetLocation,
-      versionAsOf,
-      timestampAsOf,
-      isCreate,
-      isReplace,
-      tableProperties)
-    sql(commandSql)
-  }
-  // scalastyle:on argcount
 
   testAllClones(s"table version as of syntax") { (_, target, isShallow) =>
     val tbl = "source"
