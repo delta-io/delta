@@ -15,17 +15,46 @@
  */
 package io.delta.kernel.internal
 
+import io.delta.kernel.TransactionSuite.testSchema
+
 import java.io.FileNotFoundException
-
 import scala.reflect.ClassTag
-
 import io.delta.kernel.exceptions.TableNotFoundException
+import io.delta.kernel.internal.actions.{Format, Metadata}
+import io.delta.kernel.internal.util.VectorUtils
+import io.delta.kernel.internal.util.VectorUtils.{buildArrayValue, stringStringMapValue}
 import io.delta.kernel.test.MockFileSystemClientUtils
+import io.delta.kernel.types.StringType
 import io.delta.kernel.utils.FileStatus
-
 import org.scalatest.funsuite.AnyFunSuite
 
+import java.util
+import java.util.Optional
+
 class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
+
+  def getNonICTMockSnapshot: SnapshotImpl = {
+    val metadata = new Metadata(
+      "id",
+      Optional.empty(), /* name */
+      Optional.empty(), /* description */
+      new Format(),
+      testSchema.toJson,
+      testSchema,
+      buildArrayValue(util.Arrays.asList("c3"), StringType.STRING),
+      Optional.of(123),
+      stringStringMapValue(new util.HashMap[String, String]())
+      );
+
+    new SnapshotImpl(
+      null, /* dataPath */
+      null, /* logSegment */
+      null, /* logReplay */
+      null, /* protocol */
+      metadata,
+        null, /* snapshotContext */
+    )
+  }
 
   def checkGetActiveCommitAtTimestamp(
       fileList: Seq[FileStatus],
@@ -36,6 +65,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
       canReturnEarliestCommit: Boolean = false): Unit = {
     val activeCommit = DeltaHistoryManager.getActiveCommitAtTimestamp(
       createMockFSListFromEngine(fileList),
+      getNonICTMockSnapshot,
       logPath,
       timestamp,
       mustBeRecreatable,
@@ -50,6 +80,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
       // for valid queries that do not throw an error
       val activeCommit = DeltaHistoryManager.getActiveCommitAtTimestamp(
         createMockFSListFromEngine(fileList),
+        getNonICTMockSnapshot,
         logPath,
         timestamp,
         false, // mustBeRecreatable
@@ -71,6 +102,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     val e = intercept[T] {
       DeltaHistoryManager.getActiveCommitAtTimestamp(
         createMockFSListFromEngine(fileList),
+        getNonICTMockSnapshot,
         logPath,
         timestamp,
         mustBeRecreatable,
@@ -187,6 +219,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     intercept[TableNotFoundException](
       DeltaHistoryManager.getActiveCommitAtTimestamp(
         createMockFSListFromEngine(p => throw new FileNotFoundException(p)),
+        getNonICTMockSnapshot,
         logPath,
         0,
         true, // mustBeRecreatable
@@ -197,6 +230,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     intercept[TableNotFoundException](
       DeltaHistoryManager.getActiveCommitAtTimestamp(
         createMockFSListFromEngine(p => Seq()),
+        getNonICTMockSnapshot,
         logPath,
         0,
         true, // mustBeRecreatable
@@ -281,6 +315,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     intercept[TableNotFoundException](
       DeltaHistoryManager.getActiveCommitAtTimestamp(
         createMockFSListFromEngine(p => throw new FileNotFoundException(p)),
+        getNonICTMockSnapshot,
         logPath,
         0,
         false, // mustBeRecreatable
@@ -291,6 +326,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     intercept[TableNotFoundException](
       DeltaHistoryManager.getActiveCommitAtTimestamp(
         createMockFSListFromEngine(p => Seq()),
+        getNonICTMockSnapshot,
         logPath,
         0,
         true, // mustBeRecreatable
@@ -312,4 +348,15 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
       "No delta files found in the directory",
       mustBeRecreatable = false)
   }
+  // st = snapshot.timestamp
+  // st before ICT enablement
+  // st after ICT enablement
+  // modification times out of order
+  // st before first available commit
+  // Binary search implementation test cases
+  // start = end
+  // searchTimestamp = start, end
+  // odd number of commits
+  // even number of commits
+
 }
