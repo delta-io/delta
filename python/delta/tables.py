@@ -708,7 +708,7 @@ class DeltaTable(object):
         jbuilder = self._jdt.optimize()
         return DeltaOptimizeBuilder(self._spark, jbuilder)
 
-    def clone(self, target, isShallow=False, replace=False, properties=None):
+    def clone(self, target, isShallow=False, replace=False, properties=None) -> "DeltaTable":
         """
         Clone the latest state of a DeltaTable to a destination which mirrors the existing
         table's data and metadata at that version.
@@ -730,7 +730,7 @@ class DeltaTable(object):
         DeltaTable._verify_clone_types(target, isShallow, replace, properties)
         self._jdt.clone(target, isShallow, replace, properties)
 
-    def cloneAtVersion(self, version, target, isShallow=False, replace=False, properties=None):
+    def cloneAtVersion(self, version, target, isShallow=False, replace=False, properties=None) -> "DeltaTable":
         """
         Clone a DeltaTable at the given version to a destination which mirrors the existing
         table's data and metadata at that version.
@@ -755,7 +755,7 @@ class DeltaTable(object):
         DeltaTable._verify_clone_types(target, isShallow, replace, properties, version=version)
         self._jdt.cloneAtVersion(version, target, isShallow, replace, properties)
 
-    def cloneAtTimestamp(self, timestamp, target, isShallow=False, replace=False, properties=None):
+    def cloneAtTimestamp(self, timestamp, target, isShallow=False, replace=False, properties=None) -> "DeltaTable":
         """
         Clone a DeltaTable at the given timestamp to a destination which mirrors the existing
         table's data and metadata at that timestamp.
@@ -792,7 +792,7 @@ class DeltaTable(object):
             replace,
             properties,
             timestamp="",
-            version=0):
+            version=0) -> None:
         """
         Throw an error if any of the types passed in to Clone do not
         adhere to the types that we expect
@@ -810,7 +810,7 @@ class DeltaTable(object):
                 DeltaTable._verify_type_str(value, "All property values including %s" % value)
 
     @classmethod
-    def _verify_type_dict(cls, variable, name):
+    def _verify_type_dict(cls, variable, name) -> None:
         if not isinstance(variable, dict):
             raise ValueError("%s needs to be a dict but got '%s'." % (name, type(variable)))
 
