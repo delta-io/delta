@@ -731,7 +731,8 @@ class DeltaTable(object):
         self._jdt.clone(target, isShallow, replace, properties)
 
     def cloneAtVersion(
-        self, version, target, isShallow=False, replace=False, properties=None) -> "DeltaTable":
+        self, version, target, isShallow=False, replace=False, properties=None
+    ) -> "DeltaTable":
         """
         Clone a DeltaTable at the given version to a destination which mirrors the existing
         table's data and metadata at that version.
@@ -757,7 +758,8 @@ class DeltaTable(object):
         self._jdt.cloneAtVersion(version, target, isShallow, replace, properties)
 
     def cloneAtTimestamp(
-        self, timestamp, target, isShallow=False, replace=False, properties=None) -> "DeltaTable":
+        self, timestamp, target, isShallow=False, replace=False, properties=None
+    ) -> "DeltaTable":
         """
         Clone a DeltaTable at the given timestamp to a destination which mirrors the existing
         table's data and metadata at that timestamp.
