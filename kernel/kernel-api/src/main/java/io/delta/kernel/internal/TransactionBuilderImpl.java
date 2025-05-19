@@ -503,12 +503,17 @@ public class TransactionBuilderImpl implements TransactionBuilder {
           resolvedClusteringColumns.isPresent()
               ? resolvedClusteringColumns
               : existingClusteringCols;
-      validateMetadataChange(
-          effectiveClusteringCols,
-          baseMetadata,
-          newMetadata.get(),
-          isCreateOrReplace,
-          latestSnapshot);
+
+      Optional<Metadata> schemaUpdatedMetadata =
+          validateMetadataChange(
+              effectiveClusteringCols,
+              baseMetadata,
+              newMetadata.get(),
+              isCreateOrReplace,
+              latestSnapshot);
+      if (schemaUpdatedMetadata.isPresent()) {
+        newMetadata = schemaUpdatedMetadata;
+      }
     }
 
     return new Tuple2(newProtocol, newMetadata);
@@ -610,7 +615,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
    *   <li>Materialized row tracking column names do not conflict with schema
    * </ul>
    */
-  private void validateMetadataChange(
+  private Optional<Metadata> validateMetadataChange(
       Optional<List<Column>> clusteringCols,
       Metadata oldMetadata,
       Metadata newMetadata,
@@ -621,7 +626,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     IcebergWriterCompatV1MetadataValidatorAndUpdater.validateIcebergWriterCompatV1Change(
         oldMetadata.getConfiguration(), newMetadata.getConfiguration(), isCreateOrReplace);
     IcebergUniversalFormatMetadataValidatorAndUpdater.validate(newMetadata);
-
+    Optional<Metadata> updatedMetadata = Optional.empty();
     // Validate the conditions for schema evolution and the updated schema if applicable
     if (schema.isPresent() && !isCreateOrReplace) {
       ColumnMappingMode updatedMappingMode =
@@ -650,11 +655,13 @@ public class TransactionBuilderImpl implements TransactionBuilder {
               .map(col -> col.getNames()[col.getNames().length - 1])
               .collect(toSet());
 
-      SchemaUtils.validateUpdatedSchema(
-          oldMetadata,
-          newMetadata,
-          clusteringColumnPhysicalNames,
-          false /* allowNewRequiredFields */);
+      updatedMetadata =
+          SchemaUtils.validateUpdatedSchema(
+                  oldMetadata,
+                  newMetadata,
+                  clusteringColumnPhysicalNames,
+                  false /* allowNewRequiredFields */)
+              .map(newMetadata::withNewSchema);
     }
 
     // For replace table we need to do special validation in the case of fieldId re-use
@@ -675,14 +682,18 @@ public class TransactionBuilderImpl implements TransactionBuilder {
 
       // We only need to check fieldId re-use when cmMode != none
       if (newMode != ColumnMappingMode.NONE) {
-        SchemaUtils.validateUpdatedSchema(
-            latestSnapshot.get().getMetadata(),
-            newMetadata,
-            // We already validate clustering columns elsewhere for isCreateOrReplace no need to
-            // duplicate this check here
-            emptySet() /* clusteringCols */,
-            // We allow new non-null fields in REPLACE since we know all existing data is removed
-            true /* allowNewRequiredFields */);
+        updatedMetadata =
+            SchemaUtils.validateUpdatedSchema(
+                    latestSnapshot.get().getMetadata(),
+                    updatedMetadata.orElse(newMetadata),
+                    // We already validate clustering columns elsewhere for isCreateOrReplace no
+                    // need to
+                    // duplicate this check here
+                    emptySet() /* clusteringCols */,
+                    // We allow new non-null fields in REPLACE since we know all existing data is
+                    // removed
+                    true /* allowNewRequiredFields */)
+                .map(newMetadata::withNewSchema);
       }
     }
 
@@ -694,6 +705,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     }
 
     MaterializedRowTrackingColumn.throwIfColumnNamesConflictWithSchema(newMetadata);
+    return updatedMetadata;
   }
 
   private SnapshotImpl getInitialEmptySnapshot(

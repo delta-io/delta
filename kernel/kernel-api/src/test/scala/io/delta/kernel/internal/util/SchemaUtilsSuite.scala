@@ -27,10 +27,10 @@ import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.TableConfig
 import io.delta.kernel.internal.actions.{Format, Metadata}
 import io.delta.kernel.internal.types.DataTypeJsonSerDe
-import io.delta.kernel.internal.util.ColumnMapping.{COLUMN_MAPPING_ID_KEY, COLUMN_MAPPING_MODE_KEY, COLUMN_MAPPING_NESTED_IDS_KEY, COLUMN_MAPPING_PHYSICAL_NAME_KEY, ColumnMappingMode}
+import io.delta.kernel.internal.util.ColumnMapping.{COLUMN_MAPPING_ID_KEY, COLUMN_MAPPING_MODE_KEY, COLUMN_MAPPING_PHYSICAL_NAME_KEY}
 import io.delta.kernel.internal.util.SchemaUtils.{computeSchemaChangesById, filterRecursively, validateSchema, validateUpdatedSchema}
 import io.delta.kernel.internal.util.VectorUtils.stringStringMapValue
-import io.delta.kernel.types.{ArrayType, DataType, FieldMetadata, IntegerType, LongType, MapType, StringType, StructField, StructType}
+import io.delta.kernel.types.{ArrayType, ByteType, DataType, DoubleType, FieldMetadata, IntegerType, LongType, MapType, StringType, StructField, StructType, TypeChange}
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.LongType.LONG
 import io.delta.kernel.types.TimestampType.TIMESTAMP
@@ -49,6 +49,22 @@ class SchemaUtilsSuite extends AnyFunSuite {
     assert(
       shouldContain.map(_.toLowerCase(Locale.ROOT)).forall(msg.contains),
       s"Error message '$msg' didn't contain: $shouldContain")
+  }
+
+  private def newSchema(tuple: (Int, StructField)*): StructType = {
+    val fields = tuple.map { case (id, field) =>
+      addFieldId(id, field)
+    }
+    val schemaWithIds = new StructType(fields.asJava)
+    schemaWithIds
+  }
+
+  private def addFieldId(id: Int, field: StructField) = {
+    val metadataWithFieldIds = FieldMetadata.builder().fromMetadata(field.getMetadata)
+      .putLong("delta.columnMapping.id", id)
+      .putString("delta.columnMapping.physicalName", s"col-$id")
+      .build()
+    field.withNewMetadata(metadataWithFieldIds)
   }
 
   ///////////////////////////////////////////////////////////////////////////
@@ -1231,6 +1247,233 @@ class SchemaUtilsSuite extends AnyFunSuite {
       .putString("delta.columnMapping.physicalName", s"col-$id")
       .build()
     field.withNewMetadata(metadataWithFieldIds)
+  }
+
+  ///////////////////////////////////////////////////////////////////////////
+  // Type Changes Tests
+  ///////////////////////////////////////////////////////////////////////////
+
+  test("Compute schema changes adds schema change") {
+    val currentSchema = newSchema((1, new StructField("id", IntegerType.INTEGER, true)))
+    val updatedSchema = newSchema((1, new StructField("id", LongType.LONG, true)))
+
+    val schemaChanges = computeSchemaChangesById(currentSchema, updatedSchema)
+
+    // Verify that we have one updated field
+    assert(schemaChanges.updatedFields().size() == 1)
+    val schemaUpdate = schemaChanges.updatedFields().get(0)
+
+    // Verify that the updated field has the expected before and after values
+    assert(schemaUpdate.getFieldBefore == currentSchema.get("id"))
+    assert(schemaUpdate.getFieldAfter == updatedSchema.get("id"))
+
+    // Verify that the updated schema has a TypeChange recorded
+    assert(schemaChanges.updatedSchema().isPresent)
+    val updatedField = schemaChanges.updatedSchema().get().get("id")
+    val typeChanges = updatedField.getTypeChanges
+    assert(typeChanges.size() == 1)
+    val typeChange = typeChanges.get(0)
+    assert(typeChange.getFrom == IntegerType.INTEGER)
+    assert(typeChange.getTo == LongType.LONG)
+  }
+
+  test("Type changes are preserved across schema updates") {
+    // Create a field with integer type and an existing type change from byte to int
+    val byteType = ByteType.BYTE
+    val intType = IntegerType.INTEGER
+
+    val existingTypeChange = new TypeChange(byteType, intType)
+    val fieldWithTypeChange = new StructField(
+      "id",
+      intType,
+      true,
+      fieldMetadata(1, "id")).withTypeChanges(List(existingTypeChange).asJava)
+
+    val currentSchema = new StructType(List(fieldWithTypeChange).asJava)
+    // Change the type to long without specifying the previous type change
+    val updatedSchema = newSchema((1, new StructField("id", intType, true)))
+
+    val schemaChanges = computeSchemaChangesById(currentSchema, updatedSchema)
+
+    // Verify that the updated schema has the TypeChange preserved and a new one added
+    assert(schemaChanges.updatedSchema().isPresent)
+    val updatedField = schemaChanges.updatedSchema().get().get("id")
+
+    // Check that both type changes are recorded (the original and the new one)
+    val typeChanges = updatedField.getTypeChanges
+    assert(typeChanges.size() == 1)
+    assert(typeChanges.get(0).getFrom == byteType)
+    assert(typeChanges.get(0).getTo == intType)
+  }
+
+  test("Type changes are preserved across schema updates and new ones are added") {
+    // Create a field with integer type and an existing type change from byte to int
+    val byteType = ByteType.BYTE
+    val intType = IntegerType.INTEGER
+    val longType = LongType.LONG
+
+    val existingTypeChange = new TypeChange(byteType, intType)
+    val fieldWithTypeChange = new StructField(
+      "id",
+      intType,
+      true,
+      fieldMetadata(1, "id")).withTypeChanges(List(existingTypeChange).asJava)
+
+    val currentSchema = new StructType(List(fieldWithTypeChange).asJava)
+    // Change the type to long without specifying the previous type change
+    val updatedSchema = newSchema((1, new StructField("id", longType, true)))
+
+    val schemaChanges = computeSchemaChangesById(currentSchema, updatedSchema)
+
+    // Verify that the updated schema has the TypeChange preserved and a new one added
+    assert(schemaChanges.updatedSchema().isPresent)
+    val updatedField = schemaChanges.updatedSchema().get().get("id")
+
+    // Check that both type changes are recorded (the original and the new one)
+    val typeChanges = updatedField.getTypeChanges
+    assert(typeChanges.size() == 2)
+    val typeChange = typeChanges.get(0)
+    assert(typeChange.getFrom == byteType)
+    assert(typeChange.getTo == intType)
+    val newTypeChange = typeChanges.get(1)
+    assert(newTypeChange.getFrom == intType)
+    assert(newTypeChange.getTo == longType)
+  }
+
+  test("Throws exception when type changes are inconsistent") {
+    // Create a field with integer type and an existing type change from byte to int
+    val byteType = ByteType.BYTE
+    val intType = IntegerType.INTEGER
+    val longType = LongType.LONG
+
+    val existingTypeChange = new TypeChange(byteType, intType)
+    val fieldWithTypeChange = new StructField(
+      "id",
+      intType,
+      true,
+      fieldMetadata(1, "id")).withTypeChanges(List(existingTypeChange).asJava)
+
+    val currentSchema = new StructType(List(fieldWithTypeChange).asJava)
+
+    // Create a new field with a different type change history
+    val differentTypeChange = new TypeChange(longType, intType)
+    val fieldWithDifferentTypeChange = new StructField(
+      "id",
+      intType,
+      true,
+      fieldMetadata(1, "id")).withTypeChanges(List(differentTypeChange).asJava)
+
+    val updatedSchema = new StructType(List(fieldWithDifferentTypeChange).asJava)
+
+    // This should throw an exception because the type changes are not equal
+    expectFailure(
+      "detected a modified type changes field at 'id'",
+      "typechange(from=byte,to=integer)",
+      "typechange(from=long,to=integer)") {
+      computeSchemaChangesById(currentSchema, updatedSchema)
+    }
+  }
+
+  private val validTypeWideningSchemas = Table(
+    (
+      "schemaBefore",
+      "schemaAfter",
+      "typeWideningEnabled",
+      "icebergWriterCompatV1Enabled",
+      "shouldSucceed"),
+    // Integer widening: Int -> Long (always allowed with type widening)
+    (
+      primitiveSchema,
+      new StructType().add(
+        "id",
+        LongType.LONG,
+        true,
+        fieldMetadata(id = 1, physicalName = "id")),
+      /* typeWideningEnabled= */ true,
+      /* icebergWriterCompatv1enabled= */ false,
+      /* shouldSucceed= */ true),
+    // Integer widening: Int -> Long (not allowed without type widening)
+    (
+      primitiveSchema,
+      new StructType().add(
+        "id",
+        LongType.LONG,
+        true,
+        fieldMetadata(id = 1, physicalName = "id")),
+      /* typeWideningEnabled= */ false,
+      /* icebergWriterCompatv1enabled= */ false,
+      /* shouldSucceed= */ false),
+    // Integer to Double widening (allowed with type widening but not with Iceberg compat)
+    (
+      primitiveSchema,
+      new StructType().add(
+        "id",
+        DoubleType.DOUBLE,
+        true,
+        fieldMetadata(id = 1, physicalName = "id")),
+      /* typeWideningEnabled= */ true,
+      /* icebergWriterCompatv1enabled= */ false,
+      /* shouldSucceed= */ true),
+    // Integer to Double widening (not allowed with Iceberg compat)
+    (
+      primitiveSchema,
+      new StructType().add(
+        "id",
+        DoubleType.DOUBLE,
+        true,
+        fieldMetadata(id = 1, physicalName = "id")),
+      /* typeWideningEnabled= */ true,
+      /* icebergwritercompatv1enabled= */ true,
+      /* shouldSucceed= */ false),
+    // Invalid type change: Int -> String (never allowed)
+    (
+      primitiveSchema,
+      new StructType().add(
+        "id",
+        StringType.STRING,
+        true,
+        fieldMetadata(id = 1, physicalName = "id")),
+      /* typeWideningEnabled= */ true,
+      /* typeWideningEnabled= */ false,
+      /* shouldSucceed= */ false))
+
+  forAll(validTypeWideningSchemas) {
+    (
+        schemaBefore,
+        schemaAfter,
+        typeWideningEnabled,
+        icebergWriterCompatV1Enabled,
+        shouldSucceed) =>
+      test("validateUpdatedSchema with type widening " +
+        s"$schemaBefore $schemaAfter $typeWideningEnabled $icebergWriterCompatV1Enabled") {
+
+        val tblProperties = Map(
+          ColumnMapping.COLUMN_MAPPING_MODE_KEY -> "id",
+          TableConfig.TYPE_WIDENING_ENABLED.getKey -> typeWideningEnabled.toString,
+          TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey ->
+            icebergWriterCompatV1Enabled.toString)
+
+        if (shouldSucceed) {
+          // Should not throw an exception
+          validateUpdatedSchema(
+            metadata(schemaBefore, tblProperties),
+            metadata(schemaAfter, tblProperties),
+            emptySet(),
+            false /* allowNewRequiredFields */
+          )
+        } else {
+          // Should throw an exception
+          val e = intercept[KernelException] {
+            validateUpdatedSchema(
+              metadata(schemaBefore, tblProperties),
+              metadata(schemaAfter, tblProperties),
+              emptySet(),
+              false /* allowNewRequiredFields */
+            )
+          }
+          assert(e.getMessage.contains("Cannot change the type of existing field"))
+        }
+      }
   }
 
   ///////////////////////////////////////////////////////////////////////////
