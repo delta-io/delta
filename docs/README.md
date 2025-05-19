@@ -59,13 +59,3 @@ conda env create --name delta_docs --file=<absolute_path_to_delta_repo>/docs/env
 ### JDK Setup
 
 API doc generation needs JDK 1.8. Make sure to setup `JAVA_HOME` that points to JDK 1.8.
-
-### Building API docs
-
-Run the following command using pnpm to build API docs:
-
-```
-pnpm run build:apis
-```
-
-This will build API docs into `docs/public/api` which can then be served by Astro using either `pnpm run dev` or `pnpm run build && pnpm run preview`.
