@@ -15,10 +15,13 @@
  */
 package io.delta.kernel.internal
 
-import io.delta.kernel.TransactionSuite.testSchema
-
 import java.io.FileNotFoundException
+import java.util
+import java.util.Optional
+
 import scala.reflect.ClassTag
+
+import io.delta.kernel.TransactionSuite.testSchema
 import io.delta.kernel.exceptions.TableNotFoundException
 import io.delta.kernel.internal.actions.{Format, Metadata}
 import io.delta.kernel.internal.util.VectorUtils
@@ -26,10 +29,8 @@ import io.delta.kernel.internal.util.VectorUtils.{buildArrayValue, stringStringM
 import io.delta.kernel.test.MockFileSystemClientUtils
 import io.delta.kernel.types.StringType
 import io.delta.kernel.utils.FileStatus
-import org.scalatest.funsuite.AnyFunSuite
 
-import java.util
-import java.util.Optional
+import org.scalatest.funsuite.AnyFunSuite
 
 class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
@@ -43,8 +44,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
       testSchema,
       buildArrayValue(util.Arrays.asList("c3"), StringType.STRING),
       Optional.of(123),
-      stringStringMapValue(new util.HashMap[String, String]())
-      );
+      stringStringMapValue(new util.HashMap[String, String]()));
 
     new SnapshotImpl(
       null, /* dataPath */
@@ -52,7 +52,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
       null, /* logReplay */
       null, /* protocol */
       metadata,
-        null, /* snapshotContext */
+      null /* snapshotContext */
     )
   }
 
