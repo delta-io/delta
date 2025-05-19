@@ -23,7 +23,7 @@ import org.scalatest.funsuite.AnyFunSuite
 /** Test suite for the TypeWideningChecker class. */
 class TypeWideningCheckerSuite extends AnyFunSuite {
 
-  test("same type is allowd") {
+  test("same type is allowed") {
     // Same types should not be considered widening
     assert(TypeWideningChecker.isWideningSupported(IntegerType.INTEGER, IntegerType.INTEGER))
     assert(TypeWideningChecker.isWideningSupported(StringType.STRING, StringType.STRING))

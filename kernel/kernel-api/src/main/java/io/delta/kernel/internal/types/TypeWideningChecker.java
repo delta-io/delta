@@ -47,7 +47,7 @@ public class TypeWideningChecker {
    *
    * @param sourceType The original data type
    * @param targetType The target data type to widen to
-   * @return true if the type change is a supported widening operation, false otherwise
+   * @return true if the type change is a supported widening operation (or the types are equal), false otherwise
    */
   public static boolean isWideningSupported(DataType sourceType, DataType targetType) {
     // Iceberg V2 type widening is a strict subset of Delta type widening
@@ -80,7 +80,7 @@ public class TypeWideningChecker {
    *
    * @param sourceType The original data type
    * @param targetType The target data type to widen to
-   * @return true if the type change is supported by Iceberg V2, false otherwise
+   * @return true if the type change is supported by Iceberg V2 (sourceType == targetType returns true), false otherwise
    */
   public static boolean isIcebergV2Compatible(DataType sourceType, DataType targetType) {
     // If types are the same, it's not a widening operation
