@@ -14,9 +14,13 @@ export default defineConfig({
     starlight({
       customCss: ["./src/styles/custom.css"],
       title: "Delta Lake",
-      social: {
-        github: "https://github.com/delta-io/delta",
-      },
+      social: [
+        {
+          icon: "github",
+          label: "GitHub",
+          href: "https://github.com/delta-io/delta",
+        },
+      ],
       editLink: {
         baseUrl:
           "https://github.com/jakebellacera/db-site-staging/tree/main/sites/delta-docs",
