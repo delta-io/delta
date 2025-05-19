@@ -39,8 +39,8 @@ public class ParsedLogData {
 
   public enum ParsedLogType {
     PUBLISHED_DELTA(ParsedLogCategory.DELTA),
-    RATIFIED_STAGED_DELTA(ParsedLogCategory.DELTA),
-    RATIFIED_INLINE_DELTA(ParsedLogCategory.DELTA),
+    STAGED_COMMIT(ParsedLogCategory.DELTA),
+    RATIFIED_INLINE_COMMIT(ParsedLogCategory.DELTA),
     LOG_COMPACTION(ParsedLogCategory.LOG_COMPACTION),
     CLASSIC_CHECKPOINT(ParsedLogCategory.CHECKPOINT),
     MULTIPART_CHECKPOINT(ParsedLogCategory.CHECKPOINT),
@@ -71,7 +71,7 @@ public class ParsedLogData {
       type = ParsedLogType.PUBLISHED_DELTA;
     } else if (FileNames.isStagedDeltaFile(path)) {
       version = FileNames.deltaVersion(path);
-      type = ParsedLogType.RATIFIED_STAGED_DELTA;
+      type = ParsedLogType.STAGED_COMMIT;
     } else if (FileNames.isChecksumFile(path)) {
       version = FileNames.checksumVersion(path);
       type = ParsedLogType.CHECKSUM;

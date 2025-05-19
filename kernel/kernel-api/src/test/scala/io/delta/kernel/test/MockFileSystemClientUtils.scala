@@ -37,6 +37,10 @@ trait MockFileSystemClientUtils extends MockEngineUtils {
   val dataPath = new Path("/fake/path/to/table/")
   val logPath = new Path(dataPath, "_delta_log")
 
+  /** Staged commit file status where the timestamp = 10*version */
+  def stagedCommitFile(v: Long): FileStatus =
+    FileStatus.of(FileNames.stagedCommitFile(logPath, v), v, v * 10)
+
   /** Delta file status where the timestamp = 10*version */
   def deltaFileStatus(v: Long): FileStatus =
     FileStatus.of(FileNames.deltaFile(logPath, v), v, v * 10)

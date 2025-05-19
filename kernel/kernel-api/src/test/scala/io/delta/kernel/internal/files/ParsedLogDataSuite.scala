@@ -19,7 +19,7 @@ package io.delta.kernel.internal.files
 import java.util.Optional
 
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
-import io.delta.kernel.internal.files.ParsedLogData.ParsedLogType
+import io.delta.kernel.internal.files.ParsedLogData.{ParsedLogCategory, ParsedLogType}
 import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.test.MockFileSystemClientUtils
 import io.delta.kernel.types.StructType
@@ -49,7 +49,7 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
   test("Throws on version < 0") {
     val exMsg = intercept[IllegalArgumentException] {
-      ParsedLogData.forInlineData(-1, ParsedLogType.RATIFIED_INLINE_DELTA, emptyColumnarBatch)
+      ParsedLogData.forInlineData(-1, ParsedLogType.RATIFIED_INLINE_COMMIT, emptyColumnarBatch)
     }.getMessage
     assert(exMsg.contains("version must be non-negative"))
   }
@@ -79,7 +79,20 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils {
     val parsed = ParsedLogData.forFileStatus(fileStatus)
 
     assert(parsed.version == 5)
-    assert(parsed.getCategory == ParsedLogData.ParsedLogCategory.DELTA)
+    assert(parsed.`type` == ParsedLogType.PUBLISHED_DELTA)
+    assert(parsed.getCategory == ParsedLogCategory.DELTA)
+    assert(parsed.isMaterialized)
+    assert(!parsed.isInline)
+    assert(parsed.getFileStatus == fileStatus)
+  }
+
+  test("Correctly parses staged commit file") {
+    val fileStatus = stagedCommitFile(5)
+    val parsed = ParsedLogData.forFileStatus(fileStatus)
+
+    assert(parsed.version == 5)
+    assert(parsed.`type` == ParsedLogType.STAGED_COMMIT)
+    assert(parsed.getCategory == ParsedLogCategory.DELTA)
     assert(parsed.isMaterialized)
     assert(!parsed.isInline)
     assert(parsed.getFileStatus == fileStatus)
@@ -119,7 +132,8 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
     assert(parsed.isInstanceOf[ParsedCheckpointData])
     assert(parsed.version == 10)
-    assert(parsed.getCategory == ParsedLogData.ParsedLogCategory.CHECKPOINT)
+    assert(parsed.`type` == ParsedLogType.CLASSIC_CHECKPOINT)
+    assert(parsed.getCategory == ParsedLogCategory.CHECKPOINT)
     assert(parsed.isMaterialized)
     assert(!parsed.isInline)
     assert(parsed.getFileStatus == fileStatus)
@@ -145,7 +159,8 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
     assert(parsed.isInstanceOf[ParsedCheckpointData])
     assert(parsed.version == 20)
-    assert(parsed.getCategory == ParsedLogData.ParsedLogCategory.CHECKPOINT)
+    assert(parsed.`type` == ParsedLogType.V2_CHECKPOINT)
+    assert(parsed.getCategory == ParsedLogCategory.CHECKPOINT)
     assert(parsed.isMaterialized)
     assert(!parsed.isInline)
     assert(parsed.getFileStatus == fileStatus)
@@ -194,7 +209,8 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils {
       .asInstanceOf[ParsedMultiPartCheckpointData]
 
     assert(parsed.version == 15)
-    assert(parsed.getCategory == ParsedLogData.ParsedLogCategory.CHECKPOINT)
+    assert(parsed.`type` == ParsedLogType.MULTIPART_CHECKPOINT)
+    assert(parsed.getCategory == ParsedLogCategory.CHECKPOINT)
     assert(parsed.isMaterialized)
     assert(!parsed.isInline)
     assert(parsed.getFileStatus == chkpt_15_1_3)
@@ -267,7 +283,8 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils {
     val parsed = ParsedLogData.forFileStatus(fileStatus).asInstanceOf[ParsedLogCompactionData]
 
     assert(parsed.version == 30)
-    assert(parsed.getCategory == ParsedLogData.ParsedLogCategory.LOG_COMPACTION)
+    assert(parsed.`type` == ParsedLogType.LOG_COMPACTION)
+    assert(parsed.getCategory == ParsedLogCategory.LOG_COMPACTION)
     assert(parsed.isMaterialized)
     assert(!parsed.isInline)
     assert(parsed.getFileStatus == fileStatus)
@@ -319,7 +336,8 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils {
     val parsed = ParsedLogData.forFileStatus(fileStatus)
 
     assert(parsed.version == 5)
-    assert(parsed.getCategory == ParsedLogData.ParsedLogCategory.CHECKSUM)
+    assert(parsed.`type` == ParsedLogType.CHECKSUM)
+    assert(parsed.getCategory == ParsedLogCategory.CHECKSUM)
     assert(parsed.getFileStatus == fileStatus)
   }
 

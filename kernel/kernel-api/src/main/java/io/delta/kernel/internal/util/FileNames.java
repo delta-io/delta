@@ -20,6 +20,7 @@ import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.utils.FileStatus;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -83,9 +84,6 @@ public final class FileNames {
   /** Example: 00000000000000000001.checkpoint.0000000020.0000000060.parquet */
   public static final Pattern MULTI_PART_CHECKPOINT_FILE_PATTERN =
       Pattern.compile("(\\d+)\\.checkpoint\\.(\\d+)\\.(\\d+)\\.parquet");
-
-  private static final String MULTI_PART_CHECKPOINT_FILE_FORMAT =
-      "%020d.checkpoint.%010d.%010d.parquet";
 
   public static final String STAGED_COMMIT_DIRECTORY = "_staged_commits";
 
@@ -187,6 +185,11 @@ public final class FileNames {
     return String.format("%s/%020d.json", path, version);
   }
 
+  public static String stagedCommitFile(Path logPath, long version) {
+    final Path stagedCommitPath = new Path(logPath, STAGED_COMMIT_DIRECTORY);
+    return String.format("%s/%020d.%s.json", stagedCommitPath, version, UUID.randomUUID());
+  }
+
   /** Example: /a/_sidecars/3a0d65cd-4056-49b8-937b-95f9e3ee90e5.parquet */
   public static String sidecarFile(Path path, String sidecar) {
     return String.format("%s/%s/%s", path.toString(), SIDECAR_DIRECTORY, sidecar);
@@ -241,7 +244,7 @@ public final class FileNames {
 
   public static Path multiPartCheckpointFile(Path path, long version, int part, int numParts) {
     return new Path(
-        path, String.format(MULTI_PART_CHECKPOINT_FILE_FORMAT, version, part, numParts));
+        path, String.format("%020d.checkpoint.%010d.%010d.parquet", version, part, numParts));
   }
 
   /**
@@ -256,8 +259,7 @@ public final class FileNames {
   public static List<Path> checkpointFileWithParts(Path path, long version, int numParts) {
     final List<Path> output = new ArrayList<>();
     for (int i = 1; i < numParts + 1; i++) {
-      output.add(
-          new Path(path, String.format(MULTI_PART_CHECKPOINT_FILE_FORMAT, version, i, numParts)));
+      output.add(multiPartCheckpointFile(path, version, i, numParts));
     }
     return output;
   }
