@@ -32,21 +32,6 @@ class DeltaTableTests(DeltaTableTestsMixin, DeltaTestCase):
     def test_verify_paritionedBy_compatibility(self):
         pass
 
-    @unittest.skip("clusterBy has not been implemented yet")
-    def test_create_table_with_cluster_by(self):
-        pass
-
-    @unittest.skip("clusterBy has not been implemented yet")
-    def test_replace_table_with_cluster_by(self):
-        pass
-
-    @unittest.skip("clusterBy has not been implemented yet")
-    def __test_table_with_cluster_by(self) -> None:
-        pass
-
-    @unittest.skip("clusterBy has not been implemented yet")
-    def test_cluster_by_bad_args(self) -> None:
-        pass
 
 if __name__ == "__main__":
     try:
