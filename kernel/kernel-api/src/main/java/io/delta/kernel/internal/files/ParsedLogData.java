@@ -47,10 +47,13 @@ public class ParsedLogData {
     RATIFIED_STAGED_COMMIT(ParsedLogCategory.DELTA),
     RATIFIED_INLINE_COMMIT(ParsedLogCategory.DELTA),
     LOG_COMPACTION(ParsedLogCategory.LOG_COMPACTION),
+    CHECKSUM(ParsedLogCategory.CHECKSUM),
+
+    // Note that the order of these checkpoint enum values is important for comparison of checkpoint
+    // files as we prefer V2 > MULTI_PART > CLASSIC.
     CLASSIC_CHECKPOINT(ParsedLogCategory.CHECKPOINT),
     MULTIPART_CHECKPOINT(ParsedLogCategory.CHECKPOINT),
-    V2_CHECKPOINT(ParsedLogCategory.CHECKPOINT),
-    CHECKSUM(ParsedLogCategory.CHECKSUM);
+    V2_CHECKPOINT(ParsedLogCategory.CHECKPOINT);
 
     public final ParsedLogCategory category;
 
