@@ -28,156 +28,120 @@ export default defineConfig({
         replacesTitle: true,
       },
       sidebar: [
-        { label: "Welcome", link: "/" },
+        { label: "Introduction", link: "/" },
         {
           label: "Apache Spark connector",
+          collapsed: true,
           items: [
             {
-              label: "Quickstart",
-              link: "/apache-spark-connector/quickstart/",
+              slug: "quick-start",
             },
             {
-              label: "Table batch reads and writes",
-              link: "/apache-spark-connector/table-batch-reads-and-writes/",
+              slug: "delta-batch",
             },
             {
-              label: "Table streaming reads and writes",
-              link: "/apache-spark-connector/table-streaming-reads-and-writes/",
+              slug: "delta-streaming",
             },
             {
-              label: "Table deletes, updates, and merges",
-              link: "/apache-spark-connector/table-deletes-updates-and-merges/",
+              slug: "delta-update",
             },
             {
-              label: "Change data feed",
-              link: "/apache-spark-connector/change-data-feed/",
+              slug: "delta-change-data-feed",
             },
             {
-              label: "Table utility commands",
-              link: "/apache-spark-connector/table-utility-commands/",
+              slug: "delta-utility",
             },
             {
-              label: "Constraints",
-              link: "/apache-spark-connector/constraints/",
+              slug: "delta-constraints",
             },
             {
-              label: "How does Delta Lake manage feature compatibility?",
-              link: "/apache-spark-connector/how-does-delta-lake-manage-feature-compatibility/",
+              slug: "versioning",
             },
             {
-              label: "Delta default column values",
-              link: "/apache-spark-connector/delta-default-column-values/",
+              slug: "delta-default-columns",
             },
             {
-              label: "Delta column mapping",
-              link: "/apache-spark-connector/delta-column-mapping/",
+              slug: "delta-column-mapping",
             },
             {
-              label: "Use liquid clustering for Delta tables",
-              link: "/apache-spark-connector/use-liquid-clustering-for-delta-tables/",
+              slug: "delta-clustering",
             },
             {
-              label: "What are deletion vectors?",
-              link: "/apache-spark-connector/what-are-deletion-vectors/",
+              slug: "delta-deletion-vectors",
             },
             {
-              label: "Drop Delta table features",
-              link: "/apache-spark-connector/drop-delta-table-features/",
+              slug: "delta-drop-feature",
             },
             {
-              label: "Use row tracking for Delta tables",
-              link: "/apache-spark-connector/use-row-tracking-for-delta-tables/",
+              slug: "delta-row-tracking",
             },
             {
-              label: "Storage configuration",
-              link: "/apache-spark-connector/storage-configuration/",
+              slug: "delta-storage",
             },
             {
-              label: "Delta type widening",
-              link: "/apache-spark-connector/delta-type-widening/",
+              slug: "delta-type-widening",
             },
             {
-              label: "Universal Format (UniForm)",
-              link: "/apache-spark-connector/universal-format-uniform/",
+              slug: "delta-uniform",
             },
             {
-              label: "Read Delta Sharing Tables",
-              link: "/apache-spark-connector/read-delta-sharing-tables/",
+              slug: "delta-sharing",
             },
             {
-              label: "Concurrency control",
-              link: "/apache-spark-connector/concurrency-control/",
+              slug: "concurrency-control",
             },
             {
-              label: "Migration guide",
-              link: "/apache-spark-connector/migration-guide/",
+              slug: "porting",
             },
             {
-              label: "Best practices",
-              link: "/apache-spark-connector/best-practices/",
+              slug: "best-practices",
             },
             {
-              label: "Frequently asked questions (FAQ)",
-              link: "/apache-spark-connector/faq/",
+              slug: "delta-faq",
             },
             {
-              label: "Optimizations",
-              link: "/apache-spark-connector/optimizations/",
+              slug: "optimizations-oss",
             },
           ],
         },
         {
-          label: "Trino connector",
-          link: "/trino-connector/",
+          slug: "delta-trino-integration",
         },
         {
-          label: "Presto connector",
-          link: "/presto-connector/",
+          slug: "delta-presto-integration",
         },
         {
-          label:
-            "Presto, Trino, and Athena to Delta Lake integration using manifests",
-          link: "/presto-integration/",
+          slug: "redshift-spectrum-integration",
         },
         {
-          label: "AWS Redshift Spectrum connector",
-          link: "/aws-redshift-spectrum-connector/",
+          slug: "snowflake-integration",
         },
         {
-          label: "Snowflake integration",
-          link: "/snowflake-integration/",
+          slug: "bigquery-integration",
         },
         {
-          label: "Google BigQuery connector",
-          link: "/bigquery-integration/",
+          slug: "flink-integration",
         },
         {
-          label: "Apache Flink connector",
-          link: "/flink-integration/",
+          slug: "delta-more-connectors",
         },
         {
-          label: "Delta more connectors",
-          link: "/delta-more-connectors/",
+          slug: "delta-kernel",
         },
         {
-          label: "Delta Kernel",
-          link: "/delta-kernel/",
+          slug: "delta-standalone",
         },
         {
-          label: "Delta Lake APIs",
-          link: "/delta-lake-apis/",
+          slug: "delta-apidoc",
         },
         {
-          label: "Releases",
-          link: "/releases/",
+          slug: "releases",
         },
         {
-          label: "Delta Lake Resources",
-          link: "/delta-resources/",
+          slug: "delta-resources",
         },
         {
-          label: "Delta table properties reference",
-          link: "/table-properties/",
+          slug: "table-properties",
         },
         {
           label: "Contribute",

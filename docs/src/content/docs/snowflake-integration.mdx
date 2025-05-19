@@ -1,5 +1,6 @@
 ---
-title: Snowflake Connector
+title: Snowflake connector
+description: Learn how to set up an integration to enable you to read Delta tables from Snowflake.
 ---
 
 import { Tabs, TabItem, Aside, Steps } from "@astrojs/starlight/components";
@@ -7,11 +8,11 @@ import { Tabs, TabItem, Aside, Steps } from "@astrojs/starlight/components";
 Visit the [Snowflake Delta Lake support](https://docs.snowflake.com/en/user-guide/tables-external-intro.html#delta-lake-support) documentation to use the connector.
 
 <Aside type="caution" title="Important">
-Some users in the community have reported that Snowflake, unlike [Trino](https://trino.io/docs/current/connector/delta-lake.html) or [Spark](/apache-spark-connector/table-batch-reads-and-writes/), is not using [Delta statistics](/apache-spark-connector/optimizations/#data-skipping) to do data skipping when reading Delta tables. Due to this bug, Snowflake may read a lot of unnecessary parquet files resulting in poor query performance and increased API call requests from cloud providers.
+Some users in the community have reported that Snowflake, unlike [Trino](https://trino.io/docs/current/connector/delta-lake.html) or [Spark](/delta-batch/), is not using [Delta statistics](/optimizations-oss/#data-skipping) to do data skipping when reading Delta tables. Due to this bug, Snowflake may read a lot of unnecessary parquet files resulting in poor query performance and increased API call requests from cloud providers.
 
 If you are a Snowflake customer and have subscribed to their enterprise support, please [open a support case](https://community.snowflake.com/s/article/How-To-Submit-a-Support-Case-in-Snowflake-Lodge).
 
-As a workaround, you can enable [Delta UniForm](/apache-spark-connector/universal-format-uniform/) to generate Iceberg metadata and read these tables as Iceberg tables from Snowflake.
+As a workaround, you can enable [Delta UniForm](/delta-uniform/) to generate Iceberg metadata and read these tables as Iceberg tables from Snowflake.
 
 </Aside>
 
@@ -59,7 +60,7 @@ deltaTable.generate("symlink_format_manifest")
 </TabItem>
 </Tabs>
 
-See [Generate a manifest file](/apache-spark-connector/table-utility-commands/#generate-a-manifest-file) for details.
+See [Generate a manifest file](/delta-utility/#generate-a-manifest-file) for details.
 
 The `generate` operation generates manifest files at `<path-to-delta-table>/_symlink_format_manifest/`. In other words, the files in this directory contain the names of the data files (that is, Parquet files) that should be read for reading a snapshot of the Delta table.
 
