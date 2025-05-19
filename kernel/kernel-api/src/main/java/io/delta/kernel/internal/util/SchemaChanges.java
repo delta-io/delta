@@ -39,10 +39,15 @@ class SchemaChanges {
   public static class SchemaUpdate {
     private final StructField fieldBefore;
     private final StructField fieldAfter;
+    // Note this is a by name. If we want to be able to track changes
+    // at the where an element is moved to a different location in the
+    // schema we need to add more paths here.
+    private final String pathToAfterField;
 
-    SchemaUpdate(StructField fieldBefore, StructField fieldAfter) {
+    SchemaUpdate(StructField fieldBefore, StructField fieldAfter, String pathToAfterField) {
       this.fieldBefore = fieldBefore;
       this.fieldAfter = fieldAfter;
+      this.pathToAfterField = pathToAfterField;
     }
 
     public StructField before() {
@@ -51,6 +56,10 @@ class SchemaChanges {
 
     public StructField after() {
       return fieldAfter;
+    }
+
+    public String getPathToAfterField() {
+      return pathToAfterField;
     }
   }
 
@@ -82,8 +91,9 @@ class SchemaChanges {
       return this;
     }
 
-    public Builder withUpdatedField(StructField existingField, StructField newField) {
-      updatedFields.add(new SchemaUpdate(existingField, newField));
+    public Builder withUpdatedField(
+        StructField existingField, StructField newField, String pathToAfterField) {
+      updatedFields.add(new SchemaUpdate(existingField, newField, pathToAfterField));
       return this;
     }
 

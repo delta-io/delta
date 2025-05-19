@@ -17,6 +17,7 @@ package io.delta.kernel.internal.util;
 
 import static io.delta.kernel.internal.DeltaErrors.*;
 import static io.delta.kernel.internal.util.ColumnMapping.*;
+import static io.delta.kernel.internal.util.ColumnMapping.getColumnId;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.lang.String.format;
 
@@ -393,28 +394,70 @@ public class SchemaUtils {
 
   /* Compute the SchemaChanges using field IDs */
   static SchemaChanges computeSchemaChangesById(StructType currentSchema, StructType newSchema) {
-    Map<Integer, StructField> currentFieldIdToField = fieldsById(currentSchema);
-    Map<Integer, StructField> updatedFieldIdToField = fieldsById(newSchema);
     SchemaChanges.Builder schemaDiff = SchemaChanges.builder();
-    for (Map.Entry<Integer, StructField> fieldInUpdatedSchema : updatedFieldIdToField.entrySet()) {
-      StructField existingField = currentFieldIdToField.get(fieldInUpdatedSchema.getKey());
-      StructField updatedField = fieldInUpdatedSchema.getValue();
-      // New field added
-      if (existingField == null) {
-        schemaDiff.withAddedField(updatedField);
-      } else if (!existingField.equals(updatedField)) {
-        // Field changed name, nullability, metadata or type
-        schemaDiff.withUpdatedField(existingField, updatedField);
+    findAndAddRemovedFields(currentSchema, newSchema, schemaDiff);
+    Map<SchemaElementId, StructField> currentFieldIdToField = fieldsByElementId(currentSchema);
+    Set<Integer> addedFieldIds = new HashSet<>();
+    for (SchemaIterable.SchemaElement newElement : new SchemaIterable(newSchema)) {
+      SchemaElementId id = getSchemaElementId(newElement);
+      if (addedFieldIds.contains(id.getId())) {
+        // Skip early if this is a child of an added field.
+        continue;
       }
-    }
 
-    for (Map.Entry<Integer, StructField> entry : currentFieldIdToField.entrySet()) {
-      if (!updatedFieldIdToField.containsKey(entry.getKey())) {
-        schemaDiff.withRemovedField(entry.getValue());
+      StructField existingField = currentFieldIdToField.get(id);
+      if (existingField == null) {
+        SchemaElementId rootId = new SchemaElementId("", id.getId());
+        if (!currentFieldIdToField.containsKey(rootId)) {
+          addedFieldIds.add(id.getId());
+          schemaDiff.withAddedField(newElement.getNearestStructFieldAncestor());
+        }
+        // Getting here implies a structural change in nested maps/arrays which will be caught at
+        // when comparing the higher level element (or we added a field in the if statement above).
+        continue;
+      }
+      StructField updatedField = newElement.getField();
+      if (!existingField.equals(updatedField)) {
+        // Field changed name, nullability, metadata or type
+        schemaDiff.withUpdatedField(existingField, updatedField, newElement.getNamePath());
       }
     }
 
     return schemaDiff.build();
+  }
+
+  private static Map<SchemaElementId, StructField> fieldsByElementId(StructType schema) {
+    Map<SchemaElementId, StructField> fieldIdToField = new HashMap<>();
+    for (SchemaIterable.SchemaElement element : new SchemaIterable(schema)) {
+      SchemaElementId id = getSchemaElementId(element);
+      checkArgument(
+          !fieldIdToField.containsKey(id),
+          "Field %s with id %d already exists",
+          element.getNamePath(),
+          id);
+      fieldIdToField.put(id, element.getField());
+    }
+    return fieldIdToField;
+  }
+
+  private static SchemaElementId getSchemaElementId(SchemaIterable.SchemaElement element) {
+    int columnId = getColumnId(element.getNearestStructFieldAncestor());
+    return new SchemaElementId(element.getPathFromNearestStructFieldAncestor(""), columnId);
+  }
+
+  private static void findAndAddRemovedFields(
+      StructType currentSchema, StructType newSchema, SchemaChanges.Builder schemaDiff) {
+    Map<Integer, StructField> fieldIdToField = fieldsById(newSchema);
+    for (SchemaIterable.SchemaElement element : new SchemaIterable(currentSchema)) {
+      if (!element.isStructField()) {
+        continue;
+      }
+      StructField field = element.getField();
+      int columnId = getCheckedColumnId(field);
+      if (!fieldIdToField.containsKey(columnId)) {
+        schemaDiff.withRemovedField(element.getField());
+      }
+    }
   }
 
   private static void validatePhysicalNameConsistency(
@@ -524,10 +567,7 @@ public class SchemaUtils {
     }
 
     for (SchemaChanges.SchemaUpdate updatedFields : schemaChanges.updatedFields()) {
-      // ToDo: See if recursion can be avoided by incorporating map key/value and array element
-      // updates in updatedFields
-      validateFieldCompatibility(
-          updatedFields.before(), updatedFields.after(), icebergWriterCompatV1Enabled);
+      validateFieldCompatibility(updatedFields, icebergWriterCompatV1Enabled);
     }
   }
 
@@ -537,32 +577,16 @@ public class SchemaUtils {
    * tightened
    */
   private static void validateFieldCompatibility(
-      StructField existingField, StructField newField, boolean icebergWriterCompatV1Enabled) {
+      SchemaChanges.SchemaUpdate update, boolean icebergWriterCompatV1Enabled) {
+    StructField existingField = update.before();
+    StructField newField = update.after();
     if (existingField.isNullable() && !newField.isNullable()) {
       throw new KernelException(
           String.format(
-              "Cannot tighten the nullability of existing field %s", existingField.getName()));
+              "Cannot tighten the nullability of existing field %s", update.getPathToAfterField()));
     }
 
-    // Both fields are structs, ensure there's no changes in the individual fields
-    // ToDo: Prevent additions, removals,
-    //  and type updates to struct fields when the struct is a map key
-    if (existingField.getDataType() instanceof StructType
-        && newField.getDataType() instanceof StructType) {
-      StructType existingStruct = (StructType) existingField.getDataType();
-      StructType newStruct = (StructType) newField.getDataType();
-      Map<Integer, StructField> existingNestedFields =
-          existingStruct.fields().stream()
-              .collect(Collectors.toMap(ColumnMapping::getColumnId, Function.identity()));
-
-      for (StructField newNestedField : newStruct.fields()) {
-        StructField existingNestedField = existingNestedFields.get(getColumnId(newNestedField));
-        if (existingNestedField != null) {
-          validateFieldCompatibility(
-              existingNestedField, newNestedField, icebergWriterCompatV1Enabled);
-        }
-      }
-    } else if (existingField.getDataType() instanceof MapType
+    if (existingField.getDataType() instanceof MapType
         && newField.getDataType() instanceof MapType) {
       MapType existingMapType = (MapType) existingField.getDataType();
       MapType newMapType = (MapType) newField.getDataType();
@@ -581,43 +605,65 @@ public class SchemaUtils {
                   newField.getName(), currentKeyType, newKeyType));
         }
       }
+    } else {
+      for (Class<DataType> clazz : new Class[] {StructType.class, ArrayType.class}) {
+        if (existingField.getDataType().getClass() == clazz
+            && newField.getDataType().getClass() == clazz) {
+          return;
+        }
+      }
+      if (!existingField.getDataType().equivalent(newField.getDataType())) {
+        throw new KernelException(
+            String.format(
+                "Cannot change the type of existing field %s from %s to %s",
+                existingField.getName(), existingField.getDataType(), newField.getDataType()));
+      }
+    }
+  }
 
-      validateFieldCompatibility(
-          existingMapType.getKeyField(), newMapType.getKeyField(), icebergWriterCompatV1Enabled);
-      validateFieldCompatibility(
-          existingMapType.getValueField(),
-          newMapType.getValueField(),
-          icebergWriterCompatV1Enabled);
-    } else if (existingField.getDataType() instanceof ArrayType
-        && newField.getDataType() instanceof ArrayType) {
-      ArrayType existingArrayType = (ArrayType) existingField.getDataType();
-      ArrayType newArrayType = (ArrayType) newField.getDataType();
+  private static class SchemaElementId {
+    private final String getPath;
+    private final int id;
 
-      validateFieldCompatibility(
-          existingArrayType.getElementField(),
-          newArrayType.getElementField(),
-          icebergWriterCompatV1Enabled);
-    } else if (!existingField.getDataType().equivalent(newField.getDataType())) {
-      throw new KernelException(
-          String.format(
-              "Cannot change the type of existing field %s from %s to %s",
-              existingField.getName(), existingField.getDataType(), newField.getDataType()));
+    SchemaElementId(String name, int id) {
+      this.getPath = name;
+      this.id = id;
+    }
+
+    public String getGetPath() {
+      return getPath;
+    }
+
+    public int getId() {
+      return id;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+      if (o == null || getClass() != o.getClass()) return false;
+      SchemaElementId that = (SchemaElementId) o;
+      return id == that.id && Objects.equals(getPath, that.getPath);
+    }
+
+    @Override
+    public int hashCode() {
+      return Objects.hash(getPath, id);
+    }
+
+    @Override
+    public String toString() {
+      return "SchemaElementId{" + "getPath='" + getPath + '\'' + ", id=" + id + '}';
     }
   }
 
   private static Map<Integer, StructField> fieldsById(StructType schema) {
-    List<Tuple2<List<String>, StructField>> columnPathToStructField =
-        filterRecursively(
-            schema,
-            true /* recurseIntoMapOrArrayElements */,
-            false /* stopOnFirstMatch */,
-            sf -> true);
     Map<Integer, StructField> columnIdToField = new HashMap<>();
-    for (Tuple2<List<String>, StructField> pathAndField : columnPathToStructField) {
-      StructField field = pathAndField._2;
-      checkArgument(hasColumnId(field), "Field %s is missing column id", field.getName());
-      checkArgument(hasPhysicalName(field), "Field %s is missing physical name", field.getName());
-      int columnId = getColumnId(field);
+    for (SchemaIterable.SchemaElement element : new SchemaIterable(schema)) {
+      if (!element.isStructField()) {
+        continue;
+      }
+      StructField field = element.getField();
+      int columnId = getCheckedColumnId(field);
       checkArgument(
           !columnIdToField.containsKey(columnId),
           "Field %s with id %d already exists",
@@ -627,6 +673,12 @@ public class SchemaUtils {
     }
 
     return columnIdToField;
+  }
+
+  private static int getCheckedColumnId(StructField field) {
+    checkArgument(hasColumnId(field), "Field %s is missing column id", field.getName());
+    checkArgument(hasPhysicalName(field), "Field %s is missing physical name", field.getName());
+    return ColumnMapping.getColumnId(field);
   }
 
   private static String escapeDots(String name) {

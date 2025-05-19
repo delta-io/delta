@@ -849,14 +849,14 @@ class SchemaUtilsSuite extends AnyFunSuite {
     "allowNewRequiredFields=false") {
     assertSchemaEvolutionFailure[KernelException](
       existingFieldNullabilityTightened,
-      "Cannot tighten the nullability of existing field id")
+      "Cannot tighten the nullability of existing field .*id")
   }
 
   test("validateUpdatedSchema fails when existing nullability is tightened with " +
     "allowNewRequiredFields=true") {
     assertSchemaEvolutionFailure[KernelException](
       existingFieldNullabilityTightened,
-      "Cannot tighten the nullability of existing field id",
+      "Cannot tighten the nullability of existing field .*id",
       allowNewRequiredFields = true)
   }
 
@@ -1101,7 +1101,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
           allowNewRequiredFields)
       }
 
-      assert(e.getMessage.matches(expectedMessage))
+      assert(e.getMessage.matches(expectedMessage), s"${e.getMessage} ~= $expectedMessage")
     }
   }
 
