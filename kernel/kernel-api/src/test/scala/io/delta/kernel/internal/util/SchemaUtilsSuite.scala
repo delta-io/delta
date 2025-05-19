@@ -352,7 +352,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
     assert(schemaChanges.addedFields().isEmpty)
     assert(schemaChanges.removedFields().isEmpty)
     assert(schemaChanges.updatedFields().size() == 1)
-    assert(schemaChanges.updatedFields().get(0) ==
+    assert(schemaChanges.updatedFields().get(0).asTuple ==
       new Tuple2(fieldMappingBefore.get("id"), fieldMappingAfter.get("renamed_id")))
   }
 
@@ -367,7 +367,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
     assert(schemaChanges.addedFields().isEmpty)
     assert(schemaChanges.removedFields().isEmpty)
     assert(schemaChanges.updatedFields().size() == 1)
-    assert(schemaChanges.updatedFields().get(0) ==
+    assert(schemaChanges.updatedFields().get(0).asTuple ==
       new Tuple2(fieldMappingBefore.get("id"), fieldMappingAfter.get("promoted_to_long")))
   }
 
@@ -401,7 +401,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
     assert(schemaChanges.addedFields().isEmpty)
     assert(schemaChanges.removedFields().isEmpty)
     assert(schemaChanges.updatedFields().size() == 1)
-    assert(schemaChanges.updatedFields().get(0) == new Tuple2(
+    assert(schemaChanges.updatedFields().get(0).asTuple == new Tuple2(
       fieldMappingBefore.get("data"),
       fieldMappingAfter.get("required_data")))
   }
@@ -435,8 +435,10 @@ class SchemaUtilsSuite extends AnyFunSuite {
 
     assert(schemaChanges.addedFields().isEmpty)
     assert(schemaChanges.removedFields().isEmpty)
-    assert(schemaChanges.updatedFields().size() == 1, s"${schemaChanges.updatedFields.get(0)._1}")
-    assert(schemaChanges.updatedFields().get(0) == new Tuple2(
+    assert(
+      schemaChanges.updatedFields().size() == 1,
+      s"${schemaChanges.updatedFields.get(0).getFieldBefore}")
+    assert(schemaChanges.updatedFields().get(0).asTuple == new Tuple2(
       fieldMappingBefore.get("struct"),
       fieldMappingAfter.get("struct")))
   }
@@ -469,7 +471,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
     assert(schemaChanges.addedFields().isEmpty)
     assert(schemaChanges.removedFields().isEmpty)
     assert(schemaChanges.updatedFields().size() == 1)
-    assert(schemaChanges.updatedFields().get(0) == new Tuple2(
+    assert(schemaChanges.updatedFields().get(0).asTuple == new Tuple2(
       fieldMappingBefore.get("id"),
       fieldMappingAfter.get("id")))
   }
