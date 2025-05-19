@@ -1177,7 +1177,7 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
         table,
         engine,
         newSchema,
-        "Cannot tighten the nullability of existing field a")
+        "Cannot tighten the nullability of existing field renamed_a")
     }
   }
 

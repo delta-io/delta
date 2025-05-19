@@ -177,6 +177,14 @@ public class SchemaIterable implements Iterable<SchemaIterable.SchemaElement> {
      * [<prefix>.]((key|value|element).)*(key|value|element)}
      */
     String getPathFromNearestStructFieldAncestor(String prefix);
+
+    /**
+     * Returns true if this element is a StructField (as compared to an array element or a map
+     * key/value).
+     */
+    default boolean isStructField() {
+      return false;
+    }
   }
   /**
    * Interface for manipulating Schema elements.
@@ -440,6 +448,11 @@ public class SchemaIterable implements Iterable<SchemaIterable.SchemaElement> {
   private static class StructSchemaZipper extends SchemaZipper {
     StructSchemaZipper(List<SchemaZipper> parents, StructType structType) {
       super(parents, structType.fields());
+    }
+
+    @Override
+    public boolean isStructField() {
+      return true;
     }
 
     @Override
