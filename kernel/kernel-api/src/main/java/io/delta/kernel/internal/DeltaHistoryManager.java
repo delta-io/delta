@@ -185,13 +185,13 @@ public final class DeltaHistoryManager {
 
   /**
    * Finds the commit with the latest in-commit timestamp that is less than or equal to the
-   * searchTimestamp. All commits from `startCommitVersion` till `endCommitExclusive.version`
+   * searchTimestamp. All commits from `startCommitVersionInclusive` till `endCommitVersionInclusive`
    * must have ICT enabled. Also, this method assumes that we have already proven that
    * `searchTimestamp` is in the given range.
    */
   private static Commit getActiveCommitAtTimeFromICTRange(
       long searchTimestamp,
-      long startCommitVersion,
+      long startCommitVersionInclusive,
       long endCommitVersionInclusive,
       Engine engine,
       Path logPath)
