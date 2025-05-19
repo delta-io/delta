@@ -20,6 +20,8 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.UUID
 
+import scala.collection.JavaConverters._
+
 import com.google.protobuf
 import io.delta.connect.proto
 import io.delta.connect.spark.{proto => spark_proto}
@@ -27,7 +29,7 @@ import io.delta.tables.DeltaTable
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.{Dataset, QueryTest, Row, SparkSession}
+import org.apache.spark.sql.{AnalysisException, Dataset, QueryTest, Row, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.ResolvedTable
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
@@ -36,15 +38,18 @@ import org.apache.spark.sql.connect.config.Connect
 import org.apache.spark.sql.connect.delta.ImplicitProtoConversions._
 import org.apache.spark.sql.connect.planner.{SparkConnectPlanTest, SparkConnectPlanner}
 import org.apache.spark.sql.connect.service.{SessionHolder, SparkConnectService}
-import org.apache.spark.sql.delta.{DataFrameUtils, DeltaConfigs, DeltaHistory, DeltaLog}
+import org.apache.spark.sql.delta.{DataFrameUtils, DeltaConfigs, DeltaHistory, DeltaLog, DeltaTableFeatureException, TestReaderWriterFeature, TestRemovableWriterFeature}
 import org.apache.spark.sql.delta.ClassicColumnConversions._
+import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.commands.{DescribeDeltaDetailCommand, DescribeDeltaHistory}
 import org.apache.spark.sql.delta.commands.optimize.OptimizeMetrics
 import org.apache.spark.sql.delta.hooks.GenerateSymlinkManifest
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
+import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{DeltaFileOperations, FileNames}
+import org.apache.spark.sql.types.{IntegerType, LongType, MetadataBuilder, StructField, StructType}
 import org.apache.spark.sql.functions._
 
 class DeltaConnectPlannerSuite
@@ -58,10 +63,6 @@ class DeltaConnectPlannerSuite
     super.sparkConf
       .set(Connect.CONNECT_EXTENSIONS_RELATION_CLASSES.key, classOf[DeltaRelationPlugin].getName)
       .set(Connect.CONNECT_EXTENSIONS_COMMAND_CLASSES.key, classOf[DeltaCommandPlugin].getName)
-  }
-
-  private def createSparkCommand(command: proto.DeltaCommand.Builder): spark_proto.Command = {
-    spark_proto.Command.newBuilder().setExtension(protobuf.Any.pack(command.build())).build()
   }
 
   def createDummySessionHolder(session: SparkSession): SessionHolder = {
@@ -968,6 +969,94 @@ class DeltaConnectPlannerSuite
     }
   }
 
+  test("add table feature support") {
+    val tableName = "test_table"
+    withTable(tableName) {
+      // Create a Delta table with protocol version (1, 1).
+      val oldReaderVersion = 1
+      val oldWriterVersion = 1
+      spark.range(1000)
+        .write
+        .format("delta")
+        .option(DeltaConfigs.MIN_READER_VERSION.key, oldReaderVersion)
+        .option(DeltaConfigs.MIN_WRITER_VERSION.key, oldWriterVersion)
+        .saveAsTable(tableName)
+
+      // Check that protocol version is as expected, before we add the TestReaderWriterFeature.
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+      val oldProtocol = deltaLog.update().protocol
+      assert(oldProtocol.minReaderVersion === oldReaderVersion)
+      assert(oldProtocol.minWriterVersion === oldWriterVersion)
+
+      // Use Delta Connect to add table feature.
+      transform(createSparkCommand(
+        proto.DeltaCommand.newBuilder()
+          .setAddFeatureSupport(
+            proto.AddFeatureSupport.newBuilder()
+              .setTable(proto.DeltaTable.newBuilder().setTableOrViewName(tableName))
+              .setFeatureName(TestReaderWriterFeature.name)
+          )
+      ))
+
+      // Check that protocol version is as expected, after we added the
+      // TestReaderWriterFeature.
+      val newProtocol = deltaLog.update().protocol
+      assert(newProtocol.minReaderVersion === TestReaderWriterFeature.minReaderVersion)
+      assert(newProtocol.minWriterVersion === TestReaderWriterFeature.minWriterVersion)
+    }
+  }
+
+  test("drop table feature support") {
+    val tableName = "test_table"
+    withTable(tableName) {
+      spark.range(1000)
+        .write
+        .format("delta")
+        .option(DeltaConfigs.MIN_READER_VERSION.key, 1)
+        .option(DeltaConfigs.MIN_WRITER_VERSION.key, 1)
+        .saveAsTable(tableName)
+
+    sql(
+      s"""ALTER TABLE $tableName SET TBLPROPERTIES (
+         |delta.feature.${TestRemovableWriterFeature.name} = 'supported'
+         |)""".stripMargin)
+
+      // Check that protocol version is as expected.
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+      assert(deltaLog.update().protocol === Protocol(
+        minReaderVersion = 1,
+        minWriterVersion = 7,
+        readerFeatures = None,
+        writerFeatures = Some(Set(TestRemovableWriterFeature.name))))
+
+      // Attempt truncating the history when dropping a feature that is not required.
+      // This verifies the truncateHistory option was correctly passed.
+      assert(intercept[DeltaTableFeatureException] {
+        transform(createSparkCommand(
+          proto.DeltaCommand.newBuilder()
+            .setDropFeatureSupport(
+              proto.DropFeatureSupport.newBuilder()
+                .setTable(proto.DeltaTable.newBuilder().setTableOrViewName(tableName))
+                .setFeatureName(TestRemovableWriterFeature.name)
+                .setTruncateHistory(true)
+            )
+        ))
+      }.getErrorClass === "DELTA_FEATURE_DROP_HISTORY_TRUNCATION_NOT_ALLOWED")
+
+      // Use Delta Connect to drop table feature.
+      transform(createSparkCommand(
+        proto.DeltaCommand.newBuilder()
+          .setDropFeatureSupport(
+            proto.DropFeatureSupport.newBuilder()
+              .setTable(proto.DeltaTable.newBuilder().setTableOrViewName(tableName))
+              .setFeatureName(TestRemovableWriterFeature.name)
+          )
+      ))
+
+      assert(deltaLog.update().protocol === Protocol(1, 1))
+    }
+  }
+  
   test("generate manifest") {
     withTempDir { dir =>
       spark.range(1000).write.format("delta").mode("overwrite").save(dir.getAbsolutePath)
@@ -988,6 +1077,138 @@ class DeltaConnectPlannerSuite
     }
   }
 
+  test("create delta table - basic") {
+    withTempDir { dir =>
+      val tableName = "test_table"
+      withTable(tableName) {
+        val tableComment = "table comment"
+        val nameColA = "colA"
+        val generatedAlwaysAsColA = "1"
+        val nameColB = "colB"
+        val commentColB = "colB comment"
+        val nameColC = "colC"
+        val tableProperties = Map("k1" -> "v1", "k2" -> "v2")
+        transform(createSparkCommand(
+          proto.DeltaCommand.newBuilder()
+            .setCreateDeltaTable(
+              proto.CreateDeltaTable.newBuilder()
+                .setMode(proto.CreateDeltaTable.Mode.MODE_CREATE)
+                .setTableName(tableName)
+                .setLocation(dir.getAbsolutePath)
+                .setComment(tableComment)
+                .addColumns(
+                  proto.CreateDeltaTable.Column.newBuilder()
+                    .setName(nameColA)
+                    .setDataType(UNPARSED_INT_DATA_TYPE)
+                    .setNullable(true)
+                    .setGeneratedAlwaysAs(generatedAlwaysAsColA))
+                .addColumns(
+                  proto.CreateDeltaTable.Column.newBuilder()
+                    .setName(nameColB)
+                    .setDataType(LONG_DATA_TYPE)
+                    .setNullable(false)
+                    .setComment(commentColB))
+                .addColumns(
+                  proto.CreateDeltaTable.Column.newBuilder()
+                    .setName(nameColC)
+                    .setDataType(LONG_DATA_TYPE)
+                    .setNullable(false)
+                    .setIdentityInfo(
+                        proto.CreateDeltaTable.Column.IdentityInfo.newBuilder()
+                          .setStart(100)
+                          .setStep(10)
+                          .setAllowExplicitInsert(true)
+                    )
+                )
+                .putAllProperties(tableProperties.asJava))))
+
+        val table = spark.sessionState.catalog.getTableMetadata(TableIdentifier(tableName))
+        val metadata = DeltaLog.forTable(spark, TableIdentifier(tableName)).snapshot.metadata
+        
+        assert(table.comment.contains(tableComment))
+        assert(table.location.getPath == dir.getAbsolutePath)
+        assert(metadata.configuration == tableProperties)
+
+        val colAMetadata = new MetadataBuilder()
+          .putString(GENERATION_EXPRESSION_METADATA_KEY, generatedAlwaysAsColA)
+          .build()
+        val colBMetadata = new MetadataBuilder().putString("comment", commentColB).build()
+        val colCMetadata = new MetadataBuilder()
+          .putLong(DeltaSourceUtils.IDENTITY_INFO_START, 100)
+          .putLong(DeltaSourceUtils.IDENTITY_INFO_STEP, 10)
+          .putBoolean(DeltaSourceUtils.IDENTITY_INFO_ALLOW_EXPLICIT_INSERT, true)
+          .build()
+        val expectedSchema = StructType(Seq(
+          StructField(nameColA, IntegerType, nullable = true, colAMetadata),
+          StructField(nameColB, LongType, nullable = false, colBMetadata),
+          StructField(nameColC, LongType, nullable = false, colCMetadata)))
+        
+        assert(metadata.schema == expectedSchema)
+      }
+    }
+  }
+
+  test("create delta table - modes") {
+    val tableName = "test_table"
+    def createTable(mode: proto.CreateDeltaTable.Mode, colName: String): Unit = {
+      transform(createSparkCommand(
+        proto.DeltaCommand.newBuilder()
+          .setCreateDeltaTable(
+            proto.CreateDeltaTable.newBuilder()
+              .setMode(mode)
+              .setTableName(tableName)
+              .addColumns(
+                proto.CreateDeltaTable.Column.newBuilder()
+                  .setName(colName)
+                  .setDataType(LONG_DATA_TYPE)
+                  .setNullable(true)))))
+    }
+
+    def getColumnName(): String = {
+      DeltaLog.forTable(spark, TableIdentifier(tableName)).snapshot.metadata.schema.head.name
+    }
+
+    val expectedQualifiedTableName = s"`default`.`$tableName`"
+
+    withTable(tableName) {
+      val replaceError = intercept[AnalysisException] {
+        createTable(proto.CreateDeltaTable.Mode.MODE_REPLACE, colName = "column1")
+      }
+      checkError(
+        replaceError,
+        condition = "TABLE_OR_VIEW_NOT_FOUND",
+        parameters = Map("relationName" -> expectedQualifiedTableName))
+
+      createTable(proto.CreateDeltaTable.Mode.MODE_CREATE, colName = "column2")
+      assert(getColumnName() == "column2")
+
+      val createError = intercept[AnalysisException] {
+        createTable(proto.CreateDeltaTable.Mode.MODE_CREATE, colName = "column3")
+      }
+      checkError(
+        createError,
+        condition = "TABLE_OR_VIEW_ALREADY_EXISTS",
+        parameters = Map("relationName" -> s"`default`.`$tableName`"))
+
+      createTable(proto.CreateDeltaTable.Mode.MODE_REPLACE, colName = "column4")
+      assert(getColumnName() == "column4")
+
+      createTable(proto.CreateDeltaTable.Mode.MODE_CREATE_IF_NOT_EXISTS, colName = "column5")
+      assert(getColumnName() == "column4")
+
+      spark.sql(s"DROP TABLE $tableName")
+      createTable(proto.CreateDeltaTable.Mode.MODE_CREATE_IF_NOT_EXISTS, colName = "column6")
+      assert(getColumnName() == "column6")
+
+      createTable(proto.CreateDeltaTable.Mode.MODE_CREATE_OR_REPLACE, colName = "column7")
+      assert(getColumnName() == "column7")
+
+      spark.sql(s"DROP TABLE $tableName")
+      createTable(proto.CreateDeltaTable.Mode.MODE_CREATE_OR_REPLACE, colName = "column8")
+      assert(getColumnName() == "column8")
+    }
+  }  
+
   private def getTimestampForVersion(log: DeltaLog, version: Long): String = {
     val file = new File(FileNames.unsafeDeltaFile(log.logPath, version).toUri)
     val sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS")
@@ -996,6 +1217,19 @@ class DeltaConnectPlannerSuite
 }
 
 object DeltaConnectPlannerSuite {
+  val UNPARSED_INT_DATA_TYPE: spark_proto.DataType = spark_proto.DataType
+    .newBuilder()
+    .setUnparsed(spark_proto.DataType.Unparsed.newBuilder().setDataTypeString("int"))
+    .build()
+
+  val LONG_DATA_TYPE: spark_proto.DataType = spark_proto.DataType
+    .newBuilder()
+    .setLong(spark_proto.DataType.Long.newBuilder())
+    .build()
+
+  private def createSparkCommand(command: proto.DeltaCommand.Builder): spark_proto.Command = {
+    spark_proto.Command.newBuilder().setExtension(protobuf.Any.pack(command.build())).build()
+  }
 
   private def createSparkRelation(relation: proto.DeltaRelation.Builder): spark_proto.Relation = {
     spark_proto.Relation.newBuilder().setExtension(protobuf.Any.pack(relation.build())).build()

@@ -20,8 +20,11 @@ import scala.collection.JavaConverters._
 
 import com.google.protobuf
 import io.delta.connect.proto
+import io.delta.connect.spark.{proto => spark_proto}
+import io.delta.tables.DeltaTable
 
-import org.apache.spark.sql.connect.common.InvalidPlanInput
+import org.apache.spark.sql.connect.common.{DataTypeProtoConverter, InvalidPlanInput}
+import org.apache.spark.sql.connect.delta.ImplicitProtoConversions._
 import org.apache.spark.sql.connect.planner.SparkConnectPlanner
 import org.apache.spark.sql.connect.plugin.CommandPlugin
 
@@ -49,6 +52,12 @@ class DeltaCommandPlugin extends CommandPlugin with DeltaPlannerBase {
         processUpgradeTableProtocol(planner, command.getUpgradeTableProtocol)
       case proto.DeltaCommand.CommandTypeCase.GENERATE =>
         processGenerate(planner, command.getGenerate)
+      case proto.DeltaCommand.CommandTypeCase.CREATE_DELTA_TABLE =>
+        processCreateDeltaTable(planner, command.getCreateDeltaTable)
+      case proto.DeltaCommand.CommandTypeCase.ADD_FEATURE_SUPPORT =>
+        processAddFeatureSupport(planner, command.getAddFeatureSupport)
+      case proto.DeltaCommand.CommandTypeCase.DROP_FEATURE_SUPPORT =>
+        processDropFeatureSupport(planner, command.getDropFeatureSupport)
       case _ =>
         throw InvalidPlanInput(s"${command.getCommandTypeCase}")
     }
@@ -103,5 +112,86 @@ class DeltaCommandPlugin extends CommandPlugin with DeltaPlannerBase {
   private def processGenerate(planner: SparkConnectPlanner, generate: proto.Generate): Unit = {
     val deltaTable = transformDeltaTable(planner, generate.getTable)
     deltaTable.generate(generate.getMode)
+  }
+
+  private def processCreateDeltaTable(
+      planner: SparkConnectPlanner, createDeltaTable: proto.CreateDeltaTable): Unit = {
+    val spark = planner.session
+    val tableBuilder = createDeltaTable.getMode match {
+      case proto.CreateDeltaTable.Mode.MODE_CREATE =>
+        DeltaTable.create(spark)
+      case proto.CreateDeltaTable.Mode.MODE_CREATE_IF_NOT_EXISTS =>
+        DeltaTable.createIfNotExists(spark)
+      case proto.CreateDeltaTable.Mode.MODE_REPLACE =>
+        DeltaTable.replace(spark)
+      case proto.CreateDeltaTable.Mode.MODE_CREATE_OR_REPLACE =>
+        DeltaTable.createOrReplace(spark)
+      case _ =>
+        throw new Exception("Unsupported table creation mode")
+    }
+    if (createDeltaTable.hasTableName) {
+      tableBuilder.tableName(createDeltaTable.getTableName)
+    }
+    if (createDeltaTable.hasLocation) {
+      tableBuilder.location(createDeltaTable.getLocation)
+    }
+    if (createDeltaTable.hasComment) {
+      tableBuilder.comment(createDeltaTable.getComment)
+    }
+    for (column <- createDeltaTable.getColumnsList.asScala) {
+      val colBuilder = DeltaTable
+        .columnBuilder(spark, column.getName)
+        .nullable(column.getNullable)
+      if (column.getDataType.getKindCase == spark_proto.DataType.KindCase.UNPARSED) {
+        colBuilder.dataType(column.getDataType.getUnparsed.getDataTypeString)
+      } else {
+        colBuilder.dataType(DataTypeProtoConverter.toCatalystType(column.getDataType))
+      }
+      if (column.hasGeneratedAlwaysAs) {
+        colBuilder.generatedAlwaysAs(column.getGeneratedAlwaysAs)
+      }
+      if (column.hasIdentityInfo) {
+        val identityInfo = column.getIdentityInfo
+        if (identityInfo.getAllowExplicitInsert) {
+          colBuilder.generatedByDefaultAsIdentity(identityInfo.getStart, identityInfo.getStep)
+        } else {
+          colBuilder.generatedAlwaysAsIdentity(identityInfo.getStart, identityInfo.getStep)
+        }
+      }
+      if (column.hasComment) {
+        colBuilder.comment(column.getComment)
+      }
+      tableBuilder.addColumn(colBuilder.build())
+    }
+    val partitioningColumns = createDeltaTable.getPartitioningColumnsList.asScala.toSeq
+    if (!partitioningColumns.isEmpty) {
+      tableBuilder.partitionedBy(partitioningColumns: _*)
+    }
+    val clusteringColumns = createDeltaTable.getClusteringColumnsList.asScala.toSeq
+    if (!clusteringColumns.isEmpty) {
+      tableBuilder.clusterBy(clusteringColumns: _*)
+    }
+    for ((key, value) <- createDeltaTable.getPropertiesMap.asScala) {
+      tableBuilder.property(key, value)
+    }
+    tableBuilder.execute()
+  }
+
+  private def processAddFeatureSupport(
+      planner: SparkConnectPlanner, addFeatureSupport: proto.AddFeatureSupport): Unit = {
+    val deltaTable = transformDeltaTable(planner, addFeatureSupport.getTable)
+    deltaTable.addFeatureSupport(addFeatureSupport.getFeatureName)
+  }
+
+  private def processDropFeatureSupport(
+      planner: SparkConnectPlanner, dropFeatureSupport: proto.DropFeatureSupport): Unit = {
+    val deltaTable = transformDeltaTable(planner, dropFeatureSupport.getTable)
+    if (dropFeatureSupport.hasTruncateHistory) {
+      deltaTable.dropFeatureSupport(
+        dropFeatureSupport.getFeatureName,
+        dropFeatureSupport.getTruncateHistory)
+    } else {
+      deltaTable.dropFeatureSupport(dropFeatureSupport.getFeatureName)
+    }
   }
 }
