@@ -578,7 +578,7 @@ lazy val sharing = (project in file("sharing"))
     releaseSettings,
     crossSparkSettings(),
     resolvers ++= Seq(
-      "Delta sharing client staging" at "https://oss.sonatype.org/content/repositories/iodelta-1213/"
+      "Delta sharing client staging" at "https://oss.sonatype.org/content/repositories/iodelta-1216"
     ),
     Test / javaOptions ++= Seq("-ea"),
     libraryDependencies ++= Seq(
