@@ -34,7 +34,8 @@ if TYPE_CHECKING:
     from py4j.java_gateway import JavaObject, JVMView  # type: ignore[import]
 
 
-class DeltaConcurrentModificationException(CapturedException, BaseDeltaConcurrentModificationException):
+class DeltaConcurrentModificationException(
+    CapturedException, BaseDeltaConcurrentModificationException):
     """
     The basic class for all Delta commit conflict exceptions.
 

@@ -16,6 +16,7 @@
 
 from pyspark.errors.exceptions.base import PySparkException
 
+
 class DeltaConcurrentModificationException(PySparkException):
     """
     The basic class for all Delta commit conflict exceptions.
