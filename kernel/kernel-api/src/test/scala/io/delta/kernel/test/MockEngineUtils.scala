@@ -182,9 +182,10 @@ class MockReadICTFileJsonHandler(deltaVersionToICTMapping: Map[Long, Long])
     assert(deltaVersionToICTMapping.contains(deltaVersion))
 
     val ict = deltaVersionToICTMapping(deltaVersion)
+    val schema = new StructType().add("commitInfo", CommitInfo.FULL_SCHEMA);
     Utils.singletonCloseableIterator(
       new ColumnarBatch {
-        override def getSchema: StructType = CommitInfo.FULL_SCHEMA
+        override def getSchema: StructType = schema
 
         override def getColumnVector(ordinal: Int): ColumnVector = {
           val struct = Seq(
@@ -199,7 +200,7 @@ class MockReadICTFileJsonHandler(deltaVersionToICTMapping: Map[Long, Long])
           )
           ordinal match {
             case 0 => new ColumnVector {
-                override def getDataType: DataType = new StructType()
+                override def getDataType: DataType = schema
 
                 override def getSize: Int = struct.head.getSize
 
