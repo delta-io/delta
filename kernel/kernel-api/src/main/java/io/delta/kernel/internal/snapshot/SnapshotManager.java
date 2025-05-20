@@ -381,7 +381,7 @@ public class SnapshotManager {
 
     final long latestCompleteCheckpointVersion =
         latestCompleteCheckpointOpt.map(x -> x.version).orElse(-1L);
-    System.out.println(latestCompleteCheckpointVersion);
+
     logger.info("Latest complete checkpoint version: {}", latestCompleteCheckpointVersion);
 
     /////////////////////////////////////////////////////////////////////////////////////////////
