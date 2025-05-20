@@ -52,6 +52,7 @@ public class IcebergUniversalFormatMetadataValidatorAndUpdater {
     Set<String> targetFormats = TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.fromMetadata(metadata);
     boolean isIcebergEnabled = targetFormats.contains(TableConfig.UniversalFormats.FORMAT_ICEBERG);
     boolean isIcebergCompatV2Enabled = TableConfig.ICEBERG_COMPAT_V2_ENABLED.fromMetadata(metadata);
+    boolean isIcebergCompatV3Enabled = TableConfig.ICEBERG_COMPAT_V3_ENABLED.fromMetadata(metadata);
     if (isIcebergEnabled && !isIcebergCompatV2Enabled) {
       throw new InvalidConfigurationValueException(
           TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey(),
@@ -59,6 +60,23 @@ public class IcebergUniversalFormatMetadataValidatorAndUpdater {
           String.format(
               "'%s' must be set to \"true\" to enable iceberg uniform format.",
               TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey()));
+    }
+    if (isIcebergEnabled && !isIcebergCompatV3Enabled) {
+      throw new InvalidConfigurationValueException(
+              TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey(),
+              TableConfig.UniversalFormats.FORMAT_ICEBERG,
+              String.format(
+                      "'%s' must be set to \"true\" to enable iceberg uniform format.",
+                      TableConfig.ICEBERG_COMPAT_V3_ENABLED.getKey()));
+    }
+    if (isIcebergCompatV3Enabled && isIcebergCompatV2Enabled) {
+      throw new InvalidConfigurationValueException(
+              TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey(),
+              TableConfig.UniversalFormats.FORMAT_ICEBERG,
+              String.format(
+                      "'%s' and '%s' cannot be enabled at the same time.",
+                      TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey(),
+                      TableConfig.ICEBERG_COMPAT_V3_ENABLED.getKey()));
     }
   }
 }

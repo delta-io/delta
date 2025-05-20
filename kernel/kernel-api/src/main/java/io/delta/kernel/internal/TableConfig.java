@@ -243,6 +243,23 @@ public class TableConfig<T> {
           true);
 
   /**
+   * Table property that enables modifying the table in accordance with the Delta-Iceberg
+   * Compatibility V3 protocol.
+   *
+   * @see <a
+   *     href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#delta-iceberg-compatibility-v3">
+   *     Delta-Iceberg Compatibility V3 Protocol</a>
+   */
+  public static final TableConfig<Boolean> ICEBERG_COMPAT_V3_ENABLED =
+          new TableConfig<>(
+                  "delta.enableIcebergCompatV3",
+                  "false",
+                  Boolean::valueOf,
+                  value -> true,
+                  "needs to be a boolean.",
+                  true);
+
+  /**
    * The number of columns to collect stats on for data skipping. A value of -1 means collecting
    * stats for all columns.
    *
@@ -339,6 +356,7 @@ public class TableConfig<T> {
               addConfig(this, IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP);
               addConfig(this, COLUMN_MAPPING_MODE);
               addConfig(this, ICEBERG_COMPAT_V2_ENABLED);
+              addConfig(this, ICEBERG_COMPAT_V3_ENABLED);
               addConfig(this, ICEBERG_WRITER_COMPAT_V1_ENABLED);
               addConfig(this, COLUMN_MAPPING_MAX_COLUMN_ID);
               addConfig(this, DATA_SKIPPING_NUM_INDEXED_COLS);
