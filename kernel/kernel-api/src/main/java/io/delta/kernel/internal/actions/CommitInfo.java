@@ -263,9 +263,9 @@ public class CommitInfo {
   }
 
   /**
-   * Returns the `inCommitTimestamp` of delta file at the requested version. Throws an
-   * exception if the delta file does not exist or does not have a commitInfo action
-   * or if the commitInfo action contains an empty `inCommitTimestamp`.
+   * Returns the `inCommitTimestamp` of delta file at the requested version. Throws an exception if
+   * the delta file does not exist or does not have a commitInfo action or if the commitInfo action
+   * contains an empty `inCommitTimestamp`.
    */
   public static long getRequiredInCommitTimestampFromFile(
       Engine engine, Path logPath, long version) {

@@ -121,21 +121,33 @@ public class InCommitTimestampUtils {
       long lowerBoundInclusive,
       long upperBoundInclusive,
       Function<Long, Long> indexToValueMapper) {
+    if (lowerBoundInclusive > upperBoundInclusive) {
+      return Optional.empty();
+    }
+
     long start = lowerBoundInclusive;
     long end = upperBoundInclusive;
-    Optional<Tuple2<Long, Long>> result = Optional.empty();
+    long resultIndex = -1;
+    long resultValue = 0;
+
     while (start <= end) {
-      long curIndex = start + (end - start) / 2;
-      long curValue = indexToValueMapper.apply(curIndex);
-      if (curValue == target) {
-        return Optional.of(new Tuple2<>(curIndex, curValue));
-      } else if (curValue < target) {
-        result = Optional.of(new Tuple2<>(curIndex, curValue));
-        start = curIndex + 1;
+      long mid = start + (end - start) / 2;
+      long midValue = indexToValueMapper.apply(mid);
+      if (midValue == target) {
+        return Optional.of(new Tuple2<>(mid, midValue));
+      } else if (midValue < target) {
+        resultIndex = mid;
+        resultValue = midValue;
+        start = mid + 1;
       } else {
-        end = curIndex - 1;
+        end = mid - 1;
       }
     }
-    return result;
+
+    if (resultIndex == -1) {
+      return Optional.empty();
+    } else {
+      return Optional.of(new Tuple2<>(resultIndex, resultValue));
+    }
   }
 }
