@@ -43,6 +43,7 @@ import org.slf4j.LoggerFactory;
 
 /** Utility methods for computing and writing checksums for Delta tables. */
 public class ChecksumUtils {
+
   private ChecksumUtils() {}
 
   private static final Logger logger = LoggerFactory.getLogger(ChecksumUtils.class);
