@@ -15,13 +15,17 @@
  */
 package io.delta.kernel.defaults.internal.expressions;
 
+import static io.delta.kernel.defaults.internal.DefaultEngineErrors.unsupportedExpressionException;
 import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.*;
+import static java.lang.String.format;
 
 import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.expressions.CollatedPredicate;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.types.BooleanType;
+import io.delta.kernel.types.CollationIdentifier;
 import io.delta.kernel.types.DataType;
 import java.util.List;
 
@@ -46,7 +50,20 @@ public class StartsWithExpressionEvaluator {
         childrenExpressions.get(1),
         startsWith,
         "'STARTS_WITH' expects literal as the second input");
-    return new Predicate(startsWith.getName(), childrenExpressions);
+
+    if (startsWith instanceof CollatedPredicate) {
+      CollatedPredicate collatedPredicate = (CollatedPredicate) startsWith;
+      if (!collatedPredicate.getCollationIdentifier().isSparkUTF8BinaryCollation()) {
+        String msg =
+            format(
+                "Unsupported collation: \"%s\". Default Engine supports just"
+                    + " \"%s\" collation.",
+                collatedPredicate.getCollationIdentifier(), CollationIdentifier.SPARK_UTF8_BINARY);
+        throw unsupportedExpressionException(startsWith, msg);
+      }
+    }
+    return createPredicate(
+        startsWith.getName(), startsWith.getChildren(), getCollationIdentifier(startsWith));
   }
 
   static ColumnVector eval(List<ColumnVector> childrenVectors) {
