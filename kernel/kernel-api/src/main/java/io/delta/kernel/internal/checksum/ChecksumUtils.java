@@ -52,20 +52,7 @@ public class ChecksumUtils {
   private static final int ADD_INDEX = CHECKPOINT_SCHEMA.indexOf("add");
   private static final int REMOVE_INDEX = CHECKPOINT_SCHEMA.indexOf("remove");
   private static final int DOMAIN_METADATA_INDEX = CHECKPOINT_SCHEMA.indexOf("domainMetadata");
-
-  // Indices into child structs - directly accessing these fields is faster than using
-  // accessor methods when processing large numbers of rows.
   private static final int ADD_SIZE_INDEX = AddFile.FULL_SCHEMA.indexOf("size");
-
-  /** Class for tracking state during log processing. */
-  private static class StateTracker {
-    Optional<Metadata> metadataFromLog = Optional.empty();
-    Optional<Protocol> protocolFromLog = Optional.empty();
-    LongAdder tableSizeByte = new LongAdder();
-    LongAdder fileCount = new LongAdder();
-    FileSizeHistogram fileSizeHistogram = FileSizeHistogram.createDefaultHistogram();
-    Map<String, DomainMetadata> domainMetadataMap = new HashMap<>();
-  }
 
   /**
    * Computes the state of a Delta table and writes a checksum file for the provided snapshot's
@@ -262,5 +249,15 @@ public class ChecksumUtils {
     } catch (FileAlreadyExistsException e) {
       logger.info("Checksum file already exists for version {}", logSegmentAtVersion.getVersion());
     }
+  }
+
+  /** Class for tracking state during log processing. */
+  private static class StateTracker {
+    Optional<Metadata> metadataFromLog = Optional.empty();
+    Optional<Protocol> protocolFromLog = Optional.empty();
+    LongAdder tableSizeByte = new LongAdder();
+    LongAdder fileCount = new LongAdder();
+    FileSizeHistogram fileSizeHistogram = FileSizeHistogram.createDefaultHistogram();
+    Map<String, DomainMetadata> domainMetadataMap = new HashMap<>();
   }
 }
