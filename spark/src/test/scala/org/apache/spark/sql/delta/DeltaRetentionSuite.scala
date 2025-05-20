@@ -745,31 +745,34 @@ class DeltaRetentionSuite extends QueryTest
 
       // Corner cases.
       testRequireCheckpointProtectionBeforeVersion(
-        createNumCommitsOutsideRetentionPeriod = 2,
-        createNumCommitsWithinRetentionPeriod = 14,
-        createCheckpoints = Set(2),
+        createNumCommitsOutsideRetentionPeriod = 1,
+        createNumCommitsWithinRetentionPeriod = 15,
+        createCheckpoints = Set(1),
         requireCheckpointProtectionBeforeVersion = 0,
-        expectedCommitsAfterCleanup = (2 to 15),
+        expectedCommitsAfterCleanup = (1 to 15),
         // Α checkpoint is automatically created every 10 commits.
-        expectedCheckpointsAfterCleanup = Set(2, 10))
+        expectedCheckpointsAfterCleanup = Set(1, 10))
 
       testRequireCheckpointProtectionBeforeVersion(
-        createNumCommitsOutsideRetentionPeriod = 2,
-        createNumCommitsWithinRetentionPeriod = 14,
-        createCheckpoints = Set(2),
+        createNumCommitsOutsideRetentionPeriod = 1,
+        createNumCommitsWithinRetentionPeriod = 15,
+        createCheckpoints = Set(1),
         requireCheckpointProtectionBeforeVersion = 1,
-        expectedCommitsAfterCleanup = (2 to 15),
+        expectedCommitsAfterCleanup = (1 to 15),
         // Α checkpoint is automatically created every 10 commits.
-        expectedCheckpointsAfterCleanup = Set(2, 10))
+        expectedCheckpointsAfterCleanup = Set(1, 10))
 
+      // v1 can't be deleted because it is the only checkpoint before version 2.
+      // v0 can't be deleted because of the checkpoint protection, v0 and v1 needs
+      // to be deleted together.
       testRequireCheckpointProtectionBeforeVersion(
-        createNumCommitsOutsideRetentionPeriod = 2,
-        createNumCommitsWithinRetentionPeriod = 14,
-        createCheckpoints = Set(2),
+        createNumCommitsOutsideRetentionPeriod = 1,
+        createNumCommitsWithinRetentionPeriod = 15,
+        createCheckpoints = Set(1),
         requireCheckpointProtectionBeforeVersion = 2,
-        expectedCommitsAfterCleanup = (2 to 15),
+        expectedCommitsAfterCleanup = (0 to 15),
         // Α checkpoint is automatically created every 10 commits.
-        expectedCheckpointsAfterCleanup = Set(2, 10))
+        expectedCheckpointsAfterCleanup = Set(1, 10))
 
       testRequireCheckpointProtectionBeforeVersion(
         createNumCommitsOutsideRetentionPeriod = 2,
