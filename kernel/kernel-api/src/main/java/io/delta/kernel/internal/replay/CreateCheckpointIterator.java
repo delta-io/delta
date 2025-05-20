@@ -334,7 +334,6 @@ public class CreateCheckpointIterator implements CloseableIterator<FilteredColum
       if (metadataVector.isNullAt(rowId)) {
         continue; // selectionVector will be `false` at rowId by default
       }
-
       if (isMetadataAlreadySeen) {
         // We do a reverse log replay. The latest always the one that should be written
         // to the checkpoint. Anything after the first one shouldn't be in checkpoint

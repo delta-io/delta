@@ -381,7 +381,7 @@ public class SnapshotManager {
 
     final long latestCompleteCheckpointVersion =
         latestCompleteCheckpointOpt.map(x -> x.version).orElse(-1L);
-
+    System.out.println(latestCompleteCheckpointVersion);
     logger.info("Latest complete checkpoint version: {}", latestCompleteCheckpointVersion);
 
     /////////////////////////////////////////////////////////////////////////////////////////////
@@ -603,6 +603,11 @@ public class SnapshotManager {
   }
 
   private void logDebugFileStatuses(String varName, List<FileStatus> fileStatuses) {
+    System.out.println(
+        varName
+            + ":"
+            + Arrays.toString(
+                fileStatuses.stream().map(x -> new Path(x.getPath()).getName()).toArray()));
     if (logger.isDebugEnabled()) {
       logger.debug(
           "{}: {}",

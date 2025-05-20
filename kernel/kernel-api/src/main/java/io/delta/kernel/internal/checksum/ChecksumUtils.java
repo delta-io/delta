@@ -22,19 +22,19 @@ import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.engine.Engine;
-import io.delta.kernel.internal.SnapshotImpl;
-import io.delta.kernel.internal.actions.AddFile;
-import io.delta.kernel.internal.actions.DomainMetadata;
+import io.delta.kernel.internal.actions.*;
+import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.replay.CreateCheckpointIterator;
+import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.stats.FileSizeHistogram;
+import io.delta.kernel.internal.util.FileNames;
+import io.delta.kernel.utils.FileStatus;
 import java.io.IOException;
 import java.nio.file.FileAlreadyExistsException;
 import java.time.Instant;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
 import java.util.concurrent.atomic.LongAdder;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -44,6 +44,8 @@ public class ChecksumUtils {
 
   private static final Logger logger = LoggerFactory.getLogger(ChecksumUtils.class);
 
+  private static final int PROTOCOL_INDEX = CHECKPOINT_SCHEMA.indexOf("protocol");
+  private static final int METADATA_INDEX = CHECKPOINT_SCHEMA.indexOf("metaData");
   private static final int ADD_INDEX = CHECKPOINT_SCHEMA.indexOf("add");
   private static final int REMOVE_INDEX = CHECKPOINT_SCHEMA.indexOf("remove");
   private static final int DOMAIN_METADATA_INDEX = CHECKPOINT_SCHEMA.indexOf("domainMetadata");
@@ -67,105 +69,271 @@ public class ChecksumUtils {
    * table state to compute statistics.
    *
    * @param engine The Engine instance used to access the underlying storage
-   * @param snapshot The SnapshotImpl instance representing the table at a specific version
+   * @param logSegmentAtVersion The LogSegment instance of the table at a specific version
    * @throws IOException If an I/O error occurs during checksum computation or writing
    */
-  public static void computeStateAndWriteChecksum(Engine engine, SnapshotImpl snapshot)
+  public static void computeStateAndWriteChecksum(Engine engine, LogSegment logSegmentAtVersion)
       throws IOException {
-    // If checksum already exists, nothing to do
-    if (snapshot.getCurrentCrcInfo().isPresent()) {
-      logger.info("Checksum file already exists for version {}", snapshot.getVersion());
+    if (engine == null || logSegmentAtVersion == null) {
+      throw new IllegalArgumentException("Engine and logSegmentAtVersion cannot be null");
+    }
+
+    // Step 1: Try to get the last checksum information
+    Optional<CRCInfo> lastSeenCrcInfo =
+        logSegmentAtVersion
+            .getLastSeenChecksum()
+            .flatMap(file -> ChecksumReader.getCRCInfo(engine, file));
+
+    Optional<Long> checksumVersion = lastSeenCrcInfo.map(CRCInfo::getVersion);
+
+    // If checksum already exists for this version, nothing to do
+    if (checksumVersion.isPresent()
+        && checksumVersion.get().equals(logSegmentAtVersion.getVersion())) {
+      logger.info("Checksum file already exists for version {}", logSegmentAtVersion.getVersion());
       return;
     }
 
-    // TODO: Optimize using last available crc after https://github.com/delta-io/delta/pull/4112
-    LongAdder tableSizeByte = new LongAdder();
-    LongAdder fileCount = new LongAdder();
-    FileSizeHistogram fileSizeHistogram = FileSizeHistogram.createDefaultHistogram();
-    Map<String, DomainMetadata> domainMetadataMap = new HashMap<>();
-    ChecksumWriter checksumWriter = new ChecksumWriter(snapshot.getLogPath());
+    System.out.println(lastSeenCrcInfo);
+    if (lastSeenCrcInfo.isPresent()) {
+      System.out.println(lastSeenCrcInfo.get().getFileSizeHistogram());
+      System.out.println(lastSeenCrcInfo.get().getDomainMetadata());
+    }
 
+    // Step 2: Initialize state tracking variables
+    boolean canUseLastChecksum =
+        lastSeenCrcInfo.isPresent()
+            && lastSeenCrcInfo.get().getDomainMetadata().isPresent()
+            && lastSeenCrcInfo.get().getFileSizeHistogram().isPresent();
+
+    StateTracker stateTracker = new StateTracker();
+    long minLogToRead = 0;
+    if (canUseLastChecksum) {
+      stateTracker.tableSizeByte.add(lastSeenCrcInfo.get().getTableSizeBytes());
+      stateTracker.fileCount.add(lastSeenCrcInfo.get().getNumFiles());
+      stateTracker.fileSizeHistogram = lastSeenCrcInfo.get().getFileSizeHistogram().get();
+      minLogToRead = lastSeenCrcInfo.get().getVersion() + 1;
+    }
+
+    // Step 3: Create filtered log segment from current version, this is because when crc could be
+    // used,
+    // we could only replay log until crc info + 1.
+    LogSegment filteredLogSegment = createFilteredLogSegment(logSegmentAtVersion, minLogToRead);
+
+    // Step 4: Process all logs and update state
+    processLogs(engine, filteredLogSegment, stateTracker);
+
+    // Step 5: Get final metadata and protocol for the checksum
+    Metadata finalMetadata = getFinalMetadata(stateTracker.metadataFromLog, lastSeenCrcInfo);
+    Protocol finalProtocol = getFinalProtocol(stateTracker.protocolFromLog, lastSeenCrcInfo);
+
+    // Step 6: Combine domain metadata from previous checksum if needed
+    Set<DomainMetadata> finalDomainMetadata =
+        combineWithPreviousDomainMetadata(
+            stateTracker.domainMetadataMapFromLog, lastSeenCrcInfo, minLogToRead);
+
+    // Step 8: Write the computed checksum
+    ChecksumWriter checksumWriter = new ChecksumWriter(logSegmentAtVersion.getLogPath());
+
+    try {
+      checksumWriter.writeCheckSum(
+          engine,
+          new CRCInfo(
+              logSegmentAtVersion.getVersion(),
+              finalMetadata,
+              finalProtocol,
+              stateTracker.tableSizeByte.longValue(),
+              stateTracker.fileCount.longValue(),
+              Optional.empty() /* txnId */,
+              Optional.of(finalDomainMetadata),
+              Optional.of(stateTracker.fileSizeHistogram)));
+
+      logger.info(
+          "Successfully wrote checksum file for version {}", logSegmentAtVersion.getVersion());
+    } catch (FileAlreadyExistsException e) {
+      logger.info("Checksum file already exists for version {}", logSegmentAtVersion.getVersion());
+      // Checksum file has been created while we were computing it.
+      // This is fine - the checksum now exists, which was our goal.
+    }
+  }
+
+  /** Creates a filtered log segment containing only files after minLogToRead. */
+  private static LogSegment createFilteredLogSegment(
+      LogSegment logSegmentAtVersion, long minLogToRead) {
+
+    List<FileStatus> filteredDeltas =
+        logSegmentAtVersion.getDeltas().stream()
+            .filter(file -> FileNames.getFileVersion(new Path(file.getPath())) >= minLogToRead)
+            .collect(Collectors.toList());
+
+    List<FileStatus> filteredCheckpoints =
+        logSegmentAtVersion.getCheckpoints().stream()
+            .filter(file -> FileNames.getFileVersion(new Path(file.getPath())) >= minLogToRead)
+            .collect(Collectors.toList());
+
+    return new LogSegment(
+        logSegmentAtVersion.getLogPath(),
+        logSegmentAtVersion.getVersion(),
+        filteredDeltas,
+        // TODO: Check if log compaction could further help.
+        /* compactions= */ new ArrayList<>(),
+        filteredCheckpoints,
+        Optional.empty(),
+        logSegmentAtVersion.getLastCommitTimestamp());
+  }
+
+  /** Processes all logs in the log segment and updates the state tracker. */
+  private static void processLogs(
+      Engine engine, LogSegment filteredLogSegment, StateTracker stateTracker) throws IOException {
+
+    // Create an iterator that will only process files without considering removals
     try (CreateCheckpointIterator checkpointIterator =
         new CreateCheckpointIterator(
             engine,
-            snapshot.getLogSegment(),
-            // Set minFileRetentionTimestampMillis to infinite future to skip all removed files
+            filteredLogSegment,
+            // Set retention to infinite future to skip all removed files
             Instant.ofEpochMilli(Long.MAX_VALUE).toEpochMilli())) {
 
       // Process all checkpoint batches
       while (checkpointIterator.hasNext()) {
         FilteredColumnarBatch filteredBatch = checkpointIterator.next();
-        ColumnarBatch batch = filteredBatch.getData();
-        Optional<ColumnVector> selectionVector = filteredBatch.getSelectionVector();
-        final int rowCount = batch.getSize();
+        processBatch(filteredBatch, stateTracker);
+      }
+    }
+  }
 
-        ColumnVector removeVector = batch.getColumnVector(REMOVE_INDEX);
-        ColumnVector addVector = batch.getColumnVector(ADD_INDEX);
-        ColumnVector domainMetadataVector = batch.getColumnVector(DOMAIN_METADATA_INDEX);
+  /** Processes a single batch from the checkpoint iterator. */
+  private static void processBatch(FilteredColumnarBatch filteredBatch, StateTracker stateTracker) {
+    ColumnarBatch batch = filteredBatch.getData();
+    Optional<ColumnVector> selectionVector = filteredBatch.getSelectionVector();
+    final int rowCount = batch.getSize();
 
-        // Process all selected rows in a single pass for optimal performance
-        for (int i = 0; i < rowCount; i++) {
-          // Fields referenced in the lambda should be effectively final.
-          int rowId = i;
-          boolean isSelected =
-              selectionVector
-                  .map(vec -> !vec.isNullAt(rowId) && vec.getBoolean(rowId))
-                  .orElse(true);
-          if (!isSelected) continue;
+    // Get column vectors for each action type
+    ColumnVector metadataVector = batch.getColumnVector(METADATA_INDEX);
+    ColumnVector protocolVector = batch.getColumnVector(PROTOCOL_INDEX);
+    ColumnVector removeVector = batch.getColumnVector(REMOVE_INDEX);
+    ColumnVector addVector = batch.getColumnVector(ADD_INDEX);
+    ColumnVector domainMetadataVector = batch.getColumnVector(DOMAIN_METADATA_INDEX);
 
-          // Step 1: Ensure there are no remove records
-          // We set minFileRetentionTimestampMillis to infinite future to skip all removed files,
-          // so there should be no remove actions.
-          checkState(
-              removeVector.isNullAt(i),
-              "unexpected remove row found when "
-                  + "setting minFileRetentionTimestampMillis to infinite future");
+    // Process all selected rows in a single pass for optimal performance
+    for (int i = 0; i < rowCount; i++) {
+      int rowId = i;
+      boolean isSelected = selectionVector.map(vec -> !vec.isNullAt(rowId)).orElse(true);
+      if (!isSelected) continue;
 
-          // Step 2: Process add file records - direct columnar access for better performance
-          if (!addVector.isNullAt(i)) {
-            // Direct access to size field in add file record for maximum performance
-            ColumnVector sizeVector = addVector.getChild(ADD_SIZE_INDEX);
-            long fileSize = sizeVector.getLong(i);
+      // Step 1: Ensure there are no remove records (should be filtered by infinite retention)
+      checkState(
+          removeVector.isNullAt(i),
+          "Unexpected remove row found when "
+              + "setting minFileRetentionTimestampMillis to infinite future");
 
-            tableSizeByte.add(fileSize);
-            fileSizeHistogram.insert(fileSize);
-            fileCount.increment();
-          }
+      // Step 2: Process add file records
+      if (!addVector.isNullAt(i)) {
+        ColumnVector sizeVector = addVector.getChild(ADD_SIZE_INDEX);
+        long fileSize = sizeVector.getLong(i);
 
-          // Step 3: Process domain metadata records
-          if (!domainMetadataVector.isNullAt(i)) {
-            DomainMetadata domainMetadata =
-                DomainMetadata.fromColumnVector(domainMetadataVector, i);
-            if (domainMetadata != null) {
-              checkState(
-                  !domainMetadataMap.containsKey(domainMetadata.getDomain()),
-                  "unexpected duplicate domain metadata rows");
-              if (!domainMetadata.isRemoved()) {
-                domainMetadataMap.put(domainMetadata.getDomain(), domainMetadata);
-              }
-            }
+        stateTracker.tableSizeByte.add(fileSize);
+        stateTracker.fileSizeHistogram.insert(fileSize);
+        stateTracker.fileCount.increment();
+      }
+
+      // Step 3: Process domain metadata records
+      if (!domainMetadataVector.isNullAt(i)) {
+        DomainMetadata domainMetadata = DomainMetadata.fromColumnVector(domainMetadataVector, i);
+        if (domainMetadata != null) {
+          String domain = domainMetadata.getDomain();
+          if (!stateTracker.domainMetadataMapFromLog.containsKey(domain)) {
+            stateTracker.domainMetadataMapFromLog.put(domain, domainMetadata);
           }
         }
       }
 
-      // Write the checksum file
-      try {
-        checksumWriter.writeCheckSum(
-            engine,
-            new CRCInfo(
-                snapshot.getVersion(),
-                snapshot.getMetadata(),
-                snapshot.getProtocol(),
-                tableSizeByte.longValue(),
-                fileCount.longValue(),
-                Optional.empty() /* txnId */,
-                Optional.of(new HashSet<>(domainMetadataMap.values())),
-                Optional.of(fileSizeHistogram)));
-      } catch (FileAlreadyExistsException e) {
-        logger.info("Checksum file already exists for version {}", snapshot.getVersion());
-        // Checksum file has been created while we were computing it.
-        // This is fine - the checksum now exists, which was our goal.
+      // Step 4: Process metadata records
+      if (!stateTracker.metadataFromLog.isPresent() && !metadataVector.isNullAt(i)) {
+        Metadata metadata = Metadata.fromColumnVector(metadataVector, i);
+        if (metadata != null) {
+          stateTracker.metadataFromLog = Optional.of(metadata);
+          logger.debug("Found and stored metadata at row {}", i);
+        }
+      }
+
+      // Step 5: Process protocol records
+      if (!stateTracker.protocolFromLog.isPresent() && !protocolVector.isNullAt(i)) {
+        Protocol protocol = Protocol.fromColumnVector(protocolVector, i);
+        if (protocol != null) {
+          stateTracker.protocolFromLog = Optional.of(protocol);
+          logger.debug("Found and stored protocol at row {}", i);
+        }
       }
     }
+  }
+
+  /** Determines the final metadata to use in the checksum. */
+  private static Metadata getFinalMetadata(
+      Optional<Metadata> metadataFromLog, Optional<CRCInfo> lastSeenCrcInfo) {
+
+    if (metadataFromLog.isPresent()) {
+      logger.debug("Using metadata from log processing");
+      return metadataFromLog.get();
+    }
+
+    if (lastSeenCrcInfo.isPresent() && lastSeenCrcInfo.get().getMetadata() != null) {
+      logger.debug("Using metadata from previous checksum");
+      return lastSeenCrcInfo.get().getMetadata();
+    }
+
+    throw new IllegalStateException("No metadata found in current log or previous checksum");
+  }
+
+  /** Determines the final protocol to use in the checksum. */
+  private static Protocol getFinalProtocol(
+      Optional<Protocol> protocolFromLog, Optional<CRCInfo> lastSeenCrcInfo) {
+
+    if (protocolFromLog.isPresent()) {
+      logger.debug("Using protocol from log processing");
+      return protocolFromLog.get();
+    }
+
+    if (lastSeenCrcInfo.isPresent() && lastSeenCrcInfo.get().getProtocol() != null) {
+      logger.debug("Using protocol from previous checksum");
+      return lastSeenCrcInfo.get().getProtocol();
+    }
+
+    throw new IllegalStateException("No protocol found in current log or previous checksum");
+  }
+
+  /** Combines domain metadata from the current processing with previous checksum if needed. */
+  private static Set<DomainMetadata> combineWithPreviousDomainMetadata(
+      Map<String, DomainMetadata> domainMetadataMapFromLog,
+      Optional<CRCInfo> lastSeenCrcInfo,
+      long minLogToRead) {
+
+    if (minLogToRead > 0
+        && lastSeenCrcInfo.isPresent()
+        && lastSeenCrcInfo.get().getDomainMetadata().isPresent()) {
+
+      Set<DomainMetadata> previousDomainMetadata = lastSeenCrcInfo.get().getDomainMetadata().get();
+
+      // Add any domain metadata from previous checksum that isn't already present
+      for (DomainMetadata dm : previousDomainMetadata) {
+        if (!domainMetadataMapFromLog.containsKey(dm.getDomain())) {
+          domainMetadataMapFromLog.put(dm.getDomain(), dm);
+        }
+      }
+    }
+
+    // Return only non-removed domain metadata
+    return domainMetadataMapFromLog.values().stream()
+        .filter(dm -> !dm.isRemoved())
+        .collect(Collectors.toSet());
+  }
+
+  /** Class for tracking state during log processing. */
+  private static class StateTracker {
+    Optional<Metadata> metadataFromLog = Optional.empty();
+    Optional<Protocol> protocolFromLog = Optional.empty();
+    LongAdder tableSizeByte = new LongAdder();
+    LongAdder fileCount = new LongAdder();
+    FileSizeHistogram fileSizeHistogram = FileSizeHistogram.createDefaultHistogram();
+    Map<String, DomainMetadata> domainMetadataMapFromLog = new HashMap<>();
   }
 }
