@@ -45,7 +45,9 @@ class RemoveFileSuite extends AnyFunSuite {
       stringStringMapValue(partitionValues.asJava),
       size,
       StatsUtils.deserializeFromJson(stats.getOrElse("")),
-      null)
+      null,
+      Optional.empty(),
+      Optional.empty())
   }
 
   test("getters can read RemoveFile's fields from the backing row") {

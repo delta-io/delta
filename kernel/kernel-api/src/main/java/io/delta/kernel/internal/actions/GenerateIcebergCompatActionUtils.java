@@ -248,6 +248,23 @@ public final class GenerateIcebergCompatActionUtils {
       URI tableRoot,
       DataFileStatus dataFileStatus,
       Map<String, Literal> partitionValues,
+      boolean dataChange) {
+    return convertRemoveDataFileStatus(
+        physicalSchema,
+        tableRoot,
+        dataFileStatus,
+        partitionValues,
+        dataChange,
+        Optional.empty(),
+        Optional.empty());
+  }
+
+  @VisibleForTesting
+  public static Row convertRemoveDataFileStatus(
+      StructType physicalSchema,
+      URI tableRoot,
+      DataFileStatus dataFileStatus,
+      Map<String, Literal> partitionValues,
       boolean dataChange,
       Optional<Long> baseRowId,
       Optional<Long> defaultRowCommitVersion) {
