@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Optional
 
 from pyspark import SparkContext
 from pyspark.errors.exceptions.captured import CapturedException
-from pyspark.sql.utils import utils
+from pyspark.sql import utils
 
 from delta.exceptions.base import (
     DeltaConcurrentModificationException as BaseDeltaConcurrentModificationException,
