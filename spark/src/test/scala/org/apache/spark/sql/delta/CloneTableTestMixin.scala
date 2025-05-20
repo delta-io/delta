@@ -1,3 +1,19 @@
+/*
+ * Copyright (2021) The Delta Lake Project Authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.apache.spark.sql.delta
 
 import java.io.File
@@ -56,7 +72,7 @@ trait CloneTableTestMixin extends DeltaColumnMappingTestUtils
   }
 
   protected def cloneTypeStr(isShallow: Boolean): String = {
-      "SHALLOW"
+    "SHALLOW"
   }
 
   /**
@@ -128,7 +144,6 @@ trait CloneTableTestMixin extends DeltaColumnMappingTestUtils
           isReplaceOperation,
           tableProperties)): Unit = {
     // scalastyle:on
-
     // Truncate table before REPLACE
     try {
       if (isReplaceOperation) {
@@ -217,7 +232,6 @@ trait CloneTableTestMixin extends DeltaColumnMappingTestUtils
     assert(blob("sourceNumOfFiles") === cloneSource.numOfFiles)
     assert(blob("partitionBy") === cloneSource.metadata.partitionColumns)
 
-
     // Check whether resulting metadata of target and source at version is the same
     compareMetadata(
       cloneSource,
@@ -236,7 +250,6 @@ trait CloneTableTestMixin extends DeltaColumnMappingTestUtils
     }
     assert(filePaths.groupBy(uniqueFileActionGroupBy(_)).forall(_._2.length === 1),
       "A file was added and removed in the same commit")
-
     // Check whether the resulting datasets are the same
     val targetDf = DataFrameUtils.ofRows(
       spark,
@@ -256,20 +269,17 @@ trait CloneTableTestMixin extends DeltaColumnMappingTestUtils
       .filter(_.opType.isDefined)
       .filter(_.opType.get.typeName.contains("delta.clone"))
 
-
-      assert(cloneLogs.count(_.opType.get.typeName.equals("delta.clone.makeAbsolute")) == 1)
+    assert(cloneLogs.count(_.opType.get.typeName.equals("delta.clone.makeAbsolute")) == 1)
 
     val commitStatsUsageRecords = allLogs
       .filter(_.metric === "tahoeEvent")
-      .filter(
-        _.tags.get("opType") === Some("delta.commit.stats"))
+      .filter(_.tags.get("opType") === Some("delta.commit.stats"))
     assert(commitStatsUsageRecords.length === 1)
     val commitStatsMap = JsonUtils.fromJson[Map[String, Any]](commitStatsUsageRecords.head.blob)
     commitLargeMetricsMap.foreach { case (name, expectedValue) =>
       assert(commitStatsMap(name).toString == expectedValue,
         s"Expected value for $name metrics did not match with the captured value")
     }
-
   }
 
   private def compareMetadata(
@@ -292,7 +302,7 @@ trait CloneTableTestMixin extends DeltaColumnMappingTestUtils
       cloneSource.protocol.minReaderVersion <= targetLog.protocol.minReaderVersion &&
         cloneSource.protocol.minWriterVersion <= targetLog.protocol.minWriterVersion))
 
-      assert(targetLog.setTransactions.isEmpty)
+    assert(targetLog.setTransactions.isEmpty)
 
     if (!isReplace) {
       assert(sourceMetadata.id != targetMetadata.id &&
