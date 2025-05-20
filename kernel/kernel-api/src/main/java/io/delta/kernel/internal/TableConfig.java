@@ -251,13 +251,13 @@ public class TableConfig<T> {
    *     Delta-Iceberg Compatibility V3 Protocol</a>
    */
   public static final TableConfig<Boolean> ICEBERG_COMPAT_V3_ENABLED =
-          new TableConfig<>(
-                  "delta.enableIcebergCompatV3",
-                  "false",
-                  Boolean::valueOf,
-                  value -> true,
-                  "needs to be a boolean.",
-                  true);
+      new TableConfig<>(
+          "delta.enableIcebergCompatV3",
+          "false",
+          Boolean::valueOf,
+          value -> true,
+          "needs to be a boolean.",
+          true);
 
   /**
    * The number of columns to collect stats on for data skipping. A value of -1 means collecting

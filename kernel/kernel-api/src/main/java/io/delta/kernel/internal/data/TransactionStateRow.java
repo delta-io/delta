@@ -122,8 +122,8 @@ public class TransactionStateRow extends GenericRow {
    */
   public static boolean isIcebergCompatV3Enabled(Row transactionState) {
     return Boolean.parseBoolean(
-            getConfiguration(transactionState)
-                    .getOrDefault(TableConfig.ICEBERG_COMPAT_V3_ENABLED.getKey(), "false"));
+        getConfiguration(transactionState)
+            .getOrDefault(TableConfig.ICEBERG_COMPAT_V3_ENABLED.getKey(), "false"));
   }
 
   /**

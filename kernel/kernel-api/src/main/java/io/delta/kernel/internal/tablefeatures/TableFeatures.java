@@ -329,7 +329,7 @@ public class TableFeatures {
   public static final TableFeature ICEBERG_COMPAT_V3_W_FEATURE = new IcebergCompatV3TableFeature();
 
   private static class IcebergCompatV3TableFeature extends TableFeature.WriterFeature
-          implements FeatureAutoEnabledByMetadata {
+      implements FeatureAutoEnabledByMetadata {
     IcebergCompatV3TableFeature() {
       super("icebergCompatV3", /* minWriterVersion = */ 7);
     }
