@@ -181,6 +181,7 @@ public class ChecksumUtils {
             state.fileCount.increment();
           }
 
+          // Step 3: Process domain metadata records
           if (!domainMetadataVector.isNullAt(i)) {
             DomainMetadata domainMetadata =
                 DomainMetadata.fromColumnVector(domainMetadataVector, i);
@@ -194,6 +195,7 @@ public class ChecksumUtils {
             }
           }
 
+          // Step 4: Process metadata records
           if (!state.metadataFromLog.isPresent() && !metadataVector.isNullAt(i)) {
             Metadata metadata = Metadata.fromColumnVector(metadataVector, i);
             if (metadata != null) {
@@ -201,6 +203,7 @@ public class ChecksumUtils {
             }
           }
 
+          // Step 5: Process protocol records
           if (!state.protocolFromLog.isPresent() && !protocolVector.isNullAt(i)) {
             Protocol protocol = Protocol.fromColumnVector(protocolVector, i);
             if (protocol != null) {
@@ -212,33 +215,25 @@ public class ChecksumUtils {
     }
 
     // Get final metadata and protocol
-    Metadata finalMetadata;
-    Protocol finalProtocol;
+    Metadata finalMetadata =
+        state.metadataFromLog.orElseGet(
+            () ->
+                lastSeenCrcInfo
+                    .map(CRCInfo::getMetadata)
+                    .orElseThrow(() -> new IllegalStateException("No metadata found")));
 
-    if (state.metadataFromLog.isPresent()) {
-      finalMetadata = state.metadataFromLog.get();
-    } else if (lastSeenCrcInfo.isPresent() && lastSeenCrcInfo.get().getMetadata() != null) {
-      finalMetadata = lastSeenCrcInfo.get().getMetadata();
-    } else {
-      throw new IllegalStateException("No metadata found in log or previous checksum");
-    }
+    Protocol finalProtocol =
+        state.protocolFromLog.orElseGet(
+            () ->
+                lastSeenCrcInfo
+                    .map(CRCInfo::getProtocol)
+                    .orElseThrow(() -> new IllegalStateException("No protocol found")));
 
-    if (state.protocolFromLog.isPresent()) {
-      finalProtocol = state.protocolFromLog.get();
-    } else if (lastSeenCrcInfo.isPresent() && lastSeenCrcInfo.get().getProtocol() != null) {
-      finalProtocol = lastSeenCrcInfo.get().getProtocol();
-    } else {
-      throw new IllegalStateException("No protocol found in log or previous checksum");
-    }
-
-    // Combine domain metadata if needed
+    // Combine with previous domain metadata if available
     if (canUseLastChecksum) {
-      Set<DomainMetadata> previousDomainMetadata = lastSeenCrcInfo.get().getDomainMetadata().get();
-      for (DomainMetadata dm : previousDomainMetadata) {
-        if (!state.domainMetadataMap.containsKey(dm.getDomain())) {
-          state.domainMetadataMap.put(dm.getDomain(), dm);
-        }
-      }
+      lastSeenCrcInfo.get().getDomainMetadata().get().stream()
+          .filter(dm -> !state.domainMetadataMap.containsKey(dm.getDomain()))
+          .forEach(dm -> state.domainMetadataMap.put(dm.getDomain(), dm));
     }
 
     // Filter to only non-removed domain metadata
