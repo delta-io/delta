@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
+// TODO: Deprecate this and use ParsedLogFile.CheckpointFile
 /** Metadata about Delta checkpoint. */
 public class CheckpointInstance implements Comparable<CheckpointInstance> {
 

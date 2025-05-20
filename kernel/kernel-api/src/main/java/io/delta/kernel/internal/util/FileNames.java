@@ -20,6 +20,7 @@ import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.utils.FileStatus;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public final class FileNames {
@@ -43,9 +44,6 @@ public final class FileNames {
   /** Example: 00000000000000000001.00000000000000000009.compacted.json */
   private static final Pattern COMPACTION_FILE_PATTERN =
       Pattern.compile("\\d+\\.\\d+\\.compacted\\.json");
-
-  /** Example: 00000000000000000001.dc0f9f58-a1a0-46fd-971a-bd8b2e9dbb81.json */
-  private static final Pattern UUID_DELTA_FILE_REGEX = Pattern.compile("(\\d+)\\.([^\\.]+)\\.json");
 
   /**
    * Examples:
@@ -80,7 +78,7 @@ public final class FileNames {
 
   /** Example: 00000000000000000001.checkpoint.0000000020.0000000060.parquet */
   private static final Pattern MULTI_PART_CHECKPOINT_FILE_PATTERN =
-      Pattern.compile("(\\d+)\\.checkpoint\\.\\d+\\.\\d+\\.parquet");
+      Pattern.compile("(\\d+)\\.checkpoint\\.(\\d+)\\.(\\d+)\\.parquet");
 
   public static final String SIDECAR_DIRECTORY = "_sidecars";
 
@@ -155,6 +153,22 @@ public final class FileNames {
     return Long.parseLong(name.split("\\.")[0]);
   }
 
+  public static Tuple2<Integer, Integer> multiPartCheckpointPartAndNumParts(Path path) {
+    final String fileName = path.getName();
+    final Matcher matcher = MULTI_PART_CHECKPOINT_FILE_PATTERN.matcher(fileName);
+    if (!matcher.matches()) {
+      throw new IllegalArgumentException(
+          String.format("Path is not a multi-part checkpoint file: %s", fileName));
+    }
+    final int partNum = Integer.parseInt(matcher.group(2));
+    final int numParts = Integer.parseInt(matcher.group(3));
+    return new Tuple2<>(partNum, numParts);
+  }
+
+  public static Tuple2<Integer, Integer> multiPartCheckpointPartAndNumParts(String path) {
+    return multiPartCheckpointPartAndNumParts(new Path(path));
+  }
+
   ///////////////////////////////////
   // File path and prefix builders //
   ///////////////////////////////////
@@ -176,6 +190,10 @@ public final class FileNames {
 
   public static long checksumVersion(Path path) {
     return Long.parseLong(path.getName().split("\\.")[0]);
+  }
+
+  public static long checksumVersion(String path) {
+    return checksumVersion(new Path(path));
   }
 
   /**
@@ -263,10 +281,10 @@ public final class FileNames {
     return V2_CHECKPOINT_FILE_PATTERN.matcher(new Path(path).getName()).matches();
   }
 
+  // TODO: have isDeltaFile, isPublishedDeltaFile, isStagedDeltaFile
   public static boolean isCommitFile(String path) {
     final String fileName = new Path(path).getName();
-    return DELTA_FILE_PATTERN.matcher(fileName).matches()
-        || UUID_DELTA_FILE_REGEX.matcher(fileName).matches();
+    return DELTA_FILE_PATTERN.matcher(fileName).matches();
   }
 
   public static boolean isLogCompactionFile(String path) {

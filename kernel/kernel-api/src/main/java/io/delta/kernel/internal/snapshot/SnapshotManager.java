@@ -16,6 +16,8 @@
 
 package io.delta.kernel.internal.snapshot;
 
+import io.delta.kernel.internal.files.ParsedLogFile;
+import io.delta.kernel.internal.files.ParsedLogFile.Category;
 import static io.delta.kernel.internal.replay.LogReplayUtils.assertLogFilesBelongToTable;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.lang.String.format;
@@ -325,25 +327,41 @@ public class SnapshotManager {
     // Step 5: Partition $listedFileStatuses into the checkpoints, deltas, and compactions. //
     //////////////////////////////////////////////////////////////////////////////////////////
 
-    Map<DeltaLogFileType, List<FileStatus>> partitionedFiles =
+    final Map<ParsedLogFile.Category, List<ParsedLogFile>> partitionedParsedLogFiles =
         listedFileStatuses.stream()
+            .map(ParsedLogFile::forFileStatus)
             .collect(
                 Collectors.groupingBy(
-                    FileNames::determineFileType,
+                    ParsedLogFile::getCategory,
                     LinkedHashMap::new, // Ensure order is maintained
                     Collectors.toList()));
 
-    List<FileStatus> listedDeltaFileStatuses =
-        partitionedFiles.getOrDefault(DeltaLogFileType.COMMIT, Collections.emptyList());
+    // TODO: This FileStatus -> ParsedLogFile -> FileStatus is temporary. We will incrementally
+    //       adopt ParsedLogFile.
 
-    List<FileStatus> listedCheckpointFileStatuses =
-        partitionedFiles.getOrDefault(DeltaLogFileType.CHECKPOINT, Collections.emptyList());
+    final List<FileStatus> listedDeltaFileStatuses = partitionedParsedLogFiles
+        .getOrDefault(Category.DELTA, Collections.emptyList())
+        .stream()
+        .map(ParsedLogFile::getFileStatus)
+        .collect(Collectors.toList());
 
-    List<FileStatus> listedCompactionFileStatuses =
-        partitionedFiles.getOrDefault(DeltaLogFileType.LOG_COMPACTION, Collections.emptyList());
+    final List<FileStatus> listedCheckpointFileStatuses = partitionedParsedLogFiles
+        .getOrDefault(Category.CHECKPOINT, Collections.emptyList())
+        .stream()
+        .map(ParsedLogFile::getFileStatus)
+        .collect(Collectors.toList());
 
-    List<FileStatus> listedChecksumFileStatuses =
-        partitionedFiles.getOrDefault(DeltaLogFileType.CHECKSUM, Collections.emptyList());
+    final List<FileStatus> listedCompactionFileStatuses = partitionedParsedLogFiles
+        .getOrDefault(Category.LOG_COMPACTION, Collections.emptyList())
+        .stream()
+        .map(ParsedLogFile::getFileStatus)
+        .collect(Collectors.toList());
+
+    final List<FileStatus> listedChecksumFileStatuses = partitionedParsedLogFiles
+        .getOrDefault(Category.CHECKSUM, Collections.emptyList())
+        .stream()
+        .map(ParsedLogFile::getFileStatus)
+        .collect(Collectors.toList());
 
     logDebugFileStatuses("listedCheckpointFileStatuses", listedCheckpointFileStatuses);
     logDebugFileStatuses("listedCompactionFileStatuses", listedCompactionFileStatuses);
