@@ -152,15 +152,30 @@ public class ChecksumUtils {
         ColumnVector addVector = batch.getColumnVector(ADD_INDEX);
         ColumnVector domainMetadataVector = batch.getColumnVector(DOMAIN_METADATA_INDEX);
 
+        // Process all selected rows in a single pass for optimal performance
         for (int i = 0; i < rowCount; i++) {
+          // Fields referenced in the lambda should be effectively final.
           int rowId = i;
-          boolean isSelected = selectionVector.map(vec -> !vec.isNullAt(rowId)).orElse(true);
+          boolean isSelected =
+              selectionVector
+                  .map(vec -> !vec.isNullAt(rowId) && vec.getBoolean(rowId))
+                  .orElse(true);
           if (!isSelected) continue;
 
-          checkState(removeVector.isNullAt(i), "Unexpected remove action found");
+          // Step 1: Ensure there are no remove records
+          // We set minFileRetentionTimestampMillis to infinite future to skip all removed files,
+          // so there should be no remove actions.
+          checkState(
+              removeVector.isNullAt(i),
+              "unexpected remove row found when "
+                  + "setting minFileRetentionTimestampMillis to infinite future");
 
+          // Step 2: Process add file records - direct columnar access for better performance
           if (!addVector.isNullAt(i)) {
-            long fileSize = addVector.getChild(ADD_SIZE_INDEX).getLong(i);
+            // Direct access to size field in add file record for maximum performance
+            ColumnVector sizeVector = addVector.getChild(ADD_SIZE_INDEX);
+            long fileSize = sizeVector.getLong(i);
+
             state.tableSizeByte.add(fileSize);
             state.fileSizeHistogram.insert(fileSize);
             state.fileCount.increment();
@@ -170,10 +185,12 @@ public class ChecksumUtils {
             DomainMetadata domainMetadata =
                 DomainMetadata.fromColumnVector(domainMetadataVector, i);
             if (domainMetadata != null) {
-              String domain = domainMetadata.getDomain();
-              if (!state.domainMetadataMap.containsKey(domain)) {
-                state.domainMetadataMap.put(domain, domainMetadata);
-              }
+              checkState(
+                  !state.domainMetadataMap.containsKey(domainMetadata.getDomain()),
+                  "unexpected duplicate domain metadata rows");
+              // CreateCheckpointIterator will ensure only the last entry of domain metadata
+              // got emit.
+              state.domainMetadataMap.put(domainMetadata.getDomain(), domainMetadata);
             }
           }
 
