@@ -859,16 +859,18 @@ object DeltaHistoryManager extends DeltaLogging {
       while (continueBuffering && underlying.hasNext) {
         var currentFile = underlying.next()
         require(currentFile != null, "FileStatus iterator returned null")
-
         if (needsTimeAdjustment(currentFile)) {
           currentFile = new FileStatus(
             currentFile.getLen, currentFile.isDirectory, currentFile.getReplication,
             currentFile.getBlockSize, lastFile.getModificationTime + 1, currentFile.getPath)
         } else if (FileNames.isCheckpointFile(currentFile)
-          && shouldDeleteFile(lastFile)
           && (versionGetter(currentFile.getPath) > versionGetter(lastFile.getPath))) {
+          // Only flush the buffer when find a checkpoint. This is because we don't want to delete
+          // the delta log files unless we have a checkpoint to ensure that non-expired subsequent
+          // delta logs are valid.
+
           // Version check is to handle multi-part checkpoint.
-          // We don't want to flush part2 only because the part1 is expired
+          // We don't want to flush part1 only because the part2 is expired
           flushBuffer()
           continueBuffering = false
         }
