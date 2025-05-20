@@ -865,10 +865,10 @@ object DeltaHistoryManager extends DeltaLogging {
             currentFile.getLen, currentFile.isDirectory, currentFile.getReplication,
             currentFile.getBlockSize, lastFile.getModificationTime + 1, currentFile.getPath)
         } else if (FileNames.isCheckpointFile(currentFile)
-          && shouldDeleteFile(currentFile)
+          && shouldDeleteFile(lastFile)
           && (versionGetter(currentFile.getPath) > versionGetter(lastFile.getPath))) {
-          // Need to keep at least one expired checkpoint
-          // Version check is to handle multi-part checkpoint
+          // Version check is to handle multi-part checkpoint.
+          // We don't want to flush part2 only because the part1 is expired
           flushBuffer()
           continueBuffering = false
         }

@@ -128,8 +128,15 @@ class DeltaRetentionSuite extends QueryTest
         intervalStringToMillis("interval 2 day"))
       log.cleanUpExpiredLogs(log.snapshot)
 
-      assert(getCheckpointFiles(logPath).length === 2,
-        "There should only be the last and the last expired checkpoint versions")
+      val minDeltaFile =
+        getDeltaFiles(logPath).map(f => FileNames.deltaVersion(new Path(f.toString))).min
+      val maxChkFile = getCheckpointFiles(logPath).map(f =>
+        FileNames.checkpointVersion(new Path(f.toString))).max
+
+      assert(maxChkFile === minDeltaFile,
+        "Delta files before the last checkpoint version should have been deleted")
+      assert(getCheckpointFiles(logPath).length === 1,
+        "There should only be the last checkpoint version")
     }
   }
 
@@ -268,33 +275,15 @@ class DeltaRetentionSuite extends QueryTest
       clock.advance(intervalStringToMillis(DeltaConfigs.LOG_RETENTION.defaultValue) +
         intervalStringToMillis("interval 1 day"))
 
-      // Create a new checkpoint, we need two expired checkpoints, since we always
-      // keep at least one expired checkpoint
+      // Create a new checkpoint so that the previous version can be deleted
       log.startTransaction().commit(AddFile("1", Map.empty, 1, 1, true) :: Nil, testOp)
       log.checkpoint()
 
       // despite our clock time being set in the future, this doesn't change the FileStatus
       // lastModified time. this can cause some flakiness during log cleanup. setting it fixes that.
-      def setModificationTimeToVersion(version: Long, time: Long) {
-        val deltaFile = new File(FileNames.unsafeDeltaFile(log.logPath, version).toUri)
-        deltaFile.setLastModified(time)
-        val crcFile = new File(FileNames.checksumFile(log.logPath, version).toUri)
-        crcFile.setLastModified(time)
-        val chk = getCheckpointFiles(logPath)
-          .filter(f => FileNames.checkpointVersion(new Path(f.getCanonicalPath)) == version).head
-        chk.setLastModified(time)
-      }
-
-      setModificationTimeToVersion(1L, clock.getTimeMillis())
-
-      clock.advance(intervalStringToMillis(DeltaConfigs.LOG_RETENTION.defaultValue) +
-        intervalStringToMillis("interval 1 day"))
-
-      // Create a new checkpoint so that the previous version can be deleted
-      log.startTransaction().commit(AddFile("2", Map.empty, 1, 1, true) :: Nil, testOp)
-      log.checkpoint()
-
-      setModificationTimeToVersion(2L, clock.getTimeMillis())
+      getLogFiles(logPath)
+        .filterNot(f => initialFiles.contains(f))
+        .foreach(f => f.setLastModified(clock.getTimeMillis()))
 
       log.cleanUpExpiredLogs(log.snapshot)
       val afterCleanup = getLogFiles(logPath)
@@ -425,40 +414,40 @@ class DeltaRetentionSuite extends QueryTest
         // Trigger metadata cleanup and validate that only last 6 days of deltas and checkpoints
         // have been retained.
         cleanUpExpiredLogs(log)
-        compareVersions(getCheckpointVersions(logPath), "checkpoint", 3 to 9)
-        compareVersions(getDeltaVersions(logPath), "delta", 3 to 9)
+        compareVersions(getCheckpointVersions(logPath), "checkpoint", 4 to 9)
+        compareVersions(getDeltaVersions(logPath), "delta", 4 to 9)
         // Check that all active sidecars are retained and expired ones are deleted.
         assert(
           getSidecarFiles(log) ===
             Set(evenCommitSidecarFile_1, oddCommitSidecarFile_1) ++
-            (3 to 9).map(sidecarFiles(_)))
+            (4 to 9).map(sidecarFiles(_)))
 
         // Advance 1 day and again run metadata cleanup.
         clock.setTime(day(startTime, day = 11))
         cleanUpExpiredLogs(log)
         setModificationTimeOfNewFiles(log, clock, visitedFiles)
         // Commit 4 and checkpoint 4 have expired and were deleted.
-        compareVersions(getCheckpointVersions(logPath), "checkpoint", 4 to 9)
-        compareVersions(getDeltaVersions(logPath), "delta", 4 to 9)
+        compareVersions(getCheckpointVersions(logPath), "checkpoint", 5 to 9)
+        compareVersions(getDeltaVersions(logPath), "delta", 5 to 9)
         assert(
           getSidecarFiles(log) ===
             Set(evenCommitSidecarFile_1, oddCommitSidecarFile_1) ++
-            (4 to 9).map(sidecarFiles(_)))
+            (5 to 9).map(sidecarFiles(_)))
 
         // do 1 more commit and checkpoint on day 13 and run metadata cleanup.
         commitAndCheckpoint(dayNumber = 13) // commit and checkpoint 10
-        compareVersions(getCheckpointVersions(logPath), "checkpoint", 4 to 10)
-        compareVersions(getDeltaVersions(logPath), "delta", 4 to 10)
+        compareVersions(getCheckpointVersions(logPath), "checkpoint", 5 to 10)
+        compareVersions(getDeltaVersions(logPath), "delta", 5 to 10)
         cleanUpExpiredLogs(log)
         setModificationTimeOfNewFiles(log, clock, visitedFiles)
         // Version 5 and 6 checkpoints and deltas have expired and were deleted.
-        compareVersions(getCheckpointVersions(logPath), "checkpoint", 6 to 10)
-        compareVersions(getDeltaVersions(logPath), "delta", 6 to 10)
+        compareVersions(getCheckpointVersions(logPath), "checkpoint", 7 to 10)
+        compareVersions(getDeltaVersions(logPath), "delta", 7 to 10)
 
         assert(
           getSidecarFiles(log) ===
             Set(evenCommitSidecarFile_1, oddCommitSidecarFile_1) ++
-            (6 to 10).map(sidecarFiles(_)))
+            (7 to 10).map(sidecarFiles(_)))
       }
     }
   }
@@ -503,8 +492,8 @@ class DeltaRetentionSuite extends QueryTest
         // 11th day Run metadata cleanup.
         clock.setTime(day(startTime, 11))
         cleanUpExpiredLogs(log)
-        compareVersions(getCheckpointVersions(logPath), "checkpoint", 4 to 10)
-        compareVersions(getDeltaVersions(logPath), "delta", 4 to 10)
+        compareVersions(getCheckpointVersions(logPath), "checkpoint", 5 to 10)
+        compareVersions(getDeltaVersions(logPath), "delta", 5 to 10)
         val checkpointInstancesForV10 =
           getCheckpointFiles(logPath)
             .filter(f => getFileVersions(Seq(f)).head == 10)
@@ -536,7 +525,7 @@ class DeltaRetentionSuite extends QueryTest
             DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> v2CheckpointFormat))
       }
   }.flatten).foreach { case (chkConfigName, chkConfig) =>
-  test(s"cleanup does not delete the latest checkpoint before the cutoff. " +
+  test(s"cleanup does not delete the checkpoint if it is required by non-expired versions. " +
     s"Config: $chkConfigName.") {
     withSQLConf(chkConfig: _*) {
     withTempDir { tempDir =>
@@ -650,173 +639,6 @@ class DeltaRetentionSuite extends QueryTest
   }
   }
 
-  test(s"cleanup does not delete the logs if no checkpoints exist") {
-    withTempDir { tempDir =>
-      val startTime = getStartTimeForRetentionTest
-      val clock = new ManualClock(startTime)
-      val actualTestStartTime = System.currentTimeMillis()
-      val tableReference = s"delta.`${tempDir.getCanonicalPath()}`"
-      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
-      val logPath = new File(log.logPath.toUri)
-
-      // commit 0
-      spark.sql(
-        s"""CREATE TABLE $tableReference (id Int) USING delta
-           | TBLPROPERTIES('delta.enableChangeDataFeed' = true)
-        """.stripMargin)
-      // Set time for commit 0 to ensure that the commits don't need timestamp adjustment.
-      val commit0Time = clock.getTimeMillis()
-      new File(FileNames.unsafeDeltaFile(log.logPath, 0).toUri).setLastModified(commit0Time)
-      new File(FileNames.checksumFile(log.logPath, 0).toUri).setLastModified(commit0Time)
-
-      def commitNewVersion(version: Long): Unit = {
-        spark.sql(s"INSERT INTO $tableReference VALUES (1)")
-
-        val deltaFile = new File(FileNames.unsafeDeltaFile(log.logPath, version).toUri)
-        val time = clock.getTimeMillis() + version * 1000
-        deltaFile.setLastModified(time)
-        val checkpointFile = new File(FileNames.checkpointFileSingular(log.logPath, version).toUri)
-        if (checkpointFile.exists()) {
-          checkpointFile.setLastModified(time)
-        }
-        val crcFile = new File(FileNames.checksumFile(log.logPath, version).toUri)
-        crcFile.setLastModified(time)
-      }
-
-      // Day 0: Add commits 1 to 9
-      (1L to 9L).foreach(commitNewVersion)
-
-      // Day 35: Add commit 10 --> creates a checkpoint at Day 35 for version 10
-      clock.setTime(day(startTime, 35))
-      commitNewVersion(10L)
-
-      // checkpoint is created
-      val checkpoint10Files = getCheckpointFiles(logPath)
-        .filter(f => FileNames.checkpointVersion(new Path(f.getCanonicalPath)) == 10)
-      assert(checkpoint10Files.length == 1)
-      assert(checkpoint10Files.forall(_.exists))
-
-      val deltaFiles = (0 to 10).map { i =>
-        new File(FileNames.unsafeDeltaFile(log.logPath, i).toUri)
-      }
-
-      // ensure that the versions 0 to 10 exists before the cleanup
-      deltaFiles.foreach { f =>
-        assert(f.exists())
-      }
-
-      cleanUpExpiredLogs(log)
-
-      // ensure that the versions 0 to 9 still exists after the checkpoint
-      deltaFiles.foreach { f =>
-        val version = FileNames.deltaVersion(new Path(f.toString()))
-        assert(f.exists, version)
-      }
-
-      // Validate we can time travel to all versions
-      val earliestExpectedChkVersion = 0
-      (0 to 10).map { version =>
-        val sqlCommand = s"SELECT * FROM $tableReference VERSION AS OF $version"
-        if (version < earliestExpectedChkVersion) {
-          val ex = intercept[org.apache.spark.sql.delta.VersionNotFoundException] {
-            spark.sql(sqlCommand).collect()
-          }
-          assert(ex.userVersion === version)
-          assert(ex.earliest === earliestExpectedChkVersion)
-          assert(ex.latest === 10)
-        } else {
-          spark.sql(sqlCommand).collect()
-        }
-      }
-
-      // Validate CDF - SELECT * FROM table_changes_by_path('table', X, Y)
-      (0 to 9).map { version =>
-        val sqlCommand = s"SELECT * FROM " +
-          s"table_changes_by_path('${tempDir.getCanonicalPath}', $version, 10)"
-        if (version < earliestExpectedChkVersion) {
-          val ex = intercept[org.apache.spark.sql.delta.DeltaFileNotFoundException] {
-            spark.sql(sqlCommand).collect()
-          }
-        } else {
-          spark.sql(sqlCommand).collect()
-        }
-      }
-    }
-  }
-
-  test(s"cleanup does not delete the latest checkpoint before the cutoff, " +
-    s"even if not strictly required") {
-    withTempDir { tempDir =>
-      val startTime = getStartTimeForRetentionTest
-      val clock = new ManualClock(startTime)
-      val actualTestStartTime = System.currentTimeMillis()
-      val tableReference = s"delta.`${tempDir.getCanonicalPath()}`"
-      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
-      val logPath = new File(log.logPath.toUri)
-
-      // commit 0
-      spark.sql(s"CREATE TABLE $tableReference (id Int) USING delta")
-      // Set time for commit 0 to ensure that the commits don't need timestamp adjustment.
-      val commit0Time = clock.getTimeMillis()
-      new File(FileNames.unsafeDeltaFile(log.logPath, 0).toUri).setLastModified(commit0Time)
-      new File(FileNames.checksumFile(log.logPath, 0).toUri).setLastModified(commit0Time)
-
-      def commitNewVersion(version: Long): Unit = {
-        spark.sql(s"INSERT INTO $tableReference VALUES (1)")
-
-        val deltaFile = new File(FileNames.unsafeDeltaFile(log.logPath, version).toUri)
-        val time = clock.getTimeMillis() + version * 1000
-        deltaFile.setLastModified(time)
-        val checkpointFile = new File(FileNames.checkpointFileSingular(log.logPath, version).toUri)
-        if (checkpointFile.exists()) {
-          checkpointFile.setLastModified(time)
-        }
-        val crcFile = new File(FileNames.checksumFile(log.logPath, version).toUri)
-        crcFile.setLastModified(time)
-      }
-
-      // Day 0: Add commits 1 to 9
-      (1L to 9L).foreach(commitNewVersion)
-
-      // Creates a checkpoint for version 9
-      log.checkpoint()
-      val chk9 = getCheckpointFiles(logPath)
-        .filter(f => FileNames.checkpointVersion(new Path(f.getCanonicalPath)) == 9).head
-      assert(chk9.exists())
-      chk9.setLastModified(clock.getTimeMillis() + 9 * 1000)
-
-      // Day 35: Add commit 10 --> creates a checkpoint at Day 35 for version 10
-      clock.setTime(day(startTime, 35))
-      commitNewVersion(10L)
-
-      // checkpoint is created
-      val chk10 = getCheckpointFiles(logPath)
-        .filter(f => FileNames.checkpointVersion(new Path(f.getCanonicalPath)) == 10).head
-      assert(chk10.exists())
-
-      val lastExpiredCheckpoint = 9
-
-      val deltaFiles = (lastExpiredCheckpoint to 10).map { i =>
-        new File(FileNames.unsafeDeltaFile(log.logPath, i).toUri)
-      }
-
-      // ensure that the versions 0 to 10 exists before the cleanup
-      deltaFiles.foreach { f =>
-        assert(f.exists())
-      }
-
-      cleanUpExpiredLogs(log)
-
-      // ensure that the version 0-9, including the checkpoint 9,
-      // still exists after the checkpoint 10 is created
-      deltaFiles.foreach { f =>
-        val version = FileNames.deltaVersion(new Path(f.toString()))
-        assert(f.exists, version)
-      }
-      assert(chk9.exists)
-    }
-  }
-
   test("Metadata cleanup respects requireCheckpointProtectionBeforeVersion") {
     withSQLConf(
         DeltaSQLConf.ALLOW_METADATA_CLEANUP_WHEN_ALL_PROTOCOLS_SUPPORTED.key -> "false",
@@ -919,29 +741,29 @@ class DeltaRetentionSuite extends QueryTest
       testRequireCheckpointProtectionBeforeVersion(
         createNumCommitsOutsideRetentionPeriod = 2,
         createNumCommitsWithinRetentionPeriod = 14,
-        createCheckpoints = Set(1),
+        createCheckpoints = Set(2),
         requireCheckpointProtectionBeforeVersion = 0,
         expectedCommitsAfterCleanup = (2 to 15),
         // Α checkpoint is automatically created every 10 commits.
-        expectedCheckpointsAfterCleanup = Set(10))
+        expectedCheckpointsAfterCleanup = Set(2, 10))
 
       testRequireCheckpointProtectionBeforeVersion(
         createNumCommitsOutsideRetentionPeriod = 2,
         createNumCommitsWithinRetentionPeriod = 14,
-        createCheckpoints = Set(1),
+        createCheckpoints = Set(2),
         requireCheckpointProtectionBeforeVersion = 1,
         expectedCommitsAfterCleanup = (2 to 15),
         // Α checkpoint is automatically created every 10 commits.
-        expectedCheckpointsAfterCleanup = Set(10))
+        expectedCheckpointsAfterCleanup = Set(2, 10))
 
       testRequireCheckpointProtectionBeforeVersion(
         createNumCommitsOutsideRetentionPeriod = 2,
         createNumCommitsWithinRetentionPeriod = 14,
-        createCheckpoints = Set(1),
+        createCheckpoints = Set(2),
         requireCheckpointProtectionBeforeVersion = 2,
         expectedCommitsAfterCleanup = (2 to 15),
         // Α checkpoint is automatically created every 10 commits.
-        expectedCheckpointsAfterCleanup = Set(10))
+        expectedCheckpointsAfterCleanup = Set(2, 10))
 
       testRequireCheckpointProtectionBeforeVersion(
         createNumCommitsOutsideRetentionPeriod = 2,
