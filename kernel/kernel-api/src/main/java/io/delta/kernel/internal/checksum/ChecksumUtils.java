@@ -261,6 +261,8 @@ public class ChecksumUtils {
           "Successfully wrote checksum file for version {}", logSegmentAtVersion.getVersion());
     } catch (FileAlreadyExistsException e) {
       logger.info("Checksum file already exists for version {}", logSegmentAtVersion.getVersion());
+      // Checksum file has been created while we were computing it.
+      // This is fine - the checksum now exists, which was our goal.
     }
   }
 
