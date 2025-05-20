@@ -627,8 +627,14 @@ class DeltaRetentionSuite extends QueryTest
         val sqlCommand = s"SELECT * FROM " +
           s"table_changes_by_path('${tempDir.getCanonicalPath}', $version, 25)"
         if (version < earliestExpectedChkVersion) {
-          val ex = intercept[org.apache.spark.sql.delta.DeltaFileNotFoundException] {
-            spark.sql(sqlCommand).collect()
+          if (coordinatedCommitsEnabledInTests) {
+            intercept[IllegalStateException] {
+              spark.sql(sqlCommand).collect()
+            }
+          } else {
+            intercept[org.apache.spark.sql.delta.DeltaFileNotFoundException] {
+              spark.sql(sqlCommand).collect()
+            }
           }
         } else {
           spark.sql(sqlCommand).collect()
