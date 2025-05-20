@@ -16,8 +16,7 @@
 
 package org.apache.spark.sql.delta.hooks
 
-import org.apache.spark.sql.delta.{DeltaTransaction, Snapshot, UniversalFormat}
-import org.apache.spark.sql.delta.actions.Action
+import org.apache.spark.sql.delta.{CommittedTransaction, UniversalFormat}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf.DELTA_UNIFORM_HUDI_SYNC_CONVERT_ENABLED
 
@@ -29,16 +28,12 @@ object HudiConverterHook extends PostCommitHook with DeltaLogging {
 
   val ASYNC_HUDI_CONVERTER_THREAD_NAME = "async-hudi-converter"
 
-  override def run(
-      spark: SparkSession,
-      txn: DeltaTransaction,
-      committedVersion: Long,
-      postCommitSnapshot: Snapshot,
-      committedActions: Iterator[Action]): Unit = {
+  override def run(spark: SparkSession, txn: CommittedTransaction): Unit = {
+    val postCommitSnapshot = txn.postCommitSnapshot
     // Only convert to Hudi if the snapshot matches the version committed.
     // This is to skip converting the same actions multiple times - they'll be written out
     // by another commit anyways.
-    if (committedVersion != postCommitSnapshot.version ||
+    if (txn.committedVersion != postCommitSnapshot.version ||
         !UniversalFormat.hudiEnabled(postCommitSnapshot.metadata)) {
       return
     }

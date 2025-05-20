@@ -296,6 +296,7 @@ trait OptimisticTransactionImpl extends DeltaTransaction
 
   /** Tracks if this transaction has already committed. */
   protected var committed: Option[CommittedTransaction] = None
+  def getCommitted: Option[CommittedTransaction] = committed
 
   /** Contains the execution instrumentation set via thread-local. No-op by default. */
   protected[delta] var executionObserver: TransactionExecutionObserver =

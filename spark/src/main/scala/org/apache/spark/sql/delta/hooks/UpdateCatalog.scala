@@ -26,8 +26,8 @@ import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumnInfo}
 import org.apache.spark.sql.delta.skipping.clustering.temp.ClusterBySpec
-import org.apache.spark.sql.delta.{DeltaConfigs, DeltaTableIdentifier, DeltaTransaction, Snapshot}
-import org.apache.spark.sql.delta.actions.{Action, Metadata}
+import org.apache.spark.sql.delta.{CommittedTransaction, DeltaConfigs, DeltaTableIdentifier, Snapshot}
+import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -41,7 +41,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.connector.catalog.CatalogManager.SESSION_CATALOG_NAME
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.types.{StructField, StructType}
+import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.ThreadUtils
 
 /**
@@ -62,15 +62,10 @@ trait UpdateCatalogBase extends PostCommitHook with DeltaLogging {
 
   protected val table: CatalogTable
 
-  override def run(
-      spark: SparkSession,
-      txn: DeltaTransaction,
-      committedVersion: Long,
-      postCommitSnapshot: Snapshot,
-      actions: Iterator[Action]): Unit = {
+  override def run(spark: SparkSession, txn: CommittedTransaction): Unit = {
     // There's a potential race condition here, where a newer commit has already triggered
     // this to run. That's fine.
-    executeOnWrite(spark, postCommitSnapshot)
+    executeOnWrite(spark, txn.postCommitSnapshot)
   }
 
   /**
