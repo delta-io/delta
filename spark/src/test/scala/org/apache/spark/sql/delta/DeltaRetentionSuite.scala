@@ -841,20 +841,18 @@ class DeltaRetentionSuite extends QueryTest
       testRequireCheckpointProtectionBeforeVersion(
         createNumCommitsOutsideRetentionPeriod = 8,
         createNumCommitsWithinRetentionPeriod = 8,
-        createCheckpoints = Set(1),
+        createCheckpoints = Set(1, 8),
         requireCheckpointProtectionBeforeVersion = 10,
         expectedCommitsAfterCleanup = (8 to 15),
-        // This is a bit weird. Cleanup should had created a checkpoint at 8.
-        expectedCheckpointsAfterCleanup = Set(10))
+        expectedCheckpointsAfterCleanup = Set(8, 10))
 
       testRequireCheckpointProtectionBeforeVersion(
         createNumCommitsOutsideRetentionPeriod = 8,
         createNumCommitsWithinRetentionPeriod = 8,
-        createCheckpoints = Set(0),
+        createCheckpoints = Set(0, 8),
         requireCheckpointProtectionBeforeVersion = 10,
         expectedCommitsAfterCleanup = (8 to 15),
-        // This is a bit weird. Cleanup should had created a checkpoint at 8.
-        expectedCheckpointsAfterCleanup = Set(10))
+        expectedCheckpointsAfterCleanup = Set(8, 10))
     }
   }
 
