@@ -1083,7 +1083,11 @@ class DeltaTableTestsMixin:
                 "int",
                 generatedAlwaysAs=IdentityGenerator()
             )  # type: ignore[arg-type]
+            # exception is thrown in builder.execute() for delta connect
+            builder.execute()
 
+        # reset the builder
+        builder = DeltaTable.create(self.spark).location(self.tempFile)
         # bad generatedAlwaysAs - step can't be 0
         with self.assertRaises(ValueError):
             builder.addColumn(
@@ -1116,6 +1120,11 @@ class DeltaTableTestsMixin:
                 "int",
                 generatedByDefaultAs=IdentityGenerator()
             )  # type: ignore[arg-type]
+            # exception is thrown in builder.execute() for delta connect
+            builder.execute()
+
+        # reset the builder
+        builder = DeltaTable.create(self.spark).location(self.tempFile)
 
         # bad generatedByDefaultAs - step can't be 0
         with self.assertRaises(ValueError):
@@ -1209,7 +1218,7 @@ class DeltaTableTestsMixin:
         dt = self.__create_df_for_feature_tests()
 
         # bad args
-        with self.assertRaisesRegex(Py4JJavaError, "DELTA_UNSUPPORTED_FEATURES_IN_CONFIG"):
+        with self.assertRaisesRegex(Exception, "DELTA_UNSUPPORTED_FEATURES_IN_CONFIG"):
             dt.addFeatureSupport("abc")
         with self.assertRaisesRegex(ValueError, "featureName needs to be a string"):
             dt.addFeatureSupport(12345)  # type: ignore[arg-type]
