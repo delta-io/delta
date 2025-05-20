@@ -92,6 +92,7 @@ public class TransactionImpl implements Transaction {
   private int maxRetries;
   private int logCompactionInterval;
   private Optional<CRCInfo> currentCrcInfo;
+  private Optional<Long> providedRowIdHighWatermark;
 
   private boolean closed; // To avoid trying to commit the same transaction again.
 
@@ -110,7 +111,8 @@ public class TransactionImpl implements Transaction {
       boolean shouldUpdateProtocol,
       int maxRetries,
       int logCompactionInterval,
-      Clock clock) {
+      Clock clock,
+      Optional<Long> providedRowIdHighWatermark) {
     this.isCreateOrReplace = isCreateOrReplace;
     this.dataPath = dataPath;
     this.logPath = logPath;
@@ -127,6 +129,7 @@ public class TransactionImpl implements Transaction {
     this.logCompactionInterval = logCompactionInterval;
     this.clock = clock;
     this.currentCrcInfo = readSnapshot.getCurrentCrcInfo();
+    this.providedRowIdHighWatermark = providedRowIdHighWatermark;
   }
 
   @Override
@@ -246,7 +249,8 @@ public class TransactionImpl implements Transaction {
                 protocol,
                 Optional.empty() /* winningTxnRowIdHighWatermark */,
                 dataActions,
-                resolvedDomainMetadatas);
+                resolvedDomainMetadatas,
+                providedRowIdHighWatermark);
         domainMetadataState.setComputedDomainMetadatas(updatedDomainMetadata);
         dataActions =
             RowTracking.assignBaseRowIdAndDefaultRowCommitVersion(
@@ -311,7 +315,8 @@ public class TransactionImpl implements Transaction {
             commitAsVersion,
             this,
             domainMetadataState.getComputedDomainMetadatasToCommit(),
-            dataActions);
+            dataActions,
+            providedRowIdHighWatermark);
     long newCommitAsVersion = rebaseState.getLatestVersion() + 1;
     checkArgument(
         commitAsVersion < newCommitAsVersion,

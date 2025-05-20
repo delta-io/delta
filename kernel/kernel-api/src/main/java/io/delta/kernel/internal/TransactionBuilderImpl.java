@@ -71,6 +71,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   private Optional<Map<String, String>> tableProperties = Optional.empty();
   private Optional<Set<String>> unsetTablePropertiesKeys = Optional.empty();
   private boolean needDomainMetadataSupport = false;
+  private Optional<Long> assignedRowIdHighWatermark = Optional.empty();
 
   protected final TableImpl table;
   protected Optional<StructType> schema = Optional.empty();
@@ -185,6 +186,13 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   }
 
   @Override
+  public TransactionBuilder withRowIdHighWatermark(long rowIdHighWatermark) {
+    checkArgument(rowIdHighWatermark >= 0, "rowIdHighWatermark must be >= 0");
+    this.assignedRowIdHighWatermark = Optional.of(rowIdHighWatermark);
+    return this;
+  }
+
+  @Override
   public Transaction build(Engine engine) {
     if (operation == Operation.REPLACE_TABLE) {
       throw new UnsupportedOperationException("REPLACE TABLE is not yet supported");
@@ -258,7 +266,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
           false /* shouldUpdateProtocol=false */,
           maxRetries,
           logCompactionInterval,
-          table.getClock());
+          table.getClock(),
+          assignedRowIdHighWatermark);
     }
 
     // Otherwise, if this is a new table definition or there is a metadata or protocol update, we
@@ -349,7 +358,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         newProtocol.isPresent() || isCreateOrReplace /* shouldUpdateProtocol */,
         maxRetries,
         logCompactionInterval,
-        table.getClock());
+        table.getClock(),
+        assignedRowIdHighWatermark);
   }
 
   /**
@@ -428,6 +438,12 @@ public class TransactionBuilderImpl implements TransactionBuilder {
           newProtocolAndFeatures.get()._2.stream().map(TableFeature::featureName).collect(toSet()));
 
       newProtocol = Optional.of(newProtocolAndFeatures.get()._1);
+      if (!TableFeatures.isRowTrackingSupported(newProtocol.orElse(baseProtocol))
+          && assignedRowIdHighWatermark.isPresent()) {
+        throw DeltaErrors.rowTrackingRequiredForRowIdHighWatermark(
+            table.getPath(engine), assignedRowIdHighWatermark.get());
+      }
+
       TableFeatures.validateKernelCanWriteToTable(
           newProtocol.orElse(baseProtocol),
           newMetadata.orElse(baseMetadata),

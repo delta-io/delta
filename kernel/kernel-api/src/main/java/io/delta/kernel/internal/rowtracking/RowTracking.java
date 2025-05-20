@@ -145,6 +145,8 @@ public class RowTracking {
    *     transaction. Should be empty for initial assignment and present for conflict resolution.
    * @param txnDataActions a {@link CloseableIterable} of data actions this txn is trying to commit
    * @param txnDomainMetadatas a list of domain metadata actions this txn is trying to commit
+   * @param providedRowIdHighWatermark Optional row ID high watermark explicitly provided by the
+   *     client.
    * @return Updated list of domain metadata actions for commit
    */
   public static List<DomainMetadata> updateRowIdHighWatermarkIfNeeded(
@@ -152,7 +154,8 @@ public class RowTracking {
       Protocol txnProtocol,
       Optional<Long> winningTxnRowIdHighWatermark,
       CloseableIterable<Row> txnDataActions,
-      List<DomainMetadata> txnDomainMetadatas) {
+      List<DomainMetadata> txnDomainMetadatas,
+      Optional<Long> providedRowIdHighWatermark) {
     checkArgument(
         TableFeatures.isRowTrackingSupported(txnProtocol),
         "Row ID high watermark is updated only when feature 'rowTracking' is supported.");
@@ -169,14 +172,14 @@ public class RowTracking {
 
     // Tracks the new row ID high watermark as we iterate through data actions and counting new rows
     // added in this transaction.
-    final AtomicLong currRowIdHighWatermark =
+    final AtomicLong currCalculatedRowIdHighWatermark =
         new AtomicLong(winningTxnRowIdHighWatermark.orElse(prevRowIdHighWatermark));
 
     // The row ID high watermark must increase monotonically, so the winning transaction's high
     // watermark (if present) must be greater than or equal to the high watermark from the
     // current transaction's read snapshot.
     checkArgument(
-        currRowIdHighWatermark.get() >= prevRowIdHighWatermark,
+        currCalculatedRowIdHighWatermark.get() >= prevRowIdHighWatermark,
         "The current row ID high watermark must be greater than or equal to "
             + "the high watermark from the transaction's read snapshot");
 
@@ -186,14 +189,30 @@ public class RowTracking {
             AddFile addFile = new AddFile(row.getStruct(SingleAction.ADD_FILE_ORDINAL));
             if (!addFile.getBaseRowId().isPresent()
                 || addFile.getBaseRowId().get() > prevRowIdHighWatermark) {
-              currRowIdHighWatermark.addAndGet(getNumRecordsOrThrow(addFile));
+              currCalculatedRowIdHighWatermark.addAndGet(getNumRecordsOrThrow(addFile));
             }
           }
         });
 
-    if (currRowIdHighWatermark.get() != prevRowIdHighWatermark) {
+    // If the client has explicitly provided a row ID high watermark, we should use that value
+    // instead of the one calculated from the current row ID high watermark and uncommitted data
+    // actions.
+    // Validate that the provided value is greater than or equal to the calculated watermark to
+    // ensure consistency.
+    providedRowIdHighWatermark.ifPresent(
+        providedHighWatermark ->
+            checkArgument(
+                providedHighWatermark >= currCalculatedRowIdHighWatermark.get(),
+                String.format(
+                    "The provided row ID high watermark (%d) must be greater than or equal to "
+                        + "the calculated row ID high watermark (%d) based on the transaction's "
+                        + "data actions.",
+                    providedHighWatermark, currCalculatedRowIdHighWatermark.get())));
+
+    if (providedRowIdHighWatermark.orElse(currCalculatedRowIdHighWatermark.get())
+        != prevRowIdHighWatermark) {
       nonRowTrackingDomainMetadatas.add(
-          new RowTrackingMetadataDomain(currRowIdHighWatermark.get()).toDomainMetadata());
+          new RowTrackingMetadataDomain(currCalculatedRowIdHighWatermark.get()).toDomainMetadata());
     }
 
     return nonRowTrackingDomainMetadatas;

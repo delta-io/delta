@@ -217,7 +217,9 @@ class TransactionReportSuite extends DeltaTableWriteSuiteBase with MetricsReport
           new Path(TransactionStateRow.getTablePath(trans.getTransactionState(engine))).toUri,
           fileStatus,
           Collections.emptyMap(), // partitionValues
-          true // dataChange
+          true, // dataChange,
+          Optional.empty(), // baseRowId
+          Optional.empty() // defaultRowCommitVersion
         ))
     })
   }

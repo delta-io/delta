@@ -71,6 +71,7 @@ public class ConflictChecker {
   private final long attemptVersion;
   private final CloseableIterable<Row> attemptDataActions;
   private final List<DomainMetadata> attemptDomainMetadatas;
+  private final Optional<Long> providedRowIdHighWatermark;
 
   // Helper states during conflict resolution
   private Optional<Long> lastWinningRowIdHighWatermark = Optional.empty();
@@ -80,12 +81,14 @@ public class ConflictChecker {
       TransactionImpl transaction,
       long attemptVersion,
       List<DomainMetadata> domainMetadatas,
-      CloseableIterable<Row> dataActions) {
+      CloseableIterable<Row> dataActions,
+      Optional<Long> providedRowIdHighWatermark) {
     this.snapshot = snapshot;
     this.transaction = transaction;
     this.attemptVersion = attemptVersion;
     this.attemptDomainMetadatas = domainMetadatas;
     this.attemptDataActions = dataActions;
+    this.providedRowIdHighWatermark = providedRowIdHighWatermark;
   }
 
   /**
@@ -100,6 +103,8 @@ public class ConflictChecker {
    *     commit
    * @param dataActions {@link CloseableIterable} of data actions that the losing transaction is
    *     trying to commit
+   * @param providedRowIdHighWatermark Optional high watermark explicitly provided by the client.
+   *     This value should be set as the final value in this txn.
    * @return {@link TransactionRebaseState} that the losing transaction needs to rebase against
    * @throws ConcurrentWriteException if there are logical conflicts between the losing transaction
    *     and the winning transactions that cannot be resolved.
@@ -110,12 +115,19 @@ public class ConflictChecker {
       long attemptVersion,
       TransactionImpl transaction,
       List<DomainMetadata> domainMetadatas,
-      CloseableIterable<Row> dataActions)
+      CloseableIterable<Row> dataActions,
+      Optional<Long> providedRowIdHighWatermark)
       throws ConcurrentWriteException {
     // We currently set isBlindAppend=false in our CommitInfo to avoid unsafe resolution by other
     // connectors. Here, we still can assume that conflict resolution is safe to perform in Kernel.
     // checkArgument(transaction.isBlindAppend(), "Current support is for blind appends only.");
-    return new ConflictChecker(snapshot, transaction, attemptVersion, domainMetadatas, dataActions)
+    return new ConflictChecker(
+            snapshot,
+            transaction,
+            attemptVersion,
+            domainMetadatas,
+            dataActions,
+            providedRowIdHighWatermark)
         .resolveConflicts(engine);
   }
 
@@ -163,7 +175,8 @@ public class ConflictChecker {
               transaction.getProtocol(),
               lastWinningRowIdHighWatermark,
               attemptDataActions,
-              attemptDomainMetadatas);
+              attemptDomainMetadatas,
+              providedRowIdHighWatermark);
       updatedDataActions =
           RowTracking.assignBaseRowIdAndDefaultRowCommitVersion(
               snapshot,
