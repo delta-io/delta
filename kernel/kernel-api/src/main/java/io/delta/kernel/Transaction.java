@@ -43,6 +43,7 @@ import java.net.URI;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Represents a transaction to mutate a Delta table.
@@ -257,7 +258,9 @@ public interface Transaction {
                   ((DataWriteContextImpl) dataWriteContext).getPartitionValues(),
                   true /* dataChange */,
                   // TODO: populate tags in generateAppendActions
-                  Collections.emptyMap() /* tags */);
+                  Collections.emptyMap() /* tags */,
+                  Optional.empty() /* baseRowId */,
+                  Optional.empty() /* defaultRowCommitVersion */);
           return SingleAction.createAddFileSingleAction(addFileRow.toRow());
         });
   }

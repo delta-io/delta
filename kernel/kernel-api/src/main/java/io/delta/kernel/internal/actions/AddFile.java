@@ -80,7 +80,9 @@ public class AddFile extends RowBackedAction {
       DataFileStatus dataFileStatus,
       Map<String, Literal> partitionValues,
       boolean dataChange,
-      Map<String, String> tags) {
+      Map<String, String> tags,
+      Optional<Long> baseRowId,
+      Optional<Long> defaultRowCommitVersion) {
     Optional<MapValue> tagMapValue =
         !tags.isEmpty() ? Optional.of(VectorUtils.stringStringMapValue(tags)) : Optional.empty();
     Row row =
@@ -93,8 +95,8 @@ public class AddFile extends RowBackedAction {
             dataChange,
             Optional.empty(), // deletionVector
             tagMapValue, // tags
-            Optional.empty(), // baseRowId
-            Optional.empty(), // defaultRowCommitVersion
+            baseRowId, // baseRowId
+            defaultRowCommitVersion, // defaultRowCommitVersion
             dataFileStatus.getStatistics());
 
     return new AddFile(row);
