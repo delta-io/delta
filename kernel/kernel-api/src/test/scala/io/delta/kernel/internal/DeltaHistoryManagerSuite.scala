@@ -399,343 +399,338 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
       mustBeRecreatable = false)
   }
 
-  // def basicICTTimeTravelTest(
-  //     ictEnablementVersion: Long): Unit = {
-  //   val icts = Seq(1L, 11L, 21L, 31L, 50L, 60L)
-  //   val modTimes = Seq(4L, 14L, 24L, 34L, 54L, 64L)
-  //   val deltasWithModTimes = modTimes.zipWithIndex.map { case (ts, v) =>
-  //     FileStatus.of(
-  //       FileNames.deltaFile(logPath, v),
-  //       1, /* size */
-  //       ts)
-  //   }
-  //   val deltaToICTMap = icts.zipWithIndex.map { case (ts, v) => v.toLong -> ts }.toMap
-  //   val engine = createMockFSAndJsonEngineForICT(deltasWithModTimes, deltaToICTMap)
-  //   val mockSnapshot = getMockSnapshot(
-  //     latestVersion = icts.size - 1,
-  //     Some((ictEnablementVersion, deltaToICTMap(ictEnablementVersion))))
+  def basicICTTimeTravelTest(
+      ictEnablementVersion: Long): Unit = {
+    val icts = Seq(1L, 11L, 21L, 31L, 50L, 60L)
+    val modTimes = Seq(4L, 14L, 24L, 34L, 54L, 64L)
+    val deltasWithModTimes = modTimes.zipWithIndex.map { case (ts, v) =>
+      FileStatus.of(
+        FileNames.deltaFile(logPath, v),
+        1, /* size */
+        ts)
+    }
+    val deltaToICTMap = icts.zipWithIndex.map { case (ts, v) => v.toLong -> ts }.toMap
+    val engine = createMockFSAndJsonEngineForICT(deltasWithModTimes, deltaToICTMap)
+    val mockSnapshot = getMockSnapshot(
+      latestVersion = icts.size - 1,
+      Some((ictEnablementVersion, deltaToICTMap(ictEnablementVersion))))
 
-  //   icts.indices.foreach { idx =>
-  //     val timestamp = icts(idx)
-  //     val expectedVersion = idx // For enablement at 0, version matches index
-  //     val activeCommit = DeltaHistoryManager.getActiveCommitAtTimestamp(
-  //       engine,
-  //       mockSnapshot,
-  //       logPath,
-  //       timestamp,
-  //       true, // mustBeRecreatable
-  //       false, // canReturnLastCommit
-  //       false // canReturnEarliestCommit
-  //     )
-  //     assert(activeCommit.getVersion == expectedVersion)
-  //   }
-  // }
+    icts.indices.foreach { idx =>
+      val timestamp = icts(idx)
+      val expectedVersion = idx // For enablement at 0, version matches index
+      val activeCommit = DeltaHistoryManager.getActiveCommitAtTimestamp(
+        engine,
+        mockSnapshot,
+        logPath,
+        timestamp,
+        true, // mustBeRecreatable
+        false, // canReturnLastCommit
+        false // canReturnEarliestCommit
+      )
+      assert(activeCommit.getVersion == expectedVersion)
+    }
+  }
 
-  // test("basic ICT time travel: enablement at 0") {
-  //   val icts = Seq(1L, 11L, 21L, 31L, 50L, 60L)
-  //   val modTimes = Seq(4L, 14L, 24L, 34L, 54L, 64L)
-  //   val deltasWithModTimes = modTimes.zipWithIndex.map { case (ts, v) =>
-  //     FileStatus.of(
-  //       FileNames.deltaFile(logPath, v),
-  //       1, /* size */
-  //       ts)
-  //   }
-  //   val deltaToICTMap = icts.zipWithIndex.map { case (ts, v) => v.toLong -> ts }.toMap
-  //   val engine = createMockFSAndJsonEngineForICT(deltasWithModTimes, deltaToICTMap)
-  //   val mockSnapshot = getMockSnapshot(
-  //     latestVersion = icts.size - 1,
-  //     Some((0L, deltaToICTMap(0L))))
+  test("basic ICT time travel: enablement at 0") {
+    val icts = Seq(1L, 11L, 21L, 31L, 50L, 60L)
+    val modTimes = Seq(4L, 14L, 24L, 34L, 54L, 64L)
+    val deltasWithModTimes = modTimes.zipWithIndex.map { case (ts, v) =>
+      FileStatus.of(
+        FileNames.deltaFile(logPath, v),
+        1, /* size */
+        ts)
+    }
+    val deltaToICTMap = icts.zipWithIndex.map { case (ts, v) => v.toLong -> ts }.toMap
+    val engine = createMockFSAndJsonEngineForICT(deltasWithModTimes, deltaToICTMap)
+    val mockSnapshot = getMockSnapshot(
+      latestVersion = icts.size - 1,
+      Some((0L, deltaToICTMap(0L))))
 
-  //   // Test exact timestamp matches
-  //   icts.indices.foreach { idx =>
-  //     val timestamp = icts(idx)
-  //     val expectedVersion = idx
-  //     if (timestamp < modTimes(0)) {
-  //       intercept[io.delta.kernel.exceptions.KernelException] {
-  //         DeltaHistoryManager.getActiveCommitAtTimestamp(
-  //           engine,
-  //           mockSnapshot,
-  //           logPath,
-  //           timestamp,
-  //           true, // mustBeRecreatable
-  //           false, // canReturnLastCommit
-  //           false // canReturnEarliestCommit
-  //         )
-  //       }
-  //     } else {
-  //       val activeCommit = DeltaHistoryManager.getActiveCommitAtTimestamp(
-  //         engine,
-  //         mockSnapshot,
-  //         logPath,
-  //         timestamp,
-  //         true, // mustBeRecreatable
-  //         false, // canReturnLastCommit
-  //         false // canReturnEarliestCommit
-  //       )
-  //       assert(activeCommit.getVersion == expectedVersion)
-  //     }
-  //   }
+    // Test exact timestamp matches
+    intercept[io.delta.kernel.exceptions.KernelException] {
+      DeltaHistoryManager.getActiveCommitAtTimestamp(
+        engine,
+        mockSnapshot,
+        logPath,
+        icts(0) - 1,
+        true, // mustBeRecreatable
+        false, // canReturnLastCommit
+        false // canReturnEarliestCommit
+      )
+    }
+    icts.zipWithIndex.foreach { case (timestamp, expectedVersion) =>
+      val activeCommit = DeltaHistoryManager.getActiveCommitAtTimestamp(
+        engine,
+        mockSnapshot,
+        logPath,
+        timestamp,
+        true, // mustBeRecreatable
+        false, // canReturnLastCommit
+        false // canReturnEarliestCommit
+      )
+      assert(activeCommit.getVersion == expectedVersion)
+    }
 
-  //   // Test timestamps between commits
-  //   icts.indices.foreach { expectedVersion =>
-  //     if (expectedVersion != icts.size - 1) {
-  //       val timestamp = icts(expectedVersion) + 1
-  //       val activeCommit = DeltaHistoryManager.getActiveCommitAtTimestamp(
-  //         engine,
-  //         mockSnapshot,
-  //         logPath,
-  //         timestamp,
-  //         true, // mustBeRecreatable
-  //         false, // canReturnLastCommit
-  //         false // canReturnEarliestCommit
-  //       )
-  //       assert(activeCommit.getVersion == expectedVersion)
-  //     }
-  //   }
-  // }
+    // Test timestamps between commits
+    icts.indices.foreach { expectedVersion =>
+      if (expectedVersion != icts.size - 1) {
+        val timestamp = icts(expectedVersion) + 1
+        val activeCommit = DeltaHistoryManager.getActiveCommitAtTimestamp(
+          engine,
+          mockSnapshot,
+          logPath,
+          timestamp,
+          true, // mustBeRecreatable
+          false, // canReturnLastCommit
+          false // canReturnEarliestCommit
+        )
+        assert(activeCommit.getVersion == expectedVersion)
+      }
+    }
+  }
 
-  // test("basic ICT time travel: enablement at 1") {
-  //   val icts = Seq(1L, 11L, 21L, 31L, 50L, 60L)
-  //   val modTimes = Seq(4L, 14L, 24L, 34L, 54L, 64L)
-  //   val deltasWithModTimes = modTimes.zipWithIndex.map { case (ts, v) =>
-  //     FileStatus.of(
-  //       FileNames.deltaFile(logPath, v),
-  //       1, /* size */
-  //       ts)
-  //   }
-  //   val deltaToICTMap = icts.zipWithIndex.map { case (ts, v) => v.toLong -> ts }.toMap
-  //   val engine = createMockFSAndJsonEngineForICT(deltasWithModTimes, deltaToICTMap)
-  //   val mockSnapshot = getMockSnapshot(
-  //     latestVersion = icts.size - 1,
-  //     Some((1L, deltaToICTMap(1L))))
+  test("basic ICT time travel: enablement at 1") {
+    val icts = Seq(1L, 11L, 21L, 31L, 50L, 60L)
+    val modTimes = Seq(4L, 14L, 24L, 34L, 54L, 64L)
+    val deltasWithModTimes = modTimes.zipWithIndex.map { case (ts, v) =>
+      FileStatus.of(
+        FileNames.deltaFile(logPath, v),
+        1, /* size */
+        ts)
+    }
+    val deltaToICTMap = icts.zipWithIndex.map { case (ts, v) => v.toLong -> ts }.toMap
+    val engine = createMockFSAndJsonEngineForICT(deltasWithModTimes, deltaToICTMap)
+    val mockSnapshot = getMockSnapshot(
+      latestVersion = icts.size - 1,
+      Some((1L, deltaToICTMap(1L))))
 
-  //   // Test exact timestamp matches
-  //   icts.indices.foreach { idx =>
-  //     val timestamp = if (idx >= 1) {
-  //       icts(idx)
-  //     } else {
-  //       modTimes(idx)
-  //     }
-  //     val expectedVersion = idx
-  //     if (timestamp < modTimes(0)) {
-  //       intercept[io.delta.kernel.exceptions.KernelException] {
-  //         DeltaHistoryManager.getActiveCommitAtTimestamp(
-  //           engine,
-  //           mockSnapshot,
-  //           logPath,
-  //           timestamp,
-  //           true, // mustBeRecreatable
-  //           false, // canReturnLastCommit
-  //           false // canReturnEarliestCommit
-  //         )
-  //       }
-  //     } else {
-  //       val activeCommit = DeltaHistoryManager.getActiveCommitAtTimestamp(
-  //         engine,
-  //         mockSnapshot,
-  //         logPath,
-  //         timestamp,
-  //         true, // mustBeRecreatable
-  //         false, // canReturnLastCommit
-  //         false // canReturnEarliestCommit
-  //       )
-  //       assert(activeCommit.getVersion == expectedVersion)
-  //     }
-  //   }
+    // Test exact timestamp matches
+    icts.indices.foreach { idx =>
+      val timestamp = if (idx >= 1) {
+        icts(idx)
+      } else {
+        modTimes(idx)
+      }
+      val expectedVersion = idx
+      if (timestamp < modTimes(0)) {
+        intercept[io.delta.kernel.exceptions.KernelException] {
+          DeltaHistoryManager.getActiveCommitAtTimestamp(
+            engine,
+            mockSnapshot,
+            logPath,
+            timestamp,
+            true, // mustBeRecreatable
+            false, // canReturnLastCommit
+            false // canReturnEarliestCommit
+          )
+        }
+      } else {
+        val activeCommit = DeltaHistoryManager.getActiveCommitAtTimestamp(
+          engine,
+          mockSnapshot,
+          logPath,
+          timestamp,
+          true, // mustBeRecreatable
+          false, // canReturnLastCommit
+          false // canReturnEarliestCommit
+        )
+        assert(activeCommit.getVersion == expectedVersion)
+      }
+    }
 
-  //   // Test timestamps between commits
-  //   icts.indices.foreach { expectedVersion =>
-  //     if (expectedVersion != icts.size - 1) {
-  //       val timestamp = if (expectedVersion >= 1) {
-  //         icts(expectedVersion) + 1
-  //       } else {
-  //         modTimes(expectedVersion) + 1
-  //       }
-  //       val activeCommit = DeltaHistoryManager.getActiveCommitAtTimestamp(
-  //         engine,
-  //         mockSnapshot,
-  //         logPath,
-  //         timestamp,
-  //         true, // mustBeRecreatable
-  //         false, // canReturnLastCommit
-  //         false // canReturnEarliestCommit
-  //       )
-  //       assert(activeCommit.getVersion == expectedVersion)
-  //     }
-  //   }
-  // }
+    // Test timestamps between commits
+    icts.indices.foreach { expectedVersion =>
+      if (expectedVersion != icts.size - 1) {
+        val timestamp = if (expectedVersion >= 1) {
+          icts(expectedVersion) + 1
+        } else {
+          modTimes(expectedVersion) + 1
+        }
+        val activeCommit = DeltaHistoryManager.getActiveCommitAtTimestamp(
+          engine,
+          mockSnapshot,
+          logPath,
+          timestamp,
+          true, // mustBeRecreatable
+          false, // canReturnLastCommit
+          false // canReturnEarliestCommit
+        )
+        assert(activeCommit.getVersion == expectedVersion)
+      }
+    }
+  }
 
-  // test("basic ICT time travel: enablement at 3") {
-  //   basicICTTimeTravelTest(ictEnablementVersion = 3)
-  // }
-  // test("basic ICT time travel: enablement at the last version") {
-  //   basicICTTimeTravelTest(ictEnablementVersion = 5)
-  // }
+  test("basic ICT time travel: enablement at 3") {
+    basicICTTimeTravelTest(ictEnablementVersion = 3)
+  }
+  test("basic ICT time travel: enablement at the last version") {
+    basicICTTimeTravelTest(ictEnablementVersion = 5)
+  }
 
-  // test("ICT time travel: snapshot timestamp before ICT enablement") {
-  //   val icts = Seq(1L, 11L, 21L, 31L, 50L, 60L)
-  //   val modTimes = Seq(4L, 14L, 24L, 34L, 54L, 64L)
-  //   val deltasWithModTimes = modTimes.zipWithIndex.map { case (ts, v) =>
-  //     FileStatus.of(
-  //       FileNames.deltaFile(logPath, v),
-  //       1, /* size */
-  //       ts)
-  //   }
-  //   val deltaToICTMap = icts.zipWithIndex.map { case (ts, v) => v.toLong -> ts }.toMap
-  //   val engine = createMockFSAndJsonEngineForICT(deltasWithModTimes, deltaToICTMap)
-  //   val mockSnapshot = getMockSnapshot(
-  //     latestVersion = icts.size - 1,
-  //     Some((3L, deltaToICTMap(3L))))
+  test("ICT time travel: snapshot timestamp before ICT enablement") {
+    val icts = Seq(1L, 11L, 21L, 31L, 50L, 60L)
+    val modTimes = Seq(4L, 14L, 24L, 34L, 54L, 64L)
+    val deltasWithModTimes = modTimes.zipWithIndex.map { case (ts, v) =>
+      FileStatus.of(
+        FileNames.deltaFile(logPath, v),
+        1, /* size */
+        ts)
+    }
+    val deltaToICTMap = icts.zipWithIndex.map { case (ts, v) => v.toLong -> ts }.toMap
+    val engine = createMockFSAndJsonEngineForICT(deltasWithModTimes, deltaToICTMap)
+    val mockSnapshot = getMockSnapshot(
+      latestVersion = icts.size - 1,
+      Some((3L, deltaToICTMap(3L))))
 
-  //   // Test snapshot timestamp before ICT enablement
-  //   val activeCommit = DeltaHistoryManager.getActiveCommitAtTimestamp(
-  //     engine,
-  //     mockSnapshot,
-  //     logPath,
-  //     20L, // Before ICT enablement
-  //     true, // mustBeRecreatable
-  //     false, // canReturnLastCommit
-  //     false // canReturnEarliestCommit
-  //   )
-  //   assert(activeCommit.getVersion == 1L) // Should use modification time
-  // }
+    // Test snapshot timestamp before ICT enablement
+    val activeCommit = DeltaHistoryManager.getActiveCommitAtTimestamp(
+      engine,
+      mockSnapshot,
+      logPath,
+      20L, // Before ICT enablement
+      true, // mustBeRecreatable
+      false, // canReturnLastCommit
+      false // canReturnEarliestCommit
+    )
+    assert(activeCommit.getVersion == 1L) // Should use modification time
+  }
 
-  // test("ICT time travel: snapshot timestamp after ICT enablement") {
-  //   val icts = Seq(1L, 11L, 21L, 31L, 50L, 60L)
-  //   val modTimes = Seq(4L, 14L, 24L, 34L, 54L, 64L)
-  //   val deltasWithModTimes = modTimes.zipWithIndex.map { case (ts, v) =>
-  //     FileStatus.of(
-  //       FileNames.deltaFile(logPath, v),
-  //       1, /* size */
-  //       ts)
-  //   }
-  //   val deltaToICTMap = icts.zipWithIndex.map { case (ts, v) => v.toLong -> ts }.toMap
-  //   val engine = createMockFSAndJsonEngineForICT(deltasWithModTimes, deltaToICTMap)
-  //   val mockSnapshot = getMockSnapshot(
-  //     latestVersion = icts.size - 1,
-  //     Some((3L, deltaToICTMap(3L))))
+  test("ICT time travel: snapshot timestamp after ICT enablement") {
+    val icts = Seq(1L, 11L, 21L, 31L, 50L, 60L)
+    val modTimes = Seq(4L, 14L, 24L, 34L, 54L, 64L)
+    val deltasWithModTimes = modTimes.zipWithIndex.map { case (ts, v) =>
+      FileStatus.of(
+        FileNames.deltaFile(logPath, v),
+        1, /* size */
+        ts)
+    }
+    val deltaToICTMap = icts.zipWithIndex.map { case (ts, v) => v.toLong -> ts }.toMap
+    val engine = createMockFSAndJsonEngineForICT(deltasWithModTimes, deltaToICTMap)
+    val mockSnapshot = getMockSnapshot(
+      latestVersion = icts.size - 1,
+      Some((3L, deltaToICTMap(3L))))
 
-  //   // Test snapshot timestamp after ICT enablement
-  //   val activeCommit = DeltaHistoryManager.getActiveCommitAtTimestamp(
-  //     engine,
-  //     mockSnapshot,
-  //     logPath,
-  //     40L, // After ICT enablement
-  //     true, // mustBeRecreatable
-  //     false, // canReturnLastCommit
-  //     false // canReturnEarliestCommit
-  //   )
-  //   assert(activeCommit.getVersion == 3L) // Should use ICT
-  // }
+    // Test snapshot timestamp after ICT enablement
+    val activeCommit = DeltaHistoryManager.getActiveCommitAtTimestamp(
+      engine,
+      mockSnapshot,
+      logPath,
+      40L, // After ICT enablement
+      true, // mustBeRecreatable
+      false, // canReturnLastCommit
+      false // canReturnEarliestCommit
+    )
+    assert(activeCommit.getVersion == 3L) // Should use ICT
+  }
 
-  // test("ICT time travel: modification times out of order") {
-  //   val icts = Seq(1L, 11L, 21L, 31L, 50L, 60L)
-  //   // Out of order modification times
-  //   val modTimes = Seq(4L, 24L, 14L, 34L, 54L, 64L)
-  //   val deltasWithModTimes = modTimes.zipWithIndex.map { case (ts, v) =>
-  //     FileStatus.of(
-  //       FileNames.deltaFile(logPath, v),
-  //       1, /* size */
-  //       ts)
-  //   }
-  //   val deltaToICTMap = icts.zipWithIndex.map { case (ts, v) => v.toLong -> ts }.toMap
-  //   val engine = createMockFSAndJsonEngineForICT(deltasWithModTimes, deltaToICTMap)
-  //   val mockSnapshot = getMockSnapshot(
-  //     latestVersion = icts.size - 1,
-  //     Some((3L, deltaToICTMap(3L))))
+  test("ICT time travel: modification times out of order") {
+    val icts = Seq(1L, 11L, 21L, 31L, 50L, 60L)
+    // Out of order modification times
+    val modTimes = Seq(4L, 24L, 14L, 34L, 54L, 64L)
+    val deltasWithModTimes = modTimes.zipWithIndex.map { case (ts, v) =>
+      FileStatus.of(
+        FileNames.deltaFile(logPath, v),
+        1, /* size */
+        ts)
+    }
+    val deltaToICTMap = icts.zipWithIndex.map { case (ts, v) => v.toLong -> ts }.toMap
+    val engine = createMockFSAndJsonEngineForICT(deltasWithModTimes, deltaToICTMap)
+    val mockSnapshot = getMockSnapshot(
+      latestVersion = icts.size - 1,
+      Some((3L, deltaToICTMap(3L))))
 
-  //   // Test with out of order modification times
-  //   val activeCommit = DeltaHistoryManager.getActiveCommitAtTimestamp(
-  //     engine,
-  //     mockSnapshot,
-  //     logPath,
-  //     15L, // Between version 1 and 2
-  //     true, // mustBeRecreatable
-  //     false, // canReturnLastCommit
-  //     false // canReturnEarliestCommit
-  //   )
-  //   assert(activeCommit.getVersion == 0L) // Should use ICT
-  // }
+    // Test with out of order modification times
+    val activeCommit = DeltaHistoryManager.getActiveCommitAtTimestamp(
+      engine,
+      mockSnapshot,
+      logPath,
+      15L, // Between version 1 and 2
+      true, // mustBeRecreatable
+      false, // canReturnLastCommit
+      false // canReturnEarliestCommit
+    )
+    assert(activeCommit.getVersion == 0L) // Should use ICT
+  }
 
-  // test("ICT time travel: binary search edge cases") {
-  //   val icts = Seq(1L, 11L, 21L, 31L, 50L, 60L, 70L) // Odd number of commits
-  //   val modTimes = Seq(4L, 14L, 24L, 34L, 54L, 64L, 74L)
-  //   val deltasWithModTimes = modTimes.zipWithIndex.map { case (ts, v) =>
-  //     FileStatus.of(
-  //       FileNames.deltaFile(logPath, v),
-  //       1, /* size */
-  //       ts)
-  //   }
-  //   val deltaToICTMap = icts.zipWithIndex.map { case (ts, v) => v.toLong -> ts }.toMap
-  //   val engine = createMockFSAndJsonEngineForICT(deltasWithModTimes, deltaToICTMap)
-  //   val mockSnapshot = getMockSnapshot(
-  //     latestVersion = icts.size - 1,
-  //     Some((0L, deltaToICTMap(0L))))
+  test("ICT time travel: binary search edge cases") {
+    val icts = Seq(1L, 11L, 21L, 31L, 50L, 60L, 70L) // Odd number of commits
+    val modTimes = Seq(4L, 14L, 24L, 34L, 54L, 64L, 74L)
+    val deltasWithModTimes = modTimes.zipWithIndex.map { case (ts, v) =>
+      FileStatus.of(
+        FileNames.deltaFile(logPath, v),
+        1, /* size */
+        ts)
+    }
+    val deltaToICTMap = icts.zipWithIndex.map { case (ts, v) => v.toLong -> ts }.toMap
+    val engine = createMockFSAndJsonEngineForICT(deltasWithModTimes, deltaToICTMap)
+    val mockSnapshot = getMockSnapshot(
+      latestVersion = icts.size - 1,
+      Some((0L, deltaToICTMap(0L))))
 
-  //   // Test start = end case
-  //   val activeCommit1 = DeltaHistoryManager.getActiveCommitAtTimestamp(
-  //     engine,
-  //     mockSnapshot,
-  //     logPath,
-  //     31L, // Exact match with version 3
-  //     true, // mustBeRecreatable
-  //     false, // canReturnLastCommit
-  //     false // canReturnEarliestCommit
-  //   )
-  //   assert(activeCommit1.getVersion == 3L)
+    // Test start = end case
+    val activeCommit1 = DeltaHistoryManager.getActiveCommitAtTimestamp(
+      engine,
+      mockSnapshot,
+      logPath,
+      31L, // Exact match with version 3
+      true, // mustBeRecreatable
+      false, // canReturnLastCommit
+      false // canReturnEarliestCommit
+    )
+    assert(activeCommit1.getVersion == 3L)
 
-  //   // Test searchTimestamp = start case
-  //   val activeCommit2 = DeltaHistoryManager.getActiveCommitAtTimestamp(
-  //     engine,
-  //     mockSnapshot,
-  //     logPath,
-  //     1L, // First ICT
-  //     true, // mustBeRecreatable
-  //     false, // canReturnLastCommit
-  //     false // canReturnEarliestCommit
-  //   )
-  //   assert(activeCommit2.getVersion == 0L)
+    // Test searchTimestamp = start case
+    val activeCommit2 = DeltaHistoryManager.getActiveCommitAtTimestamp(
+      engine,
+      mockSnapshot,
+      logPath,
+      1L, // First ICT
+      true, // mustBeRecreatable
+      false, // canReturnLastCommit
+      false // canReturnEarliestCommit
+    )
+    assert(activeCommit2.getVersion == 0L)
 
-  //   // Test searchTimestamp = end case
-  //   val activeCommit3 = DeltaHistoryManager.getActiveCommitAtTimestamp(
-  //     engine,
-  //     mockSnapshot,
-  //     logPath,
-  //     70L, // Last ICT
-  //     true, // mustBeRecreatable
-  //     false, // canReturnLastCommit
-  //     false // canReturnEarliestCommit
-  //   )
-  //   assert(activeCommit3.getVersion == 6L)
-  // }
+    // Test searchTimestamp = end case
+    val activeCommit3 = DeltaHistoryManager.getActiveCommitAtTimestamp(
+      engine,
+      mockSnapshot,
+      logPath,
+      70L, // Last ICT
+      true, // mustBeRecreatable
+      false, // canReturnLastCommit
+      false // canReturnEarliestCommit
+    )
+    assert(activeCommit3.getVersion == 6L)
+  }
 
-  // test("ICT time travel: even number of commits") {
-  //   val icts = Seq(1L, 11L, 21L, 31L, 50L, 60L) // Even number of commits
-  //   val modTimes = Seq(4L, 14L, 24L, 34L, 54L, 64L)
-  //   val deltasWithModTimes = modTimes.zipWithIndex.map { case (ts, v) =>
-  //     FileStatus.of(
-  //       FileNames.deltaFile(logPath, v),
-  //       1, /* size */
-  //       ts)
-  //   }
-  //   val deltaToICTMap = icts.zipWithIndex.map { case (ts, v) => v.toLong -> ts }.toMap
-  //   val engine = createMockFSAndJsonEngineForICT(deltasWithModTimes, deltaToICTMap)
-  //   val mockSnapshot = getMockSnapshot(
-  //     latestVersion = icts.size - 1,
-  //     Some((0L, deltaToICTMap(0L))))
+  test("ICT time travel: even number of commits") {
+    val icts = Seq(1L, 11L, 21L, 31L, 50L, 60L) // Even number of commits
+    val modTimes = Seq(4L, 14L, 24L, 34L, 54L, 64L)
+    val deltasWithModTimes = modTimes.zipWithIndex.map { case (ts, v) =>
+      FileStatus.of(
+        FileNames.deltaFile(logPath, v),
+        1, /* size */
+        ts)
+    }
+    val deltaToICTMap = icts.zipWithIndex.map { case (ts, v) => v.toLong -> ts }.toMap
+    val engine = createMockFSAndJsonEngineForICT(deltasWithModTimes, deltaToICTMap)
+    val mockSnapshot = getMockSnapshot(
+      latestVersion = icts.size - 1,
+      Some((0L, deltaToICTMap(0L))))
 
-  //   // Test with even number of commits
-  //   val activeCommit = DeltaHistoryManager.getActiveCommitAtTimestamp(
-  //     engine,
-  //     mockSnapshot,
-  //     logPath,
-  //     25L, // Between version 2 and 3
-  //     true, // mustBeRecreatable
-  //     false, // canReturnLastCommit
-  //     false // canReturnEarliestCommit
-  //   )
-  //   assert(activeCommit.getVersion == 2L)
-  // }
+    // Test with even number of commits
+    val activeCommit = DeltaHistoryManager.getActiveCommitAtTimestamp(
+      engine,
+      mockSnapshot,
+      logPath,
+      25L, // Between version 2 and 3
+      true, // mustBeRecreatable
+      false, // canReturnLastCommit
+      false // canReturnEarliestCommit
+    )
+    assert(activeCommit.getVersion == 2L)
+  }
 
   test("greatestLowerBound: basic functionality") {
     // Test with a simple sequence of timestamps
