@@ -232,6 +232,25 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
     }
   }
 
+  test("Fail if row tracking is not supported but client call withHighWatermark in txn") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createEmptyTable(engine, tablePath, testSchema)
+
+      val e = intercept[RuntimeException] {
+        createTxn(
+          engine,
+          tablePath,
+          isNewTable = false,
+          testSchema,
+          Seq.empty,
+          rowIdHighWatermark = Some(30L))
+      }
+      assert(
+        e.getMessage.contains(
+          "Cannot assign a rowId high water mark ('30') to a table"))
+    }
+  }
+
   test("Integration test - Write table with Kernel then write with Spark") {
     withTempDirAndEngine((tablePath, engine) => {
       val tbl = "tbl"

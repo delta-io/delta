@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.internal.actions
 
+import java.lang.{Long => JLong}
 import java.util.Optional
 
 import scala.collection.JavaConverters._
@@ -37,7 +38,14 @@ class RemoveFileSuite extends AnyFunSuite {
       dataChange: Boolean,
       partitionValues: Map[String, String],
       size: Long,
-      stats: Option[String]): Row = {
+      stats: Option[String],
+      baseRowId: Option[Long] = Option.empty,
+      defaultRowCommitVersion: Option[Long] = Option.empty): Row = {
+    def toJavaOptional[T](option: Option[T]): Optional[T] = option match {
+      case Some(value) => Optional.of(value)
+      case None => Optional.empty()
+    }
+
     GenerateIcebergCompatActionUtils.createRemoveFileRowWithExtendedFileMetadata(
       path,
       deletionTimestamp,
@@ -46,8 +54,8 @@ class RemoveFileSuite extends AnyFunSuite {
       size,
       StatsUtils.deserializeFromJson(stats.getOrElse("")),
       null,
-      Optional.empty(),
-      Optional.empty())
+      toJavaOptional(baseRowId.asInstanceOf[Option[JLong]]),
+      toJavaOptional(defaultRowCommitVersion.asInstanceOf[Option[JLong]]))
   }
 
   test("getters can read RemoveFile's fields from the backing row") {
@@ -73,5 +81,32 @@ class RemoveFileSuite extends AnyFunSuite {
     assert(!removeFile.getDeletionVector.isPresent)
     assert(!removeFile.getBaseRowId.isPresent)
     assert(!removeFile.getDefaultRowCommitVersion.isPresent)
+  }
+
+  test("getters can read RemoveFile's fields from the backing row with row tracking") {
+    val removeFileRow = createTestRemoveFileRow(
+      path = "test/path",
+      deletionTimestamp = 1000L,
+      dataChange = true,
+      partitionValues = Map("a" -> "1"),
+      size = 55555L,
+      stats = Option("{\"numRecords\":100}"),
+      baseRowId = Option(30L),
+      defaultRowCommitVersion = Option(40L))
+
+    val removeFile = new RemoveFile(removeFileRow)
+    assert(removeFile.getPath === "test/path")
+    assert(removeFile.getDeletionTimestamp == Optional.of(1000L))
+    assert(removeFile.getDataChange)
+    assert(removeFile.getExtendedFileMetadata == Optional.of(true))
+    assert(removeFile.getPartitionValues.isPresent &&
+      VectorUtils.toJavaMap(removeFile.getPartitionValues.get).asScala.equals(Map("a" -> "1")))
+    assert(removeFile.getSize == Optional.of(55555L))
+    assert(removeFile.getStats.isPresent &&
+      removeFile.getStats.get.serializeAsJson(null) == "{\"numRecords\":100}")
+    assert(removeFile.getBaseRowId === Optional.of(30L))
+    assert(removeFile.getDefaultRowCommitVersion === Optional.of(40L))
+    assert(!removeFile.getTags.isPresent)
+    assert(!removeFile.getDeletionVector.isPresent)
   }
 }

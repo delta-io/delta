@@ -438,11 +438,6 @@ public class TransactionBuilderImpl implements TransactionBuilder {
           newProtocolAndFeatures.get()._2.stream().map(TableFeature::featureName).collect(toSet()));
 
       newProtocol = Optional.of(newProtocolAndFeatures.get()._1);
-      if (!TableFeatures.isRowTrackingSupported(newProtocol.orElse(baseProtocol))
-          && assignedRowIdHighWatermark.isPresent()) {
-        throw DeltaErrors.rowTrackingRequiredForRowIdHighWatermark(
-            table.getPath(engine), assignedRowIdHighWatermark.get());
-      }
 
       TableFeatures.validateKernelCanWriteToTable(
           newProtocol.orElse(baseProtocol),
@@ -480,6 +475,12 @@ public class TransactionBuilderImpl implements TransactionBuilder {
             isCreateOrReplace, newMetadata.orElse(baseMetadata), newProtocol.orElse(baseProtocol));
     if (icebergCompatV2Metadata.isPresent()) {
       newMetadata = icebergCompatV2Metadata;
+    }
+
+    if (!TableFeatures.isRowTrackingSupported(newProtocol.orElse(baseProtocol))
+        && assignedRowIdHighWatermark.isPresent()) {
+      throw DeltaErrors.rowTrackingRequiredForRowIdHighWatermark(
+          table.getPath(engine), assignedRowIdHighWatermark.get());
     }
 
     /* ----- 4: Update the METADATA with column mapping info if applicable ----- */

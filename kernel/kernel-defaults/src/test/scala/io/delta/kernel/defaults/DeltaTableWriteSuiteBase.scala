@@ -322,7 +322,8 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       withDomainMetadataSupported: Boolean = false,
       maxRetries: Int = -1,
       clusteringColsOpt: Option[List[Column]] = None,
-      logCompactionInterval: Int = 10): Transaction = {
+      logCompactionInterval: Int = 10,
+      rowIdHighWatermark: Option[Long] = None): Transaction = {
     // scalastyle:on argcount
 
     var txnBuilder = createWriteTxnBuilder(
@@ -345,6 +346,10 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
 
     if (withDomainMetadataSupported) {
       txnBuilder = txnBuilder.withDomainMetadataSupported()
+    }
+
+    if (rowIdHighWatermark.isDefined) {
+      txnBuilder = txnBuilder.withRowIdHighWatermark(rowIdHighWatermark.get)
     }
 
     if (maxRetries >= 0) {
