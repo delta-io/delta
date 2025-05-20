@@ -68,9 +68,21 @@ public class ChecksumUtils {
   }
 
   /**
-   * Computes various statistics about the table state and writes them to a checksum file. This
-   * method scans all data files in the Delta table and uses information from the table state to
-   * compute statistics.
+   * Computes the state of a Delta table and writes a checksum file for the provided snapshot's
+   * version. If a checksum file already exists for this version, this method returns without any
+   * changes.
+   *
+   * <p>The checksum file contains table statistics including:
+   *
+   * <ul>
+   *   <li>Total table size in bytes
+   *   <li>Total number of files
+   *   <li>File size histogram
+   *   <li>Domain metadata information
+   * </ul>
+   *
+   * <p>Note: For very large tables, this operation may be expensive as it requires scanning the
+   * table state to compute statistics.
    *
    * @param engine The Engine instance used to access the underlying storage
    * @param logSegmentAtVersion The LogSegment instance of the table at a specific version
