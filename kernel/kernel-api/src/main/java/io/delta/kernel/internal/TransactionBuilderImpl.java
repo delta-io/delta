@@ -66,15 +66,23 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   private final String engineInfo;
   private final Operation operation;
   private Optional<List<String>> partitionColumns = Optional.empty();
-  private Optional<List<Column>> initialClusteringColumns = Optional.empty();
   private Optional<SetTransaction> setTxnOpt = Optional.empty();
   private Optional<Map<String, String>> tableProperties = Optional.empty();
   private Optional<Set<String>> unsetTablePropertiesKeys = Optional.empty();
   private boolean needDomainMetadataSupport = false;
 
+  // The original clustering columns provided by the user when building the transaction.
+  // This represents logical column references before schema resolution is applied.
+  // (e.g., case sensitivity, column mapping)
+  private Optional<List<Column>> initialClusteringColumns = Optional.empty();
+
+  // The resolved clustering columns that will be written into domain metadata. This reflects
+  // case-preserved column names or physical column names if column mapping is enabled.
+  // This would only be set after schema resolution and must align with the resolved schema.
+  private Optional<List<Column>> resolvedClusteringColumns = Optional.empty();
+
   protected final TableImpl table;
   protected Optional<StructType> schema = Optional.empty();
-  private Optional<List<Column>> physicalClusteringColumns = Optional.empty();
 
   /**
    * Number of retries for concurrent write exceptions to resolve conflicts and retry commit. In
@@ -338,7 +346,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         newProtocol.orElse(baseProtocol),
         newMetadata.orElse(baseMetadata),
         setTxnOpt,
-        physicalClusteringColumns,
+        resolvedClusteringColumns,
         newMetadata.isPresent() || isCreateOrReplace /* shouldUpdateMetadata */,
         newProtocol.isPresent() || isCreateOrReplace /* shouldUpdateProtocol */,
         maxRetries,
@@ -473,7 +481,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     // Get the physical names of clustering columns based on the updated schema.
     // This is only done if clustering columns are explicitly set in this transaction.
     StructType updatedSchema = newMetadata.orElse(baseMetadata).getSchema();
-    physicalClusteringColumns =
+    resolvedClusteringColumns =
         initialClusteringColumns.map(
             cols -> SchemaUtils.casePreservingEligibleClusterColumns(updatedSchema, cols));
 
@@ -483,8 +491,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       // Use physicalClusteringColumns if clustering column is set in this txn,
       // otherwise fallback to existingClusteringCols
       Optional<List<Column>> effectiveClusteringCols =
-          physicalClusteringColumns.isPresent()
-              ? physicalClusteringColumns
+          resolvedClusteringColumns.isPresent()
+              ? resolvedClusteringColumns
               : existingClusteringCols;
       validateMetadataChange(
           effectiveClusteringCols,
