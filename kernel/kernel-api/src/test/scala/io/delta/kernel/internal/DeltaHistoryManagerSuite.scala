@@ -18,25 +18,24 @@ package io.delta.kernel.internal
 import java.io.FileNotFoundException
 import java.util
 import java.util.Optional
-
 import scala.reflect.ClassTag
-
 import scala.collection.JavaConverters._
-
 import io.delta.kernel.TransactionSuite.testSchema
 import io.delta.kernel.exceptions.TableNotFoundException
 import io.delta.kernel.internal.actions.{Format, Metadata}
-import io.delta.kernel.internal.util.VectorUtils
+import io.delta.kernel.internal.snapshot.LogSegment
+import io.delta.kernel.internal.util.{FileNames, VectorUtils}
 import io.delta.kernel.internal.util.VectorUtils.{buildArrayValue, stringStringMapValue}
 import io.delta.kernel.test.MockFileSystemClientUtils
 import io.delta.kernel.types.StringType
 import io.delta.kernel.utils.FileStatus
-
 import org.scalatest.funsuite.AnyFunSuite
 
-class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
+trait DeltaHistoryManagerBaseSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
-  def getMockSnapshot(ictEnablementInfoOpt: Option[(Long, Long)] = None): SnapshotImpl = {
+  def getMockSnapshot(
+      latestVersion: Option[Long] = None,
+      ictEnablementInfoOpt: Option[(Long, Long)] = None): SnapshotImpl = {
     val configuration = ictEnablementInfoOpt match {
       case Some((version, _)) if version == 0L =>
         Map(TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true")
@@ -60,9 +59,18 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
       Optional.of(123),
       stringStringMapValue(configuration.asJava));
 
+    val logSegment = new LogSegment(
+        null, /* logPath */
+        latestVersion.getOrElse(0L),
+        Seq.empty.asJava, /* deltas */
+        Seq.empty.asJava, /* compactions */
+        Seq.empty.asJava, /* checkpoints */
+        Optional.empty, /* lastSeenChecksum */
+        0L /* lastCommitTimestamp */
+    )
     new SnapshotImpl(
       null, /* dataPath */
-      null, /* logSegment */
+      logSegment, /* logSegment */
       null, /* logReplay */
       null, /* protocol */
       metadata,
@@ -376,9 +384,56 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
   def basicICTTimeTravelTest(
       ictEnablementVersion: Long
                             ): Unit = {
-    val icts = (0 until 100, 15)
-    val modTimes = (10 until 110, 15)
-    val engine = createMockFSAndJsonEngineForICT(p => throw new FileNotFoundException(p))
+    val icts = Seq(1, 11, 21, 31, 50, 60)
+    val modTimes = Seq(4, 14, 24, 34, 54, 64)
+    val deltasWithModTimes = modTimes.zipWithIndex { case (ts, v) =>
+      FileStatus.of(
+        FileNames.deltaFile(logPath, v),
+        1, /* size */
+        ts)
+    }
+    val deltaToICTMap = icts.zipWithIndex { case (ts, v) => v -> ts }.toMap
+    val engine = createMockFSAndJsonEngineForICT(deltasWithModTimes, deltaToICTMap)
+    val mockSnapshot = getMockSnapshot(
+      latestVersion = Some(icts.size - 1),
+      Some((ictEnablementVersion, deltaToICTMap(ictEnablementVersion))))
+
+    icts.zipWithIndex.foreach { case (ict, expectedVersion) =>
+      /* exact timestamp match */
+      val activeCommit = DeltaHistoryManager.getActiveCommitAtTimestamp(
+        engine,
+        mockSnapshot,
+        logPath,
+        ict,
+        true, // mustBeRecreatable
+        false, // canReturnLastCommit
+        false // canReturnEarliestCommit
+      )
+      assert(activeCommit.getVersion == expectedVersion)
+      /* timestamp 1 ms before commit's ict */
+      val activeCommit2 = DeltaHistoryManager.getActiveCommitAtTimestamp(
+        engine,
+        mockSnapshot,
+        logPath,
+        ict - 1,
+        true, // mustBeRecreatable
+        false, // canReturnLastCommit
+        false // canReturnEarliestCommit
+      )
+      assert(activeCommit2.getVersion == expectedVersion)
+    }
   }
 
+  test("basic ICT time travel: enablement at 0") {
+    basicICTTimeTravelTest(ictEnablementVersion = 0)
+  }
+  test("basic ICT time travel: enablement at 1") {
+      basicICTTimeTravelTest(ictEnablementVersion = 1)
+  }
+  test("basic ICT time travel: enablement at 3") {
+    basicICTTimeTravelTest(ictEnablementVersion = 1)
+  }
+  test("basic ICT time travel: enablement at the last version") {
+    basicICTTimeTravelTest(ictEnablementVersion = 5)
+  }
 }
