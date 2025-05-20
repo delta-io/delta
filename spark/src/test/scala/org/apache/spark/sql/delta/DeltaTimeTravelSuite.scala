@@ -236,8 +236,8 @@ class DeltaTimeTravelSuite extends QueryTest
    * timestamps come from the input.
    */
   private def createFileStatuses(modTimes: Long*): Iterator[FileStatus] = {
-    modTimes.zipWithIndex.map { case (time, version) =>
-      new FileStatus(10L, false, 1, 10L, time, FileNames.checkpointFileSingular(new Path("/foo"), version))
+    modTimes.zipWithIndex.map { case (time, version) => new FileStatus(
+      10L, false, 1, 10L, time, FileNames.checkpointFileSingular(new Path("/foo"), version))
     }.iterator
   }
 
