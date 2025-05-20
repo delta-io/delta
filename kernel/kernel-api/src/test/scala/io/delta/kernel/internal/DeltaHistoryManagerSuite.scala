@@ -21,6 +21,8 @@ import java.util.Optional
 
 import scala.reflect.ClassTag
 
+import scala.collection.JavaConverters._
+
 import io.delta.kernel.TransactionSuite.testSchema
 import io.delta.kernel.exceptions.TableNotFoundException
 import io.delta.kernel.internal.actions.{Format, Metadata}
@@ -34,7 +36,19 @@ import org.scalatest.funsuite.AnyFunSuite
 
 class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
-  def getNonICTMockSnapshot: SnapshotImpl = {
+  def getMockSnapshot(ictEnablementInfoOpt: Option[(Long, Long)] = None): SnapshotImpl = {
+    val configuration = ictEnablementInfoOpt match {
+      case Some((version, _)) if version == 0L =>
+        Map(TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true")
+      case Some((version, ts)) =>
+        Map(
+          TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true",
+          TableConfig.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.getKey -> version.toString,
+          TableConfig.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.getKey -> ts.toString
+        )
+      case None =>
+        Map.empty()
+    }
     val metadata = new Metadata(
       "id",
       Optional.empty(), /* name */
@@ -44,7 +58,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
       testSchema,
       buildArrayValue(util.Arrays.asList("c3"), StringType.STRING),
       Optional.of(123),
-      stringStringMapValue(new util.HashMap[String, String]()));
+      stringStringMapValue(configuration.asJava));
 
     new SnapshotImpl(
       null, /* dataPath */
@@ -65,7 +79,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
       canReturnEarliestCommit: Boolean = false): Unit = {
     val activeCommit = DeltaHistoryManager.getActiveCommitAtTimestamp(
       createMockFSListFromEngine(fileList),
-      getNonICTMockSnapshot,
+      getMockSnapshot(),
       logPath,
       timestamp,
       mustBeRecreatable,
@@ -80,7 +94,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
       // for valid queries that do not throw an error
       val activeCommit = DeltaHistoryManager.getActiveCommitAtTimestamp(
         createMockFSListFromEngine(fileList),
-        getNonICTMockSnapshot,
+        getMockSnapshot(),
         logPath,
         timestamp,
         false, // mustBeRecreatable
@@ -102,7 +116,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     val e = intercept[T] {
       DeltaHistoryManager.getActiveCommitAtTimestamp(
         createMockFSListFromEngine(fileList),
-        getNonICTMockSnapshot,
+        getMockSnapshot(),
         logPath,
         timestamp,
         mustBeRecreatable,
@@ -219,7 +233,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     intercept[TableNotFoundException](
       DeltaHistoryManager.getActiveCommitAtTimestamp(
         createMockFSListFromEngine(p => throw new FileNotFoundException(p)),
-        getNonICTMockSnapshot,
+        getMockSnapshot(),
         logPath,
         0,
         true, // mustBeRecreatable
@@ -230,7 +244,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     intercept[TableNotFoundException](
       DeltaHistoryManager.getActiveCommitAtTimestamp(
         createMockFSListFromEngine(p => Seq()),
-        getNonICTMockSnapshot,
+        getMockSnapshot(),
         logPath,
         0,
         true, // mustBeRecreatable
@@ -315,7 +329,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     intercept[TableNotFoundException](
       DeltaHistoryManager.getActiveCommitAtTimestamp(
         createMockFSListFromEngine(p => throw new FileNotFoundException(p)),
-        getNonICTMockSnapshot,
+        getMockSnapshot(),
         logPath,
         0,
         false, // mustBeRecreatable
@@ -326,7 +340,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     intercept[TableNotFoundException](
       DeltaHistoryManager.getActiveCommitAtTimestamp(
         createMockFSListFromEngine(p => Seq()),
-        getNonICTMockSnapshot,
+        getMockSnapshot(),
         logPath,
         0,
         true, // mustBeRecreatable
@@ -358,5 +372,13 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
   // searchTimestamp = start, end
   // odd number of commits
   // even number of commits
+
+  def basicICTTimeTravelTest(
+      ictEnablementVersion: Long
+                            ): Unit = {
+    val icts = (0 until 100, 15)
+    val modTimes = (10 until 110, 15)
+    val engine = createMockFSAndJsonEngineForICT(p => throw new FileNotFoundException(p))
+  }
 
 }

@@ -167,6 +167,14 @@ trait MockFileSystemClientUtils extends MockEngineUtils {
       })
   }
 
+  def createMockFSAndJsonEngineForICT(
+    contents: Seq[FileStatus],
+    deltaToICTMap: Map[Long, Long]): Engine = {
+    mockEngine(
+      fileSystemClient = new MockListFromFileSystemClient(listFromProvider(contents)),
+      jsonHandler = new MockReadICTFileJsonHandler(deltaToICTMap))
+  }
+
   /**
    * Create a mock [[Engine]] to mock the [[FileSystemClient.listFrom]] calls using
    * the given contents. The contents are filtered depending upon the list from path prefix.
