@@ -17,8 +17,8 @@
 from typing import TYPE_CHECKING, Optional
 
 from pyspark import SparkContext
+from pyspark.errors.exceptions import captured
 from pyspark.errors.exceptions.captured import CapturedException
-import pyspark.sql.utils as utils
 
 from delta.exceptions.base import (
     DeltaConcurrentModificationException as BaseDeltaConcurrentModificationException,
@@ -158,7 +158,7 @@ def _patch_convert_exception() -> None:
     Patch PySpark's exception convert method to convert Delta's Scala concurrent exceptions to the
     corresponding Python exceptions.
     """
-    original_convert_sql_exception = utils.convert_exception
+    original_convert_sql_exception = captured.convert_exception
 
     def convert_delta_exception(e: "JavaObject") -> CapturedException:
         delta_exception = _convert_delta_exception(e)
@@ -166,7 +166,7 @@ def _patch_convert_exception() -> None:
             return delta_exception
         return original_convert_sql_exception(e)
 
-    utils.convert_exception = convert_delta_exception
+    captured.convert_exception = convert_delta_exception
 
 
 if not _delta_exception_patched:
