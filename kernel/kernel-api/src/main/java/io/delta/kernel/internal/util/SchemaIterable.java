@@ -48,16 +48,47 @@ import java.util.function.Consumer;
  * }</pre>
  */
 public class SchemaIterable implements Iterable<SchemaIterable.SchemaElement> {
+  private final Class<?>[] typesToSkipRecursion;
   private StructType schema;
 
   /** Construct a new Iterable for the schema. */
   public SchemaIterable(StructType schema) {
+    this(schema, new Class[0]);
+  }
+
+  /**
+   * Constructs a new iterable that skips recursion for some data types.
+   *
+   * <p>No recursion will be done on any type that is an instance of a class in
+   * typesToSkipRecursion.
+   *
+   * <p>For example with schema:
+   *
+   * <pre>{@code
+   * a: Map<String, Int>
+   * b: Array<Int>}
+   * </code>
+   * </pre>
+   *
+   * <p>If {@code typesToSkipRecursion = {MapType.class}} is provided then the iterator will only
+   * visit "a", "b.element", and "b".
+   *
+   * <p>If {@code typesToSkipRecursion = {ArrayType.class}} is provided then the iterator wil only
+   * visit "a.key", "a.value", "a" and "b".
+   */
+  public static SchemaIterable newSchemaIterableWithIgnoredRecursion(
+      StructType schema, Class<?>[] typesToSkipRecursion) {
+    return new SchemaIterable(schema, typesToSkipRecursion);
+  }
+
+  private SchemaIterable(StructType schema, Class<?>[] typesToSkipRecursion) {
     this.schema = schema;
+    this.typesToSkipRecursion = Arrays.copyOf(typesToSkipRecursion, typesToSkipRecursion.length);
   }
 
   /**
    * Gets the latest schema (either the initial schema or the one set after a mutable iterator is
-   * fully consumed.
+   * fully consumed).
    */
   public StructType getSchema() {
     return schema;
@@ -65,7 +96,7 @@ public class SchemaIterable implements Iterable<SchemaIterable.SchemaElement> {
 
   @Override
   public Iterator<SchemaElement> iterator() {
-    Iterator<MutableSchemaElement> iterator = new SchemaIterator(schema, structType -> {});
+    Iterator<MutableSchemaElement> iterator = newMutableIterator();
     return new Iterator<SchemaElement>() {
 
       @Override
@@ -85,9 +116,20 @@ public class SchemaIterable implements Iterable<SchemaIterable.SchemaElement> {
    * current schema on this iterable is updated once the returned iterator is fully consumed.
    *
    * <p>Consuming multiple iterators across different threads concurrently is not thread safe.
+   *
+   * <p>Example usage:
+   *
+   * <pre>{@code
+   * Iterator<SchemaIterable.MutableSchemaElement> iterator = schemaIterable.newMutableIterator();
+   * while (iterator.hasNext()) {
+   *    SchemaIterable.MutableSchemaElement element = iterator.next();
+   *    element.updateField(...)
+   * }
+   * updatedSchema = schemaIterable.getSchema();
+   * }</pre>
    */
   public Iterator<MutableSchemaElement> newMutableIterator() {
-    return new SchemaIterator(schema, this::setSchema);
+    return new SchemaIterator(schema, this::setSchema, typesToSkipRecursion);
   }
 
   private void setSchema(StructType newSchema) {
@@ -103,8 +145,11 @@ public class SchemaIterable implements Iterable<SchemaIterable.SchemaElement> {
     private SchemaZipper nextZipper;
     private boolean finishedVisitingCurrent = false;
 
-    SchemaIterator(StructType schema, Consumer<StructType> finalizedSchemaConsumer) {
-      this.nextZipper = SchemaZipper.createZipper(schema);
+    SchemaIterator(
+        StructType schema,
+        Consumer<StructType> finalizedSchemaConsumer,
+        Class<?>[] typesToSkipRecursion) {
+      this.nextZipper = SchemaZipper.createZipper(schema, typesToSkipRecursion);
       this.finalizedSchemaConsumer = finalizedSchemaConsumer;
       // Special case if struct is empty no force no iteration.
       this.finishedVisitingCurrent = schema.fields().isEmpty();
@@ -241,6 +286,7 @@ public class SchemaIterable implements Iterable<SchemaIterable.SchemaElement> {
     // Path to the current zipper. Note parents is shared between all elements
     // on the path.
     private final List<SchemaZipper> parents;
+    private final Class<?>[] typesToSkipRecursion;
 
     abstract DataType constructType();
 
@@ -250,44 +296,60 @@ public class SchemaIterable implements Iterable<SchemaIterable.SchemaElement> {
     private boolean modified = false;
 
     private SchemaZipper(List<SchemaZipper> parents, List<StructField> fields) {
+      this(parents, fields, new Class[0]);
+    }
+
+    private SchemaZipper(
+        List<SchemaZipper> parents, List<StructField> fields, Class<?>[] typesToSkipRecursion) {
       this.parents = parents;
       this.fields = fields;
+      this.typesToSkipRecursion = typesToSkipRecursion;
     }
 
     /** Returns if the zipper has any children can be traversed. */
     public boolean hasChildren() {
-      boolean isStructType = currentField().getDataType() instanceof StructType;
+
+      DataType currentType = currentField().getDataType();
+
+      // Skip recursion for specified types
+      for (Class<?> typeToSkip : typesToSkipRecursion) {
+        if (typeToSkip.isInstance(currentType)) {
+          return false;
+        }
+      }
+
+      boolean isStructType = currentType instanceof StructType;
+
       // TODO(#4571): this concept should be centralized.
       boolean isNested =
-          isStructType
-              || currentField().getDataType() instanceof ArrayType
-              || currentField().getDataType() instanceof MapType;
-      boolean isEmptyStruct =
-          isStructType && ((StructType) currentField().getDataType()).fields().isEmpty();
+          isStructType || currentType instanceof ArrayType || currentType instanceof MapType;
+      boolean isEmptyStruct = isStructType && ((StructType) currentType).fields().isEmpty();
       return isNested && !isEmptyStruct;
     }
 
-    static SchemaZipper createZipper(StructType schema) {
-      return createZipper(/*parents=*/ new ArrayList<>(), schema);
+    static SchemaZipper createZipper(StructType schema, Class<?>[] typesToSkipRecursion) {
+      return createZipper(/*parents=*/ new ArrayList<>(), schema, typesToSkipRecursion);
     }
 
-    private static SchemaZipper createZipper(List<SchemaZipper> parents, DataType type) {
+    private static SchemaZipper createZipper(
+        List<SchemaZipper> parents, DataType type, Class<?>[] typesToSkipRecursion) {
       if (type instanceof ArrayType) {
         ArrayType arrayType = (ArrayType) type;
-        return new ArraySchemaZipper(parents, arrayType);
+        return new ArraySchemaZipper(parents, arrayType, typesToSkipRecursion);
       } else if (type instanceof MapType) {
         MapType mapType = (MapType) type;
-        return new MapSchemaZipper(parents, mapType);
+        return new MapSchemaZipper(parents, mapType, typesToSkipRecursion);
       } else if (type instanceof StructType) {
         StructType structType = (StructType) type;
-        return new StructSchemaZipper(parents, structType);
+        return new StructSchemaZipper(parents, structType, typesToSkipRecursion);
       } else {
         throw new KernelException("Unsupported data type: " + type);
       }
     }
 
-    private static SchemaZipper createZipper(List<SchemaZipper> parents, StructField field) {
-      return createZipper(parents, field.getDataType());
+    private static SchemaZipper createZipper(
+        List<SchemaZipper> parents, StructField field, Class<?>[] typesToSkipRecursion) {
+      return createZipper(parents, field.getDataType(), typesToSkipRecursion);
     }
 
     /** Returns a zipper pointing the left-most child field of this zipper. */
@@ -296,7 +358,7 @@ public class SchemaIterable implements Iterable<SchemaIterable.SchemaElement> {
         return null;
       }
       parents.add(this);
-      return createZipper(parents, fields.get(index));
+      return createZipper(parents, fields.get(index), typesToSkipRecursion);
     }
 
     /**
@@ -454,6 +516,11 @@ public class SchemaIterable implements Iterable<SchemaIterable.SchemaElement> {
       }
     }
 
+    ArraySchemaZipper(
+        List<SchemaZipper> parents, ArrayType arrayType, Class<?>[] typesToSkipRecursion) {
+      super(parents, Collections.singletonList(arrayType.getElementField()), typesToSkipRecursion);
+    }
+
     @Override
     DataType constructType() {
       return new ArrayType(fields.get(0));
@@ -473,6 +540,13 @@ public class SchemaIterable implements Iterable<SchemaIterable.SchemaElement> {
       }
     }
 
+    MapSchemaZipper(List<SchemaZipper> parents, MapType mapType, Class<?>[] typesToSkipRecursion) {
+      super(
+          parents,
+          Arrays.asList(mapType.getKeyField(), mapType.getValueField()),
+          typesToSkipRecursion);
+    }
+
     @Override
     DataType constructType() {
       return new MapType(fields.get(0), fields.get(1));
@@ -482,6 +556,11 @@ public class SchemaIterable implements Iterable<SchemaIterable.SchemaElement> {
   private static class StructSchemaZipper extends SchemaZipper {
     StructSchemaZipper(List<SchemaZipper> parents, StructType structType) {
       super(parents, structType.fields());
+    }
+
+    StructSchemaZipper(
+        List<SchemaZipper> parents, StructType structType, Class<?>[] typesToSkipRecursion) {
+      super(parents, structType.fields(), typesToSkipRecursion);
     }
 
     @Override

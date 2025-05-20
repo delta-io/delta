@@ -18,7 +18,6 @@ package io.delta.kernel.internal.util
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 
-import io.delta.kernel.internal.types.DataTypeJsonSerDe
 import io.delta.kernel.types._
 
 import org.scalatest.funsuite.AnyFunSuite
@@ -263,7 +262,7 @@ class SchemaIterableSuite extends AnyFunSuite {
     iterable.newMutableIterator().asScala.foreach {
       element =>
         newMetadata.get(element.getNamePath).foreach { fm =>
-          val ancestorField = element.getNearestStructFieldAncestor()
+          val ancestorField = element.getNearestStructFieldAncestor
           val metadataBuilder = FieldMetadata.builder()
             .fromMetadata(ancestorField.getMetadata).fromMetadata(fm)
           element.setMetadataOnNearestStructFieldAncestor(metadataBuilder.build())
@@ -283,6 +282,98 @@ class SchemaIterableSuite extends AnyFunSuite {
     val newCount = iterable.asScala.count(_ => true)
     assert(newCount > 0)
     assert(originalCount == newCount)
+
+  }
+
+  val testCases = Seq(
+    // Test case 1: Skip ArrayType
+    (
+      Seq(classOf[ArrayType]),
+      List(
+        "nested_array",
+        "nested_map.key",
+        "nested_map.value.points",
+        "nested_map.value.metadata.key",
+        "nested_map.value.metadata.value",
+        "nested_map.value.metadata",
+        "nested_map.value",
+        "nested_map")),
+
+    // Test case 2: Skip MapType
+    (
+      Seq(classOf[MapType]),
+      List(
+        "nested_array.element.id",
+        "nested_array.element.tags.element",
+        "nested_array.element.tags",
+        "nested_array.element",
+        "nested_array",
+        "nested_map")),
+
+    // Test case 3: Skip StructType
+    (
+      Seq(classOf[StructType]),
+      List(
+        "nested_array.element",
+        "nested_array",
+        "nested_map.key.element",
+        "nested_map.key",
+        "nested_map.value",
+        "nested_map")),
+
+    // Test case 4: Skip multiple types (ArrayType and MapType)
+    (
+      Seq(classOf[ArrayType], classOf[MapType]),
+      List(
+        "nested_array",
+        "nested_map"))).foreach { case (typesToSkip, expectedFields) =>
+    test(s"skip recursion for specified types $typesToSkip") {
+      val schema: StructType = getDeeplyNestedSchema
+      // Define test cases as a sequence of (types to skip, expected output) pairs
+
+      val iterable =
+        SchemaIterable.newSchemaIterableWithIgnoredRecursion(schema, typesToSkip.toArray)
+      val visitedPaths = iterable.asScala.map(_.getNamePath).toList
+
+      // Assert the results match expected output
+      assert(
+        visitedPaths === expectedFields,
+        s"Failed for types: ${typesToSkip.map(_.getSimpleName).mkString(", ")}")
+    }
+  }
+
+  test("update schema with type recursion skipping") {
+    val schema: StructType = getDeeplyNestedSchema
+
+    val iterable =
+      SchemaIterable.newSchemaIterableWithIgnoredRecursion(schema, Array(classOf[ArrayType]))
+
+    // Create a modified schema by skipping recursion into ArrayType
+    // and modifying only the top-level fields
+    iterable.newMutableIterator.asScala.foreach { element =>
+      if (element.getNamePath.contains("nested_array")) {
+        // Add metadata to the array field but don't recurse into it
+        val fieldMetadata = FieldMetadata.builder()
+          .putString("array_skipped", "true")
+          .build()
+        element.updateField(element.getField.withNewMetadata(fieldMetadata))
+      }
+    }
+
+    // Verify the metadata was added to the array field
+    assert(iterable.getSchema.get("nested_array").getMetadata
+      .getString("array_skipped") == "true")
+
+    // Verify that the array elements were not modified (recursion was skipped)
+    val newIterable = new SchemaIterable(iterable.getSchema)
+    var visited_count = 0
+    newIterable.asScala.foreach(element => {
+      if (element.getNamePath.startsWith("nested_array.")) {
+        visited_count += 1
+        assert(element.getField.getMetadata == FieldMetadata.empty())
+      }
+    })
+    assert(visited_count > 0)
 
   }
 
