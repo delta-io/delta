@@ -16,6 +16,7 @@
 package io.delta.kernel.internal.checksum;
 
 import static io.delta.kernel.internal.actions.SingleAction.CHECKPOINT_SCHEMA;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Preconditions.checkState;
 
 import io.delta.kernel.data.ColumnVector;
@@ -93,12 +94,6 @@ public class ChecksumUtils {
       return;
     }
 
-    System.out.println(lastSeenCrcInfo);
-    if (lastSeenCrcInfo.isPresent()) {
-      System.out.println(lastSeenCrcInfo.get().getFileSizeHistogram());
-      System.out.println(lastSeenCrcInfo.get().getDomainMetadata());
-    }
-
     // Step 2: Initialize state tracking variables
     boolean canUseLastChecksum =
         lastSeenCrcInfo.isPresent()
@@ -127,9 +122,17 @@ public class ChecksumUtils {
     Protocol finalProtocol = getFinalProtocol(stateTracker.protocolFromLog, lastSeenCrcInfo);
 
     // Step 6: Combine domain metadata from previous checksum if needed
+    Map<String, DomainMetadata> finalDomainMetadataMap =
+        canUseLastChecksum
+            ? combineWithDomainMetadataInCrc(
+                stateTracker.domainMetadataMapFromLog, lastSeenCrcInfo.get())
+            : stateTracker.domainMetadataMapFromLog;
+
+    // Return only non-removed domain metadata
     Set<DomainMetadata> finalDomainMetadata =
-        combineWithPreviousDomainMetadata(
-            stateTracker.domainMetadataMapFromLog, lastSeenCrcInfo, minLogToRead);
+        finalDomainMetadataMap.values().stream()
+            .filter(dm -> !dm.isRemoved())
+            .collect(Collectors.toSet());
 
     // Step 8: Write the computed checksum
     ChecksumWriter checksumWriter = new ChecksumWriter(logSegmentAtVersion.getLogPath());
@@ -302,29 +305,18 @@ public class ChecksumUtils {
   }
 
   /** Combines domain metadata from the current processing with previous checksum if needed. */
-  private static Set<DomainMetadata> combineWithPreviousDomainMetadata(
-      Map<String, DomainMetadata> domainMetadataMapFromLog,
-      Optional<CRCInfo> lastSeenCrcInfo,
-      long minLogToRead) {
+  private static Map<String, DomainMetadata> combineWithDomainMetadataInCrc(
+      Map<String, DomainMetadata> domainMetadataMapFromLog, CRCInfo lastSeenCrcInfo) {
+    checkArgument(lastSeenCrcInfo.getDomainMetadata().isPresent());
+    Set<DomainMetadata> previousDomainMetadata = lastSeenCrcInfo.getDomainMetadata().get();
 
-    if (minLogToRead > 0
-        && lastSeenCrcInfo.isPresent()
-        && lastSeenCrcInfo.get().getDomainMetadata().isPresent()) {
-
-      Set<DomainMetadata> previousDomainMetadata = lastSeenCrcInfo.get().getDomainMetadata().get();
-
-      // Add any domain metadata from previous checksum that isn't already present
-      for (DomainMetadata dm : previousDomainMetadata) {
-        if (!domainMetadataMapFromLog.containsKey(dm.getDomain())) {
-          domainMetadataMapFromLog.put(dm.getDomain(), dm);
-        }
+    for (DomainMetadata dm : previousDomainMetadata) {
+      if (!domainMetadataMapFromLog.containsKey(dm.getDomain())) {
+        domainMetadataMapFromLog.put(dm.getDomain(), dm);
       }
     }
 
-    // Return only non-removed domain metadata
-    return domainMetadataMapFromLog.values().stream()
-        .filter(dm -> !dm.isRemoved())
-        .collect(Collectors.toSet());
+    return domainMetadataMapFromLog;
   }
 
   /** Class for tracking state during log processing. */
