@@ -438,7 +438,6 @@ public class TransactionBuilderImpl implements TransactionBuilder {
           newProtocolAndFeatures.get()._2.stream().map(TableFeature::featureName).collect(toSet()));
 
       newProtocol = Optional.of(newProtocolAndFeatures.get()._1);
-
       TableFeatures.validateKernelCanWriteToTable(
           newProtocol.orElse(baseProtocol),
           newMetadata.orElse(baseMetadata),

@@ -95,8 +95,8 @@ public class AddFile extends RowBackedAction {
             dataChange,
             Optional.empty(), // deletionVector
             tagMapValue, // tags
-            baseRowId, // baseRowId
-            defaultRowCommitVersion, // defaultRowCommitVersion
+            baseRowId,
+            defaultRowCommitVersion,
             dataFileStatus.getStatistics());
 
     return new AddFile(row);

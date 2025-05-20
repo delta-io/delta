@@ -57,7 +57,7 @@ public final class GenerateIcebergCompatActionUtils {
    * @param dataChange whether or not the add constitutes a dataChange (i.e. append vs. compaction)
    * @param tags key-value metadata to be attached to the add action
    * @param baseRowId the base row id to be attached to the add action
-   * @param defaultRowCommitVersion the lastest commit version to be attached to the add action
+   * @param defaultRowCommitVersion the commit version to be attached to the add action
    * @return add action row that can be included in the transaction
    * @throws UnsupportedOperationException if icebergWriterCompatV1 is not enabled
    * @throws UnsupportedOperationException if maxRetries != 0 in the transaction
@@ -129,6 +129,8 @@ public final class GenerateIcebergCompatActionUtils {
    * @param partitionValues the partition values for the remove
    * @param dataChange whether or not the remove constitutes a dataChange (i.e. delete vs.
    *     compaction)
+   * @param baseRowId the base row id to be attached to the add action
+   * @param defaultRowCommitVersion the commit version to be attached to the add action
    * @return remove action row that can be committed to the transaction
    * @throws UnsupportedOperationException if icebergWriterCompatV1 is not enabled
    * @throws UnsupportedOperationException if maxRetries != 0 in the transaction
