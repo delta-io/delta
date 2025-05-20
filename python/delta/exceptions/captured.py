@@ -1,5 +1,5 @@
 #
-# Copyright (2023) The Delta Lake Project Authors.
+# Copyright (2021) The Delta Lake Project Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -35,7 +35,8 @@ if TYPE_CHECKING:
 
 
 class DeltaConcurrentModificationException(
-    CapturedException, BaseDeltaConcurrentModificationException):
+    CapturedException, BaseDeltaConcurrentModificationException
+):
     """
     The basic class for all Delta commit conflict exceptions.
 
