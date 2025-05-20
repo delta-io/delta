@@ -187,15 +187,28 @@ class MockReadICTFileJsonHandler(deltaVersionToICTMapping: Map[Long, Long])
         override def getSchema: StructType = CommitInfo.FULL_SCHEMA
 
         override def getColumnVector(ordinal: Int): ColumnVector = {
+          val struct = Seq(
+            longVector(ict), /* inCommitTimestamp */
+            longVector(-1L), /* timestamp */
+            stringVector(Seq("engine")), /* engineInfo */
+            stringVector(Seq("operation")), /* operation */
+            mapTypeVector(Seq(Map("operationParameter" -> ""))), /* operationParameters */
+            booleanVector(Seq(false)), /* isBlindAppend */
+            stringVector(Seq("txnId")), /* txnId */
+            mapTypeVector(Seq(Map("operationMetrics" -> ""))) /* operationMetrics */
+          )
           ordinal match {
-            case 0 => longVector(ict) /* inCommitTimestamp */
-            case 1 => longVector(-1L) /* timestamp */
-            case 2 => stringVector(Seq("engine")) /* engineInfo */
-            case 3 => stringVector(Seq("operation")) /* operation */
-            case 4 => stringVector(Seq("operationParameters")) /* operationParameters */
-            case 5 => booleanVector(Seq(false)) /* isBlindAppend */
-            case 6 => stringVector(Seq("txnId")) /* txnId */
-            case 7 => stringVector(Seq("operationMetrics")) /* operationMetrics */
+            case 0 => new ColumnVector {
+                override def getDataType: DataType = new StructType()
+
+                override def getSize: Int = struct.head.getSize
+
+                override def close(): Unit = {}
+
+                override def isNullAt(rowId: Int): Boolean = false
+
+                override def getChild(ordinal: Int): ColumnVector = struct(ordinal)
+              }
           }
         }
         override def getSize: Int = 1

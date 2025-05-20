@@ -127,7 +127,7 @@ public final class DeltaHistoryManager {
                 engine, logPath, placeholderEarliestCommit.getVersion());
         searchResult = new Commit(placeholderEarliestCommit.getVersion(), ict);
       } else {
-        // start non-ICT linear search over [earliestVersion, ictEnablementVersion)
+        // start non-ICT linear search over [earliestVersion, )
         List<Commit> commits = getCommits(engine, logPath, earliestVersion);
         searchResult =
             lastCommitBeforeOrAtTimestamp(commits, timestamp)
@@ -145,7 +145,9 @@ public final class DeltaHistoryManager {
           searchResult.version);
     }
     // If timestamp is after the last commit of the table
-    if (searchResult.timestamp < timestamp && !canReturnLastCommit) {
+    if (searchResult.version == latestSnapshot.getVersion()
+        && searchResult.timestamp < timestamp
+        && !canReturnLastCommit) {
       throw DeltaErrors.timestampAfterLatestCommit(
           logPath.getParent().toString(), /* use dataPath */
           timestamp,
@@ -171,12 +173,20 @@ public final class DeltaHistoryManager {
       throws IOException {
     // Now we have a range of commits to search through. We can use binary search to find the
     // commit that is closest to the search timestamp.
-    Tuple2<Long, Long> greatestLowerBound =
+    Optional<Tuple2<Long, Long>> greatestLowerBoundOpt =
         InCommitTimestampUtils.greatestLowerBound(
             searchTimestamp,
             startCommitVersionInclusive,
             endCommitVersionInclusive,
             version -> CommitInfo.getRequiredInCommitTimestampFromFile(engine, logPath, version));
+    // This indicates that the search timestamp is less than the earliest commit.
+    if (!greatestLowerBoundOpt.isPresent()) {
+      long startIct =
+          CommitInfo.getRequiredInCommitTimestampFromFile(
+              engine, logPath, startCommitVersionInclusive);
+      return new Commit(startCommitVersionInclusive, startIct);
+    }
+    Tuple2<Long, Long> greatestLowerBound = greatestLowerBoundOpt.get();
     return new Commit(greatestLowerBound._1, greatestLowerBound._2);
   }
 

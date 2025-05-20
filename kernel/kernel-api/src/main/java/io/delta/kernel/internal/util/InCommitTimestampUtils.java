@@ -107,29 +107,30 @@ public class InCommitTimestampUtils {
    * Finds the greatest lower bound of the target value in the range [lowerBoundInclusive,
    * upperBoundExclusive) using binary search. The indexToValueMapper function is used to map the
    * index to the corresponding value. Note that this function assumes that the values are sorted in
-   * ascending order and that the greatestLowerBound exists in the range.
+   * ascending order.
    *
    * @param target The target value to find the greatest lower bound for.
    * @param lowerBoundInclusive The lower bound of the search range (inclusive).
    * @param upperBoundInclusive The upper bound of the search range (inclusive).
    * @param indexToValueMapper A function that maps an index to its corresponding value.
-   * @return A tuple containing the index and the value of the greatest lower bound.
+   * @return An optional which contains a tuple containing the index and the value of the greatest
+   *     lower bound when found, or an empty optional if not found.
    */
-  public static Tuple2<Long, Long> greatestLowerBound(
+  public static Optional<Tuple2<Long, Long>> greatestLowerBound(
       long target,
       long lowerBoundInclusive,
       long upperBoundInclusive,
       Function<Long, Long> indexToValueMapper) {
     long start = lowerBoundInclusive;
     long end = upperBoundInclusive;
-    Tuple2<Long, Long> result = null;
+    Optional<Tuple2<Long, Long>> result = Optional.empty();
     while (start <= end) {
       long curIndex = start + (end - start) / 2;
       long curValue = indexToValueMapper.apply(curIndex);
       if (curValue == target) {
-        return new Tuple2<>(curIndex, curValue);
+        return Optional.of(new Tuple2<>(curIndex, curValue));
       } else if (curValue < target) {
-        result = new Tuple2<>(curIndex, curValue);
+        result = Optional.of(new Tuple2<>(curIndex, curValue));
         start = curIndex + 1;
       } else {
         end = curIndex - 1;
