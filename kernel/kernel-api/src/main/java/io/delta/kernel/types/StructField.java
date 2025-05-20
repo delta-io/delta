@@ -18,6 +18,7 @@ package io.delta.kernel.types;
 
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.exceptions.KernelException;
+import io.delta.kernel.internal.types.DataTypeJsonSerDe;
 import io.delta.kernel.internal.util.SchemaIterable;
 import java.util.*;
 
@@ -28,7 +29,6 @@ import java.util.*;
  */
 @Evolving
 public class StructField {
-
   ////////////////////////////////////////////////////////////////////////////////
   // Static Fields / Methods
   ////////////////////////////////////////////////////////////////////////////////
@@ -51,6 +51,10 @@ public class StructField {
           Collections.emptyList());
 
   public static final String COLLATIONS_METADATA_KEY = "__COLLATIONS";
+  public static final String FROM_TYPE_KEY = "fromType";
+  public static final String TO_TYPE_KEY = "toType";
+  public static final String FIELD_PATH_KEY = "fieldPath";
+  public static final String DELTA_TYPE_CHANGES_KEY = "delta.typeChanges";
 
   ////////////////////////////////////////////////////////////////////////////////
   // Instance Fields / Methods
@@ -194,9 +198,10 @@ public class StructField {
     return new StructField(name, newType, nullable, metadata, typeChanges);
   }
 
-  /** Fetches collation metadata from nested collated fields. */
-  private FieldMetadata fetchCollationMetadata() {
+  /** Fetches collation and type changes metadata from nested fields. */
+  private FieldMetadata collectNestedMapArrayTypeMetadata() {
     FieldMetadata.Builder collationBuilder = FieldMetadata.builder();
+    List<FieldMetadata> typeChangesBuilder = new ArrayList<>();
     // This is a little risky since this isn't fully initialized but should be fine since all fields
     // we needed are initialized.
     // StructTypes children would already have their own collation metadata, so skip them here.
@@ -218,14 +223,38 @@ public class StructField {
               path, stringType.getCollationIdentifier().toStringWithoutVersion());
         }
       }
+      StructField field = element.getField();
+      if (!field.getTypeChanges().isEmpty()) {
+        for (TypeChange typeChange : field.getTypeChanges()) {
+          FieldMetadata.Builder typeChangeBuilder = FieldMetadata.builder();
+          typeChangeBuilder.putString(FROM_TYPE_KEY, typeAsString(typeChange.getFrom()));
+          typeChangeBuilder.putString(TO_TYPE_KEY, typeAsString(typeChange.getTo()));
+          if (!element.isStructField()) {
+            // For type changes the field name the field name is not a prefix.
+            typeChangeBuilder.putString(
+                FIELD_PATH_KEY, element.getPathFromNearestStructFieldAncestor(""));
+          }
+          typeChangesBuilder.add(typeChangeBuilder.build());
+        }
+      }
     }
 
+    FieldMetadata.Builder finalBuilder = FieldMetadata.builder();
+
     FieldMetadata collationMetadata = collationBuilder.build();
-    if (collationMetadata.getEntries().isEmpty()) {
-      return FieldMetadata.empty();
+    if (!collationMetadata.getEntries().isEmpty()) {
+      finalBuilder.putFieldMetadata(COLLATIONS_METADATA_KEY, collationMetadata);
     }
-    return new FieldMetadata.Builder()
-        .putFieldMetadata(COLLATIONS_METADATA_KEY, collationMetadata)
-        .build();
+    if (!typeChangesBuilder.isEmpty()) {
+      finalBuilder.putFieldMetadataArray(
+          DELTA_TYPE_CHANGES_KEY, typeChangesBuilder.toArray(new FieldMetadata[0]));
+    }
+    return finalBuilder.build();
+  }
+
+  private static String typeAsString(DataType dt) {
+    String jsonString = DataTypeJsonSerDe.serializeDataType(dt);
+    // Remove leading/trailing quotes.
+    return jsonString.substring(1, jsonString.length() - 1);
   }
 }
