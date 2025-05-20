@@ -18,8 +18,10 @@ package io.delta.kernel.internal
 import java.io.FileNotFoundException
 import java.util
 import java.util.Optional
-import scala.reflect.ClassTag
+
 import scala.collection.JavaConverters._
+import scala.reflect.ClassTag
+
 import io.delta.kernel.TransactionSuite.testSchema
 import io.delta.kernel.exceptions.TableNotFoundException
 import io.delta.kernel.internal.actions.{Format, Metadata}
@@ -29,6 +31,7 @@ import io.delta.kernel.internal.util.VectorUtils.{buildArrayValue, stringStringM
 import io.delta.kernel.test.MockFileSystemClientUtils
 import io.delta.kernel.types.StringType
 import io.delta.kernel.utils.FileStatus
+
 import org.scalatest.funsuite.AnyFunSuite
 
 trait DeltaHistoryManagerBaseSuite extends AnyFunSuite with MockFileSystemClientUtils {
@@ -43,8 +46,7 @@ trait DeltaHistoryManagerBaseSuite extends AnyFunSuite with MockFileSystemClient
         Map(
           TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true",
           TableConfig.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.getKey -> version.toString,
-          TableConfig.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.getKey -> ts.toString
-        )
+          TableConfig.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.getKey -> ts.toString)
       case None =>
         Map.empty()
     }
@@ -60,13 +62,13 @@ trait DeltaHistoryManagerBaseSuite extends AnyFunSuite with MockFileSystemClient
       stringStringMapValue(configuration.asJava));
 
     val logSegment = new LogSegment(
-        null, /* logPath */
-        latestVersion.getOrElse(0L),
-        Seq.empty.asJava, /* deltas */
-        Seq.empty.asJava, /* compactions */
-        Seq.empty.asJava, /* checkpoints */
-        Optional.empty, /* lastSeenChecksum */
-        0L /* lastCommitTimestamp */
+      null, /* logPath */
+      latestVersion.getOrElse(0L),
+      Seq.empty.asJava, /* deltas */
+      Seq.empty.asJava, /* compactions */
+      Seq.empty.asJava, /* checkpoints */
+      Optional.empty, /* lastSeenChecksum */
+      0L /* lastCommitTimestamp */
     )
     new SnapshotImpl(
       null, /* dataPath */
@@ -382,8 +384,7 @@ trait DeltaHistoryManagerBaseSuite extends AnyFunSuite with MockFileSystemClient
   // even number of commits
 
   def basicICTTimeTravelTest(
-      ictEnablementVersion: Long
-                            ): Unit = {
+      ictEnablementVersion: Long): Unit = {
     val icts = Seq(1, 11, 21, 31, 50, 60)
     val modTimes = Seq(4, 14, 24, 34, 54, 64)
     val deltasWithModTimes = modTimes.zipWithIndex { case (ts, v) =>
@@ -428,7 +429,7 @@ trait DeltaHistoryManagerBaseSuite extends AnyFunSuite with MockFileSystemClient
     basicICTTimeTravelTest(ictEnablementVersion = 0)
   }
   test("basic ICT time travel: enablement at 1") {
-      basicICTTimeTravelTest(ictEnablementVersion = 1)
+    basicICTTimeTravelTest(ictEnablementVersion = 1)
   }
   test("basic ICT time travel: enablement at 3") {
     basicICTTimeTravelTest(ictEnablementVersion = 1)

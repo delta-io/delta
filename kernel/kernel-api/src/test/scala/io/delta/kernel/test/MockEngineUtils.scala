@@ -18,7 +18,8 @@ package io.delta.kernel.test
 import java.io.ByteArrayInputStream
 import java.util
 import java.util.Optional
-import io.delta.kernel.data.{ColumnVector, ColumnarBatch, FilteredColumnarBatch, Row}
+
+import io.delta.kernel.data.{ColumnarBatch, ColumnVector, FilteredColumnarBatch, Row}
 import io.delta.kernel.engine._
 import io.delta.kernel.expressions.{Column, Expression, ExpressionEvaluator, Predicate, PredicateEvaluator}
 import io.delta.kernel.internal.actions.CommitInfo
@@ -169,14 +170,14 @@ trait BaseMockFileSystemClient extends FileSystemClient {
  * @param deltaVersionToICTMapping A mapping from delta version to inCommitTimestamp.
  */
 class MockReadICTFileJsonHandler(deltaVersionToICTMapping: Map[Long, Long])
-  extends BaseMockJsonHandler with VectorTestUtils {
+    extends BaseMockJsonHandler with VectorTestUtils {
   override def readJsonFiles(
-                              fileIter: CloseableIterator[FileStatus],
-                              physicalSchema: StructType,
-                              predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] = {
+      fileIter: CloseableIterator[FileStatus],
+      physicalSchema: StructType,
+      predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] = {
     assert(fileIter.hasNext)
     val filePathStr = fileIter.next.getPath
-    assert(FileNames.isCommitFile(filePathStr)
+    assert(FileNames.isCommitFile(filePathStr))
     val deltaVersion = FileNames.getFileVersion(new Path(filePathStr))
     assert(deltaVersionToICTMapping.contains(deltaVersion))
 

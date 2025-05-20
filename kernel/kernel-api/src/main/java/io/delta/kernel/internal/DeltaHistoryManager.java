@@ -210,7 +210,8 @@ public final class DeltaHistoryManager {
     } else {
       throw new IllegalStateException(
           String.format(
-              "Both %s and %s should be present or absent together when inCommitTimestamp is enabled.",
+              "Both %s and %s should be present or absent together"
+                  + "when inCommitTimestamp is enabled.",
               IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.getKey(),
               IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.getKey()));
     }

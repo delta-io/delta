@@ -168,8 +168,8 @@ trait MockFileSystemClientUtils extends MockEngineUtils {
   }
 
   def createMockFSAndJsonEngineForICT(
-    contents: Seq[FileStatus],
-    deltaToICTMap: Map[Long, Long]): Engine = {
+      contents: Seq[FileStatus],
+      deltaToICTMap: Map[Long, Long]): Engine = {
     mockEngine(
       fileSystemClient = new MockListFromFileSystemClient(listFromProvider(contents)),
       jsonHandler = new MockReadICTFileJsonHandler(deltaToICTMap))
