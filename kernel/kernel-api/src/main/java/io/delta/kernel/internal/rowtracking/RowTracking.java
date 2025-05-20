@@ -209,10 +209,11 @@ public class RowTracking {
                         + "data actions.",
                     providedHighWatermark, currCalculatedRowIdHighWatermark.get())));
 
-    if (providedRowIdHighWatermark.orElse(currCalculatedRowIdHighWatermark.get())
-        != prevRowIdHighWatermark) {
+    final Long finalRowIdHighWatermark =
+        providedRowIdHighWatermark.orElse(currCalculatedRowIdHighWatermark.get());
+    if (finalRowIdHighWatermark != prevRowIdHighWatermark) {
       nonRowTrackingDomainMetadatas.add(
-          new RowTrackingMetadataDomain(currCalculatedRowIdHighWatermark.get()).toDomainMetadata());
+          new RowTrackingMetadataDomain(finalRowIdHighWatermark).toDomainMetadata());
     }
 
     return nonRowTrackingDomainMetadatas;

@@ -163,6 +163,66 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
     }
   }
 
+  test("Provided Row ID high watermark should be set in the txn") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createTableWithRowTrackingSupported(engine, tablePath)
+
+      val dataBatch1 = generateData(testSchema, Seq.empty, Map.empty, 100, 1)
+      val commitVersion1 = appendData(
+        engine,
+        tablePath,
+        data = Seq(dataBatch1).map(Map.empty[String, Literal] -> _)).getVersion
+
+      verifyBaseRowIDs(engine, tablePath, Seq(0))
+      verifyDefaultRowCommitVersion(engine, tablePath, Seq(commitVersion1))
+      verifyHighWatermark(engine, tablePath, 99)
+
+      val dataBatch2 = generateData(testSchema, Seq.empty, Map.empty, 200, 1)
+      val commitVersion2 = appendData(
+        engine,
+        tablePath,
+        data = prepareDataForCommit(dataBatch2),
+        // Set a higher value than the calculated high watermark
+        rowIdHighWatermarkOpt = Some(400)).getVersion
+
+      verifyBaseRowIDs(engine, tablePath, Seq(0, 100))
+      verifyDefaultRowCommitVersion(engine, tablePath, Seq(commitVersion1, commitVersion2))
+      verifyHighWatermark(engine, tablePath, 400)
+    }
+  }
+
+  test("Fail if provided Row ID high watermark is smaller than the calculated high watermark") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createTableWithRowTrackingSupported(engine, tablePath)
+
+      val dataBatch1 = generateData(testSchema, Seq.empty, Map.empty, 100, 1)
+      val commitVersion1 = appendData(
+        engine,
+        tablePath,
+        data = Seq(dataBatch1).map(Map.empty[String, Literal] -> _)).getVersion
+
+      verifyBaseRowIDs(engine, tablePath, Seq(0))
+      verifyDefaultRowCommitVersion(engine, tablePath, Seq(commitVersion1))
+      verifyHighWatermark(engine, tablePath, 99)
+
+      val dataBatch2 = generateData(testSchema, Seq.empty, Map.empty, 200, 1)
+      val e = intercept[RuntimeException] {
+        appendData(
+          engine,
+          tablePath,
+          data = prepareDataForCommit(dataBatch2),
+          // Set a higher value than the calculated high watermark = 299
+          rowIdHighWatermarkOpt = Some(120)).getVersion
+      }
+
+      assert(
+        e.getMessage.contains(
+          "The provided row ID high watermark (120) must be greater than " +
+            "or equal to the calculated row ID high watermark (299) based " +
+            "on the transaction's data actions."))
+    }
+  }
+
   test("Base row IDs/default row commit versions are preserved in checkpoint") {
     withTempDirAndEngine { (tablePath, engine) =>
       createTableWithRowTrackingSupported(engine, tablePath)
@@ -243,7 +303,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
           isNewTable = false,
           testSchema,
           Seq.empty,
-          rowIdHighWatermark = Some(30L))
+          rowIdHighWatermarkOpt = Some(30L))
       }
       assert(
         e.getMessage.contains(
