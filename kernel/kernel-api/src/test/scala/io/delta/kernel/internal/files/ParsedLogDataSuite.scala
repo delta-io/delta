@@ -150,7 +150,7 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils {
   }
 
   test("Correctly parses V2 checkpoint file") {
-    val fileStatus = v2CheckpointFileStatuses(Seq((20, true, 0)), "parquet").head._1
+    val fileStatus = v2CheckpointFileStatus(20)
     val parsed = ParsedLogData.forFileStatus(fileStatus)
 
     assert(parsed.isInstanceOf[ParsedCheckpointData])
@@ -163,13 +163,9 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils {
   }
 
   test("V2 checkpoint file equality") {
-    val fileStatus1 = v2CheckpointFileStatuses(Seq((20, false, 0)), "parquet").head._1
-    val fileStatus2 = v2CheckpointFileStatuses(Seq((20, false, 0)), "parquet").head._1
-    val fileStatus3 = v2CheckpointFileStatuses(Seq((21, true, 0)), "parquet").head._1
-
-    val parsed1 = ParsedLogData.forFileStatus(fileStatus1)
-    val parsed2 = ParsedLogData.forFileStatus(fileStatus2)
-    val parsed3 = ParsedLogData.forFileStatus(fileStatus3)
+    val parsed1 = ParsedLogData.forFileStatus(v2CheckpointFileStatus(20, useUUID = false))
+    val parsed2 = ParsedLogData.forFileStatus(v2CheckpointFileStatus(20, useUUID = false))
+    val parsed3 = ParsedLogData.forFileStatus(v2CheckpointFileStatus(21))
 
     assert(parsed1 == parsed1)
     assert(parsed1 == parsed2)

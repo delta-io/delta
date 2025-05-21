@@ -95,6 +95,20 @@ trait MockFileSystemClientUtils extends MockEngineUtils {
         .map(p => FileStatus.of(p.toString, v, v * 10)))
   }
 
+  /** Checkpoint file status for a top-level V2 checkpoint file. */
+  def v2CheckpointFileStatus(
+      version: Long,
+      useUUID: Boolean = true,
+      fileType: String = "json"): FileStatus = {
+    val path = if (useUUID) {
+      val uuid = UUID.randomUUID().toString
+      FileNames.topLevelV2CheckpointFile(logPath, version, uuid, fileType).toString
+    } else {
+      FileNames.checkpointFileSingular(logPath, version).toString
+    }
+    FileStatus.of(path, version, version * 10)
+  }
+
   /**
    * Checkpoint file status for a top-level V2 checkpoint file.
    *
@@ -106,18 +120,7 @@ trait MockFileSystemClientUtils extends MockEngineUtils {
       checkpointVersions: Seq[(Long, Boolean, Int)],
       fileType: String): Seq[(FileStatus, Seq[FileStatus])] = {
     checkpointVersions.map { case (v, useUUID, numSidecars) =>
-      val topLevelFile = if (useUUID) {
-        FileStatus.of(
-          FileNames.topLevelV2CheckpointFile(
-            logPath,
-            v,
-            UUID.randomUUID().toString,
-            fileType).toString,
-          v,
-          v * 10)
-      } else {
-        FileStatus.of(FileNames.checkpointFileSingular(logPath, v).toString, v, v * 10)
-      }
+      val topLevelFile = v2CheckpointFileStatus(v, useUUID, fileType)
       val sidecars = (0 until numSidecars).map { _ =>
         FileStatus.of(
           FileNames.v2CheckpointSidecarFile(logPath, UUID.randomUUID().toString).toString,
