@@ -828,7 +828,7 @@ object DeltaHistoryManager extends DeltaLogging {
      * Files need a time adjustment if their timestamp isn't later than the lastFile.
      */
     private def needsTimeAdjustment(file: FileStatus): Boolean = {
-      versionGetter(lastFile.getPath) < versionGetter(file.getPath) &&
+      isFileVersionGreaterThanLastFileVersion(file) &&
         lastFile.getModificationTime >= file.getModificationTime
     }
 
@@ -864,7 +864,7 @@ object DeltaHistoryManager extends DeltaLogging {
             currentFile.getLen, currentFile.isDirectory, currentFile.getReplication,
             currentFile.getBlockSize, lastFile.getModificationTime + 1, currentFile.getPath)
         } else if (FileNames.isCheckpointFile(currentFile)
-          && (versionGetter(currentFile.getPath) > versionGetter(lastFile.getPath))) {
+          && isFileVersionGreaterThanLastFileVersion(currentFile)) {
           // Only flush the buffer when find a checkpoint. This is because we don't want to delete
           // the delta log files unless we have a checkpoint to ensure that non-expired subsequent
           // delta logs are valid.
@@ -877,6 +877,10 @@ object DeltaHistoryManager extends DeltaLogging {
         maybeDeleteFiles.append(currentFile)
         lastFile = currentFile
       }
+    }
+
+    def isFileVersionGreaterThanLastFileVersion(file: FileStatus): Boolean = {
+      versionGetter(file.getPath) > versionGetter(lastFile.getPath)
     }
 
     override def hasNext: Boolean = {
