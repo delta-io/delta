@@ -108,13 +108,6 @@ public class ChecksumUtils {
             ? incrementallyBuiltCrc.get()
             : buildCrcInfoWithFullLogReplay(engine, logSegmentAtVersion);
 
-    // Write the checksum file
-    writeChecksum(engine, logSegmentAtVersion, crcInfo);
-  }
-
-  /** Write the checksum file for the given version. */
-  private static void writeChecksum(Engine engine, LogSegment logSegmentAtVersion, CRCInfo crcInfo)
-      throws IOException {
     ChecksumWriter checksumWriter = new ChecksumWriter(logSegmentAtVersion.getLogPath());
     try {
       checksumWriter.writeCheckSum(engine, crcInfo);
@@ -157,44 +150,48 @@ public class ChecksumUtils {
                 Optional.empty(),
                 logSegment.getLastCommitTimestamp()),
             0L)) {
-      FilteredColumnarBatch filteredColumnarBatch = checkpointIterator.next();
-      ColumnarBatch batch = filteredColumnarBatch.getData();
-      Optional<ColumnVector> selectionVector = filteredColumnarBatch.getSelectionVector();
+      while (checkpointIterator.hasNext()) {
+        FilteredColumnarBatch filteredColumnarBatch = checkpointIterator.next();
+        ColumnarBatch batch = filteredColumnarBatch.getData();
+        Optional<ColumnVector> selectionVector = filteredColumnarBatch.getSelectionVector();
 
-      ColumnVector metadataVector = batch.getColumnVector(METADATA_INDEX);
-      ColumnVector protocolVector = batch.getColumnVector(PROTOCOL_INDEX);
-      ColumnVector removeVector = batch.getColumnVector(REMOVE_INDEX);
-      ColumnVector addVector = batch.getColumnVector(ADD_INDEX);
-      ColumnVector domainMetadataVector = batch.getColumnVector(DOMAIN_METADATA_INDEX);
-      final int rowCount = batch.getSize();
+        ColumnVector metadataVector = batch.getColumnVector(METADATA_INDEX);
+        ColumnVector protocolVector = batch.getColumnVector(PROTOCOL_INDEX);
+        ColumnVector removeVector = batch.getColumnVector(REMOVE_INDEX);
+        ColumnVector addVector = batch.getColumnVector(ADD_INDEX);
+        ColumnVector domainMetadataVector = batch.getColumnVector(DOMAIN_METADATA_INDEX);
+        final int rowCount = batch.getSize();
 
-      // Process all selected rows in a single pass for optimal performance
-      for (int i = 0; i < rowCount; i++) {
-        // Process add file records
-        processAddRecord(addVector, state, Optional.of(addFilesFromJson), i);
+        // Process all selected rows in a single pass for optimal performance
+        for (int i = 0; i < rowCount; i++) {
+          // Process add file records
+          processAddRecord(addVector, state, Optional.of(addFilesFromJson), i);
 
-        // Process remove file records
-        if (!removeVector.isNullAt(i)) {
-          ColumnVector sizeVector = removeVector.getChild(REMOVE_SIZE_INDEX);
-          // Cannot determine if a remove file missing stats came before or after crc
-          if (sizeVector.isNullAt(i)) {
-            throw new IllegalStateException("Remove file missing size information");
+          // Process remove file records
+          if (!removeVector.isNullAt(i)) {
+            ColumnVector sizeVector = removeVector.getChild(REMOVE_SIZE_INDEX);
+            // Cannot determine if a remove file missing stats came before or after crc
+            if (sizeVector.isNullAt(i)) {
+              throw new IllegalStateException("Remove file missing size information");
+            }
+            long fileSize = sizeVector.getLong(i);
+            state.tableSizeByte.add(-fileSize);
+            state.removedFileSizeHistogram.insert(fileSize);
+            state.fileCount.decrement();
           }
-          long fileSize = sizeVector.getLong(i);
-          state.tableSizeByte.add(-fileSize);
-          state.removedFileSizeHistogram.insert(fileSize);
-          state.fileCount.decrement();
+
+          int rowId = i;
+          boolean isSelected =
+              selectionVector
+                  .map(vec -> !vec.isNullAt(rowId) && vec.getBoolean(rowId))
+                  .orElse(true);
+          if (!isSelected) continue;
+
+          // Process domain metadata, protocol, and metadata
+          processDomainMetadataRecord(domainMetadataVector, state, i);
+          processMetadataRecord(metadataVector, state, i);
+          processProtocolRecord(protocolVector, state, i);
         }
-
-        int rowId = i;
-        boolean isSelected =
-            selectionVector.map(vec -> !vec.isNullAt(rowId) && vec.getBoolean(rowId)).orElse(true);
-        if (!isSelected) continue;
-
-        // Process domain metadata, protocol, and metadata
-        processDomainMetadataRecord(domainMetadataVector, state, i);
-        processMetadataRecord(metadataVector, state, i);
-        processProtocolRecord(protocolVector, state, i);
       }
     }
 
