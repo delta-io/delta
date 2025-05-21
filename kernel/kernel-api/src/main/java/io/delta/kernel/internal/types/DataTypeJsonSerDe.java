@@ -250,21 +250,19 @@ public class DataTypeJsonSerDe {
       StructField structField, FieldMetadata metadata) {
     if (structField.getMetadata().contains(StructField.COLLATIONS_METADATA_KEY)) {
       FieldMetadata collationsMetadata = metadata.getMetadata(StructField.COLLATIONS_METADATA_KEY);
-      SchemaIterable iterable = new SchemaIterable(new StructType().add(structField));
       // Don't recurse on Structs because they would have already been constructed/fixed up in this
-      // code
-      // path.
-      Iterator<SchemaIterable.MutableSchemaElement> elements =
-          iterable.newMutableIteratorWithSkippedRecursion(StructType.class);
+      // code path when assembling the child structs.
+      SchemaIterable iterable =
+          SchemaIterable.newSchemaIterableWithIgnoredRecursion(
+              new StructType().add(structField), new Class<?>[] {StructType.class});
+
+      Iterator<SchemaIterable.MutableSchemaElement> elements = iterable.newMutableIterator();
       while (elements.hasNext()) {
         SchemaIterable.MutableSchemaElement element = elements.next();
         String pathFromAncestor =
             element.getPathFromNearestStructFieldAncestor(structField.getName());
         if (collationsMetadata.contains(pathFromAncestor)) {
-          StructField field = element.getField();
-          assertValidTypeForCollations(field.getDataType());
-          StringType collatedType = new StringType(collationsMetadata.getString(pathFromAncestor));
-          element.updateField(field.withDataType(collatedType));
+          updateCollation(element, collationsMetadata, pathFromAncestor);
         }
       }
       structField =
@@ -278,6 +276,20 @@ public class DataTypeJsonSerDe {
                       .build());
     }
     return structField;
+  }
+
+  private static void updateCollation(
+      SchemaIterable.MutableSchemaElement element,
+      FieldMetadata collationsMetadata,
+      String pathFromAncestor) {
+    StructField field = element.getField();
+    DataType fieldType = field.getDataType();
+    if (!(fieldType instanceof StringType)) {
+      throw new IllegalArgumentException(
+          format("Invalid data type for collations: \"%s\"", fieldType));
+    }
+    StringType collatedType = new StringType(collationsMetadata.getString(pathFromAncestor));
+    element.updateField(field.withDataType(collatedType));
   }
 
   /** Parses a {@link FieldMetadata}. */
@@ -401,13 +413,6 @@ public class DataTypeJsonSerDe {
     checkArgument(
         node.isTextual(), "Expected string for fieldName=%s in:\n%s", fieldName, rootNode);
     return node.textValue(); // double check this only works for string values! and isTextual()!
-  }
-
-  private static void assertValidTypeForCollations(DataType fieldType) {
-    if (!(fieldType instanceof StringType)) {
-      throw new IllegalArgumentException(
-          String.format("Invalid data type for collations: \"%s\"", fieldType));
-    }
   }
 
   private static boolean getBooleanField(JsonNode rootNode, String fieldName) {
