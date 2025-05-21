@@ -735,6 +735,8 @@ class DeltaTable(object):
         Example::
             # Shallow clone a table to path '/path/to/table'
             deltaTable = DeltaTable.clone("/path/to/table", False, True)
+        :param self: The current instance
+        :type self: :py:class:`~delta.tables.DeltaTable`
         :param target: Path where we should clone the Delta table
         :type target: str
         :param isShallow: True for shallow clones, false for deep clones
@@ -760,8 +762,10 @@ class DeltaTable(object):
         Example::
             # Shallow clone a table to path '/path/to/table' at version 1
             deltaTable = DeltaTable.cloneAtVersion(1, "/path/to/table", False)
+        :param self: The current instance
+        :type self: :py:class:`~delta.tables.DeltaTable`
         :param version: Version at which to clone the source directory. Take the metadata at this
-        version of the table as well.
+                        version of the table as well.
         :type version: number
         :param target: Path where we should clone the Delta table
         :type target: str
@@ -792,8 +796,10 @@ class DeltaTable(object):
                 "2019-01-01",
                 "/path/to/table",
                 False)
+        :param self: The current instance
+        :type self: :py:class:`~delta.tables.DeltaTable`
         :param timestamp: Timestamp at which to clone the source directory. Take the metadata at
-        this timestamp as well.
+                          this timestamp as well.
         :type timestamp: str
         :param target: Path where we should clone the Delta table
         :type target: str
@@ -813,17 +819,14 @@ class DeltaTable(object):
 
     @classmethod
     def _verify_clone_types(
-            cls,
-            target,
-            isShallow,
-            replace,
-            properties,
-            timestamp="",
-            version=0) -> None:
-        """
-        Throw an error if any of the types passed in to Clone do not
-        adhere to the types that we expect
-        """
+        self,
+        target: str,
+        isShallow: bool,
+        replace: bool,
+        properties: dict,
+        timestamp="": str,
+        version=0: int
+    ) -> None: # ignore[no-untyped-def]
         DeltaTable._verify_type_str(timestamp, "timestamp")
         DeltaTable._verify_type_int(version, "version")
         DeltaTable._verify_type_str(target, "target")
@@ -837,7 +840,7 @@ class DeltaTable(object):
                 DeltaTable._verify_type_str(value, "All property values including %s" % value)
 
     @classmethod
-    def _verify_type_dict(cls, variable, name) -> None:
+    def _verify_type_dict(self, variable: dict, name: str) -> None:
         if not isinstance(variable, dict):
             raise ValueError("%s needs to be a dict but got '%s'." % (name, type(variable)))
 
