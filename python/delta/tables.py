@@ -824,8 +824,8 @@ class DeltaTable(object):
         isShallow: bool,
         replace: bool,
         properties: dict,
-        timestamp="": str,
-        version=0: int
+        timestamp: str = "",
+        version: int = 0
     ) -> None: # ignore[no-untyped-def]
         DeltaTable._verify_type_str(timestamp, "timestamp")
         DeltaTable._verify_type_int(version, "version")
