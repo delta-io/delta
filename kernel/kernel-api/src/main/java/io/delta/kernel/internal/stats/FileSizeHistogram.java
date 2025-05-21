@@ -302,7 +302,7 @@ public class FileSizeHistogram {
    * @throws IllegalArgumentException if the histograms have different bin boundaries
    */
   public FileSizeHistogram plus(FileSizeHistogram other) {
-    requireNonNull(other, "other histogram cannot be null");
+    requireNonNull(other, "histogram to add cannot be null");
     checkArgument(
         Arrays.equals(this.sortedBinBoundaries, other.sortedBinBoundaries),
         "Cannot add histograms with different bin boundaries");
@@ -330,7 +330,7 @@ public class FileSizeHistogram {
    * @throws IllegalArgumentException if subtraction would result in negative counts or bytes
    */
   public FileSizeHistogram minus(FileSizeHistogram other) {
-    requireNonNull(other, "other histogram cannot be null");
+    requireNonNull(other, "histogram to minus cannot be null");
     checkArgument(
         Arrays.equals(this.sortedBinBoundaries, other.sortedBinBoundaries),
         "Cannot subtract histograms with different bin boundaries");
