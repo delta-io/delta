@@ -192,10 +192,13 @@ class IcebergConverter(spark: SparkSession)
     } catch {
       case NonFatal(e) =>
         logError(log"Error when converting to Iceberg metadata", e)
+        val (opType, baseTags) =
+            ("delta.iceberg.conversion.error", Map.empty[String, String])
+
         recordDeltaEvent(
           snapshotToConvert.deltaLog,
-          "delta.iceberg.conversion.error",
-          data = Map(
+          opType,
+          data = baseTags ++ Map(
             "exception" -> ExceptionUtils.getMessage(e),
             "stackTrace" -> ExceptionUtils.getStackTrace(e)
           )
