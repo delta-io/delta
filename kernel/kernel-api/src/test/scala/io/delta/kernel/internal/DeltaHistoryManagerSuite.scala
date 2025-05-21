@@ -437,6 +437,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
         false // canReturnEarliestCommit
       )
       assert(activeCommit.getVersion == expectedVersion)
+      assert(activeCommit.getTimestamp == timestamp)
       if (idx != icts.size - 1) {
         val activeCommit = DeltaHistoryManager.getActiveCommitAtTimestamp(
           engine,
@@ -448,6 +449,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
           false // canReturnEarliestCommit
         )
         assert(activeCommit.getVersion == expectedVersion)
+        assert(activeCommit.getTimestamp == timestamp)
       } else {
         // Querying for a timestamp greater than the last commit should throw an exception
         // when canReturnLastCommit is false.
@@ -473,6 +475,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
           false // canReturnEarliestCommit
         )
         assert(lastCommit.getVersion == expectedVersion)
+        assert(lastCommit.getTimestamp == timestamp)
       }
     }
   }
