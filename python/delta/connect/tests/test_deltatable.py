@@ -28,85 +28,10 @@ from tests.test_deltatable import DeltaTableTestsMixin
 
 
 class DeltaTableTests(DeltaTableTestsMixin, DeltaTestCase):
-    @unittest.skip("create has not been implemented yet")
-    def test_create_table_with_existing_schema(self):
-        pass
-
-    @unittest.skip("createOrReplace has not been implemented yet")
-    def test_create_replace_table_with_cluster_by(self):
-        pass
-
-    @unittest.skip("createOrReplace has not been implemented yet")
-    def test_create_replace_table_with_no_spark_session_passed(self):
-        pass
-
-    @unittest.skip("create has not been implemented yet")
-    def test_create_table_with_name_only(self):
-        pass
-
-    @unittest.skip("create has not been implemented yet")
-    def test_create_table_with_location_only(self):
-        pass
-
-    @unittest.skip("create has not been implemented yet")
-    def test_create_table_with_name_and_location(self):
-        pass
-
-    @unittest.skip("create has not been implemented yet")
-    def test_create_table_behavior(self):
-        pass
-
-    @unittest.skip("replace has not been implemented yet")
-    def test_replace_table_with_name_only(self):
-        pass
-
-    @unittest.skip("replace has not been implemented yet")
-    def test_replace_table_with_location_only(self):
-        pass
-
-    @unittest.skip("replace has not been implemented yet")
-    def test_replace_table_with_name_and_location(self):
-        pass
-
-    @unittest.skip("replace has not been implemented yet")
-    def test_replace_table_behavior(self):
-        pass
-
-    @unittest.skip("create has not been implemented yet")
+    @unittest.skip("relies on jvm")
     def test_verify_paritionedBy_compatibility(self):
         pass
 
-    @unittest.skip("create has not been implemented yet")
-    def test_create_table_with_identity_column(self):
-        pass
-
-    @unittest.skip("create has not been implemented yet")
-    def test_delta_table_builder_with_bad_args(self):
-        pass
-
-    @unittest.skip("addFeatureSupport has not been implemented yet")
-    def test_addFeatureSupport(self):
-        pass
-
-    @unittest.skip("dropFeatureSupport has not been implemented yet")
-    def test_dropFeatureSupport(self):
-        pass
-
-    @unittest.skip("clusterBy has not been implemented yet")
-    def test_create_table_with_cluster_by(self):
-        pass
-
-    @unittest.skip("clusterBy has not been implemented yet")
-    def test_replace_table_with_cluster_by(self):
-        pass
-
-    @unittest.skip("clusterBy has not been implemented yet")
-    def __test_table_with_cluster_by(self) -> None:
-        pass
-
-    @unittest.skip("clusterBy has not been implemented yet")
-    def test_cluster_by_bad_args(self) -> None:
-        pass
 
 if __name__ == "__main__":
     try:

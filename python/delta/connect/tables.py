@@ -33,14 +33,17 @@ from delta.connect._typing import (
     OptionalExpressionOrColumn
 )
 from delta.connect.plan import (
+    AddFeatureSupport,
     Assignment,
     CloneTable,
     ConvertToDelta,
+    CreateDeltaTable,
     DeleteAction,
     DeleteFromTable,
     DeltaScan,
     DescribeHistory,
     DescribeDetail,
+    DropFeatureSupport,
     Generate,
     InsertAction,
     InsertStarAction,
@@ -230,6 +233,46 @@ class DeltaTable(object):
     forName.__func__.__doc__ = LocalDeltaTable.forName.__doc__
 
     @classmethod
+    def create(
+        cls, sparkSession: Optional[SparkSession] = None
+    ) -> "DeltaTableBuilder":
+        return DeltaTableBuilder(
+            sparkSession,
+            proto.CreateDeltaTable.Mode.MODE_CREATE)
+
+    create.__func__.__doc__ = LocalDeltaTable.create.__doc__
+
+    @classmethod
+    def createIfNotExists(
+        cls, sparkSession: Optional[SparkSession] = None
+    ) -> "DeltaTableBuilder":
+        return DeltaTableBuilder(
+            sparkSession,
+            proto.CreateDeltaTable.Mode.MODE_CREATE_IF_NOT_EXISTS)
+
+    createIfNotExists.__func__.__doc__ = LocalDeltaTable.createIfNotExists.__doc__
+
+    @classmethod
+    def replace(
+        cls, sparkSession: Optional[SparkSession] = None
+    ) -> "DeltaTableBuilder":
+        return DeltaTableBuilder(
+            sparkSession,
+            proto.CreateDeltaTable.Mode.MODE_REPLACE)
+
+    replace.__func__.__doc__ = LocalDeltaTable.replace.__doc__
+
+    @classmethod
+    def createOrReplace(
+        cls, sparkSession: Optional[SparkSession] = None
+    ) -> "DeltaTableBuilder":
+        return DeltaTableBuilder(
+            sparkSession,
+            proto.CreateDeltaTable.Mode.MODE_CREATE_OR_REPLACE)
+
+    createOrReplace.__func__.__doc__ = LocalDeltaTable.createOrReplace.__doc__
+
+    @classmethod
     def isDeltaTable(cls, sparkSession: SparkSession, identifier: str) -> bool:
         assert sparkSession is not None
 
@@ -256,6 +299,29 @@ class DeltaTable(object):
         self._spark.client.execute_command(command)
 
     upgradeTableProtocol.__doc__ = LocalDeltaTable.upgradeTableProtocol.__doc__
+
+    def addFeatureSupport(self, featureName: str) -> None:
+        LocalDeltaTable._verify_type_str(featureName, "featureName")
+        command = AddFeatureSupport(
+            self._to_proto(),
+            featureName
+        ).command(session=self._spark.client)
+        self._spark.client.execute_command(command)
+
+    addFeatureSupport.__doc__ = LocalDeltaTable.addFeatureSupport.__doc__
+
+    def dropFeatureSupport(self, featureName: str, truncateHistory: Optional[bool] = None) -> None:
+        LocalDeltaTable._verify_type_str(featureName, "featureName")
+        if truncateHistory is not None:
+            LocalDeltaTable._verify_type_bool(truncateHistory, "truncateHistory")
+        command = DropFeatureSupport(
+            self._to_proto(),
+            featureName,
+            truncateHistory
+        ).command(session=self._spark.client)
+        self._spark.client.execute_command(command)
+
+    dropFeatureSupport.__doc__ = LocalDeltaTable.dropFeatureSupport.__doc__
 
     def restoreToVersion(self, version: int) -> DataFrame:
         LocalDeltaTable._verify_type_int(version, "version")
@@ -543,6 +609,225 @@ class DeltaMergeBuilder(object):
         return self._spark.createDataFrame(df.toPandas())
 
     execute.__doc__ = LocalDeltaMergeBuilder.execute.__doc__
+
+
+class DeltaTableBuilder(object):
+    __doc__ = LocalDeltaTableBuilder.__doc__
+
+    def __init__(
+        self,
+        spark: SparkSession,
+        mode: proto.CreateDeltaTable.Mode
+    ) -> None:
+        self._spark = spark
+        self._mode = mode
+        self._tableName = None
+        self._location = None
+        self._comment = None
+        self._columns = []
+        self._properties = {}
+        self._partitioningColumns = []
+        self._clusteringColumns = []
+
+    def _raise_type_error(self, msg: str, objs: Iterable[Any]) -> NoReturn:
+        errorMsg = msg
+        for obj in objs:
+            errorMsg += " Found %s with type %s" % ((str(obj)), str(type(obj)))
+        raise TypeError(errorMsg)
+
+    def _check_identity_column_spec(self, identityGenerator: IdentityGenerator) -> None:
+        if identityGenerator.step == 0:
+            raise ValueError("Column identity generation requires step to be non-zero.")
+
+    def tableName(self, identifier: str) -> "DeltaTableBuilder":
+        if type(identifier) is not str:
+            self._raise_type_error("Identifier must be str.", [identifier])
+        self._tableName = identifier
+        return self
+
+    tableName.__doc__ = LocalDeltaTableBuilder.tableName.__doc__
+
+    def location(self, location: str) -> "DeltaTableBuilder":
+        if type(location) is not str:
+            self._raise_type_error("Location must be str.", [location])
+        self._location = location
+        return self
+
+    location.__doc__ = LocalDeltaTableBuilder.location.__doc__
+
+    def comment(self, comment: str) -> "DeltaTableBuilder":
+        if type(comment) is not str:
+            self._raise_type_error("Table comment must be str.", [comment])
+        self._comment = comment
+        return self
+
+    comment.__doc__ = LocalDeltaTableBuilder.comment.__doc__
+
+    def addColumn(
+        self,
+        colName: str,
+        dataType: Union[str, DataType],
+        nullable: bool = True,
+        generatedAlwaysAs: Optional[Union[str, IdentityGenerator]] = None,
+        generatedByDefaultAs: Optional[IdentityGenerator] = None,
+        comment: Optional[str] = None,
+    ) -> "DeltaTableBuilder":
+        if type(colName) is not str:
+            self._raise_type_error("Column name must be str.", [colName])
+        if type(dataType) is not str and not isinstance(dataType, DataType):
+            self._raise_type_error(
+                "Column data type must be str or DataType.", [dataType])
+        if type(nullable) is not bool:
+            self._raise_type_error("Column nullable must be bool.", [nullable])
+        if generatedAlwaysAs is not None and generatedByDefaultAs is not None:
+            raise ValueError(
+                "generatedByDefaultAs and generatedAlwaysAs cannot both be set.",
+                [generatedByDefaultAs, generatedAlwaysAs])
+        if generatedAlwaysAs is not None:
+            if isinstance(generatedAlwaysAs, IdentityGenerator):
+                self._check_identity_column_spec(generatedAlwaysAs)
+            elif type(generatedAlwaysAs) is not str:
+                self._raise_type_error(
+                    "Generated always as expression must be str or IdentityGenerator.",
+                    [generatedAlwaysAs])
+        elif generatedByDefaultAs is not None:
+            if not isinstance(generatedByDefaultAs, IdentityGenerator):
+                self._raise_type_error(
+                    "Generated by default expression must be IdentityGenerator.",
+                    [generatedByDefaultAs])
+            self._check_identity_column_spec(generatedByDefaultAs)
+
+        if comment is not None and type(comment) is not str:
+            self._raise_type_error("Comment must be str or None.", [colName])
+
+        column = proto.CreateDeltaTable.Column()
+        column.name = colName
+        if type(dataType) is str:
+            column.data_type.unparsed.data_type_string = dataType
+        elif isinstance(dataType, DataType):
+            column.data_type.CopyFrom(pyspark_types_to_proto_types(dataType))
+        column.nullable = nullable
+        if generatedAlwaysAs is not None:
+            if type(generatedAlwaysAs) is str:
+                column.generated_always_as = generatedAlwaysAs
+            else:
+                identity_info = proto.CreateDeltaTable.Column.IdentityInfo(
+                    start=generatedAlwaysAs.start,
+                    step=generatedAlwaysAs.step,
+                    allow_explicit_insert=False)
+                column.identity_info.CopyFrom(identity_info)
+        if generatedByDefaultAs is not None:
+            identity_info = proto.CreateDeltaTable.Column.IdentityInfo(
+                start=generatedByDefaultAs.start,
+                step=generatedByDefaultAs.step,
+                allow_explicit_insert=True)
+            column.identity_info.CopyFrom(identity_info)
+        if comment is not None:
+            column.comment = comment
+        self._columns.append(column)
+        return self
+
+    addColumn.__doc__ = LocalDeltaTableBuilder.addColumn.__doc__
+
+    def addColumns(
+        self, cols: Union[StructType, List[StructField]]
+    ) -> "DeltaTableBuilder":
+        if isinstance(cols, list):
+            for col in cols:
+                if type(col) is not StructField:
+                    self._raise_type_error(
+                        "Column in existing schema must be StructField.", [col])
+            cols = StructType(cols)
+        if type(cols) is not StructType:
+            self._raise_type_error(
+                "Schema must be StructType or a list of StructField.", [cols])
+
+        for col in cols:
+            self.addColumn(col.name, col.dataType, col.nullable)
+        return self
+
+    addColumns.__doc__ = LocalDeltaTableBuilder.addColumns.__doc__
+
+    @overload
+    def partitionedBy(
+        self, *cols: str
+    ) -> "DeltaTableBuilder":
+        ...
+
+    @overload
+    def partitionedBy(
+        self, __cols: Union[List[str], Tuple[str, ...]]
+    ) -> "DeltaTableBuilder":
+        ...
+
+    def partitionedBy(
+        self, *cols: Union[str, List[str], Tuple[str, ...]]
+    ) -> "DeltaTableBuilder":
+        if len(cols) == 1 and isinstance(cols[0], (list, tuple)):
+            cols = cols[0]  # type: ignore[assignment]
+        for c in cols:
+            if type(c) is not str:
+                self._raise_type_error("Partitioning column must be str.", [c])
+
+        self._partitioningColumns.extend(cols)
+        return self
+
+    partitionedBy.__doc__ = LocalDeltaTableBuilder.partitionedBy.__doc__
+
+    @overload
+    def clusterBy(
+        self, *cols: str
+    ) -> "DeltaTableBuilder":
+        ...
+
+    @overload
+    def clusterBy(
+        self, __cols: Union[List[str], Tuple[str, ...]]
+    ) -> "DeltaTableBuilder":
+        ...
+
+    def clusterBy(
+        self, *cols: Union[str, List[str], Tuple[str, ...]]
+    ) -> "DeltaTableBuilder":
+        if len(cols) == 1 and isinstance(cols[0], (list, tuple)):
+            cols = cols[0]  # type: ignore[assignment]
+        for c in cols:
+            if type(c) is not str:
+                self._raise_type_error("Clustering column must be str.", [c])
+
+        self._clusteringColumns.extend(cols)
+        return self
+
+    clusterBy.__doc__ = LocalDeltaTableBuilder.clusterBy.__doc__
+
+    def property(self, key: str, value: str) -> "DeltaTableBuilder":
+        if type(key) is not str or type(value) is not str:
+            self._raise_type_error(
+                "Key and value of property must be string.", [key, value])
+
+        self._properties[key] = value
+        return self
+
+    property.__doc__ = LocalDeltaTableBuilder.property.__doc__
+
+    def execute(self) -> DeltaTable:
+        command = CreateDeltaTable(
+            self._mode,
+            self._tableName,
+            self._location,
+            self._comment,
+            self._columns,
+            self._partitioningColumns,
+            self._properties,
+            self._clusteringColumns
+        ).command(session=self._spark.client)
+        self._spark.client.execute_command(command)
+        if self._tableName is not None:
+            return DeltaTable.forName(self._spark, self._tableName)
+        else:
+            return DeltaTable.forPath(self._spark, self._location)
+
+    execute.__doc__ = LocalDeltaTableBuilder.execute.__doc__
 
 
 class DeltaOptimizeBuilder(object):

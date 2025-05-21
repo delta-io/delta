@@ -176,7 +176,13 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
                   columnName
                 )
             }
-          case (from: MapType, to: MapType) if !Cast.canCast(from, to) =>
+          case (from: MapType, to: MapType) if !Cast.canCast(from, to) || (
+              // Structs can be nested into the MapType, so if we need to do by-name casts,
+              // we need to recurse into the children here.
+              castingBehavior.resolveStructsByName &&
+                containsNestedStruct(from) &&
+                containsNestedStruct(to) &&
+                !DataTypeUtils.equalsIgnoreCaseAndNullability(from, to)) =>
             // Manually convert map keys and values if the types are not compatible to allow schema
             // evolution. This is slower than direct cast so we only do it when required.
             def createMapConverter(convert: (Expression, Expression) => Expression): Expression = {
@@ -522,6 +528,14 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
       case SQLConf.StoreAssignmentPolicy.STRICT =>
         UpCast(child, dataType)
     }
+  }
+  private def containsNestedStruct(dt: DataType): Boolean = dt match {
+    case _: StructType => true
+    case _: AtomicType => false
+    case a: ArrayType => containsNestedStruct(a.elementType)
+    case m: MapType => containsNestedStruct(m.keyType) || containsNestedStruct(m.valueType)
+    // Let's defensively pretend it might have a nested struct if we don't recognise something.
+    case _ => true
   }
 
   private def containsIntegralOrDecimalType(dt: DataType): Boolean = dt match {

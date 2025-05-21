@@ -89,7 +89,7 @@ object NumRecordsStats {
           numFilesRemovedWithoutNumRecords += 1
           0L
         }
-        numDeletionVectorRecordsRemoved = r.numDeletedRecords
+        numDeletionVectorRecordsRemoved += r.numDeletedRecords
       case _ =>
         // Do nothing
     }

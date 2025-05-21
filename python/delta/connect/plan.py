@@ -311,6 +311,45 @@ class IsDeltaTable(DeltaLogicalPlan):
         return relation
 
 
+class CreateDeltaTable(DeltaLogicalPlan):
+    def __init__(
+        self,
+        mode: proto.CreateDeltaTable.Mode,
+        tableName: Optional[str],
+        location: Optional[str],
+        comment: Optional[str],
+        columns: List[proto.CreateDeltaTable.Column],
+        partitioningColumns: List[str],
+        properties: Dict[str, str],
+        clusteringColumns: List[str]
+    ) -> None:
+        super().__init__(None)
+        self._mode = mode
+        self._tableName = tableName
+        self._location = location
+        self._comment = comment
+        self._columns = columns
+        self._partitioningColumns = partitioningColumns
+        self._clusteringColumns = clusteringColumns
+        self._properties = properties
+
+    def to_delta_command(self, client: SparkConnectClient) -> proto.DeltaCommand:
+        command = proto.DeltaCommand()
+        command.create_delta_table.mode = self._mode
+        if self._tableName is not None:
+            command.create_delta_table.table_name = self._tableName
+        if self._location is not None:
+            command.create_delta_table.location = self._location
+        if self._comment is not None:
+            command.create_delta_table.comment = self._comment
+        command.create_delta_table.columns.extend(self._columns)
+        command.create_delta_table.partitioning_columns.extend(self._partitioningColumns)
+        command.create_delta_table.clustering_columns.extend(self._clusteringColumns)
+        for k, v in self._properties.items():
+            command.create_delta_table.properties[k] = v
+        return command
+
+
 class UpgradeTableProtocol(DeltaLogicalPlan):
     def __init__(
         self,
@@ -328,6 +367,44 @@ class UpgradeTableProtocol(DeltaLogicalPlan):
         command.upgrade_table_protocol.table.CopyFrom(self._table)
         command.upgrade_table_protocol.reader_version = self._readerVersion
         command.upgrade_table_protocol.writer_version = self._writerVersion
+        return command
+
+
+class AddFeatureSupport(DeltaLogicalPlan):
+    def __init__(
+        self,
+        table: proto.DeltaTable,
+        featureName: str
+    ) -> None:
+        super().__init__(None)
+        self._table = table
+        self._featureName = featureName
+
+    def to_delta_command(self, client: SparkConnectClient) -> proto.DeltaCommand:
+        command = proto.DeltaCommand()
+        command.add_feature_support.table.CopyFrom(self._table)
+        command.add_feature_support.feature_name = self._featureName
+        return command
+
+
+class DropFeatureSupport(DeltaLogicalPlan):
+    def __init__(
+        self,
+        table: proto.DeltaTable,
+        featureName: str,
+        truncateHistory: Optional[bool]
+    ) -> None:
+        super().__init__(None)
+        self._table = table
+        self._featureName = featureName
+        self._truncateHistory = truncateHistory
+
+    def to_delta_command(self, client: SparkConnectClient) -> proto.DeltaCommand:
+        command = proto.DeltaCommand()
+        command.drop_feature_support.table.CopyFrom(self._table)
+        command.drop_feature_support.feature_name = self._featureName
+        if self._truncateHistory is not None:
+            command.drop_feature_support.truncate_history = self._truncateHistory
         return command
 
 

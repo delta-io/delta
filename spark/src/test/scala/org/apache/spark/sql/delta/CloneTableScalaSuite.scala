@@ -20,42 +20,11 @@ import org.apache.spark.sql.delta.util.AnalysisHelper
 import org.apache.hadoop.fs.Path
 
 class CloneTableScalaSuite extends CloneTableSuiteBase
+    with CloneTableScalaTestMixin
     with AnalysisHelper
     with DeltaColumnMappingTestUtils {
 
   import testImplicits._
-
-  // scalastyle:off argcount
-  override protected def cloneTable(
-      source: String,
-      target: String,
-      isShallow: Boolean,
-      sourceIsTable: Boolean = false,
-      targetIsTable: Boolean = false,
-      targetLocation: Option[String] = None,
-      versionAsOf: Option[Long] = None,
-      timestampAsOf: Option[String] = None,
-      isCreate: Boolean = true,
-      isReplace: Boolean = false,
-      tableProperties: Map[String, String] = Map.empty): Unit = {
-    val table = if (sourceIsTable) {
-      io.delta.tables.DeltaTable.forName(spark, source)
-    } else {
-      io.delta.tables.DeltaTable.forPath(spark, source)
-    }
-
-    if (versionAsOf.isDefined) {
-      table.cloneAtVersion(versionAsOf.get,
-        target, isShallow = isShallow, replace = isReplace, tableProperties)
-    } else if (timestampAsOf.isDefined) {
-      table.cloneAtTimestamp(timestampAsOf.get,
-        target, isShallow = isShallow, replace = isReplace, tableProperties)
-    } else {
-      table.clone(target, isShallow = isShallow, replace = isReplace,
-        new java.util.HashMap[String, String](tableProperties.asJava))
-    }
-  }
-  // scalastyle:on argcount
 
   testAllClones("cloneAtVersion API") { (source, target, isShallow) =>
     spark.range(5).write.format("delta").save(source)
