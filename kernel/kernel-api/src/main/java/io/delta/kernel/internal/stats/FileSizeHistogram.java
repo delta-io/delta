@@ -20,6 +20,7 @@ import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.Row;
+import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.util.InternalUtils;
 import io.delta.kernel.internal.util.VectorUtils;
@@ -177,7 +178,8 @@ public class FileSizeHistogram {
   private final long[] fileCounts;
   private final long[] totalBytes;
 
-  private FileSizeHistogram(long[] sortedBinBoundaries, long[] fileCounts, long[] totalBytes) {
+  @VisibleForTesting
+  public FileSizeHistogram(long[] sortedBinBoundaries, long[] fileCounts, long[] totalBytes) {
     requireNonNull(sortedBinBoundaries, "sortedBinBoundaries cannot be null");
     requireNonNull(fileCounts, "fileCounts cannot be null");
     requireNonNull(totalBytes, "totalBytes cannot be null");
