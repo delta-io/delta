@@ -29,7 +29,7 @@ import io.delta.kernel.internal.{SnapshotImpl, TableConfig}
 import io.delta.kernel.internal.actions.DomainMetadata
 import io.delta.kernel.internal.clustering.ClusteringMetadataDomain
 import io.delta.kernel.internal.util.{ColumnMapping, ColumnMappingSuiteBase}
-import io.delta.kernel.types.{ArrayType, DecimalType, FieldMetadata, IntegerType, LongType, MapType, StringType, StructType}
+import io.delta.kernel.types.{ArrayType, DecimalType, FieldMetadata, IntegerType, LongType, MapType, StringType, StructType, TypeChange}
 import io.delta.kernel.utils.CloseableIterable
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
 
@@ -1441,7 +1441,19 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
 
             val updatedSchema = table.getLatestSnapshot(engine).getSchema
             assert(updatedSchema.get("id").getDataType == newType)
-            // TODO: Add checks for type changes once SerDe is supported.
+            assert(updatedSchema.get("id").getTypeChanges.asScala ==
+              List(new TypeChange(initialType, newType)))
+
+            // Do an unrelated schema change. And ensure type change and type changes
+            // are still present.
+            table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
+              .withSchema(engine, newSchema.add("newField", StringType.STRING, true))
+              .build(engine).commit(engine, emptyIterable())
+
+            val lastSchema = table.getLatestSnapshot(engine).getSchema
+            assert(lastSchema.get("id").getDataType == newType)
+            assert(lastSchema.get("id").getTypeChanges.asScala ==
+              List(new TypeChange(initialType, newType)))
           } else {
             // This should fail because conditions don't allow type widening
             assertSchemaEvolutionFails[KernelException](
