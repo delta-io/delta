@@ -503,13 +503,14 @@ lazy val spark = (project in file("spark"))
     ),
     unidocSourceFilePatterns := Seq(SourceFilePattern("io/delta/tables/", "io/delta/exceptions/"))
   ).configureUnidoc(
-  generatedJavaDoc = getSparkVersion() == LATEST_RELEASED_SPARK_VERSION,
-  generateScalaDoc = getSparkVersion() == LATEST_RELEASED_SPARK_VERSION,
+  generatedJavaDoc = true,
+  generateScalaDoc = true,
   // spark-connect has classes with the same name as spark-core, this causes compilation issues
   // with unidoc since it concatenates the classpaths from all modules
   // ==> thus we exclude such sources
   // (mostly) relevant github issue: https://github.com/sbt/sbt-unidoc/issues/77
   classPathToSkip = "spark-connect"
+)
 
 lazy val contribs = (project in file("contribs"))
   .dependsOn(spark % "compile->compile;test->test;provided->provided")
