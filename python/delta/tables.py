@@ -721,6 +721,7 @@ class DeltaTable(object):
         :type isShallow: bool
         :param replace: True if the desired behavior is to overwrite the target table if one exists
                       otherwise throw an error if table exists at the target
+        :type replace: bool
         :param properties: user-defined table properties that should override any properties with
                            the same key from the source table
         :type properties: dict
@@ -728,11 +729,10 @@ class DeltaTable(object):
         """
 
         DeltaTable._verify_clone_types(target, isShallow, replace, properties)
-        self._jdt.clone(target, isShallow, replace, properties)
+        return self._jdt.clone(target, isShallow, replace, properties)
 
     def cloneAtVersion(
-        self, version, target, isShallow=False, replace=False, properties=None
-    ) -> "DeltaTable":
+        self, version, target, isShallow=False, replace=False, properties=None) -> "DeltaTable":
         """
         Clone a DeltaTable at the given version to a destination which mirrors the existing
         table's data and metadata at that version.
@@ -748,18 +748,17 @@ class DeltaTable(object):
         :type isShallow: bool
         :param replace: True if the desired behavior is to overwrite the target table if one exists
                       otherwise throw an error if table exists at the target
-
+        :type replace: bool
         :param properties: user-defined table properties that should override any properties with
                            the same key from the source table
         :type properties: dict
         :rtype: :py:class:`~delta.tables.DeltaTable`
         """
         DeltaTable._verify_clone_types(target, isShallow, replace, properties, version=version)
-        self._jdt.cloneAtVersion(version, target, isShallow, replace, properties)
+        return self._jdt.cloneAtVersion(version, target, isShallow, replace, properties)
 
     def cloneAtTimestamp(
-        self, timestamp, target, isShallow=False, replace=False, properties=None
-    ) -> "DeltaTable":
+        self, timestamp, target, isShallow=False, replace=False, properties=None) -> "DeltaTable":
         """
         Clone a DeltaTable at the given timestamp to a destination which mirrors the existing
         table's data and metadata at that timestamp.
@@ -779,14 +778,14 @@ class DeltaTable(object):
         :type isShallow: bool
         :param replace: True if the desired behavior is to overwrite the target table if one exists
                       otherwise throw an error if table exists at the target
-
+        :type replace: bool
         :param properties: user-defined table properties that should override any properties with
                            the same key from the source table
         :type properties: dict
         :rtype: :py:class:`~delta.tables.DeltaTable`
         """
         DeltaTable._verify_clone_types(target, isShallow, replace, properties, timestamp)
-        self._jdt.cloneAtTimestamp(timestamp, target, isShallow, replace, properties)
+        return self._jdt.cloneAtTimestamp(timestamp, target, isShallow, replace, properties)
 
     @classmethod
     def _verify_clone_types(

@@ -1491,6 +1491,7 @@ class DeltaTableTestsMixin:
         self.assertEqual('all', metrics.zOrderStats.strategyName)
         self.assertEqual(1, metrics.zOrderStats.numOutputCubes)  # one per each affected partition
 
+        # type: ignore[arg-type]
         def test_clone(self) -> None:
             df = self.spark.createDataFrame([('a', 1), ('b', 2), ('c', 3)], ["key", "value"])
             df2 = self.spark.createDataFrame([('d', 4), ('e', 5), ('f', 6)], ["key", "value"])
@@ -1521,6 +1522,7 @@ class DeltaTableTestsMixin:
                 self.spark.read.format("delta").load(tempFile3),
                 [('d', 4), ('e', 5), ('f', 6)])
 
+        # type: ignore[arg-type]
         def test_clone_invalid_inputs(self) -> None:
             df = self.spark.createDataFrame([('a', 1), ('b', 2), ('c', 3)], ["key", "value"])
             df.write.format("delta").save(self.tempFile)
@@ -1529,38 +1531,38 @@ class DeltaTableTestsMixin:
             tempFile2 = self.tempFile + "_2"
 
             def incorrectTarget() -> "DeltaTable":
-                dt.clone(10)
+                return dt.clone(10)
 
             self.__intercept(incorrectTarget, "target needs to be a string but got int")
 
             def incorrectShallow() -> "DeltaTable":
-                dt.clone(tempFile2, isShallow=10)
+                return dt.clone(tempFile2, isShallow=10)
 
             self.__intercept(incorrectShallow, "isShallow needs to be a boolean but got int")
 
             def incorrectReplace() -> "DeltaTable":
-                dt.clone(tempFile2, False, replace=10)
+                return dt.clone(tempFile2, False, replace=10)
 
             self.__intercept(incorrectReplace, "replace needs to be a boolean but got int")
 
             def incorrectProperties() -> "DeltaTable":
-                dt.clone(tempFile2, False, False, properties=10)
+                return dt.clone(tempFile2, False, False, properties=10)
 
             self.__intercept(incorrectProperties, "properties needs to be a dict but got int")
 
             def incorrectPropertyValue() -> "DeltaTable":
-                dt.clone(tempFile2, False, False, properties={"key": 10})
+                return dt.clone(tempFile2, False, False, properties={"key": 10})
 
             self.__intercept(incorrectPropertyValue, "All property values including 10"
                                                      " needs to be a str but got int")
 
             def incorrectVersion() -> "DeltaTable":
-                dt.cloneAtVersion("0", tempFile2, False, False)
+                return dt.cloneAtVersion("0", tempFile2, False, False)
 
             self.__intercept(incorrectVersion, "version needs to be an int but got string")
 
             def incorrectTimestamp() -> "DeltaTable":
-                dt.cloneAtTimestamp(10, tempFile2, False, False)
+                return dt.cloneAtTimestamp(10, tempFile2, False, False)
 
             self.__intercept(incorrectTimestamp, "timestamp needs to be a string but got int")
 
