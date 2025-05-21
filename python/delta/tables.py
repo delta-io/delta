@@ -826,7 +826,7 @@ class DeltaTable(object):
         properties: dict,
         timestamp: str = "",
         version: int = 0
-    ) -> None: # ignore[no-untyped-def]
+    ) -> None:  # ignore[no-untyped-def]
         DeltaTable._verify_type_str(timestamp, "timestamp")
         DeltaTable._verify_type_int(version, "version")
         DeltaTable._verify_type_str(target, "target")

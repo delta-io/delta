@@ -1500,7 +1500,7 @@ class DeltaTableTestsMixin:
         self.assertEqual('all', metrics.zOrderStats.strategyName)
         self.assertEqual(1, metrics.zOrderStats.numOutputCubes)  # one per each affected partition
 
-        def test_clone(self) -> None: # type: ignore[no-untyped-def]
+        def test_clone(self) -> None:  # type: ignore[no-untyped-def]
             df = self.spark.createDataFrame([('a', 1), ('b', 2), ('c', 3)], ["key", "value"])
             df2 = self.spark.createDataFrame([('d', 4), ('e', 5), ('f', 6)], ["key", "value"])
             df.write.format("delta").save(self.tempFile)
@@ -1530,7 +1530,7 @@ class DeltaTableTestsMixin:
                 self.spark.read.format("delta").load(tempFile3),
                 [('d', 4), ('e', 5), ('f', 6)])
 
-        def test_clone_invalid_inputs(self) -> None: # type: ignore[no-untyped-def]
+        def test_clone_invalid_inputs(self) -> None:  # type: ignore[no-untyped-def]
             df = self.spark.createDataFrame([('a', 1), ('b', 2), ('c', 3)], ["key", "value"])
             df.write.format("delta").save(self.tempFile)
             # source
