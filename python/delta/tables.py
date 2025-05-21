@@ -730,7 +730,7 @@ class DeltaTable(object):
 
     def clone(  # type: ignore[no-untyped-def]
         self, target, isShallow=False, replace=False, properties=None
-    ) -> "DeltaTable":  # type: ignore[no-untyped-def]
+    ) -> "DeltaTable":
         """
         Clone the latest state of a DeltaTable to a destination which mirrors the existing
         table's data and metadata at that version.
@@ -757,7 +757,7 @@ class DeltaTable(object):
 
     def cloneAtVersion(  # type: ignore[no-untyped-def]
         self, version, target, isShallow=False, replace=False, properties=None
-    ) -> "DeltaTable":  # type: ignore[no-untyped-def]
+    ) -> "DeltaTable":
         """
         Clone a DeltaTable at the given version to a destination which mirrors the existing
         table's data and metadata at that version.
@@ -828,7 +828,7 @@ class DeltaTable(object):
         properties: dict,
         timestamp: str = "",
         version: int = 0
-    ) -> None:  # ignore[no-untyped-def]
+    ) -> None:
         DeltaTable._verify_type_str(timestamp, "timestamp")
         DeltaTable._verify_type_int(version, "version")
         DeltaTable._verify_type_str(target, "target")
