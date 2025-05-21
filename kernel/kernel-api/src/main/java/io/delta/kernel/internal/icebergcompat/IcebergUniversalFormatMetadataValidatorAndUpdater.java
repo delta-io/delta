@@ -68,7 +68,7 @@ public class IcebergUniversalFormatMetadataValidatorAndUpdater {
           TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey(),
           TableConfig.UniversalFormats.FORMAT_ICEBERG,
           String.format(
-              "One of %s must be set to \"true\" to enable Iceberg universal format.", optionKeys));
+              "One of %s must be set to \"true\" to enable iceberg uniform format.", optionKeys));
     }
 
     if (enabledCompatCount > 1) {
