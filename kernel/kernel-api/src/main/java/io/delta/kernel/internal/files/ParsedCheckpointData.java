@@ -68,6 +68,7 @@ public class ParsedCheckpointData extends ParsedLogData
     checkArgument(type.category == ParsedLogCategory.CHECKPOINT, "Must be a checkpoint");
   }
 
+  /** Here, returning 1 means that `this` is preferred over (i.e. greater than) `that`. */
   @Override
   public int compareTo(ParsedCheckpointData that) {
     // Compare versions.
