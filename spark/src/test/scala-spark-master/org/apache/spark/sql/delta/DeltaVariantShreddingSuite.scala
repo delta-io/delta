@@ -88,21 +88,41 @@ class DeltaVariantShreddingSuite
   }
 
   test("variant shredding table property") {
+    // 1. Create table with variant but no shredding property so variantType feature is added.
+    // 2. Drop the variant column (currently the variantTy)
+    // 3. Add the shredding property - shredding feature should be absent
+    // 4. Add the variant column - shredding feature should be present
     withTable("tbl") {
-      sql("CREATE TABLE tbl(s STRING, i INTEGER) USING DELTA")
+      sql("CREATE TABLE tbl(s STRING, i INTEGER, v VARIANT) USING DELTA")
       val (deltaLog, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier("tbl"))
       assert(!snapshot.protocol
         .isFeatureSupported(VariantShreddingPreviewTableFeature),
-        s"Table tbl contains ShreddedVariantTableFeature descriptor when its not supposed to"
-      )
+        s"Table tbl contains ShreddedVariantTableFeature descriptor when its not supposed to")
+      // Add column mapping so drop column can be supported
+      sql("""ALTER TABLE tbl SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name')""")
+      sql("ALTER TABLE tbl DROP COLUMN v")
+      assert(!getProtocolForTable("tbl")
+        .readerAndWriterFeatures.contains(VariantShreddingPreviewTableFeature))
       sql(s"ALTER TABLE tbl " +
         s"SET TBLPROPERTIES('${DeltaConfigs.ENABLE_VARIANT_SHREDDING.key}' = 'true')")
+      assert(!getProtocolForTable("tbl")
+        .readerAndWriterFeatures.contains(VariantShreddingPreviewTableFeature))
+      sql(s"ALTER TABLE tbl ADD COLUMN (v VARIANT)")
       assert(getProtocolForTable("tbl")
         .readerAndWriterFeatures.contains(VariantShreddingPreviewTableFeature))
     }
+    // Create table with variant and config - feature should be present
     withTable("tbl") {
-      sql(s"CREATE TABLE tbl(s STRING, i INTEGER) USING DELTA " +
+      sql(s"CREATE TABLE tbl(s STRING, i INTEGER, v VARIANT) USING DELTA " +
         s"TBLPROPERTIES('${DeltaConfigs.ENABLE_VARIANT_SHREDDING.key}' = 'true')")
+      assert(getProtocolForTable("tbl")
+        .readerAndWriterFeatures.contains(VariantShreddingPreviewTableFeature))
+    }
+    // CTAS variant and config - feature should be present
+    withTable("tbl") {
+      sql(s"CREATE TABLE tbl USING DELTA " +
+        s"TBLPROPERTIES('${DeltaConfigs.ENABLE_VARIANT_SHREDDING.key}' = 'true') " +
+        s"""AS SELECT 1 AS i, parse_json('{"a": 1, "b": "2", "c": 3.3}') AS v from range(10)""")
       assert(getProtocolForTable("tbl")
         .readerAndWriterFeatures.contains(VariantShreddingPreviewTableFeature))
     }
