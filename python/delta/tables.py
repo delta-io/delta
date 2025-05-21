@@ -754,6 +754,7 @@ class DeltaTable(object):
         :type properties: dict
         :rtype: :py:class:`~delta.tables.DeltaTable`
         """
+
         DeltaTable._verify_clone_types(target, isShallow, replace, properties, version=version)
         return self._jdt.cloneAtVersion(version, target, isShallow, replace, properties)
 
@@ -784,6 +785,7 @@ class DeltaTable(object):
         :type properties: dict
         :rtype: :py:class:`~delta.tables.DeltaTable`
         """
+
         DeltaTable._verify_clone_types(target, isShallow, replace, properties, timestamp)
         return self._jdt.cloneAtTimestamp(timestamp, target, isShallow, replace, properties)
 
