@@ -721,7 +721,8 @@ object VariantShreddingPreviewTableFeature
 
   override def metadataRequiresFeatureToBeEnabled(
       protocol: Protocol, metadata: Metadata, spark: SparkSession): Boolean = {
-    DeltaConfigs.ENABLE_VARIANT_SHREDDING.fromMetaData(metadata)
+    DeltaConfigs.ENABLE_VARIANT_SHREDDING.fromMetaData(metadata) &&
+      SchemaUtils.checkForVariantTypeColumnsRecursively(metadata.schema)
   }
 }
 
