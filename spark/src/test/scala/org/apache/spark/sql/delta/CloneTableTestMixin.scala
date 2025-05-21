@@ -19,6 +19,8 @@ package org.apache.spark.sql.delta
 import java.io.File
 import java.util.Locale
 
+import scala.collection.JavaConverters._
+
 import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
 import org.apache.spark.sql.delta.actions.{AddFile, FileAction, RemoveFile, SingleAction}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
