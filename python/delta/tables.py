@@ -728,7 +728,9 @@ class DeltaTable(object):
         jbuilder = self._jdt.optimize()
         return DeltaOptimizeBuilder(self._spark, jbuilder)
 
-    def clone(self, target, isShallow=False, replace=False, properties=None) -> "DeltaTable":
+    def clone(
+        self, target, isShallow=False, replace=False, properties=None
+    ) -> "DeltaTable":  # type: ignore[no-untyped-def]
         """
         Clone the latest state of a DeltaTable to a destination which mirrors the existing
         table's data and metadata at that version.
@@ -755,7 +757,7 @@ class DeltaTable(object):
 
     def cloneAtVersion(
         self, version, target, isShallow=False, replace=False, properties=None
-    ) -> "DeltaTable":
+    ) -> "DeltaTable":  # type: ignore[no-untyped-def]
         """
         Clone a DeltaTable at the given version to a destination which mirrors the existing
         table's data and metadata at that version.
@@ -785,7 +787,7 @@ class DeltaTable(object):
 
     def cloneAtTimestamp(
         self, timestamp, target, isShallow=False, replace=False, properties=None
-    ) -> "DeltaTable":
+    ) -> "DeltaTable":  # type: ignore[no-untyped-def]
         """
         Clone a DeltaTable at the given timestamp to a destination which mirrors the existing
         table's data and metadata at that timestamp.
