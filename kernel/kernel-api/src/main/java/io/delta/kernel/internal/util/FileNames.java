@@ -16,6 +16,8 @@
 
 package io.delta.kernel.internal.util;
 
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.utils.FileStatus;
 import java.util.ArrayList;
@@ -163,10 +165,8 @@ public final class FileNames {
   public static Tuple2<Integer, Integer> multiPartCheckpointPartAndNumParts(Path path) {
     final String fileName = path.getName();
     final Matcher matcher = MULTI_PART_CHECKPOINT_FILE_PATTERN.matcher(fileName);
-    if (!matcher.matches()) {
-      throw new IllegalArgumentException(
-          String.format("Path is not a multi-part checkpoint file: %s", fileName));
-    }
+    checkArgument(
+        matcher.matches(), String.format("Path is not a multi-part checkpoint file: %s", fileName));
     final int partNum = Integer.parseInt(matcher.group(2));
     final int numParts = Integer.parseInt(matcher.group(3));
     return new Tuple2<>(partNum, numParts);

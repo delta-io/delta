@@ -21,9 +21,14 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.utils.FileStatus;
+import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.Optional;
 
+/**
+ * Represents a Delta Log "file" - the actual content may be materialized to disk (with a file
+ * status) or stored inline (as a columnar batch).
+ */
 public class ParsedLogData {
 
   ///////////////////////////////////////
@@ -39,7 +44,7 @@ public class ParsedLogData {
 
   public enum ParsedLogType {
     PUBLISHED_DELTA(ParsedLogCategory.DELTA),
-    STAGED_COMMIT(ParsedLogCategory.DELTA),
+    RATIFIED_STAGED_COMMIT(ParsedLogCategory.DELTA),
     RATIFIED_INLINE_COMMIT(ParsedLogCategory.DELTA),
     LOG_COMPACTION(ParsedLogCategory.LOG_COMPACTION),
     CLASSIC_CHECKPOINT(ParsedLogCategory.CHECKPOINT),
@@ -71,7 +76,7 @@ public class ParsedLogData {
       type = ParsedLogType.PUBLISHED_DELTA;
     } else if (FileNames.isStagedDeltaFile(path)) {
       version = FileNames.deltaVersion(path);
-      type = ParsedLogType.STAGED_COMMIT;
+      type = ParsedLogType.RATIFIED_STAGED_COMMIT;
     } else if (FileNames.isChecksumFile(path)) {
       version = FileNames.checksumVersion(path);
       type = ParsedLogType.CHECKSUM;
@@ -84,7 +89,10 @@ public class ParsedLogData {
 
   public static ParsedLogData forInlineData(
       long version, ParsedLogType type, ColumnarBatch inlineData) {
-    if (type == ParsedLogType.LOG_COMPACTION) {
+    if (type == ParsedLogType.PUBLISHED_DELTA || type == ParsedLogType.RATIFIED_STAGED_COMMIT) {
+      throw new IllegalArgumentException(
+          "For PUBLISHED_DELTA|RATIFIED_STAGED_COMMIT, use ParsedLogData.forFileStatus() instead");
+    } else if (type == ParsedLogType.LOG_COMPACTION) {
       throw new IllegalArgumentException(
           "For LOG_COMPACTION, use ParsedLogCompactionData.forInlineData() instead");
     } else if (type.category == ParsedLogCategory.CHECKPOINT) {
@@ -125,10 +133,20 @@ public class ParsedLogData {
     return inlineDataOpt.isPresent();
   }
 
+  /**
+   * Callers must check {@link #isMaterialized()} before calling this method.
+   *
+   * @throws NoSuchElementException if {@link #isMaterialized()} is false
+   */
   public FileStatus getFileStatus() {
     return fileStatusOpt.get();
   }
 
+  /**
+   * Callers must check {@link #isInline()} before calling this method.
+   *
+   * @throws NoSuchElementException if {@link #isInline()} is false
+   */
   public ColumnarBatch getInlineData() {
     return inlineDataOpt.get();
   }

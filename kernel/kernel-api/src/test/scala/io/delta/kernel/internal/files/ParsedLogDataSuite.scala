@@ -51,7 +51,7 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils {
     val exMsg = intercept[IllegalArgumentException] {
       ParsedLogData.forInlineData(-1, ParsedLogType.RATIFIED_INLINE_COMMIT, emptyColumnarBatch)
     }.getMessage
-    assert(exMsg.contains("version must be non-negative"))
+    assert(exMsg === "version must be non-negative")
   }
 
   test("Throws on both fileStatusOpt and inlineDataOpt present") {
@@ -60,19 +60,31 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils {
     val exMsg = intercept[IllegalArgumentException] {
       new ParsedLogData(10, ParsedLogType.PUBLISHED_DELTA, fileStatusOpt, inlineDataOpt)
     }.getMessage
-    assert(exMsg.contains("Exactly one of fileStatusOpt or inlineDataOpt must be present"))
+    assert(exMsg === "Exactly one of fileStatusOpt or inlineDataOpt must be present")
   }
 
   test("Throws on both fileStatusOpt and inlineDataOpt empty") {
     val exMsg = intercept[IllegalArgumentException] {
       new ParsedLogData(10, ParsedLogType.PUBLISHED_DELTA, Optional.empty(), Optional.empty())
     }.getMessage
-    assert(exMsg.contains("Exactly one of fileStatusOpt or inlineDataOpt must be present"))
+    assert(exMsg === "Exactly one of fileStatusOpt or inlineDataOpt must be present")
   }
 
   ////////////
   // Deltas //
   ////////////
+
+  test("Cannot construct Ratified staged commit using forInlineData") {
+    val exMsg = intercept[IllegalArgumentException] {
+      ParsedLogData.forInlineData(10, ParsedLogType.RATIFIED_STAGED_COMMIT, emptyColumnarBatch)
+    }.getMessage
+    assert(exMsg ==
+      "For PUBLISHED_DELTA|RATIFIED_STAGED_COMMIT, use ParsedLogData.forFileStatus() instead")
+  }
+
+  test("Can construct Ratified inline commit using forInlineData") {
+    ParsedLogData.forInlineData(10, ParsedLogType.RATIFIED_INLINE_COMMIT, emptyColumnarBatch)
+  }
 
   test("Correctly parses published delta file") {
     val fileStatus = deltaFileStatus(5)
@@ -91,7 +103,7 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils {
     val parsed = ParsedLogData.forFileStatus(fileStatus)
 
     assert(parsed.version == 5)
-    assert(parsed.`type` == ParsedLogType.STAGED_COMMIT)
+    assert(parsed.`type` == ParsedLogType.RATIFIED_STAGED_COMMIT)
     assert(parsed.getCategory == ParsedLogCategory.DELTA)
     assert(parsed.isMaterialized)
     assert(!parsed.isInline)
@@ -116,12 +128,12 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils {
   // Checkpoints //
   /////////////////
 
-  test("Inline classic checkpoint") {
+  test("Can construct Inline classic checkpoint using forInlineData") {
     ParsedLogData.forInlineData(10, ParsedLogType.CLASSIC_CHECKPOINT, emptyColumnarBatch)
     ParsedCheckpointData.forInlineData(10, ParsedLogType.CLASSIC_CHECKPOINT, emptyColumnarBatch)
   }
 
-  test("Inline v2 checkpoint") {
+  test("Can construct Inline v2 checkpoint using forInlineData") {
     ParsedLogData.forInlineData(10, ParsedLogType.V2_CHECKPOINT, emptyColumnarBatch)
     ParsedCheckpointData.forInlineData(10, ParsedLogType.V2_CHECKPOINT, emptyColumnarBatch)
   }
@@ -176,11 +188,11 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils {
   // Multi-Part Checkpoints //
   ////////////////////////////
 
-  test("Inline multi-part checkpoint") {
+  test("Can construct inline multi-part checkpoint using forInlineData") {
     ParsedMultiPartCheckpointData.forInlineData(10, 1, 3, emptyColumnarBatch)
   }
 
-  test("Throws on inline multi-part checkpoint using wrong factory") {
+  test("Throws on inline multi-part checkpoint using wrong factory method") {
     val exMsg1 = intercept[IllegalArgumentException] {
       ParsedLogData.forInlineData(10, ParsedLogType.MULTIPART_CHECKPOINT, emptyColumnarBatch)
     }.getMessage
@@ -215,7 +227,7 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils {
     val exMsg = intercept[IllegalArgumentException] {
       ParsedLogData.forFileStatus(FileStatus.of(path.toString))
     }.getMessage
-    assert(exMsg.contains("part must be between 1 and numParts"))
+    assert(exMsg === "part must be between 1 and numParts")
   }
 
   test("Throws on multi-part checkpoint with numParts = 0") {
@@ -223,7 +235,7 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils {
     val exMsg = intercept[IllegalArgumentException] {
       ParsedLogData.forFileStatus(FileStatus.of(path.toString))
     }.getMessage
-    assert(exMsg.contains("numParts must be greater than 0"))
+    assert(exMsg === "numParts must be greater than 0")
   }
 
   test("Throws on multi-part checkpoint with part = 0") {
@@ -231,7 +243,7 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils {
     val exMsg = intercept[IllegalArgumentException] {
       ParsedLogData.forFileStatus(FileStatus.of(path.toString))
     }.getMessage
-    assert(exMsg.contains("part must be between 1 and numParts"))
+    assert(exMsg === "part must be between 1 and numParts")
   }
 
   test("Multi-part checkpoint file equality") {
@@ -252,7 +264,7 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils {
   // Log compactions //
   /////////////////////
 
-  test("inline log compaction") {
+  test("Can construct inline log compaction using forInlineData") {
     ParsedLogCompactionData.forInlineData(10, 20, emptyColumnarBatch)
   }
 
@@ -282,21 +294,21 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils {
     val exMsg = intercept[IllegalArgumentException] {
       ParsedLogCompactionData.forInlineData(-1, 3, emptyColumnarBatch)
     }.getMessage
-    assert(exMsg.contains("startVersion and endVersion must be non-negative"))
+    assert(exMsg === "startVersion and endVersion must be non-negative")
   }
 
   test("Throws on log compaction with endVersion < 0") {
     val exMsg = intercept[IllegalArgumentException] {
       ParsedLogCompactionData.forInlineData(1, -1, emptyColumnarBatch)
     }.getMessage
-    assert(exMsg.contains("version must be non-negative"))
+    assert(exMsg === "version must be non-negative")
   }
 
   test("Throws on log compaction with startVersion > endVersion") {
     val exMsg = intercept[IllegalArgumentException] {
       ParsedLogCompactionData.forInlineData(3, 1, emptyColumnarBatch)
     }.getMessage
-    assert(exMsg.contains("startVersion must be less than endVersion"))
+    assert(exMsg === "startVersion must be less than endVersion")
   }
 
   test("Log compaction file equality") {
@@ -316,6 +328,10 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils {
   //////////////
   // Checksum //
   //////////////
+
+  test("Can construct checksum file using forInlineData") {
+    ParsedLogData.forInlineData(5, ParsedLogType.CHECKSUM, emptyColumnarBatch)
+  }
 
   test("Correctly parses checksum file") {
     val fileStatus = checksumFileStatus(5)
