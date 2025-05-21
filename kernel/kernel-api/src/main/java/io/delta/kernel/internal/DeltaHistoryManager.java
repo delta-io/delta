@@ -88,6 +88,10 @@ public final class DeltaHistoryManager {
       long latestSnapshotTimestamp = latestSnapshot.getTimestamp(engine);
       if (latestSnapshotTimestamp <= timestamp) {
         // We just proved we should use the latest snapshot
+        // Note that if `latestSnapshotTimestamp` is less than `timestamp`, we only
+        // return this search result if `canReturnLastCommit` is true.
+        // If `canReturnLastCommit` is false, we still need this commit to
+        // throw the timestampAfterLatestCommit error.
         searchResult = new Commit(latestSnapshot.getVersion(), latestSnapshotTimestamp);
       } else {
         // start ICT search over [earliest available ICT version, latestVersion)

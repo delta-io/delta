@@ -105,7 +105,7 @@ public class InCommitTimestampUtils {
 
   /**
    * Finds the greatest lower bound of the target value in the range [lowerBoundInclusive,
-   * upperBoundExclusive) using binary search. The indexToValueMapper function is used to map the
+   * upperBoundInclusive] using binary search. The indexToValueMapper function is used to map the
    * index to the corresponding value. Note that this function assumes that the values are sorted in
    * ascending order.
    *
