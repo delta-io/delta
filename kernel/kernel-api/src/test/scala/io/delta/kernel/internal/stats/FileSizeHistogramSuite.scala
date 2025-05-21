@@ -342,8 +342,7 @@ class FileSizeHistogramSuite extends AnyFunSuite {
     assert(result.getTotalBytes(mbBinIndex10) == 10 * MB)
 
     // Test error cases
-
-    // Test error case - different bin boundaries
+    // different bin boundaries
     val customBoundaries = Array(0L, 1L * KB, 1L * MB)
     val customCounts = new Array[Long](customBoundaries.length)
     val customBytes = new Array[Long](customBoundaries.length)
