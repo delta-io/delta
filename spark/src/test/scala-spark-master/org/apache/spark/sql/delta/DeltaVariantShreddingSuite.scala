@@ -92,7 +92,8 @@ class DeltaVariantShreddingSuite
     // 2. Drop the variant column (currently the variantTy)
     // 3. Add the shredding property - shredding feature should be absent
     // 4. Add the variant column - shredding feature should be present
-    Seq("v variant", "v struct<v1 variant>").foreach { variantColumn =>
+    Seq("v variant", "v struct<v1 variant>", "v array<variant>", "v map<string, variant>")
+      .foreach { variantColumn =>
       withTable("tbl") {
         sql("CREATE TABLE tbl(s STRING, i INTEGER, v VARIANT) USING DELTA")
         val (deltaLog, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier("tbl"))
