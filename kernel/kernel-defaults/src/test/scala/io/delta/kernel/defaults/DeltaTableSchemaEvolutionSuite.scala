@@ -32,6 +32,7 @@ import io.delta.kernel.internal.util.{ColumnMapping, ColumnMappingSuiteBase}
 import io.delta.kernel.types.{ArrayType, DecimalType, FieldMetadata, IntegerType, LongType, MapType, StringType, StructType}
 import io.delta.kernel.utils.CloseableIterable
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
+
 import org.scalatest.prop.TableDrivenPropertyChecks.forAll
 import org.scalatest.prop.Tables
 
@@ -1335,9 +1336,9 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
         .add("d", StringType.STRING, true)
 
       val txn = table.createTransactionBuilder(
-          engine,
-          testEngineInfo,
-          Operation.MANUAL_UPDATE)
+        engine,
+        testEngineInfo,
+        Operation.MANUAL_UPDATE)
         .withSchema(engine, newSchema)
         .withClusteringColumns(engine, List(new Column("d")).asJava)
         .build(engine)
