@@ -62,7 +62,6 @@ connectCommon / sparkVersion := getSparkVersion()
 connectClient / sparkVersion := getSparkVersion()
 connectServer / sparkVersion := getSparkVersion()
 sharing / sparkVersion := getSparkVersion()
-// sqlDeltaImport / sparkVersion := getSparkVersion()
 
 // Dependent library versions
 val defaultSparkVersion = LATEST_RELEASED_SPARK_VERSION
@@ -173,6 +172,23 @@ lazy val commonSettings = Seq(
   unidocSourceFilePatterns := Nil,
 )
 
+lazy val java17TestSettings =
+  Test / javaOptions ++= Seq(
+    // Copied from SparkBuild.scala to support Java 17 for unit tests (see apache/spark#34153)
+    "--add-opens=java.base/java.lang=ALL-UNNAMED",
+    "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
+    "--add-opens=java.base/java.io=ALL-UNNAMED",
+    "--add-opens=java.base/java.net=ALL-UNNAMED",
+    "--add-opens=java.base/java.nio=ALL-UNNAMED",
+    "--add-opens=java.base/java.util=ALL-UNNAMED",
+    "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
+    "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+    "--add-opens=java.base/sun.nio.cs=ALL-UNNAMED",
+    "--add-opens=java.base/sun.security.action=ALL-UNNAMED",
+    "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED",
+    "--add-opens=java.base/sun.net.util=ALL-UNNAMED"
+  )
+
 ////////////////////////////
 // START: Code Formatting //
 ////////////////////////////
@@ -192,8 +208,6 @@ def scalafmtCheckSettings(): Seq[Def.Setting[Task[CompileAnalysis]]] = Seq(
 //////////////////////////
 // END: Code Formatting //
 //////////////////////////
-
-// TODO cherry-pick this too https://github.com/delta-io/delta/commit/22b318e9fa01e592a1c4e550115e176917e3ad24?
 
 /**
  * Note: we cannot access sparkVersion.value here, since that can only be used within a task or
@@ -231,23 +245,6 @@ def crossSparkSettings(): Seq[Setting[_]] = getSparkVersion() match {
     exportJars := true
   )
 }
-
-lazy val java17TestSettings =
-  Test / javaOptions ++= Seq(
-    // Copied from SparkBuild.scala to support Java 17 for unit tests (see apache/spark#34153)
-    "--add-opens=java.base/java.lang=ALL-UNNAMED",
-    "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
-    "--add-opens=java.base/java.io=ALL-UNNAMED",
-    "--add-opens=java.base/java.net=ALL-UNNAMED",
-    "--add-opens=java.base/java.nio=ALL-UNNAMED",
-    "--add-opens=java.base/java.util=ALL-UNNAMED",
-    "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
-    "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
-    "--add-opens=java.base/sun.nio.cs=ALL-UNNAMED",
-    "--add-opens=java.base/sun.security.action=ALL-UNNAMED",
-    "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED",
-    "--add-opens=java.base/sun.net.util=ALL-UNNAMED"
-  )
 
 def runTaskOnlyOnSparkMaster[T](
     task: sbt.TaskKey[T],
@@ -432,11 +429,6 @@ lazy val spark = (project in file("spark"))
     sparkMimaSettings,
     releaseSettings,
     crossSparkSettings(),
-    // TODO probably don't need this / clean up resolvers + versions
-    resolvers ++= Seq(
-      "Apache Spark 4.0 (RC7) Staging" at "https://repository.apache.org/content/repositories/orgapachespark-1485/",
-      "Maven Central" at "https://repo1.maven.org/maven2/",
-    ),
     libraryDependencies ++= Seq(
       // Adding test classifier seems to break transitive resolution of the core dependencies
       "org.apache.spark" %% "spark-hive" % sparkVersion.value % "provided",
@@ -1003,10 +995,7 @@ val createTargetClassesDir = taskKey[Unit]("create target classes dir")
 
 // Don't use these groups for any other projects
 lazy val sparkGroup = project
-  // remove sharing for now as it requires the delta-sharing-client to upgrade to Spark 4.0
-  // this hopefully allows us to run the CI for this group successfully; I've added a separate CI
-  // job just for the sharing tests
-  .aggregate(spark, contribs, storage, storageS3DynamoDB, hudi)
+  .aggregate(spark, contribs, storage, storageS3DynamoDB, hudi, sharing)
   .settings(
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,
