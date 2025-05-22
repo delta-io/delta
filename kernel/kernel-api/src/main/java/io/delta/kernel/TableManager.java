@@ -17,6 +17,7 @@
 package io.delta.kernel;
 
 import io.delta.kernel.annotation.Evolving;
+import io.delta.kernel.internal.ResolvedTableBuilderInternalImpl;
 
 @Evolving
 public interface TableManager {
@@ -26,6 +27,6 @@ public interface TableManager {
 
   // TODO: Take in a Committer for write support.
   static ResolvedTableBuilder loadTable(String path) {
-    throw new UnsupportedOperationException("Not implemented");
+    return new ResolvedTableBuilderInternalImpl(path);
   }
 }
