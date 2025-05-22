@@ -25,7 +25,9 @@ import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.tablefeatures.TableFeature;
+import io.delta.kernel.internal.types.TypeWideningChecker;
 import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
+import io.delta.kernel.internal.util.SchemaIterable;
 import io.delta.kernel.internal.util.SchemaUtils;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.*;
@@ -175,6 +177,25 @@ public class IcebergCompatV2MetadataValidatorAndUpdater
         }
       };
 
+  private static final IcebergCompatCheck ICEBERG_COMPAT_V2_CHECK_HAS_SUPPORTED_TYPE_WIDENING =
+      (inputContext) -> {
+        Protocol protocol = inputContext.newProtocol;
+        if (!protocol.supportsFeature(TYPE_WIDENING_RW_FEATURE)
+            && !protocol.supportsFeature(TYPE_WIDENING_RW_PREVIEW_FEATURE)) {
+          return;
+        }
+        for (SchemaIterable.SchemaElement element :
+            new SchemaIterable(inputContext.newMetadata.getSchema())) {
+          for (TypeChange typeChange : element.getField().getTypeChanges()) {
+            if (!TypeWideningChecker.isIcebergV2Compatible(
+                typeChange.getFrom(), typeChange.getTo())) {
+              throw DeltaErrors.icebergCompatUnsupportedTypeWidening(
+                  INSTANCE.compatFeatureName(), typeChange);
+            }
+          }
+        }
+      };
+
   @Override
   String compatFeatureName() {
     return "icebergCompatV2";
@@ -202,7 +223,8 @@ public class IcebergCompatV2MetadataValidatorAndUpdater
             ICEBERG_COMPAT_V2_CHECK_HAS_SUPPORTED_TYPES,
             ICEBERG_COMPAT_V2_CHECK_HAS_ALLOWED_PARTITION_TYPES,
             ICEBERG_COMPAT_V2_CHECK_HAS_NO_PARTITION_EVOLUTION,
-            ICEBERG_COMPAT_V2_CHECK_HAS_NO_DELETION_VECTORS)
+            ICEBERG_COMPAT_V2_CHECK_HAS_NO_DELETION_VECTORS,
+            ICEBERG_COMPAT_V2_CHECK_HAS_SUPPORTED_TYPE_WIDENING)
         .collect(toList());
   }
 }
