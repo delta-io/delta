@@ -300,6 +300,8 @@ class FileSizeHistogramSuite extends AnyFunSuite {
 
     assert(combined.getFileCounts(mbBinIndex10) == 3)
     assert(combined.getTotalBytes(mbBinIndex10) == 30 * MB)
+    // check commutative.
+    assert(combined === histogram2.plus(histogram1))
 
     // Test error case - different bin boundaries
     val customBoundaries = Array(0L, 1L * KB, 1L * MB)
@@ -327,6 +329,9 @@ class FileSizeHistogramSuite extends AnyFunSuite {
     // Add subset of data to second histogram
     histogram2.insert(1 * MB)
     histogram2.insert(10 * MB)
+
+    // Check plus and minus are opposite operation.
+    assert(histogram1 === histogram1.plus(histogram2).minus(histogram2))
 
     // Subtract histograms
     val result = histogram1.minus(histogram2)
