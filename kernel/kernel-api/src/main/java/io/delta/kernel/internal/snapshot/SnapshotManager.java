@@ -256,11 +256,6 @@ public class SnapshotManager {
     final Optional<Long> startCheckpointVersionOpt =
         getStartCheckpointVersion(engine, versionToLoadOpt);
 
-    logger.info(
-        "{}: Took {}ms to find the start checkpoint version",
-        tablePath,
-        System.currentTimeMillis() - logSegmentBuildingStartTimeMillis);
-
     /////////////////////////////////////////////////////////////////
     // Step 2: Determine the actual version to start listing from. //
     /////////////////////////////////////////////////////////////////
