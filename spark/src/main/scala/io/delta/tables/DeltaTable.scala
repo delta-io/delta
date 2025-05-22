@@ -22,7 +22,7 @@ import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.DeltaTableUtils.withActiveSession
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
-import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.catalog.{CatalogResolver, DeltaTableV2}
 import org.apache.spark.sql.delta.commands.{AlterTableDropFeatureDeltaCommand, AlterTableSetPropertiesDeltaCommand}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import io.delta.tables.execution._
@@ -1104,27 +1104,47 @@ object DeltaTable {
     forName(sparkSession, tableOrViewName)
   }
 
-  /**
-   * Instantiate a [[DeltaTable]] object using the given table name using the given
-   * SparkSession. If the given tableName is invalid (i.e. either no table exists or an
-   * existing table is not a Delta table), it throws a `not a Delta table` error. Note:
-   * Passing a view name will also result in this error as views are not supported.
-   *
-   * The given tableName can also be the absolute path of a delta datasource (i.e.
-   * delta.`path`), If so, instantiate a [[DeltaTable]] object representing the data at
-   * the given path (consistent with the [[forPath]]).
-   */
-  def forName(sparkSession: SparkSession, tableName: String): DeltaTable = {
-    val tableId = sparkSession.sessionState.sqlParser.parseTableIdentifier(tableName)
-    if (DeltaTableUtils.isDeltaTable(sparkSession, tableId)) {
-      val tbl = sparkSession.sessionState.catalog.getTableMetadata(tableId)
+  // Helper to resolve a table using SessionCatalog
+  private def getDeltaTableFromSessionCatalog(
+      spark: SparkSession,
+      tableName: String): DeltaTable = {
+    val tableId = spark.sessionState.sqlParser.parseTableIdentifier(tableName)
+    if (DeltaTableUtils.isDeltaTable(spark, tableId)) {
+      val tbl = spark.sessionState.catalog.getTableMetadata(tableId)
       new DeltaTable(
-        sparkSession.table(tableName),
-        DeltaTableV2(sparkSession, new Path(tbl.location), Some(tbl), Some(tableName)))
+        spark.table(tableName),
+        DeltaTableV2(spark, new Path(tbl.location), Some(tbl), Some(tableName)))
     } else if (DeltaTableUtils.isValidPath(tableId)) {
-      forPath(sparkSession, tableId.table)
+      forPath(spark, tableId.table)
     } else {
       throw DeltaErrors.notADeltaTableException(DeltaTableIdentifier(table = Some(tableId)))
+    }
+  }
+
+  /**
+   * Instantiate a [[DeltaTable]] object using one of the following:
+   * 1. The given tableName using the given SparkSession and SessionCatalog.
+   * 2. The tableName can also be the absolute path of a delta datasource (i.e.
+   * delta.`path`), If so, instantiate a [[DeltaTable]] object representing the data at
+   * the given path (consistent with the [[forPath]]).
+   * 3. A fully qualified tableName is passed in the form `catalog.db.table`, If so
+   * the table is resolved through the specified catalog instead of the default *SessionCatalog*
+   *
+   * If the given tableName is invalid (i.e. either no table exists or an
+   * existing table is not a Delta table), it throws a `not a Delta table` error. Note:
+   * Passing a view name will also result in this error as views are not supported.
+   */
+  def forName(sparkSession: SparkSession, tableName: String): DeltaTable = {
+    sparkSession.sessionState.sqlParser.parseMultipartIdentifier(tableName) match {
+      case parts if parts.length == 3 =>
+        val (catalog, ident) =
+          CatalogResolver.getCatalogPluginAndIdentifier(sparkSession, parts.head, parts.tail)
+        new DeltaTable(
+          sparkSession.table(tableName),
+          CatalogResolver.getTableFromCatalog(sparkSession, catalog, ident)
+        )
+      case _ =>
+        getDeltaTableFromSessionCatalog(sparkSession, tableName)
     }
   }
 
