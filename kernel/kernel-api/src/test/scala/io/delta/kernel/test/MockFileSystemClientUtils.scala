@@ -167,6 +167,12 @@ trait MockFileSystemClientUtils extends MockEngineUtils {
       })
   }
 
+  /**
+   * Create a mock [[Engine]] to mock the [[FileSystemClient.listFrom]] calls using
+   * the given list of delta file statuses. When read, each file status will return
+   * a single `commitInfo` action with the an inCommitTimestamp set as per
+   * `deltaToICTMap`.
+   */
   def createMockFSAndJsonEngineForICT(
       contents: Seq[FileStatus],
       deltaToICTMap: Map[Long, Long]): Engine = {
