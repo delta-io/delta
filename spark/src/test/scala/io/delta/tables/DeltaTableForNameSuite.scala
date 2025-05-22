@@ -131,21 +131,6 @@ class DeltaTableForNameSuite extends QueryTest
       s"$catalogName.$nonSessionCatalogNonDefaultSchema.$nonDefaultSchemaUniqueTbl")
   }
 
-  ignore(s"forName resolves partially qualified tables in non session catalog correctly") {
-    sql(s"SET CATALOG $catalogName")
-    validateForNameTableId(s"$defaultSchema.$commonTblName",
-      Some(tableNameToId(s"$catalogName.$defaultSchema.$commonTblName")))
-    validateForNameTableId(s"$defaultSchema.$defaultSchemaUniqueTbl",
-      Some(tableNameToId(s"$catalogName.$defaultSchema.$defaultSchemaUniqueTbl")))
-
-    validateForNameTableId(s"$nonSessionCatalogNonDefaultSchema.$commonTblName",
-      Some(tableNameToId(s"$catalogName.$nonSessionCatalogNonDefaultSchema.$commonTblName")))
-    validateForNameTableId(s"$nonSessionCatalogNonDefaultSchema.$nonDefaultSchemaUniqueTbl",
-      Some(
-        tableNameToId(s"$catalogName.$nonSessionCatalogNonDefaultSchema.$nonDefaultSchemaUniqueTbl")
-      ))
-  }
-
   for (table <- Seq(commonTblName, nonDefaultSchemaUniqueTbl))
   test(s"forName fails for partially " +
     s"qualified tables in non session catalog with table=$table") {
@@ -155,6 +140,17 @@ class DeltaTableForNameSuite extends QueryTest
     }
     checkError(exception = e, "DELTA_MISSING_DELTA_TABLE",
       parameters = Map("tableName" -> s"`$nonSessionCatalogNonDefaultSchema`.`$table`"))
+  }
+
+  // forName currently doesn't resolve unqualified tables correctly for non session catalogs.
+  // in this test, it resolves to the table `spark_catalog.default.tbl` but it adds an incorrect
+  // identifier on top.
+  test(s"forName resolves partially qualified tables in non session catalog incorrectly") {
+    sql(s"SET CATALOG $catalogName")
+    validateForNameTableId(s"$defaultSchema.$commonTblName",
+      Some(tableNameToId(s"$catalogName.$defaultSchema.$commonTblName")))
+    validateForNameTableId(s"$defaultSchema.$defaultSchemaUniqueTbl",
+      Some(tableNameToId(s"$catalogName.$defaultSchema.$defaultSchemaUniqueTbl")))
   }
 
   test("forName with invalid non session catalog") {

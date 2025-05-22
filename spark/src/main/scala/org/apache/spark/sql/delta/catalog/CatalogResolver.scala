@@ -50,7 +50,7 @@ object CatalogResolver {
       MultipartIdentifierHelper(ident).asIdentifier)
   }
 
-  def getTableFromCatalog(
+  def getDeltaTableFromCatalog(
       spark: SparkSession,
       catalog: CatalogPlugin,
       ident: Identifier): DeltaTableV2 = {

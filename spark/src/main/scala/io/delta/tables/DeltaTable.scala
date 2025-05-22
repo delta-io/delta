@@ -1141,7 +1141,7 @@ object DeltaTable {
           CatalogResolver.getCatalogPluginAndIdentifier(sparkSession, parts.head, parts.tail)
         new DeltaTable(
           sparkSession.table(tableName),
-          CatalogResolver.getTableFromCatalog(sparkSession, catalog, ident)
+          CatalogResolver.getDeltaTableFromCatalog(sparkSession, catalog, ident)
         )
       case _ =>
         getDeltaTableFromSessionCatalog(sparkSession, tableName)
