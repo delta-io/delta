@@ -9,11 +9,11 @@ jobs:
         # These Scala versions must match those in the build.sbt
         scala: [2.13.13]
         # Important: This list of shards must be [0..NUM_SHARDS - 1]
-        shard: [0, 1, 2]
+        shard: [0, 1, 2, 3]
     env:
       SCALA_VERSION: ${{ matrix.scala }}
       # Important: This must be the same as the length of shards in matrix
-      NUM_SHARDS: 3
+      NUM_SHARDS: 4
     steps:
       - uses: actions/checkout@v3
       - uses: technote-space/get-diff-action@v4
@@ -47,11 +47,46 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y make build-essential libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev wget curl llvm libncurses5-dev libncursesw5-dev xz-utils tk-dev libffi-dev liblzma-dev python3-openssl git
           sudo apt install libedit-dev
+          curl -LO https://github.com/bufbuild/buf/releases/download/v1.28.1/buf-Linux-x86_64.tar.gz
+          mkdir -p ~/buf
+          tar -xvzf buf-Linux-x86_64.tar.gz -C ~/buf --strip-components 1
+          rm buf-Linux-x86_64.tar.gz
+          sudo apt install python3-pip --fix-missing
+          sudo pip3 install pipenv==2024.4.1
+          curl https://pyenv.run | bash
+          export PATH="~/.pyenv/bin:$PATH"
+          eval "$(pyenv init -)"
+          eval "$(pyenv virtualenv-init -)"
+          pyenv install 3.9
+          pyenv global system 3.9
+          pipenv --python 3.9 install
+          # Update the pip version to 24.0. By default `pyenv.run` installs the latest pip version
+          # available. From version 24.1, `pip` doesn't allow installing python packages
+          # with version string containing `-`. In Delta-Spark case, the pypi package generated has
+          # `-SNAPSHOT` in version (e.g. `3.3.0-SNAPSHOT`) as the version is picked up from
+          # the`version.sbt` file.
+          pipenv run pip install pip==24.0 setuptools==69.5.1 wheel==0.43.0
+          pipenv run pip install flake8==3.9.0
+          pipenv run pip install black==23.9.1
+          pipenv run pip install mypy==1.8.0
+          pipenv run pip install mypy-protobuf==3.3.0
+          pipenv run pip install cryptography==37.0.4
+          pipenv run pip install twine==4.0.1
+          pipenv run pip install wheel==0.33.4
+          pipenv run pip install setuptools==41.1.0
+          pipenv run pip install pydocstyle==3.0.0
+          pipenv run pip install pandas==1.4.4
+          pipenv run pip install pyarrow==8.0.0
+          pipenv run pip install numpy==1.21
         if: steps.git-diff.outputs.diff
-      - name: Run Spark Master tests
-        # when changing TEST_PARALLELISM_COUNT make sure to also change it in spark_test.yaml
+      - name: Run Delta Connect tests
         run: |
-          TEST_PARALLELISM_COUNT=4 SHARD_ID=${{matrix.shard}} build/sbt -DsparkVersion=master "++ ${{ matrix.scala }}" clean spark/test
           TEST_PARALLELISM_COUNT=4 build/sbt -DsparkVersion=master "++ ${{ matrix.scala }}" clean connectServer/test
           TEST_PARALLELISM_COUNT=4 build/sbt -DsparkVersion=master "++ ${{ matrix.scala }}" clean connectServer/assembly connectClient/test
+        if: steps.git-diff.outputs.diff
+      - name: Run Delta Spark master tests
+        # when changing TEST_PARALLELISM_COUNT make sure to also change it in spark_test.yaml
+        # NOTE: in this branch, the default sparkVersion is the SPARK_MASTER_VERSION
+        run: |
+          TEST_PARALLELISM_COUNT=4 pipenv run python run-tests.py --group spark --shard ${{ matrix.shard }}
         if: steps.git-diff.outputs.diff

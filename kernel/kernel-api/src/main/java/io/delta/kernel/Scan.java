@@ -94,9 +94,10 @@ public interface Scan {
    *             <li>Description: Absolute path of the table location. The path is a URI as
    *                 specified by RFC 2396 URI Generic Syntax, which needs to be decode to get the
    *                 data file path. NOTE: this is temporary. Will be removed in future.
-   * @see <a href=https://github.com/delta-io/delta/issues/2089></a>
-   *     </ul>
+   *           </ul>
    *     </ol>
+   *
+   * @see <a href=https://github.com/delta-io/delta/issues/2089></a>
    */
   CloseableIterator<FilteredColumnarBatch> getScanFiles(Engine engine);
 

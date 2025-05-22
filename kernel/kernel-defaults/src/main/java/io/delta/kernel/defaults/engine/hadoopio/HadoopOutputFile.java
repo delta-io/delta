@@ -19,7 +19,6 @@ import static java.lang.String.format;
 
 import io.delta.kernel.defaults.engine.fileio.OutputFile;
 import io.delta.kernel.defaults.engine.fileio.PositionOutputStream;
-import io.delta.kernel.defaults.internal.logstore.LogStoreProvider;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.storage.LogStore;
@@ -51,7 +50,9 @@ public class HadoopOutputFile implements OutputFile {
     if (!putIfAbsent) {
       return new HadoopPositionOutputStream(fs.create(targetPath));
     }
-    LogStore logStore = LogStoreProvider.getLogStore(hadoopConf, targetPath.toUri().getScheme());
+    LogStore logStore =
+        io.delta.kernel.defaults.internal.logstore.LogStoreProvider.getLogStore(
+            hadoopConf, targetPath.toUri().getScheme());
 
     boolean useRename = logStore.isPartialWriteVisible(targetPath, hadoopConf);
 
@@ -95,7 +96,9 @@ public class HadoopOutputFile implements OutputFile {
       throws IOException {
     Path pathObj = new Path(path);
     try {
-      LogStore logStore = LogStoreProvider.getLogStore(hadoopConf, pathObj.toUri().getScheme());
+      LogStore logStore =
+          io.delta.kernel.defaults.internal.logstore.LogStoreProvider.getLogStore(
+              hadoopConf, pathObj.toUri().getScheme());
       logStore.write(pathObj, data, overwrite, hadoopConf);
     } finally {
       Utils.closeCloseables(data);
