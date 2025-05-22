@@ -18,7 +18,6 @@ package io.delta.kernel.defaults.engine.hadoopio;
 import io.delta.kernel.defaults.engine.fileio.FileIO;
 import io.delta.kernel.defaults.engine.fileio.InputFile;
 import io.delta.kernel.defaults.engine.fileio.OutputFile;
-import io.delta.kernel.defaults.internal.logstore.LogStoreProvider;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
@@ -42,7 +41,9 @@ public class HadoopFileIO implements FileIO {
   @Override
   public CloseableIterator<FileStatus> listFrom(String filePath) throws IOException {
     Path path = new Path(filePath);
-    LogStore logStore = LogStoreProvider.getLogStore(hadoopConf, path.toUri().getScheme());
+    LogStore logStore =
+        io.delta.kernel.defaults.internal.logstore.LogStoreProvider.getLogStore(
+            hadoopConf, path.toUri().getScheme());
 
     return Utils.toCloseableIterator(logStore.listFrom(path, hadoopConf))
         .map(
