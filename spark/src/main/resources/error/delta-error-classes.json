@@ -2317,6 +2317,12 @@
     ],
     "sqlState" : "42809"
   },
+  "DELTA_SHREDDING_TABLE_PROPERTY_DISABLED" : {
+    "message" : [
+      "Attempted to write shredded Variants but the table does not support shredded writes. Consider setting the table property enableVariantShredding to true."
+    ],
+    "sqlState" : "0A000"
+  },
   "DELTA_SOURCE_IGNORE_DELETE" : {
     "message" : [
       "Detected deleted data (for example <removedFile>) from streaming source at version <version>. This is currently not supported. If you'd like to ignore deletes, set the option 'ignoreDeletes' to 'true'. The source table can be found at path <dataPath>."
