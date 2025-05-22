@@ -91,10 +91,41 @@ assert_dataframe_equals(spark.read.format("delta").table(tableName), spark.range
 assert_dataframe_equals(spark.sql(f"SELECT * FROM {tableName}"), spark.range(5))
 
 # By table path
-spark.range(10).write.format("delta").save(filePath)
-assert_dataframe_equals(DeltaTable.forPath(spark, filePath).toDF(), spark.range(10))
-assert_dataframe_equals(spark.read.format("delta").load(filePath), spark.range(10))
-assert_dataframe_equals(spark.sql(f"SELECT * FROM delta.`{filePath}`"), spark.range(10))
+spark.range(6).write.format("delta").save(filePath)
+assert_dataframe_equals(DeltaTable.forPath(spark, filePath).toDF(), spark.range(6))
+assert_dataframe_equals(spark.read.format("delta").load(filePath), spark.range(6))
+assert_dataframe_equals(spark.sql(f"SELECT * FROM delta.`{filePath}`"), spark.range(6))
+
+deltaTable = DeltaTable.forPath(spark, filePath)
+
+# Update every even value by adding 100 to it
+print("########### Update to the table(add 100 to every even value) ##############")
+deltaTable.update(
+    condition=expr("id % 2 == 0"),
+    set={"id": expr("id + 100")}
+)
+
+updateResult = spark.createDataFrame([(100,), (1,), (102,), (3,), (104,), (5,)], ["id"])
+assert_dataframe_equals(deltaTable.toDF(), updateResult)
+assert_dataframe_equals(spark.read.format("delta").load(filePath), updateResult)
+assert_dataframe_equals(spark.sql(f"SELECT * FROM delta.`{filePath}`"), updateResult)
+
+# Delete every even value
+print("######### Delete every even value ##############")
+deltaTable.delete(condition=expr("id % 2 == 0"))
+
+deleteResult = spark.createDataFrame([(1,), (3,), (5,)], ["id"])
+assert_dataframe_equals(deltaTable.toDF(), deleteResult)
+assert_dataframe_equals(spark.read.format("delta").load(filePath), deleteResult)
+assert_dataframe_equals(spark.sql(f"SELECT * FROM delta.`{filePath}`"), deleteResult)
+
+# Read old version of data using time travel
+print("######## Read old data using time travel ############")
+oldVersionDF = spark.read.format("delta").option("versionAsOf", 0).load(filePath)
+
+assert_dataframe_equals(oldVersionDF, spark.range(6))
+assert_dataframe_equals(spark.read.format("delta").load(filePath), spark.range(6))
+assert_dataframe_equals(spark.sql(f"SELECT * FROM delta.`{filePath}`"), spark.range(6))
 
 # ---------------------------------- Clean up ----------------------------------------
 cleanup(spark)
