@@ -30,6 +30,7 @@ import io.delta.kernel.internal.snapshot.LogSegment
 import io.delta.kernel.internal.util.{Clock, FileNames, ManualClock}
 import io.delta.kernel.internal.util.VectorUtils.{buildArrayValue, stringStringMapValue}
 import io.delta.kernel.test.{MockFileSystemClientUtils, MockListFromResolvePathFileSystemClient}
+import io.delta.kernel.test.MockSnapshotUtils.getMockSnapshot
 import io.delta.kernel.types.StringType
 import io.delta.kernel.utils.FileStatus
 
@@ -44,35 +45,9 @@ class TableImplSuite extends AnyFunSuite with MockFileSystemClientUtils {
   class TableImplWithMockedLatestSnapshot(tablePath: String, clock: Clock, latestVersion: Long)
       extends TableImpl(tablePath, clock) {
     override def getLatestSnapshot(engine: Engine): Snapshot = {
-      val metadata = new Metadata(
-        "id",
-        Optional.empty(), /* name */
-        Optional.empty(), /* description */
-        new Format(),
-        testSchema.toJson,
-        testSchema,
-        buildArrayValue(java.util.Arrays.asList("c3"), StringType.STRING),
-        Optional.of(123),
-        stringStringMapValue(Map.empty[String, String].asJava))
-
-      val logSegment = new LogSegment(
-        logPath, /* logPath */
-        latestVersion,
-        Seq(deltaFileStatus(latestVersion)).asJava, /* deltas */
-        Seq.empty.asJava, /* compactions */
-        Seq.empty.asJava, /* checkpoints */
-        Optional.empty(), /* lastSeenChecksum */
-        0L /* lastCommitTimestamp */
-      )
-      val snapshotQueryContext = SnapshotQueryContext.forLatestSnapshot(tablePath)
-      new SnapshotImpl(
-        new Path(tablePath), /* dataPath */
-        logSegment, /* logSegment */
-        null, /* logReplay */
-        null, /* protocol */
-        metadata,
-        snapshotQueryContext /* snapshotContext */
-      )
+      getMockSnapshot(
+        new Path(tablePath),
+        latestVersion)
     }
   }
 

@@ -32,57 +32,13 @@ import io.delta.kernel.internal.util.{FileNames, VectorUtils}
 import io.delta.kernel.internal.util.InCommitTimestampUtils
 import io.delta.kernel.internal.util.VectorUtils.{buildArrayValue, stringStringMapValue}
 import io.delta.kernel.test.MockFileSystemClientUtils
+import io.delta.kernel.test.MockSnapshotUtils.getMockSnapshot
 import io.delta.kernel.types.StringType
 import io.delta.kernel.utils.FileStatus
 
 import org.scalatest.funsuite.AnyFunSuite
 
 class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
-
-  def getMockSnapshot(
-      latestVersion: Long,
-      ictEnablementInfoOpt: Option[(Long, Long)] = None): SnapshotImpl = {
-    val configuration = ictEnablementInfoOpt match {
-      case Some((version, _)) if version == 0L =>
-        Map(TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true")
-      case Some((version, ts)) =>
-        Map(
-          TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true",
-          TableConfig.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.getKey -> version.toString,
-          TableConfig.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.getKey -> ts.toString)
-      case None =>
-        Map[String, String]()
-    }
-    val metadata = new Metadata(
-      "id",
-      Optional.empty(), /* name */
-      Optional.empty(), /* description */
-      new Format(),
-      testSchema.toJson,
-      testSchema,
-      buildArrayValue(java.util.Arrays.asList("c3"), StringType.STRING),
-      Optional.of(123),
-      stringStringMapValue(configuration.asJava));
-
-    val logSegment = new LogSegment(
-      logPath, /* logPath */
-      latestVersion,
-      Seq(deltaFileStatus(latestVersion)).asJava, /* deltas */
-      Seq.empty.asJava, /* compactions */
-      Seq.empty.asJava, /* checkpoints */
-      Optional.empty(), /* lastSeenChecksum */
-      0L /* lastCommitTimestamp */
-    )
-    val snapshotQueryContext = SnapshotQueryContext.forLatestSnapshot(dataPath.toString)
-    new SnapshotImpl(
-      dataPath, /* dataPath */
-      logSegment, /* logSegment */
-      null, /* logReplay */
-      null, /* protocol */
-      metadata,
-      snapshotQueryContext /* snapshotContext */
-    )
-  }
 
   def checkGetActiveCommitAtTimestamp(
       fileList: Seq[FileStatus],
@@ -95,7 +51,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     val latestVersion = FileNames.getFileVersion(new Path(lastDelta))
     val activeCommit = DeltaHistoryManager.getActiveCommitAtTimestamp(
       createMockFSListFromEngine(fileList),
-      getMockSnapshot(latestVersion = latestVersion),
+      getMockSnapshot(dataPath, latestVersion = latestVersion),
       logPath,
       timestamp,
       mustBeRecreatable,
@@ -110,7 +66,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
       // for valid queries that do not throw an error
       val activeCommit = DeltaHistoryManager.getActiveCommitAtTimestamp(
         createMockFSListFromEngine(fileList),
-        getMockSnapshot(latestVersion),
+        getMockSnapshot(dataPath, latestVersion),
         logPath,
         timestamp,
         false, // mustBeRecreatable
@@ -133,7 +89,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     val e = intercept[T] {
       DeltaHistoryManager.getActiveCommitAtTimestamp(
         createMockFSListFromEngine(fileList),
-        getMockSnapshot(latestVersion = latestVersion),
+        getMockSnapshot(dataPath, latestVersion = latestVersion),
         logPath,
         timestamp,
         mustBeRecreatable,
@@ -260,7 +216,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     intercept[TableNotFoundException](
       DeltaHistoryManager.getActiveCommitAtTimestamp(
         createMockFSListFromEngine(p => throw new FileNotFoundException(p)),
-        getMockSnapshot(latestVersion = 1L),
+        getMockSnapshot(dataPath, latestVersion = 1L),
         logPath,
         0,
         true, // mustBeRecreatable
@@ -271,7 +227,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     intercept[TableNotFoundException](
       DeltaHistoryManager.getActiveCommitAtTimestamp(
         createMockFSListFromEngine(p => Seq()),
-        getMockSnapshot(latestVersion = 1L),
+        getMockSnapshot(dataPath, latestVersion = 1L),
         logPath,
         0,
         true, // mustBeRecreatable
@@ -363,7 +319,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     intercept[TableNotFoundException](
       DeltaHistoryManager.getActiveCommitAtTimestamp(
         createMockFSListFromEngine(p => throw new FileNotFoundException(p)),
-        getMockSnapshot(latestVersion = 1L),
+        getMockSnapshot(dataPath, latestVersion = 1L),
         logPath,
         0,
         false, // mustBeRecreatable
@@ -374,7 +330,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     intercept[TableNotFoundException](
       DeltaHistoryManager.getActiveCommitAtTimestamp(
         createMockFSListFromEngine(p => Seq()),
-        getMockSnapshot(latestVersion = 1L),
+        getMockSnapshot(dataPath, latestVersion = 1L),
         logPath,
         0,
         true, // mustBeRecreatable
@@ -428,7 +384,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
         if (shouldSucceed) {
           val activeCommit = DeltaHistoryManager.getActiveCommitAtTimestamp(
             createMockFSListFromEngine(fileList),
-            getMockSnapshot(latestVersion = latestVersion, ictEnablementInfoOpt),
+            getMockSnapshot(dataPath, latestVersion = latestVersion, ictEnablementInfoOpt),
             logPath,
             timestamp,
             mustBeRecreatable,
@@ -445,7 +401,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
           val e = intercept[Exception] {
             DeltaHistoryManager.getActiveCommitAtTimestamp(
               createMockFSListFromEngine(fileList),
-              getMockSnapshot(latestVersion = latestVersion, ictEnablementInfoOpt),
+              getMockSnapshot(dataPath, latestVersion = latestVersion, ictEnablementInfoOpt),
               logPath,
               timestamp,
               mustBeRecreatable,
@@ -482,6 +438,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     val deltaToICTMap = icts.zipWithIndex.map { case (ts, v) => v.toLong -> ts }.toMap
     val engine = createMockFSAndJsonEngineForICT(deltasWithModTimes, deltaToICTMap)
     val mockSnapshot = getMockSnapshot(
+      dataPath,
       latestVersion = icts.size - 1,
       Some((ictEnablementVersion, deltaToICTMap(ictEnablementVersion))))
 
@@ -576,6 +533,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
 
     // Test with ICT enabled from version 0
     val mockSnapshot = getMockSnapshot(
+      dataPath,
       latestVersion = icts.size - 1,
       Some((0L, deltaToICTMap(0L))))
 
@@ -639,6 +597,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     val engine = createMockFSAndJsonEngineForICT(deltasWithModTimes, deltaToICTMap)
 
     val mockSnapshot = getMockSnapshot(
+      dataPath,
       latestVersion = icts.size - 1,
       Some((0L, deltaToICTMap(0L))))
 
@@ -698,6 +657,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     val engine = createMockFSAndJsonEngineForICT(allFiles, deltaToICTMap)
 
     val mockSnapshot = getMockSnapshot(
+      dataPath,
       latestVersion = 3L,
       Some((2L, deltaToICTMap(2L)))
     ) // ICT enabled at version 2
@@ -758,6 +718,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     val engine = createMockFSAndJsonEngineForICT(allFiles, deltaToICTMap)
 
     val mockSnapshot = getMockSnapshot(
+      dataPath,
       latestVersion = 2L,
       Some((1L, deltaToICTMap(1L)))
     ) // ICT enabled at version 1, but earliest available is 2
@@ -798,6 +759,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     val deltaToICTMap = icts.zipWithIndex.map { case (ts, v) => v.toLong -> ts }.toMap
     val engine = createMockFSAndJsonEngineForICT(deltasWithModTimes, deltaToICTMap)
     val mockSnapshot = getMockSnapshot(
+      dataPath,
       latestVersion = icts.size - 1,
       Some((0L, deltaToICTMap(0L))))
 
@@ -843,6 +805,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     val deltaToICTMapEven = ictsEven.zipWithIndex.map { case (ts, v) => v.toLong -> ts }.toMap
     val engineEven = createMockFSAndJsonEngineForICT(deltasWithModTimesEven, deltaToICTMapEven)
     val mockSnapshotEven = getMockSnapshot(
+      dataPath,
       latestVersion = ictsEven.size - 1,
       Some((0L, deltaToICTMapEven(0L))))
 
@@ -869,6 +832,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     val engine = createMockFSAndJsonEngineForICT(deltasWithModTimes, deltaToICTMap)
 
     val mockSnapshot = getMockSnapshot(
+      dataPath,
       latestVersion = 0L,
       Some((0L, deltaToICTMap(0L))))
 
@@ -935,6 +899,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     val engine = createMockFSAndJsonEngineForICT(deltasWithModTimes, deltaToICTMap)
 
     val mockSnapshot = getMockSnapshot(
+      dataPath,
       latestVersion = 2L,
       Some((0L, deltaToICTMap(0L))))
 
@@ -1026,7 +991,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     val engine = createMockFSAndJsonEngineForICT(deltasWithModTimes, deltaToICTMap)
 
     // Test with ICT not enabled
-    val nonICTSnapshot = getMockSnapshot(latestVersion = 2L, None)
+    val nonICTSnapshot = getMockSnapshot(dataPath, latestVersion = 2L, None)
     val activeCommit1 = DeltaHistoryManager.getActiveCommitAtTimestamp(
       createMockFSListFromEngine(deltasWithModTimes),
       nonICTSnapshot,
