@@ -15,14 +15,66 @@
  */
 package io.delta.kernel.internal
 
-import io.delta.kernel.Table
+import java.util.Optional
+
+import scala.collection.JavaConverters._
+
+import io.delta.kernel.Snapshot
+import io.delta.kernel.TransactionSuite.testSchema
+import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.KernelException
+import io.delta.kernel.internal.actions.{Format, Metadata}
+import io.delta.kernel.internal.fs.Path
+import io.delta.kernel.internal.metrics.SnapshotQueryContext
+import io.delta.kernel.internal.snapshot.LogSegment
+import io.delta.kernel.internal.util.{Clock, FileNames, ManualClock}
+import io.delta.kernel.internal.util.VectorUtils.{buildArrayValue, stringStringMapValue}
 import io.delta.kernel.test.{MockFileSystemClientUtils, MockListFromResolvePathFileSystemClient}
+import io.delta.kernel.types.StringType
 import io.delta.kernel.utils.FileStatus
 
 import org.scalatest.funsuite.AnyFunSuite
 
 class TableImplSuite extends AnyFunSuite with MockFileSystemClientUtils {
+
+  /**
+   * Both timestamp-based travel methods need to be able to construct the latest snapshot
+   * internally. This class overrides getLatestSnapshot to return a mocked snapshot.
+   */
+  class TableImplWithMockedLatestSnapshot(tablePath: String, clock: Clock, latestVersion: Long)
+      extends TableImpl(tablePath, clock) {
+    override def getLatestSnapshot(engine: Engine): Snapshot = {
+      val metadata = new Metadata(
+        "id",
+        Optional.empty(), /* name */
+        Optional.empty(), /* description */
+        new Format(),
+        testSchema.toJson,
+        testSchema,
+        buildArrayValue(java.util.Arrays.asList("c3"), StringType.STRING),
+        Optional.of(123),
+        stringStringMapValue(Map.empty[String, String].asJava))
+
+      val logSegment = new LogSegment(
+        logPath, /* logPath */
+        latestVersion,
+        Seq(deltaFileStatus(latestVersion)).asJava, /* deltas */
+        Seq.empty.asJava, /* compactions */
+        Seq.empty.asJava, /* checkpoints */
+        Optional.empty(), /* lastSeenChecksum */
+        0L /* lastCommitTimestamp */
+      )
+      val snapshotQueryContext = SnapshotQueryContext.forLatestSnapshot(tablePath)
+      new SnapshotImpl(
+        new Path(tablePath), /* dataPath */
+        logSegment, /* logSegment */
+        null, /* logReplay */
+        null, /* protocol */
+        metadata,
+        snapshotQueryContext /* snapshotContext */
+      )
+    }
+  }
 
   def checkGetVersionBeforeOrAtTimestamp(
       fileList: Seq[FileStatus],
@@ -35,7 +87,9 @@ class TableImplSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
     val engine = mockEngine(fileSystemClient =
       new MockListFromResolvePathFileSystemClient(listFromProvider(fileList)))
-    val table = Table.forPath(engine, dataPath.toString)
+    val latestVersion = fileList.map(fs => FileNames.getFileVersion(new Path(fs.getPath))).max
+    val table =
+      new TableImplWithMockedLatestSnapshot(dataPath.toString, new ManualClock(0), latestVersion)
 
     expectedVersion.foreach { v =>
       assert(table.asInstanceOf[TableImpl].getVersionBeforeOrAtTimestamp(engine, timestamp) == v)
@@ -58,7 +112,9 @@ class TableImplSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
     val engine = mockEngine(fileSystemClient =
       new MockListFromResolvePathFileSystemClient(listFromProvider(fileList)))
-    val table = Table.forPath(engine, dataPath.toString)
+    val latestVersion = fileList.map(fs => FileNames.getFileVersion(new Path(fs.getPath))).max
+    val table =
+      new TableImplWithMockedLatestSnapshot(dataPath.toString, new ManualClock(0), latestVersion)
 
     expectedVersion.foreach { v =>
       assert(table.asInstanceOf[TableImpl].getVersionAtOrAfterTimestamp(engine, timestamp) == v)
