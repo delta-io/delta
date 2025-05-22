@@ -66,9 +66,8 @@ public class SchemaIterable implements Iterable<SchemaIterable.SchemaElement> {
    *
    * <pre>{@code
    * a: Map<String, Int>
-   * b: Array<Int>}
-   * </code>
-   * </pre>
+   * b: Array<Int>
+   * }</pre>
    *
    * <p>If {@code typesToSkipRecursion = {MapType.class}} is provided then the iterator will only
    * visit "a", "b.element", and "b".
