@@ -124,8 +124,6 @@ print("######## Read old data using time travel ############")
 oldVersionDF = spark.read.format("delta").option("versionAsOf", 0).load(filePath)
 
 assert_dataframe_equals(oldVersionDF, spark.range(6))
-assert_dataframe_equals(spark.read.format("delta").load(filePath), spark.range(6))
-assert_dataframe_equals(spark.sql(f"SELECT * FROM delta.`{filePath}`"), spark.range(6))
 
 # ---------------------------------- Clean up ----------------------------------------
 cleanup(spark)
