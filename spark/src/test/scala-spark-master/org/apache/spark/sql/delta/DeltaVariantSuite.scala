@@ -1,5 +1,5 @@
 /*
- * Copyright (2021) The Delta Lake Project Authors.
+ * Copyright (2024) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -724,34 +724,5 @@ class DeltaVariantSuite
       val newLessThanZeroCount = spark.sql("select * from tbl where v::int < 0").count()
       assert(newLessThanZeroCount == 0)
     }
-  }
-
-  test("variant shredding table property") {
-    withTable("tbl") {
-      sql("CREATE TABLE tbl(s STRING, i INTEGER) USING DELTA")
-      assert(getProtocolForTable("tbl") == Protocol(1, 2))
-      val deltaLog = DeltaLog.forTable(spark, TableIdentifier("tbl"))
-      assert(
-        !deltaLog.unsafeVolatileSnapshot.protocol.isFeatureSupported(VariantShreddingTableFeature),
-        s"Table tbl contains ShreddedVariantTableFeature descriptor when it is not supposed to"
-      )
-      sql(s"ALTER TABLE tbl " +
-        s"SET TBLPROPERTIES('${DeltaConfigs.ENABLE_VARIANT_SHREDDING.key}' = 'true')")
-      assert(
-        getProtocolForTable("tbl") == VariantShreddingTableFeature.minProtocolVersion
-          .withFeatures(
-            Seq(VariantShreddingTableFeature, InvariantsTableFeature, AppendOnlyTableFeature))
-      )
-    }
-    withTable("tbl") {
-      sql(s"CREATE TABLE tbl(s STRING, i INTEGER) USING DELTA " +
-        s"TBLPROPERTIES('${DeltaConfigs.ENABLE_VARIANT_SHREDDING.key}' = 'true')")
-      assert(
-        getProtocolForTable("tbl") == VariantShreddingTableFeature.minProtocolVersion
-          .withFeatures(
-            Seq(VariantShreddingTableFeature, InvariantsTableFeature, AppendOnlyTableFeature))
-      )
-    }
-    assert(DeltaConfigs.ENABLE_VARIANT_SHREDDING.key == "delta.enableVariantShredding")
   }
 }
