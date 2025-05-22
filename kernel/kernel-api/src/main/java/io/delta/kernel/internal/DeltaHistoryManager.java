@@ -110,10 +110,9 @@ public final class DeltaHistoryManager {
                   latestSnapshot.getLogPath());
         } catch (IOException e) {
           throw new RuntimeException(
-              "There was an error while reading a historical commit while performing a timestamp"
-                  + "based lookup. This can happen when the commit log is corrupted or when "
-                  + "there is a parallel operation like metadata cleanup that is deleting "
-                  + "commits. Please retry the query.",
+              "There was an error while reading a historical commit while performing a timestamp-"
+                  + "based lookup. This usually happens when there is a parallel operation like "
+                  + "metadata cleanup that is deleting commits. Please retry the query.",
               e);
         }
       }
