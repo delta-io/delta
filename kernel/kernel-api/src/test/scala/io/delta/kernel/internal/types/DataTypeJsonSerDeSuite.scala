@@ -294,8 +294,8 @@ class DataTypeJsonSerDeSuite extends AnyFunSuite {
       structFieldJson(
         "tags",
         mapTypeJson(
-          /*key=*/ mapTypeJson("\"integer\"", "\"integer\"", false),
-          /*value=*/ mapTypeJson("\"long\"", "\"long\"", false),
+          /* key= */ mapTypeJson("\"integer\"", "\"integer\"", false),
+          /* value= */ mapTypeJson("\"long\"", "\"long\"", false),
           false),
         true,
         metadataJson = Some(
