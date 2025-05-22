@@ -258,8 +258,6 @@ class TableFeaturesSuite extends AnyFunSuite {
       "changeDataFeed",
       "timestampNtz",
       "identityColumns",
-      "typeWidening-preview",
-      "typeWidening",
       "icebergWriterCompatV1",
       "clustering")
 
@@ -527,13 +525,13 @@ class TableFeaturesSuite extends AnyFunSuite {
     testMetadata(includeTimestampNtzTypeCol = true))
 
   Seq("typeWidening", "typeWidening-preview").foreach { feature =>
-    checkWriteSupported(
+    checkWriteUnsupported(
       s"validateKernelCanWriteToTable: protocol 7 with $feature, " +
         s"metadata doesn't contains $feature",
       new Protocol(3, 7, singleton(feature), singleton(feature)),
       testMetadata())
 
-    checkWriteSupported(
+    checkWriteUnsupported(
       s"validateKernelCanWriteToTable: protocol 7 with $feature, " +
         s"metadata contains $feature",
       new Protocol(3, 7, singleton(feature), singleton(feature)),

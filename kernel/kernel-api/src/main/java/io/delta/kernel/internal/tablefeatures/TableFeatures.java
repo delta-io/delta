@@ -354,6 +354,11 @@ public class TableFeatures {
           // avoid possibly breaking old clients that only support the preview feature.
           !protocol.supportsFeature(TYPE_WIDENING_RW_PREVIEW_FEATURE);
     }
+
+    @Override
+    public boolean hasKernelWriteSupport(Metadata metadata) {
+      return false; // TODO: yet to support it.
+    }
   }
 
   public static final TableFeature TYPE_WIDENING_RW_FEATURE = new TypeWideningTableFeature();
