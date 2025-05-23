@@ -33,7 +33,6 @@ The docs site is build on [Astro](https://astro.build/). Using pnpm, you can run
 | `pnpm run format`     | Format docs site code using Prettier            |
 | `pnpm run dev`        | Start Astro in development mode                 |
 | `pnpm run build`      | Build the Astro site for production             |
-| `pnpm run build:apis` | Build API docs (runs apis/generate_api_docs.py) |
 | `pnpm run preview`    | Preview the built Astro site                    |
 | `pnpm run astro`      | Run Astro CLI                                   |
 
@@ -59,3 +58,7 @@ conda env create --name delta_docs --file=<absolute_path_to_delta_repo>/docs/env
 ### JDK Setup
 
 API doc generation needs JDK 1.8. Make sure to setup `JAVA_HOME` that points to JDK 1.8.
+
+### Build API docs
+
+Run the following command: `python3 docs/apis/generate_api_docs.py`
