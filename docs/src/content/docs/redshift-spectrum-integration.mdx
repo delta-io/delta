@@ -1,0 +1,161 @@
+---
+title: AWS Redshift Spectrum connector
+description: Learn how to set up an integration to enable you to read Delta tables from AWS Redshift.
+---
+
+import { Tabs, TabItem, Aside } from "@astrojs/starlight/components";
+
+<Aside
+  type="note"
+  title="Experimental"
+>
+  This is an experimental integration. Use with caution.
+</Aside>
+
+A Delta table can be read by AWS Redshift Spectrum using a _manifest file_, which is a text file containing the list of data files to read for querying a Delta table. This article describes how to set up a AWS Redshift Spectrum to Delta Lake integration using manifest files and query Delta tables.
+
+## Set up a AWS Redshift Spectrum to Delta Lake integration and query Delta tables
+
+You set up a AWS Redshift Spectrum to Delta Lake integration using the following steps.
+
+### Step 1: Generate manifests of a Delta table using Apache Spark
+
+Run the `generate` operation on a Delta table at location `<path-to-delta-table>`:
+
+<Tabs syncKey="code-examples">
+<TabItem value="sql" label="SQL" default>
+
+```sql
+GENERATE symlink_format_manifest FOR TABLE delta.`<path-to-delta-table>`
+```
+
+</TabItem>
+<TabItem value="scala" label="Scala">
+
+```scala
+val deltaTable = DeltaTable.forPath(<path-to-delta-table>)
+deltaTable.generate("symlink_format_manifest")
+```
+
+</TabItem>
+<TabItem value="java" label="Java">
+
+```java
+DeltaTable deltaTable = DeltaTable.forPath(<path-to-delta-table>);
+deltaTable.generate("symlink_format_manifest");
+```
+
+</TabItem>
+<TabItem value="python" label="Python">
+
+```python
+deltaTable = DeltaTable.forPath(<path-to-delta-table>)
+deltaTable.generate("symlink_format_manifest")
+```
+
+</TabItem>
+</Tabs>
+
+See [Generate a manifest file](/delta-utility/#generate-a-manifest-file) for details.
+
+The `generate` operation generates manifest files at `<path-to-delta-table>/_symlink_format_manifest/`. In other words, the files in this directory contain the names of the data files (that is, Parquet files) that should be read for reading a snapshot of the Delta table.
+
+<Aside type="note">
+  We recommend that you define the Delta table in a location that AWS Redshift
+  Spectrum can read directly.
+</Aside>
+
+### Step 2: Configure AWS Redshift Spectrum to read the generated manifests
+
+Run the following commands in your AWS Redshift Spectrum environment.
+
+1. Define a new external table in AWS Redshift Spectrum using the format `SymlinkTextInputFormat` and the manifest location `<path-to-delta-table>/_symlink_format_manifest/`.
+
+<Tabs>
+  <TabItem label="SQL">
+    ```sql
+    CREATE EXTERNAL TABLE mytable ([(col_name1 col_datatype1, ...)])
+    [PARTITIONED BY (col_name2 col_datatype2, ...)]
+    ROW FORMAT SERDE 'org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe'
+    STORED AS INPUTFORMAT 'org.apache.hadoop.hive.ql.io.SymlinkTextInputFormat'
+    OUTPUTFORMAT 'org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat'
+    LOCATION '<path-to-delta-table>/_symlink_format_manifest/'  -- location of the generated manifest
+    ```
+  </TabItem>
+</Tabs>
+
+`SymlinkTextInputFormat` configures AWS Redshift Spectrum to compute file splits for `mytable` by reading the manifest file instead of using a directory listing to find data files. Replace `mytable` with the name of the external table and `<path-to-delta-table>` with the absolute path to the Delta table.
+
+<Aside type="caution" title="Important">
+- `mytable` must be the same schema and have the same partitions as the Delta table.
+- The set of `PARTITIONED BY` columns must be distinct from the set of non-partitioned columns. Furthermore, you cannot specify partitioned columns with `AS <select-statement>`.
+</Aside>
+
+- You cannot use this table definition in Apache Spark; it can be used only by AWS Redshift Spectrum.
+
+2. If the Delta table is partitioned, you must add the partitions explicitly to the AWS Redshift Spectrum table. This is needed because the manifest of a partitioned table is itself partitioned in the same directory structure as the table.
+
+   - For every partition in the table, run the following in AWS Redshift Spectrum, either directly in AWS Redshift Spectrum, or using the AWS CLI or [Data API](https://docs.aws.amazon.com/redshift/latest/mgmt/data-api.html):
+
+<Tabs>
+  <TabItem label="SQL">
+    ```sql
+    ALTER TABLE mytable.redshiftdeltatable ADD IF NOT EXISTS PARTITION (col_name=col_value) LOCATION '<path-to-delta-table>/_symlink_format_manifest/col_name=col_value'
+    ```
+  </TabItem>
+</Tabs>
+
+This steps will provide you with a [consistent](#data-consistency) view of the Delta table.
+
+### Step 3: Update manifests
+
+When data in a Delta table is updated, you must regenerate the manifests using either of the following approaches:
+
+- **Update explicitly**: After all the data updates, you can run the `generate` operation to update the manifests.
+
+- **Update automatically**: You can configure a Delta table so that all write operations on the table automatically update the manifests. To enable this automatic mode, set the corresponding table property using the following SQL command.
+
+<Tabs>
+  <TabItem label="SQL">
+    ```sql
+    ALTER TABLE delta.`<path-to-delta-table>` SET TBLPROPERTIES(delta.compatibility.symlinkFormatManifest.enabled=true)
+    ```
+  </TabItem>
+</Tabs>
+
+To disable this automatic mode, set this property to `false`.
+
+<Aside type="note">
+  After enabling automatic mode on a partitioned table, each write operation
+  updates only manifests corresponding to the partitions that operation wrote
+  to. This incremental update ensures that the overhead of manifest generation
+  is low for write operations. However, this also means that if the manifests in
+  other partitions are stale, enabling automatic mode will not automatically fix
+  it. Therefore, you should explicitly run `GENERATE` to update manifests for
+  the entire table immediately after enabling automatic mode.
+</Aside>
+
+Whether to update automatically or explicitly depends on the concurrent nature of write operations on the Delta table and the desired data consistency. For example, if automatic mode is enabled, concurrent write operations lead to concurrent overwrites to the manifest files. With such unordered writes, the manifest files are not guaranteed to point to the latest version of the table after the write operations complete. Hence, if concurrent writes are expected and you want to avoid stale manifests, you should consider explicitly updating the manifest after the expected write operations have completed.
+
+In addition, if your table is partitioned, then you must add any new partitions or remove deleted partitions by following the same process as described in the preceding step.
+
+## Limitations
+
+The AWS Redshift Spectrum integration has known limitations in its behavior.
+
+### Data consistency
+
+Whenever Delta Lake generates updated manifests, it atomically overwrites existing manifest files. Therefore, AWS Redshift Spectrum will always see a consistent view of the data files; it will see all of the old version files or all of the new version files. However, the granularity of the consistency guarantees depends on whether or not the table is partitioned.
+
+- **Unpartitioned tables**: All the files names are written in one manifest file which is updated atomically. In this case AWS Redshift Spectrum will see full table snapshot consistency.
+- **Partitioned tables**: A manifest file is partitioned in the same Hive-partitioning-style directory structure as the original Delta table. This means that each partition is updated atomically, and AWS Redshift Spectrum will see a consistent view of each partition but not a consistent view across partitions. Furthermore, since all manifests of all partitions cannot be updated together, concurrent attempts to generate manifests can lead to different partitions having manifests of different versions. While this consistency guarantee under data change is weaker than that of reading Delta tables with Spark, it is still stronger than formats like Parquet as they do not provide partition-level consistency.
+
+Depending on what storage system you are using for Delta tables, it is possible to get incorrect results when AWS Redshift Spectrum concurrently queries the manifest while the manifest files are being rewritten. In file system implementations that lack atomic file overwrites, a manifest file may be momentarily unavailable. Hence, use manifests with caution if their updates are likely to coincide with queries from AWS Redshift Spectrum.
+
+### Performance
+
+This is an experimental integration and its performance and scalability characteristics have not yet been tested.
+
+### Schema evolution
+
+Delta Lake supports schema evolution and queries on a Delta table automatically use the latest schema regardless of the schema defined in the table in the Hive metastore. However, AWS Redshift Spectrum uses the schema defined in its table definition, and will not query with the updated schema until the table definition is updated to the new schema.
