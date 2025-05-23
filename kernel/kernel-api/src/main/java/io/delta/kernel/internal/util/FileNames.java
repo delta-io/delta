@@ -119,28 +119,15 @@ public final class FileNames {
    * upgrade.
    */
   public static long getFileVersion(Path path) {
-    Optional<Long> fileVersionOpt = getFileVersionOpt(path);
-    if (fileVersionOpt.isPresent()) {
-      return fileVersionOpt.get();
+    if (isCheckpointFile(path.getName())) {
+      return checkpointVersion(path);
+    } else if (isCommitFile(path.getName())) {
+      return deltaVersion(path);
+    } else if (isChecksumFile(path.getName())) {
+      return checksumVersion(path);
     } else {
       throw new IllegalArgumentException(
-          String.format("Unexpected file type found in transaction log: %s", path));
-    }
-  }
-
-  /**
-   * Get the version of the checkpoint, checksum or delta file. Returns an empty optional if the
-   * file is not a checkpoint, checksum or delta file.
-   */
-  public static Optional<Long> getFileVersionOpt(Path path) {
-    if (isCheckpointFile(path.getName())) {
-      return Optional.of(checkpointVersion(path));
-    } else if (isCommitFile(path.getName())) {
-      return Optional.of(deltaVersion(path));
-    } else if (isChecksumFile(path.getName())) {
-      return Optional.of(checksumVersion(path));
-    } else {
-      return Optional.empty();
+              String.format("Unexpected file type found in transaction log: %s", path));
     }
   }
 
