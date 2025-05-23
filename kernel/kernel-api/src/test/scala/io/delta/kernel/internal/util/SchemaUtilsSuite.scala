@@ -340,22 +340,6 @@ class SchemaUtilsSuite extends AnyFunSuite {
     assert(schemaChanges.addedFields().get(0) == fieldMappingAfter.get("data"))
   }
 
-  private def newSchema(tuple: (Int, StructField)*): StructType = {
-    val fields = tuple.map { case (id, field) =>
-      addFieldId(id, field)
-    }
-    val schemaWithIds = new StructType(fields.asJava)
-    schemaWithIds
-  }
-
-  private def addFieldId(id: Int, field: StructField) = {
-    val metadataWithFieldIds = FieldMetadata.builder().fromMetadata(field.getMetadata)
-      .putLong("delta.columnMapping.id", id)
-      .putString("delta.columnMapping.physicalName", s"col-$id")
-      .build()
-    field.withNewMetadata(metadataWithFieldIds)
-  }
-
   test("Compute schema changes with renamed fields") {
     val fieldMappingBefore = newSchema(
       (1, new StructField("id", IntegerType.INTEGER, true)))
@@ -1140,6 +1124,22 @@ class SchemaUtilsSuite extends AnyFunSuite {
       .putLong(COLUMN_MAPPING_ID_KEY, id.longValue())
       .putString(COLUMN_MAPPING_PHYSICAL_NAME_KEY, physicalName)
       .build()
+  }
+
+  private def newSchema(tuple: (Int, StructField)*): StructType = {
+    val fields = tuple.map { case (id, field) =>
+      addFieldId(id, field)
+    }
+    val schemaWithIds = new StructType(fields.asJava)
+    schemaWithIds
+  }
+
+  private def addFieldId(id: Int, field: StructField) = {
+    val metadataWithFieldIds = FieldMetadata.builder().fromMetadata(field.getMetadata)
+      .putLong("delta.columnMapping.id", id)
+      .putString("delta.columnMapping.physicalName", s"col-$id")
+      .build()
+    field.withNewMetadata(metadataWithFieldIds)
   }
 
   ///////////////////////////////////////////////////////////////////////////
