@@ -1999,6 +1999,7 @@ Feature | Name | Readers or Writers?
 [Iceberg Compatibility V2](#iceberg-compatibility-v2) | `icebergCompatV2` | Writers only
 [Clustered Table](#clustered-table) | `clustering` | Writers only
 [VACUUM Protocol Check](#vacuum-protocol-check) | `vacuumProtocolCheck` | Readers and Writers
+[In-Commit Timestamps](#in-commit-timestamps) | `inCommitTimestamp` | Writers only
 
 ## Deletion Vector Format
 
