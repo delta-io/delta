@@ -32,7 +32,6 @@ import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.ListUtils;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.replay.LogReplay;
-import io.delta.kernel.internal.util.CatalogManagedUtils;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.FileNames.DeltaLogFileType;
 import io.delta.kernel.internal.util.Tuple2;
@@ -405,7 +404,7 @@ public class SnapshotManager {
         listedDeltaFileStatuses.stream()
             .filter(
                 fs -> {
-                  final long deltaVersion = FileNames.deltaVersion(new Path(fs.getPath()));
+                  final long deltaVersion = FileNames.deltaVersion(fs.getPath());
                   return latestCompleteCheckpointVersion + 1 <= deltaVersion
                       && deltaVersion <= versionToLoad;
                 })
@@ -413,22 +412,30 @@ public class SnapshotManager {
 
     logDebugFileStatuses("listedDeltasAfterCheckpoint", listedDeltasAfterCheckpoint);
 
-    final List<ParsedLogData> suffixCommitsAfterCheckpoint =
+    logDebugParsedLogDatas("parsedLogData", parsedLogData);
+
+    final long suffixCommitsLowerBoundInclusive =
+        listedDeltasAfterCheckpoint.isEmpty()
+            ? latestCompleteCheckpointVersion + 1
+            : FileNames.deltaVersion(ListUtils.getLast(listedDeltasAfterCheckpoint).getPath()) + 1;
+
+    final List<FileStatus> suffixCommitsAfterDeltas =
         parsedLogData.stream()
             .filter(x -> x.type == ParsedLogData.ParsedLogType.RATIFIED_STAGED_COMMIT)
-            .filter(x -> x.version > latestCompleteCheckpointVersion && x.version <= versionToLoad)
+            .filter(
+                x -> x.version >= suffixCommitsLowerBoundInclusive && x.version <= versionToLoad)
             .filter(ParsedLogData::isMaterialized)
+            .map(ParsedLogData::getFileStatus)
             .collect(Collectors.toList());
 
-    logDebugParsedLogDatas("suffixCommitsAfterCheckpoint", suffixCommitsAfterCheckpoint);
+    logDebugFileStatuses("suffixCommitsAfterDeltas", suffixCommitsAfterDeltas);
 
-    /////////////////////////////////////////////////////////////////////////////////////////////
-    // Step 7.5: Merge the $listedDeltasAfterCheckpoint with the #suffixCommitsAfterCheckpoint //
-    /////////////////////////////////////////////////////////////////////////////////////////////
+    //////////////////////////////////////////////////////////////////////////////////////////////
+    // Step 7.5: Concat the $listedDeltasAfterCheckpoint with the $suffixCommitsAfterCheckpoint //
+    //////////////////////////////////////////////////////////////////////////////////////////////
 
-    final List<FileStatus> allDeltasAfterCheckpoint =
-        CatalogManagedUtils.mergeListedDeltasAndSuffixDeltas(
-            listedDeltasAfterCheckpoint, suffixCommitsAfterCheckpoint);
+    final List<FileStatus> allDeltasAfterCheckpoint = new ArrayList<>(listedDeltasAfterCheckpoint);
+    allDeltasAfterCheckpoint.addAll(suffixCommitsAfterDeltas);
 
     logDebugFileStatuses("allDeltasAfterCheckpoint", allDeltasAfterCheckpoint);
 
