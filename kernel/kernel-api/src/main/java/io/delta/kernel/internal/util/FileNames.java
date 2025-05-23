@@ -22,7 +22,6 @@ import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.utils.FileStatus;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -127,7 +126,7 @@ public final class FileNames {
       return checksumVersion(path);
     } else {
       throw new IllegalArgumentException(
-              String.format("Unexpected file type found in transaction log: %s", path));
+          String.format("Unexpected file type found in transaction log: %s", path));
     }
   }
 
