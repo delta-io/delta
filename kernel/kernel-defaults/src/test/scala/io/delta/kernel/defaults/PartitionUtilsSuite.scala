@@ -39,12 +39,6 @@ class PartitionUtilsSuite extends AnyFunSuite with TestUtils with ExpressionTest
       .save(path)
   }
 
-  test("foo") {
-    val path = "/home/scott.sandre/temp/my_delta_Tables/table_000"
-    val snapshot = Table.forPath(engine, path).getLatestSnapshot(engine)
-    readSnapshot(snapshot)
-  }
-
   test("partitionExists - input validation") {
     withTempDirAndEngine { (path, engine) =>
       createTableWithPartCols(path)
