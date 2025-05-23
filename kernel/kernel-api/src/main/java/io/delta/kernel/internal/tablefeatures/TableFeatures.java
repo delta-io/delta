@@ -337,6 +337,7 @@ public class TableFeatures {
     TypeWideningTableFeatureBase(String featureName) {
       super(featureName, /* minReaderVersion = */ 3, /* minWriterVersion = */ 7);
     }
+
     @Override
     public boolean hasKernelWriteSupport(Metadata metadata) {
       return false; // TODO: yet to support it.
