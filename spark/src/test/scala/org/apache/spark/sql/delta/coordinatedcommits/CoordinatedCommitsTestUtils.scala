@@ -210,7 +210,7 @@ trait CatalogOwnedTestBaseSuite
     DeltaLog.clearCache()
   }
 
-  protected def isICTEnabledForNewTables: Boolean = {
+  protected def isICTEnabledForNewTablesCatalogOwned: Boolean = {
     catalogOwnedCoordinatorBackfillBatchSize.nonEmpty ||
       spark.conf.getOption(
         DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey).contains("true")

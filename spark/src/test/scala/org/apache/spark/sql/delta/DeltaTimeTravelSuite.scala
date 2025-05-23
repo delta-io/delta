@@ -92,7 +92,7 @@ class DeltaTimeTravelSuite extends QueryTest
       val rangeEnd = rangeStart + 10
       spark.range(rangeStart, rangeEnd).write.format("delta").mode("append").save(location)
       val filePath = DeltaCommitFileProvider(deltaLog.update()).deltaFile(startVersion)
-      if (isICTEnabledForNewTables) {
+      if (isICTEnabledForNewTablesCatalogOwned) {
         InCommitTimestampTestUtils.overwriteICTInDeltaFile(deltaLog, filePath, Some(ts))
       } else {
         val file = new File(filePath.toUri)
@@ -155,7 +155,7 @@ class DeltaTimeTravelSuite extends QueryTest
 
   historyTest("describe history timestamps are adjusted according to file timestamp") {
       (deltaLog, clock) =>
-    if (isICTEnabledForNewTables) {
+    if (isICTEnabledForNewTablesCatalogOwned) {
       // File timestamp adjustment is not needed when ICT is enabled.
       cancel("This test is not compatible with InCommitTimestamps.")
     }
@@ -599,7 +599,7 @@ class DeltaTimeTravelSuite extends QueryTest
   }
 
   test("time travelling with adjusted timestamps") {
-    if (isICTEnabledForNewTables) {
+    if (isICTEnabledForNewTablesCatalogOwned) {
       // ICT Timestamps are always monotonically increasing. Therefore,
       // this test is not needed when ICT is enabled.
       cancel("This test is not compatible with InCommitTimestamps.")
