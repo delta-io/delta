@@ -204,7 +204,7 @@ public class SchemaIterable implements Iterable<SchemaIterable.SchemaElement> {
    * the internal state is mutable.
    */
   private abstract static class SchemaZipper implements MutableSchemaElement {
-    // Path to the curren zipper. Note parents is shared between all elements
+    // Path to the current zipper. Note parents is shared between all elements
     // on the path.
     private final List<SchemaZipper> parents;
 
@@ -223,7 +223,7 @@ public class SchemaIterable implements Iterable<SchemaIterable.SchemaElement> {
     /** Returns if the zipper has any children can be traversed. */
     public boolean hasChildren() {
       boolean isStructType = currentField().getDataType() instanceof StructType;
-      // TODO this concept should be centralized.
+      // TODO(#4571): this concept should be centralized.
       boolean isNested =
           isStructType
               || currentField().getDataType() instanceof ArrayType
@@ -305,9 +305,10 @@ public class SchemaIterable implements Iterable<SchemaIterable.SchemaElement> {
         return null;
       }
       if (modified) {
-        StructField existingField = parent.currentField();
-        StructField newField = existingField.withDataType(extractDataTypeFromFields());
-        parent.updateField(newField);
+        // Propagate changes to parent.
+        StructField currentParentField = parent.currentField();
+        StructField newParentField = currentParentField.withDataType(extractDataTypeFromFields());
+        parent.updateField(newParentField);
       }
       return parent;
     }
