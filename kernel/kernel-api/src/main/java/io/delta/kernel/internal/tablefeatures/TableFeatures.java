@@ -337,6 +337,10 @@ public class TableFeatures {
     TypeWideningTableFeatureBase(String featureName) {
       super(featureName, /* minReaderVersion = */ 3, /* minWriterVersion = */ 7);
     }
+    @Override
+    public boolean hasKernelWriteSupport(Metadata metadata) {
+      return false; // TODO: yet to support it.
+    }
   }
 
   private static class TypeWideningTableFeature extends TypeWideningTableFeatureBase
@@ -353,11 +357,6 @@ public class TableFeatures {
           // supported, to
           // avoid possibly breaking old clients that only support the preview feature.
           !protocol.supportsFeature(TYPE_WIDENING_RW_PREVIEW_FEATURE);
-    }
-
-    @Override
-    public boolean hasKernelWriteSupport(Metadata metadata) {
-      return false; // TODO: yet to support it.
     }
   }
 
