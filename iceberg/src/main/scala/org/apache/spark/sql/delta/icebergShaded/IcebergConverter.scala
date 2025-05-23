@@ -34,7 +34,7 @@ import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.Path
 import shadedForDelta.org.apache.iceberg.{Table => IcebergTable, TableProperties}
 import shadedForDelta.org.apache.iceberg.exceptions.CommitFailedException
-import shadedForDelta.org.apache.iceberg.hive.{HiveCatalog, HiveTableOperations}
+
 import shadedForDelta.org.apache.iceberg.util.LocationUtil
 
 import org.apache.spark.internal.MDC
@@ -328,6 +328,7 @@ class IcebergConverter(spark: SparkSession)
     val tableOp = (lastDeltaVersionConverted, prevConvertedSnapshotOpt) match {
       case (Some(_), Some(_)) => WRITE_TABLE
       case (Some(_), None) => REPLACE_TABLE
+      case (None, Some(_)) => WRITE_TABLE // Handle the missing case
       case (None, None) => CREATE_TABLE
     }
 

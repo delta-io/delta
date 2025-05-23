@@ -24,7 +24,7 @@ import scala.collection.mutable
 import io.delta.kernel._
 import io.delta.kernel.Operation.{CREATE_TABLE, WRITE}
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.exceptions.{InvalidTableException, ProtocolChangedException}
+import io.delta.kernel.exceptions.{InvalidTableException, KernelException, ProtocolChangedException}
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.{DeltaHistoryManager, SnapshotImpl, TableImpl}
 import io.delta.kernel.internal.TableConfig._
@@ -600,6 +600,219 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
       assert(ex.getMessage.contains(String.format("Transaction has encountered a conflict and " +
         "can not be committed. Query needs to be re-executed using the latest version of the " +
         "table.")))
+    }
+  }
+
+  test("Time travel by timestamp should use ICT when enabled") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val startTime = System.currentTimeMillis()
+      val clock = new ManualClock(startTime)
+
+      clock.setTime(startTime)
+      setTablePropAndVerify(
+        engine = engine,
+        tablePath = tablePath,
+        key = IN_COMMIT_TIMESTAMPS_ENABLED,
+        value = "true",
+        expectedValue = true,
+        clock = clock)
+
+      val ver0Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      val ver0ICT = getInCommitTimestamp(engine, table, version = 0).get
+      assert(ver0ICT === ver0Snapshot.getTimestamp(engine))
+
+      // Edge case: file timestamp < ICT
+      clock.setTime(startTime - 5000)
+      appendData(
+        engine,
+        tablePath,
+        data = Seq(Map.empty[String, Literal] -> dataBatches1),
+        clock = clock)
+      val ver1Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      val ver1ICT = getInCommitTimestamp(engine, table, version = 1).get
+      assert(ver1ICT > ver0ICT)
+
+      // Common case: file timestamp > ICT
+      clock.setTime(startTime + 10000)
+      appendData(
+        engine,
+        tablePath,
+        data = Seq(Map.empty[String, Literal] -> dataBatches2),
+        clock = clock)
+      val ver2Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      val ver2ICT = getInCommitTimestamp(engine, table, version = 2).get
+      assert(ver2ICT > ver1ICT)
+
+      val logPath = new Path(table.getPath(engine), "_delta_log")
+      val commits = DeltaHistoryManager.getCommitsForTests(engine, logPath, 0)
+      assert(commits.size() === 3)
+      for (i <- 0 until 3) assert(commits.get(i).getVersion === i)
+      assert(commits.get(0).getTimestamp === ver0ICT)
+      assert(commits.get(1).getTimestamp === ver1ICT)
+      assert(commits.get(2).getTimestamp === ver2ICT)
+
+      // Time travel between versions
+      val midTimestamp1 = ver0ICT + (ver1ICT - ver0ICT) / 2
+      assert(table.getSnapshotAsOfTimestamp(engine, midTimestamp1).getVersion === 0)
+
+      val midTimestamp2 = ver1ICT + (ver2ICT - ver1ICT) / 2
+      assert(table.getSnapshotAsOfTimestamp(engine, midTimestamp2).getVersion === 1)
+
+      // Exact timestamp matches
+      assert(table.getSnapshotAsOfTimestamp(engine, ver1ICT).getVersion === 1)
+      assert(table.getSnapshotAsOfTimestamp(engine, ver2ICT).getVersion === 2)
+
+      intercept[KernelException] {
+        table.getSnapshotAsOfTimestamp(engine, ver2ICT + 1000)
+      }
+    }
+  }
+
+  test("Time travel by timestamp for a table with both ICT and non-ICT commits") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // Test mixed ICT/non-ICT commits: v0-v1 use file time, v2-v3 use ICT
+      val table = Table.forPath(engine, tablePath)
+      val startTime = System.currentTimeMillis()
+      val clock = new ManualClock(startTime)
+
+      // v0: Create table without ICT
+      clock.setTime(startTime)
+      val txn = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
+        .withSchema(engine, testSchema)
+        .build(engine)
+      txn.commit(engine, emptyIterable())
+
+      // v1: Append data without ICT
+      clock.setTime(startTime + 10000)
+      appendData(
+        engine,
+        tablePath,
+        data = Seq(Map.empty[String, Literal] -> dataBatches1),
+        clock = clock)
+
+      // v2: Enable ICT
+      clock.setTime(startTime + 20000)
+      setTablePropAndVerify(
+        engine = engine,
+        tablePath = tablePath,
+        isNewTable = false,
+        key = IN_COMMIT_TIMESTAMPS_ENABLED,
+        value = "true",
+        expectedValue = true,
+        clock = clock)
+
+      // v3: Append data with ICT
+      clock.setTime(startTime + 30000)
+      appendData(
+        engine,
+        tablePath,
+        data = Seq(Map.empty[String, Literal] -> dataBatches2),
+        clock = clock)
+
+      val ver2ICT = getInCommitTimestamp(engine, table, version = 2).get
+      val ver3ICT = getInCommitTimestamp(engine, table, version = 3).get
+
+      // Verify enablement metadata
+      val ver3Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      val enablementVersion =
+        IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.fromMetadata(ver3Snapshot.getMetadata).get
+      val enablementTimestamp =
+        IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.fromMetadata(ver3Snapshot.getMetadata).get
+      assert(enablementVersion === 2)
+      assert(enablementTimestamp === ver2ICT)
+
+      // Get commits using DeltaHistoryManager
+      val logPath = new Path(table.getPath(engine), "_delta_log")
+      val commits = DeltaHistoryManager.getCommitsForTests(engine, logPath, 0)
+
+      // Verify versions and timestamps
+      assert(commits.size() === 4)
+      for (i <- 0 until 4) assert(commits.get(i).getVersion === i)
+
+      // Verify ICT is used for v2-v3
+      assert(commits.get(2).getTimestamp === ver2ICT)
+      assert(commits.get(3).getTimestamp === ver3ICT)
+
+      // Verify monotonically increasing timestamps
+      for (i <- 0 until 3) {
+        assert(commits.get(i).getTimestamp < commits.get(i + 1).getTimestamp)
+      }
+
+      // Test time travel by timestamp
+      val midpoints = for (i <- 0 until 3) yield {
+        val curr = commits.get(i).getTimestamp
+        val next = commits.get(i + 1).getTimestamp
+        curr + (next - curr) / 2
+      }
+
+      // Verify correct versions returned for timestamps between versions
+      for (i <- 0 until 3) {
+        val snapshot = table.getSnapshotAsOfTimestamp(engine, midpoints(i))
+        assert(snapshot.getVersion === i)
+      }
+
+      // Verify exact timestamp of v3
+      val snapshotAtVer3 = table.getSnapshotAsOfTimestamp(engine, commits.get(3).getTimestamp)
+      assert(snapshotAtVer3.getVersion === 3)
+    }
+  }
+
+  test("Time travel by timestamp with file timestamp different from ICT") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val startTime = System.currentTimeMillis()
+      val clock = new ManualClock(startTime)
+
+      clock.setTime(startTime)
+      setTablePropAndVerify(
+        engine = engine,
+        tablePath = tablePath,
+        key = IN_COMMIT_TIMESTAMPS_ENABLED,
+        value = "true",
+        expectedValue = true,
+        clock = clock)
+      val ver0ICT = getInCommitTimestamp(engine, table, version = 0).get
+
+      // Edge case: file timestamp < ICT
+      clock.setTime(startTime - 5000)
+      appendData(
+        engine,
+        tablePath,
+        data = Seq(Map.empty[String, Literal] -> dataBatches1),
+        clock = clock)
+      val ver1ICT = getInCommitTimestamp(engine, table, version = 1).get
+
+      // Common case: file timestamp > ICT
+      clock.setTime(startTime + 10000)
+      appendData(
+        engine,
+        tablePath,
+        data = Seq(Map.empty[String, Literal] -> dataBatches2),
+        clock = clock)
+      val ver2ICT = getInCommitTimestamp(engine, table, version = 2).get
+
+      assert(ver1ICT > ver0ICT)
+      assert(ver2ICT > ver1ICT)
+
+      val logPath = new Path(table.getPath(engine), "_delta_log")
+      val commits = DeltaHistoryManager.getCommitsForTests(engine, logPath, 0)
+      assert(commits.size() === 3)
+      for (i <- 0 until 3) assert(commits.get(i).getVersion === i)
+      assert(commits.get(0).getTimestamp === ver0ICT)
+      assert(commits.get(1).getTimestamp === ver1ICT)
+      assert(commits.get(2).getTimestamp === ver2ICT)
+
+      // Time travel between versions
+      val midpoint1 = ver0ICT + (ver1ICT - ver0ICT) / 2
+      assert(table.getSnapshotAsOfTimestamp(engine, midpoint1).getVersion === 0)
+
+      val midpoint2 = ver1ICT + (ver2ICT - ver1ICT) / 2
+      assert(table.getSnapshotAsOfTimestamp(engine, midpoint2).getVersion === 1)
+
+      // Exact timestamp matches
+      assert(table.getSnapshotAsOfTimestamp(engine, ver1ICT).getVersion === 1)
+      assert(table.getSnapshotAsOfTimestamp(engine, ver2ICT).getVersion === 2)
     }
   }
 }
