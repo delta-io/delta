@@ -31,7 +31,7 @@ You can remove files no longer referenced by a Delta table and are older than th
   a version older than the retention period is lost after running `vacuum`.
 </Aside>
 
-<Tabs>
+<Tabs syncKey="code-examples">
   <TabItem label="SQL">
     <Code code={`VACUUM eventsTable   -- This runs VACUUM in 'FULL' mode and deletes data files outside of the retention duration and all files in the table directory not referenced by the table.
 
@@ -359,7 +359,7 @@ The output of this operation has only one row with the following schema.
 
 You can a generate manifest file for a Delta table that can be used by other processing engines (that is, other than Apache Spark) to read the Delta table. For example, to generate a manifest file that can be used by Presto and Athena to read a Delta table, you run the following:
 
-<Tabs>
+<Tabs syncKey="code-examples">
   <TabItem label="SQL">
     <Code code={`GENERATE symlink_format_manifest FOR TABLE delta.\`<path-to-delta-table>\``} lang="sql" />
   </TabItem>
@@ -401,7 +401,7 @@ By default, this command will collect per-file statistics (e.g. minimum and maxi
   `spark.databricks.delta.convert.useMetadataLog` to `true`.
 </Aside>
 
-<Tabs>
+<Tabs syncKey="code-examples">
   <TabItem label="SQL">
     <Code code={`-- Convert unpartitioned Parquet table at path '<path-to-table>'
 CONVERT TO DELTA parquet.\`<path-to-table>\`
@@ -507,7 +507,7 @@ You can restore a Delta table to its earlier state by using the `RESTORE` comman
   date(`yyyy-MM-dd`) string is also supported.
 </Aside>
 
-<Tabs>
+<Tabs syncKey="code-examples">
   <TabItem label="SQL">
     <Code code={`RESTORE TABLE db.target_table TO VERSION AS OF <version>
 RESTORE TABLE delta.\`/data/target/\` TO TIMESTAMP AS OF <timestamp>`} lang="sql" />
@@ -620,7 +620,7 @@ The metadata that is cloned includes: schema, partitioning information, invarian
   new table such as `SELECT * FROM tbl AS OF VERSION 99`.
 </Aside>
 
-<Tabs>
+<Tabs syncKey="code-examples">
   <TabItem label="SQL">
     <Code code={`CREATE TABLE delta.\`/data/target/\` SHALLOW CLONE delta.\`/data/source/\` -- Create a shallow clone of /data/source at /data/target
 
@@ -652,7 +652,7 @@ If you have created a shallow clone, any user that reads the shallow clone needs
 
 When doing machine learning, you may want to archive a certain version of a table on which you trained an ML model. Future models can be tested using this archived data set.
 
-<Tabs>
+<Tabs syncKey="code-examples">
   <TabItem label="SQL">
     <Code
       code={`-- Trained model on version 15 of Delta table
@@ -666,7 +666,7 @@ CREATE TABLE delta.\`/model/dataset\` SHALLOW CLONE entire_dataset VERSION AS OF
 
 To test a workflow on a production table without corrupting the table, you can easily create a shallow clone. This allows you to run arbitrary workflows on the cloned table that contains all the production data but does not affect any production workloads.
 
-<Tabs>
+<Tabs syncKey="code-examples">
   <TabItem label="SQL">
     <Code code={`-- Perform shallow clone
 CREATE OR REPLACE TABLE my_test SHALLOW CLONE my_prod_table;
@@ -687,7 +687,7 @@ Table property overrides are particularly useful for:
 - Annotating tables with owner or user information when sharing data with different business units.
 - Archiving Delta tables and time travel is required. You can specify the log retention period independently for the archive table. For example:
 
-<Tabs>
+<Tabs syncKey="code-examples">
   <TabItem label="SQL">
     <Code
       code={`CREATE OR REPLACE TABLE archive.my_table SHALLOW CLONE prod.my_table
@@ -709,7 +709,7 @@ Shallow clone for Parquet and Iceberg combines functionality used to clone Delta
 
 `replace` has the same limitation as Delta shallow clone, the target table must be emptied before applying replace.
 
-<Tabs>
+<Tabs syncKey="code-examples">
   <TabItem label="SQL">
     <Code code={`CREATE OR REPLACE TABLE <target_table_name> SHALLOW CLONE parquet.\`/path/to/data\`;
 

@@ -30,7 +30,7 @@ You must explicitly enable row tracking using one of the following methods:
 
 - **New table**: Set the table property `delta.enableRowTracking = true` in the `CREATE TABLE` command.
 
-<Tabs>
+<Tabs syncKey="code-examples">
   <TabItem label="SQL">
 
     ```sql
@@ -55,7 +55,7 @@ You must explicitly enable row tracking using one of the following methods:
 
 - **Existing table**: Available from Delta 3.3 and above, set the table property `'delta.enableRowTracking' = 'true'` in the `ALTER TABLE` command.
 
-<Tabs>
+<Tabs syncKey="code-examples">
   <TabItem label="SQL">
 
     ```sql
@@ -67,7 +67,7 @@ You must explicitly enable row tracking using one of the following methods:
 
 - **All new tables**: Set the configuration `spark.databricks.delta.properties.defaults.enableRowTracking = true` for the current session in the `SET` command.
 
-<Tabs>
+<Tabs syncKey="code-examples">
   <TabItem label="SQL">
 
     ```sql
@@ -117,7 +117,7 @@ Row tracking adds the following metadata fields that can be accessed when readin
 
 The row ids and row commit versions metadata fields are not automatically included when reading the table. Instead, these metadata fields must be manually selected from the hidden `_metadata` column which is available for all tables in Apache Spark.
 
-<Tabs>
+<Tabs syncKey="code-examples">
   <TabItem label="SQL">
 
     ```sql
@@ -147,7 +147,7 @@ The row ids and row commit versions metadata fields are not automatically includ
 
 Row tracking can be disabled to reduce the storage overhead of the metadata fields. After disabling row tracking the metadata fields remain available, but all rows always get assigned a new id and commit version whenever they are touched by an operation.
 
-<Tabs>
+<Tabs syncKey="code-examples">
   <TabItem label="SQL">
 
     ```sql

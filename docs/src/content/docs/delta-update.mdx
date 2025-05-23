@@ -12,7 +12,7 @@ Delta Lake supports several statements to facilitate deleting data from and upda
 
 You can remove data that matches a predicate from a Delta table. For instance, in a table named `people10m` or a path at `/tmp/delta/people-10m`, to delete all rows corresponding to people with a value in the `birthDate` column from before `1955`, you can run the following:
 
-<Tabs>
+<Tabs syncKey="code-examples">
   <TabItem label="SQL">
     <Code code={`DELETE FROM people10m WHERE birthDate < '1955-01-01'
 
@@ -85,7 +85,7 @@ See the [Delta Lake APIs](/delta-apidoc/) for details.
 
 You can update data that matches a predicate in a Delta table. For example, in a table named `people10m` or a path at `/tmp/delta/people-10m`, to change an abbreviation in the `gender` column from `M` or `F` to `Male` or `Female`, you can run the following:
 
-<Tabs>
+<Tabs syncKey="code-examples">
   <TabItem label="SQL">
     <Code code={`UPDATE people10m SET gender = 'Female' WHERE gender = 'F';
 UPDATE people10m SET gender = 'Male' WHERE gender = 'M';
@@ -97,7 +97,7 @@ UPDATE delta.\`/tmp/delta/people-10m\` SET gender = 'Female' WHERE gender = 'F';
 
 See [Configure SparkSession](/delta-batch/#configure-sparksession) for the steps to enable support for SQL commands.
 
-<Tabs>
+<Tabs syncKey="code-examples">
   <TabItem label="Python">
     <Code code={`from delta.tables import *
 from pyspark.sql.functions import *
@@ -159,7 +159,7 @@ You can upsert data from a source table, view, or DataFrame into a target Delta 
 
 Suppose you have a source table named `people10mupdates` or a source path at `/tmp/delta/people-10m-updates` that contains new data for a target table named `people10m` or a target path at `/tmp/delta/people-10m`. Some of these new records may already be present in the target data. To merge the new data, you want to update rows where the person's `id` is already present and insert the new rows where no matching `id` is present. You can run the following:
 
-<Tabs>
+<Tabs syncKey="code-examples">
   <TabItem label="SQL">
     <Code
       code={`MERGE INTO people10m
@@ -203,7 +203,7 @@ WHEN NOT MATCHED
 
 See [Configure SparkSession](/delta-batch/#configure-sparksession) for the steps to enable support for SQL commands.
 
-<Tabs>
+<Tabs syncKey="code-examples">
   <TabItem label="Python">
     <Code code={`from delta.tables import *
 
@@ -288,7 +288,7 @@ You can use the `WHEN NOT MATCHED BY SOURCE` clause to `UPDATE` or `DELETE` reco
 
 The following code example shows the basic syntax of using this for deletes, overwriting the target table with the contents of the source table and deleting unmatched records in the target table.
 
-<Tabs>
+<Tabs syncKey="code-examples">
   <TabItem label="Python">
     <Code code={`(targetDF
   .merge(sourceDF, "source.key = target.key")
@@ -328,7 +328,7 @@ WHEN NOT MATCHED BY SOURCE
 
 The following example adds conditions to the `WHEN NOT MATCHED BY SOURCE` clause and specifies values to update in unmatched target rows.
 
-<Tabs>
+<Tabs syncKey="code-examples">
 	<TabItem label="Python">
 		<Code code={`(targetDF
 (targetDF
@@ -520,7 +520,7 @@ Here are a few examples on how to use `merge` in different scenarios.
 
 A common ETL use case is to collect logs into Delta table by appending them to a table. However, often the sources can generate duplicate log records and downstream deduplication steps are needed to take care of them. With `merge`, you can avoid inserting the duplicate records.
 
-<Tabs>
+<Tabs syncKey="code-examples">
   <TabItem label="SQL">
     <Code code={`MERGE INTO logs
 USING newDedupedLogs
@@ -572,7 +572,7 @@ WHEN NOT MATCHED
 
 If you know that you may get duplicate records only for a few days, you can optimized your query further by partitioning the table by date, and then specifying the date range of the target table to match on.
 
-<Tabs>
+<Tabs syncKey="code-examples">
   <TabItem label="SQL">
     <Code code={`MERGE INTO logs
 USING newDedupedLogs
@@ -625,7 +625,7 @@ Another common operation is SCD Type 2, which maintains history of all changes m
 
 Here is a concrete example of maintaining the history of addresses for a customer along with the active date range of each address. When a customer's address needs to be updated, you have to mark the previous address as not the current one, update its active date range, and add the new address as the current one.
 
-<Tabs>
+<Tabs syncKey="code-examples">
   <TabItem label="Scala">
     <Code code={`val customersTable: DeltaTable = ...   // table with schema (customerId, address, current, effectiveDate, endDate)
 
@@ -668,7 +668,7 @@ customersTable.alias("customers").merge( stagedUpdates.alias("staged_updates"), 
 
 Similar to SCD, another common use case, often called change data capture (CDC), is to apply all data changes generated from an external database into a Delta table. In other words, a set of updates, deletes, and inserts applied to an external table needs to be applied to a Delta table. You can do this using `merge` as follows.
 
-<Tabs>
+<Tabs syncKey="code-examples">
   <TabItem label="Scala">
     <Code code={`val deltaTable: DeltaTable = ... // DeltaTable with schema (key, value)
 
@@ -724,7 +724,7 @@ You can use a combination of `merge` and `foreachBatch` (see [foreachbatch](http
 
 - **Write streaming aggregates in Update Mode**: This is much more efficient than Complete Mode.
 
-<Tabs>
+<Tabs syncKey="code-examples">
   <TabItem label="Scala">
     <Code code={`import io.delta.tables.*
 

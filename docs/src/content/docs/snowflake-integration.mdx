@@ -26,7 +26,7 @@ You set up a Delta Lake to Snowflake integration using the following steps.
 
 Run the `generate` operation on a Delta table at location `<path-to-delta-table>`:
 
-<Tabs>
+<Tabs syncKey="code-examples">
 <TabItem value="sql" label="SQL" default>
 
 ```sql
@@ -109,32 +109,48 @@ You can define a table `my_parquet_data_table` that reads all the Parquet files 
 
 <Tabs>
   <TabItem label="SQL">
-    ```sql CREATE OR REPLACE EXTERNAL TABLE my_parquet_data_table( id INT AS
-    (VALUE:id::INT), part INT AS (VALUE:part::INT), ... parquet_filename VARCHAR
-    AS split_part(metadata$filename, '/', -1) ) WITH LOCATION =
-    @my_staged_table/ FILE_FORMAT = (TYPE = PARQUET) PATTERN =
-    '.*[/]part-[^/]*[.]parquet' AUTO_REFRESH = true; ```
+    ```sql
+    CREATE OR REPLACE EXTERNAL TABLE my_parquet_data_table(
+      id INT AS (VALUE:id::INT),
+      part INT AS (VALUE:part::INT),
+      ...,
+      parquet_filename VARCHAR AS split_part(metadata$filename, '/', -1)
+    )
+    WITH LOCATION = @my_staged_table/
+    FILE_FORMAT = (TYPE = PARQUET)
+    PATTERN = '.*[/]part-[^/]*[.]parquet'
+    AUTO_REFRESH = true;
+    ```
   </TabItem>
 </Tabs>
 
 <Aside type="note">
-In this query:
-
-- The location is the Delta table path.
-- The `parquet_filename` column contains the name of the file that contains each row of the table.
-  </Aside>
+  In this query:
+  - The location is the Delta table path.
+  - The `parquet_filename` column contains the name of the file that contains each row of the table.
+</Aside>
 
 If your Delta table is partitioned, then you will have to explicitly extract the partition values in the table definition. For example, if the table was partitioned by a single integer column named `part`, you can extract the values as follows:
 
 <Tabs>
   <TabItem label="SQL">
-    ```sql CREATE OR REPLACE EXTERNAL TABLE my_parquet_data_partitioned_table(
-    id INT AS (VALUE:id::INT), part INT AS ( nullif( regexp_replace
-    (metadata$filename, '.*part\\=(.*)\\/.*', '\\1'),
-    '__HIVE_DEFAULT_PARTITION__' )::INT ), ... parquet_filename VARCHAR AS
-    split_part(metadata$filename, '/', -1), ) WITH LOCATION =
-    @my_staged_partitioned_table/ FILE_FORMAT = (TYPE = PARQUET) PATTERN =
-    '.*[/]part-[^/]*[.]parquet' AUTO_REFRESH = true; ```
+    ```sql
+    CREATE OR REPLACE EXTERNAL TABLE my_parquet_data_partitioned_table(
+      id INT AS (VALUE:id::INT),
+      part INT AS (
+        nullif(
+          regexp_replace(metadata$filename, '.*part\\=(.*)\\/.*', '\\1'),
+          '__HIVE_DEFAULT_PARTITION__'
+        )::INT
+      ),
+      ...,
+      parquet_filename VARCHAR AS split_part(metadata$filename, '/', -1)
+    )
+    WITH LOCATION = @my_staged_partitioned_table/
+    FILE_FORMAT = (TYPE = PARQUET)
+    PATTERN = '.*[/]part-[^/]*[.]parquet'
+    AUTO_REFRESH = true;
+    ```
   </TabItem>
 </Tabs>
 
@@ -148,9 +164,15 @@ To read only the rows belonging to the consistent snapshot defined in the genera
 
 <Tabs>
   <TabItem label="SQL">
-    ```sql CREATE OR REPLACE VIEW my_delta_table AS SELECT id, part, ... FROM
-    my_parquet_data_table WHERE parquet_filename IN (SELECT filename FROM
-    delta-manifest-table); ```
+    ```sql
+    CREATE OR REPLACE VIEW my_delta_table AS
+    SELECT id, part, ...
+    FROM my_parquet_data_table
+    WHERE parquet_filename IN (
+      SELECT filename 
+      FROM delta-manifest-table
+    );
+    ```
   </TabItem>
 </Tabs>
 

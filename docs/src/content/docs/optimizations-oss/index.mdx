@@ -18,7 +18,7 @@ To improve query speed, Delta Lake supports the ability to optimize the layout o
 
 Delta Lake can improve the speed of read queries from a table by coalescing small files into larger ones.
 
-<Tabs>
+<Tabs syncKey="code-examples">
   <TabItem label="SQL">
     ```sql
     OPTIMIZE '/path/to/delta/table' -- Optimizes the path-based Delta Lake table
@@ -120,7 +120,7 @@ Collecting statistics on a column containing long values such as `string` or `bi
 
 Z-Ordering is a [technique](https://en.wikipedia.org/wiki/Z-order_curve) to colocate related information in the same set of files. This co-locality is automatically used by Delta Lake in data-skipping algorithms. This behavior dramatically reduces the amount of data that Delta Lake on Apache Spark needs to read. To Z-Order data, you specify the columns to order on in the `ZORDER BY` clause:
 
-<Tabs>
+<Tabs syncKey="code-examples">
   <TabItem label="SQL">
     ```sql
     OPTIMIZE events ZORDER BY (eventType)

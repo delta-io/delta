@@ -44,7 +44,7 @@ To use Delta Lake interactively within the Spark SQL, Scala, or Python shell, yo
 
 ### Spark SQL Shell
 
-<Tabs>
+<Tabs syncKey="code-examples">
   <TabItem label="Spark SQL Shell">
     Download the [compatible version](/releases/) of Apache Spark by following instructions from [Downloading Spark](https://spark.apache.org/downloads.html), either using `pip` or by downloading and extracting the archive and running `spark-sql` in the extracted directory.
 
@@ -74,7 +74,7 @@ To use Delta Lake interactively within the Spark SQL, Scala, or Python shell, yo
 
 If you want to build a project using Delta Lake binaries from Maven Central Repository, you can use the following Maven coordinates.
 
-<Tabs>
+<Tabs syncKey="code-examples">
   <TabItem label="Maven">
     You include Delta Lake in your Maven project by adding it as a dependency in your POM file. Delta Lake compiled with Scala 2.12.
 
@@ -110,7 +110,7 @@ spark = configure_spark_with_delta_pip(builder).getOrCreate()`} lang="python" />
 
 To create a Delta table, write a DataFrame out in the `delta` format. You can use existing Spark SQL code and change the format from `parquet`, `csv`, `json`, and so on, to `delta`.
 
-<Tabs>
+<Tabs syncKey="code-examples">
   <TabItem label="SQL">
     <Code code={`CREATE TABLE delta.\`/tmp/delta-table\` USING DELTA AS SELECT col1 as id FROM VALUES 0,1,2,3,4;`} lang="sql" />
   </TabItem>
@@ -155,7 +155,7 @@ These operations create a new Delta table using the schema that was _inferred_ f
 
 You read data in your Delta table by specifying the path to the files: `/tmp/delta-table`:
 
-<Tabs>
+<Tabs syncKey="code-examples">
   <TabItem label="SQL">
     <Code code={`SELECT * FROM delta.\`/tmp/delta-table\`;`} lang="sql" />
   </TabItem>
@@ -188,7 +188,7 @@ Delta Lake supports several operations to modify tables using standard DataFrame
 
 ### Overwrite
 
-<Tabs>
+<Tabs syncKey="code-examples">
   <TabItem label="SQL">
     <Code code={`INSERT OVERWRITE delta.\`/tmp/delta-table\` SELECT col1 as id FROM VALUES 5,6,7,8,9;`} lang="sql" />
   </TabItem>
@@ -222,7 +222,7 @@ If you read this table again, you should see only the values `5-9` you have adde
 
 Delta Lake provides programmatic APIs to conditional update, delete, and merge (upsert) data into tables. Here are a few examples.
 
-<Tabs>
+<Tabs syncKey="code-examples">
   <TabItem label="SQL">
     <Code code={`-- Update every even value by adding 100 to it
 UPDATE delta.\`/tmp/delta-table\` SET id = id + 100 WHERE id % 2 == 0;
@@ -309,7 +309,7 @@ deltaTable.toDF().show();`} lang="java" />
 
 You can query previous snapshots of your Delta table by using time travel. If you want to access the data that you overwrote, you can query a snapshot of the table before you overwrote the first set of data using the `versionAsOf` option.
 
-<Tabs>
+<Tabs syncKey="code-examples">
   <TabItem label="SQL">
     <Code code={`SELECT * FROM delta.\`/tmp/delta-table\` VERSION AS OF 0;`} lang="sql" />
   </TabItem>
@@ -342,7 +342,7 @@ You should see the first set of data, from before you overwrote it. Time travel 
 
 You can also write to a Delta table using Structured Streaming. The Delta Lake transaction log guarantees exactly-once processing, even when there are other streams or batch queries running concurrently against the table. By default, streams run in append mode, which adds new records to the table:
 
-<Tabs>
+<Tabs syncKey="code-examples">
   <TabItem label="Python">
     <Code code={`streamingDf = spark.readStream.format("rate").load()
 stream = streamingDf.selectExpr("value as id").writeStream.format("delta").option("checkpointLocation", "/tmp/checkpoint").start("/tmp/delta-table")`} lang="python" />
@@ -380,7 +380,7 @@ For more information about Delta Lake integration with Structured Streaming, see
 
 While the stream is writing to the Delta table, you can also read from that table as streaming source. For example, you can start another streaming query that prints all the changes made to the Delta table. You can specify which version Structured Streaming should start from by providing the `startingVersion` or `startingTimestamp` option to get changes from that point onwards. See [Structured Streaming](/delta-streaming/#specify-initial-position) for details.
 
-<Tabs>
+<Tabs syncKey="code-examples">
   <TabItem label="Python">
     <Code code={`stream2 = spark.readStream.format("delta").load("/tmp/delta-table").writeStream.format("console").start()`} lang="python" />
   </TabItem>

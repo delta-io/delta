@@ -20,7 +20,7 @@ You can compact a table by repartitioning it to smaller number of files. In addi
 
 For example, you can compact a table into 16 files:
 
-<Tabs>
+<Tabs syncKey="code-examples">
   <TabItem label="Scala">
     ```scala
     val path = "..."
@@ -59,7 +59,7 @@ For example, you can compact a table into 16 files:
 
 If your table is partitioned and you want to repartition just one partition based on a predicate, you can read only the partition using `where` and write back to that using `replaceWhere`:
 
-<Tabs>
+<Tabs syncKey="code-examples">
   <TabItem label="Scala">
     ```scala
     val path = "..."
@@ -130,7 +130,7 @@ If you don't need to change the table schema, you can [delete](/delta-update/#de
 
 If you want to change the table schema, you can replace the whole table atomically. For example:
 
-<Tabs>
+<Tabs syncKey="code-examples">
   <TabItem label="Python">
     ```python
     dataframe.write \

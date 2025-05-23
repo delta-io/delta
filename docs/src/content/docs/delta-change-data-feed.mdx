@@ -64,7 +64,7 @@ You specify a version as an integer and a timestamps as a string in the format `
 
 If you provide a version lower or timestamp older than one that has recorded change events, that is, when the change data feed was enabled, an error is thrown indicating that the change data feed was not enabled.
 
-<Tabs>
+<Tabs syncKey="code-examples">
   <TabItem label="SQL">
     <Code code={`-- version as ints or longs e.g. changes from version 0 to 10
 SELECT * FROM table_changes('tableName', 0, 10)
@@ -76,7 +76,6 @@ SELECT * FROM table_changes('tableName', 0, 10)
 -- database/schema names inside the string for table name, with backticks for escaping dots and special characters SELECT \* FROM table_changes('dbName.\`dotted.tableName\`', '2021-04-21 06:45:46' , '2021-05-21 12:00:00')
 
 -- path based tables SELECT \* FROM table_changes_by_path('\\path', '2021-04-21 05:45:46')`} lang="sql" />
-
   </TabItem>
 
   <TabItem label="Python">
@@ -98,7 +97,6 @@ spark.read.format("delta") \\ .option("readChangeFeed", "true") \\ .option("star
 # path based tables
 
 spark.read.format("delta") \\ .option("readChangeFeed", "true") \\ .option("startingTimestamp", '2021-04-21 05:45:46') \\ .load("pathToMyDeltaTable")`} lang="python" />
-
   </TabItem>
 
   <TabItem label="Scala">
@@ -114,13 +112,12 @@ spark.read.format("delta")
 // providing only the startingVersion/timestamp spark.read.format("delta") .option("readChangeFeed", "true") .option("startingVersion", 0) .table("myDeltaTable")
 
 // path based tables spark.read.format("delta") .option("readChangeFeed", "true") .option("startingTimestamp", "2021-04-21 05:45:46") .load("pathToMyDeltaTable")`} lang="scala" />
-
   </TabItem>
 </Tabs>
 
 ## Read changes in streaming queries
 
-<Tabs>
+<Tabs syncKey="code-examples">
   <TabItem label="Python">
     <Code code={`# providing a starting version
 spark.readStream.format("delta") \\
@@ -135,7 +132,6 @@ spark.readStream.format("delta") \\ .option("readChangeFeed", "true") \\ .option
 # not providing a starting version/timestamp will result in the latest snapshot being fetched first
 
 spark.readStream.format("delta") \\ .option("readChangeFeed", "true") \\ .table("myDeltaTable")`} lang="python" />
-
   </TabItem>
 
   <TabItem label="Scala">
@@ -148,7 +144,6 @@ spark.readStream.format("delta")
 // providing a starting timestamp spark.readStream.format("delta") .option("readChangeFeed", "true") .option("startingVersion", "2021-04-21 05:35:43") .load("/pathToMyDeltaTable")
 
 // not providing a starting version/timestamp will result in the latest snapshot being fetched first spark.readStream.format("delta") .option("readChangeFeed", "true") .table("myDeltaTable")`} lang="scala" />
-
   </TabItem>
 </Tabs>
 

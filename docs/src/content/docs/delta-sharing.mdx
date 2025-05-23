@@ -17,7 +17,7 @@ For Delta Sharing reads on shared tables with advanced Delta Lake features such 
 
 After you save the [Profile File](https://github.com/delta-io/delta-sharing/blob/main/PROTOCOL.md#profile-file-format) locally and launch Spark with the connector library, you can access shared tables. A profile file is provided by the data provider to the data recipient.
 
-<Tabs>
+<Tabs syncKey="code-examples">
   <TabItem label="SQL">
     ```sql
     -- A table path is the profile file path followed by `#` and the fully qualified name
@@ -60,22 +60,24 @@ Delta Sharing supports [predicate pushdown](https://github.com/delta-io/delta-sh
 
 Once the data provider enables history sharing of the shared table, Delta Sharing time travel allows you to query an older snapshot of a shared table.
 
-<Tabs>
+<Tabs syncKey="code-examples">
   <TabItem label="SQL">
-    ```sql SELECT * FROM mytable TIMESTAMP AS OF timestamp_expression SELECT *
-    FROM mytable VERSION AS OF version ```
+    ```sql
+    SELECT * FROM mytable TIMESTAMP AS OF timestamp_expression
+    SELECT * FROM mytable VERSION AS OF version
+    ```
   </TabItem>
   <TabItem label="Python">
-    ```python spark.read.format("deltaSharing").option("timestampAsOf",
-    timestamp_string).load(tablePath)
-    spark.read.format("deltaSharing").option("versionAsOf",
-    version).load(tablePath) ```
+    ```python
+    spark.read.format("deltaSharing").option("timestampAsOf", timestamp_string).load(tablePath)
+    spark.read.format("deltaSharing").option("versionAsOf", version).load(tablePath)
+    ```
   </TabItem>
   <TabItem label="Scala">
-    ```scala spark.read.format("deltaSharing").option("timestampAsOf",
-    timestamp_string).load(tablePath)
-    spark.read.format("deltaSharing").option("versionAsOf",
-    version).load(tablePath) ```
+    ```scala
+    spark.read.format("deltaSharing").option("timestampAsOf", timestamp_string).load(tablePath)
+    spark.read.format("deltaSharing").option("versionAsOf", version).load(tablePath)
+    ```
   </TabItem>
 </Tabs>
 
@@ -85,7 +87,7 @@ The `timestamp_expression` and `version` share the same syntax as [Delta](/delta
 
 Once the data provider turns on CDF on the original Delta Lake table and shares it with history through Delta Sharing, the recipient can query CDF of a Delta Sharing table similar to [CDF of a Delta table](/delta-change-data-feed).
 
-<Tabs>
+<Tabs syncKey="code-examples">
   <TabItem label="SQL">
     ```sql
     CREATE TABLE mytable USING deltaSharing LOCATION '<profile-file-path>#<share-name>.<schema-name>.<table-name>';

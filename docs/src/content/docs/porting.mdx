@@ -116,7 +116,7 @@ The [LogStore](/api/java/index.html) related code is extracted out from the `del
 
 If the name of a partition column in a Delta table contains invalid characters (` ,;{}()\n\t=`), you cannot read it in Delta Lake 1.1 and above, due to [SPARK-36271](https://issues.apache.org/jira/browse/SPARK-36271). However, this should be rare as you cannot create such tables by using Delta Lake 0.6 and above. If you still have such legacy tables, you can overwrite your tables with new valid column names by using Delta Lake 1.0 and below before upgrading Delta Lake to 1.1 and above, such as the following:
 
-<Tabs>
+<Tabs syncKey="code-examples">
   <TabItem label="Python">
 
 ```python
@@ -153,7 +153,7 @@ spark.read
 
 If you are using `DeltaTable` APIs in Scala, Java, or Python to [update](/delta-update/) or [run utility operations](/delta-utility/) on them, then you may have to add the following configurations when creating the `SparkSession` used to perform those operations.
 
-<Tabs>
+<Tabs syncKey="code-examples">
   <TabItem label="Python">
 
     ```python

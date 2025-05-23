@@ -134,7 +134,7 @@ You can choose to manually update a table to a newer protocol version. We recomm
 
 To upgrade a table to a newer protocol version, use the `DeltaTable.upgradeTableProtocol` method:
 
-<Tabs>
+<Tabs syncKey="code-examples">
   <TabItem label="SQL">
     ```sql
     -- Upgrades the reader protocol version to 1 and the writer protocol version to 3.
@@ -143,10 +143,12 @@ To upgrade a table to a newer protocol version, use the `DeltaTable.upgradeTable
   </TabItem>
 
 <TabItem label="Python">
-  ```python from delta.tables import DeltaTable delta =
+  ```python 
+  from delta.tables import DeltaTable delta =
   DeltaTable.forPath(spark, "path_to_table") # or DeltaTable.forName
   delta.upgradeTableProtocol(1, 3) # upgrades to readerVersion=1,
-  writerVersion=3 ```
+  writerVersion=3 
+  ```
 </TabItem>
 
   <TabItem label="Scala">

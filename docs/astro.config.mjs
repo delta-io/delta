@@ -26,6 +26,7 @@ export default defineConfig({
           "https://github.com/jakebellacera/db-site-staging/tree/main/sites/delta-docs",
       },
       lastUpdated: true,
+      favicon: "/delta-lake-white.png",
       logo: {
         light: "./src/assets/delta-lake-logo-light.svg",
         dark: "./src/assets/delta-lake-logo-dark.svg",

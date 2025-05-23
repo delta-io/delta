@@ -44,10 +44,19 @@ This exception is often thrown during concurrent `DELETE`, `UPDATE`, or `MERGE` 
 
 <Tabs>
   <TabItem label="Scala">
-    ```scala // Target 'deltaTable' is partitioned by date and country
-    deltaTable.as("t").merge( source.as("s"), "s.user_id = t.user_id AND s.date
-    = t.date AND s.country = t.country") .whenMatched().updateAll()
-    .whenNotMatched().insertAll() .execute() ```
+    ```scala
+    // Target 'deltaTable' is partitioned by date and country
+    deltaTable.as("t")
+      .merge(
+        source.as("s"),
+        "s.user_id = t.user_id AND s.date = t.date AND s.country = t.country"
+      )
+      .whenMatched()
+      .updateAll()
+      .whenNotMatched()
+      .insertAll()
+      .execute()
+    ```
   </TabItem>
 </Tabs>
 
@@ -57,12 +66,15 @@ Suppose you run the above code concurrently for different dates or countries. Si
   <TabItem label="Scala">
     ```scala
     // Target 'deltaTable' is partitioned by date and country
-    deltaTable.as("t").merge(
-      source.as("s"),
-      "s.user_id = t.user_id AND s.date = t.date AND s.country = t.country AND t.date = '" + <date> + "' AND t.country = '" + <country> + "'"
-    )
-      .whenMatched().updateAll()
-      .whenNotMatched().insertAll()
+    deltaTable.as("t")
+      .merge(
+        source.as("s"),
+        "s.user_id = t.user_id AND s.date = t.date AND s.country = t.country AND t.date = '" + <date> + "' AND t.country = '" + <country> + "'"
+      )
+      .whenMatched()
+      .updateAll()
+      .whenNotMatched()
+      .insertAll()
       .execute()
     ```
   </TabItem>
