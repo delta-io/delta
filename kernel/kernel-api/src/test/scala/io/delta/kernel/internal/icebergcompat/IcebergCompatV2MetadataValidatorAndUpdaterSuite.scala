@@ -120,6 +120,26 @@ trait IcebergCompatV2MetadataValidatorAndUpdaterSuiteBase extends AnyFunSuite
   }
 
   Seq(true, false).foreach { isNewTable =>
+    Seq(TYPE_WIDENING_RW_FEATURE, TYPE_WIDENING_RW_PREVIEW_FEATURE).foreach {
+      typeWideningFeature =>
+        test(s"can't enable icebergCompatV2 on a table with $typeWideningFeature supported, " +
+          s"isNewTable = $isNewTable") {
+          val schema = new StructType().add("col", BooleanType.BOOLEAN)
+          val metadata = getCompatEnabledMetadata(schema)
+          val protocol = getCompatEnabledProtocol(typeWideningFeature)
+
+          val ex = intercept[KernelException] {
+            runValidateAndUpdateIcebergCompatV2Metadata(isNewTable, metadata, protocol)
+          }
+          assert(ex.getMessage.contains(
+            s"Unsupported Delta table feature: table requires feature " +
+              s""""${typeWideningFeature.featureName()}" which is unsupported by this version """ +
+              s"of Delta Kernel."))
+        }
+    }
+  }
+
+  Seq(true, false).foreach { isNewTable =>
     test(s"can't enable icebergCompatV2 on a table with icebergCompatv1 enabled, " +
       s"isNewTable = $isNewTable") {
       val schema = new StructType().add("col", BooleanType.BOOLEAN)

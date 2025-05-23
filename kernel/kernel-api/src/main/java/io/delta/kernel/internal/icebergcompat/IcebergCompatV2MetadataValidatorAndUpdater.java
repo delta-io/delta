@@ -175,6 +175,17 @@ public class IcebergCompatV2MetadataValidatorAndUpdater
         }
       };
 
+  private static final IcebergCompatCheck ICEBERG_COMPAT_V2_CHECK_HAS_SUPPORTED_TYPE_WIDENING =
+      (inputContext) -> {
+        if (inputContext.newProtocol.supportsFeature(TYPE_WIDENING_RW_FEATURE)) {
+          // TODO: Currently Kernel has no support for writing with type widening. When it is
+          //  supported extend this to allow a whitelist of supported type widening in Iceberg
+          throw DeltaErrors.unsupportedTableFeature(TYPE_WIDENING_RW_FEATURE.featureName());
+        } else if (inputContext.newProtocol.supportsFeature(TYPE_WIDENING_RW_PREVIEW_FEATURE)) {
+          throw DeltaErrors.unsupportedTableFeature(TYPE_WIDENING_RW_PREVIEW_FEATURE.featureName());
+        }
+      };
+
   @Override
   String compatFeatureName() {
     return "icebergCompatV2";
@@ -202,7 +213,8 @@ public class IcebergCompatV2MetadataValidatorAndUpdater
             ICEBERG_COMPAT_V2_CHECK_HAS_SUPPORTED_TYPES,
             ICEBERG_COMPAT_V2_CHECK_HAS_ALLOWED_PARTITION_TYPES,
             ICEBERG_COMPAT_V2_CHECK_HAS_NO_PARTITION_EVOLUTION,
-            ICEBERG_COMPAT_V2_CHECK_HAS_NO_DELETION_VECTORS)
+            ICEBERG_COMPAT_V2_CHECK_HAS_NO_DELETION_VECTORS,
+            ICEBERG_COMPAT_V2_CHECK_HAS_SUPPORTED_TYPE_WIDENING)
         .collect(toList());
   }
 }

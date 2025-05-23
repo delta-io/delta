@@ -183,6 +183,17 @@ class DeltaIcebergCompatV2Suite extends DeltaTableWriteSuiteBase with ColumnMapp
     }
   }
 
+  test("can't enable icebergCompatV2 on a table with type widening supported also enabled") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      checkError[KernelException]("Unsupported Delta writer feature") {
+        val tblProps = Map(
+          TableConfig.TYPE_WIDENING_ENABLED.getKey -> "true",
+          TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true")
+        createEmptyTable(engine, tablePath, testSchema, tableProperties = tblProps)
+      }
+    }
+  }
+
   ignore("can't enable icebergCompatV2 on a table with icebergCompatv1 enabled") {
     // We can't test this as Kernel throws error when enabling icebergCompatV1
     // as there is no support it in the current version.
