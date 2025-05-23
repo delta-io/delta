@@ -18,14 +18,21 @@ package io.delta.kernel.defaults
 import java.io.File
 
 import scala.collection.JavaConverters._
+import scala.collection.immutable
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.data.Row
 import io.delta.kernel.data.ColumnarBatch
 import io.delta.kernel.defaults.utils.TestUtils
+<<<<<<< ours
 import io.delta.kernel.utils.CloseableIterator
+=======
+import io.delta.kernel.exceptions.{KernelException, TableNotFoundException}
+import io.delta.kernel.expressions.Literal
+>>>>>>> theirs
 import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction
 import io.delta.kernel.internal.actions.{AddCDCFile, AddFile, CommitInfo, Metadata, Protocol, RemoveFile}
+<<<<<<< ours
 import io.delta.kernel.internal.util.{FileNames, VectorUtils}
 import io.delta.kernel.Table
 import io.delta.kernel.exceptions.{KernelException, TableNotFoundException}
@@ -34,10 +41,23 @@ import io.delta.kernel.internal.fs.Path
 
 import org.apache.spark.sql.delta.actions.{Action => SparkAction, AddCDCFile => SparkAddCDCFile, AddFile => SparkAddFile, CommitInfo => SparkCommitInfo, Metadata => SparkMetadata, Protocol => SparkProtocol, RemoveFile => SparkRemoveFile}
 import org.apache.spark.sql.delta.DeltaLog
+=======
+import io.delta.kernel.internal.fs.Path
+import io.delta.kernel.internal.util.{FileNames, ManualClock, VectorUtils}
+import io.delta.kernel.utils.CloseableIterator
+
+import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.actions.{Action => SparkAction, AddCDCFile => SparkAddCDCFile, AddFile => SparkAddFile, CommitInfo => SparkCommitInfo, Metadata => SparkMetadata, Protocol => SparkProtocol, RemoveFile => SparkRemoveFile, SetTransaction => SparkSetTransaction}
+import org.apache.spark.sql.delta.test.DeltaTestImplicits.OptimisticTxnTestHelper
+
+import org.apache.hadoop.fs.{Path => HadoopPath}
+import org.apache.spark.sql.functions.col
+import org.apache.spark.sql.types.{IntegerType, StructType}
+>>>>>>> theirs
 import org.scalatest.funsuite.AnyFunSuite
 import org.apache.spark.sql.functions.col
 
-class TableChangesSuite extends AnyFunSuite with TestUtils {
+class TableChangesSuite extends AnyFunSuite with TestUtils with DeltaTableWriteSuiteBase {
 
   /* actionSet including all currently supported actions */
   val FULL_ACTION_SET: Set[DeltaAction] = DeltaAction.values().toSet
@@ -74,6 +94,7 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
     compareActions(kernelChanges, pruneSparkActionsByActionSet(sparkChanges, actionSet))
   }
 
+<<<<<<< ours
   // Golden table from Delta Standalone test
   test("getChanges - golden table deltalog-getChanges valid queries") {
     withGoldenTable("deltalog-getChanges") { tablePath =>
@@ -126,9 +147,109 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
           spark.range(i*10, i*10 + 10).write.format("delta").mode("append").save(path)
           val file = new File(FileNames.deltaFile(new Path(path, "_delta_log"), i))
           file.setLastModified(ts)
-        }
-      }
+=======
+  Seq(true, false).foreach { ictEnabled =>
+    test(s"getChanges should return the same results as Spark [ictEnabled: $ictEnabled]") {
+      withTempDir { tempDir =>
+        val tablePath = tempDir.getCanonicalPath()
+        // The code to create this table is copied from GoldenTables.scala.
+        // The part that enables ICT is a new addition.
+        val log = DeltaLog.forTable(spark, new HadoopPath(tablePath))
 
+        val schema = new StructType()
+          .add("part", IntegerType)
+          .add("id", IntegerType)
+        val configuration = if (ictEnabled) {
+          Map("delta.enableInCommitTimestamps" -> "true")
+        } else {
+          Map.empty[String, String]
+        }
+        val metadata = SparkMetadata(schemaString = schema.json, configuration = configuration)
+
+        val add1 = SparkAddFile("fake/path/1", Map.empty, 1, 1, dataChange = true)
+        val txn1 = log.startTransaction()
+        txn1.commitManually(metadata :: add1 :: Nil: _*)
+
+        val addCDC2 = SparkAddCDCFile(
+          "fake/path/2",
+          Map("partition_foo" -> "partition_bar"),
+          1,
+          Map("tag_foo" -> "tag_bar"))
+        val remove2 = SparkRemoveFile("fake/path/1", Some(100), dataChange = true)
+        val txn2 = log.startTransaction()
+        txn2.commitManually(addCDC2 :: remove2 :: Nil: _*)
+
+        val setTransaction3 = SparkSetTransaction("fakeAppId", 3L, Some(200))
+        val txn3 = log.startTransaction()
+        val latestTableProtocol = log.snapshot.protocol
+        txn3.commitManually(latestTableProtocol :: setTransaction3 :: Nil: _*)
+
+        // request subset of actions
+        testGetChangesVsSpark(
+          tablePath,
+          0,
+          2,
+          Set(DeltaAction.REMOVE))
+        testGetChangesVsSpark(
+          tablePath,
+          0,
+          2,
+          Set(DeltaAction.ADD))
+        testGetChangesVsSpark(
+          tablePath,
+          0,
+          2,
+          Set(DeltaAction.ADD, DeltaAction.REMOVE, DeltaAction.METADATA, DeltaAction.PROTOCOL))
+        // request full actions, various versions
+        testGetChangesVsSpark(
+          tablePath,
+          0,
+          2,
+          FULL_ACTION_SET)
+        testGetChangesVsSpark(
+          tablePath,
+          1,
+          2,
+          FULL_ACTION_SET)
+        testGetChangesVsSpark(
+          tablePath,
+          0,
+          0,
+          FULL_ACTION_SET)
+      }
+    }
+  }
+
+  Seq(Some(0), Some(1), None).foreach { ictEnablementVersion =>
+    test("getChanges - returns correct timestamps " +
+      s"[ictEnablementVersion = ${ictEnablementVersion.getOrElse("None")}]") {
+      withTempDirAndEngine { (tempDir, engine) =>
+        def generateCommits(tablePath: String, commits: Long*): Unit = {
+          commits.zipWithIndex.foreach { case (ts, i) =>
+            val tableProperties = if (ictEnablementVersion.contains(i)) {
+              Map("delta.enableInCommitTimestamps" -> "true")
+            } else {
+              Map.empty[String, String]
+            }
+            val clock = new ManualClock(ts)
+            appendData(
+              engine,
+              tablePath,
+              isNewTable = i == 0,
+              schema = testSchema,
+              data = immutable.Seq(Map.empty[String, Literal] -> dataBatches2),
+              clock = clock,
+              tableProperties = tableProperties)
+            // Only set the file modification time if ICT has not been enabled yet.
+            if (!ictEnablementVersion.exists(_ <= i)) {
+              val file = new File(FileNames.deltaFile(new Path(tablePath, "_delta_log"), i))
+              file.setLastModified(ts)
+            }
+          }
+>>>>>>> theirs
+        }
+
+<<<<<<< ours
       val start = 1540415658000L
       val minuteInMilliseconds = 60000L
       generateCommits(tempDir.getCanonicalPath, start, start + 20 * minuteInMilliseconds,
@@ -160,6 +281,42 @@ class TableChangesSuite extends AnyFunSuite with TestUtils {
         2,
         FULL_ACTION_SET
       )
+=======
+        val start = 1540415658000L
+        val minuteInMilliseconds = 60000L
+        generateCommits(
+          tempDir,
+          start,
+          start + 20 * minuteInMilliseconds,
+          start + 40 * minuteInMilliseconds)
+        val versionToTimestamp: Map[Long, Long] = Map(
+          0L -> start,
+          1L -> (start + 20 * minuteInMilliseconds),
+          2L -> (start + 40 * minuteInMilliseconds))
+
+        // Check the timestamps are returned correctly
+        Table.forPath(defaultEngine, tempDir)
+          .asInstanceOf[TableImpl]
+          .getChanges(defaultEngine, 0, 2, Set(DeltaAction.ADD).asJava)
+          .toSeq
+          .flatMap(_.getRows.toSeq)
+          .foreach { row =>
+            val version = row.getLong(0)
+            val timestamp = row.getLong(1)
+            assert(
+              timestamp == versionToTimestamp(version),
+              f"Expected timestamp ${versionToTimestamp(version)} for version $version but" +
+                f"Kernel returned timestamp $timestamp")
+          }
+
+        // Check contents as well
+        testGetChangesVsSpark(
+          tempDir,
+          0,
+          2,
+          FULL_ACTION_SET)
+      }
+>>>>>>> theirs
     }
   }
 
