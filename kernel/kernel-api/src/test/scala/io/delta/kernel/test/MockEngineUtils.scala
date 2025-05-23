@@ -22,6 +22,9 @@ import java.util.Optional
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector, FilteredColumnarBatch, Row}
 import io.delta.kernel.engine._
 import io.delta.kernel.expressions.{Column, Expression, ExpressionEvaluator, Predicate, PredicateEvaluator}
+import io.delta.kernel.internal.actions.CommitInfo
+import io.delta.kernel.internal.fs.Path
+import io.delta.kernel.internal.util.{FileNames, Utils}
 import io.delta.kernel.types.{DataType, StructType}
 import io.delta.kernel.utils.{CloseableIterator, DataFileStatus, FileStatus}
 
@@ -157,4 +160,59 @@ trait BaseMockFileSystemClient extends FileSystemClient {
 
   override def delete(path: String): Boolean =
     throw new UnsupportedOperationException("not supported in this test suite")
+}
+
+/**
+ * A mock [[JsonHandler]] that reads a single file and returns a single [[ColumnarBatch]].
+ * The columnar batch only contains the [[CommitInfo]] action with the `inCommitTimestamp`
+ * column set to the value in the mapping.
+ *
+ * @param deltaVersionToICTMapping A mapping from delta version to inCommitTimestamp.
+ */
+class MockReadICTFileJsonHandler(deltaVersionToICTMapping: Map[Long, Long])
+    extends BaseMockJsonHandler with VectorTestUtils {
+  override def readJsonFiles(
+      fileIter: CloseableIterator[FileStatus],
+      physicalSchema: StructType,
+      predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] = {
+    assert(fileIter.hasNext)
+    val filePathStr = fileIter.next.getPath
+    assert(FileNames.isCommitFile(filePathStr))
+    val deltaVersion = FileNames.getFileVersion(new Path(filePathStr))
+    assert(deltaVersionToICTMapping.contains(deltaVersion))
+
+    val ict = deltaVersionToICTMapping(deltaVersion)
+    val schema = new StructType().add("commitInfo", CommitInfo.FULL_SCHEMA);
+    Utils.singletonCloseableIterator(
+      new ColumnarBatch {
+        override def getSchema: StructType = schema
+
+        override def getColumnVector(ordinal: Int): ColumnVector = {
+          val struct = Seq(
+            longVector(ict), /* inCommitTimestamp */
+            longVector(-1L), /* timestamp */
+            stringVector(Seq("engine")), /* engineInfo */
+            stringVector(Seq("operation")), /* operation */
+            mapTypeVector(Seq(Map("operationParameter" -> ""))), /* operationParameters */
+            booleanVector(Seq(false)), /* isBlindAppend */
+            stringVector(Seq("txnId")), /* txnId */
+            mapTypeVector(Seq(Map("operationMetrics" -> ""))) /* operationMetrics */
+          )
+          ordinal match {
+            case 0 => new ColumnVector {
+                override def getDataType: DataType = schema
+
+                override def getSize: Int = struct.head.getSize
+
+                override def close(): Unit = {}
+
+                override def isNullAt(rowId: Int): Boolean = false
+
+                override def getChild(ordinal: Int): ColumnVector = struct(ordinal)
+              }
+          }
+        }
+        override def getSize: Int = 1
+      })
+  }
 }
