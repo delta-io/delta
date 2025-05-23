@@ -235,6 +235,7 @@ trait DeltaReplaceTableSuiteBase extends DeltaTableWriteSuiteBase {
       expectedTableFeaturesSupported: Seq[TableFeature] = Seq.empty): Unit = {
     // scalastyle:on argcount
     val oldProtocol = getProtocol(engine, tablePath)
+    val wasClusteredTable = oldProtocol.supportsFeature(TableFeatures.CLUSTERING_W_FEATURE)
 
     commitReplaceTable(
       engine,
@@ -265,7 +266,17 @@ trait DeltaReplaceTableSuiteBase extends DeltaTableWriteSuiteBase {
         assert(ClusteringUtils.getClusteringColumnsOptional(snapshot).toScala
           .exists(_.asScala == clusteringCols))
       case None =>
-        assert(!ClusteringMetadataDomain.fromSnapshot(snapshot).isPresent)
+        if (wasClusteredTable) {
+          // If the table was previously clustered we expect the table feature to remain and for
+          // there to be a clustering domain metadata with clusteringColumns=[]
+          assertHasWriterFeature(snapshot, "clustering")
+          assert(ClusteringUtils.getClusteringColumnsOptional(snapshot).toScala
+            .exists(_.isEmpty))
+        } else {
+          // Otherwise there should be no table feature and no clustering domain metadata
+          assertHasNoWriterFeature(snapshot, "clustering")
+          assert(!ClusteringMetadataDomain.fromSnapshot(snapshot).isPresent)
+        }
     }
 
     assert(snapshot.getMetadata.getConfiguration.asScala ==

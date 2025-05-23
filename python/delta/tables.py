@@ -27,6 +27,7 @@ from delta._typing import (
 from pyspark import since
 from pyspark.sql import Column, DataFrame, functions, SparkSession
 from pyspark.sql.types import DataType, StructType, StructField
+from pyspark.sql.utils import is_remote
 
 
 if TYPE_CHECKING:
@@ -332,6 +333,11 @@ class DeltaTable(object):
         :rtype: :py:class:`~delta.tables.DeltaTable`
         """
         assert sparkSession is not None
+        if is_remote():
+            from pyspark.sql.connect.session import SparkSession as RemoteSparkSession
+            if isinstance(sparkSession, RemoteSparkSession):
+                from delta.connect.tables import DeltaTable as RemoteDeltaTable
+                return RemoteDeltaTable.convertToDelta(sparkSession, identifier, partitionSchema)
 
         jvm: "JVMView" = sparkSession._sc._jvm  # type: ignore[attr-defined]
         jsparkSession: "JavaObject" = sparkSession._jsparkSession  # type: ignore[attr-defined]
@@ -380,12 +386,8 @@ class DeltaTable(object):
                            hadoopConf)
         """
         assert sparkSession is not None
-
-        if (sparkSession.version.split(".")[0] == "4"):
-            # Delta Connect is only supported in Delta 4.0+ on Spark 4.0+
-            # Only import if using Delta/Spark 4.0+ since the import fails without grpc installed
+        if is_remote():
             from pyspark.sql.connect.session import SparkSession as RemoteSparkSession
-
             if isinstance(sparkSession, RemoteSparkSession):
                 from delta.connect.tables import DeltaTable as RemoteDeltaTable
                 return RemoteDeltaTable.forPath(sparkSession, path, hadoopConf)
@@ -421,12 +423,8 @@ class DeltaTable(object):
             deltaTable = DeltaTable.forName(spark, "tblName")
         """
         assert sparkSession is not None
-
-        if (sparkSession.version.split(".")[0] == "4"):
-            # Delta Connect is only supported in Delta 4.0+ on Spark 4.0+
-            # Only import if using Delta/Spark 4.0+ since the import fails without grpc installed
+        if is_remote():
             from pyspark.sql.connect.session import SparkSession as RemoteSparkSession
-
             if isinstance(sparkSession, RemoteSparkSession):
                 from delta.connect.tables import DeltaTable as RemoteDeltaTable
                 return RemoteDeltaTable.forName(sparkSession, tableOrViewName)
@@ -460,6 +458,11 @@ class DeltaTable(object):
         if sparkSession is None:
             sparkSession = SparkSession.getActiveSession()
         assert sparkSession is not None
+        if is_remote():
+            from pyspark.sql.connect.session import SparkSession as RemoteSparkSession
+            if isinstance(sparkSession, RemoteSparkSession):
+                from delta.connect.tables import DeltaTable as RemoteDeltaTable
+                return RemoteDeltaTable.create(sparkSession)
 
         jvm: "JVMView" = sparkSession._sc._jvm  # type: ignore[attr-defined]
         jsparkSession: "JavaObject" = sparkSession._jsparkSession  # type: ignore[attr-defined]
@@ -490,6 +493,11 @@ class DeltaTable(object):
         if sparkSession is None:
             sparkSession = SparkSession.getActiveSession()
         assert sparkSession is not None
+        if is_remote():
+            from pyspark.sql.connect.session import SparkSession as RemoteSparkSession
+            if isinstance(sparkSession, RemoteSparkSession):
+                from delta.connect.tables import DeltaTable as RemoteDeltaTable
+                return RemoteDeltaTable.createIfNotExists(sparkSession)
 
         jvm: "JVMView" = sparkSession._sc._jvm  # type: ignore[attr-defined]
         jsparkSession: "JavaObject" = sparkSession._jsparkSession  # type: ignore[attr-defined]
@@ -520,6 +528,11 @@ class DeltaTable(object):
         if sparkSession is None:
             sparkSession = SparkSession.getActiveSession()
         assert sparkSession is not None
+        if is_remote():
+            from pyspark.sql.connect.session import SparkSession as RemoteSparkSession
+            if isinstance(sparkSession, RemoteSparkSession):
+                from delta.connect.tables import DeltaTable as RemoteDeltaTable
+                return RemoteDeltaTable.replace(sparkSession)
 
         jvm: "JVMView" = sparkSession._sc._jvm  # type: ignore[attr-defined]
         jsparkSession: "JavaObject" = sparkSession._jsparkSession  # type: ignore[attr-defined]
@@ -550,6 +563,11 @@ class DeltaTable(object):
         if sparkSession is None:
             sparkSession = SparkSession.getActiveSession()
         assert sparkSession is not None
+        if is_remote():
+            from pyspark.sql.connect.session import SparkSession as RemoteSparkSession
+            if isinstance(sparkSession, RemoteSparkSession):
+                from delta.connect.tables import DeltaTable as RemoteDeltaTable
+                return RemoteDeltaTable.createOrReplace(sparkSession)
 
         jvm: "JVMView" = sparkSession._sc._jvm  # type: ignore[attr-defined]
         jsparkSession: "JavaObject" = sparkSession._jsparkSession  # type: ignore[attr-defined]
@@ -574,6 +592,11 @@ class DeltaTable(object):
             DeltaTable.isDeltaTable(spark, "/path/to/table")
         """
         assert sparkSession is not None
+        if is_remote():
+            from pyspark.sql.connect.session import SparkSession as RemoteSparkSession
+            if isinstance(sparkSession, RemoteSparkSession):
+                from delta.connect.tables import DeltaTable as RemoteDeltaTable
+                return RemoteDeltaTable.isDeltaTable(sparkSession, identifier)
 
         jvm: "JVMView" = sparkSession._sc._jvm  # type: ignore[attr-defined]
         jsparkSession: "JavaObject" = sparkSession._jsparkSession  # type: ignore[attr-defined]

@@ -311,18 +311,15 @@ class IcebergConversionTransaction(
     // the schema as part of this transaction
     if (newMetadata.schema != prevMetadata.schema || tableOp == REPLACE_TABLE) {
       val differenceStr = SchemaUtils.reportDifferences(prevMetadata.schema, newMetadata.schema)
-      if (newMetadata.schema != prevMetadata.schema) {
-        logInfo(log"Detected Delta schema update for table with name=" +
-          log"${MDC(DeltaLogKeys.TABLE_NAME, newMetadata.name)}, " +
-          log"id=${MDC(DeltaLogKeys.METADATA_ID, newMetadata.id)}:\n" +
-          log"${MDC(DeltaLogKeys.SCHEMA_DIFF, differenceStr)}; Setting new Iceberg schema:\n " +
-          log"${MDC(DeltaLogKeys.SCHEMA, icebergSchema)}")
-      } else {
-        logInfo(log"Detected REPLACE_TABLE operation for table with name=" +
-          log"${MDC(DeltaLogKeys.TABLE_NAME, newMetadata.name)}." +
-          log" Setting new Iceberg schema:\n ${MDC(DeltaLogKeys.SCHEMA, icebergSchema)}")
-      }
-
+      logInfo(
+        log"Detected schema update for table with name=" +
+        log"${MDC(DeltaLogKeys.TABLE_NAME, newMetadata.name)}, " +
+        log"id=${MDC(DeltaLogKeys.METADATA_ID, newMetadata.id)}:\n" +
+        log"${MDC(DeltaLogKeys.SCHEMA_DIFF, differenceStr)}, " +
+        s"tableOp=$tableOp, " +
+        log"Setting new Iceberg schema:\n " +
+        log"${MDC(DeltaLogKeys.SCHEMA, icebergSchema)}"
+      )
       txn.setSchema(icebergSchema).commit()
 
       recordDeltaEvent(

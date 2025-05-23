@@ -20,9 +20,10 @@ import scala.collection.JavaConverters._
 
 import io.delta.connect.proto
 import io.delta.connect.spark.{proto => spark_proto}
+import io.delta.tables.execution.{CreateTableOptions, ReplaceTableOptions}
 
 import org.apache.spark.annotation.Evolving
-import org.apache.spark.sql.{functions, Column, DataFrame, Dataset, Row, SparkSession}
+import org.apache.spark.sql.{functions, AnalysisException, Column, DataFrame, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.encoders.AgnosticEncoders.PrimitiveBooleanEncoder
 import org.apache.spark.sql.connect.ColumnNodeToProtoConverter.toExpr
 import org.apache.spark.sql.connect.ConnectConversions._
@@ -928,6 +929,93 @@ class DeltaTable private[tables](
     execute(command)
   }
 
+  /**
+   * Modify the protocol to add a supported feature, and if the table does not support table
+   * features, upgrade the protocol automatically. In such a case when the provided feature is
+   * writer-only, the table's writer version will be upgraded to `7`, and when the provided
+   * feature is reader-writer, both reader and writer versions will be upgraded, to `(3, 7)`.
+   *
+   * See online documentation and Delta's protocol specification at PROTOCOL.md for more details.
+   *
+   * @since 4.0.0
+   */
+  def addFeatureSupport(featureName: String): Unit = {
+    val addFeatureSupport = proto.AddFeatureSupport
+      .newBuilder()
+      .setTable(table)
+      .setFeatureName(featureName)
+    val command = proto.DeltaCommand.newBuilder().setAddFeatureSupport(addFeatureSupport).build()
+    execute(command)
+  }
+
+  private def executeDropFeature(featureName: String, truncateHistory: Option[Boolean]): Unit = {
+    val dropFeatureSupport = proto.DropFeatureSupport
+      .newBuilder()
+      .setTable(table)
+      .setFeatureName(featureName)
+    truncateHistory.foreach(dropFeatureSupport.setTruncateHistory)
+    val command = proto.DeltaCommand.newBuilder().setDropFeatureSupport(dropFeatureSupport).build()
+    execute(command)
+  }
+
+  /**
+   * Modify the protocol to drop a supported feature. The operation always normalizes the
+   * resulting protocol. Protocol normalization is the process of converting a table features
+   * protocol to the weakest possible form. This primarily refers to converting a table features
+   * protocol to a legacy protocol. A table features protocol can be represented with the legacy
+   * representation only when the feature set of the former exactly matches a legacy protocol.
+   * Normalization can also decrease the reader version of a table features protocol when it is
+   * higher than necessary. For example:
+   *
+   * (1, 7, None, {AppendOnly, Invariants, CheckConstraints}) -> (1, 3)
+   * (3, 7, None, {RowTracking}) -> (1, 7, RowTracking)
+   *
+   * The dropFeatureSupport method can be used as follows:
+   * {{{
+   *   io.delta.tables.DeltaTable.dropFeatureSupport("rowTracking")
+   * }}}
+   *
+   * See online documentation for more details.
+   *
+   * @param featureName The name of the feature to drop.
+   * @param truncateHistory Whether to truncate history before downgrading the protocol.
+   * @return None.
+   * @since 4.0.0
+   */
+  def dropFeatureSupport(featureName: String, truncateHistory: Boolean): Unit = {
+    executeDropFeature(featureName, Some(truncateHistory))
+  }
+
+  /**
+   * Modify the protocol to drop a supported feature. The operation always normalizes the
+   * resulting protocol. Protocol normalization is the process of converting a table features
+   * protocol to the weakest possible form. This primarily refers to converting a table features
+   * protocol to a legacy protocol. A table features protocol can be represented with the legacy
+   * representation only when the feature set of the former exactly matches a legacy protocol.
+   * Normalization can also decrease the reader version of a table features protocol when it is
+   * higher than necessary. For example:
+   *
+   * (1, 7, None, {AppendOnly, Invariants, CheckConstraints}) -> (1, 3)
+   * (3, 7, None, {RowTracking}) -> (1, 7, RowTracking)
+   *
+   * The dropFeatureSupport method can be used as follows:
+   * {{{
+   *   io.delta.tables.DeltaTable.dropFeatureSupport("rowTracking")
+   * }}}
+   *
+   * Note, this command will not truncate history.
+   *
+   * See online documentation for more details.
+   *
+   *
+   * @param featureName The name of the feature to drop.
+   * @return None.
+   * @since 4.0.0
+   */
+  def dropFeatureSupport(featureName: String): Unit = {
+    executeDropFeature(featureName, None)
+  }
+
   private def execute(command: proto.DeltaCommand): Unit = {
     val extension = com.google.protobuf.Any.pack(command)
     val sparkCommand = spark_proto.Command
@@ -949,6 +1037,18 @@ class DeltaTable private[tables](
  */
 object DeltaTable {
   /**
+   * Helper method to get the active SparkSession.
+   * 
+   * @return The active SparkSession if one exists.
+   * @throws IllegalArgumentException if no active SparkSession is found.
+   */
+  private def getActiveSparkSession(): SparkSession = {
+    SparkSession.getActiveSession.getOrElse {
+      throw new IllegalArgumentException("Could not find active SparkSession") 
+    }
+  }
+
+  /**
    * Instantiate a [[DeltaTable]] object representing the data at the given path, If the given
    * path is invalid (i.e. either no table exists or an existing table is not a Delta table),
    * it throws a `not a Delta table` error.
@@ -960,10 +1060,7 @@ object DeltaTable {
    * @since 4.0.0
    */
   def forPath(path: String): DeltaTable = {
-    val sparkSession = SparkSession.getActiveSession.getOrElse {
-      throw new IllegalArgumentException("Could not find active SparkSession")
-    }
-    forPath(sparkSession, path)
+    forPath(getActiveSparkSession(), path)
   }
 
   /**
@@ -1054,10 +1151,7 @@ object DeltaTable {
    * @since 4.0.0
    */
   def forName(tableOrViewName: String): DeltaTable = {
-    val sparkSession = SparkSession.getActiveSession.getOrElse {
-      throw new IllegalArgumentException("Could not find active SparkSession")
-    }
-    forName(sparkSession, tableOrViewName)
+    forName(getActiveSparkSession(), tableOrViewName)
   }
 
   /**
@@ -1128,9 +1222,182 @@ object DeltaTable {
    * @since 4.0.0
    */
   def isDeltaTable(identifier: String): Boolean = {
-    val sparkSession = SparkSession.getActiveSession.getOrElse {
-      throw new IllegalArgumentException("Could not find active SparkSession")
-    }
-    isDeltaTable(sparkSession, identifier)
+    isDeltaTable(getActiveSparkSession(), identifier)
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Return an instance of [[DeltaTableBuilder]] to create a Delta table,
+   * error if the table exists (the same as SQL `CREATE TABLE`).
+   * Refer to [[DeltaTableBuilder]] for more details.
+   *
+   * Note: This uses the active SparkSession in the current thread to read the table data. Hence,
+   * this throws error if active SparkSession has not been set, that is,
+   * `SparkSession.getActiveSession()` is empty.
+   *
+   * @since 4.0.0
+   */
+  @Evolving
+  def create(): DeltaTableBuilder = {
+    create(getActiveSparkSession())
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Return an instance of [[DeltaTableBuilder]] to create a Delta table,
+   * error if the table exists (the same as SQL `CREATE TABLE`).
+   * Refer to [[DeltaTableBuilder]] for more details.
+   *
+   * @param spark sparkSession sparkSession passed by the user
+   * @since 4.0.0
+   */
+  @Evolving
+  def create(spark: SparkSession): DeltaTableBuilder = {
+    new DeltaTableBuilder(spark, CreateTableOptions(ifNotExists = false))
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Return an instance of [[DeltaTableBuilder]] to create a Delta table,
+   * if it does not exists (the same as SQL `CREATE TABLE IF NOT EXISTS`).
+   * Refer to [[DeltaTableBuilder]] for more details.
+   *
+   * Note: This uses the active SparkSession in the current thread to read the table data. Hence,
+   * this throws error if active SparkSession has not been set, that is,
+   * `SparkSession.getActiveSession()` is empty.
+   *
+   * @since 4.0.0
+   */
+  @Evolving
+  def createIfNotExists(): DeltaTableBuilder = {
+    createIfNotExists(getActiveSparkSession())
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Return an instance of [[DeltaTableBuilder]] to create a Delta table,
+   * if it does not exists (the same as SQL `CREATE TABLE IF NOT EXISTS`).
+   * Refer to [[DeltaTableBuilder]] for more details.
+   *
+   * @param spark sparkSession sparkSession passed by the user
+   * @since 4.0.0
+   */
+  @Evolving
+  def createIfNotExists(spark: SparkSession): DeltaTableBuilder = {
+    new DeltaTableBuilder(spark, CreateTableOptions(ifNotExists = true))
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Return an instance of [[DeltaTableBuilder]] to replace a Delta table,
+   * error if the table doesn't exist (the same as SQL `REPLACE TABLE`)
+   * Refer to [[DeltaTableBuilder]] for more details.
+   *
+   * Note: This uses the active SparkSession in the current thread to read the table data. Hence,
+   * this throws error if active SparkSession has not been set, that is,
+   * `SparkSession.getActiveSession()` is empty.
+   *
+   * @since 4.0.0
+   */
+  @Evolving
+  def replace(): DeltaTableBuilder = {
+    replace(getActiveSparkSession())
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Return an instance of [[DeltaTableBuilder]] to replace a Delta table,
+   * error if the table doesn't exist (the same as SQL `REPLACE TABLE`)
+   * Refer to [[DeltaTableBuilder]] for more details.
+   *
+   * @param spark sparkSession sparkSession passed by the user
+   * @since 4.0.0
+   */
+  @Evolving
+  def replace(spark: SparkSession): DeltaTableBuilder = {
+    new DeltaTableBuilder(spark, ReplaceTableOptions(orCreate = false))
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Return an instance of [[DeltaTableBuilder]] to replace a Delta table
+   * or create table if not exists (the same as SQL `CREATE OR REPLACE TABLE`)
+   * Refer to [[DeltaTableBuilder]] for more details.
+   *
+   * Note: This uses the active SparkSession in the current thread to read the table data. Hence,
+   * this throws error if active SparkSession has not been set, that is,
+   * `SparkSession.getActiveSession()` is empty.
+   *
+   * @since 4.0.0
+   */
+  @Evolving
+  def createOrReplace(): DeltaTableBuilder = {
+    createOrReplace(getActiveSparkSession())
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Return an instance of [[DeltaTableBuilder]] to replace a Delta table,
+   * or create table if not exists (the same as SQL `CREATE OR REPLACE TABLE`)
+   * Refer to [[DeltaTableBuilder]] for more details.
+   *
+   * @param spark sparkSession sparkSession passed by the user.
+   * @since 4.0.0
+   */
+  @Evolving
+  def createOrReplace(spark: SparkSession): DeltaTableBuilder = {
+    new DeltaTableBuilder(spark, ReplaceTableOptions(orCreate = true))
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Return an instance of [[DeltaColumnBuilder]] to specify a column.
+   * Refer to [[DeltaTableBuilder]] for examples and [[DeltaColumnBuilder]] detailed APIs.
+   *
+   * Note: This uses the active SparkSession in the current thread to read the table data. Hence,
+   * this throws error if active SparkSession has not been set, that is,
+   * `SparkSession.getActiveSession()` is empty.
+   *
+   * @param colName string the column name
+   * @since 4.0.0
+   */
+  @Evolving
+  def columnBuilder(colName: String): DeltaColumnBuilder = {
+    new DeltaColumnBuilder(colName)
+  }
+
+  /**
+   * :: Evolving ::
+   *
+   * Return an instance of [[DeltaColumnBuilder]] to specify a column.
+   * Refer to [[DeltaTableBuilder]] for examples and [[DeltaColumnBuilder]] detailed APIs.
+   *
+   * @param spark   sparkSession sparkSession passed by the user
+   * @param colName string the column name
+   * @since 4.0.0
+   */
+  @Evolving
+  def columnBuilder(spark: SparkSession, colName: String): DeltaColumnBuilder = {
+    new DeltaColumnBuilder(colName)
+  }
+
+  private[tables] def createAnalysisException(message: String): AnalysisException = {
+    // TODO: We should refactor this to use DeltaErrors. Until then, we need to use a dummy Spark
+    // error class to initialize the AnalysisException, which we then remove in the copy method.
+    new AnalysisException(
+      errorClass = "ALL_PARTITION_COLUMNS_NOT_ALLOWED",
+      messageParameters = Map("message" -> message)).copy(
+        message = message, 
+        errorClass = None,
+        messageParameters = Map.empty)
   }
 }
