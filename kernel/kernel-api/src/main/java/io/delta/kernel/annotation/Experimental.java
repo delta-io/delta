@@ -14,26 +14,23 @@
  * limitations under the License.
  */
 
-package io.delta.kernel;
+package io.delta.kernel.annotation;
 
-import io.delta.kernel.annotation.Experimental;
-import io.delta.kernel.types.StructType;
-import java.util.List;
-import java.util.Optional;
+import java.lang.annotation.*;
 
-@Experimental
-public interface ResolvedTable {
-  String getPath();
-
-  long getVersion();
-
-  long getTimestamp();
-
-  List<String> getPartitionColumns();
-
-  Optional<String> getDomainMetadata(String domain);
-
-  StructType getSchema();
-
-  ScanBuilder getScanBuilder();
-}
+/**
+ * APIs that are still under active development and are expected to change. Experimental interfaces
+ * can change, break, or be deleted from one feature release to another release (i.e. 3.0 to 3.1).
+ */
+@Documented
+@Retention(RetentionPolicy.RUNTIME)
+@Target({
+  ElementType.TYPE,
+  ElementType.FIELD,
+  ElementType.METHOD,
+  ElementType.PARAMETER,
+  ElementType.CONSTRUCTOR,
+  ElementType.LOCAL_VARIABLE,
+  ElementType.PACKAGE
+})
+public @interface Experimental {}

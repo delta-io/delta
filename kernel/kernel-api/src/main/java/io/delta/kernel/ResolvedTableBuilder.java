@@ -16,12 +16,12 @@
 
 package io.delta.kernel;
 
-import io.delta.kernel.annotation.Evolving;
+import io.delta.kernel.annotation.Experimental;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.files.ParsedLogData;
 import java.util.List;
 
-@Evolving
+@Experimental
 public interface ResolvedTableBuilder {
   ResolvedTableBuilder atVersion(long version);
 

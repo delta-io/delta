@@ -16,16 +16,18 @@
 
 package io.delta.kernel;
 
-import io.delta.kernel.annotation.Evolving;
+import io.delta.kernel.annotation.Experimental;
 
-@Evolving
+@Experimental
 public interface TableManager {
-  // TODO ResolvedTable forPathAtLatest(Engine engine, String path);
-  // TODO ResolvedTable forPathAtVersion(Engine engine, String path, long version);
-  // TODO ResolvedTable forPathAtTimestamp(Engine engine, String path, long timestamp);
+  // TODO static ResolvedTable forPathAtLatest(Engine engine, String path);
+  // TODO static ResolvedTable forPathAtVersion(Engine engine, String path, long version);
+  // TODO static ResolvedTable forPathAtTimestamp(Engine engine, String path, long timestamp);
 
   // TODO: Take in a Committer for write support.
   static ResolvedTableBuilder loadTable(String path) {
     throw new UnsupportedOperationException("Not implemented");
   }
+
+  // TODO: static CreateTableTransactionBuilder buildCreateTableTransaction(...)
 }
