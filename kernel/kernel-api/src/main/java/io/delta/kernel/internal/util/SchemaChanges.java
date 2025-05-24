@@ -36,14 +36,41 @@ import java.util.List;
  * level schema
  */
 class SchemaChanges {
+  public static class SchemaUpdate {
+    private final StructField fieldBefore;
+    private final StructField fieldAfter;
+    // Note this is a by name. If we want to be able to track changes
+    // at the where an element is moved to a different location in the
+    // schema we need to add more paths here.
+    private final String pathToAfterField;
+
+    SchemaUpdate(StructField fieldBefore, StructField fieldAfter, String pathToAfterField) {
+      this.fieldBefore = fieldBefore;
+      this.fieldAfter = fieldAfter;
+      this.pathToAfterField = pathToAfterField;
+    }
+
+    public StructField getFieldBefore() {
+      return fieldBefore;
+    }
+
+    public StructField getFieldAfter() {
+      return fieldAfter;
+    }
+
+    public String getPathToAfterField() {
+      return pathToAfterField;
+    }
+  }
+
   private List<StructField> addedFields;
   private List<StructField> removedFields;
-  private List<Tuple2<StructField, StructField>> updatedFields;
+  private List<SchemaUpdate> updatedFields;
 
   private SchemaChanges(
       List<StructField> addedFields,
       List<StructField> removedFields,
-      List<Tuple2<StructField, StructField>> updatedFields) {
+      List<SchemaUpdate> updatedFields) {
     this.addedFields = Collections.unmodifiableList(addedFields);
     this.removedFields = Collections.unmodifiableList(removedFields);
     this.updatedFields = Collections.unmodifiableList(updatedFields);
@@ -52,7 +79,7 @@ class SchemaChanges {
   static class Builder {
     private List<StructField> addedFields = new ArrayList<>();
     private List<StructField> removedFields = new ArrayList<>();
-    private List<Tuple2<StructField, StructField>> updatedFields = new ArrayList<>();
+    private List<SchemaUpdate> updatedFields = new ArrayList<>();
 
     public Builder withAddedField(StructField addedField) {
       addedFields.add(addedField);
@@ -64,8 +91,9 @@ class SchemaChanges {
       return this;
     }
 
-    public Builder withUpdatedField(StructField existingField, StructField newField) {
-      updatedFields.add(new Tuple2<>(existingField, newField));
+    public Builder withUpdatedField(
+        StructField existingField, StructField newField, String pathToAfterField) {
+      updatedFields.add(new SchemaUpdate(existingField, newField, pathToAfterField));
       return this;
     }
 
@@ -88,8 +116,8 @@ class SchemaChanges {
     return removedFields;
   }
 
-  /* Updated Fields (e.g. rename, type change) represented as a Tuple<FieldBefore, FieldAfter> */
-  public List<Tuple2<StructField, StructField>> updatedFields() {
+  /* Updated Fields (e.g. rename, type change) represented */
+  public List<SchemaUpdate> updatedFields() {
     return updatedFields;
   }
 }
