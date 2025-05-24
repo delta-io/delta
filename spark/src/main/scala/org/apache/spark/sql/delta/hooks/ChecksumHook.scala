@@ -17,8 +17,7 @@
 package org.apache.spark.sql.delta.hooks
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.{DeltaLog, DeltaTransaction, RecordChecksum, Snapshot}
-import org.apache.spark.sql.delta.actions.Action
+import org.apache.spark.sql.delta.{CommittedTransaction, DeltaLog, RecordChecksum, Snapshot}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 
@@ -38,26 +37,18 @@ object ChecksumHook extends PostCommitHook with DeltaLogging {
 
   override val name: String = "Post commit checksum trigger"
 
-  override def run(
-      spark: SparkSession,
-      txn: DeltaTransaction,
-      committedVersion: Long,
-      postCommitSnapshot: Snapshot,
-      committedActions: Iterator[Action]): Unit = {
+  override def run(spark: SparkSession, txn: CommittedTransaction): Unit = {
     // Only write the checksum if the postCommitSnapshot matches the version that was committed.
-    if (postCommitSnapshot.version != committedVersion) return
+    if (txn.postCommitSnapshot.version != txn.committedVersion) return
     logInfo(
       log"Writing checksum file for table path ${MDC(DeltaLogKeys.PATH, txn.deltaLog.logPath)} " +
-      log"version ${MDC(DeltaLogKeys.VERSION, committedVersion)}")
+      log"version ${MDC(DeltaLogKeys.VERSION, txn.committedVersion)}")
 
-    writeChecksum(spark, txn, postCommitSnapshot)
+    writeChecksum(spark, txn)
   }
 
-  private def writeChecksum(
-      spark: SparkSession,
-      txn: DeltaTransaction,
-      postCommitSnapshot: Snapshot): Unit = {
-    WriteChecksum(spark, txn.deltaLog, txn.txnId, postCommitSnapshot)
+  private def writeChecksum(spark: SparkSession, txn: CommittedTransaction): Unit = {
+    WriteChecksum(spark, txn.deltaLog, txn.txnId, txn.postCommitSnapshot)
   }
 
 }

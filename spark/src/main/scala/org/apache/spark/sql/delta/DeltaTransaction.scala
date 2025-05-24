@@ -101,12 +101,7 @@ trait DeltaTransaction extends DeltaLogging {
       committedTransaction: CommittedTransaction): Unit = {
     val version = committedTransaction.committedVersion
     try {
-      hook.run(
-        spark,
-        committedTransaction,
-        committedTransaction.committedVersion,
-        committedTransaction.postCommitSnapshot,
-        committedTransaction.committedActions.toIterator)
+      hook.run(spark, committedTransaction)
     } catch {
       case NonFatal(e) =>
         logWarning(log"Error when executing post-commit hook " +

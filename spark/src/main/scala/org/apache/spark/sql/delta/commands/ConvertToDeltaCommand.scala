@@ -393,7 +393,7 @@ abstract class ConvertToDeltaCommandBase(
       )
       metrics("numConvertedFiles") += numFiles
       sendDriverMetrics(spark, metrics)
-      val (committedVersion, postCommitSnapshot) = txn.commitLarge(
+      txn.commitLarge(
         spark,
         addFilesIter,
         Some(txn.protocol),

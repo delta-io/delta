@@ -16,8 +16,7 @@
 
 package org.apache.spark.sql.delta.hooks
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaTransaction, Snapshot, UniversalFormat}
-import org.apache.spark.sql.delta.actions.Action
+import org.apache.spark.sql.delta.{CommittedTransaction, DeltaErrors, UniversalFormat}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf.DELTA_UNIFORM_ICEBERG_SYNC_CONVERT_ENABLED
 import org.apache.commons.lang3.exception.ExceptionUtils
@@ -30,16 +29,12 @@ object IcebergConverterHook extends PostCommitHook with DeltaLogging {
 
   val ASYNC_ICEBERG_CONVERTER_THREAD_NAME = "async-iceberg-converter"
 
-  override def run(
-      spark: SparkSession,
-      txn: DeltaTransaction,
-      committedVersion: Long,
-      postCommitSnapshot: Snapshot,
-      committedActions: Iterator[Action]): Unit = {
+  override def run(spark: SparkSession, txn: CommittedTransaction): Unit = {
+    val postCommitSnapshot = txn.postCommitSnapshot
     // Only convert to Iceberg if the snapshot matches the version committed.
     // This is to skip converting the same actions multiple times - they'll be written out
     // by another commit anyways.
-    if (committedVersion != postCommitSnapshot.version ||
+    if (txn.committedVersion != postCommitSnapshot.version ||
         !UniversalFormat.icebergEnabled(postCommitSnapshot.metadata)) {
       return
     }

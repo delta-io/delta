@@ -16,8 +16,7 @@
 
 package org.apache.spark.sql.delta.hooks
 
-import org.apache.spark.sql.delta.{DeltaTransaction, Snapshot}
-import org.apache.spark.sql.delta.actions.Action
+import org.apache.spark.sql.delta.CommittedTransaction
 
 import org.apache.spark.sql.SparkSession
 
@@ -25,19 +24,14 @@ import org.apache.spark.sql.SparkSession
 object CheckpointHook extends PostCommitHook {
   override val name: String = "Post commit checkpoint trigger"
 
-  override def run(
-      spark: SparkSession,
-      txn: DeltaTransaction,
-      committedVersion: Long,
-      postCommitSnapshot: Snapshot,
-      committedActions: Iterator[Action]): Unit = {
+  override def run(spark: SparkSession, txn: CommittedTransaction): Unit = {
     if (!txn.needsCheckpoint) return
 
     // Since the postCommitSnapshot isn't guaranteed to match committedVersion, we have to
     // explicitly checkpoint the snapshot at the committedVersion.
-    val cp = postCommitSnapshot.checkpointProvider
+    val cp = txn.postCommitSnapshot.checkpointProvider
     val snapshotToCheckpoint = txn.deltaLog.getSnapshotAt(
-      committedVersion,
+      txn.committedVersion,
       lastCheckpointHint = None,
       lastCheckpointProvider = Some(cp),
       catalogTableOpt = txn.catalogTable)
