@@ -26,6 +26,8 @@ import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.FileStatus
 
 import org.scalatest.funsuite.AnyFunSuite
+import org.scalatest.matchers.must.Matchers.be
+import org.scalatest.matchers.should.Matchers.convertToAnyShouldWrapper
 
 class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
@@ -258,6 +260,54 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils {
     assert(parsed_15_1_3_a != parsed_15_2_3)
     assert(parsed_15_1_3_a != parsed_15_1_4)
     assert(parsed_15_1_3_a != parsed_16_1_3)
+  }
+
+  /////////////////////////
+  // Checkpoint ordering //
+  /////////////////////////
+
+  test("checkpoint ordering") {
+    // _m means materialized, _i means inline
+
+    val classic_12_m = ParsedCheckpointData.forFileStatus(classicCheckpointFileStatus(12))
+    val multi_11_3_m = ParsedCheckpointData.forFileStatus(multiPartCheckpointFileStatus(11, 1, 3))
+    val v2_10_m = ParsedCheckpointData.forFileStatus(v2CheckpointFileStatus(10))
+
+    val multi_12_3_m = ParsedCheckpointData.forFileStatus(multiPartCheckpointFileStatus(12, 1, 3))
+    val v2_12_m = ParsedCheckpointData.forFileStatus(v2CheckpointFileStatus(12))
+
+    val classic_12_i =
+      ParsedCheckpointData.forInlineData(12, ParsedLogType.CLASSIC_CHECKPOINT, emptyColumnarBatch)
+    val v2_12_i =
+      ParsedCheckpointData.forInlineData(12, ParsedLogType.V2_CHECKPOINT, emptyColumnarBatch)
+
+    val multi_12_3_i = ParsedMultiPartCheckpointData.forInlineData(12, 1, 3, emptyColumnarBatch)
+    val multi_12_4_m = ParsedCheckpointData.forFileStatus(multiPartCheckpointFileStatus(12, 1, 4))
+
+    val v2_aaa = ParsedCheckpointData.forFileStatus(
+      FileStatus.of(FileNames.topLevelV2CheckpointFile(logPath, 10, "aaa", "json").toString))
+    val v2_bbb = ParsedCheckpointData.forFileStatus(
+      FileStatus.of(FileNames.topLevelV2CheckpointFile(logPath, 10, "bbb", "json").toString))
+
+    // Case 1: Version priority
+    classic_12_m should be > multi_11_3_m
+    classic_12_m should be > v2_10_m
+    multi_11_3_m should be > v2_10_m
+
+    // Case 2: Type priority, when version is tied
+    v2_12_m should be > classic_12_m
+    v2_12_m should be > multi_12_3_m
+
+    // Case 3: Inline priority, when version and type are tied (and parts are tied for multi)
+    classic_12_i should be > classic_12_m
+    v2_12_i should be > v2_12_m
+    multi_12_3_i should be > multi_12_3_m
+
+    // Case 4: Multi-part checkpoint with more parts has higher priority
+    multi_12_4_m should be > multi_12_3_m
+
+    // Case 5: For tied v2, filepath is tie-breaker
+    v2_bbb should be > v2_aaa
   }
 
   /////////////////////
