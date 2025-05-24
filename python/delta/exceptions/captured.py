@@ -19,18 +19,25 @@ from typing import TYPE_CHECKING, Optional
 from pyspark import SparkContext
 from pyspark.errors.exceptions import captured
 from pyspark.errors.exceptions.captured import CapturedException
-from pyspark.sql.utils import (
-    AnalysisException,
-    IllegalArgumentException,
-    ParseException
+
+from delta.exceptions.base import (
+    DeltaConcurrentModificationException as BaseDeltaConcurrentModificationException,
+    ConcurrentWriteException as BaseConcurrentWriteException,
+    MetadataChangedException as BaseMetadataChangedException,
+    ProtocolChangedException as BaseProtocolChangedException,
+    ConcurrentAppendException as BaseConcurrentAppendException,
+    ConcurrentDeleteReadException as BaseConcurrentDeleteReadException,
+    ConcurrentDeleteDeleteException as BaseConcurrentDeleteDeleteException,
+    ConcurrentTransactionException as BaseConcurrentTransactionException,
 )
-from py4j.java_gateway import is_instance_of  # type: ignore[import]
 
 if TYPE_CHECKING:
     from py4j.java_gateway import JavaObject, JVMView  # type: ignore[import]
 
 
-class DeltaConcurrentModificationException(CapturedException):
+class DeltaConcurrentModificationException(
+    CapturedException, BaseDeltaConcurrentModificationException
+):
     """
     The basic class for all Delta commit conflict exceptions.
 
@@ -40,7 +47,7 @@ class DeltaConcurrentModificationException(CapturedException):
     """
 
 
-class ConcurrentWriteException(CapturedException):
+class ConcurrentWriteException(CapturedException, BaseConcurrentWriteException):
     """
     Thrown when a concurrent transaction has written data after the current transaction read the
     table.
@@ -51,7 +58,7 @@ class ConcurrentWriteException(CapturedException):
     """
 
 
-class MetadataChangedException(CapturedException):
+class MetadataChangedException(CapturedException, BaseMetadataChangedException):
     """
     Thrown when the metadata of the Delta table has changed between the time of read
     and the time of commit.
@@ -62,7 +69,7 @@ class MetadataChangedException(CapturedException):
     """
 
 
-class ProtocolChangedException(CapturedException):
+class ProtocolChangedException(CapturedException, BaseProtocolChangedException):
     """
     Thrown when the protocol version has changed between the time of read
     and the time of commit.
@@ -73,7 +80,7 @@ class ProtocolChangedException(CapturedException):
     """
 
 
-class ConcurrentAppendException(CapturedException):
+class ConcurrentAppendException(CapturedException, BaseConcurrentAppendException):
     """
     Thrown when files are added that would have been read by the current transaction.
 
@@ -83,7 +90,7 @@ class ConcurrentAppendException(CapturedException):
     """
 
 
-class ConcurrentDeleteReadException(CapturedException):
+class ConcurrentDeleteReadException(CapturedException, BaseConcurrentDeleteReadException):
     """
     Thrown when the current transaction reads data that was deleted by a concurrent transaction.
 
@@ -93,7 +100,7 @@ class ConcurrentDeleteReadException(CapturedException):
     """
 
 
-class ConcurrentDeleteDeleteException(CapturedException):
+class ConcurrentDeleteDeleteException(CapturedException, BaseConcurrentDeleteDeleteException):
     """
     Thrown when the current transaction deletes data that was deleted by a concurrent transaction.
 
@@ -103,7 +110,7 @@ class ConcurrentDeleteDeleteException(CapturedException):
     """
 
 
-class ConcurrentTransactionException(CapturedException):
+class ConcurrentTransactionException(CapturedException, BaseConcurrentTransactionException):
     """
     Thrown when concurrent transaction both attempt to update the same idempotent transaction.
 

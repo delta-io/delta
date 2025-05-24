@@ -19,7 +19,6 @@ from typing import (
     TYPE_CHECKING, cast, overload, Any, Dict, Iterable, Optional, Union, NoReturn, List, Tuple
 )
 
-import delta.exceptions  # noqa: F401; pylint: disable=unused-variable
 from delta._typing import (
     ColumnMapping, OptionalColumnMapping, ExpressionOrColumn, OptionalExpressionOrColumn
 )
