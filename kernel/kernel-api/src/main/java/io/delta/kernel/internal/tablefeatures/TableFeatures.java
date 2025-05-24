@@ -235,7 +235,8 @@ public class TableFeatures {
 
     @Override
     public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
-      return TableConfig.VARIANT_SHREDDING_ENABLED.fromMetadata(metadata);
+      return hasTypeColumn(metadata.getSchema(), VARIANT)
+          && TableConfig.VARIANT_SHREDDING_ENABLED.fromMetadata(metadata);
     }
 
     @Override
