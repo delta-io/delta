@@ -1,0 +1,130 @@
+/*
+ * Copyright (2021) The Delta Lake Project Authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package example
+
+import io.delta.tables.DeltaTable
+
+import org.apache.spark.sql.{DataFrame, SparkSession}
+
+"""
+To run this example you must follow these steps:
+
+Requirements:
+- Using Java 17
+- Spark 4.0.0-preview1+
+- delta-spark (scala package) 4.0.0rc1+, delta-spark-connect-client 4.0.0rc1+ and delta-spark-connect-common 4.0.0rc1+
+
+(1) Start a local Spark connect server using this command:
+sbin/start-connect-server.sh \
+  --packages org.apache.spark:spark-connect_2.13:4.0.0-preview1,io.delta:delta-connect-server_2.13:{DELTA_VERSION},io.delta:delta-spark_2.13:{DELTA_VERSION},com.google.protobuf:protobuf-java:3.25.1 \
+  --conf "spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension" \
+  --conf "spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog" \
+  --conf "spark.connect.extensions.relation.classes"="org.apache.spark.sql.connect.delta.DeltaRelationPlugin" \
+  --conf "spark.connect.extensions.command.classes"="org.apache.spark.sql.connect.delta.DeltaCommandPlugin"
+* Be sure to replace DELTA_VERSION with the version you are using
+
+(2) Set the SPARK_REMOTE environment variable to point to your local Spark server
+export SPARK_REMOTE="sc://localhost"
+
+(3) export _JAVA_OPTIONS="--add-opens=java.base/java.nio=ALL-UNNAMED"
+
+(4) Run this file i.e. bin/spark-submit --remote 'sc://localhost' --class example.DeltaConnect --packages org.apache.spark:spark-connect-client-jvm:4.0.0-preview1 io.delta:delta-connect-client_2.13:4.0.0rc1 io.delta:delta-connect-common_2.13:4.0.0rc1 com.google.protobuf:protobuf-java:3.25.1
+"""
+
+object DeltaConnect {
+  private val filePath = "/tmp/deltaConnect"
+
+  private val tableName = "deltaConnectTable"
+
+  private def assertDataframeEquals(df1: DataFrame, df2: DataFrame): Unit = {
+    assert(df1.collect().sort() == df2.collect().sort())
+  }
+
+  private def cleanup(): Unit = {
+    deltaSpark.sql(s"DROP TABLE IF EXISTS $tableName")
+    deltaSpark.sql(s"DROP TABLE IF EXISTS delta.`${filePath}`")
+  }
+
+  def main(args: Array[String]): Unit = {
+    val deltaSpark = SparkSession
+      .builder()
+      .appName("DeltaConnectClient")
+      .remote("sc://localhost")
+      .getOrCreate()
+
+    // Clear up old session
+    cleanup()
+
+    // Using forPath
+    try {
+      DeltaTable.forPath(deltaSpark, filePath).toDF.show()
+    } catch {
+      case e: DeltaAnalysisException =>
+        assert(ex.getErrorClass === "DELTA_MISSING_DELTA_TABLE")
+    }
+
+    // Using forName
+    try {
+      DeltaTable.forName(deltaSpark, tableName).toDF.show()
+    } catch {
+      case e: DeltaAnalysisException =>
+        assert(ex.getErrorClass === "DELTA_MISSING_DELTA_TABLE")
+    }
+
+    try {
+      println("########### Write basic table and check that results match ##############")
+      // By table name
+      spark.range(5).write.format("delta").saveAsTable(tableName)
+      assertDataframeEquals(DeltaTable.forName(spark, tableName).toDF, spark.range(5))
+      assertDataframeEquals(spark.read.format("delta").table(tableName), spark.range(5))
+      assertDataframeEquals(spark.sql(s"SELECT * FROM ${tableName}"), spark.range(5))
+
+      // By table path
+      spark.range(6).write.format("delta").save(filePath)
+      assertDataframeEquals(DeltaTable.forPath(spark, filePath).toDF, spark.range(6))
+      assertDataframeEquals(spark.read.format("delta").load(filePath), spark.range(6))
+      assertDataframeEquals(spark.sql(s"SELECT * FROM delta.`${filePath}`"), spark.range(6))
+
+      val deltaTable = DeltaTable.forPath(spark, filePath)
+      println("########### Update to the table(add 100 to every even value) ##############")
+      deltaTable.updateExpr(
+        condition = "id % 2 == 0",
+        set = Map("id" -> "id + 100")
+      )
+
+      val updateResult = Seq((100), (1), (102), (3), (104), (5)).toDF("id")
+      assertDataframeEquals(deltaTable.toDF, updateResult)
+      assertDataframeEquals(spark.read.format("delta").load(filePath), updateResult)
+      assertDataframeEquals(spark.sql(s"SELECT * FROM delta.`${filePath}`"), updateResult)
+
+      println("######### Delete every even value ##############")
+      deltaTable.delete(condition = "id % 2 == 0")
+
+      val deleteResult = Seq((1), (3), (5)).toDF("id")
+      assertDataframeEquals(deltaTable.toDF, deleteResult)
+      assertDataframeEquals(spark.read.format("delta").load(filePath), deleteResult)
+      assertDataframeEquals(spark.sql(s"SELECT * FROM delta.`${filePath}`"), deleteResult)
+
+      println("######## Read old data using time travel ############")
+      oldVersionDF = spark.read.format("delta").option("versionAsOf", 0).load(filePath)
+
+      assertDataframeEquals(oldVersionDF, spark.range(6))
+    } finally {
+      cleanup()
+      deltaSpark.stop()
+    }
+  }
+}
