@@ -75,6 +75,7 @@ public final class GenerateIcebergCompatActionUtils {
     validateMaxRetriesSetToZero(transactionState);
 
     /* ----- Validate this is valid write given the table's protocol & configurations ----- */
+    // TODO: need to make it general
     checkState(
         TableConfig.ICEBERG_COMPAT_V2_ENABLED.fromMetadata(configuration),
         "icebergCompatV2 not enabled despite icebergWriterCompatV1 enabled");
