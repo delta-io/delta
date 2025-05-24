@@ -27,6 +27,7 @@ import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.*;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.checkpoints.*;
+import io.delta.kernel.internal.files.ParsedLogData;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.ListUtils;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
@@ -241,8 +242,14 @@ public class SnapshotManager {
    *   <li>Third, process and validate this list of _delta_log files to yield a {@code LogSegment}.
    * </ol>
    */
-  @VisibleForTesting
   public LogSegment getLogSegmentForVersion(Engine engine, Optional<Long> versionToLoadOpt) {
+    return getLogSegmentForVersion(engine, versionToLoadOpt, Collections.emptyList());
+  }
+
+  public LogSegment getLogSegmentForVersion(
+      Engine engine, Optional<Long> versionToLoadOpt, List<ParsedLogData> parsedLogData) {
+    final long versionToLoad = versionToLoadOpt.orElse(Long.MAX_VALUE);
+
     // Defaulting to listing the files for now. This has low cost. We can make this a configurable
     // option in the future if we need to.
     final boolean USE_COMPACTED_FILES = true;
@@ -387,17 +394,45 @@ public class SnapshotManager {
     /////////////////////////////////////////////////////////////////////////////////////////////
     // Step 7: Grab all deltas in range [$latestCompleteCheckpointVersion + 1, $versionToLoad] //
     /////////////////////////////////////////////////////////////////////////////////////////////
-    final List<FileStatus> deltasAfterCheckpoint =
+
+    final List<FileStatus> listedDeltasAfterCheckpoint =
         listedDeltaFileStatuses.stream()
             .filter(
                 fs -> {
-                  final long deltaVersion = FileNames.deltaVersion(new Path(fs.getPath()));
+                  final long deltaVersion = FileNames.deltaVersion(fs.getPath());
                   return latestCompleteCheckpointVersion + 1 <= deltaVersion
-                      && deltaVersion <= versionToLoadOpt.orElse(Long.MAX_VALUE);
+                      && deltaVersion <= versionToLoad;
                 })
             .collect(Collectors.toList());
 
-    logDebugFileStatuses("deltasAfterCheckpoint", deltasAfterCheckpoint);
+    logDebugFileStatuses("listedDeltasAfterCheckpoint", listedDeltasAfterCheckpoint);
+
+    logDebugParsedLogDatas("parsedLogData", parsedLogData);
+
+    final long suffixCommitsLowerBoundInclusive =
+        listedDeltasAfterCheckpoint.isEmpty()
+            ? latestCompleteCheckpointVersion + 1
+            : FileNames.deltaVersion(ListUtils.getLast(listedDeltasAfterCheckpoint).getPath()) + 1;
+
+    final List<FileStatus> suffixCommitsAfterDeltas =
+        parsedLogData.stream()
+            .filter(x -> x.type == ParsedLogData.ParsedLogType.RATIFIED_STAGED_COMMIT)
+            .filter(
+                x -> x.version >= suffixCommitsLowerBoundInclusive && x.version <= versionToLoad)
+            .filter(ParsedLogData::isMaterialized)
+            .map(ParsedLogData::getFileStatus)
+            .collect(Collectors.toList());
+
+    logDebugFileStatuses("suffixCommitsAfterDeltas", suffixCommitsAfterDeltas);
+
+    //////////////////////////////////////////////////////////////////////////////////////////////
+    // Step 7.5: Concat the $listedDeltasAfterCheckpoint with the $suffixCommitsAfterCheckpoint //
+    //////////////////////////////////////////////////////////////////////////////////////////////
+
+    final List<FileStatus> allDeltasAfterCheckpoint = new ArrayList<>(listedDeltasAfterCheckpoint);
+    allDeltasAfterCheckpoint.addAll(suffixCommitsAfterDeltas);
+
+    logDebugFileStatuses("allDeltasAfterCheckpoint", allDeltasAfterCheckpoint);
 
     //////////////////////////////////////////////////////////////////////////////////
     // Step 8: Grab all compactions in range [$latestCompleteCheckpointVersion + 1, //
@@ -411,7 +446,7 @@ public class SnapshotManager {
                   final Tuple2<Long, Long> compactionVersions =
                       FileNames.logCompactionVersions(new Path(fs.getPath()));
                   return latestCompleteCheckpointVersion + 1 <= compactionVersions._1
-                      && compactionVersions._2 <= versionToLoadOpt.orElse(Long.MAX_VALUE);
+                      && compactionVersions._2 <= versionToLoad;
                 })
             .collect(Collectors.toList());
 
@@ -422,7 +457,7 @@ public class SnapshotManager {
     ////////////////////////////////////////////////////////////////////
 
     final List<Long> deltaVersionsAfterCheckpoint =
-        deltasAfterCheckpoint.stream()
+        allDeltasAfterCheckpoint.stream()
             .map(fileStatus -> FileNames.deltaVersion(new Path(fileStatus.getPath())))
             .collect(Collectors.toList());
 
@@ -438,7 +473,7 @@ public class SnapshotManager {
     /////////////////////////////////////////////
 
     // Check that we have found at least one checkpoint or delta file
-    if (!latestCompleteCheckpointOpt.isPresent() && deltasAfterCheckpoint.isEmpty()) {
+    if (!latestCompleteCheckpointOpt.isPresent() && allDeltasAfterCheckpoint.isEmpty()) {
       throw new InvalidTableException(
           tablePath.toString(), "No complete checkpoint found and no delta files found");
     }
@@ -454,20 +489,19 @@ public class SnapshotManager {
     }
 
     // Check that the $newVersion we actually loaded is the desired $versionToLoad
-    versionToLoadOpt.ifPresent(
-        versionToLoad -> {
-          if (newVersion < versionToLoad) {
-            throw DeltaErrors.versionToLoadAfterLatestCommit(
-                tablePath.toString(), versionToLoad, newVersion);
-          } else if (newVersion > versionToLoad) {
-            throw new IllegalStateException(
-                String.format(
-                    "%s: Expected to load version %s but actually loaded version %s",
-                    tablePath, versionToLoad, newVersion));
-          }
-        });
+    if (versionToLoadOpt.isPresent()) {
+      if (newVersion < versionToLoad) {
+        throw DeltaErrors.versionToLoadAfterLatestCommit(
+            tablePath.toString(), versionToLoad, newVersion);
+      } else if (newVersion > versionToLoad) {
+        throw new IllegalStateException(
+            String.format(
+                "%s: Expected to load version %s but actually loaded version %s",
+                tablePath, versionToLoad, newVersion));
+      }
+    }
 
-    if (!deltasAfterCheckpoint.isEmpty()) {
+    if (!allDeltasAfterCheckpoint.isEmpty()) {
       // Check that the delta versions are contiguous
       verifyDeltaVersionsContiguous(deltaVersionsAfterCheckpoint, tablePath);
 
@@ -555,7 +589,7 @@ public class SnapshotManager {
     return new LogSegment(
         logPath,
         newVersion,
-        deltasAfterCheckpoint,
+        allDeltasAfterCheckpoint,
         compactionsAfterCheckpoint,
         latestCompleteCheckpointFileStatuses,
         lastSeenChecksumFile,
@@ -609,6 +643,15 @@ public class SnapshotManager {
           varName,
           Arrays.toString(
               fileStatuses.stream().map(x -> new Path(x.getPath()).getName()).toArray()));
+    }
+  }
+
+  private void logDebugParsedLogDatas(String varName, List<ParsedLogData> logDatas) {
+    if (logger.isDebugEnabled()) {
+      logger.debug(
+          "{}: \n  {}",
+          varName,
+          logDatas.stream().map(Object::toString).collect(Collectors.joining("\n  ")));
     }
   }
 }
