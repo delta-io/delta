@@ -3251,6 +3251,26 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     }
   }
 
+  test(s"Correct error is thrown when attempting to drop a table property using drop feature") {
+    withTempDir { dir =>
+      val deltaLog = DeltaLog.forTable(spark, dir)
+      sql(s"CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta")
+
+      val command = AlterTableDropFeatureDeltaCommand(
+        DeltaTableV2(spark, deltaLog.dataPath),
+        s"${DeltaConfigs.ROW_TRACKING_ENABLED.key}")
+
+      val e = intercept[DeltaTableFeatureException] {
+        command.run(spark)
+      }
+      checkError(
+        e,
+        "DELTA_FEATURE_DROP_FEATURE_IS_DELTA_PROPERTY",
+        parameters = Map("property" -> DeltaConfigs.ROW_TRACKING_ENABLED.key)
+      )
+    }
+  }
+
   protected def testProtocolVersionDowngrade(
       initialMinReaderVersion: Int,
       initialMinWriterVersion: Int,
