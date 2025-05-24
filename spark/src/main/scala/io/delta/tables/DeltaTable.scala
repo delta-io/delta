@@ -668,6 +668,42 @@ class DeltaTable private[tables](
   }
 
   /**
+   * clone used by Python implementation using java.util.HashMap for the properties argument.
+   *
+   * Specifying properties here means that the target will override any properties with the same key
+   * in the source table with the user-defined properties.
+   *
+   * An example would be
+   * {{{
+   *   io.delta.tables.DeltaTable.clone(
+   *     "/some/path/to/table",
+   *     true,
+   *     true,
+   *     Map("foo" -> "bar"))
+   * }}}
+   *
+   * @param target The path or table name to create the clone.
+   * @param isShallow Whether to create a shallow clone or a deep clone.
+   * @param replace Whether to replace the destination with the clone command.
+   * @param properties The table properties to override in the clone.
+   */
+  def clone(
+      target: String,
+      isShallow: Boolean,
+      replace: Boolean,
+      properties: java.util.HashMap[String, String]): DeltaTable = {
+    val scalaProps = Option(properties).map(_.asScala.toMap).getOrElse(Map.empty[String, String])
+    executeClone(
+      table,
+      target,
+      isShallow,
+      replace,
+      scalaProps,
+      versionAsOf = None,
+      timestampAsOf = None)
+  }
+
+  /**
    * Clone a DeltaTable to a given destination to mirror the existing table's data and metadata.
    *
    * An example would be
@@ -744,6 +780,46 @@ class DeltaTable private[tables](
       isShallow,
       replace,
       properties,
+      versionAsOf = Some(version),
+      timestampAsOf = None)
+  }
+
+  /**
+   * cloneAtVersion used by Python implementation using java.util.HashMap for the properties
+   * argument.
+   *
+   * Specifying properties here means that the target will override any properties with the same key
+   * in the source table with the user-defined properties.
+   *
+   * An example would be
+   * {{{
+   *   io.delta.tables.DeltaTable.cloneAtVersion(
+   *     5,
+   *     "/some/path/to/table",
+   *     true,
+   *     true,
+   *     new java.util.HashMap[String, String](Map("foo" -> "bar").asJava))
+   * }}}
+   *
+   * @param version The version of this table to clone from.
+   * @param target The path or table name to create the clone.
+   * @param isShallow Whether to create a shallow clone or a deep clone.
+   * @param replace Whether to replace the destination with the clone command.
+   * @param properties The table properties to override in the clone.
+   */
+  def cloneAtVersion(
+      version: Long,
+      target: String,
+      isShallow: Boolean,
+      replace: Boolean,
+      properties: java.util.HashMap[String, String]): DeltaTable = {
+    val scalaProps = Option(properties).map(_.asScala.toMap).getOrElse(Map.empty[String, String])
+    executeClone(
+      table,
+      target,
+      isShallow,
+      replace,
+      scalaProps,
       versionAsOf = Some(version),
       timestampAsOf = None)
   }
@@ -840,6 +916,48 @@ class DeltaTable private[tables](
       versionAsOf = None,
       timestampAsOf = Some(timestamp)
     )
+  }
+
+  /**
+   * cloneAtTimestamp used by Python implementation using java.util.HashMap for the properties
+   * argument.
+   *
+   * Clone a DeltaTable at a specific timestamp to a given destination to mirror the existing
+   * table's data and metadata at that version.
+   * Specifying properties here means that the target will override any properties with the same key
+   * in the source table with the user-defined properties.
+   *
+   * An example would be
+   * {{{
+   *   io.delta.tables.DeltaTable.cloneAtVersion(
+   *     5,
+   *     "/some/path/to/table",
+   *     true,
+   *     true,
+   *     new java.util.HashMap[String, String](Map("foo" -> "bar").asJava)
+   * }}}
+   *
+   * @param timestamp The timestamp of this table to clone from.
+   * @param target The path or table name to create the clone.
+   * @param isShallow Whether to create a shallow clone or a deep clone.
+   * @param replace Whether to replace the destination with the clone command.
+   * @param properties The table properties to override in the clone.
+   */
+  def cloneAtTimestamp(
+      timestamp: String,
+      target: String,
+      isShallow: Boolean,
+      replace: Boolean,
+      properties: java.util.HashMap[String, String]): DeltaTable = {
+    val scalaProps = Option(properties).map(_.asScala.toMap).getOrElse(Map.empty[String, String])
+    executeClone(
+      table,
+      target,
+      isShallow,
+      replace,
+      scalaProps,
+      versionAsOf = None,
+      timestampAsOf = Some(timestamp))
   }
 
   /**

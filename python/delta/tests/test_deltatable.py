@@ -1500,6 +1500,79 @@ class DeltaTableTestsMixin:
         self.assertEqual('all', metrics.zOrderStats.strategyName)
         self.assertEqual(1, metrics.zOrderStats.numOutputCubes)  # one per each affected partition
 
+        def test_clone(self) -> None:  # type: ignore[no-untyped-def]
+            df = self.spark.createDataFrame([('a', 1), ('b', 2), ('c', 3)], ["key", "value"])
+            df2 = self.spark.createDataFrame([('d', 4), ('e', 5), ('f', 6)], ["key", "value"])
+            df.write.format("delta").save(self.tempFile)
+            df2.write.format("delta").mode("overwrite").save(self.tempFile)
+            # source
+            dt = DeltaTable.forPath(self.spark, self.tempFile)
+            tempFile2 = self.tempFile + "_2"
+            tempFile3 = self.tempFile + "_3"
+
+            dt.clone(tempFile2, True, False, {"foo": "bar"})
+            props = self.spark.sql('''SHOW TBLPROPERTIES delta.`{}`("foo")
+            '''.format(tempFile2))
+            self.__checkAnswer(props, [("foo", "bar")])
+
+            self.__checkAnswer(
+                self.spark.read.format("delta").load(tempFile2),
+                [('d', 4), ('e', 5), ('f', 6)])
+
+            dt.cloneAtVersion(0, tempFile3, True)
+            self.__checkAnswer(
+                self.spark.read.format("delta").load(tempFile3),
+                [('a', 1), ('b', 2), ('c', 3)])
+
+            # clone over tempFile3 with source at current version
+            dt.clone(tempFile3, True, True)
+            self.__checkAnswer(
+                self.spark.read.format("delta").load(tempFile3),
+                [('d', 4), ('e', 5), ('f', 6)])
+
+        def test_clone_invalid_inputs(self) -> None:  # type: ignore[no-untyped-def]
+            df = self.spark.createDataFrame([('a', 1), ('b', 2), ('c', 3)], ["key", "value"])
+            df.write.format("delta").save(self.tempFile)
+            # source
+            dt = DeltaTable.forPath(self.spark, self.tempFile)
+            tempFile2 = self.tempFile + "_2"
+
+            def incorrectTarget() -> "DeltaTable":
+                return dt.clone(10)
+
+            self.__intercept(incorrectTarget, "target needs to be a string but got int")
+
+            def incorrectShallow() -> "DeltaTable":
+                return dt.clone(tempFile2, isShallow=10)
+
+            self.__intercept(incorrectShallow, "isShallow needs to be a boolean but got int")
+
+            def incorrectReplace() -> "DeltaTable":
+                return dt.clone(tempFile2, False, replace=10)
+
+            self.__intercept(incorrectReplace, "replace needs to be a boolean but got int")
+
+            def incorrectProperties() -> "DeltaTable":
+                return dt.clone(tempFile2, False, False, properties=10)
+
+            self.__intercept(incorrectProperties, "properties needs to be a dict but got int")
+
+            def incorrectPropertyValue() -> "DeltaTable":
+                return dt.clone(tempFile2, False, False, properties={"key": 10})
+
+            self.__intercept(incorrectPropertyValue, "All property values including 10"
+                                                     " needs to be a str but got int")
+
+            def incorrectVersion() -> "DeltaTable":
+                return dt.cloneAtVersion("0", tempFile2, False, False)
+
+            self.__intercept(incorrectVersion, "version needs to be an int but got string")
+
+            def incorrectTimestamp() -> "DeltaTable":
+                return dt.cloneAtTimestamp(10, tempFile2, False, False)
+
+            self.__intercept(incorrectTimestamp, "timestamp needs to be a string but got int")
+
     def test_create_table_with_cluster_by(self) -> None:
         with self.table("test"):
             builder = DeltaTable.create(self.spark)
