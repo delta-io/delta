@@ -17,6 +17,7 @@ package io.delta.kernel.internal.replay;
 
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.FileNames;
+import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.utils.FileStatus;
 
 /**
@@ -25,26 +26,47 @@ import io.delta.kernel.utils.FileStatus;
  * checkpoint.
  */
 public class DeltaLogFile {
-  public enum LogType {
+
+  ///////////////////////////////////////
+  // Static enums, fields, and methods //
+  ///////////////////////////////////////
+
+  public enum Category {
     COMMIT,
     LOG_COMPACTION,
-    CHECKPOINT_CLASSIC,
-    MULTIPART_CHECKPOINT,
-    V2_CHECKPOINT_MANIFEST,
-    SIDECAR
+    CHECKPOINT,
+    CHECKSUM,
+    NOT_APPLICABLE
+  }
+
+  public enum LogType {
+    COMMIT(Category.COMMIT),
+    LOG_COMPACTION(Category.LOG_COMPACTION),
+    CHECKPOINT_CLASSIC(Category.CHECKPOINT),
+    MULTIPART_CHECKPOINT(Category.CHECKPOINT),
+    V2_CHECKPOINT_MANIFEST(Category.CHECKPOINT),
+    SIDECAR(Category.NOT_APPLICABLE);
+
+    private final Category category;
+
+    LogType(Category category) {
+      this.category = category;
+    }
+
+    public Category getCategory() {
+      return category;
+    }
   }
 
   public static DeltaLogFile forFileStatus(FileStatus file) {
-    String fileName = new Path(file.getPath()).getName();
-    LogType logType = null;
-    long version = -1;
+    final String fileName = new Path(file.getPath()).getName();
+    final LogType logType;
+    final long version;
     if (FileNames.isCommitFile(fileName)) {
       logType = LogType.COMMIT;
       version = FileNames.deltaVersion(fileName);
     } else if (FileNames.isLogCompactionFile(fileName)) {
-      logType = LogType.LOG_COMPACTION;
-      // use end version, similar to a checkpoint
-      version = FileNames.logCompactionVersions(fileName)._2;
+      return CompactionFile.forFileStatus(file);
     } else if (FileNames.isClassicCheckpointFile(fileName)) {
       logType = LogType.CHECKPOINT_CLASSIC;
       version = FileNames.checkpointVersion(fileName);
@@ -65,22 +87,30 @@ public class DeltaLogFile {
     return new DeltaLogFile(file, LogType.SIDECAR, version);
   }
 
-  private final FileStatus file;
+  ///////////////////////////////
+  // Member fields and methods //
+  ///////////////////////////////
+
+  private final FileStatus fileStatus;
   private final LogType logType;
   private final long version;
 
-  private DeltaLogFile(FileStatus file, LogType logType, long version) {
-    this.file = file;
+  private DeltaLogFile(FileStatus fileStatus, LogType logType, long version) {
+    this.fileStatus = fileStatus;
     this.logType = logType;
     this.version = version;
   }
 
-  public FileStatus getFile() {
-    return file;
+  public FileStatus getFileStatus() {
+    return fileStatus;
   }
 
   public LogType getLogType() {
     return logType;
+  }
+
+  public Category getCategory() {
+    return logType.getCategory();
   }
 
   /**
@@ -90,4 +120,42 @@ public class DeltaLogFile {
   public long getVersion() {
     return version;
   }
+
+  @Override
+  public String toString() {
+    return "DeltaLogFile{" +
+        "file=" + fileStatus +
+        ", logType=" + logType +
+        ", version=" + version +
+        '}';
+  }
+
+  ////////////////////
+  // Static classes //
+  ////////////////////
+
+  public static class CompactionFile extends DeltaLogFile {
+    public static CompactionFile forFileStatus(FileStatus file) {
+      final Tuple2<Long, Long> versions = FileNames.logCompactionVersions(file.getPath());
+      return new CompactionFile(file, versions._1, versions._2);
+    }
+
+    private final long startVersion;
+    private final long endVersion;
+
+    private CompactionFile(FileStatus file, long startVersion, long endVersion) {
+      super(file, LogType.LOG_COMPACTION, endVersion);
+      this.startVersion = startVersion;
+      this.endVersion = endVersion;
+    }
+
+    public long getStartVersion() {
+      return startVersion;
+    }
+
+    public long getEndVersion() {
+      return endVersion;
+    }
+  }
+
 }
