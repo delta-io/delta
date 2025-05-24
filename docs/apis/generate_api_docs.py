@@ -41,7 +41,7 @@ def main():
     kernel_javadoc_gen_dir = repo_root_dir + "/kernelGroup/target/javaunidoc"
 
     # --- final dirs where the docs will be copied to
-    all_docs_final_dir = docs_root_dir + "/public/api"
+    all_docs_final_dir = docs_root_dir + "/apis/_site/api"
     all_javadocs_final_dir = all_docs_final_dir + "/java"
     all_scaladocs_final_dir = all_docs_final_dir + "/scala"
     all_pythondocs_final_dir = all_docs_final_dir + "/python"
