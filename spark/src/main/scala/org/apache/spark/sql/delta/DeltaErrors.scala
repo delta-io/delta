@@ -2827,6 +2827,13 @@ trait DeltaErrorsBase
     )
   }
 
+  def variantShreddingUnsupported(): Throwable = {
+    new DeltaSparkException(
+      errorClass = "DELTA_SHREDDING_TABLE_PROPERTY_DISABLED",
+      messageParameters = Array.empty
+    )
+  }
+
   def unsupportSubqueryInPartitionPredicates(): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_UNSUPPORTED_SUBQUERY_IN_PARTITION_PREDICATES",
