@@ -239,7 +239,7 @@ object TransactionSuite extends VectorTestUtils with MockEngineUtils {
         // Update the vectors
         val newColumnVectors = vectors.toBuffer
         newColumnVectors.remove(ordinal)
-        columnarBatch(newSchema, newColumnVectors)
+        columnarBatch(newSchema, newColumnVectors.toSeq)
       }
 
       override def getSize: Int = vectors.head.getSize

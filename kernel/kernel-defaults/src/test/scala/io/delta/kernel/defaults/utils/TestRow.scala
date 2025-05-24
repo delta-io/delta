@@ -112,7 +112,7 @@ object TestRow {
         case _: StructType => TestRow(row.getStruct(i))
         case _ => throw new UnsupportedOperationException("unrecognized data type")
       }
-    })
+    }.toSeq)
   }
 
   def apply(row: SparkRow): TestRow = {
@@ -135,8 +135,14 @@ object TestRow {
         case _: sparktypes.BinaryType => obj.asInstanceOf[Array[Byte]]
         case _: sparktypes.DecimalType => obj.asInstanceOf[java.math.BigDecimal]
         case arrayType: sparktypes.ArrayType =>
-          obj.asInstanceOf[Seq[Any]]
-            .map(decodeCellValue(arrayType.elementType, _))
+          obj match {
+            case s: Seq[Any] =>
+              s.map(decodeCellValue(arrayType.elementType, _))
+            case as: scala.collection.mutable.ArraySeq[Any] =>
+              as.map(decodeCellValue(arrayType.elementType, _)).toSeq
+            case _ =>
+              throw new RuntimeException("Encountered unexpected underlying type for ArrayType");
+          }
         case mapType: sparktypes.MapType => obj.asInstanceOf[Map[Any, Any]].map {
             case (k, v) =>
               decodeCellValue(mapType.keyType, k) -> decodeCellValue(mapType.valueType, v)

@@ -19,9 +19,6 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.data.ColumnVector;
-import io.delta.kernel.defaults.internal.data.vector.DefaultBooleanVector;
-import io.delta.kernel.defaults.internal.expressions.DefaultExpressionEvaluator;
-import io.delta.kernel.defaults.internal.expressions.DefaultPredicateEvaluator;
 import io.delta.kernel.engine.ExpressionHandler;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.ExpressionEvaluator;
@@ -38,12 +35,14 @@ public class DefaultExpressionHandler implements ExpressionHandler {
   @Override
   public ExpressionEvaluator getEvaluator(
       StructType inputSchema, Expression expression, DataType outputType) {
-    return new DefaultExpressionEvaluator(inputSchema, expression, outputType);
+    return new io.delta.kernel.defaults.internal.expressions.DefaultExpressionEvaluator(
+        inputSchema, expression, outputType);
   }
 
   @Override
   public PredicateEvaluator getPredicateEvaluator(StructType inputSchema, Predicate predicate) {
-    return new DefaultPredicateEvaluator(inputSchema, predicate);
+    return new io.delta.kernel.defaults.internal.expressions.DefaultPredicateEvaluator(
+        inputSchema, predicate);
   }
 
   @Override
@@ -59,6 +58,7 @@ public class DefaultExpressionHandler implements ExpressionHandler {
 
     // Make a copy of the `values` array.
     boolean[] valuesCopy = Arrays.copyOfRange(values, from, to);
-    return new DefaultBooleanVector(length, Optional.empty(), valuesCopy);
+    return new io.delta.kernel.defaults.internal.data.vector.DefaultBooleanVector(
+        length, Optional.empty(), valuesCopy);
   }
 }
