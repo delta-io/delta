@@ -486,21 +486,22 @@ class IcebergWriterCompatV1Suite extends DeltaTableWriteSuiteBase with ColumnMap
         testSchema,
         tableProperties = tblPropertiesIcebergWriterCompatV1Enabled)
       verifyIcebergWriterCompatV1Enabled(tablePath, engine)
-      val e = intercept[UnsupportedOperationException] {
+      val e = intercept[KernelException] {
         // Update the table such that we enable rowTracking
         updateTableMetadata(
           engine,
           tablePath,
           tableProperties = Map("delta.enableRowTracking" -> "true"))
       }
-      assert(e.getMessage.contains("Feature `rowTracking` is not yet supported in Kernel"))
+      assert(e.getMessage.contains(
+        "Table features [rowTracking] are incompatible with icebergWriterCompatV1"))
     }
   }
 
   test(s"Cannot enable feature rowTracking and icebergWriterCompatV1 on a new table") {
     withTempDirAndEngine { (tablePath, engine) =>
       // Create table with IcebergCompatWriterV1 and rowTracking enabled
-      val e = intercept[UnsupportedOperationException] {
+      val e = intercept[KernelException] {
         createEmptyTable(
           engine,
           tablePath,
@@ -508,7 +509,8 @@ class IcebergWriterCompatV1Suite extends DeltaTableWriteSuiteBase with ColumnMap
           tableProperties =
             tblPropertiesIcebergWriterCompatV1Enabled ++ Map("delta.enableRowTracking" -> "true"))
       }
-      assert(e.getMessage.contains("Feature `rowTracking` is not yet supported in Kernel"))
+      assert(e.getMessage.contains(
+        "Table features [rowTracking] are incompatible with icebergWriterCompatV1"))
     }
   }
 

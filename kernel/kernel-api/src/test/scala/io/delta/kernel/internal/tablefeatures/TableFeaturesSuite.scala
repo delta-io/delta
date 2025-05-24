@@ -202,17 +202,6 @@ class TableFeaturesSuite extends AnyFunSuite {
       }
   }
 
-  test("row tracking enable through metadata property is not supported") {
-    val tableFeature = TableFeatures.getTableFeature("rowTracking")
-    val ex = intercept[UnsupportedOperationException] {
-      tableFeature.asInstanceOf[FeatureAutoEnabledByMetadata]
-        .metadataRequiresFeatureToBeEnabled(
-          testProtocol,
-          testMetadata(tblProps = Map("delta.enableRowTracking" -> "true")))
-    }
-    assert(ex.getMessage.contains("Feature `rowTracking` is not yet supported in Kernel."))
-  }
-
   test("hasKernelReadSupport expected to be true") {
     val results = TABLE_FEATURES.stream()
       .filter(_.isReaderWriterFeature)
