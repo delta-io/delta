@@ -19,12 +19,13 @@ To run this example you must follow these steps:
 
 Requirements:
 - Using Java 17
-- Spark 4.0.0-preview1+
-- delta-spark (python package) 4.0.0rc1+ and pyspark 4.0.0.dev1+
+- Spark 4.0.0
+- pyspark 4.0.0
+- delta-connect-client 4.0.0rc1+, delta-spark-connect-client 4.0.0rc1+
 
 (1) Start a local Spark connect server using this command:
 sbin/start-connect-server.sh \
-  --packages org.apache.spark:spark-connect_2.13:4.0.0-preview1,io.delta:delta-connect-server_2.13:{DELTA_VERSION},io.delta:delta-spark_2.13:{DELTA_VERSION},com.google.protobuf:protobuf-java:3.25.1 \
+  --packages io.delta:delta-connect-server_2.13:{DELTA_VERSION},com.google.protobuf:protobuf-java:3.25.1 \
   --conf "spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension" \
   --conf "spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog" \
   --conf "spark.connect.extensions.relation.classes"="org.apache.spark.sql.connect.delta.DeltaRelationPlugin" \
