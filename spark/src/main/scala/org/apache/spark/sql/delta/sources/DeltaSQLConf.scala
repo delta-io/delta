@@ -861,6 +861,18 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val MERGE_MATERIALIZE_CACHED_SOURCE =
+    buildConf("merge.materializeCachedSource")
+      .internal()
+      .doc(
+        """
+          |When enabled, materialize the source in MERGE if it is cached (e.g. via df.cache()). This
+          |prevents incorrect results due to query caching not pinning the version of cached Delta
+          |tables.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val MERGE_MATERIALIZE_SOURCE_RDD_STORAGE_LEVEL =
     buildConf("merge.materializeSource.rddStorageLevel")
       .internal()

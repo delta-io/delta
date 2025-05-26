@@ -16,8 +16,9 @@
 
 package org.apache.spark.sql.delta.util
 
-import org.apache.spark.sql.delta.{DeltaTable, DeltaTableReadPredicate}
+import org.apache.spark.sql.delta.{DataFrameUtils, DeltaTable, DeltaTableReadPredicate}
 
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.{Exists, Expression, InSubquery, LateralSubquery, ScalarSubquery, SubqueryExpression => SparkSubqueryExpression, UserDefinedExpression}
 import org.apache.spark.sql.catalyst.plans.logical.{Distinct, Filter, LeafNode, LogicalPlan, OneRowRelation, Project, SubqueryAlias, Union}
 import org.apache.spark.sql.execution.datasources.LogicalRelation
@@ -43,6 +44,12 @@ trait DeltaSparkPlanUtils {
       // If not found in main plan, look into subqueries.
       collectFirst(source.subqueries, findFirstNonDeltaScan)
     )
+  }
+
+  /** Returns whether the given plan was cached using df.cache() or similar. */
+  protected def planIsCached(spark: SparkSession, plan: LogicalPlan): Boolean = {
+    import org.apache.spark.sql.delta.ClassicColumnConversions._
+    spark.sharedState.cacheManager.lookupCachedData(DataFrameUtils.ofRows(spark, plan)).nonEmpty
   }
 
   /**

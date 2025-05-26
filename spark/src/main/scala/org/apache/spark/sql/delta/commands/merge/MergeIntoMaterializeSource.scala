@@ -246,6 +246,8 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
     import DeltaSQLConf.MergeMaterializeSource._
     val checkDeterministicOptions =
       DeltaSparkPlanUtils.CheckDeterministicOptions(allowDeterministicUdf = true)
+    val materializeCachedSource = spark.conf.get(DeltaSQLConf.MERGE_MATERIALIZE_CACHED_SOURCE)
+
     materializeType match {
       case ALL =>
         (true, MergeIntoMaterializeSourceReason.MATERIALIZE_ALL)
@@ -270,6 +272,10 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
           // the user defined function is marked as deterministic, as it is often incorrectly marked
           // as such.
           (true, MergeIntoMaterializeSourceReason.NON_DETERMINISTIC_SOURCE_WITH_DETERMINISTIC_UDF)
+        } else if (materializeCachedSource && planIsCached(spark, source)) {
+          // The query cache doesn't pin the version of cached Delta tables, we materialize the
+          // source in that case to avoid this issue.
+          (true, MergeIntoMaterializeSourceReason.SOURCE_CACHED)
         } else {
           (false, MergeIntoMaterializeSourceReason.NOT_MATERIALIZED_AUTO)
         }
@@ -460,6 +466,8 @@ object MergeIntoMaterializeSourceReason extends Enumeration {
     Value("materializeNonDeterministicSourceWithDeterministicUdf")
   // Materialize when the configuration is invalid
   val INVALID_CONFIG = Value("invalidConfigurationFailsafe")
+  // Materialize when the source is cached.
+  val SOURCE_CACHED = Value("materializeCachedSource")
   // Catch-all case.
   val UNKNOWN = Value("unknown")
 
@@ -470,7 +478,8 @@ object MergeIntoMaterializeSourceReason extends Enumeration {
     NON_DETERMINISTIC_SOURCE_OPERATORS,
     IGNORE_UNREADABLE_FILES_CONFIGS_ARE_SET,
     NON_DETERMINISTIC_SOURCE_WITH_DETERMINISTIC_UDF,
-    INVALID_CONFIG
+    INVALID_CONFIG,
+    SOURCE_CACHED
   )
 }
 
