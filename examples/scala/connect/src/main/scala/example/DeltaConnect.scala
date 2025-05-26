@@ -27,7 +27,7 @@ To run this example you must follow these steps:
 Requirements:
 - Using Java 17
 - Spark 4.0.0+
-- delta-connect-client 4.0.0rc1+, delta-spark-connect-client 4.0.0rc1+ and delta-spark-connect-common 4.0.0rc1+
+- delta-connect-client 4.0.0rc1+, and delta-connect-server 4.0.0rc1+
 (1) Start a local Spark connect server using this command:
 sbin/start-connect-server.sh \
   --packages io.delta:delta-connect-server_2.13:{DELTA_VERSION},com.google.protobuf:protobuf-java:3.25.1 \
@@ -43,9 +43,9 @@ export SPARK_REMOTE="sc://localhost:15002"
 */
 
 object DeltaConnect {
-  private val filePath = "/tmp/deltaConnec300"
+  private val filePath = "/tmp/deltaConnect"
 
-  private val tableName = "deltaConnectTable300"
+  private val tableName = "deltaConnectTable"
 
   private def cleanup(deltaSpark: SparkSession): Unit = {
     deltaSpark.sql(s"DROP TABLE IF EXISTS $tableName")
@@ -96,18 +96,16 @@ object DeltaConnect {
         set = Map("id" -> "id + 100")
       )
 
-      val updateResult = Seq((100), (1), (102), (3), (104), (5))
-      deltaTable.toDF.show()
+      deltaTable.toDF.show() // 100, 1, 102, 3, 104, 5
 
       println("######### Delete every even value ##############")
       deltaTable.delete(condition = "id % 2 == 0")
 
-      val deleteResult = Seq((1), (3), (5))
-      deltaTable.toDF.show()
+      deltaTable.toDF.show() // 1, 3, 5
 
       println("######## Read old data using time travel ############")
       val oldVersionDF = deltaSpark.read.format("delta").option("versionAsOf", 0).load(filePath)
-      oldVersionDF.show()
+      oldVersionDF.show() // 0, 1, 2, 3, 4, 5
     } finally {
       cleanup(deltaSpark)
       deltaSpark.stop()
