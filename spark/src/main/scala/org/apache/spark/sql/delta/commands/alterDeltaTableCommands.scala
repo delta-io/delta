@@ -324,20 +324,24 @@ case class AlterTableDropFeatureDeltaCommand(
   private val NUMBER_OF_BARRIER_CHECKPOINTS = 3
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
-    val removableFeature = TableFeature.featureNameToFeature(featureName) match {
-      case Some(feature: RemovableFeature) => feature
-      case Some(_) => throw DeltaErrors.dropTableFeatureNonRemovableFeature(featureName)
-      case None => throw DeltaErrors.dropTableFeatureFeatureNotSupportedByClient(featureName)
-    }
-
     // Check whether the protocol contains the feature in either the writer features list or
     // the reader+writer features list. Note, protocol needs to denormalized to allow dropping
     // features from legacy protocols.
     val protocol = table.deltaLog.update(catalogTableOpt = table.catalogTable).protocol
     val protocolContainsFeatureName =
       protocol.implicitlyAndExplicitlySupportedFeatures.map(_.name).contains(featureName)
-    if (!protocolContainsFeatureName) {
-      throw DeltaErrors.dropTableFeatureFeatureNotSupportedByProtocol(featureName)
+    val featureInLowerCase = featureName.toLowerCase(Locale.ROOT)
+    val removableFeature = TableFeature.featureNameToFeature(featureName) match {
+      // Check if a property was passed instead of a feature, featureName has to
+      // start with "delta." if that is the case.
+      case _ if !protocolContainsFeatureName && featureInLowerCase.startsWith("delta.") &&
+        DeltaConfigs.getAllConfigs.contains(featureInLowerCase.stripPrefix("delta.")) =>
+          throw DeltaErrors.dropTableFeatureFeatureIsADeltaProperty(featureName)
+      case Some(_) if !protocolContainsFeatureName =>
+        throw DeltaErrors.dropTableFeatureFeatureNotSupportedByProtocol(featureName)
+      case Some(feature: RemovableFeature) => feature
+      case Some(_) => throw DeltaErrors.dropTableFeatureNonRemovableFeature(featureName)
+      case None => throw DeltaErrors.dropTableFeatureFeatureNotSupportedByClient(featureName)
     }
 
     val historyTruncationEligibleFeature = removableFeature.requiresHistoryProtection ||
