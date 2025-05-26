@@ -572,4 +572,35 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
       }
     }
   })
+
+  test("manually setting materialized row tracking column names is not allowed - new table") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      Seq(ROW_ID, ROW_COMMIT_VERSION).foreach { rowTrackingColumn =>
+        val propName = rowTrackingColumn.getMaterializedColumnNameProperty
+        val customTableProps = Map(propName -> "custom_name")
+        val e = intercept[KernelException] {
+          createTableWithRowTracking(engine, tablePath, extraProps = customTableProps)
+        }
+        assert(e.getMessage.contains(
+          s"The Delta table property '$propName' is an internal property and cannot be updated"))
+      }
+    }
+  }
+
+  test("manually setting materialized row tracking column names is not allowed - existing table") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createTableWithRowTracking(engine, tablePath)
+
+      Seq(ROW_ID, ROW_COMMIT_VERSION).foreach { rowTrackingColumn =>
+        val propName = rowTrackingColumn.getMaterializedColumnNameProperty
+        val customTableProps = Map(propName -> "custom_name")
+        val e = intercept[KernelException] {
+          createTxn(engine, tablePath, tableProperties = customTableProps)
+            .commit(engine, emptyIterable())
+        }
+        assert(e.getMessage.contains(
+          s"The Delta table property '$propName' is an internal property and cannot be updated"))
+      }
+    }
+  }
 }

@@ -31,24 +31,25 @@ public final class MaterializedRowTrackingColumn {
   /** Static instance for the materialized row ID column. */
   public static final MaterializedRowTrackingColumn ROW_ID =
       new MaterializedRowTrackingColumn(
-          "delta.rowTracking.materializedRowIdColumnName", "_row-id-col-");
+          TableConfig.MATERIALIZED_ROW_ID_COLUMN_NAME, "_row-id-col-");
 
   /** Static instance for the materialized row commit version column. */
   public static final MaterializedRowTrackingColumn ROW_COMMIT_VERSION =
       new MaterializedRowTrackingColumn(
-          "delta.rowTracking.materializedRowCommitVersionColumnName", "_row-commit-version-col-");
+          TableConfig.MATERIALIZED_ROW_COMMIT_VERSION_COLUMN_NAME, "_row-commit-version-col-");
 
-  private final String materializedColumnNameProperty;
+  private final TableConfig<String> tableConfig;
   private final String materializedColumnNamePrefix;
 
-  private MaterializedRowTrackingColumn(String property, String prefix) {
-    this.materializedColumnNameProperty = property;
+  /** Private constructor to enforce the use of static instances. */
+  private MaterializedRowTrackingColumn(TableConfig<String> tableConfig, String prefix) {
+    this.tableConfig = tableConfig;
     this.materializedColumnNamePrefix = prefix;
   }
 
   /** Returns the configuration property name associated with this materialized column. */
   public String getMaterializedColumnNameProperty() {
-    return materializedColumnNameProperty;
+    return tableConfig.getKey();
   }
 
   /** Returns the prefix to use for generating the materialized column name. */
