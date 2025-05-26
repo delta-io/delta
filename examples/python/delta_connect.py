@@ -21,7 +21,7 @@ Requirements:
 - Using Java 17
 - Spark 4.0.0
 - pyspark 4.0.0
-- delta-connect-client 4.0.0rc1+, delta-spark-connect-client 4.0.0rc1+
+- delta-connect-server 4.0.0rc1+
 
 (1) Start a local Spark connect server using this command:
 sbin/start-connect-server.sh \
@@ -52,6 +52,7 @@ def assert_dataframe_equals(df1, df2):
 def cleanup(spark):
     shutil.rmtree(filePath, ignore_errors=True)
     spark.sql(f"DROP TABLE IF EXISTS {tableName}")
+    spark.sql(f"DROP TABLE IF EXISTS delta.`{filePath}`")
 
 # --------------------- Set up Spark Connect spark session ------------------------
 
@@ -102,8 +103,8 @@ deltaTable = DeltaTable.forPath(spark, filePath)
 # Update every even value by adding 100 to it
 print("########### Update to the table(add 100 to every even value) ##############")
 deltaTable.update(
-    condition=expr("id % 2 == 0"),
-    set={"id": expr("id + 100")}
+    condition="id % 2 == 0",
+    set={"id": "id + 100"}
 )
 
 updateResult = spark.createDataFrame([(100,), (1,), (102,), (3,), (104,), (5,)], ["id"])
@@ -113,7 +114,7 @@ assert_dataframe_equals(spark.sql(f"SELECT * FROM delta.`{filePath}`"), updateRe
 
 # Delete every even value
 print("######### Delete every even value ##############")
-deltaTable.delete(condition=expr("id % 2 == 0"))
+deltaTable.delete(condition="id % 2 == 0")
 
 deleteResult = spark.createDataFrame([(1,), (3,), (5,)], ["id"])
 assert_dataframe_equals(deltaTable.toDF(), deleteResult)
