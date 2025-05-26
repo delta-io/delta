@@ -157,13 +157,33 @@ lazy val root = (project in file("."))
     run / fork := true,
     name := "hello-world",
     crossScalaVersions := Seq(scala213),
+    libraryDependencies ++= getLibraryDependencies(
+      getDeltaVersion.value,
+      getDeltaArtifactName.value,
+      getIcebergSparkRuntimeArtifactName.value),
+    extraMavenRepo,
+    resolvers ++= Seq(
+      Resolver.mavenLocal,
+      // TODO remove this once the Spark preview release has been finalized
+      "Apache Spark 4.0 (RC7) Staging" at "https://repository.apache.org/content/repositories/orgapachespark-1485/"
+    ),
+    scalacOptions ++= Seq(
+      "-deprecation",
+      "-feature"
+    ),
+    java17Settings
+  )
+
+lazy val connect = (project in file("./connect"))
+  .settings(
+    run / fork := true,
+    name := "example",
+    scalaVersion := scala213,
+    mainClass := Some("example.DeltaConnect"),
     libraryDependencies ++= Seq(
-      "io.delta" %% getDeltaArtifactName.value % getDeltaVersion.value,
-      "org.apache.spark" %% "spark-sql" % lookupSparkVersion.apply(
-        getMajorMinor(getDeltaVersion.value)
-      ),
-      "org.apache.spark" %% "spark-hive" % lookupSparkVersion.apply(
-        getMajorMinor(getDeltaVersion.value)
+      "io.delta" %% "delta-connect-client" % "4.0.0rc2",
+      "org.apache.spark" %% "spark-connect-client-jvm" % lookupSparkVersion.apply(
+        getMajorMinor("4.0.0rc2")
       )
     ),
     extraMavenRepo,
