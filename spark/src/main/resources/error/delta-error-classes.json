@@ -1059,7 +1059,7 @@
   },
   "DELTA_FEATURE_DROP_FEATURE_IS_DELTA_PROPERTY" : {
     "message" : [
-      "Cannot drop `<property>` from this table because this is a delta table property not a table feature."
+      "Cannot drop `<property>` from this table because this is a delta table property and not a table feature."
     ],
     "sqlState" : "55000"
   },
