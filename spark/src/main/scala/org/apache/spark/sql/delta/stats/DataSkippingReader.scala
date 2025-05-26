@@ -278,7 +278,7 @@ trait DataSkippingReaderBase
       pathToColumn: Seq[String]): Option[DataSkippingPredicate] = {
     val nullCountCol = StatsColumn(NULL_COUNT, pathToColumn, LongType)
     val numRecordsCol = StatsColumn(NUM_RECORDS, pathToColumn = Nil, LongType)
-    statsProvider.getPredicateWithStatsColumns(nullCountCol, numRecordsCol) {
+    statsProvider.getPredicateWithStatsColumnsIfExists(nullCountCol, numRecordsCol) {
       (nullCount, numRecords) => nullCount < numRecords
     }
   }
@@ -514,7 +514,7 @@ trait DataSkippingReaderBase
       // Note DVs might result in a redundant read of a file.
       // However, they cannot lead to a correctness issue.
       case IsNull(SkippingEligibleColumn(a, dt)) =>
-        statsProvider.getPredicateWithStatType(a, dt, NULL_COUNT) { nullCount =>
+        statsProvider.getPredicateWithStatTypeIfExists(a, dt, NULL_COUNT) { nullCount =>
           nullCount > Literal(0L)
         }
       case Not(IsNull(e)) =>
@@ -589,7 +589,7 @@ trait DataSkippingReaderBase
       // Similar to an equality test, except comparing against a prefix of the min/max stats, and
       // neither commutative nor invertible.
       case StartsWith(SkippingEligibleColumn(a, _), v @ Literal(s: UTF8String, dt: StringType)) =>
-        statsProvider.getPredicateWithStatTypes(a, dt, MIN, MAX) { (min, max) =>
+        statsProvider.getPredicateWithStatTypesIfExists(a, dt, MIN, MAX) { (min, max) =>
           val sLen = s.numChars()
           substring(min, 0, sLen) <= v && substring(max, 0, sLen) >= v
         }
