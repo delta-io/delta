@@ -38,12 +38,9 @@ sbin/start-connect-server.sh \
   --conf "spark.connect.extensions.command.classes"="org.apache.spark.sql.connect.delta.DeltaCommandPlugin"
 * Be sure to replace DELTA_VERSION with the version you are using
 
-(2) Set the SPARK_REMOTE environment variable to point to your local Spark server
-export SPARK_REMOTE="sc://localhost:15002"
+(2) Run this file i.e. ./build/sbt connect/run
 
-(3) Run this file i.e. ./build/sbt connect/run
-
-(4) Once finished QA-ing, stop the Spark Connect server.
+(3) Once finished QA-ing, stop the Spark Connect server.
 sbin/stop-connect-server.sh
 */
 
