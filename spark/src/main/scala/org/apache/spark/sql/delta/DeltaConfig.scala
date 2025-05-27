@@ -549,6 +549,13 @@ trait DeltaConfigsBase extends DeltaLogging {
     validationFunction = _ => true,
     helpMessage = "needs to be a boolean.")
 
+  val ENABLE_VARIANT_SHREDDING = buildConfig[Boolean](
+    key = "enableVariantShredding",
+    defaultValue = "false",
+    fromString = _.toBoolean,
+    validationFunction = _ => true,
+    helpMessage = "needs to be a boolean.")
+
   /**
    * Whether this table will automatically optimize the layout of files during writes.
    */
