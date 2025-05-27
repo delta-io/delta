@@ -169,7 +169,16 @@ public class ChecksumUtils {
         // Process all selected rows in a single pass for optimal performance
         for (int i = 0; i < rowCount; i++) {
           // Process add file records
-          processAddRecord(addVector, state, Optional.of(addFilesFromJson), i);
+          if (!addVector.isNullAt(i)) {
+            final LogReplayUtils.UniqueFileActionTuple key =
+                    getUniqueFileAction(
+                            addVector.getChild(ADD_PATH_INDEX), addVector.getChild(ADD_DV_INDEX), i);
+            if (!addFilesFromJson.contains(key)) {
+              addFilesFromJson.add(key);
+              processAddRecord(addVector, state, i);
+            }
+          }
+          processAddRecord(addVector, state, i);
 
           // Process remove file records
           if (!removeVector.isNullAt(i)) {
@@ -277,7 +286,7 @@ public class ChecksumUtils {
                   + "setting minFileRetentionTimestampMillis to infinite future");
 
           // Process add files, domain metadata, metadata, and protocol
-          processAddRecord(addVector, state, Optional.empty(), i);
+          processAddRecord(addVector, state, i);
           processDomainMetadataRecord(domainMetadataVector, state, i);
           processMetadataRecord(metadataVector, state, i);
           processProtocolRecord(protocolVector, state, i);
@@ -306,27 +315,8 @@ public class ChecksumUtils {
         Optional.of(state.addedFileSizeHistogram));
   }
 
-  /**
-   * Process an add file record, addFilesFromJson keep track of all added file read from log,
-   * if addFilesFromJson present, we will perform dedup.
-   * */
-  private static void processAddRecord(
-      ColumnVector addVector,
-      StateTracker state,
-      Optional<Set<LogReplayUtils.UniqueFileActionTuple>> addFilesFromJson,
-      int rowId) {
-
+  private static void processAddRecord(ColumnVector addVector, StateTracker state, int rowId) {
     if (!addVector.isNullAt(rowId)) {
-      if (addFilesFromJson.isPresent()) {
-        final LogReplayUtils.UniqueFileActionTuple key =
-            getUniqueFileAction(
-                addVector.getChild(ADD_PATH_INDEX), addVector.getChild(ADD_DV_INDEX), rowId);
-        if (addFilesFromJson.get().contains(key)) {
-          return;
-        }
-        addFilesFromJson.get().add(key);
-      }
-
       // Get file size and update tracking information
       ColumnVector sizeVector = addVector.getChild(ADD_SIZE_INDEX);
       long fileSize = sizeVector.getLong(rowId);
