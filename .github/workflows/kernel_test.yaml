@@ -30,6 +30,5 @@ jobs:
 
       # Run unit tests with JDK 17. These unit tests depend on Spark, and Spark 4.0+ is JDK 17.
       - name: Run unit tests (JDK 17)
-        # Disable coverage for now because it compiles all projects & causes a flink failure
         run: |
           python run-tests.py --group kernel
