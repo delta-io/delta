@@ -222,6 +222,8 @@ class MockListFromFileSystemClient(listFromProvider: String => Seq[FileStatus])
     toCloseableIterator(listFromProvider(filePath).iterator.asJava)
   }
 
+  override def resolvePath(path: String): String = path
+
   def getListFromCalls: Seq[String] = listFromCalls
 }
 
