@@ -16,11 +16,12 @@
 
 package org.apache.spark.sql.delta.util
 
-import org.apache.spark.sql.delta.{DataFrameUtils, DeltaTable, DeltaTableReadPredicate}
+import org.apache.spark.sql.delta.{DeltaTable, DeltaTableReadPredicate}
 
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.catalyst.expressions.{Exists, Expression, InSubquery, LateralSubquery, ScalarSubquery, SubqueryExpression => SparkSubqueryExpression, UserDefinedExpression}
 import org.apache.spark.sql.catalyst.plans.logical.{Distinct, Filter, LeafNode, LogicalPlan, OneRowRelation, Project, SubqueryAlias, Union}
+import org.apache.spark.sql.execution.columnar.InMemoryRelation
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 
 
@@ -46,11 +47,10 @@ trait DeltaSparkPlanUtils {
     )
   }
 
-  /** Returns whether the given plan was cached using df.cache() or similar. */
-  protected def planIsCached(spark: SparkSession, plan: LogicalPlan): Boolean = {
-    import org.apache.spark.sql.delta.ClassicColumnConversions._
-    spark.sharedState.cacheManager.lookupCachedData(DataFrameUtils.ofRows(spark, plan)).nonEmpty
-  }
+  /** Returns whether part of the plan was cached using df.cache() or similar. */
+  protected def planContainsCachedRelation(df: DataFrame): Boolean =
+    df.queryExecution.withCachedData.exists(_.isInstanceOf[InMemoryRelation])
+
 
   /**
    * Returns `true` if `plan` has a safe level of determinism. This is a conservative
