@@ -23,6 +23,11 @@ import io.delta.kernel.internal.SnapshotImpl
 import io.delta.kernel.internal.checksum.ChecksumUtils
 import io.delta.kernel.internal.util.ManualClock
 
+import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.test.DeltaTestImplicits.OptimisticTxnTestHelper
+
+import org.apache.hadoop.fs.Path
+
 /**
  * Test suite for io.delta.kernel.internal.checksum.ChecksumUtils
  */
@@ -136,6 +141,32 @@ class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase with LogReplayBaseSuit
         Seq(1),
         expChecksumReadSet = Nil)
       verifyChecksumForSnapshot(table.getSnapshotAsOfVersion(engine, 11))
+    }
+  }
+
+  test("test checksum -- duplicate add file") {
+    withTableWithCrc { (table, path, engine) =>
+      val deltaLog = DeltaLog.forTable(spark, new Path(path))
+      deltaLog
+        .startTransaction()
+        .commitManually(
+          List(
+            deltaLog.getSnapshotAt(11).allFiles.head().copy(dataChange = false).wrap.unwrap): _*)
+      deleteChecksumFileForTableUsingHadoopFs(
+        table.getPath(engine).stripPrefix("file:"),
+        Seq(11, 12))
+      table.checksum(engine, 11)
+      engine.resetMetrics()
+      table.checksum(engine, 12)
+      assertMetrics(
+        engine,
+        Seq(12, 11),
+        Seq(10),
+        Seq(1),
+        // Tries to incrementally load CRC but fall back with unable to handle
+        // Add file without data change(compute stats).
+        expChecksumReadSet = Seq(11))
+      verifyChecksumForSnapshot(table.getSnapshotAsOfVersion(engine, 12))
     }
   }
 }

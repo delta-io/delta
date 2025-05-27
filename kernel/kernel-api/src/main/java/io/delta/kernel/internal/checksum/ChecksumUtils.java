@@ -16,7 +16,6 @@
 package io.delta.kernel.internal.checksum;
 
 import static io.delta.kernel.internal.actions.SingleAction.CHECKPOINT_SCHEMA;
-import static io.delta.kernel.internal.replay.LogReplayUtils.getUniqueFileAction;
 import static io.delta.kernel.internal.util.Preconditions.checkState;
 
 import io.delta.kernel.data.ColumnVector;
@@ -26,7 +25,6 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.replay.CreateCheckpointIterator;
-import io.delta.kernel.internal.replay.LogReplayUtils;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.stats.FileSizeHistogram;
 import io.delta.kernel.internal.util.FileNames;
@@ -53,8 +51,7 @@ public class ChecksumUtils {
   private static final int DOMAIN_METADATA_INDEX = CHECKPOINT_SCHEMA.indexOf("domainMetadata");
   private static final int ADD_SIZE_INDEX = AddFile.FULL_SCHEMA.indexOf("size");
   private static final int REMOVE_SIZE_INDEX = RemoveFile.FULL_SCHEMA.indexOf("size");
-  private static final int ADD_PATH_INDEX = AddFile.FULL_SCHEMA.indexOf("path");
-  private static final int ADD_DV_INDEX = AddFile.FULL_SCHEMA.indexOf("deletionVector");
+  private static final int ADD_DATA_CHANGE_INDEX = AddFile.FULL_SCHEMA.indexOf("dataChange");
 
   /**
    * Computes the state of a Delta table and writes a checksum file for the provided snapshot's
@@ -133,7 +130,6 @@ public class ChecksumUtils {
 
     // Initialize state tracking
     StateTracker state = new StateTracker();
-    final Set<LogReplayUtils.UniqueFileActionTuple> addFilesFromJson = new HashSet<>();
 
     // Create a CreateCheckpointIterator with only delta file
     try (CreateCheckpointIterator checkpointIterator =
@@ -170,13 +166,13 @@ public class ChecksumUtils {
         for (int i = 0; i < rowCount; i++) {
           // Process add file records
           if (!addVector.isNullAt(i)) {
-            final LogReplayUtils.UniqueFileActionTuple key =
-                getUniqueFileAction(
-                    addVector.getChild(ADD_PATH_INDEX), addVector.getChild(ADD_DV_INDEX), i);
-            if (!addFilesFromJson.contains(key)) {
-              addFilesFromJson.add(key);
-              processAddRecord(addVector, state, i);
+            ColumnVector dataChangeVector = addVector.getChild(ADD_DATA_CHANGE_INDEX);
+            if (!dataChangeVector.getBoolean(i)) {
+              // TODO: Handle optimize case, where rdd and remove from the same log.
+              // For compute stats, we cannot know add file missing stats came before or after crc
+              return Optional.empty();
             }
+            processAddRecord(addVector, state, i);
           }
 
           // Process remove file records
@@ -184,7 +180,7 @@ public class ChecksumUtils {
             ColumnVector sizeVector = removeVector.getChild(REMOVE_SIZE_INDEX);
             // Cannot determine if a remove file missing stats came before or after crc
             if (sizeVector.isNullAt(i)) {
-              throw new IllegalStateException("Remove file missing size information");
+              return Optional.empty();
             }
             long fileSize = sizeVector.getLong(i);
             state.tableSizeByte.add(-fileSize);
