@@ -172,7 +172,8 @@ public class ChecksumUtils {
           if (!addVector.isNullAt(i)) {
             final LogReplayUtils.UniqueFileActionTuple key =
                 getUniqueFileAction(
-                    addVector.getChild(ADD_PATH_INDEX), addVector.getChild(ADD_DV_INDEX), i);
+                    addVector.getChild(ADD_PATH_INDEX),
+                    addVector.getChild(ADD_DV_INDEX), i);
             if (!addFilesFromJson.contains(key)) {
               addFilesFromJson.add(key);
               processAddRecord(addVector, state, i);
