@@ -188,6 +188,9 @@ public class SnapshotManager {
 
     long startTimeMillis = System.currentTimeMillis();
 
+    // Note: LogReplay now loads the protocol and metadata (P & M) lazily. Nonetheless, SnapshotImpl
+    //       is still constructed with an "eagerly"-loaded P & M.
+
     LogReplay logReplay =
         new LogReplay(
             logPath,
