@@ -61,7 +61,59 @@ class SchemaIterableSuite extends AnyFunSuite {
       ("nested_map.value.metadata.value", "metadata.value", "value", "IntegerType"),
       ("nested_map.value.metadata", "metadata", "", "MapType"),
       ("nested_map.value", "nested_map.value", "value", "StructType"),
-      ("nested_map", "nested_map", "", "MapType"))
+      ("nested_map", "nested_map", "", "MapType"),
+      // Third branch
+      (
+        "double_nested.element.element.key.key.element",
+        "double_nested.element.element.key.key.element",
+        "element.element.key.key.element",
+        "IntegerType"),
+      (
+        "double_nested.element.element.key.key",
+        "double_nested.element.element.key.key",
+        "element.element.key.key",
+        "ArrayType"),
+      (
+        "double_nested.element.element.key.value",
+        "double_nested.element.element.key.value",
+        "element.element.key.value",
+        "StringType"),
+      (
+        "double_nested.element.element.key",
+        "double_nested.element.element.key",
+        "element.element.key",
+        "MapType"),
+      (
+        "double_nested.element.element.value.key",
+        "double_nested.element.element.value.key",
+        "element.element.value.key",
+        "StringType"),
+      (
+        "double_nested.element.element.value.value",
+        "double_nested.element.element.value.value",
+        "element.element.value.value",
+        "StringType"),
+      (
+        "double_nested.element.element.value",
+        "double_nested.element.element.value",
+        "element.element.value",
+        "MapType"),
+      (
+        "double_nested.element.element",
+        "double_nested.element.element",
+        "element.element",
+        "MapType"),
+      ("double_nested.element", "double_nested.element", "element", "ArrayType"),
+      ("double_nested", "double_nested", "", "ArrayType"),
+      // fourth branch
+      ("empty_struct", "empty_struct", "", "StructType"),
+      // fifth branch
+      ("empty_struct_array.element", "empty_struct_array.element", "element", "StructType"),
+      ("empty_struct_array", "empty_struct_array", "", "ArrayType"),
+      // sixth branch
+      ("empty_map_struct.key", "empty_map_struct.key", "key", "StructType"),
+      ("empty_map_struct.value", "empty_map_struct.value", "value", "StructType"),
+      ("empty_map_struct", "empty_map_struct", "", "MapType"))
 
     fieldInfo.zip(expectedOrder).foreach {
       case (actual, expected) => assert(actual == expected)
@@ -149,7 +201,27 @@ class SchemaIterableSuite extends AnyFunSuite {
       ("nested_map.value.metadata.value", "StringType"),
       ("nested_map.value.metadata", "MapType"),
       ("nested_map.value", "StructType"),
-      ("nested_map", "MapType"))
+      ("nested_map", "MapType"),
+      // Third branch
+      ("double_nested.element.element.key.key.element", "IntegerType"),
+      ("double_nested.element.element.key.key", "ArrayType"),
+      ("double_nested.element.element.key.value", "StringType"),
+      ("double_nested.element.element.key", "MapType"),
+      ("double_nested.element.element.value.key", "StringType"),
+      ("double_nested.element.element.value.value", "StringType"),
+      ("double_nested.element.element.value", "MapType"),
+      ("double_nested.element.element", "MapType"),
+      ("double_nested.element", "ArrayType"),
+      ("double_nested", "ArrayType"),
+      // fourth branch
+      ("empty_struct", "StructType"),
+      // fifth branch
+      ("empty_struct_array.element", "StructType"),
+      ("empty_struct_array", "ArrayType"),
+      // sixth branch
+      ("empty_map_struct.key", "StructType"),
+      ("empty_map_struct.value", "StructType"),
+      ("empty_map_struct", "MapType"))
 
     fieldInfo.zip(expectedOrder).foreach {
       case (actual, expected) => assert(actual == expected)
@@ -232,6 +304,12 @@ class SchemaIterableSuite extends AnyFunSuite {
     //       metadata: map<string, int>
     //     >
     //   >
+    //   double_nested:
+    //     array<array<map<map<array<int>, string>, map<string, string>>>
+    //   empty_struct_array:
+    //     array<struct<>>>
+    //   empty_map_struct:
+    //    map<struct<>, struct<>>
     // >
 
     // Define the point struct inside the array
@@ -252,7 +330,21 @@ class SchemaIterableSuite extends AnyFunSuite {
 
     // Create the root schema
     val schema = new StructType().add("nested_array", new ArrayType(innerStruct, false))
-      .add("nested_map", new MapType(new ArrayType(stringType, false), valueStruct, true));
+      .add("nested_map", new MapType(new ArrayType(stringType, false), valueStruct, true))
+      .add(
+        "double_nested",
+        new ArrayType(
+          new ArrayType(
+            new MapType(
+              new MapType(new ArrayType(IntegerType.INTEGER, true), StringType.STRING, true),
+              new MapType(StringType.STRING, StringType.STRING, true),
+              true),
+            false),
+          false),
+        false)
+      .add("empty_struct", new StructType(), false)
+      .add("empty_struct_array", new ArrayType(new StructType(), true), false)
+      .add("empty_map_struct", new MapType(new StructType(), new StructType(), true), false)
     schema
   }
 }

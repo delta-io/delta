@@ -20,7 +20,33 @@ import io.delta.kernel.types.*;
 import java.util.*;
 import java.util.function.Consumer;
 
-/** Utility class for iterating over schema structures and modifying them. */
+/**
+ * Utility class for iterating over schema structures and modifying them.
+ *
+ * <p>Sample usage for iterating schemas:
+ *
+ * <pre>{@code
+ * StructType schema = ...;
+ * for (SchemaIterable.SchemaElement element : new SchemaIterable(schema)) {
+ *    StructField field = element.getField();
+ *    // Get info from field in some way.
+ * }
+ * }</pre>
+ *
+ * <p>Sample usage for mutating schemas:
+ *
+ * <pre>{@code
+ * StructType schema = ...;
+ * SchemaIterable schemaIterable = new SchemaIterable(schema);
+ * Iterator<SchemaIterable.MutableSchemaElement> iterator = schemaIterable.newMutableIterator();
+ * while (iterator.hasNext()) {
+ *    SchemaIterable.MutableSchemaElement element = iterator.next();
+ *    // Calculate a new field in some way then call updateField.
+ *    element.updateField(...)
+ * }
+ * updatedSchema = schemaIterable.getSchema();
+ * }</pre>
+ */
 public class SchemaIterable implements Iterable<SchemaIterable.SchemaElement> {
   private StructType schema;
 
@@ -335,17 +361,12 @@ public class SchemaIterable implements Iterable<SchemaIterable.SchemaElement> {
 
     @Override
     public String getNamePath() {
-      // TODO: Escape names that have '.' in them.
-      int size =
-          parents.stream().mapToInt(p -> p.currentField().getName().length()).sum()
-              + currentField().getName().length();
-      StringBuilder sb = new StringBuilder(size + parents.size());
+      List<String> names = new ArrayList<>();
       for (SchemaZipper parent : parents) {
-        sb.append(parent.currentField().getName());
-        sb.append(".");
+        names.add(parent.currentField().getName());
       }
-      sb.append(currentField().getName());
-      return sb.toString();
+      names.add(currentField().getName());
+      return SchemaUtils.concatWithDot(names);
     }
 
     @Override
@@ -418,6 +439,11 @@ public class SchemaIterable implements Iterable<SchemaIterable.SchemaElement> {
   private static class ArraySchemaZipper extends SchemaZipper {
     ArraySchemaZipper(List<SchemaZipper> parents, ArrayType arrayType) {
       super(parents, Collections.singletonList(arrayType.getElementField()));
+      if (!fields.get(0).getName().equals(ArrayType.ARRAY_ELEMENT_NAME)) {
+        throw new KernelException(
+            "ArrayType must have a single field named 'element', found: "
+                + fields.get(0).getName());
+      }
     }
 
     @Override
@@ -429,6 +455,14 @@ public class SchemaIterable implements Iterable<SchemaIterable.SchemaElement> {
   private static class MapSchemaZipper extends SchemaZipper {
     MapSchemaZipper(List<SchemaZipper> parents, MapType mapType) {
       super(parents, Arrays.asList(mapType.getKeyField(), mapType.getValueField()));
+      if (!fields.get(0).getName().equals(MapType.MAP_KEY_NAME)
+          || !fields.get(1).getName().equals(MapType.MAP_VALUE_NAME)) {
+        throw new KernelException(
+            "MapType must have two fields named 'key' and 'value', found: "
+                + fields.get(0).getName()
+                + ", "
+                + fields.get(1).getName());
+      }
     }
 
     @Override
