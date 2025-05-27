@@ -46,6 +46,7 @@ public class ResolvedTableInternalImpl implements ResolvedTableInternal {
   //////////////////////////////////
   // Public ResolvedTable Methods //
   //////////////////////////////////
+
   @Override
   public String getPath() {
     return path;
