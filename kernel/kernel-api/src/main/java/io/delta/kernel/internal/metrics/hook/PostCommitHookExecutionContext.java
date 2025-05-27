@@ -33,6 +33,7 @@ public class PostCommitHookExecutionContext {
 
   /**
    * Creates a new context for a single hook execution.
+   *
    * @param tablePath absolute Delta-table path
    * @param hookType enum identifying the hook type.
    * @param hookExecutionDetails additional hook-specific execution details.
@@ -66,6 +67,7 @@ public class PostCommitHookExecutionContext {
 
   /**
    * Records the execution duration for this hook
+   *
    * @param durationNs the duration in nanoseconds
    */
   public void setExecutionDurationNs(long durationNs) {
@@ -74,6 +76,7 @@ public class PostCommitHookExecutionContext {
 
   /**
    * Creates a PostCommitHookMetricsResult reflecting the recorded duration.
+   *
    * @return PostCommitHookMetricsResult containing the timing for this hook type
    */
   public PostCommitHookMetricsResult getPostCommitHookMetrics() {
