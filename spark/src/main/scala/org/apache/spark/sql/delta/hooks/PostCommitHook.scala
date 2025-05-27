@@ -28,25 +28,14 @@ import org.apache.spark.sql.SparkSession
  */
 trait PostCommitHook {
 
-  /** A user friendly name for the hook for error reporting purposes. */
+  /** A user-friendly name for the hook for error reporting purposes. */
   val name: String
 
   /**
    * Executes the hook.
    * @param txn The txn that made the commit, after which this PostCommitHook was run
-   * @param committedVersion The version that was committed by the txn
-   * @param postCommitSnapshot the snapshot of the table after the txn successfully committed.
-   *                           NOTE: This may not match the committedVersion, if racing
-   *                           commits were written while the snapshot was computed.
-   * @param committedActions the actions that were committed in the txn. *May* be empty
-   *                         if the list of actions was too large.
    */
-  def run(
-    spark: SparkSession,
-    txn: DeltaTransaction,
-    committedVersion: Long,
-    postCommitSnapshot: Snapshot,
-    committedActions: Iterator[Action]): Unit
+  def run(spark: SparkSession, txn: CommittedTransaction): Unit
 
   /**
    * Handle any error caused while running the hook. By default, all errors are ignored as

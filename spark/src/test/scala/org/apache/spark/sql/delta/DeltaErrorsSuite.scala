@@ -33,8 +33,7 @@ import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.constraints.CharVarcharConstraint
 import org.apache.spark.sql.delta.constraints.Constraints
 import org.apache.spark.sql.delta.constraints.Constraints.NotNull
-import org.apache.spark.sql.delta.hooks.AutoCompactType
-import org.apache.spark.sql.delta.hooks.PostCommitHook
+import org.apache.spark.sql.delta.hooks.{AutoCompactType, PostCommitHook}
 import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, InvariantViolationException, SchemaMergingUtils, SchemaUtils, UnsupportedDataTypeInfo}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -799,9 +798,7 @@ trait DeltaErrorsSuiteBase
       val e = intercept[DeltaRuntimeException] {
         throw DeltaErrors.postCommitHookFailedException(new PostCommitHook() {
           override val name: String = "DummyPostCommitHook"
-          override def run(
-            spark: SparkSession, txn: DeltaTransaction, committedVersion: Long,
-            postCommitSnapshot: Snapshot, committedActions: Iterator[Action]): Unit = {}
+          override def run(spark: SparkSession, txn: CommittedTransaction): Unit = {}
         }, 0, "msg", null)
       }
       checkError(e, "DELTA_POST_COMMIT_HOOK_FAILED", "2DKD0",
@@ -811,9 +808,7 @@ trait DeltaErrorsSuiteBase
       val e = intercept[DeltaRuntimeException] {
         throw DeltaErrors.postCommitHookFailedException(new PostCommitHook() {
           override val name: String = "DummyPostCommitHook"
-          override def run(
-            spark: SparkSession, txn: DeltaTransaction, committedVersion: Long,
-            postCommitSnapshot: Snapshot, committedActions: Iterator[Action]): Unit = {}
+          override def run(spark: SparkSession, txn: CommittedTransaction): Unit = {}
         }, 0, null, null)
       }
       checkError(e, "DELTA_POST_COMMIT_HOOK_FAILED", "2DKD0", Map(
