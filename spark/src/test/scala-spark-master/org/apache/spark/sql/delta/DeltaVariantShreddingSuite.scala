@@ -81,7 +81,6 @@ class DeltaVariantShreddingSuite
       val footer: ParquetMetadata = reader.getFooter
       val isShredded =
         hasStructWithFieldNames(footer.getFileMetaData().getSchema, requiredFieldNames)
-        hasStructWithFieldNames(footer.getFileMetaData().getSchema, requiredFieldNames)
       reader.close()
       isShredded
     }
