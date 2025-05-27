@@ -20,15 +20,16 @@ import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.Table;
 import io.delta.kernel.engine.Engine;
-import io.delta.kernel.hook.PostCommitHook;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.metrics.hook.PostCommitHookExecutionContext;
 import java.io.IOException;
+import java.util.Collections;
 
 /**
  * A post-commit hook that writes a new checksum file at the version committed by the transaction.
  * This hook performs a writing checksum operation with table state construction for log replay.
  */
-public class ChecksumFullHook implements PostCommitHook {
+public class ChecksumFullHook extends TimedPostCommitHook {
 
   private final Path tablePath;
   private final long version;
@@ -39,7 +40,7 @@ public class ChecksumFullHook implements PostCommitHook {
   }
 
   @Override
-  public void threadSafeInvoke(Engine engine) throws IOException {
+  public void executeHook(Engine engine) throws IOException {
     checkArgument(engine != null);
     Table.forPath(engine, tablePath.toString()).checksum(engine, version);
   }
@@ -47,5 +48,13 @@ public class ChecksumFullHook implements PostCommitHook {
   @Override
   public PostCommitHookType getType() {
     return PostCommitHookType.CHECKSUM_FULL;
+  }
+
+  @Override
+  public PostCommitHookExecutionContext createHookExecutionContext() {
+    return new PostCommitHookExecutionContext(
+        tablePath.toString(),
+        getType(),
+        Collections.singletonMap("version", Long.toString(version)));
   }
 }

@@ -17,12 +17,13 @@ package io.delta.kernel.internal.hook;
 
 import io.delta.kernel.Table;
 import io.delta.kernel.engine.Engine;
-import io.delta.kernel.hook.PostCommitHook;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.metrics.hook.PostCommitHookExecutionContext;
 import java.io.IOException;
+import java.util.Collections;
 
 /** Write a new checkpoint at the version committed by the txn. */
-public class CheckpointHook implements PostCommitHook {
+public class CheckpointHook extends TimedPostCommitHook {
 
   private final Path tablePath;
   private final long checkpointVersion;
@@ -33,12 +34,20 @@ public class CheckpointHook implements PostCommitHook {
   }
 
   @Override
-  public void threadSafeInvoke(Engine engine) throws IOException {
+  public void executeHook(Engine engine) throws IOException {
     Table.forPath(engine, tablePath.toString()).checkpoint(engine, checkpointVersion);
   }
 
   @Override
   public PostCommitHookType getType() {
     return PostCommitHookType.CHECKPOINT;
+  }
+
+  @Override
+  public PostCommitHookExecutionContext createHookExecutionContext() {
+    return new PostCommitHookExecutionContext(
+        tablePath.toString(),
+        getType(),
+        Collections.singletonMap("checkpointVersion", Long.toString(checkpointVersion)));
   }
 }

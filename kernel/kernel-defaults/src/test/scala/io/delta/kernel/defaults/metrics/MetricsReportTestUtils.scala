@@ -22,7 +22,7 @@ import scala.collection.mutable.ArrayBuffer
 import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.defaults.utils.TestUtils
 import io.delta.kernel.engine._
-import io.delta.kernel.metrics.MetricsReport
+import io.delta.kernel.metrics.{MetricsReport, PostCommitHookMetricsReport}
 
 import org.apache.hadoop.conf.Configuration
 
@@ -61,6 +61,20 @@ trait MetricsReportTestUtils extends TestUtils {
       f(new EngineWithInMemoryMetricsReporter(reports, defaultEngine))
       (reports, Option.empty)
     }
+  }
+
+  /**
+   * Executes a PostCommitHook and returns the metrics report
+   */
+  def getPostCommitHookReport(
+      executeHook: Engine => Unit,
+      expectException: Boolean): (PostCommitHookMetricsReport, Option[Exception]) = {
+    val (metricsReports, exception) = collectMetricsReports(executeHook, expectException)
+
+    val postCommitReports = metricsReports.filter(_.isInstanceOf[PostCommitHookMetricsReport])
+    assert(postCommitReports.length == 1, "Expected exactly 1 PostCommitHookMetricsReport")
+
+    (postCommitReports.head.asInstanceOf[PostCommitHookMetricsReport], exception)
   }
 
   /**

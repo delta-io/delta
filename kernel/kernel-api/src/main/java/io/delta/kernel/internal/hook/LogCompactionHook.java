@@ -18,17 +18,19 @@ package io.delta.kernel.internal.hook;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.engine.Engine;
-import io.delta.kernel.hook.PostCommitHook;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.compaction.LogCompactionWriter;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.metrics.hook.PostCommitHookExecutionContext;
 import java.io.IOException;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * A post-commit hook that performs inline log compaction. It merges commit JSON files over a
  * compaction interval into a single compacted JSON file.
  */
-public class LogCompactionHook implements PostCommitHook {
+public class LogCompactionHook extends TimedPostCommitHook {
 
   private final Path dataPath;
   private final Path logPath;
@@ -50,7 +52,7 @@ public class LogCompactionHook implements PostCommitHook {
   }
 
   @Override
-  public void threadSafeInvoke(Engine engine) throws IOException {
+  public void executeHook(Engine engine) throws IOException {
     LogCompactionWriter compactionWriter =
         new LogCompactionWriter(
             dataPath, logPath, startVersion, commitVersion, minFileRetentionTimestampMillis);
@@ -85,5 +87,15 @@ public class LogCompactionHook implements PostCommitHook {
   @VisibleForTesting
   public long getMinFileRetentionTimestampMillis() {
     return minFileRetentionTimestampMillis;
+  }
+
+  @Override
+  protected PostCommitHookExecutionContext createHookExecutionContext() {
+    Map<String, String> details = new HashMap<>();
+    details.put("logPath", logPath.toString());
+    details.put("startVersion", Long.toString(startVersion));
+    details.put("commitVersion", Long.toString(commitVersion));
+    details.put("minFileRetentionTimestampMillis", Long.toString(minFileRetentionTimestampMillis));
+    return new PostCommitHookExecutionContext(dataPath.toString(), getType(), details);
   }
 }
