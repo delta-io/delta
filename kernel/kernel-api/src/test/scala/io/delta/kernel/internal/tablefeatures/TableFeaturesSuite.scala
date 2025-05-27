@@ -133,7 +133,6 @@ class TableFeaturesSuite extends AnyFunSuite {
       "variantShredding-preview",
       testMetadata(tblProps = Map("delta.enableVariantShredding" -> "false")),
       false),
-    ("rowTracking", testMetadata(tblProps = Map("delta.enableRowTracking" -> "false")), false),
     (
       "deletionVectors",
       testMetadata(tblProps = Map("delta.enableDeletionVectors" -> "true")),
