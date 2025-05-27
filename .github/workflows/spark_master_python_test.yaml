@@ -83,12 +83,10 @@ jobs:
           pipenv run pip install protobuf==5.29.1
           pipenv run pip install googleapis-common-protos-stubs==2.2.0
           pipenv run pip install grpc-stubs==1.24.11
-          pipenv run pip install https://dist.apache.org/repos/dist/dev/spark/v4.0.0-rc6-bin/pyspark-4.0.0.tar.gz
+          pipenv run pip install pyspark==4.0.0
         if: steps.git-diff.outputs.diff
       - name: Run Python tests
         # when changing TEST_PARALLELISM_COUNT make sure to also change it in spark_master_test.yaml
         run: |
-          # We use the SBT version to choose our dependencies in our python packaging in setup.py
-          echo 'ThisBuild / version := "4.0.0-SNAPSHOT"' > version.sbt
           TEST_PARALLELISM_COUNT=4 USE_SPARK_MASTER=true pipenv run python run-tests.py --group spark-python
         if: steps.git-diff.outputs.diff
