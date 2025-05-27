@@ -23,7 +23,7 @@ Requirements:
 - pyspark 4.0.0
 - delta-connect-server 4.0.0rc1+
 
-(1) Start a local Spark connect server using this command:
+(1) Download the latest Spark 4 release and start a local Spark connect server using this command:
 sbin/start-connect-server.sh \
   --packages io.delta:delta-connect-server_2.13:{DELTA_VERSION},com.google.protobuf:protobuf-java:3.25.1 \
   --conf "spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension" \
@@ -36,6 +36,9 @@ sbin/start-connect-server.sh \
 export SPARK_REMOTE="sc://localhost:15002"
 
 (3) Run this file i.e. python3 examples/python/delta_connect.py
+
+(4) Once finished QA-ing, stop the Spark Connect server.
+sbin/stop-connect-server.sh
 """
 
 import os
