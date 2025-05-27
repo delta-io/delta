@@ -15,11 +15,11 @@
  */
 package io.delta.kernel.internal.metrics;
 
-import io.delta.kernel.metrics.SnapshotReport;
-import java.util.Optional;
-
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
+
+import io.delta.kernel.metrics.SnapshotReport;
+import java.util.Optional;
 
 /**
  * Stores the context for a given Snapshot query. This includes information about the query
@@ -34,19 +34,19 @@ public class SnapshotQueryContext {
   /** Creates a {@link SnapshotQueryContext} for a Snapshot created by a latest snapshot query */
   public static SnapshotQueryContext forLatestSnapshot(String tablePath) {
     return new SnapshotQueryContext(
-            tablePath, Optional.empty(), Optional.empty(), Optional.empty());
+        tablePath, Optional.empty(), Optional.empty(), Optional.empty());
   }
 
   /** Creates a {@link SnapshotQueryContext} for a Snapshot created by a AS OF VERSION query */
   public static SnapshotQueryContext forVersionSnapshot(String tablePath, long version) {
     return new SnapshotQueryContext(
-            tablePath, Optional.of(version), Optional.empty(), Optional.empty());
+        tablePath, Optional.of(version), Optional.empty(), Optional.empty());
   }
 
   /** Creates a {@link SnapshotQueryContext} for a Snapshot created by a AS OF TIMESTAMP query */
   public static SnapshotQueryContext forTimestampSnapshot(String tablePath, long timestamp) {
     return new SnapshotQueryContext(
-            tablePath, Optional.empty(), Optional.empty(), Optional.of(timestamp));
+        tablePath, Optional.empty(), Optional.empty(), Optional.of(timestamp));
   }
 
   private final String tablePath;
@@ -106,22 +106,21 @@ public class SnapshotQueryContext {
     version = Optional.of(updatedVersion);
   }
 
-  /**
-   * Updates the {@code checkpointVersion} stored in this snapshot context.
-   */
-  public void setCheckpointVersion(Optional<Long> checkpointVersion)
-  {
+  /** Updates the {@code checkpointVersion} stored in this snapshot context. */
+  public void setCheckpointVersion(Optional<Long> checkpointVersion) {
     requireNonNull(checkpointVersion, "checkpointVersion cannot be null");
-    checkArgument(!checkpointVersion.isPresent() || checkpointVersion.get() >= 0,
-        "Invalid checkpoint version: %s", checkpointVersion);
+    checkArgument(
+        !checkpointVersion.isPresent() || checkpointVersion.get() >= 0,
+        "Invalid checkpoint version: %s",
+        checkpointVersion);
     this.checkpointVersion = checkpointVersion;
   }
 
   @Override
   public String toString() {
     return String.format(
-        "SnapshotQueryContext(tablePath=%s, version=%s, providedTimestamp=%s, " +
-            "checkpointVersion=%s, snapshotMetric=%s)",
+        "SnapshotQueryContext(tablePath=%s, version=%s, providedTimestamp=%s, "
+            + "checkpointVersion=%s, snapshotMetric=%s)",
         tablePath, version, providedTimestamp, checkpointVersion, snapshotMetrics);
   }
 }

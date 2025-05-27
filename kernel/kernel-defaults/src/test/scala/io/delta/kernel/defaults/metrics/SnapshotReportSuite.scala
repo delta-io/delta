@@ -113,10 +113,12 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
     assert(
       Objects.equals(snapshotReport.getVersion, expectedVersion),
       s"Expected version $expectedVersion found ${snapshotReport.getVersion}")
-    assert(Objects.equals(
-      snapshotReport.getCheckpointVersion, expectedCheckpointVersion),
+    assert(
+      Objects.equals(
+        snapshotReport.getCheckpointVersion,
+        expectedCheckpointVersion),
       s"Expected checkpoint version $expectedCheckpointVersion, found " +
-          s"${snapshotReport.getCheckpointVersion}")
+        s"${snapshotReport.getCheckpointVersion}")
     assert(Objects.equals(snapshotReport.getProvidedTimestamp, expectedProvidedTimestamp))
 
     // Since we cannot know the actual durations of these we sanity check that they are > 0 and

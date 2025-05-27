@@ -85,8 +85,7 @@ public class SnapshotReportImpl extends DeltaOperationReportImpl implements Snap
   }
 
   @Override
-  public Optional<Long> getCheckpointVersion()
-  {
+  public Optional<Long> getCheckpointVersion() {
     return checkpointVersion;
   }
 
