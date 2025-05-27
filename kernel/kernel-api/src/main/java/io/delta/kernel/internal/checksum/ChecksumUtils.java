@@ -306,7 +306,10 @@ public class ChecksumUtils {
         Optional.of(state.addedFileSizeHistogram));
   }
 
-  /** Process an add file record. */
+  /**
+   * Process an add file record, addFilesFromJson keep track of all added file read from log,
+   * if addFilesFromJson present, we will perform dedup.
+   * */
   private static void processAddRecord(
       ColumnVector addVector,
       StateTracker state,
@@ -333,7 +336,6 @@ public class ChecksumUtils {
     }
   }
 
-  /** Process a domain metadata record. */
   private static void processDomainMetadataRecord(
       ColumnVector domainMetadataVector, StateTracker state, int rowId) {
     if (!domainMetadataVector.isNullAt(rowId)) {
@@ -347,7 +349,6 @@ public class ChecksumUtils {
     }
   }
 
-  /** Process a metadata record. */
   private static void processMetadataRecord(
       ColumnVector metadataVector, StateTracker state, int rowId) {
     if (!metadataVector.isNullAt(rowId)) {
@@ -357,7 +358,6 @@ public class ChecksumUtils {
     }
   }
 
-  /** Process a protocol record. */
   private static void processProtocolRecord(
       ColumnVector protocolVector, StateTracker state, int rowId) {
     if (!protocolVector.isNullAt(rowId)) {
