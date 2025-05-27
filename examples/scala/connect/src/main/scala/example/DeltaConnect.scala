@@ -27,8 +27,9 @@ To run this example you must follow these steps:
 Requirements:
 - Using Java 17
 - Spark 4.0.0+
-- delta-connect-client 4.0.0rc1+, and delta-connect-server 4.0.0rc1+
-(1) Start a local Spark connect server using this command:
+- delta-connect-server 4.0.0rc1+
+
+(1) Download the latest Spark 4 release and start a local Spark connect server using this command:
 sbin/start-connect-server.sh \
   --packages io.delta:delta-connect-server_2.13:{DELTA_VERSION},com.google.protobuf:protobuf-java:3.25.1 \
   --conf "spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension" \
@@ -36,10 +37,16 @@ sbin/start-connect-server.sh \
   --conf "spark.connect.extensions.relation.classes"="org.apache.spark.sql.connect.delta.DeltaRelationPlugin" \
   --conf "spark.connect.extensions.command.classes"="org.apache.spark.sql.connect.delta.DeltaCommandPlugin"
 * Be sure to replace DELTA_VERSION with the version you are using
+
 (2) Set the SPARK_REMOTE environment variable to point to your local Spark server
 export SPARK_REMOTE="sc://localhost:15002"
+
 (3) export _JAVA_OPTIONS="--add-opens=java.base/java.nio=ALL-UNNAMED"
+
 (4) Run this file i.e. ./build/sbt connect/run
+
+(5) Once finished QA-ing, stop the Spark Connect server.
+sbin/stop-connect-server.sh
 */
 
 object DeltaConnect {
