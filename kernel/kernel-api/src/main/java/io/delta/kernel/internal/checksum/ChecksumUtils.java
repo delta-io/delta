@@ -260,8 +260,8 @@ public class ChecksumUtils {
         FilteredColumnarBatch filteredBatch = checkpointIterator.next();
         ColumnarBatch batch = filteredBatch.getData();
         Optional<ColumnVector> selectionVector = filteredBatch.getSelectionVector();
-
         final int rowCount = batch.getSize();
+
         ColumnVector metadataVector = batch.getColumnVector(METADATA_INDEX);
         ColumnVector protocolVector = batch.getColumnVector(PROTOCOL_INDEX);
         ColumnVector removeVector = batch.getColumnVector(REMOVE_INDEX);
@@ -278,8 +278,9 @@ public class ChecksumUtils {
                   .orElse(true);
           if (!isSelected) continue;
 
-          // Ensure there are no remove records (we set minFileRetentionTimestampMillis to infinite
-          // future)
+          // Step 1: Ensure there are no remove records
+          // We set minFileRetentionTimestampMillis to infinite future to skip all removed files,
+          // so there should be no remove actions.
           checkState(
               removeVector.isNullAt(i),
               "unexpected remove row found when "
