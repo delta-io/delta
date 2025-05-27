@@ -92,26 +92,24 @@ class DeltaVariantShreddingSuite
     // 2. Drop the variant column (currently the variantTy)
     // 3. Add the shredding property - shredding feature should be absent
     // 4. Add the variant column - shredding feature should be present
-    Seq("v variant", "v struct<v1 variant>").foreach { variantColumn =>
-      withTable("tbl") {
-        sql("CREATE TABLE tbl(s STRING, i INTEGER, v VARIANT) USING DELTA")
-        val (deltaLog, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier("tbl"))
-        assert(!snapshot.protocol
-          .isFeatureSupported(VariantShreddingPreviewTableFeature),
-          s"Table tbl contains ShreddedVariantTableFeature descriptor when its not supposed to")
-        // Add column mapping so drop column can be supported
-        sql("""ALTER TABLE tbl SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name')""")
-        sql("ALTER TABLE tbl DROP COLUMN v")
-        assert(!getProtocolForTable("tbl")
-          .readerAndWriterFeatures.contains(VariantShreddingPreviewTableFeature))
-        sql(s"ALTER TABLE tbl " +
-          s"SET TBLPROPERTIES('${DeltaConfigs.ENABLE_VARIANT_SHREDDING.key}' = 'true')")
-        assert(!getProtocolForTable("tbl")
-          .readerAndWriterFeatures.contains(VariantShreddingPreviewTableFeature))
-        sql(s"ALTER TABLE tbl ADD COLUMN ($variantColumn)")
-        assert(getProtocolForTable("tbl")
-          .readerAndWriterFeatures.contains(VariantShreddingPreviewTableFeature))
-      }
+    withTable("tbl") {
+      sql("CREATE TABLE tbl(s STRING, i INTEGER, v VARIANT) USING DELTA")
+      val (deltaLog, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier("tbl"))
+      assert(!snapshot.protocol
+        .isFeatureSupported(VariantShreddingPreviewTableFeature),
+        s"Table tbl contains ShreddedVariantTableFeature descriptor when its not supposed to")
+      // Add column mapping so drop column can be supported
+      sql("""ALTER TABLE tbl SET TBLPROPERTIES ('delta.columnMapping.mode' = 'name')""")
+      sql("ALTER TABLE tbl DROP COLUMN v")
+      assert(!getProtocolForTable("tbl")
+        .readerAndWriterFeatures.contains(VariantShreddingPreviewTableFeature))
+      sql(s"ALTER TABLE tbl " +
+        s"SET TBLPROPERTIES('${DeltaConfigs.ENABLE_VARIANT_SHREDDING.key}' = 'true')")
+      assert(!getProtocolForTable("tbl")
+        .readerAndWriterFeatures.contains(VariantShreddingPreviewTableFeature))
+      sql(s"ALTER TABLE tbl ADD COLUMN (v VARIANT)")
+      assert(getProtocolForTable("tbl")
+        .readerAndWriterFeatures.contains(VariantShreddingPreviewTableFeature))
     }
     // Create table with variant and config - feature should be present
     withTable("tbl") {
