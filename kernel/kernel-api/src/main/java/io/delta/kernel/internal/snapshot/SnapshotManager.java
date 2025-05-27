@@ -77,6 +77,9 @@ public class SnapshotManager {
     final LogSegment logSegment =
         getLogSegmentForVersion(engine, Optional.empty() /* versionToLoad */);
 
+    snapshotContext.setVersion(logSegment.getVersion());
+    snapshotContext.setCheckpointVersion(logSegment.getCheckpointVersionOpt());
+
     return createSnapshot(logSegment, engine, snapshotContext);
   }
 

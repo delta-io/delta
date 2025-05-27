@@ -194,10 +194,15 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
       val path = tempDir.getCanonicalPath
 
       // Set up delta table with version 0 to 11 with checkpoint at version 10
-      (0 until 12).foreach(_ =>
+      (0 until 11).foreach(_ =>
         spark.range(10).write.format("delta").mode("append").save(path))
-      Thread.sleep(1000)
+
       val version11timestamp = System.currentTimeMillis
+      // Since filesystem modification time might be truncated to the second, we sleep to make sure
+      // the next commit is after this timestamp
+      Thread.sleep(1000)
+      // create version 11
+      spark.range(10).write.format("delta").mode("append").save(path)
 
       // Test getLatestSnapshot
       checkSnapshotReport(
@@ -229,7 +234,7 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         expectedReportCount = 2,
         path,
         expectException = false,
-        expectedVersion = Optional.of(11),
+        expectedVersion = Optional.of(10),
         expectedCheckpointVersion = Optional.of(10),
         expectedProvidedTimestamp = Optional.of(version11timestamp),
         expectNonEmptyTimestampToVersionResolutionDuration = true,
