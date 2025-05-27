@@ -22,6 +22,7 @@ import io.delta.kernel.ScanBuilder;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.util.Clock;
 import io.delta.kernel.types.StructType;
@@ -31,15 +32,16 @@ import java.util.Optional;
 public class ResolvedTableInternalImpl implements ResolvedTableInternal {
   private final String path;
   private final String logPath;
-  private final LogSegment logSegment;
   private final long version;
+  private final Lazy<LogSegment> lazyLogSegment;
   private final Clock clock;
 
-  public ResolvedTableInternalImpl(String path, LogSegment logSegment, Clock clock) {
+  public ResolvedTableInternalImpl(
+      String path, long version, Lazy<LogSegment> lazyLogSegment, Clock clock) {
     this.path = requireNonNull(path, "path is null");
     this.logPath = new Path(path, "_delta_log").toString();
-    this.logSegment = requireNonNull(logSegment, "logSegment is null");
-    this.version = logSegment.getVersion();
+    this.version = version;
+    this.lazyLogSegment = requireNonNull(lazyLogSegment, "lazyLogSegment is null");
     this.clock = requireNonNull(clock, "clock is null");
   }
 
@@ -108,6 +110,6 @@ public class ResolvedTableInternalImpl implements ResolvedTableInternal {
 
   @Override
   public LogSegment getLogSegment() {
-    return logSegment;
+    return lazyLogSegment.get();
   }
 }

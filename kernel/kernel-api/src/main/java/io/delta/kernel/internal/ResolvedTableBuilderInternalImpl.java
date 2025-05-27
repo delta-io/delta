@@ -16,29 +16,32 @@
 
 package io.delta.kernel.internal;
 
+import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.files.ParsedLogData;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.snapshot.SnapshotManager;
 import io.delta.kernel.internal.util.Clock;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
-import java.util.OptionalLong;
 
 public class ResolvedTableBuilderInternalImpl implements ResolvedTableBuilderInternal {
-  private final String path;
-  private OptionalLong versionOpt;
+  private final String unresolvedPath;
+  private Optional<Long> versionOpt;
   private List<ParsedLogData> logData;
   private Clock clock;
 
-  public ResolvedTableBuilderInternalImpl(String path) {
-    this.path = requireNonNull(path, "path is null");
-    this.versionOpt = OptionalLong.empty();
+  public ResolvedTableBuilderInternalImpl(String unresolvedPath) {
+    this.unresolvedPath = requireNonNull(unresolvedPath, "unresolvedPath is null");
+    this.versionOpt = Optional.empty();
     this.logData = Collections.emptyList();
     this.clock = System::currentTimeMillis;
   }
@@ -49,7 +52,7 @@ public class ResolvedTableBuilderInternalImpl implements ResolvedTableBuilderInt
 
   @Override
   public ResolvedTableBuilderInternal atVersion(long version) {
-    this.versionOpt = OptionalLong.of(version);
+    this.versionOpt = Optional.of(version);
     return this;
   }
 
@@ -61,8 +64,9 @@ public class ResolvedTableBuilderInternalImpl implements ResolvedTableBuilderInt
 
   @Override
   public ResolvedTableInternal build(Engine engine) {
+    final String resolvedPath = resolvePath(engine);
     validateInputOnBuild();
-    return buildTable(engine);
+    return buildTable(engine, resolvedPath);
   }
 
   //////////////////////////////////////////
@@ -79,23 +83,34 @@ public class ResolvedTableBuilderInternalImpl implements ResolvedTableBuilderInt
   // Private Helper Methods //
   ////////////////////////////
 
+  private String resolvePath(Engine engine) {
+    try {
+      return wrapEngineExceptionThrowsIO(
+          () -> engine.getFileSystemClient().resolvePath(unresolvedPath),
+          "Resolving path %s",
+          unresolvedPath);
+    } catch (IOException io) {
+      throw new UncheckedIOException(io);
+    }
+  }
+
   private void validateInputOnBuild() {
-    checkArgument(versionOpt.orElse(0) >= 0, "version must be >= 0");
+    checkArgument(versionOpt.orElse(0L) >= 0, "version must be >= 0");
     // TODO: logData if and only if version is provided
     // TODO: logData only ratified staged commits
     // TODO: logData sorted and contiguous
     // TODO: logData ends with version
   }
 
-  private ResolvedTableInternal buildTable(Engine engine) {
-    final LogSegment logSegment =
-        new SnapshotManager(new Path(path))
-            .getLogSegmentForVersion(
-                engine,
-                // TODO: Refactor SnapshotManager to use OptionalLong not Optional<Long>
-                versionOpt.isPresent() ? Optional.of(versionOpt.getAsLong()) : Optional.empty(),
-                logData);
+  private ResolvedTableInternal buildTable(Engine engine, String resolvedPath) {
+    final Lazy<LogSegment> lazyLogSegment =
+        new Lazy<>(
+            () ->
+                new SnapshotManager(new Path(resolvedPath))
+                    .getLogSegmentForVersion(engine, versionOpt, logData));
 
-    return new ResolvedTableInternalImpl(path, logSegment, clock);
+    final long version = versionOpt.orElse(lazyLogSegment.get().getVersion());
+
+    return new ResolvedTableInternalImpl(resolvedPath, version, lazyLogSegment, clock);
   }
 }
