@@ -946,8 +946,6 @@ trait OptimisticTransactionImpl extends DeltaTransaction
   // Make sure shredded writes are only performed if the shredding table property was set.
   private def assertShreddingStateConsistent() = {
     if (!DeltaConfigs.ENABLE_VARIANT_SHREDDING.fromMetaData(metadata)) {
-      // TODO: Point to the VARIANT_FORCE_SHREDDING_SCHEMA_FOR_TEST config instead of hard-coding
-      // the config name when connected to Spark versions that contain this config.
       val isVariantShreddingSchemaForced =
         spark.sessionState.conf
           .getConfString("spark.sql.variant.forceShreddingSchemaForTest", "").nonEmpty

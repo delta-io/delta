@@ -197,6 +197,9 @@ class DeltaVariantShreddingSuite
               df.write.format("delta").mode("append").saveAsTable("tbl")
             }
             checkError(e, "DELTA_SHREDDING_TABLE_PROPERTY_DISABLED", parameters = Map())
+            assert(e.getMessage.contains(
+              "Attempted to write shredded Variants but the table does not support shredded " +
+                "writes. Consider setting the table property enableVariantShredding to true."))
             assert(numShreddedFiles(dir.getAbsolutePath, validation = { field: GroupType =>
               field.getName == "v" && (field.getType("typed_value") match {
                 case t: GroupType =>
