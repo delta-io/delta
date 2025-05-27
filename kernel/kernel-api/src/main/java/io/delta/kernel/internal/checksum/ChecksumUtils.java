@@ -270,7 +270,7 @@ public class ChecksumUtils {
 
         // Process all selected rows in a single pass for optimal performance
         for (int i = 0; i < rowCount; i++) {
-          // Fields referenced in the lambda should be effectively final
+          // Fields referenced in the lambda should be effectively final.
           int rowId = i;
           boolean isSelected =
               selectionVector
