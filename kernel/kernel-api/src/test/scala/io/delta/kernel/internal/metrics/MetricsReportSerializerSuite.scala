@@ -259,11 +259,6 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
       Optional.of(exception))
 
     // Manually check expected JSON
-    val tableSchemaStr = "struct(StructField(name=part,type=integer,nullable=true,metadata={}," +
-      "typeChanges=[]), StructField(name=id,type=integer,nullable=true,metadata={},typeChanges=[]))"
-    val readSchemaStr = "struct(StructField(name=id,type=integer,nullable=true,metadata={}," +
-      "typeChanges=[]))"
-
     val expectedJson =
       s"""
          |{"tablePath":"/table/path",
@@ -271,10 +266,11 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |"reportUUID":"${scanReport1.getReportUUID}",
          |"exception":"$exception",
          |"tableVersion":1,
-         |"tableSchema":"$tableSchemaStr",
+         |"tableSchema":"struct(StructField(name=part,type=integer,nullable=true,metadata={}),
+         | StructField(name=id,type=integer,nullable=true,metadata={}))",
          |"snapshotReportUUID":"$snapshotReportUUID",
          |"filter":"(column(`part`) > 1)",
-         |"readSchema":"$readSchemaStr",
+         |"readSchema":"struct(StructField(name=id,type=integer,nullable=true,metadata={}))",
          |"partitionPredicate":"(column(`part`) > 1)",
          |"dataSkippingFilter":null,
          |"isFullyConsumed":true,
