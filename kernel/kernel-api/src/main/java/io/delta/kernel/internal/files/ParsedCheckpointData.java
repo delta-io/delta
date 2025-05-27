@@ -89,12 +89,7 @@ public class ParsedCheckpointData extends ParsedLogData
       case MULTIPART_CHECKPOINT:
         final ParsedMultiPartCheckpointData thisCasted = (ParsedMultiPartCheckpointData) this;
         final ParsedMultiPartCheckpointData thatCasted = (ParsedMultiPartCheckpointData) that;
-        final int numPartsComparison = Long.compare(thisCasted.numParts, thatCasted.numParts);
-        if (numPartsComparison != 0) {
-          return numPartsComparison;
-        } else {
-          return getTieBreaker(that);
-        }
+        return thisCasted.compareToMultiPart(thatCasted);
       default:
         throw new IllegalStateException("Unexpected type: " + type);
     }
@@ -104,7 +99,7 @@ public class ParsedCheckpointData extends ParsedLogData
    * Here, we prefer inline data -- if the data is already stored in memory, we should read that
    * instead of going to the cloud store to read a file status.
    */
-  private int getTieBreaker(ParsedCheckpointData that) {
+  protected int getTieBreaker(ParsedCheckpointData that) {
     if (this.isInline() && that.isMaterialized()) {
       return 1; // Prefer this
     } else if (this.isMaterialized() && that.isInline()) {

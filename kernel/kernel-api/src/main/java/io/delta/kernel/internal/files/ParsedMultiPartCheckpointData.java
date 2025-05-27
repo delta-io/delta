@@ -77,4 +77,13 @@ public class ParsedMultiPartCheckpointData extends ParsedCheckpointData {
   public int hashCode() {
     return Objects.hash(super.hashCode(), part, numParts);
   }
+
+  public int compareToMultiPart(ParsedMultiPartCheckpointData that) {
+    final int numPartsComparison = Long.compare(this.numParts, that.numParts);
+    if (numPartsComparison != 0) {
+      return numPartsComparison;
+    } else {
+      return getTieBreaker(that);
+    }
+  }
 }
