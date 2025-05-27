@@ -127,8 +127,7 @@ class SchemaIterableSuite extends AnyFunSuite {
 
     val fieldInfo = iterable.asScala.map {
       element => (element.getNamePath, element.getField.getDataType.getClass.getSimpleName)
-    }
-      .toList
+    }.toList
 
     // The expected traversal order with field types, showing the complete depth-first traversal
     val expectedOrder = List(

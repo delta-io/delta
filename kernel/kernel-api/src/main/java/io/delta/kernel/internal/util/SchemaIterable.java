@@ -55,7 +55,7 @@ public class SchemaIterable implements Iterable<SchemaIterable.SchemaElement> {
   }
 
   /**
-   * Returns a new iterate that can be used to iterate and update elements in the schema. The
+   * Returns a new iterator that can be used to iterate and update elements in the schema. The
    * current schema on this iterable is updated once the returned iterator is fully consumed.
    *
    * <p>Consuming multiple iterators across different threads concurrently is not thread safe.
