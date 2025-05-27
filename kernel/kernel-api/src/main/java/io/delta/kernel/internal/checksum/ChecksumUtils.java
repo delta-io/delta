@@ -178,7 +178,6 @@ public class ChecksumUtils {
               processAddRecord(addVector, state, i);
             }
           }
-          processAddRecord(addVector, state, i);
 
           // Process remove file records
           if (!removeVector.isNullAt(i)) {
