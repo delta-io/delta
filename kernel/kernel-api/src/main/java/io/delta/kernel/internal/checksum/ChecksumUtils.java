@@ -84,18 +84,21 @@ public class ChecksumUtils {
     }
 
     // Check for existing checksum for this version
-    Optional<CRCInfo> lastSeenCrcInfo =
+    Optional<Long> lastSeenCrcVersion =
         logSegmentAtVersion
             .getLastSeenChecksum()
-            .flatMap(file -> ChecksumReader.getCRCInfo(engine, file));
+            .map(file -> FileNames.getFileVersion(new Path(file.getPath())));
 
-    Optional<Long> checksumVersion = lastSeenCrcInfo.map(CRCInfo::getVersion);
-    if (checksumVersion.isPresent()
-        && checksumVersion.get().equals(logSegmentAtVersion.getVersion())) {
+    if (lastSeenCrcVersion.isPresent()
+        && lastSeenCrcVersion.get().equals(logSegmentAtVersion.getVersion())) {
       logger.info("Checksum file already exists for version {}", logSegmentAtVersion.getVersion());
       return;
     }
 
+    Optional<CRCInfo> lastSeenCrcInfo =
+            logSegmentAtVersion
+                    .getLastSeenChecksum()
+                    .flatMap(file -> ChecksumReader.getCRCInfo(engine, file));
     // Try to build CRC incrementally if possible
     Optional<CRCInfo> incrementallyBuiltCrc =
         lastSeenCrcInfo.isPresent()
@@ -149,7 +152,8 @@ public class ChecksumUtils {
                 new ArrayList<>(),
                 Optional.empty(),
                 logSegment.getLastCommitTimestamp()),
-            0L)) {
+            // minFileRetentionTimestampMillis could be set to any value as we don't rely on it
+            /* minFileRetentionTimestampMillis */0L)) {
       while (checkpointIterator.hasNext()) {
         FilteredColumnarBatch filteredColumnarBatch = checkpointIterator.next();
         ColumnarBatch batch = filteredColumnarBatch.getData();
