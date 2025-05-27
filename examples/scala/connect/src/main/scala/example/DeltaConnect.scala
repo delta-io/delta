@@ -41,11 +41,9 @@ sbin/start-connect-server.sh \
 (2) Set the SPARK_REMOTE environment variable to point to your local Spark server
 export SPARK_REMOTE="sc://localhost:15002"
 
-(3) export _JAVA_OPTIONS="--add-opens=java.base/java.nio=ALL-UNNAMED"
+(3) Run this file i.e. ./build/sbt connect/run
 
-(4) Run this file i.e. ./build/sbt connect/run
-
-(5) Once finished QA-ing, stop the Spark Connect server.
+(4) Once finished QA-ing, stop the Spark Connect server.
 sbin/stop-connect-server.sh
 */
 
