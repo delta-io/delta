@@ -96,9 +96,9 @@ public class ChecksumUtils {
     }
 
     Optional<CRCInfo> lastSeenCrcInfo =
-            logSegmentAtVersion
-                    .getLastSeenChecksum()
-                    .flatMap(file -> ChecksumReader.getCRCInfo(engine, file));
+        logSegmentAtVersion
+            .getLastSeenChecksum()
+            .flatMap(file -> ChecksumReader.getCRCInfo(engine, file));
     // Try to build CRC incrementally if possible
     Optional<CRCInfo> incrementallyBuiltCrc =
         lastSeenCrcInfo.isPresent()
@@ -153,7 +153,7 @@ public class ChecksumUtils {
                 Optional.empty(),
                 logSegment.getLastCommitTimestamp()),
             // minFileRetentionTimestampMillis could be set to any value as we don't rely on it
-            /* minFileRetentionTimestampMillis */0L)) {
+            /* minFileRetentionTimestampMillis */ 0L)) {
       while (checkpointIterator.hasNext()) {
         FilteredColumnarBatch filteredColumnarBatch = checkpointIterator.next();
         ColumnarBatch batch = filteredColumnarBatch.getData();
@@ -171,8 +171,8 @@ public class ChecksumUtils {
           // Process add file records
           if (!addVector.isNullAt(i)) {
             final LogReplayUtils.UniqueFileActionTuple key =
-                    getUniqueFileAction(
-                            addVector.getChild(ADD_PATH_INDEX), addVector.getChild(ADD_DV_INDEX), i);
+                getUniqueFileAction(
+                    addVector.getChild(ADD_PATH_INDEX), addVector.getChild(ADD_DV_INDEX), i);
             if (!addFilesFromJson.contains(key)) {
               addFilesFromJson.add(key);
               processAddRecord(addVector, state, i);
