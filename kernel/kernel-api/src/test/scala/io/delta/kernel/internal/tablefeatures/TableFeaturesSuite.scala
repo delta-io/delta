@@ -123,8 +123,8 @@ class TableFeaturesSuite extends AnyFunSuite {
     ("typeWidening", testMetadata(tblProps = Map("delta.enableTypeWidening" -> "false")), false),
     ("variantType", testMetadata(includeVariantTypeCol = true), true),
     ("variantType", testMetadata(includeVariantTypeCol = false), false),
-    // Disable this until we have support to enable row tracking through metadata
-    // ("rowTracking", testMetadata(tblProps = Map("delta.enableRowTracking" -> "true")), true),
+    ("rowTracking", testMetadata(tblProps = Map("delta.enableRowTracking" -> "true")), true),
+    ("rowTracking", testMetadata(tblProps = Map("delta.enableRowTracking" -> "false")), false),
     (
       "variantShredding-preview",
       testMetadata(tblProps = Map("delta.enableVariantShredding" -> "true")),
@@ -133,7 +133,6 @@ class TableFeaturesSuite extends AnyFunSuite {
       "variantShredding-preview",
       testMetadata(tblProps = Map("delta.enableVariantShredding" -> "false")),
       false),
-    ("rowTracking", testMetadata(tblProps = Map("delta.enableRowTracking" -> "false")), false),
     (
       "deletionVectors",
       testMetadata(tblProps = Map("delta.enableDeletionVectors" -> "true")),
@@ -200,17 +199,6 @@ class TableFeaturesSuite extends AnyFunSuite {
             metadataEnablingFeature)
         assert(!enable, "shouldn't enable non-preview feature")
       }
-  }
-
-  test("row tracking enable through metadata property is not supported") {
-    val tableFeature = TableFeatures.getTableFeature("rowTracking")
-    val ex = intercept[UnsupportedOperationException] {
-      tableFeature.asInstanceOf[FeatureAutoEnabledByMetadata]
-        .metadataRequiresFeatureToBeEnabled(
-          testProtocol,
-          testMetadata(tblProps = Map("delta.enableRowTracking" -> "true")))
-    }
-    assert(ex.getMessage.contains("Feature `rowTracking` is not yet supported in Kernel."))
   }
 
   test("hasKernelReadSupport expected to be true") {
