@@ -111,7 +111,10 @@ public class SnapshotManager {
    * @throws InvalidTableException if the table is in an invalid state
    */
   public Snapshot getSnapshotForTimestamp(
-      Engine engine, long millisSinceEpochUTC, SnapshotQueryContext snapshotContext)
+      Engine engine,
+      SnapshotImpl latestSnapshot,
+      long millisSinceEpochUTC,
+      SnapshotQueryContext snapshotContext)
       throws TableNotFoundException {
     long versionToRead =
         snapshotContext
@@ -121,6 +124,7 @@ public class SnapshotManager {
                 () ->
                     DeltaHistoryManager.getActiveCommitAtTimestamp(
                             engine,
+                            latestSnapshot,
                             logPath,
                             millisSinceEpochUTC,
                             true /* mustBeRecreatable */,
@@ -184,6 +188,9 @@ public class SnapshotManager {
 
     long startTimeMillis = System.currentTimeMillis();
 
+    // Note: LogReplay now loads the protocol and metadata (P & M) lazily. Nonetheless, SnapshotImpl
+    //       is still constructed with an "eagerly"-loaded P & M.
+
     LogReplay logReplay =
         new LogReplay(
             logPath,
@@ -245,6 +252,7 @@ public class SnapshotManager {
 
     final String versionToLoadStr = versionToLoadOpt.map(String::valueOf).orElse("latest");
     logger.info("Loading log segment for version {}", versionToLoadStr);
+    final long logSegmentBuildingStartTimeMillis = System.currentTimeMillis();
 
     ////////////////////////////////////////////////////////////////////////////////////////////////
     // Step 1: Find the latest checkpoint version. If $versionToLoadOpt is empty, use the version //
@@ -284,7 +292,7 @@ public class SnapshotManager {
       fileTypes.add(DeltaLogFileType.LOG_COMPACTION);
     }
 
-    final long startTimeMillis = System.currentTimeMillis();
+    final long listingStartTimeMillis = System.currentTimeMillis();
     final List<FileStatus> listedFileStatuses =
         DeltaLogActionUtils.listDeltaLogFilesAsIter(
                 engine,
@@ -298,7 +306,7 @@ public class SnapshotManager {
     logger.info(
         "{}: Took {}ms to list the files after starting checkpoint",
         tablePath,
-        System.currentTimeMillis() - startTimeMillis);
+        System.currentTimeMillis() - listingStartTimeMillis);
 
     ////////////////////////////////////////////////////////////////////////
     // Step 4: Perform some basic validations on the listed file statuses //
@@ -539,7 +547,10 @@ public class SnapshotManager {
     // Step 13: Construct the LogSegment and return. //
     ///////////////////////////////////////////////////
 
-    logger.info("Successfully constructed LogSegment at version {}", newVersion);
+    logger.info(
+        "Successfully constructed LogSegment at version {}, took {}ms",
+        newVersion,
+        System.currentTimeMillis() - logSegmentBuildingStartTimeMillis);
 
     final long lastCommitTimestamp =
         ListUtils.getLast(listedDeltaFileStatuses).getModificationTime();

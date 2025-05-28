@@ -19,6 +19,8 @@ package org.apache.spark.sql.delta
 import java.io.File
 import java.util.Locale
 
+import scala.jdk.CollectionConverters._
+
 import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
 import org.apache.spark.sql.delta.actions.{AddFile, FileAction, RemoveFile, SingleAction}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
@@ -382,7 +384,8 @@ trait CloneTableScalaTestMixin extends CloneTableTestMixin {
       table.cloneAtTimestamp(timestampAsOf.get,
         target, isShallow = isShallow, replace = isReplace, tableProperties)
     } else {
-      table.clone(target, isShallow = isShallow, replace = isReplace, tableProperties)
+      table.clone(target, isShallow = isShallow, replace = isReplace,
+        properties = new java.util.HashMap[String, String](tableProperties.asJava))
     }
   }
   // scalastyle:on argcount

@@ -16,10 +16,14 @@
 
 package io.delta.kernel.internal.util;
 
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.utils.FileStatus;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public final class FileNames {
@@ -30,6 +34,7 @@ public final class FileNames {
   // File name patterns and other static values //
   ////////////////////////////////////////////////
 
+  // TODO: Delete this in favor of ParsedLogCategory.
   public enum DeltaLogFileType {
     COMMIT,
     LOG_COMPACTION,
@@ -79,8 +84,10 @@ public final class FileNames {
       Pattern.compile("(\\d+)\\.checkpoint\\.[^.]+\\.(json|parquet)");
 
   /** Example: 00000000000000000001.checkpoint.0000000020.0000000060.parquet */
-  private static final Pattern MULTI_PART_CHECKPOINT_FILE_PATTERN =
-      Pattern.compile("(\\d+)\\.checkpoint\\.\\d+\\.\\d+\\.parquet");
+  public static final Pattern MULTI_PART_CHECKPOINT_FILE_PATTERN =
+      Pattern.compile("(\\d+)\\.checkpoint\\.(\\d+)\\.(\\d+)\\.parquet");
+
+  public static final String STAGED_COMMIT_DIRECTORY = "_staged_commits";
 
   public static final String SIDECAR_DIRECTORY = "_sidecars";
 
@@ -155,6 +162,20 @@ public final class FileNames {
     return Long.parseLong(name.split("\\.")[0]);
   }
 
+  public static Tuple2<Integer, Integer> multiPartCheckpointPartAndNumParts(Path path) {
+    final String fileName = path.getName();
+    final Matcher matcher = MULTI_PART_CHECKPOINT_FILE_PATTERN.matcher(fileName);
+    checkArgument(
+        matcher.matches(), String.format("Path is not a multi-part checkpoint file: %s", fileName));
+    final int partNum = Integer.parseInt(matcher.group(2));
+    final int numParts = Integer.parseInt(matcher.group(3));
+    return new Tuple2<>(partNum, numParts);
+  }
+
+  public static Tuple2<Integer, Integer> multiPartCheckpointPartAndNumParts(String path) {
+    return multiPartCheckpointPartAndNumParts(new Path(path));
+  }
+
   ///////////////////////////////////
   // File path and prefix builders //
   ///////////////////////////////////
@@ -162,6 +183,11 @@ public final class FileNames {
   /** Returns the delta (json format) path for a given delta file. */
   public static String deltaFile(Path path, long version) {
     return String.format("%s/%020d.json", path, version);
+  }
+
+  public static String stagedCommitFile(Path logPath, long version) {
+    final Path stagedCommitPath = new Path(logPath, STAGED_COMMIT_DIRECTORY);
+    return String.format("%s/%020d.%s.json", stagedCommitPath, version, UUID.randomUUID());
   }
 
   /** Example: /a/_sidecars/3a0d65cd-4056-49b8-937b-95f9e3ee90e5.parquet */
@@ -176,6 +202,10 @@ public final class FileNames {
 
   public static long checksumVersion(Path path) {
     return Long.parseLong(path.getName().split("\\.")[0]);
+  }
+
+  public static long checksumVersion(String path) {
+    return checksumVersion(new Path(path));
   }
 
   /**
@@ -212,6 +242,11 @@ public final class FileNames {
     return new Path(String.format("%s/%s/%s.parquet", path.toString(), SIDECAR_DIRECTORY, uuid));
   }
 
+  public static Path multiPartCheckpointFile(Path path, long version, int part, int numParts) {
+    return new Path(
+        path, String.format("%020d.checkpoint.%010d.%010d.parquet", version, part, numParts));
+  }
+
   /**
    * Returns the paths for all parts of the checkpoint up to the given version.
    *
@@ -224,9 +259,7 @@ public final class FileNames {
   public static List<Path> checkpointFileWithParts(Path path, long version, int numParts) {
     final List<Path> output = new ArrayList<>();
     for (int i = 1; i < numParts + 1; i++) {
-      output.add(
-          new Path(
-              path, String.format("%020d.checkpoint.%010d.%010d.parquet", version, i, numParts)));
+      output.add(multiPartCheckpointFile(path, version, i, numParts));
     }
     return output;
   }
@@ -267,6 +300,19 @@ public final class FileNames {
     final String fileName = new Path(path).getName();
     return DELTA_FILE_PATTERN.matcher(fileName).matches()
         || UUID_DELTA_FILE_REGEX.matcher(fileName).matches();
+  }
+
+  public static boolean isPublishedDeltaFile(String path) {
+    final String fileName = new Path(path).getName();
+    return DELTA_FILE_PATTERN.matcher(fileName).matches();
+  }
+
+  public static boolean isStagedDeltaFile(String path) {
+    final Path p = new Path(path);
+    if (!p.getParent().getName().equals(STAGED_COMMIT_DIRECTORY)) {
+      return false;
+    }
+    return UUID_DELTA_FILE_REGEX.matcher(p.getName()).matches();
   }
 
   public static boolean isLogCompactionFile(String path) {

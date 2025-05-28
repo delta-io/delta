@@ -269,6 +269,105 @@ class FileSizeHistogramSuite extends AnyFunSuite {
     assert(histogram === reconstructedHistogram.get())
   }
 
+  test("plus should combine histograms correctly") {
+    // Create two histograms
+    val histogram1 = FileSizeHistogram.createDefaultHistogram()
+    val histogram2 = FileSizeHistogram.createDefaultHistogram()
+
+    // Add data to first histogram
+    histogram1.insert(1 * MB)
+    histogram1.insert(1 * MB)
+    histogram1.insert(10 * MB)
+
+    // Add data to second histogram
+    histogram2.insert(2 * MB)
+    histogram2.insert(10 * MB)
+    histogram2.insert(10 * MB)
+
+    // Combine histograms
+    val combined = histogram1.plus(histogram2)
+
+    // Check results
+    val mbBinIndex1 = getBinIndexForTesting(combined.getSortedBinBoundaries, 1 * MB)
+    val mbBinIndex2 = getBinIndexForTesting(combined.getSortedBinBoundaries, 2 * MB)
+    val mbBinIndex10 = getBinIndexForTesting(combined.getSortedBinBoundaries, 10 * MB)
+
+    assert(combined.getFileCounts(mbBinIndex1) == 2)
+    assert(combined.getTotalBytes(mbBinIndex1) == 2 * MB)
+
+    assert(combined.getFileCounts(mbBinIndex2) == 1)
+    assert(combined.getTotalBytes(mbBinIndex2) == 2 * MB)
+
+    assert(combined.getFileCounts(mbBinIndex10) == 3)
+    assert(combined.getTotalBytes(mbBinIndex10) == 30 * MB)
+    // check commutative.
+    assert(combined === histogram2.plus(histogram1))
+
+    // Test error case - different bin boundaries
+    val customBoundaries = Array(0L, 1L * KB, 1L * MB)
+    val customCounts = new Array[Long](customBoundaries.length)
+    val customBytes = new Array[Long](customBoundaries.length)
+    val customHistogram = new FileSizeHistogram(customBoundaries, customCounts, customBytes)
+
+    intercept[IllegalArgumentException] {
+      histogram1.plus(customHistogram)
+    }
+  }
+
+  test("minus should subtract histograms correctly") {
+    // Create two histograms
+    val histogram1 = FileSizeHistogram.createDefaultHistogram()
+    val histogram2 = FileSizeHistogram.createDefaultHistogram()
+
+    // Add data to first histogram
+    histogram1.insert(1 * MB)
+    histogram1.insert(1 * MB)
+    histogram1.insert(1 * MB)
+    histogram1.insert(10 * MB)
+    histogram1.insert(10 * MB)
+
+    // Add subset of data to second histogram
+    histogram2.insert(1 * MB)
+    histogram2.insert(10 * MB)
+
+    // Check plus and minus are opposite operation.
+    assert(histogram1 === histogram1.plus(histogram2).minus(histogram2))
+
+    // Subtract histograms
+    val result = histogram1.minus(histogram2)
+
+    // Check results
+    val mbBinIndex1 = getBinIndexForTesting(result.getSortedBinBoundaries, 1 * MB)
+    val mbBinIndex10 = getBinIndexForTesting(result.getSortedBinBoundaries, 10 * MB)
+
+    assert(result.getFileCounts(mbBinIndex1) == 2)
+    assert(result.getTotalBytes(mbBinIndex1) == 2 * MB)
+
+    assert(result.getFileCounts(mbBinIndex10) == 1)
+    assert(result.getTotalBytes(mbBinIndex10) == 10 * MB)
+
+    // Test error cases
+    // different bin boundaries
+    val customBoundaries = Array(0L, 1L * KB, 1L * MB)
+    val customCounts = new Array[Long](customBoundaries.length)
+    val customBytes = new Array[Long](customBoundaries.length)
+    val customHistogram = new FileSizeHistogram(customBoundaries, customCounts, customBytes)
+
+    intercept[IllegalArgumentException] {
+      histogram1.minus(customHistogram)
+    }
+
+    // Negative result scenario
+    val largerHistogram = FileSizeHistogram.createDefaultHistogram()
+    largerHistogram.insert(1 * MB)
+    largerHistogram.insert(1 * MB)
+
+    intercept[IllegalArgumentException] {
+      // Try to subtract more than what exists
+      FileSizeHistogram.createDefaultHistogram().minus(largerHistogram)
+    }
+  }
+
   /**
    * Determines the bin index for a given file size using binary search.
    * Returns the index of the largest bin boundary that is less than or equal to the file size.

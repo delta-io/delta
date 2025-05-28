@@ -73,7 +73,11 @@ public class StructField {
     this(name, dataType, nullable, metadata, Collections.emptyList());
   }
 
-  public StructField(
+  /*
+   * N.B. Type changes should be entirely managed by the Delta Kernel, users are not expected to
+   * maintain this field, and therefore should not be using this constructor.
+   */
+  StructField(
       String name,
       DataType dataType,
       boolean nullable,
@@ -119,6 +123,9 @@ public class StructField {
    * Returns the list of type changes for this field. A field can go through multiple type changes
    * (e.g. {@code int->long->decimal}). Changes are ordered from least recent to most recent in the
    * list (index 0 is the oldest change).
+   *
+   * <p>N.B. Type changes should be entirely managed by the Delta Kernel, users are not expected to
+   * maintain this field.
    */
   public List<TypeChange> getTypeChanges() {
     return Collections.unmodifiableList(typeChanges);
@@ -168,11 +175,26 @@ public class StructField {
   /**
    * Creates a copy of this StructField with the specified type changes.
    *
+   * <p>N.B. Type changes should be entirely managed by the Delta Kernel, users are not expected to
+   * maintain this field.
+   *
    * @param typeChanges The list of type changes to set
    * @return A new StructField with the same properties but with the specified type changes
    */
   public StructField withTypeChanges(List<TypeChange> typeChanges) {
     return new StructField(name, dataType, nullable, metadata, typeChanges);
+  }
+
+  /**
+   * Creates a copy of this StructField with the specified data type.
+   *
+   * <p>TypeChanges are NOT updated as part of this call.
+   *
+   * @param newType The new type to use in the StructField.
+   * @return A new StructField with the same properties but with the specified data type.
+   */
+  public StructField withDataType(DataType newType) {
+    return new StructField(name, newType, nullable, metadata, typeChanges);
   }
 
   private List<Tuple2<String, String>> getNestedCollatedFields(DataType parent, String path) {
