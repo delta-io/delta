@@ -505,7 +505,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
               : existingClusteringCols;
 
       Optional<Metadata> schemaUpdatedMetadata =
-          validateMetadataChange(
+          validateMetadataChangeAndUpdateMetadata(
               effectiveClusteringCols,
               baseMetadata,
               newMetadata.get(),
@@ -614,8 +614,11 @@ public class TransactionBuilderImpl implements TransactionBuilder {
    *   <li>Enabling/disabling row tracking on existing tables is blocked
    *   <li>Materialized row tracking column names do not conflict with schema
    * </ul>
+   *
+   * @return An updated metadata object if any changes where made. Currently, changed schemas can
+   *     require a new metadata object to be returned, but other changes do not.
    */
-  private Optional<Metadata> validateMetadataChange(
+  private Optional<Metadata> validateMetadataChangeAndUpdateMetadata(
       Optional<List<Column>> clusteringCols,
       Metadata oldMetadata,
       Metadata newMetadata,
@@ -656,7 +659,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
               .collect(toSet());
 
       updatedMetadata =
-          SchemaUtils.validateUpdatedSchema(
+          SchemaUtils.validateUpdatedSchemaAndGetUpdatedSchema(
                   oldMetadata,
                   newMetadata,
                   clusteringColumnPhysicalNames,
@@ -683,7 +686,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       // We only need to check fieldId re-use when cmMode != none
       if (newMode != ColumnMappingMode.NONE) {
         updatedMetadata =
-            SchemaUtils.validateUpdatedSchema(
+            SchemaUtils.validateUpdatedSchemaAndGetUpdatedSchema(
                     latestSnapshot.get().getMetadata(),
                     updatedMetadata.orElse(newMetadata),
                     // We already validate clustering columns elsewhere for isCreateOrReplace no

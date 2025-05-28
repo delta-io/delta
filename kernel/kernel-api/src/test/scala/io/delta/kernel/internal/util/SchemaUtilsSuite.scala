@@ -28,7 +28,7 @@ import io.delta.kernel.internal.TableConfig
 import io.delta.kernel.internal.actions.{Format, Metadata}
 import io.delta.kernel.internal.types.DataTypeJsonSerDe
 import io.delta.kernel.internal.util.ColumnMapping.{COLUMN_MAPPING_ID_KEY, COLUMN_MAPPING_MODE_KEY, COLUMN_MAPPING_PHYSICAL_NAME_KEY}
-import io.delta.kernel.internal.util.SchemaUtils.{computeSchemaChangesById, filterRecursively, validateSchema, validateUpdatedSchema}
+import io.delta.kernel.internal.util.SchemaUtils.{computeSchemaChangesById, filterRecursively, validateSchema, validateUpdatedSchemaAndGetUpdatedSchema}
 import io.delta.kernel.internal.util.VectorUtils.stringStringMapValue
 import io.delta.kernel.types.{ArrayType, ByteType, DataType, DoubleType, FieldMetadata, IntegerType, LongType, MapType, StringType, StructField, StructType, TypeChange}
 import io.delta.kernel.types.IntegerType.INTEGER
@@ -49,22 +49,6 @@ class SchemaUtilsSuite extends AnyFunSuite {
     assert(
       shouldContain.map(_.toLowerCase(Locale.ROOT)).forall(msg.contains),
       s"Error message '$msg' didn't contain: $shouldContain")
-  }
-
-  private def newSchema(tuple: (Int, StructField)*): StructType = {
-    val fields = tuple.map { case (id, field) =>
-      addFieldId(id, field)
-    }
-    val schemaWithIds = new StructType(fields.asJava)
-    schemaWithIds
-  }
-
-  private def addFieldId(id: Int, field: StructField) = {
-    val metadataWithFieldIds = FieldMetadata.builder().fromMetadata(field.getMetadata)
-      .putLong("delta.columnMapping.id", id)
-      .putString("delta.columnMapping.physicalName", s"col-$id")
-      .build()
-    field.withNewMetadata(metadataWithFieldIds)
   }
 
   ///////////////////////////////////////////////////////////////////////////
@@ -506,7 +490,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
 
     val e = intercept[IllegalArgumentException] {
       val tblProperties = Map(COLUMN_MAPPING_MODE_KEY -> "none")
-      validateUpdatedSchema(
+      validateUpdatedSchemaAndGetUpdatedSchema(
         metadata(current, properties = tblProperties),
         metadata(updated, properties = tblProperties),
         emptySet(),
@@ -703,7 +687,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
   test("validateUpdatedSchema fails with schema with duplicate column ID") {
     forAll(updatedSchemaHasDuplicateColumnId) { (schemaBefore, schemaAfter) =>
       val e = intercept[IllegalArgumentException] {
-        validateUpdatedSchema(
+        validateUpdatedSchemaAndGetUpdatedSchema(
           metadata(schemaBefore),
           metadata(schemaAfter),
           emptySet(),
@@ -756,7 +740,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
 
   test("validateUpdatedSchema succeeds with valid ID and physical name") {
     forAll(validUpdatedSchemas) { (schemaBefore, schemaAfter) =>
-      validateUpdatedSchema(
+      validateUpdatedSchemaAndGetUpdatedSchema(
         metadata(schemaBefore),
         metadata(schemaAfter),
         emptySet(),
@@ -816,7 +800,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
   test("validateUpdatedSchema succeeds when non-nullable field is added with " +
     "allowNewRequiredFields=true") {
     forAll(nonNullableFieldAdded) { (schemaBefore, schemaAfter) =>
-      validateUpdatedSchema(
+      validateUpdatedSchemaAndGetUpdatedSchema(
         metadata(schemaBefore),
         metadata(schemaAfter),
         emptySet(),
@@ -1053,7 +1037,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
 
   test("validateUpdatedSchema succeeds when adding field") {
     forAll(validateAddedFields) { (schemaBefore, schemaAfter) =>
-      validateUpdatedSchema(
+      validateUpdatedSchemaAndGetUpdatedSchema(
         metadata(schemaBefore),
         metadata(schemaAfter),
         emptySet(),
@@ -1091,7 +1075,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
 
   test("validateUpdatedSchema succeeds when updating field metadata") {
     forAll(validateMetadataChange) { (schemaBefore, schemaAfter) =>
-      validateUpdatedSchema(
+      validateUpdatedSchemaAndGetUpdatedSchema(
         metadata(schemaBefore),
         metadata(schemaAfter),
         emptySet(),
@@ -1195,7 +1179,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
       allowNewRequiredFields: Boolean = false)(implicit classTag: ClassTag[T]) {
     forAll(evolutionCases) { (schemaBefore, schemaAfter) =>
       val e = intercept[T] {
-        validateUpdatedSchema(
+        validateUpdatedSchemaAndGetUpdatedSchema(
           metadata(schemaBefore, tableProperties),
           metadata(schemaAfter, tableProperties),
           emptySet(),
@@ -1264,8 +1248,8 @@ class SchemaUtilsSuite extends AnyFunSuite {
     val schemaUpdate = schemaChanges.updatedFields().get(0)
 
     // Verify that the updated field has the expected before and after values
-    assert(schemaUpdate.getFieldBefore == currentSchema.get("id"))
-    assert(schemaUpdate.getFieldAfter == updatedSchema.get("id"))
+    assert(schemaUpdate.before == currentSchema.get("id"))
+    assert(schemaUpdate.after == updatedSchema.get("id"))
 
     // Verify that the updated schema has a TypeChange recorded
     assert(schemaChanges.updatedSchema().isPresent)
@@ -1455,7 +1439,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
 
         if (shouldSucceed) {
           // Should not throw an exception
-          validateUpdatedSchema(
+          validateUpdatedSchemaAndGetUpdatedSchema(
             metadata(schemaBefore, tblProperties),
             metadata(schemaAfter, tblProperties),
             emptySet(),
@@ -1464,7 +1448,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
         } else {
           // Should throw an exception
           val e = intercept[KernelException] {
-            validateUpdatedSchema(
+            validateUpdatedSchemaAndGetUpdatedSchema(
               metadata(schemaBefore, tblProperties),
               metadata(schemaAfter, tblProperties),
               emptySet(),

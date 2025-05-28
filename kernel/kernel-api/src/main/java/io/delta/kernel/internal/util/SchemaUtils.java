@@ -92,7 +92,8 @@ public class SchemaUtils {
    * base for validation. ColumnMapping must be enabled to call this.
    *
    * <p>Returns an updated schema if metadata (i.e. TypeChanges needs to be copied over from
-   * currentSchema).
+   * currentSchema and new type changes need to be recorded. Kernel is expected to handle this work
+   * instead of clients).
    *
    * <p>The following checks are performed:
    *
@@ -105,7 +106,7 @@ public class SchemaUtils {
    *   <li>ToDo: Nested IDs for array/map types are preserved in the new schema for IcebergCompatV2
    * </ul>
    */
-  public static Optional<StructType> validateUpdatedSchema(
+  public static Optional<StructType> validateUpdatedSchemaAndGetUpdatedSchema(
       Metadata currentMetadata,
       Metadata newMetadata,
       Set<String> clusteringColumnPhysicalNames,
