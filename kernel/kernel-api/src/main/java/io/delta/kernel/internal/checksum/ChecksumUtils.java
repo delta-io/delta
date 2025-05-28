@@ -123,8 +123,12 @@ public class ChecksumUtils {
   private static Optional<CRCInfo> buildCrcInfoIncrementally(
       CRCInfo lastSeenCrcInfo, Engine engine, LogSegment logSegment) throws IOException {
     // Can only build incrementally if we have domain metadata and file size histogram
-    if (!lastSeenCrcInfo.getDomainMetadata().isPresent()
-        || !lastSeenCrcInfo.getFileSizeHistogram().isPresent()) {
+    if (!lastSeenCrcInfo.getDomainMetadata().isPresent()) {
+      logger.info("Falling back to full replay: detected current crc missing domain metadata.");
+      return Optional.empty();
+    }
+    if (!lastSeenCrcInfo.getFileSizeHistogram().isPresent()) {
+      logger.info("Falling back to full replay: detected current crc missing file size histogram.");
       return Optional.empty();
     }
 
@@ -170,6 +174,7 @@ public class ChecksumUtils {
             if (!dataChangeVector.getBoolean(i)) {
               // TODO: Handle optimize case, where rdd and remove from the same log.
               // For compute stats, we cannot know add file missing stats came before or after crc
+              logger.info("Falling back to full replay: detected add file without data change");
               return Optional.empty();
             }
             processAddRecord(addVector, state, i);
@@ -180,6 +185,7 @@ public class ChecksumUtils {
             ColumnVector sizeVector = removeVector.getChild(REMOVE_SIZE_INDEX);
             // Cannot determine if a remove file missing stats came before or after crc
             if (sizeVector.isNullAt(i)) {
+              logger.info("Falling back to full replay: detected remove without file size");
               return Optional.empty();
             }
             long fileSize = sizeVector.getLong(i);
