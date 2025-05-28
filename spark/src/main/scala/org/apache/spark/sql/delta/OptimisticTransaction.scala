@@ -2775,17 +2775,15 @@ trait OptimisticTransactionImpl extends DeltaTransaction
       txnId = txnId,
       deltaLog = deltaLog,
       catalogTable = catalogTable,
-      snapshot = snapshot,
-      metadata = metadata,
-      protocol = protocol,
+      readSnapshot = snapshot,
       committedVersion = committedVersion,
       committedActions = committedActions,
       postCommitSnapshot = postCommitSnapshot,
       postCommitHooks = postCommitHooks.toSeq,
-      finalTxnExecutionTimeMs = txnExecutionTimeMs.get,
-      finalNeedsCheckpoint = needsCheckpoint,
-      finalPartitionsAddedToOpt = partitionsAddedToOpt,
-      finalIsBlindAppend = isBlindAppend
+      txnExecutionTimeMs = txnExecutionTimeMs.get,
+      needsCheckpoint = needsCheckpoint,
+      partitionsAddedToOpt = partitionsAddedToOpt,
+      isBlindAppend = isBlindAppend
     ))
 
   /** Register a hook that will be executed once a commit is successful. */
