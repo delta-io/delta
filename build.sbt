@@ -542,14 +542,12 @@ lazy val sharing = (project in file("sharing"))
     name := "delta-sharing-spark",
     commonSettings,
     scalaStyleSettings,
-    // TODO re-enable release once 1.3.2 is available
-    skipReleaseSettings,
     crossSparkSettings(),
     Test / javaOptions ++= Seq("-ea"),
     libraryDependencies ++= Seq(
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
 
-      "io.delta" %% "delta-sharing-client" % "1.2.4",
+      "io.delta" %% "delta-sharing-client" % "1.3.2",
 
       // Test deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
