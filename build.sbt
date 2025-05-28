@@ -974,9 +974,7 @@ val createTargetClassesDir = taskKey[Unit]("create target classes dir")
 
 // Don't use these groups for any other projects
 lazy val sparkGroup = project
-  // TODO remove sharing for now since requires sharing client release for tests to pass, add back
-  //  once release is available
-  .aggregate(spark, contribs, storage, storageS3DynamoDB, hudi)
+  .aggregate(spark, contribs, storage, storageS3DynamoDB, hudi, sharing)
   .settings(
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,
