@@ -24,6 +24,7 @@ import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
+import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.util.Clock;
 import io.delta.kernel.types.StructType;
@@ -35,15 +36,27 @@ public class ResolvedTableInternalImpl implements ResolvedTableInternal {
   private final String path;
   private final String logPath;
   private final long version;
+  private final Protocol protocol;
+  private final Metadata metadata;
   private final Lazy<LogSegment> lazyLogSegment;
+  private final Lazy<LogReplay> lazyLogReplay;
   private final Clock clock;
 
   public ResolvedTableInternalImpl(
-      String path, long version, Lazy<LogSegment> lazyLogSegment, Clock clock) {
+      String path,
+      long version,
+      Protocol protocol,
+      Metadata metadata,
+      Lazy<LogSegment> lazyLogSegment,
+      Lazy<LogReplay> lazyLogReplay,
+      Clock clock) {
     this.path = requireNonNull(path, "path is null");
     this.logPath = new Path(path, "_delta_log").toString();
     this.version = version;
+    this.protocol = requireNonNull(protocol, "protocol is null");
+    this.metadata = requireNonNull(metadata, "metadata is null");
     this.lazyLogSegment = requireNonNull(lazyLogSegment, "lazyLogSegment is null");
+    this.lazyLogReplay = requireNonNull(lazyLogReplay, "lazyLogReplay is null");
     this.clock = requireNonNull(clock, "clock is null");
   }
 
@@ -97,12 +110,12 @@ public class ResolvedTableInternalImpl implements ResolvedTableInternal {
 
   @Override
   public Protocol getProtocol() {
-    throw new UnsupportedOperationException("Not implemented");
+    return protocol;
   }
 
   @Override
   public Metadata getMetadata() {
-    throw new UnsupportedOperationException("Not implemented");
+    return metadata;
   }
 
   @Override
