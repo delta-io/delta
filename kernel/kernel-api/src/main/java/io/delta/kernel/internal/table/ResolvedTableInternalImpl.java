@@ -22,6 +22,7 @@ import io.delta.kernel.ScanBuilder;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.replay.LogReplay;
@@ -128,7 +129,20 @@ public class ResolvedTableInternalImpl implements ResolvedTableInternal {
   }
 
   @Override
+  @VisibleForTesting
   public LogSegment getLogSegment() {
     return lazyLogSegment.get();
+  }
+
+  @Override
+  @VisibleForTesting
+  public Lazy<LogSegment> getLazyLogSegment() {
+    return lazyLogSegment;
+  }
+
+  @Override
+  @VisibleForTesting
+  public Lazy<LogReplay> getLazyLogReplay() {
+    return lazyLogReplay;
   }
 }
