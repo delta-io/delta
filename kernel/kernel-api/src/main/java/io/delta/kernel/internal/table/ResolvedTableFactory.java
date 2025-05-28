@@ -38,7 +38,7 @@ public class ResolvedTableFactory {
   public ResolvedTableInternalImpl create(Engine engine) {
     final String resolvedPath = resolvePath(engine);
     final Lazy<LogSegment> lazyLogSegment = getLazyLogSegment(engine, resolvedPath);
-    final long version = ctx.versionOpt.orElse(lazyLogSegment.get().getVersion());
+    final long version = ctx.versionOpt.orElseGet(() -> lazyLogSegment.get().getVersion());
 
     return new ResolvedTableInternalImpl(resolvedPath, version, lazyLogSegment, ctx.clock);
   }

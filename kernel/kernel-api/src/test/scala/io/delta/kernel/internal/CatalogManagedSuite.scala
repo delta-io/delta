@@ -31,7 +31,7 @@ class CatalogManagedSuite extends AnyFunSuite with MockFileSystemClientUtils {
   // Basic LogSegment construction tests -- positive cases //
   ///////////////////////////////////////////////////////////
 
-  private def testHelper(
+  private def testLogSegment(
       testName: String,
       versionToLoad: Long,
       checkpointVersionOpt: Option[Long],
@@ -55,7 +55,8 @@ class CatalogManagedSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
       if (expectedExceptionClassOpt.isDefined) {
         val exception = intercept[Throwable] {
-          builder.build(engine)
+          // Ensure we load the LogSegment to identify any gaps/issues
+          builder.build(engine).asInstanceOf[ResolvedTableInternal].getLogSegment
         }
         assert(expectedExceptionClassOpt.get.isInstance(exception))
       } else {
@@ -74,7 +75,7 @@ class CatalogManagedSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
   // _delta_log: [                          10.checkpoint+json, 11.json, 12.json]
   // catalog:    [8.uuid.json, 9.uuid.json                                      ]
-  testHelper(
+  testLogSegment(
     testName = "Build RT with ratified commits that are before first checkpoint",
     versionToLoad = 12L,
     checkpointVersionOpt = Some(10L),
@@ -84,7 +85,7 @@ class CatalogManagedSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
   // _delta_log: [          10.checkpoint+json, 11.json, 12.json, 13.json]
   // catalog:    [9.uuid.json, 10.uuid.json, 11.uuid.json                ]
-  testHelper(
+  testLogSegment(
     testName = "Build RT with ratified commits that overlap w first checkpoint + deltas",
     versionToLoad = 13L,
     checkpointVersionOpt = Some(10L),
@@ -94,7 +95,7 @@ class CatalogManagedSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
   // _delta_log: [10.checkpoint+json, 11.json, 12.json, 13.json, 14.json, 15.json]
   // catalog:    [                  11.uuid.json, 12.uuid.json, 13.uuid.json     ]
-  testHelper(
+  testLogSegment(
     testName = "Build RT with ratified commits that are contained within first checkpoint + deltas",
     versionToLoad = 15L,
     checkpointVersionOpt = Some(10L),
@@ -104,7 +105,7 @@ class CatalogManagedSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
   // _delta_log: [             10.checkpoint+json, 11.json, 12.json                      ]
   // catalog:    [9.uuid.json, 10.uuid.json 11.uuid.json, 12.uuid.json, 13.uuid.json     ]
-  testHelper(
+  testLogSegment(
     testName = "Build RT with ratified commits that supersets the first checkpoint + deltas",
     versionToLoad = 13L,
     checkpointVersionOpt = Some(10L),
@@ -114,7 +115,7 @@ class CatalogManagedSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
   // _delta_log: [10.checkpoint+json, 11.json, 12.json                                 ]
   // catalog:    [                             12.uuid.json, 13.uuid.json, 14.uuid.json]
-  testHelper(
+  testLogSegment(
     testName = "Build RT with ratified commits that overlap with end of deltas",
     versionToLoad = 14L,
     checkpointVersionOpt = Some(10L),
@@ -124,7 +125,7 @@ class CatalogManagedSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
   // _delta_log: [10.checkpoint+json, 11.json, 12.json                           ]
   // catalog:    [                                     13.uuid.json, 14.uuid.json]
-  testHelper(
+  testLogSegment(
     testName = "Build RT with ratified commits that are after (no gap) the deltas",
     versionToLoad = 14L,
     checkpointVersionOpt = Some(10L),
@@ -134,7 +135,7 @@ class CatalogManagedSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
   // _delta_log: [0.json,                                      ]
   // catalog:    [        1.uuid.json, 2.uuid.json, 3.uuid.json]
-  testHelper(
+  testLogSegment(
     testName = "Build RT with only deltas and ratified commits",
     versionToLoad = 3L,
     checkpointVersionOpt = None,
@@ -148,7 +149,7 @@ class CatalogManagedSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
   // _delta_log: [10.checkpoint+json, 11.json, 12.json                                ]
   // catalog:    [                                          14.uuid.json, 15.uuid.json]
-  testHelper(
+  testLogSegment(
     testName = "Build RT with ratified commits that are after (with gap) the deltas => ERROR",
     versionToLoad = 15L,
     checkpointVersionOpt = Some(10L),
@@ -158,7 +159,7 @@ class CatalogManagedSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
   // _delta_log: [                                                  ]
   // catalog:    [0.uuid.json, 1.uuid.json, 2.uuid.json, 3.uuid.json]
-  testHelper(
+  testLogSegment(
     testName = "Build RT with only ratified commits => ERROR",
     versionToLoad = 3L,
     checkpointVersionOpt = None,
