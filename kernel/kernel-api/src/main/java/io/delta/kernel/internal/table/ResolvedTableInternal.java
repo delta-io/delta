@@ -14,11 +14,24 @@
  * limitations under the License.
  */
 
-package io.delta.kernel.internal;
+package io.delta.kernel.internal.table;
 
-import io.delta.kernel.ResolvedTableBuilder;
+import io.delta.kernel.ResolvedTable;
+import io.delta.kernel.internal.actions.Metadata;
+import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.annotation.VisibleForTesting;
+import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.util.Clock;
 
-public interface ResolvedTableBuilderInternal extends ResolvedTableBuilder {
-  ResolvedTableBuilderInternal withClock(Clock clock);
+public interface ResolvedTableInternal extends ResolvedTable {
+  String getLogPath();
+
+  Protocol getProtocol();
+
+  Metadata getMetadata();
+
+  Clock getClock();
+
+  @VisibleForTesting
+  LogSegment getLogSegment();
 }
