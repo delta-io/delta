@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.delta.kernel.internal;
+package io.delta.kernel.internal.table;
 
 import static java.util.Objects.requireNonNull;
 
