@@ -276,11 +276,7 @@ public class TableFeatures {
 
     @Override
     public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
-      if (TableConfig.ROW_TRACKING_ENABLED.fromMetadata(metadata)) {
-        throw new UnsupportedOperationException(
-            "Feature `rowTracking` is not yet supported in Kernel.");
-      }
-      return false;
+      return TableConfig.ROW_TRACKING_ENABLED.fromMetadata(metadata);
     }
 
     @Override
