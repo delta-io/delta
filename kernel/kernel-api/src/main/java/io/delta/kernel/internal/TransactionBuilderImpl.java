@@ -233,6 +233,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     latestSnapshot.ifPresent(
         snapshot -> validateWriteToExistingTable(engine, snapshot, isCreateOrReplace));
     validateTransactionInputs(engine, isCreateOrReplace);
+    checkArgument(
+        isCreateOrReplace || !schema.isPresent(), "Schema evolution is not supported currently");
 
     boolean enablesDomainMetadataSupport =
         needDomainMetadataSupport

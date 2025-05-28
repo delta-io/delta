@@ -33,6 +33,7 @@ import io.delta.kernel.types.{ArrayType, FieldMetadata, IntegerType, LongType, M
 import io.delta.kernel.utils.CloseableIterable
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
 
+import org.scalatest.Ignore
 import org.scalatest.prop.TableDrivenPropertyChecks.forAll
 import org.scalatest.prop.Tables
 
@@ -40,6 +41,7 @@ import org.scalatest.prop.Tables
  * ToDo: Clean this up by moving some common schemas to fixtures and abstracting
  * the setup/run schema evolution/assert loop
  */
+@Ignore
 class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with ColumnMappingSuiteBase {
 
   test("Add nullable column succeeds and correctly updates maxFieldId") {
