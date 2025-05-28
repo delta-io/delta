@@ -15,6 +15,8 @@
  */
 package io.delta.kernel.internal.metrics;
 
+import io.delta.kernel.engine.Engine;
+import io.delta.kernel.engine.MetricsReporter;
 import io.delta.kernel.metrics.SnapshotReport;
 import java.util.Optional;
 
@@ -86,6 +88,12 @@ public class SnapshotQueryContext {
    */
   public void setVersion(long updatedVersion) {
     version = Optional.of(updatedVersion);
+  }
+
+  /** Creates a {@link SnapshotReport} and pushes it to any {@link MetricsReporter}s. */
+  public void recordSnapshotErrorReport(Engine engine, Exception e) {
+    SnapshotReport snapshotReport = SnapshotReportImpl.forError(this, e);
+    engine.getMetricsReporters().forEach(reporter -> reporter.report(snapshotReport));
   }
 
   @Override
