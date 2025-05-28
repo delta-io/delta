@@ -72,10 +72,14 @@ class ResolvedTableFactory {
     final Lazy<LogReplay> lazyLogReplay = getLazyLogReplay(engine, lazyLogSegment);
 
     final Protocol protocol =
-        ctx.protocolAndMetadataOpt.map(x -> x._1).orElse(lazyLogReplay.get().getProtocol());
+        ctx.protocolAndMetadataOpt
+            .map(x -> x._1)
+            .orElseGet(() -> lazyLogReplay.get().getProtocol());
 
     final Metadata metadata =
-        ctx.protocolAndMetadataOpt.map(x -> x._2).orElse(lazyLogReplay.get().getMetadata());
+        ctx.protocolAndMetadataOpt
+            .map(x -> x._2)
+            .orElseGet(() -> lazyLogReplay.get().getMetadata());
 
     return new ResolvedTableInternalImpl(
         resolvedPath, version, protocol, metadata, lazyLogSegment, lazyLogReplay, ctx.clock);

@@ -18,6 +18,8 @@ package io.delta.kernel;
 
 import io.delta.kernel.annotation.Experimental;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.actions.Metadata;
+import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.files.ParsedLogData;
 import io.delta.kernel.internal.files.ParsedLogData.ParsedLogType;
 import java.util.List;
@@ -42,7 +44,8 @@ public interface ResolvedTableBuilder {
   /** For now, only log datas of type {@link ParsedLogType#RATIFIED_STAGED_COMMIT}s are supported */
   ResolvedTableBuilder withLogData(List<ParsedLogData> logData);
 
-  // TODO: withProtocolAndMetadata
+  // TODO: P & M must be public interfaces, not internal classes
+  ResolvedTableBuilder withProtocolAndMetadata(Protocol protocol, Metadata metadata);
 
   ResolvedTable build(Engine engine);
 }

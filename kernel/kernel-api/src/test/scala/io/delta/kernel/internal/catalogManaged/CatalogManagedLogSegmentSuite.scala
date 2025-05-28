@@ -16,16 +16,21 @@
 
 package io.delta.kernel.internal.catalogManaged
 
+import java.util.{Collections, Optional}
+
 import scala.collection.JavaConverters._
 
 import io.delta.kernel.TableManager
+import io.delta.kernel.data.{ArrayValue, ColumnVector, MapValue}
+import io.delta.kernel.internal.actions.{Format, Metadata, Protocol}
 import io.delta.kernel.internal.table.ResolvedTableInternal
 import io.delta.kernel.internal.util.FileNames
-import io.delta.kernel.test.MockFileSystemClientUtils
+import io.delta.kernel.test.{MockFileSystemClientUtils, VectorTestUtils}
+import io.delta.kernel.types.{IntegerType, StructType}
 
 import org.scalatest.funsuite.AnyFunSuite
 
-class CatalogManagedLogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils {
+class CatalogManagedSuite extends AnyFunSuite with MockFileSystemClientUtils with VectorTestUtils {
 
   private def testLogSegment(
       testName: String,
@@ -44,9 +49,12 @@ class CatalogManagedLogSegmentSuite extends AnyFunSuite with MockFileSystemClien
 
       val engine = createMockFSListFromEngine(checkpointFile ++ deltaFiles)
 
+      val testSchema = new StructType().add("c1", IntegerType.INTEGER);
+
       val builder = TableManager
         .loadTable(dataPath.toString)
         .atVersion(versionToLoad)
+        .withProtocolAndMetadata(new Protocol(1, 2), testMetadata(testSchema))
         .withLogData(ratifiedCommitParsedLogDatas.toList.asJava)
 
       if (expectedExceptionClassOpt.isDefined) {
@@ -212,4 +220,28 @@ class CatalogManagedLogSegmentSuite extends AnyFunSuite with MockFileSystemClien
     deltaVersions = 10L to 12L,
     ratifiedCommitVersions = 14L to 15L,
     expectedExceptionClassOpt = Some(classOf[io.delta.kernel.exceptions.InvalidTableException]))
+
+  // TODO: refactor to util trait
+  def testMetadata(
+      schema: StructType,
+      partitionCols: Seq[String] = Seq.empty,
+      tblProps: Map[String, String] = Map.empty): Metadata = {
+    new Metadata(
+      "id",
+      Optional.of("name"),
+      Optional.of("description"),
+      new Format("parquet", Collections.emptyMap()),
+      schema.toJson,
+      schema,
+      new ArrayValue() { // partitionColumns
+        override def getSize: Int = partitionCols.size
+        override def getElements: ColumnVector = stringVector(partitionCols)
+      },
+      Optional.empty(),
+      new MapValue() { // conf
+        override def getSize: Int = tblProps.size
+        override def getKeys: ColumnVector = stringVector(tblProps.toSeq.map(_._1))
+        override def getValues: ColumnVector = stringVector(tblProps.toSeq.map(_._2))
+      })
+  }
 }

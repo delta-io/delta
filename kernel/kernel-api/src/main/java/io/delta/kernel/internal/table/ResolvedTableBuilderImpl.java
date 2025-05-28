@@ -89,6 +89,12 @@ public class ResolvedTableBuilderImpl implements ResolvedTableBuilder {
   }
 
   @Override
+  public ResolvedTableBuilder withProtocolAndMetadata(Protocol protocol, Metadata metadata) {
+    ctx.protocolAndMetadataOpt = Optional.of(new Tuple2<>(protocol, metadata));
+    return this;
+  }
+
+  @Override
   public ResolvedTableInternal build(Engine engine) {
     validateInputOnBuild();
     return new ResolvedTableFactory(engine, ctx).create(engine);
