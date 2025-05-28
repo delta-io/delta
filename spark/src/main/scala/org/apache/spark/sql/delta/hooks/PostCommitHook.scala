@@ -17,7 +17,6 @@
 package org.apache.spark.sql.delta.hooks
 
 import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.actions.Action
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.SparkSession

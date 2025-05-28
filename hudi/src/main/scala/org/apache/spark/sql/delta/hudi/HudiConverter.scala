@@ -226,8 +226,8 @@ class HudiConverter(spark: SparkSession)
 
     // Get the most recently converted delta snapshot, if applicable
     val prevConvertedSnapshotOpt = (lastDeltaVersionConverted, txnOpt) match {
-      case (Some(version), Some(txn)) if version == txn.snapshot.version =>
-        Some(txn.snapshot)
+      case (Some(version), Some(txn)) if version == txn.readSnapshot.version =>
+        Some(txn.readSnapshot)
       // Check how long it has been since we last converted to Hudi. If outside the threshold,
       // fall back to state reconstruction to get the actions, to protect driver from OOMing.
       case (Some(version), _) if snapshotToConvert.version - version <= maxCommitsToConvert =>
