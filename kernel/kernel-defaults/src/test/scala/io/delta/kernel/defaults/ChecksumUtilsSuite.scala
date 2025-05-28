@@ -197,7 +197,7 @@ class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase with LogReplayBaseSuit
     }
   }
 
-  test("test checksum -- Optimize => fallback to full state construction") {
+  test("test checksum -- Optimize => incrementally build from CRC") {
     withTableWithCrc { (table, path, engine) =>
       spark.sql(s"OPTIMIZE delta.`$path`")
       // Spark generated CRC from Spark doesn't include file size histogram
@@ -209,11 +209,9 @@ class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase with LogReplayBaseSuit
       table.checksum(engine, 12)
       assertMetrics(
         engine,
-        Seq(12, 11),
-        Seq(10),
-        Seq(1),
-        // Tries to incrementally load CRC but fall back with unable to handle
-        // Add file without data change.
+        Seq(12),
+        Nil,
+        Nil,
         expChecksumReadSet = Seq(11))
       verifyChecksumForSnapshot(table.getSnapshotAsOfVersion(engine, 12))
     }
