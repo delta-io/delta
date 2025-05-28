@@ -56,10 +56,10 @@ trait MetricsReportTestUtils extends TestUtils {
     if (expectException) {
       val e = intercept[Exception](
         f(new EngineWithInMemoryMetricsReporter(reports, defaultEngine)))
-      (reports, Some(e))
+      (reports.toSeq, Some(e))
     } else {
       f(new EngineWithInMemoryMetricsReporter(reports, defaultEngine))
-      (reports, Option.empty)
+      (reports.toSeq, Option.empty)
     }
   }
 

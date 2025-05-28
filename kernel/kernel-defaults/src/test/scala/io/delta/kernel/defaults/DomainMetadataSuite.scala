@@ -186,7 +186,7 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
         (winningTxn2DomainMetadatas ++ winningTxn3DomainMetadatas ++ currentTxn1DomainMetadatas)
           .groupBy(_.getDomain)
           .mapValues(_.last)
-      assertDomainMetadata(table, engine, expectedMetadata)
+      assertDomainMetadata(table, engine, expectedMetadata.toMap)
     }
   }
 

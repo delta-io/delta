@@ -85,7 +85,7 @@ class LogCompactionWriterSuite extends CheckpointSuiteBase {
       tablePath: Path,
       engine: Engine,
       startVersion: Long,
-      endVersion: Long): scala.collection.Seq[TestRow] = {
+      endVersion: Long): Seq[TestRow] = {
     val files = DeltaLogActionUtils.listDeltaLogFilesAsIter(
       engine,
       Collections.singleton(DeltaLogFileType.COMMIT),
@@ -151,7 +151,7 @@ class LogCompactionWriterSuite extends CheckpointSuiteBase {
 
   def getActionsFromCompacted(
       compactedPath: String,
-      engine: Engine): scala.collection.Seq[Row] = {
+      engine: Engine): Seq[Row] = {
     val fileStatus = FileStatus.of(compactedPath, 0, 0)
     val batches = engine
       .getJsonHandler()

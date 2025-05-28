@@ -1249,7 +1249,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
 
         // Assert that the number of results matches the expected columns
         assert(results.size === expectedColumns.size)
-        assert(results === flattenedTestSchema.filterKeys(expectedColumns.contains))
+        assert(results === flattenedTestSchema.filterKeys(expectedColumns.contains).toMap)
       }
   }
 
