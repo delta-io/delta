@@ -51,7 +51,6 @@ trait DeltaSparkPlanUtils {
   protected def planContainsCachedRelation(df: DataFrame): Boolean =
     df.queryExecution.withCachedData.exists(_.isInstanceOf[InMemoryRelation])
 
-
   /**
    * Returns `true` if `plan` has a safe level of determinism. This is a conservative
    * approximation of `plan` being a truly deterministic query.
