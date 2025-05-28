@@ -274,8 +274,9 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
           (true, MergeIntoMaterializeSourceReason.NON_DETERMINISTIC_SOURCE_WITH_DETERMINISTIC_UDF)
         } else if (materializeCachedSource &&
             planContainsCachedRelation(DataFrameUtils.ofRows(spark, source))) {
-          // The query cache doesn't pin the version of cached Delta tables, we materialize the
-          // source in that case to avoid this issue.
+          // The query cache doesn't pin the version of cached Delta tables, cache can get
+          // concurrently updated in the middle of MERGE execution. We materialize the source in
+          // that case to avoid this issue.
           (true, MergeIntoMaterializeSourceReason.SOURCE_CACHED)
         } else {
           (false, MergeIntoMaterializeSourceReason.NOT_MATERIALIZED_AUTO)

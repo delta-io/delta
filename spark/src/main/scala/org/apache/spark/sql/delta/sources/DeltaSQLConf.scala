@@ -873,6 +873,20 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val MERGE_FAIL_SOURCE_CACHED_AFTER_MATERIALIZATION =
+    buildConf("merge.failSourceCachedAfterMaterialization")
+      .internal()
+      .doc(
+        """
+          |Enables a check that fails the MERGE operation if the source was cached (using
+          |df.cache()) after the source materialization phase. Query caching doesn't pin the version
+          |of Delta tables and we should materialize cached source plans. In rare cases, the source
+          |might get cached after the decision to materialize, which could lead to incorrect results
+          |if we let the operation succeed.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val MERGE_MATERIALIZE_SOURCE_RDD_STORAGE_LEVEL =
     buildConf("merge.materializeSource.rddStorageLevel")
       .internal()
