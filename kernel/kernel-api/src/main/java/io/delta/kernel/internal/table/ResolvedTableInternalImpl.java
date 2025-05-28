@@ -27,9 +27,11 @@ import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.util.Clock;
+import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.types.StructType;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 /** An implementation of {@link ResolvedTableInternal}. */
 public class ResolvedTableInternalImpl implements ResolvedTableInternal {
@@ -81,7 +83,9 @@ public class ResolvedTableInternalImpl implements ResolvedTableInternal {
 
   @Override
   public List<Column> getPartitionColumns() {
-    throw new UnsupportedOperationException("Not implemented");
+    return VectorUtils.<String>toJavaList(getMetadata().getPartitionColumns()).stream()
+        .map(Column::new)
+        .collect(Collectors.toList());
   }
 
   @Override
@@ -91,7 +95,7 @@ public class ResolvedTableInternalImpl implements ResolvedTableInternal {
 
   @Override
   public StructType getSchema() {
-    throw new UnsupportedOperationException("Not implemented");
+    return getMetadata().getSchema();
   }
 
   @Override
