@@ -26,8 +26,7 @@ import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta.skipping.clustering.ClusteringColumnInfo
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.ClassicColumnConversions._
-import org.apache.spark.sql.delta.actions.Protocol
-import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
+import org.apache.spark.sql.delta.actions.{DropTableFeatureUtils, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.backfill.RowTrackingBackfillCommand
 import org.apache.spark.sql.delta.commands.columnmapping.RemoveColumnMappingCommand
@@ -321,8 +320,6 @@ case class AlterTableDropFeatureDeltaCommand(
   with IgnoreCachedData {
   import org.apache.spark.sql.delta.actions.DropTableFeatureUtils._
 
-  private val NUMBER_OF_BARRIER_CHECKPOINTS = 3
-
   override def run(sparkSession: SparkSession): Seq[Row] = {
     // Check whether the protocol contains the feature in either the writer features list or
     // the reader+writer features list. Note, protocol needs to denormalized to allow dropping
@@ -513,7 +510,7 @@ case class AlterTableDropFeatureDeltaCommand(
       // whether NUMBER_OF_BARRIER_CHECKPOINTS exist after the pre-downgrade commit.
       val historyBarrierIsRequired = removableFeature.requiresHistoryProtection
       if (historyBarrierIsRequired) {
-        (1 to NUMBER_OF_BARRIER_CHECKPOINTS).foreach { _ =>
+        (1 to DropTableFeatureUtils.NUMBER_OF_BARRIER_CHECKPOINTS).foreach { _ =>
           // This call also cleans up the logs. In most of the cases we should be able to truncate
           // the history of a previous drop feature operation.
           if (!createEmptyCommitAndCheckpoint(table, startTimeNs, retryOnFailure = true)) {
