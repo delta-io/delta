@@ -19,7 +19,6 @@ To run this example you must follow these steps:
 
 Requirements:
 - Using Java 17
-- Spark 4.0.0
 - pyspark 4.0.0
 - delta-connect-server 4.0.0rc1+
 
