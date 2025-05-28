@@ -37,27 +37,6 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite {
   // Test Helper Methods //
   /////////////////////////
 
-  /**
-   * Creates a temporary directory with a test engine and builds a table with CRC files.
-   * Returns the created table and engine for testing.
-   *
-   * @param f code to run with the table and engine
-   */
-  protected def withTableWithCrc(f: (Table, String, MetricsEngine) => Any): Unit = {
-    withTempDirAndMetricsEngine { (path, engine) =>
-      // Produce a test table with 0 to 11 .json, 0 to 11.crc, 10.checkpoint.parquet
-      withSQLConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true") {
-        spark.sql(
-          s"CREATE TABLE delta.`$path` USING DELTA AS " +
-            s"SELECT 0L as id")
-        for (_ <- 0 to 10) { appendCommit(path) }
-        assert(checkpointFileExistsForTable(path, 10))
-      }
-      val table = Table.forPath(engine, path)
-      f(table, path, engine)
-    }
-  }
-
   // Abstract method to be implemented by concrete test classes
   protected def loadSnapshotFieldsCheckMetrics(
       table: Table,
