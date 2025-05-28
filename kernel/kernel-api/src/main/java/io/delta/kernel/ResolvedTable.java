@@ -17,6 +17,7 @@
 package io.delta.kernel;
 
 import io.delta.kernel.annotation.Experimental;
+import io.delta.kernel.expressions.Column;
 import io.delta.kernel.types.StructType;
 import java.util.List;
 import java.util.Optional;
@@ -29,7 +30,7 @@ public interface ResolvedTable {
 
   long getTimestamp();
 
-  List<String> getPartitionColumns();
+  List<Column> getPartitionColumns();
 
   Optional<String> getDomainMetadata(String domain);
 
