@@ -297,7 +297,13 @@ class SchemaIterableSuite extends AnyFunSuite {
         "nested_map.value.metadata.value",
         "nested_map.value.metadata",
         "nested_map.value",
-        "nested_map")),
+        "nested_map",
+        "double_nested",
+        "empty_struct",
+        "empty_struct_array",
+        "empty_map_struct.key",
+        "empty_map_struct.value",
+        "empty_map_struct")),
 
     // Test case 2: Skip MapType
     (
@@ -308,7 +314,14 @@ class SchemaIterableSuite extends AnyFunSuite {
         "nested_array.element.tags",
         "nested_array.element",
         "nested_array",
-        "nested_map")),
+        "nested_map",
+        "double_nested.element.element",
+        "double_nested.element",
+        "double_nested",
+        "empty_struct",
+        "empty_struct_array.element",
+        "empty_struct_array",
+        "empty_map_struct")),
 
     // Test case 3: Skip StructType
     (
@@ -319,14 +332,33 @@ class SchemaIterableSuite extends AnyFunSuite {
         "nested_map.key.element",
         "nested_map.key",
         "nested_map.value",
-        "nested_map")),
-
+        "nested_map",
+        "double_nested.element.element.key.key.element",
+        "double_nested.element.element.key.key",
+        "double_nested.element.element.key.value",
+        "double_nested.element.element.key",
+        "double_nested.element.element.value.key",
+        "double_nested.element.element.value.value",
+        "double_nested.element.element.value",
+        "double_nested.element.element",
+        "double_nested.element",
+        "double_nested",
+        "empty_struct",
+        "empty_struct_array.element",
+        "empty_struct_array",
+        "empty_map_struct.key",
+        "empty_map_struct.value",
+        "empty_map_struct")),
     // Test case 4: Skip multiple types (ArrayType and MapType)
     (
       Seq(classOf[ArrayType], classOf[MapType]),
       List(
         "nested_array",
-        "nested_map"))).foreach { case (typesToSkip, expectedFields) =>
+        "nested_map",
+        "double_nested",
+        "empty_struct",
+        "empty_struct_array",
+        "empty_map_struct"))).foreach { case (typesToSkip, expectedFields) =>
     test(s"skip recursion for specified types $typesToSkip") {
       val schema: StructType = getDeeplyNestedSchema
       // Define test cases as a sequence of (types to skip, expected output) pairs
@@ -403,6 +435,7 @@ class SchemaIterableSuite extends AnyFunSuite {
     //   >
     //   double_nested:
     //     array<array<map<map<array<int>, string>, map<string, string>>>
+    //   empty_struct: struct<>
     //   empty_struct_array:
     //     array<struct<>>>
     //   empty_map_struct:
