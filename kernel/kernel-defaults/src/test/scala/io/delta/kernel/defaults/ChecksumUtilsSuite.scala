@@ -169,4 +169,30 @@ class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase with LogReplayBaseSuit
       verifyChecksumForSnapshot(table.getSnapshotAsOfVersion(engine, 12))
     }
   }
+
+  test("test checksum -- removeFile without Stats") {
+    withTableWithCrc { (table, path, engine) =>
+      val deltaLog = DeltaLog.forTable(spark, new Path(path))
+      deltaLog
+        .startTransaction()
+        .commitManually(
+          List(
+            deltaLog.getSnapshotAt(11).allFiles.head().remove.copy(size = None).wrap.unwrap): _*)
+      deleteChecksumFileForTableUsingHadoopFs(
+        table.getPath(engine).stripPrefix("file:"),
+        Seq(11, 12))
+      table.checksum(engine, 11)
+      engine.resetMetrics()
+      table.checksum(engine, 12)
+      assertMetrics(
+        engine,
+        Seq(12, 11),
+        Seq(10),
+        Seq(1),
+        // Tries to incrementally load CRC but fall back with unable to handle
+        // Remove file without stats.
+        expChecksumReadSet = Seq(11))
+      verifyChecksumForSnapshot(table.getSnapshotAsOfVersion(engine, 12))
+    }
+  }
 }
