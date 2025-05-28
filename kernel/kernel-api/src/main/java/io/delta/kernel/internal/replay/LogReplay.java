@@ -53,17 +53,19 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Replays a history of actions, resolving them to produce the current state of the table. The
- * protocol for resolution is as follows: - The most recent {@code AddFile} and accompanying
- * metadata for any `(path, dv id)` tuple wins. - {@code RemoveFile} deletes a corresponding
- * AddFile. A {@code RemoveFile} "corresponds" to the AddFile that matches both the parquet file URI
- * *and* the deletion vector's URI (if any). - The most recent {@code Metadata} wins. - The most
- * recent {@code Protocol} version wins. - For each `(path, dv id)` tuple, this class should always
- * output only one {@code FileAction} (either {@code AddFile} or {@code RemoveFile})
+ * protocol for resolution is as follows:
  *
- * <p>This class exposes the following public APIs - {@link #getProtocol()}: latest non-null
- * Protocol - {@link #getMetadata()}: latest non-null Metadata - {@link
- * #getAddFilesAsColumnarBatches}: return all active (not tombstoned) AddFiles as {@link
- * ColumnarBatch}s
+ * <ul>
+ *   <li>The most recent {@code AddFile} and accompanying metadata for any `(path, dv id)` tuple
+ *       wins.
+ *   <li>{@code RemoveFile} deletes a corresponding AddFile. A {@code RemoveFile} "corresponds" to
+ *       the AddFile that matches both the parquet file URI *and* the deletion vector's URI (if
+ *       any).
+ *   <li>The most recent {@code Metadata} wins.
+ *   <li>The most recent {@code Protocol} version wins.
+ *   <li>For each `(path, dv id)` tuple, this class should always output only one {@code *
+ *       FileAction} (either {@code AddFile} or {@code RemoveFile})
+ * </ul>
  */
 public class LogReplay {
 
@@ -134,8 +136,8 @@ public class LogReplay {
 
   private final Path dataPath;
   private final LogSegment logSegment;
-  private final Tuple2<Protocol, Metadata> protocolAndMetadata;
-  private final Lazy<Map<String, DomainMetadata>> activeDomainMetadataMap;
+  private final Lazy<Tuple2<Protocol, Metadata>> lazyProtocolAndMetadata;
+  private final Lazy<Map<String, DomainMetadata>> lazyActiveDomainMetadataMap;
   private final CrcInfoContext crcInfoContext;
 
   public LogReplay(
@@ -156,23 +158,13 @@ public class LogReplay {
     this.crcInfoContext = new CrcInfoContext(engine);
     this.dataPath = dataPath;
     this.logSegment = logSegment;
-    Optional<SnapshotHint> newerSnapshotHint =
-        crcInfoContext.maybeGetNewerSnapshotHintAndUpdateCache(
-            engine, logSegment, snapshotHint, logSegment.getVersion());
-    this.protocolAndMetadata =
-        snapshotMetrics.loadInitialDeltaActionsTimer.time(
-            () -> {
-              Tuple2<Protocol, Metadata> protocolAndMetadata =
-                  loadTableProtocolAndMetadata(
-                      engine, logSegment, newerSnapshotHint, logSegment.getVersion());
 
-              TableFeatures.validateKernelCanReadTheTable(
-                  protocolAndMetadata._1, dataPath.toString());
+    // Lazy loading of protocol and metadata only when needed
+    this.lazyProtocolAndMetadata =
+        createLazyProtocolAndMetadata(engine, logSegment, snapshotHint, snapshotMetrics);
 
-              return protocolAndMetadata;
-            });
     // Lazy loading of domain metadata only when needed
-    this.activeDomainMetadataMap =
+    this.lazyActiveDomainMetadataMap =
         new Lazy<>(
             () ->
                 loadDomainMetadataMap(engine).entrySet().stream()
@@ -185,11 +177,11 @@ public class LogReplay {
   /////////////////
 
   public Protocol getProtocol() {
-    return this.protocolAndMetadata._1;
+    return lazyProtocolAndMetadata.get()._1;
   }
 
   public Metadata getMetadata() {
-    return this.protocolAndMetadata._2;
+    return lazyProtocolAndMetadata.get()._2;
   }
 
   public Optional<Long> getLatestTransactionIdentifier(Engine engine, String applicationId) {
@@ -198,7 +190,7 @@ public class LogReplay {
 
   /* Returns map for all active domain metadata. */
   public Map<String, DomainMetadata> getActiveDomainMetadataMap() {
-    return activeDomainMetadataMap.get();
+    return lazyActiveDomainMetadataMap.get();
   }
 
   public long getVersion() {
@@ -261,6 +253,30 @@ public class LogReplay {
     } else {
       return logSegment.allLogFilesReversed();
     }
+  }
+
+  private Lazy<Tuple2<Protocol, Metadata>> createLazyProtocolAndMetadata(
+      Engine engine,
+      LogSegment logSegment,
+      Optional<SnapshotHint> snapshotHint,
+      SnapshotMetrics snapshotMetrics) {
+    final Optional<SnapshotHint> newerSnapshotHint =
+        crcInfoContext.maybeGetNewerSnapshotHintAndUpdateCache(
+            engine, logSegment, snapshotHint, logSegment.getVersion());
+
+    return new Lazy<>(
+        () ->
+            snapshotMetrics.loadInitialDeltaActionsTimer.time(
+                () -> {
+                  Tuple2<Protocol, Metadata> protocolAndMetadata =
+                      loadTableProtocolAndMetadata(
+                          engine, logSegment, newerSnapshotHint, logSegment.getVersion());
+
+                  TableFeatures.validateKernelCanReadTheTable(
+                      protocolAndMetadata._1, dataPath.toString());
+
+                  return protocolAndMetadata;
+                }));
   }
 
   /**
