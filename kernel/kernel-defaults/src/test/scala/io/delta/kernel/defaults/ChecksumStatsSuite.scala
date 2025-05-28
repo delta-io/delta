@@ -17,7 +17,7 @@ package io.delta.kernel.defaults
 
 import java.util.{Collections, Optional}
 
-import scala.jdk.CollectionConverters.{asJavaIteratorConverter, mapAsJavaMapConverter, seqAsJavaListConverter, setAsJavaSetConverter}
+import scala.collection.JavaConverters._
 
 import io.delta.kernel.{Table, Transaction, TransactionCommitResult}
 import io.delta.kernel.data.Row

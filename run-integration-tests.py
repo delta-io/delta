@@ -16,6 +16,7 @@
 # limitations under the License.
 #
 
+
 import os
 import subprocess
 from os import path
@@ -85,7 +86,7 @@ def run_python_integration_tests(root_dir, version, test_name, extra_maven_repo,
 
     python_root_dir = path.join(root_dir, "python")
     extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
-    package = "io.delta:delta-%s_2.12:%s" % (get_artifact_name(version), version)
+    package = "io.delta:delta-%s_2.13:%s" % (get_artifact_name(version), version)
 
     repo = extra_maven_repo if extra_maven_repo else ""
 
@@ -128,9 +129,9 @@ def test_missing_delta_storage_jar(root_dir, version, use_local):
     artifact_name = get_artifact_name(version)
     jar = path.join(
         os.path.expanduser("~/.m2/repository/io/delta/"),
-        "delta-%s_2.12" % artifact_name,
+        "delta-%s_2.13" % artifact_name,
         version,
-        "delta-%s_2.12-%s.jar" % (artifact_name, str(version)))
+        "delta-%s_2.13-%s.jar" % (artifact_name, str(version)))
 
     try:
         cmd = ["spark-submit",
@@ -160,7 +161,7 @@ def run_dynamodb_logstore_integration_tests(root_dir, version, test_name, extra_
 
     python_root_dir = path.join(root_dir, "python")
     extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
-    packages = "io.delta:delta-%s_2.12:%s" % (get_artifact_name(version), version)
+    packages = "io.delta:delta-%s_2.13:%s" % (get_artifact_name(version), version)
     packages += "," + "io.delta:delta-storage-s3-dynamodb:" + version
     if extra_packages:
         packages += "," + extra_packages
@@ -318,6 +319,7 @@ def run_uniform_hudi_integration_tests(root_dir, version, spark_version, hudi_ve
         except:
             print("Failed Uniform Hudi tests in %s" % (test_file))
             raise
+
 
 def run_pip_installation_tests(root_dir, version, use_testpypi, use_localpypi, extra_maven_repo):
     print("\n\n##### Running pip installation tests on version %s #####" % str(version))
@@ -483,8 +485,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--scala-version",
         required=False,
-        default="2.12",
-        help="Specify scala version for scala tests only, valid values are '2.12' and '2.13'")
+        default="2.13",
+        help="Specify scala version for scala tests only, valid values are '2.13'")
     parser.add_argument(
         "--pip-only",
         required=False,
@@ -591,9 +593,8 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    if args.scala_version not in ["2.12", "2.13"]:
-        raise Exception("Scala version can only be specified as --scala-version 2.12 or " +
-                        "--scala-version 2.13")
+    if args.scala_version not in ["2.13"]:
+        raise Exception("Scala version can only be specified as --scala-version 2.13")
 
     if args.pip_only and args.no_pip:
         raise Exception("Cannot specify both --pip-only and --no-pip")
