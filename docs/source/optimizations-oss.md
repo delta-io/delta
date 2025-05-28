@@ -80,7 +80,7 @@ Auto compaction combines small files within Delta table partitions to automatica
 
 You can control the output file size by setting the configuration `spark.databricks.delta.autoCompact.maxFileSize`.
 
-Auto compaction is only triggered for partitions or tables that have at least a certain number of small files. You can optionally change the minimum number of files required to trigger auto compaction by setting `spark.databricks.delta.autoCompact.minNumFiles`.
+Auto compaction is only triggered for partitions or tables that have at least a certain number of small files. You can optionally change the minimum number of files required to trigger auto compaction by setting `spark.databricks.delta.autoCompact.minNumFiles` (default=50).
 
 Auto compaction can be enabled at the table or session level using the following settings:
 
