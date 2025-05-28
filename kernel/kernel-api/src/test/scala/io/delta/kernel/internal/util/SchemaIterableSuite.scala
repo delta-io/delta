@@ -164,7 +164,12 @@ class SchemaIterableSuite extends AnyFunSuite {
       .build()
     val newTypes = Map(
       "nested_array.element.tags.element" -> IntegerType.INTEGER,
-      "nested_map.value.metadata.value" -> StringType.STRING)
+      "nested_map.value.metadata.value" -> StringType.STRING,
+      "nested_map.value.points.element" -> new StructType().add(
+        "x",
+        DoubleType.DOUBLE,
+        false).add("y", DoubleType.DOUBLE, false)
+        .add("z", LongType.LONG, false))
     val newMetadata = Map("nested_array" -> fieldMetadata)
 
     iterable.newMutableIterator().asScala.foreach {
@@ -195,6 +200,7 @@ class SchemaIterableSuite extends AnyFunSuite {
       ("nested_map.key", "ArrayType"),
       ("nested_map.value.points.element.x", "DoubleType"),
       ("nested_map.value.points.element.y", "DoubleType"),
+      ("nested_map.value.points.element.z", "LongType"),
       ("nested_map.value.points.element", "StructType"),
       ("nested_map.value.points", "ArrayType"),
       ("nested_map.value.metadata.key", "StringType"),
