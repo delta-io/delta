@@ -352,8 +352,9 @@ class SchemaUtilsSuite extends AnyFunSuite {
     assert(schemaChanges.addedFields().isEmpty)
     assert(schemaChanges.removedFields().isEmpty)
     assert(schemaChanges.updatedFields().size() == 1)
-    assert(schemaChanges.updatedFields().get(0) ==
-      new Tuple2(fieldMappingBefore.get("id"), fieldMappingAfter.get("renamed_id")))
+    val schemaUpdate = schemaChanges.updatedFields().get(0)
+    assert(schemaUpdate.before == fieldMappingBefore.get("id"))
+    assert(schemaUpdate.after == fieldMappingAfter.get("renamed_id"))
   }
 
   test("Compute schema changes with type changed columns") {
@@ -367,8 +368,10 @@ class SchemaUtilsSuite extends AnyFunSuite {
     assert(schemaChanges.addedFields().isEmpty)
     assert(schemaChanges.removedFields().isEmpty)
     assert(schemaChanges.updatedFields().size() == 1)
-    assert(schemaChanges.updatedFields().get(0) ==
-      new Tuple2(fieldMappingBefore.get("id"), fieldMappingAfter.get("promoted_to_long")))
+    val schemaUpdate = schemaChanges.updatedFields().get(0)
+    assert(schemaUpdate.before == fieldMappingBefore.get("id"))
+    assert(schemaUpdate.after == fieldMappingAfter.get(
+      "promoted_to_long"))
   }
 
   test("Compute schema changes with dropped fields") {
@@ -401,9 +404,10 @@ class SchemaUtilsSuite extends AnyFunSuite {
     assert(schemaChanges.addedFields().isEmpty)
     assert(schemaChanges.removedFields().isEmpty)
     assert(schemaChanges.updatedFields().size() == 1)
-    assert(schemaChanges.updatedFields().get(0) == new Tuple2(
-      fieldMappingBefore.get("data"),
-      fieldMappingAfter.get("required_data")))
+    val schemaUpdate = schemaChanges.updatedFields().get(0)
+    assert(schemaUpdate.before == fieldMappingBefore.get("data"))
+    assert(
+      schemaUpdate.after == fieldMappingAfter.get("required_data"))
   }
 
   test("Compute schema changes with moved fields") {
@@ -435,10 +439,12 @@ class SchemaUtilsSuite extends AnyFunSuite {
 
     assert(schemaChanges.addedFields().isEmpty)
     assert(schemaChanges.removedFields().isEmpty)
-    assert(schemaChanges.updatedFields().size() == 1, s"${schemaChanges.updatedFields.get(0)._1}")
-    assert(schemaChanges.updatedFields().get(0) == new Tuple2(
-      fieldMappingBefore.get("struct"),
-      fieldMappingAfter.get("struct")))
+    assert(
+      schemaChanges.updatedFields().size() == 1,
+      s"${schemaChanges.updatedFields.get(0).before}")
+    val schemaUpdate = schemaChanges.updatedFields().get(0)
+    assert(schemaUpdate.before == fieldMappingBefore.get("struct"))
+    assert(schemaUpdate.after == fieldMappingAfter.get("struct"))
   }
 
   test("Compute schema changes with field metadata changes") {
@@ -469,9 +475,9 @@ class SchemaUtilsSuite extends AnyFunSuite {
     assert(schemaChanges.addedFields().isEmpty)
     assert(schemaChanges.removedFields().isEmpty)
     assert(schemaChanges.updatedFields().size() == 1)
-    assert(schemaChanges.updatedFields().get(0) == new Tuple2(
-      fieldMappingBefore.get("id"),
-      fieldMappingAfter.get("id")))
+    val schemaUpdate = schemaChanges.updatedFields().get(0)
+    assert(schemaUpdate.before == fieldMappingBefore.get("id"))
+    assert(schemaUpdate.after == fieldMappingAfter.get("id"))
   }
 
   ///////////////////////////////////////////////////////////////////////////

@@ -418,10 +418,10 @@ public class SchemaUtils {
   }
 
   private static void validatePhysicalNameConsistency(
-      List<Tuple2<StructField, StructField>> updatedFields) {
-    for (Tuple2<StructField, StructField> updatedField : updatedFields) {
-      StructField currentField = updatedField._1;
-      StructField newField = updatedField._2;
+      List<SchemaChanges.SchemaUpdate> updatedFields) {
+    for (SchemaChanges.SchemaUpdate updatedField : updatedFields) {
+      StructField currentField = updatedField.before();
+      StructField newField = updatedField.after();
       if (!getPhysicalName(currentField).equals(getPhysicalName(newField))) {
         throw new IllegalArgumentException(
             String.format(
@@ -523,10 +523,11 @@ public class SchemaUtils {
       }
     }
 
-    for (Tuple2<StructField, StructField> updatedFields : schemaChanges.updatedFields()) {
+    for (SchemaChanges.SchemaUpdate updatedFields : schemaChanges.updatedFields()) {
       // ToDo: See if recursion can be avoided by incorporating map key/value and array element
       // updates in updatedFields
-      validateFieldCompatibility(updatedFields._1, updatedFields._2, icebergWriterCompatV1Enabled);
+      validateFieldCompatibility(
+          updatedFields.before(), updatedFields.after(), icebergWriterCompatV1Enabled);
     }
   }
 
