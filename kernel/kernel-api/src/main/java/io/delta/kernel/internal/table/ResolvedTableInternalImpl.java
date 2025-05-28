@@ -19,6 +19,7 @@ package io.delta.kernel.internal.table;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.ScanBuilder;
+import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.fs.Path;
@@ -65,7 +66,7 @@ public class ResolvedTableInternalImpl implements ResolvedTableInternal {
   }
 
   @Override
-  public List<String> getPartitionColumns() {
+  public List<Column> getPartitionColumns() {
     throw new UnsupportedOperationException("Not implemented");
   }
 

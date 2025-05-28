@@ -16,57 +16,36 @@
 
 package io.delta.kernel.internal.table;
 
-import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.files.ParsedLogData;
-import io.delta.kernel.internal.fs.Path;
-import io.delta.kernel.internal.lang.Lazy;
-import io.delta.kernel.internal.snapshot.LogSegment;
-import io.delta.kernel.internal.snapshot.SnapshotManager;
 import io.delta.kernel.internal.util.Clock;
-import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
 public class ResolvedTableBuilderInternalImpl implements ResolvedTableBuilderInternal {
-  private final String unresolvedPath;
-  private Optional<Long> versionOpt;
-  private List<ParsedLogData> logData;
-  private Clock clock;
+
+  public static class ResolvedTableBuilderContext {
+    public final String unresolvedPath;
+    public Optional<Long> versionOpt;
+    public List<ParsedLogData> logData;
+    public Clock clock;
+
+    public ResolvedTableBuilderContext(String unresolvedPath) {
+      this.unresolvedPath = requireNonNull(unresolvedPath, "unresolvedPath is null");
+      this.versionOpt = Optional.empty();
+      this.logData = Collections.emptyList();
+      this.clock = System::currentTimeMillis;
+    }
+  }
+
+  private final ResolvedTableBuilderContext ctx;
 
   public ResolvedTableBuilderInternalImpl(String unresolvedPath) {
-    this.unresolvedPath = requireNonNull(unresolvedPath, "unresolvedPath is null");
-    this.versionOpt = Optional.empty();
-    this.logData = Collections.emptyList();
-    this.clock = System::currentTimeMillis;
-  }
-
-  /////////////////////////////////////////
-  // Public ResolvedTableBuilder Methods //
-  /////////////////////////////////////////
-
-  @Override
-  public ResolvedTableBuilderInternal atVersion(long version) {
-    this.versionOpt = Optional.of(version);
-    return this;
-  }
-
-  @Override
-  public ResolvedTableBuilderInternal withLogData(List<ParsedLogData> logData) {
-    this.logData = requireNonNull(logData, "logData is null");
-    return this;
-  }
-
-  @Override
-  public ResolvedTableInternal build(Engine engine) {
-    final String resolvedPath = resolvePath(engine);
-    validateInputOnBuild();
-    return buildTable(engine, resolvedPath);
+    ctx = new ResolvedTableBuilderContext(unresolvedPath);
   }
 
   //////////////////////////////////////////
@@ -75,42 +54,41 @@ public class ResolvedTableBuilderInternalImpl implements ResolvedTableBuilderInt
 
   @Override
   public ResolvedTableBuilderInternal withClock(Clock clock) {
-    this.clock = requireNonNull(clock, "clock is null");
+    ctx.clock = requireNonNull(clock, "clock is null");
     return this;
+  }
+
+  /////////////////////////////////////////
+  // Public ResolvedTableBuilder Methods //
+  /////////////////////////////////////////
+
+  @Override
+  public ResolvedTableBuilderInternal atVersion(long version) {
+    ctx.versionOpt = Optional.of(version);
+    return this;
+  }
+
+  @Override
+  public ResolvedTableBuilderInternal withLogData(List<ParsedLogData> logData) {
+    ctx.logData = requireNonNull(logData, "logData is null");
+    return this;
+  }
+
+  @Override
+  public ResolvedTableInternal build(Engine engine) {
+    validateInputOnBuild();
+    return new ResolvedTableFactory(ctx).create(engine);
   }
 
   ////////////////////////////
   // Private Helper Methods //
   ////////////////////////////
 
-  private String resolvePath(Engine engine) {
-    try {
-      return wrapEngineExceptionThrowsIO(
-          () -> engine.getFileSystemClient().resolvePath(unresolvedPath),
-          "Resolving path %s",
-          unresolvedPath);
-    } catch (IOException io) {
-      throw new UncheckedIOException(io);
-    }
-  }
-
   private void validateInputOnBuild() {
-    checkArgument(versionOpt.orElse(0L) >= 0, "version must be >= 0");
+    checkArgument(ctx.versionOpt.orElse(0L) >= 0, "version must be >= 0");
     // TODO: logData if and only if version is provided
     // TODO: logData only ratified staged commits
     // TODO: logData sorted and contiguous
     // TODO: logData ends with version
-  }
-
-  private ResolvedTableInternal buildTable(Engine engine, String resolvedPath) {
-    final Lazy<LogSegment> lazyLogSegment =
-        new Lazy<>(
-            () ->
-                new SnapshotManager(new Path(resolvedPath))
-                    .getLogSegmentForVersion(engine, versionOpt, logData));
-
-    final long version = versionOpt.orElse(lazyLogSegment.get().getVersion());
-
-    return new ResolvedTableInternalImpl(resolvedPath, version, lazyLogSegment, clock);
   }
 }
