@@ -903,6 +903,91 @@ class SchemaUtilsSuite extends AnyFunSuite {
       "Cannot change the type of existing field id from integer to string")
   }
 
+  private val invalidTypeChangesNested = Table(
+    ("schemaBefore", "schemaWithInvalidTypeChange"),
+    // Array to Map
+    (
+      newSchema((
+        1,
+        new StructField(
+          "array",
+          new ArrayType(
+            IntegerType.INTEGER,
+            false),
+          true))),
+      newSchema((
+        1,
+        new StructField(
+          "to_map",
+          new MapType(
+            IntegerType.INTEGER,
+            IntegerType.INTEGER,
+            false),
+          true)))),
+
+    // Array to Map
+    (
+      newSchema((
+        1,
+        new StructField(
+          "map",
+          new MapType(
+            IntegerType.INTEGER,
+            IntegerType.INTEGER,
+            false),
+          true))),
+      newSchema((
+        1,
+        new StructField(
+          "to_array",
+          new ArrayType(
+            IntegerType.INTEGER,
+            false),
+          true)))),
+    // nested array change
+    (
+      newSchema((
+        1,
+        new StructField(
+          "array",
+          new ArrayType(
+            new ArrayType(IntegerType.INTEGER, false),
+            false),
+          true))),
+      newSchema((
+        1,
+        new StructField(
+          "to_map",
+          new ArrayType(
+            new MapType(IntegerType.INTEGER, IntegerType.INTEGER, false),
+            false),
+          true)))),
+    // nested map change
+    (
+      newSchema((
+        1,
+        new StructField(
+          "map",
+          new MapType(
+            IntegerType.INTEGER,
+            new ArrayType(IntegerType.INTEGER, false),
+            false),
+          true))),
+      newSchema((
+        1,
+        new StructField(
+          "to_nested_array_to_primitive",
+          new MapType(
+            IntegerType.INTEGER,
+            IntegerType.INTEGER,
+            false),
+          false)))))
+  test("validateUpdatedSchema fails when invalid type change is performed on nested fields") {
+    assertSchemaEvolutionFailure[KernelException](
+      invalidTypeChangesNested,
+      "Cannot change the type of existing field.*")
+  }
+
   private val validateAddedFields = Table(
     ("schemaBefore", "schemaWithAddedField"),
     (
