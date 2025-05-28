@@ -144,7 +144,7 @@ class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase with LogReplayBaseSuit
     }
   }
 
-  test("test checksum -- duplicate add file") {
+  test("test checksum -- duplicate add file => fallback") {
     withTableWithCrc { (table, path, engine) =>
       val deltaLog = DeltaLog.forTable(spark, new Path(path))
       deltaLog
@@ -170,7 +170,7 @@ class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase with LogReplayBaseSuit
     }
   }
 
-  test("test checksum -- removeFile without Stats") {
+  test("test checksum -- removeFile without Stats => fallback") {
     withTableWithCrc { (table, path, engine) =>
       val deltaLog = DeltaLog.forTable(spark, new Path(path))
       deltaLog
@@ -191,6 +191,27 @@ class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase with LogReplayBaseSuit
         Seq(1),
         // Tries to incrementally load CRC but fall back with unable to handle
         // Remove file without stats.
+        expChecksumReadSet = Seq(11))
+      verifyChecksumForSnapshot(table.getSnapshotAsOfVersion(engine, 12))
+    }
+  }
+
+  test("test checksum -- Optimize => fallback") {
+    withTableWithCrc { (table, path, engine) =>
+      spark.sql(s"OPTIMIZE delta.`$path`")
+      deleteChecksumFileForTableUsingHadoopFs(
+        table.getPath(engine).stripPrefix("file:"),
+        Seq(11, 12))
+      table.checksum(engine, 11)
+      engine.resetMetrics()
+      table.checksum(engine, 12)
+      assertMetrics(
+        engine,
+        Seq(12, 11),
+        Seq(10),
+        Seq(1),
+        // Tries to incrementally load CRC but fall back with unable to handle
+        // Add file without data change.
         expChecksumReadSet = Seq(11))
       verifyChecksumForSnapshot(table.getSnapshotAsOfVersion(engine, 12))
     }
