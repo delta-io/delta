@@ -19,12 +19,17 @@ package io.delta.kernel.internal.table;
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.actions.Metadata;
+import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
+import io.delta.kernel.internal.metrics.SnapshotMetrics;
+import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.snapshot.SnapshotManager;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.util.Optional;
 
 /**
  * Factory class responsible for creating {@link ResolvedTableInternal} instances.
@@ -43,10 +48,19 @@ class ResolvedTableFactory {
 
   ResolvedTableInternalImpl create(Engine engine) {
     final String resolvedPath = resolvePath(engine);
+
     final Lazy<LogSegment> lazyLogSegment = getLazyLogSegment(engine, resolvedPath);
     final long version = ctx.versionOpt.orElseGet(() -> lazyLogSegment.get().getVersion());
 
-    return new ResolvedTableInternalImpl(resolvedPath, version, lazyLogSegment, ctx.clock);
+    final Lazy<LogReplay> lazyLogReplay = getLazyLogReplay(engine, resolvedPath, lazyLogSegment);
+    final Protocol protocol =
+        ctx.protocolAndMetadataOpt.map(x -> x._1).orElse(lazyLogReplay.get().getProtocol());
+
+    final Metadata metadata =
+        ctx.protocolAndMetadataOpt.map(x -> x._2).orElse(lazyLogReplay.get().getMetadata());
+
+    return new ResolvedTableInternalImpl(
+        resolvedPath, version, protocol, metadata, lazyLogSegment, lazyLogReplay, ctx.clock);
   }
 
   private String resolvePath(Engine engine) {
@@ -65,5 +79,21 @@ class ResolvedTableFactory {
         () ->
             new SnapshotManager(new Path(resolvedPath))
                 .getLogSegmentForVersion(engine, ctx.versionOpt, ctx.logDatas));
+  }
+
+  private Lazy<LogReplay> getLazyLogReplay(
+      Engine engine, String resolvedPath, Lazy<LogSegment> lazyLogSegment) {
+    final Path wrappedTablePath = new Path(resolvedPath);
+    final Path wrappedLogPath = new Path(wrappedTablePath, "_delta_log");
+    return new Lazy<>(
+        () ->
+            new LogReplay(
+                wrappedLogPath,
+                wrappedTablePath,
+                engine,
+                lazyLogSegment.get(),
+                // TODO: Proper ResolvedTable-oriented metrics
+                Optional.empty() /* snapshotHint */,
+                new SnapshotMetrics()));
   }
 }
