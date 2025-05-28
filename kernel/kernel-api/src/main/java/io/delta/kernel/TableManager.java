@@ -17,7 +17,7 @@
 package io.delta.kernel;
 
 import io.delta.kernel.annotation.Experimental;
-import io.delta.kernel.internal.ResolvedTableBuilderInternalImpl;
+import io.delta.kernel.internal.table.ResolvedTableBuilderInternalImpl;
 
 @Experimental
 public interface TableManager {
