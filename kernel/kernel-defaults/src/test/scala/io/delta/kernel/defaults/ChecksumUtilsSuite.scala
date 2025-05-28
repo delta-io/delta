@@ -115,7 +115,7 @@ class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase with LogReplayBaseSuit
   test("test checksum -- stale checksum, no checkpoint => incrementally load from checksum") {
     withTableWithCrc { (table, _, engine) =>
       deleteChecksumFileForTableUsingHadoopFs(table.getPath(engine).stripPrefix("file:"), (5 to 8))
-      // Generating 5.crc with file size histogram.
+      // Spark generated CRC from Spark doesn't include file size histogram, regenerate it.
       table.checksum(engine, 5)
       engine.resetMetrics()
       table.checksum(engine, 8)
@@ -178,6 +178,7 @@ class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase with LogReplayBaseSuit
         .commitManually(
           List(
             deltaLog.getSnapshotAt(11).allFiles.head().remove.copy(size = None).wrap.unwrap): _*)
+      // Spark generated CRC from Spark doesn't include file size histogram
       deleteChecksumFileForTableUsingHadoopFs(
         table.getPath(engine).stripPrefix("file:"),
         Seq(11, 12))
@@ -196,9 +197,10 @@ class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase with LogReplayBaseSuit
     }
   }
 
-  test("test checksum -- Optimize => fallback") {
+  test("test checksum -- Optimize => fallback to full state construction") {
     withTableWithCrc { (table, path, engine) =>
       spark.sql(s"OPTIMIZE delta.`$path`")
+      // Spark generated CRC from Spark doesn't include file size histogram
       deleteChecksumFileForTableUsingHadoopFs(
         table.getPath(engine).stripPrefix("file:"),
         Seq(11, 12))
