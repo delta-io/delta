@@ -24,6 +24,7 @@ import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.metrics.SnapshotMetrics;
+import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.snapshot.SnapshotManager;
@@ -41,18 +42,35 @@ import java.util.Optional;
 class ResolvedTableFactory {
 
   private final ResolvedTableBuilderImpl.Context ctx;
+  private final String resolvedPath;
+  private final Path wrappedTablePath;
+  private final Path wrappedLogPath;
 
-  ResolvedTableFactory(ResolvedTableBuilderImpl.Context ctx) {
+  ResolvedTableFactory(Engine engine, ResolvedTableBuilderImpl.Context ctx) {
     this.ctx = ctx;
+    this.resolvedPath = resolvePath(engine);
+    this.wrappedTablePath = new Path(resolvedPath);
+    this.wrappedLogPath = new Path(wrappedTablePath, "_delta_log");
   }
 
   ResolvedTableInternalImpl create(Engine engine) {
-    final String resolvedPath = resolvePath(engine);
+    final SnapshotQueryContext snapshotContext = getSnapshotQueryContext();
 
-    final Lazy<LogSegment> lazyLogSegment = getLazyLogSegment(engine, resolvedPath);
+    try {
+      return createImpl(engine);
+    } catch (Exception e) {
+      snapshotContext.recordSnapshotErrorReport(engine, e);
+      throw e;
+    }
+  }
+
+  private ResolvedTableInternalImpl createImpl(Engine engine) {
+    final Lazy<LogSegment> lazyLogSegment = getLazyLogSegment(engine);
+
     final long version = ctx.versionOpt.orElseGet(() -> lazyLogSegment.get().getVersion());
 
-    final Lazy<LogReplay> lazyLogReplay = getLazyLogReplay(engine, resolvedPath, lazyLogSegment);
+    final Lazy<LogReplay> lazyLogReplay = getLazyLogReplay(engine, lazyLogSegment);
+
     final Protocol protocol =
         ctx.protocolAndMetadataOpt.map(x -> x._1).orElse(lazyLogReplay.get().getProtocol());
 
@@ -61,6 +79,13 @@ class ResolvedTableFactory {
 
     return new ResolvedTableInternalImpl(
         resolvedPath, version, protocol, metadata, lazyLogSegment, lazyLogReplay, ctx.clock);
+  }
+
+  private SnapshotQueryContext getSnapshotQueryContext() {
+    if (ctx.versionOpt.isPresent()) {
+      return SnapshotQueryContext.forVersionSnapshot(resolvedPath, ctx.versionOpt.get());
+    }
+    return SnapshotQueryContext.forLatestSnapshot(resolvedPath);
   }
 
   private String resolvePath(Engine engine) {
@@ -74,17 +99,14 @@ class ResolvedTableFactory {
     }
   }
 
-  private Lazy<LogSegment> getLazyLogSegment(Engine engine, String resolvedPath) {
+  private Lazy<LogSegment> getLazyLogSegment(Engine engine) {
     return new Lazy<>(
         () ->
-            new SnapshotManager(new Path(resolvedPath))
+            new SnapshotManager(wrappedTablePath)
                 .getLogSegmentForVersion(engine, ctx.versionOpt, ctx.logDatas));
   }
 
-  private Lazy<LogReplay> getLazyLogReplay(
-      Engine engine, String resolvedPath, Lazy<LogSegment> lazyLogSegment) {
-    final Path wrappedTablePath = new Path(resolvedPath);
-    final Path wrappedLogPath = new Path(wrappedTablePath, "_delta_log");
+  private Lazy<LogReplay> getLazyLogReplay(Engine engine, Lazy<LogSegment> lazyLogSegment) {
     return new Lazy<>(
         () ->
             new LogReplay(

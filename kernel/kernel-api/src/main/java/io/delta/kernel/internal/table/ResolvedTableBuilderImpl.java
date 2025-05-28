@@ -91,7 +91,7 @@ public class ResolvedTableBuilderImpl implements ResolvedTableBuilder {
   @Override
   public ResolvedTableInternal build(Engine engine) {
     validateInputOnBuild();
-    return new ResolvedTableFactory(ctx).create(engine);
+    return new ResolvedTableFactory(engine, ctx).create(engine);
   }
 
   ////////////////////////////
