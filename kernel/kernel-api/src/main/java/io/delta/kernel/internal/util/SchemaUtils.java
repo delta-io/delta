@@ -401,19 +401,36 @@ public class SchemaUtils {
     for (SchemaIterable.SchemaElement newElement : new SchemaIterable(newSchema)) {
       SchemaElementId id = getSchemaElementId(newElement);
       if (addedFieldIds.contains(id.getId())) {
-        // Skip early if this is a child of an added field.
+        // Skip early if this is a descendant of an added field.
         continue;
       }
 
       StructField existingField = currentFieldIdToField.get(id);
       if (existingField == null) {
-        SchemaElementId rootId = new SchemaElementId("", id.getId());
+        // If the field wasn't present in the schema before then it represents either
+        // a schema change or a newly added field. To check if it is a new struct field,
+        // we check the old schema for just the field ID (i.e. no nested path) to make
+        // a determination between these two cases.
+        SchemaElementId rootId = new SchemaElementId(/* nestedPath =*/ "", id.getId());
         if (!currentFieldIdToField.containsKey(rootId)) {
           addedFieldIds.add(id.getId());
           schemaDiff.withAddedField(newElement.getNearestStructFieldAncestor());
         }
         // Getting here implies a structural change in nested maps/arrays which will be caught at
         // when comparing the higher level element (or we added a field in the if statement above).
+        // This can be somewhat subtle, if this is a type change.
+        // Consider the case of the changing a field from Map to an Array. This would imply that
+        // path would be "element" here and either "key" or "value" in the previous schema. Nothing
+        // is done for the new "element" path if it isn't a field addition there must be at least
+        // one
+        // ancestor node in common (at least the nearest struct field) which would get added as an
+        // update
+        // below. This logic is inductive. If the previous schema was a array<array<x>> and was not
+        // a new
+        // addition and the new schema was array<array<array<x>>> then this path would be reached on
+        // element.element.element but the type the code would move past this block for
+        // element.element
+        // which would have a type change detected from x to array<x>.
         continue;
       }
       StructField updatedField = newElement.getField();
@@ -606,12 +623,33 @@ public class SchemaUtils {
         }
       }
     } else {
-      for (Class<DataType> clazz : new Class[] {StructType.class, ArrayType.class}) {
+      // Note because computeSchemaChangesById() adds all changed struct fields and any nested
+      // elements that have the same path but different types then the following scenarios are
+      // handled
+      // in this block.
+      // 1. This is non-leaf node (e.g. StructType, ArrayType) type, in which case it is sufficient
+      // to ensure that the types are of the same class. For a struct type there might be field
+      // additions or removals,
+      // which shouldn't be considered invalid schema transitions (and hence `equivalent(...)` is
+      // not used in this
+      // case). If the nested type changes (e.g. ArrayType to Primitive) then the classes would be
+      // different
+      // and the types by definition would not be equivalent.
+      // 2. This is a leaf node, in which case it sufficient to check that the types are equivalent
+      // (or once
+      // implemented the transition of types is valid).
+      //
+      // The subtle point here is for any non-leaf node change, the computed changes will include at
+      // least
+      // one ancestor change where the type change can be detected.
+      //
+      for (Class<?> clazz : new Class<?>[] {StructType.class, ArrayType.class}) {
         if (existingField.getDataType().getClass() == clazz
             && newField.getDataType().getClass() == clazz) {
           return;
         }
       }
+
       if (!existingField.getDataType().equivalent(newField.getDataType())) {
         throw new KernelException(
             String.format(
@@ -621,17 +659,19 @@ public class SchemaUtils {
     }
   }
 
+  /**
+   * A composite class that uniquely identifiers an element in a schema.
+   *
+   * <p>When column mapping is enabled, the every field in structs has a unique ID. For other nested
+   * types (maps and arrays), elements are identified from there path from the struct field.
+   */
   private static class SchemaElementId {
-    private final String getPath;
+    private final String nestedPath;
     private final int id;
 
-    SchemaElementId(String name, int id) {
-      this.getPath = name;
+    SchemaElementId(String nestedPath, int id) {
+      this.nestedPath = nestedPath;
       this.id = id;
-    }
-
-    public String getGetPath() {
-      return getPath;
     }
 
     public int getId() {
@@ -642,17 +682,17 @@ public class SchemaUtils {
     public boolean equals(Object o) {
       if (o == null || getClass() != o.getClass()) return false;
       SchemaElementId that = (SchemaElementId) o;
-      return id == that.id && Objects.equals(getPath, that.getPath);
+      return id == that.id && Objects.equals(nestedPath, that.nestedPath);
     }
 
     @Override
     public int hashCode() {
-      return Objects.hash(getPath, id);
+      return Objects.hash(nestedPath, id);
     }
 
     @Override
     public String toString() {
-      return "SchemaElementId{" + "getPath='" + getPath + '\'' + ", id=" + id + '}';
+      return "SchemaElementId{" + "getPath='" + nestedPath + '\'' + ", id=" + id + '}';
     }
   }
 
