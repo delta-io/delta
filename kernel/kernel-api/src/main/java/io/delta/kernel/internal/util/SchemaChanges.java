@@ -45,11 +45,11 @@ class SchemaChanges {
       this.fieldAfter = fieldAfter;
     }
 
-    public StructField getFieldBefore() {
+    public StructField before() {
       return fieldBefore;
     }
 
-    public StructField getFieldAfter() {
+    public StructField after() {
       return fieldAfter;
     }
   }

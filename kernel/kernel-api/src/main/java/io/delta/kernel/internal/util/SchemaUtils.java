@@ -420,8 +420,8 @@ public class SchemaUtils {
   private static void validatePhysicalNameConsistency(
       List<SchemaChanges.SchemaUpdate> updatedFields) {
     for (SchemaChanges.SchemaUpdate updatedField : updatedFields) {
-      StructField currentField = updatedField.getFieldBefore();
-      StructField newField = updatedField.getFieldAfter();
+      StructField currentField = updatedField.before();
+      StructField newField = updatedField.after();
       if (!getPhysicalName(currentField).equals(getPhysicalName(newField))) {
         throw new IllegalArgumentException(
             String.format(
@@ -527,9 +527,7 @@ public class SchemaUtils {
       // ToDo: See if recursion can be avoided by incorporating map key/value and array element
       // updates in updatedFields
       validateFieldCompatibility(
-          updatedFields.getFieldBefore(),
-          updatedFields.getFieldAfter(),
-          icebergWriterCompatV1Enabled);
+          updatedFields.before(), updatedFields.after(), icebergWriterCompatV1Enabled);
     }
   }
 

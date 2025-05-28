@@ -353,8 +353,8 @@ class SchemaUtilsSuite extends AnyFunSuite {
     assert(schemaChanges.removedFields().isEmpty)
     assert(schemaChanges.updatedFields().size() == 1)
     val schemaUpdate = schemaChanges.updatedFields().get(0)
-    assert(schemaUpdate.getFieldBefore == fieldMappingBefore.get("id"))
-    assert(schemaUpdate.getFieldAfter == fieldMappingAfter.get("renamed_id"))
+    assert(schemaUpdate.before == fieldMappingBefore.get("id"))
+    assert(schemaUpdate.after == fieldMappingAfter.get("renamed_id"))
   }
 
   test("Compute schema changes with type changed columns") {
@@ -369,8 +369,8 @@ class SchemaUtilsSuite extends AnyFunSuite {
     assert(schemaChanges.removedFields().isEmpty)
     assert(schemaChanges.updatedFields().size() == 1)
     val schemaUpdate = schemaChanges.updatedFields().get(0)
-    assert(schemaUpdate.getFieldBefore == fieldMappingBefore.get("id"))
-    assert(schemaUpdate.getFieldAfter == fieldMappingAfter.get(
+    assert(schemaUpdate.before == fieldMappingBefore.get("id"))
+    assert(schemaUpdate.after == fieldMappingAfter.get(
       "promoted_to_long"))
   }
 
@@ -405,9 +405,9 @@ class SchemaUtilsSuite extends AnyFunSuite {
     assert(schemaChanges.removedFields().isEmpty)
     assert(schemaChanges.updatedFields().size() == 1)
     val schemaUpdate = schemaChanges.updatedFields().get(0)
-    assert(schemaUpdate.getFieldBefore == fieldMappingBefore.get("data"))
+    assert(schemaUpdate.before == fieldMappingBefore.get("data"))
     assert(
-      schemaUpdate.getFieldAfter == fieldMappingAfter.get("required_data"))
+      schemaUpdate.after == fieldMappingAfter.get("required_data"))
   }
 
   test("Compute schema changes with moved fields") {
@@ -441,10 +441,10 @@ class SchemaUtilsSuite extends AnyFunSuite {
     assert(schemaChanges.removedFields().isEmpty)
     assert(
       schemaChanges.updatedFields().size() == 1,
-      s"${schemaChanges.updatedFields.get(0).getFieldBefore}")
+      s"${schemaChanges.updatedFields.get(0).before}")
     val schemaUpdate = schemaChanges.updatedFields().get(0)
-    assert(schemaUpdate.getFieldBefore == fieldMappingBefore.get("struct"))
-    assert(schemaUpdate.getFieldAfter == fieldMappingAfter.get("struct"))
+    assert(schemaUpdate.before == fieldMappingBefore.get("struct"))
+    assert(schemaUpdate.after == fieldMappingAfter.get("struct"))
   }
 
   test("Compute schema changes with field metadata changes") {
@@ -476,8 +476,8 @@ class SchemaUtilsSuite extends AnyFunSuite {
     assert(schemaChanges.removedFields().isEmpty)
     assert(schemaChanges.updatedFields().size() == 1)
     val schemaUpdate = schemaChanges.updatedFields().get(0)
-    assert(schemaUpdate.getFieldBefore == fieldMappingBefore.get("id"))
-    assert(schemaUpdate.getFieldAfter == fieldMappingAfter.get("id"))
+    assert(schemaUpdate.before == fieldMappingBefore.get("id"))
+    assert(schemaUpdate.after == fieldMappingAfter.get("id"))
   }
 
   ///////////////////////////////////////////////////////////////////////////
