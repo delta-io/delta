@@ -15,16 +15,13 @@
  */
 package io.delta.kernel.internal.util
 
-import java.util.{Collections, Optional}
-
 import scala.collection.JavaConverters._
 
-import io.delta.kernel.data.{ArrayValue, ColumnVector, MapValue}
 import io.delta.kernel.internal.TableConfig
-import io.delta.kernel.internal.actions.{Format, Metadata, Protocol}
+import io.delta.kernel.internal.actions.{Metadata, Protocol}
 import io.delta.kernel.internal.tablefeatures.TableFeature
 import io.delta.kernel.internal.util.ColumnMapping.{COLUMN_MAPPING_ID_KEY, COLUMN_MAPPING_NESTED_IDS_KEY}
-import io.delta.kernel.test.VectorTestUtils
+import io.delta.kernel.test.ActionUtils
 import io.delta.kernel.types.{ArrayType, FieldMetadata, IntegerType, MapType, StringType, StructField, StructType}
 
 import org.assertj.core.api.Assertions.assertThat
@@ -34,7 +31,7 @@ import org.assertj.core.util.Maps
  * Common utilities for column mapping and iceberg compat v2 related nested column mapping
  * functionality
  */
-trait ColumnMappingSuiteBase extends VectorTestUtils {
+trait ColumnMappingSuiteBase extends ActionUtils {
 
   /* Asserts that the given field has the expected column mapping info */
   def assertColumnMapping(
@@ -229,30 +226,6 @@ trait ColumnMappingSuiteBase extends VectorTestUtils {
 
     assertThat(metadata.getConfiguration)
       .containsEntry(ColumnMapping.COLUMN_MAPPING_MAX_COLUMN_ID_KEY, fieldId.toString)
-  }
-
-  /** create test metadata object */
-  def testMetadata(
-      schema: StructType,
-      partitionCols: Seq[String] = Seq.empty,
-      tblProps: Map[String, String] = Map.empty): Metadata = {
-    new Metadata(
-      "id",
-      Optional.of("name"),
-      Optional.of("description"),
-      new Format("parquet", Collections.emptyMap()),
-      schema.toJson,
-      schema,
-      new ArrayValue() { // partitionColumns
-        override def getSize: Int = partitionCols.size
-        override def getElements: ColumnVector = stringVector(partitionCols)
-      },
-      Optional.empty(),
-      new MapValue() { // conf
-        override def getSize: Int = tblProps.size
-        override def getKeys: ColumnVector = stringVector(tblProps.toSeq.map(_._1))
-        override def getValues: ColumnVector = stringVector(tblProps.toSeq.map(_._2))
-      })
   }
 
   def testProtocol(tableFeatures: TableFeature*): Protocol = {
