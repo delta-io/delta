@@ -54,18 +54,18 @@ class ResolvedTableFactory {
   }
 
   ResolvedTableInternalImpl create(Engine engine) {
-    final SnapshotQueryContext snapshotContext = getSnapshotQueryContext();
+    final SnapshotQueryContext snapshotCtx = getSnapshotQueryContext();
 
     try {
-      return createImpl(engine);
+      return createImpl(engine, snapshotCtx);
     } catch (Exception e) {
-      snapshotContext.recordSnapshotErrorReport(engine, e);
+      snapshotCtx.recordSnapshotErrorReport(engine, e);
       throw e;
     }
   }
 
-  private ResolvedTableInternalImpl createImpl(Engine engine) {
-    final Lazy<LogSegment> lazyLogSegment = getLazyLogSegment(engine);
+  private ResolvedTableInternalImpl createImpl(Engine engine, SnapshotQueryContext snapshotCtx) {
+    final Lazy<LogSegment> lazyLogSegment = getLazyLogSegment(engine, snapshotCtx);
 
     final long version = ctx.versionOpt.orElseGet(() -> lazyLogSegment.get().getVersion());
 
@@ -99,11 +99,25 @@ class ResolvedTableFactory {
     }
   }
 
-  private Lazy<LogSegment> getLazyLogSegment(Engine engine) {
+  private Lazy<LogSegment> getLazyLogSegment(Engine engine, SnapshotQueryContext snapshotCtx) {
     return new Lazy<>(
-        () ->
-            new SnapshotManager(wrappedTablePath)
-                .getLogSegmentForVersion(engine, ctx.versionOpt, ctx.logDatas));
+        () -> {
+          final LogSegment result =
+              new SnapshotManager(wrappedTablePath)
+                  .getLogSegmentForVersion(
+                      engine, getTargetVersionToLoad(engine, snapshotCtx), ctx.logDatas);
+
+          if (!ctx.versionOpt.isPresent()) {
+            snapshotCtx.setVersion(result.getVersion());
+          }
+
+          return result;
+        });
+  }
+
+  private Optional<Long> getTargetVersionToLoad(Engine engine, SnapshotQueryContext snapshotCtx) {
+    // TODO: if time travel by timestamp, call snapshotCtx.setVersion after resolving the version
+    return ctx.versionOpt;
   }
 
   private Lazy<LogReplay> getLazyLogReplay(Engine engine, Lazy<LogSegment> lazyLogSegment) {
