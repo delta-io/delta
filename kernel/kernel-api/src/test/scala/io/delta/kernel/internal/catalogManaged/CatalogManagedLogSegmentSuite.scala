@@ -24,7 +24,7 @@ import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.test.MockFileSystemClientUtils
 import org.scalatest.funsuite.AnyFunSuite
 
-class CatalogManagedLogSegmentConstructionSuite extends AnyFunSuite with MockFileSystemClientUtils {
+class CatalogManagedLogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
   private def testLogSegment(
       testName: String,
