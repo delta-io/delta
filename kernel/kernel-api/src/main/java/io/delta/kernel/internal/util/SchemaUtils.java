@@ -467,7 +467,7 @@ public class SchemaUtils {
    * Validates a given schema evolution by using field ID as the source of truth for identifying
    * fields
    */
-  private static void validateSchemaEvolutionById(
+  public static void validateSchemaEvolutionById(
       StructType currentSchema,
       StructType newSchema,
       Set<String> clusteringColumnPhysicalNames,
