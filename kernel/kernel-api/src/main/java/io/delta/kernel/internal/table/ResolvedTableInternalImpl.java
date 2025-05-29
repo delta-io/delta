@@ -30,6 +30,7 @@ import io.delta.kernel.types.StructType;
 import java.util.List;
 import java.util.Optional;
 
+/** An implementation of {@link ResolvedTableInternal}. */
 public class ResolvedTableInternalImpl implements ResolvedTableInternal {
   private final String path;
   private final String logPath;

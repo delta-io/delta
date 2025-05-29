@@ -27,6 +27,13 @@ import io.delta.kernel.internal.table.ResolvedTableBuilderInternalImpl.ResolvedT
 import java.io.IOException;
 import java.io.UncheckedIOException;
 
+/**
+ * Factory class responsible for creating {@link ResolvedTableInternal} instances.
+ *
+ * <p>Note: The {@link ResolvedTableBuilderInternal} is responsible for receiving and validating all
+ * builder parameters, and then passing that information to this factory to actually create the
+ * {@link ResolvedTableInternal
+ */
 public class ResolvedTableFactory {
 
   private final ResolvedTableBuilderContext ctx;

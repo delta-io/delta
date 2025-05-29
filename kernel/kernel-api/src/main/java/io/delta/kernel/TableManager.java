@@ -19,6 +19,7 @@ package io.delta.kernel;
 import io.delta.kernel.annotation.Experimental;
 import io.delta.kernel.internal.table.ResolvedTableBuilderInternalImpl;
 
+/** The entry point to load and create {@link ResolvedTable}s. */
 @Experimental
 public interface TableManager {
   // TODO static ResolvedTable forPathAtLatest(Engine engine, String path);

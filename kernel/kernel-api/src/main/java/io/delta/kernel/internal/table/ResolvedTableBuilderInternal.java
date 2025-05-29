@@ -19,6 +19,14 @@ package io.delta.kernel.internal.table;
 import io.delta.kernel.ResolvedTableBuilder;
 import io.delta.kernel.internal.util.Clock;
 
+/**
+ * Internal extension of {@link ResolvedTableBuilder} that exposes additional interfaces to provided
+ * access to internal configuration options that are not part of the public API.
+ *
+ * <p>Note: The primary responsibility of this interface is to take input, validate that input, and
+ * then pass the input to the {@link ResolvedTableFactory}, which is then responsible for actually
+ * creating the {@link ResolvedTableInternal} instance.
+ */
 public interface ResolvedTableBuilderInternal extends ResolvedTableBuilder {
   ResolvedTableBuilderInternal withClock(Clock clock);
 }
