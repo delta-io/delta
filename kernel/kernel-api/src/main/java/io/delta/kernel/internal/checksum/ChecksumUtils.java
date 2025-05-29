@@ -85,7 +85,6 @@ public class ChecksumUtils {
 
     if (lastSeenCrcVersion.isPresent()
         && lastSeenCrcVersion.get().equals(logSegmentAtVersion.getVersion())) {
-      System.out.println(logSegmentAtVersion.getVersion());
       logger.info("Checksum file already exists for version {}", logSegmentAtVersion.getVersion());
       return;
     }
