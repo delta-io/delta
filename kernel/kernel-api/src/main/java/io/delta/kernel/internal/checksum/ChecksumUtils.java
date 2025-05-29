@@ -32,6 +32,7 @@ import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
+import io.delta.kernel.utils.PeekableIterator;
 import java.io.IOException;
 import java.nio.file.FileAlreadyExistsException;
 import java.time.Instant;
@@ -55,7 +56,19 @@ public class ChecksumUtils {
   private static final int DOMAIN_METADATA_INDEX = CHECKPOINT_SCHEMA.indexOf("domainMetadata");
   private static final int ADD_SIZE_INDEX = AddFile.FULL_SCHEMA.indexOf("size");
   private static final int REMOVE_SIZE_INDEX = RemoveFile.FULL_SCHEMA.indexOf("size");
-  private static final int ADD_DATA_CHANGE_INDEX = AddFile.FULL_SCHEMA.indexOf("dataChange");
+
+  private static final Set<String> INCREMENTAL_SUPPORTED_OPS =
+      Collections.unmodifiableSet(
+          new HashSet<>(
+              Arrays.asList(
+                  "WRITE",
+                  "MERGE",
+                  "UPDATE",
+                  "DELETE",
+                  "OPTIMIZE",
+                  "CREATE TABLE AS SELECT", // CTAS
+                  "REPLACE TABLE AS SELECT", // RTAS
+                  "CREATE OR REPLACE TABLE AS SELECT")));
 
   /**
    * Computes the state of a Delta table and writes a checksum file for the provided snapshot's
@@ -230,7 +243,7 @@ public class ChecksumUtils {
                     Comparator.comparing((FileStatus a) -> new Path(a.getPath()).getName())
                         .reversed())
                 .collect(Collectors.toList()),
-            CHECKPOINT_SCHEMA)) {
+            CHECKPOINT_SCHEMA.add("commitInfo", CommitInfo.FULL_SCHEMA))) {
 
       Optional<VersionColumnBatchTracker> currentVersionBatch = Optional.empty();
 
@@ -370,56 +383,39 @@ public class ChecksumUtils {
      * @return true if should fallback to full replay, false otherwise
      */
     public boolean computeState(StateTracker state) {
-      // First pass: check if we have any removes and count adds without data change
-      boolean hasRemoves = false;
-      int addsWithoutDataChangeCount = 0;
-
-      // Scan all batches to understand the operations in this version
-      for (ColumnarBatch batch : columnarBatches) {
-        StructType schema = batch.getSchema();
-        ColumnVector addVector = batch.getColumnVector(schema.indexOf("add"));
-        ColumnVector removeVector = batch.getColumnVector(schema.indexOf("remove"));
-        int rowCount = batch.getSize();
-
-        for (int i = 0; i < rowCount; i++) {
-          // Check for removes
-          if (!removeVector.isNullAt(i)) {
-            hasRemoves = true;
-          }
-
-          // Count adds without data change
-          if (!addVector.isNullAt(i)) {
-            ColumnVector dataChangeVector = addVector.getChild(ADD_DATA_CHANGE_INDEX);
-            if (!dataChangeVector.getBoolean(i)) {
-              addsWithoutDataChangeCount++;
-            }
-          }
-        }
+      PeekableIterator<ColumnarBatch> peekableIterator =
+          new PeekableIterator<>(columnarBatches.iterator());
+      if (!peekableIterator.hasNext()) {
+        return false;
       }
-
-      // If we have adds without data change but no removes in this version, fallback
-      if (addsWithoutDataChangeCount > 0 && !hasRemoves) {
-        logger.info(
-            "Falling back to full replay: detected {} add file(s) "
-                + "without data change and no removes in version {}",
-            addsWithoutDataChangeCount,
-            version);
+      ColumnarBatch firstBatch = peekableIterator.peek();
+      if (firstBatch.getSize() == 0) {
+        return true;
+      }
+      ColumnVector commitInfoVector =
+          firstBatch.getColumnVector(firstBatch.getSchema().indexOf("commitInfo"));
+      CommitInfo commitInfo = CommitInfo.fromColumnVector(commitInfoVector, 0);
+      if (commitInfo == null) {
+        return true;
+      }
+      if (!INCREMENTAL_SUPPORTED_OPS.contains(commitInfo.getOperation())) {
         return true;
       }
 
-      // Second pass: process all actions normally
-      for (ColumnarBatch batch : columnarBatches) {
+      // Scan all batches to understand the operations in this version
+      while (peekableIterator.hasNext()) {
+        ColumnarBatch batch = peekableIterator.next();
         StructType schema = batch.getSchema();
+        ColumnVector addVector = batch.getColumnVector(schema.indexOf("add"));
+        ColumnVector removeVector = batch.getColumnVector(schema.indexOf("remove"));
         ColumnVector metadataVector = batch.getColumnVector(schema.indexOf("metaData"));
         ColumnVector protocolVector = batch.getColumnVector(schema.indexOf("protocol"));
-        ColumnVector removeVector = batch.getColumnVector(schema.indexOf("remove"));
-        ColumnVector addVector = batch.getColumnVector(schema.indexOf("add"));
         ColumnVector domainMetadataVector = batch.getColumnVector(schema.indexOf("domainMetadata"));
         int rowCount = batch.getSize();
-
+        if (rowCount == 0) {
+          continue;
+        }
         for (int i = 0; i < rowCount; i++) {
-          // Process add file records (including those without data change, since we validated
-          // above)
           if (!addVector.isNullAt(i)) {
             processAddRecord(addVector, state, i);
           }
