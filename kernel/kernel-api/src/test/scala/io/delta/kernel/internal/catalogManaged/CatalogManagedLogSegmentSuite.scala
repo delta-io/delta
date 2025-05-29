@@ -27,7 +27,9 @@ import io.delta.kernel.types.{IntegerType, StructType}
 
 import org.scalatest.funsuite.AnyFunSuite
 
-class CatalogManagedSuite extends AnyFunSuite with MockFileSystemClientUtils with ActionUtils {
+class CatalogManagedLogSegmentSuite extends AnyFunSuite
+    with MockFileSystemClientUtils
+    with ActionUtils {
 
   private def testLogSegment(
       testName: String,
