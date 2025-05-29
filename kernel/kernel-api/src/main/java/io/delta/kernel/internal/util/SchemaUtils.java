@@ -128,6 +128,38 @@ public class SchemaUtils {
   }
 
   /**
+   * Validates a given schema evolution by using field ID as the source of truth for identifying
+   * fields
+   *
+   * @param currentSchema the schema that is present the table schema _before_ the schema evolution
+   * @param newSchema the new schema that is present the table schema _after_ the schema evolution
+   * @param clusteringColumnPhysicalNames The clustering columns present in the table before the
+   *     schema update
+   * @param oldMaxFieldId the maximum field id in the table before the schema update
+   * @param allowNewRequiredFields If `false`, adding new required columns throws an error. If
+   *     `true`, new required columns are allowed
+   * @param icebergWriterCompatV1Enabled `true` if icebergCompatV1 is enabled on the table
+   * @throws IllegalArgumentException if the schema evolution is invalid
+   */
+  public static void validateSchemaEvolutionById(
+      StructType currentSchema,
+      StructType newSchema,
+      Set<String> clusteringColumnPhysicalNames,
+      int oldMaxFieldId,
+      boolean allowNewRequiredFields,
+      boolean icebergWriterCompatV1Enabled) {
+    SchemaChanges schemaChanges = computeSchemaChangesById(currentSchema, newSchema);
+    validatePhysicalNameConsistency(schemaChanges.updatedFields());
+    // Validates that the updated schema does not contain breaking changes in terms of types and
+    // nullability
+    validateUpdatedSchemaCompatibility(
+        schemaChanges, oldMaxFieldId, allowNewRequiredFields, icebergWriterCompatV1Enabled);
+    validateClusteringColumnsNotDropped(
+        schemaChanges.removedFields(), clusteringColumnPhysicalNames);
+    // ToDo Potentially validate IcebergCompatV2 nested IDs
+  }
+
+  /**
    * Verify the partition columns exists in the table schema and a supported data type for a
    * partition column.
    *
@@ -461,28 +493,6 @@ public class SchemaUtils {
         throw new UnsupportedOperationException(
             "Unknown column mapping mode: " + columnMappingMode);
     }
-  }
-
-  /**
-   * Validates a given schema evolution by using field ID as the source of truth for identifying
-   * fields
-   */
-  private static void validateSchemaEvolutionById(
-      StructType currentSchema,
-      StructType newSchema,
-      Set<String> clusteringColumnPhysicalNames,
-      int oldMaxFieldId,
-      boolean allowNewRequiredFields,
-      boolean icebergWriterCompatV1Enabled) {
-    SchemaChanges schemaChanges = computeSchemaChangesById(currentSchema, newSchema);
-    validatePhysicalNameConsistency(schemaChanges.updatedFields());
-    // Validates that the updated schema does not contain breaking changes in terms of types and
-    // nullability
-    validateUpdatedSchemaCompatibility(
-        schemaChanges, oldMaxFieldId, allowNewRequiredFields, icebergWriterCompatV1Enabled);
-    validateClusteringColumnsNotDropped(
-        schemaChanges.removedFields(), clusteringColumnPhysicalNames);
-    // ToDo Potentially validate IcebergCompatV2 nested IDs
   }
 
   private static void validateClusteringColumnsNotDropped(
