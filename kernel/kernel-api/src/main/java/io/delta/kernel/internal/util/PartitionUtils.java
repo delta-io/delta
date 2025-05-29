@@ -27,7 +27,9 @@ import io.delta.kernel.data.*;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.engine.ExpressionHandler;
 import io.delta.kernel.expressions.*;
+import io.delta.kernel.internal.DeltaErrorsInternal;
 import io.delta.kernel.internal.InternalScanFileUtils;
+import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.types.*;
 import java.math.BigDecimal;
@@ -36,7 +38,9 @@ import java.sql.Date;
 import java.sql.Timestamp;
 import java.time.*;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
@@ -429,6 +433,49 @@ public class PartitionUtils {
     return new And(left, right);
   }
 
+  /**
+   * Try parsing the standard formatted timestamp (e.g. 2024-03-11 11:00:00.123456). Return the
+   * number of microseconds since epoch.
+   */
+  private static Optional<Long> tryParseStandardTimestamp(String value) {
+    try {
+      Timestamp ts = Timestamp.valueOf(value);
+      return Optional.of(InternalUtils.microsSinceEpoch(ts));
+    } catch (IllegalArgumentException e) {
+      return Optional.empty();
+    }
+  }
+
+  /**
+   * Try parsing the ISO8601 formatted timestamp (e.g. 1970-01-01T00:00:00.123456Z). Return the
+   * number of microseconds since epoch.
+   */
+  private static Optional<Long> tryParseIsoTimestamp(String value) {
+    try {
+      Instant instant = Instant.parse(value);
+      long micros = TimeUnit.MILLISECONDS.toMicros(instant.toEpochMilli());
+      return Optional.of(micros);
+    } catch (DateTimeParseException e) {
+      return Optional.empty();
+    }
+  }
+
+  /**
+   * Try parsing the timestamp, could be in the standard format or ISO8601 format. Return the
+   * Literal Object.
+   */
+  @VisibleForTesting
+  static Literal tryParseTimestamp(String partitionValue) {
+    Optional<Long> micros = tryParseStandardTimestamp(partitionValue);
+    if (!micros.isPresent()) {
+      micros = tryParseIsoTimestamp(partitionValue);
+    }
+    return micros
+        .map(Literal::ofTimestamp)
+        .orElseThrow(
+            () -> DeltaErrorsInternal.invalidTimestampFormatForPartitionValue(partitionValue));
+  }
+
   protected static Literal literalForPartitionValue(DataType dataType, String partitionValue) {
     if (partitionValue == null) {
       return Literal.ofNull(dataType);
@@ -470,7 +517,7 @@ public class PartitionUtils {
           new BigDecimal(partitionValue), decimalType.getPrecision(), decimalType.getScale());
     }
     if (dataType instanceof TimestampType) {
-      return Literal.ofTimestamp(InternalUtils.microsSinceEpoch(Timestamp.valueOf(partitionValue)));
+      return tryParseTimestamp(partitionValue);
     }
     if (dataType instanceof TimestampNTZType) {
       // Both the timestamp and timestamp_ntz have no timezone info, so they are interpreted
