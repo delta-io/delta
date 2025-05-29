@@ -124,6 +124,84 @@ public class ChecksumUtils {
     }
   }
 
+  /**
+   * Builds CRC info by replaying the full log.
+   *
+   * @param engine The engine instance
+   * @param logSegmentAtVersion The log segment at the target version
+   * @return The complete CRC info
+   */
+  private static CRCInfo buildCrcInfoWithFullLogReplay(
+      Engine engine, LogSegment logSegmentAtVersion) throws IOException {
+
+    // Initialize state tracking
+    StateTracker state = new StateTracker();
+
+    // Process logs and update state
+    try (CreateCheckpointIterator checkpointIterator =
+        new CreateCheckpointIterator(
+            engine, logSegmentAtVersion, Instant.ofEpochMilli(Long.MAX_VALUE).toEpochMilli())) {
+
+      while (checkpointIterator.hasNext()) {
+        FilteredColumnarBatch filteredBatch = checkpointIterator.next();
+        ColumnarBatch batch = filteredBatch.getData();
+        Optional<ColumnVector> selectionVector = filteredBatch.getSelectionVector();
+        final int rowCount = batch.getSize();
+
+        ColumnVector metadataVector = batch.getColumnVector(METADATA_INDEX);
+        ColumnVector protocolVector = batch.getColumnVector(PROTOCOL_INDEX);
+        ColumnVector removeVector = batch.getColumnVector(REMOVE_INDEX);
+        ColumnVector addVector = batch.getColumnVector(ADD_INDEX);
+        ColumnVector domainMetadataVector = batch.getColumnVector(DOMAIN_METADATA_INDEX);
+
+        // Process all selected rows in a single pass for optimal performance
+        for (int i = 0; i < rowCount; i++) {
+          // Fields referenced in the lambda should be effectively final.
+          int rowId = i;
+          boolean isSelected =
+              selectionVector
+                  .map(vec -> !vec.isNullAt(rowId) && vec.getBoolean(rowId))
+                  .orElse(true);
+          if (!isSelected) continue;
+
+          // Step 1: Ensure there are no remove records
+          // We set minFileRetentionTimestampMillis to infinite future to skip all removed files,
+          // so there should be no remove actions.
+          checkState(
+              removeVector.isNullAt(i),
+              "unexpected remove row found when "
+                  + "setting minFileRetentionTimestampMillis to infinite future");
+
+          // Process add files, domain metadata, metadata, and protocol
+          processAddRecord(addVector, state, i);
+          processDomainMetadataRecord(domainMetadataVector, state, i);
+          processMetadataRecord(metadataVector, state, i);
+          processProtocolRecord(protocolVector, state, i);
+        }
+      }
+    }
+
+    // Get final metadata and protocol
+    Metadata finalMetadata =
+        state.metadataFromLog.orElseThrow(() -> new IllegalStateException("No metadata found"));
+
+    Protocol finalProtocol =
+        state.protocolFromLog.orElseThrow(() -> new IllegalStateException("No protocol found"));
+
+    // Filter to only non-removed domain metadata
+    Set<DomainMetadata> finalDomainMetadata = getNonRemovedDomainMetadata(state);
+
+    return new CRCInfo(
+        logSegmentAtVersion.getVersion(),
+        finalMetadata,
+        finalProtocol,
+        state.tableSizeByte.longValue(),
+        state.fileCount.longValue(),
+        Optional.empty(),
+        Optional.of(finalDomainMetadata),
+        Optional.of(state.addedFileSizeHistogram));
+  }
+
   private static Optional<CRCInfo> buildCrcInfoIncrementally(
       CRCInfo lastSeenCrcInfo, Engine engine, LogSegment logSegment) throws IOException {
     // Can only build incrementally if we have domain metadata and file size histogram
@@ -220,84 +298,6 @@ public class ChecksumUtils {
                     .addedFileSizeHistogram
                     .plus(lastSeenCrcInfo.getFileSizeHistogram().get())
                     .minus(state.removedFileSizeHistogram))));
-  }
-
-  /**
-   * Builds CRC info by replaying the full log.
-   *
-   * @param engine The engine instance
-   * @param logSegmentAtVersion The log segment at the target version
-   * @return The complete CRC info
-   */
-  private static CRCInfo buildCrcInfoWithFullLogReplay(
-      Engine engine, LogSegment logSegmentAtVersion) throws IOException {
-
-    // Initialize state tracking
-    StateTracker state = new StateTracker();
-
-    // Process logs and update state
-    try (CreateCheckpointIterator checkpointIterator =
-        new CreateCheckpointIterator(
-            engine, logSegmentAtVersion, Instant.ofEpochMilli(Long.MAX_VALUE).toEpochMilli())) {
-
-      while (checkpointIterator.hasNext()) {
-        FilteredColumnarBatch filteredBatch = checkpointIterator.next();
-        ColumnarBatch batch = filteredBatch.getData();
-        Optional<ColumnVector> selectionVector = filteredBatch.getSelectionVector();
-        final int rowCount = batch.getSize();
-
-        ColumnVector metadataVector = batch.getColumnVector(METADATA_INDEX);
-        ColumnVector protocolVector = batch.getColumnVector(PROTOCOL_INDEX);
-        ColumnVector removeVector = batch.getColumnVector(REMOVE_INDEX);
-        ColumnVector addVector = batch.getColumnVector(ADD_INDEX);
-        ColumnVector domainMetadataVector = batch.getColumnVector(DOMAIN_METADATA_INDEX);
-
-        // Process all selected rows in a single pass for optimal performance
-        for (int i = 0; i < rowCount; i++) {
-          // Fields referenced in the lambda should be effectively final.
-          int rowId = i;
-          boolean isSelected =
-              selectionVector
-                  .map(vec -> !vec.isNullAt(rowId) && vec.getBoolean(rowId))
-                  .orElse(true);
-          if (!isSelected) continue;
-
-          // Step 1: Ensure there are no remove records
-          // We set minFileRetentionTimestampMillis to infinite future to skip all removed files,
-          // so there should be no remove actions.
-          checkState(
-              removeVector.isNullAt(i),
-              "unexpected remove row found when "
-                  + "setting minFileRetentionTimestampMillis to infinite future");
-
-          // Process add files, domain metadata, metadata, and protocol
-          processAddRecord(addVector, state, i);
-          processDomainMetadataRecord(domainMetadataVector, state, i);
-          processMetadataRecord(metadataVector, state, i);
-          processProtocolRecord(protocolVector, state, i);
-        }
-      }
-    }
-
-    // Get final metadata and protocol
-    Metadata finalMetadata =
-        state.metadataFromLog.orElseThrow(() -> new IllegalStateException("No metadata found"));
-
-    Protocol finalProtocol =
-        state.protocolFromLog.orElseThrow(() -> new IllegalStateException("No protocol found"));
-
-    // Filter to only non-removed domain metadata
-    Set<DomainMetadata> finalDomainMetadata = getNonRemovedDomainMetadata(state);
-
-    return new CRCInfo(
-        logSegmentAtVersion.getVersion(),
-        finalMetadata,
-        finalProtocol,
-        state.tableSizeByte.longValue(),
-        state.fileCount.longValue(),
-        Optional.empty(),
-        Optional.of(finalDomainMetadata),
-        Optional.of(state.addedFileSizeHistogram));
   }
 
   private static void processAddRecord(ColumnVector addVector, StateTracker state, int rowId) {
