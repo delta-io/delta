@@ -27,10 +27,6 @@ import org.scalatest.funsuite.AnyFunSuite
 
 class CatalogManagedSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
-  ///////////////////////////////////////////////////////////
-  // Basic LogSegment construction tests -- positive cases //
-  ///////////////////////////////////////////////////////////
-
   private def testLogSegment(
       testName: String,
       versionToLoad: Long,
@@ -61,17 +57,32 @@ class CatalogManagedSuite extends AnyFunSuite with MockFileSystemClientUtils {
         assert(expectedExceptionClassOpt.get.isInstance(exception))
       } else {
         val resolvedTable = builder.build(engine).asInstanceOf[ResolvedTableInternal]
+        val logSegmentDeltas = resolvedTable.getLogSegment.getDeltas.asScala
 
-        val actualDeltaAndCommitVersions = resolvedTable
-          .getLogSegment
-          .getDeltas
-          .asScala
-          .map(x => FileNames.deltaVersion(x.getPath))
-
+        // Check: we got the expected versions
+        val actualDeltaAndCommitVersions =
+          logSegmentDeltas.map(x => FileNames.deltaVersion(x.getPath))
         assert(actualDeltaAndCommitVersions sameElements expectedDeltaAndCommitVersionsOpt.get)
+
+        // Check: published deltas take priority over ratified commits when versions overlap
+        val expectedPublishedDeltaVersions =
+          deltaVersions.toSet.intersect(expectedDeltaAndCommitVersionsOpt.get.toSet)
+
+        logSegmentDeltas.map(_.getPath).foreach { path =>
+          val version = FileNames.deltaVersion(path)
+          if (expectedPublishedDeltaVersions.contains(version)) {
+            assert(FileNames.isPublishedDeltaFile(path))
+          } else {
+            assert(FileNames.isStagedDeltaFile(path))
+          }
+        }
       }
     }
   }
+
+  /////////////////////////////////////////////////////
+  // LogSegment construction tests -- positive cases //
+  /////////////////////////////////////////////////////
 
   // _delta_log: [                          10.checkpoint+json, 11.json, 12.json]
   // catalog:    [8.uuid.json, 9.uuid.json                                      ]
@@ -143,9 +154,9 @@ class CatalogManagedSuite extends AnyFunSuite with MockFileSystemClientUtils {
     ratifiedCommitVersions = 1L to 3L,
     expectedDeltaAndCommitVersionsOpt = Some(0L to 3L))
 
-  ///////////////////////////////////////////////////////////
-  // Basic LogSegment construction tests -- negative cases //
-  ///////////////////////////////////////////////////////////
+  /////////////////////////////////////////////////////
+  // LogSegment construction tests -- negative cases //
+  /////////////////////////////////////////////////////
 
   // _delta_log: [10.checkpoint+json, 11.json, 12.json                                ]
   // catalog:    [                                          14.uuid.json, 15.uuid.json]
