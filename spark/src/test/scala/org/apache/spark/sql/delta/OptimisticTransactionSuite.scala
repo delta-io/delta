@@ -228,9 +228,9 @@ class OptimisticTransactionSuite
       t => t.metadata
     ),
     concurrentWrites = Seq(
-      Action.supportedProtocolVersion()),
+      Action.supportedProtocolVersion(featuresToExclude = Seq(CatalogOwnedTableFeature))),
     actions = Seq(
-      Action.supportedProtocolVersion()))
+      Action.supportedProtocolVersion(featuresToExclude = Seq(CatalogOwnedTableFeature))))
 
   check(
     "taint whole table",
@@ -710,7 +710,8 @@ class OptimisticTransactionSuite
         .add("id", "long")
         .add("part", "string")
       deltaLog.withNewTransaction { txn =>
-        val protocol = Action.supportedProtocolVersion()
+        val protocol = Action.supportedProtocolVersion(
+          featuresToExclude = Seq(CatalogOwnedTableFeature))
         val metadata = Metadata(
           schemaString = schema.json,
           partitionColumns = partitionColumns)
@@ -933,19 +934,29 @@ class OptimisticTransactionSuite
   }
 
   test("Append does not trigger snapshot state computation") {
-    withTempDir { tableDir =>
-      val df = Seq((1, 0), (2, 1)).toDF("key", "value")
-      df.write.format("delta").mode("append").save(tableDir.getCanonicalPath)
+    withSQLConf(
+      DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "false",
+      DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> "true",
+      DeltaSQLConf.INCREMENTAL_COMMIT_FORCE_VERIFY_IN_TESTS.key -> "false",
+      DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_VERIFICATION_MODE_ENABLED.key -> "false",
+      DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_FORCE_VERIFICATION_MODE_FOR_NON_UTC_ENABLED.key ->
+        "false",
+      DeltaSQLConf.INCREMENTAL_COMMIT_FORCE_VERIFY_IN_TESTS.key -> "false"
+    ) {
+      withTempDir { tableDir =>
+        val df = Seq((1, 0), (2, 1)).toDF("key", "value")
+        df.write.format("delta").mode("append").save(tableDir.getCanonicalPath)
 
-      val deltaLog = DeltaLog.forTable(spark, tableDir)
-      val preCommitSnapshot = deltaLog.update()
-      assert(!preCommitSnapshot.stateReconstructionTriggered)
+        val deltaLog = DeltaLog.forTable(spark, tableDir)
+        val preCommitSnapshot = deltaLog.update()
+        assert(!preCommitSnapshot.stateReconstructionTriggered)
 
-      df.write.format("delta").mode("append").save(tableDir.getCanonicalPath)
+        df.write.format("delta").mode("append").save(tableDir.getCanonicalPath)
 
-      val postCommitSnapshot = deltaLog.update()
-      assert(!preCommitSnapshot.stateReconstructionTriggered)
-      assert(!postCommitSnapshot.stateReconstructionTriggered)
+        val postCommitSnapshot = deltaLog.update()
+        assert(!preCommitSnapshot.stateReconstructionTriggered)
+        assert(!postCommitSnapshot.stateReconstructionTriggered)
+      }
     }
   }
 

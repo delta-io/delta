@@ -259,5 +259,19 @@ public final class FieldMetadata {
     public FieldMetadata build() {
       return new FieldMetadata(this.metadata);
     }
+
+    public FieldMetadata getMetadata(String key) {
+      Object value = metadata.get(key);
+      if (null == value) {
+        return null;
+      }
+      if (value instanceof FieldMetadata) {
+        return (FieldMetadata) value;
+      }
+      throw new io.delta.kernel.exceptions.KernelException(
+          String.format(
+              "Expected '%s' to be of type 'FieldMetadata' but was '%s'",
+              value, value.getClass().getName()));
+    }
   }
 }

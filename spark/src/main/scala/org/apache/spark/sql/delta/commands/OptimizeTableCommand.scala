@@ -46,6 +46,7 @@ import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
 import org.apache.spark.sql.types._
 import org.apache.spark.util.{SystemClock, ThreadUtils}
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.delta.actions.InMemoryLogReplay.UniqueFileActionTuple
 
 /** Base class defining abstract optimize command */
 abstract class OptimizeTableCommandBase extends RunnableCommand with DeltaCommand {
@@ -128,8 +129,10 @@ object OptimizeTableCommand {
 /**
  * The `optimize` command implementation for Spark SQL. Example SQL:
  * {{{
- *    OPTIMIZE ('/path/to/dir' | delta.table) [WHERE part = 25];
+ *    OPTIMIZE ('/path/to/dir' | delta.table) [WHERE part = 25] [FULL];
  * }}}
+ *
+ * Note FULL and WHERE clauses are set exclusively.
  */
 case class OptimizeTableCommand(
     override val child: LogicalPlan,
@@ -146,18 +149,24 @@ case class OptimizeTableCommand(
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val table = getDeltaTable(child, "OPTIMIZE")
-    val snapshot = table.deltaLog.update()
+    val snapshot = table.update()
     if (snapshot.version == -1) {
       throw DeltaErrors.notADeltaTableException(table.deltaLog.dataPath.toString)
     }
 
-    if (ClusteredTableUtils.isSupported(snapshot.protocol)) {
+    val isClusteredTable = ClusteredTableUtils.isSupported(snapshot.protocol)
+    if (isClusteredTable) {
       if (userPartitionPredicates.nonEmpty) {
         throw DeltaErrors.clusteringWithPartitionPredicatesException(userPartitionPredicates)
       }
       if (zOrderBy.nonEmpty) {
         throw DeltaErrors.clusteringWithZOrderByException(zOrderBy)
       }
+    }
+
+    lazy val clusteringColumns = ClusteringColumnInfo.extractLogicalNames(snapshot)
+    if (optimizeContext.isFull && (!isClusteredTable || clusteringColumns.isEmpty)) {
+      throw DeltaErrors.optimizeFullNotSupportedException()
     }
 
     val partitionColumns = snapshot.metadata.partitionColumns
@@ -199,12 +208,14 @@ case class OptimizeTableCommand(
  *                            this threshold will be rewritten by the OPTIMIZE command. If not
  *                            specified, [[DeltaSQLConf.DELTA_OPTIMIZE_MAX_DELETED_ROWS_RATIO]]
  *                            will be used. This parameter must be set to `0` when [[reorg]] is set.
+ * @param isFull whether OPTIMIZE FULL is run. This is only for clustered tables.
  */
 case class DeltaOptimizeContext(
     reorg: Option[DeltaReorgOperation] = None,
     minFileSize: Option[Long] = None,
     maxFileSize: Option[Long] = None,
-    maxDeletedRowsRatio: Option[Double] = None) {
+    maxDeletedRowsRatio: Option[Double] = None,
+    isFull: Boolean = false) {
   if (reorg.nonEmpty) {
     require(
       minFileSize.contains(0L) && maxDeletedRowsRatio.contains(0d),
@@ -443,12 +454,17 @@ class OptimizeExecutor(
       val metrics = createMetrics(sparkSession.sparkContext, addedFiles, removedFiles, removedDVs)
       commitAndRetry(txn, getOperation(), updates, metrics) { newTxn =>
         val newPartitionSchema = newTxn.metadata.partitionSchema
-        val candidateSetOld = filesToProcess.map(_.path).toSet
+        // Note: When checking if the candidate set is the same, we need to consider (Path, DV)
+        //       as the key.
+        val candidateSetOld = filesToProcess.
+          map(f => UniqueFileActionTuple(f.pathAsUri, f.getDeletionVectorUniqueId)).toSet
+
         // We specifically don't list the files through the transaction since we are potentially
         // only processing a subset of them below. If the transaction is still valid, we will
         // register the files and predicate below
         val candidateSetNew =
-          newTxn.snapshot.filesForScan(partitionPredicate).files.map(_.path).toSet
+          newTxn.snapshot.filesForScan(partitionPredicate).files
+            .map(f => UniqueFileActionTuple(f.pathAsUri, f.getDeletionVectorUniqueId)).toSet
 
         // As long as all of the files that we compacted are still part of the table,
         // and the partitioning has not changed it is valid to continue to try
@@ -547,10 +563,11 @@ class OptimizeExecutor(
       case e: ConcurrentModificationException =>
         val newTxn = txn.deltaLog.startTransaction(txn.catalogTable)
         if (f(newTxn)) {
-          logInfo("Retrying commit after checking for semantic conflicts with concurrent updates.")
+          logInfo(
+            log"Retrying commit after checking for semantic conflicts with concurrent updates.")
           commitAndRetry(newTxn, optimizeOperation, actions, metrics)(f)
         } else {
-          logWarning("Semantic conflicts detected. Aborting operation.")
+          logWarning(log"Semantic conflicts detected. Aborting operation.")
           throw e
         }
     }
@@ -565,7 +582,8 @@ class OptimizeExecutor(
         predicate = partitionPredicate,
         zOrderBy = zOrderByColumns,
         auto = isAutoCompact,
-        clusterBy = if (isClusteredTable) Option(clusteringColumns).filter(_.nonEmpty) else None)
+        clusterBy = if (isClusteredTable) Option(clusteringColumns).filter(_.nonEmpty) else None,
+        isFull = optimizeContext.isFull)
     }
   }
 

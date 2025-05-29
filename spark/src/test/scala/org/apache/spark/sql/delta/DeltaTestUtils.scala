@@ -16,8 +16,9 @@
 
 package org.apache.spark.sql.delta
 
-import java.io.File
-import java.util.Locale
+import java.io.{BufferedReader, File, InputStreamReader}
+import java.nio.charset.StandardCharsets.UTF_8
+import java.util.{Locale, TimeZone}
 import java.util.concurrent.ConcurrentHashMap
 
 import scala.collection.JavaConverters._
@@ -25,20 +26,21 @@ import scala.collection.concurrent
 import scala.reflect.ClassTag
 import scala.util.matching.Regex
 
-import com.databricks.spark.util.UsageRecord
+import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
 import org.apache.spark.sql.delta.DeltaTestUtils.Plans
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
-import org.apache.spark.sql.delta.util.FileNames
+import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames}
+import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.module.scala.DefaultScalaModule
 import io.delta.tables.{DeltaTable => IODeltaTable}
 import org.apache.hadoop.fs.FileStatus
 import org.apache.hadoop.fs.Path
 import org.scalatest.BeforeAndAfterEach
 
-import org.apache.spark.SparkContext
-import org.apache.spark.SparkFunSuite
+import org.apache.spark.{SparkContext, SparkFunSuite, SparkThrowable}
 import org.apache.spark.scheduler.{JobFailed, SparkListener, SparkListenerJobEnd, SparkListenerJobStart}
 import org.apache.spark.sql.{AnalysisException, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -165,6 +167,36 @@ trait DeltaTestUtilsBase {
     }
   }
 
+  def collectUsageLogs(opType: String)(f: => Unit): collection.Seq[UsageRecord] = {
+    Log4jUsageLogger.track(f).filter { r =>
+      r.metric == "tahoeEvent" &&
+        r.tags.get("opType").contains(opType)
+    }
+  }
+
+  /**
+   * Remove protocol and metadata fields from checksum file of json format
+   */
+  def removeProtocolAndMetadataFromChecksumFile(checksumFilePath : Path): Unit = {
+    // scalastyle:off deltahadoopconfiguration
+    val fs = checksumFilePath.getFileSystem(
+      SparkSession.getActiveSession.map(_.sessionState.newHadoopConf()).get
+    )
+    // scalastyle:on deltahadoopconfiguration
+    if (!fs.exists(checksumFilePath)) return
+    val stream = fs.open(checksumFilePath)
+    val reader = new BufferedReader(new InputStreamReader(stream, UTF_8))
+    val content = reader.readLine()
+    stream.close()
+    val mapper = new ObjectMapper()
+    mapper.registerModule(DefaultScalaModule)
+    val map = mapper.readValue(content, classOf[Map[String, String]])
+    val partialContent = mapper.writeValueAsString(map.-("protocol").-("metadata")) + "\n"
+    val output = fs.create(checksumFilePath, true)
+    output.write(partialContent.getBytes(UTF_8))
+    output.close()
+  }
+
   protected def getfindTouchedFilesJobPlans(plans: Seq[Plans]): SparkPlan = {
     // The expected plan for touched file computation is of the format below.
     // The data column should be pruned from both leaves.
@@ -238,6 +270,19 @@ trait DeltaTestUtilsBase {
   @deprecated("Use checkError() instead")
   protected def errorContains(errMsg: String, str: String): Unit = {
     assert(errMsg.toLowerCase(Locale.ROOT).contains(str.toLowerCase(Locale.ROOT)))
+  }
+
+  /**
+   * Helper types to define the expected result of a test case.
+   * Either:
+   * - Success: include an expected value to check, e.g. expected schema or result as a DF or rows.
+   * - Failure: an exception is thrown and the caller passes a function to check that it matches an
+   *     expected error, typ. `checkError()` or `checkErrorMatchPVals()`.
+   */
+  sealed trait ExpectedResult[-T]
+  object ExpectedResult {
+    case class Success[T](expected: T) extends ExpectedResult[T]
+    case class Failure[T](checkError: SparkThrowable => Unit = _ => ()) extends ExpectedResult[T]
   }
 
   /** Utility method to check exception `e` is of type `E` or a cause of it is of type `E` */
@@ -405,6 +450,39 @@ object DeltaTestUtils extends DeltaTestUtilsBase {
     // Just a more readable version of `lteq`.
     def fulfillsVersionRequirements(actual: Protocol, requirement: Protocol): Boolean =
       lteq(requirement, actual)
+  }
+
+  def modifyCommitTimestamp(deltaLog: DeltaLog, version: Long, ts: Long): Unit = {
+    val filePath = DeltaCommitFileProvider(deltaLog.update()).deltaFile(version)
+    val file = new File(filePath.toUri)
+    InCommitTimestampTestUtils.overwriteICTInDeltaFile(
+      deltaLog,
+      new Path(file.getPath),
+      Some(ts))
+    file.setLastModified(ts)
+    if (FileNames.isUnbackfilledDeltaFile(filePath)) {
+      // Also change the ICT in the backfilled file if it exists.
+      val backfilledFilePath = FileNames.unsafeDeltaFile(deltaLog.logPath, version)
+      val fs = backfilledFilePath.getFileSystem(deltaLog.newDeltaHadoopConf())
+      if (fs.exists(backfilledFilePath)) {
+        InCommitTimestampTestUtils.overwriteICTInDeltaFile(deltaLog, backfilledFilePath, Some(ts))
+      }
+    }
+    val crc = new File(FileNames.checksumFile(deltaLog.logPath, version).toUri)
+    if (crc.exists()) {
+      InCommitTimestampTestUtils.overwriteICTInCrc(deltaLog, version, Some(ts))
+      crc.setLastModified(ts)
+    }
+  }
+
+  def withTimeZone(zone: String)(f: => Unit): Unit = {
+    val currentDefault = TimeZone.getDefault
+    try {
+      TimeZone.setDefault(TimeZone.getTimeZone(zone))
+      f
+    } finally {
+      TimeZone.setDefault(currentDefault)
+    }
   }
 }
 

@@ -35,8 +35,8 @@ class FileNamesSuite extends SparkFunSuite {
     // UUID Files
     assert(!isDeltaFile(new Path("/a/123.uuid.json")))
     assert(!isDeltaFile(new Path("/a/_delta_log/123.uuid.json")))
-    assert(isDeltaFile(new Path("/a/_delta_log/_commits/123.uuid.json")))
-    assert(!isDeltaFile(new Path("/a/_delta_log/_commits/123.uuid1.uuid2.json")))
+    assert(isDeltaFile(new Path("/a/_delta_log/_staged_commits/123.uuid.json")))
+    assert(!isDeltaFile(new Path("/a/_delta_log/_staged_commits/123.uuid1.uuid2.json")))
   }
 
   test("DeltaFile.unapply") {
@@ -52,9 +52,10 @@ class FileNamesSuite extends SparkFunSuite {
     // UUID Files
     assert(DeltaFile.unapply(new Path("/a/123.uuid.json")).isEmpty)
     assert(DeltaFile.unapply(new Path("/a/_delta_log/123.uuid.json")).isEmpty)
-    assert(DeltaFile.unapply(new Path("/a/_delta_log/_commits/123.uuid.json")) ===
-      Some((new Path("/a/_delta_log/_commits/123.uuid.json"), 123)))
-    assert(DeltaFile.unapply(new Path("/a/_delta_log/_commits/123.uuid1.uuid2.json")).isEmpty)
+    assert(DeltaFile.unapply(new Path("/a/_delta_log/_staged_commits/123.uuid.json")) ===
+      Some((new Path("/a/_delta_log/_staged_commits/123.uuid.json"), 123)))
+    assert(DeltaFile.unapply(
+      new Path("/a/_delta_log/_staged_commits/123.uuid1.uuid2.json")).isEmpty)
   }
 
   test("isCheckpointFile") {
@@ -98,8 +99,8 @@ class FileNamesSuite extends SparkFunSuite {
 
   test("commitDirPath") {
     assert(commitDirPath(logPath = new Path("/a/_delta_log")) ===
-      new Path("/a/_delta_log/_commits"))
+      new Path("/a/_delta_log/_staged_commits"))
     assert(commitDirPath(logPath = new Path("/a/_delta_log/")) ===
-      new Path("/a/_delta_log/_commits"))
+      new Path("/a/_delta_log/_staged_commits"))
   }
 }

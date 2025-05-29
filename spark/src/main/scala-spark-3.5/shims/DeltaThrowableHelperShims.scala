@@ -16,10 +16,24 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.SparkThrowable
+import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.errors.QueryCompilationErrors
+
 object DeltaThrowableHelperShims {
   /**
    * Handles a breaking change (SPARK-46810) between Spark 3.5 and Spark Master (4.0) where
    * `error-classes.json` was renamed to `error-conditions.json`.
    */
   val SPARK_ERROR_CLASS_SOURCE_FILE = "error/error-classes.json"
+
+  def showColumnsWithConflictDatabasesError(
+      db: Seq[String], v1TableName: TableIdentifier): Throwable = {
+    QueryCompilationErrors.showColumnsWithConflictDatabasesError(db, v1TableName)
+  }
+}
+
+trait DeltaThrowableConditionShim extends SparkThrowable {
+  def getCondition(): String = getErrorClass()
+  override def getErrorClass(): String
 }

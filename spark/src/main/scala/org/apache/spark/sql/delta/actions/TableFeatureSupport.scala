@@ -19,10 +19,13 @@ package org.apache.spark.sql.delta.actions
 import java.util.Locale
 
 import scala.collection.mutable
+import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaOperations.Operation
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import com.fasterxml.jackson.annotation.JsonIgnore
 
@@ -39,31 +42,13 @@ import com.fasterxml.jackson.annotation.JsonIgnore
  */
 trait TableFeatureSupport { this: Protocol =>
 
-  /**
-   * Check if this protocol can support arbitrary reader features. If this returns false,
-   * then the table may still be able to support the "columnMapping" feature.
-   * See [[canSupportColumnMappingFeature]] below.
-   */
+  /** Check if this protocol is capable of adding features into its `readerFeatures` field. */
   def supportsReaderFeatures: Boolean =
     TableFeatureProtocolUtils.supportsReaderFeatures(minReaderVersion)
-
-  /**
-   *  Check if this protocol is in table feature representation and can support column mapping.
-   *  Column mapping is the only legacy reader feature and requires special handling in some
-   *  cases.
-   */
-  def canSupportColumnMappingFeature: Boolean =
-    TableFeatureProtocolUtils.canSupportColumnMappingFeature(minReaderVersion, minWriterVersion)
 
   /** Check if this protocol is capable of adding features into its `writerFeatures` field. */
   def supportsWriterFeatures: Boolean =
     TableFeatureProtocolUtils.supportsWriterFeatures(minWriterVersion)
-
-  /**
-   * As soon as a protocol supports writer features it is considered a table features protocol.
-   * It is not possible to support reader features without supporting writer features.
-   */
-  def supportsTableFeatures: Boolean = supportsWriterFeatures
 
   /**
    * Get a new Protocol object that has `feature` supported. Writer-only features will be added to
@@ -78,7 +63,7 @@ trait TableFeatureSupport { this: Protocol =>
    */
   def withFeature(feature: TableFeature): Protocol = {
     def shouldAddRead: Boolean = {
-      if (feature == ColumnMappingTableFeature && canSupportColumnMappingFeature) return true
+      if (supportsReaderFeatures) return true
       if (feature.minReaderVersion <= minReaderVersion) return false
 
       throw DeltaErrors.tableFeatureRequiresHigherReaderProtocolVersion(
@@ -129,13 +114,25 @@ trait TableFeatureSupport { this: Protocol =>
    * `writerFeatures` field.
    *
    * The method does not require the feature to be recognized by the client, therefore will not
-   * try keeping the protocol's `readerFeatures` and `writerFeatures` in sync.
-   * Should never be used directly. Always use withFeature(feature: TableFeature): Protocol.
+   * try keeping the protocol's `readerFeatures` and `writerFeatures` in sync. Use with caution.
    */
   private[actions] def withFeature(
       name: String,
       addToReaderFeatures: Boolean,
       addToWriterFeatures: Boolean): Protocol = {
+    if (addToReaderFeatures && !supportsReaderFeatures) {
+      throw DeltaErrors.tableFeatureRequiresHigherReaderProtocolVersion(
+        name,
+        currentVersion = minReaderVersion,
+        requiredVersion = TableFeatureProtocolUtils.TABLE_FEATURES_MIN_READER_VERSION)
+    }
+    if (addToWriterFeatures && !supportsWriterFeatures) {
+      throw DeltaErrors.tableFeatureRequiresHigherWriterProtocolVersion(
+        name,
+        currentVersion = minWriterVersion,
+        requiredVersion = TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION)
+    }
+
     val addedReaderFeatureOpt = if (addToReaderFeatures) Some(name) else None
     val addedWriterFeatureOpt = if (addToWriterFeatures) Some(name) else None
 
@@ -149,11 +146,11 @@ trait TableFeatureSupport { this: Protocol =>
    * `readerFeatures` field.
    *
    * The method does not require the features to be recognized by the client, therefore will not
-   * try keeping the protocol's `readerFeatures` and `writerFeatures` in sync.
-   * Intended only for testing. Use with caution.
+   * try keeping the protocol's `readerFeatures` and `writerFeatures` in sync. Use with caution.
    */
   private[delta] def withReaderFeatures(names: Iterable[String]): Protocol = {
-    names.foldLeft(this)(_.withFeature(_, addToReaderFeatures = true, addToWriterFeatures = false))
+    names.foldLeft(this)(
+      _.withFeature(_, addToReaderFeatures = true, addToWriterFeatures = false))
   }
 
   /**
@@ -161,11 +158,11 @@ trait TableFeatureSupport { this: Protocol =>
    * `writerFeatures` field.
    *
    * The method does not require the features to be recognized by the client, therefore will not
-   * try keeping the protocol's `readerFeatures` and `writerFeatures` in sync.
-   * Intended only for testing. Use with caution.
+   * try keeping the protocol's `readerFeatures` and `writerFeatures` in sync. Use with caution.
    */
   private[delta] def withWriterFeatures(names: Iterable[String]): Protocol = {
-    names.foldLeft(this)(_.withFeature(_, addToReaderFeatures = false, addToWriterFeatures = true))
+    names.foldLeft(this)(
+      _.withFeature(_, addToReaderFeatures = false, addToWriterFeatures = true))
   }
 
   /**
@@ -209,16 +206,14 @@ trait TableFeatureSupport { this: Protocol =>
    */
   @JsonIgnore
   lazy val implicitlySupportedFeatures: Set[TableFeature] = {
-    if (supportsTableFeatures) {
-      // As soon as a protocol supports writer features, all features need to be explicitly defined.
-      // This includes legacy reader features (the only one is Column Mapping), even if the
-      // reader protocol is legacy and explicitly supports Column Mapping.
+    if (supportsReaderFeatures && supportsWriterFeatures) {
+      // this protocol uses both reader and writer features, no feature can be implicitly supported
       Set()
     } else {
       TableFeature.allSupportedFeaturesMap.values
         .filter(_.isLegacyFeature)
-        .filter(_.minReaderVersion <= this.minReaderVersion)
-        .filter(_.minWriterVersion <= this.minWriterVersion)
+        .filterNot(supportsReaderFeatures || this.minReaderVersion < _.minReaderVersion)
+        .filterNot(supportsWriterFeatures || this.minWriterVersion < _.minWriterVersion)
         .toSet
     }
   }
@@ -250,15 +245,21 @@ trait TableFeatureSupport { this: Protocol =>
 
   /**
    * Determine whether this protocol can be safely downgraded to a new protocol `to`.
-   * All we need is the implicit and explicit features between the two protocols to match,
-   * excluding the dropped feature. Note, this accounts for cases where we downgrade
-   * from table features to legacy protocol versions.
+   * All the implicit and explicit features between the two protocols need to match,
+   * excluding the dropped feature. We also need to take into account that in some cases
+   * the downgrade process may add the CheckpointProtectionTableFeature.
+   *
+   * Note, the conditions above also account for cases where we downgrade from table features
+   * to legacy protocol versions.
    */
   def canDowngradeTo(to: Protocol, droppedFeatureName: String): Boolean = {
     val thisFeatures = this.implicitlyAndExplicitlySupportedFeatures
     val toFeatures = to.implicitlyAndExplicitlySupportedFeatures
+    val allowedNewFeatures: Set[TableFeature] = Set(CheckpointProtectionTableFeature)
     val droppedFeature = Seq(droppedFeatureName).flatMap(TableFeature.featureNameToFeature)
-    (thisFeatures -- droppedFeature) == toFeatures
+    val newFeatures = toFeatures -- thisFeatures
+    newFeatures.subsetOf(allowedNewFeatures) &&
+      (thisFeatures -- droppedFeature == toFeatures -- newFeatures)
   }
 
   /**
@@ -279,11 +280,14 @@ trait TableFeatureSupport { this: Protocol =>
     val protocols = this +: others
     val mergedReaderVersion = protocols.map(_.minReaderVersion).max
     val mergedWriterVersion = protocols.map(_.minWriterVersion).max
-    val mergedFeatures = protocols.flatMap(_.readerAndWriterFeatures)
+    val mergedReaderFeatures = protocols.flatMap(_.readerFeatureNames)
+    val mergedWriterFeatures = protocols.flatMap(_.writerFeatureNames)
     val mergedImplicitFeatures = protocols.flatMap(_.implicitlySupportedFeatures)
 
     val mergedProtocol = Protocol(mergedReaderVersion, mergedWriterVersion)
-      .withFeatures(mergedFeatures ++ mergedImplicitFeatures)
+      .withReaderFeatures(mergedReaderFeatures)
+      .withWriterFeatures(mergedWriterFeatures)
+      .withFeatures(mergedImplicitFeatures)
 
     // The merged protocol is always normalized in order to represent the protocol
     // with the weakest possible form. This enables backward compatibility.
@@ -353,7 +357,7 @@ trait TableFeatureSupport { this: Protocol =>
    */
   def normalized: Protocol = {
     // Normalization can only be applied to table feature protocols.
-    if (!supportsTableFeatures) return this
+    if (!supportsWriterFeatures) return this
 
     val (minReaderVersion, minWriterVersion) =
       TableFeatureProtocolUtils.minimumRequiredVersions(readerAndWriterFeatures)
@@ -376,7 +380,7 @@ trait TableFeatureSupport { this: Protocol =>
    */
   def denormalized: Protocol = {
     // Denormalization can only be applied to legacy protocols.
-    if (supportsTableFeatures) return this
+    if (supportsWriterFeatures) return this
 
     val (minReaderVersion, _) =
       TableFeatureProtocolUtils.minimumRequiredVersions(implicitlySupportedFeatures.toSeq)
@@ -403,6 +407,29 @@ trait TableFeatureSupport { this: Protocol =>
       // new protocol
       readerAndWriterFeatureNames.contains(feature.name)
   }
+
+  /** Returns whether this client supports writing in a table with this protocol. */
+  def supportedForWrite(): Boolean = {
+    val supportedWriterVersions = Action.supportedWriterVersionNumbers
+    val supportedWriterFeatures = Action.supportedProtocolVersion().writerFeatureNames
+    val testUnsupportedFeatures: Set[String] = TableFeature.testUnsupportedFeatures
+      .filterNot(_.isReaderWriterFeature)
+      .map(_.name)
+
+    supportedWriterVersions.contains(this.minWriterVersion) &&
+      this.writerFeatureNames.subsetOf(supportedWriterFeatures -- testUnsupportedFeatures)
+  }
+
+  /** Returns whether this client supports reading a table with this protocol. */
+  def supportedForRead(): Boolean = {
+    val supportedReaderVersions = Action.supportedReaderVersionNumbers
+    val supportedReaderFeatures = Action.supportedProtocolVersion().readerFeatureNames
+    val testUnsupportedFeatures: Set[String] = TableFeature.testUnsupportedFeatures
+      .filter(_.isReaderWriterFeature).map(_.name)
+
+    supportedReaderVersions.contains(this.minReaderVersion) &&
+      this.readerFeatureNames.subsetOf(supportedReaderFeatures -- testUnsupportedFeatures)
+  }
 }
 
 object TableFeatureProtocolUtils {
@@ -424,7 +451,7 @@ object TableFeatureProtocolUtils {
   /** The string constant "supported" for uses in table properties. */
   val FEATURE_PROP_SUPPORTED = "supported"
 
-  /** Min reader version that supports native reader features. */
+  /** Min reader version that supports reader features. */
   val TABLE_FEATURES_MIN_READER_VERSION = 3
 
   /** Min reader version that supports writer features. */
@@ -445,20 +472,8 @@ object TableFeatureProtocolUtils {
     s"$DEFAULT_FEATURE_PROP_PREFIX$featureName"
 
   /**
-   * Determine whether a [[Protocol]] with the given reader protocol version can support column
-   * mapping. All table feature protocols that can support column mapping are capable of adding
-   * the feature to the `readerFeatures` field. This includes legacy reader protocol version
-   * (2, 7).
-   */
-  def canSupportColumnMappingFeature(readerVersion: Int, writerVersion: Int): Boolean = {
-    readerVersion >= ColumnMappingTableFeature.minReaderVersion &&
-      supportsWriterFeatures(writerVersion)
-  }
-
-  /**
-   * Determine whether a [[Protocol]] with the given reader protocol version supports
-   * native features. All protocols that can support native reader features are capable
-   * of adding the feature to the `readerFeatures` field.
+   * Determine whether a [[Protocol]] with the given reader protocol version is capable of adding
+   * features into its `readerFeatures` field.
    */
   def supportsReaderFeatures(readerVersion: Int): Boolean = {
     readerVersion >= TABLE_FEATURES_MIN_READER_VERSION
@@ -515,4 +530,76 @@ object TableFeatureProtocolUtils {
    */
   def minimumRequiredVersions(features: Seq[TableFeature]): (Int, Int) =
     ((features.map(_.minReaderVersion) :+ 1).max, (features.map(_.minWriterVersion) :+ 1).max)
+}
+
+object DropTableFeatureUtils extends DeltaLogging {
+  private val MAX_CHECKPOINT_RETRIES = 3
+
+  // The number of barrier checkpoints to create before the version requiring checkpoint protection.
+  val NUMBER_OF_BARRIER_CHECKPOINTS = 3
+
+  /**
+   * Helper function for creating checkpoints. If checkpoint creation fails we retry up
+   * to [[MAX_CHECKPOINT_RETRIES]] times.
+   *
+   * @param snapshotRefreshStartTimeTs The timestamp to use as a starting point for refreshing
+   *                                   the snapshot. This value is used to improve the performance
+   *                                   of the snapshot refresh operation.
+   */
+  def createCheckpointWithRetries(
+      table: DeltaTableV2,
+      snapshotRefreshStartTimeTs: Long): Boolean = {
+    val log = table.deltaLog
+    val snapshot = log.update(checkIfUpdatedSinceTs = Some(snapshotRefreshStartTimeTs))
+
+    def checkpointAndVerify(snapshot: Snapshot): Boolean = {
+      try {
+        log.checkpoint(snapshot)
+        val upperBoundVersion = Some(CheckpointInstance(version = snapshot.version + 1))
+        val lastVerifiedCheckpoint = log.findLastCompleteCheckpointBefore(upperBoundVersion)
+        lastVerifiedCheckpoint.exists(_.version == snapshot.version)
+      } catch {
+        case NonFatal(e) =>
+          recordDeltaEvent(
+            deltaLog = log,
+            opType = "dropFeature.checkpointAndVerify.error",
+            data = Map(
+              "message" -> e.getMessage,
+              "stackTrace" -> e.getStackTrace().mkString("\n")))
+          false
+      }
+    }
+
+    (1 to MAX_CHECKPOINT_RETRIES).collectFirst {
+      case _ if checkpointAndVerify(snapshot) => true
+    }.getOrElse(false)
+  }
+
+  def createEmptyCommitAndCheckpoint(
+      table: DeltaTableV2,
+      snapshotRefreshStartTs: Long,
+      retryOnFailure: Boolean = false): Boolean = {
+    val log = table.deltaLog
+    val snapshot = log.update(checkIfUpdatedSinceTs = Some(snapshotRefreshStartTs))
+    val emptyCommitTS = table.deltaLog.clock.nanoTime()
+    log.startTransaction(table.catalogTable, Some(snapshot))
+      .commit(Nil, DeltaOperations.EmptyCommit)
+
+    // retryOnFailure is temporary to avoid affecting the behavior of the legacy Drop Feature
+    // command behavior.
+    if (retryOnFailure) {
+      createCheckpointWithRetries(table, emptyCommitTS)
+    } else {
+      log.checkpoint(log.update(checkIfUpdatedSinceTs = Some(emptyCommitTS)))
+      true
+    }
+  }
+
+  def truncateHistoryLogRetentionMillis(metadata: Metadata): Long = {
+    val truncateHistoryLogRetention = DeltaConfigs
+      .TABLE_FEATURE_DROP_TRUNCATE_HISTORY_LOG_RETENTION
+      .fromMetaData(metadata)
+
+    DeltaConfigs.getMilliSeconds(truncateHistoryLogRetention)
+  }
 }

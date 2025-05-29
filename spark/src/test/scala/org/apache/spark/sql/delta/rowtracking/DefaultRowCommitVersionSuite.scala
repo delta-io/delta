@@ -25,7 +25,6 @@ import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.{TABLE_FEATU
 import org.apache.spark.sql.delta.rowid.RowIdTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
-import org.apache.spark.sql.ColumnImplicitsShim._
 import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.execution.datasources.parquet.ParquetTest
@@ -36,6 +35,8 @@ class DefaultRowCommitVersionSuite extends QueryTest
   with SharedSparkSession
   with ParquetTest
   with RowIdTestUtils {
+  import testImplicits._
+
   def expectedCommitVersionsForAllFiles(deltaLog: DeltaLog): Map[String, Long] = {
     val commitVersionForFiles = mutable.Map.empty[String, Long]
     deltaLog.getChanges(startVersion = 0).foreach { case (commitVersion, actions) =>

@@ -84,6 +84,11 @@ case class DeltaScan(
     val scannedSnapshot: Snapshot,
     val partitionFilters: ExpressionSet,
     val dataFilters: ExpressionSet,
+    val partitionLikeDataFilters: ExpressionSet,
+    // We can't use an ExpressionSet here because the rewritten filters aren't yet resolved when the
+    // DeltaScan is created. Since this is for logging only, it's OK to store the non-canonicalized
+    // expressions instead.
+    val rewrittenPartitionLikeDataFilters: Set[Expression],
     val unusedFilters: ExpressionSet,
     val scanDurationMs: Long,
     val dataSkippingType: DeltaDataSkippingType) {

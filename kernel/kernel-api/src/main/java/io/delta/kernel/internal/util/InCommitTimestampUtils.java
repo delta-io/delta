@@ -15,15 +15,19 @@
  */
 package io.delta.kernel.internal.util;
 
-import static io.delta.kernel.internal.TableConfig.isICTEnabled;
+import static io.delta.kernel.internal.TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED;
 
+import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.TableConfig;
+import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.Metadata;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Function;
 
 public class InCommitTimestampUtils {
 
@@ -49,11 +53,34 @@ public class InCommitTimestampUtils {
           TableConfig.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.getKey(),
           Long.toString(inCommitTimestamp));
 
-      Metadata newMetadata = metadata.withNewConfiguration(enablementTrackingProperties);
+      Metadata newMetadata = metadata.withMergedConfiguration(enablementTrackingProperties);
       return Optional.of(newMetadata);
     } else {
       return Optional.empty();
     }
+  }
+
+  /**
+   * Tries to extract the inCommitTimestamp from the commitInfo action in the given ColumnarBatch.
+   * When inCommitTimestamp is enabled, the commitInfo action is always the first action in the
+   * delta file. This function assumes that this batch is the leading batch of a single delta file
+   * and attempts to extract the commitInfo action from the first row. If the commitInfo action is
+   * not present or does not contain an inCommitTimestamp, this function returns an empty Optional.
+   */
+  public static Optional<Long> tryExtractInCommitTimestamp(
+      ColumnarBatch firstActionsBatchFromSingleDelta) {
+    final int commitInfoOrdinal =
+        firstActionsBatchFromSingleDelta.getSchema().indexOf("commitInfo");
+    if (commitInfoOrdinal == -1) {
+      return Optional.empty();
+    }
+    ColumnVector commitInfoVector =
+        firstActionsBatchFromSingleDelta.getColumnVector(commitInfoOrdinal);
+    // CommitInfo is always the first action in the batch when inCommitTimestamp is enabled.
+    int expectedRowIdOfCommitInfo = 0;
+    CommitInfo commitInfo =
+        CommitInfo.fromColumnVector(commitInfoVector, expectedRowIdOfCommitInfo);
+    return commitInfo != null ? commitInfo.getInCommitTimestamp() : Optional.empty();
   }
 
   /** Returns true if the current transaction implicitly/explicitly enables ICT. */
@@ -68,9 +95,59 @@ public class InCommitTimestampUtils {
     //
     // WARNING: To ensure that this function returns true if ICT is enabled during the first
     // commit, we explicitly handle the case where the readSnapshot.version is -1.
-    boolean isICTCurrentlyEnabled = isICTEnabled(engine, currentTransactionMetadata);
+    boolean isICTCurrentlyEnabled =
+        IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(currentTransactionMetadata);
     boolean wasICTEnabledInReadSnapshot =
-        readSnapshot.getVersion(engine) != -1 && isICTEnabled(engine, readSnapshot.getMetadata());
+        readSnapshot.getVersion() != -1
+            && IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(readSnapshot.getMetadata());
     return isICTCurrentlyEnabled && !wasICTEnabledInReadSnapshot;
+  }
+
+  /**
+   * Finds the greatest lower bound of the target value in the range [lowerBoundInclusive,
+   * upperBoundInclusive] using binary search. The indexToValueMapper function is used to map the
+   * index to the corresponding value. Note that this function assumes that the values are sorted in
+   * ascending order.
+   *
+   * @param target The target value to find the greatest lower bound for.
+   * @param lowerBoundInclusive The lower bound of the search range (inclusive).
+   * @param upperBoundInclusive The upper bound of the search range (inclusive).
+   * @param indexToValueMapper A function that maps an index to its corresponding value.
+   * @return An optional which contains a tuple containing the index and the value of the greatest
+   *     lower bound when found, or an empty optional if not found.
+   */
+  public static Optional<Tuple2<Long, Long>> greatestLowerBound(
+      long target,
+      long lowerBoundInclusive,
+      long upperBoundInclusive,
+      Function<Long, Long> indexToValueMapper) {
+    if (lowerBoundInclusive > upperBoundInclusive) {
+      return Optional.empty();
+    }
+
+    long start = lowerBoundInclusive;
+    long end = upperBoundInclusive;
+    long resultIndex = -1;
+    long resultValue = 0;
+
+    while (start <= end) {
+      long mid = start + (end - start) / 2;
+      long midValue = indexToValueMapper.apply(mid);
+      if (midValue == target) {
+        return Optional.of(new Tuple2<>(mid, midValue));
+      } else if (midValue < target) {
+        resultIndex = mid;
+        resultValue = midValue;
+        start = mid + 1;
+      } else {
+        end = mid - 1;
+      }
+    }
+
+    if (resultIndex == -1) {
+      return Optional.empty();
+    } else {
+      return Optional.of(new Tuple2<>(resultIndex, resultValue));
+    }
   }
 }

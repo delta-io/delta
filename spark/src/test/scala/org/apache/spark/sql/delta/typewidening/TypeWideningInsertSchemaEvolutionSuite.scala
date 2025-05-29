@@ -122,6 +122,23 @@ trait TypeWideningInsertSchemaEvolutionTests
       Seq(1, 2).toDF("a").select($"a".cast(ShortType)))
   }
 
+  test("INSERT - type widening is triggered when schema evolution is enabled via option") {
+    val tableName = "type_widening_insert_into_table"
+    withTable(tableName) {
+      sql(s"CREATE TABLE $tableName (a short) USING DELTA")
+      Seq(1, 2).toDF("a")
+        .write
+        .format("delta")
+        .mode("append")
+        .option("mergeSchema", "true")
+        .insertInto(tableName)
+
+      val result = spark.read.format("delta").table(tableName)
+      assert(result.schema("a").dataType === IntegerType)
+      checkAnswer(result, Seq(1, 2).toDF("a"))
+    }
+  }
+
   /**
    * Short-hand to create a logical plan to insert into the table. This captures the state of the
    * table at the time the method is called, e.p. the type widening property value that will be used
@@ -144,7 +161,7 @@ trait TypeWideningInsertSchemaEvolutionTests
     // Enabling type widening after analysis doesn't impact the insert operation: the data is
     // already cast to conform to the current schema.
     enableTypeWidening(tempPath, enabled = true)
-    Dataset.ofRows(spark, insert).collect()
+    DataFrameUtils.ofRows(spark, insert).collect()
     assert(readDeltaTable(tempPath).schema == new StructType().add("a", ShortType))
     checkAnswer(readDeltaTable(tempPath), Row(1))
   }
@@ -156,208 +173,135 @@ trait TypeWideningInsertSchemaEvolutionTests
     // table while type widening is actually disabled during execution. We do actually widen the
     // table schema in that case because `short` and `int` are both stored as INT32 in parquet.
     enableTypeWidening(tempPath, enabled = false)
-    Dataset.ofRows(spark, insert).collect()
+    DataFrameUtils.ofRows(spark, insert).collect()
     assert(readDeltaTable(tempPath).schema == new StructType().add("a", IntegerType))
     checkAnswer(readDeltaTable(tempPath), Row(1))
   }
 
   testInserts("top-level type evolution")(
-    initialSchemaDDL = "a int, b short",
-    initialJsonData = Seq("""{ "a": 1, "b": 2 }"""),
+    initialData = TestData("a int, b short", Seq("""{ "a": 1, "b": 2 }""")),
     partitionBy = Seq("a"),
     overwriteWhere = "a" -> 1,
-    insertSchemaDDL = "a int, b int",
-    insertJsonData = Seq("""{ "a": 1, "b": 4 }"""),
-    expectedResult = ExpectedResult.Success(expectedSchema = new StructType()
+    insertData = TestData("a int, b int", Seq("""{ "a": 1, "b": 4 }""")),
+    expectedResult = ExpectedResult.Success(new StructType()
       .add("a", IntegerType)
-      .add("b", IntegerType, nullable = true,
-        metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType))),
-    excludeInserts = Seq(StreamingInsert)
+      .add("b", IntegerType))
   )
 
   testInserts("top-level type evolution with column upcast")(
-    initialSchemaDDL = "a int, b short, c int",
-    initialJsonData = Seq("""{ "a": 1, "b": 2, "c": 3 }"""),
+    initialData = TestData("a int, b short, c int", Seq("""{ "a": 1, "b": 2, "c": 3 }""")),
     partitionBy = Seq("a"),
     overwriteWhere = "a" -> 1,
-    insertSchemaDDL = "a int, b int, c short",
-    insertJsonData = Seq("""{ "a": 1, "b": 5, "c": 6 }"""),
-    expectedResult = ExpectedResult.Success(expectedSchema = new StructType()
+    insertData = TestData("a int, b int, c short", Seq("""{ "a": 1, "b": 5, "c": 6 }""")),
+    expectedResult = ExpectedResult.Success(new StructType()
       .add("a", IntegerType)
-      .add("b", IntegerType, nullable = true,
-        metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType))
-      .add("c", IntegerType)),
-    excludeInserts = Seq(StreamingInsert)
+      .add("b", IntegerType)
+      .add("c", IntegerType))
   )
 
   testInserts("top-level type evolution with schema evolution")(
-    initialSchemaDDL = "a int, b short",
-    initialJsonData = Seq("""{ "a": 1, "b": 2 }"""),
+    initialData = TestData("a int, b short", Seq("""{ "a": 1, "b": 2 }""")),
     partitionBy = Seq("a"),
     overwriteWhere = "a" -> 1,
-    insertSchemaDDL = "a int, b int, c int",
-    insertJsonData = Seq("""{ "a": 1, "b": 4, "c": 5 }"""),
-    expectedResult = ExpectedResult.Success(expectedSchema = new StructType()
+    insertData = TestData("a int, b int, c int", Seq("""{ "a": 1, "b": 4, "c": 5 }""")),
+    expectedResult = ExpectedResult.Success(new StructType()
       .add("a", IntegerType)
-      .add("b", IntegerType, nullable = true,
-        metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType))
+      .add("b", IntegerType)
       .add("c", IntegerType)),
-    // INSERT INTO/OVERWRITE (a, b) VALUES doesn't support schema evolution.
-    excludeInserts = Seq(
-      SQLInsertColList(SaveMode.Append),
-      SQLInsertColList(SaveMode.Overwrite),
-      SQLInsertOverwritePartitionColList,
-      StreamingInsert)
+    // SQL INSERT by name doesn't support schema evolution.
+    excludeInserts = insertsSQL.intersect(insertsByName)
   )
 
 
   testInserts("nested type evolution by position")(
-    initialSchemaDDL =
+    initialData = TestData(
       "key int, s struct<x: short, y: short>, m map<string, short>, a array<short>",
-    initialJsonData = Seq("""{ "key": 1, "s": { "x": 1, "y": 2 }, "m": { "p": 3 }, "a": [4] }"""),
+      Seq("""{ "key": 1, "s": { "x": 1, "y": 2 }, "m": { "p": 3 }, "a": [4] }""")),
     partitionBy = Seq("key"),
     overwriteWhere = "key" -> 1,
-    insertSchemaDDL = "key int, s struct<x: short, y: int>, m map<string, int>, a array<int>",
-    insertJsonData = Seq("""{ "key": 1, "s": { "x": 4, "y": 5 }, "m": { "p": 6 }, "a": [7] }"""),
-    expectedResult = ExpectedResult.Success(expectedSchema = new StructType()
+    insertData = TestData(
+      "key int, s struct<x: short, y: int>, m map<string, int>, a array<int>",
+      Seq("""{ "key": 1, "s": { "x": 4, "y": 5 }, "m": { "p": 6 }, "a": [7] }""")),
+    expectedResult = ExpectedResult.Success(new StructType()
       .add("key", IntegerType)
       .add("s", new StructType()
         .add("x", ShortType)
-        .add("y", IntegerType, nullable = true,
-          metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType)))
-      .add("m", MapType(StringType, IntegerType), nullable = true,
-        metadata = typeWideningMetadata(
-          version = 1,
-          from = ShortType,
-          to = IntegerType,
-          path = Seq("value")))
-      .add("a", ArrayType(IntegerType), nullable = true,
-        metadata = typeWideningMetadata(
-          version = 1,
-          from = ShortType,
-          to = IntegerType,
-          path = Seq("element")))),
-    excludeInserts = Seq(StreamingInsert)
+        .add("y", IntegerType))
+      .add("m", MapType(StringType, IntegerType))
+      .add("a", ArrayType(IntegerType)))
   )
 
 
   testInserts("nested type evolution with struct evolution by position")(
-    initialSchemaDDL =
+    initialData = TestData(
       "key int, s struct<x: short, y: short>, m map<string, short>, a array<short>",
-    initialJsonData = Seq("""{ "key": 1, "s": { "x": 1, "y": 2 }, "m": { "p": 3 }, "a": [4] }"""),
+      Seq("""{ "key": 1, "s": { "x": 1, "y": 2 }, "m": { "p": 3 }, "a": [4] }""")),
     partitionBy = Seq("key"),
     overwriteWhere = "key" -> 1,
-    insertSchemaDDL =
+    insertData = TestData(
       "key int, s struct<x: short, y: int, z: int>, m map<string, int>, a array<int>",
-    insertJsonData =
-      Seq("""{ "key": 1, "s": { "x": 4, "y": 5, "z": 8 }, "m": { "p": 6 }, "a": [7] }"""),
-    expectedResult = ExpectedResult.Success(expectedSchema = new StructType()
+      Seq("""{ "key": 1, "s": { "x": 4, "y": 5, "z": 8 }, "m": { "p": 6 }, "a": [7] }""")),
+    expectedResult = ExpectedResult.Success(new StructType()
       .add("key", IntegerType)
       .add("s", new StructType()
         .add("x", ShortType)
-        .add("y", IntegerType, nullable = true,
-          metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType))
+        .add("y", IntegerType)
         .add("z", IntegerType))
-      .add("m", MapType(StringType, IntegerType), nullable = true,
-        metadata = typeWideningMetadata(
-          version = 1,
-          from = ShortType,
-          to = IntegerType,
-          path = Seq("value")))
-      .add("a", ArrayType(IntegerType), nullable = true,
-        metadata = typeWideningMetadata(
-          version = 1,
-          from = ShortType,
-          to = IntegerType,
-          path = Seq("element")))),
-    excludeInserts = Seq(StreamingInsert)
+      .add("m", MapType(StringType, IntegerType))
+      .add("a", ArrayType(IntegerType)))
   )
 
 
   testInserts("nested struct type evolution with field upcast")(
-    initialSchemaDDL = "key int, s struct<x: int, y: short>",
-    initialJsonData = Seq("""{ "key": 1, "s": { "x": 1, "y": 2 } }"""),
+    initialData = TestData(
+      "key int, s struct<x: int, y: short>",
+      Seq("""{ "key": 1, "s": { "x": 1, "y": 2 } }""")),
     partitionBy = Seq("key"),
     overwriteWhere = "key" -> 1,
-    insertSchemaDDL = "key int, s struct<x: short, y: int>",
-    insertJsonData = Seq("""{ "key": 1, "s": { "x": 4, "y": 5 } }"""),
-    expectedResult = ExpectedResult.Success(expectedSchema = new StructType()
+    insertData = TestData(
+      "key int, s struct<x: short, y: int>",
+      Seq("""{ "key": 1, "s": { "x": 4, "y": 5 } }""")),
+    expectedResult = ExpectedResult.Success(new StructType()
       .add("key", IntegerType)
       .add("s", new StructType()
         .add("x", IntegerType)
-        .add("y", IntegerType, nullable = true,
-          metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType)))),
-    excludeInserts = Seq(StreamingInsert)
+        .add("y", IntegerType)))
   )
 
   // Interestingly, we introduced a special case to handle schema evolution / casting for structs
   // directly nested into an array. This doesn't always work with maps or with elements that
   // aren't a struct (see other tests).
   testInserts("nested struct type evolution with field upcast in array")(
-    initialSchemaDDL = "key int, a array<struct<x: int, y: short>>",
-    initialJsonData = Seq("""{ "key": 1, "a": [ { "x": 1, "y": 2 } ] }"""),
+    initialData = TestData(
+      "key int, a array<struct<x: int, y: short>>",
+      Seq("""{ "key": 1, "a": [ { "x": 1, "y": 2 } ] }""")),
     partitionBy = Seq("key"),
     overwriteWhere = "key" -> 1,
-    insertSchemaDDL = "key int, a array<struct<x: short, y: int>>",
-    insertJsonData = Seq("""{ "key": 1, "a": [ { "x": 3, "y": 4 } ] }"""),
-    expectedResult = ExpectedResult.Success(expectedSchema = new StructType()
+    insertData = TestData(
+      "key int, a array<struct<x: short, y: int>>",
+      Seq("""{ "key": 1, "a": [ { "x": 3, "y": 4 } ] }""")),
+    expectedResult = ExpectedResult.Success(new StructType()
       .add("key", IntegerType)
       .add("a", ArrayType(new StructType()
         .add("x", IntegerType)
-        .add("y", IntegerType, nullable = true,
-          metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType))))),
-    excludeInserts = Seq(StreamingInsert)
+        .add("y", IntegerType))))
   )
 
-  // The next two tests document inconsistencies when handling maps. Using SQL doesn't allow type
-  // evolution but using the dataframe API does.
+  // maps now allow type evolution for INSERT by position and name in SQL and dataframe.
   testInserts("nested struct type evolution with field upcast in map")(
-    initialSchemaDDL = "key int, m map<string, struct<x: int, y: short>>",
-    initialJsonData = Seq("""{ "key": 1, "m": { "a": { "x": 1, "y": 2 } } }"""),
+    initialData = TestData(
+      "key int, m map<string, struct<x: int, y: short>>",
+      Seq("""{ "key": 1, "m": { "a": { "x": 1, "y": 2 } } }""")),
     partitionBy = Seq("key"),
     overwriteWhere = "key" -> 1,
-    insertSchemaDDL = "key int, m map<string, struct<x: short, y: int>>",
-    insertJsonData = Seq("""{ "key": 1, "m": { "a": { "x": 3, "y": 4 } } }"""),
-    expectedResult = ExpectedResult.Success(expectedSchema = new StructType()
-      .add("key", IntegerType)
-      // Type evolution wasn't applied in the map.
-      .add("m", MapType(StringType, new StructType()
-        .add("x", IntegerType)
-        .add("y", ShortType)))),
-    excludeInserts = Seq(
-      DFv1SaveAsTable(SaveMode.Append),
-      DFv1SaveAsTable(SaveMode.Overwrite),
-      DFv1Save(SaveMode.Append),
-      DFv1Save(SaveMode.Overwrite),
-      DFv2Append,
-      DFv2Overwrite,
-      DFv2OverwritePartition,
-      StreamingInsert
-    )
-  )
-
-  testInserts("nested struct type evolution with field upcast in map")(
-    initialSchemaDDL = "key int, m map<string, struct<x: int, y: short>>",
-    initialJsonData = Seq("""{ "key": 1, "m": { "a": { "x": 1, "y": 2 } } }"""),
-    partitionBy = Seq("key"),
-    overwriteWhere = "key" -> 1,
-    insertSchemaDDL = "key int, m map<string, struct<x: short, y: int>>",
-    insertJsonData = Seq("""{ "key": 1, "m": { "a": { "x": 3, "y": 4 } } }"""),
-    expectedResult = ExpectedResult.Success(expectedSchema = new StructType()
+    insertData = TestData(
+      "key int, m map<string, struct<x: short, y: int>>",
+      Seq("""{ "key": 1, "m": { "a": { "x": 3, "y": 4 } } }""")),
+    expectedResult = ExpectedResult.Success(new StructType()
       .add("key", IntegerType)
       // Type evolution was applied in the map.
       .add("m", MapType(StringType, new StructType()
         .add("x", IntegerType)
-        .add("y", IntegerType, nullable = true,
-          metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType))))),
-    includeInserts = Seq(
-      DFv1SaveAsTable(SaveMode.Append),
-      DFv1SaveAsTable(SaveMode.Overwrite),
-      DFv1Save(SaveMode.Append),
-      DFv1Save(SaveMode.Overwrite),
-      DFv2Append,
-      DFv2Overwrite,
-      DFv2OverwritePartition
-    )
+        .add("y", IntegerType))))
   )
 }

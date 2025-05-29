@@ -23,12 +23,20 @@ import io.delta.kernel.data.*;
 import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.types.DataTypeJsonSerDe;
+import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.types.*;
 import java.util.*;
 import java.util.stream.Collectors;
 
 public class Metadata {
+
+  public static Metadata fromRow(Row row) {
+    requireNonNull(row);
+    checkArgument(FULL_SCHEMA.equals(row.getSchema()));
+    return fromColumnVector(
+        VectorUtils.buildColumnVector(Collections.singletonList(row), FULL_SCHEMA), /* rowId */ 0);
+  }
 
   public static Metadata fromColumnVector(ColumnVector vector, int rowId) {
     if (vector.isNullAt(rowId)) {
@@ -106,7 +114,7 @@ public class Metadata {
     this.createdTime = createdTime;
     this.configurationMapValue = requireNonNull(configurationMapValue, "configuration is null");
     this.configuration = new Lazy<>(() -> VectorUtils.toJavaMap(configurationMapValue));
-    this.partitionColNames = new Lazy<>(() -> loadPartitionColNames());
+    this.partitionColNames = new Lazy<>(this::loadPartitionColNames);
     this.dataSchema =
         new Lazy<>(
             () ->
@@ -120,9 +128,33 @@ public class Metadata {
                         .collect(Collectors.toList())));
   }
 
-  public Metadata withNewConfiguration(Map<String, String> configuration) {
+  /**
+   * Returns a new metadata object that has a new configuration which is the combination of its
+   * current configuration and {@code configuration}.
+   *
+   * <p>For overlapping keys the values from {@code configuration} take precedence.
+   */
+  public Metadata withMergedConfiguration(Map<String, String> configuration) {
     Map<String, String> newConfiguration = new HashMap<>(getConfiguration());
     newConfiguration.putAll(configuration);
+    return withReplacedConfiguration(newConfiguration);
+  }
+
+  /**
+   * Returns a new metadata object that has a new configuration which does not contain any of the
+   * keys provided in {@code keysToUnset}.
+   */
+  public Metadata withConfigurationKeysUnset(Set<String> keysToUnset) {
+    Map<String, String> newConfiguration = new HashMap<>(getConfiguration());
+    keysToUnset.forEach(newConfiguration::remove);
+    return withReplacedConfiguration(newConfiguration);
+  }
+
+  /**
+   * Returns a new Metadata object with the configuration provided with newConfiguration (any prior
+   * configuration is replaced).
+   */
+  public Metadata withReplacedConfiguration(Map<String, String> newConfiguration) {
     return new Metadata(
         this.id,
         this.name,
@@ -233,6 +265,18 @@ public class Metadata {
   }
 
   /**
+   * The full schema (including partition columns) with the field names converted to their physical
+   * names (column names used in the data files) based on the table's column mapping mode. When
+   * column mapping mode is ID, fieldId metadata is preserved in the field metadata; all column
+   * metadata is otherwise removed.
+   */
+  public StructType getPhysicalSchema() {
+    ColumnMapping.ColumnMappingMode mappingMode =
+        ColumnMapping.getColumnMappingMode(getConfiguration());
+    return ColumnMapping.convertToPhysicalSchema(schema, schema, mappingMode);
+  }
+
+  /**
    * Filter out the key-value pair matches exactly with the old properties.
    *
    * @param newProperties the new properties to be filtered
@@ -265,6 +309,28 @@ public class Metadata {
     metadataMap.put(7, configurationMapValue);
 
     return new GenericRow(Metadata.FULL_SCHEMA, metadataMap);
+  }
+
+  @Override
+  public int hashCode() {
+    return Objects.hash(
+        id, name, description, format, schema, partitionColNames, createdTime, configuration);
+  }
+
+  @Override
+  public boolean equals(Object o) {
+    if (!(o instanceof Metadata)) {
+      return false;
+    }
+    Metadata other = (Metadata) o;
+    return id.equals(other.id)
+        && name.equals(other.name)
+        && description.equals(other.description)
+        && format.equals(other.format)
+        && schema.equals(other.schema)
+        && partitionColNames.get().equals(other.partitionColNames.get())
+        && createdTime.equals(other.createdTime)
+        && configuration.get().equals(other.configuration.get());
   }
 
   /** Helper method to load the partition column names. */

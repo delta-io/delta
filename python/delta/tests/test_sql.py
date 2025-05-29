@@ -99,11 +99,12 @@ class DeltaSqlTests(DeltaTestCase):
     def test_ddls(self) -> None:
         table = "deltaTable"
         table2 = "deltaTable2"
-        with self.table(table, table2):
+        with self.table(table, table + "_part", table2):
             def read_table() -> DataFrame:
                 return self.spark.sql(f"SELECT * FROM {table}")
 
             self.spark.sql(f"DROP TABLE IF EXISTS {table}")
+            self.spark.sql(f"DROP TABLE IF EXISTS {table}_part")
             self.spark.sql(f"DROP TABLE IF EXISTS {table2}")
 
             self.spark.sql(f"CREATE TABLE {table}(a LONG, b String NOT NULL) USING delta")

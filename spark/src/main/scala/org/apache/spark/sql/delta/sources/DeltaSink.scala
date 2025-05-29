@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.sources
 import java.util.concurrent.ConcurrentHashMap
 
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.DeltaOperations.StreamingUpdate
 import org.apache.spark.sql.delta.actions.{FileAction, Metadata, Protocol, SetTransaction}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
@@ -29,8 +30,6 @@ import org.apache.hadoop.fs.Path
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql._
-import org.apache.spark.sql.ColumnImplicitsShim._
-import org.apache.spark.sql.catalyst.analysis.TableOutputResolver
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.Alias
 import org.apache.spark.sql.catalyst.types.DataTypeUtils
@@ -95,8 +94,8 @@ case class DeltaSink(
       logInfo(
         log"Committed transaction, batchId=${MDC(DeltaLogKeys.BATCH_ID, batchId)}, " +
         log"duration=${MDC(DeltaLogKeys.DURATION, durationMs)} ms, " +
-        log"added ${MDC(DeltaLogKeys.NUM_FILES, newFiles.size)} files, " +
-        log"removed ${MDC(DeltaLogKeys.NUM_FILES2, deletedFiles.size)} files.")
+        log"added ${MDC(DeltaLogKeys.NUM_FILES, newFiles.size.toLong)} files, " +
+        log"removed ${MDC(DeltaLogKeys.NUM_FILES2, deletedFiles.size.toLong)} files.")
       val executionId = sc.getLocalProperty(SQLExecution.EXECUTION_ID_KEY)
       SQLMetrics.postDriverMetricUpdates(sc, executionId, metrics.values.toSeq)
     }
@@ -155,8 +154,8 @@ case class DeltaSink(
     val totalSize = newFiles.map(_.getFileSize).sum
     val totalLogicalRecords = newFiles.map(_.numLogicalRecords.getOrElse(0L)).sum
     logInfo(
-      log"Wrote ${MDC(DeltaLogKeys.NUM_FILES, newFiles.size)} files, with total size " +
-      log"${MDC(DeltaLogKeys.NUM_BYTES, totalSize)}, " +
+      log"Wrote ${MDC(DeltaLogKeys.NUM_FILES, newFiles.size.toLong)} files, " +
+        log"with total size ${MDC(DeltaLogKeys.NUM_BYTES, totalSize)}, " +
       log"${MDC(DeltaLogKeys.NUM_RECORDS, totalLogicalRecords)} logical records, " +
       log"duration=${MDC(DeltaLogKeys.DURATION, writeFilesTimeMs)} ms.")
 
@@ -178,11 +177,17 @@ case class DeltaSink(
 
     if (canOverwriteSchema) return dataSchema
 
+    val typeWideningMode = if (canMergeSchema && TypeWidening.isEnabled(protocol, metadata)) {
+        TypeWideningMode.TypeEvolution(
+          uniformIcebergCompatibleOnly = UniversalFormat.icebergEnabled(metadata))
+      } else {
+        TypeWideningMode.NoTypeWidening
+      }
     SchemaMergingUtils.mergeSchemas(
       metadata.schema,
       dataSchema,
       allowImplicitConversions = true,
-      allowTypeWidening = canMergeSchema && TypeWidening.isEnabled(protocol, metadata)
+      typeWideningMode = typeWideningMode
     )
   }
 
@@ -204,7 +209,7 @@ case class DeltaSink(
       val castExpr = castIfNeeded(
         fromExpression = data.col(columnName).expr,
         dataType = targetTypes(columnName),
-        allowStructEvolution = canMergeSchema,
+        castingBehavior = CastByName(allowMissingStructField = true),
         columnName = columnName
       )
       Column(Alias(castExpr, columnName)())

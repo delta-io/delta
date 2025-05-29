@@ -61,7 +61,8 @@ class MapColumnReader extends RepeatedValueConverter {
     // See https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#maps for details
     checkArgument(
         typeFromFile.getFieldCount() == 1,
-        "Expected exactly one repeated field in the map type, but got: " + typeFromFile);
+        "Expected exactly one repeated field in the map type, but got: %s",
+        typeFromFile);
 
     GroupType innerMapType = typeFromFile.getType(0).asGroupType();
     Converter[] elemConverters = new Converter[2];

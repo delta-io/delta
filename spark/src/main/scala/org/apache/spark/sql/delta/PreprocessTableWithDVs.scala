@@ -25,7 +25,7 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, EqualTo, Literal}
 import org.apache.spark.sql.catalyst.expressions.Literal.TrueLiteral
 import org.apache.spark.sql.catalyst.plans.logical.{Filter, LogicalPlan, Project}
-import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
+import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation, LogicalRelationWithTable}
 import org.apache.spark.sql.execution.datasources.FileFormat.METADATA_NAME
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.types.StructType
@@ -59,9 +59,9 @@ trait PreprocessTableWithDVs extends SubqueryTransformerHelper {
 
 object ScanWithDeletionVectors {
   def unapply(a: LogicalRelation): Option[LogicalPlan] = a match {
-    case scan @ LogicalRelation(
+    case scan @ LogicalRelationWithTable(
             relation @ HadoopFsRelation(
-            index: TahoeFileIndex, _, _, _, format: DeltaParquetFileFormat, _), _, _, _) =>
+            index: TahoeFileIndex, _, _, _, format: DeltaParquetFileFormat, _), _) =>
       dvEnabledScanFor(scan, relation, format, index)
     case _ => None
   }

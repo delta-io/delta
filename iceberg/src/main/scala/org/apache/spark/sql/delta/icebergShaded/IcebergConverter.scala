@@ -23,7 +23,7 @@ import scala.collection.JavaConverters._
 import scala.util.control.Breaks._
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaFileNotFoundException, DeltaFileProviderUtils, IcebergConstants, OptimisticTransactionImpl, Snapshot, UniversalFormat, UniversalFormatConverter}
+import org.apache.spark.sql.delta.{CommittedTransaction, DeltaErrors, DeltaFileNotFoundException, DeltaFileProviderUtils, DeltaOperations, IcebergConstants, Snapshot, UniversalFormat, UniversalFormatConverter}
 import org.apache.spark.sql.delta.DeltaOperations.OPTIMIZE_OPERATION_NAME
 import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, RemoveFile}
 import org.apache.spark.sql.delta.hooks.IcebergConverterHook
@@ -32,8 +32,10 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.Path
-import shadedForDelta.org.apache.iceberg.{Table => IcebergTable}
+import shadedForDelta.org.apache.iceberg.{Table => IcebergTable, TableProperties}
+import shadedForDelta.org.apache.iceberg.exceptions.CommitFailedException
 import shadedForDelta.org.apache.iceberg.hive.{HiveCatalog, HiveTableOperations}
+import shadedForDelta.org.apache.iceberg.util.LocationUtil
 
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
@@ -54,8 +56,17 @@ object IcebergConverter {
    */
   val DELTA_TIMESTAMP_PROPERTY = "delta-timestamp"
 
+  /**
+   * Property to be set in translated Iceberg metadata files.
+   * Indicates the base delta commit version # that the conversion started from
+   */
+  val BASE_DELTA_VERSION_PROPERTY = "base-delta-version"
+
   def getLastConvertedDeltaVersion(table: Option[IcebergTable]): Option[Long] =
     table.flatMap(_.properties().asScala.get(DELTA_VERSION_PROPERTY)).map(_.toLong)
+
+  def getLastConvertedDeltaTimestamp(table: Option[IcebergTable]): Option[Long] =
+    table.flatMap(_.properties().asScala.get(DELTA_TIMESTAMP_PROPERTY)).map(_.toLong)
 }
 
 /**
@@ -68,9 +79,9 @@ class IcebergConverter(spark: SparkSession)
   // Save an atomic reference of the snapshot being converted, and the txn that triggered
   // resulted in the specified snapshot
   protected val currentConversion =
-    new AtomicReference[(Snapshot, OptimisticTransactionImpl)]()
+    new AtomicReference[(Snapshot, CommittedTransaction)]()
   protected val standbyConversion =
-    new AtomicReference[(Snapshot, OptimisticTransactionImpl)]()
+    new AtomicReference[(Snapshot, CommittedTransaction)]()
 
   // Whether our async converter thread is active. We may already have an alive thread that is
   // about to shutdown, but in such cases this value should return false.
@@ -89,7 +100,7 @@ class IcebergConverter(spark: SparkSession)
    */
   override def enqueueSnapshotForConversion(
       snapshotToConvert: Snapshot,
-      txn: OptimisticTransactionImpl): Unit = {
+      txn: CommittedTransaction): Unit = {
     if (!UniversalFormat.icebergEnabled(snapshotToConvert.metadata)) {
       return
     }
@@ -117,7 +128,7 @@ class IcebergConverter(spark: SparkSession)
                       convertSnapshot(snapshotVal, prevTxn)
                     } catch {
                       case NonFatal(e) =>
-                        logWarning("Error when writing Iceberg metadata asynchronously", e)
+                        logWarning(log"Error when writing Iceberg metadata asynchronously", e)
                         recordDeltaEvent(
                           log,
                           "delta.iceberg.conversion.async.error",
@@ -139,7 +150,7 @@ class IcebergConverter(spark: SparkSession)
               }
 
           // Get a snapshot to convert from the icebergQueue. Sets the queue to null after.
-          private def getNextSnapshot: (Snapshot, OptimisticTransactionImpl) =
+          private def getNextSnapshot: (Snapshot, CommittedTransaction) =
             asyncThreadLock.synchronized {
               val potentialSnapshotAndTxn = standbyConversion.get()
               currentConversion.set(potentialSnapshotAndTxn)
@@ -177,14 +188,17 @@ class IcebergConverter(spark: SparkSession)
   override def convertSnapshot(
       snapshotToConvert: Snapshot, catalogTable: CatalogTable): Option[(Long, Long)] = {
     try {
-      convertSnapshot(snapshotToConvert, None, catalogTable)
+      convertSnapshotWithRetry(snapshotToConvert, None, catalogTable)
     } catch {
       case NonFatal(e) =>
-        logError("Error when converting to Iceberg metadata", e)
+        logError(log"Error when converting to Iceberg metadata", e)
+        val (opType, baseTags) =
+            ("delta.iceberg.conversion.error", Map.empty[String, String])
+
         recordDeltaEvent(
           snapshotToConvert.deltaLog,
-          "delta.iceberg.conversion.error",
-          data = Map(
+          opType,
+          data = baseTags ++ Map(
             "exception" -> ExceptionUtils.getMessage(e),
             "stackTrace" -> ExceptionUtils.getStackTrace(e)
           )
@@ -202,10 +216,10 @@ class IcebergConverter(spark: SparkSession)
    * @return Converted Delta version and commit timestamp
    */
   override def convertSnapshot(
-      snapshotToConvert: Snapshot, txn: OptimisticTransactionImpl): Option[(Long, Long)] = {
+      snapshotToConvert: Snapshot, txn: CommittedTransaction): Option[(Long, Long)] = {
     try {
       txn.catalogTable match {
-        case Some(table) => convertSnapshot(snapshotToConvert, Some(txn), table)
+        case Some(table) => convertSnapshotWithRetry(snapshotToConvert, Some(txn), table)
         case _ =>
           val msg = s"CatalogTable for table ${snapshotToConvert.deltaLog.tableId} " +
             s"is empty in txn. Skip iceberg conversion."
@@ -214,7 +228,7 @@ class IcebergConverter(spark: SparkSession)
       }
     } catch {
       case NonFatal(e) =>
-        logError("Error when converting to Iceberg metadata", e)
+        logError(log"Error when converting to Iceberg metadata", e)
         recordDeltaEvent(
           txn.deltaLog,
           "delta.iceberg.conversion.error",
@@ -228,6 +242,41 @@ class IcebergConverter(spark: SparkSession)
   }
 
   /**
+   *  Convert the specified snapshot into Iceberg with retry
+   */
+  private def convertSnapshotWithRetry(
+      snapshotToConvert: Snapshot,
+      txnOpt: Option[CommittedTransaction],
+      catalogTable: CatalogTable,
+      maxRetry: Int =
+        spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_UNIFORM_ICEBERG_RETRY_TIMES)
+  ): Option[(Long, Long)] = {
+    var retryAttempt = 0
+    while (retryAttempt < maxRetry) {
+      try {
+        return convertSnapshot(snapshotToConvert, txnOpt, catalogTable)
+      } catch {
+        case e: CommitFailedException if retryAttempt < maxRetry =>
+          retryAttempt += 1
+          val lastConvertedIcebergTable = loadIcebergTable(snapshotToConvert, catalogTable)
+          val lastDeltaVersionConverted = IcebergConverter
+            .getLastConvertedDeltaVersion(lastConvertedIcebergTable)
+          val lastConvertedDeltaTimestamp = IcebergConverter
+            .getLastConvertedDeltaTimestamp(lastConvertedIcebergTable)
+          // Do not retry if the current or higher Delta version is already converted
+          (lastDeltaVersionConverted, lastConvertedDeltaTimestamp) match {
+            case (Some(version), Some(timestamp)) if version >= snapshotToConvert.version =>
+              return Some(version, timestamp)
+            case _ =>
+              logWarning(s"CommitFailedException when converting to Iceberg metadata;" +
+                s" retry count $retryAttempt", e)
+          }
+      }
+    }
+    throw new IllegalStateException("should not happen")
+  }
+
+  /**
    * Convert the specified snapshot into Iceberg. NOTE: This operation is blocking. Call
    * enqueueSnapshotForConversion to run the operation asynchronously.
    * @param snapshotToConvert the snapshot that needs to be converted to Iceberg
@@ -238,7 +287,7 @@ class IcebergConverter(spark: SparkSession)
    */
   private def convertSnapshot(
       snapshotToConvert: Snapshot,
-      txnOpt: Option[OptimisticTransactionImpl],
+      txnOpt: Option[CommittedTransaction],
       catalogTable: CatalogTable): Option[(Long, Long)] =
       recordFrameProfile("Delta", "IcebergConverter.convertSnapshot") {
     val cleanedCatalogTable =
@@ -259,15 +308,15 @@ class IcebergConverter(spark: SparkSession)
 
     // Get the most recently converted delta snapshot, if applicable
     val prevConvertedSnapshotOpt = (lastDeltaVersionConverted, txnOpt) match {
-      case (Some(version), Some(txn)) if version == txn.snapshot.version =>
-        Some(txn.snapshot)
+      case (Some(version), Some(txn)) if version == txn.readSnapshot.version =>
+        Some(txn.readSnapshot)
       // Check how long it has been since we last converted to Iceberg. If outside the threshold,
       // fall back to state reconstruction to get the actions, to protect driver from OOMing.
       case (Some(version), _) if snapshotToConvert.version - version <= maxCommitsToConvert =>
         try {
           // TODO: We can optimize this by providing a checkpointHint to getSnapshotAt. Check if
           //  txn.snapshot.version < version. If true, use txn.snapshot's checkpoint as a hint.
-          Some(log.getSnapshotAt(version))
+          Some(log.getSnapshotAt(version, catalogTableOpt = Some(catalogTable)))
         } catch {
           // If we can't load the file since the last time Iceberg was converted, it's likely that
           // the commit file expired. Treat this like a new Iceberg table conversion.
@@ -288,7 +337,7 @@ class IcebergConverter(spark: SparkSession)
     }
 
     val icebergTxn = new IcebergConversionTransaction(
-      cleanedCatalogTable, log.newDeltaHadoopConf(), snapshotToConvert, tableOp,
+      spark, cleanedCatalogTable, log.newDeltaHadoopConf(), snapshotToConvert, tableOp,
       lastConvertedIcebergSnapshotId, lastDeltaVersionConverted)
 
     // Write out the actions taken since the last conversion (or since table creation).
@@ -305,7 +354,10 @@ class IcebergConverter(spark: SparkSession)
         // Read the actions directly from the delta json files.
         // TODO: Run this as a spark job on executors
         val deltaFiles = DeltaFileProviderUtils.getDeltaFilesInVersionRange(
-          spark, log, prevSnapshot.version + 1, snapshotToConvert.version)
+          spark = spark,
+          deltaLog = log,
+          startVersion = prevSnapshot.version + 1,
+          endVersion = snapshotToConvert.version)
 
         recordDeltaEvent(
           snapshotToConvert.deltaLog,
@@ -328,7 +380,6 @@ class IcebergConverter(spark: SparkSession)
               runIcebergConversionForActions(
                 icebergTxn,
                 actions,
-                log.dataPath,
                 prevConvertedSnapshotOpt)
             }
           } finally {
@@ -360,7 +411,7 @@ class IcebergConverter(spark: SparkSession)
           .grouped(actionBatchSize)
           .foreach { actions =>
             needsExpireSnapshot ||= existsOptimize(actions)
-            runIcebergConversionForActions(icebergTxn, actions, log.dataPath, None)
+            runIcebergConversionForActions(icebergTxn, actions, None)
         }
 
         // Always attempt to update table metadata (schema/properties) for REPLACE_TABLE
@@ -373,6 +424,24 @@ class IcebergConverter(spark: SparkSession)
         log"[path = ${MDC(DeltaLogKeys.PATH, log.logPath)}] tableId=" +
         log"${MDC(DeltaLogKeys.TABLE_ID, log.tableId)}]")
       val expireSnapshotHelper = icebergTxn.getExpireSnapshotHelper()
+      val table = icebergTxn.txn.table()
+      val tableLocation = LocationUtil.stripTrailingSlash(table.location)
+      val defaultWriteMetadataLocation = s"$tableLocation/metadata"
+      val writeMetadataLocation = LocationUtil.stripTrailingSlash(
+        table.properties().getOrDefault(
+          TableProperties.WRITE_METADATA_LOCATION, defaultWriteMetadataLocation))
+      if (snapshotToConvert.path.toString == writeMetadataLocation) {
+        // Don't attempt any file cleanup in the edge-case configuration
+        // that the data location (in Uniform the table root location)
+        // is the same as the Iceberg metadata location
+        expireSnapshotHelper.cleanExpiredFiles(false)
+      } else {
+        expireSnapshotHelper.deleteWith(path => {
+          if (path.startsWith(writeMetadataLocation)) {
+            table.io().deleteFile(path)
+          }
+        })
+      }
       expireSnapshotHelper.commit()
     }
 
@@ -388,9 +457,9 @@ class IcebergConverter(spark: SparkSession)
   private def cleanCatalogTableIfEnablingUniform(
       table: CatalogTable,
       snapshotToConvert: Snapshot,
-      txnOpt: Option[OptimisticTransactionImpl]): CatalogTable = {
+      txnOpt: Option[CommittedTransaction]): CatalogTable = {
     val disabledIceberg = txnOpt.map(txn =>
-      !UniversalFormat.icebergEnabled(txn.snapshot.metadata)
+      !UniversalFormat.icebergEnabled(txn.readSnapshot.metadata)
     ).getOrElse(!UniversalFormat.icebergEnabled(table.properties))
     val enablingUniform =
       disabledIceberg && UniversalFormat.icebergEnabled(snapshotToConvert.metadata)
@@ -444,18 +513,17 @@ class IcebergConverter(spark: SparkSession)
   private[delta] def runIcebergConversionForActions(
       icebergTxn: IcebergConversionTransaction,
       actionsToCommit: Seq[Action],
-      dataPath: Path,
       prevSnapshotOpt: Option[Snapshot]): Unit = {
     prevSnapshotOpt match {
       case None =>
         // If we don't have a previous snapshot, that implies that the table is either being
         // created or replaced. We can assume that the actions have already been deduped, and
         // only addFiles are present.
-        val appendHelper = icebergTxn.getAppendOnlyHelper()
+        val appendHelper = icebergTxn.getAppendOnlyHelper
         actionsToCommit.foreach {
           case a: AddFile => appendHelper.add(a)
           case _ => throw new IllegalStateException(s"Must provide only AddFiles when creating " +
-            s"or replacing an Iceberg Table $dataPath.")
+            s"or replacing an Iceberg Table.")
         }
         appendHelper.commit()
 
@@ -498,32 +566,39 @@ class IcebergConverter(spark: SparkSession)
           .filter(sa => sa.remove != null || sa.add != null)
 
         if (hasAdds && hasRemoves && !hasDataChange && allDeltaActionsCaptured) {
-          val rewriteHelper = icebergTxn.getRewriteHelper()
+          val rewriteHelper = icebergTxn.getRewriteHelper
           val split = addsAndRemoves.partition(_.add == null)
-          rewriteHelper.rewrite(removes = split._1.map(_.remove), adds = split._2.map(_.add))
+          addsAndRemoves.foreach { action =>
+            if (action.add != null) {
+              rewriteHelper.add(action.add)
+            } else {
+              rewriteHelper.add(action.remove)
+            }
+          }
           rewriteHelper.commit()
         } else if ((hasAdds && hasRemoves) || !allDeltaActionsCaptured) {
-          val overwriteHelper = icebergTxn.getOverwriteHelper()
+          val overwriteHelper = icebergTxn.getOverwriteHelper
           addsAndRemoves.foreach { action =>
             if (action.add != null) {
               overwriteHelper.add(action.add)
             } else {
-              overwriteHelper.remove(action.remove)
+              overwriteHelper.add(action.remove)
             }
           }
           overwriteHelper.commit()
         } else if (hasAdds) {
           if (!hasRemoves && !hasDataChange && allDeltaActionsCaptured) {
-            logInfo(s"Skip Iceberg conversion for commit that only has AddFiles " +
-              s"without any RemoveFiles or data change. CommitInfo: $commitInfo")
+            logInfo(log"Skip Iceberg conversion for commit that only has AddFiles " +
+              log"without any RemoveFiles or data change. CommitInfo: " +
+              log"${MDC(DeltaLogKeys.DELTA_COMMIT_INFO, commitInfo)}")
           } else {
-            val appendHelper = icebergTxn.getAppendOnlyHelper()
+            val appendHelper = icebergTxn.getAppendOnlyHelper
               addsAndRemoves.foreach(action => appendHelper.add(action.add))
               appendHelper.commit()
           }
         } else if (hasRemoves) {
-          val removeHelper = icebergTxn.getRemoveOnlyHelper()
-          addsAndRemoves.foreach(action => removeHelper.remove(action.remove))
+          val removeHelper = icebergTxn.getRemoveOnlyHelper
+          addsAndRemoves.foreach(action => removeHelper.add(action.remove))
           removeHelper.commit()
         }
     }

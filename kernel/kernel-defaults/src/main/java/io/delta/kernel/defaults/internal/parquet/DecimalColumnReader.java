@@ -114,9 +114,10 @@ public class DecimalColumnReader {
       int precisionIncrease = decimalType.getPrecision() - precision;
       checkArgument(
           scaleIncrease >= 0 && precisionIncrease >= scaleIncrease,
-          String.format(
-              "Found Delta type %s but Parquet type has precision=%s and scale=%s",
-              decimalType, precision, scale));
+          "Found Delta type %s but Parquet type has precision=%s and scale=%s",
+          decimalType,
+          precision,
+          scale);
       this.scale = scale;
       this.decimalType = decimalType;
       this.values = new BigDecimal[initialBatchSize];

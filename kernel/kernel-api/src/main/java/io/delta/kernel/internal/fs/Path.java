@@ -55,35 +55,6 @@ public class Path implements Comparable<Path>, Serializable, ObjectInputValidati
   private URI uri; // a hierarchical uri
 
   /**
-   * Test whether this Path uses a scheme and is relative. Pathnames with scheme and relative path
-   * are illegal.
-   */
-  void checkNotSchemeWithRelative() {
-    if (toUri().isAbsolute() && !isUriPathAbsolute()) {
-      throw new IllegalArgumentException("Unsupported name: has scheme but relative path-part");
-    }
-  }
-
-  void checkNotRelative() {
-    if (!isAbsolute() && toUri().getScheme() == null) {
-      throw new IllegalArgumentException("Path is relative");
-    }
-  }
-
-  /**
-   * Return a version of the given Path without the scheme information.
-   *
-   * @param path the source Path
-   * @return a copy of this Path without the scheme information
-   */
-  public static Path getPathWithoutSchemeAndAuthority(Path path) {
-    // This code depends on Path.toString() to remove the leading slash before
-    // the drive specification on Windows.
-    Path newPath = path.isUriPathAbsolute() ? new Path(null, null, path.toUri().getPath()) : path;
-    return newPath;
-  }
-
-  /**
    * Create a new Path based on the child path resolved against the parent path.
    *
    * @param parent the parent path
@@ -239,27 +210,6 @@ public class Path implements Comparable<Path>, Serializable, ObjectInputValidati
   }
 
   /**
-   * Merge 2 paths such that the second path is appended relative to the first. The returned path
-   * has the scheme and authority of the first path. On Windows, the drive specification in the
-   * second path is discarded.
-   *
-   * @param path1 the first path
-   * @param path2 the second path, to be appended relative to path1
-   * @return the merged path
-   */
-  public static Path mergePaths(Path path1, Path path2) {
-    String path2Str = path2.toUri().getPath();
-    path2Str = path2Str.substring(startPositionWithoutWindowsDrive(path2Str));
-    // Add path components explicitly, because simply concatenating two path
-    // string is not safe, for example:
-    // "/" + "/foo" yields "//foo", which will be parsed as authority in Path
-    return new Path(
-        path1.toUri().getScheme(),
-        path1.toUri().getAuthority(),
-        path1.toUri().getPath() + path2Str);
-  }
-
-  /**
    * Normalize a path string to use non-duplicated forward slashes as the path separator and remove
    * any trailing path separators.
    *
@@ -303,37 +253,12 @@ public class Path implements Comparable<Path>, Serializable, ObjectInputValidati
   }
 
   /**
-   * Determine whether a given path string represents an absolute path on Windows. e.g. "C:/a/b" is
-   * an absolute path. "C:a/b" is not.
-   *
-   * @param pathString the path string to evaluate
-   * @param slashed true if the given path is prefixed with "/"
-   * @return true if the supplied path looks like an absolute path with a Windows drive-specifier
-   */
-  public static boolean isWindowsAbsolutePath(final String pathString, final boolean slashed) {
-    int start = startPositionWithoutWindowsDrive(pathString);
-    return start > 0
-        && pathString.length() > start
-        && ((pathString.charAt(start) == SEPARATOR_CHAR) || (pathString.charAt(start) == '\\'));
-  }
-
-  /**
    * Convert this Path to a URI.
    *
    * @return this Path as a URI
    */
   public URI toUri() {
     return uri;
-  }
-
-  /**
-   * Returns true if the path component (i.e. directory) of this URI is absolute
-   * <strong>and</strong> the scheme is null, <b>and</b> the authority is null.
-   *
-   * @return whether the path is absolute and the URI has no scheme nor authority parts
-   */
-  public boolean isAbsoluteAndSchemeAuthorityNull() {
-    return (isUriPathAbsolute() && uri.getScheme() == null && uri.getAuthority() == null);
   }
 
   /**
@@ -399,16 +324,6 @@ public class Path implements Comparable<Path>, Serializable, ObjectInputValidati
     return new Path(uri.getScheme(), uri.getAuthority(), parent);
   }
 
-  /**
-   * Adds a suffix to the final name in the path.
-   *
-   * @param suffix the suffix to add
-   * @return a new path with the suffix added
-   */
-  public Path suffix(String suffix) {
-    return new Path(getParent(), getName() + suffix);
-  }
-
   @Override
   public String toString() {
     // we can't use uri.toString(), which escapes everything, because we want
@@ -455,67 +370,6 @@ public class Path implements Comparable<Path>, Serializable, ObjectInputValidati
   @Override
   public int compareTo(Path o) {
     return this.uri.compareTo(o.uri);
-  }
-
-  /**
-   * Returns the number of elements in this path.
-   *
-   * @return the number of elements in this path
-   */
-  public int depth() {
-    String path = uri.getPath();
-    int depth = 0;
-    int slash = path.length() == 1 && path.charAt(0) == '/' ? -1 : 0;
-    while (slash != -1) {
-      depth++;
-      slash = path.indexOf(SEPARATOR, slash + 1);
-    }
-    return depth;
-  }
-
-  /**
-   * Returns a qualified path object.
-   *
-   * @param defaultUri if this path is missing the scheme or authority components, borrow them from
-   *     this URI
-   * @param workingDir if this path isn't absolute, treat it as relative to this working directory
-   * @return this path if it contains a scheme and authority and is absolute, or a new path that
-   *     includes a path and authority and is fully qualified
-   */
-  public Path makeQualified(URI defaultUri, Path workingDir) {
-    Path path = this;
-    if (!isAbsolute()) {
-      path = new Path(workingDir, this);
-    }
-
-    URI pathUri = path.toUri();
-
-    String scheme = pathUri.getScheme();
-    String authority = pathUri.getAuthority();
-    String fragment = pathUri.getFragment();
-
-    if (scheme != null && (authority != null || defaultUri.getAuthority() == null)) {
-      return path;
-    }
-
-    if (scheme == null) {
-      scheme = defaultUri.getScheme();
-    }
-
-    if (authority == null) {
-      authority = defaultUri.getAuthority();
-      if (authority == null) {
-        authority = "";
-      }
-    }
-
-    URI newUri = null;
-    try {
-      newUri = new URI(scheme, authority, normalizePath(scheme, pathUri.getPath()), null, fragment);
-    } catch (URISyntaxException e) {
-      throw new IllegalArgumentException(e);
-    }
-    return new Path(newUri);
   }
 
   /**

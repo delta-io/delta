@@ -16,24 +16,23 @@
 
 package org.apache.spark.sql.delta
 
-import java.io.File
 import java.sql.Timestamp
 import java.text.SimpleDateFormat
 import java.util.Date
 
 import scala.language.implicitConversions
 
+import org.apache.spark.sql.delta.DeltaTestUtils.modifyCommitTimestamp
 import org.apache.spark.sql.delta.actions.AddCDCFile
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.sources.{DeltaSourceOffset, DeltaSQLConf}
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
+import org.apache.spark.sql.delta.util.JsonUtils
 import io.delta.tables._
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.{SparkConf, SparkThrowable}
-import org.apache.spark.sql.DataFrame
+import org.apache.spark.SparkConf
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.streaming.{StreamingQuery, StreamingQueryException, StreamTest, Trigger}
 import org.apache.spark.sql.types.StructType
@@ -47,16 +46,6 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
 
   override protected def sparkConf: SparkConf = super.sparkConf
     .set(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "true")
-
-  /** Modify timestamp for a delta commit, used to test timestamp querying */
-  def modifyDeltaTimestamp(deltaLog: DeltaLog, version: Long, time: Long): Unit = {
-    val file = new File(FileNames.unsafeDeltaFile(deltaLog.logPath, version).toUri)
-    file.setLastModified(time)
-    val crc = new File(FileNames.checksumFile(deltaLog.logPath, version).toUri)
-    if (crc.exists()) {
-      crc.setLastModified(time)
-    }
-  }
 
   /**
    * Create two tests for maxFilesPerTrigger and maxBytesPerTrigger
@@ -198,11 +187,11 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
       // version 0
       Seq(1, 2, 3).toDF("id").write.delta(inputDir.toString)
       val deltaLog = DeltaLog.forTable(spark, inputDir.getAbsolutePath)
-      modifyDeltaTimestamp(deltaLog, 0, 1000)
+      modifyCommitTimestamp(deltaLog, 0, 1000)
 
       // version 1
       Seq(-1).toDF("id").write.mode("append").delta(inputDir.toString)
-      modifyDeltaTimestamp(deltaLog, 1, 2000)
+      modifyCommitTimestamp(deltaLog, 1, 2000)
 
       val deltaTable = io.delta.tables.DeltaTable.forPath(inputDir.getAbsolutePath)
       val startTs = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
@@ -231,7 +220,7 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
       // version 0
       Seq(1, 2, 3, 4, 5, 6).toDF("id").write.delta(inputDir.toString)
       val deltaLog = DeltaLog.forTable(spark, inputDir.getAbsolutePath)
-      modifyDeltaTimestamp(deltaLog, 0, 1000)
+      modifyCommitTimestamp(deltaLog, 0, 1000)
 
       val df1 = spark.readStream
         .option(DeltaOptions.CDC_READ_OPTION, "true")
@@ -278,7 +267,7 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
           Seq(1, 2, 3).toDF("id").write.delta(inputDir.toString)
           val inputPath = inputDir.getAbsolutePath
           val deltaLog = DeltaLog.forTable(spark, inputPath)
-          modifyDeltaTimestamp(deltaLog, 0, 1000)
+          modifyCommitTimestamp(deltaLog, 0, 1000)
 
           val deltaTable = io.delta.tables.DeltaTable.forPath(inputPath)
 
@@ -1065,6 +1054,21 @@ class DeltaCDCStreamDeletionVectorSuite extends DeltaCDCStreamSuite
 }
 
 class DeltaCDCStreamSuite extends DeltaCDCStreamSuiteBase
+class DeltaCDCStreamWithCoordinatedCommitsBatch1Suite
+  extends DeltaCDCStreamSuite {
+  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(1)
+}
+
+class DeltaCDCStreamWithCoordinatedCommitsBatch10Suite
+  extends DeltaCDCStreamSuite {
+  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(10)
+}
+
+class DeltaCDCStreamWithCoordinatedCommitsBatch100Suite
+    extends DeltaCDCStreamSuite {
+  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(100)
+}
+
 abstract class DeltaCDCStreamColumnMappingSuiteBase extends DeltaCDCStreamSuite
   with ColumnMappingStreamingBlockedWorkflowSuiteBase with DeltaColumnMappingSelectedTestMixin {
 

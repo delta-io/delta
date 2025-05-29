@@ -49,6 +49,7 @@ object Unidoc {
       generateScalaDoc: Boolean = false,
       classPathToSkip: String = null
     ): Project = {
+      if (sys.env.contains("DISABLE_UNIDOC")) return projectToUpdate
       if (!generatedJavaDoc && !generateScalaDoc) return projectToUpdate
 
       var updatedProject: Project = projectToUpdate
@@ -69,7 +70,12 @@ object Unidoc {
           generateUnidocSettings(docTitle, generateScalaDoc, classPathToSkip),
 
           // Ensure unidoc is run with tests.
-          (Test / test) := ((Test / test) dependsOn (Compile / unidoc)).value
+          (Test / test) := ((Test / test) dependsOn (Compile / unidoc)).value,
+
+          // hide package private types and methods in javadoc
+          scalacOptions ++= Seq(
+            "-P:genjavadoc:strictVisibility=true"
+          ),
         )
     }
 

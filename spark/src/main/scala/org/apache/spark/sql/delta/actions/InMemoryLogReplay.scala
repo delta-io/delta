@@ -47,7 +47,12 @@ class InMemoryLogReplay(
   private val transactions = new scala.collection.mutable.HashMap[String, SetTransaction]()
   private val domainMetadatas = collection.mutable.Map.empty[String, DomainMetadata]
   private val activeFiles = new scala.collection.mutable.HashMap[UniqueFileActionTuple, AddFile]()
-  private val tombstones = new scala.collection.mutable.HashMap[UniqueFileActionTuple, RemoveFile]()
+  // RemoveFiles that had cancelled AddFile during replay
+  private val cancelledRemoveFiles =
+    new scala.collection.mutable.HashMap[UniqueFileActionTuple, RemoveFile]()
+  // RemoveFiles that had NOT cancelled any AddFile during replay
+  private val activeRemoveFiles =
+    new scala.collection.mutable.HashMap[UniqueFileActionTuple, RemoveFile]()
 
   override def append(version: Long, actions: Iterator[Action]): Unit = {
     assert(currentVersion == -1 || version == currentVersion + 1,
@@ -69,11 +74,15 @@ class InMemoryLogReplay(
         val uniquePath = UniqueFileActionTuple(add.pathAsUri, add.getDeletionVectorUniqueId)
         activeFiles(uniquePath) = add.copy(dataChange = false)
         // Remove the tombstone to make sure we only output one `FileAction`.
-        tombstones.remove(uniquePath)
+        cancelledRemoveFiles.remove(uniquePath)
+        // Remove from activeRemoveFiles to handle commits that add a previously-removed file
+        activeRemoveFiles.remove(uniquePath)
       case remove: RemoveFile =>
         val uniquePath = UniqueFileActionTuple(remove.pathAsUri, remove.getDeletionVectorUniqueId)
-        activeFiles.remove(uniquePath)
-        tombstones(uniquePath) = remove.copy(dataChange = false)
+        activeFiles.remove(uniquePath) match {
+          case Some(_) => cancelledRemoveFiles(uniquePath) = remove
+          case None => activeRemoveFiles(uniquePath) = remove
+        }
       case _: CommitInfo => // do nothing
       case _: AddCDCFile => // do nothing
       case null => // Some crazy future feature. Ignore
@@ -81,7 +90,9 @@ class InMemoryLogReplay(
   }
 
   private def getTombstones: Iterable[FileAction] = {
-    tombstones.values.filter(_.delTimestamp > minFileRetentionTimestamp)
+    (cancelledRemoveFiles.values ++ activeRemoveFiles.values)
+      .filter(_.delTimestamp > minFileRetentionTimestamp)
+      .map(_.copy(dataChange = false))
   }
 
   private[delta] def getTransactions: Iterable[SetTransaction] = {

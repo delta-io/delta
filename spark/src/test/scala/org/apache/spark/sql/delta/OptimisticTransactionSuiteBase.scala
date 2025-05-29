@@ -58,7 +58,8 @@ trait OptimisticTransactionSuiteBase
   protected def check(
       name: String,
       conflicts: Boolean,
-      setup: Seq[Action] = Seq(Metadata(), Action.supportedProtocolVersion()),
+      setup: Seq[Action] = Seq(Metadata(), Action.supportedProtocolVersion(
+        featuresToExclude = Seq(CatalogOwnedTableFeature))),
       reads: Seq[OptimisticTransaction => Unit],
       concurrentWrites: Seq[Action],
       actions: Seq[Action],

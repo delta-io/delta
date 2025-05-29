@@ -28,6 +28,7 @@ import scala.collection.mutable
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{DeltaFileOperations, JsonUtils, Utils => DeltaUtils}
@@ -43,7 +44,6 @@ import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.internal.Logging
 import org.apache.spark.paths.SparkPath
-import org.apache.spark.sql.ColumnImplicitsShim._
 import org.apache.spark.sql.{Column, Encoder, SparkSession}
 import org.apache.spark.sql.catalyst.ScalaReflection
 import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
@@ -143,13 +143,13 @@ case class Protocol private (
   // Correctness check
   // Reader and writer versions must match the status of reader and writer features
   require(
-    (supportsReaderFeatures || canSupportColumnMappingFeature) == readerFeatures.isDefined,
+    supportsReaderFeatures == readerFeatures.isDefined,
     "Mismatched minReaderVersion and readerFeatures.")
   require(
     supportsWriterFeatures == writerFeatures.isDefined,
     "Mismatched minWriterVersion and writerFeatures.")
 
-  // When reader is on table features, writer must be on table features too.
+  // When reader is on table features, writer must be on table features too
   if (supportsReaderFeatures && !supportsWriterFeatures) {
     throw DeltaErrors.tableFeatureReadRequiresWriteException(
       TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION)
@@ -166,7 +166,7 @@ case class Protocol private (
    */
   @JsonIgnore
   lazy val simpleString: String = {
-    if (!supportsTableFeatures) {
+    if (!supportsReaderFeatures && !supportsWriterFeatures) {
       s"$minReaderVersion,$minWriterVersion"
     } else {
       val readerFeaturesStr = readerFeatures
@@ -203,12 +203,10 @@ object Protocol {
   def apply(
       minReaderVersion: Int = Action.readerVersion,
       minWriterVersion: Int = Action.writerVersion): Protocol = {
-    val shouldAddReaderFeatures = supportsReaderFeatures(minReaderVersion) ||
-      canSupportColumnMappingFeature(minReaderVersion, minWriterVersion)
     new Protocol(
       minReaderVersion = minReaderVersion,
       minWriterVersion = minWriterVersion,
-      readerFeatures = if (shouldAddReaderFeatures) Some(Set()) else None,
+      readerFeatures = if (supportsReaderFeatures(minReaderVersion)) Some(Set()) else None,
       writerFeatures = if (supportsWriterFeatures(minWriterVersion)) Some(Set()) else None)
   }
 
@@ -216,7 +214,7 @@ object Protocol {
   def forTableFeature(tf: TableFeature): Protocol = {
     // Every table feature is a writer feature.
     val writerFeatures = tf.requiredFeatures + tf
-    val readerFeatures = writerFeatures.filter(_.isReaderWriterFeature)
+    val readerFeatures = writerFeatures.filter(f => f.isReaderWriterFeature && !f.isLegacyFeature)
     val writerFeaturesNames = writerFeatures.map(_.name)
     val readerFeaturesNames = readerFeatures.map(_.name)
 
@@ -593,7 +591,15 @@ sealed trait FileAction extends Action {
   @JsonIgnore
   val tags: Map[String, String]
   @JsonIgnore
-  lazy val pathAsUri: URI = new URI(path)
+  lazy val pathAsUri: URI = {
+    // Paths like http:example.com are opaque URIs that have schema and scheme-specific parts, but
+    // path is not defined. We do not support such paths, so we throw an exception.
+    val uri = new URI(path)
+    if (uri.getPath == null) {
+      throw DeltaErrors.cannotReconstructPathFromURI(path)
+    }
+    uri
+  }
   @JsonIgnore
   def numLogicalRecords: Option[Long]
   @JsonIgnore
@@ -952,6 +958,10 @@ case class RemoveFile(
 
   @JsonIgnore
   override def getFileSize: Long = size.getOrElse(0L)
+
+  /** Only for testing. */
+  @JsonIgnore
+  private [delta] def isDVTombstone: Boolean = DeletionVectorDescriptor.isDeletionVectorPath(new Path(path))
 
 }
 // scalastyle:on

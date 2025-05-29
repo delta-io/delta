@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import java.io.File
 
 import org.apache.spark.sql.delta.actions.Format
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 
@@ -27,7 +28,8 @@ import org.apache.spark.sql.streaming.StreamTest
 import org.apache.spark.sql.types.StructType
 
 trait DeltaSourceSuiteBase extends StreamTest
-  with DeltaSQLTestUtils {
+  with DeltaSQLTestUtils
+  with CoordinatedCommitsBaseSuite {
 
   /**
    * Creates 3 temporary directories for use within a function.
@@ -91,13 +93,21 @@ trait DeltaSourceSuiteBase extends StreamTest
     val baseMetadata = tableId.map { tId => txn.metadata.copy(id = tId) }.getOrElse(txn.metadata)
     // We need to fill up the missing id/physical name in column mapping mode
     // while maintaining existing metadata if there is any
-    val updatedMetadata = copyOverMetadata(
+    val updatedSchema = copyOverMetadata(
       schema, baseMetadata.schema,
       baseMetadata.columnMappingMode)
+    // Configure coordinated commits
+    val updatedConfiguration = if (coordinatedCommitsEnabledInTests) {
+      baseMetadata.configuration +
+        (DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key -> defaultCommitsCoordinatorName)
+    } else {
+      baseMetadata.configuration
+    }
     txn.commit(
       DeltaColumnMapping.assignColumnIdAndPhysicalName(
         baseMetadata.copy(
-          schemaString = updatedMetadata.json,
+          schemaString = updatedSchema.json,
+          configuration = updatedConfiguration,
           format = Format(format)),
         baseMetadata,
         isChangingModeOnExistingTable = false,

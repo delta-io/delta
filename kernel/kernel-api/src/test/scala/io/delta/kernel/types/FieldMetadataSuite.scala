@@ -15,6 +15,8 @@
  */
 package io.delta.kernel.types
 
+import io.delta.kernel.exceptions.KernelException
+
 import org.assertj.core.api.Assertions.{assertThat, assertThatThrownBy}
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -33,10 +35,10 @@ class FieldMetadataSuite extends AnyFunSuite {
   }
 
   test("retrieving key with wrong type throws exception") {
-    val longs : Seq[java.lang.Long] = Seq(1L, 2L, 3L)
-    val doubles : Seq[java.lang.Double] = Seq(1.0, 2.0, 3.0)
-    val booleans : Seq[java.lang.Boolean] = Seq(true, false, true)
-    val strings : Seq[java.lang.String] = Seq("a", "b", "c")
+    val longs: Seq[java.lang.Long] = Seq(1L, 2L, 3L)
+    val doubles: Seq[java.lang.Double] = Seq(1.0, 2.0, 3.0)
+    val booleans: Seq[java.lang.Boolean] = Seq(true, false, true)
+    val strings: Seq[java.lang.String] = Seq("a", "b", "c")
     val innerMeta = FieldMetadata.builder().putBoolean("key", true).build()
     val meta = FieldMetadata.builder()
       .putLong("longKey", 23L)
@@ -83,10 +85,10 @@ class FieldMetadataSuite extends AnyFunSuite {
   }
 
   test("retrieving key with correct type returns value") {
-    val longs : Seq[java.lang.Long] = Seq(1L, 2L, 3L)
-    val doubles : Seq[java.lang.Double] = Seq(1.0, 2.0, 3.0)
-    val booleans : Seq[java.lang.Boolean] = Seq(true, false, true)
-    val strings : Seq[java.lang.String] = Seq("a", "b", "c")
+    val longs: Seq[java.lang.Long] = Seq(1L, 2L, 3L)
+    val doubles: Seq[java.lang.Double] = Seq(1.0, 2.0, 3.0)
+    val booleans: Seq[java.lang.Boolean] = Seq(true, false, true)
+    val strings: Seq[java.lang.String] = Seq("a", "b", "c")
     val innerMeta = FieldMetadata.builder().putBoolean("key", true).build()
     val meta = FieldMetadata.builder()
       .putLong("longKey", 23L)
@@ -112,5 +114,29 @@ class FieldMetadataSuite extends AnyFunSuite {
     assertThat(meta.getStringArray("stringArrayKey")).isEqualTo(strings.toArray)
     assertThat(meta.getMetadataArray("fieldMetadataArrayKey"))
       .isEqualTo(Seq(innerMeta).toArray)
+  }
+
+  test("builder.getMetadata handles null correctly") {
+    val builder = FieldMetadata.builder()
+    assertThat(builder.getMetadata("non-existing")).isNull()
+  }
+
+  test("builder.getMetadata with wrong type throws KernelException") {
+    val builder = FieldMetadata.builder()
+      .putLong("longKey", 23L)
+
+    val err = intercept[KernelException] {
+      builder.getMetadata("longKey")
+    }
+
+    assert(err.getMessage.contains("Expected '23' to be of type 'FieldMetadata'"))
+  }
+
+  test("builder.getMetadata with correct type returns value") {
+    val innerMeta = FieldMetadata.builder().putBoolean("key", true).build()
+    val builder = FieldMetadata.builder()
+      .putFieldMetadata("fieldMetadataKey", innerMeta)
+
+    assertThat(builder.getMetadata("fieldMetadataKey")).isEqualTo(innerMeta)
   }
 }

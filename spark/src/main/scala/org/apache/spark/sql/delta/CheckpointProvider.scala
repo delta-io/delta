@@ -20,6 +20,7 @@ import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.duration.Duration
 import scala.util.control.NonFatal
 
+import org.apache.spark.sql.delta.DataFrameUtils
 import org.apache.spark.sql.delta.SnapshotManagement.checkpointV2ThreadPool
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -74,6 +75,12 @@ trait CheckpointProvider extends UninitializedCheckpointProvider {
    * for the checkpoint.
    */
   def allActionsFileIndexes(): Seq[DeltaLogFileIndex]
+
+  /**
+   * The type of checkpoint (V2 vs Classic). This will be None when no checkpoint is available.
+   * This is only intended to be used for logging and metrics.
+   */
+  def checkpointPolicy: Option[CheckpointPolicy.Policy]
 }
 
 object CheckpointProvider extends DeltaLogging {
@@ -230,7 +237,7 @@ object CheckpointProvider extends DeltaLogging {
       val relation = DeltaLog.indexToRelation(
         spark, checkpointFileIndex(Seq(fileStatus)), deltaLogOptions, Action.logSchema)
       import implicits._
-      val rows = Dataset.ofRows(spark, relation)
+      val rows = DataFrameUtils.ofRows(spark, relation)
         .select("checkpointMetadata", "sidecar")
         .where("checkpointMetadata.version is not null or sidecar.path is not null")
         .as[(CheckpointMetadata, SidecarFile)]
@@ -285,6 +292,8 @@ case class PreloadedCheckpointProvider(
   override def allActionsFileIndexes(): Seq[DeltaLogFileIndex] = Seq(fileIndex)
 
   override lazy val topLevelFileIndex: Option[DeltaLogFileIndex] = Some(fileIndex)
+
+  override def checkpointPolicy: Option[CheckpointPolicy.Policy] = Some(CheckpointPolicy.Classic)
 }
 
 /**
@@ -302,6 +311,7 @@ object EmptyCheckpointProvider extends CheckpointProvider {
   override def effectiveCheckpointSizeInBytes(): Long = 0L
   override def allActionsFileIndexes(): Seq[DeltaLogFileIndex] = Nil
   override def topLevelFileIndex: Option[DeltaLogFileIndex] = None
+  override def checkpointPolicy: Option[CheckpointPolicy.Policy] = None
 }
 
 /** A trait representing a v2 [[UninitializedCheckpointProvider]] */
@@ -413,6 +423,9 @@ abstract class LazyCompleteCheckpointProvider(
 
   override def allActionsFileIndexes(): Seq[DeltaLogFileIndex] =
     underlyingCheckpointProvider.allActionsFileIndexes()
+
+  override def checkpointPolicy: Option[CheckpointPolicy.Policy] =
+    underlyingCheckpointProvider.checkpointPolicy
 }
 
 /**
@@ -457,6 +470,8 @@ case class V2CheckpointProvider(
     sidecarFiles.map(_.sizeInBytes).sum + v2CheckpointFile.getLen
   override def allActionsFileIndexes(): Seq[DeltaLogFileIndex] =
     topLevelFileIndex ++: fileIndexesForSidecarFiles
+
+  override def checkpointPolicy: Option[CheckpointPolicy.Policy] = Some(CheckpointPolicy.V2)
 
 }
 

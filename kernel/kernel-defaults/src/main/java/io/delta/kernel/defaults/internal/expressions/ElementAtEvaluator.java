@@ -140,7 +140,8 @@ class ElementAtEvaluator {
   private static MapType validateSupportedMapType(Expression elementAt, DataType mapInputType) {
     checkArgument(
         mapInputType instanceof MapType,
-        "expected a map type input as first argument: " + elementAt);
+        "expected a map type input as first argument: %s",
+        elementAt);
     MapType asMapType = (MapType) mapInputType;
     // For now we only need to support lookup in columns of type `map(string -> string)`.
     // Additional type support may be added later

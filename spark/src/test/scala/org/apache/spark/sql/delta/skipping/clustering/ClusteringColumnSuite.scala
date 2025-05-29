@@ -71,4 +71,20 @@ class ClusteringColumnSuite extends ClusteredTableTestUtils with DeltaSQLCommand
           "tableSchema" -> schema.treeString))
     }
   }
+
+  test("ClusteringColumn: throws correct error when nested column not found") {
+    withTable("tbl") {
+      sql("CREATE TABLE tbl (a INT, b STRING) USING DELTA")
+      val schema = spark.table("tbl").schema
+      val e = intercept[AnalysisException] {
+        ClusteringColumn(schema, "b.c")
+      }
+      checkError(
+        e,
+        "DELTA_COLUMN_NOT_FOUND_IN_SCHEMA",
+        parameters = Map(
+          "columnName" -> "b.c",
+          "tableSchema" -> schema.treeString))
+    }
+  }
 }

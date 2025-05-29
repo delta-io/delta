@@ -40,7 +40,7 @@ import org.apache.spark.sql.catalyst.plans.logical.{Filter, LeafNode, LogicalPla
 import org.apache.spark.sql.catalyst.util.CharVarcharCodegenUtils
 import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTransform}
-import org.apache.spark.sql.execution.datasources.{FileFormat, FileIndex, HadoopFsRelation, LogicalRelation}
+import org.apache.spark.sql.execution.datasources.{FileFormat, FileIndex, HadoopFsRelation, LogicalRelation, LogicalRelationWithTable}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
@@ -50,7 +50,7 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap
  */
 object RelationFileIndex {
   def unapply(a: LogicalRelation): Option[FileIndex] = a match {
-    case LogicalRelation(hrel: HadoopFsRelation, _, _, _) => Some(hrel.location)
+    case LogicalRelationWithTable(hrel: HadoopFsRelation, _) => Some(hrel.location)
     case _ => None
   }
 }
@@ -416,8 +416,27 @@ object DeltaTableUtils extends PredicateHelper
       target: LogicalPlan,
       fileIndex: FileIndex): LogicalPlan = {
     target transform {
-      case l @ LogicalRelation(hfsr: HadoopFsRelation, _, _, _) =>
+      case l @ LogicalRelationWithTable(hfsr: HadoopFsRelation, _) =>
         l.copy(relation = hfsr.copy(location = fileIndex)(hfsr.sparkSession))
+    }
+  }
+
+  /**
+   * Transform the file format in a logical plan and return the updated plan.
+   *
+   * @param target the logical plan in which the file format is replaced.
+   * @param rule   the rule to apply to the file format.
+   */
+  def transformFileFormat(
+      target: LogicalPlan)(
+      rule: PartialFunction[DeltaParquetFileFormat, DeltaParquetFileFormat]): LogicalPlan = {
+    target.transform {
+      case l@LogicalRelationWithTable(hfsr: HadoopFsRelation, _) =>
+        val newFileFormat = hfsr.fileFormat match {
+          case format: DeltaParquetFileFormat =>
+            rule.applyOrElse(format, identity[DeltaParquetFileFormat])
+        }
+        l.copy(relation = hfsr.copy(fileFormat = newFileFormat)(hfsr.sparkSession))
     }
   }
 
@@ -454,7 +473,7 @@ object DeltaTableUtils extends PredicateHelper
     }
 
     target transformUp {
-      case l@LogicalRelation(hfsr: HadoopFsRelation, _, _, _) =>
+      case l@LogicalRelationWithTable(hfsr: HadoopFsRelation, _) =>
         // Prune columns from the scan.
         val prunedOutput = l.output.filterNot { col =>
           columnsToDrop.exists(resolver(_, col.name))
@@ -488,7 +507,7 @@ object DeltaTableUtils extends PredicateHelper
       target: LogicalPlan,
       updatedFileFormat: FileFormat): LogicalPlan = {
     target transform {
-      case l @ LogicalRelation(hfsr: HadoopFsRelation, _, _, _) =>
+      case l @ LogicalRelationWithTable(hfsr: HadoopFsRelation, _) =>
         l.copy(
           relation = hfsr.copy(fileFormat = updatedFileFormat)(hfsr.sparkSession))
     }
@@ -526,15 +545,18 @@ object DeltaTableUtils extends PredicateHelper
   def resolveTimeTravelVersion(
       conf: SQLConf,
       deltaLog: DeltaLog,
+      catalogTableOpt: Option[CatalogTable],
       tt: DeltaTimeTravelSpec,
       canReturnLastCommit: Boolean = false): (Long, String) = {
     if (tt.version.isDefined) {
       val userVersion = tt.version.get
-      deltaLog.history.checkVersionExists(userVersion)
+      deltaLog.history.checkVersionExists(userVersion, catalogTableOpt)
       userVersion -> "version"
     } else {
       val timestamp = tt.getTimestamp(conf)
-      deltaLog.history.getActiveCommitAtTime(timestamp, canReturnLastCommit).version -> "timestamp"
+      val commit =
+        deltaLog.history.getActiveCommitAtTime(timestamp, catalogTableOpt, canReturnLastCommit)
+      commit.version -> "timestamp"
     }
   }
 
@@ -611,8 +633,7 @@ object DeltaTableUtils extends PredicateHelper
    * intentionally. This method removes all possible metadata keys to avoid Spark interpreting
    * table columns incorrectly.
    */
-  def removeInternalMetadata(spark: SparkSession, persistedSchema: StructType): StructType = {
-    val schema = ColumnWithDefaultExprUtils.removeDefaultExpressions(persistedSchema)
+  def removeSparkInternalMetadata(spark: SparkSession, schema: StructType): StructType = {
     if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SCHEMA_REMOVE_SPARK_INTERNAL_METADATA)) {
       var updated = false
       val updatedSchema = schema.map { field =>
@@ -634,6 +655,35 @@ object DeltaTableUtils extends PredicateHelper
       schema
     }
   }
+
+  /**
+   * Removes from the given schema all the metadata keys that are not used when reading a Delta
+   * table. This includes typically all metadata used by writer-only table features.
+   * Note that this also removes all leaked Spark internal metadata.
+   */
+  def removeInternalWriterMetadata(spark: SparkSession, schema: StructType): StructType = {
+    ColumnWithDefaultExprUtils.removeDefaultExpressions(
+      removeSparkInternalMetadata(spark, schema)
+    )
+  }
+
+  /**
+   * Removes internal Delta metadata from the given schema. This includes tyically metadata used by
+   * reader-writer table features that shouldn't leak outside of the table. Use
+   * [[removeInternalWriterMetadata]] in addition / instead to remove metadata for writer-only table
+   * features.
+   */
+  def removeInternalDeltaMetadata(spark: SparkSession, schema: StructType): StructType = {
+    val cleanedSchema = DeltaColumnMapping.dropColumnMappingMetadata(schema)
+
+    val conf = spark.sessionState.conf
+    if (conf.getConf(DeltaSQLConf.DELTA_TYPE_WIDENING_REMOVE_SCHEMA_METADATA)) {
+      TypeWideningMetadata.removeTypeWideningMetadata(cleanedSchema)._1
+    } else {
+      cleanedSchema
+    }
+  }
+
 }
 
 sealed abstract class UnresolvedPathBasedDeltaTableBase(path: String) extends UnresolvedLeafNode {
@@ -689,14 +739,21 @@ object UnresolvedDeltaPathOrIdentifier {
   def apply(
       path: Option[String],
       tableIdentifier: Option[TableIdentifier],
+      options: Map[String, String],
       cmd: String): LogicalPlan = {
     (path, tableIdentifier) match {
-      case (Some(p), None) => UnresolvedPathBasedDeltaTable(p, Map.empty, cmd)
+      case (Some(p), None) => UnresolvedPathBasedDeltaTable(p, options, cmd)
       case (None, Some(t)) => UnresolvedTable(t.nameParts, cmd)
       case _ => throw new IllegalArgumentException(
         s"Exactly one of path or tableIdentifier must be provided to $cmd")
     }
   }
+
+  def apply(
+      path: Option[String],
+      tableIdentifier: Option[TableIdentifier],
+      cmd: String): LogicalPlan =
+    this(path, tableIdentifier, Map.empty, cmd)
 }
 
 /**
@@ -711,10 +768,11 @@ object UnresolvedPathOrIdentifier {
   def apply(
       path: Option[String],
       tableIdentifier: Option[TableIdentifier],
+      options: Map[String, String],
       cmd: String): LogicalPlan = {
     (path, tableIdentifier) match {
       case (_, Some(t)) => UnresolvedTable(t.nameParts, cmd)
-      case (Some(p), None) => UnresolvedPathBasedTable(p, Map.empty, cmd)
+      case (Some(p), None) => UnresolvedPathBasedTable(p, options, cmd)
       case _ => throw new IllegalArgumentException(
         s"At least one of path or tableIdentifier must be provided to $cmd")
     }

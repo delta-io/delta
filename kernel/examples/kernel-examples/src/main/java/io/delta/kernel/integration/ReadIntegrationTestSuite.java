@@ -199,6 +199,22 @@ public class ReadIntegrationTestSuite {
                     asList(new Column("as_int"), Literal.ofInt(1))
                 )),
             0 /* expected row count */);
+
+        // Type widening: table with various type changes.
+        runAndVerifyRowCount(
+            "type_widening",
+            "type-widening",
+            Optional.empty(), /* read schema - read all columns */
+            Optional.empty(), /* predicate */
+            2 /* expected row count */);
+
+        // Type widening: table with type changes inside nested struct/array/map.
+        runAndVerifyRowCount(
+            "type_widening_nested",
+            "type-widening-nested",
+            Optional.empty(), /* read schema - read all columns */
+            Optional.empty(), /* predicate */
+            2 /* expected row count */);
     }
 
     private void runAndVerifyRowCount(

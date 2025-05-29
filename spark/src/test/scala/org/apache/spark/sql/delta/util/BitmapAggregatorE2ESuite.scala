@@ -22,12 +22,11 @@ import java.nio.{ByteBuffer, ByteOrder}
 import java.nio.file.Files
 
 import org.apache.spark.sql.catalyst.expressions.aggregation.BitmapAggregator
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.deletionvectors.{PortableRoaringBitmapArraySerializationFormat, RoaringBitmapArray, RoaringBitmapArrayFormat}
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 
-import org.apache.spark.sql.Column
-import org.apache.spark.sql.ColumnImplicitsShim._
-import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.{Column, QueryTest}
 import org.apache.spark.sql.test.SharedSparkSession
 
 class BitmapAggregatorE2ESuite extends QueryTest
@@ -200,7 +199,7 @@ object BitmapAggregatorE2ESuite {
   private[delta] def bitmapAggColumn(
       column: Column,
       format: RoaringBitmapArrayFormat.Value): Column = {
-    val func = new BitmapAggregator(column.expr, format);
+    val func = new BitmapAggregator(expression(column), format);
     Column(func.toAggregateExpression(isDistinct = false))
   }
 }

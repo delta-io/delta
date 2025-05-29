@@ -32,6 +32,7 @@ import io.delta.kernel.utils.FileStatus;
 import java.net.URI;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Utilities to extract information out of the scan file rows returned by {@link
@@ -42,6 +43,7 @@ public class InternalScanFileUtils {
 
   private static final String TABLE_ROOT_COL_NAME = "tableRoot";
   private static final DataType TABLE_ROOT_DATA_TYPE = StringType.STRING;
+
   /** {@link Column} expression referring to the `partitionValues` in scan `add` file. */
   public static final Column ADD_FILE_PARTITION_COL_REF =
       new Column(new String[] {"add", "partitionValues"});
@@ -101,8 +103,8 @@ public class InternalScanFileUtils {
   public static FileStatus getAddFileStatus(Row scanFileInfo) {
     Row addFile = getAddFileEntry(scanFileInfo);
     String path = addFile.getString(ADD_FILE_PATH_ORDINAL);
-    Long size = addFile.getLong(ADD_FILE_SIZE_ORDINAL);
-    Long modificationTime = addFile.getLong(ADD_FILE_MOD_TIME_ORDINAL);
+    long size = addFile.getLong(ADD_FILE_SIZE_ORDINAL);
+    long modificationTime = addFile.getLong(ADD_FILE_MOD_TIME_ORDINAL);
 
     // TODO: this is hack until the path in `add.path` is converted to an absolute path
     String tableRoot = scanFileInfo.getString(TABLE_ROOT_ORDINAL);
@@ -189,5 +191,15 @@ public class InternalScanFileUtils {
    */
   public static Column getPartitionValuesParsedRefInAddFile(String partitionColName) {
     return new Column(new String[] {"add", "partitionValues_parsed", partitionColName});
+  }
+
+  public static Optional<Long> getBaseRowId(Row scanFile) {
+    Row addFileRow = getAddFileEntry(scanFile);
+    return new AddFile(addFileRow).getBaseRowId();
+  }
+
+  public static Optional<Long> getDefaultRowCommitVersion(Row scanFile) {
+    Row addFileRow = getAddFileEntry(scanFile);
+    return new AddFile(addFileRow).getDefaultRowCommitVersion();
   }
 }

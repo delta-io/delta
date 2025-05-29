@@ -36,6 +36,7 @@ import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.QueryPlanningTracker
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.expressions.{Expression, Literal, PredicateHelper}
+import org.apache.spark.sql.catalyst.plans.logical.Filter
 import org.apache.spark.sql.functions.{col, lit}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
@@ -45,7 +46,7 @@ import org.apache.spark.util.Utils
 trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShims
     with SharedSparkSession
     with DeltaSQLCommandTest
-    with PredicateHelper
+    with DataSkippingDeltaTestsUtils
     with GivenWhenThen
     with ScanReportHelper {
 
@@ -597,6 +598,33 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
     ),
     indexedCols = 3,
     deltaStatsColNamesOpt = Some("b.c")
+  )
+
+  testSkipping(
+    "indexed column names - naming a nested column allows nested complex types",
+    """{
+      "a": {
+        "b": [1, 2, 3],
+        "c": [4, 5, 6],
+        "d": 7,
+        "e": 8,
+        "f": {
+          "g": 9
+        }
+      },
+      "i": 10
+    }""".replace("\n", ""),
+    hits = Seq(
+      "i < 0",
+      "a.d > 6",
+      "a.f.g < 10"
+    ),
+    misses = Seq(
+      "a.d < 0",
+      "a.e < 0",
+      "a.f.g < 0"
+    ),
+    deltaStatsColNamesOpt = Some("a")
   )
 
   testSkipping(
@@ -1902,57 +1930,85 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
     }
   }
 
-  protected def parse(deltaLog: DeltaLog, predicate: String): Seq[Expression] = {
+  test("File skipping with non-deterministic filters") {
+    withTable("tbl") {
+      // Create the table.
+      val df = spark.range(100).toDF()
+      df.write.mode("overwrite").format("delta").saveAsTable("tbl")
 
-    // We produce a wrong filter in this case otherwise
-    if (predicate == "True") return Seq(Literal.TrueLiteral)
+      // Append 9 times to the table.
+      for (i <- 1 to 9) {
+        val df = spark.range(i * 100, (i + 1) * 100).toDF()
+        df.write.mode("append").format("delta").insertInto("tbl")
+      }
 
-    val filtered = spark.read.format("delta").load(deltaLog.dataPath.toString).where(predicate)
-    filtered
-      .queryExecution
-      .optimizedPlan
-      .expressions
-      .flatMap(splitConjunctivePredicates)
+      val query = "SELECT count(*) FROM tbl WHERE rand(0) < 0.25"
+      val result = sql(query).collect().head.getLong(0)
+      assert(result > 150, s"Expected around 250 rows (~0.25 * 1000), got: $result")
+
+      val predicates = sql(query).queryExecution.optimizedPlan.collect {
+        case Filter(condition, _) => condition
+      }.flatMap(splitConjunctivePredicates)
+      val scanResult = DeltaLog.forTable(spark, TableIdentifier("tbl"))
+        .update().filesForScan(predicates)
+      assert(scanResult.unusedFilters.nonEmpty)
+    }
   }
 
-  /**
-   * Returns the number of files that should be included in a scan after applying the given
-   * predicate on a snapshot of the Delta log.
-   *
-   * @param deltaLog Delta log for a table.
-   * @param predicate Predicate to run on the Delta table.
-   * @param checkEmptyUnusedFilters If true, check if there were no unused filters, meaning
-   *                                the given predicate was used as data or partition filters.
-   * @return The number of files that should be included in a scan after applying the predicate.
-   */
+  test("File skipping with non-deterministic filters on partitioned tables") {
+    withTable("tbl_partitioned") {
+      import org.apache.spark.sql.functions.col
+
+      // Create initial DataFrame and add a partition column.
+      val df = spark.range(100).toDF().withColumn("p", col("id") % 10)
+      df.write
+        .mode("overwrite")
+        .format("delta")
+        .partitionBy("p")
+        .saveAsTable("tbl_partitioned")
+
+      // Append 9 more times to the table.
+      for (i <- 1 to 9) {
+        val newDF = spark.range(i * 100, (i + 1) * 100).toDF().withColumn("p", col("id") % 10)
+        newDF.write.mode("append").format("delta").insertInto("tbl_partitioned")
+      }
+
+      // Run query with a nondeterministic filter.
+      val query = "SELECT count(*) FROM tbl_partitioned WHERE rand(0) < 0.25"
+      val result = sql(query).collect().head.getLong(0)
+      // Assert that the row count is as expected (e.g., roughly 25% of rows).
+      assert(result > 150, s"Expected a reasonable number of rows, got: $result")
+
+      val predicates = sql(query).queryExecution.optimizedPlan.collect {
+        case Filter(condition, _) => condition
+      }.flatMap(splitConjunctivePredicates)
+      val scanResult = DeltaLog.forTable(spark, TableIdentifier("tbl_partitioned"))
+        .update().filesForScan(predicates)
+      assert(scanResult.unusedFilters.nonEmpty)
+
+      // Assert that entries are fetched from all 10 partitions
+      val distinctPartitions =
+        sql("SELECT DISTINCT p FROM tbl_partitioned WHERE rand(0) < 0.25")
+        .collect()
+        .length
+      assert(distinctPartitions == 10)
+    }
+  }
+
+  protected def parse(deltaLog: DeltaLog, predicate: String): Seq[Expression] =
+    super.parse(spark, deltaLog, predicate)
+
   protected def filesRead(
       deltaLog: DeltaLog,
       predicate: String,
       checkEmptyUnusedFilters: Boolean = false): Int =
-    getFilesRead(deltaLog, predicate, checkEmptyUnusedFilters).size
+    super.filesRead(spark, deltaLog, predicate, checkEmptyUnusedFilters)
 
-  /**
-   * Returns the files that should be included in a scan after applying the given predicate on
-   * a snapshot of the Delta log.
-   * @param deltaLog Delta log for a table.
-   * @param predicate Predicate to run on the Delta table.
-   * @param checkEmptyUnusedFilters If true, check if there were no unused filters, meaning
-   *                                the given predicate was used as data or partition filters.
-   * @return The files that should be included in a scan after applying the predicate.
-   */
   protected def getFilesRead(
       deltaLog: DeltaLog,
       predicate: String,
-      checkEmptyUnusedFilters: Boolean = false): Seq[AddFile] = {
-    val parsed = parse(deltaLog, predicate)
-    val res = deltaLog.snapshot.filesForScan(parsed)
-    assert(res.total.files.get == deltaLog.snapshot.numOfFiles)
-    assert(res.total.bytesCompressed.get == deltaLog.snapshot.sizeInBytes)
-    assert(res.scanned.files.get == res.files.size)
-    assert(res.scanned.bytesCompressed.get == res.files.map(_.size).sum)
-    assert(!checkEmptyUnusedFilters || res.unusedFilters.isEmpty)
-    res.files
-  }
+      checkEmptyUnusedFilters: Boolean = false): Seq[AddFile] =
+    super.getFilesRead(spark, deltaLog, predicate, checkEmptyUnusedFilters)
 
   protected def checkResultsWithPartitions(
     tableDir: String,
@@ -2094,6 +2150,64 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
     }
   }
 }
+
+trait DataSkippingDeltaTestsUtils extends PredicateHelper {
+  protected def parse(
+      spark: SparkSession, deltaLog: DeltaLog, predicate: String): Seq[Expression] = {
+
+    // We produce a wrong filter in this case otherwise
+    if (predicate == "True") return Seq(Literal.TrueLiteral)
+
+    val filtered = spark.read.format("delta").load(deltaLog.dataPath.toString).where(predicate)
+    filtered
+      .queryExecution
+      .optimizedPlan
+      .expressions
+      .flatMap(splitConjunctivePredicates)
+  }
+
+  /**
+   * Returns the number of files that should be included in a scan after applying the given
+   * predicate on a snapshot of the Delta log.
+   *
+   * @param deltaLog Delta log for a table.
+   * @param predicate Predicate to run on the Delta table.
+   * @param checkEmptyUnusedFilters If true, check if there were no unused filters, meaning
+   *                                the given predicate was used as data or partition filters.
+   * @return The number of files that should be included in a scan after applying the predicate.
+   */
+  protected def filesRead(
+      spark: SparkSession,
+      deltaLog: DeltaLog,
+      predicate: String,
+      checkEmptyUnusedFilters: Boolean): Int =
+    getFilesRead(spark, deltaLog, predicate, checkEmptyUnusedFilters).size
+
+  /**
+   * Returns the files that should be included in a scan after applying the given predicate on
+   * a snapshot of the Delta log.
+   * @param deltaLog Delta log for a table.
+   * @param predicate Predicate to run on the Delta table.
+   * @param checkEmptyUnusedFilters If true, check if there were no unused filters, meaning
+   *                                the given predicate was used as data or partition filters.
+   * @return The files that should be included in a scan after applying the predicate.
+   */
+  protected def getFilesRead(
+      spark: SparkSession,
+      deltaLog: DeltaLog,
+      predicate: String,
+      checkEmptyUnusedFilters: Boolean): Seq[AddFile] = {
+    val parsed = parse(spark, deltaLog, predicate)
+    val res = deltaLog.snapshot.filesForScan(parsed)
+    assert(res.total.files.get == deltaLog.snapshot.numOfFiles)
+    assert(res.total.bytesCompressed.get == deltaLog.snapshot.sizeInBytes)
+    assert(res.scanned.files.get == res.files.size)
+    assert(res.scanned.bytesCompressed.get == res.files.map(_.size).sum)
+    assert(!checkEmptyUnusedFilters || res.unusedFilters.isEmpty)
+    res.files
+  }
+}
+
 
 trait DataSkippingDeltaTests extends DataSkippingDeltaTestsBase
 /** Tests code paths within DataSkippingReader.scala */

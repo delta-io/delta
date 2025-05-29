@@ -128,7 +128,7 @@ object DeltaFileOperations extends DeltaLogging {
       base: Int = 100,
       jitter: Int = 1000): Unit = {
     val sleepTime = Random.nextInt(jitter) + base
-    logWarning(log"Sleeping for ${MDC(DeltaLogKeys.TIME_MS, sleepTime)} ms to rate limit " +
+    logWarning(log"Sleeping for ${MDC(DeltaLogKeys.TIME_MS, sleepTime.toLong)} ms to rate limit " +
       log"${MDC(DeltaLogKeys.OP_NAME, opName)}", t)
     Thread.sleep(sleepTime)
   }
@@ -243,7 +243,10 @@ object DeltaFileOperations extends DeltaLogging {
     import org.apache.spark.sql.delta.implicits._
     if (subDirs.isEmpty) return spark.emptyDataset[SerializableFileStatus]
     val listParallelism = fileListingParallelism.getOrElse(spark.sparkContext.defaultParallelism)
-    val dirsAndFiles = spark.sparkContext.parallelize(subDirs).mapPartitions { dirs =>
+    val subDirsParallelism = subDirs.length.min(spark.sparkContext.defaultParallelism)
+    val dirsAndFiles = spark.sparkContext.parallelize(
+        subDirs,
+        subDirsParallelism).mapPartitions { dirs =>
       val logStore = LogStore(SparkEnv.get.conf, hadoopConf.value.value)
       listUsingLogStore(
         logStore,

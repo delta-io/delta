@@ -499,14 +499,13 @@ class StatsCollectionSuite
     ("BINARY", "BinaryType"),
     ("BOOLEAN", "BooleanType"),
     ("ARRAY<TINYINT>", "ArrayType(ByteType,true)"),
-    ("MAP<DATE, INT>", "MapType(DateType,IntegerType,true)"),
-    ("STRUCT<c60:INT, c61:ARRAY<INT>>", "ArrayType(IntegerType,true)")
+    ("MAP<DATE, INT>", "MapType(DateType,IntegerType,true)")
   ).foreach { case (invalidType, typename) =>
     val tableName1 = "delta_table_1"
     val tableName2 = "delta_table_2"
     test(s"Delta statistic column: invalid data type $invalidType") {
       withTable(tableName1, tableName2) {
-        val columnName = if (typename.equals("ArrayType(IntegerType,true)")) "c2.c61" else "c2"
+        val columnName = "c2"
         val exceptOne = intercept[DeltaIllegalArgumentException] {
           sql(
             s"create table $tableName1 (c1 long, c2 $invalidType) using delta " +
@@ -524,49 +523,6 @@ class StatsCollectionSuite
         assert(
           exceptTwo.getErrorClass == "DELTA_COLUMN_DATA_SKIPPING_NOT_SUPPORTED_TYPE" &&
           exceptTwo.getMessageParametersArray.toSeq == Seq(columnName, typename)
-        )
-      }
-    }
-
-    test(s"Delta statistic column: invalid data type $invalidType in nested column") {
-      withTable(tableName1, tableName2) {
-        val columnName = if (typename == "ArrayType(IntegerType,true)") "c2.c21.c61" else "c2.c21"
-        val exceptOne = intercept[DeltaIllegalArgumentException] {
-          sql(
-            s"create table $tableName1 (c1 long, c2 STRUCT<c20:INT, c21:$invalidType>) " +
-              s"using delta TBLPROPERTIES('delta.dataSkippingStatsColumns' = 'c2.c21')"
-          )
-        }
-        assert(
-          exceptOne.getErrorClass == "DELTA_COLUMN_DATA_SKIPPING_NOT_SUPPORTED_TYPE" &&
-            exceptOne.getMessageParametersArray.toSeq == Seq(columnName, typename)
-        )
-        val exceptTwo = intercept[DeltaIllegalArgumentException] {
-          sql(
-            s"create table $tableName1 (c1 long, c2 STRUCT<c20:INT, c21:$invalidType>) " +
-              s"using delta TBLPROPERTIES('delta.dataSkippingStatsColumns' = 'c2')"
-          )
-        }
-        assert(
-          exceptTwo.getErrorClass == "DELTA_COLUMN_DATA_SKIPPING_NOT_SUPPORTED_TYPE" &&
-          exceptTwo.getMessageParametersArray.toSeq == Seq(columnName, typename)
-        )
-        sql(s"create table $tableName2 (c1 long, c2 STRUCT<c20:INT, c21:$invalidType>) using delta")
-        val exceptThree = interceptWithUnwrapping[DeltaIllegalArgumentException] {
-          sql(
-            s"ALTER TABLE $tableName2 SET TBLPROPERTIES('delta.dataSkippingStatsColumns'='c2.c21')"
-          )
-        }
-        assert(
-          exceptThree.getErrorClass == "DELTA_COLUMN_DATA_SKIPPING_NOT_SUPPORTED_TYPE" &&
-          exceptThree.getMessageParametersArray.toSeq == Seq(columnName, typename)
-        )
-        val exceptFour = interceptWithUnwrapping[DeltaIllegalArgumentException] {
-          sql(s"ALTER TABLE $tableName2 SET TBLPROPERTIES('delta.dataSkippingStatsColumns'='c2')")
-        }
-        assert(
-          exceptFour.getErrorClass == "DELTA_COLUMN_DATA_SKIPPING_NOT_SUPPORTED_TYPE" &&
-          exceptFour.getMessageParametersArray.toSeq == Seq(columnName, typename)
         )
       }
     }
@@ -608,7 +564,8 @@ class StatsCollectionSuite
 
   Seq(
     "BIGINT", "DATE", "DECIMAL(3, 2)", "DOUBLE", "FLOAT", "INT", "SMALLINT", "STRING",
-    "TIMESTAMP", "TIMESTAMP_NTZ", "TINYINT"
+    "TIMESTAMP", "TIMESTAMP_NTZ", "TINYINT", "STRUCT<c3: BIGINT>",
+    "STRUCT<c3: BIGINT, c4: ARRAY<BIGINT>>"
   ).foreach { validType =>
     val tableName1 = "delta_table_1"
     val tableName2 = "delta_table_2"
@@ -872,6 +829,21 @@ class StatsCollectionSuite
         exception.getErrorClass == "DELTA_DUPLICATE_DATA_SKIPPING_COLUMNS" &&
         exception.getMessageParametersArray.toSeq == Seq(duplicatedColumns)
       )
+    }
+  }
+
+  test("handle special nested characters in column name") {
+    withTable("t") {
+      sql(
+        s"create table t (`|` long, c struct<s struct<a int, b INT>, `s.a` int>) using delta " +
+          s"TBLPROPERTIES('delta.columnMapping.mode' = 'name')")
+      // Have this test to make sure there are no collisions with c.`s.a` and c.s.a.
+      sql(
+        s"ALTER TABLE t SET TBLPROPERTIES('delta.dataSkippingStatsColumns' = 'c')")
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier("t"))
+      val tblProperty = DeltaConfigs.DATA_SKIPPING_STATS_COLUMNS
+        .fromMetaData(deltaLog.update().metadata)
+      assert(tblProperty.get == "c")
     }
   }
 

@@ -21,7 +21,8 @@ import java.util.UUID
 import scala.collection.generic.Sizing
 
 import org.apache.spark.sql.catalyst.expressions.aggregation.BitmapAggregator
-import org.apache.spark.sql.delta.{DeltaLog, DeltaParquetFileFormat, OptimisticTransaction, Snapshot}
+import org.apache.spark.sql.delta.ClassicColumnConversions._
+import org.apache.spark.sql.delta.{DataFrameUtils, DeltaLog, DeltaParquetFileFormat, OptimisticTransaction, Snapshot}
 import org.apache.spark.sql.delta.DeltaParquetFileFormat._
 import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor, FileAction}
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat, StoredBitmap}
@@ -37,10 +38,9 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql._
-import org.apache.spark.sql.ColumnImplicitsShim._
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Expression}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, Project}
-import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
+import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelationWithTable}
 import org.apache.spark.sql.execution.datasources.FileFormat.{FILE_PATH, METADATA_NAME}
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.functions.{col, lit}
@@ -62,7 +62,7 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
       spark: SparkSession,
       target: LogicalPlan,
       fileIndex: TahoeFileIndex): DataFrame = {
-    Dataset.ofRows(spark, replaceFileIndex(spark, target, fileIndex))
+    DataFrameUtils.ofRows(spark, replaceFileIndex(spark, target, fileIndex))
   }
 
   /**
@@ -93,8 +93,8 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
     var fileMetadataCol: AttributeReference = null
 
     val newTarget = target.transformUp {
-      case l @ LogicalRelation(
-        hfsr @ HadoopFsRelation(_, _, _, _, format: DeltaParquetFileFormat, _), _, _, _) =>
+      case l @ LogicalRelationWithTable(
+        hfsr @ HadoopFsRelation(_, _, _, _, format: DeltaParquetFileFormat, _), _) =>
         fileMetadataCol = format.createFileMetadataCol()
         // Take the existing schema and add additional metadata columns
         if (useMetadataRowIndex) {
@@ -273,12 +273,10 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
       if (filesWithNoStats.nonEmpty) {
         StatsCollectionUtils.computeStats(spark,
           conf = snapshot.deltaLog.newDeltaHadoopConf(),
-          dataPath = snapshot.deltaLog.dataPath,
+          deltaLog = snapshot.deltaLog,
+          snapshot = snapshot,
           addFiles = filesWithNoStats.toDS(spark),
           numFilesOpt = Some(filesWithNoStats.size),
-          columnMappingMode = snapshot.metadata.columnMappingMode,
-          dataSchema = snapshot.dataSchema,
-          statsSchema = snapshot.statsSchema,
           setBoundsToWide = true)
           .collect()
           .toSeq
@@ -459,8 +457,29 @@ case class DeletionVectorData(
     deletedRowIndexSet: Array[Byte],
     deletedRowIndexCount: Long) extends Sizing {
 
+  @transient
+  lazy val deletionVectorDescriptor: Option[DeletionVectorDescriptor] = deletionVectorId.map { id =>
+    DeletionVectorDescriptor.deserializeFromBase64(id)
+  }
+
   /** The size of the bitmaps to use in [[BinPackingIterator]]. */
-  override def size: Int = deletedRowIndexSet.length
+  override def size: Int = {
+    val sizeWithoutExistingDV: Int = deletedRowIndexSet.length
+    // Add the size of the existing DV that we will eventually merge with, so that
+    // [[BinPackingIterator]] can get a better estimate. It's an estimate since the
+    // row indices are not merged and serialized. We add the size of the checksum
+    // and the size of the data size, which are fixed sizes added for every DV.
+    val sizeWithDV = sizeWithoutExistingDV +
+      deletionVectorDescriptor.map(_.sizeInBytes).getOrElse(0) +
+      DeletionVectorStore.CHECKSUM_LEN + DeletionVectorStore.DATA_SIZE_LEN
+    // If we have an int overflow, we can end up with a negative size. In that case,
+    // let's return the maximum value of Int and fail later when writing the DV writer.
+    if (sizeWithDV < 0) {
+      Int.MaxValue
+    } else {
+      sizeWithDV
+    }
+  }
 }
 
 object DeletionVectorData {
@@ -662,19 +681,25 @@ object DeletionVectorWriter extends DeltaLogging {
          |It is likely that _metadata.file_path is not encoded by Spark as expected.
          |""".stripMargin)
 
-    val fileDvDescriptor = row.deletionVectorId.map(DeletionVectorDescriptor.deserializeFromBase64)
+    val fileDvDescriptor = row.deletionVectorDescriptor
     val finalDvDescriptor = fileDvDescriptor match {
       case Some(existingDvDescriptor) if row.deletedRowIndexCount > 0 =>
         // Load the existing bit map
         val existingBitmap =
           StoredBitmap.create(existingDvDescriptor, ctx.tablePath).load(ctx.dvStore)
-        val newBitmap = RoaringBitmapArray.readFrom(row.deletedRowIndexSet)
-
+        val newBitmap =
+          DeletionVectorUtils.deserialize(row.deletedRowIndexSet, Some(ctx.tablePath))
         // Merge both the existing and new bitmaps into one, and finally persist on disk
         existingBitmap.merge(newBitmap)
+
+        val serializedBitmap = DeletionVectorUtils.serialize(
+          existingBitmap,
+          RoaringBitmapArrayFormat.Portable,
+          Some(ctx.tablePath),
+          debugInfo = Map("existingDvDescriptor" -> existingDvDescriptor))
         storeSerializedBitmap(
           ctx,
-          existingBitmap.serializeAsByteArray(RoaringBitmapArrayFormat.Portable),
+          serializedBitmap,
           existingBitmap.cardinality)
       case Some(existingDvDescriptor) =>
         existingDvDescriptor // This is already stored.

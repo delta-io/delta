@@ -15,28 +15,29 @@
  */
 package io.delta.kernel.defaults
 
-import io.delta.kernel.Operation.{CREATE_TABLE, WRITE}
-import io.delta.kernel._
-import io.delta.kernel.engine.Engine
-import io.delta.kernel.exceptions.{InvalidTableException, ProtocolChangedException}
-import io.delta.kernel.expressions.Literal
-import io.delta.kernel.internal.actions.{CommitInfo, SingleAction}
-import io.delta.kernel.internal.fs.Path
-import io.delta.kernel.internal.util.{FileNames, VectorUtils}
-import io.delta.kernel.internal.{DeltaHistoryManager, SnapshotImpl, TableImpl}
-import io.delta.kernel.internal.util.ManualClock
-import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
-import io.delta.kernel.types.IntegerType.INTEGER
-import io.delta.kernel.types._
-import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
-
 import java.util.{Locale, Optional}
+
 import scala.collection.JavaConverters._
 import scala.collection.immutable.{ListMap, Seq}
 import scala.collection.mutable
+
+import io.delta.kernel._
+import io.delta.kernel.Operation.{CREATE_TABLE, WRITE}
+import io.delta.kernel.engine.Engine
+import io.delta.kernel.exceptions.{InvalidTableException, ProtocolChangedException}
+import io.delta.kernel.expressions.Literal
+import io.delta.kernel.internal.{DeltaHistoryManager, SnapshotImpl, TableImpl}
 import io.delta.kernel.internal.TableConfig._
-import io.delta.kernel.utils.FileStatus
+import io.delta.kernel.internal.actions.{CommitInfo, SingleAction}
 import io.delta.kernel.internal.actions.SingleAction.createCommitInfoSingleAction
+import io.delta.kernel.internal.fs.Path
+import io.delta.kernel.internal.util.{FileNames, VectorUtils}
+import io.delta.kernel.internal.util.ManualClock
+import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
+import io.delta.kernel.types._
+import io.delta.kernel.types.IntegerType.INTEGER
+import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
+import io.delta.kernel.utils.FileStatus
 
 class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
 
@@ -54,7 +55,9 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
     engine
       .getJsonHandler
       .writeJsonFileAtomically(
-        FileNames.deltaFile(logPath, version), rowsWithoutCommitInfo, true /* overwrite */)
+        FileNames.deltaFile(logPath, version),
+        rowsWithoutCommitInfo,
+        true /* overwrite */ )
   }
 
   test("Enable ICT on commit 0") {
@@ -78,6 +81,10 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
       assert(
         getInCommitTimestamp(engine, table, version = 0).get === ver0Snapshot.getTimestamp(engine))
       assertHasWriterFeature(ver0Snapshot, "inCommitTimestamp")
+      // Time travel should work
+      val searchedSnapshot =
+        table.getSnapshotAsOfTimestamp(engine, beforeCommitAttemptStartTime + 1)
+      assert(searchedSnapshot.getVersion == 0)
     }
   }
 
@@ -93,7 +100,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
       txn1.commit(engine, emptyIterable())
 
       val ver0Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-      assertMetadataProp(engine, ver0Snapshot, IN_COMMIT_TIMESTAMPS_ENABLED, false)
+      assertMetadataProp(ver0Snapshot, IN_COMMIT_TIMESTAMPS_ENABLED, false)
       assertHasNoWriterFeature(ver0Snapshot, "inCommitTimestamp")
       assert(getInCommitTimestamp(engine, table, version = 0).isEmpty)
 
@@ -110,6 +117,16 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
       assert(ver1Snapshot.getTimestamp(engine) > ver0Snapshot.getTimestamp(engine))
       assert(
         getInCommitTimestamp(engine, table, version = 1).get === ver1Snapshot.getTimestamp(engine))
+
+      // Time travel should work
+      // Search timestamp = ICT enablement time - 1
+      val searchedSnapshot1 =
+        table.getSnapshotAsOfTimestamp(engine, ver1Snapshot.getTimestamp(engine) - 1)
+      assert(searchedSnapshot1.getVersion == 0)
+      // Search timestamp = ICT enablement time
+      val searchedSnapshot2 =
+        table.getSnapshotAsOfTimestamp(engine, ver1Snapshot.getTimestamp(engine))
+      assert(searchedSnapshot2.getVersion == 1)
     }
   }
 
@@ -127,20 +144,18 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
         partCols = Seq.empty,
         data = Seq(Map.empty[String, Literal] -> dataBatches1),
         clock = clock,
-        tableProperties = Map(IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true")
-      )
+        tableProperties = Map(IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true"))
 
       val ver1Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
       val ver1Timestamp = ver1Snapshot.getTimestamp(engine)
-      assert(isICTEnabled(engine, ver1Snapshot.getMetadata))
+      assert(IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(ver1Snapshot.getMetadata))
 
       clock.setTime(startTime - 10000)
       appendData(
         engine,
         tablePath,
         data = Seq(Map.empty[String, Literal] -> dataBatches2),
-        clock = clock
-      )
+        clock = clock)
 
       val ver2Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
       val ver2Timestamp = ver2Snapshot.getTimestamp(engine)
@@ -168,7 +183,9 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
       assert(ex.getMessage.contains(String.format(
         "This table has the feature %s enabled which requires the presence of the " +
           "CommitInfo action in every commit. However, the CommitInfo action is " +
-          "missing from commit version %s.", "inCommitTimestamp", "0")))
+          "missing from commit version %s.",
+        "inCommitTimestamp",
+        "0")))
     }
   }
 
@@ -178,7 +195,12 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
       val table = Table.forPath(engine, tablePath)
 
       setTablePropAndVerify(
-        engine, tablePath, isNewTable = true, IN_COMMIT_TIMESTAMPS_ENABLED, "true", true)
+        engine,
+        tablePath,
+        isNewTable = true,
+        IN_COMMIT_TIMESTAMPS_ENABLED,
+        "true",
+        true)
       // Remove CommitInfo.inCommitTimestamp from the commit.
       val logPath = new Path(table.getPath(engine), "_delta_log")
       val file = FileStatus.of(FileNames.deltaFile(logPath, 0), 0, 0)
@@ -206,7 +228,8 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
         .getJsonHandler
         .writeJsonFileAtomically(
           FileNames.deltaFile(logPath, 0),
-          rowsWithoutCommitInfoInCommitTimestamp, true /* overwrite */)
+          rowsWithoutCommitInfoInCommitTimestamp,
+          true /* overwrite */ )
 
       val ex = intercept[InvalidTableException] {
         table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl].getTimestamp(engine)
@@ -214,7 +237,9 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
       assert(ex.getMessage.contains(String.format(
         "This table has the feature %s enabled which requires the presence of " +
           "inCommitTimestamp in the CommitInfo action. However, this field has not " +
-          "been set in commit version %s.", "inCommitTimestamp", "0")))
+          "been set in commit version %s.",
+        "inCommitTimestamp",
+        "0")))
     }
   }
 
@@ -229,8 +254,8 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
 
       val ver0Snapshot =
         Table.forPath(engine, tablePath).getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-      assertHasNoMetadataProp(engine, ver0Snapshot, IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP)
-      assertHasNoMetadataProp(engine, ver0Snapshot, IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION)
+      assertHasNoMetadataProp(ver0Snapshot, IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP)
+      assertHasNoMetadataProp(ver0Snapshot, IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION)
     }
   }
 
@@ -254,14 +279,12 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
         tableProperties = Map(IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true"))
 
       val ver1Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-      assertMetadataProp(engine, ver1Snapshot, IN_COMMIT_TIMESTAMPS_ENABLED, true)
+      assertMetadataProp(ver1Snapshot, IN_COMMIT_TIMESTAMPS_ENABLED, true)
       assertMetadataProp(
-        engine,
         ver1Snapshot,
         IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP,
         Optional.of(ver1Snapshot.getTimestamp(engine)))
       assertMetadataProp(
-        engine,
         ver1Snapshot,
         IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION,
         Optional.of(1L))
@@ -274,14 +297,12 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
         data = Seq(Map.empty[String, Literal] -> dataBatches2))
 
       val ver2Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-      assertMetadataProp(engine, ver2Snapshot, IN_COMMIT_TIMESTAMPS_ENABLED, true)
+      assertMetadataProp(ver2Snapshot, IN_COMMIT_TIMESTAMPS_ENABLED, true)
       assertMetadataProp(
-        engine,
         ver2Snapshot,
         IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP,
         Optional.of(ver1Snapshot.getTimestamp(engine)))
       assertMetadataProp(
-        engine,
         ver2Snapshot,
         IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION,
         Optional.of(1L))
@@ -378,14 +399,12 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
         tableProperties = Map(IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true"))
 
       val ver1Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-      assertMetadataProp(engine, ver1Snapshot, IN_COMMIT_TIMESTAMPS_ENABLED, true)
+      assertMetadataProp(ver1Snapshot, IN_COMMIT_TIMESTAMPS_ENABLED, true)
       assertMetadataProp(
-        engine,
         ver1Snapshot,
         IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP,
         Optional.of(getInCommitTimestamp(engine, table, version = 1).get))
       assertMetadataProp(
-        engine,
         ver1Snapshot,
         IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION,
         Optional.of(1L))
@@ -395,13 +414,20 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
       verifyCommitResult(commitResult, expVersion = 1, expIsReadyForCheckpoint = false)
       verifyCommitInfo(tablePath, version = 1, partitionCols = null, operation = WRITE)
       verifyWrittenContent(tablePath, testSchema, expData)
-      verifyTableProperties(tablePath,
-        ListMap(IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> true,
-        "delta.feature.inCommitTimestamp" -> "supported",
-        IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.getKey
-          -> getInCommitTimestamp(engine, table, version = 1).get,
-        IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.getKey -> 1L),
-        3,
+      verifyTableProperties(
+        tablePath,
+        ListMap(
+          // appendOnly, invariants implicitly supported as the protocol is upgraded from 2 to 7
+          // These properties are not set in the table properties, but are generated by the
+          // Spark describe
+          IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> true,
+          "delta.feature.appendOnly" -> "supported",
+          "delta.feature.inCommitTimestamp" -> "supported",
+          "delta.feature.invariants" -> "supported",
+          IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.getKey
+            -> getInCommitTimestamp(engine, table, version = 1).get,
+          IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.getKey -> 1L),
+        1,
         7)
     }
   }
@@ -424,7 +450,12 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = TableImpl.forPath(engine, tablePath, () => System.currentTimeMillis)
       setTablePropAndVerify(
-        engine, tablePath, isNewTable = true, IN_COMMIT_TIMESTAMPS_ENABLED, "true", true)
+        engine,
+        tablePath,
+        isNewTable = true,
+        IN_COMMIT_TIMESTAMPS_ENABLED,
+        "true",
+        true)
 
       val startTime = System.currentTimeMillis()
       val clock = new ManualClock(startTime)
@@ -433,15 +464,13 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
         tablePath,
         schema = testSchema,
         partCols = Seq.empty,
-        clock = clock
-      )
+        clock = clock)
       clock.setTime(startTime)
       appendData(
         engine,
         tablePath,
         data = Seq(Map.empty[String, Literal] -> dataBatches2),
-        clock = clock
-      )
+        clock = clock)
       clock.setTime(startTime - 1000)
       commitAppendData(engine, txn1, Seq(Map.empty[String, Literal] -> dataBatches1))
       assert(
@@ -479,19 +508,19 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
             engine,
             tablePath,
             data = Seq(Map.empty[String, Literal] -> dataBatches2),
-            clock = clock
-          )
+            clock = clock)
         }
 
         commitAppendData(engine, txn1, Seq(Map.empty[String, Literal] -> dataBatches1))
 
         val lastSnapshot = table.getSnapshotAsOfVersion(
-          engine, winningCommitCount).asInstanceOf[SnapshotImpl]
+          engine,
+          winningCommitCount).asInstanceOf[SnapshotImpl]
         val curSnapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
         val observedEnablementTimestamp =
-          IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.fromMetadata(engine, curSnapshot.getMetadata)
+          IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.fromMetadata(curSnapshot.getMetadata)
         val observedEnablementVersion =
-          IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.fromMetadata(engine, curSnapshot.getMetadata)
+          IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.fromMetadata(curSnapshot.getMetadata)
         assert(observedEnablementTimestamp.get === lastSnapshot.getTimestamp(engine) + 1)
         assert(
           observedEnablementTimestamp.get ===
@@ -506,7 +535,12 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = TableImpl.forPath(engine, tablePath, () => System.currentTimeMillis)
       setTablePropAndVerify(
-        engine, tablePath, isNewTable = true, IN_COMMIT_TIMESTAMPS_ENABLED, "true", true)
+        engine,
+        tablePath,
+        isNewTable = true,
+        IN_COMMIT_TIMESTAMPS_ENABLED,
+        "true",
+        true)
 
       val startTime = System.currentTimeMillis()
       val clock = new ManualClock(startTime)
@@ -515,21 +549,18 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
         tablePath,
         schema = testSchema,
         partCols = Seq.empty,
-        clock = clock
-      )
+        clock = clock)
       clock.setTime(startTime)
       appendData(
         engine,
         tablePath,
         data = Seq(Map.empty[String, Literal] -> dataBatches2),
-        clock = clock
-      )
+        clock = clock)
       appendData(
         engine,
         tablePath,
         data = Seq(Map.empty[String, Literal] -> dataBatches2),
-        clock = clock
-      )
+        clock = clock)
 
       // Remove CommitInfo from the commit.
       val logPath = new Path(table.getPath(engine), "_delta_log")
@@ -542,7 +573,9 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
       assert(ex.getMessage.contains(String.format(
         "This table has the feature %s enabled which requires the presence of the " +
           "CommitInfo action in every commit. However, the CommitInfo action is " +
-          "missing from commit version %s.", "inCommitTimestamp", "2")))
+          "missing from commit version %s.",
+        "inCommitTimestamp",
+        "2")))
     }
   }
 
@@ -566,16 +599,14 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
         schema = testSchema,
         partCols = Seq.empty,
         tableProperties = Map(IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true"),
-        clock = clock
-      )
+        clock = clock)
       clock.setTime(startTime)
       appendData(
         engine,
         tablePath,
         data = Seq(Map.empty[String, Literal] -> dataBatches2),
         tableProperties = Map(IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true"),
-        clock = clock
-      )
+        clock = clock)
       clock.setTime(startTime - 1000)
       val ex = intercept[ProtocolChangedException] {
         commitAppendData(engine, txn1, Seq(Map.empty[String, Literal] -> dataBatches1))

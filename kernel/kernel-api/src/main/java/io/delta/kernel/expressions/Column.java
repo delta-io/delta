@@ -61,6 +61,20 @@ public final class Column implements Expression {
     return "column(" + quoteColumnPath(names) + ")";
   }
 
+  /**
+   * Returns a new column that appends the input column name to the current column. Corresponds to
+   * an additional level of nested reference.
+   *
+   * @param name the column name to append
+   * @return the new column
+   */
+  public Column appendNestedField(String name) {
+    String[] newNames = new String[names.length + 1];
+    System.arraycopy(names, 0, newNames, 0, names.length);
+    newNames[names.length] = name;
+    return new Column(newNames);
+  }
+
   private static String quoteColumnPath(String[] names) {
     return Arrays.stream(names)
         .map(s -> format("`%s`", s.replace("`", "``")))

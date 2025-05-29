@@ -23,13 +23,15 @@ import java.util.Date
 import scala.collection.JavaConverters._
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
+import org.apache.spark.sql.delta.DeltaTestUtils.{modifyCommitTimestamp, BOOLEAN_DOMAIN}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader._
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaColumnMappingSelectedTestMixin
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import org.apache.spark.sql.delta.util.FileNames
+import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames}
+import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
@@ -105,16 +107,6 @@ abstract class DeltaCDCSuiteBase
       end: Boundary,
       schemaMode: Option[DeltaBatchCDFSchemaMode] = Some(BatchCDFSchemaLegacy),
       readerOptions: Map[String, String] = Map.empty): DataFrame
-
-  /** Modify timestamp for a delta commit, used to test timestamp querying */
-  def modifyDeltaTimestamp(deltaLog: DeltaLog, version: Long, time: Long): Unit = {
-    val file = new File(FileNames.unsafeDeltaFile(deltaLog.logPath, version).toUri)
-    file.setLastModified(time)
-    val crc = new File(FileNames.checksumFile(deltaLog.logPath, version).toUri)
-    if (crc.exists()) {
-      crc.setLastModified(time)
-    }
-  }
 
   /** Create table utility method */
   def ctas(srcTbl: String, dstTbl: String, disableCDC: Boolean = false): Unit = {
@@ -250,14 +242,14 @@ abstract class DeltaCDCSuiteBase
 
       // modify timestamps
       // version 0
-      modifyDeltaTimestamp(deltaLog, 0, 0)
+      modifyCommitTimestamp(deltaLog, 0, 0)
       val tsAfterV0 = dateFormat.format(new Date(1))
 
       // version 1
-      modifyDeltaTimestamp(deltaLog, 1, 1000)
+      modifyCommitTimestamp(deltaLog, 1, 1000)
       val tsAfterV1 = dateFormat.format(new Date(1001))
 
-      modifyDeltaTimestamp(deltaLog, 2, 2000)
+      modifyCommitTimestamp(deltaLog, 2, 2000)
 
       val readDf = cdcRead(
         new TablePath(tempDir.getAbsolutePath),
@@ -276,9 +268,9 @@ abstract class DeltaCDCSuiteBase
       createTblWithThreeVersions(path = Some(tempDir.getAbsolutePath))
       val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
 
-      modifyDeltaTimestamp(deltaLog, 0, 0)
-      modifyDeltaTimestamp(deltaLog, 1, 10000)
-      modifyDeltaTimestamp(deltaLog, 2, 20000)
+      modifyCommitTimestamp(deltaLog, 0, 0)
+      modifyCommitTimestamp(deltaLog, 1, 10000)
+      modifyCommitTimestamp(deltaLog, 2, 20000)
 
       val ts0 = dateFormat.format(new Date(2000))
       val readDf = cdcRead(
@@ -297,9 +289,9 @@ abstract class DeltaCDCSuiteBase
       createTblWithThreeVersions(path = Some(tempDir.getAbsolutePath))
       val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
 
-      modifyDeltaTimestamp(deltaLog, 0, 0)
-      modifyDeltaTimestamp(deltaLog, 1, 1000)
-      modifyDeltaTimestamp(deltaLog, 2, 2000)
+      modifyCommitTimestamp(deltaLog, 0, 0)
+      modifyCommitTimestamp(deltaLog, 1, 1000)
+      modifyCommitTimestamp(deltaLog, 2, 2000)
 
       val ts0 = dateFormat.format(new Date(0))
       val readDf = cdcRead(
@@ -318,9 +310,9 @@ abstract class DeltaCDCSuiteBase
       createTblWithThreeVersions(path = Some(tempDir.getAbsolutePath))
       val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
 
-      modifyDeltaTimestamp(deltaLog, 0, 4000)
-      modifyDeltaTimestamp(deltaLog, 1, 8000)
-      modifyDeltaTimestamp(deltaLog, 2, 12000)
+      modifyCommitTimestamp(deltaLog, 0, 4000)
+      modifyCommitTimestamp(deltaLog, 1, 8000)
+      modifyCommitTimestamp(deltaLog, 2, 12000)
 
       val ts0 = dateFormat.format(new Date(1000))
       val ts1 = dateFormat.format(new Date(3000))
@@ -339,9 +331,9 @@ abstract class DeltaCDCSuiteBase
       createTblWithThreeVersions(path = Some(tempDir.getAbsolutePath))
       val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
 
-      modifyDeltaTimestamp(deltaLog, 0, 0)
-      modifyDeltaTimestamp(deltaLog, 1, 4000)
-      modifyDeltaTimestamp(deltaLog, 2, 8000)
+      modifyCommitTimestamp(deltaLog, 0, 0)
+      modifyCommitTimestamp(deltaLog, 1, 4000)
+      modifyCommitTimestamp(deltaLog, 2, 8000)
 
       val ts0 = dateFormat.format(new Date(1000))
       val ts1 = dateFormat.format(new Date(3000))
@@ -361,9 +353,9 @@ abstract class DeltaCDCSuiteBase
       createTblWithThreeVersions(path = Some(tempDir.getAbsolutePath))
       val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
 
-      modifyDeltaTimestamp(deltaLog, 0, 0)
-      modifyDeltaTimestamp(deltaLog, 1, 4000)
-      modifyDeltaTimestamp(deltaLog, 2, 8000)
+      modifyCommitTimestamp(deltaLog, 0, 0)
+      modifyCommitTimestamp(deltaLog, 1, 4000)
+      modifyCommitTimestamp(deltaLog, 2, 8000)
 
       val ts0 = dateFormat.format(new Date(3000))
       val ts1 = dateFormat.format(new Date(5000))
@@ -383,9 +375,9 @@ abstract class DeltaCDCSuiteBase
       createTblWithThreeVersions(path = Some(tempDir.getAbsolutePath))
       val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
 
-      modifyDeltaTimestamp(deltaLog, 0, 0)
-      modifyDeltaTimestamp(deltaLog, 1, 4000)
-      modifyDeltaTimestamp(deltaLog, 2, 8000)
+      modifyCommitTimestamp(deltaLog, 0, 0)
+      modifyCommitTimestamp(deltaLog, 1, 4000)
+      modifyCommitTimestamp(deltaLog, 2, 8000)
 
       val ts0 = dateFormat.format(new Date(3000))
       val ts1 = dateFormat.format(new Date(1000))
@@ -404,9 +396,9 @@ abstract class DeltaCDCSuiteBase
       createTblWithThreeVersions(path = Some(tempDir.getAbsolutePath))
       val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
 
-      modifyDeltaTimestamp(deltaLog, 0, 0)
-      modifyDeltaTimestamp(deltaLog, 1, 4000)
-      modifyDeltaTimestamp(deltaLog, 2, 8000)
+      modifyCommitTimestamp(deltaLog, 0, 0)
+      modifyCommitTimestamp(deltaLog, 1, 4000)
+      modifyCommitTimestamp(deltaLog, 2, 8000)
 
       val ts0 = dateFormat.format(new Date(5000))
       val ts1 = dateFormat.format(new Date(3000))
@@ -447,7 +439,7 @@ abstract class DeltaCDCSuiteBase
       // Set commit time during Daylight savings time change.
       val restoreDate = "2022-11-06 01:42:44"
       val timestamp = dateFormat.parse(s"$restoreDate -0800").getTime
-      modifyDeltaTimestamp(deltaLog, 0, timestamp)
+      modifyCommitTimestamp(deltaLog, 0, timestamp)
 
       // Verify DST is respected.
       val e = intercept[Exception] {
@@ -556,9 +548,9 @@ abstract class DeltaCDCSuiteBase
       createTblWithThreeVersions(path = Some(tempDir.getAbsolutePath))
       val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
 
-      modifyDeltaTimestamp(deltaLog, 0, 0)
-      modifyDeltaTimestamp(deltaLog, 1, 1000)
-      modifyDeltaTimestamp(deltaLog, 2, 2000)
+      modifyCommitTimestamp(deltaLog, 0, 0)
+      modifyCommitTimestamp(deltaLog, 1, 1000)
+      modifyCommitTimestamp(deltaLog, 2, 2000)
 
       val ts0 = dateFormat.format(new Date(2000))
       val ts1 = dateFormat.format(new Date(1))
@@ -793,13 +785,13 @@ abstract class DeltaCDCSuiteBase
 
         // modify timestamps
         // version 0
-        modifyDeltaTimestamp(deltaLog, 0, 0)
+        modifyCommitTimestamp(deltaLog, 0, 0)
 
         // version 1
-        modifyDeltaTimestamp(deltaLog, 1, 1000)
+        modifyCommitTimestamp(deltaLog, 1, 1000)
 
         // version 2
-        modifyDeltaTimestamp(deltaLog, 2, 2000)
+        modifyCommitTimestamp(deltaLog, 2, 2000)
         val tsStart = dateFormat.format(new Date(3000))
         val tsEnd = dateFormat.format(new Date(4000))
 
@@ -823,13 +815,13 @@ abstract class DeltaCDCSuiteBase
 
         // modify timestamps
         // version 0
-        modifyDeltaTimestamp(deltaLog, 0, 0)
+        modifyCommitTimestamp(deltaLog, 0, 0)
 
         // version 1
-        modifyDeltaTimestamp(deltaLog, 1, 1000)
+        modifyCommitTimestamp(deltaLog, 1, 1000)
 
         // version 2
-        modifyDeltaTimestamp(deltaLog, 2, 2000)
+        modifyCommitTimestamp(deltaLog, 2, 2000)
 
         val tsStart = dateFormat.format(new Date(0))
         val tsEnd = dateFormat.format(new Date(4000))
@@ -964,6 +956,52 @@ class DeltaCDCScalaSuite extends DeltaCDCSuiteBase {
       case _ =>
         throw new IllegalArgumentException("No table name or path provided")
     }
+  }
+
+  private def testNullRangeBoundary(start: Boundary, end: Boundary): Unit = {
+    test(s"range boundary cannot be null - start=$start end=$end") {
+      val tblName = "tbl"
+      withTable(tblName) {
+        createTblWithThreeVersions(tblName = Some(tblName))
+
+        val expectedError = (start, end) match {
+          case (StartingVersion(null), _) => "DELTA_VERSION_INVALID"
+          case (StartingTimestamp(null), _) => "DELTA_TIMESTAMP_INVALID"
+          case (_, EndingVersion(null)) => "DELTA_VERSION_INVALID"
+          case (_, EndingTimestamp(null)) => "DELTA_TIMESTAMP_INVALID"
+        }
+        val expectedErrorParameters = expectedError match {
+          case "DELTA_VERSION_INVALID" => Map("version" -> "null")
+          case "DELTA_TIMESTAMP_INVALID" => Map("expr" -> "NULL")
+        }
+
+        checkError(
+          intercept[DeltaAnalysisException] {
+            cdcRead(new TableName(tblName), start, end)
+          },
+          expectedError,
+          parameters = expectedErrorParameters)
+      }
+    }
+  }
+
+  for {
+    start <- Seq(StartingVersion("0"), StartingTimestamp(dateFormat.format(new Date(1))))
+    end <- Seq(EndingVersion(null), EndingTimestamp(null))
+  } {
+    testNullRangeBoundary(start, end)
+  }
+
+  for {
+    start <- Seq(StartingVersion(null), StartingTimestamp(null))
+    end <- Seq(
+      Unbounded,
+      EndingVersion(null),
+      EndingTimestamp(null),
+      EndingVersion("0"),
+      EndingTimestamp(dateFormat.format(new Date(1))))
+  } {
+    testNullRangeBoundary(start, end)
   }
 
   test("filters should be pushed down") {
@@ -1102,4 +1140,9 @@ class DeltaCDCScalaWithDeletionVectorsSuite extends DeltaCDCScalaSuite
     super.beforeAll()
     enableDeletionVectorsForAllSupportedOperations(spark)
   }
+}
+
+class DeltaCDCScalaSuiteWithCoordinatedCommitsBatch10 extends DeltaCDCScalaSuite
+    with CoordinatedCommitsBaseSuite {
+  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(10)
 }

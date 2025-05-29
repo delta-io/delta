@@ -67,7 +67,8 @@ class ArrayColumnReader extends RepeatedValueConverter {
 
     checkArgument(
         typeFromFile.getFieldCount() == 1,
-        "Expected exactly one field in the array type, but got: " + typeFromFile);
+        "Expected exactly one field in the array type, but got: %s",
+        typeFromFile);
     GroupType repeatedGroup = typeFromFile.getType(0).asGroupType();
 
     // TODO: handle the legacy 2-level list physical format

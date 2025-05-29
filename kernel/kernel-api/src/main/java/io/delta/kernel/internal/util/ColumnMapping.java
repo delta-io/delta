@@ -15,7 +15,12 @@
  */
 package io.delta.kernel.internal.util;
 
+import static io.delta.kernel.internal.DeltaErrors.columnNotFoundInSchema;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+import static java.util.Collections.singletonMap;
+
 import io.delta.kernel.exceptions.InvalidConfigurationValueException;
+import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.types.*;
@@ -82,32 +87,27 @@ public class ColumnMapping {
   }
 
   /**
-   * Checks if the given column mapping mode in the given table metadata is supported. Throws on
-   * unsupported modes.
-   *
-   * @param metadata Metadata of the table
-   */
-  public static void throwOnUnsupportedColumnMappingMode(Metadata metadata) {
-    getColumnMappingMode(metadata.getConfiguration());
-  }
-
-  /**
    * Helper method that converts the logical schema (requested by the connector) to physical schema
-   * of the data stored in data files based on the table's column mapping mode.
+   * of the data stored in data files based on the table's column mapping mode. Field-id column
+   * metadata is preserved when cmMode = ID, all column metadata is otherwise removed.
    *
-   * @param logicalSchema Logical schema of the scan
-   * @param physicalSchema Physical schema of the scan
+   * <p>We require {@code fullSchema} in addition to the pruned schema we want to convert since we
+   * need the complete field metadata as it is stored in the schema in the _delta_log. We cannot be
+   * sure (and do not enforce) that this metadata is preserved by the connector.
+   *
+   * @param prunedSchema the logical read schema requested by the connector
+   * @param fullSchema the full delta schema (with complete metadata) as read from the _delta_log
    * @param columnMappingMode Column mapping mode
    */
   public static StructType convertToPhysicalSchema(
-      StructType logicalSchema, StructType physicalSchema, ColumnMappingMode columnMappingMode) {
+      StructType prunedSchema, StructType fullSchema, ColumnMappingMode columnMappingMode) {
     switch (columnMappingMode) {
       case NONE:
-        return logicalSchema;
+        return prunedSchema;
       case ID: // fall through
       case NAME:
         boolean includeFieldIds = columnMappingMode == ColumnMappingMode.ID;
-        return convertToPhysicalSchema(logicalSchema, physicalSchema, includeFieldIds);
+        return convertToPhysicalSchema(prunedSchema, fullSchema, includeFieldIds);
       default:
         throw new UnsupportedOperationException(
             "Unsupported column mapping mode: " + columnMappingMode);
@@ -123,12 +123,20 @@ public class ColumnMapping {
     }
   }
 
+  /** Returns the column id for a given {@link StructField} */
+  public static int getColumnId(StructField field) {
+    checkArgument(
+        field.getMetadata().contains(COLUMN_MAPPING_ID_KEY),
+        "Field does not have column id set in it's metadata");
+    return field.getMetadata().getLong(COLUMN_MAPPING_ID_KEY).intValue();
+  }
+
   public static void verifyColumnMappingChange(
       Map<String, String> oldConfig, Map<String, String> newConfig, boolean isNewTable) {
     ColumnMappingMode oldMappingMode = getColumnMappingMode(oldConfig);
     ColumnMappingMode newMappingMode = getColumnMappingMode(newConfig);
 
-    Preconditions.checkArgument(
+    checkArgument(
         isNewTable || validModeChange(oldMappingMode, newMappingMode),
         "Changing column mapping mode from '%s' to '%s' is not supported",
         oldMappingMode,
@@ -139,11 +147,22 @@ public class ColumnMapping {
     return columnMappingMode == ColumnMappingMode.ID || columnMappingMode == ColumnMappingMode.NAME;
   }
 
-  public static Metadata updateColumnMappingMetadata(
-      Metadata metadata, ColumnMappingMode columnMappingMode, boolean isNewTable) {
+  /**
+   * Updates the column mapping metadata if needed based on the column mapping mode and whether the
+   * icebergCompatV2 is enabled. If column mapping/iceberg compat info is already present in the
+   * metadata, this method does nothing and returns an empty Optional. Callers can avoid updating
+   * the metadata if the metadata has not changed.
+   *
+   * @param metadata Current metadata.
+   * @param isNewTable Whether this is part of a commit that sets the mapping mode on a new table.
+   * @return Optional of the updated metadata if it has changed, Optional.empty() otherwise.
+   */
+  public static Optional<Metadata> updateColumnMappingMetadataIfNeeded(
+      Metadata metadata, boolean isNewTable) {
+    ColumnMappingMode columnMappingMode = getColumnMappingMode(metadata.getConfiguration());
     switch (columnMappingMode) {
       case NONE:
-        return metadata;
+        return Optional.empty();
       case ID: // fall through
       case NAME:
         return assignColumnIdAndPhysicalName(metadata, isNewTable);
@@ -151,6 +170,31 @@ public class ColumnMapping {
         throw new UnsupportedOperationException(
             "Unsupported column mapping mode: " + columnMappingMode);
     }
+  }
+
+  /** Returns the physical column and data type for a given logical column based on the schema. */
+  public static Tuple2<Column, DataType> getPhysicalColumnNameAndDataType(
+      StructType schema, Column logicalColumn) {
+    List<String> physicalNameParts = new ArrayList<>();
+    DataType currentType = schema;
+
+    // Traverse through each level of the logical name to resolve its corresponding physical name.
+    for (String namePart : logicalColumn.getNames()) {
+      if (!(currentType instanceof StructType)) {
+        throw columnNotFoundInSchema(logicalColumn, schema);
+      }
+
+      StructType structType = (StructType) currentType;
+      // Find the field in the current structure that matches the given name
+      StructField field =
+          structType.fields().stream()
+              .filter(f -> f.getName().equalsIgnoreCase(namePart))
+              .findFirst()
+              .orElseThrow(() -> columnNotFoundInSchema(logicalColumn, schema));
+      physicalNameParts.add(ColumnMapping.getPhysicalName(field));
+      currentType = field.getDataType();
+    }
+    return new Tuple2<>(new Column(physicalNameParts.toArray(new String[0])), currentType);
   }
 
   ////////////////////////////
@@ -164,6 +208,14 @@ public class ColumnMapping {
       maxColumnId = findMaxColumnId(field, maxColumnId);
     }
     return maxColumnId;
+  }
+
+  static boolean hasColumnId(StructField field) {
+    return field.getMetadata().contains(COLUMN_MAPPING_ID_KEY);
+  }
+
+  static boolean hasPhysicalName(StructField field) {
+    return field.getMetadata().contains(COLUMN_MAPPING_PHYSICAL_NAME_KEY);
   }
 
   private static int findMaxColumnId(StructField field, int maxColumnId) {
@@ -196,20 +248,20 @@ public class ColumnMapping {
   /**
    * Utility method to convert the given logical schema to physical schema, recursively converting
    * sub-types in case of complex types. When {@code includeFieldId} is true, converted physical
-   * schema will have field ids in the metadata.
+   * schema will have field ids in the metadata. Column metadata is otherwise removed.
    */
   private static StructType convertToPhysicalSchema(
-      StructType logicalSchema, StructType physicalSchema, boolean includeFieldId) {
+      StructType prunedSchema, StructType fullSchema, boolean includeFieldId) {
     StructType newSchema = new StructType();
-    for (StructField logicalField : logicalSchema.fields()) {
-      DataType logicalType = logicalField.getDataType();
-      StructField physicalField = physicalSchema.get(logicalField.getName());
+    for (StructField prunedField : prunedSchema.fields()) {
+      StructField completeField = fullSchema.get(prunedField.getName());
       DataType physicalType =
-          convertToPhysicalType(logicalType, physicalField.getDataType(), includeFieldId);
-      String physicalName = physicalField.getMetadata().getString(COLUMN_MAPPING_PHYSICAL_NAME_KEY);
+          convertToPhysicalType(
+              prunedField.getDataType(), completeField.getDataType(), includeFieldId);
+      String physicalName = completeField.getMetadata().getString(COLUMN_MAPPING_PHYSICAL_NAME_KEY);
 
       if (includeFieldId) {
-        Long fieldId = physicalField.getMetadata().getLong(COLUMN_MAPPING_ID_KEY);
+        Long fieldId = completeField.getMetadata().getLong(COLUMN_MAPPING_ID_KEY);
         FieldMetadata.Builder builder =
             FieldMetadata.builder().putLong(PARQUET_FIELD_ID_KEY, fieldId);
 
@@ -218,15 +270,15 @@ public class ColumnMapping {
         // the 'element' and 'key'/'value' fields of Arrays/Maps haven been written,
         // then IcebergCompatV2 is enabled because the schema we are looking at is from
         // the DeltaLog and has nested field IDs setup
-        if (hasNestedColumnIds(physicalField)) {
+        if (hasNestedColumnIds(completeField)) {
           builder.putFieldMetadata(
-              PARQUET_FIELD_NESTED_IDS_METADATA_KEY, getNestedColumnIds(physicalField));
+              PARQUET_FIELD_NESTED_IDS_METADATA_KEY, getNestedColumnIds(completeField));
         }
 
         newSchema =
-            newSchema.add(physicalName, physicalType, logicalField.isNullable(), builder.build());
+            newSchema.add(physicalName, physicalType, prunedField.isNullable(), builder.build());
       } else {
-        newSchema = newSchema.add(physicalName, physicalType, logicalField.isNullable());
+        newSchema = newSchema.add(physicalName, physicalType, prunedField.isNullable());
       }
     }
     return newSchema;
@@ -267,14 +319,26 @@ public class ColumnMapping {
   /**
    * For each column/field in a {@link Metadata}'s schema, assign an id using the current maximum id
    * as the basis and increment from there. Additionally, assign a physical name based on a random
-   * UUID or re-use the old display name if the mapping mode is updated on an existing table.
+   * UUID or re-use the old display name if the mapping mode is updated on an existing table. When
+   * `icebergWriterCompatV1` is enabled, we assign physical names as 'col-[colId]'.
    *
    * @param metadata The new metadata to assign ids and physical names to
    * @param isNewTable whether this is part of a commit that sets the mapping mode on a new table
-   * @return {@link Metadata} with a new schema where ids and physical names have been assigned
+   * @return Optional {@link Metadata} with a new schema where ids and physical names have been
+   *     assigned if the schema has changed, returns Optional.empty() otherwise
    */
-  private static Metadata assignColumnIdAndPhysicalName(Metadata metadata, boolean isNewTable) {
-    StructType schema = metadata.getSchema();
+  private static Optional<Metadata> assignColumnIdAndPhysicalName(
+      Metadata metadata, boolean isNewTable) {
+    StructType oldSchema = metadata.getSchema();
+
+    // When icebergWriterCompatV1 is enabled we require physicalName='col-[columnId]'
+    boolean useColumnIdForPhysicalName =
+        TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.fromMetadata(metadata);
+
+    // This is the maxColumnId to use when assigning any new field-ids; we update this as we
+    // traverse the schema and after traversal this is the value that should be stored in the
+    // metadata. Note - this could be greater than the current value stored in the metadata if
+    // the connector has added new fields with field-ids
     AtomicInteger maxColumnId =
         new AtomicInteger(
             Math.max(
@@ -282,15 +346,18 @@ public class ColumnMapping {
                     metadata
                         .getConfiguration()
                         .getOrDefault(COLUMN_MAPPING_MAX_COLUMN_ID_KEY, "0")),
-                findMaxColumnId(schema)));
+                findMaxColumnId(oldSchema)));
+
     StructType newSchema = new StructType();
-    for (StructField field : schema.fields()) {
+    for (StructField field : oldSchema.fields()) {
       newSchema =
           newSchema.add(
               transformAndAssignColumnIdAndPhysicalName(
-                  assignColumnIdAndPhysicalNameToField(field, maxColumnId, isNewTable),
+                  assignColumnIdAndPhysicalNameToField(
+                      field, maxColumnId, isNewTable, useColumnIdForPhysicalName),
                   maxColumnId,
-                  isNewTable));
+                  isNewTable,
+                  useColumnIdForPhysicalName));
     }
 
     if (Boolean.parseBoolean(
@@ -300,10 +367,24 @@ public class ColumnMapping {
       newSchema = rewriteFieldIdsForIceberg(newSchema, maxColumnId);
     }
 
-    Map<String, String> config = new HashMap<>();
-    config.put(COLUMN_MAPPING_MAX_COLUMN_ID_KEY, Integer.toString(maxColumnId.get()));
+    // The maxColumnId in the metadata may be out-of-date either due to field-id assignment
+    // performed in this fx, or due to connector adding new fields
+    boolean shouldUpdateMaxId =
+        TableConfig.COLUMN_MAPPING_MAX_COLUMN_ID.fromMetadata(metadata) != maxColumnId.get();
 
-    return metadata.withNewSchema(newSchema).withNewConfiguration(config);
+    // We are comparing the old schema with the new schema to determine if the schema has changed.
+    // If this becomes hotspot, we can consider updating the methods to pass around AtomicBoolean
+    // to track if the schema has changed. It is a bit convoluted to pass around and update the
+    // AtomicBoolean in the recursive and multiple methods.
+    if (oldSchema.equals(newSchema) && !shouldUpdateMaxId) {
+      return Optional.empty();
+    }
+
+    String maxFieldId = Integer.toString(maxColumnId.get());
+    return Optional.of(
+        metadata
+            .withNewSchema(newSchema)
+            .withMergedConfiguration(singletonMap(COLUMN_MAPPING_MAX_COLUMN_ID_KEY, maxFieldId)));
   }
 
   /**
@@ -319,12 +400,17 @@ public class ColumnMapping {
    *     id value is used to keep the current value always the max id
    * @param isNewTable Whether this is a new or an existing table. For existing tables the physical
    *     name will be re-used from the old display name
+   * @param useColumnIdForPhysicalName Whether we should assign physical names to 'col-[colId]'.
+   *     When false uses the default behavior described above.
    * @return A new {@link StructField} with updated metadata under the {@link
    *     ColumnMapping#COLUMN_MAPPING_ID_KEY} and the {@link
    *     ColumnMapping#COLUMN_MAPPING_PHYSICAL_NAME_KEY} keys
    */
   private static StructField transformAndAssignColumnIdAndPhysicalName(
-      StructField field, AtomicInteger maxColumnId, boolean isNewTable) {
+      StructField field,
+      AtomicInteger maxColumnId,
+      boolean isNewTable,
+      boolean useColumnIdForPhysicalName) {
     DataType dataType = field.getDataType();
     if (dataType instanceof StructType) {
       StructType type = (StructType) dataType;
@@ -333,24 +419,28 @@ public class ColumnMapping {
         schema =
             schema.add(
                 transformAndAssignColumnIdAndPhysicalName(
-                    assignColumnIdAndPhysicalNameToField(f, maxColumnId, isNewTable),
+                    assignColumnIdAndPhysicalNameToField(
+                        f, maxColumnId, isNewTable, useColumnIdForPhysicalName),
                     maxColumnId,
-                    isNewTable));
+                    isNewTable,
+                    useColumnIdForPhysicalName));
       }
       return new StructField(field.getName(), schema, field.isNullable(), field.getMetadata());
     } else if (dataType instanceof ArrayType) {
       ArrayType type = (ArrayType) dataType;
       StructField elementField =
           transformAndAssignColumnIdAndPhysicalName(
-              type.getElementField(), maxColumnId, isNewTable);
+              type.getElementField(), maxColumnId, isNewTable, useColumnIdForPhysicalName);
       return new StructField(
           field.getName(), new ArrayType(elementField), field.isNullable(), field.getMetadata());
     } else if (dataType instanceof MapType) {
       MapType type = (MapType) dataType;
       StructField key =
-          transformAndAssignColumnIdAndPhysicalName(type.getKeyField(), maxColumnId, isNewTable);
+          transformAndAssignColumnIdAndPhysicalName(
+              type.getKeyField(), maxColumnId, isNewTable, useColumnIdForPhysicalName);
       StructField value =
-          transformAndAssignColumnIdAndPhysicalName(type.getValueField(), maxColumnId, isNewTable);
+          transformAndAssignColumnIdAndPhysicalName(
+              type.getValueField(), maxColumnId, isNewTable, useColumnIdForPhysicalName);
       return new StructField(
           field.getName(), new MapType(key, value), field.isNullable(), field.getMetadata());
     }
@@ -367,12 +457,26 @@ public class ColumnMapping {
    *     id value is used to keep the current value always the max id
    * @param isNewTable Whether this is a new or an existing table. For existing tables the physical
    *     name will be re-used from the old display name
+   * @param useColumnIdForPhysicalName Whether we should assign physical names to 'col-[colId]'.
+   *     When false uses the default behavior described above.
    * @return A new {@link StructField} with updated metadata under the {@link
    *     ColumnMapping#COLUMN_MAPPING_ID_KEY} and the {@link
    *     ColumnMapping#COLUMN_MAPPING_PHYSICAL_NAME_KEY} keys
    */
   private static StructField assignColumnIdAndPhysicalNameToField(
-      StructField field, AtomicInteger maxColumnId, boolean isNewTable) {
+      StructField field,
+      AtomicInteger maxColumnId,
+      boolean isNewTable,
+      boolean useColumnIdForPhysicalName) {
+    if (hasColumnId(field) ^ hasPhysicalName(field)) {
+      // If a connector is providing column mapping metadata in the given schema we require it to be
+      // complete
+      throw new IllegalArgumentException(
+          String.format(
+              "Both columnId and physicalName must be present if one is present. "
+                  + "Found this field with incomplete column mapping metadata: %s",
+              field));
+    }
     if (!hasColumnId(field)) {
       field =
           field.withNewMetadata(
@@ -383,7 +487,14 @@ public class ColumnMapping {
     }
     if (!hasPhysicalName(field)) {
       // re-use old display names as physical names when a table is updated
-      String physicalName = isNewTable ? "col-" + UUID.randomUUID() : field.getName();
+      String physicalName;
+      if (useColumnIdForPhysicalName) {
+        long columnId = getColumnId(field);
+        physicalName = String.format("col-%s", columnId);
+      } else {
+        physicalName = isNewTable ? "col-" + UUID.randomUUID() : field.getName();
+      }
+
       field =
           field.withNewMetadata(
               FieldMetadata.builder()
@@ -392,18 +503,6 @@ public class ColumnMapping {
                   .build());
     }
     return field;
-  }
-
-  private static boolean hasColumnId(StructField field) {
-    return field.getMetadata().contains(COLUMN_MAPPING_ID_KEY);
-  }
-
-  private static boolean hasPhysicalName(StructField field) {
-    return field.getMetadata().contains(COLUMN_MAPPING_PHYSICAL_NAME_KEY);
-  }
-
-  private static int getColumnId(StructField field) {
-    return field.getMetadata().getLong(COLUMN_MAPPING_ID_KEY).intValue();
   }
 
   private static boolean hasNestedColumnIds(StructField field) {
@@ -453,12 +552,16 @@ public class ColumnMapping {
   private static StructType rewriteFieldIdsForIceberg(StructType schema, AtomicInteger startId) {
     StructType newSchema = new StructType();
     for (StructField field : schema.fields()) {
+      FieldMetadata.Builder builder = FieldMetadata.builder().fromMetadata(field.getMetadata());
       newSchema =
           newSchema.add(
               transformSchema(
-                  startId, field, ""
-                  /** current column path */
-                  ));
+                      startId,
+                      field,
+                      "",
+                      /** current column path */
+                      builder)
+                  .withNewMetadata(builder.build()));
     }
     return newSchema;
   }
@@ -474,16 +577,29 @@ public class ColumnMapping {
    * @param structField The field where to start from
    * @param path The current field path relative to the parent field (aka most recent ancestor with
    *     a StructField). An empty path indicates that there's no parent and we're at the root
+   * @param closestStructFieldParentMetadata The metadata builder of the closest struct field parent
+   *     where nested IDs will be stored. For StructFields this is the current field. For
+   *     map/arrays, it is the closest parent that is a struct field.
    * @return A new {@link StructField} with updated {@link FieldMetadata}
    */
   private static StructField transformSchema(
-      AtomicInteger currentFieldId, StructField structField, String path) {
+      AtomicInteger currentFieldId,
+      StructField structField,
+      String path,
+      FieldMetadata.Builder closestStructFieldParentMetadata) {
     DataType dataType = structField.getDataType();
     if (dataType instanceof StructType) {
       StructType type = (StructType) dataType;
       List<StructField> fields =
           type.fields().stream()
-              .map(field -> transformSchema(currentFieldId, field, getPhysicalName(field)))
+              .map(
+                  field -> {
+                    FieldMetadata.Builder metadataBuilder =
+                        FieldMetadata.builder().fromMetadata(field.getMetadata());
+                    return transformSchema(
+                            currentFieldId, field, getPhysicalName(field), metadataBuilder)
+                        .withNewMetadata(metadataBuilder.build());
+                  })
               .collect(Collectors.toList());
       return new StructField(
           structField.getName(),
@@ -495,9 +611,13 @@ public class ColumnMapping {
       String basePath = "".equals(path) ? getPhysicalName(structField) : path;
       // update element type metadata and recurse into element type
       String elementPath = basePath + "." + type.getElementField().getName();
-      structField = maybeUpdateFieldId(structField, elementPath, currentFieldId);
+      maybeUpdateFieldId(closestStructFieldParentMetadata, elementPath, currentFieldId);
       StructField elementType =
-          transformSchema(currentFieldId, type.getElementField(), elementPath);
+          transformSchema(
+              currentFieldId,
+              type.getElementField(),
+              elementPath,
+              closestStructFieldParentMetadata);
       return new StructField(
           structField.getName(),
           new ArrayType(elementType),
@@ -508,12 +628,16 @@ public class ColumnMapping {
       // update key type metadata and recurse into key type
       String basePath = "".equals(path) ? getPhysicalName(structField) : path;
       String keyPath = basePath + "." + type.getKeyField().getName();
-      structField = maybeUpdateFieldId(structField, keyPath, currentFieldId);
-      StructField key = transformSchema(currentFieldId, type.getKeyField(), keyPath);
+      maybeUpdateFieldId(closestStructFieldParentMetadata, keyPath, currentFieldId);
+      StructField key =
+          transformSchema(
+              currentFieldId, type.getKeyField(), keyPath, closestStructFieldParentMetadata);
       // update value type metadata and recurse into value type
       String valuePath = basePath + "." + type.getValueField().getName();
-      structField = maybeUpdateFieldId(structField, valuePath, currentFieldId);
-      StructField value = transformSchema(currentFieldId, type.getValueField(), valuePath);
+      maybeUpdateFieldId(closestStructFieldParentMetadata, valuePath, currentFieldId);
+      StructField value =
+          transformSchema(
+              currentFieldId, type.getValueField(), valuePath, closestStructFieldParentMetadata);
       return new StructField(
           structField.getName(),
           new MapType(key, value),
@@ -559,26 +683,20 @@ public class ColumnMapping {
    *
    * </blockquote>
    *
-   * @param field The current field where to update the COLUMN_MAPPING_NESTED_IDS_KEY
+   * @param fieldMetadataBuilder The FieldMetadata.Builder to update with nested IDs
    * @param key For a map this is <colName>.key or <colName>.value. For an array this is
    *     <colName>.element
    * @param currentFieldId The current maximum field id to increment and use for assignment
-   * @return A field with potentially updated {@link FieldMetadata}
    */
-  private static StructField maybeUpdateFieldId(
-      StructField field, String key, AtomicInteger currentFieldId) {
+  private static void maybeUpdateFieldId(
+      FieldMetadata.Builder fieldMetadataBuilder, String key, AtomicInteger currentFieldId) {
     // init the nested metadata that holds the nested ids
-    if (!field.getMetadata().contains(COLUMN_MAPPING_NESTED_IDS_KEY)) {
-      FieldMetadata.Builder nestedIdsBuilder = initNestedIdsMetadataBuilder(field);
-      FieldMetadata metadata =
-          FieldMetadata.builder()
-              .fromMetadata(field.getMetadata())
-              .putFieldMetadata(COLUMN_MAPPING_NESTED_IDS_KEY, nestedIdsBuilder.build())
-              .build();
-      field = field.withNewMetadata(metadata);
+    FieldMetadata nestedMetadata = fieldMetadataBuilder.getMetadata(COLUMN_MAPPING_NESTED_IDS_KEY);
+    if (fieldMetadataBuilder.getMetadata(COLUMN_MAPPING_NESTED_IDS_KEY) == null) {
+      fieldMetadataBuilder.putFieldMetadata(COLUMN_MAPPING_NESTED_IDS_KEY, FieldMetadata.empty());
+      nestedMetadata = fieldMetadataBuilder.getMetadata(COLUMN_MAPPING_NESTED_IDS_KEY);
     }
 
-    FieldMetadata nestedMetadata = field.getMetadata().getMetadata(COLUMN_MAPPING_NESTED_IDS_KEY);
     // assign an id to the nested element and update the metadata
     if (!nestedMetadata.contains(key)) {
       FieldMetadata newNestedMeta =
@@ -586,19 +704,7 @@ public class ColumnMapping {
               .fromMetadata(nestedMetadata)
               .putLong(key, currentFieldId.incrementAndGet())
               .build();
-      return field.withNewMetadata(
-          FieldMetadata.builder()
-              .fromMetadata(field.getMetadata())
-              .putFieldMetadata(COLUMN_MAPPING_NESTED_IDS_KEY, newNestedMeta)
-              .build());
+      fieldMetadataBuilder.putFieldMetadata(COLUMN_MAPPING_NESTED_IDS_KEY, newNestedMeta);
     }
-    return field;
-  }
-
-  private static FieldMetadata.Builder initNestedIdsMetadataBuilder(StructField field) {
-    if (hasNestedColumnIds(field)) {
-      return FieldMetadata.builder().fromMetadata(getNestedColumnIds(field));
-    }
-    return FieldMetadata.builder();
   }
 }

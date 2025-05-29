@@ -19,6 +19,9 @@ package org.apache.spark.sql.delta
 import java.io.File
 import java.sql.{Date, Timestamp}
 
+import scala.concurrent.duration._
+
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
 import org.apache.spark.sql.delta.sources.{DeltaSink, DeltaSQLConf}
 
 import org.apache.spark.{SparkArithmeticException, SparkThrowable}
@@ -53,10 +56,16 @@ abstract class DeltaSinkImplicitCastSuiteBase extends DeltaSinkTest {
     private val source = MemoryStream[T]
 
     def write(data: T*)(selectExpr: String*): Unit =
-      write(outputMode = OutputMode.Append, extraOptions = Map.empty)(data: _*)(selectExpr: _*)
+      write(
+        outputMode = OutputMode.Append,
+        timeout = streamingTimeout,
+        extraOptions = Map.empty)(
+        data: _*)(
+        selectExpr: _*)
 
     def write(
         outputMode: OutputMode,
+        timeout: Duration,
         extraOptions: Map[String, String])(
         data: T*)(
         selectExpr: String*): Unit = {
@@ -72,7 +81,7 @@ abstract class DeltaSinkImplicitCastSuiteBase extends DeltaSinkTest {
           .trigger(Trigger.AvailableNow())
           .start(outputDir.getCanonicalPath)
       try {
-        failAfter(streamingTimeout) {
+        failAfter(timeout) {
           query.processAllAvailable()
         }
       } finally {
@@ -111,12 +120,18 @@ abstract class DeltaSinkImplicitCastSuiteBase extends DeltaSinkTest {
 /**
  * Covers handling implicit casting to handle type mismatches when writing data to a Delta sink.
  */
-class DeltaSinkImplicitCastSuite extends DeltaSinkImplicitCastSuiteBase {
+class DeltaSinkImplicitCastSuite extends DeltaSinkImplicitCastSuiteBase
+  with CoordinatedCommitsBaseSuite {
   import testImplicits._
 
   test(s"write wider type - long -> int") {
     withDeltaStream[Long] { stream =>
-      stream.write(17)("CAST(value AS INT)")
+      // This is the first write in this test suite, use a larger timeout to allow for the initial
+      // streaming setup to take place.
+      stream.write(
+        outputMode = OutputMode.Append,
+        timeout = 600.seconds,
+        extraOptions = Map.empty)(17)("CAST(value AS INT)")
       assert(stream.currentSchema("value").dataType === IntegerType)
       checkAnswer(stream.read(), Row(17))
 
@@ -536,4 +551,12 @@ class DeltaSinkImplicitCastSuite extends DeltaSinkImplicitCastSuiteBase {
       }
     }
   }
+}
+
+class DeltaSinkImplicitCastWithCoordinatedCommitsBatch1Suite extends DeltaSinkImplicitCastSuite {
+  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(1)
+}
+
+class DeltaSinkImplicitCastWithCoordinatedCommitsBatch100Suite extends DeltaSinkImplicitCastSuite {
+  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(100)
 }

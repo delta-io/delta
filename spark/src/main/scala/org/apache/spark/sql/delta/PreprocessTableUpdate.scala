@@ -37,8 +37,6 @@ case class PreprocessTableUpdate(sqlConf: SQLConf)
 
   override def conf: SQLConf = sqlConf
 
-  override protected val supportMergeAndUpdateLegacyCastBehavior: Boolean = true
-
   override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperators {
     case u: DeltaUpdateTable if u.resolved =>
       u.condition.foreach { cond =>
@@ -57,8 +55,9 @@ case class PreprocessTableUpdate(sqlConf: SQLConf)
         throw DeltaErrors.notADeltaSourceException("UPDATE", Some(o))
     }
 
-    val generatedColumns = GeneratedColumn.getGeneratedColumns(index.snapshotAtAnalysis)
-    if (generatedColumns.nonEmpty && !deltaLogicalNode.isInstanceOf[LogicalRelation]) {
+    val generatedColumns = GeneratedColumn.getGeneratedColumns(index)
+    if (generatedColumns.nonEmpty &&
+        !GeneratedColumn.allowDMLTargetPlan(deltaLogicalNode, conf)) {
       // Disallow temp views referring to a Delta table that contains generated columns. When the
       // user doesn't provide expressions for generated columns, we need to create update
       // expressions for them automatically. Currently, we assume `update.child.output` is the same

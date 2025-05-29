@@ -248,7 +248,8 @@ class DeltaLogSuite extends QueryTest
 
         log.store.write(
           FileNames.unsafeDeltaFile(log.logPath, 0L),
-          Iterator(Action.supportedProtocolVersion(), Metadata(), add)
+          Iterator(Action.supportedProtocolVersion(
+            featuresToExclude = Seq(CatalogOwnedTableFeature)), Metadata(), add)
             .map(a => JsonUtils.toJson(a.wrap)),
           overwrite = false,
           log.newDeltaHadoopConf())
@@ -277,7 +278,8 @@ class DeltaLogSuite extends QueryTest
 
         log.store.write(
           FileNames.unsafeDeltaFile(log.logPath, 0L),
-          Iterator(Action.supportedProtocolVersion(), Metadata(), add)
+          Iterator(Action.supportedProtocolVersion(
+            featuresToExclude = Seq(CatalogOwnedTableFeature)), Metadata(), add)
             .map(a => JsonUtils.toJson(a.wrap)),
           overwrite = false,
           log.newDeltaHadoopConf())
@@ -410,6 +412,9 @@ class DeltaLogSuite extends QueryTest
             txn.commit(Seq(addFile), testOp)
           }
         }
+
+        val checksumFilePath = FileNames.checksumFile(log.logPath, log.snapshot.version)
+        removeProtocolAndMetadataFromChecksumFile(checksumFilePath)
 
         {
           // Create an incomplete checkpoint without the action and overwrite the
@@ -594,7 +599,7 @@ class DeltaLogSuite extends QueryTest
           Iterator(JsonUtils.toJson(add.wrap)),
           overwrite = false,
           deltaLog.newDeltaHadoopConf())
-        deltaLog
+        (deltaLog, None)
       }
       assert(snapshot.version === 0)
 
@@ -752,7 +757,7 @@ class DeltaLogSuite extends QueryTest
       val e = intercept[DeltaIOException] {
         log.createLogDirectoriesIfNotExists()
       }
-      checkError(e, "DELTA_CANNOT_CREATE_LOG_PATH")
+      checkError(e, "DELTA_CANNOT_CREATE_LOG_PATH", "42KD5", Map("path" -> log.logPath.toString))
       e.getCause match {
         case e: IOException =>
           assert(e.getMessage.contains("Parent path is not a directory"))
@@ -791,6 +796,62 @@ class DeltaLogSuite extends QueryTest
     }
   }
 
+  test("checksum file should contain protocol and metadata") {
+    withSQLConf(
+      DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true",
+      DeltaSQLConf.USE_PROTOCOL_AND_METADATA_FROM_CHECKSUM_ENABLED.key -> "true"
+    ) {
+      withTempDir { dir =>
+        val path = new Path("file://" + dir.getAbsolutePath)
+        val log = DeltaLog.forTable(spark, path)
+
+        val txn = log.startTransaction()
+        val files = (1 to 10).map(f => createTestAddFile(encodedPath = f.toString))
+        txn.commitManually(files: _*)
+        val metadata = log.snapshot.metadata
+        val protocol = log.snapshot.protocol
+        DeltaLog.clearCache()
+
+        val readLog = DeltaLog.forTable(spark, path)
+        val checksum = readLog.snapshot.checksumOpt.get
+        assert(checksum.metadata != null)
+        assert(checksum.protocol != null)
+        assert(checksum.metadata.equals(metadata))
+        assert(checksum.protocol.equals(protocol))
+      }
+    }
+  }
+
+  test("checksum reader should be able to read incomplete checksum file without " +
+    "protocol and metadata") {
+    withSQLConf(
+      DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true",
+      DeltaSQLConf.USE_PROTOCOL_AND_METADATA_FROM_CHECKSUM_ENABLED.key -> "true"
+    ) {
+      withTempDir { dir =>
+        val path = new Path("file://" + dir.getAbsolutePath)
+        val log = DeltaLog.forTable(spark, path)
+
+        val txn = log.startTransaction()
+        val files = (1 to 10).map(f => createTestAddFile(encodedPath = f.toString))
+        txn.commitManually(files: _*)
+        val metadata = log.snapshot.metadata
+        val protocol = log.snapshot.protocol
+        DeltaLog.clearCache()
+        val checksumFilePath = FileNames.checksumFile(log.logPath, 0L)
+        removeProtocolAndMetadataFromChecksumFile(checksumFilePath)
+
+        val readLog = DeltaLog.forTable(spark, path)
+        val checksum = readLog.snapshot.checksumOpt.get
+        assert(checksum.metadata == null)
+        assert(checksum.protocol == null)
+
+        // check we are still able to read protocol and metadata from checkpoint
+        assert(readLog.snapshot.metadata.equals(metadata))
+        assert(readLog.snapshot.protocol.equals(protocol))
+      }
+    }
+  }
 }
 
 class CoordinatedCommitsBatchBackfill1DeltaLogSuite extends DeltaLogSuite {

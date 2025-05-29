@@ -36,6 +36,14 @@ public class LogStoreErrors {
         return true;
     }
 
+    /**
+     * Returns true if the provided Throwable is to be considered fatal, or false if it is to be
+     * considered non-fatal
+     */
+    public static boolean isFatal(Throwable t) {
+        return !isNonFatal(t);
+    }
+
     public static IOException incorrectLogStoreImplementationException(Throwable cause) {
         return new IOException(
             String.join("\n",

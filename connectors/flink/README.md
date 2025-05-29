@@ -318,6 +318,8 @@ Both Delta Source and Delta Sink can be used as Flink Tables for SELECT and INSE
 Flink/Delta SQL connector **must** be used with Delta Catalog. Trying to execute SQL queries on Delta table
 using Flink API without Delta Catalog configured will cause SQL job to fail.
 
+_For an example of configuring Flink SQL to write to Delta Lake, see [this blog](https://www.decodable.co/blog/adventures-with-apache-flink-and-delta-lake)._
+
 | Feature support                                | Notes                                                                                   |
 |------------------------------------------------|-----------------------------------------------------------------------------------------|
 | [CREATE CATALOG](#delta-catalog-configuration) | A Delta Catalog is required for Delta Flink SQL support.                                |

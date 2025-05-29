@@ -13,6 +13,8 @@
       - [Sidecar Files](#sidecar-files)
     - [Log Compaction Files](#log-compaction-files)
     - [Last Checkpoint File](#last-checkpoint-file)
+    - [Version Checksum File](#version-checksum-file)
+      - [File Size Histogram Schema](#file-size-histogram-schema)
   - [Actions](#actions)
     - [Change Metadata](#change-metadata)
       - [Format Specification](#format-specification)
@@ -60,6 +62,11 @@
   - [Reader Requirements for Vacuum Protocol Check](#reader-requirements-for-vacuum-protocol-check)
 - [Clustered Table](#clustered-table)
   - [Writer Requirements for Clustered Table](#writer-requirements-for-clustered-table)
+- [Variant Data Type](#variant-data-type)
+  - [Variant data in Parquet](#variant-data-in-parquet)
+  - [Writer Requirements for Variant Type](#writer-requirements-for-variant-type)
+  - [Reader Requirements for Variant Data Type](#reader-requirements-for-variant-data-type)
+  - [Compatibility with other Delta Features](#compatibility-with-other-delta-features)
 - [Requirements for Writers](#requirements-for-writers)
   - [Creation of New Log Entries](#creation-of-new-log-entries)
   - [Consistency Between Table Metadata and Data Files](#consistency-between-table-metadata-and-data-files)
@@ -98,6 +105,7 @@
     - [Struct Field](#struct-field)
     - [Array Type](#array-type)
     - [Map Type](#map-type)
+    - [Variant Type](#variant-type)
     - [Column Metadata](#column-metadata)
     - [Example](#example)
   - [Checkpoint Schema](#checkpoint-schema)
@@ -162,7 +170,7 @@ This directory format is only used to follow existing conventions and is not req
 Actual partition values for a file must be read from the transaction log.
 
 ### Deletion Vector Files
-Deletion Vector (DV) files are stored root directory of the table alongside the data files. A DV file contains one or more serialised DV, each describing the set of *invalidated* (or "soft deleted") rows for a particular data file it is associated with.
+Deletion Vector (DV) files are stored in the root directory of the table alongside the data files. A DV file contains one or more serialised DV, each describing the set of *invalidated* (or "soft deleted") rows for a particular data file it is associated with.
 For data with partition values, DV files are *not* kept in the same directory hierarchy as data files, as each one can contain DVs for files from multiple partitions.
 DV files store DVs in a [binary format](#deletion-vector-format).
 
@@ -321,6 +329,98 @@ The last checkpoint file can help reduce the cost of constructing the latest sna
 Rather than list the entire directory, readers can locate a recent checkpoint by looking at the `_delta_log/_last_checkpoint` file.
 Due to the zero-padded encoding of the files in the log, the version id of this recent checkpoint can be used on storage systems that support lexicographically-sorted, paginated directory listing to enumerate any delta files or newer checkpoints that comprise more recent versions of the table.
 
+### Version Checksum File
+
+The Delta transaction log must remain an append-only log. To enable the detection of non-compliant modifications to Delta files, writers can optionally emit an auxiliary file with every commit, which contains important information about the state of the table as of that version. This file is referred to as the **Version Checksum** and can be used to validate the integrity of the table.
+
+### Version Checksum File Schema
+
+A Version Checksum file must have the following properties:
+- Be named `{version}.crc` where `version` is zero-padded to 20 digits (e.g., `00000000000000000001.crc`)
+- Be stored directly in the `_delta_log` directory alongside Delta log files
+- Contain exactly one JSON object with the following schema:
+
+Field Name | Data Type | Description | optional/required
+-|-|-|-
+txnId | String | A unique identifier for the transaction that produced this commit. | optional
+tableSizeBytes | Long | Total size of the table in bytes, calculated as the sum of the `size` field of all live `add` actions. | required
+numFiles | Long | Number of live `add` actions in this table version after Action Reconciliation. | required
+numMetadata | Long | Number of `metaData` actions. Must be 1. | required
+numProtocol | Long | Number of `protocol` actions. Must be 1. | required
+inCommitTimestampOpt | Long | The in-commit timestamp of this version. Present if and only if [In-Commit Timestamps](#in-commit-timestamps) are enabled. | optional
+setTransactions | Array[`txn`] | Live [Transaction Identifier](#transaction-identifiers) actions at this version. | optional
+domainMetadata | Array[`domainMetadata`] | Live [Domain Metadata](#domain-metadata) actions at this version, excluding tombstones. | optional
+metadata | Metadata | The table [metadata](#change-metadata) at this version. | required
+protocol | Protocol | The table [protocol](#protocol-evolution) at this version. | required
+fileSizeHistogram | FileSizeHistogram | Size distribution information of files remaining after [Action Reconciliation](#action-reconciliation). See [FileSizeHistogram](#file-size-histogram-schema) for more details. | optional
+allFiles | Array[`add`] | All live [Add File](#add-file-and-remove-file) actions at this version. | optional
+numDeletedRecordsOpt | Long | Number of records deleted through Deletion Vectors in this table version. | optional
+numDeletionVectorsOpt | Long | Number of Deletion Vectors active in this table version. | optional
+deletedRecordCountsHistogramOpt | DeletedRecordCountsHistogram | Distribution of deleted record counts across files. See [this](#deleted-record-counts-histogram-schema) section for more details. | optional
+
+##### File Size Histogram Schema
+
+The `FileSizeHistogram` object represents a histogram tracking file counts and total bytes across different size ranges. It has the following schema:
+
+Field Name | Data Type | Description | optional/required
+-|-|-|-
+sortedBinBoundaries | Array[Long] | A sorted array of bin boundaries where each element represents the start of a bin (inclusive) and the next element represents the end of the bin (exclusive). The first element must be 0. | required
+fileCounts | Array[Long] | Count of files in each bin. Length must match `sortedBinBoundaries`. | required
+totalBytes | Array[Long] | Total bytes of files in each bin. Length must match `sortedBinBoundaries`. | required
+
+Each index `i` in these arrays corresponds to a size range from `sortedBinBoundaries[i]` (inclusive) up to but not including `sortedBinBoundaries[i+1]`. The last bin ends at positive infinity. For example, given boundaries `[0, 1024, 4096]`:
+- Bin 0 contains files of size [0, 1024) bytes
+- Bin 1 contains files of size [1024, 4096) bytes
+- Bin 2 contains files of size [4096, ∞) bytes
+
+The arrays `fileCounts` and `totalBytes` store the number of files and their total size respectively that fall into each bin. This data structure enables efficient analysis of file size distributions in Delta tables.
+
+### Deleted Record Counts Histogram Schema
+
+The `DeletedRecordCountsHistogram` object represents a histogram tracking the distribution of deleted record counts across files in the table. Each bin in the histogram represents a range of deletion counts and stores the number of files having that many deleted records.
+
+Field Name | Data Type | Description | optional/required
+-|-|-|-
+deletedRecordCounts | Array[Long] | Array of size 10 where each element represents the count of files falling into a specific deletion count range. | required
+
+The histogram bins correspond to the following ranges:
+- Bin 0: [0, 0] (files with no deletions)
+- Bin 1: [1, 9] (files with 1-9 deleted records)
+- Bin 2: [10, 99] (files with 10-99 deleted records)
+- Bin 3: [100, 999] (files with 100-999 deleted records) 
+- Bin 4: [1000, 9999] (files with 1,000-9,999 deleted records)
+- Bin 5: [10000, 99999] (files with 10,000-99,999 deleted records)
+- Bin 6: [100000, 999999] (files with 100,000-999,999 deleted records)
+- Bin 7: [1000000, 9999999] (files with 1,000,000-9,999,999 deleted records)
+- Bin 8: [10000000, 2147483646] (files with 10,000,000 to 2147483646 (i.e. Int.MaxValue-1 in Java) deleted records)
+- Bin 9: [2147483647, ∞) (files with 2147483647 or more deleted records)
+
+This histogram allows analyzing the distribution of deleted records across files in a Delta table, which can be useful for monitoring and optimizing deletion patterns.
+
+#### State Validation
+
+Readers can validate table state integrity at a particular version by:
+1. Reading the Version Checksum file for that version
+2. Independently computing the same metrics by performing [Action Reconciliation](#action-reconciliation) on the table state
+3. Comparing the computed values against those recorded in the Version Checksum
+
+If any discrepancy is found between computed and recorded values, the table state at that version should be considered potentially corrupted.
+
+### Writer Requirements
+
+- Writers SHOULD produce a Version Checksum file for each commit
+- Writers MUST ensure all metrics in the Version Checksum accurately reflect table state after Action Reconciliation
+- Writers MUST write the Version Checksum file only after successfully writing the corresponding Delta log entry
+- Writers MUST NOT overwrite existing Version Checksum files
+
+### Reader Requirements
+
+- Readers MAY use Version Checksums to validate table state integrity
+- If performing validation, readers SHOULD verify all required fields match computed values
+- If validation fails, readers SHOULD surface the discrepancy to users via error messaging
+- Readers MUST continue functioning if Version Checksum files are missing
+
+
 ## Actions
 Actions modify the state of the table and they are stored both in delta files and in checkpoints.
 This section lists the space of available actions as well as their schema.
@@ -394,6 +494,8 @@ That means specifically that for any commit…
  - it is **legal** for the same `path` to occur in an `add` action and a `remove` action, but with two different `dvId`s.
  - it is **legal** for the same `path` to be added and/or removed and also occur in a `cdc` action.
  - it is **illegal** for the same `path` to be occur twice with different `dvId`s within each set of `add` or `remove` actions.
+ - it is **illegal** for a `path` to occur in an `add` action that already occurs with a different `dvId` in the list of `add` actions from the snapshot of the version immediately preceeding the commit, unless the commit also contains a remove for the later combination.
+ - it is **legal** to commit an existing `path` and `dvId` combination again (this allows metadata updates).
 
 The `dataChange` flag on either an `add` or a `remove` can be set to `false` to indicate that an action when combined with other actions in the same atomic version only rearranges existing data or adds new statistics.
 For example, streaming queries that are tailing the transaction log can use this flag to skip actions that would not affect the final results.
@@ -731,7 +833,7 @@ A given snapshot of the table can be computed by replaying the events committed 
  - A single `metaData` action
  - A collection of `txn` actions with unique `appId`s
  - A collection of `domainMetadata` actions with unique `domain`s.
- - A collection of `add` actions with unique `(path, deletionVector.uniqueId)` keys.
+ - A collection of `add` actions with unique path keys, corresponding to the newest (path, deletionVector.uniqueId) pair encountered for each path.
  - A collection of `remove` actions with unique `(path, deletionVector.uniqueId)` keys. The intersection of the primary keys in the `add` collection and `remove` collection must be empty. That means a logical file cannot exist in both the `remove` and `add` collections at the same time; however, the same *data file* can exist with *different* DVs in the `remove` collection, as logically they represent different content. The `remove` actions act as _tombstones_, and only exist for the benefit of the VACUUM command. Snapshot reads only return `add` actions on the read path.
  
 To achieve the requirements above, related actions from different delta files need to be reconciled with each other:
@@ -926,6 +1028,7 @@ When supported and active, writers must:
 - Block replacing partitioned tables with a differently-named partition spec
   - e.g. replacing a table partitioned by `part_a INT` with partition spec `part_b INT` must be blocked
   - e.g. replacing a table partitioned by `part_a INT` with partition spec `part_a LONG` is allowed
+- When the [Type Widening](#type-widening) table feature is supported, require that all type changes applied on the table are supported by [Iceberg V2](https://iceberg.apache.org/spec/#schema-evolution), based on the [Type Change Metadata](#type-change-metadata) recorded in the table schema.
 
 # Iceberg Compatibility V2
 
@@ -952,6 +1055,7 @@ When this feature is supported and enabled, writers must:
 - Block replacing partitioned tables with a differently-named partition spec
   - e.g. replacing a table partitioned by `part_a INT` with partition spec `part_b INT` must be blocked
   - e.g. replacing a table partitioned by `part_a INT` with partition spec `part_a LONG` is allowed
+- When the [Type Widening](#type-widening) table feature is supported, require that all type changes applied on the table are supported by [Iceberg V2](https://iceberg.apache.org/spec/#schema-evolution), based on the [Type Change Metadata](#type-change-metadata) recorded in the table schema.
 
 ### Example of storing identifiers for nested fields in ArrayType and MapType
 The following is an example of storing the identifiers for nested fields in `ArrayType` and `MapType`, of a table with the following schema,
@@ -1063,7 +1167,7 @@ Row Tracking is defined to be **supported** or **enabled** on a table as follows
 
 Enablement:
 - The table must be on Writer Version 7.
-- The feature `rowTracking` must exist in the table `protocol`'s `writerFeatures`.
+- The feature `rowTracking` must exist in the table `protocol`'s `writerFeatures`. The feature `domainMetadata` is required in the table `protocol`'s `writerFeatures`.
 - The table property `delta.enableRowTracking` must be set to `true`.
 
 ## Row IDs
@@ -1257,13 +1361,93 @@ The example above converts `configuration` field into JSON format, including esc
 }
 ```
 
+
+# Variant Data Type
+
+This feature enables support for the `variant` data type, which stores semi-structured data.
+The schema serialization method is described in [Schema Serialization Format](#schema-serialization-format).
+
+To support this feature:
+- The table must be on Reader Version 3 and Writer Version 7
+- The feature `variantType` must exist in the table `protocol`'s `readerFeatures` and `writerFeatures`.
+
+## Example JSON-Encoded Delta Table Schema with Variant types
+
+```
+{
+  "type" : "struct",
+  "fields" : [ {
+    "name" : "raw_data",
+    "type" : "variant",
+    "nullable" : true,
+    "metadata" : { }
+  }, {
+    "name" : "variant_array",
+    "type" : {
+      "type" : "array",
+      "elementType" : {
+        "type" : "variant"
+      },
+      "containsNull" : false
+    },
+    "nullable" : false,
+    "metadata" : { }
+  } ]
+}
+```
+
+## Variant data in Parquet
+
+The Variant data type is represented as two binary encoded values, according to the [Spark Variant binary encoding specification](https://github.com/apache/spark/blob/master/common/variant/README.md).
+The two binary values are named `value` and `metadata`.
+
+When writing Variant data to parquet files, the Variant data is written as a single Parquet struct, with the following fields:
+
+Struct field name | Parquet primitive type | Description
+-|-|-
+value | binary | The binary-encoded Variant value, as described in [Variant binary encoding](https://github.com/apache/spark/blob/master/common/variant/README.md)
+metadata | binary | The binary-encoded Variant metadata, as described in [Variant binary encoding](https://github.com/apache/spark/blob/master/common/variant/README.md)
+
+The parquet struct must include the two struct fields `value` and `metadata`.
+Supported writers must write the two binary fields, and supported readers must read the two binary fields.
+
+[Variant shredding](https://github.com/apache/parquet-format/blob/master/VariantShredding.md) will be introduced in a separate `variantShredding` table feature. will be introduced later, as a separate `variantShredding` table feature.
+
+## Writer Requirements for Variant Data Type
+
+When Variant type is supported (`writerFeatures` field of a table's `protocol` action contains `variantType`), writers:
+- must write a column of type `variant` to parquet as a struct containing the fields `value` and `metadata` and storing values that conform to the [Variant binary encoding specification](https://github.com/apache/spark/blob/master/common/variant/README.md)
+- must not write a parquet struct field named `typed_value` to avoid confusion with the field required by [Variant shredding](https://github.com/apache/parquet-format/blob/master/VariantShredding.md) with the same name.
+
+## Reader Requirements for Variant Data Type
+
+When Variant type is supported (`readerFeatures` field of a table's `protocol` action contains `variantType`), readers:
+- must recognize and tolerate a `variant` data type in a Delta schema
+- must use the correct physical schema (struct-of-binary, with fields `value` and `metadata`) when reading a Variant data type from file
+- must make the column available to the engine:
+    - [Recommended] Expose and interpret the struct-of-binary as a single Variant field in accordance with the [Spark Variant binary encoding specification](https://github.com/apache/spark/blob/master/common/variant/README.md).
+    - [Alternate] Expose the raw physical struct-of-binary, e.g. if the engine does not support Variant.
+    - [Alternate] Convert the struct-of-binary to a string, and expose the string representation, e.g. if the engine does not support Variant.
+
+## Compatibility with other Delta Features
+
+Feature | Support for Variant Data Type
+-|-
+Partition Columns | **Supported:** A Variant column is allowed to be a non-partitioned column of a partitioned table. <br/> **Unsupported:** Variant is not a comparable data type, so it cannot be included in a partition column.
+Clustered Tables | **Supported:** A Variant column is allowed to be a non-clustering column of a clustered table. <br/> **Unsupported:** Variant is not a comparable data type, so it cannot be included in a clustering column.
+Delta Column Statistics | **Supported:** A Variant column supports the `nullCount` statistic. <br/> **Unsupported:** Variant is not a comparable data type, so a Variant column does not support the `minValues` and `maxValues` statistics.
+Generated Columns | **Supported:** A Variant column is allowed to be used as a source in a generated column expression, as long as the Variant type is not the result type of the generated column expression. <br/> **Unsupported:** The Variant data type is not allowed to be the result type of a generated column expression.
+Delta CHECK Constraints | **Supported:** A Variant column is allowed to be used for a CHECK constraint expression.
+Default Column Values | **Supported:** A Variant column is allowed to have a default column value.
+Change Data Feed | **Supported:** A table using the Variant data type is allowed to enable the Delta Change Data Feed.
+
 # In-Commit Timestamps
 
 The In-Commit Timestamps writer feature strongly associates a monotonically increasing timestamp with each commit by storing it in the commit's metadata.
 
 Enablement:
 - The table must be on Writer Version 7.
-- The feature `inCommitTimestamps` must exist in the table `protocol`'s `writerFeatures`.
+- The feature `inCommitTimestamp` must exist in the table `protocol`'s `writerFeatures`.
 - The table property `delta.enableInCommitTimestamps` must be set to `true`.
 
 ## Writer Requirements for In-Commit Timestamps
@@ -1291,6 +1475,140 @@ Furthermore, when attempting timestamp-based time travel where table state must 
 1. If `timestamp X` >= `delta.inCommitTimestampEnablementTimestamp`, only table versions >= `delta.inCommitTimestampEnablementVersion` should be considered for the query.
 2. Otherwise, only table versions less than `delta.inCommitTimestampEnablementVersion` should be considered for the query.
 
+# Type Widening
+
+The Type Widening feature enables changing the type of a column or field in an existing Delta table to a wider type.
+
+The supported type changes are:
+- Integer widening:
+  - `Byte` -> `Short` -> `Int` -> `Long`
+- Floating-point widening:
+  - `Float` -> `Double`
+  - `Byte`, `Short` or `Int` -> `Double`
+- Date widening:
+  - `Date` -> `Timestamp without timezone`
+- Decimal widening - `p` and `s` denote the decimal precision and scale respectively.
+  - `Decimal(p, s)` -> `Decimal(p + k1, s + k2)` where `k1 >= k2 >= 0`.
+  - `Byte`, `Short` or `Int` -> `Decimal(10 + k1, k2)` where `k1 >= k2 >= 0`.
+  - `Long` -> `Decimal(20 + k1, k2)` where `k1 >= k2 >= 0`.
+
+To support this feature:
+- The table must be on Reader version 3 and Writer Version 7.
+- The feature `typeWidening` must exist in the table `protocol`'s `readerFeatures` and `writerFeatures`, either during its creation or at a later stage.
+
+When supported:
+ - A table may have a metadata property `delta.enableTypeWidening` in the Delta schema set to `true`. Writers must reject widening type changes when this property isn't set to `true`.
+ - The `metadata` for a column or field in the table schema may contain the key `delta.typeChanges` storing a history of type changes for that column or field.
+
+### Type Change Metadata
+
+Type changes applied to a table are recorded in the table schema and stored in the `metadata` of their nearest ancestor [StructField](#struct-field) using the key `delta.typeChanges`.
+The value for the key `delta.typeChanges` must be a JSON list of objects, where each object contains the following fields:
+Field Name | optional/required | Description
+-|-|-
+`fromType`| required | The type of the column or field before the type change.
+`toType`| required | The type of the column or field after the type change.
+`fieldPath`| optional | When updating the type of a map key/value or array element only: the path from the struct field holding the metadata to the map key/value or array element that was updated.
+
+The `fieldPath` value is "key", "value" and "element"  when updating resp. the type of a map key, map value and array element.
+The `fieldPath` value for nested maps and nested arrays are prefixed by their parents's path, separated by dots.
+
+The following is an example for the definition of a column that went through two type changes:
+```json
+{
+    "name" : "e",
+    "type" : "long",
+    "nullable" : true,
+    "metadata" : { 
+      "delta.typeChanges": [
+        {
+          "fromType": "short",
+          "toType": "integer"
+        },
+        {
+          "fromType": "integer",
+          "toType": "long"
+        }
+      ]
+    }
+  }
+```
+
+The following is an example for the definition of a column after changing the type of a map key:
+```json
+{
+    "name" : "e",
+    "type" : {
+      "type": "map",
+      "keyType": "double",
+      "valueType": "integer",
+      "valueContainsNull": true
+    },
+    "nullable" : true,
+    "metadata" : { 
+      "delta.typeChanges": [
+        {
+          "fromType": "float",
+          "toType": "double",
+          "fieldPath": "key"
+        }
+      ]
+    }
+  }
+```
+
+The following is an example for the definition of a column after changing the type of a map value nested in an array:
+```json
+{
+    "name" : "e",
+    "type" : {
+      "type": "array",
+      "elementType": {
+        "type": "map",
+        "keyType": "string",
+        "valueType": "decimal(10, 4)",
+        "valueContainsNull": true
+      },
+      "containsNull": true
+    },
+    "nullable" : true,
+    "metadata" : { 
+      "delta.typeChanges": [
+        {
+          "fromType": "decimal(6, 2)",
+          "toType": "decimal(10, 4)",
+          "fieldPath": "element.value"
+        }
+      ]
+    }
+  }
+```
+
+## Writer Requirements for Type Widening
+
+When Type Widening is supported (when the `writerFeatures` field of a table's `protocol` action contains `typeWidening`), then:
+- Writers must reject applying any unsupported type change.
+- Writers must reject applying type changes not supported by [Iceberg V2](https://iceberg.apache.org/spec/#schema-evolution)
+  when either the [Iceberg Compatibility V1](#iceberg-compatibility-v1) or [Iceberg Compatibility V2](#iceberg-compatibility-v2) table feature is supported:
+  - `Byte`, `Short` or `Int` -> `Double`
+  - `Date`  -> `Timestamp without timezone`
+  - Decimal scale increase
+  - `Byte`, `Short`, `Int` or `Long` -> `Decimal`
+- Writers must record type change information in the `metadata` of the nearest ancestor [StructField](#struct-field). See [Type Change Metadata](#type-change-metadata).
+- Writers must preserve the `delta.typeChanges` field in the metadata fields in the schema when the table schema is updated.
+- Writers may remove the `delta.typeChanges` metadata in the table schema if all data files use the same field types as the table schema.
+
+When Type Widening is enabled (when the table property `delta.enableTypeWidening` is set to `true`), then:
+- Writers should allow updating the table schema to apply a supported type change to a column, struct field, map key/value or array element.
+
+When removing the Type Widening table feature from the table, in the version that removes `typeWidening` from the `writerFeatures` and `readerFeatures` fields of the table's `protocol` action:
+- Writers must ensure no `delta.typeChanges` metadata key is present in the table schema. This may require rewriting existing data files to ensure that all data files use the same field types as the table schema in order to fulfill the requirement to remove type widening metadata.
+- Writers must ensure that the table property `delta.enableTypeWidening` is not set.
+
+## Reader Requirements for Type Widening
+When Type Widening is supported (when the `readerFeatures` field of a table's `protocol` action contains `typeWidening`), then:
+- Readers must allow reading data files written before the table underwent any supported type change, and must convert such values to the current, wider type.
+- Readers must validate that they support all type changes in the `delta.typeChanges` field in the table schema for the table version they are reading and fail when finding any unsupported type change.
 
 # Requirements for Writers
 This section documents additional requirements that writers must follow in order to preserve some of the higher level guarantees that Delta provides.
@@ -1606,6 +1924,7 @@ When enabled:
 - The `metadata` for the column in the table schema MAY contain the key `CURRENT_DEFAULT`.
 - The value of `CURRENT_DEFAULT` SHOULD be parsed as a SQL expression.
 - Writers MUST enforce that before writing any rows to the table, for each such requested row that lacks any explicit value (including NULL) for columns with default values, the writing system will assign the result of evaluating the default value expression for each such column as the value for that column in the row. By the same token, if the engine specified the explicit `DEFAULT` SQL keyword for any column, the expression result must be substituted in the same way.
+- All columns of `variant` type must default to null.
 
 ## Identity Columns
 
@@ -1680,6 +1999,7 @@ Feature | Name | Readers or Writers?
 [Iceberg Compatibility V2](#iceberg-compatibility-v2) | `icebergCompatV2` | Writers only
 [Clustered Table](#clustered-table) | `clustering` | Writers only
 [VACUUM Protocol Check](#vacuum-protocol-check) | `vacuumProtocolCheck` | Readers and Writers
+[In-Commit Timestamps](#in-commit-timestamps) | `inCommitTimestamp` | Writers only
 
 ## Deletion Vector Format
 
@@ -1869,6 +2189,14 @@ type| Always the string "map".
 keyType| The type of element used for the key of this map, represented as a string containing the name of a primitive type, a struct definition, an array definition or a map definition
 valueType| The type of element used for the key of this map, represented as a string containing the name of a primitive type, a struct definition, an array definition or a map definition
 
+### Variant Type
+
+Variant data uses the Delta type name `variant` for Delta schema serialization.
+
+Field Name | Description
+-|-
+type | Always the string "variant"
+
 ### Column Metadata
 A column metadata stores various information about the column.
 For example, this MAY contain some keys like [`delta.columnMapping`](#column-mapping) or [`delta.generationExpression`](#generated-columns) or [`CURRENT_DEFAULT`](#default-columns).  
@@ -1878,7 +2206,7 @@ delta.columnMapping.*| These keys are used to store information about the mappin
 delta.identity.*| These keys are for defining identity columns. See [Identity Columns](#identity-columns) for details.
 delta.invariants| JSON string contains SQL expression information. See [Column Invariants](#column-invariants) for details.
 delta.generationExpression| SQL expression string. See [Generated Columns](#generated-columns) for details.
-
+delta.typeChanges| JSON string containing information about previous type changes applied to this column. See [Type Change Metadata](#type-change-metadata) for details.
 
 ### Example
 

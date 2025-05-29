@@ -190,9 +190,7 @@ trait TypeWideningMergeIntoSchemaEvolutionTests
     cond = "t.a = s.a",
     clauses = update("a = s.a + 1") :: Nil,
     result = Seq("""{ "a": 1 }""", """{ "a": 10 }"""),
-    resultSchema = new StructType()
-      .add("a", IntegerType, nullable = true,
-        metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType))
+    resultSchema = new StructType().add("a", IntegerType)
   )
 
   testTypeEvolution("change top-level column short -> int with insert")(
@@ -203,9 +201,7 @@ trait TypeWideningMergeIntoSchemaEvolutionTests
     cond = "t.a = s.a",
     clauses = insert("(a) VALUES (s.a)") :: Nil,
     result = Seq("""{ "a": 0 }""", """{ "a": 10 }""", """{ "a": 20 }"""),
-    resultSchema = new StructType()
-      .add("a", IntegerType, nullable = true,
-        metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType))
+    resultSchema = new StructType().add("a", IntegerType)
   )
 
   testTypeEvolution("updating using narrower value doesn't evolve schema")(
@@ -233,8 +229,7 @@ trait TypeWideningMergeIntoSchemaEvolutionTests
     result = Seq(
       """{ "a": 1, "b": 5 }""", """{ "a": 10, "b": 15 }"""),
     resultSchema = new StructType()
-      .add("a", IntegerType, nullable = true,
-        metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType))
+      .add("a", IntegerType)
       .add("b", ShortType)
   )
 
@@ -252,8 +247,7 @@ trait TypeWideningMergeIntoSchemaEvolutionTests
     result = Seq("""{ "s": { "a": 2 } }""", """{ "s": { "a": 10 } }"""),
     resultSchema = new StructType()
       .add("s", new StructType()
-        .add("a", IntegerType, nullable = true,
-        metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType)))
+        .add("a", IntegerType))
   )
 
   testTypeEvolution("automatic widening of struct field with field assignment")(
@@ -270,8 +264,7 @@ trait TypeWideningMergeIntoSchemaEvolutionTests
     result = Seq("""{ "s": { "a": 2 } }""", """{ "s": { "a": 10 } }"""),
     resultSchema = new StructType()
       .add("s", new StructType()
-        .add("a", IntegerType, nullable = true,
-        metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType)))
+        .add("a", IntegerType))
   )
 
   testTypeEvolution("automatic widening of map value")(
@@ -286,14 +279,7 @@ trait TypeWideningMergeIntoSchemaEvolutionTests
     clauses = update("t.m = s.m") :: Nil,
     result = Seq("""{ "m": { "a": 2 } }"""),
     resultSchema = new StructType()
-      .add("m",
-        MapType(StringType, IntegerType),
-        nullable = true,
-        metadata = typeWideningMetadata(
-          version = 1,
-          from = ShortType,
-          to = IntegerType,
-          path = Seq("value")))
+      .add("m", MapType(StringType, IntegerType))
   )
 
   testTypeEvolution("automatic widening of array element")(
@@ -307,14 +293,7 @@ trait TypeWideningMergeIntoSchemaEvolutionTests
     clauses = update("t.a = s.a") :: Nil,
     result = Seq("""{ "a": [3, 4] }"""),
     resultSchema = new StructType()
-      .add("a",
-        ArrayType(IntegerType),
-        nullable = true,
-        metadata = typeWideningMetadata(
-          version = 1,
-          from = ShortType,
-          to = IntegerType,
-          path = Seq("element")))
+      .add("a", ArrayType(IntegerType))
   )
 
   testTypeEvolution("multiple automatic widening")(
@@ -330,10 +309,8 @@ trait TypeWideningMergeIntoSchemaEvolutionTests
     clauses = update("*") :: insert("*")  :: Nil,
     result = Seq("""{ "a": 1, "b": 4  }""", """{ "a": 5, "b": 6  }"""),
     resultSchema = new StructType()
-      .add("a", ShortType, nullable = true,
-        metadata = typeWideningMetadata(version = 1, from = ByteType, to = ShortType))
-      .add("b", IntegerType, nullable = true,
-        metadata = typeWideningMetadata(version = 1, from = ShortType, to = IntegerType))
+      .add("a", ShortType)
+      .add("b", IntegerType)
   )
 
   for (enabled <- BOOLEAN_DOMAIN)

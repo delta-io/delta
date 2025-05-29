@@ -106,7 +106,11 @@ object Constraints {
     metadata.configuration.filter {
       case (key, constraint) if key.toLowerCase(Locale.ROOT).startsWith("delta.constraints.") =>
         SchemaUtils.containsDependentExpression(
-          sparkSession, columnName, constraint, sparkSession.sessionState.conf.resolver)
+          sparkSession,
+          columnName,
+          constraint,
+          metadata.schema,
+          sparkSession.sessionState.conf.resolver)
       case _ => false
     }
   }

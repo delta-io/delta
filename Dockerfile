@@ -38,7 +38,7 @@ RUN pip3 install --upgrade pip
 # the`version.sbt` file.
 RUN pip install pip==24.0 setuptools==69.5.1 wheel==0.43.0
 
-RUN pip3 install pyspark==3.5.2
+RUN pip3 install pyspark==3.5.3
 
 RUN pip3 install mypy==0.982
 

@@ -20,6 +20,8 @@ import java.util.concurrent.TimeUnit
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaConfigs._
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.sources.DeltaSQLConf._
 
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -29,6 +31,14 @@ import org.apache.spark.util.ManualClock
  * Test dropping column mapping feature from a table.
  */
 class DropColumnMappingFeatureSuite extends RemoveColumnMappingSuiteUtils {
+
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    // All the drop feature tests below are based on the drop feature with history truncation
+    // implementation. The fast drop feature implementation does not require any waiting time.
+    // The fast drop feature implementation is tested extensively in the DeltaFastDropFeatureSuite.
+    spark.conf.set(DeltaSQLConf.FAST_DROP_FEATURE_ENABLED.key, false.toString)
+  }
 
   val clock = new ManualClock(System.currentTimeMillis())
   test("column mapping cannot be dropped without the feature flag") {
@@ -76,7 +86,8 @@ class DropColumnMappingFeatureSuite extends RemoveColumnMappingSuiteUtils {
     }
     checkError(e,
       "DELTA_INVALID_COLUMN_NAMES_WHEN_REMOVING_COLUMN_MAPPING",
-      parameters = Map("invalidColumnNames" -> "col1 with special chars ,;{}()\n\t="))
+      parameters = Map("invalidColumnNames" ->
+        "col1 with special chars ,;{}()\n\t=, col2 with special chars ,;{}()\n\t="))
   }
 
   test("drop column mapping from a table without table feature") {
@@ -154,13 +165,13 @@ class DropColumnMappingFeatureSuite extends RemoveColumnMappingSuiteUtils {
     val comment = "test comment"
     sql(s"ALTER TABLE $testTableName ALTER COLUMN $logicalColumnName COMMENT '$comment'")
 
-    val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName = testTableName))
-    val originalSnapshot = deltaLog.update()
+    val table = DeltaTableV2(spark, TableIdentifier(tableName = testTableName), "")
+    val originalSnapshot = table.initialSnapshot
 
     assert(originalSnapshot.schema.head.getComment().get == comment,
       "Renamed column should preserve comment.")
     val originalFiles = getFiles(originalSnapshot)
-    val startingVersion = deltaLog.update().version
+    val startingVersion = originalSnapshot.version
 
     val e = intercept[DeltaTableFeatureException] {
       dropColumnMappingTableFeature()
@@ -177,7 +188,7 @@ class DropColumnMappingFeatureSuite extends RemoveColumnMappingSuiteUtils {
 
     verifyRewrite(
       unsetTableProperty = true,
-      deltaLog,
+      table,
       originalFiles,
       startingVersion,
       originalData = originalData,

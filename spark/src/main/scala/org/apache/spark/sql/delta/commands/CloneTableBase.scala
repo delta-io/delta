@@ -25,10 +25,11 @@ import scala.collection.JavaConverters._
 import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
-import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsUtils
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util._
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
 
@@ -256,16 +257,16 @@ abstract class CloneTableBase(
         }
       }
 
-        recordDeltaOperation(
-          destinationTable, s"delta.${deltaOperation.name.toLowerCase()}.commit") {
-          txn.commitLarge(
-            spark,
-            actions,
-            Some(newProtocol),
-            deltaOperation,
-            context,
-            commitOpMetrics.mapValues(_.toString()).toMap)
-        }
+      recordDeltaOperation(
+        destinationTable, s"delta.${deltaOperation.name.toLowerCase()}.commit") {
+        txn.commitLarge(
+          spark,
+          actions,
+          Some(newProtocol),
+          deltaOperation,
+          context,
+          commitOpMetrics.mapValues(_.toString()).toMap)
+      }
 
       val cloneLogData = getOperationMetricsForEventRecord(opMetrics) ++ Map(
         SOURCE -> sourceName,
@@ -302,14 +303,19 @@ abstract class CloneTableBase(
       clonedMetadata = clonedMetadata.copy(id = targetSnapshot.metadata.id)
     }
 
-    // Coordinated Commit configurations are never copied over to the target table.
     val filteredConfiguration = clonedMetadata.configuration
+      // Coordinated Commit configurations are never copied over to the target table.
       .filterKeys(!CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS.contains(_))
+      // Catalog-Owned enabled table's `ucTableId` are never copied over to the target table.
+      .filterKeys(_ != UCCommitCoordinatorClient.UC_TABLE_ID_KEY)
       .toMap
+
     val clonedSchema =
       IdentityColumn.copySchemaWithMergedHighWaterMarks(
+        deltaLog = targetSnapshot.deltaLog,
         schemaToCopy = clonedMetadata.schema,
-        schemaWithHighWaterMarksToMerge = targetSnapshot.metadata.schema)
+        schemaWithHighWaterMarksToMerge = targetSnapshot.metadata.schema
+      )
     clonedMetadata.copy(configuration = filteredConfiguration, schemaString = clonedSchema.json)
   }
 
@@ -346,14 +352,30 @@ abstract class CloneTableBase(
       assert(validatedOverrides.isEmpty,
         "Explicit overrides on Coordinated Commits configurations for existing tables" +
           " are not supported, and should have been caught earlier.")
-      CoordinatedCommitsUtils.extractCoordinatedCommitsConfigurations(
-        targetSnapshot.metadata.configuration)
+      CoordinatedCommitsUtils.getExplicitCCConfigurations(targetSnapshot.metadata.configuration)
     } else {
       if (validatedOverrides.nonEmpty) {
         validatedOverrides
       } else {
-        CoordinatedCommitsUtils.fetchDefaultCoordinatedCommitsConfigurations(spark)
+        CoordinatedCommitsUtils.getDefaultCCConfigurations(spark)
       }
+    }
+  }
+
+  /**
+   * Helper function to determine [[UCCommitCoordinatorClient.UC_TABLE_ID_KEY]]
+   * for the target table.
+   */
+  private def determineCatalogOwnedUCTableId(
+      targetSnapshot: SnapshotDescriptor): Map[String, String] = {
+    // For REPLACE TABLE command, extract the `ucTableId` from the target table
+    // if it exists.
+    if (tableExists(targetSnapshot)) {
+      targetSnapshot.metadata.configuration.filter { case (k, _) =>
+        k == UCCommitCoordinatorClient.UC_TABLE_ID_KEY
+      }
+    } else {
+      Map.empty
     }
   }
 
@@ -369,19 +391,21 @@ abstract class CloneTableBase(
 
     // Finalize Coordinated Commits configurations for the target
     val coordinatedCommitsConfigurationOverrides =
-      CoordinatedCommitsUtils.extractCoordinatedCommitsConfigurations(validatedConfigurations)
+      CoordinatedCommitsUtils.getExplicitCCConfigurations(validatedConfigurations)
     val validatedConfigurationsWithoutCoordinatedCommits =
       validatedConfigurations -- coordinatedCommitsConfigurationOverrides.keys
     val finalCoordinatedCommitsConfigurations = determineCoordinatedCommitsConfigurations(
       spark,
       targetSnapshot,
       coordinatedCommitsConfigurationOverrides)
+    val finalCatalogOwnedMetadata = finalCoordinatedCommitsConfigurations ++
+      determineCatalogOwnedUCTableId(targetSnapshot)
 
     // Merge source configuration, table property overrides and coordinated-commits configurations.
     metadata = metadata.copy(configuration =
       metadata.configuration ++
         validatedConfigurationsWithoutCoordinatedCommits ++
-        finalCoordinatedCommitsConfigurations)
+        finalCatalogOwnedMetadata)
 
     verifyMetadataInvariants(targetSnapshot, metadata)
     metadata
@@ -395,7 +419,9 @@ abstract class CloneTableBase(
       spark: SparkSession,
       txn: OptimisticTransaction,
       opName: String): Protocol = {
-    val sourceProtocol = sourceTable.protocol
+    val sourceProtocol =
+      // Catalog-Owned: Do not copy over [[CatalogOwnedTableFeature]] from source table.
+      CatalogOwnedTableUtils.filterOutCatalogOwnedTableFeature(protocol = sourceTable.protocol)
     // Pre-transaction version of the target table.
     val targetProtocol = txn.snapshot.protocol
     // Overriding properties during the CLONE can change the minimum required protocol for target.
@@ -404,7 +430,21 @@ abstract class CloneTableBase(
     // the table property overrides as table features set by it won't be in the transaction
     // metadata anymore.
     val validatedConfigurations = DeltaConfigs.validateConfigurations(tablePropertyOverrides)
-    val configWithOverrides = txn.metadata.configuration ++ validatedConfigurations
+    // For CREATE CLONE, check the default spark configuration for Catalog-Owned.
+    val catalogOwnedEnabledByDefaultConf =
+      if (CatalogOwnedTableUtils.defaultCatalogOwnedEnabled(spark)
+          && !tableExists(txn.snapshot)) {
+        // Append [[CatalogOwnedTableFeature]] to the `configWithOverrides` below if table
+        // does not exist, to ensure the final target protocol contains CatalogOwned
+        // if enabled by default.
+        // Note: We need this because CatalogOwned is enabled through single protocol
+        //       without auxiliary metadata.
+        Map(s"delta.feature.${CatalogOwnedTableFeature.name}" -> "supported")
+      } else {
+        Map.empty
+      }
+    val configWithOverrides = txn.metadata.configuration ++ validatedConfigurations ++
+      catalogOwnedEnabledByDefaultConf
     val metadataWithOverrides = txn.metadata.copy(configuration = configWithOverrides)
     var (minReaderVersion, minWriterVersion, enabledFeatures) =
       Protocol.minProtocolComponentsFromMetadata(spark, metadataWithOverrides)

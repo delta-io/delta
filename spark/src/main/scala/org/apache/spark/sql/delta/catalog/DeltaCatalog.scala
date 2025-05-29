@@ -32,17 +32,20 @@ import org.apache.spark.sql.delta.{DeltaLog, DeltaOptions, IdentityColumn}
 import org.apache.spark.sql.delta.DeltaTableIdentifier.gluePermissionError
 import org.apache.spark.sql.delta.commands._
 import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.redirect.RedirectFeature
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.spark.sql.delta.tablefeatures.DropFeature
+import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.PartitionUtils
 import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkException
-import org.apache.spark.internal.Logging
+import org.apache.spark.internal.{Logging, MDC}
 import org.apache.spark.sql.{AnalysisException, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{NoSuchDatabaseException, NoSuchNamespaceException, NoSuchTableException, UnresolvedAttribute, UnresolvedFieldName, UnresolvedFieldPosition}
@@ -52,7 +55,7 @@ import org.apache.spark.sql.connector.catalog.{DelegatingCatalogExtension, Ident
 import org.apache.spark.sql.connector.catalog.TableCapability._
 import org.apache.spark.sql.connector.catalog.TableChange._
 import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTransform, Literal, NamedReference, Transform}
-import org.apache.spark.sql.connector.write.{LogicalWriteInfo, V1Write, WriteBuilder}
+import org.apache.spark.sql.connector.write.{LogicalWriteInfo, SupportsTruncate, V1Write, WriteBuilder}
 import org.apache.spark.sql.execution.datasources.{DataSource, PartitioningUtils}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.sources.InsertableRelation
@@ -147,11 +150,6 @@ class DeltaCatalog extends DelegatingCatalogExtension
     }
     var locUriOpt = location.map(CatalogUtils.stringToURI)
     val existingTableOpt = getExistingTableIfExists(id)
-    val loc = locUriOpt
-      .orElse(existingTableOpt.flatMap(_.storage.locationUri))
-      .getOrElse(spark.sessionState.catalog.defaultTablePath(id))
-    val storage = DataSource.buildStorageFormatFromOptions(writeOptions)
-      .copy(locationUri = Option(loc))
     // PROP_IS_MANAGED_LOCATION indicates that the table location is not user-specified but
     // system-generated. The table should be created as managed table in this case.
     val isManagedLocation = Option(allTableProperties.get(TableCatalog.PROP_IS_MANAGED_LOCATION))
@@ -159,12 +157,17 @@ class DeltaCatalog extends DelegatingCatalogExtension
     // Note: Spark generates the table location for managed tables in
     // `DeltaCatalog#delegate#createTable`, so `isManagedLocation` should never be true if
     // Unity Catalog is not involved. For safety we also check `isUnityCatalog` here.
-    val respectManagedLoc = isUnityCatalog || org.apache.spark.util.Utils.isTesting
+    val respectManagedLoc = isUnityCatalog || DeltaUtils.isTesting
     val tableType = if (location.isEmpty || (isManagedLocation && respectManagedLoc)) {
       CatalogTableType.MANAGED
     } else {
       CatalogTableType.EXTERNAL
     }
+    val loc = locUriOpt
+      .orElse(existingTableOpt.flatMap(_.storage.locationUri))
+      .getOrElse(spark.sessionState.catalog.defaultTablePath(id))
+    val storage = DataSource.buildStorageFormatFromOptions(writeOptions)
+      .copy(locationUri = Option(loc))
     val commentOpt = Option(allTableProperties.get("comment"))
 
 
@@ -245,8 +248,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
             throw e
           }
       case e: AnalysisException if gluePermissionError(e) && isPathIdentifier(ident) =>
-        logWarning("Received an access denied error from Glue. Assuming this " +
-          s"identifier ($ident) is path based.", e)
+        logWarning(log"Received an access denied error from Glue. Assuming this " +
+          log"identifier (${MDC(DeltaLogKeys.TABLE_NAME, ident)}) is path based.", e)
         newDeltaPathTable(ident)
     }
   }
@@ -615,7 +618,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
     override def abortStagedChanges(): Unit = {}
 
     override def capabilities(): util.Set[TableCapability] = {
-      Set(V1_BATCH_WRITE).asJava
+      Set(V1_BATCH_WRITE, TRUNCATE).asJava
     }
 
     override def newWriteBuilder(info: LogicalWriteInfo): WriteBuilder = {
@@ -626,7 +629,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
     /*
      * WriteBuilder for creating a Delta table.
      */
-    private class DeltaV1WriteBuilder extends WriteBuilder {
+    private class DeltaV1WriteBuilder extends WriteBuilder with SupportsTruncate {
+      override def truncate(): this.type = this
       override def build(): V1Write = new V1Write {
         override def toInsertableRelation(): InsertableRelation = {
           new InsertableRelation {
@@ -649,6 +653,17 @@ class DeltaCatalog extends DelegatingCatalogExtension
       case s: SetProperty if s.property() == "location" => classOf[SetLocation]
       case c => c.getClass
     }
+    // Determines whether this DDL SET or UNSET the table redirect property. If it is, the table
+    // redirect feature should be disabled to ensure the DDL can be applied onto the source or
+    // destination table properly.
+    val isUpdateTableRedirectDDL = grouped.map {
+      case (t, s: Seq[RemoveProperty]) if t == classOf[RemoveProperty] =>
+        s.map { prop => prop.property() }.exists(RedirectFeature.isRedirectProperty)
+      case (t, s: Seq[SetProperty]) if t == classOf[SetProperty] =>
+        RedirectFeature.hasRedirectConfig(s.map(prop => prop.property() -> prop.value()).toMap)
+      case (_, _) => false
+    }.toSeq.exists(a => a)
+    RedirectFeature.withUpdateTableRedirectDDL(isUpdateTableRedirectDDL) {
     val table = loadTable(ident) match {
       case deltaTable: DeltaTableV2 => deltaTable
       case _ if changes.exists(_.isInstanceOf[ClusterBy]) =>
@@ -658,9 +673,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
       case _ => return super.alterTable(ident, changes: _*)
     }
 
-    // Whether this is an ALTER TABLE ALTER COLUMN SYNC IDENTITY command.
-    var syncIdentity = false
-    val columnUpdates = new mutable.HashMap[Seq[String], (StructField, Option[ColumnPosition])]()
+    val columnUpdates = new mutable.HashMap[Seq[String], DeltaChangeColumnSpec]()
     val isReplaceColumnsCommand = grouped.get(classOf[DeleteColumn]) match {
       case Some(deletes) if grouped.contains(classOf[AddColumn]) =>
         // Convert to Seq so that contains method works
@@ -735,15 +748,9 @@ class DeltaCatalog extends DelegatingCatalogExtension
 
       case (t, columnChanges) if classOf[ColumnChange].isAssignableFrom(t) =>
         // TODO: Theoretically we should be able to fetch the snapshot from a txn.
-        val snapshotSchema = table.initialSnapshot.schema
-        val schema = if (!spark.conf.get(DeltaSQLConf.DELTA_BYPASS_CHARVARCHAR_TO_STRING_FIX)) {
-          // Convert (StringType, metadata = 'VARCHAR(n)') into (VARCHAR(n), metadata = '')
-          // so that CHAR/VARCHAR to String conversion can be handled correctly.
-          SchemaUtils.getRawSchemaWithoutCharVarcharMetadata(snapshotSchema)
-        } else {
-          snapshotSchema
-        }
-        def getColumn(fieldNames: Seq[String]): (StructField, Option[ColumnPosition]) = {
+        val schema = table.initialSnapshot.schema
+        def getColumn(fieldNames: Seq[String])
+            : DeltaChangeColumnSpec = {
           columnUpdates.getOrElseUpdate(fieldNames, {
             val colName = UnresolvedAttribute(fieldNames).name
             val fieldOpt = schema.findNestedField(fieldNames, includeCollections = true,
@@ -752,7 +759,12 @@ class DeltaCatalog extends DelegatingCatalogExtension
             val field = fieldOpt.getOrElse {
               throw DeltaErrors.nonExistentColumnInSchema(colName, schema.treeString)
             }
-            field -> None
+            DeltaChangeColumnSpec(
+              fieldNames.init,
+              fieldNames.last,
+              field,
+              colPosition = None,
+              syncIdentity = false)
           })
         }
 
@@ -766,8 +778,8 @@ class DeltaCatalog extends DelegatingCatalogExtension
         disallowedColumnChangesOnIdentityColumns.foreach {
           case change: ColumnChange =>
             val field = change.fieldNames()
-            val (existingField, _) = getColumn(field)
-            if (ColumnWithDefaultExprUtils.isIdentityColumn(existingField)) {
+            val spec = getColumn(field)
+            if (ColumnWithDefaultExprUtils.isIdentityColumn(spec.newColumn)) {
               throw DeltaErrors.identityColumnAlterColumnNotSupported()
             }
         }
@@ -775,50 +787,60 @@ class DeltaCatalog extends DelegatingCatalogExtension
         columnChanges.foreach {
           case comment: UpdateColumnComment =>
             val field = comment.fieldNames()
-            val (oldField, pos) = getColumn(field)
-            columnUpdates(field) = oldField.withComment(comment.newComment()) -> pos
+            val spec = getColumn(field)
+            columnUpdates(field) = spec.copy(
+              newColumn = spec.newColumn.withComment(comment.newComment()))
 
           case dataType: UpdateColumnType =>
             val field = dataType.fieldNames()
-            val (oldField, pos) = getColumn(field)
-            columnUpdates(field) = oldField.copy(dataType = dataType.newDataType()) -> pos
+            val spec = getColumn(field)
+            val newField = SchemaUtils.setFieldDataTypeCharVarcharSafe(
+              spec.newColumn, dataType.newDataType())
+            columnUpdates(field) = spec.copy(newColumn = newField)
 
           case position: UpdateColumnPosition =>
             val field = position.fieldNames()
-            val (oldField, pos) = getColumn(field)
-            columnUpdates(field) = oldField -> Option(position.position())
+            val spec = getColumn(field)
+            columnUpdates(field) = spec.copy(colPosition = Option(position.position()))
 
           case nullability: UpdateColumnNullability =>
             val field = nullability.fieldNames()
-            val (oldField, pos) = getColumn(field)
-            columnUpdates(field) = oldField.copy(nullable = nullability.nullable()) -> pos
+            val spec = getColumn(field)
+            columnUpdates(field) = spec.copy(
+              newColumn = spec.newColumn.copy(nullable = nullability.nullable()))
 
           case rename: RenameColumn =>
             val field = rename.fieldNames()
-            val (oldField, pos) = getColumn(field)
-            columnUpdates(field) = oldField.copy(name = rename.newName()) -> pos
+            val spec = getColumn(field)
+            columnUpdates(field) = spec.copy(
+              newColumn = spec.newColumn.copy(name = rename.newName()))
 
           case sync: SyncIdentity =>
-            syncIdentity = true
             val field = sync.fieldNames
-            val (oldField, pos) = getColumn(field)
-            if (!ColumnWithDefaultExprUtils.isIdentityColumn(oldField)) {
+            val spec = getColumn(field).copy(syncIdentity = true)
+            columnUpdates(field) = spec
+            if (!ColumnWithDefaultExprUtils.isIdentityColumn(spec.newColumn)) {
               throw DeltaErrors.identityColumnAlterNonIdentityColumnError()
             }
             // If the IDENTITY column does not allow explicit insert, high water mark should
-            // always be sync'ed and this is an no-op.
-            if (IdentityColumn.allowExplicitInsert(oldField)) {
-              columnUpdates(field) = oldField.copy() -> pos
+            // always be sync'ed and this is a no-op.
+            // TODO: This is redundant at the moment because columnUpdates is always set above.
+            // The original intention was to avoid running sync identity when the column does not
+            // allow explicit insert, so columnUpdates should only be set here, but doing so would
+            // fail a test related to DELTA_IDENTITY_ALLOW_SYNC_IDENTITY_TO_LOWER_HIGH_WATER_MARK.
+            // This should be fixed in the future.
+            if (IdentityColumn.allowExplicitInsert(spec.newColumn)) {
+              columnUpdates(field) = spec
             }
 
           case updateDefault: UpdateColumnDefaultValue =>
             val field = updateDefault.fieldNames()
-            val (oldField, pos) = getColumn(field)
+            val spec = getColumn(field)
             val updatedField = updateDefault.newDefaultValue() match {
-              case "" => oldField.clearCurrentDefaultValue()
-              case newDefault => oldField.withCurrentDefaultValue(newDefault)
+              case "" => spec.newColumn.clearCurrentDefaultValue()
+              case newDefault => spec.newColumn.withCurrentDefaultValue(newDefault)
             }
-            columnUpdates(field) = updatedField -> pos
+            columnUpdates(field) = spec.copy(newColumn = updatedField)
 
           case other =>
             throw DeltaErrors.unrecognizedColumnChange(s"${other.getClass}")
@@ -870,17 +892,12 @@ class DeltaCatalog extends DelegatingCatalogExtension
         }
     }
 
-    columnUpdates.foreach { case (fieldNames, (newField, newPositionOpt)) =>
-      AlterTableChangeColumnDeltaCommand(
-        table,
-        fieldNames.dropRight(1),
-        fieldNames.last,
-        newField,
-        newPositionOpt,
-        syncIdentity = syncIdentity).run(spark)
+    if (columnUpdates.nonEmpty) {
+      AlterTableChangeColumnDeltaCommand(table, columnUpdates.values.toSeq).run(spark)
     }
 
     loadTable(ident)
+  }
   }
 
   // We want our catalog to handle Delta, therefore for other data sources that want to be

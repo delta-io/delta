@@ -17,7 +17,7 @@
 [tool.black]
 # When changing the version, we have to update
 # GitHub workflow version
-required-version = "23.9.1"
+required-version = "23.12.1"
 line-length = 100
 target-version = ['py38']
 include = '\.pyi?$'

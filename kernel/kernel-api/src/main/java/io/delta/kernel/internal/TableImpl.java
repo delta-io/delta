@@ -25,8 +25,12 @@ import io.delta.kernel.exceptions.CheckpointAlreadyExistsException;
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.checkpoints.Checkpointer;
+import io.delta.kernel.internal.checksum.ChecksumUtils;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.snapshot.SnapshotManager;
+import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.Clock;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
@@ -36,7 +40,6 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
@@ -71,15 +74,17 @@ public class TableImpl implements Table {
     return new TableImpl(resolvedPath, clock);
   }
 
-  private final SnapshotManager snapshotManager;
   private final String tablePath;
+  private final Checkpointer checkpointer;
+  private final SnapshotManager snapshotManager;
   private final Clock clock;
 
   public TableImpl(String tablePath, Clock clock) {
     this.tablePath = tablePath;
     final Path dataPath = new Path(tablePath);
     final Path logPath = new Path(dataPath, "_delta_log");
-    this.snapshotManager = new SnapshotManager(logPath, dataPath);
+    this.checkpointer = new Checkpointer(logPath);
+    this.snapshotManager = new SnapshotManager(dataPath);
     this.clock = clock;
   }
 
@@ -90,31 +95,66 @@ public class TableImpl implements Table {
 
   @Override
   public Snapshot getLatestSnapshot(Engine engine) throws TableNotFoundException {
-    return snapshotManager.buildLatestSnapshot(engine);
+    SnapshotQueryContext snapshotContext = SnapshotQueryContext.forLatestSnapshot(tablePath);
+    try {
+      return snapshotManager.buildLatestSnapshot(engine, snapshotContext);
+    } catch (Exception e) {
+      snapshotContext.recordSnapshotErrorReport(engine, e);
+      throw e;
+    }
   }
 
   @Override
   public Snapshot getSnapshotAsOfVersion(Engine engine, long versionId)
       throws TableNotFoundException {
-    return snapshotManager.getSnapshotAt(engine, versionId);
+    SnapshotQueryContext snapshotContext =
+        SnapshotQueryContext.forVersionSnapshot(tablePath, versionId);
+    try {
+      return snapshotManager.getSnapshotAt(engine, versionId, snapshotContext);
+    } catch (Exception e) {
+      snapshotContext.recordSnapshotErrorReport(engine, e);
+      throw e;
+    }
   }
 
   @Override
   public Snapshot getSnapshotAsOfTimestamp(Engine engine, long millisSinceEpochUTC)
       throws TableNotFoundException {
-    return snapshotManager.getSnapshotForTimestamp(engine, millisSinceEpochUTC);
+    SnapshotQueryContext snapshotContext =
+        SnapshotQueryContext.forTimestampSnapshot(tablePath, millisSinceEpochUTC);
+    SnapshotImpl latestSnapshot = (SnapshotImpl) getLatestSnapshot(engine);
+    try {
+      return snapshotManager.getSnapshotForTimestamp(
+          engine, latestSnapshot, millisSinceEpochUTC, snapshotContext);
+    } catch (Exception e) {
+      snapshotContext.recordSnapshotErrorReport(engine, e);
+      throw e;
+    }
   }
 
   @Override
   public void checkpoint(Engine engine, long version)
       throws TableNotFoundException, CheckpointAlreadyExistsException, IOException {
-    snapshotManager.checkpoint(engine, clock, version);
+    final SnapshotImpl snapshotToCheckpoint =
+        (SnapshotImpl) getSnapshotAsOfVersion(engine, version);
+    checkpointer.checkpoint(engine, clock, snapshotToCheckpoint);
+  }
+
+  @Override
+  public void checksum(Engine engine, long version) throws TableNotFoundException, IOException {
+    final SnapshotImpl snapshotToWriteCrcFile =
+        (SnapshotImpl) getSnapshotAsOfVersion(engine, version);
+    ChecksumUtils.computeStateAndWriteChecksum(engine, snapshotToWriteCrcFile);
   }
 
   @Override
   public TransactionBuilder createTransactionBuilder(
       Engine engine, String engineInfo, Operation operation) {
     return new TransactionBuilderImpl(this, engineInfo, operation);
+  }
+
+  public TransactionBuilder createReplaceTableTransactionBuilder(Engine engine, String engineInfo) {
+    return new ReplaceTableTransactionBuilderImpl(this, engineInfo);
   }
 
   public Clock getClock() {
@@ -154,12 +194,19 @@ public class TableImpl implements Table {
       long startVersion,
       long endVersion,
       Set<DeltaLogActionUtils.DeltaAction> actionSet) {
-    // Create a new action set that always contains protocol
+    // Create a new action set which is a super set of the requested actions.
+    // The extra actions are needed either for checks or to extract
+    // extra information. We will strip out the extra actions before
+    // returning the result.
     Set<DeltaLogActionUtils.DeltaAction> copySet = new HashSet<>(actionSet);
     copySet.add(DeltaLogActionUtils.DeltaAction.PROTOCOL);
-    // If protocol is not in the original requested actions we drop the column before returning
+    // commitInfo is needed to extract the inCommitTimestamp of delta files
+    copySet.add(DeltaLogActionUtils.DeltaAction.COMMITINFO);
+    // Determine whether the additional actions were in the original set.
     boolean shouldDropProtocolColumn =
         !actionSet.contains(DeltaLogActionUtils.DeltaAction.PROTOCOL);
+    boolean shouldDropCommitInfoColumn =
+        !actionSet.contains(DeltaLogActionUtils.DeltaAction.COMMITINFO);
 
     return getRawChanges(engine, startVersion, endVersion, copySet)
         .map(
@@ -169,15 +216,18 @@ public class TableImpl implements Table {
               for (int rowId = 0; rowId < protocolVector.getSize(); rowId++) {
                 if (!protocolVector.isNullAt(rowId)) {
                   Protocol protocol = Protocol.fromColumnVector(protocolVector, rowId);
-                  TableFeatures.validateReadSupportedTable(
-                      protocol, getDataPath().toString(), Optional.empty());
+                  TableFeatures.validateKernelCanReadTheTable(protocol, getDataPath().toString());
                 }
               }
+              ColumnarBatch batchToReturn = batch;
               if (shouldDropProtocolColumn) {
-                return batch.withDeletedColumnAt(protocolIdx);
-              } else {
-                return batch;
+                batchToReturn = batchToReturn.withDeletedColumnAt(protocolIdx);
               }
+              int commitInfoIdx = batchToReturn.getSchema().indexOf("commitInfo");
+              if (shouldDropCommitInfoColumn) {
+                batchToReturn = batchToReturn.withDeletedColumnAt(commitInfoIdx);
+              }
+              return batchToReturn;
             });
   }
 
@@ -210,8 +260,10 @@ public class TableImpl implements Table {
    * @throws TableNotFoundException if no delta table is found
    */
   public long getVersionBeforeOrAtTimestamp(Engine engine, long millisSinceEpochUTC) {
+    SnapshotImpl latestSnapshot = (SnapshotImpl) getLatestSnapshot(engine);
     return DeltaHistoryManager.getActiveCommitAtTimestamp(
             engine,
+            latestSnapshot,
             getLogPath(),
             millisSinceEpochUTC,
             false, /* mustBeRecreatable */
@@ -245,9 +297,11 @@ public class TableImpl implements Table {
    * @throws TableNotFoundException if no delta table is found
    */
   public long getVersionAtOrAfterTimestamp(Engine engine, long millisSinceEpochUTC) {
+    SnapshotImpl latestSnapshot = (SnapshotImpl) getLatestSnapshot(engine);
     DeltaHistoryManager.Commit commit =
         DeltaHistoryManager.getActiveCommitAtTimestamp(
             engine,
+            latestSnapshot,
             getLogPath(),
             millisSinceEpochUTC,
             false, /* mustBeRecreatable */

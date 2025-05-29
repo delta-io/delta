@@ -276,6 +276,30 @@ trait IdentityColumnConflictSuiteBase
       tblIsoLevel = Some(Serializable)
     )
   }
+
+  test("high watermark changes after analysis but before execution of merge") {
+    val tblName = getRandomTableName
+    withIdentityColumnTable(GeneratedAsIdentityType.GeneratedAlways, tblName) {
+      // Create a QueryExecution object for a MERGE statement, and it forces the command to be
+      // analyzed, but does not execute the command yet.
+      val parsedMerge = spark.sessionState.sqlParser.parsePlan(
+        s"""MERGE INTO $tblName t
+           |USING (SELECT * FROM range(1000)) s
+           |ON t.id = s.id
+           |WHEN NOT MATCHED THEN INSERT (value) VALUES (s.id)""".stripMargin)
+      val qeMerge = new QueryExecution(spark, parsedMerge)
+      qeMerge.analyzed
+
+      // Insert a row, forcing the high watermark to be updated.
+      sql(s"INSERT INTO $tblName (value) VALUES (0)")
+
+      // Force merge to be executed. This should fail, as MERGE is still using the old high
+      // watermark in its insert action.
+      intercept[MetadataChangedException] {
+        qeMerge.commandExecuted
+      }
+    }
+  }
 }
 
 class IdentityColumnConflictScalaSuite

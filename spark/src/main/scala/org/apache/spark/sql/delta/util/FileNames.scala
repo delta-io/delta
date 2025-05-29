@@ -47,7 +47,8 @@ object FileNames {
    *
    * @param logPath The root path of the delta log.
    * @param version The version of the delta file.
-   * @return The path to the un-backfilled delta file: <logPath>/_commits/<version>.<uuid>.json
+   * @return The path to the un-backfilled delta file:
+   *         `<logPath>/_staged_commits/<version>.<uuid>.json`
    */
   def unbackfilledDeltaFile(
       logPath: Path,
@@ -187,7 +188,7 @@ object FileNames {
       unapply(f.getPath).map { case (_, version) => (f, version) }
     def unapply(path: Path): Option[(Path, Long)] = {
       val parentDirName = path.getParent.getName
-      // If parent is _commits dir, then match against unbackfilled commit file.
+      // If parent is `_staged_commits` dir, then match against unbackfilled commit file.
       val regex = if (parentDirName == COMMIT_SUBDIR) uuidDeltaFileRegex else deltaFileRegex
       regex.unapplySeq(path.getName).map(path -> _.head.toLong)
     }
@@ -209,7 +210,7 @@ object FileNames {
     def unapply(f: FileStatus): Option[(FileStatus, Long)] =
       unapply(f.getPath).map { case (_, version) => (f, version) }
     def unapply(path: Path): Option[(Path, Long)] = {
-      // Don't match files in the _commits sub-directory.
+      // Don't match files in the `_staged_commits` subdirectory.
       if (path.getParent.getName == COMMIT_SUBDIR) {
         None
       } else {
@@ -223,7 +224,7 @@ object FileNames {
     def unapply(f: FileStatus): Option[(FileStatus, Long, String)] =
       unapply(f.getPath).map { case (_, version, uuidString) => (f, version, uuidString) }
     def unapply(path: Path): Option[(Path, Long, String)] = {
-      // If parent is _commits dir, then match against uuid commit file.
+      // If parent is `_staged_commits` dir, then match against uuid commit file.
       if (path.getParent.getName == COMMIT_SUBDIR) {
         uuidDeltaFileRegex
           .unapplySeq(path.getName)
@@ -258,10 +259,12 @@ object FileNames {
   }
 
   val SIDECAR_SUBDIR = "_sidecars"
-  val COMMIT_SUBDIR = "_commits"
+
   /** Returns path to the sidecar directory */
   def sidecarDirPath(logPath: Path): Path = new Path(logPath, SIDECAR_SUBDIR)
 
-  /** Returns path to the sidecar directory */
+  val COMMIT_SUBDIR = "_staged_commits"
+
+  /** Returns path to the staged commit directory */
   def commitDirPath(logPath: Path): Path = new Path(logPath, COMMIT_SUBDIR)
 }

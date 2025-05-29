@@ -16,7 +16,6 @@
 package io.delta.kernel.defaults.engine;
 
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
-import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.data.ColumnVector;
@@ -53,7 +52,10 @@ public class DefaultExpressionHandler implements ExpressionHandler {
     int length = to - from;
     checkArgument(
         length >= 0 && values.length > from && values.length >= to,
-        format("invalid range from=%s, to=%s, values length=%s", from, to, values.length));
+        "invalid range from=%s, to=%s, values length=%s",
+        from,
+        to,
+        values.length);
 
     // Make a copy of the `values` array.
     boolean[] valuesCopy = Arrays.copyOfRange(values, from, to);

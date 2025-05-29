@@ -213,6 +213,8 @@ object SupportedGenerationExpressions {
     expression[Now]("now"),
     expression[Quarter]("quarter"),
     expression[Second]("second"),
+    expression[TimestampAdd]("timestampadd"),
+    expression[TimestampDiff]("timestampdiff"),
     expression[ParseToTimestamp]("to_timestamp"),
     expression[ParseToDate]("to_date"),
     // `gettimestamp` is not a Spark built-in class but `ParseToDate` will refer to
