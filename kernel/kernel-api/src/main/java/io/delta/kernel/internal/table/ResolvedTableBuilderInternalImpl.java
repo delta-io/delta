@@ -21,11 +21,13 @@ import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.files.ParsedLogData;
+import io.delta.kernel.internal.files.ParsedLogData.ParsedLogType;
 import io.delta.kernel.internal.util.Clock;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
+/** An implementation of {@link ResolvedTableBuilderInternal}. */
 public class ResolvedTableBuilderInternalImpl implements ResolvedTableBuilderInternal {
 
   public static class ResolvedTableBuilderContext {
@@ -68,6 +70,7 @@ public class ResolvedTableBuilderInternalImpl implements ResolvedTableBuilderInt
     return this;
   }
 
+  /** For now, only log datas of type {@link ParsedLogType#RATIFIED_STAGED_COMMIT}s are supported */
   @Override
   public ResolvedTableBuilderInternal withLogData(List<ParsedLogData> logData) {
     ctx.logData = requireNonNull(logData, "logData is null");
@@ -86,7 +89,6 @@ public class ResolvedTableBuilderInternalImpl implements ResolvedTableBuilderInt
 
   private void validateInputOnBuild() {
     checkArgument(ctx.versionOpt.orElse(0L) >= 0, "version must be >= 0");
-    // TODO: logData if and only if version is provided
     // TODO: logData only ratified staged commits
     // TODO: logData sorted and contiguous
     // TODO: logData ends with version

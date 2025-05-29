@@ -23,6 +23,11 @@ import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.util.Clock;
 
+/**
+ * Internal extension of {@link ResolvedTable} that exposes additional interfaces to provides access
+ * to information that are only needed by Kernel's internal operations but should not be exposed in
+ * the public API.
+ */
 public interface ResolvedTableInternal extends ResolvedTable {
   String getLogPath();
 
