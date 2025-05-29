@@ -17,6 +17,7 @@ package io.delta.kernel.internal.checksum;
 
 import static io.delta.kernel.internal.actions.SingleAction.CHECKPOINT_SCHEMA;
 import static io.delta.kernel.internal.util.Preconditions.checkState;
+import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
@@ -73,9 +74,8 @@ public class ChecksumUtils {
    */
   public static void computeStateAndWriteChecksum(Engine engine, LogSegment logSegmentAtVersion)
       throws IOException {
-    if (engine == null || logSegmentAtVersion == null) {
-      throw new IllegalArgumentException("Engine and logSegmentAtVersion cannot be null");
-    }
+    requireNonNull(engine);
+    requireNonNull(logSegmentAtVersion);
 
     // Check for existing checksum for this version
     Optional<Long> lastSeenCrcVersion =
@@ -92,15 +92,7 @@ public class ChecksumUtils {
     // TODO: Optimize using last available crc.
     CRCInfo crcInfo = buildCrcInfoWithFullLogReplay(engine, logSegmentAtVersion);
     ChecksumWriter checksumWriter = new ChecksumWriter(logSegmentAtVersion.getLogPath());
-    try {
-      checksumWriter.writeCheckSum(engine, crcInfo);
-      logger.info(
-          "Successfully wrote checksum file for version {}", logSegmentAtVersion.getVersion());
-    } catch (FileAlreadyExistsException e) {
-      logger.info("Checksum file already exists for version {}", logSegmentAtVersion.getVersion());
-      // Checksum file has been created while we were computing it.
-      // This is fine - the checksum now exists, which was our goal.
-    }
+    checksumWriter.writeCheckSum(engine, crcInfo);
   }
 
   /**
