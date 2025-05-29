@@ -20,15 +20,19 @@ import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.ScanBuilder;
 import io.delta.kernel.expressions.Column;
+import io.delta.kernel.internal.ScanBuilderImpl;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
+import io.delta.kernel.internal.metrics.SnapshotQueryContext;
+import io.delta.kernel.internal.metrics.SnapshotReportImpl;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.util.Clock;
 import io.delta.kernel.internal.util.VectorUtils;
+import io.delta.kernel.metrics.SnapshotReport;
 import io.delta.kernel.types.StructType;
 import java.util.List;
 import java.util.Optional;
@@ -44,6 +48,7 @@ public class ResolvedTableInternalImpl implements ResolvedTableInternal {
   private final Lazy<LogSegment> lazyLogSegment;
   private final Lazy<LogReplay> lazyLogReplay;
   private final Clock clock;
+  private final SnapshotReport snapshotReport;
 
   public ResolvedTableInternalImpl(
       String path,
@@ -52,7 +57,8 @@ public class ResolvedTableInternalImpl implements ResolvedTableInternal {
       Metadata metadata,
       Lazy<LogSegment> lazyLogSegment,
       Lazy<LogReplay> lazyLogReplay,
-      Clock clock) {
+      Clock clock,
+      SnapshotQueryContext snapshotCtx) {
     this.path = requireNonNull(path, "path is null");
     this.logPath = new Path(path, "_delta_log").toString();
     this.version = version;
@@ -61,6 +67,7 @@ public class ResolvedTableInternalImpl implements ResolvedTableInternal {
     this.lazyLogSegment = requireNonNull(lazyLogSegment, "lazyLogSegment is null");
     this.lazyLogReplay = requireNonNull(lazyLogReplay, "lazyLogReplay is null");
     this.clock = requireNonNull(clock, "clock is null");
+    this.snapshotReport = SnapshotReportImpl.forSuccess(snapshotCtx);
   }
 
   //////////////////////////////////
@@ -101,7 +108,13 @@ public class ResolvedTableInternalImpl implements ResolvedTableInternal {
 
   @Override
   public ScanBuilder getScanBuilder() {
-    throw new UnsupportedOperationException("Not implemented");
+    return new ScanBuilderImpl(
+        new Path(getPath()),
+        getProtocol(),
+        getMetadata(),
+        getSchema(),
+        getLazyLogReplay().get(),
+        snapshotReport);
   }
 
   ///////////////////////////////////////

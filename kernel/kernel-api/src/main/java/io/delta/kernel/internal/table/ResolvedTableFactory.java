@@ -76,7 +76,14 @@ public class ResolvedTableFactory {
     final Metadata metadata = getMetadata(lazyLogReplay);
 
     return new ResolvedTableInternalImpl(
-        resolvedPath, version, protocol, metadata, lazyLogSegment, lazyLogReplay, ctx.clock);
+        resolvedPath,
+        version,
+        protocol,
+        metadata,
+        lazyLogSegment,
+        lazyLogReplay,
+        ctx.clock,
+        snapshotCtx);
   }
 
   private SnapshotQueryContext getSnapshotQueryContext() {
