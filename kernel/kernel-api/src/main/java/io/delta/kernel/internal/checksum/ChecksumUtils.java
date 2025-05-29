@@ -30,7 +30,6 @@ import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.stats.FileSizeHistogram;
 import io.delta.kernel.internal.util.FileNames;
 import java.io.IOException;
-import java.nio.file.FileAlreadyExistsException;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.atomic.LongAdder;
