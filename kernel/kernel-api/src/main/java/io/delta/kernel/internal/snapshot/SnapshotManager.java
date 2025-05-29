@@ -419,16 +419,15 @@ public class SnapshotManager {
 
     logDebugParsedLogDatas("parsedLogDatas", parsedLogDatas);
 
-    final long suffixCommitsLowerBoundInclusive =
+    final long suffixCommitsLowerBoundExclusive =
         listedDeltasAfterCheckpoint.isEmpty()
-            ? latestCompleteCheckpointVersion + 1
-            : FileNames.deltaVersion(ListUtils.getLast(listedDeltasAfterCheckpoint).getPath()) + 1;
+            ? latestCompleteCheckpointVersion
+            : FileNames.deltaVersion(ListUtils.getLast(listedDeltasAfterCheckpoint).getPath());
 
     final List<FileStatus> suffixCommitsAfterDeltas =
         parsedLogDatas.stream()
             .filter(x -> x.type == ParsedLogData.ParsedLogType.RATIFIED_STAGED_COMMIT)
-            .filter(
-                x -> x.version >= suffixCommitsLowerBoundInclusive && x.version <= versionToLoad)
+            .filter(x -> suffixCommitsLowerBoundExclusive < x.version && x.version <= versionToLoad)
             .filter(ParsedLogData::isMaterialized)
             .map(ParsedLogData::getFileStatus)
             .collect(Collectors.toList());
