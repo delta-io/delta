@@ -177,44 +177,52 @@ public class ChecksumUtils {
         Optional.of(state.addedFileSizeHistogram));
   }
 
+  /** Processes an add file record and updates the state tracker. */
   private static void processAddRecord(ColumnVector addVector, StateTracker state, int rowId) {
     if (!addVector.isNullAt(rowId)) {
-      // Get file size and update tracking information
       ColumnVector sizeVector = addVector.getChild(ADD_SIZE_INDEX);
+      checkState(!sizeVector.isNullAt(rowId), "Add record has null file size");
+
       long fileSize = sizeVector.getLong(rowId);
+      checkState(fileSize >= 0, "Add record has negative file size: " + fileSize);
+
       state.tableSizeByte.add(fileSize);
       state.addedFileSizeHistogram.insert(fileSize);
       state.fileCount.increment();
     }
   }
 
+  /** Processes a domain metadata record and updates the state tracker. */
   private static void processDomainMetadataRecord(
       ColumnVector domainMetadataVector, StateTracker state, int rowId) {
     if (!domainMetadataVector.isNullAt(rowId)) {
       DomainMetadata domainMetadata = DomainMetadata.fromColumnVector(domainMetadataVector, rowId);
+      checkState(domainMetadata != null, "Domain metadata is null");
       checkState(
           !state.domainMetadataMap.containsKey(domainMetadata.getDomain()),
-          "unexpected duplicate domain metadata rows");
-      // CreateCheckpointIterator will ensure only the last entry of domain metadata
-      // got emit.
+          "Duplicate domain metadata: " + domainMetadata.getDomain());
       state.domainMetadataMap.put(domainMetadata.getDomain(), domainMetadata);
     }
   }
 
+  /** Processes a metadata record and updates the state tracker. */
   private static void processMetadataRecord(
       ColumnVector metadataVector, StateTracker state, int rowId) {
     if (!metadataVector.isNullAt(rowId)) {
-      checkState(!state.metadataFromLog.isPresent(), "unexpected duplicate selected metadata rows");
+      checkState(!state.metadataFromLog.isPresent(), "Duplicate metadata rows");
       Metadata metadata = Metadata.fromColumnVector(metadataVector, rowId);
+      checkState(metadata != null, "Metadata is null");
       state.metadataFromLog = Optional.of(metadata);
     }
   }
 
+  /** Processes a protocol record and updates the state tracker. */
   private static void processProtocolRecord(
       ColumnVector protocolVector, StateTracker state, int rowId) {
     if (!protocolVector.isNullAt(rowId)) {
-      checkState(!state.protocolFromLog.isPresent(), "unexpected duplicate selected protocol rows");
+      checkState(!state.protocolFromLog.isPresent(), "Duplicate protocol rows");
       Protocol protocol = Protocol.fromColumnVector(protocolVector, rowId);
+      checkState(protocol != null, "Protocol is null");
       state.protocolFromLog = Optional.of(protocol);
     }
   }

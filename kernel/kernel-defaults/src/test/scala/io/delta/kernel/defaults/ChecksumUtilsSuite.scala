@@ -91,7 +91,7 @@ class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase with LogReplayBaseSuit
     }
   }
 
-  test("test checksum -- stale checksum, no checkpoint") {
+  test("test checksum -- stale checksum, no checkpoint before checksum => full log replay") {
     withTableWithCrc { (table, _, engine) =>
       deleteChecksumFileForTableUsingHadoopFs(table.getPath(engine), (5 to 8))
       engine.resetMetrics()
@@ -106,8 +106,8 @@ class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase with LogReplayBaseSuit
     }
   }
 
-  test("test checksum -- stale checksum, checkpoint after checksum" +
-    " => use checkpoint for full replay") {
+  test("test checksum -- stale checksum, checkpoint after checksum " +
+    "=> checkpoint with log replay") {
     withTableWithCrc { (table, _, engine) =>
       deleteChecksumFileForTableUsingHadoopFs(table.getPath(engine), (5 to 11))
       engine.resetMetrics()
