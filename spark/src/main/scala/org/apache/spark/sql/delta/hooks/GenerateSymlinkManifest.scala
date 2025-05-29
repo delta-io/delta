@@ -120,7 +120,7 @@ trait GenerateSymlinkManifestImpl extends PostCommitHook with DeltaLogging with 
       val removedFileNames =
         spark.createDataset(removeFiles.collect { case r: RemoveFile => r.path }.toSeq).toDF("path")
       val partitionValuesOfRemovedFiles =
-        txn.snapshot.allFiles.join(removedFileNames, "path").select("partitionValues").persist()
+        txn.readSnapshot.allFiles.join(removedFileNames, "path").select("partitionValues").persist()
       try {
         val partitionsOfRemovedFiles = partitionValuesOfRemovedFiles
           .as[Map[String, String]](GenerateSymlinkManifestUtils.mapEncoder).collect().toSet

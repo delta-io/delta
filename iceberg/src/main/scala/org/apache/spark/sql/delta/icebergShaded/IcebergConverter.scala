@@ -308,8 +308,8 @@ class IcebergConverter(spark: SparkSession)
 
     // Get the most recently converted delta snapshot, if applicable
     val prevConvertedSnapshotOpt = (lastDeltaVersionConverted, txnOpt) match {
-      case (Some(version), Some(txn)) if version == txn.snapshot.version =>
-        Some(txn.snapshot)
+      case (Some(version), Some(txn)) if version == txn.readSnapshot.version =>
+        Some(txn.readSnapshot)
       // Check how long it has been since we last converted to Iceberg. If outside the threshold,
       // fall back to state reconstruction to get the actions, to protect driver from OOMing.
       case (Some(version), _) if snapshotToConvert.version - version <= maxCommitsToConvert =>
@@ -459,7 +459,7 @@ class IcebergConverter(spark: SparkSession)
       snapshotToConvert: Snapshot,
       txnOpt: Option[CommittedTransaction]): CatalogTable = {
     val disabledIceberg = txnOpt.map(txn =>
-      !UniversalFormat.icebergEnabled(txn.snapshot.metadata)
+      !UniversalFormat.icebergEnabled(txn.readSnapshot.metadata)
     ).getOrElse(!UniversalFormat.icebergEnabled(table.properties))
     val enablingUniform =
       disabledIceberg && UniversalFormat.icebergEnabled(snapshotToConvert.metadata)

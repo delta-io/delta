@@ -392,9 +392,9 @@ public class SchemaUtils {
   }
 
   /* Compute the SchemaChanges using field IDs */
-  static SchemaChanges computeSchemaChangesById(
-      Map<Integer, StructField> currentFieldIdToField,
-      Map<Integer, StructField> updatedFieldIdToField) {
+  static SchemaChanges computeSchemaChangesById(StructType currentSchema, StructType newSchema) {
+    Map<Integer, StructField> currentFieldIdToField = fieldsById(currentSchema);
+    Map<Integer, StructField> updatedFieldIdToField = fieldsById(newSchema);
     SchemaChanges.Builder schemaDiff = SchemaChanges.builder();
     for (Map.Entry<Integer, StructField> fieldInUpdatedSchema : updatedFieldIdToField.entrySet()) {
       StructField existingField = currentFieldIdToField.get(fieldInUpdatedSchema.getKey());
@@ -418,10 +418,10 @@ public class SchemaUtils {
   }
 
   private static void validatePhysicalNameConsistency(
-      List<Tuple2<StructField, StructField>> updatedFields) {
-    for (Tuple2<StructField, StructField> updatedField : updatedFields) {
-      StructField currentField = updatedField._1;
-      StructField newField = updatedField._2;
+      List<SchemaChanges.SchemaUpdate> updatedFields) {
+    for (SchemaChanges.SchemaUpdate updatedField : updatedFields) {
+      StructField currentField = updatedField.before();
+      StructField newField = updatedField.after();
       if (!getPhysicalName(currentField).equals(getPhysicalName(newField))) {
         throw new IllegalArgumentException(
             String.format(
@@ -474,9 +474,7 @@ public class SchemaUtils {
       int oldMaxFieldId,
       boolean allowNewRequiredFields,
       boolean icebergWriterCompatV1Enabled) {
-    Map<Integer, StructField> currentFieldsById = fieldsById(currentSchema);
-    Map<Integer, StructField> updatedFieldsById = fieldsById(newSchema);
-    SchemaChanges schemaChanges = computeSchemaChangesById(currentFieldsById, updatedFieldsById);
+    SchemaChanges schemaChanges = computeSchemaChangesById(currentSchema, newSchema);
     validatePhysicalNameConsistency(schemaChanges.updatedFields());
     // Validates that the updated schema does not contain breaking changes in terms of types and
     // nullability
@@ -525,10 +523,11 @@ public class SchemaUtils {
       }
     }
 
-    for (Tuple2<StructField, StructField> updatedFields : schemaChanges.updatedFields()) {
+    for (SchemaChanges.SchemaUpdate updatedFields : schemaChanges.updatedFields()) {
       // ToDo: See if recursion can be avoided by incorporating map key/value and array element
       // updates in updatedFields
-      validateFieldCompatibility(updatedFields._1, updatedFields._2, icebergWriterCompatV1Enabled);
+      validateFieldCompatibility(
+          updatedFields.before(), updatedFields.after(), icebergWriterCompatV1Enabled);
     }
   }
 

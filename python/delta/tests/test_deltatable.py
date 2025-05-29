@@ -1289,6 +1289,7 @@ class DeltaTableTestsMixin:
             dt.dropFeatureSupport("testRemovableReaderWriter")
 
         # Try to drop a non-removable feature.
+        dt.addFeatureSupport("testReaderWriter")
         with self.assertRaisesRegex(Exception, "DELTA_FEATURE_DROP_NONREMOVABLE_FEATURE"):
             dt.dropFeatureSupport("testReaderWriter")
 

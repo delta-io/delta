@@ -27,9 +27,10 @@ import java.util.Objects;
 @Evolving
 public class ArrayType extends DataType {
   private final StructField elementField;
+  public static final String ARRAY_ELEMENT_NAME = "element";
 
   public ArrayType(DataType elementType, boolean containsNull) {
-    this.elementField = new StructField("element", elementType, containsNull);
+    this.elementField = new StructField(ARRAY_ELEMENT_NAME, elementType, containsNull);
   }
 
   public ArrayType(StructField elementField) {

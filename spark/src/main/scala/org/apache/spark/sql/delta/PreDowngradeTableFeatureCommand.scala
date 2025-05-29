@@ -32,6 +32,8 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.util.ScalaExtensions._
 
+import org.apache.hadoop.fs.Path
+
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.analysis.ResolvedTable
 import org.apache.spark.sql.functions.{approx_count_distinct, col, not}
@@ -182,9 +184,11 @@ case class DeletionVectorsPreDowngradeCommand(table: DeltaTableV2)
     val snapshotToUse = table.deltaLog.update(
       checkIfUpdatedSinceTs = Some(checkIfSnapshotUpdatedSinceTs))
 
-    val deletionVectorPath = DeletionVectorDescriptor.urlEncodedPath(
-      deletionVectorCol = col("deletionVector"),
-      tablePath = table.deltaLog.dataPath)
+    val deletionVectorPath =
+        DeletionVectorDescriptor.urlEncodedRelativePathIfExists(
+          deletionVectorCol = col("deletionVector"),
+          tablePath = table.deltaLog.dataPath)
+
     val isInlineDeletionVector = DeletionVectorDescriptor.isInline(col("deletionVector"))
 
     // SnapshotToUse.tombstones returns only the tombstones within the retention period. The
@@ -196,6 +200,7 @@ case class DeletionVectorsPreDowngradeCommand(table: DeltaTableV2)
       .filter(col("deletionVector").isNotNull)
       .filter(not(isInlineDeletionVector))
       .select(deletionVectorPath.as("path"))
+      .filter(col("path").isNotNull)
       .distinct()
 
     // This is a union of the DV tombstones and the regular data file tombstones without DVs (we
