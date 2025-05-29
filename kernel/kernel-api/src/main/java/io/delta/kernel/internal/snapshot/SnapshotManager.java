@@ -78,6 +78,7 @@ public class SnapshotManager {
         getLogSegmentForVersion(engine, Optional.empty() /* versionToLoad */);
 
     snapshotContext.setVersion(logSegment.getVersion());
+    snapshotContext.setCheckpointVersion(logSegment.getCheckpointVersionOpt());
 
     return createSnapshot(logSegment, engine, snapshotContext);
   }
@@ -96,6 +97,9 @@ public class SnapshotManager {
       throws TableNotFoundException {
     final LogSegment logSegment =
         getLogSegmentForVersion(engine, Optional.of(version) /* versionToLoadOpt */);
+
+    snapshotContext.setCheckpointVersion(logSegment.getCheckpointVersionOpt());
+    snapshotContext.setVersion(logSegment.getVersion());
 
     return createSnapshot(logSegment, engine, snapshotContext);
   }
@@ -136,8 +140,6 @@ public class SnapshotManager {
         tablePath,
         snapshotContext.getSnapshotMetrics().timestampToVersionResolutionTimer.totalDurationMs(),
         millisSinceEpochUTC);
-    // We update the query context version as soon as we resolve timestamp --> version
-    snapshotContext.setVersion(versionToRead);
 
     return getSnapshotAt(engine, versionToRead, snapshotContext);
   }
