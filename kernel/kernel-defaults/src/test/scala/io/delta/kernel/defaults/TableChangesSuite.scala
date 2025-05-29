@@ -171,6 +171,7 @@ class TableChangesSuite extends AnyFunSuite with TestUtils with DeltaTableWriteS
               isNewTable = i == 0,
               schema = testSchema,
               data = immutable.Seq(Map.empty[String, Literal] -> dataBatches2),
+              partCols = immutable.Seq.empty,
               clock = clock,
               tableProperties = tableProperties)
             // Only set the file modification time if ICT has not been enabled yet.
