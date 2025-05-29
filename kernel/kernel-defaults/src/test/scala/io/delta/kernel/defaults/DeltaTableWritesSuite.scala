@@ -1157,6 +1157,24 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     }
   }
 
+  test("Attempting schema evolution throws unsupported operation") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val txn = createTxn(engine, tablePath, isNewTable = true, schema = testSchema)
+      commitTransaction(txn, engine, emptyIterable())
+
+      {
+        val ex = intercept[UnsupportedOperationException] {
+          table.createTransactionBuilder(engine, testEngineInfo, MANUAL_UPDATE)
+            .withSchema(engine, testSchema.add("some_new_column", IntegerType.INTEGER))
+            .build(engine)
+        }
+        assert(ex.getMessage.contains(
+          "Schema can only be provided for new tables. Evolution is not currently supported"))
+      }
+    }
+  }
+
   // Different scenarios that have multiple winning txns and with a checkpoint in between.
   Seq(1, 5, 12).foreach { numWinningTxs =>
     test(s"conflicts - concurrent data append ($numWinningTxs) after the losing txn has started") {

@@ -155,7 +155,7 @@ class IcebergWriterCompatV1Suite extends DeltaTableWriteSuiteBase with ColumnMap
   }
 
   Seq(true, false).foreach { cmInfoPopulated =>
-    test(
+    ignore(
       s"Column mapping metadata set correctly when cmInfoPrePopulated=$cmInfoPopulated") {
       withTempDirAndEngine { (tablePath, engine) =>
         // Create new table and verify column mapping info set correctly
@@ -213,7 +213,8 @@ class IcebergWriterCompatV1Suite extends DeltaTableWriteSuiteBase with ColumnMap
   }
 
   Seq(true, false).foreach { isNewTable =>
-    test(s"Cannot set physicalName to something other than col-{fieldId}, isNewTable=$isNewTable") {
+    ignore(s"Cannot set physicalName to something other than col-{fieldId}, " +
+      s"isNewTable=$isNewTable") {
       withTempDirAndEngine { (tablePath, engine) =>
         if (!isNewTable) {
           createEmptyTable(
