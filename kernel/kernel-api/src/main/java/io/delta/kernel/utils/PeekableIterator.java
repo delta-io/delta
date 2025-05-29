@@ -44,7 +44,7 @@ public class PeekableIterator<T> implements Iterator<T> {
       hasPeeked = true;
     }
     if (!hasPeeked) {
-      throw new NoSuchElementException("No element to peek");
+      throw new NoSuchElementException();
     }
     return peekedItem;
   }
