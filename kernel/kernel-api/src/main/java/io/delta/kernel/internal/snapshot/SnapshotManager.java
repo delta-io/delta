@@ -658,7 +658,7 @@ public class SnapshotManager {
   private void logDebugParsedLogDatas(String varName, List<ParsedLogData> logDatas) {
     if (logger.isDebugEnabled()) {
       logger.debug(
-          "{}: \n  {}",
+          "{}:\n  {}",
           varName,
           logDatas.stream().map(Object::toString).collect(Collectors.joining("\n  ")));
     }
