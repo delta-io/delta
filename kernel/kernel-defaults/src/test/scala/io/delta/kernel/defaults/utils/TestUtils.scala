@@ -765,6 +765,12 @@ trait TestUtils extends Assertions with SQLHelper {
       Files.deleteIfExists(
         new File(FileNames.checksumFile(new Path(s"$tablePath/_delta_log"), v).toString).toPath))
 
+  def deleteChecksumFileForTableUsingHadoopFs(tablePath: String, versions: Seq[Int]): Unit =
+    versions.foreach(v =>
+      defaultEngine.getFileSystemClient.delete(FileNames.checksumFile(
+        new Path(s"$tablePath/_delta_log"),
+        v).toString))
+
   def rewriteChecksumFileToExcludeDomainMetadata(
       engine: Engine,
       tablePath: String,
