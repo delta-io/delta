@@ -434,13 +434,13 @@ public class SchemaUtils {
         // path would be "element" here and either "key" or "value" in the previous schema. Nothing
         // is done for the new "element" path if it isn't a field addition there must be at least
         // one ancestor node in common (at least the nearest struct field) which would get added as
-        // an update below. This logic is inductive. If the previous schema was a array<array<x>> and
-        // was not a new addition and the new schema was array<array<array<x>>> then this path would
-        // be reached on element.element.element but the type the code would move past this block for
-        // element.element which would have a type change detected from x to array<x>.
+        // an update below. This logic is inductive. If the previous schema was a array<array<x>>
+        // and was not a new addition and the new schema was array<array<array<x>>> then this path
+        // would be reached on element.element.element but the type the code would move past this
+        // block for element.element which would have a type change detected from x to array<x>.
         // concretely if the new schema was <a id=1 : array<struct<b (id=2) : Int>>> then
-        // <"element, "1"> would be skipped here but the type change would be detected for <"", 1> from
-        // map to array.
+        // <"element, "1"> would be skipped here but the type change would be detected for <"", 1>
+        // from map to array.
         continue;
       }
       StructField updatedField = newElement.getField();

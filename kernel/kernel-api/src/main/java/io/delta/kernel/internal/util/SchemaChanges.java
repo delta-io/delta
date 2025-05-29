@@ -39,7 +39,8 @@ class SchemaChanges {
   public static class SchemaUpdate {
     private final StructField fieldBefore;
     private final StructField fieldAfter;
-    // This is a "." concatenated path to the field. Names containing "." are wrapped in back-ticks (`).
+    // This is a "." concatenated path to the field. Names containing "." are wrapped in
+    // back-ticks (`).
     // For example in the schema <a.b : array<StructType<c : Int>>> the path to "c" would be:
     // "`a.b`.element.c". In general, though the format should not be relid upon since this
     // is used for surfacing errors to users.
