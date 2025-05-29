@@ -24,6 +24,7 @@ import io.delta.kernel.internal.table.ResolvedTableInternal
 import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.test.{ActionUtils, MockFileSystemClientUtils}
 import io.delta.kernel.types.{IntegerType, StructType}
+
 import org.scalatest.funsuite.AnyFunSuite
 
 class CatalogManagedLogSegmentSuite extends AnyFunSuite
