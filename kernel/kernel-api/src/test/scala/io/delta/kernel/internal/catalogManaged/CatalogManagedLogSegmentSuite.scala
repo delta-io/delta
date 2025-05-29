@@ -16,8 +16,6 @@
 
 package io.delta.kernel.internal.catalogManaged
 
-import java.util.Collections
-
 import scala.collection.JavaConverters._
 
 import io.delta.kernel.TableManager
@@ -220,25 +218,4 @@ class CatalogManagedSuite extends AnyFunSuite with MockFileSystemClientUtils wit
     ratifiedCommitVersions = 14L to 15L,
     expectedExceptionClassOpt = Some(classOf[io.delta.kernel.exceptions.InvalidTableException]))
 
-  ////////////////////
-  // Laziness tests //
-  ////////////////////
-
-  test("if P&M are provided then LogReplay and LogSegment are not loaded/invoked") {
-    val testSchema = new StructType().add("c1", IntegerType.INTEGER)
-    val engine = createMockFSListFromEngine(Nil)
-
-    val resolvedTable = TableManager
-      .loadTable(dataPath.toString)
-      .atVersion(13)
-      .withProtocolAndMetadata(new Protocol(1, 2), testMetadata(testSchema))
-      .withLogData(Collections.emptyList())
-      .build(engine)
-      .asInstanceOf[ResolvedTableInternal]
-
-    assert(!resolvedTable.getLazyLogReplay.isPresent)
-    assert(!resolvedTable.getLazyLogSegment.isPresent)
-  }
-
-  // TODO: Mock JSON reading and then actually read the P & M
 }
