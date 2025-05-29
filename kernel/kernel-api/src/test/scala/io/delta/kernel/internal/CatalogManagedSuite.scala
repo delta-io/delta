@@ -154,6 +154,16 @@ class CatalogManagedSuite extends AnyFunSuite with MockFileSystemClientUtils {
     ratifiedCommitVersions = 1L to 3L,
     expectedDeltaAndCommitVersionsOpt = Some(0L to 3L))
 
+  // _delta_log: [10.checkpoint+json,             ]
+  // catalog:    [                    11.uuid.json]
+  testLogSegment(
+    testName = "Build RT when checkpoint version is the last version from the filesystem",
+    versionToLoad = 11L,
+    checkpointVersionOpt = Some(10L),
+    deltaVersions = Seq(10L),
+    ratifiedCommitVersions = Seq(11L),
+    expectedDeltaAndCommitVersionsOpt = Some(Seq(11L)))
+
   /////////////////////////////////////////////////////
   // LogSegment construction tests -- negative cases //
   /////////////////////////////////////////////////////
