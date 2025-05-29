@@ -114,7 +114,6 @@ public class ChecksumUtils {
   private static CRCInfo buildCrcInfoWithFullLogReplay(
       Engine engine, LogSegment logSegmentAtVersion) throws IOException {
 
-    // Initialize state tracking
     StateTracker state = new StateTracker();
 
     // Process logs and update state
