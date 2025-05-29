@@ -335,9 +335,7 @@ object AutoCompactUtils extends DeltaLogging {
    */
   def isQualifiedForAutoCompact(
       spark: SparkSession,
-      txn: DeltaTransaction): Boolean = {
-    // If txnExecutionTimeMs is empty, there is no transaction commit.
-    if (txn.txnExecutionTimeMs.isEmpty) return false
+      txn: CommittedTransaction): Boolean = {
     // If modified partitions only mode is not enabled, return true to avoid subsequent checking.
     if (!isModifiedPartitionsOnlyAutoCompactEnabled(spark)) return true
 

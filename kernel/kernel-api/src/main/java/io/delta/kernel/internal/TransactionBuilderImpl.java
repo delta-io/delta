@@ -15,8 +15,7 @@
  */
 package io.delta.kernel.internal;
 
-import static io.delta.kernel.internal.DeltaErrors.requiresSchemaForNewTable;
-import static io.delta.kernel.internal.DeltaErrors.tableAlreadyExists;
+import static io.delta.kernel.internal.DeltaErrors.*;
 import static io.delta.kernel.internal.TransactionImpl.DEFAULT_READ_VERSION;
 import static io.delta.kernel.internal.TransactionImpl.DEFAULT_WRITE_VERSION;
 import static io.delta.kernel.internal.util.ColumnMapping.isColumnMappingModeEnabled;
@@ -44,6 +43,8 @@ import io.delta.kernel.internal.icebergcompat.IcebergWriterCompatV1MetadataValid
 import io.delta.kernel.internal.metrics.SnapshotMetrics;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.replay.LogReplay;
+import io.delta.kernel.internal.rowtracking.MaterializedRowTrackingColumn;
+import io.delta.kernel.internal.rowtracking.RowTracking;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.snapshot.SnapshotHint;
 import io.delta.kernel.internal.tablefeatures.TableFeature;
@@ -485,7 +486,15 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         initialClusteringColumns.map(
             cols -> SchemaUtils.casePreservingEligibleClusterColumns(updatedSchema, cols));
 
-    /* ----- 6: Validate the metadata change ----- */
+    /* ----- 6: Update the METADATA with materialized row tracking column name if applicable----- */
+    Optional<Metadata> rowTrackingMetadata =
+        MaterializedRowTrackingColumn.assignMaterializedColumnNamesIfNeeded(
+            newMetadata.orElse(baseMetadata));
+    if (rowTrackingMetadata.isPresent()) {
+      newMetadata = rowTrackingMetadata;
+    }
+
+    /* ----- 7: Validate the metadata change ----- */
     // Now that all the config and schema changes have been made validate the old vs new metadata
     if (newMetadata.isPresent()) {
       // Use physicalClusteringColumns if clustering column is set in this txn,
@@ -597,6 +606,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
    *         <li>the schema change is a valid schema change given the tables partition and
    *             clustering columns
    *       </ul>
+   *   <li>Enabling/disabling row tracking on existing tables is blocked
+   *   <li>Materialized row tracking column names do not conflict with schema
    * </ul>
    */
   private void validateMetadataChange(
@@ -674,6 +685,15 @@ public class TransactionBuilderImpl implements TransactionBuilder {
             true /* allowNewRequiredFields */);
       }
     }
+
+    // Block enabling/disabling row tracking on existing tables because:
+    // 1. Enabling requires backfilling row IDs/commit versions, which is not supported in Kernel
+    // 2. Disabling is irreversible in Kernel (re-enabling not supported)
+    if (!isCreateOrReplace) {
+      RowTracking.throwIfRowTrackingToggled(oldMetadata, newMetadata);
+    }
+
+    MaterializedRowTrackingColumn.throwIfColumnNamesConflictWithSchema(newMetadata);
   }
 
   private SnapshotImpl getInitialEmptySnapshot(

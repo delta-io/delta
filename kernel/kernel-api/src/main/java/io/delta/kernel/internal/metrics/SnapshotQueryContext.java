@@ -18,6 +18,8 @@ package io.delta.kernel.internal.metrics;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
+import io.delta.kernel.engine.Engine;
+import io.delta.kernel.engine.MetricsReporter;
 import io.delta.kernel.metrics.SnapshotReport;
 import java.util.Optional;
 
@@ -114,6 +116,12 @@ public class SnapshotQueryContext {
         "Invalid checkpoint version: %s",
         checkpointVersion);
     this.checkpointVersion = checkpointVersion;
+  }
+
+  /** Creates a {@link SnapshotReport} and pushes it to any {@link MetricsReporter}s. */
+  public void recordSnapshotErrorReport(Engine engine, Exception e) {
+    SnapshotReport snapshotReport = SnapshotReportImpl.forError(this, e);
+    engine.getMetricsReporters().forEach(reporter -> reporter.report(snapshotReport));
   }
 
   @Override

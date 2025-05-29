@@ -36,14 +36,32 @@ import java.util.List;
  * level schema
  */
 class SchemaChanges {
+  public static class SchemaUpdate {
+    private final StructField fieldBefore;
+    private final StructField fieldAfter;
+
+    SchemaUpdate(StructField fieldBefore, StructField fieldAfter) {
+      this.fieldBefore = fieldBefore;
+      this.fieldAfter = fieldAfter;
+    }
+
+    public StructField before() {
+      return fieldBefore;
+    }
+
+    public StructField after() {
+      return fieldAfter;
+    }
+  }
+
   private List<StructField> addedFields;
   private List<StructField> removedFields;
-  private List<Tuple2<StructField, StructField>> updatedFields;
+  private List<SchemaUpdate> updatedFields;
 
   private SchemaChanges(
       List<StructField> addedFields,
       List<StructField> removedFields,
-      List<Tuple2<StructField, StructField>> updatedFields) {
+      List<SchemaUpdate> updatedFields) {
     this.addedFields = Collections.unmodifiableList(addedFields);
     this.removedFields = Collections.unmodifiableList(removedFields);
     this.updatedFields = Collections.unmodifiableList(updatedFields);
@@ -52,7 +70,7 @@ class SchemaChanges {
   static class Builder {
     private List<StructField> addedFields = new ArrayList<>();
     private List<StructField> removedFields = new ArrayList<>();
-    private List<Tuple2<StructField, StructField>> updatedFields = new ArrayList<>();
+    private List<SchemaUpdate> updatedFields = new ArrayList<>();
 
     public Builder withAddedField(StructField addedField) {
       addedFields.add(addedField);
@@ -65,7 +83,7 @@ class SchemaChanges {
     }
 
     public Builder withUpdatedField(StructField existingField, StructField newField) {
-      updatedFields.add(new Tuple2<>(existingField, newField));
+      updatedFields.add(new SchemaUpdate(existingField, newField));
       return this;
     }
 
@@ -88,8 +106,8 @@ class SchemaChanges {
     return removedFields;
   }
 
-  /* Updated Fields (e.g. rename, type change) represented as a Tuple<FieldBefore, FieldAfter> */
-  public List<Tuple2<StructField, StructField>> updatedFields() {
+  /* Updated Fields (e.g. rename, type change) represented */
+  public List<SchemaUpdate> updatedFields() {
     return updatedFields;
   }
 }

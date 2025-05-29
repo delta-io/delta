@@ -42,7 +42,7 @@ object IcebergConverterHook extends PostCommitHook with DeltaLogging {
 
     val converter = postCommitSnapshot.deltaLog.icebergConverter
     if (spark.sessionState.conf.getConf(DELTA_UNIFORM_ICEBERG_SYNC_CONVERT_ENABLED) ||
-         !UniversalFormat.icebergEnabled(txn.snapshot.metadata)) { // UniForm was not enabled
+         !UniversalFormat.icebergEnabled(txn.readSnapshot.metadata)) { // UniForm was not enabled
       converter.convertSnapshot(postCommitSnapshot, txn)
     } else {
       converter.enqueueSnapshotForConversion(postCommitSnapshot, txn)

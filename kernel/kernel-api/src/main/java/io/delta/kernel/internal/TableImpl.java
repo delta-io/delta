@@ -29,11 +29,9 @@ import io.delta.kernel.internal.checkpoints.Checkpointer;
 import io.delta.kernel.internal.checksum.ChecksumUtils;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
-import io.delta.kernel.internal.metrics.SnapshotReportImpl;
 import io.delta.kernel.internal.snapshot.SnapshotManager;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.Clock;
-import io.delta.kernel.metrics.SnapshotReport;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
@@ -101,7 +99,7 @@ public class TableImpl implements Table {
     try {
       return snapshotManager.buildLatestSnapshot(engine, snapshotContext);
     } catch (Exception e) {
-      recordSnapshotErrorReport(engine, snapshotContext, e);
+      snapshotContext.recordSnapshotErrorReport(engine, e);
       throw e;
     }
   }
@@ -114,7 +112,7 @@ public class TableImpl implements Table {
     try {
       return snapshotManager.getSnapshotAt(engine, versionId, snapshotContext);
     } catch (Exception e) {
-      recordSnapshotErrorReport(engine, snapshotContext, e);
+      snapshotContext.recordSnapshotErrorReport(engine, e);
       throw e;
     }
   }
@@ -129,7 +127,7 @@ public class TableImpl implements Table {
       return snapshotManager.getSnapshotForTimestamp(
           engine, latestSnapshot, millisSinceEpochUTC, snapshotContext);
     } catch (Exception e) {
-      recordSnapshotErrorReport(engine, snapshotContext, e);
+      snapshotContext.recordSnapshotErrorReport(engine, e);
       throw e;
     }
   }
@@ -371,12 +369,5 @@ public class TableImpl implements Table {
 
     logger.info("{}: Reading the commit files with readSchema {}", tablePath, readSchema);
     return DeltaLogActionUtils.readCommitFiles(engine, commitFiles, readSchema);
-  }
-
-  /** Creates a {@link SnapshotReport} and pushes it to any {@link MetricsReporter}s. */
-  private void recordSnapshotErrorReport(
-      Engine engine, SnapshotQueryContext snapshotContext, Exception e) {
-    SnapshotReport snapshotReport = SnapshotReportImpl.forError(snapshotContext, e);
-    engine.getMetricsReporters().forEach(reporter -> reporter.report(snapshotReport));
   }
 }
