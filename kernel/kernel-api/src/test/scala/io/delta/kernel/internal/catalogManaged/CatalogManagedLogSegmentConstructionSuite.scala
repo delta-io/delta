@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.delta.kernel.internal
+package io.delta.kernel.internal.catalogManaged
 
 import scala.collection.JavaConverters._
 
@@ -22,10 +22,9 @@ import io.delta.kernel.TableManager
 import io.delta.kernel.internal.table.ResolvedTableInternal
 import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.test.MockFileSystemClientUtils
-
 import org.scalatest.funsuite.AnyFunSuite
 
-class CatalogManagedSuite extends AnyFunSuite with MockFileSystemClientUtils {
+class CatalogManagedLogSegmentConstructionSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
   private def testLogSegment(
       testName: String,
