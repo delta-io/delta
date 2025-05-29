@@ -133,10 +133,11 @@ public class SchemaUtils {
    *
    * @param currentSchema the schema that is present the table schema _before_ the schema evolution
    * @param newSchema the new schema that is present the table schema _after_ the schema evolution
-   * @param clusteringColumnPhysicalNames The clustering columns present in the table before the schema update
+   * @param clusteringColumnPhysicalNames The clustering columns present in the table before the
+   *     schema update
    * @param oldMaxFieldId the maximum field id in the table before the schema update
-   * @param allowNewRequiredFields If `false`, adding new required columns throws an error. 
-   *                               If `true`, new required columns are allowed
+   * @param allowNewRequiredFields If `false`, adding new required columns throws an error. If
+   *     `true`, new required columns are allowed
    * @param icebergWriterCompatV1Enabled `true` if icebergCompatV1 is enabled on the table
    * @throws IllegalArgumentException if the schema evolution is invalid
    */
