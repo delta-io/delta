@@ -33,13 +33,13 @@ public class ResolvedTableBuilderInternalImpl implements ResolvedTableBuilderInt
   public static class ResolvedTableBuilderContext {
     public final String unresolvedPath;
     public Optional<Long> versionOpt;
-    public List<ParsedLogData> logData;
+    public List<ParsedLogData> logDatas;
     public Clock clock;
 
     public ResolvedTableBuilderContext(String unresolvedPath) {
       this.unresolvedPath = requireNonNull(unresolvedPath, "unresolvedPath is null");
       this.versionOpt = Optional.empty();
-      this.logData = Collections.emptyList();
+      this.logDatas = Collections.emptyList();
       this.clock = System::currentTimeMillis;
     }
   }
@@ -72,8 +72,8 @@ public class ResolvedTableBuilderInternalImpl implements ResolvedTableBuilderInt
 
   /** For now, only log datas of type {@link ParsedLogType#RATIFIED_STAGED_COMMIT}s are supported */
   @Override
-  public ResolvedTableBuilderInternal withLogData(List<ParsedLogData> logData) {
-    ctx.logData = requireNonNull(logData, "logData is null");
+  public ResolvedTableBuilderInternal withLogData(List<ParsedLogData> logDatas) {
+    ctx.logDatas = requireNonNull(logDatas, "logDatas is null");
     return this;
   }
 

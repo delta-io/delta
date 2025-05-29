@@ -65,6 +65,6 @@ public class ResolvedTableFactory {
     return new Lazy<>(
         () ->
             new SnapshotManager(new Path(resolvedPath))
-                .getLogSegmentForVersion(engine, ctx.versionOpt, ctx.logData));
+                .getLogSegmentForVersion(engine, ctx.versionOpt, ctx.logDatas));
   }
 }
