@@ -25,6 +25,7 @@ import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.files.ParsedLogData;
 import io.delta.kernel.internal.files.ParsedLogData.ParsedLogType;
+import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.Clock;
 import io.delta.kernel.internal.util.Tuple2;
 import java.util.Collections;
@@ -110,8 +111,14 @@ public class ResolvedTableBuilderImpl implements ResolvedTableBuilder {
 
   private void validateInputOnBuild() {
     checkArgument(ctx.versionOpt.orElse(0L) >= 0, "version must be >= 0");
+    validateProtocolRead();
     validateLogDatasOnlyRatifiedCommits();
     validateLogDatasSortedContiguous();
+  }
+
+  private void validateProtocolRead() {
+    ctx.protocolAndMetadataOpt.ifPresent(
+        x -> TableFeatures.validateKernelCanReadTheTable(x._1, ctx.unresolvedPath));
   }
 
   private void validateLogDatasOnlyRatifiedCommits() {
