@@ -23,6 +23,11 @@ import io.delta.kernel.internal.SnapshotImpl
 import io.delta.kernel.internal.checksum.ChecksumUtils
 import io.delta.kernel.internal.util.ManualClock
 
+import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.test.DeltaTestImplicits.OptimisticTxnTestHelper
+
+import org.apache.hadoop.fs.Path
+
 /**
  * Test suite for io.delta.kernel.internal.checksum.ChecksumUtils
  */
@@ -77,7 +82,7 @@ class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase with LogReplayBaseSuit
 
   test("test checksum -- no checksum, with checkpoint") {
     withTableWithCrc { (table, _, engine) =>
-      // Need to use HadoopFs to delete file to avoid fs throwing checksum mismatch on
+      // Need to use HadoopFs to delete file to avoid fs throwing checksum mismatch(betw) on
       deleteChecksumFileForTableUsingHadoopFs(table.getPath(engine).stripPrefix("file:"), (0 to 11))
       engine.resetMetrics()
       table.checksum(engine, 11)
@@ -91,9 +96,10 @@ class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase with LogReplayBaseSuit
     }
   }
 
-  test("test checksum -- stale checksum, no checkpoint") {
+  test("test checksum -- stale checksum without file size histogram, " +
+    "no checkpoint => incrementally load from checksum") {
     withTableWithCrc { (table, _, engine) =>
-      deleteChecksumFileForTableUsingHadoopFs(table.getPath(engine), (5 to 8))
+      deleteChecksumFileForTableUsingHadoopFs(table.getPath(engine).stripPrefix("file:"), (5 to 8))
       engine.resetMetrics()
       table.checksum(engine, 8)
       assertMetrics(
@@ -101,15 +107,31 @@ class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase with LogReplayBaseSuit
         Seq(8, 7, 6, 5, 4, 3, 2, 1, 0),
         Nil,
         Nil,
-        expChecksumReadSet = Nil)
+        expChecksumReadSet = Seq(4))
       verifyChecksumForSnapshot(table.getSnapshotAsOfVersion(engine, 8))
     }
   }
 
-  test("test checksum -- stale checksum, checkpoint after checksum" +
-    " => use checkpoint for full replay") {
+  test("test checksum -- stale checksum, no checkpoint => incrementally load from checksum") {
     withTableWithCrc { (table, _, engine) =>
-      deleteChecksumFileForTableUsingHadoopFs(table.getPath(engine), (5 to 11))
+      deleteChecksumFileForTableUsingHadoopFs(table.getPath(engine).stripPrefix("file:"), (5 to 8))
+      // Spark generated CRC from Spark doesn't include file size histogram, regenerate it.
+      table.checksum(engine, 5)
+      engine.resetMetrics()
+      table.checksum(engine, 8)
+      assertMetrics(
+        engine,
+        Seq(8, 7, 6),
+        Nil,
+        Nil,
+        expChecksumReadSet = Seq(5))
+      verifyChecksumForSnapshot(table.getSnapshotAsOfVersion(engine, 8))
+    }
+  }
+
+  test("test checksum -- stale checksum, checkpoint after checksum => use checkpoint") {
+    withTableWithCrc { (table, _, engine) =>
+      deleteChecksumFileForTableUsingHadoopFs(table.getPath(engine).stripPrefix("file:"), (5 to 11))
       engine.resetMetrics()
       table.checksum(engine, 11)
       assertMetrics(
@@ -119,6 +141,81 @@ class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase with LogReplayBaseSuit
         Seq(1),
         expChecksumReadSet = Nil)
       verifyChecksumForSnapshot(table.getSnapshotAsOfVersion(engine, 11))
+    }
+  }
+
+  test("test checksum -- duplicate add file => fallback") {
+    withTableWithCrc { (table, path, engine) =>
+      val deltaLog = DeltaLog.forTable(spark, new Path(path))
+      deltaLog
+        .startTransaction()
+        .commitManually(
+          List(
+            deltaLog.getSnapshotAt(11).allFiles.head().copy(dataChange = false).wrap.unwrap): _*)
+      deleteChecksumFileForTableUsingHadoopFs(
+        table.getPath(engine).stripPrefix("file:"),
+        Seq(11, 12))
+      table.checksum(engine, 11)
+      engine.resetMetrics()
+      table.checksum(engine, 12)
+      assertMetrics(
+        engine,
+        Seq(12, 11),
+        Seq(10),
+        Seq(1),
+        // Tries to incrementally load CRC but fall back with unable to handle
+        // Add file without data change(compute stats).
+        expChecksumReadSet = Seq(11))
+      verifyChecksumForSnapshot(table.getSnapshotAsOfVersion(engine, 12))
+    }
+  }
+
+  test("test checksum -- removeFile without Stats => fallback") {
+    withTableWithCrc { (table, path, engine) =>
+      val deltaLog = DeltaLog.forTable(spark, new Path(path))
+      deltaLog
+        .startTransaction()
+        .commitManually(
+          List(
+            deltaLog.getSnapshotAt(11).allFiles.head().remove.copy(size = None).wrap.unwrap): _*)
+      // Spark generated CRC from Spark doesn't include file size histogram
+      deleteChecksumFileForTableUsingHadoopFs(
+        table.getPath(engine).stripPrefix("file:"),
+        Seq(11, 12))
+      table.checksum(engine, 11)
+      engine.resetMetrics()
+      table.checksum(engine, 12)
+      assertMetrics(
+        engine,
+        Seq(12, 11),
+        Seq(10),
+        Seq(1),
+        // Tries to incrementally load CRC but fall back with unable to handle
+        // Remove file without stats.
+        expChecksumReadSet = Seq(11))
+      verifyChecksumForSnapshot(table.getSnapshotAsOfVersion(engine, 12))
+    }
+  }
+
+  test("test checksum -- Optimize => fallback to full state construction") {
+    withTableWithCrc { (table, path, engine) =>
+      spark.sql(s"OPTIMIZE delta.`$path`")
+      // Spark generated CRC from Spark doesn't include file size histogram
+      deleteChecksumFileForTableUsingHadoopFs(
+        table.getPath(engine).stripPrefix("file:"),
+        Seq(11, 12))
+      table.checksum(engine, 11)
+      engine.resetMetrics()
+      table.checksum(engine, 12)
+      assertMetrics(
+        engine,
+        Seq(12, 11),
+        Seq(10),
+        Seq(1),
+        // Tries to incrementally load CRC but fall back with unable to handle
+        // Add file without data change.
+        expChecksumReadSet = Seq(11))
+      verifyChecksumForSnapshot(table.getSnapshotAsOfVersion(engine, 12))
     }
   }
 }
