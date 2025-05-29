@@ -15,7 +15,6 @@
  */
 
 package io.delta.kernel
-import java.util.{Iterator => JIterator, NoSuchElementException}
 
 import scala.collection.JavaConverters.seqAsJavaListConverter
 
@@ -25,37 +24,37 @@ import org.scalatest.funsuite.AnyFunSuite
 
 class PeekableIteratorSuite extends AnyFunSuite {
 
-  test("peek should return the next element without consuming it") {
+  test("basic peek and next functionality") {
     val list = List(1, 2, 3).asJava
     val peekable = new PeekableIterator(list.iterator())
 
     assert(peekable.peek() === 1)
     assert(peekable.peek() === 1) // Should return same element
-    assert(peekable.hasNext === true)
-    assert(peekable.next() === 1) // Should return the peeked element
+    assert(peekable.next() === 1)
+    assert(peekable.next() === 2)
+    assert(peekable.peek() === 3)
+    assert(peekable.next() === 3)
+    assert(peekable.hasNext === false)
   }
 
-  test("peek should throw NoSuchElementException when no elements available") {
+  test("empty iterator throws exception") {
     val emptyList = List.empty[Int].asJava
     val peekable = new PeekableIterator(emptyList.iterator())
 
+    assert(peekable.hasNext === false)
     assertThrows[NoSuchElementException] {
       peekable.peek()
     }
   }
 
-  test("peek and next should work correctly") {
-    val list = List(1, 2).asJava
-    val peekable = new PeekableIterator(list.iterator())
+  test("handles null values correctly") {
+    val list = List(null, "test").asJava
+    val peekable = new PeekableIterator[String](list.iterator())
 
     assert(peekable.hasNext === true)
-    assert(peekable.peek() === 1)
-    assert(peekable.next() === 1)
-
-    assert(peekable.hasNext === true)
-    assert(peekable.peek() === 2)
-    assert(peekable.next() === 2)
-
-    assert(peekable.hasNext === false)
+    assert(peekable.peek() === null)
+    assert(peekable.next() === null)
+    assert(peekable.peek() === "test")
+    assert(peekable.next() === "test")
   }
 }

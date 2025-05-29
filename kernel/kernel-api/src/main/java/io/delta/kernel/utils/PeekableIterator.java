@@ -18,38 +18,47 @@ package io.delta.kernel.utils;
 
 import java.util.Iterator;
 import java.util.NoSuchElementException;
-import java.util.Optional;
 
+/**
+ * An iterator that allows peeking at the next element without consuming it. This iterator wraps
+ * another iterator and provides the ability to look ahead at the next element while maintaining the
+ * standard Iterator contract.
+ *
+ * <p>The peek operation does not advance the iterator, so multiple calls to peek() will return the
+ * same element until next() is called.
+ *
+ * @param <T> the type of elements returned by this iterator
+ */
 public class PeekableIterator<T> implements Iterator<T> {
   private final Iterator<T> iterator;
-  private Optional<T> peekedItem = Optional.empty();
+  private T peekedItem = null;
+  private boolean hasPeeked = false;
 
   public PeekableIterator(Iterator<T> iterator) {
     this.iterator = iterator;
   }
 
   public T peek() {
-    if (!peekedItem.isPresent() && iterator.hasNext()) {
-      peekedItem = Optional.of(iterator.next());
+    if (!hasPeeked && iterator.hasNext()) {
+      peekedItem = iterator.next();
+      hasPeeked = true;
     }
-    if (!peekedItem.isPresent()) {
+    if (!hasPeeked) {
       throw new NoSuchElementException("No element to peek");
     }
-    return peekedItem.get();
+    return peekedItem;
   }
 
   @Override
   public boolean hasNext() {
-    return peekedItem.isPresent() || iterator.hasNext();
+    return hasPeeked || iterator.hasNext();
   }
 
   @Override
   public T next() {
-    if (peekedItem.isPresent()) {
-      T result = peekedItem.get();
-      peekedItem = Optional.empty();
-      return result;
-    }
-    return iterator.next();
+    T result = peek();
+    peekedItem = null;
+    hasPeeked = false;
+    return result;
   }
 }
