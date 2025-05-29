@@ -16,21 +16,23 @@
 package io.delta.kernel.defaults
 
 import java.io.File
+
 import scala.collection.JavaConverters._
 import scala.collection.immutable
+
 import io.delta.golden.GoldenTableUtils.goldenTablePath
-import io.delta.kernel.Table
 import io.delta.kernel.data.Row
 import io.delta.kernel.data.ColumnarBatch
 import io.delta.kernel.defaults.utils.TestUtils
-import io.delta.kernel.exceptions.{KernelException, TableNotFoundException}
-import io.delta.kernel.expressions.Literal
-import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction
-import io.delta.kernel.internal.TableImpl
-import io.delta.kernel.internal.actions.{AddCDCFile, AddFile, CommitInfo, Metadata, Protocol, RemoveFile}
-import io.delta.kernel.internal.fs.Path
-import io.delta.kernel.internal.util.{FileNames, ManualClock, VectorUtils}
 import io.delta.kernel.utils.CloseableIterator
+import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction
+import io.delta.kernel.internal.actions.{AddCDCFile, AddFile, CommitInfo, Metadata, Protocol, RemoveFile}
+import io.delta.kernel.internal.util.{FileNames, ManualClock, VectorUtils}
+import io.delta.kernel.Table
+import io.delta.kernel.exceptions.{KernelException, TableNotFoundException}
+import io.delta.kernel.internal.TableImpl
+import io.delta.kernel.internal.fs.Path
+import io.delta.kernel.expressions.Literal
 
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.actions.{Action => SparkAction, AddCDCFile => SparkAddCDCFile, AddFile => SparkAddFile, CommitInfo => SparkCommitInfo, Metadata => SparkMetadata, Protocol => SparkProtocol, RemoveFile => SparkRemoveFile, SetTransaction => SparkSetTransaction}
