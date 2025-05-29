@@ -235,7 +235,6 @@ public class ChecksumUtils {
     LongAdder tableSizeByte = new LongAdder();
     LongAdder fileCount = new LongAdder();
     FileSizeHistogram addedFileSizeHistogram = FileSizeHistogram.createDefaultHistogram();
-    FileSizeHistogram removedFileSizeHistogram = FileSizeHistogram.createDefaultHistogram();
     Map<String, DomainMetadata> domainMetadataMap = new HashMap<>();
   }
 }
