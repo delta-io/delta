@@ -255,7 +255,7 @@ public class SnapshotManager {
    * ParsedLogType#RATIFIED_STAGED_COMMIT}s.
    */
   public LogSegment getLogSegmentForVersion(
-      Engine engine, Optional<Long> versionToLoadOpt, List<ParsedLogData> parsedLogData) {
+      Engine engine, Optional<Long> versionToLoadOpt, List<ParsedLogData> parsedLogDatas) {
     final long versionToLoad = versionToLoadOpt.orElse(Long.MAX_VALUE);
 
     // Defaulting to listing the files for now. This has low cost. We can make this a configurable
@@ -415,7 +415,7 @@ public class SnapshotManager {
 
     logDebugFileStatuses("listedDeltasAfterCheckpoint", listedDeltasAfterCheckpoint);
 
-    logDebugParsedLogDatas("parsedLogData", parsedLogData);
+    logDebugParsedLogDatas("parsedLogDatas", parsedLogDatas);
 
     final long suffixCommitsLowerBoundInclusive =
         listedDeltasAfterCheckpoint.isEmpty()
@@ -423,7 +423,7 @@ public class SnapshotManager {
             : FileNames.deltaVersion(ListUtils.getLast(listedDeltasAfterCheckpoint).getPath()) + 1;
 
     final List<FileStatus> suffixCommitsAfterDeltas =
-        parsedLogData.stream()
+        parsedLogDatas.stream()
             .filter(x -> x.type == ParsedLogData.ParsedLogType.RATIFIED_STAGED_COMMIT)
             .filter(
                 x -> x.version >= suffixCommitsLowerBoundInclusive && x.version <= versionToLoad)
