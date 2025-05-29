@@ -90,7 +90,11 @@ public class ResolvedTableBuilderImpl implements ResolvedTableBuilder {
 
   @Override
   public ResolvedTableBuilder withProtocolAndMetadata(Protocol protocol, Metadata metadata) {
-    ctx.protocolAndMetadataOpt = Optional.of(new Tuple2<>(protocol, metadata));
+    ctx.protocolAndMetadataOpt =
+        Optional.of(
+            new Tuple2<>(
+                requireNonNull(protocol, "protocol is null"),
+                requireNonNull(metadata, "metadata is null")));
     return this;
   }
 
@@ -106,7 +110,28 @@ public class ResolvedTableBuilderImpl implements ResolvedTableBuilder {
 
   private void validateInputOnBuild() {
     checkArgument(ctx.versionOpt.orElse(0L) >= 0, "version must be >= 0");
-    // TODO: logData only ratified staged commits
-    // TODO: logData sorted and contiguous
+    validateLogDatasOnlyRatifiedCommits();
+    validateLogDatasSortedContiguous();
+  }
+
+  private void validateLogDatasOnlyRatifiedCommits() {
+    for (ParsedLogData logData : ctx.logDatas) {
+      checkArgument(
+          logData.type == ParsedLogType.RATIFIED_STAGED_COMMIT,
+          "Only RATIFIED_STAGED_COMMIT log data is supported, but found: " + logData);
+    }
+  }
+
+  private void validateLogDatasSortedContiguous() {
+    if (ctx.logDatas.size() > 1) {
+      for (int i = 1; i < ctx.logDatas.size(); i++) {
+        final ParsedLogData prev = ctx.logDatas.get(i - 1);
+        final ParsedLogData curr = ctx.logDatas.get(i);
+        checkArgument(
+            prev.version + 1 == curr.version,
+            String.format(
+                "Log data must be sorted and contiguous, but found: %s and %s", prev, curr));
+      }
+    }
   }
 }
