@@ -28,6 +28,7 @@ import io.delta.kernel.internal.*;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.checkpoints.*;
 import io.delta.kernel.internal.files.ParsedLogData;
+import io.delta.kernel.internal.files.ParsedLogData.ParsedLogType;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.ListUtils;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
@@ -251,6 +252,10 @@ public class SnapshotManager {
     return getLogSegmentForVersion(engine, versionToLoadOpt, Collections.emptyList());
   }
 
+  /**
+   * Recall: Right now, we are only supporting log datas of type {@link
+   * ParsedLogType#RATIFIED_STAGED_COMMIT}s.
+   */
   public LogSegment getLogSegmentForVersion(
       Engine engine, Optional<Long> versionToLoadOpt, List<ParsedLogData> parsedLogData) {
     final long versionToLoad = versionToLoadOpt.orElse(Long.MAX_VALUE);
