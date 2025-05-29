@@ -396,6 +396,13 @@ public class SchemaUtils {
   static SchemaChanges computeSchemaChangesById(StructType currentSchema, StructType newSchema) {
     SchemaChanges.Builder schemaDiff = SchemaChanges.builder();
     findAndAddRemovedFields(currentSchema, newSchema, schemaDiff);
+
+    // Given a schema like struct<a (id=1) : map<int,struct<b (id=2) : Int >>
+    // This map would contain:
+    // {<"", 1> : StructField("a", MapType),
+    // <"key", 1> : StructField("key", IntegerType),
+    // <"value", 1> : StructField("value", StructType),
+    // <"", 2>: StructField("b", IntegerType)}
     Map<SchemaElementId, StructField> currentFieldIdToField = fieldsByElementId(currentSchema);
     Set<Integer> addedFieldIds = new HashSet<>();
     for (SchemaIterable.SchemaElement newElement : new SchemaIterable(newSchema)) {
@@ -411,6 +418,10 @@ public class SchemaUtils {
         // a schema change or a newly added field. To check if it is a new struct field,
         // we check the old schema for just the field ID (i.e. no nested path) to make
         // a determination between these two cases.
+        // If new StructField where added to the schema example above (e.g
+        // <a (id=1) : map<int,struct<b (id=2) : Int, c (id=3) : Int>>> )
+        // This would eventually probe the currentFieldIdToField map for <"", 3> and
+        // find it is an addition.
         SchemaElementId rootId = new SchemaElementId(/* nestedPath =*/ "", id.getId());
         if (!currentFieldIdToField.containsKey(rootId)) {
           addedFieldIds.add(id.getId());
@@ -422,15 +433,14 @@ public class SchemaUtils {
         // Consider the case of the changing a field from Map to an Array. This would imply that
         // path would be "element" here and either "key" or "value" in the previous schema. Nothing
         // is done for the new "element" path if it isn't a field addition there must be at least
-        // one
-        // ancestor node in common (at least the nearest struct field) which would get added as an
-        // update
-        // below. This logic is inductive. If the previous schema was a array<array<x>> and was not
-        // a new
-        // addition and the new schema was array<array<array<x>>> then this path would be reached on
-        // element.element.element but the type the code would move past this block for
-        // element.element
-        // which would have a type change detected from x to array<x>.
+        // one ancestor node in common (at least the nearest struct field) which would get added as
+        // an update below. This logic is inductive. If the previous schema was a array<array<x>> and
+        // was not a new addition and the new schema was array<array<array<x>>> then this path would
+        // be reached on element.element.element but the type the code would move past this block for
+        // element.element which would have a type change detected from x to array<x>.
+        // concretely if the new schema was <a id=1 : array<struct<b (id=2) : Int>>> then
+        // <"element, "1"> would be skipped here but the type change would be detected for <"", 1> from
+        // map to array.
         continue;
       }
       StructField updatedField = newElement.getField();
@@ -464,8 +474,14 @@ public class SchemaUtils {
 
   private static void findAndAddRemovedFields(
       StructType currentSchema, StructType newSchema, SchemaChanges.Builder schemaDiff) {
+    // With schema: <a (id=1) : map<int,struct<b (id=2) : Int, c (id=3) : Int>>>
+    // contains {1: StructField("a", MapType), 3: StructField("c", IntegerType)}
     Map<Integer, StructField> fieldIdToField = fieldsById(newSchema);
     for (SchemaIterable.SchemaElement element : new SchemaIterable(currentSchema)) {
+      // Removed fields are always calculated at the Struct level.
+      // From the example above, we only "c" or "a" are removed, as all other StructFields
+      // returned by the iterator (e.g. a.key, a.value cannot be removed without a type
+      // change).
       if (!element.isStructField()) {
         continue;
       }
@@ -625,23 +641,19 @@ public class SchemaUtils {
     } else {
       // Note because computeSchemaChangesById() adds all changed struct fields and any nested
       // elements that have the same path but different types then the following scenarios are
-      // handled
-      // in this block.
+      // handled in this block.
       // 1. This is non-leaf node (e.g. StructType, ArrayType) type, in which case it is sufficient
       // to ensure that the types are of the same class. For a struct type there might be field
-      // additions or removals,
-      // which shouldn't be considered invalid schema transitions (and hence `equivalent(...)` is
-      // not used in this
-      // case). If the nested type changes (e.g. ArrayType to Primitive) then the classes would be
-      // different
-      // and the types by definition would not be equivalent.
+      // additions or removals, which shouldn't be considered invalid schema transitions
+      // (and hence `equivalent(...)` is not used in this case). If the nested type changes
+      // (e.g. ArrayType to Primitive) then the classes would be different and the types by
+      // definition would not be equivalent.
+      //
       // 2. This is a leaf node, in which case it sufficient to check that the types are equivalent
-      // (or once
-      // implemented the transition of types is valid).
+      // (or once implemented the transition of types is valid).
       //
       // The subtle point here is for any non-leaf node change, the computed changes will include at
-      // least
-      // one ancestor change where the type change can be detected.
+      // least one ancestor change where the type change can be detected.
       //
       for (Class<?> clazz : new Class<?>[] {StructType.class, ArrayType.class}) {
         if (existingField.getDataType().getClass() == clazz
