@@ -32,7 +32,6 @@ import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
-import io.delta.kernel.utils.PeekableIterator;
 import java.io.IOException;
 import java.nio.file.FileAlreadyExistsException;
 import java.time.Instant;
@@ -245,7 +244,7 @@ public class ChecksumUtils {
                 .collect(Collectors.toList()),
             CHECKPOINT_SCHEMA.add("commitInfo", CommitInfo.FULL_SCHEMA))) {
 
-      Optional<VersionColumnBatchTracker> currentVersionBatch = Optional.empty();
+      Optional<Long> currentVersion = Optional.empty();
 
       while (iterator.hasNext()) {
         ColumnarBatch batch = iterator.next();
@@ -254,30 +253,66 @@ public class ChecksumUtils {
           continue;
         }
 
-        // Get version from first row (assuming all rows in batch have same version)
-        long versionBatch = batch.getColumnVector(batch.getSchema().indexOf("version")).getLong(0);
+        StructType schema = batch.getSchema();
+        ColumnVector versionVector = batch.getColumnVector(schema.indexOf("version"));
+        ColumnVector addVector = batch.getColumnVector(schema.indexOf("add"));
+        ColumnVector removeVector = batch.getColumnVector(schema.indexOf("remove"));
+        ColumnVector metadataVector = batch.getColumnVector(schema.indexOf("metaData"));
+        ColumnVector protocolVector = batch.getColumnVector(schema.indexOf("protocol"));
+        ColumnVector domainMetadataVector = batch.getColumnVector(schema.indexOf("domainMetadata"));
+        ColumnVector commitInfoVector = batch.getColumnVector(schema.indexOf("commitInfo"));
 
-        // If this is a new version, process the previous version's batches
-        if (!currentVersionBatch.isPresent()
-            || versionBatch != currentVersionBatch.get().getVersion()) {
-          if (currentVersionBatch.isPresent()) {
-            boolean shouldFallback = currentVersionBatch.get().computeState(state);
-            if (shouldFallback) {
+        for (int i = 0; i < rowCount; i++) {
+          long rowVersion = versionVector.getLong(i);
+
+          // Detect version change
+          if (!currentVersion.isPresent() || rowVersion != currentVersion.get()) {
+            // New version detected - current row must be commit info
+            if (commitInfoVector.isNullAt(i)) {
+              logger.info(
+                  "Falling back to full replay: first row of version {} is not commit info",
+                  rowVersion);
               return Optional.empty();
             }
+
+            CommitInfo commitInfo = CommitInfo.fromColumnVector(commitInfoVector, i);
+            if (commitInfo == null
+                || !INCREMENTAL_SUPPORTED_OPS.contains(commitInfo.getOperation())) {
+              logger.info(
+                  "Falling back to full replay: unsupported operation '{}' for version {}",
+                  commitInfo != null ? commitInfo.getOperation() : "null",
+                  rowVersion);
+              return Optional.empty();
+            }
+
+            currentVersion = Optional.of(rowVersion);
+            continue;
           }
-          currentVersionBatch = Optional.of(new VersionColumnBatchTracker(versionBatch));
-        }
 
-        // Collect the current batch
-        currentVersionBatch.get().collect(batch);
-      }
+          // Process the row
+          if (!addVector.isNullAt(i)) {
+            processAddRecord(addVector, state, i);
+          }
 
-      // Process the last version's batches
-      if (currentVersionBatch.isPresent()) {
-        boolean shouldFallback = currentVersionBatch.get().computeState(state);
-        if (shouldFallback) {
-          return Optional.empty();
+          // Process remove file records
+          if (!removeVector.isNullAt(i)) {
+            ColumnVector sizeVector = removeVector.getChild(REMOVE_SIZE_INDEX);
+            if (sizeVector.isNullAt(i)) {
+              logger.info(
+                  "Falling back to full replay: detected remove without file size in version {}",
+                  rowVersion);
+              return Optional.empty();
+            }
+            long fileSize = sizeVector.getLong(i);
+            state.tableSizeByte.add(-fileSize);
+            state.removedFileSizeHistogram.insert(fileSize);
+            state.fileCount.decrement();
+          }
+
+          // Process domain metadata, protocol, and metadata
+          processDomainMetadataRecord(domainMetadataVector, state, i);
+          processMetadataRecord(metadataVector, state, i);
+          processProtocolRecord(protocolVector, state, i);
         }
       }
     }
@@ -357,91 +392,6 @@ public class ChecksumUtils {
     return state.domainMetadataMap.values().stream()
         .filter(dm -> !dm.isRemoved())
         .collect(Collectors.toSet());
-  }
-
-  private static class VersionColumnBatchTracker {
-    private final long version;
-    private final List<ColumnarBatch> columnarBatches;
-
-    VersionColumnBatchTracker(long version) {
-      this.version = version;
-      this.columnarBatches = new ArrayList<>();
-    }
-
-    public void collect(ColumnarBatch columnarBatch) {
-      this.columnarBatches.add(columnarBatch);
-    }
-
-    public long getVersion() {
-      return version;
-    }
-
-    /**
-     * Computes state for all batches in this version.
-     *
-     * @param state The state tracker to update
-     * @return true if should fallback to full replay, false otherwise
-     */
-    public boolean computeState(StateTracker state) {
-      PeekableIterator<ColumnarBatch> peekableIterator =
-          new PeekableIterator<>(columnarBatches.iterator());
-      if (!peekableIterator.hasNext()) {
-        return false;
-      }
-      ColumnarBatch firstBatch = peekableIterator.peek();
-      if (firstBatch.getSize() == 0) {
-        return true;
-      }
-      ColumnVector commitInfoVector =
-          firstBatch.getColumnVector(firstBatch.getSchema().indexOf("commitInfo"));
-      CommitInfo commitInfo = CommitInfo.fromColumnVector(commitInfoVector, 0);
-      if (commitInfo == null) {
-        return true;
-      }
-      if (!INCREMENTAL_SUPPORTED_OPS.contains(commitInfo.getOperation())) {
-        return true;
-      }
-
-      // Scan all batches to understand the operations in this version
-      while (peekableIterator.hasNext()) {
-        ColumnarBatch batch = peekableIterator.next();
-        StructType schema = batch.getSchema();
-        ColumnVector addVector = batch.getColumnVector(schema.indexOf("add"));
-        ColumnVector removeVector = batch.getColumnVector(schema.indexOf("remove"));
-        ColumnVector metadataVector = batch.getColumnVector(schema.indexOf("metaData"));
-        ColumnVector protocolVector = batch.getColumnVector(schema.indexOf("protocol"));
-        ColumnVector domainMetadataVector = batch.getColumnVector(schema.indexOf("domainMetadata"));
-        int rowCount = batch.getSize();
-        if (rowCount == 0) {
-          continue;
-        }
-        for (int i = 0; i < rowCount; i++) {
-          if (!addVector.isNullAt(i)) {
-            processAddRecord(addVector, state, i);
-          }
-
-          // Process remove file records
-          if (!removeVector.isNullAt(i)) {
-            ColumnVector sizeVector = removeVector.getChild(REMOVE_SIZE_INDEX);
-            if (sizeVector.isNullAt(i)) {
-              logger.info("Falling back to full replay: detected remove without file size");
-              return true;
-            }
-            long fileSize = sizeVector.getLong(i);
-            state.tableSizeByte.add(-fileSize);
-            state.removedFileSizeHistogram.insert(fileSize);
-            state.fileCount.decrement();
-          }
-
-          // Process domain metadata, protocol, and metadata
-          processDomainMetadataRecord(domainMetadataVector, state, i);
-          processMetadataRecord(metadataVector, state, i);
-          processProtocolRecord(protocolVector, state, i);
-        }
-      }
-
-      return false; // No fallback needed
-    }
   }
 
   /** Class for tracking state during log processing. */
