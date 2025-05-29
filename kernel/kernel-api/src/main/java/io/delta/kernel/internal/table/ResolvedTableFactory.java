@@ -32,7 +32,7 @@ import java.io.UncheckedIOException;
  *
  * <p>Note: The {@link ResolvedTableBuilderInternal} is responsible for receiving and validating all
  * builder parameters, and then passing that information to this factory to actually create the
- * {@link ResolvedTableInternal
+ * {@link ResolvedTableInternal}
  */
 public class ResolvedTableFactory {
 
