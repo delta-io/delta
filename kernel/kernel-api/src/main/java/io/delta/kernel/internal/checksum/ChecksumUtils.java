@@ -109,6 +109,7 @@ public class ChecksumUtils {
     // Process logs and update state
     try (CreateCheckpointIterator checkpointIterator =
         new CreateCheckpointIterator(
+            // Set minFileRetentionTimestampMillis to infinite future to skip all removed files
             engine, logSegmentAtVersion, Instant.ofEpochMilli(Long.MAX_VALUE).toEpochMilli())) {
 
       // Process all checkpoint batches
