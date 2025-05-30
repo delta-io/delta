@@ -983,6 +983,23 @@ trait ClusteredTableDDLSuiteBase
       assert(!currentSnapshot.domainMetadata.exists(_.domain ==
         ClusteringMetadataDomain.domainName))
     }
+
+    // Scenario 6: restore clustered table to unclustered table.
+    withTable(testTable) {
+      sql(s"CREATE TABLE $testTable (a INT) USING delta")
+      val (_, startingSnapshot) = DeltaLog.forTableWithSnapshot(spark, tableIdentifier)
+      assert(!ClusteredTableUtils.isSupported(startingSnapshot.protocol))
+      assert(!startingSnapshot.domainMetadata.exists(_.domain ==
+        ClusteringMetadataDomain.domainName))
+
+      sql(s"ALTER TABLE $testTable CLUSTER BY (a)")
+
+      sql(s"RESTORE TABLE $testTable TO VERSION AS OF 0")
+
+      val (_, currentSnapshot) = DeltaLog.forTableWithSnapshot(spark, tableIdentifier)
+      assert(ClusteredTableUtils.isSupported(currentSnapshot.protocol))
+      verifyClusteringColumns(tableIdentifier, Seq.empty[String], skipCatalogCheck = true)
+    }
   }
 
   testSparkMasterOnly("Variant is not supported") {

@@ -235,7 +235,7 @@ abstract class CloneTableBase(
         // Handle DomainMetadata for cloning a table.
         if (deltaOperation.name == DeltaOperations.OP_CLONE) {
           actions ++=
-            DomainMetadataUtils.handleDomainMetadataForCloneTable(sourceSnapshot.domainMetadata)
+            DomainMetadataUtils.handleDomainMetadataForCloneTable(sourceSnapshot, txn.snapshot)
         }
       }
       val sourceName = sourceTable.name
