@@ -15,7 +15,7 @@
 #
 version: v1
 plugins:
-  - plugin: buf.build/protocolbuffers/python:v21.7
+  - plugin: buf.build/protocolbuffers/python:v28.3
     out: gen/proto/python
   - name: mypy
     out: gen/proto/python
