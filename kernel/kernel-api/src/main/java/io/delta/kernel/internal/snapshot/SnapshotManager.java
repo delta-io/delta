@@ -253,7 +253,7 @@ public class SnapshotManager {
   }
 
   /**
-   * Recall: Right now, we are only supporting log datas of type {@link
+   * Recall: Right now, we are only supporting sorted and contiguous log datas of type {@link
    * ParsedLogType#RATIFIED_STAGED_COMMIT}s.
    */
   public LogSegment getLogSegmentForVersion(

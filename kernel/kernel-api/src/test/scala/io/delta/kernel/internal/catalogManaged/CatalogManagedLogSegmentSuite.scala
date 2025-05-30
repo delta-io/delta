@@ -144,10 +144,32 @@ class CatalogManagedLogSegmentSuite extends AnyFunSuite with MockFileSystemClien
     ratifiedCommitVersions = 13L to 14L,
     expectedDeltaAndCommitVersionsOpt = Some(11L to 14L))
 
+  // versionToLoad:     V
+  // _delta_log: [10.checkpoint+json, 11.json, 12.json                           ]
+  // catalog:    [                                     13.uuid.json, 14.uuid.json]
+  testLogSegment(
+    testName = "Build RT with commit versions > versionToLoad - versionToLoad = checkpoint version",
+    versionToLoad = 10L,
+    checkpointVersionOpt = Some(10L),
+    deltaVersions = 10L to 12L,
+    ratifiedCommitVersions = 13L to 14L,
+    expectedDeltaAndCommitVersionsOpt = Some(Nil))
+
+  // versionToLoad:                              V
+  // _delta_log: [10.checkpoint+json, 11.json, 12.json                           ]
+  // catalog:    [                                     13.uuid.json, 14.uuid.json]
+  testLogSegment(
+    testName = "Build RT with commit versions > versionToLoad - versionToLoad = delta version",
+    versionToLoad = 12L,
+    checkpointVersionOpt = Some(10L),
+    deltaVersions = 10L to 12L,
+    ratifiedCommitVersions = 13L to 14L,
+    expectedDeltaAndCommitVersionsOpt = Some(11L to 12L))
+
   // _delta_log: [0.json,                                      ]
   // catalog:    [        1.uuid.json, 2.uuid.json, 3.uuid.json]
   testLogSegment(
-    testName = "Build RT with only deltas and ratified commits",
+    testName = "Build RT with only deltas and ratified commits (no checkpoint)",
     versionToLoad = 3L,
     checkpointVersionOpt = None,
     deltaVersions = Seq(0L),
@@ -164,6 +186,19 @@ class CatalogManagedLogSegmentSuite extends AnyFunSuite with MockFileSystemClien
     ratifiedCommitVersions = Seq(11L),
     expectedDeltaAndCommitVersionsOpt = Some(Seq(11L)))
 
+  // TODO: Support this case in a followup PR
+  // _delta_log: [                                                  ]
+  // catalog:    [0.uuid.json, 1.uuid.json, 2.uuid.json, 3.uuid.json]
+  /*
+  testLogSegment(
+    testName = "Build RT with only ratified commits",
+    versionToLoad = 3L,
+    checkpointVersionOpt = None,
+    deltaVersions = Seq(),
+    ratifiedCommitVersions = 0L to 3L,
+    expectedDeltaAndCommitVersionsOpt = Some(0L to 3L))
+   */
+
   /////////////////////////////////////////////////////
   // LogSegment construction tests -- negative cases //
   /////////////////////////////////////////////////////
@@ -177,14 +212,4 @@ class CatalogManagedLogSegmentSuite extends AnyFunSuite with MockFileSystemClien
     deltaVersions = 10L to 12L,
     ratifiedCommitVersions = 14L to 15L,
     expectedExceptionClassOpt = Some(classOf[io.delta.kernel.exceptions.InvalidTableException]))
-
-  // _delta_log: [                                                  ]
-  // catalog:    [0.uuid.json, 1.uuid.json, 2.uuid.json, 3.uuid.json]
-  testLogSegment(
-    testName = "Build RT with only ratified commits => ERROR",
-    versionToLoad = 3L,
-    checkpointVersionOpt = None,
-    deltaVersions = Seq(),
-    ratifiedCommitVersions = 0L to 3L,
-    expectedExceptionClassOpt = Some(classOf[io.delta.kernel.exceptions.TableNotFoundException]))
 }

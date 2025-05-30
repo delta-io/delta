@@ -95,9 +95,7 @@ public class ResolvedTableBuilderImpl implements ResolvedTableBuilder {
 
   private void validateInputOnBuild() {
     checkArgument(ctx.versionOpt.orElse(0L) >= 0, "version must be >= 0");
-    // TODO: logData if and only if atVersion
     // TODO: logData only ratified staged commits
     // TODO: logData sorted and contiguous
-    // TODO: logData ends with version
   }
 }

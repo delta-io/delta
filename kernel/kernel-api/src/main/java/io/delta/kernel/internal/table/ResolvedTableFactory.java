@@ -33,15 +33,15 @@ import java.io.UncheckedIOException;
  * builder parameters, and then passing that information to this factory to actually create the
  * {@link ResolvedTableInternal}
  */
-public class ResolvedTableFactory {
+class ResolvedTableFactory {
 
   private final ResolvedTableBuilderImpl.Context ctx;
 
-  public ResolvedTableFactory(ResolvedTableBuilderImpl.Context ctx) {
+  ResolvedTableFactory(ResolvedTableBuilderImpl.Context ctx) {
     this.ctx = ctx;
   }
 
-  public ResolvedTableInternalImpl create(Engine engine) {
+  ResolvedTableInternalImpl create(Engine engine) {
     final String resolvedPath = resolvePath(engine);
     final Lazy<LogSegment> lazyLogSegment = getLazyLogSegment(engine, resolvedPath);
     final long version = ctx.versionOpt.orElseGet(() -> lazyLogSegment.get().getVersion());
