@@ -25,6 +25,7 @@ import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.files.ParsedLogData;
 import io.delta.kernel.internal.files.ParsedLogData.ParsedLogType;
+import io.delta.kernel.internal.lang.ListUtils;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.Clock;
 import io.delta.kernel.internal.util.Tuple2;
@@ -111,14 +112,35 @@ public class ResolvedTableBuilderImpl implements ResolvedTableBuilder {
 
   private void validateInputOnBuild() {
     checkArgument(ctx.versionOpt.orElse(0L) >= 0, "version must be >= 0");
+    validateProtocolAndMetadataOnlyIfVersionProvided();
     validateProtocolRead();
     validateLogDatasOnlyRatifiedCommits();
     validateLogDatasSortedContiguous();
+    validateLogDatasEndsWithVersion();
+  }
+
+  private void validateProtocolAndMetadataOnlyIfVersionProvided() {
+    checkArgument(
+        ctx.versionOpt.isPresent() || !ctx.protocolAndMetadataOpt.isPresent(),
+        "protocol and metadata can only be provided if a version is provided");
   }
 
   private void validateProtocolRead() {
     ctx.protocolAndMetadataOpt.ifPresent(
         x -> TableFeatures.validateKernelCanReadTheTable(x._1, ctx.unresolvedPath));
+  }
+
+  private void validateLogDatasEndsWithVersion() {
+    if (ctx.versionOpt.isPresent() && !ctx.logDatas.isEmpty()) {
+      final long expectedVersion = ctx.versionOpt.get();
+      final long actualVersion = ListUtils.getLast(ctx.logDatas).version;
+
+      checkArgument(
+          actualVersion == expectedVersion,
+          String.format(
+              "Last log data version (%d) must match provided version (%d)",
+              actualVersion, expectedVersion));
+    }
   }
 
   private void validateLogDatasOnlyRatifiedCommits() {
