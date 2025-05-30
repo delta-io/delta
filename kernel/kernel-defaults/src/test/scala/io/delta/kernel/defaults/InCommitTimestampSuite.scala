@@ -81,7 +81,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
       // Time travel should work
       val searchedSnapshot =
         table.getSnapshotAsOfTimestamp(engine, beforeCommitAttemptStartTime + 1)
-      assert(searchedSnapshot.getVersion == 0)
+      assert(searchedSnapshot.getVersion(engine) == 0)
     }
   }
 
@@ -119,11 +119,11 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
       // Search timestamp = ICT enablement time - 1
       val searchedSnapshot1 =
         table.getSnapshotAsOfTimestamp(engine, ver1Snapshot.getTimestamp(engine) - 1)
-      assert(searchedSnapshot1.getVersion == 0)
+      assert(searchedSnapshot1.getVersion(engine) == 0)
       // Search timestamp = ICT enablement time
       val searchedSnapshot2 =
         table.getSnapshotAsOfTimestamp(engine, ver1Snapshot.getTimestamp(engine))
-      assert(searchedSnapshot2.getVersion == 1)
+      assert(searchedSnapshot2.getVersion(engine) == 1)
     }
   }
 
