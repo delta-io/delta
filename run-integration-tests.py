@@ -76,7 +76,7 @@ def run_python_integration_tests(root_dir, version, test_name, extra_maven_repo,
         run_cmd(["build/sbt", "publishM2"])
 
     test_dir = path.join(root_dir, path.join("examples", "python"))
-    files_to_skip = {"using_with_pip.py", "missing_delta_storage_jar.py", "image_storage.py"}
+    files_to_skip = {"using_with_pip.py", "missing_delta_storage_jar.py", "image_storage.py", "delta_connect.py"}
 
     test_files = [path.join(test_dir, f) for f in os.listdir(test_dir)
                   if path.isfile(path.join(test_dir, f)) and

@@ -29,9 +29,12 @@ public class MapType extends DataType {
   private final StructField keyField;
   private final StructField valueField;
 
+  public static final String MAP_KEY_NAME = "key";
+  public static final String MAP_VALUE_NAME = "value";
+
   public MapType(DataType keyType, DataType valueType, boolean valueContainsNull) {
-    this.keyField = new StructField("key", keyType, false);
-    this.valueField = new StructField("value", valueType, valueContainsNull);
+    this.keyField = new StructField(MAP_KEY_NAME, keyType, false);
+    this.valueField = new StructField(MAP_VALUE_NAME, valueType, valueContainsNull);
   }
 
   public MapType(StructField keyField, StructField valueField) {

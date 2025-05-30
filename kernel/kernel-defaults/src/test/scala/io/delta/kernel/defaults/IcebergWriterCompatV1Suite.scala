@@ -474,43 +474,11 @@ class IcebergWriterCompatV1Suite extends DeltaTableWriteSuiteBase with ColumnMap
     // We throw an error earlier for variant for some reason
     expectedErrorMessage = "Kernel doesn't support writing data of type: variant")
 
-  // For some reason rowTracking throws an UnsupportedOperationException (due to partial support?)
-  // so cannot use test fx here
-  test(
-    s"Cannot enable feature rowTracking on an existing table with icebergWriterCompatV1 enabled") {
-    withTempDirAndEngine { (tablePath, engine) =>
-      // Create existing table with icebergWriterCompatV1 enabled
-      createEmptyTable(
-        engine,
-        tablePath,
-        testSchema,
-        tableProperties = tblPropertiesIcebergWriterCompatV1Enabled)
-      verifyIcebergWriterCompatV1Enabled(tablePath, engine)
-      val e = intercept[UnsupportedOperationException] {
-        // Update the table such that we enable rowTracking
-        updateTableMetadata(
-          engine,
-          tablePath,
-          tableProperties = Map("delta.enableRowTracking" -> "true"))
-      }
-      assert(e.getMessage.contains("Feature `rowTracking` is not yet supported in Kernel"))
-    }
-  }
-
-  test(s"Cannot enable feature rowTracking and icebergWriterCompatV1 on a new table") {
-    withTempDirAndEngine { (tablePath, engine) =>
-      // Create table with IcebergCompatWriterV1 and rowTracking enabled
-      val e = intercept[UnsupportedOperationException] {
-        createEmptyTable(
-          engine,
-          tablePath,
-          testSchema,
-          tableProperties =
-            tblPropertiesIcebergWriterCompatV1Enabled ++ Map("delta.enableRowTracking" -> "true"))
-      }
-      assert(e.getMessage.contains("Feature `rowTracking` is not yet supported in Kernel"))
-    }
-  }
+  testIncompatibleTableFeature(
+    "rowTracking",
+    tablePropertiesToEnable = Map("delta.enableRowTracking" -> "true"),
+    expectedErrorMessage =
+      "Table features [rowTracking] are incompatible with icebergWriterCompatV1")
 
   // deletionVectors is blocked by both icebergCompatV2 and icebergWriterCompatV1; since the
   // icebergCompatV2 checks are executed first as part of ICEBERG_COMPAT_V2_ENABLED.postProcess we

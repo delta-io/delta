@@ -48,7 +48,8 @@ class TableFeaturesSuite extends AnyFunSuite {
     "v2Checkpoint",
     "vacuumProtocolCheck",
     "variantType",
-    "variantType-preview")
+    "variantType-preview",
+    "variantShredding-preview")
 
   val writerOnlyFeatures = Seq(
     "appendOnly",
@@ -122,9 +123,16 @@ class TableFeaturesSuite extends AnyFunSuite {
     ("typeWidening", testMetadata(tblProps = Map("delta.enableTypeWidening" -> "false")), false),
     ("variantType", testMetadata(includeVariantTypeCol = true), true),
     ("variantType", testMetadata(includeVariantTypeCol = false), false),
-    // Disable this until we have support to enable row tracking through metadata
-    // ("rowTracking", testMetadata(tblProps = Map("delta.enableRowTracking" -> "true")), true),
+    ("rowTracking", testMetadata(tblProps = Map("delta.enableRowTracking" -> "true")), true),
     ("rowTracking", testMetadata(tblProps = Map("delta.enableRowTracking" -> "false")), false),
+    (
+      "variantShredding-preview",
+      testMetadata(tblProps = Map("delta.enableVariantShredding" -> "true")),
+      true),
+    (
+      "variantShredding-preview",
+      testMetadata(tblProps = Map("delta.enableVariantShredding" -> "false")),
+      false),
     (
       "deletionVectors",
       testMetadata(tblProps = Map("delta.enableDeletionVectors" -> "true")),
@@ -193,17 +201,6 @@ class TableFeaturesSuite extends AnyFunSuite {
       }
   }
 
-  test("row tracking enable through metadata property is not supported") {
-    val tableFeature = TableFeatures.getTableFeature("rowTracking")
-    val ex = intercept[UnsupportedOperationException] {
-      tableFeature.asInstanceOf[FeatureAutoEnabledByMetadata]
-        .metadataRequiresFeatureToBeEnabled(
-          testProtocol,
-          testMetadata(tblProps = Map("delta.enableRowTracking" -> "true")))
-    }
-    assert(ex.getMessage.contains("Feature `rowTracking` is not yet supported in Kernel."))
-  }
-
   test("hasKernelReadSupport expected to be true") {
     val results = TABLE_FEATURES.stream()
       .filter(_.isReaderWriterFeature)
@@ -215,6 +212,7 @@ class TableFeaturesSuite extends AnyFunSuite {
       "v2Checkpoint",
       "variantType",
       "variantType-preview",
+      "variantShredding-preview",
       "typeWidening",
       "typeWidening-preview",
       "deletionVectors",
@@ -293,6 +291,7 @@ class TableFeaturesSuite extends AnyFunSuite {
   Seq(
     "variantType",
     "variantType-preview",
+    "variantShredding-preview",
     "deletionVectors",
     "typeWidening",
     "typeWidening-preview",
@@ -529,7 +528,7 @@ class TableFeaturesSuite extends AnyFunSuite {
       testMetadata(tblProps = Map("delta.enableTypeWidening" -> "true")))
   }
 
-  Seq("variantType", "variantType-preview").foreach { feature =>
+  Seq("variantType", "variantType-preview", "variantShredding-preview").foreach { feature =>
     checkWriteUnsupported(
       s"validateKernelCanWriteToTable: protocol 7 with $feature, " +
         s"metadata doesn't contains $feature",
@@ -862,7 +861,26 @@ class TableFeaturesSuite extends AnyFunSuite {
         7,
         set("columnMapping", "deletionVectors"),
         set("columnMapping", "icebergCompatV2", "deletionVectors", "icebergWriterCompatV1")),
-      set("icebergCompatV2", "icebergWriterCompatV1"))).foreach {
+      set("icebergCompatV2", "icebergWriterCompatV1")),
+    (
+      testMetadata(
+        tblProps = Map("delta.enableVariantShredding" -> "true"),
+        includeVariantTypeCol = true),
+      new Protocol(
+        3,
+        7,
+        set("columnMapping", "deletionVectors"),
+        set("columnMapping")),
+      new Protocol(
+        3,
+        7,
+        set("columnMapping", "deletionVectors"),
+        set(
+          "columnMapping",
+          "deletionVectors",
+          "variantShredding-preview",
+          "variantType")),
+      set("variantType", "variantShredding-preview"))).foreach {
     case (newMetadata, currentProtocol, expectedProtocol, expectedNewFeatures) =>
       test(s"autoUpgradeProtocolBasedOnMetadata:" +
         s"$currentProtocol -> $expectedProtocol, $expectedNewFeatures") {

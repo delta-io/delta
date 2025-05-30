@@ -1924,6 +1924,7 @@ When enabled:
 - The `metadata` for the column in the table schema MAY contain the key `CURRENT_DEFAULT`.
 - The value of `CURRENT_DEFAULT` SHOULD be parsed as a SQL expression.
 - Writers MUST enforce that before writing any rows to the table, for each such requested row that lacks any explicit value (including NULL) for columns with default values, the writing system will assign the result of evaluating the default value expression for each such column as the value for that column in the row. By the same token, if the engine specified the explicit `DEFAULT` SQL keyword for any column, the expression result must be substituted in the same way.
+- All columns of `variant` type must default to null.
 
 ## Identity Columns
 
@@ -1998,6 +1999,7 @@ Feature | Name | Readers or Writers?
 [Iceberg Compatibility V2](#iceberg-compatibility-v2) | `icebergCompatV2` | Writers only
 [Clustered Table](#clustered-table) | `clustering` | Writers only
 [VACUUM Protocol Check](#vacuum-protocol-check) | `vacuumProtocolCheck` | Readers and Writers
+[In-Commit Timestamps](#in-commit-timestamps) | `inCommitTimestamp` | Writers only
 
 ## Deletion Vector Format
 

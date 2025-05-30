@@ -165,12 +165,11 @@ object SchemaUtils extends DeltaLogging {
   /**
    * A char(x)/varchar(x) related types are internally stored as string type with the constraint
    * information stored in the metadata. For example:
-   *  + char(10) -> (string, char_varchar_metadata = "char(10)")
-   *  + array[varchar(10)]
-   *    -> (array[string], char_varchar_metadata = "array[varchar(10)]")
+   *  + char(10) is (string, char_varchar_metadata = "char(10)")
+   *  + array[varchar(10)] is (array[string], char_varchar_metadata = "array[varchar(10)]")
    * This method converts the string + metadata representation to the actual type.
-   *  + (string, metadata = "char(10)") -> (char(10), char_varchar_metadata = "")
-   *  + (array[string], metadata = "array[varchar(10)]")
+   *  + (string, char_varchar_metadata = "char(10)") -> (char(10), char_varchar_metadata = "")
+   *  + (array[string], char_varchar_metadata = "array[varchar(10)]")
    *    -> (array[varchar(10)], char_varchar_metadata = "")
    */
   private def getRawFieldWithoutCharVarcharMetadata(field: StructField): StructField = {
@@ -189,20 +188,21 @@ object SchemaUtils extends DeltaLogging {
   /**
    * Sets a data type to a field in a char/varchar-safe manner. A char(x)/varchar(x) related types
    * consists of two parts: a string-based type and the constraint information stored in the
-   * metadata. Simply setting the data type will lead to unexpected results.
+   * metadata. Simply changing the data type will lead to unexpected results.
    *
    * For example, an array[varchar(10)] type is internally represented as
-   * (array[string], char_varchar_metadata = "array[varchar(10)]"). If we convert it into a string
-   * simply by setting the data type part, the metadata part will still be there, and the type will
-   * still stay as varchar(10).
+   * (array[string], char_varchar_metadata = "array[varchar(10)]"). If we convert it into an
+   * array[string] simply by setting the data type part, the metadata part will still be there, and
+   * the type will still stay as array[varchar(10)].
    *
    * This method first converts the field into its raw type without the metadata part, then sets the
-   * data type to the new data type, and finally converts it back to the original representation.
+   * data type part to the new data type, and finally converts the whole thing back to the original
+   * representation.
    *
    * In the above example, this methods will convert the array[varchar(10)] representation into
-   * (array[varchar(10)], char_varchar_metadata = ""), set the data type to string
-   * (string, char_varchar_metadata = ""), and finally convert it back to
-   * (string, char_varchar_metadata = ""), which happens to be the same.
+   * (array[varchar(10)], char_varchar_metadata = ""), set the data type to array[string]
+   * (array[string], char_varchar_metadata = ""), and finally convert it back to
+   * (array[string], char_varchar_metadata = ""), which happens to be the same.
    */
   def setFieldDataTypeCharVarcharSafe(field: StructField, newDataType: DataType): StructField = {
     val byPassCharVarcharToStringFix =
@@ -1126,10 +1126,10 @@ def normalizeColumnNamesInDataType(
    * Target: (string, char_varchar_metadata = "varchar(10)")
    *  -> (varchar(10), char_varchar_metadata = "")
    *
-   * Then, we change the data type of the target:
+   * Then, we change the data type of the target to that of the source:
    * (varchar(1), char_varchar_metadata = "") -> (varchar(10), char_varchar_metadata = "")
    *
-   * Finally, we set the metadata back to the target field:
+   * Finally, we set the metadata back to the target:
    * (varchar(10), char_varchar_metadata = "") -> (string, char_varchar_metadata = "varchar(10)")
    */
   def changeFieldDataTypeCharVarcharSafe(

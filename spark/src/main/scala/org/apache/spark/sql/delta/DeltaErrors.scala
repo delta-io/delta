@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.{FileNotFoundException, IOException}
 import java.nio.file.FileAlreadyExistsException
-import java.util.ConcurrentModificationException
+import java.util.{ConcurrentModificationException, UUID}
 
 import scala.collection.JavaConverters._
 
@@ -2524,6 +2524,12 @@ trait DeltaErrorsBase
       messageParameters = Array(feature))
   }
 
+  def dropTableFeatureFeatureIsADeltaProperty(feature: String): DeltaTableFeatureException = {
+    new DeltaTableFeatureException(
+      errorClass = "DELTA_FEATURE_DROP_FEATURE_IS_DELTA_PROPERTY",
+      messageParameters = Array(feature))
+  }
+
   def dropTableFeatureNotDeltaTableException(): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_ONLY_OPERATION",
@@ -2823,6 +2829,13 @@ trait DeltaErrorsBase
   def deltaTableFoundInExecutor(): Throwable = {
     new DeltaIllegalStateException(
       errorClass = "DELTA_TABLE_FOUND_IN_EXECUTOR",
+      messageParameters = Array.empty
+    )
+  }
+
+  def variantShreddingUnsupported(): Throwable = {
+    new DeltaSparkException(
+      errorClass = "DELTA_SHREDDING_TABLE_PROPERTY_DISABLED",
       messageParameters = Array.empty
     )
   }
@@ -3727,6 +3740,25 @@ trait DeltaErrorsBase
     new DeltaUnsupportedOperationException(
       errorClass = "DELTA_UNSUPPORTED_CATALOG_OWNED_TABLE_CREATION",
       messageParameters = Array.empty)
+  }
+
+  def numRecordsMismatch(
+      operation: String,
+      numAddedRecords: Long,
+      numRemovedRecords: Long): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_NUM_RECORDS_MISMATCH",
+      messageParameters = Array(operation, numAddedRecords.toString, numRemovedRecords.toString)
+    )
+  }
+
+  def commandInvariantViolationException(
+      operation: String,
+      id: UUID): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_COMMAND_INVARIANT_VIOLATION",
+      messageParameters = Array(operation, id.toString)
+    )
   }
 }
 

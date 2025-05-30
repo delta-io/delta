@@ -16,7 +16,7 @@
 package io.delta.kernel.defaults
 
 import java.util
-import java.util.{Collections, Optional}
+import java.util.Optional
 
 import scala.collection.JavaConverters._
 import scala.collection.immutable.Seq
@@ -24,14 +24,14 @@ import scala.collection.immutable.Seq
 import io.delta.kernel.data.{FilteredColumnarBatch, Row}
 import io.delta.kernel.defaults.internal.parquet.ParquetSuiteBase
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.exceptions.{KernelException, ProtocolChangedException}
+import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.expressions.Literal
-import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl, TableImpl}
-import io.delta.kernel.internal.actions.{AddFile, Protocol, SingleAction}
+import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl, TableConfig, TableImpl}
+import io.delta.kernel.internal.actions.{AddFile, SingleAction}
+import io.delta.kernel.internal.rowtracking.MaterializedRowTrackingColumn.{ROW_COMMIT_VERSION, ROW_ID}
 import io.delta.kernel.internal.rowtracking.RowTrackingMetadataDomain
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.internal.util.VectorUtils
-import io.delta.kernel.internal.util.VectorUtils.stringStringMapValue
 import io.delta.kernel.types.LongType.LONG
 import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.CloseableIterable
@@ -46,29 +46,13 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
     inMemoryIterable(toCloseableIterator(actions.asJava.iterator()))
   }
 
-  private def setWriterFeatureSupported(
+  private def createTableWithRowTracking(
       engine: Engine,
       tablePath: String,
-      schema: StructType,
-      writerFeatures: Seq[String]): Unit = {
-    val protocol = new Protocol(
-      3, // minReaderVersion
-      7, // minWriterVersion
-      Collections.emptySet(), // readerFeatures
-      writerFeatures.toSet.asJava // writerFeatures
-    )
-    val protocolAction = SingleAction.createProtocolSingleAction(protocol.toRow)
-    val txn = createTxn(engine, tablePath, isNewTable = false, schema, Seq.empty)
-    txn.commit(engine, prepareActionsForCommit(protocolAction))
-  }
-
-  private def createTableWithRowTrackingSupported(
-      engine: Engine,
-      tablePath: String,
-      schema: StructType = testSchema): Unit = {
-    createTxn(engine, tablePath, isNewTable = true, schema, Seq.empty)
-      .commit(engine, emptyIterable())
-    setWriterFeatureSupported(engine, tablePath, schema, Seq("domainMetadata", "rowTracking"))
+      schema: StructType = testSchema,
+      extraProps: Map[String, String] = Map.empty): Unit = {
+    val tableProps = Map(TableConfig.ROW_TRACKING_ENABLED.getKey -> "true") ++ extraProps
+    createEmptyTable(engine, tablePath, schema = schema, tableProperties = tableProps)
   }
 
   private def verifyBaseRowIDs(
@@ -119,7 +103,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
 
   test("Base row IDs/default row commit versions are assigned to AddFile actions") {
     withTempDirAndEngine { (tablePath, engine) =>
-      createTableWithRowTrackingSupported(engine, tablePath)
+      createTableWithRowTracking(engine, tablePath)
 
       val dataBatch1 = generateData(testSchema, Seq.empty, Map.empty, 100, 1) // 100 rows
       val dataBatch2 = generateData(testSchema, Seq.empty, Map.empty, 200, 1) // 200 rows
@@ -139,7 +123,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
 
   test("Previous Row ID high watermark can be picked up to assign base row IDs") {
     withTempDirAndEngine { (tablePath, engine) =>
-      createTableWithRowTrackingSupported(engine, tablePath)
+      createTableWithRowTracking(engine, tablePath)
 
       val dataBatch1 = generateData(testSchema, Seq.empty, Map.empty, 100, 1)
       val commitVersion1 = appendData(
@@ -165,7 +149,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
 
   test("Base row IDs/default row commit versions are preserved in checkpoint") {
     withTempDirAndEngine { (tablePath, engine) =>
-      createTableWithRowTrackingSupported(engine, tablePath)
+      createTableWithRowTracking(engine, tablePath)
 
       val dataBatch1 = generateData(testSchema, Seq.empty, Map.empty, 100, 1)
       val dataBatch2 = generateData(testSchema, Seq.empty, Map.empty, 200, 1)
@@ -202,7 +186,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
 
   test("Fail if row tracking is supported but AddFile actions are missing stats") {
     withTempDirAndEngine { (tablePath, engine) =>
-      createTableWithRowTrackingSupported(engine, tablePath)
+      createTableWithRowTracking(engine, tablePath)
 
       val addFileRow = AddFile.createAddFileRow(
         null,
@@ -237,7 +221,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
       val tbl = "tbl"
       withTable(tbl) {
         val schema = new StructType().add("id", LONG)
-        createTableWithRowTrackingSupported(engine, tablePath, schema = schema)
+        createTableWithRowTracking(engine, tablePath, schema)
 
         // Write table using Kernel
         val dataBatch1 = generateData(schema, Seq.empty, Map.empty, 100, 1) // 100 rows
@@ -248,20 +232,20 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
           tablePath,
           schema = schema,
           data = prepareDataForCommit(dataBatch1, dataBatch2, dataBatch3)
-        ).getVersion // version 2
+        ).getVersion // version 1
 
         // Verify the table state
         verifyBaseRowIDs(engine, tablePath, Seq(0, 100, 300))
-        verifyDefaultRowCommitVersion(engine, tablePath, Seq(2, 2, 2))
+        verifyDefaultRowCommitVersion(engine, tablePath, Seq(1, 1, 1))
         verifyHighWatermark(engine, tablePath, 699)
 
         // Write 20, 80 rows to the table using Spark
-        spark.range(0, 20).write.format("delta").mode("append").save(tablePath) // version 3
-        spark.range(20, 100).write.format("delta").mode("append").save(tablePath) // version 4
+        spark.range(0, 20).write.format("delta").mode("append").save(tablePath) // version 2
+        spark.range(20, 100).write.format("delta").mode("append").save(tablePath) // version 3
 
         // Verify the table state
         verifyBaseRowIDs(engine, tablePath, Seq(0, 100, 300, 700, 720))
-        verifyDefaultRowCommitVersion(engine, tablePath, Seq(2, 2, 2, 3, 4))
+        verifyDefaultRowCommitVersion(engine, tablePath, Seq(1, 1, 1, 2, 3))
         verifyHighWatermark(engine, tablePath, 799)
       }
     })
@@ -335,7 +319,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
     val schema = new StructType().add("id", LONG)
 
     // Create a row-tracking-supported table and bump the row ID high watermark to the initial value
-    createTableWithRowTrackingSupported(engine, tablePath, schema)
+    createTableWithRowTracking(engine, tablePath, schema)
     val initDataSize = 100L
     val dataBatch = generateData(schema, Seq.empty, Map.empty, initDataSize.toInt, 1)
     val v0 = appendData(engine, tablePath, data = prepareDataForCommit(dataBatch)).getVersion
@@ -468,47 +452,155 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
     })
   }
 
-  test("Conflict resolution - Row tracking is made supported by a concurrent txn") {
-    withTempDirAndEngine((tablePath, engine) => {
-      // Create a table without row tracking
-      createTxn(engine, tablePath, isNewTable = true, testSchema, Seq.empty)
-        .commit(engine, emptyIterable())
+  private val ROW_TRACKING_ENABLED_PROP = Map(TableConfig.ROW_TRACKING_ENABLED.getKey -> "true")
+  private val ROW_TRACKING_DISABLED_PROP = Map(TableConfig.ROW_TRACKING_ENABLED.getKey -> "false")
 
-      // Create a txn but don't commit it yet
-      val dataBatch1 = generateData(testSchema, Seq.empty, Map.empty, 100, 1)
-      val txn1 = createTxn(engine, tablePath, isNewTable = false, testSchema, Seq.empty)
+  test("row tracking can be enabled/disabled on new table") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createTxn(
+        engine,
+        tablePath,
+        isNewTable = true,
+        schema = testSchema,
+        tableProperties = ROW_TRACKING_ENABLED_PROP).commit(engine, emptyIterable())
+      val snapshot =
+        TableImpl.forPath(engine, tablePath).getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      assertMetadataProp(snapshot, TableConfig.ROW_TRACKING_ENABLED, true)
+    }
 
-      // A concurrent txn makes row tracking supported
-      setWriterFeatureSupported(engine, tablePath, testSchema, Seq("rowTracking", "domainMetadata"))
-
-      // Commit txn1 and expect failure
-      val e = intercept[ProtocolChangedException] {
-        commitAppendData(
-          engine,
-          txn1,
-          prepareDataForCommit(dataBatch1))
-      }
-    })
+    withTempDirAndEngine { (tablePath, engine) =>
+      createTxn(
+        engine,
+        tablePath,
+        isNewTable = true,
+        schema = testSchema,
+        tableProperties = ROW_TRACKING_DISABLED_PROP).commit(engine, emptyIterable())
+      val snapshot =
+        TableImpl.forPath(engine, tablePath).getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      assertMetadataProp(snapshot, TableConfig.ROW_TRACKING_ENABLED, false)
+    }
   }
 
-  test("Conflict resolution - Row tracking is made unsupported by a concurrent txn") {
-    withTempDirAndEngine((tablePath, engine) => {
-      createTableWithRowTrackingSupported(engine, tablePath)
+  test("row tracking cannot be enabled on existing table") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // Create a new table with row tracking disabled (it is disabled by default)
+      createTxn(engine, tablePath, isNewTable = true, testSchema, tableProperties = Map.empty)
+        .commit(engine, emptyIterable())
 
-      // Create a txn but don't commit it yet
-      val dataBatch1 = generateData(testSchema, Seq.empty, Map.empty, 100, 1)
-      val txn1 = createTxn(engine, tablePath, isNewTable = false, testSchema, Seq.empty)
-
-      // A concurrent txn makes row tracking unsupported
-      setWriterFeatureSupported(engine, tablePath, testSchema, Seq())
-
-      // Commit txn1 and expect failure
-      val e = intercept[ProtocolChangedException] {
-        commitAppendData(
-          engine,
-          txn1,
-          prepareDataForCommit(dataBatch1))
+      // Fail if try to enable row tracking on an existing table
+      val e = intercept[KernelException] {
+        createTxn(engine, tablePath, tableProperties = ROW_TRACKING_ENABLED_PROP)
+          .commit(engine, emptyIterable())
       }
-    })
+      assert(
+        e.getMessage.contains("Row tracking support cannot be changed once the table is created"))
+
+      // It's okay to continue setting it disabled on an existing table; it will be a no-op
+      createTxn(engine, tablePath, tableProperties = ROW_TRACKING_DISABLED_PROP)
+        .commit(engine, emptyIterable())
+    }
+  }
+
+  test("row tracking cannot be disabled on existing table") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // Create a new table with row tracking enabled
+      createTableWithRowTracking(engine, tablePath)
+
+      // Fail if try to disable row tracking on an existing table
+      val e = intercept[KernelException] {
+        createTxn(engine, tablePath, tableProperties = ROW_TRACKING_DISABLED_PROP)
+          .commit(engine, emptyIterable())
+      }
+      assert(
+        e.getMessage.contains("Row tracking support cannot be changed once the table is created"))
+
+      // It's okay to continue setting it enabled on an existing table; it will be a no-op
+      createTxn(engine, tablePath, tableProperties = ROW_TRACKING_ENABLED_PROP)
+        .commit(engine, emptyIterable())
+    }
+  }
+
+  test("materialized row tracking column names are assigned when the feature is enabled") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createTableWithRowTracking(engine, tablePath)
+      val config = getMetadata(engine, tablePath).getConfiguration
+
+      Seq(ROW_ID, ROW_COMMIT_VERSION).foreach { rowTrackingColumn =>
+        assert(config.containsKey(rowTrackingColumn.getMaterializedColumnNameProperty))
+        assert(
+          config
+            .get(rowTrackingColumn.getMaterializedColumnNameProperty)
+            .startsWith(rowTrackingColumn.getMaterializedColumnNamePrefix))
+      }
+    }
+  }
+
+  Seq("none", "name", "id").foreach(mode => {
+    test(
+      s"throw if materialized row tracking column name conflicts with schema, " +
+        s"with column mapping = $mode") {
+      withTempDirAndEngine {
+        (tablePath, engine) =>
+          // Create a new table with row tracking and specified column mapping mode
+          val columnMappingProp = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> mode)
+          createTableWithRowTracking(engine, tablePath, extraProps = columnMappingProp)
+          val config = getMetadata(engine, tablePath).getConfiguration
+
+          Seq(ROW_ID, ROW_COMMIT_VERSION).foreach {
+            rowTrackingColumn =>
+              val colName =
+                config.get(rowTrackingColumn.getMaterializedColumnNameProperty)
+
+              val newSchema = testSchema.add(colName, LONG)
+              val e = intercept[KernelException] {
+                createWriteTxnBuilder(TableImpl.forPath(engine, tablePath))
+                  .withSchema(engine, newSchema)
+                  .build(engine)
+                  .commit(engine, emptyIterable())
+              }
+
+              if (mode == "none") {
+                assert(
+                  e.getMessage
+                    .contains(s"Cannot update schema for table when column mapping is disabled"))
+              } else {
+                assert(
+                  e.getMessage.contains(
+                    s"Cannot use column name '$colName' because it is reserved for internal use"))
+              }
+          }
+      }
+    }
+  })
+
+  test("manually setting materialized row tracking column names is not allowed - new table") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      Seq(ROW_ID, ROW_COMMIT_VERSION).foreach { rowTrackingColumn =>
+        val propName = rowTrackingColumn.getMaterializedColumnNameProperty
+        val customTableProps = Map(propName -> "custom_name")
+        val e = intercept[KernelException] {
+          createTableWithRowTracking(engine, tablePath, extraProps = customTableProps)
+        }
+        assert(e.getMessage.contains(
+          s"The Delta table property '$propName' is an internal property and cannot be updated"))
+      }
+    }
+  }
+
+  test("manually setting materialized row tracking column names is not allowed - existing table") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createTableWithRowTracking(engine, tablePath)
+
+      Seq(ROW_ID, ROW_COMMIT_VERSION).foreach { rowTrackingColumn =>
+        val propName = rowTrackingColumn.getMaterializedColumnNameProperty
+        val customTableProps = Map(propName -> "custom_name")
+        val e = intercept[KernelException] {
+          createTxn(engine, tablePath, tableProperties = customTableProps)
+            .commit(engine, emptyIterable())
+        }
+        assert(e.getMessage.contains(
+          s"The Delta table property '$propName' is an internal property and cannot be updated"))
+      }
+    }
   }
 }

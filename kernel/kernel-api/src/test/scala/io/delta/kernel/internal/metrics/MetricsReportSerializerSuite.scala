@@ -50,6 +50,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |"reportUUID":"${snapshotReport.getReportUUID()}",
          |"exception":${optionToString(exception)},
          |"version":${optionToString(snapshotReport.getVersion())},
+         |"checkpointVersion":${optionToString(snapshotReport.getCheckpointVersion())},
          |"providedTimestamp":${optionToString(snapshotReport.getProvidedTimestamp())},
          |"snapshotMetrics":{
          |"timestampToVersionResolutionDurationNs":${timestampToVersionResolutionDuration},
@@ -64,7 +65,8 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
     val snapshotContext1 = SnapshotQueryContext.forTimestampSnapshot("/table/path", 0)
     snapshotContext1.getSnapshotMetrics.timestampToVersionResolutionTimer.record(10)
     snapshotContext1.getSnapshotMetrics.loadInitialDeltaActionsTimer.record(1000)
-    snapshotContext1.setVersion(1)
+    snapshotContext1.setVersion(25)
+    snapshotContext1.setCheckpointVersion(Optional.of(20))
     val exception = new RuntimeException("something something failed")
 
     val snapshotReport1 = SnapshotReportImpl.forError(
@@ -78,7 +80,8 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
         |"operationType":"Snapshot",
         |"reportUUID":"${snapshotReport1.getReportUUID()}",
         |"exception":"$exception",
-        |"version":1,
+        |"version":25,
+        |"checkpointVersion":20,
         |"providedTimestamp":0,
         |"snapshotMetrics":{
         |"timestampToVersionResolutionDurationNs":10,
@@ -259,6 +262,11 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
       Optional.of(exception))
 
     // Manually check expected JSON
+    val tableSchemaStr = "struct(StructField(name=part,type=integer,nullable=true,metadata={}," +
+      "typeChanges=[]), StructField(name=id,type=integer,nullable=true,metadata={},typeChanges=[]))"
+    val readSchemaStr = "struct(StructField(name=id,type=integer,nullable=true,metadata={}," +
+      "typeChanges=[]))"
+
     val expectedJson =
       s"""
          |{"tablePath":"/table/path",
@@ -266,11 +274,10 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |"reportUUID":"${scanReport1.getReportUUID}",
          |"exception":"$exception",
          |"tableVersion":1,
-         |"tableSchema":"struct(StructField(name=part,type=integer,nullable=true,metadata={}),
-         | StructField(name=id,type=integer,nullable=true,metadata={}))",
+         |"tableSchema":"$tableSchemaStr",
          |"snapshotReportUUID":"$snapshotReportUUID",
          |"filter":"(column(`part`) > 1)",
-         |"readSchema":"struct(StructField(name=id,type=integer,nullable=true,metadata={}))",
+         |"readSchema":"$readSchemaStr",
          |"partitionPredicate":"(column(`part`) > 1)",
          |"dataSkippingFilter":null,
          |"isFullyConsumed":true,

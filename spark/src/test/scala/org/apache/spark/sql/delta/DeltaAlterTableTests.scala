@@ -1449,6 +1449,11 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
 
   ddlTest("CHANGE COLUMN - set comment on a array/map/struct<varchar> column") {
     val schema = """
+      |arr_c array<char(1)>,
+      |map_cc map<char(1), char(1)>,
+      |map_sc map<string, char(1)>,
+      |map_cs map<char(1), string>,
+      |struct_c struct<v: char(1)>,
       |arr_v array<varchar(1)>,
       |map_vv map<varchar(1), varchar(1)>,
       |map_sv map<string, varchar(1)>,
@@ -1473,6 +1478,31 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
         assert(e.getMessage.contains("exceeds char/varchar type length limitation"))
       }
     }
+    testCommentOnVarcharInContainer(
+      colName = "arr_c",
+      expectedType = "array<string>",
+      goodInsertValue = "array('1')",
+      badInsertValue = "array('12')")
+    testCommentOnVarcharInContainer(
+      colName = "map_cc",
+      expectedType = "map<string,string>",
+      goodInsertValue = "map('1', '1')",
+      badInsertValue = "map('12', '12')")
+    testCommentOnVarcharInContainer(
+      colName = "map_sc",
+      expectedType = "map<string,string>",
+      goodInsertValue = "map('123', '1')",
+      badInsertValue = "map('123', '12')")
+    testCommentOnVarcharInContainer(
+      colName = "map_cs",
+      expectedType = "map<string,string>",
+      goodInsertValue = "map('1', '123')",
+      badInsertValue = "map('12', '123')")
+    testCommentOnVarcharInContainer(
+      colName = "struct_c",
+      expectedType = "struct<v:string>",
+      goodInsertValue = "named_struct('v', '1')",
+      badInsertValue = "named_struct('v', '12')")
     testCommentOnVarcharInContainer(
       colName = "arr_v",
       expectedType = "array<string>",

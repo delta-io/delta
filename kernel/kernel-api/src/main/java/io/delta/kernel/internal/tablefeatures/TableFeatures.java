@@ -223,6 +223,28 @@ public class TableFeatures {
       new VariantTypeTableFeatureBase("variantType-preview");
   /* ---- End: variantType ---- */
 
+  /* ---- Start: variantShredding-preview ---- */
+  public static final TableFeature VARIANT_SHREDDING_PREVIEW_RW_FEATURE =
+      new VariantShreddingPreviewFeature();
+
+  private static class VariantShreddingPreviewFeature extends TableFeature.ReaderWriterFeature
+      implements FeatureAutoEnabledByMetadata {
+    VariantShreddingPreviewFeature() {
+      super("variantShredding-preview", /* minReaderVersion = */ 3, /* minWriterVersion = */ 7);
+    }
+
+    @Override
+    public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
+      return TableConfig.VARIANT_SHREDDING_ENABLED.fromMetadata(metadata);
+    }
+
+    @Override
+    public boolean hasKernelWriteSupport(Metadata metadata) {
+      return false; // TODO: yet to be implemented in Kernel
+    }
+  }
+  /* ---- End: variantShredding-preview ---- */
+
   public static final TableFeature DOMAIN_METADATA_W_FEATURE = new DomainMetadataFeature();
 
   private static class DomainMetadataFeature extends TableFeature.WriterFeature {
@@ -254,11 +276,7 @@ public class TableFeatures {
 
     @Override
     public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
-      if (TableConfig.ROW_TRACKING_ENABLED.fromMetadata(metadata)) {
-        throw new UnsupportedOperationException(
-            "Feature `rowTracking` is not yet supported in Kernel.");
-      }
-      return false;
+      return TableConfig.ROW_TRACKING_ENABLED.fromMetadata(metadata);
     }
 
     @Override
@@ -451,6 +469,7 @@ public class TableFeatures {
               VACUUM_PROTOCOL_CHECK_RW_FEATURE,
               VARIANT_RW_FEATURE,
               VARIANT_RW_PREVIEW_FEATURE,
+              VARIANT_SHREDDING_PREVIEW_RW_FEATURE,
               ICEBERG_WRITER_COMPAT_V1));
 
   public static final Map<String, TableFeature> TABLE_FEATURE_MAP =

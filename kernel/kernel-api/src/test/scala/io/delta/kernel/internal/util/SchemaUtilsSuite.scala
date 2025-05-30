@@ -24,10 +24,11 @@ import scala.collection.JavaConverters.mapAsJavaMapConverter
 import scala.reflect.ClassTag
 
 import io.delta.kernel.exceptions.KernelException
+import io.delta.kernel.internal.TableConfig
 import io.delta.kernel.internal.actions.{Format, Metadata}
 import io.delta.kernel.internal.types.DataTypeJsonSerDe
 import io.delta.kernel.internal.util.ColumnMapping.{COLUMN_MAPPING_ID_KEY, COLUMN_MAPPING_MODE_KEY, COLUMN_MAPPING_NESTED_IDS_KEY, COLUMN_MAPPING_PHYSICAL_NAME_KEY, ColumnMappingMode}
-import io.delta.kernel.internal.util.SchemaUtils.{filterRecursively, validateSchema, validateUpdatedSchema}
+import io.delta.kernel.internal.util.SchemaUtils.{computeSchemaChangesById, filterRecursively, validateSchema, validateUpdatedSchema}
 import io.delta.kernel.internal.util.VectorUtils.stringStringMapValue
 import io.delta.kernel.types.{ArrayType, DataType, FieldMetadata, IntegerType, LongType, MapType, StringType, StructField, StructType}
 import io.delta.kernel.types.IntegerType.INTEGER
@@ -325,158 +326,158 @@ class SchemaUtilsSuite extends AnyFunSuite {
   // computeSchemaChangesById
   ///////////////////////////////////////////////////////////////////////////
   test("Compute schema changes with added columns") {
-    val fieldMappingBefore = Map(
-      1 -> new StructField("id", IntegerType.INTEGER, true))
+    val fieldMappingBefore = newSchema((1, new StructField("id", IntegerType.INTEGER, true)))
 
-    val fieldMappingAfter = Map(
-      1 -> new StructField("id", IntegerType.INTEGER, true),
-      2 -> new StructField("data", StringType.STRING, true))
+    val fieldMappingAfter = newSchema(
+      (1, new StructField("id", IntegerType.INTEGER, true)),
+      (2, new StructField("data", StringType.STRING, true)))
 
-    val schemaChanges = schemaChangesHelper(fieldMappingBefore, fieldMappingAfter)
+    val schemaChanges = computeSchemaChangesById(fieldMappingBefore, fieldMappingAfter)
 
     assert(schemaChanges.removedFields().isEmpty)
     assert(schemaChanges.updatedFields().isEmpty)
     assert(schemaChanges.addedFields().size() == 1)
-    assert(schemaChanges.addedFields().get(0) == fieldMappingAfter(2))
+    assert(schemaChanges.addedFields().get(0) == fieldMappingAfter.get("data"))
   }
 
   test("Compute schema changes with renamed fields") {
-    val fieldMappingBefore = Map(
-      1 -> new StructField("id", IntegerType.INTEGER, true))
+    val fieldMappingBefore = newSchema(
+      (1, new StructField("id", IntegerType.INTEGER, true)))
 
-    val fieldMappingAfter = Map(
-      1 -> new StructField("renamed_id", IntegerType.INTEGER, true))
+    val fieldMappingAfter = newSchema(
+      (1, new StructField("renamed_id", IntegerType.INTEGER, true)))
 
-    val schemaChanges = schemaChangesHelper(fieldMappingBefore, fieldMappingAfter)
+    val schemaChanges = computeSchemaChangesById(fieldMappingBefore, fieldMappingAfter)
 
     assert(schemaChanges.addedFields().isEmpty)
     assert(schemaChanges.removedFields().isEmpty)
     assert(schemaChanges.updatedFields().size() == 1)
-    assert(schemaChanges.updatedFields().get(0) ==
-      new Tuple2(fieldMappingBefore(1), fieldMappingAfter(1)))
+    val schemaUpdate = schemaChanges.updatedFields().get(0)
+    assert(schemaUpdate.before == fieldMappingBefore.get("id"))
+    assert(schemaUpdate.after == fieldMappingAfter.get("renamed_id"))
   }
 
   test("Compute schema changes with type changed columns") {
-    val fieldMappingBefore = Map(
-      1 -> new StructField("id", IntegerType.INTEGER, true))
+    val fieldMappingBefore = newSchema((1, new StructField("id", IntegerType.INTEGER, true)))
 
-    val fieldMappingAfter = Map(
-      1 -> new StructField("promoted_to_long", LongType.LONG, true))
+    val fieldMappingAfter =
+      newSchema((1, new StructField("promoted_to_long", LongType.LONG, true)));
 
-    val schemaChanges = schemaChangesHelper(fieldMappingBefore, fieldMappingAfter)
+    val schemaChanges = computeSchemaChangesById(fieldMappingBefore, fieldMappingAfter)
 
     assert(schemaChanges.addedFields().isEmpty)
     assert(schemaChanges.removedFields().isEmpty)
     assert(schemaChanges.updatedFields().size() == 1)
-    assert(schemaChanges.updatedFields().get(0) ==
-      new Tuple2(fieldMappingBefore(1), fieldMappingAfter(1)))
+    val schemaUpdate = schemaChanges.updatedFields().get(0)
+    assert(schemaUpdate.before == fieldMappingBefore.get("id"))
+    assert(schemaUpdate.after == fieldMappingAfter.get(
+      "promoted_to_long"))
   }
 
   test("Compute schema changes with dropped fields") {
-    val fieldMappingBefore = Map(
-      1 -> new StructField("id", IntegerType.INTEGER, true),
-      2 -> new StructField("data", StringType.STRING, true))
+    val fieldMappingBefore = newSchema(
+      (1, new StructField("id", IntegerType.INTEGER, true)),
+      (2, new StructField("data", StringType.STRING, true)))
 
-    val fieldMappingAfter = Map(
-      2 -> new StructField("data", StringType.STRING, true))
+    val fieldMappingAfter = newSchema((
+      2 -> new StructField("data", StringType.STRING, true)))
 
-    val schemaChanges = schemaChangesHelper(fieldMappingBefore, fieldMappingAfter)
+    val schemaChanges = computeSchemaChangesById(fieldMappingBefore, fieldMappingAfter)
 
     assert(schemaChanges.addedFields().isEmpty)
     assert(schemaChanges.updatedFields().isEmpty)
     assert(schemaChanges.removedFields().size() == 1)
-    assert(schemaChanges.removedFields().get(0) == fieldMappingBefore(1))
+    assert(schemaChanges.removedFields().get(0) == fieldMappingBefore.get("id"))
   }
 
   test("Compute schema changes with nullability change") {
-    val fieldMappingBefore = Map(
-      1 -> new StructField("id", IntegerType.INTEGER, true),
-      2 -> new StructField("data", StringType.STRING, true))
+    val fieldMappingBefore = newSchema(
+      (1, new StructField("id", IntegerType.INTEGER, true)),
+      (2, new StructField("data", StringType.STRING, true)))
 
-    val fieldMappingAfter = Map(
-      1 -> new StructField("id", IntegerType.INTEGER, true),
-      2 -> new StructField("required_data", StringType.STRING, false))
+    val fieldMappingAfter = newSchema(
+      (1, new StructField("id", IntegerType.INTEGER, true)),
+      (2, new StructField("required_data", StringType.STRING, false)))
 
-    val schemaChanges = schemaChangesHelper(fieldMappingBefore, fieldMappingAfter)
+    val schemaChanges = computeSchemaChangesById(fieldMappingBefore, fieldMappingAfter)
 
     assert(schemaChanges.addedFields().isEmpty)
     assert(schemaChanges.removedFields().isEmpty)
     assert(schemaChanges.updatedFields().size() == 1)
-    assert(schemaChanges.updatedFields().get(0) == new Tuple2(
-      fieldMappingBefore(2),
-      fieldMappingAfter(2)))
+    val schemaUpdate = schemaChanges.updatedFields().get(0)
+    assert(schemaUpdate.before == fieldMappingBefore.get("data"))
+    assert(
+      schemaUpdate.after == fieldMappingAfter.get("required_data"))
   }
 
   test("Compute schema changes with moved fields") {
-    val fieldMappingBefore = Map(
-      1 -> new StructField(
-        "struct",
-        new StructType()
-          .add(new StructField("id", IntegerType.INTEGER, true))
-          .add(new StructField("data", StringType.STRING, true)),
-        true),
-      2 -> new StructField("id", IntegerType.INTEGER, true),
-      3 -> new StructField("data", StringType.STRING, true))
+    val fieldMappingBefore = newSchema(
+      (
+        1,
+        new StructField(
+          "struct",
+          newSchema(
+            (4, new StructField("id", IntegerType.INTEGER, true)),
+            (5, new StructField("data", StringType.STRING, true))),
+          true)),
+      (2, new StructField("id", IntegerType.INTEGER, true)),
+      (3, new StructField("data", StringType.STRING, true)))
 
-    val fieldMappingAfter = Map(
-      1 -> new StructField(
-        "struct",
-        new StructType()
-          .add(new StructField("data", StringType.STRING, true))
-          .add(new StructField("id", IntegerType.INTEGER, true)),
-        true),
-      2 -> new StructField("id", IntegerType.INTEGER, true),
-      3 -> new StructField("data", StringType.STRING, true))
+    val fieldMappingAfter = newSchema(
+      (
+        1,
+        new StructField(
+          "struct",
+          newSchema(
+            (5, new StructField("data", StringType.STRING, true)),
+            (4, new StructField("id", IntegerType.INTEGER, true))),
+          true)),
+      (2, new StructField("id", IntegerType.INTEGER, true)),
+      (3, new StructField("data", StringType.STRING, true)))
 
-    val schemaChanges = schemaChangesHelper(fieldMappingBefore, fieldMappingAfter)
+    val schemaChanges = computeSchemaChangesById(fieldMappingBefore, fieldMappingAfter)
 
     assert(schemaChanges.addedFields().isEmpty)
     assert(schemaChanges.removedFields().isEmpty)
-    assert(schemaChanges.updatedFields().size() == 1)
-    assert(schemaChanges.updatedFields().get(0) == new Tuple2(
-      fieldMappingBefore(1),
-      fieldMappingAfter(1)))
+    assert(
+      schemaChanges.updatedFields().size() == 1,
+      s"${schemaChanges.updatedFields.get(0).before}")
+    val schemaUpdate = schemaChanges.updatedFields().get(0)
+    assert(schemaUpdate.before == fieldMappingBefore.get("struct"))
+    assert(schemaUpdate.after == fieldMappingAfter.get("struct"))
   }
 
   test("Compute schema changes with field metadata changes") {
-    val fieldMappingBefore = Map(
-      1 -> new StructField(
-        "id",
-        IntegerType.INTEGER,
-        true,
-        FieldMetadata.builder().putString(
-          "metadata_col",
-          "metadata_val").build()))
+    val fieldMappingBefore = newSchema(
+      (
+        1,
+        new StructField(
+          "id",
+          IntegerType.INTEGER,
+          true,
+          FieldMetadata.builder().putString(
+            "metadata_col",
+            "metadata_val").build())))
 
-    val fieldMappingAfter = Map(
-      1 -> new StructField(
-        "id",
-        IntegerType.INTEGER,
-        true,
-        FieldMetadata.builder().putString(
-          "metadata_col",
-          "updated_metadata_val").build()))
+    val fieldMappingAfter = newSchema(
+      (
+        1,
+        new StructField(
+          "id",
+          IntegerType.INTEGER,
+          true,
+          FieldMetadata.builder().putString(
+            "metadata_col",
+            "updated_metadata_val").build())))
 
-    val schemaChanges = schemaChangesHelper(fieldMappingBefore, fieldMappingAfter)
+    val schemaChanges = computeSchemaChangesById(fieldMappingBefore, fieldMappingAfter)
 
     assert(schemaChanges.addedFields().isEmpty)
     assert(schemaChanges.removedFields().isEmpty)
     assert(schemaChanges.updatedFields().size() == 1)
-    assert(schemaChanges.updatedFields().get(0) == new Tuple2(
-      fieldMappingBefore(1),
-      fieldMappingAfter(1)))
-  }
-
-  private def schemaChangesHelper(
-      before: Map[Int, StructField],
-      after: Map[Int, StructField]): SchemaChanges = {
-    SchemaUtils.computeSchemaChangesById(
-      before.map {
-        case (k, v) => java.lang.Integer.valueOf(k) -> v
-      }.asJava,
-      after.map {
-        case (k, v) => java.lang.Integer.valueOf(k) -> v
-      }.asJava)
+    val schemaUpdate = schemaChanges.updatedFields().get(0)
+    assert(schemaUpdate.before == fieldMappingBefore.get("id"))
+    assert(schemaUpdate.after == fieldMappingAfter.get("id"))
   }
 
   ///////////////////////////////////////////////////////////////////////////
@@ -848,14 +849,14 @@ class SchemaUtilsSuite extends AnyFunSuite {
     "allowNewRequiredFields=false") {
     assertSchemaEvolutionFailure[KernelException](
       existingFieldNullabilityTightened,
-      "Cannot tighten the nullability of existing field id")
+      "Cannot tighten the nullability of existing field .*id")
   }
 
   test("validateUpdatedSchema fails when existing nullability is tightened with " +
     "allowNewRequiredFields=true") {
     assertSchemaEvolutionFailure[KernelException](
       existingFieldNullabilityTightened,
-      "Cannot tighten the nullability of existing field id",
+      "Cannot tighten the nullability of existing field .*id",
       allowNewRequiredFields = true)
   }
 
@@ -900,6 +901,91 @@ class SchemaUtilsSuite extends AnyFunSuite {
     assertSchemaEvolutionFailure[KernelException](
       invalidTypeChange,
       "Cannot change the type of existing field id from integer to string")
+  }
+
+  private val invalidTypeChangesNested = Table(
+    ("schemaBefore", "schemaWithInvalidTypeChange"),
+    // Array to Map
+    (
+      newSchema((
+        1,
+        new StructField(
+          "array",
+          new ArrayType(
+            IntegerType.INTEGER,
+            false),
+          true))),
+      newSchema((
+        1,
+        new StructField(
+          "to_map",
+          new MapType(
+            IntegerType.INTEGER,
+            IntegerType.INTEGER,
+            false),
+          true)))),
+
+    // Array to Map
+    (
+      newSchema((
+        1,
+        new StructField(
+          "map",
+          new MapType(
+            IntegerType.INTEGER,
+            IntegerType.INTEGER,
+            false),
+          true))),
+      newSchema((
+        1,
+        new StructField(
+          "to_array",
+          new ArrayType(
+            IntegerType.INTEGER,
+            false),
+          true)))),
+    // nested array change
+    (
+      newSchema((
+        1,
+        new StructField(
+          "array",
+          new ArrayType(
+            new ArrayType(IntegerType.INTEGER, false),
+            false),
+          true))),
+      newSchema((
+        1,
+        new StructField(
+          "to_map",
+          new ArrayType(
+            new MapType(IntegerType.INTEGER, IntegerType.INTEGER, false),
+            false),
+          true)))),
+    // nested map change
+    (
+      newSchema((
+        1,
+        new StructField(
+          "map",
+          new MapType(
+            IntegerType.INTEGER,
+            new ArrayType(IntegerType.INTEGER, false),
+            false),
+          true))),
+      newSchema((
+        1,
+        new StructField(
+          "to_nested_array_to_primitive",
+          new MapType(
+            IntegerType.INTEGER,
+            IntegerType.INTEGER,
+            false),
+          false)))))
+  test("validateUpdatedSchema fails when invalid type change is performed on nested fields") {
+    assertSchemaEvolutionFailure[KernelException](
+      invalidTypeChangesNested,
+      "Cannot change the type of existing field.*")
   }
 
   private val validateAddedFields = Table(
@@ -1100,7 +1186,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
           allowNewRequiredFields)
       }
 
-      assert(e.getMessage.matches(expectedMessage))
+      assert(e.getMessage.matches(expectedMessage), s"${e.getMessage} ~= $expectedMessage")
     }
   }
 
@@ -1129,6 +1215,22 @@ class SchemaUtilsSuite extends AnyFunSuite {
       .putLong(COLUMN_MAPPING_ID_KEY, id.longValue())
       .putString(COLUMN_MAPPING_PHYSICAL_NAME_KEY, physicalName)
       .build()
+  }
+
+  private def newSchema(tuple: (Int, StructField)*): StructType = {
+    val fields = tuple.map { case (id, field) =>
+      addFieldId(id, field)
+    }
+    val schemaWithIds = new StructType(fields.asJava)
+    schemaWithIds
+  }
+
+  private def addFieldId(id: Int, field: StructField) = {
+    val metadataWithFieldIds = FieldMetadata.builder().fromMetadata(field.getMetadata)
+      .putLong("delta.columnMapping.id", id)
+      .putString("delta.columnMapping.physicalName", s"col-$id")
+      .build()
+    field.withNewMetadata(metadataWithFieldIds)
   }
 
   ///////////////////////////////////////////////////////////////////////////
@@ -1250,5 +1352,77 @@ class SchemaUtilsSuite extends AnyFunSuite {
         assert(results.size === expectedColumns.size)
         assert(results === flattenedTestSchema.filterKeys(expectedColumns.contains))
       }
+  }
+
+  ///////////////////////////////////////////////////////////////////////////
+  // validateNoMapStructKeyChanges
+  ///////////////////////////////////////////////////////////////////////////
+
+  private val updatedSchemasWithChangedMaps = Table(
+    ("schemaBefore", "updatedSchemaWithChangedMapKey"),
+    // add a col
+    (
+      mapWithStructKey,
+      new StructType()
+        .add(
+          "map",
+          new MapType(
+            new StructType()
+              .add("id", IntegerType.INTEGER, true, fieldMetadata(id = 2, physicalName = "id"))
+              .add("id2", IntegerType.INTEGER, true, fieldMetadata(id = 3, physicalName = "id2")),
+            IntegerType.INTEGER,
+            false),
+          true,
+          fieldMetadata(id = 1, physicalName = "map"))),
+    (
+      new StructType()
+        .add(
+          "map",
+          new MapType(
+            new StructType()
+              .add("id", IntegerType.INTEGER, true, fieldMetadata(id = 2, physicalName = "id"))
+              .add("id2", IntegerType.INTEGER, true, fieldMetadata(id = 3, physicalName = "id2")),
+            IntegerType.INTEGER,
+            false),
+          true,
+          fieldMetadata(id = 1, physicalName = "map")),
+      mapWithStructKey),
+    (
+      new StructType()
+        .add(
+          "top_level_struct",
+          new StructType().add(
+            "map",
+            new MapType(
+              new StructType()
+                .add("id", IntegerType.INTEGER, true, fieldMetadata(id = 3, physicalName = "id")),
+              IntegerType.INTEGER,
+              false),
+            true,
+            fieldMetadata(2, "map")),
+          fieldMetadata(1, "top_level_struct")),
+      new StructType()
+        .add(
+          "top_level_struct",
+          new StructType().add(
+            "map",
+            new MapType(
+              new StructType()
+                .add("id", IntegerType.INTEGER, true, fieldMetadata(id = 3, physicalName = "id"))
+                .add("id2", IntegerType.INTEGER, true, fieldMetadata(id = 4, physicalName = "id")),
+              IntegerType.INTEGER,
+              false),
+            true,
+            fieldMetadata(2, "map")),
+          fieldMetadata(1, "top_level_struct"))))
+
+  test("validateNoMapStructKeyChanges fails when map struct changes") {
+    val tblProperties = Map(
+      TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey -> "true",
+      ColumnMapping.COLUMN_MAPPING_MODE_KEY -> "id")
+    assertSchemaEvolutionFailure[KernelException](
+      updatedSchemasWithChangedMaps,
+      "Cannot change the type key of Map field map from .*",
+      tableProperties = tblProperties)
   }
 }

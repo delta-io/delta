@@ -36,8 +36,7 @@ import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.files._
-import org.apache.spark.sql.delta.hooks.{CheckpointHook, GenerateSymlinkManifest, HudiConverterHook, IcebergConverterHook, PostCommitHook, UpdateCatalogFactory}
-import org.apache.spark.sql.delta.hooks.ChecksumHook
+import org.apache.spark.sql.delta.hooks.{CheckpointHook, ChecksumHook, GenerateSymlinkManifest, HudiConverterHook, IcebergConverterHook, PostCommitHook, UpdateCatalogFactory}
 import org.apache.spark.sql.delta.implicits.addFileEncoder
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -62,6 +61,7 @@ import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical.UnsetTableProperties
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.catalyst.util.{CharVarcharUtils, ResolveDefaultColumns}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{StructField, StructType}
 import org.apache.spark.util.{Clock, Utils}
 
@@ -296,7 +296,8 @@ trait OptimisticTransactionImpl extends DeltaTransaction
   protected var readTheWholeTable = false
 
   /** Tracks if this transaction has already committed. */
-  protected var committed = false
+  protected var committed: Option[CommittedTransaction] = None
+  def getCommitted: Option[CommittedTransaction] = committed
 
   /** Contains the execution instrumentation set via thread-local. No-op by default. */
   protected[delta] var executionObserver: TransactionExecutionObserver =
@@ -964,6 +965,18 @@ trait OptimisticTransactionImpl extends DeltaTransaction
     }
   }
 
+  // Make sure shredded writes are only performed if the shredding table property was set.
+  private def assertShreddingStateConsistent() = {
+    if (!DeltaConfigs.ENABLE_VARIANT_SHREDDING.fromMetaData(metadata)) {
+      val isVariantShreddingSchemaForced =
+        spark.sessionState.conf
+          .getConfString("spark.sql.variant.forceShreddingSchemaForTest", "").nonEmpty
+      if (isVariantShreddingSchemaForced) {
+        throw DeltaErrors.variantShreddingUnsupported()
+      }
+    }
+  }
+
   /**
    * Must make sure that deletion vectors are never added to a table where that isn't allowed.
    * Note, statistics recomputation is still allowed even though DVs might be currently disabled.
@@ -1395,7 +1408,7 @@ trait OptimisticTransactionImpl extends DeltaTransaction
       tags: Map[String, String]): Option[Long] = recordDeltaOperation(deltaLog, "delta.commit") {
     commitStartNano = System.nanoTime()
 
-    val (version, postCommitSnapshot, actualCommittedActions) = try {
+    val version = try {
       // Check for satisfaction of no redirect rules
       performRedirectCheck(op)
 
@@ -1501,9 +1514,10 @@ trait OptimisticTransactionImpl extends DeltaTransaction
 
       val (commitVersion, postCommitSnapshot, updatedCurrentTransactionInfo) =
         doCommitRetryIteratively(firstAttemptVersion, currentTransactionInfo, isolationLevelToUse)
+      setCommitted(commitVersion, postCommitSnapshot, updatedCurrentTransactionInfo.actions)
       logInfo(log"Committed delta #${MDC(DeltaLogKeys.VERSION, commitVersion)} to " +
         log"${MDC(DeltaLogKeys.PATH, deltaLog.logPath)}")
-      (commitVersion, postCommitSnapshot, updatedCurrentTransactionInfo.actions)
+      commitVersion
     } catch {
       case e: DeltaConcurrentModificationException =>
         recordDeltaEvent(deltaLog, "delta.commit.conflict." + e.conflictType)
@@ -1516,7 +1530,7 @@ trait OptimisticTransactionImpl extends DeltaTransaction
         throw e
     }
 
-    runPostCommitHooks(version, postCommitSnapshot, actualCommittedActions)
+    runPostCommitHooks(committed.get)
 
     executionObserver.transactionCommitted()
     Some(version)
@@ -1614,7 +1628,7 @@ trait OptimisticTransactionImpl extends DeltaTransaction
       context: Map[String, String],
       metrics: Map[String, String]
   ): (Long, Snapshot) = recordDeltaOperation(deltaLog, "delta.commit.large") {
-    assert(!committed, "Transaction already committed.")
+    assert(committed.isEmpty, "Transaction already committed.")
     commitStartNano = System.nanoTime()
     val attemptVersion = getFirstAttemptVersion
     executionObserver.preparingCommit()
@@ -1752,12 +1766,12 @@ trait OptimisticTransactionImpl extends DeltaTransaction
         DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION,
         Some(attemptVersion))
       commitEndNano = System.nanoTime()
-      committed = true
       executionObserver.beginPostCommit()
       // NOTE: commitLarge cannot run postCommitHooks (such as the CheckpointHook).
       // Instead, manually run any necessary actions in updateAndCheckpoint.
       val postCommitSnapshot = updateAndCheckpoint(
         spark, deltaLog, commitSize, attemptVersion, commitResponse.getCommit, txnId)
+      setCommitted(attemptVersion, postCommitSnapshot, committedActions = Seq.empty)
       val postCommitReconstructionTime = System.nanoTime()
       var stats = CommitStats(
         startVersion = readVersion,
@@ -2021,7 +2035,7 @@ trait OptimisticTransactionImpl extends DeltaTransaction
       actions: Seq[Action],
       op: DeltaOperations.Operation): Seq[Action] = {
 
-    assert(!committed, "Transaction already committed.")
+    assert(committed.isEmpty, "Transaction already committed.")
 
     val (metadatasAndProtocols, otherActions) = actions
       .partition(a => a.isInstanceOf[Metadata] || a.isInstanceOf[Protocol])
@@ -2175,6 +2189,9 @@ trait OptimisticTransactionImpl extends DeltaTransaction
     val assertDeletionVectorWellFormed = getAssertDeletionVectorWellFormedFunc(spark, op)
     actions.foreach(assertDeletionVectorWellFormed)
 
+    // Make sure shredded writes are only performed if the shredding table property was set
+    assertShreddingStateConsistent()
+
     // Make sure this operation does not include default column values if the corresponding table
     // feature is not enabled.
     if (!protocol.isFeatureSupported(AllowColumnDefaultsTableFeature)) {
@@ -2320,7 +2337,6 @@ trait OptimisticTransactionImpl extends DeltaTransaction
             updatedCurrentTransactionInfo = newCurrentTransactionInfo
             doCommit(commitVersion, updatedCurrentTransactionInfo, attemptNumber, isolationLevel)
           }
-          committed = true
           return (commitVersion, postCommitSnapshot, updatedCurrentTransactionInfo)
         } catch {
           case _: FileAlreadyExistsException if isFsToCcCommit =>
@@ -2751,6 +2767,25 @@ trait OptimisticTransactionImpl extends DeltaTransaction
     newCommitFileStatuses
   }
 
+  protected def setCommitted(
+      committedVersion: Long,
+      postCommitSnapshot: Snapshot,
+      committedActions: Seq[Action]): Unit =
+    committed = Some(CommittedTransaction(
+      txnId = txnId,
+      deltaLog = deltaLog,
+      catalogTable = catalogTable,
+      readSnapshot = snapshot,
+      committedVersion = committedVersion,
+      committedActions = committedActions,
+      postCommitSnapshot = postCommitSnapshot,
+      postCommitHooks = postCommitHooks.toSeq,
+      txnExecutionTimeMs = txnExecutionTimeMs.get,
+      needsCheckpoint = needsCheckpoint,
+      partitionsAddedToOpt = partitionsAddedToOpt,
+      isBlindAppend = isBlindAppend
+    ))
+
   /** Register a hook that will be executed once a commit is successful. */
   def registerPostCommitHook(hook: PostCommitHook): Unit = {
     if (!postCommitHooks.contains(hook)) {
@@ -2761,42 +2796,18 @@ trait OptimisticTransactionImpl extends DeltaTransaction
   def containsPostCommitHook(hook: PostCommitHook): Boolean = postCommitHooks.contains(hook)
 
   /** Executes the registered post commit hooks. */
-  protected def runPostCommitHooks(
-      version: Long,
-      postCommitSnapshot: Snapshot,
-      committedActions: Seq[Action]): Unit = {
-    assert(committed, "Can't call post commit hooks before committing")
+  protected def runPostCommitHooks(committedTransaction: CommittedTransaction): Unit = {
+    assert(committed.isDefined, "Can't call post commit hooks before committing")
+    val postCommitHooksToRun = committedTransaction.postCommitHooks
 
     // Keep track of the active txn because hooks may create more txns and overwrite the active one.
     val activeCommit = OptimisticTransaction.getActive()
     OptimisticTransaction.clearActive()
 
     try {
-      postCommitHooks.foreach(
-        runPostCommitHook(_, version, postCommitSnapshot, committedActions.toIterator))
+      postCommitHooksToRun.foreach(runPostCommitHook(_, committedTransaction))
     } finally {
       activeCommit.foreach(OptimisticTransaction.setActive)
-    }
-  }
-
-  protected def runPostCommitHook(
-      hook: PostCommitHook,
-      version: Long,
-      postCommitSnapshot: Snapshot,
-      committedActions: Iterator[Action]): Unit = {
-    try {
-      hook.run(spark, this, version, postCommitSnapshot, committedActions)
-    } catch {
-      case NonFatal(e) =>
-        logWarning(log"Error when executing post-commit hook " +
-          log"${MDC(DeltaLogKeys.HOOK_NAME, hook.name)} " +
-          log"for commit ${MDC(DeltaLogKeys.VERSION, version)}", e)
-        recordDeltaEvent(deltaLog, "delta.commit.hook.failure", data = Map(
-          "hook" -> hook.name,
-          "version" -> version,
-          "exception" -> e.toString
-        ))
-        hook.handleError(spark, e, version)
     }
   }
 
