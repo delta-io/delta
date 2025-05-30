@@ -976,10 +976,10 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       }
 
       // Setup part 1 of 2: create log files
-      (0 to 2).foreach { i =>
+      spark.range(10).write.format("delta").mode("overwrite").save(dir.getCanonicalPath)
+      (1 to 2).foreach { i =>
         val files = AddFile(i.toString, Map.empty, 1, 1, true) :: Nil
-        val metadata = if (i == 0) Metadata() :: Nil else Nil
-        log.startTransaction().commit( metadata ++ files, DeltaOperations.ManualUpdate)
+        log.startTransaction().commit(files, DeltaOperations.ManualUpdate)
       }
 
       // Setup part 2 of 2: edit lastModified times
@@ -1041,10 +1041,10 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
       val tableImpl = Table.forPath(defaultEngine, dir.getCanonicalPath).asInstanceOf[TableImpl]
 
-      (0 to 35).foreach { i =>
+      spark.range(10).write.format("delta").mode("overwrite").save(dir.getCanonicalPath)
+      (1 to 35).foreach { i =>
         val files = AddFile(i.toString, Map.empty, 1, 1, true) :: Nil
-        val metadata = if (i == 0) Metadata() :: Nil else Nil
-        log.startTransaction().commit(metadata ++ files, DeltaOperations.ManualUpdate)
+        log.startTransaction().commit(files, DeltaOperations.ManualUpdate)
       }
 
       (0 to 35).foreach { i =>
