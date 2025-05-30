@@ -39,6 +39,8 @@ import org.apache.spark.sql.types.StructType
  */
 trait DeltaInsertIntoTest extends QueryTest with DeltaDMLTestUtils with DeltaSQLCommandTest {
 
+  val catalogName = "spark_catalog"
+
   /**
    * Represents one way of inserting data into a Delta table.
    * @param name A human-readable name for the insert type displayed in the test names.
