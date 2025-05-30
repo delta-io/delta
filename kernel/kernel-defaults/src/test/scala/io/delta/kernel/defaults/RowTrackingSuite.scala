@@ -24,7 +24,7 @@ import scala.collection.immutable.Seq
 import io.delta.kernel.data.{FilteredColumnarBatch, Row}
 import io.delta.kernel.defaults.internal.parquet.ParquetSuiteBase
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.exceptions.KernelException
+import io.delta.kernel.exceptions.{InvalidTableException, KernelException}
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl, TableConfig, TableImpl}
 import io.delta.kernel.internal.actions.{AddFile, SingleAction}
@@ -601,6 +601,54 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
         assert(e.getMessage.contains(
           s"The Delta table property '$propName' is an internal property and cannot be updated"))
       }
+    }
+  }
+
+  test("throw if materialized row tracking column configs are missing on an existing table") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // Create a normal table with row tracking enabled first
+      createTableWithRowTracking(engine, tablePath)
+
+      // Get the current metadata and manually remove row tracking materialized column configs
+      val originalMetadata = getMetadata(engine, tablePath)
+      val configWithoutMaterializedCols = originalMetadata.getConfiguration.asScala.toMap
+        .filterNot {
+          case (key, _) =>
+            key == ROW_ID.getMaterializedColumnNameProperty ||
+            key == ROW_COMMIT_VERSION.getMaterializedColumnNameProperty
+        }
+
+      // Create new metadata with row tracking enabled but configs missing
+      val newMetadata =
+        originalMetadata.withReplacedConfiguration(configWithoutMaterializedCols.asJava)
+
+      // Manually commit this problematic metadata
+      val txn = createTxn(engine, tablePath)
+      val metadataAction = SingleAction.createMetadataSingleAction(newMetadata.toRow)
+      commitTransaction(
+        txn,
+        engine,
+        inMemoryIterable(toCloseableIterator(Seq(metadataAction).asJava.iterator())))
+
+      // Verify that row tracking is enabled but configs are missing
+      val metadata = getMetadata(engine, tablePath)
+      assert(TableConfig.ROW_TRACKING_ENABLED.fromMetadata(metadata) == true)
+      assert(!metadata.getConfiguration.containsKey(ROW_ID.getMaterializedColumnNameProperty))
+      assert(
+        !metadata.getConfiguration
+          .containsKey(ROW_COMMIT_VERSION.getMaterializedColumnNameProperty))
+
+      // Now try to perform an append operation on this existing table with missing configs
+      // This should trigger the validation and throw the expected exception
+      val e = intercept[InvalidTableException] {
+        val dataBatch = generateData(testSchema, Seq.empty, Map.empty, 10, 1)
+        appendData(engine, tablePath, data = prepareDataForCommit(dataBatch))
+      }
+
+      assert(
+        e.getMessage.contains(
+          s"Row tracking is enabled but the materialized column name " +
+            s"`${ROW_ID.getMaterializedColumnNameProperty}` is missing."))
     }
   }
 }
