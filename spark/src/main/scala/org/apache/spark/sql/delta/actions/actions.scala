@@ -1213,7 +1213,7 @@ case class NotebookInfo(notebookId: String)
 
 object NotebookInfo {
   def fromContext(context: Map[String, String]): Option[NotebookInfo] = {
-    context.get("notebookId").map { nbId => NotebookInfo(nbId) }
+    context.get("notebookId").orElse(context.get("notebook_id")).map { nbId => NotebookInfo(nbId) }
   }
 }
 
