@@ -198,22 +198,6 @@ class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase with LogReplayBaseSuit
     }
   }
 
-  test("test checksum -- metadata updated and picked up in the crc") {
-    withTableWithCrc { (table, path, engine) =>
-      spark.sql(s"ALTER TABLE delta.`$path` ADD COLUMNS (b String, c Int)")
-      deleteChecksumFileForTableUsingHadoopFs(table.getPath(engine), (5 to 12))
-      engine.resetMetrics()
-      table.checksum(engine, 12)
-      assertMetrics(
-        engine,
-        Seq(12, 11),
-        Seq(10),
-        Seq(1),
-        expChecksumReadSet = Nil)
-      verifyChecksumForSnapshot(table.getSnapshotAsOfVersion(engine, 12))
-    }
-  }
-
   test("test checksum -- Optimize => incrementally build from CRC") {
     withTableWithCrc { (table, path, engine) =>
       spark.sql(s"OPTIMIZE delta.`$path`")
@@ -230,6 +214,22 @@ class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase with LogReplayBaseSuit
         Nil,
         Nil,
         expChecksumReadSet = Seq(11))
+      verifyChecksumForSnapshot(table.getSnapshotAsOfVersion(engine, 12))
+    }
+  }
+
+  test("test checksum -- metadata updated and picked up in the crc") {
+    withTableWithCrc { (table, path, engine) =>
+      spark.sql(s"ALTER TABLE delta.`$path` ADD COLUMNS (b String, c Int)")
+      deleteChecksumFileForTableUsingHadoopFs(table.getPath(engine), (5 to 12))
+      engine.resetMetrics()
+      table.checksum(engine, 12)
+      assertMetrics(
+        engine,
+        Seq(12, 11),
+        Seq(10),
+        Seq(1),
+        expChecksumReadSet = Nil)
       verifyChecksumForSnapshot(table.getSnapshotAsOfVersion(engine, 12))
     }
   }
