@@ -491,24 +491,9 @@ public class TransactionBuilderImpl implements TransactionBuilder {
             cols -> SchemaUtils.casePreservingEligibleClusterColumns(updatedSchema, cols));
 
     /* ----- 6: Update the METADATA with materialized row tracking column name if applicable----- */
-    Optional<Metadata> rowTrackingMetadata = Optional.empty();
-    if (isCreateOrReplace) {
-      // For new tables, assign materialized column names if row tracking is enabled
-      rowTrackingMetadata =
-          MaterializedRowTrackingColumn.assignMaterializedColumnNamesIfNeeded(
-              newMetadata.orElse(baseMetadata));
-    } else {
-      // For existing tables, we block enabling/disabling row tracking because:
-      // 1. Enabling requires backfilling row IDs/commit versions, which is not supported in Kernel
-      // 2. Disabling is irreversible in Kernel (re-enabling not supported)
-      newMetadata.ifPresent(
-          metadata -> RowTracking.throwIfRowTrackingToggled(baseMetadata, metadata));
-
-      // For existing tables, validate that row tracking configs are present when row tracking
-      // is enabled
-      MaterializedRowTrackingColumn.validateRowTrackingConfigsNotMissing(
-          newMetadata.orElse(baseMetadata));
-    }
+    Optional<Metadata> rowTrackingMetadata =
+        validateAndUpdateRowTrackingMetadata(
+            isCreateOrReplace, baseMetadata, newMetadata, table.getPath(engine));
     if (rowTrackingMetadata.isPresent()) {
       newMetadata = rowTrackingMetadata;
     }
@@ -782,5 +767,42 @@ public class TransactionBuilderImpl implements TransactionBuilder {
 
   private Protocol getInitialProtocol() {
     return new Protocol(DEFAULT_READ_VERSION, DEFAULT_WRITE_VERSION);
+  }
+
+  /**
+   * Validates and updates row tracking metadata. For new tables: assigns materialized column names
+   * for row ID and commit version if row tracking is enabled. For existing tables: blocks
+   * enabling/disabling row tracking (not supported in Kernel) and validates that required row
+   * tracking configs are present when row tracking is enabled.
+   *
+   * @param isCreateOrReplace whether this is a new table definition
+   * @param oldMetadata the existing table metadata
+   * @param newMetadata the updated metadata, or empty if no changes
+   * @return updated metadata with row tracking configs if needed, empty otherwise
+   */
+  private Optional<Metadata> validateAndUpdateRowTrackingMetadata(
+      boolean isCreateOrReplace,
+      Metadata oldMetadata,
+      Optional<Metadata> newMetadata,
+      String tablePath) {
+    Optional<Metadata> rowTrackingMetadata = Optional.empty();
+    if (isCreateOrReplace) {
+      // For new tables, assign materialized column names if row tracking is enabled
+      rowTrackingMetadata =
+          MaterializedRowTrackingColumn.assignMaterializedColumnNamesIfNeeded(
+              newMetadata.orElse(oldMetadata));
+    } else {
+      // For existing tables, we block enabling/disabling row tracking because:
+      // 1. Enabling requires backfilling row IDs/commit versions, which is not supported in Kernel
+      // 2. Disabling is irreversible in Kernel (re-enabling not supported)
+      newMetadata.ifPresent(
+          metadata -> RowTracking.throwIfRowTrackingToggled(oldMetadata, metadata));
+
+      // For existing tables, validate that row tracking configs are present when row tracking
+      // is enabled
+      MaterializedRowTrackingColumn.validateRowTrackingConfigsNotMissing(
+          newMetadata.orElse(oldMetadata), tablePath);
+    }
+    return rowTrackingMetadata;
   }
 }
