@@ -356,8 +356,6 @@ public class ChecksumUtils {
     if (!domainMetadataVector.isNullAt(rowId)) {
       DomainMetadata domainMetadata = DomainMetadata.fromColumnVector(domainMetadataVector, rowId);
       if (!state.domainMetadataMap.containsKey(domainMetadata.getDomain())) {
-        // CreateCheckpointIterator will ensure only the last entry of domain metadata
-        // got emit.
         state.domainMetadataMap.put(domainMetadata.getDomain(), domainMetadata);
       }
     }
