@@ -781,11 +781,9 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       Metadata oldMetadata,
       Optional<Metadata> newMetadata,
       String tablePath) {
-    Optional<Metadata> rowTrackingMetadata = Optional.empty();
     if (isCreateOrReplace) {
       // For new tables, assign materialized column names if row tracking is enabled
-      rowTrackingMetadata =
-          MaterializedRowTrackingColumn.assignMaterializedColumnNamesIfNeeded(
+      return MaterializedRowTrackingColumn.assignMaterializedColumnNamesIfNeeded(
               newMetadata.orElse(oldMetadata));
     } else {
       // For existing tables, we block enabling/disabling row tracking because:
@@ -798,7 +796,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       // is enabled
       MaterializedRowTrackingColumn.validateRowTrackingConfigsNotMissing(
           newMetadata.orElse(oldMetadata), tablePath);
+      return Optional.empty();
     }
-    return rowTrackingMetadata;
   }
 }
