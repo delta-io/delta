@@ -201,6 +201,7 @@ class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase with LogReplayBaseSuit
     withTableWithCrc { (table, path, engine) =>
       spark.sql(s"ALTER TABLE delta.`$path` ADD COLUMNS (b String, c Int)")
       deleteChecksumFileForTableUsingHadoopFs(table.getPath(engine), (5 to 12))
+      engine.resetMetrics()
       table.checksum(engine, 12)
       assertMetrics(
         engine,
