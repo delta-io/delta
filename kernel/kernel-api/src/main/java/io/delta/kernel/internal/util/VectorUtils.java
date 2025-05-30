@@ -21,6 +21,7 @@ import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
+import io.delta.kernel.internal.data.GenericColumnVector;
 import io.delta.kernel.internal.data.StructRow;
 import io.delta.kernel.types.*;
 import java.util.ArrayList;
@@ -125,6 +126,35 @@ public final class VectorUtils {
         return stringVector(values);
       }
     };
+  }
+
+  /** Creates an {@link ArrayValue} from list of objects. */
+  public static ArrayValue buildArrayValue(List<?> values, DataType dataType) {
+    if (values == null) {
+      return null;
+    }
+    return new ArrayValue() {
+      @Override
+      public int getSize() {
+        return values.size();
+      }
+
+      @Override
+      public ColumnVector getElements() {
+        return buildColumnVector(values, dataType);
+      }
+    };
+  }
+
+  /**
+   * Utility method to create a {@link ColumnVector} for given list of object, the object should be
+   * primitive type or an Row instance.
+   *
+   * @param values list of strings
+   * @return a {@link ColumnVector} with the given values type.
+   */
+  public static ColumnVector buildColumnVector(List<?> values, DataType dataType) {
+    return new GenericColumnVector(values, dataType);
   }
 
   /**

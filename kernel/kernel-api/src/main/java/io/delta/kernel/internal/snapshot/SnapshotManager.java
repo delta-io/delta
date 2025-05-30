@@ -172,12 +172,14 @@ public class SnapshotManager {
    * @return a {@link Snapshot} of the table at the provided timestamp
    * @throws TableNotFoundException
    */
-  public Snapshot getSnapshotForTimestamp(Engine engine, long millisSinceEpochUTC)
+  public Snapshot getSnapshotForTimestamp(
+      Engine engine, SnapshotImpl latestSnapshot, long millisSinceEpochUTC)
       throws TableNotFoundException {
     long startTimeMillis = System.currentTimeMillis();
     long versionToRead =
         DeltaHistoryManager.getActiveCommitAtTimestamp(
                 engine,
+                latestSnapshot,
                 logPath,
                 millisSinceEpochUTC,
                 true /* mustBeRecreatable */,
