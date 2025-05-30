@@ -25,7 +25,6 @@ import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.actions.{Format, Metadata}
 import io.delta.kernel.internal.fs.Path
-import io.delta.kernel.internal.metrics.SnapshotQueryContext
 import io.delta.kernel.internal.snapshot.LogSegment
 import io.delta.kernel.internal.util.{Clock, FileNames, ManualClock}
 import io.delta.kernel.internal.util.VectorUtils.{buildArrayValue, stringStringMapValue}

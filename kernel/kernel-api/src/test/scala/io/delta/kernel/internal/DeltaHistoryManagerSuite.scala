@@ -26,7 +26,6 @@ import io.delta.kernel.TransactionSuite.testSchema
 import io.delta.kernel.exceptions.TableNotFoundException
 import io.delta.kernel.internal.actions.{Format, Metadata}
 import io.delta.kernel.internal.fs.Path
-import io.delta.kernel.internal.metrics.SnapshotQueryContext
 import io.delta.kernel.internal.snapshot.LogSegment
 import io.delta.kernel.internal.util.{FileNames, VectorUtils}
 import io.delta.kernel.internal.util.InCommitTimestampUtils
@@ -1042,15 +1041,13 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
       new LogSegment(
         logPath,
         2L,
-        Seq(deltaFileStatus(2L)).asJava,
-        Seq.empty.asJava,
+        deltaFileStatuses(Seq(2L)).asJava,
         Seq.empty.asJava,
         Optional.empty(),
         0L),
       null, /* logReplay */
       null, /* protocol */
-      malformedMetadata,
-      SnapshotQueryContext.forLatestSnapshot(dataPath.toString))
+      malformedMetadata)
 
     intercept[IllegalStateException] {
       DeltaHistoryManager.getActiveCommitAtTimestamp(

@@ -22,7 +22,6 @@ import io.delta.kernel.TransactionSuite.testSchema
 import io.delta.kernel.internal.{SnapshotImpl, TableConfig}
 import io.delta.kernel.internal.actions.{Format, Metadata}
 import io.delta.kernel.internal.fs.Path
-import io.delta.kernel.internal.metrics.SnapshotQueryContext
 import io.delta.kernel.internal.snapshot.LogSegment
 import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.internal.util.VectorUtils.{buildArrayValue, stringStringMapValue}
@@ -70,19 +69,16 @@ object MockSnapshotUtils {
       logPath, /* logPath */
       latestVersion,
       Seq(fs).asJava, /* deltas */
-      Seq.empty.asJava, /* compactions */
       Seq.empty.asJava, /* checkpoints */
       Optional.empty(), /* lastSeenChecksum */
       0L /* lastCommitTimestamp */
     )
-    val snapshotQueryContext = SnapshotQueryContext.forLatestSnapshot(dataPath.toString)
     new SnapshotImpl(
       dataPath, /* dataPath */
       logSegment, /* logSegment */
       null, /* logReplay */
       null, /* protocol */
-      metadata,
-      snapshotQueryContext /* snapshotContext */
+      metadata /* metadata */
     )
   }
 }
