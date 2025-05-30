@@ -24,7 +24,7 @@ import scala.collection.immutable.Seq
 import io.delta.kernel.data.{FilteredColumnarBatch, Row}
 import io.delta.kernel.defaults.internal.parquet.ParquetSuiteBase
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.exceptions.KernelException
+import io.delta.kernel.exceptions.{InvalidTableException, KernelException}
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl, TableConfig, TableImpl}
 import io.delta.kernel.internal.actions.{AddFile, SingleAction}
@@ -640,7 +640,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
 
       // Now try to perform an append operation on this existing table with missing configs
       // This should trigger the validation and throw the expected exception
-      val e = intercept[IllegalStateException] {
+      val e = intercept[InvalidTableException] {
         val dataBatch = generateData(testSchema, Seq.empty, Map.empty, 10, 1)
         appendData(engine, tablePath, data = prepareDataForCommit(dataBatch))
       }

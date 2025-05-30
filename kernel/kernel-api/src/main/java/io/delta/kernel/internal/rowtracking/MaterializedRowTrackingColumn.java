@@ -15,8 +15,7 @@
  */
 package io.delta.kernel.internal.rowtracking;
 
-import static io.delta.kernel.internal.util.Preconditions.checkState;
-
+import io.delta.kernel.exceptions.InvalidTableException;
 import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
@@ -90,7 +89,7 @@ public final class MaterializedRowTrackingColumn {
    *
    * @param metadata The current {@link Metadata} of the table.
    */
-  public static void validateRowTrackingConfigsNotMissing(Metadata metadata) {
+  public static void validateRowTrackingConfigsNotMissing(Metadata metadata, String tablePath) {
     // No validation needed if row tracking is disabled
     if (!TableConfig.ROW_TRACKING_ENABLED.fromMetadata(metadata)) {
       return;
@@ -100,13 +99,15 @@ public final class MaterializedRowTrackingColumn {
     Stream.of(ROW_ID, ROW_COMMIT_VERSION)
         .forEach(
             column -> {
-              checkState(
-                  metadata
-                      .getConfiguration()
-                      .containsKey(column.getMaterializedColumnNameProperty()),
-                  String.format(
-                      "Row tracking is enabled but the materialized column name `%s` is missing.",
-                      column.getMaterializedColumnNameProperty()));
+              if (!metadata
+                  .getConfiguration()
+                  .containsKey(column.getMaterializedColumnNameProperty())) {
+                throw new InvalidTableException(
+                    tablePath,
+                    String.format(
+                        "Row tracking is enabled but the materialized column name `%s` is missing.",
+                        column.getMaterializedColumnNameProperty()));
+              }
             });
   }
 
