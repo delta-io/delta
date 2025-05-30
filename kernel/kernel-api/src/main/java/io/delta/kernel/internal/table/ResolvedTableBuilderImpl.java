@@ -19,6 +19,7 @@ package io.delta.kernel.internal.table;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
+import io.delta.kernel.ResolvedTableBuilder;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.files.ParsedLogData;
 import io.delta.kernel.internal.files.ParsedLogData.ParsedLogType;
@@ -27,16 +28,22 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
-/** An implementation of {@link ResolvedTableBuilderInternal}. */
-public class ResolvedTableBuilderInternalImpl implements ResolvedTableBuilderInternal {
+/**
+ * An implementation of {@link ResolvedTableBuilder}.
+ *
+ * <p>Note: The primary responsibility of this class is to take input, validate that input, and then
+ * pass the input to the {@link ResolvedTableFactory}, which is then responsible for actually
+ * creating the {@link ResolvedTableInternal} instance.
+ */
+public class ResolvedTableBuilderImpl implements ResolvedTableBuilder {
 
-  public static class ResolvedTableBuilderContext {
+  public static class Context {
     public final String unresolvedPath;
     public Optional<Long> versionOpt;
     public List<ParsedLogData> logDatas;
     public Clock clock;
 
-    public ResolvedTableBuilderContext(String unresolvedPath) {
+    public Context(String unresolvedPath) {
       this.unresolvedPath = requireNonNull(unresolvedPath, "unresolvedPath is null");
       this.versionOpt = Optional.empty();
       this.logDatas = Collections.emptyList();
@@ -44,18 +51,17 @@ public class ResolvedTableBuilderInternalImpl implements ResolvedTableBuilderInt
     }
   }
 
-  private final ResolvedTableBuilderContext ctx;
+  private final Context ctx;
 
-  public ResolvedTableBuilderInternalImpl(String unresolvedPath) {
-    ctx = new ResolvedTableBuilderContext(unresolvedPath);
+  public ResolvedTableBuilderImpl(String unresolvedPath) {
+    ctx = new Context(unresolvedPath);
   }
 
-  //////////////////////////////////////////
-  // ResolvedTableBuilderInternal Methods //
-  //////////////////////////////////////////
+  /////////////////////////////////
+  // Additional Internal Methods //
+  /////////////////////////////////
 
-  @Override
-  public ResolvedTableBuilderInternal withClock(Clock clock) {
+  public ResolvedTableBuilderImpl withClock(Clock clock) {
     ctx.clock = requireNonNull(clock, "clock is null");
     return this;
   }
@@ -65,14 +71,14 @@ public class ResolvedTableBuilderInternalImpl implements ResolvedTableBuilderInt
   /////////////////////////////////////////
 
   @Override
-  public ResolvedTableBuilderInternal atVersion(long version) {
+  public ResolvedTableBuilderImpl atVersion(long version) {
     ctx.versionOpt = Optional.of(version);
     return this;
   }
 
   /** For now, only log datas of type {@link ParsedLogType#RATIFIED_STAGED_COMMIT}s are supported */
   @Override
-  public ResolvedTableBuilderInternal withLogData(List<ParsedLogData> logDatas) {
+  public ResolvedTableBuilderImpl withLogData(List<ParsedLogData> logDatas) {
     ctx.logDatas = requireNonNull(logDatas, "logDatas is null");
     return this;
   }
@@ -89,6 +95,7 @@ public class ResolvedTableBuilderInternalImpl implements ResolvedTableBuilderInt
 
   private void validateInputOnBuild() {
     checkArgument(ctx.versionOpt.orElse(0L) >= 0, "version must be >= 0");
+    // TODO: logData if and only if atVersion
     // TODO: logData only ratified staged commits
     // TODO: logData sorted and contiguous
     // TODO: logData ends with version
