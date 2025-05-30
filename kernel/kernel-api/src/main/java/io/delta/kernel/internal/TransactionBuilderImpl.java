@@ -487,9 +487,24 @@ public class TransactionBuilderImpl implements TransactionBuilder {
             cols -> SchemaUtils.casePreservingEligibleClusterColumns(updatedSchema, cols));
 
     /* ----- 6: Update the METADATA with materialized row tracking column name if applicable----- */
-    Optional<Metadata> rowTrackingMetadata =
-        MaterializedRowTrackingColumn.assignMaterializedColumnNamesIfNeeded(
-            newMetadata.orElse(baseMetadata));
+    Optional<Metadata> rowTrackingMetadata = Optional.empty();
+    if (isCreateOrReplace) {
+      // For new tables, assign materialized column names if row tracking is enabled
+      rowTrackingMetadata =
+          MaterializedRowTrackingColumn.assignMaterializedColumnNamesIfNeeded(
+              newMetadata.orElse(baseMetadata));
+    } else {
+      // For existing tables, we block enabling/disabling row tracking because:
+      // 1. Enabling requires backfilling row IDs/commit versions, which is not supported in Kernel
+      // 2. Disabling is irreversible in Kernel (re-enabling not supported)
+      newMetadata.ifPresent(
+          metadata -> RowTracking.throwIfRowTrackingToggled(baseMetadata, metadata));
+
+      // For existing tables, validate that row tracking configs are present when row tracking
+      // is enabled
+      MaterializedRowTrackingColumn.validateRowTrackingConfigsNotMissing(
+          newMetadata.orElse(baseMetadata));
+    }
     if (rowTrackingMetadata.isPresent()) {
       newMetadata = rowTrackingMetadata;
     }
@@ -606,7 +621,6 @@ public class TransactionBuilderImpl implements TransactionBuilder {
    *         <li>the schema change is a valid schema change given the tables partition and
    *             clustering columns
    *       </ul>
-   *   <li>Enabling/disabling row tracking on existing tables is blocked
    *   <li>Materialized row tracking column names do not conflict with schema
    * </ul>
    */
@@ -684,13 +698,6 @@ public class TransactionBuilderImpl implements TransactionBuilder {
             // We allow new non-null fields in REPLACE since we know all existing data is removed
             true /* allowNewRequiredFields */);
       }
-    }
-
-    // Block enabling/disabling row tracking on existing tables because:
-    // 1. Enabling requires backfilling row IDs/commit versions, which is not supported in Kernel
-    // 2. Disabling is irreversible in Kernel (re-enabling not supported)
-    if (!isCreateOrReplace) {
-      RowTracking.throwIfRowTrackingToggled(oldMetadata, newMetadata);
     }
 
     MaterializedRowTrackingColumn.throwIfColumnNamesConflictWithSchema(newMetadata);
