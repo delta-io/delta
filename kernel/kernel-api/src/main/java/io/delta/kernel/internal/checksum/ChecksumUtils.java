@@ -173,7 +173,6 @@ public class ChecksumUtils {
               removeVector.isNullAt(i),
               "unexpected remove row found when "
                   + "setting minFileRetentionTimestampMillis to infinite future");
-
           // Step 2: Process add files, domain metadata, metadata, and protocol
           processAddRecord(addVector, state, i);
           processDomainMetadataRecord(domainMetadataVector, state, i);

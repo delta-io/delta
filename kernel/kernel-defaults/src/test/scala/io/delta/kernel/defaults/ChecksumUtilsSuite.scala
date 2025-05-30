@@ -97,7 +97,7 @@ class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase with LogReplayBaseSuit
   }
 
   test("test checksum -- stale checksum without file size histogram" +
-    ", no checkpoint => fall back to full log replay") {
+    ", no checkpoint => fall back to full state construction") {
     withTableWithCrc { (table, _, engine) =>
       deleteChecksumFileForTableUsingHadoopFs(table.getPath(engine), (5 to 8))
       engine.resetMetrics()
@@ -145,7 +145,7 @@ class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase with LogReplayBaseSuit
     }
   }
 
-  test("test checksum -- duplicate add file => fallback") {
+  test("test checksum -- duplicate add file => fallback with full state construction") {
     withTableWithCrc { (table, path, engine) =>
       val deltaLog = DeltaLog.forTable(spark, new Path(path))
       deltaLog
@@ -171,7 +171,7 @@ class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase with LogReplayBaseSuit
     }
   }
 
-  test("test checksum -- removeFile without Stats => fallback") {
+  test("test checksum -- removeFile without Stats => fallback with full state construction") {
     withTableWithCrc { (table, path, engine) =>
       val deltaLog = DeltaLog.forTable(spark, new Path(path))
       deltaLog
