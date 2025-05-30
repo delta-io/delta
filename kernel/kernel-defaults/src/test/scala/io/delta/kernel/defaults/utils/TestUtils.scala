@@ -28,6 +28,7 @@ import io.delta.kernel.{Scan, Snapshot, Table, TransactionCommitResult}
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector, FilteredColumnarBatch, MapValue, Row}
 import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.defaults.internal.data.vector.{DefaultGenericVector, DefaultStructVector}
+import io.delta.kernel.defaults.test.{AbstractTestTableManager, LegacyTestTableManagerAdapter, NewTestTableManagerAdapter}
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.expressions.{Column, Predicate}
 import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
@@ -55,7 +56,23 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.plans.SQLHelper
 import org.scalatest.Assertions
 
-trait TestUtils extends Assertions with SQLHelper {
+trait TestUtils extends AbstractTestUtils with AbstractReadUtils {
+  override def getTestTableManager: AbstractTestTableManager = new LegacyTestTableManagerAdapter()
+}
+
+/**
+ * DO NOT MODIFY this trait -- this is just syntactic sugar to clearly indicate we are extending the
+ * "default" TestUtils which happens to use the legacy Kernel APIs
+ */
+trait TestUtilsWithLegacyKernel extends TestUtils
+
+trait TestUtilsWithNewKernel extends AbstractTestUtils with AbstractReadUtils {
+  override def getTestTableManager: AbstractTestTableManager = new NewTestTableManagerAdapter()
+}
+
+trait AbstractTestUtils extends Assertions with SQLHelper {
+
+  def getTestTableManager: AbstractTestTableManager
 
   lazy val configuration = new Configuration()
   lazy val defaultEngine = DefaultEngine.create(configuration)
@@ -204,79 +221,6 @@ trait TestUtils extends Assertions with SQLHelper {
       .flatMap(_.getRows.toSeq)
   }
 
-  def readSnapshot(
-      snapshot: Snapshot,
-      readSchema: StructType = null,
-      filter: Predicate = null,
-      expectedRemainingFilter: Predicate = null,
-      engine: Engine = defaultEngine): Seq[Row] = {
-
-    val result = ArrayBuffer[Row]()
-
-    var scanBuilder = snapshot.getScanBuilder()
-
-    if (readSchema != null) {
-      scanBuilder = scanBuilder.withReadSchema(readSchema)
-    }
-
-    if (filter != null) {
-      scanBuilder = scanBuilder.withFilter(filter)
-    }
-
-    val scan = scanBuilder.build()
-
-    if (filter != null) {
-      val actRemainingPredicate = scan.getRemainingFilter()
-      assert(
-        actRemainingPredicate.toString === Optional.ofNullable(expectedRemainingFilter).toString)
-    }
-
-    val scanState = scan.getScanState(engine);
-    val fileIter = scan.getScanFiles(engine)
-
-    val physicalDataReadSchema = ScanStateRow.getPhysicalDataReadSchema(engine, scanState)
-    fileIter.forEach { fileColumnarBatch =>
-      fileColumnarBatch.getRows().forEach { scanFileRow =>
-        val fileStatus = InternalScanFileUtils.getAddFileStatus(scanFileRow)
-        val physicalDataIter = engine.getParquetHandler().readParquetFiles(
-          singletonCloseableIterator(fileStatus),
-          physicalDataReadSchema,
-          Optional.empty())
-        var dataBatches: CloseableIterator[FilteredColumnarBatch] = null
-        try {
-          dataBatches = Scan.transformPhysicalData(
-            engine,
-            scanState,
-            scanFileRow,
-            physicalDataIter)
-
-          dataBatches.forEach { batch =>
-            val selectionVector = batch.getSelectionVector()
-            val data = batch.getData()
-
-            var i = 0
-            val rowIter = data.getRows()
-            try {
-              while (rowIter.hasNext) {
-                val row = rowIter.next()
-                if (!selectionVector.isPresent || selectionVector.get.getBoolean(i)) {
-                  // row is valid
-                  result.append(row)
-                }
-                i += 1
-              }
-            } finally {
-              rowIter.close()
-            }
-          }
-        } finally {
-          dataBatches.close()
-        }
-      }
-    }
-    result
-  }
-
   def readTableUsingKernel(
       engine: Engine,
       tablePath: String,
@@ -346,71 +290,6 @@ trait TestUtils extends Assertions with SQLHelper {
     new ArrayType(BooleanType.BOOLEAN, true),
     new MapType(IntegerType.INTEGER, LongType.LONG, true),
     new StructType().add("s1", BooleanType.BOOLEAN).add("s2", IntegerType.INTEGER))
-
-  /**
-   * Compares the rows in the tables latest snapshot with the expected answer and fails if they
-   * do not match. The comparison is order independent. If expectedSchema is provided, checks
-   * that the latest snapshot's schema is equivalent.
-   *
-   * @param path fully qualified path of the table to check
-   * @param expectedAnswer expected rows
-   * @param readCols subset of columns to read; if null then all columns will be read
-   * @param engine engine to use to read the table
-   * @param expectedSchema expected schema to check for; if null then no check is performed
-   * @param filter Filter to select a subset of rows form the table
-   * @param expectedRemainingFilter Remaining predicate out of the `filter` that is not enforced
-   *                                by Kernel.
-   * @param expectedVersion expected version of the latest snapshot for the table
-   */
-  def checkTable(
-      path: String,
-      expectedAnswer: Seq[TestRow],
-      readCols: Seq[String] = null,
-      engine: Engine = defaultEngine,
-      expectedSchema: StructType = null,
-      filter: Predicate = null,
-      version: Option[Long] = None,
-      timestamp: Option[Long] = None,
-      expectedRemainingFilter: Predicate = null,
-      expectedVersion: Option[Long] = None): Unit = {
-    assert(version.isEmpty || timestamp.isEmpty, "Cannot provide both a version and timestamp")
-
-    val snapshot = if (version.isDefined) {
-      Table.forPath(engine, path)
-        .getSnapshotAsOfVersion(engine, version.get)
-    } else if (timestamp.isDefined) {
-      Table.forPath(engine, path)
-        .getSnapshotAsOfTimestamp(engine, timestamp.get)
-    } else {
-      latestSnapshot(path, engine)
-    }
-
-    val readSchema = if (readCols == null) {
-      null
-    } else {
-      val schema = snapshot.getSchema()
-      new StructType(readCols.map(schema.get(_)).asJava)
-    }
-
-    if (expectedSchema != null) {
-      assert(
-        expectedSchema == snapshot.getSchema(),
-        s"""
-           |Expected schema does not match actual schema:
-           |Expected schema: $expectedSchema
-           |Actual schema: ${snapshot.getSchema()}
-           |""".stripMargin)
-    }
-
-    expectedVersion.foreach { version =>
-      assert(
-        version == snapshot.getVersion(),
-        s"Expected version $version does not match actual version ${snapshot.getVersion()}")
-    }
-
-    val result = readSnapshot(snapshot, readSchema, filter, expectedRemainingFilter, engine)
-    checkAnswer(result, expectedAnswer)
-  }
 
   def checkAnswer(result: => Seq[Row], expectedAnswer: Seq[TestRow]): Unit = {
     checkAnswer(result.map(TestRow(_)), expectedAnswer)
