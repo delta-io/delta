@@ -367,6 +367,7 @@ public class ChecksumUtils {
       ColumnVector metadataVector, StateTracker state, int rowId) {
     if (!metadataVector.isNullAt(rowId) && !state.metadataFromLog.isPresent()) {
       Metadata metadata = Metadata.fromColumnVector(metadataVector, rowId);
+      checkState(metadata != null, "Metadata is null");
       state.metadataFromLog = Optional.of(metadata);
     }
   }
@@ -376,6 +377,7 @@ public class ChecksumUtils {
       ColumnVector protocolVector, StateTracker state, int rowId) {
     if (!protocolVector.isNullAt(rowId) && !state.protocolFromLog.isPresent()) {
       Protocol protocol = Protocol.fromColumnVector(protocolVector, rowId);
+      checkState(protocol != null, "Protocol is null");
       state.protocolFromLog = Optional.of(protocol);
     }
   }
