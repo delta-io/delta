@@ -17,7 +17,7 @@
 package io.delta.kernel;
 
 import io.delta.kernel.annotation.Experimental;
-import io.delta.kernel.internal.table.ResolvedTableBuilderInternalImpl;
+import io.delta.kernel.internal.table.ResolvedTableBuilderImpl;
 
 /** The entry point to load and create {@link ResolvedTable}s. */
 @Experimental
@@ -28,7 +28,7 @@ public interface TableManager {
 
   // TODO: Take in a Committer for write support.
   static ResolvedTableBuilder loadTable(String path) {
-    return new ResolvedTableBuilderInternalImpl(path);
+    return new ResolvedTableBuilderImpl(path);
   }
 
   // TODO: static CreateTableTransactionBuilder buildCreateTableTransaction(...)
