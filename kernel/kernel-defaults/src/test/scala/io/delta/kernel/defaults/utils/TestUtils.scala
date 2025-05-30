@@ -765,6 +765,12 @@ trait TestUtils extends Assertions with SQLHelper {
       Files.deleteIfExists(
         new File(FileNames.checksumFile(new Path(s"$tablePath/_delta_log"), v).toString).toPath))
 
+  def deleteChecksumFileForTableUsingHadoopFs(tablePath: String, versions: Seq[Int]): Unit =
+    versions.foreach(v =>
+      defaultEngine.getFileSystemClient.delete(FileNames.checksumFile(
+        new Path(s"$tablePath/_delta_log"),
+        v).toString))
+
   def rewriteChecksumFileToExcludeDomainMetadata(
       engine: Engine,
       tablePath: String,
@@ -825,7 +831,8 @@ trait TestUtils extends Assertions with SQLHelper {
       crcInfoOpt.isPresent,
       s"CRC information should be present for version ${snapshot.getVersion}")
     crcInfoOpt.toScala.foreach { crcInfo =>
-      // TODO: check metadata, protocol and file size.
+      // TODO: check protocol and file size.
+      assert(crcInfo.getMetadata.getSchema === snapshot.getSchema)
       assert(
         crcInfo.getNumFiles === collectScanFileRows(snapshot.getScanBuilder.build()).size,
         "Number of files in checksum should match snapshot")
