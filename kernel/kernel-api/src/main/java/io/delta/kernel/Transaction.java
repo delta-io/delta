@@ -36,6 +36,7 @@ import io.delta.kernel.internal.actions.SingleAction;
 import io.delta.kernel.internal.data.TransactionStateRow;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.icebergcompat.IcebergCompatV2MetadataValidatorAndUpdater;
+import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.statistics.DataFileStatistics;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.*;
@@ -164,6 +165,12 @@ public interface Transaction {
     // - generating the generated columns
 
     boolean isIcebergCompatV2Enabled = isIcebergCompatV2Enabled(transactionState);
+    ColumnMapping.ColumnMappingMode columnMappingMode = getColumnMappingMode(transactionState);
+
+    if (columnMappingMode != ColumnMapping.ColumnMappingMode.NONE) {
+      throw new UnsupportedOperationException(
+          "Writing into column mapping enabled table is not supported yet.");
+    }
 
     // TODO: set the correct schema once writing into column mapping enabled table is supported.
     String tablePath = getTablePath(transactionState);
