@@ -341,8 +341,10 @@ public class ChecksumUtils {
     if (!addVector.isNullAt(rowId)) {
       ColumnVector sizeVector = addVector.getChild(ADD_SIZE_INDEX);
       checkState(!sizeVector.isNullAt(rowId), "Add record has null file size");
+
       long fileSize = sizeVector.getLong(rowId);
       checkState(fileSize >= 0, "Add record has negative file size: " + fileSize);
+ 
       state.tableSizeByte.add(fileSize);
       state.addedFileSizeHistogram.insert(fileSize);
       state.fileCount.increment();
