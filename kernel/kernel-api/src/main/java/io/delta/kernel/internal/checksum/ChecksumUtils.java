@@ -336,6 +336,7 @@ public class ChecksumUtils {
                     .minus(state.removedFileSizeHistogram))));
   }
 
+  /** Processes an add file record and updates the state tracker. */
   private static void processAddRecord(ColumnVector addVector, StateTracker state, int rowId) {
     if (!addVector.isNullAt(rowId)) {
       ColumnVector sizeVector = addVector.getChild(ADD_SIZE_INDEX);
