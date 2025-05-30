@@ -16,6 +16,7 @@
 
 package io.delta.kernel.internal.snapshot;
 
+import static io.delta.kernel.internal.replay.LogReplayUtils.assertLogFilesBelongToTable;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
@@ -113,6 +114,7 @@ public class LogSegment {
     ///////////////////////
 
     requireNonNull(logPath, "logPath is null");
+
     requireNonNull(deltas, "deltas is null");
     requireNonNull(compactions, "compactions is null");
     requireNonNull(checkpoints, "checkpoints is null");
@@ -234,6 +236,9 @@ public class LogSegment {
         new Lazy<>(
             () ->
                 Stream.concat(checkpoints.stream(), deltas.stream()).collect(Collectors.toList()));
+
+    // Make sure all delta log files are valid.
+    assertLogFilesBelongToTable(logPath, allFiles.get());
 
     this.allFilesReversed =
         new Lazy<>(

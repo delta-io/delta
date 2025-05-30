@@ -16,7 +16,6 @@
 
 package io.delta.kernel.internal.snapshot;
 
-import static io.delta.kernel.internal.replay.LogReplayUtils.assertLogFilesBelongToTable;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.lang.String.format;
 
@@ -202,7 +201,8 @@ public class SnapshotManager {
             Optional.ofNullable(latestSnapshotHint.get()),
             snapshotContext.getSnapshotMetrics());
 
-    assertLogFilesBelongToTable(logPath, initSegment.allLogFilesUnsorted());
+    // assertLogFilesBelongToTable(logPath, initSegment.allLogFilesUnsorted()); moved this logic to
+    // logsegment
 
     final SnapshotImpl snapshot =
         new SnapshotImpl(
