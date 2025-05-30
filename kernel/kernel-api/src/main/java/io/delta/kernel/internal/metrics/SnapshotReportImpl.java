@@ -35,6 +35,7 @@ public class SnapshotReportImpl extends DeltaOperationReportImpl implements Snap
         snapshotContext.getTablePath(),
         snapshotContext.getSnapshotMetrics(),
         snapshotContext.getVersion(),
+        snapshotContext.getCheckpointVersion(),
         snapshotContext.getProvidedTimestamp(),
         Optional.of(e));
   }
@@ -49,23 +50,27 @@ public class SnapshotReportImpl extends DeltaOperationReportImpl implements Snap
         snapshotContext.getTablePath(),
         snapshotContext.getSnapshotMetrics(),
         snapshotContext.getVersion(),
+        snapshotContext.getCheckpointVersion(),
         snapshotContext.getProvidedTimestamp(),
         Optional.empty() /* exception */);
   }
 
   private final SnapshotMetricsResult snapshotMetrics;
   private final Optional<Long> version;
+  private final Optional<Long> checkpointVersion;
   private final Optional<Long> providedTimestamp;
 
   private SnapshotReportImpl(
       String tablePath,
       SnapshotMetrics snapshotMetrics,
       Optional<Long> version,
+      Optional<Long> checkpointVersion,
       Optional<Long> providedTimestamp,
       Optional<Exception> exception) {
     super(tablePath, exception);
     this.snapshotMetrics = requireNonNull(snapshotMetrics).captureSnapshotMetricsResult();
     this.version = requireNonNull(version);
+    this.checkpointVersion = requireNonNull(checkpointVersion);
     this.providedTimestamp = requireNonNull(providedTimestamp);
   }
 
@@ -77,6 +82,11 @@ public class SnapshotReportImpl extends DeltaOperationReportImpl implements Snap
   @Override
   public Optional<Long> getVersion() {
     return version;
+  }
+
+  @Override
+  public Optional<Long> getCheckpointVersion() {
+    return checkpointVersion;
   }
 
   @Override
