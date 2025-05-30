@@ -144,10 +144,8 @@ public class SchemaUtils {
    * @param allowNewRequiredFields If `false`, adding new required columns throws an error. If
    *     `true`, new required columns are allowed
    * @param icebergWriterCompatV1Enabled `true` if icebergCompatV1 is enabled on the table
-   *
-   * @return an updated schema if metadata (e.g. TypeChanges needs to be copied over from
-   *   the old schema
-   *
+   * @return an updated schema if metadata (e.g. TypeChanges needs to be copied over from the old
+   *     schema
    * @throws IllegalArgumentException if the schema evolution is invalid
    */
   public static Optional<StructType> validateSchemaEvolutionById(
@@ -156,19 +154,20 @@ public class SchemaUtils {
       Set<String> clusteringColumnPhysicalNames,
       int oldMaxFieldId,
       boolean allowNewRequiredFields,
-      boolean icebergWriterCompatV1Enabled) {
+      boolean icebergWriterCompatV1Enabled,
+      boolean typeWideningEnabled) {
     SchemaChanges schemaChanges = computeSchemaChangesById(currentSchema, newSchema);
     validatePhysicalNameConsistency(schemaChanges.updatedFields());
     // Validates that the updated schema does not contain breaking changes in terms of types and
     // nullability
     validateUpdatedSchemaCompatibility(
-            schemaChanges,
-            oldMaxFieldId,
-            allowNewRequiredFields,
-            icebergWriterCompatV1Enabled,
-            typeWideningEnabled);
+        schemaChanges,
+        oldMaxFieldId,
+        allowNewRequiredFields,
+        icebergWriterCompatV1Enabled,
+        typeWideningEnabled);
     validateClusteringColumnsNotDropped(
-            schemaChanges.removedFields(), clusteringColumnPhysicalNames);
+        schemaChanges.removedFields(), clusteringColumnPhysicalNames);
     return schemaChanges.updatedSchema();
     // ToDo Potentially validate IcebergCompatV2 nested IDs
   }
