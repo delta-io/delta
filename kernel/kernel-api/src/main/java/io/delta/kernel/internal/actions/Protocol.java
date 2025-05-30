@@ -118,10 +118,15 @@ public class Protocol {
     if (this.writerFeatures != null) {
       newWriterFeatures.addAll(this.writerFeatures);
     }
+    final List<String> newReaderFeatures;
+    if (newProtocolVersions._1 >= 3 && this.readerFeatures == null) {
+      newReaderFeatures = new ArrayList<>();
+    } else if (this.readerFeatures != null) {
+      newReaderFeatures = new ArrayList<>(this.readerFeatures);
+    } else {
+      newReaderFeatures = null;
+    }
     return new Protocol(
-        newProtocolVersions._1,
-        newProtocolVersions._2,
-        this.readerFeatures == null ? null : new ArrayList<>(this.readerFeatures),
-        newWriterFeatures);
+        newProtocolVersions._1, newProtocolVersions._2, newReaderFeatures, newWriterFeatures);
   }
 }
