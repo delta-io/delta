@@ -29,6 +29,8 @@ The following <Delta> features break forward compatibility. Features are enabled
    Row Tracking, [Delta Lake 3.2.0](https://github.com/delta-io/delta/releases/tag/v3.2.0),[_](/delta-row-tracking.md)
    Type widening (Preview),[Delta Lake 3.2.0](https://github.com/delta-io/delta/releases/tag/v3.2.0),[_](/delta-type-widening.md)
    Identity columns, [Delta Lake 3.3.0](https://github.com/delta-io/delta/releases/tag/v3.3.0),[_](/delta-batch.md#use-identity-columns)
+   Variant Type, [Delta Lake 4.0.0](https://github.com/delta-io/delta/releases/tag/v4.0.0-final-rc1),[Variant Type](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#variant-data-type)
+   Variant Shredding (Preview), [Delta Lake 4.0.0](https://github.com/delta-io/delta/releases/tag/v4.0.0-final-rc1),[Variant Shredding](https://github.com/delta-io/delta/blob/master/protocol_rfcs/variant-shredding.md)
 
 <a id="table-protocol"></a>
 
@@ -113,6 +115,8 @@ The following table shows minimum protocol versions required for <Delta> feature
    Vacuum Protocol Check,7,3,[Vacuum Protocol Check Spec](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#vacuum-protocol-check)
    Row Tracking,7,3,[_](/delta-row-tracking.md)
    Type widening (Preview),7,3,[_](/delta-type-widening.md)
+   Variant Type,7,3,[Variant Type](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#variant-data-type)
+   Variant Shredding (Preview),7,3[Variant Shredding](https://github.com/delta-io/delta/blob/master/protocol_rfcs/variant-shredding.md)
 
 <a id="upgrade"></a>
 
