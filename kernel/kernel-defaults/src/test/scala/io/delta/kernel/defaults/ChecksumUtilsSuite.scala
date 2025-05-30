@@ -97,7 +97,7 @@ class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase with LogReplayBaseSuit
   }
 
   test("test checksum -- stale checksum without file size histogram" +
-    ", no checkpoint => incrementally load from checksum") {
+    ", no checkpoint => fall back to full log replay") {
     withTableWithCrc { (table, _, engine) =>
       deleteChecksumFileForTableUsingHadoopFs(table.getPath(engine), (5 to 8))
       engine.resetMetrics()
