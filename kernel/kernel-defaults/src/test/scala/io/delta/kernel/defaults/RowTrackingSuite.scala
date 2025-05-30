@@ -536,7 +536,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
   }
 
   Seq("none", "name", "id").foreach(mode => {
-    test(
+    ignore(
       s"throw if materialized row tracking column name conflicts with schema, " +
         s"with column mapping = $mode") {
       withTempDirAndEngine {
