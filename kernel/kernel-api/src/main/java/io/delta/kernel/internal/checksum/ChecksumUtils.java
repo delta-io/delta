@@ -344,7 +344,7 @@ public class ChecksumUtils {
 
       long fileSize = sizeVector.getLong(rowId);
       checkState(fileSize >= 0, "Add record has negative file size: " + fileSize);
- 
+
       state.tableSizeByte.add(fileSize);
       state.addedFileSizeHistogram.insert(fileSize);
       state.fileCount.increment();
