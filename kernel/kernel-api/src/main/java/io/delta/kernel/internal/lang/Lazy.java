@@ -33,4 +33,8 @@ public class Lazy<T> {
 
     return instance.get();
   }
+
+  public boolean isPresent() {
+    return instance.isPresent();
+  }
 }

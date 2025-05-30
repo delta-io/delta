@@ -20,9 +20,16 @@ import io.delta.kernel.ResolvedTable;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
+import io.delta.kernel.internal.lang.Lazy;
+import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.util.Clock;
 
+/**
+ * Internal extension of {@link ResolvedTable} that exposes additional interfaces to provides access
+ * to information that are only needed by Kernel's internal operations but should not be exposed in
+ * the public API.
+ */
 public interface ResolvedTableInternal extends ResolvedTable {
   String getLogPath();
 
@@ -34,4 +41,10 @@ public interface ResolvedTableInternal extends ResolvedTable {
 
   @VisibleForTesting
   LogSegment getLogSegment();
+
+  @VisibleForTesting
+  Lazy<LogSegment> getLazyLogSegment();
+
+  @VisibleForTesting
+  Lazy<LogReplay> getLazyLogReplay();
 }
