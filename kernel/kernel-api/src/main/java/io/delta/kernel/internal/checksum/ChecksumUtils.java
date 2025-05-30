@@ -17,6 +17,7 @@ package io.delta.kernel.internal.checksum;
 
 import static io.delta.kernel.internal.actions.SingleAction.CHECKPOINT_SCHEMA;
 import static io.delta.kernel.internal.util.Preconditions.checkState;
+import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
@@ -33,7 +34,6 @@ import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import java.io.IOException;
-import java.nio.file.FileAlreadyExistsException;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.atomic.LongAdder;
@@ -92,9 +92,8 @@ public class ChecksumUtils {
    */
   public static void computeStateAndWriteChecksum(Engine engine, LogSegment logSegmentAtVersion)
       throws IOException {
-    if (engine == null || logSegmentAtVersion == null) {
-      throw new IllegalArgumentException("Engine and logSegmentAtVersion cannot be null");
-    }
+    requireNonNull(engine);
+    requireNonNull(logSegmentAtVersion);
 
     // Check for existing checksum for this version
     Optional<Long> lastSeenCrcVersion =
@@ -125,15 +124,7 @@ public class ChecksumUtils {
             : buildCrcInfoWithFullLogReplay(engine, logSegmentAtVersion);
 
     ChecksumWriter checksumWriter = new ChecksumWriter(logSegmentAtVersion.getLogPath());
-    try {
-      checksumWriter.writeCheckSum(engine, crcInfo);
-      logger.info(
-          "Successfully wrote checksum file for version {}", logSegmentAtVersion.getVersion());
-    } catch (FileAlreadyExistsException e) {
-      logger.info("Checksum file already exists for version {}", logSegmentAtVersion.getVersion());
-      // Checksum file has been created while we were computing it.
-      // This is fine - the checksum now exists, which was our goal.
-    }
+    checksumWriter.writeCheckSum(engine, crcInfo);
   }
 
   /**
@@ -146,14 +137,15 @@ public class ChecksumUtils {
   private static CRCInfo buildCrcInfoWithFullLogReplay(
       Engine engine, LogSegment logSegmentAtVersion) throws IOException {
 
-    // Initialize state tracking
     StateTracker state = new StateTracker();
 
     // Process logs and update state
     try (CreateCheckpointIterator checkpointIterator =
         new CreateCheckpointIterator(
+            // Set minFileRetentionTimestampMillis to infinite future to skip all removed files
             engine, logSegmentAtVersion, Instant.ofEpochMilli(Long.MAX_VALUE).toEpochMilli())) {
 
+      // Process all checkpoint batches
       while (checkpointIterator.hasNext()) {
         FilteredColumnarBatch filteredBatch = checkpointIterator.next();
         ColumnarBatch batch = filteredBatch.getData();
@@ -165,7 +157,6 @@ public class ChecksumUtils {
         ColumnVector removeVector = batch.getColumnVector(REMOVE_INDEX);
         ColumnVector addVector = batch.getColumnVector(ADD_INDEX);
         ColumnVector domainMetadataVector = batch.getColumnVector(DOMAIN_METADATA_INDEX);
-
         // Process all selected rows in a single pass for optimal performance
         for (int i = 0; i < rowCount; i++) {
           // Fields referenced in the lambda should be effectively final.
@@ -175,7 +166,6 @@ public class ChecksumUtils {
                   .map(vec -> !vec.isNullAt(rowId) && vec.getBoolean(rowId))
                   .orElse(true);
           if (!isSelected) continue;
-
           // Step 1: Ensure there are no remove records
           // We set minFileRetentionTimestampMillis to infinite future to skip all removed files,
           // so there should be no remove actions.
@@ -184,7 +174,7 @@ public class ChecksumUtils {
               "unexpected remove row found when "
                   + "setting minFileRetentionTimestampMillis to infinite future");
 
-          // Process add files, domain metadata, metadata, and protocol
+          // Step 2: Process add files, domain metadata, metadata, and protocol
           processAddRecord(addVector, state, i);
           processDomainMetadataRecord(domainMetadataVector, state, i);
           processMetadataRecord(metadataVector, state, i);
@@ -192,7 +182,6 @@ public class ChecksumUtils {
         }
       }
     }
-
     // Get final metadata and protocol
     Metadata finalMetadata =
         state.metadataFromLog.orElseThrow(() -> new IllegalStateException("No metadata found"));
@@ -350,7 +339,6 @@ public class ChecksumUtils {
 
   private static void processAddRecord(ColumnVector addVector, StateTracker state, int rowId) {
     if (!addVector.isNullAt(rowId)) {
-      // Get file size and update tracking information
       ColumnVector sizeVector = addVector.getChild(ADD_SIZE_INDEX);
       long fileSize = sizeVector.getLong(rowId);
       state.tableSizeByte.add(fileSize);
@@ -359,6 +347,7 @@ public class ChecksumUtils {
     }
   }
 
+  /** Processes a domain metadata record and updates the state tracker. */
   private static void processDomainMetadataRecord(
       ColumnVector domainMetadataVector, StateTracker state, int rowId) {
     if (!domainMetadataVector.isNullAt(rowId)) {
@@ -371,6 +360,7 @@ public class ChecksumUtils {
     }
   }
 
+  /** Processes a metadata record and updates the state tracker. */
   private static void processMetadataRecord(
       ColumnVector metadataVector, StateTracker state, int rowId) {
     if (!metadataVector.isNullAt(rowId) && !state.metadataFromLog.isPresent()) {
@@ -379,6 +369,7 @@ public class ChecksumUtils {
     }
   }
 
+  /** Processes a protocol record and updates the state tracker. */
   private static void processProtocolRecord(
       ColumnVector protocolVector, StateTracker state, int rowId) {
     if (!protocolVector.isNullAt(rowId) && !state.protocolFromLog.isPresent()) {

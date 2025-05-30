@@ -82,7 +82,7 @@ class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase with LogReplayBaseSuit
 
   test("test checksum -- no checksum, with checkpoint") {
     withTableWithCrc { (table, _, engine) =>
-      // Need to use HadoopFs to delete file to avoid fs throwing checksum mismatch(betw) on
+      // Need to use HadoopFs to delete file to avoid fs throwing checksum mismatch on read.
       deleteChecksumFileForTableUsingHadoopFs(table.getPath(engine).stripPrefix("file:"), (0 to 11))
       engine.resetMetrics()
       table.checksum(engine, 11)
@@ -193,6 +193,21 @@ class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase with LogReplayBaseSuit
         // Tries to incrementally load CRC but fall back with unable to handle
         // Remove file without stats.
         expChecksumReadSet = Seq(11))
+      verifyChecksumForSnapshot(table.getSnapshotAsOfVersion(engine, 12))
+    }
+  }
+
+  test("test checksum -- metadata updated and picked up in the crc") {
+    withTableWithCrc { (table, path, engine) =>
+      spark.sql(s"ALTER TABLE delta.`$path` ADD COLUMNS (b String, c Int)")
+      deleteChecksumFileForTableUsingHadoopFs(table.getPath(engine), (5 to 12))
+      table.checksum(engine, 12)
+      assertMetrics(
+        engine,
+        Seq(12, 11),
+        Seq(10),
+        Seq(1),
+        expChecksumReadSet = Nil)
       verifyChecksumForSnapshot(table.getSnapshotAsOfVersion(engine, 12))
     }
   }
