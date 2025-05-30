@@ -849,14 +849,14 @@ class SchemaUtilsSuite extends AnyFunSuite {
     "allowNewRequiredFields=false") {
     assertSchemaEvolutionFailure[KernelException](
       existingFieldNullabilityTightened,
-      "Cannot tighten the nullability of existing field id")
+      "Cannot tighten the nullability of existing field .*id")
   }
 
   test("validateUpdatedSchema fails when existing nullability is tightened with " +
     "allowNewRequiredFields=true") {
     assertSchemaEvolutionFailure[KernelException](
       existingFieldNullabilityTightened,
-      "Cannot tighten the nullability of existing field id",
+      "Cannot tighten the nullability of existing field .*id",
       allowNewRequiredFields = true)
   }
 
@@ -901,6 +901,91 @@ class SchemaUtilsSuite extends AnyFunSuite {
     assertSchemaEvolutionFailure[KernelException](
       invalidTypeChange,
       "Cannot change the type of existing field id from integer to string")
+  }
+
+  private val invalidTypeChangesNested = Table(
+    ("schemaBefore", "schemaWithInvalidTypeChange"),
+    // Array to Map
+    (
+      newSchema((
+        1,
+        new StructField(
+          "array",
+          new ArrayType(
+            IntegerType.INTEGER,
+            false),
+          true))),
+      newSchema((
+        1,
+        new StructField(
+          "to_map",
+          new MapType(
+            IntegerType.INTEGER,
+            IntegerType.INTEGER,
+            false),
+          true)))),
+
+    // Array to Map
+    (
+      newSchema((
+        1,
+        new StructField(
+          "map",
+          new MapType(
+            IntegerType.INTEGER,
+            IntegerType.INTEGER,
+            false),
+          true))),
+      newSchema((
+        1,
+        new StructField(
+          "to_array",
+          new ArrayType(
+            IntegerType.INTEGER,
+            false),
+          true)))),
+    // nested array change
+    (
+      newSchema((
+        1,
+        new StructField(
+          "array",
+          new ArrayType(
+            new ArrayType(IntegerType.INTEGER, false),
+            false),
+          true))),
+      newSchema((
+        1,
+        new StructField(
+          "to_map",
+          new ArrayType(
+            new MapType(IntegerType.INTEGER, IntegerType.INTEGER, false),
+            false),
+          true)))),
+    // nested map change
+    (
+      newSchema((
+        1,
+        new StructField(
+          "map",
+          new MapType(
+            IntegerType.INTEGER,
+            new ArrayType(IntegerType.INTEGER, false),
+            false),
+          true))),
+      newSchema((
+        1,
+        new StructField(
+          "to_nested_array_to_primitive",
+          new MapType(
+            IntegerType.INTEGER,
+            IntegerType.INTEGER,
+            false),
+          false)))))
+  test("validateUpdatedSchema fails when invalid type change is performed on nested fields") {
+    assertSchemaEvolutionFailure[KernelException](
+      invalidTypeChangesNested,
+      "Cannot change the type of existing field.*")
   }
 
   private val validateAddedFields = Table(
@@ -1101,7 +1186,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
           allowNewRequiredFields)
       }
 
-      assert(e.getMessage.matches(expectedMessage))
+      assert(e.getMessage.matches(expectedMessage), s"${e.getMessage} ~= $expectedMessage")
     }
   }
 
