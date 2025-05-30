@@ -65,8 +65,8 @@ public class ChecksumUtils {
                   "UPDATE",
                   "DELETE",
                   "OPTIMIZE",
-                  "CREATE TABLE AS SELECT", // CTAS
-                  "REPLACE TABLE AS SELECT", // RTAS
+                  "CREATE TABLE AS SELECT",
+                  "REPLACE TABLE AS SELECT",
                   "CREATE OR REPLACE TABLE AS SELECT")));
 
   /**
