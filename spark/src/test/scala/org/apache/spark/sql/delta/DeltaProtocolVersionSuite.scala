@@ -3251,6 +3251,30 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
     }
   }
 
+  for {
+    propertyName <- Seq("delta.enableRowTracking", "DELTA.enableRowTracking",
+      "delta.ENABLEROWTRACKING", "DELTA.ENABLEROWTRACKING")
+  } test(s"Drop a table property using drop feature should fail" +
+    s" - with propertyName=$propertyName") {
+    withTempDir { dir =>
+      val deltaLog = DeltaLog.forTable(spark, dir)
+      sql(s"CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta")
+
+      val command = AlterTableDropFeatureDeltaCommand(
+        DeltaTableV2(spark, deltaLog.dataPath),
+        propertyName)
+
+      val e = intercept[DeltaTableFeatureException] {
+        command.run(spark)
+      }
+      checkError(
+        e,
+        "DELTA_FEATURE_DROP_FEATURE_IS_DELTA_PROPERTY",
+        parameters = Map("property" -> propertyName)
+      )
+    }
+  }
+
   protected def testProtocolVersionDowngrade(
       initialMinReaderVersion: Int,
       initialMinWriterVersion: Int,
