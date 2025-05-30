@@ -19,6 +19,7 @@ import static io.delta.kernel.internal.DeltaErrors.dataSchemaMismatch;
 import static io.delta.kernel.internal.DeltaErrors.partitionColumnMissingInData;
 import static io.delta.kernel.internal.TransactionImpl.getStatisticsColumns;
 import static io.delta.kernel.internal.data.TransactionStateRow.*;
+import static io.delta.kernel.internal.util.ColumnMapping.blockIfColumnMappingEnabled;
 import static io.delta.kernel.internal.util.PartitionUtils.getTargetDirectory;
 import static io.delta.kernel.internal.util.PartitionUtils.validateAndSanitizePartitionValues;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
@@ -36,7 +37,6 @@ import io.delta.kernel.internal.actions.SingleAction;
 import io.delta.kernel.internal.data.TransactionStateRow;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.icebergcompat.IcebergCompatV2MetadataValidatorAndUpdater;
-import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.statistics.DataFileStatistics;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.*;
@@ -165,12 +165,7 @@ public interface Transaction {
     // - generating the generated columns
 
     boolean isIcebergCompatV2Enabled = isIcebergCompatV2Enabled(transactionState);
-    ColumnMapping.ColumnMappingMode columnMappingMode = getColumnMappingMode(transactionState);
-
-    if (columnMappingMode != ColumnMapping.ColumnMappingMode.NONE) {
-      throw new UnsupportedOperationException(
-          "Writing into column mapping enabled table is not supported yet.");
-    }
+    blockIfColumnMappingEnabled(transactionState);
 
     // TODO: set the correct schema once writing into column mapping enabled table is supported.
     String tablePath = getTablePath(transactionState);
@@ -211,6 +206,7 @@ public interface Transaction {
    */
   static DataWriteContext getWriteContext(
       Engine engine, Row transactionState, Map<String, Literal> partitionValues) {
+    blockIfColumnMappingEnabled(transactionState);
     StructType tableSchema = getLogicalSchema(transactionState);
     List<String> partitionColNames = getPartitionColumnsList(transactionState);
 
