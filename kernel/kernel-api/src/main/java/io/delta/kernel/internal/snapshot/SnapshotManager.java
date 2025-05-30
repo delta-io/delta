@@ -173,9 +173,7 @@ public class SnapshotManager {
    * @throws TableNotFoundException
    */
   public Snapshot getSnapshotForTimestamp(
-      Engine engine,
-      SnapshotImpl latestSnapshot,
-      long millisSinceEpochUTC)
+      Engine engine, SnapshotImpl latestSnapshot, long millisSinceEpochUTC)
       throws TableNotFoundException {
     long startTimeMillis = System.currentTimeMillis();
     long versionToRead =
