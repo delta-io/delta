@@ -81,7 +81,8 @@ public final class DeltaHistoryManager {
             : getEarliestDeltaFile(engine, logPath);
 
     Commit placeholderEarliestCommit = new Commit(earliestVersion, -1L /* timestamp */);
-    Commit ictEnablementCommit = getICTEnablementCommit(latestSnapshot, placeholderEarliestCommit);
+    Commit ictEnablementCommit =
+        getICTEnablementCommit(engine, latestSnapshot, placeholderEarliestCommit);
     Commit searchResult;
     if (ictEnablementCommit.getTimestamp() <= timestamp) {
       // The target commit is in the ICT range.
@@ -92,7 +93,7 @@ public final class DeltaHistoryManager {
         // return this search result if `canReturnLastCommit` is true.
         // If `canReturnLastCommit` is false, we still need this commit to
         // throw the timestampAfterLatestCommit error.
-        searchResult = new Commit(latestSnapshot.getVersion(), latestSnapshotTimestamp);
+        searchResult = new Commit(latestSnapshot.getVersion(engine), latestSnapshotTimestamp);
       } else {
         // start ICT search over [earliest available ICT version, latestVersion)
         boolean ictEnabledForEntireWindow = (ictEnablementCommit.version <= earliestVersion);
@@ -105,7 +106,7 @@ public final class DeltaHistoryManager {
               getActiveCommitAtTimeFromICTRange(
                   timestamp,
                   searchWindowLowerBound,
-                  latestSnapshot.getVersion(),
+                  latestSnapshot.getVersion(engine),
                   engine,
                   latestSnapshot.getLogPath());
         } catch (IOException e) {
@@ -148,7 +149,7 @@ public final class DeltaHistoryManager {
           searchResult.version);
     }
     // If timestamp is after the last commit of the table
-    if (searchResult.version == latestSnapshot.getVersion()
+    if (searchResult.version == latestSnapshot.getVersion(engine)
         && searchResult.timestamp < timestamp
         && !canReturnLastCommit) {
       throw DeltaErrors.timestampAfterLatestCommit(
@@ -204,12 +205,13 @@ public final class DeltaHistoryManager {
    *     timestamps enabled, this will be the commit after the latest version. If in-commit
    *     timestamps were enabled for the entire history, this will be `earliestCommit`.
    */
-  private static Commit getICTEnablementCommit(SnapshotImpl snapshot, Commit earliestCommit) {
+  private static Commit getICTEnablementCommit(
+      Engine engine, SnapshotImpl snapshot, Commit earliestCommit) {
     Metadata metadata = snapshot.getMetadata();
     if (!IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata)) {
       // Pretend ICT will be enabled after the latest version and requested timestamp.
       // This will force us to use the non-ICT search path.
-      return new Commit(snapshot.getVersion() + 1, Long.MAX_VALUE);
+      return new Commit(snapshot.getVersion(engine) + 1, Long.MAX_VALUE);
     }
     Optional<Long> enablementTimestampOpt =
         IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.fromMetadata(metadata);
