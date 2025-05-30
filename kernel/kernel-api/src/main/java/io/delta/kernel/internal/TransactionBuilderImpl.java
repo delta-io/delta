@@ -784,7 +784,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     if (isCreateOrReplace) {
       // For new tables, assign materialized column names if row tracking is enabled
       return MaterializedRowTrackingColumn.assignMaterializedColumnNamesIfNeeded(
-              newMetadata.orElse(oldMetadata));
+          newMetadata.orElse(oldMetadata));
     } else {
       // For existing tables, we block enabling/disabling row tracking because:
       // 1. Enabling requires backfilling row IDs/commit versions, which is not supported in Kernel
