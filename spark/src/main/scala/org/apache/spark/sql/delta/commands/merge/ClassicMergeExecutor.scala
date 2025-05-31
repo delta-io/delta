@@ -165,6 +165,8 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
       .collect()
       .head
 
+    checkSourcePlanIsNotCached(spark, getMergeSource.df.queryExecution.logical)
+
     val hasMultipleMatches = multipleMatchCount > 0
     throwErrorOnMultipleMatches(hasMultipleMatches, spark)
     if (hasMultipleMatches) {
@@ -464,6 +466,8 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
 
     // Write to Delta
     val newFiles = writeFiles(spark, deltaTxn, outputDF)
+
+    checkSourcePlanIsNotCached(spark, getMergeSource.df.queryExecution.logical)
 
     // Update metrics
     val (addedBytes, addedPartitions) = totalBytesAndDistinctPartitionValues(newFiles)
