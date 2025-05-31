@@ -16,9 +16,11 @@
 package io.delta.kernel.internal.util;
 
 import io.delta.kernel.types.StructField;
+import io.delta.kernel.types.StructType;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * SchemaChanges encapsulates a list of added, removed, renamed, or updated fields in a schema
@@ -71,20 +73,24 @@ class SchemaChanges {
   private List<StructField> addedFields;
   private List<StructField> removedFields;
   private List<SchemaUpdate> updatedFields;
+  private Optional<StructType> updatedSchema;
 
   private SchemaChanges(
       List<StructField> addedFields,
       List<StructField> removedFields,
-      List<SchemaUpdate> updatedFields) {
+      List<SchemaUpdate> updatedFields,
+      Optional<StructType> updatedSchema) {
     this.addedFields = Collections.unmodifiableList(addedFields);
     this.removedFields = Collections.unmodifiableList(removedFields);
     this.updatedFields = Collections.unmodifiableList(updatedFields);
+    this.updatedSchema = updatedSchema;
   }
 
   static class Builder {
     private List<StructField> addedFields = new ArrayList<>();
     private List<StructField> removedFields = new ArrayList<>();
     private List<SchemaUpdate> updatedFields = new ArrayList<>();
+    private Optional<StructType> updatedSchema = Optional.empty();
 
     public Builder withAddedField(StructField addedField) {
       addedFields.add(addedField);
@@ -102,8 +108,13 @@ class SchemaChanges {
       return this;
     }
 
+    public Builder withUpdatedSchema(StructType updatedSchema) {
+      this.updatedSchema = Optional.of(updatedSchema);
+      return this;
+    }
+
     public SchemaChanges build() {
-      return new SchemaChanges(addedFields, removedFields, updatedFields);
+      return new SchemaChanges(addedFields, removedFields, updatedFields, updatedSchema);
     }
   }
 
@@ -124,5 +135,9 @@ class SchemaChanges {
   /* Updated Fields (e.g. rename, type change) represented */
   public List<SchemaUpdate> updatedFields() {
     return updatedFields;
+  }
+
+  public Optional<StructType> updatedSchema() {
+    return updatedSchema;
   }
 }
