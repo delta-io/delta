@@ -23,12 +23,16 @@ import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.DeltaLogActionUtils;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.replay.CreateCheckpointIterator;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.stats.FileSizeHistogram;
 import io.delta.kernel.internal.util.FileNames;
+import io.delta.kernel.types.StructType;
+import io.delta.kernel.utils.CloseableIterator;
+import io.delta.kernel.utils.FileStatus;
 import java.io.IOException;
 import java.time.Instant;
 import java.util.*;
@@ -37,6 +41,7 @@ import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+/** Utility methods for computing and writing checksums for Delta tables. */
 public class ChecksumUtils {
 
   private ChecksumUtils() {}
@@ -49,6 +54,20 @@ public class ChecksumUtils {
   private static final int REMOVE_INDEX = CHECKPOINT_SCHEMA.indexOf("remove");
   private static final int DOMAIN_METADATA_INDEX = CHECKPOINT_SCHEMA.indexOf("domainMetadata");
   private static final int ADD_SIZE_INDEX = AddFile.FULL_SCHEMA.indexOf("size");
+  private static final int REMOVE_SIZE_INDEX = RemoveFile.FULL_SCHEMA.indexOf("size");
+
+  private static final Set<String> INCREMENTAL_SUPPORTED_OPS =
+      Collections.unmodifiableSet(
+          new HashSet<>(
+              Arrays.asList(
+                  "WRITE",
+                  "MERGE",
+                  "UPDATE",
+                  "DELETE",
+                  "OPTIMIZE",
+                  "CREATE TABLE AS SELECT",
+                  "REPLACE TABLE AS SELECT",
+                  "CREATE OR REPLACE TABLE AS SELECT")));
 
   /**
    * Computes the state of a Delta table and writes a checksum file for the provided snapshot's
@@ -88,8 +107,22 @@ public class ChecksumUtils {
       return;
     }
 
-    // TODO: Optimize using last available crc.
-    CRCInfo crcInfo = buildCrcInfoWithFullLogReplay(engine, logSegmentAtVersion);
+    Optional<CRCInfo> lastSeenCrcInfo =
+        logSegmentAtVersion
+            .getLastSeenChecksum()
+            .flatMap(file -> ChecksumReader.getCRCInfo(engine, file));
+    // Try to build CRC incrementally if possible
+    Optional<CRCInfo> incrementallyBuiltCrc =
+        lastSeenCrcInfo.isPresent()
+            ? buildCrcInfoIncrementally(lastSeenCrcInfo.get(), engine, logSegmentAtVersion)
+            : Optional.empty();
+
+    // Use incrementally built CRC if available, otherwise do full log replay
+    CRCInfo crcInfo =
+        incrementallyBuiltCrc.isPresent()
+            ? incrementallyBuiltCrc.get()
+            : buildCrcInfoWithFullLogReplay(engine, logSegmentAtVersion);
+
     ChecksumWriter checksumWriter = new ChecksumWriter(logSegmentAtVersion.getLogPath());
     checksumWriter.writeCheckSum(engine, crcInfo);
   }
@@ -169,6 +202,140 @@ public class ChecksumUtils {
         Optional.of(state.addedFileSizeHistogram));
   }
 
+  private static Optional<CRCInfo> buildCrcInfoIncrementally(
+      CRCInfo lastSeenCrcInfo, Engine engine, LogSegment logSegment) throws IOException {
+    // Can only build incrementally if we have domain metadata and file size histogram
+    if (!lastSeenCrcInfo.getDomainMetadata().isPresent()) {
+      logger.info("Falling back to full replay: detected current crc missing domain metadata.");
+      return Optional.empty();
+    }
+    if (!lastSeenCrcInfo.getFileSizeHistogram().isPresent()) {
+      logger.info("Falling back to full replay: detected current crc missing file size histogram.");
+      return Optional.empty();
+    }
+
+    // Initialize state tracking
+    StateTracker state = new StateTracker();
+
+    // Create iterator for delta files newer than last CRC
+    try (CloseableIterator<ColumnarBatch> iterator =
+        DeltaLogActionUtils.readCommitFiles(
+            engine,
+            logSegment.getDeltas().stream()
+                .filter(
+                    file ->
+                        FileNames.getFileVersion(new Path(file.getPath()))
+                            > lastSeenCrcInfo.getVersion())
+                .sorted(
+                    Comparator.comparing((FileStatus a) -> new Path(a.getPath()).getName())
+                        .reversed())
+                .collect(Collectors.toList()),
+            CHECKPOINT_SCHEMA.add("commitInfo", CommitInfo.FULL_SCHEMA))) {
+
+      Optional<Long> currentVersion = Optional.empty();
+
+      while (iterator.hasNext()) {
+        ColumnarBatch batch = iterator.next();
+        final int rowCount = batch.getSize();
+        if (rowCount == 0) {
+          continue;
+        }
+
+        StructType schema = batch.getSchema();
+        ColumnVector versionVector = batch.getColumnVector(schema.indexOf("version"));
+        ColumnVector addVector = batch.getColumnVector(schema.indexOf("add"));
+        ColumnVector removeVector = batch.getColumnVector(schema.indexOf("remove"));
+        ColumnVector metadataVector = batch.getColumnVector(schema.indexOf("metaData"));
+        ColumnVector protocolVector = batch.getColumnVector(schema.indexOf("protocol"));
+        ColumnVector domainMetadataVector = batch.getColumnVector(schema.indexOf("domainMetadata"));
+        ColumnVector commitInfoVector = batch.getColumnVector(schema.indexOf("commitInfo"));
+
+        for (int i = 0; i < rowCount; i++) {
+          long rowVersion = versionVector.getLong(i);
+
+          // Detect version change
+          if (!currentVersion.isPresent() || rowVersion != currentVersion.get()) {
+            // New version detected - current row must be commit info
+            if (commitInfoVector.isNullAt(i)) {
+              logger.info(
+                  "Falling back to full replay: first row of version {} is not commit info",
+                  rowVersion);
+              return Optional.empty();
+            }
+
+            CommitInfo commitInfo = CommitInfo.fromColumnVector(commitInfoVector, i);
+            if (commitInfo == null
+                || !INCREMENTAL_SUPPORTED_OPS.contains(commitInfo.getOperation())) {
+              logger.info(
+                  "Falling back to full replay: unsupported operation '{}' for version {}",
+                  commitInfo != null ? commitInfo.getOperation() : "null",
+                  rowVersion);
+              return Optional.empty();
+            }
+
+            currentVersion = Optional.of(rowVersion);
+            continue;
+          }
+
+          // Process the row
+          if (!addVector.isNullAt(i)) {
+            processAddRecord(addVector, state, i);
+          }
+
+          // Process remove file records
+          if (!removeVector.isNullAt(i)) {
+            ColumnVector sizeVector = removeVector.getChild(REMOVE_SIZE_INDEX);
+            if (sizeVector.isNullAt(i)) {
+              logger.info(
+                  "Falling back to full replay: detected remove without file size in version {}",
+                  rowVersion);
+              return Optional.empty();
+            }
+            long fileSize = sizeVector.getLong(i);
+            state.tableSizeByte.add(-fileSize);
+            state.removedFileSizeHistogram.insert(fileSize);
+            state.fileCount.decrement();
+          }
+
+          // Process domain metadata, protocol, and metadata
+          processDomainMetadataRecord(domainMetadataVector, state, i);
+          processMetadataRecord(metadataVector, state, i);
+          processProtocolRecord(protocolVector, state, i);
+        }
+      }
+    }
+
+    // Merge with existing domain metadata
+    lastSeenCrcInfo
+        .getDomainMetadata()
+        .get()
+        .forEach(
+            dm -> {
+              if (!state.domainMetadataMap.containsKey(dm.getDomain())) {
+                state.domainMetadataMap.put(dm.getDomain(), dm);
+              }
+            });
+
+    // Filter to only non-removed domain metadata
+    Set<DomainMetadata> finalDomainMetadata = getNonRemovedDomainMetadata(state);
+
+    // Build and return the new CRC info
+    return Optional.of(
+        new CRCInfo(
+            logSegment.getVersion(),
+            state.metadataFromLog.orElseGet(lastSeenCrcInfo::getMetadata),
+            state.protocolFromLog.orElseGet(lastSeenCrcInfo::getProtocol),
+            state.tableSizeByte.longValue() + lastSeenCrcInfo.getTableSizeBytes(),
+            state.fileCount.longValue() + lastSeenCrcInfo.getNumFiles(),
+            Optional.empty(),
+            Optional.of(finalDomainMetadata),
+            Optional.of(
+                state
+                    .addedFileSizeHistogram
+                    .plus(lastSeenCrcInfo.getFileSizeHistogram().get())
+                    .minus(state.removedFileSizeHistogram))));
+  }
+
   /** Processes an add file record and updates the state tracker. */
   private static void processAddRecord(ColumnVector addVector, StateTracker state, int rowId) {
     if (!addVector.isNullAt(rowId)) {
@@ -189,19 +356,16 @@ public class ChecksumUtils {
       ColumnVector domainMetadataVector, StateTracker state, int rowId) {
     if (!domainMetadataVector.isNullAt(rowId)) {
       DomainMetadata domainMetadata = DomainMetadata.fromColumnVector(domainMetadataVector, rowId);
-      checkState(domainMetadata != null, "Domain metadata is null");
-      checkState(
-          !state.domainMetadataMap.containsKey(domainMetadata.getDomain()),
-          "Duplicate domain metadata: " + domainMetadata.getDomain());
-      state.domainMetadataMap.put(domainMetadata.getDomain(), domainMetadata);
+      if (!state.domainMetadataMap.containsKey(domainMetadata.getDomain())) {
+        state.domainMetadataMap.put(domainMetadata.getDomain(), domainMetadata);
+      }
     }
   }
 
   /** Processes a metadata record and updates the state tracker. */
   private static void processMetadataRecord(
       ColumnVector metadataVector, StateTracker state, int rowId) {
-    if (!metadataVector.isNullAt(rowId)) {
-      checkState(!state.metadataFromLog.isPresent(), "Duplicate metadata rows");
+    if (!metadataVector.isNullAt(rowId) && !state.metadataFromLog.isPresent()) {
       Metadata metadata = Metadata.fromColumnVector(metadataVector, rowId);
       checkState(metadata != null, "Metadata is null");
       state.metadataFromLog = Optional.of(metadata);
@@ -211,8 +375,7 @@ public class ChecksumUtils {
   /** Processes a protocol record and updates the state tracker. */
   private static void processProtocolRecord(
       ColumnVector protocolVector, StateTracker state, int rowId) {
-    if (!protocolVector.isNullAt(rowId)) {
-      checkState(!state.protocolFromLog.isPresent(), "Duplicate protocol rows");
+    if (!protocolVector.isNullAt(rowId) && !state.protocolFromLog.isPresent()) {
       Protocol protocol = Protocol.fromColumnVector(protocolVector, rowId);
       checkState(protocol != null, "Protocol is null");
       state.protocolFromLog = Optional.of(protocol);
@@ -233,6 +396,7 @@ public class ChecksumUtils {
     LongAdder tableSizeByte = new LongAdder();
     LongAdder fileCount = new LongAdder();
     FileSizeHistogram addedFileSizeHistogram = FileSizeHistogram.createDefaultHistogram();
+    FileSizeHistogram removedFileSizeHistogram = FileSizeHistogram.createDefaultHistogram();
     Map<String, DomainMetadata> domainMetadataMap = new HashMap<>();
   }
 }
