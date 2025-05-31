@@ -114,7 +114,6 @@ public class LogSegment {
     ///////////////////////
 
     requireNonNull(logPath, "logPath is null");
-
     requireNonNull(deltas, "deltas is null");
     requireNonNull(compactions, "compactions is null");
     requireNonNull(checkpoints, "checkpoints is null");

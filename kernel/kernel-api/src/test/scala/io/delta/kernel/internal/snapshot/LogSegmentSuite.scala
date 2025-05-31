@@ -28,7 +28,7 @@ import org.scalatest.funsuite.AnyFunSuite
 class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils {
   private val checkpointFs10List = singularCheckpointFileStatuses(Seq(10)).toList.asJava
   private val anotherCheckpointFs10List = anotherSingularCheckpointFileStatuses(Seq(10)).
-    toList.asJava
+  toList.asJava
   private val checksumAtVersion10 = checksumFileStatus(10)
   private val deltaFs11List = deltaFileStatuses(Seq(11)).toList.asJava
   private val deltaFs12List = deltaFileStatuses(Seq(12)).toList.asJava
@@ -265,6 +265,7 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils {
   }
 
   test("constructor -- delta commit files (JSON) outside of log path") {
+    // Create delta commit file lists from a different table.
     val ex = intercept[RuntimeException] {
       new LogSegment(
         logPath,
@@ -279,6 +280,7 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils {
   }
 
   test("constructor -- checkpoint files (parquet) outside of log path") {
+    // Create checkpoint file lists from a different table.
     val ex = intercept[RuntimeException] {
       new LogSegment(
         logPath,

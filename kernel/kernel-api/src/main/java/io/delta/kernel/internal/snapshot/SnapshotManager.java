@@ -191,9 +191,6 @@ public class SnapshotManager {
             Optional.ofNullable(latestSnapshotHint.get()),
             snapshotContext.getSnapshotMetrics());
 
-    // assertLogFilesBelongToTable(logPath, initSegment.allLogFilesUnsorted()); moved this logic to
-    // logsegment
-
     final SnapshotImpl snapshot =
         new SnapshotImpl(
             tablePath,

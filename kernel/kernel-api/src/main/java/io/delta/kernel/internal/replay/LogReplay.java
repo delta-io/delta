@@ -144,9 +144,6 @@ public class LogReplay {
       Optional<SnapshotHint> snapshotHint,
       SnapshotMetrics snapshotMetrics) {
 
-    // assertLogFilesBelongToTable(logPath, logSegment.allLogFilesUnsorted()); moved this logic to
-    // logsegment
-
     // Ignore the snapshot hint whose version is larger than the snapshot version.
     if (snapshotHint.isPresent() && snapshotHint.get().getVersion() > logSegment.getVersion()) {
       snapshotHint = Optional.empty();
