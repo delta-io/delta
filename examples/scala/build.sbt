@@ -169,3 +169,28 @@ lazy val root = (project in file("."))
     ),
     java17Settings
   )
+
+lazy val connect = (project in file("./connect"))
+  .settings(
+    run / fork := true,
+    name := "example",
+    scalaVersion := scala213,
+    mainClass := Some("example.DeltaConnect"),
+    libraryDependencies ++= Seq(
+      "io.delta" %% "delta-connect-client" % "4.0.0",
+      "org.apache.spark" %% "spark-connect-client-jvm" % "4.0.0"
+    ),
+    extraMavenRepo,
+    resolvers ++= Seq(
+      Resolver.mavenLocal,
+      // TODO remove this once the Spark preview release has been finalized
+      "Apache Spark 4.0 (RC7) Staging" at "https://repository.apache.org/content/repositories/orgapachespark-1485/",
+      "Delta" at "https://oss.sonatype.org/content/repositories/iodelta-1227"
+    ),
+    scalacOptions ++= Seq(
+      "-deprecation",
+      "-feature"
+    ),
+    java17Settings,
+    javaOptions += "--add-opens=java.base/java.nio=org.apache.arrow.memory.core,ALL-UNNAMED"
+  )
