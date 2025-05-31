@@ -313,7 +313,7 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
    */
   private CloseableIterator<ActionWrapper> getNextActionsIter() {
     final DeltaLogFile nextLogFile = filesList.pop();
-    final FileStatus nextFile = nextLogFile.getFile();
+    final FileStatus nextFile = nextLogFile.getFileStatus();
     final Path nextFilePath = new Path(nextFile.getPath());
     final String fileName = nextFilePath.getName();
     try {
@@ -462,7 +462,7 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     final List<FileStatus> checkpointFiles = new ArrayList<>();
 
     // Add the already retrieved checkpoint file to the list.
-    checkpointFiles.add(deltaLogFile.getFile());
+    checkpointFiles.add(deltaLogFile.getFileStatus());
 
     // Sidecar or multipart checkpoint types are the only files that can have multiple parts.
     if (deltaLogFile.getLogType() == SIDECAR || deltaLogFile.getLogType() == MULTIPART_CHECKPOINT) {
@@ -471,7 +471,7 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
       while (peek != null
           && deltaLogFile.getLogType() == peek.getLogType()
           && deltaLogFile.getVersion() == peek.getVersion()) {
-        checkpointFiles.add(filesList.pop().getFile());
+        checkpointFiles.add(filesList.pop().getFileStatus());
         peek = filesList.peek();
       }
     }

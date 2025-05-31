@@ -16,6 +16,7 @@
 
 package io.delta.kernel.internal.snapshot;
 
+import io.delta.kernel.internal.replay.DeltaLogFile;
 import static io.delta.kernel.internal.replay.LogReplayUtils.assertLogFilesBelongToTable;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.lang.String.format;
@@ -335,30 +336,34 @@ public class SnapshotManager {
     // Step 5: Partition $listedFileStatuses into the checkpoints, deltas, and compactions. //
     //////////////////////////////////////////////////////////////////////////////////////////
 
-    Map<DeltaLogFileType, List<FileStatus>> partitionedFiles =
-        listedFileStatuses.stream()
-            .collect(
-                Collectors.groupingBy(
-                    FileNames::determineFileType,
-                    LinkedHashMap::new, // Ensure order is maintained
-                    Collectors.toList()));
+    Map<DeltaLogFile.Category, List<DeltaLogFile>> partitionedFiles = listedFileStatuses
+        .stream()
+        .map(DeltaLogFile::forFileStatus)
+        .collect(
+            Collectors.groupingBy(
+                DeltaLogFile::getCategory,
+                LinkedHashMap::new, // Ensure order is maintained
+                Collectors.toList()));
 
-    List<FileStatus> listedDeltaFileStatuses =
-        partitionedFiles.getOrDefault(DeltaLogFileType.COMMIT, Collections.emptyList());
+    List<DeltaLogFile> listedDeltaFiles =
+        partitionedFiles.getOrDefault(DeltaLogFile.Category.COMMIT, Collections.emptyList());
 
-    List<FileStatus> listedCheckpointFileStatuses =
-        partitionedFiles.getOrDefault(DeltaLogFileType.CHECKPOINT, Collections.emptyList());
+    List<DeltaLogFile> listedCheckpointFiles =
+        partitionedFiles.getOrDefault(DeltaLogFile.Category.CHECKPOINT, Collections.emptyList());
 
-    List<FileStatus> listedCompactionFileStatuses =
-        partitionedFiles.getOrDefault(DeltaLogFileType.LOG_COMPACTION, Collections.emptyList());
+    List<DeltaLogFile.CompactionFile> listedCompactionFiles =
+        partitionedFiles.getOrDefault(DeltaLogFile.Category.LOG_COMPACTION, Collections.emptyList())
+            .stream()
+            .map(f -> (DeltaLogFile.CompactionFile) f)
+            .collect(Collectors.toList());
 
-    List<FileStatus> listedChecksumFileStatuses =
-        partitionedFiles.getOrDefault(DeltaLogFileType.CHECKSUM, Collections.emptyList());
+    List<DeltaLogFile> listedChecksumFiles =
+        partitionedFiles.getOrDefault(DeltaLogFile.Category.CHECKSUM, Collections.emptyList());
 
-    logDebugFileStatuses("listedCheckpointFileStatuses", listedCheckpointFileStatuses);
-    logDebugFileStatuses("listedCompactionFileStatuses", listedCompactionFileStatuses);
-    logDebugFileStatuses("listedDeltaFileStatuses", listedDeltaFileStatuses);
-    logDebugFileStatuses("listedCheckSumFileStatuses", listedChecksumFileStatuses);
+    logDebugFiles("listedCheckpointFiles", listedCheckpointFiles);
+    logDebugFiles("listedCompactionFiles", listedCompactionFiles);
+    logDebugFiles("listedDeltaFiles", listedDeltaFiles);
+    logDebugFiles("listedCheckSumFileStatuses", listedChecksumFiles);
 
     /////////////////////////////////////////////////////////////////////////////////////////////
     // Step 6: Determine the latest complete checkpoint version. The intuition here is that we //
@@ -367,8 +372,8 @@ public class SnapshotManager {
     /////////////////////////////////////////////////////////////////////////////////////////////
 
     final List<CheckpointInstance> listedCheckpointInstances =
-        listedCheckpointFileStatuses.stream()
-            .map(f -> new CheckpointInstance(f.getPath()))
+        listedCheckpointFiles.stream()
+            .map(f -> new CheckpointInstance(f.getFileStatus().getPath()))
             .collect(Collectors.toList());
 
     final CheckpointInstance notLaterThanCheckpoint =
@@ -392,44 +397,38 @@ public class SnapshotManager {
     /////////////////////////////////////////////////////////////////////////////////////////////
     // Step 7: Grab all deltas in range [$latestCompleteCheckpointVersion + 1, $versionToLoad] //
     /////////////////////////////////////////////////////////////////////////////////////////////
-    final List<FileStatus> deltasAfterCheckpoint =
-        listedDeltaFileStatuses.stream()
+    final List<DeltaLogFile> deltasAfterCheckpoint =
+        listedDeltaFiles.stream()
             .filter(
-                fs -> {
-                  final long deltaVersion = FileNames.deltaVersion(new Path(fs.getPath()));
-                  return latestCompleteCheckpointVersion + 1 <= deltaVersion
-                      && deltaVersion <= versionToLoadOpt.orElse(Long.MAX_VALUE);
-                })
+                f -> latestCompleteCheckpointVersion + 1 <= f.getVersion() &&
+                    f.getVersion() <= versionToLoadOpt.orElse(Long.MAX_VALUE)
+                )
             .collect(Collectors.toList());
 
-    logDebugFileStatuses("deltasAfterCheckpoint", deltasAfterCheckpoint);
+    logDebugFiles("deltasAfterCheckpoint", deltasAfterCheckpoint);
 
     //////////////////////////////////////////////////////////////////////////////////
     // Step 8: Grab all compactions in range [$latestCompleteCheckpointVersion + 1, //
     //         $versionToLoad]                                                      //
     //////////////////////////////////////////////////////////////////////////////////
 
-    final List<FileStatus> compactionsAfterCheckpoint =
-        listedCompactionFileStatuses.stream()
+    final List<DeltaLogFile.CompactionFile> compactionsAfterCheckpoint =
+        listedCompactionFiles.stream()
             .filter(
-                fs -> {
-                  final Tuple2<Long, Long> compactionVersions =
-                      FileNames.logCompactionVersions(new Path(fs.getPath()));
-                  return latestCompleteCheckpointVersion + 1 <= compactionVersions._1
-                      && compactionVersions._2 <= versionToLoadOpt.orElse(Long.MAX_VALUE);
-                })
+                f ->
+                  latestCompleteCheckpointVersion + 1 <= f.getStartVersion()
+                      && f.getEndVersion() <= versionToLoadOpt.orElse(Long.MAX_VALUE)
+                )
             .collect(Collectors.toList());
 
-    logDebugFileStatuses("compactionsAfterCheckpoint", compactionsAfterCheckpoint);
+    logDebugFiles("compactionsAfterCheckpoint", compactionsAfterCheckpoint);
 
     ////////////////////////////////////////////////////////////////////
     // Step 9: Determine the version of the snapshot we can now load. //
     ////////////////////////////////////////////////////////////////////
 
     final List<Long> deltaVersionsAfterCheckpoint =
-        deltasAfterCheckpoint.stream()
-            .map(fileStatus -> FileNames.deltaVersion(new Path(fileStatus.getPath())))
-            .collect(Collectors.toList());
+        deltasAfterCheckpoint.stream().map(DeltaLogFile::getVersion).collect(Collectors.toList());
 
     final long newVersion =
         deltaVersionsAfterCheckpoint.isEmpty()
@@ -450,8 +449,8 @@ public class SnapshotManager {
 
     // Check that, for a checkpoint at version N, there's a delta file at N, too.
     if (latestCompleteCheckpointOpt.isPresent()
-        && listedDeltaFileStatuses.stream()
-            .map(x -> FileNames.deltaVersion(new Path(x.getPath())))
+        && listedDeltaFiles.stream()
+            .map(DeltaLogFile::getVersion)
             .noneMatch(v -> v == latestCompleteCheckpointVersion)) {
       throw new InvalidTableException(
           tablePath.toString(),
@@ -500,21 +499,22 @@ public class SnapshotManager {
     // Step 11: Grab the actual checkpoint file statuses for latestCompleteCheckpointVersion. //
     ////////////////////////////////////////////////////////////////////////////////////////////
 
-    final List<FileStatus> latestCompleteCheckpointFileStatuses =
+    final List<DeltaLogFile> latestCompleteCheckpointFileStatuses =
         latestCompleteCheckpointOpt
             .map(
                 latestCompleteCheckpoint -> {
                   final Set<Path> newCheckpointPaths =
                       new HashSet<>(latestCompleteCheckpoint.getCorrespondingFiles(logPath));
 
-                  final List<FileStatus> newCheckpointFileStatuses =
-                      listedCheckpointFileStatuses.stream()
-                          .filter(f -> newCheckpointPaths.contains(new Path(f.getPath())))
+                  final List<DeltaLogFile> newCheckpointFiles =
+                      listedCheckpointFiles.stream()
+                          .filter(f ->
+                              newCheckpointPaths.contains(new Path(f.getFileStatus().getPath())))
                           .collect(Collectors.toList());
 
-                  logDebugFileStatuses("newCheckpointFileStatuses", newCheckpointFileStatuses);
+                  logDebugFiles("newCheckpointFileStatuses", newCheckpointFiles);
 
-                  if (newCheckpointFileStatuses.size() != newCheckpointPaths.size()) {
+                  if (newCheckpointFiles.size() != newCheckpointPaths.size()) {
                     final String msg =
                         format(
                             "Seems like the checkpoint is corrupted. Failed in getting the file "
@@ -522,13 +522,14 @@ public class SnapshotManager {
                             newCheckpointPaths.stream()
                                 .map(Path::toString)
                                 .collect(Collectors.joining("\n - ")),
-                            listedCheckpointFileStatuses.stream()
+                            listedCheckpointFiles.stream()
+                                .map(DeltaLogFile::getFileStatus)
                                 .map(FileStatus::getPath)
                                 .collect(Collectors.joining("\n - ")));
                     throw new IllegalStateException(msg);
                   }
 
-                  return newCheckpointFileStatuses;
+                  return newCheckpointFiles;
                 })
             .orElse(Collections.emptyList());
 
@@ -536,11 +537,10 @@ public class SnapshotManager {
     // Step 12: Grab the last seen checksum //
     //////////////////////////////////////////
 
-    Optional<FileStatus> lastSeenChecksumFile = Optional.empty();
-    if (!listedChecksumFileStatuses.isEmpty()) {
-      FileStatus latestChecksum = ListUtils.getLast(listedChecksumFileStatuses);
-      long checksumVersion = FileNames.checksumVersion(new Path(latestChecksum.getPath()));
-      if (checksumVersion >= latestCompleteCheckpointVersion) {
+    Optional<DeltaLogFile> lastSeenChecksumFile = Optional.empty();
+    if (!listedChecksumFiles.isEmpty()) {
+      DeltaLogFile latestChecksum = ListUtils.getLast(listedChecksumFiles);
+      if (latestChecksum.getVersion() >= latestCompleteCheckpointVersion) {
         lastSeenChecksumFile = Optional.of(latestChecksum);
       }
     }
@@ -555,7 +555,7 @@ public class SnapshotManager {
         System.currentTimeMillis() - logSegmentBuildingStartTimeMillis);
 
     final long lastCommitTimestamp =
-        ListUtils.getLast(listedDeltaFileStatuses).getModificationTime();
+        ListUtils.getLast(listedDeltaFiles).getFileStatus().getModificationTime();
 
     return new LogSegment(
         logPath,
@@ -614,6 +614,16 @@ public class SnapshotManager {
           varName,
           Arrays.toString(
               fileStatuses.stream().map(x -> new Path(x.getPath()).getName()).toArray()));
+    }
+  }
+
+  private <T extends DeltaLogFile> void logDebugFiles(String varName, List<T> files) {
+    if (logger.isDebugEnabled()) {
+      logDebugFileStatuses(
+          varName,
+          files.stream()
+              .map(DeltaLogFile::getFileStatus)
+              .collect(Collectors.toList()));
     }
   }
 }
