@@ -1194,6 +1194,39 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     }
   }
 
+  // Tests transaction conflict detection with the same app ID but different versions.
+  private def testTransactionConflictWithSameAppId(
+      firstVersion: Long, secondVersion: Long): Unit = {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // Commit a transaction with app ID "t1" and the specified version
+      val setupTxn = createWriteTxnBuilder(Table.forPath(engine, tablePath))
+        .withSchema(engine, testSchema)
+        .withTransactionId(engine, "t1", firstVersion)
+        .build(engine)
+      commitTransaction(setupTxn, engine, emptyIterable())
+
+      // Attempt to create another transaction with the same app ID but different version
+      val ex = intercept[Exception] {
+        createWriteTxnBuilder(Table.forPath(engine, tablePath))
+          .withSchema(engine, testSchema)
+          .withTransactionId(engine, "t1", secondVersion)
+          .build(engine)
+      }
+
+      // Verify that an appropriate exception is thrown
+      assert(ex.isInstanceOf[ConcurrentTransactionException] ||
+        (ex.isInstanceOf[KernelException] && ex.getMessage.contains("Cannot update schema")))
+    }
+  }
+
+  test("block concurrent set-txns with the same app id but higher version") {
+    testTransactionConflictWithSameAppId(firstVersion = 3, secondVersion = 5)
+  }
+
+  test("block concurrent set-txns with the same app id but lower version") {
+    testTransactionConflictWithSameAppId(firstVersion = 5, secondVersion = 3)
+  }
+
   def removeTimestampNtzTypeColumns(structType: StructType): StructType = {
     def process(dataType: DataType): Option[DataType] = dataType match {
       case a: ArrayType =>
