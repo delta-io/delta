@@ -138,7 +138,6 @@ public class LogReplay {
   private final CrcInfoContext crcInfoContext;
 
   public LogReplay(
-      Path logPath,
       Path dataPath,
       Engine engine,
       LogSegment logSegment,

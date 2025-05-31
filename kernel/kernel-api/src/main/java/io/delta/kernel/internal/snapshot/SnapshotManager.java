@@ -185,7 +185,6 @@ public class SnapshotManager {
 
     LogReplay logReplay =
         new LogReplay(
-            logPath,
             tablePath,
             engine,
             initSegment,

@@ -27,10 +27,13 @@ import org.scalatest.funsuite.AnyFunSuite
 
 class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils {
   private val checkpointFs10List = singularCheckpointFileStatuses(Seq(10)).toList.asJava
+  private val anotherCheckpointFs10List = anotherSingularCheckpointFileStatuses(Seq(10)).
+    toList.asJava
   private val checksumAtVersion10 = checksumFileStatus(10)
   private val deltaFs11List = deltaFileStatuses(Seq(11)).toList.asJava
   private val deltaFs12List = deltaFileStatuses(Seq(12)).toList.asJava
   private val deltasFs11To12List = deltaFileStatuses(Seq(11, 12)).toList.asJava
+  private val anotherTableDeltasFs11To12List = anotherDeltaFileStatuses(Seq(11, 12)).toList.asJava
   private val compactionFs3To5List = compactedFileStatuses(Seq((3, 5))).toList.asJava
   private val badJsonsList = Collections.singletonList(
     FileStatus.of(s"${logPath.toString}/gibberish.json", 1, 1))
@@ -259,6 +262,34 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils {
         1)
     }.getMessage
     assert(exMsg === "Delta versions must be contiguous: [11, 13]")
+  }
+
+  test("constructor -- delta commit files (JSON) outside of log path") {
+    val ex = intercept[RuntimeException] {
+      new LogSegment(
+        logPath,
+        12,
+        anotherTableDeltasFs11To12List,
+        Collections.emptyList(),
+        checkpointFs10List,
+        Optional.empty(),
+        1)
+    }
+    assert(ex.getMessage.contains("doesn't belong in the transaction log"))
+  }
+
+  test("constructor -- checkpoint files (parquet) outside of log path") {
+    val ex = intercept[RuntimeException] {
+      new LogSegment(
+        logPath,
+        12,
+        deltasFs11To12List,
+        Collections.emptyList(),
+        anotherCheckpointFs10List,
+        Optional.empty(),
+        1)
+    }
+    assert(ex.getMessage.contains("doesn't belong in the transaction log"))
   }
 
   test("isComplete") {

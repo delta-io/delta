@@ -36,10 +36,15 @@ trait MockFileSystemClientUtils extends MockEngineUtils {
 
   val dataPath = new Path("/fake/path/to/table/")
   val logPath = new Path(dataPath, "_delta_log")
+  val anotherLogPath = new Path("/another/fake/path/to/table/", "_delta_log")
 
   /** Delta file status where the timestamp = 10*version */
   def deltaFileStatus(v: Long): FileStatus =
     FileStatus.of(FileNames.deltaFile(logPath, v), v, v * 10)
+
+  /** Delta file status where the timestamp = 10*version and file is in anotherLogPath */
+  def anotherDeltaFileStatus(v: Long): FileStatus =
+    FileStatus.of(FileNames.deltaFile(anotherLogPath, v), v, v * 10)
 
   /** Compaction file status where the timestamp = 10*startVersion */
   def logCompactionStatus(s: Long, e: Long): FileStatus =
@@ -49,6 +54,12 @@ trait MockFileSystemClientUtils extends MockEngineUtils {
   def deltaFileStatuses(deltaVersions: Seq[Long]): Seq[FileStatus] = {
     assert(deltaVersions.size == deltaVersions.toSet.size)
     deltaVersions.map(deltaFileStatus)
+  }
+
+  /** Delta file statuses where the timestamp = 10*version and files are in anotherLogPath */
+  def anotherDeltaFileStatuses(deltaVersions: Seq[Long]): Seq[FileStatus] = {
+    assert(deltaVersions.size == deltaVersions.toSet.size)
+    deltaVersions.map(anotherDeltaFileStatus)
   }
 
   /** Compaction file statuses where the timestamp = 10*startVersion */
@@ -68,6 +79,13 @@ trait MockFileSystemClientUtils extends MockEngineUtils {
     assert(checkpointVersions.size == checkpointVersions.toSet.size)
     checkpointVersions.map(v =>
       FileStatus.of(FileNames.checkpointFileSingular(logPath, v).toString, v, v * 10))
+  }
+
+  /** Checkpoint file statuses where the timestamp = 10*version and is in anotherLogPath */
+  def anotherSingularCheckpointFileStatuses(checkpointVersions: Seq[Long]): Seq[FileStatus] = {
+    assert(checkpointVersions.size == checkpointVersions.toSet.size)
+    checkpointVersions.map(v =>
+      FileStatus.of(FileNames.checkpointFileSingular(anotherLogPath, v).toString, v, v * 10))
   }
 
   /** Checkpoint file statuses where the timestamp = 10*version */
