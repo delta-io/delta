@@ -18,8 +18,6 @@ package io.delta.kernel.defaults.engine;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.defaults.engine.fileio.FileIO;
-import io.delta.kernel.defaults.internal.parquet.ParquetFileReader;
-import io.delta.kernel.defaults.internal.parquet.ParquetFileWriter;
 import io.delta.kernel.engine.ParquetHandler;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Predicate;
@@ -52,7 +50,8 @@ public class DefaultParquetHandler implements ParquetHandler {
       Optional<Predicate> predicate)
       throws IOException {
     return new CloseableIterator<ColumnarBatch>() {
-      private final ParquetFileReader batchReader = new ParquetFileReader(fileIO);
+      private final io.delta.kernel.defaults.internal.parquet.ParquetFileReader batchReader =
+          new io.delta.kernel.defaults.internal.parquet.ParquetFileReader(fileIO);
       private CloseableIterator<ColumnarBatch> currentFileReader;
 
       @Override
@@ -92,8 +91,9 @@ public class DefaultParquetHandler implements ParquetHandler {
       CloseableIterator<FilteredColumnarBatch> dataIter,
       List<Column> statsColumns)
       throws IOException {
-    ParquetFileWriter batchWriter =
-        ParquetFileWriter.multiFileWriter(fileIO, directoryPath, statsColumns);
+    io.delta.kernel.defaults.internal.parquet.ParquetFileWriter batchWriter =
+        io.delta.kernel.defaults.internal.parquet.ParquetFileWriter.multiFileWriter(
+            fileIO, directoryPath, statsColumns);
     return batchWriter.write(dataIter);
   }
 
@@ -110,8 +110,8 @@ public class DefaultParquetHandler implements ParquetHandler {
       String filePath, CloseableIterator<FilteredColumnarBatch> data) throws IOException {
 
     try {
-      ParquetFileWriter fileWriter =
-          ParquetFileWriter.singleFileWriter(
+      io.delta.kernel.defaults.internal.parquet.ParquetFileWriter fileWriter =
+          io.delta.kernel.defaults.internal.parquet.ParquetFileWriter.singleFileWriter(
               fileIO,
               filePath,
               /* atomicWrite= */ true,

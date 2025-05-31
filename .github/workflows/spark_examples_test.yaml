@@ -7,7 +7,7 @@ jobs:
     strategy:
       matrix:
         # These Scala versions must match those in the build.sbt
-        scala: [2.12.18, 2.13.13]
+        scala: [2.13.13]
     env:
       SCALA_VERSION: ${{ matrix.scala }}
     steps:
@@ -24,7 +24,7 @@ jobs:
         uses: actions/setup-java@v3
         with:
           distribution: "zulu"
-          java-version: "8"
+          java-version: "17"
       - name: Cache Scala, SBT
         uses: actions/cache@v3
         with:
@@ -44,13 +44,10 @@ jobs:
           sudo apt install libedit-dev
         if: steps.git-diff.outputs.diff
       - name: Run Delta Spark Local Publishing and Examples Compilation
-        # examples/scala/build.sbt will compile against the local Delta relase version (e.g. 3.2.0-SNAPSHOT).
+        # examples/scala/build.sbt will compile against the local Delta release version (e.g. 3.2.0-SNAPSHOT).
         # Thus, we need to publishM2 first so those jars are locally accessible.
-        # We publish storage explicitly so that it is available for the Scala 2.13 build. As a java project
-        # it is typically only released when publishing for Scala 2.12.
         run: |
           build/sbt clean
-          build/sbt storage/publishM2
-          build/sbt "++ $SCALA_VERSION publishM2"
+          build/sbt sparkGroup/publishM2
           cd examples/scala && build/sbt "++ $SCALA_VERSION compile"
         if: steps.git-diff.outputs.diff
