@@ -82,7 +82,7 @@ class DeltaTableForNameSuite extends QueryTest
   }
 
   private def getTablePath(tableName: String): Path = {
-    new Path(FileUtils.getTempDirectory.toString + "/DeltaTableForNameSuite/" + tableName)
+    new Path(DummyCatalogWithNamespace.catalogDir + s"/$tableName")
   }
 
   private def setUpTable(catalog: String, schema: String, table: String): Unit = {
