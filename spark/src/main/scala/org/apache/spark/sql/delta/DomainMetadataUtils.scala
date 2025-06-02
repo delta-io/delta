@@ -134,17 +134,29 @@ trait DomainMetadataUtilsBase extends DeltaLogging {
       ClusteredTableUtils.getMatchingMetadataDomain(
         clusteringColumns,
         fromSnapshot.domainMetadata)
-    filteredDomainMetadata ++ matchingMetadataDomain.clusteringDomainOpt
+
+    // RESTORE table is effectively replacing the current table state (`fromSnapshot`) with a
+    // previous snapshot (`toSnapshot`). Like for REPLACE table, this means any DomainMetadata in
+    // the previous `fromSnapshot` without an equivalent domain in the `fromSnapshot` must be marked
+    // as removed.
+    handleDomainMetadataForReplaceTable(
+      toSnapshot.domainMetadata,
+      filteredDomainMetadata ++ matchingMetadataDomain.clusteringDomainOpt)
   }
 
   /**
    *  Generates sequence of DomainMetadata to commit for CLONE TABLE command.
    */
   def handleDomainMetadataForCloneTable(
-      sourceDomainMetadatas: Seq[DomainMetadata]): Seq[DomainMetadata] = {
-    sourceDomainMetadatas.filter { m =>
+      sourceSnapshot: Snapshot,
+      targetSnapshot: Snapshot): Seq[DomainMetadata] = {
+    val newDomainMetadata = sourceSnapshot.domainMetadata.filter { m =>
       METADATA_DOMAIN_TO_COPY_FOR_CLONE_TABLE.contains(m.domain)
     }
+
+    // A CLONE operation may overwrite an existing snapshot (effectively a REPLACE operation).
+    // Handle the removed DomainMetadata accordingly.
+    handleDomainMetadataForReplaceTable(targetSnapshot.domainMetadata, newDomainMetadata)
   }
 }
 
