@@ -18,11 +18,17 @@ package io.delta.kernel.internal.metrics;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
+import io.delta.kernel.expressions.Column;
+import io.delta.kernel.internal.util.SchemaUtils;
 import io.delta.kernel.metrics.SnapshotReport;
 import io.delta.kernel.metrics.TransactionMetricsResult;
 import io.delta.kernel.metrics.TransactionReport;
+
+import java.util.Collections;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /** A basic POJO implementation of {@link TransactionReport} for creating them */
 public class TransactionReportImpl extends DeltaOperationReportImpl implements TransactionReport {
@@ -32,6 +38,7 @@ public class TransactionReportImpl extends DeltaOperationReportImpl implements T
   private final long snapshotVersion;
   private final Optional<UUID> snapshotReportUUID;
   private final Optional<Long> committedVersion;
+  private final List<String[]> clusteringColumns;
   private final TransactionMetricsResult transactionMetrics;
 
   /**
@@ -39,6 +46,7 @@ public class TransactionReportImpl extends DeltaOperationReportImpl implements T
    * @param operation the operation provided by the connector when the transaction was created
    * @param engineInfo the engineInfo provided by the connector when the transaction was created
    * @param committedVersion the version committed to the table. Empty for a failed transaction.
+   * @param clusteringColumns the clustering columns for the table, if any. Empty if not set.
    * @param transactionMetrics the metrics for the transaction
    * @param snapshotReport the SnapshotReport for the base snapshot of this transaction. Note, in
    *     the case of a new table (when version = -1), this SnapshotReport is just a placeholder and
@@ -50,6 +58,7 @@ public class TransactionReportImpl extends DeltaOperationReportImpl implements T
       String operation,
       String engineInfo,
       Optional<Long> committedVersion,
+      Optional<List<Column>> clusteringColumns,
       TransactionMetrics transactionMetrics,
       SnapshotReport snapshotReport,
       Optional<Exception> exception) {
@@ -58,6 +67,8 @@ public class TransactionReportImpl extends DeltaOperationReportImpl implements T
     this.engineInfo = requireNonNull(engineInfo);
     this.transactionMetrics = requireNonNull(transactionMetrics).captureTransactionMetricsResult();
     this.committedVersion = committedVersion;
+    this.clusteringColumns = requireNonNull(clusteringColumns).orElse(Collections.emptyList())
+                    .stream().map(Column::getNames).collect(Collectors.toList());
     requireNonNull(snapshotReport);
     checkArgument(
         !snapshotReport.getException().isPresent(),
@@ -87,6 +98,12 @@ public class TransactionReportImpl extends DeltaOperationReportImpl implements T
   @Override
   public long getBaseSnapshotVersion() {
     return snapshotVersion;
+  }
+
+  @Override
+  public List<String[]> getClusteringColumns()
+  {
+    return clusteringColumns;
   }
 
   @Override

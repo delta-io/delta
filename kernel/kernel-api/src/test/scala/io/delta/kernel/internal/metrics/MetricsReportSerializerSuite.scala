@@ -15,12 +15,10 @@
  */
 package io.delta.kernel.internal.metrics
 
-import java.util.{Optional, UUID}
-
+import java.util.{Collections, Optional, UUID}
 import io.delta.kernel.expressions.{Column, Literal, Predicate}
 import io.delta.kernel.metrics.{ScanReport, SnapshotReport, TransactionReport}
 import io.delta.kernel.types.{IntegerType, StructType}
-
 import org.scalatest.funsuite.AnyFunSuite
 
 class MetricsReportSerializerSuite extends AnyFunSuite {
@@ -122,6 +120,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |"baseSnapshotVersion":${transactionReport.getBaseSnapshotVersion()},
          |"snapshotReportUUID":${optionToString(snapshotReportUUID)},
          |"committedVersion":${optionToString(transactionReport.getCommittedVersion())},
+         |"clusteringColumns":${transactionReport.getClusteringColumns()},
          |"transactionMetrics":{
          |"totalCommitDurationNs":${transactionMetrics.getTotalCommitDurationNs},
          |"numCommitAttempts":${transactionMetrics.getNumCommitAttempts},
@@ -155,6 +154,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
       "test-operation",
       "test-engine",
       Optional.of(2), /* committedVersion */
+      Optional.of(Collections.singletonList(new Column("test-clustering-col1"))),
       transactionMetrics1,
       snapshotReport1,
       Optional.of(exception))
@@ -171,6 +171,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |"baseSnapshotVersion":1,
          |"snapshotReportUUID":"${snapshotReport1.getReportUUID}",
          |"committedVersion":2,
+         |"clusteringColumns":[["test-clustering-col1"]],
          |"transactionMetrics":{
          |"totalCommitDurationNs":200,
          |"numCommitAttempts":2,
@@ -195,6 +196,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
       "test-operation-2",
       "test-engine-2",
       Optional.empty(), /* committedVersion */
+      Optional.of(Collections.singletonList(new Column("test-clustering-col1"))),
       // empty/un-incremented transaction metrics
       TransactionMetrics.withExistingTableFileSizeHistogram(Optional.empty()),
       snapshotReport2,
