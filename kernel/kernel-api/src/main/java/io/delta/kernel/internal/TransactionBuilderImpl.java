@@ -722,7 +722,6 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   private LogReplay getEmptyLogReplay(
       Engine engine, Metadata metadata, Protocol protocol, SnapshotMetrics snapshotMetrics) {
     return new LogReplay(
-        table.getLogPath(),
         table.getDataPath(),
         engine,
         LogSegment.empty(table.getLogPath()),

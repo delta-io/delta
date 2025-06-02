@@ -16,7 +16,6 @@
 
 package io.delta.kernel.internal.replay;
 
-import static io.delta.kernel.internal.replay.LogReplayUtils.assertLogFilesBelongToTable;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
@@ -141,14 +140,11 @@ public class LogReplay {
   private final CrcInfoContext crcInfoContext;
 
   public LogReplay(
-      Path logPath,
       Path dataPath,
       Engine engine,
       LogSegment logSegment,
       Optional<SnapshotHint> snapshotHint,
       SnapshotMetrics snapshotMetrics) {
-
-    assertLogFilesBelongToTable(logPath, logSegment.allLogFilesUnsorted());
 
     // Ignore the snapshot hint whose version is larger than the snapshot version.
     if (snapshotHint.isPresent() && snapshotHint.get().getVersion() > logSegment.getVersion()) {
