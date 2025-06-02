@@ -82,6 +82,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   // case-preserved column names or physical column names if column mapping is enabled.
   // This would only be set after schema resolution and must align with the resolved schema.
   private Optional<List<Column>> resolvedClusteringColumns = Optional.empty();
+  private boolean shouldUpdateClusteringDomainMetadata = false;
 
   protected final TableImpl table;
   protected Optional<StructType> schema = Optional.empty();
@@ -265,6 +266,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
           latestSnapshot.get().getMetadata(), // reuse latest metadata
           setTxnOpt,
           Optional.empty(), /* clustering cols=empty */
+          false /* shouldUpdateClusteringDomainMetadata=false */,
           false /* shouldUpdateMetadata=false */,
           false /* shouldUpdateProtocol=false */,
           maxRetries,
@@ -349,6 +351,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         newMetadata.orElse(baseMetadata),
         setTxnOpt,
         resolvedClusteringColumns,
+        shouldUpdateClusteringDomainMetadata,
         newMetadata.isPresent() || isCreateOrReplace /* shouldUpdateMetadata */,
         newProtocol.isPresent() || isCreateOrReplace /* shouldUpdateProtocol */,
         maxRetries,
@@ -483,9 +486,12 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     // Get the physical names of clustering columns based on the updated schema.
     // This is only done if clustering columns are explicitly set in this transaction.
     StructType updatedSchema = newMetadata.orElse(baseMetadata).getSchema();
-    resolvedClusteringColumns =
-        initialClusteringColumns.map(
-            cols -> SchemaUtils.casePreservingEligibleClusterColumns(updatedSchema, cols));
+    this.resolvedClusteringColumns =
+      initialClusteringColumns.isPresent() ?
+            initialClusteringColumns.map(
+                    cols -> SchemaUtils.casePreservingEligibleClusterColumns(updatedSchema, cols))
+            : existingClusteringCols;
+    shouldUpdateClusteringDomainMetadata = initialClusteringColumns.isPresent();
 
     /* ----- 6: Update the METADATA with materialized row tracking column name if applicable----- */
     Optional<Metadata> rowTrackingMetadata =
