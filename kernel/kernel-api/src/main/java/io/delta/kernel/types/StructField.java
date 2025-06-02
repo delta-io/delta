@@ -85,17 +85,9 @@ public class StructField {
     this.nullable = nullable;
     this.typeChanges = typeChanges == null ? Collections.emptyList() : typeChanges;
 
-    if (metadata.contains("delta.____no_recursion")) {
-      this.metadata =
-          FieldMetadata.builder().fromMetadata(metadata).remove("delta.____no_recursion").build();
-    } else {
-      FieldMetadata collationMetadata = fetchCollationMetadata();
-      this.metadata =
-          new FieldMetadata.Builder()
-              .fromMetadata(metadata)
-              .fromMetadata(collationMetadata)
-              .build();
-    }
+    FieldMetadata collationMetadata = fetchCollationMetadata();
+    this.metadata =
+        new FieldMetadata.Builder().fromMetadata(metadata).fromMetadata(collationMetadata).build();
     if (!this.typeChanges.isEmpty()
         && (dataType instanceof MapType
             || dataType instanceof StructType
