@@ -21,6 +21,7 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.ScanBuilder;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.ScanBuilderImpl;
+import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
@@ -35,6 +36,7 @@ import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.metrics.SnapshotReport;
 import io.delta.kernel.types.StructType;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
@@ -98,7 +100,8 @@ public class ResolvedTableInternalImpl implements ResolvedTableInternal {
 
   @Override
   public Optional<String> getDomainMetadata(String domain) {
-    throw new UnsupportedOperationException("Not implemented");
+    return Optional.ofNullable(getActiveDomainMetadataMap().get(domain))
+        .map(DomainMetadata::getConfiguration);
   }
 
   @Override
@@ -134,6 +137,11 @@ public class ResolvedTableInternalImpl implements ResolvedTableInternal {
   @Override
   public Clock getClock() {
     return clock;
+  }
+
+  @Override
+  public Map<String, DomainMetadata> getActiveDomainMetadataMap() {
+    return lazyLogReplay.get().getActiveDomainMetadataMap();
   }
 
   @Override
