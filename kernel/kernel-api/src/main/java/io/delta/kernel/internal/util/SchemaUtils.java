@@ -517,6 +517,10 @@ public class SchemaUtils {
         if (!isNestedType(existingField)
             && !isNestedType(newField)
             && !existingField.getDataType().equivalent(newField.getDataType())) {
+          // Type changes only apply to non-nested types.  This loop evaluates both
+          // nested and non-nested, so we narrow down updates here. Actual type differences
+          // between nested types are validated against SchemaChanges returned by this
+          // function.
           List<TypeChange> changes = new ArrayList<>(newField.getTypeChanges());
           changes.add(new TypeChange(existingField.getDataType(), newField.getDataType()));
           newElement.updateField(newField.withTypeChanges(changes));
