@@ -32,48 +32,74 @@ class DeltaSharingUtilsSuite extends SparkFunSuite with SharedSparkContext {
 
   type RefresherFunction = Option[String] => TableRefreshResult
   class SimpleTestDeltaSharingClient extends DeltaSharingClient {
-    def getAddFileStr(): String = {
-        s"""{"file":{
-           |  "id":"add_file_id1",
-           |  "expirationTimestamp":1721350999999,
-           |  "deltaSingleAction":{
-           |    "add":{
-           |      "path":"70/part-00000-df2a2a20.c000.snappy.parquet",
-           |      "partitionValues":{"col-partition":"3"},
-           |      "size":1213,
-           |      "modificationTime":1721350059000,
-           |      "dataChange":true,
-           |      "stats":"{\\"numRecords\\":20,\\"minValues\\":{\\"col-a\\":0},\\"maxValues\\":{\\"col-a\\":19},\\"nullCount\\":{\\"col-a\\":0}}",
-           |      "tags":{"INSERTION_TIME":"1721350059000000"}
-           |    }
-           |  }
-           |}}""".stripMargin
+    def getStatsStr(): String = {
+      """{
+        |  "numRecords": 20,
+        |  "minValues": { "col-a": 0 },
+        |  "maxValues": { "col-a": 19 },
+        |  "nullCount": { "col-a": 0 }
+        |}""".stripMargin
+        .replace("\n", "")
+        .replace(" ", "")
+        .replace("\"", "\\\"")
     }
 
-    def getDeletionVectorStr(): String = {
-      s"""{"file":{
-         |  "id":"add_file_id2",
-         |  "expirationTimestamp":1721350999999,
-         |  "deletionVectorFileId":"dv_file_id",
-         |  "deltaSingleAction":{
-         |    "add":{
-         |      "path":"70/part-00000-df2a2a20.c000.snappy.parquet",
-         |      "partitionValues":{"col-partition":"3"},
-         |      "size":1213,
-         |      "modificationTime":1721350059000,
-         |      "dataChange":true,
-         |      "stats":"{\\"numRecords\\":20,\\"minValues\\":{\\"col-a\\":0},\\"maxValues\\":{\\"col-a\\":19},\\"nullCount\\":{\\"col-a\\":0}}",
-         |      "tags":{"INSERTION_TIME":"1721350059000000"},
-         |      "deletionVector":{
-         |        "storageType":"p",
-         |        "pathOrInlineDv":":encoded:placeholder:",
-         |        "offset":1,
-         |        "sizeInBytes":34,
-         |        "cardinality":1
+    def getAddFileStr(): String = {
+      val stats = getStatsStr()
+      s"""{
+         |  "file": {
+         |    "id": "add_file_id1",
+         |    "expirationTimestamp": 1721350999999,
+         |    "deltaSingleAction": {
+         |      "add": {
+         |        "path": "70/part-00000-df2a2a20.c000.snappy.parquet",
+         |        "partitionValues": {
+         |          "col-partition": "3"
+         |        },
+         |        "size": 1213,
+         |        "modificationTime": 1721350059000,
+         |        "dataChange": true,
+         |        "stats": "$stats",
+         |        "tags": {
+         |          "INSERTION_TIME": "1721350059000000"
+         |        }
          |      }
          |    }
          |  }
-         |}}""".stripMargin
+         |}""".stripMargin
+    }
+
+    def getDeletionVectorStr(): String = {
+      val stats = getStatsStr()
+      s"""{
+         |  "file": {
+         |    "id": "add_file_id2",
+         |    "expirationTimestamp": 1721350999999,
+         |    "deletionVectorFileId": "dv_file_id",
+         |    "deltaSingleAction": {
+         |      "add": {
+         |        "path": "70/part-00000-df2a2a20.c000.snappy.parquet",
+         |        "partitionValues": {
+         |          "col-partition": "3"
+         |        },
+         |        "size": 1213,
+         |        "modificationTime": 1721350059000,
+         |        "dataChange": true,
+         |        "stats": "$stats",
+         |        "tags": {
+         |          "INSERTION_TIME": "1721350059000000"
+         |        },
+         |        "deletionVector": {
+         |          "storageType": "p",
+         |          "pathOrInlineDv": ":encoded:placeholder:",
+         |          "offset": 1,
+         |          "sizeInBytes": 34,
+         |          "cardinality": 1
+         |        }
+         |      }
+         |    }
+         |  }
+         |}""".stripMargin
     }
 
     def getCdcStr(): String = {
