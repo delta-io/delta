@@ -55,7 +55,6 @@ public class ChecksumUtils {
   private static final int DOMAIN_METADATA_INDEX = CHECKPOINT_SCHEMA.indexOf("domainMetadata");
   private static final int ADD_SIZE_INDEX = AddFile.FULL_SCHEMA.indexOf("size");
   private static final int REMOVE_SIZE_INDEX = RemoveFile.FULL_SCHEMA.indexOf("size");
-
   private static final Set<String> INCREMENTAL_SUPPORTED_OPS =
       Collections.unmodifiableSet(
           new HashSet<>(
@@ -202,6 +201,15 @@ public class ChecksumUtils {
         Optional.of(state.addedFileSizeHistogram));
   }
 
+  /**
+   * Attempts to build CRC info incrementally from the last seen checksum. Falls back if incremental
+   * computation is not possible.
+   *
+   * @param lastSeenCrcInfo The last available CRC info to build upon
+   * @param engine The engine to use for file operations
+   * @param logSegment The log segment to process
+   * @return Optional containing the new CRC info, or empty if fallback is needed
+   */
   private static Optional<CRCInfo> buildCrcInfoIncrementally(
       CRCInfo lastSeenCrcInfo, Engine engine, LogSegment logSegment) throws IOException {
     // Can only build incrementally if we have domain metadata and file size histogram
