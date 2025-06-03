@@ -227,13 +227,18 @@ public class ChecksumUtils {
    */
   private static Optional<CRCInfo> buildCrcInfoIncrementally(
       CRCInfo lastSeenCrcInfo, Engine engine, LogSegment logSegment) throws IOException {
+    long startTime = System.currentTimeMillis();
     // Can only build incrementally if we have domain metadata and file size histogram
     if (!lastSeenCrcInfo.getDomainMetadata().isPresent()) {
-      logger.info("Falling back to full replay: detected current crc missing domain metadata.");
+      logger.info(
+          "Falling back to full replay after {}ms: detected current crc missing domain metadata.",
+          System.currentTimeMillis() - startTime);
       return Optional.empty();
     }
     if (!lastSeenCrcInfo.getFileSizeHistogram().isPresent()) {
-      logger.info("Falling back to full replay: detected current crc missing file size histogram.");
+      logger.info(
+          "Falling back to full replay after {}ms: detected current crc missing file size histogram.",
+          System.currentTimeMillis() - startTime);
       return Optional.empty();
     }
 
@@ -291,7 +296,8 @@ public class ChecksumUtils {
             if (commitInfo == null
                 || !INCREMENTAL_SUPPORTED_OPS.contains(commitInfo.getOperation())) {
               logger.info(
-                  "Falling back to full replay: unsupported operation '{}' for version {}",
+                  "Falling back to full replay after {}ms: unsupported operation '{}' for version {}",
+                  System.currentTimeMillis() - startTime,
                   commitInfo != null ? commitInfo.getOperation() : "null",
                   newVersion);
               return Optional.empty();
@@ -311,7 +317,8 @@ public class ChecksumUtils {
             ColumnVector sizeVector = removeVector.getChild(REMOVE_SIZE_INDEX);
             if (sizeVector.isNullAt(i)) {
               logger.info(
-                  "Falling back to full replay: detected remove without file size in version {}",
+                  "Falling back to full replay after {}ms: detected remove without file size in version {}",
+                  System.currentTimeMillis() - startTime,
                   newVersion);
               return Optional.empty();
             }
@@ -342,7 +349,9 @@ public class ChecksumUtils {
 
     // Filter to only non-removed domain metadata
     Set<DomainMetadata> finalDomainMetadata = getNonRemovedDomainMetadata(state);
-
+    logger.info(
+        "Successfully completed incremental CRC computation in {} ms",
+        System.currentTimeMillis() - startTime);
     // Build and return the new CRC info
     return Optional.of(
         new CRCInfo(
