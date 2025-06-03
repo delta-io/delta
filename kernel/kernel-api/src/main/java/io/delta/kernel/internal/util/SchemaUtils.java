@@ -148,6 +148,8 @@ public class SchemaUtils {
    *     schema
    * @throws IllegalArgumentException if the schema evolution is invalid
    */
+  // TODO: Consider renaming or refactoring to avoid returning the
+  // StructType here.
   public static Optional<StructType> validateSchemaEvolutionById(
       StructType currentSchema,
       StructType newSchema,
