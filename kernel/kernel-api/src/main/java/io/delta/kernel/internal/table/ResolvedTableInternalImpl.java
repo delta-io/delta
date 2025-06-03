@@ -141,7 +141,7 @@ public class ResolvedTableInternalImpl implements ResolvedTableInternal {
 
   @Override
   public Map<String, DomainMetadata> getActiveDomainMetadataMap() {
-    return lazyLogReplay.get().getActiveDomainMetadataMap();
+    return logReplay.getActiveDomainMetadataMap();
   }
 
   @Override
