@@ -79,6 +79,8 @@ public class ChecksumUtils {
                   "UPDATE",
                   "DELETE",
                   "OPTIMIZE",
+                  "CREATE TABLE",
+                  "REPLACE TABLE",
                   "CREATE TABLE AS SELECT",
                   "REPLACE TABLE AS SELECT",
                   "CREATE OR REPLACE TABLE AS SELECT")));

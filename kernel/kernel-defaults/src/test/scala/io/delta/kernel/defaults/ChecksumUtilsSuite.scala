@@ -15,15 +15,20 @@
  */
 package io.delta.kernel.defaults
 import scala.collection.immutable.Seq
+import scala.jdk.CollectionConverters.seqAsJavaListConverter
 
 import io.delta.kernel.Table
+import io.delta.kernel.data.Row
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.expressions.Literal
-import io.delta.kernel.internal.SnapshotImpl
+import io.delta.kernel.expressions.{Column, Literal}
+import io.delta.kernel.internal.{SnapshotImpl, TableImpl}
 import io.delta.kernel.internal.checksum.ChecksumUtils
 import io.delta.kernel.internal.util.ManualClock
+import io.delta.kernel.types.{StringType, StructType}
+import io.delta.kernel.utils.CloseableIterable.emptyIterable
 
 import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.actions.CommitInfo
 import org.apache.spark.sql.delta.test.DeltaTestImplicits.OptimisticTxnTestHelper
 
 import org.apache.hadoop.fs.Path
@@ -145,13 +150,26 @@ class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase with LogReplayBaseSuit
     }
   }
 
-  test("test checksum -- duplicate add file => fallback with full state construction") {
+  test("test checksum -- not allowlisted operation => fallback with full state construction") {
     withTableWithCrc { (table, path, engine) =>
       val deltaLog = DeltaLog.forTable(spark, new Path(path))
       deltaLog
         .startTransaction()
         .commitManually(
           List(
+            CommitInfo(
+              time = 12345,
+              operation = "MANUAL UPDATE",
+              inCommitTimestamp = Some(12345),
+              operationParameters = Map.empty,
+              commandContext = Map.empty,
+              readVersion = Some(11),
+              isolationLevel = None,
+              isBlindAppend = None,
+              operationMetrics = None,
+              userMetadata = None,
+              tags = None,
+              txnId = None),
             deltaLog.getSnapshotAt(11).allFiles.head().copy(dataChange = false).wrap.unwrap): _*)
       deleteChecksumFileForTableUsingHadoopFs(
         table.getPath(engine).stripPrefix("file:"),
@@ -178,6 +196,19 @@ class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase with LogReplayBaseSuit
         .startTransaction()
         .commitManually(
           List(
+            CommitInfo(
+              time = 12345,
+              operation = "REPLACE TABLE",
+              inCommitTimestamp = Some(12345),
+              operationParameters = Map.empty,
+              commandContext = Map.empty,
+              readVersion = Some(11),
+              isolationLevel = None,
+              isBlindAppend = None,
+              operationMetrics = None,
+              userMetadata = None,
+              tags = None,
+              txnId = None),
             deltaLog.getSnapshotAt(11).allFiles.head().remove.copy(size = None).wrap.unwrap): _*)
       // Spark generated CRC from Spark doesn't include file size histogram
       deleteChecksumFileForTableUsingHadoopFs(
@@ -231,6 +262,117 @@ class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase with LogReplayBaseSuit
         Seq(1),
         expChecksumReadSet = Nil)
       verifyChecksumForSnapshot(table.getSnapshotAsOfVersion(engine, 12))
+    }
+  }
+
+  test("test checksum -- replace table updating p&m, domain metadata is picked up") {
+    withTableWithCrc { (table, path, engine) =>
+      // Spark generated CRC from Spark doesn't include file size histogram
+      deleteChecksumFileForTableUsingHadoopFs(
+        table.getPath(engine).stripPrefix("file:"),
+        Seq(11))
+      table.checksum(engine, 11)
+      Table.forPath(engine, path).asInstanceOf[TableImpl]
+        .createReplaceTableTransactionBuilder(engine, "test")
+        .withDomainMetadataSupported()
+        .withClusteringColumns(engine, Seq(new Column("a")).asJava)
+        .withSchema(
+          engine,
+          new StructType().add(
+            "a",
+            StringType.STRING)).build(engine)
+        .commit(engine, emptyIterable[Row])
+      engine.resetMetrics()
+      table.checksum(engine, 12)
+      assertMetrics(
+        engine,
+        Seq(12),
+        Nil,
+        Nil,
+        expChecksumReadSet = Seq(11))
+      verifyChecksumForSnapshot(table.getSnapshotAsOfVersion(engine, 12))
+    }
+  }
+
+  test("test checksum -- commit info missing => fallback") {
+    withTableWithCrc { (table, path, engine) =>
+      val deltaLog = DeltaLog.forTable(spark, new Path(path))
+      deltaLog
+        .startTransaction()
+        .commitManually(
+          List(
+            deltaLog.getSnapshotAt(11).allFiles.head().remove.wrap.unwrap,
+            CommitInfo(
+              time = 12345,
+              operation = "REPLACE TABLE",
+              inCommitTimestamp = Some(12345),
+              operationParameters = Map.empty,
+              commandContext = Map.empty,
+              readVersion = Some(11),
+              isolationLevel = None,
+              isBlindAppend = None,
+              operationMetrics = None,
+              userMetadata = None,
+              tags = None,
+              txnId = None).wrap.unwrap): _*)
+      // Spark generated CRC from Spark doesn't include file size histogram
+      deleteChecksumFileForTableUsingHadoopFs(
+        table.getPath(engine).stripPrefix("file:"),
+        Seq(11, 12))
+      table.checksum(engine, 11)
+      engine.resetMetrics()
+      table.checksum(engine, 12)
+      assertMetrics(
+        engine,
+        Seq(12, 11),
+        Seq(10),
+        Seq(1),
+        expChecksumReadSet = Seq(11))
+      verifyChecksumForSnapshot(table.getSnapshotAsOfVersion(engine, 12))
+    }
+  }
+
+  test("test checksum -- commit info not in the first action in an version => fallback") {
+    withTableWithCrc { (table, path, engine) =>
+      val deltaLog = DeltaLog.forTable(spark, new Path(path))
+      deltaLog
+        .startTransaction()
+        .commitManually(
+          List(
+            deltaLog.getSnapshotAt(11).allFiles.head().remove.wrap.unwrap): _*)
+      // Spark generated CRC from Spark doesn't include file size histogram
+      deleteChecksumFileForTableUsingHadoopFs(
+        table.getPath(engine).stripPrefix("file:"),
+        Seq(11, 12))
+      table.checksum(engine, 11)
+      engine.resetMetrics()
+      table.checksum(engine, 12)
+      assertMetrics(
+        engine,
+        Seq(12, 11),
+        Seq(10),
+        Seq(1),
+        expChecksumReadSet = Seq(11))
+      verifyChecksumForSnapshot(table.getSnapshotAsOfVersion(engine, 12))
+    }
+  }
+
+  test("test checksum -- checksum missing domain metadata => fallback") {
+    withTableWithCrc { (table, path, engine) =>
+      // Spark generated CRC from Spark doesn't include file size histogram
+      deleteChecksumFileForTableUsingHadoopFs(
+        table.getPath(engine).stripPrefix("file:"),
+        Seq(11))
+      rewriteChecksumFileToExcludeDomainMetadata(engine, path, 10)
+      engine.resetMetrics()
+      table.checksum(engine, 11)
+      assertMetrics(
+        engine,
+        Seq(11),
+        Seq(10),
+        Seq(1),
+        expChecksumReadSet = Seq(10))
+      verifyChecksumForSnapshot(table.getSnapshotAsOfVersion(engine, 11))
     }
   }
 }
