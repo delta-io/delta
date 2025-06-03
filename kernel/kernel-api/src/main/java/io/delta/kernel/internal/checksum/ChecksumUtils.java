@@ -55,6 +55,20 @@ public class ChecksumUtils {
   private static final int DOMAIN_METADATA_INDEX = CHECKPOINT_SCHEMA.indexOf("domainMetadata");
   private static final int ADD_SIZE_INDEX = AddFile.FULL_SCHEMA.indexOf("size");
   private static final int REMOVE_SIZE_INDEX = RemoveFile.FULL_SCHEMA.indexOf("size");
+
+  private static final StructType INCR_READ_SCHEMA =
+      CHECKPOINT_SCHEMA.add("commitInfo", CommitInfo.FULL_SCHEMA);
+
+  private static final int INCR_READ_VERSION_INDEX = INCR_READ_SCHEMA.indexOf("version");
+  // TODO: simplify the schema to only read size from addFile.
+  private static final int INCR_READ_ADD_INDEX = INCR_READ_SCHEMA.indexOf("add");
+  private static final int INCR_READ_REMOVE_INDEX = INCR_READ_SCHEMA.indexOf("remove");
+  private static final int INCR_READ_METADATA_INDEX = INCR_READ_SCHEMA.indexOf("metaData");
+  private static final int INCR_READ_PROTOCOL_INDEX = INCR_READ_SCHEMA.indexOf("protocol");
+  private static final int INCR_READ_DOMAIN_METADATA_INDEX =
+      INCR_READ_SCHEMA.indexOf("domainMetadata");
+  private static final int INCR_READ_COMMIT_INFO_INDEX = INCR_READ_SCHEMA.indexOf("commitInfo");
+
   private static final Set<String> INCREMENTAL_SUPPORTED_OPS =
       Collections.unmodifiableSet(
           new HashSet<>(
@@ -225,22 +239,24 @@ public class ChecksumUtils {
     // Initialize state tracking
     StateTracker state = new StateTracker();
 
+    // TODO: use compacted logs.
+    List<FileStatus> deltaFiles =
+        logSegment.getDeltas().stream()
+            .filter(
+                file ->
+                    FileNames.getFileVersion(new Path(file.getPath()))
+                        > lastSeenCrcInfo.getVersion())
+            .sorted(
+                Comparator.comparingLong(
+                    (FileStatus file) -> FileNames.getFileVersion(new Path(file.getPath()))))
+            .collect(Collectors.toList());
+    validateDeltaContinuity(deltaFiles, lastSeenCrcInfo.getVersion());
+    Collections.reverse(deltaFiles);
     // Create iterator for delta files newer than last CRC
     try (CloseableIterator<ColumnarBatch> iterator =
-        DeltaLogActionUtils.readCommitFiles(
-            engine,
-            logSegment.getDeltas().stream()
-                .filter(
-                    file ->
-                        FileNames.getFileVersion(new Path(file.getPath()))
-                            > lastSeenCrcInfo.getVersion())
-                .sorted(
-                    Comparator.comparing((FileStatus a) -> new Path(a.getPath()).getName())
-                        .reversed())
-                .collect(Collectors.toList()),
-            CHECKPOINT_SCHEMA.add("commitInfo", CommitInfo.FULL_SCHEMA))) {
+        DeltaLogActionUtils.readCommitFiles(engine, deltaFiles, INCR_READ_SCHEMA)) {
 
-      Optional<Long> currentVersion = Optional.empty();
+      Optional<Long> lastSeenVersion = Optional.empty();
 
       while (iterator.hasNext()) {
         ColumnarBatch batch = iterator.next();
@@ -249,25 +265,24 @@ public class ChecksumUtils {
           continue;
         }
 
-        StructType schema = batch.getSchema();
-        ColumnVector versionVector = batch.getColumnVector(schema.indexOf("version"));
-        ColumnVector addVector = batch.getColumnVector(schema.indexOf("add"));
-        ColumnVector removeVector = batch.getColumnVector(schema.indexOf("remove"));
-        ColumnVector metadataVector = batch.getColumnVector(schema.indexOf("metaData"));
-        ColumnVector protocolVector = batch.getColumnVector(schema.indexOf("protocol"));
-        ColumnVector domainMetadataVector = batch.getColumnVector(schema.indexOf("domainMetadata"));
-        ColumnVector commitInfoVector = batch.getColumnVector(schema.indexOf("commitInfo"));
+        ColumnVector versionVector = batch.getColumnVector(INCR_READ_VERSION_INDEX);
+        ColumnVector addVector = batch.getColumnVector(INCR_READ_ADD_INDEX);
+        ColumnVector removeVector = batch.getColumnVector(INCR_READ_REMOVE_INDEX);
+        ColumnVector metadataVector = batch.getColumnVector(INCR_READ_METADATA_INDEX);
+        ColumnVector protocolVector = batch.getColumnVector(INCR_READ_PROTOCOL_INDEX);
+        ColumnVector domainMetadataVector = batch.getColumnVector(INCR_READ_DOMAIN_METADATA_INDEX);
+        ColumnVector commitInfoVector = batch.getColumnVector(INCR_READ_COMMIT_INFO_INDEX);
 
         for (int i = 0; i < rowCount; i++) {
-          long rowVersion = versionVector.getLong(i);
+          long newVersion = versionVector.getLong(i);
 
           // Detect version change
-          if (!currentVersion.isPresent() || rowVersion != currentVersion.get()) {
+          if (!lastSeenVersion.isPresent() || newVersion != lastSeenVersion.get()) {
             // New version detected - current row must be commit info
             if (commitInfoVector.isNullAt(i)) {
               logger.info(
                   "Falling back to full replay: first row of version {} is not commit info",
-                  rowVersion);
+                  newVersion);
               return Optional.empty();
             }
 
@@ -277,11 +292,11 @@ public class ChecksumUtils {
               logger.info(
                   "Falling back to full replay: unsupported operation '{}' for version {}",
                   commitInfo != null ? commitInfo.getOperation() : "null",
-                  rowVersion);
+                  newVersion);
               return Optional.empty();
             }
 
-            currentVersion = Optional.of(rowVersion);
+            lastSeenVersion = Optional.of(newVersion);
             continue;
           }
 
@@ -296,7 +311,7 @@ public class ChecksumUtils {
             if (sizeVector.isNullAt(i)) {
               logger.info(
                   "Falling back to full replay: detected remove without file size in version {}",
-                  rowVersion);
+                  newVersion);
               return Optional.empty();
             }
             long fileSize = sizeVector.getLong(i);
@@ -406,5 +421,23 @@ public class ChecksumUtils {
     FileSizeHistogram addedFileSizeHistogram = FileSizeHistogram.createDefaultHistogram();
     FileSizeHistogram removedFileSizeHistogram = FileSizeHistogram.createDefaultHistogram();
     Map<String, DomainMetadata> domainMetadataMap = new HashMap<>();
+  }
+
+  private static void validateDeltaContinuity(List<FileStatus> deltas, long lastSeenVersion) {
+    if (deltas.isEmpty()) {
+      return;
+    }
+
+    long expectedVersion = lastSeenVersion + 1;
+    for (FileStatus delta : deltas) {
+      long version = FileNames.getFileVersion(new Path(delta.getPath()));
+      if (version != expectedVersion) {
+        throw new IllegalStateException(
+            String.format(
+                "Gap detected in delta files: expected version %d, found %d",
+                expectedVersion, version));
+      }
+      expectedVersion++;
+    }
   }
 }
