@@ -167,4 +167,12 @@ class DeltaTableForNameSuite extends QueryTest
     checkError(exception = e, "DELTA_MISSING_DELTA_TABLE",
       parameters = Map("tableName" -> s"`$nonSessionCatalogNonDefaultSchema`.`$commonTblName`"))
   }
+
+  test("forName fails with fully qualified non existent table") {
+    val e = intercept[AnalysisException] {
+      DeltaTable.forName(spark, s"$catalogName.$defaultSchema.invalid_table")
+    }
+    checkError(exception = e, "TABLE_OR_VIEW_NOT_FOUND",
+      parameters = Map("relationName" -> s"`$catalogName`.`$defaultSchema`.`invalid_table`"))
+  }
 }
