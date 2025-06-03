@@ -30,7 +30,6 @@ import io.delta.kernel.internal.replay.CreateCheckpointIterator;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.stats.FileSizeHistogram;
 import io.delta.kernel.internal.util.FileNames;
-import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import java.io.IOException;
@@ -50,24 +49,26 @@ public class ChecksumUtils {
 
   private static final int PROTOCOL_INDEX = CHECKPOINT_SCHEMA.indexOf("protocol");
   private static final int METADATA_INDEX = CHECKPOINT_SCHEMA.indexOf("metaData");
+  // TODO: simplify the schema to only read size from addFile.
   private static final int ADD_INDEX = CHECKPOINT_SCHEMA.indexOf("add");
   private static final int REMOVE_INDEX = CHECKPOINT_SCHEMA.indexOf("remove");
   private static final int DOMAIN_METADATA_INDEX = CHECKPOINT_SCHEMA.indexOf("domainMetadata");
   private static final int ADD_SIZE_INDEX = AddFile.FULL_SCHEMA.indexOf("size");
   private static final int REMOVE_SIZE_INDEX = RemoveFile.FULL_SCHEMA.indexOf("size");
 
-  private static final StructType INCR_READ_SCHEMA =
-      CHECKPOINT_SCHEMA.add("commitInfo", CommitInfo.FULL_SCHEMA);
-
-  private static final int INCR_READ_VERSION_INDEX = INCR_READ_SCHEMA.indexOf("version");
-  // TODO: simplify the schema to only read size from addFile.
-  private static final int INCR_READ_ADD_INDEX = INCR_READ_SCHEMA.indexOf("add");
-  private static final int INCR_READ_REMOVE_INDEX = INCR_READ_SCHEMA.indexOf("remove");
-  private static final int INCR_READ_METADATA_INDEX = INCR_READ_SCHEMA.indexOf("metaData");
-  private static final int INCR_READ_PROTOCOL_INDEX = INCR_READ_SCHEMA.indexOf("protocol");
+  // DeltaLogActionUtils.readCommitFiles will add first two columns.
+  private static final int INCR_READ_COLUMN_INDEX_OFFSET = 2;
+  private static final int INCR_READ_VERSION_INDEX = 0;
+  private static final int INCR_READ_ADD_INDEX = ADD_INDEX + INCR_READ_COLUMN_INDEX_OFFSET;
+  private static final int INCR_READ_REMOVE_INDEX = REMOVE_INDEX + INCR_READ_COLUMN_INDEX_OFFSET;
+  private static final int INCR_READ_METADATA_INDEX =
+      METADATA_INDEX + INCR_READ_COLUMN_INDEX_OFFSET;
+  private static final int INCR_READ_PROTOCOL_INDEX =
+      PROTOCOL_INDEX + INCR_READ_COLUMN_INDEX_OFFSET;
   private static final int INCR_READ_DOMAIN_METADATA_INDEX =
-      INCR_READ_SCHEMA.indexOf("domainMetadata");
-  private static final int INCR_READ_COMMIT_INFO_INDEX = INCR_READ_SCHEMA.indexOf("commitInfo");
+      DOMAIN_METADATA_INDEX + INCR_READ_COLUMN_INDEX_OFFSET;
+  private static final int INCR_READ_COMMIT_INFO_INDEX =
+      CHECKPOINT_SCHEMA.length() + INCR_READ_COLUMN_INDEX_OFFSET;
 
   private static final Set<String> INCREMENTAL_SUPPORTED_OPS =
       Collections.unmodifiableSet(
@@ -254,8 +255,8 @@ public class ChecksumUtils {
     Collections.reverse(deltaFiles);
     // Create iterator for delta files newer than last CRC
     try (CloseableIterator<ColumnarBatch> iterator =
-        DeltaLogActionUtils.readCommitFiles(engine, deltaFiles, INCR_READ_SCHEMA)) {
-
+        DeltaLogActionUtils.readCommitFiles(
+            engine, deltaFiles, CHECKPOINT_SCHEMA.add("commitInfo", CommitInfo.FULL_SCHEMA))) {
       Optional<Long> lastSeenVersion = Optional.empty();
 
       while (iterator.hasNext()) {
