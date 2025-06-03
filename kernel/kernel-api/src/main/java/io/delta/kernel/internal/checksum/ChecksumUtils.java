@@ -237,7 +237,8 @@ public class ChecksumUtils {
     }
     if (!lastSeenCrcInfo.getFileSizeHistogram().isPresent()) {
       logger.info(
-          "Falling back to full replay after {}ms: detected current crc missing file size histogram.",
+          "Falling back to full replay after {}ms: "
+              + "detected current crc missing file size histogram.",
           System.currentTimeMillis() - startTime);
       return Optional.empty();
     }
@@ -296,7 +297,8 @@ public class ChecksumUtils {
             if (commitInfo == null
                 || !INCREMENTAL_SUPPORTED_OPS.contains(commitInfo.getOperation())) {
               logger.info(
-                  "Falling back to full replay after {}ms: unsupported operation '{}' for version {}",
+                  "Falling back to full replay after {}ms: "
+                      + "unsupported operation '{}' for version {}",
                   System.currentTimeMillis() - startTime,
                   commitInfo != null ? commitInfo.getOperation() : "null",
                   newVersion);
@@ -317,7 +319,8 @@ public class ChecksumUtils {
             ColumnVector sizeVector = removeVector.getChild(REMOVE_SIZE_INDEX);
             if (sizeVector.isNullAt(i)) {
               logger.info(
-                  "Falling back to full replay after {}ms: detected remove without file size in version {}",
+                  "Falling back to full replay after {}ms: "
+                      + "detected remove without file size in version {}",
                   System.currentTimeMillis() - startTime,
                   newVersion);
               return Optional.empty();
