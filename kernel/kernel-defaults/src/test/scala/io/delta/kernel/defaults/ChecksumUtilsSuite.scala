@@ -342,7 +342,7 @@ class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase with LogReplayBaseSuit
     }
   }
 
-  test("test checksum -- commit info missing => fallback with full state construction") {
+  test("test checksum -- crc missing domain metadata => fallback with full state construction") {
     withTableWithCrc { (table, path, engine) =>
       // Spark generated CRC from Spark doesn't include file size histogram
       deleteChecksumFileForTableUsingHadoopFs(
