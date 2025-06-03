@@ -183,9 +183,7 @@ lazy val connect = (project in file("./connect"))
     extraMavenRepo,
     resolvers ++= Seq(
       Resolver.mavenLocal,
-      // TODO remove this once the Spark preview release has been finalized
-      "Apache Spark 4.0 (RC7) Staging" at "https://repository.apache.org/content/repositories/orgapachespark-1485/",
-      "Delta" at "https://oss.sonatype.org/content/repositories/iodelta-1227"
+      "Delta" at "https://oss.sonatype.org/content/repositories/iodelta-1229"
     ),
     scalacOptions ++= Seq(
       "-deprecation",
