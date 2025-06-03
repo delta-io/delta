@@ -21,6 +21,7 @@ import scala.collection.JavaConverters._
 
 import io.delta.kernel.engine._
 import io.delta.kernel.internal.MockReadLastCheckpointFileJsonHandler
+import io.delta.kernel.internal.files.ParsedLogData
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
@@ -36,6 +37,14 @@ trait MockFileSystemClientUtils extends MockEngineUtils {
 
   val dataPath = new Path("/fake/path/to/table/")
   val logPath = new Path(dataPath, "_delta_log")
+
+  def parsedRatifiedStagedCommit(version: Long): ParsedLogData = {
+    ParsedLogData.forFileStatus(stagedCommitFile(version))
+  }
+
+  def parsedRatifiedStagedCommits(versions: Seq[Long]): Seq[ParsedLogData] = {
+    versions.map(parsedRatifiedStagedCommit)
+  }
 
   /** Staged commit file status where the timestamp = 10*version */
   def stagedCommitFile(v: Long): FileStatus =
@@ -216,6 +225,8 @@ class MockListFromFileSystemClient(listFromProvider: String => Seq[FileStatus])
     listFromCalls = listFromCalls :+ filePath
     toCloseableIterator(listFromProvider(filePath).iterator.asJava)
   }
+
+  override def resolvePath(path: String): String = path
 
   def getListFromCalls: Seq[String] = listFromCalls
 }
