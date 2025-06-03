@@ -56,7 +56,7 @@ public class ChecksumUtils {
   private static final int ADD_SIZE_INDEX = AddFile.FULL_SCHEMA.indexOf("size");
   private static final int REMOVE_SIZE_INDEX = RemoveFile.FULL_SCHEMA.indexOf("size");
 
-  // DeltaLogActionUtils.readCommitFiles will add first two columns.
+  // DeltaLogActionUtils.readCommitFiles will add first two columns, version and commit timestamp.
   private static final int INCR_READ_COLUMN_INDEX_OFFSET = 2;
   private static final int INCR_READ_VERSION_INDEX = 0;
   private static final int INCR_READ_ADD_INDEX = ADD_INDEX + INCR_READ_COLUMN_INDEX_OFFSET;
