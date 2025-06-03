@@ -29,7 +29,7 @@ import org.scalatest.funsuite.AnyFunSuite
 class ResolvedTableBuilderSuite extends AnyFunSuite
     with MockFileSystemClientUtils with ActionUtils {
 
-  test("if P&M are provided LogSegment is not loaded") {
+  test("if P & M are provided then LogSegment is not loaded") {
     val testSchema = new StructType().add("c1", IntegerType.INTEGER)
     val engine = createMockFSListFromEngine(Nil)
 
