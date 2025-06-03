@@ -831,7 +831,8 @@ trait TestUtils extends Assertions with SQLHelper {
       crcInfoOpt.isPresent,
       s"CRC information should be present for version ${snapshot.getVersion}")
     crcInfoOpt.toScala.foreach { crcInfo =>
-      // TODO: check protocol and file size.
+      // TODO: check file size.
+      assert(crcInfo.getProtocol === snapshot.asInstanceOf[SnapshotImpl].getProtocol)
       assert(crcInfo.getMetadata.getSchema === snapshot.getSchema)
       assert(
         crcInfo.getNumFiles === collectScanFileRows(snapshot.getScanBuilder.build()).size,
