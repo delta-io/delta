@@ -27,6 +27,7 @@ import io.delta.kernel.internal.*;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.checkpoints.*;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.lang.ListUtils;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.replay.LogReplay;
@@ -189,14 +190,15 @@ public class SnapshotManager {
 
     long startTimeMillis = System.currentTimeMillis();
 
-    // Note: LogReplay now loads the protocol and metadata (P & M) lazily. Nonetheless, SnapshotImpl
-    //       is still constructed with an "eagerly"-loaded P & M.
+    // Note: LogReplay now loads the protocol and metadata (P & M) only when invoked (as opposed to
+    //       eagerly in its constructor). Nonetheless, we invoke it right away, so SnapshotImpl is
+    //       still constructed with an "eagerly"-loaded P & M.
 
     LogReplay logReplay =
         new LogReplay(
             tablePath,
             engine,
-            initSegment,
+            new Lazy<>(() -> initSegment),
             Optional.ofNullable(latestSnapshotHint.get()),
             snapshotContext.getSnapshotMetrics());
 
