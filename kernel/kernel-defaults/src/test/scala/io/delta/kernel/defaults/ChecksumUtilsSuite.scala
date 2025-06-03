@@ -279,7 +279,7 @@ class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase with LogReplayBaseSuit
   }
 
   test("test checksum -- commit info not in the first action => " +
-      "fallback with full state construction") {
+    "fallback with full state construction") {
     withTableWithCrc { (table, path, engine) =>
       val deltaLog = DeltaLog.forTable(spark, new Path(path))
       deltaLog
