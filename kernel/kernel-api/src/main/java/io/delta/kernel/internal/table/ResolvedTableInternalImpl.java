@@ -22,28 +22,44 @@ import io.delta.kernel.ScanBuilder;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
+import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.util.Clock;
+import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.types.StructType;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 /** An implementation of {@link ResolvedTableInternal}. */
 public class ResolvedTableInternalImpl implements ResolvedTableInternal {
   private final String path;
   private final String logPath;
   private final long version;
+  private final Protocol protocol;
+  private final Metadata metadata;
   private final Lazy<LogSegment> lazyLogSegment;
+  private final LogReplay logReplay;
   private final Clock clock;
 
   public ResolvedTableInternalImpl(
-      String path, long version, Lazy<LogSegment> lazyLogSegment, Clock clock) {
+      String path,
+      long version,
+      Protocol protocol,
+      Metadata metadata,
+      Lazy<LogSegment> lazyLogSegment,
+      LogReplay logReplay,
+      Clock clock) {
     this.path = requireNonNull(path, "path is null");
     this.logPath = new Path(path, "_delta_log").toString();
     this.version = version;
+    this.protocol = requireNonNull(protocol, "protocol is null");
+    this.metadata = requireNonNull(metadata, "metadata is null");
     this.lazyLogSegment = requireNonNull(lazyLogSegment, "lazyLogSegment is null");
+    this.logReplay = requireNonNull(logReplay, "logReplay is null");
     this.clock = requireNonNull(clock, "clock is null");
   }
 
@@ -68,7 +84,9 @@ public class ResolvedTableInternalImpl implements ResolvedTableInternal {
 
   @Override
   public List<Column> getPartitionColumns() {
-    throw new UnsupportedOperationException("Not implemented");
+    return VectorUtils.<String>toJavaList(getMetadata().getPartitionColumns()).stream()
+        .map(Column::new)
+        .collect(Collectors.toList());
   }
 
   @Override
@@ -78,7 +96,7 @@ public class ResolvedTableInternalImpl implements ResolvedTableInternal {
 
   @Override
   public StructType getSchema() {
-    throw new UnsupportedOperationException("Not implemented");
+    return getMetadata().getSchema();
   }
 
   @Override
@@ -97,12 +115,12 @@ public class ResolvedTableInternalImpl implements ResolvedTableInternal {
 
   @Override
   public Protocol getProtocol() {
-    throw new UnsupportedOperationException("Not implemented");
+    return protocol;
   }
 
   @Override
   public Metadata getMetadata() {
-    throw new UnsupportedOperationException("Not implemented");
+    return metadata;
   }
 
   @Override
@@ -111,7 +129,14 @@ public class ResolvedTableInternalImpl implements ResolvedTableInternal {
   }
 
   @Override
+  @VisibleForTesting
   public LogSegment getLogSegment() {
     return lazyLogSegment.get();
+  }
+
+  @Override
+  @VisibleForTesting
+  public Lazy<LogSegment> getLazyLogSegment() {
+    return lazyLogSegment;
   }
 }

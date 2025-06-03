@@ -20,6 +20,7 @@ import io.delta.kernel.ResolvedTable;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
+import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.util.Clock;
 
@@ -39,4 +40,7 @@ public interface ResolvedTableInternal extends ResolvedTable {
 
   @VisibleForTesting
   LogSegment getLogSegment();
+
+  @VisibleForTesting
+  Lazy<LogSegment> getLazyLogSegment();
 }
