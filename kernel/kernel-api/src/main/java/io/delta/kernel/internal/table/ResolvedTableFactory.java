@@ -69,14 +69,14 @@ class ResolvedTableFactory {
 
     final long version = ctx.versionOpt.orElseGet(() -> lazyLogSegment.get().getVersion());
 
-    final Lazy<LogReplay> lazyLogReplay = getLazyLogReplay(engine, lazyLogSegment);
+    final LogReplay logReplay = getLogReplay(engine, lazyLogSegment);
 
-    final Protocol protocol = getProtocol(lazyLogReplay);
+    final Protocol protocol = getProtocol(logReplay);
 
-    final Metadata metadata = getMetadata(lazyLogReplay);
+    final Metadata metadata = getMetadata(logReplay);
 
     return new ResolvedTableInternalImpl(
-        resolvedPath, version, protocol, metadata, lazyLogSegment, lazyLogReplay, ctx.clock);
+        resolvedPath, version, protocol, metadata, lazyLogSegment, logReplay, ctx.clock);
   }
 
   private SnapshotQueryContext getSnapshotQueryContext() {
@@ -118,28 +118,21 @@ class ResolvedTableFactory {
     return ctx.versionOpt;
   }
 
-  private Lazy<LogReplay> getLazyLogReplay(Engine engine, Lazy<LogSegment> lazyLogSegment) {
-    return new Lazy<>(
-        () ->
-            new LogReplay(
-                wrappedLogPath,
-                wrappedTablePath,
-                engine,
-                lazyLogSegment.get(),
-                // TODO: Proper ResolvedTable-oriented metrics
-                Optional.empty() /* snapshotHint */,
-                new SnapshotMetrics()));
+  private LogReplay getLogReplay(Engine engine, Lazy<LogSegment> lazyLogSegment) {
+    return new LogReplay(
+        wrappedTablePath,
+        engine,
+        lazyLogSegment,
+        // TODO: Proper ResolvedTable-oriented metrics
+        Optional.empty() /* snapshotHint */,
+        new SnapshotMetrics());
   }
 
-  private Protocol getProtocol(Lazy<LogReplay> lazyLogReplay) {
-    return ctx.protocolAndMetadataOpt
-        .map(x -> x._1)
-        .orElseGet(() -> lazyLogReplay.get().getProtocol());
+  private Protocol getProtocol(LogReplay logReplay) {
+    return ctx.protocolAndMetadataOpt.map(x -> x._1).orElseGet(logReplay::getProtocol);
   }
 
-  private Metadata getMetadata(Lazy<LogReplay> lazyLogReplay) {
-    return ctx.protocolAndMetadataOpt
-        .map(x -> x._2)
-        .orElseGet(() -> lazyLogReplay.get().getMetadata());
+  private Metadata getMetadata(LogReplay logReplay) {
+    return ctx.protocolAndMetadataOpt.map(x -> x._2).orElseGet(logReplay::getMetadata);
   }
 }

@@ -42,7 +42,7 @@ public class ResolvedTableInternalImpl implements ResolvedTableInternal {
   private final Protocol protocol;
   private final Metadata metadata;
   private final Lazy<LogSegment> lazyLogSegment;
-  private final Lazy<LogReplay> lazyLogReplay;
+  private final LogReplay logReplay;
   private final Clock clock;
 
   public ResolvedTableInternalImpl(
@@ -51,7 +51,7 @@ public class ResolvedTableInternalImpl implements ResolvedTableInternal {
       Protocol protocol,
       Metadata metadata,
       Lazy<LogSegment> lazyLogSegment,
-      Lazy<LogReplay> lazyLogReplay,
+      LogReplay logReplay,
       Clock clock) {
     this.path = requireNonNull(path, "path is null");
     this.logPath = new Path(path, "_delta_log").toString();
@@ -59,7 +59,7 @@ public class ResolvedTableInternalImpl implements ResolvedTableInternal {
     this.protocol = requireNonNull(protocol, "protocol is null");
     this.metadata = requireNonNull(metadata, "metadata is null");
     this.lazyLogSegment = requireNonNull(lazyLogSegment, "lazyLogSegment is null");
-    this.lazyLogReplay = requireNonNull(lazyLogReplay, "lazyLogReplay is null");
+    this.logReplay = requireNonNull(logReplay, "logReplay is null");
     this.clock = requireNonNull(clock, "clock is null");
   }
 
@@ -138,11 +138,5 @@ public class ResolvedTableInternalImpl implements ResolvedTableInternal {
   @VisibleForTesting
   public Lazy<LogSegment> getLazyLogSegment() {
     return lazyLogSegment;
-  }
-
-  @Override
-  @VisibleForTesting
-  public Lazy<LogReplay> getLazyLogReplay() {
-    return lazyLogReplay;
   }
 }
