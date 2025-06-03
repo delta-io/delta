@@ -40,6 +40,7 @@ import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.icebergcompat.IcebergCompatV2MetadataValidatorAndUpdater;
 import io.delta.kernel.internal.icebergcompat.IcebergUniversalFormatMetadataValidatorAndUpdater;
 import io.delta.kernel.internal.icebergcompat.IcebergWriterCompatV1MetadataValidatorAndUpdater;
+import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.metrics.SnapshotMetrics;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.replay.LogReplay;
@@ -724,7 +725,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     return new LogReplay(
         table.getDataPath(),
         engine,
-        LogSegment.empty(table.getLogPath()),
+        new Lazy<>(() -> LogSegment.empty(table.getLogPath())),
         Optional.empty(),
         snapshotMetrics) {
 
