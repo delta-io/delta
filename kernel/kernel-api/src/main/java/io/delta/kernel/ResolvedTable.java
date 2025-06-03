@@ -22,6 +22,7 @@ import io.delta.kernel.types.StructType;
 import java.util.List;
 import java.util.Optional;
 
+/** Represents a Delta table resolved to a specific version. */
 @Experimental
 public interface ResolvedTable {
   String getPath();

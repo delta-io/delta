@@ -16,13 +16,16 @@
 package io.delta.kernel.internal.util;
 
 import static io.delta.kernel.internal.DeltaErrors.columnNotFoundInSchema;
+import static io.delta.kernel.internal.data.TransactionStateRow.getColumnMappingMode;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Collections.singletonMap;
 
+import io.delta.kernel.data.Row;
 import io.delta.kernel.exceptions.InvalidConfigurationValueException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
+import io.delta.kernel.internal.data.TransactionStateRow;
 import io.delta.kernel.types.*;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -195,6 +198,20 @@ public class ColumnMapping {
       currentType = field.getDataType();
     }
     return new Tuple2<>(new Column(physicalNameParts.toArray(new String[0])), currentType);
+  }
+
+  /**
+   * Utility method to block writing into a table with column mapping enabled. Currently Kernel only
+   * supports the metadata updates on tables with column mapping enabled. Data writes into such
+   * tables using the data transformation APIs provided by the Kernel are not supported yet.
+   */
+  public static void blockIfColumnMappingEnabled(Row transactionState) {
+    ColumnMapping.ColumnMappingMode columnMappingMode =
+        TransactionStateRow.getColumnMappingMode(transactionState);
+    if (columnMappingMode != ColumnMapping.ColumnMappingMode.NONE) {
+      throw new UnsupportedOperationException(
+          "Writing into column mapping enabled table is not supported yet.");
+    }
   }
 
   ////////////////////////////

@@ -40,6 +40,7 @@ import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.icebergcompat.IcebergCompatV2MetadataValidatorAndUpdater;
 import io.delta.kernel.internal.icebergcompat.IcebergUniversalFormatMetadataValidatorAndUpdater;
 import io.delta.kernel.internal.icebergcompat.IcebergWriterCompatV1MetadataValidatorAndUpdater;
+import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.metrics.SnapshotMetrics;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.replay.LogReplay;
@@ -488,8 +489,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
 
     /* ----- 6: Update the METADATA with materialized row tracking column name if applicable----- */
     Optional<Metadata> rowTrackingMetadata =
-        MaterializedRowTrackingColumn.assignMaterializedColumnNamesIfNeeded(
-            newMetadata.orElse(baseMetadata));
+        validateAndUpdateRowTrackingMetadata(
+            isCreateOrReplace, baseMetadata, newMetadata, table.getPath(engine));
     if (rowTrackingMetadata.isPresent()) {
       newMetadata = rowTrackingMetadata;
     }
@@ -503,12 +504,17 @@ public class TransactionBuilderImpl implements TransactionBuilder {
           resolvedClusteringColumns.isPresent()
               ? resolvedClusteringColumns
               : existingClusteringCols;
-      validateMetadataChange(
-          effectiveClusteringCols,
-          baseMetadata,
-          newMetadata.get(),
-          isCreateOrReplace,
-          latestSnapshot);
+
+      Optional<Metadata> schemaUpdatedMetadata =
+          validateMetadataChangeAndUpdateMetadata(
+              effectiveClusteringCols,
+              baseMetadata,
+              newMetadata.get(),
+              isCreateOrReplace,
+              latestSnapshot);
+      if (schemaUpdatedMetadata.isPresent()) {
+        newMetadata = schemaUpdatedMetadata;
+      }
     }
 
     return new Tuple2(newProtocol, newMetadata);
@@ -606,11 +612,13 @@ public class TransactionBuilderImpl implements TransactionBuilder {
    *         <li>the schema change is a valid schema change given the tables partition and
    *             clustering columns
    *       </ul>
-   *   <li>Enabling/disabling row tracking on existing tables is blocked
    *   <li>Materialized row tracking column names do not conflict with schema
    * </ul>
+   *
+   * @return An updated metadata object if any changes where made. Currently, changed schemas can
+   *     require a new metadata object to be returned, but other changes do not.
    */
-  private void validateMetadataChange(
+  private Optional<Metadata> validateMetadataChangeAndUpdateMetadata(
       Optional<List<Column>> clusteringCols,
       Metadata oldMetadata,
       Metadata newMetadata,
@@ -621,7 +629,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     IcebergWriterCompatV1MetadataValidatorAndUpdater.validateIcebergWriterCompatV1Change(
         oldMetadata.getConfiguration(), newMetadata.getConfiguration(), isCreateOrReplace);
     IcebergUniversalFormatMetadataValidatorAndUpdater.validate(newMetadata);
-
+    Optional<Metadata> updatedMetadata = Optional.empty();
     // Validate the conditions for schema evolution and the updated schema if applicable
     if (schema.isPresent() && !isCreateOrReplace) {
       ColumnMappingMode updatedMappingMode =
@@ -650,11 +658,13 @@ public class TransactionBuilderImpl implements TransactionBuilder {
               .map(col -> col.getNames()[col.getNames().length - 1])
               .collect(toSet());
 
-      SchemaUtils.validateUpdatedSchema(
-          oldMetadata,
-          newMetadata,
-          clusteringColumnPhysicalNames,
-          false /* allowNewRequiredFields */);
+      updatedMetadata =
+          SchemaUtils.validateUpdatedSchemaAndGetUpdatedSchema(
+                  oldMetadata,
+                  newMetadata,
+                  clusteringColumnPhysicalNames,
+                  false /* allowNewRequiredFields */)
+              .map(newMetadata::withNewSchema);
     }
 
     // For replace table we need to do special validation in the case of fieldId re-use
@@ -675,25 +685,23 @@ public class TransactionBuilderImpl implements TransactionBuilder {
 
       // We only need to check fieldId re-use when cmMode != none
       if (newMode != ColumnMappingMode.NONE) {
-        SchemaUtils.validateUpdatedSchema(
-            latestSnapshot.get().getMetadata(),
-            newMetadata,
-            // We already validate clustering columns elsewhere for isCreateOrReplace no need to
-            // duplicate this check here
-            emptySet() /* clusteringCols */,
-            // We allow new non-null fields in REPLACE since we know all existing data is removed
-            true /* allowNewRequiredFields */);
+        updatedMetadata =
+            SchemaUtils.validateUpdatedSchemaAndGetUpdatedSchema(
+                    latestSnapshot.get().getMetadata(),
+                    updatedMetadata.orElse(newMetadata),
+                    // We already validate clustering columns elsewhere for isCreateOrReplace no
+                    // need to
+                    // duplicate this check here
+                    emptySet() /* clusteringCols */,
+                    // We allow new non-null fields in REPLACE since we know all existing data is
+                    // removed
+                    true /* allowNewRequiredFields */)
+                .map(newMetadata::withNewSchema);
       }
     }
 
-    // Block enabling/disabling row tracking on existing tables because:
-    // 1. Enabling requires backfilling row IDs/commit versions, which is not supported in Kernel
-    // 2. Disabling is irreversible in Kernel (re-enabling not supported)
-    if (!isCreateOrReplace) {
-      RowTracking.throwIfRowTrackingToggled(oldMetadata, newMetadata);
-    }
-
     MaterializedRowTrackingColumn.throwIfColumnNamesConflictWithSchema(newMetadata);
+    return updatedMetadata;
   }
 
   private SnapshotImpl getInitialEmptySnapshot(
@@ -730,10 +738,9 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   private LogReplay getEmptyLogReplay(
       Engine engine, Metadata metadata, Protocol protocol, SnapshotMetrics snapshotMetrics) {
     return new LogReplay(
-        table.getLogPath(),
         table.getDataPath(),
         engine,
-        LogSegment.empty(table.getLogPath()),
+        new Lazy<>(() -> LogSegment.empty(table.getLogPath())),
         Optional.empty(),
         snapshotMetrics) {
 
@@ -771,5 +778,40 @@ public class TransactionBuilderImpl implements TransactionBuilder {
 
   private Protocol getInitialProtocol() {
     return new Protocol(DEFAULT_READ_VERSION, DEFAULT_WRITE_VERSION);
+  }
+
+  /**
+   * Validates and updates row tracking metadata. For new tables: assigns materialized column names
+   * for row ID and commit version if row tracking is enabled. For existing tables: blocks
+   * enabling/disabling row tracking (not supported in Kernel) and validates that required row
+   * tracking configs are present when row tracking is enabled.
+   *
+   * @param isCreateOrReplace whether this is a new table definition
+   * @param oldMetadata the existing table metadata
+   * @param newMetadata the updated metadata, or empty if no changes
+   * @return updated metadata with row tracking configs if needed, empty otherwise
+   */
+  private Optional<Metadata> validateAndUpdateRowTrackingMetadata(
+      boolean isCreateOrReplace,
+      Metadata oldMetadata,
+      Optional<Metadata> newMetadata,
+      String tablePath) {
+    if (isCreateOrReplace) {
+      // For new tables, assign materialized column names if row tracking is enabled
+      return MaterializedRowTrackingColumn.assignMaterializedColumnNamesIfNeeded(
+          newMetadata.orElse(oldMetadata));
+    } else {
+      // For existing tables, we block enabling/disabling row tracking because:
+      // 1. Enabling requires backfilling row IDs/commit versions, which is not supported in Kernel
+      // 2. Disabling is irreversible in Kernel (re-enabling not supported)
+      newMetadata.ifPresent(
+          metadata -> RowTracking.throwIfRowTrackingToggled(oldMetadata, metadata));
+
+      // For existing tables, validate that row tracking configs are present when row tracking
+      // is enabled
+      MaterializedRowTrackingColumn.validateRowTrackingConfigsNotMissing(
+          newMetadata.orElse(oldMetadata), tablePath);
+      return Optional.empty();
+    }
   }
 }
