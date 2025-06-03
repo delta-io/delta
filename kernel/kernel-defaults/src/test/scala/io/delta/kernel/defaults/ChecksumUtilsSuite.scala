@@ -278,7 +278,9 @@ class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase with LogReplayBaseSuit
     }
   }
 
-  test("test checksum -- commit info missing => fallback") {
+  test(
+    "test checksum -- commit info not in the first action in an version " +
+      "=> fallback with full state construction") {
     withTableWithCrc { (table, path, engine) =>
       val deltaLog = DeltaLog.forTable(spark, new Path(path))
       deltaLog
@@ -316,7 +318,8 @@ class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase with LogReplayBaseSuit
     }
   }
 
-  test("test checksum -- commit info not in the first action in an version => fallback") {
+  test("test checksum -- commit info not in the first action in an version " +
+    "=> fallback with full state construction") {
     withTableWithCrc { (table, path, engine) =>
       val deltaLog = DeltaLog.forTable(spark, new Path(path))
       deltaLog
@@ -341,7 +344,7 @@ class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase with LogReplayBaseSuit
     }
   }
 
-  test("test checksum -- checksum missing domain metadata => fallback") {
+  test("test checksum -- commit info missing => fallback with full state construction") {
     withTableWithCrc { (table, path, engine) =>
       // Spark generated CRC from Spark doesn't include file size histogram
       deleteChecksumFileForTableUsingHadoopFs(
