@@ -21,9 +21,12 @@ import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.ResolvedTableBuilder;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.actions.Metadata;
+import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.files.ParsedLogData;
 import io.delta.kernel.internal.files.ParsedLogData.ParsedLogType;
 import io.delta.kernel.internal.util.Clock;
+import io.delta.kernel.internal.util.Tuple2;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
@@ -41,12 +44,14 @@ public class ResolvedTableBuilderImpl implements ResolvedTableBuilder {
     public final String unresolvedPath;
     public Optional<Long> versionOpt;
     public List<ParsedLogData> logDatas;
+    public Optional<Tuple2<Protocol, Metadata>> protocolAndMetadataOpt;
     public Clock clock;
 
     public Context(String unresolvedPath) {
       this.unresolvedPath = requireNonNull(unresolvedPath, "unresolvedPath is null");
       this.versionOpt = Optional.empty();
       this.logDatas = Collections.emptyList();
+      this.protocolAndMetadataOpt = Optional.empty();
       this.clock = System::currentTimeMillis;
     }
   }
@@ -84,9 +89,15 @@ public class ResolvedTableBuilderImpl implements ResolvedTableBuilder {
   }
 
   @Override
+  public ResolvedTableBuilder withProtocolAndMetadata(Protocol protocol, Metadata metadata) {
+    ctx.protocolAndMetadataOpt = Optional.of(new Tuple2<>(protocol, metadata));
+    return this;
+  }
+
+  @Override
   public ResolvedTableInternal build(Engine engine) {
     validateInputOnBuild();
-    return new ResolvedTableFactory(ctx).create(engine);
+    return new ResolvedTableFactory(engine, ctx).create(engine);
   }
 
   ////////////////////////////
