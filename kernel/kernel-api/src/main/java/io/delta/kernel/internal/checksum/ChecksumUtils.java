@@ -438,12 +438,12 @@ public class ChecksumUtils {
     Map<String, DomainMetadata> domainMetadataMap = new HashMap<>();
   }
 
-  private static void validateDeltaContinuity(List<FileStatus> deltas, long lastSeenVersion) {
+  private static void validateDeltaContinuity(List<FileStatus> deltas, long checksumVersion) {
     if (deltas.isEmpty()) {
       return;
     }
 
-    long expectedVersion = lastSeenVersion + 1;
+    long expectedVersion = checksumVersion + 1;
     for (FileStatus delta : deltas) {
       long version = FileNames.getFileVersion(new Path(delta.getPath()));
       if (version != expectedVersion) {
