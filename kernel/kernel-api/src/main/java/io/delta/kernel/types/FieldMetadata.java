@@ -273,5 +273,10 @@ public final class FieldMetadata {
               "Expected '%s' to be of type 'FieldMetadata' but was '%s'",
               value, value.getClass().getName()));
     }
+
+    public Builder remove(String s) {
+      metadata.remove(s);
+      return this;
+    }
   }
 }
