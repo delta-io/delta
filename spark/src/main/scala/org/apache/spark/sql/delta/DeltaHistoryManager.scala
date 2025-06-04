@@ -809,6 +809,9 @@ object DeltaHistoryManager extends DeltaLogging {
     private val maybeDeleteFiles = new mutable.ArrayBuffer[FileStatus]()
     private var lastFile: FileStatus = _
     private var hasNextCalled: Boolean = false
+    // A map to keep track of multi-part checkpoints.
+    val checkpointMap = new scala.collection.mutable.HashMap[(Long, Int),
+      collection.mutable.Buffer[FileStatus]]()
 
     private def init(): Unit = {
       if (underlying.hasNext) {
@@ -828,7 +831,7 @@ object DeltaHistoryManager extends DeltaLogging {
      * Files need a time adjustment if their timestamp isn't later than the lastFile.
      */
     private def needsTimeAdjustment(file: FileStatus): Boolean = {
-      isFileVersionGreaterThanLastFileVersion(file) &&
+      versionGetter(lastFile.getPath) < versionGetter(file.getPath) &&
         lastFile.getModificationTime >= file.getModificationTime
     }
 
@@ -863,24 +866,35 @@ object DeltaHistoryManager extends DeltaLogging {
           currentFile = new FileStatus(
             currentFile.getLen, currentFile.isDirectory, currentFile.getReplication,
             currentFile.getBlockSize, lastFile.getModificationTime + 1, currentFile.getPath)
-        } else if (FileNames.isCheckpointFile(currentFile)
-          && isFileVersionGreaterThanLastFileVersion(currentFile)) {
+          maybeDeleteFiles.append(currentFile)
+        } else if (FileNames.isCheckpointFile(currentFile)) {
           // Only flush the buffer when find a checkpoint. This is because we don't want to delete
           // the delta log files unless we have a checkpoint to ensure that non-expired subsequent
           // delta logs are valid.
+          val numParts = FileNames.numCheckpointParts(currentFile.getPath)
 
-          // Version check is to handle multi-part checkpoint.
-          // We don't want to flush part1 only because the part2 is expired
-          flushBuffer()
-          continueBuffering = false
+          if (numParts.isEmpty) { // Single-part or V2
+            flushBuffer()
+            maybeDeleteFiles.append(currentFile)
+            continueBuffering = false
+          } else {
+            // Multi-part checkpoint
+            val mpKey = versionGetter(currentFile.getPath) -> numParts.get
+            val partBuffer = checkpointMap.getOrElse(mpKey, mutable.ArrayBuffer())
+            partBuffer.append(currentFile)
+            checkpointMap.put(mpKey, partBuffer)
+            if (numParts.get == partBuffer.size) {
+              flushBuffer()
+              partBuffer.foreach(f => maybeDeleteFiles.append(f))
+              checkpointMap.remove(mpKey)
+              continueBuffering = false
+            }
+          }
+        } else {
+          maybeDeleteFiles.append(currentFile)
         }
-        maybeDeleteFiles.append(currentFile)
         lastFile = currentFile
       }
-    }
-
-    def isFileVersionGreaterThanLastFileVersion(file: FileStatus): Boolean = {
-      versionGetter(file.getPath) > versionGetter(lastFile.getPath)
     }
 
     override def hasNext: Boolean = {
