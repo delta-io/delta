@@ -46,8 +46,14 @@ case class DeltaConfig[T](
    * alternate keys, returning defaultValue if none match.
    */
   def fromMetaData(metadata: Metadata): T = {
+    fromMap(metadata.configuration)
+  }
+
+  def fromMap(configs: Map[String, String]): T = {
     for (usedKey <- key +: alternateKeys) {
-      metadata.configuration.get(usedKey).map { value => return fromString(value) }
+      configs.get(usedKey).map { value =>
+        return fromString(value)
+      }
     }
     fromString(defaultValue)
   }
@@ -137,7 +143,7 @@ trait DeltaConfigsBase extends DeltaLogging {
    */
   val sqlConfPrefix = "spark.databricks.delta.properties.defaults."
 
-  private val entries = new HashMap[String, DeltaConfig[_]]
+  private[delta] val entries = new HashMap[String, DeltaConfig[_]]
 
   protected def buildConfig[T](
       key: String,
