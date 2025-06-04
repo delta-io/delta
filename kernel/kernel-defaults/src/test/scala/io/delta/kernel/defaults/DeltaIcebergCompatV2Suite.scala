@@ -281,7 +281,9 @@ class DeltaIcebergCompatV2Suite extends DeltaTableWriteSuiteBase with ColumnMapp
           false,
           FieldMetadata.builder()
             .putLong(ColumnMapping.COLUMN_MAPPING_ID_KEY, 1)
-            .putString(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, "col-1").build(),
+            .putString(
+              ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
+              "col-1").build()).withTypeChanges(
           Seq(new TypeChange(DateType.DATE, TimestampNTZType.TIMESTAMP_NTZ)).asJava))
 
       val tblProps = Map(TableConfig.TYPE_WIDENING_ENABLED.getKey -> "true")
