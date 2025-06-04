@@ -16,15 +16,17 @@ trait DataSkippingDeltaTestsUtils extends PredicateHelper {
 
   /** Parses a predicate string into Spark expressions by analyzing the optimized query plan. */
   def parse(spark: SparkSession, deltaLog: DeltaLog, predicate: String): Seq[Expression] = {
-    if (predicate == "True") return Seq(
-      org.apache.spark.sql.catalyst.expressions.Literal.TrueLiteral)
-
-    val filtered = spark.read.format("delta").load(deltaLog.dataPath.toString).where(predicate)
-    filtered
-      .queryExecution
-      .optimizedPlan
-      .expressions
-      .flatMap(splitConjunctivePredicates).toList
+    if (predicate == "True") {
+      Seq(org.apache.spark.sql.catalyst.expressions.Literal.TrueLiteral)
+    } else {
+      val filtered = spark.read.format("delta").load(deltaLog.dataPath.toString).where(predicate)
+      filtered
+        .queryExecution
+        .optimizedPlan
+        .expressions
+        .flatMap(splitConjunctivePredicates)
+        .toList
+    }
   }
 
   /**
