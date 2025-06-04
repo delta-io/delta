@@ -85,6 +85,10 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
    *                                                     loadInitialDeltaActionsDurationNs to be
    *                                                     non-zero (should be true except when an
    *                                                     exception is thrown before log replay)
+   * @param expectNonZeroBuildLogSegmentDuration whether we expect
+   *                                             buildLogSegmentForVersionDurationNs to be
+   *                                             non-zero (should be true except when an
+   *                                             exception is thrown before log segment building)
    */
   def checkSnapshotReport(
       f: (Table, Engine) => Snapshot,
@@ -95,7 +99,8 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
       expectedCheckpointVersion: Optional[Long],
       expectedProvidedTimestamp: Optional[Long],
       expectNonEmptyTimestampToVersionResolutionDuration: Boolean,
-      expectNonZeroLoadProtocolAndMetadataDuration: Boolean): Unit = {
+      expectNonZeroLoadProtocolAndMetadataDuration: Boolean,
+      expectNonZeroBuildLogSegmentDuration: Boolean = true): Unit = {
 
     val (snapshotReport, duration, exception) =
       getSnapshotReport(f, path, expectedReportCount, expectException)
@@ -136,6 +141,12 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
       assert(snapshotReport.getSnapshotMetrics.getLoadInitialDeltaActionsDurationNs < duration)
     } else {
       assert(snapshotReport.getSnapshotMetrics.getLoadInitialDeltaActionsDurationNs == 0)
+    }
+    if (expectNonZeroBuildLogSegmentDuration) {
+      assert(snapshotReport.getSnapshotMetrics.getTimeToBuildLogSegmentForVersionNs > 0)
+      assert(snapshotReport.getSnapshotMetrics.getTimeToBuildLogSegmentForVersionNs < duration)
+    } else {
+      assert(snapshotReport.getSnapshotMetrics.getTimeToBuildLogSegmentForVersionNs == 0)
     }
   }
 
@@ -273,7 +284,8 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         expectedCheckpointVersion = Optional.empty(),
         expectedProvidedTimestamp = Optional.of(0),
         expectNonEmptyTimestampToVersionResolutionDuration = true,
-        expectNonZeroLoadProtocolAndMetadataDuration = false)
+        expectNonZeroLoadProtocolAndMetadataDuration = false,
+        expectNonZeroBuildLogSegmentDuration = false)
 
       // Test getSnapshotAsOfTimestamp with timestamp=currentTime (does not exist)
       // This fails during timestamp -> version resolution
@@ -287,7 +299,8 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         expectedCheckpointVersion = Optional.empty(),
         expectedProvidedTimestamp = Optional.of(currentTimeMillis),
         expectNonEmptyTimestampToVersionResolutionDuration = true,
-        expectNonZeroLoadProtocolAndMetadataDuration = false)
+        expectNonZeroLoadProtocolAndMetadataDuration = false,
+        expectNonZeroBuildLogSegmentDuration = false)
     }
   }
 
