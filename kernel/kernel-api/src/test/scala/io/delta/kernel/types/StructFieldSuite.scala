@@ -19,7 +19,7 @@ package io.delta.kernel.types
 import java.util.ArrayList
 
 import io.delta.kernel.exceptions.KernelException
-import io.delta.kernel.types.StructField.COLLATIONS_METADATA_KEY
+import io.delta.kernel.types.StructField.{COLLATIONS_METADATA_KEY, DELTA_TYPE_CHANGES_KEY, FIELD_PATH_KEY, FROM_TYPE_KEY, TO_TYPE_KEY}
 
 import collection.JavaConverters._
 import org.scalatest.funsuite.AnyFunSuite
@@ -148,7 +148,14 @@ class StructFieldSuite extends AnyFunSuite {
     assert(updatedField.getName == originalField.getName)
     assert(updatedField.getDataType == originalField.getDataType)
     assert(updatedField.isNullable == originalField.isNullable)
-    assert(updatedField.getMetadata == originalField.getMetadata)
+    assert(updatedField.getMetadata == FieldMetadata.builder()
+      .putString("a", "b")
+      .putFieldMetadataArray(
+        "delta.typeChanges",
+        Array(FieldMetadata.builder()
+          .putString("fromType", "integer")
+          .putString("toType", "long").build()))
+      .build())
     assert(updatedField.getTypeChanges.size() == 1)
 
     val typeChange = updatedField.getTypeChanges.get(0)
@@ -172,5 +179,176 @@ class StructFieldSuite extends AnyFunSuite {
     assert(typeChange == sameTypeChange)
     assert(typeChange.hashCode() == sameTypeChange.hashCode())
     assert(typeChange != differentTypeChange)
+  }
+
+  // Sequence of tuples containing StructFields with type changes and their expected FieldMetadata
+  Seq(
+    // Simple primitive type change: Integer -> Long
+    (
+      new StructField(
+        "intToLongField",
+        LongType.LONG,
+        true,
+        FieldMetadata.empty(),
+        Seq(new TypeChange(IntegerType.INTEGER, LongType.LONG)).asJava),
+      FieldMetadata.builder()
+        .putFieldMetadataArray(
+          DELTA_TYPE_CHANGES_KEY,
+          Array(
+            FieldMetadata.builder()
+              .putString(FROM_TYPE_KEY, "integer")
+              .putString(TO_TYPE_KEY, "long")
+              .build()))
+        .build()),
+
+    // Multiple type changes: Integer -> Long -> Decimal
+    (
+      new StructField(
+        "multiTypeChangeField",
+        new DecimalType(10, 2),
+        true,
+        FieldMetadata.empty(),
+        Seq(
+          new TypeChange(IntegerType.INTEGER, LongType.LONG),
+          new TypeChange(LongType.LONG, new DecimalType(10, 2))).asJava),
+      FieldMetadata.builder()
+        .putFieldMetadataArray(
+          DELTA_TYPE_CHANGES_KEY,
+          Array(
+            FieldMetadata.builder()
+              .putString(FROM_TYPE_KEY, "integer")
+              .putString(TO_TYPE_KEY, "long")
+              .build(),
+            FieldMetadata.builder()
+              .putString(FROM_TYPE_KEY, "long")
+              .putString(TO_TYPE_KEY, "decimal(10,2)")
+              .build()))
+        .build()),
+    // Float -> Double type change with additional metadata
+    (
+      new StructField(
+        "floatToDoubleField",
+        DoubleType.DOUBLE,
+        true,
+        FieldMetadata.builder().putString("description", "A field with type change").build(),
+        Seq(new TypeChange(FloatType.FLOAT, DoubleType.DOUBLE)).asJava),
+      FieldMetadata.builder()
+        .putString("description", "A field with type change")
+        .putFieldMetadataArray(
+          DELTA_TYPE_CHANGES_KEY,
+          Array(
+            FieldMetadata.builder()
+              .putString(FROM_TYPE_KEY, "float")
+              .putString(TO_TYPE_KEY, "double")
+              .build()))
+        .build()),
+    // Type change in array element type
+    (
+      new StructField(
+        "arrayField",
+        new ArrayType(new StructField("element", LongType.LONG, true)
+          .withTypeChanges(Seq(new TypeChange(ShortType.SHORT, LongType.LONG)).asJava)),
+        true),
+      FieldMetadata.builder()
+        .putFieldMetadataArray(
+          DELTA_TYPE_CHANGES_KEY,
+          Array(
+            FieldMetadata.builder()
+              .putString(FROM_TYPE_KEY, "short")
+              .putString(TO_TYPE_KEY, "long")
+              .putString(FIELD_PATH_KEY, "element")
+              .build()))
+        .build()),
+    // Type change in map value type
+    (
+      new StructField(
+        "mapField",
+        new MapType(
+          new StructField("key", new StringType("ICU.DE_DE"), false),
+          new StructField("value", LongType.LONG, true).withTypeChanges(
+            Seq(
+              new TypeChange(ShortType.SHORT, IntegerType.INTEGER),
+              new TypeChange(IntegerType.INTEGER, LongType.LONG)).asJava)),
+        false),
+      FieldMetadata.builder()
+        .putFieldMetadata(
+          COLLATIONS_METADATA_KEY,
+          FieldMetadata.builder()
+            .putString("mapField.key", "ICU.DE_DE")
+            .build())
+        .putFieldMetadataArray(
+          DELTA_TYPE_CHANGES_KEY,
+          Array(
+            FieldMetadata.builder()
+              .putString(FROM_TYPE_KEY, "short")
+              .putString(TO_TYPE_KEY, "integer")
+              .putString(FIELD_PATH_KEY, "value")
+              .build(),
+            FieldMetadata.builder()
+              .putString(FROM_TYPE_KEY, "integer")
+              .putString(TO_TYPE_KEY, "long")
+              .putString(FIELD_PATH_KEY, "value")
+              .build()))
+        .build()),
+    // Complex nested type with multiple type changes
+    (
+      new StructField(
+        "complexField",
+        new ArrayType(new StructField(
+          "element",
+          new MapType(
+            new StructField(
+              "key",
+              new ArrayType(new StructField("element", LongType.LONG, false)
+                .withTypeChanges(Seq(new TypeChange(ShortType.SHORT, LongType.LONG)).asJava)),
+              false),
+            new StructField(
+              "value",
+              new MapType(
+                new StructField("key", ShortType.SHORT, false),
+                new StructField("value", LongType.LONG, true)
+                  .withTypeChanges(Seq(new TypeChange(ByteType.BYTE, LongType.LONG)).asJava)),
+              false)),
+          false)),
+        false),
+      FieldMetadata.builder()
+        .putFieldMetadataArray(
+          DELTA_TYPE_CHANGES_KEY,
+          Array(
+            FieldMetadata.builder()
+              .putString(FROM_TYPE_KEY, "short")
+              .putString(TO_TYPE_KEY, "long")
+              .putString(FIELD_PATH_KEY, "element.key.element")
+              .build(),
+            FieldMetadata.builder()
+              .putString(FROM_TYPE_KEY, "byte")
+              .putString(TO_TYPE_KEY, "long")
+              .putString(FIELD_PATH_KEY, "element.value.value")
+              .build()))
+        .build())).foreach {
+
+    case (structField, expectedMetadata) =>
+
+      test(s"$structField has expected metadata") {
+        assert(structField.getMetadata == expectedMetadata)
+      }
+
+      test(s"$structField does not leak field metadata if it is a child struct field.") {
+        // Field metadata for type changes is stored at the nearest ancestor of the type
+        // sho it shouldn't leak up.
+        assert(new StructField("parent", new StructType().add(structField), false).getMetadata ==
+          FieldMetadata.empty())
+        assert(new StructField(
+          "parent",
+          new ArrayType(new StructType().add(structField), false),
+          false).getMetadata ==
+          FieldMetadata.empty())
+        assert(new StructField(
+          "parent",
+          new MapType(new StructType().add(structField), new StructType().add(structField), false),
+          false).getMetadata ==
+          FieldMetadata.empty())
+
+      }
   }
 }
