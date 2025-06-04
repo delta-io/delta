@@ -553,10 +553,11 @@ lazy val sharing = (project in file("sharing"))
     releaseSettings,
     crossSparkSettings(),
     Test / javaOptions ++= Seq("-ea"),
+    resolvers ++= Seq("staging" at "https://oss.sonatype.org/content/repositories/iodelta-1233"),
     libraryDependencies ++= Seq(
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
 
-      "io.delta" %% "delta-sharing-client" % "1.3.2",
+      "io.delta" %% "delta-sharing-client" % "2.0.0",
 
       // Test deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
