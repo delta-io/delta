@@ -13,6 +13,8 @@ import org.apache.spark.sql.catalyst.expressions.{Expression, PredicateHelper}
  * E.g A helper to get files in a deltaScan after applying a predicate.
  */
 trait DataSkippingDeltaTestsUtils extends PredicateHelper {
+
+  /** Parses a predicate string into Spark expressions by analyzing the optimized query plan. */
   def parse(spark: SparkSession, deltaLog: DeltaLog, predicate: String): Seq[Expression] = {
     if (predicate == "True") return Seq(
       org.apache.spark.sql.catalyst.expressions.Literal.TrueLiteral)
@@ -25,7 +27,11 @@ trait DataSkippingDeltaTestsUtils extends PredicateHelper {
       .flatMap(splitConjunctivePredicates).toList
   }
 
-  def filesRead(
+  /**
+   * Returns the number of files that would be read when applying
+   * the given predicate (for data skipping validation).
+   */
+  def filesReadCount(
       spark: SparkSession,
       deltaLog: DeltaLog,
       predicate: String): Int = {

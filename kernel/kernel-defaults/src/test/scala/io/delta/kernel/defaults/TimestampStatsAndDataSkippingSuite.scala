@@ -5,8 +5,9 @@ import java.time.{LocalDateTime, ZoneOffset}
 import java.util.Optional
 
 import scala.collection.immutable.Seq
+import scala.jdk.CollectionConverters.collectionAsScalaIterableConverter
 
-import io.delta.kernel.data.{ColumnarBatch, FilteredColumnarBatch}
+import io.delta.kernel.data.{ColumnarBatch, ColumnVector, FilteredColumnarBatch}
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
 import io.delta.kernel.defaults.internal.data.vector.DefaultGenericVector
 import io.delta.kernel.defaults.internal.parquet.ParquetSuiteBase
@@ -22,7 +23,7 @@ import org.apache.hadoop.fs.Path
  * Tests timestamp statistics serialization and data skipping behavior
  * for TIMESTAMP and TIMESTAMP_NTZ types.
  */
-class TimestampStatsAndDataSkippingTest extends DeltaTableWriteSuiteBase
+class TimestampStatsAndDataSkippingSuite extends DeltaTableWriteSuiteBase
     with DataSkippingDeltaTestsUtils
     with ParquetSuiteBase {
 
@@ -45,7 +46,7 @@ class TimestampStatsAndDataSkippingTest extends DeltaTableWriteSuiteBase
 
       // Write through Kernel
       timestampRanges.zipWithIndex.foreach { case ((minTs, maxTs), fileIndex) =>
-        val batch = createMixedTimestampBatch(schema, minTs, maxTs, rowsPerFile = 10)
+        val batch = createTimestampBatch(schema, minTs, maxTs, rowsPerFile = 10)
         appendData(
           engine,
           kernelPath,
@@ -56,7 +57,6 @@ class TimestampStatsAndDataSkippingTest extends DeltaTableWriteSuiteBase
             new FilteredColumnarBatch(batch, Optional.empty()))))
       }
 
-      // Read each file individually from Kernel location and write through Spark
       val sparkTablePath = new File(kernelPath, "spark-copy").getAbsolutePath
       val kernelDf = spark.read.format("delta").load(kernelPath)
       val kernelFiles = kernelDf.inputFiles
@@ -67,10 +67,8 @@ class TimestampStatsAndDataSkippingTest extends DeltaTableWriteSuiteBase
         kernelFiles.zipWithIndex.foreach { case (filePath, fileIndex) =>
           val singleFileDf = spark.read.parquet(filePath)
           if (fileIndex == 0) {
-            // First file - create new table
             singleFileDf.write.format("delta").mode("overwrite").save(sparkTablePath)
           } else {
-            // Subsequent files - append to existing table
             singleFileDf.write.format("delta").mode("append").save(sparkTablePath)
           }
         }
@@ -135,7 +133,7 @@ class TimestampStatsAndDataSkippingTest extends DeltaTableWriteSuiteBase
             (s"ts = ${createTimestampLiteral(timestampType, "2019-09-09 01:02:03.456789")}", 1))
 
           exactHits.foreach { case (predicate, expectedFiles) =>
-            val filesHit = filesRead(spark, deltaLogPath, predicate)
+            val filesHit = filesReadCount(spark, deltaLogPath, predicate)
             assert(
               filesHit == expectedFiles,
               s"Expected exactly $expectedFiles files for: $predicate, but got $filesHit files")
@@ -157,7 +155,7 @@ class TimestampStatsAndDataSkippingTest extends DeltaTableWriteSuiteBase
               3))
 
           rangeHits.foreach { case (predicate, expectedFiles) =>
-            val filesHit = filesRead(spark, deltaLogPath, predicate)
+            val filesHit = filesReadCount(spark, deltaLogPath, predicate)
             assert(
               filesHit == expectedFiles,
               s"Expected exactly $expectedFiles files for: $predicate, but got $filesHit files")
@@ -176,85 +174,107 @@ class TimestampStatsAndDataSkippingTest extends DeltaTableWriteSuiteBase
             (s"ts <= ${createTimestampLiteral(timestampType, "2018-01-01 00:00:00")}", 0))
 
           preciseCases.foreach { case (predicate, expectedFiles) =>
-            val filesHit = filesRead(spark, deltaLogPath, predicate)
+            val filesHit = filesReadCount(spark, deltaLogPath, predicate)
             assert(
               filesHit == expectedFiles,
               s"Expected exactly $expectedFiles files for: $predicate, but got $filesHit files")
           }
 
           // Test that we have the expected total number of files
-          val totalFiles = filesRead(spark, deltaLogPath, "TRUE")
+          val totalFiles = filesReadCount(spark, deltaLogPath, "TRUE")
           assert(totalFiles == 5, s"Expected 5 total files, but got $totalFiles")
         }
       }
     }
   }
 
-  /**
-   * Create a mixed batch with various microsecond precision timestamps for fair Spark comparison
-   */
-  private def createMixedTimestampBatch(
-      schema: StructType,
-      minTimestampStr: String,
-      maxTimestampStr: String,
-      rowsPerFile: Int): ColumnarBatch = {
+  // Test timezone boundary behavior with a single timestamp across multiple timezones
+  test(s"kernel data skipping timezone boundary behavior for TIMESTAMP type") {
+    withTempDirAndEngine { (kernelPath, engine) =>
+      val timestampType = TimestampType.TIMESTAMP
+      val schema = new StructType().add("ts", timestampType)
 
-    val minMicros = parseTimestampToMicros(minTimestampStr)
-    val maxMicros = parseTimestampToMicros(maxTimestampStr)
+      val testTimestamp = "2019-09-09 01:02:03.456789"
+      val batch = createTimestampBatch(schema, testTimestamp, testTimestamp, rowsPerFile = 1)
 
-    val timestampValues = (0 until rowsPerFile).map { rowIndex =>
-      if (rowIndex % 5 == 0) {
-        null // Some nulls for realistic data
-      } else {
-        // Distribute timestamps between min and max with microsecond precision
-        val fraction = rowIndex.toDouble / (rowsPerFile - 1)
-        val interpolatedMicros = minMicros + ((maxMicros - minMicros) * fraction).toLong
-        interpolatedMicros
+      appendData(
+        engine,
+        kernelPath,
+        isNewTable = true,
+        schema,
+        partCols = Seq.empty,
+        data = Seq(Map.empty[String, Literal] -> Seq(
+          new FilteredColumnarBatch(batch, Optional.empty()))))
+
+      val sparkLog = DeltaLog.forTable(spark, new Path(kernelPath))
+
+      // Test UTC timezone-aware queries
+      val utcHits = Seq(
+        s"ts >= ${createTimestampLiteral(timestampType, "2019-09-09 01:02:03.456789+00:00")}",
+        s"ts <= ${createTimestampLiteral(timestampType, "2019-09-09 01:02:03.456789+00:00")}",
+        s"ts >= ${createTimestampLiteral(timestampType, "2019-09-09 01:02:03.456789 UTC")}",
+        s"TS >= ${createTimestampLiteral(timestampType, "2019-09-09 01:02:03.456789+00:00")}")
+
+      val utcMisses = Seq(
+        s"ts >= ${createTimestampLiteral(timestampType, "2019-09-09 01:02:03.457001+00:00")}",
+        s"ts <= ${createTimestampLiteral(timestampType, "2019-09-04 01:02:03.455999+00:00")}",
+        s"TS >= ${createTimestampLiteral(timestampType, "2019-09-09 01:02:03.457001 UTC")}")
+
+      // Test PST timezone-aware queries
+      val pstHits = Seq(
+        s"ts >= ${createTimestampLiteral(timestampType, "2019-09-08 17:02:03.456789-08:00")}",
+        s"ts <= ${createTimestampLiteral(timestampType, "2019-09-08 17:02:03.456789-08:00")}",
+        s"ts >= ${createTimestampLiteral(timestampType, "2019-09-08 17:02:03.456789 PST")}")
+
+      val pstMisses = Seq(
+        s"ts >= ${createTimestampLiteral(timestampType, "2019-09-08 17:02:03.457001-08:00")}",
+        s"ts <= ${createTimestampLiteral(timestampType, "2019-09-08 17:02:03.455999-08:00")}")
+
+      utcHits.foreach { predicate =>
+        val filesHit = filesReadCount(spark, sparkLog, predicate)
+        assert(filesHit == 1, s"Expected UTC hit but got miss for $predicate")
       }
-    }.toArray.asInstanceOf[Array[AnyRef]]
 
-    // TIMESTAMP column
-    val timestampVector = DefaultGenericVector.fromArray(
-      schema.fields().get(0).getDataType,
-      timestampValues)
+      utcMisses.foreach { predicate =>
+        val filesHit = filesReadCount(spark, sparkLog, predicate)
+        assert(filesHit == 0, s"Expected UTC miss but got hit for $predicate")
+      }
 
-    // TIMESTAMP_NTZ column (same values)
-    val timestampNtzVector = DefaultGenericVector.fromArray(
-      schema.fields().get(1).getDataType,
-      timestampValues)
+      pstHits.foreach { predicate =>
+        val filesHit = filesReadCount(spark, sparkLog, predicate)
+        assert(filesHit == 1, s"Expected PST hit but got miss for $predicate")
+      }
 
-    new DefaultColumnarBatch(rowsPerFile, schema, Array(timestampVector, timestampNtzVector))
+      pstMisses.foreach { predicate =>
+        val filesHit = filesReadCount(spark, sparkLog, predicate)
+        assert(filesHit == 0, s"Expected PST miss but got hit for $predicate")
+      }
+    }
   }
 
-  /**
-   * Create a batch of timestamp data within a specific range
-   */
   private def createTimestampBatch(
       schema: StructType,
       minTimestampStr: String,
       maxTimestampStr: String,
       rowsPerFile: Int): ColumnarBatch = {
-
     val minMicros = parseTimestampToMicros(minTimestampStr)
     val maxMicros = parseTimestampToMicros(maxTimestampStr)
 
-    // Generate timestamps distributed between min and max
     val timestampValues = (0 until rowsPerFile).map { rowIndex =>
       if (rowIndex != 0 && rowIndex % 4 == 0) {
-        null // Some nulls for realistic data
+        null
       } else {
-        // Distribute timestamps across the range
-        val fraction = rowIndex.toDouble / (rowsPerFile - 1)
+        val fraction = if (rowsPerFile == 1) 0.0 else rowIndex.toDouble / (rowsPerFile - 1)
         val interpolatedMicros = minMicros + ((maxMicros - minMicros) * fraction).toLong
         interpolatedMicros
       }
     }.toArray.asInstanceOf[Array[AnyRef]]
 
-    val timestampVector = DefaultGenericVector.fromArray(
-      schema.fields().get(0).getDataType,
-      timestampValues)
+    val vectors = schema.fields().asScala.map { field =>
+      DefaultGenericVector.fromArray(field.getDataType, timestampValues)
+    }.toArray.asInstanceOf[Array[ColumnVector]]
 
-    new DefaultColumnarBatch(rowsPerFile, schema, Array(timestampVector))
+    new DefaultColumnarBatch(rowsPerFile, schema, vectors)
   }
 
   /**
