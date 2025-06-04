@@ -1057,6 +1057,12 @@
     ],
     "sqlState" : "55000"
   },
+  "DELTA_FEATURE_DROP_FEATURE_IS_DELTA_PROPERTY" : {
+    "message" : [
+      "Cannot drop `<property>` from this table because this is a delta table property and not a table feature."
+    ],
+    "sqlState" : "42000"
+  },
   "DELTA_FEATURE_DROP_FEATURE_NOT_PRESENT" : {
     "message" : [
       "Cannot drop <feature> from this table because it is not currently present in the table's protocol."

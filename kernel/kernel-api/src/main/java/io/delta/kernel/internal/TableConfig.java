@@ -319,6 +319,24 @@ public class TableConfig<T> {
           "needs to be a boolean.",
           true);
 
+  public static final TableConfig<String> MATERIALIZED_ROW_ID_COLUMN_NAME =
+      new TableConfig<>(
+          "delta.rowTracking.materializedRowIdColumnName",
+          null,
+          v -> v,
+          value -> true,
+          "need to be a string.",
+          false);
+
+  public static final TableConfig<String> MATERIALIZED_ROW_COMMIT_VERSION_COLUMN_NAME =
+      new TableConfig<>(
+          "delta.rowTracking.materializedRowCommitVersionColumnName",
+          null,
+          v -> v,
+          value -> true,
+          "need to be a string.",
+          false);
+
   /** All the valid properties that can be set on the table. */
   private static final Map<String, TableConfig<?>> VALID_PROPERTIES =
       Collections.unmodifiableMap(
@@ -343,6 +361,8 @@ public class TableConfig<T> {
               addConfig(this, COLUMN_MAPPING_MAX_COLUMN_ID);
               addConfig(this, DATA_SKIPPING_NUM_INDEXED_COLS);
               addConfig(this, UNIVERSAL_FORMAT_ENABLED_FORMATS);
+              addConfig(this, MATERIALIZED_ROW_ID_COLUMN_NAME);
+              addConfig(this, MATERIALIZED_ROW_COMMIT_VERSION_COLUMN_NAME);
             }
           });
 

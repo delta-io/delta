@@ -109,6 +109,9 @@ class IcebergConversionTransaction(
     }
 
     private[icebergShaded]def hasCommitted: Boolean = committed
+
+    protected def currentSnapshotId: Option[Long] =
+      Option(txn.table().currentSnapshot()).map(_.snapshotId())
   }
 
   class NullHelper extends TransactionHelper(null) {
@@ -174,9 +177,7 @@ class IcebergConversionTransaction(
    *
    * e.g. OPTIMIZE
    */
-  class RewriteHelper(
-      rewriter: RewriteFiles,
-      startingSnapshotId: Option[Long]) extends TransactionHelper(rewriter) {
+  class RewriteHelper(rewriter: RewriteFiles) extends TransactionHelper(rewriter) {
 
     override def opType: String = "rewrite"
 
@@ -198,7 +199,7 @@ class IcebergConversionTransaction(
       if (removeBuffer.nonEmpty) {
         rewriter.rewriteFiles(removeBuffer.asJava, addBuffer.asJava, 0)
       }
-      startingSnapshotId.foreach(id => rewriter.validateFromSnapshot(id))
+      currentSnapshotId.foreach(rewriter.validateFromSnapshot)
       super.commit()
     }
   }
@@ -280,7 +281,7 @@ class IcebergConversionTransaction(
   }
 
   def getRewriteHelper: RewriteHelper = {
-    val ret = new RewriteHelper(txn.newRewrite(), startFromSnapshotId)
+    val ret = new RewriteHelper(txn.newRewrite())
     fileUpdates += ret
     ret
   }

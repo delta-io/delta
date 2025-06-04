@@ -21,12 +21,12 @@ import java.util.Optional
 
 import scala.collection.JavaConverters._
 
-import io.delta.kernel.Transaction.{generateAppendActions, transformLogicalData}
+import io.delta.kernel.Transaction.{generateAppendActions, getWriteContext, transformLogicalData}
 import io.delta.kernel.data._
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.expressions.{Column, Literal}
 import io.delta.kernel.internal.{DataWriteContextImpl, TableConfig, TransactionImpl}
-import io.delta.kernel.internal.TableConfig.ICEBERG_COMPAT_V2_ENABLED
+import io.delta.kernel.internal.TableConfig.{COLUMN_MAPPING_MODE, ICEBERG_COMPAT_V2_ENABLED}
 import io.delta.kernel.internal.actions.{Format, Metadata}
 import io.delta.kernel.internal.data.TransactionStateRow
 import io.delta.kernel.internal.types.DataTypeJsonSerDe
@@ -185,6 +185,40 @@ class TransactionSuite extends AnyFunSuite with VectorTestUtils with MockEngineU
       }
     }
   }
+
+  Seq("name", "id").foreach { cmMode =>
+    test(s"transformLogicalData: CM tables are blocked: cmMode=$cmMode") {
+      val txnState = testTxnState(new StructType(), cmMode = cmMode)
+      val engine = mockEngine()
+
+      val ex = intercept[UnsupportedOperationException] {
+        transformLogicalData(
+          engine,
+          txnState,
+          testData(includePartitionCols = false),
+          Map.empty[String, Literal].asJava /* partition values */ )
+          .forEachRemaining(_ => ()) // consume the iterator
+      }
+      assert(ex.getMessage.contains(
+        "Writing into column mapping enabled table is not supported yet."))
+    }
+  }
+
+  Seq("name", "id").foreach { cmMode =>
+    test(s"getWriteContext: CM tables are blocked: $cmMode") {
+      val txnState = testTxnState(new StructType(), cmMode = cmMode)
+      val engine = mockEngine()
+
+      val ex = intercept[UnsupportedOperationException] {
+        getWriteContext(
+          engine,
+          txnState,
+          Map.empty[String, Literal].asJava /* partition values */ )
+      }
+      assert(ex.getMessage.contains(
+        "Writing into column mapping enabled table is not supported yet."))
+    }
+  }
 }
 
 object TransactionSuite extends VectorTestUtils with MockEngineUtils {
@@ -249,8 +283,11 @@ object TransactionSuite extends VectorTestUtils with MockEngineUtils {
   def testTxnState(
       schema: StructType,
       partitionCols: Seq[String] = Seq.empty,
+      cmMode: String = "none",
       enableIcebergCompatV2: Boolean = false): Row = {
-    val configurationMap = Map(ICEBERG_COMPAT_V2_ENABLED.getKey -> enableIcebergCompatV2.toString)
+    val configurationMap = Map(
+      ICEBERG_COMPAT_V2_ENABLED.getKey -> enableIcebergCompatV2.toString,
+      COLUMN_MAPPING_MODE.getKey -> cmMode)
     val metadata = new Metadata(
       "id",
       Optional.empty(), /* name */

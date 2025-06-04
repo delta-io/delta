@@ -25,19 +25,19 @@ import java.util.Objects;
  * types.
  */
 public class TypeChange {
-  private final BasePrimitiveType from;
-  private final BasePrimitiveType to;
+  private final DataType from;
+  private final DataType to;
 
-  public TypeChange(BasePrimitiveType from, BasePrimitiveType to) {
+  public TypeChange(DataType from, DataType to) {
     this.from = Objects.requireNonNull(from, "from type cannot be null");
     this.to = Objects.requireNonNull(to, "to type cannot be null");
   }
 
-  public BasePrimitiveType getFrom() {
+  public DataType getFrom() {
     return from;
   }
 
-  public BasePrimitiveType getTo() {
+  public DataType getTo() {
     return to;
   }
 

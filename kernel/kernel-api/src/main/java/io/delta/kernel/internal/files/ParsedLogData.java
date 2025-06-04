@@ -29,6 +29,7 @@ import java.util.Optional;
  * Represents a Delta Log "file" - the actual content may be materialized to disk (with a file
  * status) or stored inline (as a columnar batch).
  */
+// TODO: Move this to be a public API
 public class ParsedLogData {
 
   ///////////////////////////////////////

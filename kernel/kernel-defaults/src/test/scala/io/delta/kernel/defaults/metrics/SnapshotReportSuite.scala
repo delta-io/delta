@@ -75,6 +75,7 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
    *                        report contains the thrown exception
    * @param expectedVersion the expected version for the SnapshotReport
    * @param expectedProvidedTimestamp the expected providedTimestamp for the SnapshotReport
+   * @param expectedCheckpointVersion the expected checkpoint version for the SnapshotReport
    * @param expectNonEmptyTimestampToVersionResolutionDuration whether we expect
    *                                                           timestampToVersionResolution-
    *                                                           DurationNs to be non-empty (should
@@ -91,6 +92,7 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
       path: String,
       expectException: Boolean,
       expectedVersion: Optional[Long],
+      expectedCheckpointVersion: Optional[Long],
       expectedProvidedTimestamp: Optional[Long],
       expectNonEmptyTimestampToVersionResolutionDuration: Boolean,
       expectNonZeroLoadProtocolAndMetadataDuration: Boolean): Unit = {
@@ -111,6 +113,12 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
     assert(
       Objects.equals(snapshotReport.getVersion, expectedVersion),
       s"Expected version $expectedVersion found ${snapshotReport.getVersion}")
+    assert(
+      Objects.equals(
+        snapshotReport.getCheckpointVersion,
+        expectedCheckpointVersion),
+      s"Expected checkpoint version $expectedCheckpointVersion, found " +
+        s"${snapshotReport.getCheckpointVersion}")
     assert(Objects.equals(snapshotReport.getProvidedTimestamp, expectedProvidedTimestamp))
 
     // Since we cannot know the actual durations of these we sanity check that they are > 0 and
@@ -131,7 +139,7 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
     }
   }
 
-  test("SnapshotReport valid queries") {
+  test("SnapshotReport valid queries - no checkpoint") {
     withTempDir { tempDir =>
       val path = tempDir.getCanonicalPath
 
@@ -150,6 +158,7 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         path,
         expectException = false,
         expectedVersion = Optional.of(1),
+        expectedCheckpointVersion = Optional.empty(),
         expectedProvidedTimestamp = Optional.empty(), // No time travel by timestamp
         expectNonEmptyTimestampToVersionResolutionDuration = false, // No time travel by timestamp
         expectNonZeroLoadProtocolAndMetadataDuration = true)
@@ -161,6 +170,7 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         path,
         expectException = false,
         expectedVersion = Optional.of(0),
+        expectedCheckpointVersion = Optional.empty(),
         expectedProvidedTimestamp = Optional.empty(), // No time travel by timestamp
         expectNonEmptyTimestampToVersionResolutionDuration = false, // No time travel by timestamp
         expectNonZeroLoadProtocolAndMetadataDuration = true)
@@ -172,7 +182,61 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         path,
         expectException = false,
         expectedVersion = Optional.of(0),
+        expectedCheckpointVersion = Optional.empty(),
         expectedProvidedTimestamp = Optional.of(version0timestamp),
+        expectNonEmptyTimestampToVersionResolutionDuration = true,
+        expectNonZeroLoadProtocolAndMetadataDuration = true)
+    }
+  }
+
+  test("SnapshotReport valid queries - with checkpoint") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+
+      // Set up delta table with version 0 to 11 with checkpoint at version 10
+      (0 until 11).foreach(_ =>
+        spark.range(10).write.format("delta").mode("append").save(path))
+
+      val version11timestamp = System.currentTimeMillis
+      // Since filesystem modification time might be truncated to the second, we sleep to make sure
+      // the next commit is after this timestamp
+      Thread.sleep(1000)
+      // create version 11
+      spark.range(10).write.format("delta").mode("append").save(path)
+
+      // Test getLatestSnapshot
+      checkSnapshotReport(
+        (table, engine) => table.getLatestSnapshot(engine),
+        expectedReportCount = 1,
+        path,
+        expectException = false,
+        expectedVersion = Optional.of(11),
+        expectedCheckpointVersion = Optional.of(10),
+        expectedProvidedTimestamp = Optional.empty(), // No time travel by timestamp
+        expectNonEmptyTimestampToVersionResolutionDuration = false, // No time travel by timestamp
+        expectNonZeroLoadProtocolAndMetadataDuration = true)
+
+      // Test getSnapshotAsOfVersion
+      checkSnapshotReport(
+        (table, engine) => table.getSnapshotAsOfVersion(engine, 11),
+        expectedReportCount = 1,
+        path,
+        expectException = false,
+        expectedVersion = Optional.of(11),
+        expectedCheckpointVersion = Optional.of(10),
+        expectedProvidedTimestamp = Optional.empty(), // No time travel by timestamp
+        expectNonEmptyTimestampToVersionResolutionDuration = false, // No time travel by timestamp
+        expectNonZeroLoadProtocolAndMetadataDuration = true)
+
+      // Test getSnapshotAsOfTimestamp
+      checkSnapshotReport(
+        (table, engine) => table.getSnapshotAsOfTimestamp(engine, version11timestamp),
+        expectedReportCount = 2,
+        path,
+        expectException = false,
+        expectedVersion = Optional.of(10),
+        expectedCheckpointVersion = Optional.of(10),
+        expectedProvidedTimestamp = Optional.of(version11timestamp),
         expectNonEmptyTimestampToVersionResolutionDuration = true,
         expectNonZeroLoadProtocolAndMetadataDuration = true)
     }
@@ -193,6 +257,7 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         path,
         expectException = true,
         expectedVersion = Optional.of(1),
+        expectedCheckpointVersion = Optional.empty(),
         expectedProvidedTimestamp = Optional.empty(), // No time travel by timestamp
         expectNonEmptyTimestampToVersionResolutionDuration = false, // No time travel by timestamp
         expectNonZeroLoadProtocolAndMetadataDuration = false)
@@ -205,6 +270,7 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         path,
         expectException = true,
         expectedVersion = Optional.empty(),
+        expectedCheckpointVersion = Optional.empty(),
         expectedProvidedTimestamp = Optional.of(0),
         expectNonEmptyTimestampToVersionResolutionDuration = true,
         expectNonZeroLoadProtocolAndMetadataDuration = false)
@@ -218,6 +284,7 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         path,
         expectException = true,
         expectedVersion = Optional.empty(),
+        expectedCheckpointVersion = Optional.empty(),
         expectedProvidedTimestamp = Optional.of(currentTimeMillis),
         expectNonEmptyTimestampToVersionResolutionDuration = true,
         expectNonZeroLoadProtocolAndMetadataDuration = false)
@@ -236,6 +303,7 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         path,
         expectException = true,
         expectedVersion = Optional.empty(),
+        expectedCheckpointVersion = Optional.empty(),
         expectedProvidedTimestamp = Optional.empty(), // No time travel by timestamp
         expectNonEmptyTimestampToVersionResolutionDuration = false, // No time travel by timestamp
         expectNonZeroLoadProtocolAndMetadataDuration = false)
@@ -247,6 +315,7 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         path,
         expectException = true,
         expectedVersion = Optional.of(0),
+        expectedCheckpointVersion = Optional.empty(),
         expectedProvidedTimestamp = Optional.empty(), // No time travel by timestamp
         expectNonEmptyTimestampToVersionResolutionDuration = false, // No time travel by timestamp
         expectNonZeroLoadProtocolAndMetadataDuration = false)
@@ -258,6 +327,7 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         path,
         expectException = true,
         expectedVersion = Optional.empty(),
+        expectedCheckpointVersion = Optional.empty(),
         // Query will fail before timestamp -> version resolution. The failure
         // will happen when `getLatestSnapshot` is called.
         expectedProvidedTimestamp = Optional.empty(),
@@ -283,6 +353,7 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         path,
         expectException = true,
         expectedVersion = Optional.empty(),
+        expectedCheckpointVersion = Optional.empty(),
         expectedProvidedTimestamp = Optional.empty(), // No time travel by timestamp
         expectNonEmptyTimestampToVersionResolutionDuration = false, // No time travel by timestamp
         expectNonZeroLoadProtocolAndMetadataDuration = false)
@@ -294,6 +365,7 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         path,
         expectException = true,
         expectedVersion = Optional.of(2),
+        expectedCheckpointVersion = Optional.empty(),
         expectedProvidedTimestamp = Optional.empty(), // No time travel by timestamp
         expectNonEmptyTimestampToVersionResolutionDuration = false, // No time travel by timestamp
         expectNonZeroLoadProtocolAndMetadataDuration = false)
@@ -309,6 +381,7 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         // Query will fail before timestamp -> version resolution. The failure
         // will happen when `getLatestSnapshot` is called.
         expectedVersion = Optional.empty(),
+        expectedCheckpointVersion = Optional.empty(),
         expectedProvidedTimestamp = Optional.empty(),
         expectNonEmptyTimestampToVersionResolutionDuration = false,
         expectNonZeroLoadProtocolAndMetadataDuration = false)
@@ -326,6 +399,7 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
       path,
       expectException = true,
       expectedVersion = Optional.of(0),
+      expectedCheckpointVersion = Optional.empty(),
       expectedProvidedTimestamp = Optional.empty(), // No time travel by timestamp
       expectNonEmptyTimestampToVersionResolutionDuration = false, // No time travel by timestamp
       expectNonZeroLoadProtocolAndMetadataDuration = true)
@@ -337,6 +411,7 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
       path,
       expectException = true,
       expectedVersion = Optional.of(0),
+      expectedCheckpointVersion = Optional.empty(),
       expectedProvidedTimestamp = Optional.empty(), // No time travel by timestamp
       expectNonEmptyTimestampToVersionResolutionDuration = false, // No time travel by timestamp
       expectNonZeroLoadProtocolAndMetadataDuration = true)
@@ -353,6 +428,7 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
       // Query will fail before timestamp -> version resolution. The failure
       // will happen when `getLatestSnapshot` is called.
       expectedVersion = Optional.of(0),
+      expectedCheckpointVersion = Optional.empty(),
       expectedProvidedTimestamp = Optional.empty(),
       expectNonEmptyTimestampToVersionResolutionDuration = false,
       // This is due to the `getLatestSnapshot` call.

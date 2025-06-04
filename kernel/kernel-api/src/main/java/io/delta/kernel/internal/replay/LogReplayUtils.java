@@ -20,11 +20,9 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
-import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StructType;
-import io.delta.kernel.utils.FileStatus;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.*;
@@ -48,26 +46,6 @@ public class LogReplayUtils {
             .map(DeletionVectorDescriptor::getUniqueId);
 
     return new UniqueFileActionTuple(pathAsUri, dvId);
-  }
-
-  /**
-   * Verifies that a set of delta or checkpoint files to be read actually belongs to this table.
-   * Visible only for testing.
-   */
-  public static void assertLogFilesBelongToTable(Path logPath, List<FileStatus> allFiles) {
-    String logPathStr = logPath.toString(); // fully qualified path
-    for (FileStatus fileStatus : allFiles) {
-      String filePath = fileStatus.getPath();
-      if (!filePath.startsWith(logPathStr)) {
-        throw new RuntimeException(
-            "File ("
-                + filePath
-                + ") doesn't belong in the "
-                + "transaction log at "
-                + logPathStr
-                + ".");
-      }
-    }
   }
 
   static boolean[] prepareSelectionVectorBuffer(boolean[] currentSelectionVector, int newSize) {
