@@ -89,9 +89,9 @@ public class StructField {
     this.nullable = nullable;
     this.typeChanges = typeChanges == null ? Collections.emptyList() : typeChanges;
 
-    FieldMetadata collationMetadata = fetchCollationMetadata();
+    FieldMetadata nestedMetadata = collectNestedMapArrayTypeMetadata();
     this.metadata =
-        new FieldMetadata.Builder().fromMetadata(metadata).fromMetadata(collationMetadata).build();
+        new FieldMetadata.Builder().fromMetadata(metadata).fromMetadata(nestedMetadata).build();
     if (!this.typeChanges.isEmpty()
         && (dataType instanceof MapType
             || dataType instanceof StructType
