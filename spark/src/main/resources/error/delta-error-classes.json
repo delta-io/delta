@@ -2216,7 +2216,7 @@
     "message" : [
       "Cannot assign row IDs without row count statistics.",
       "Collect statistics for the table by running the ANALYZE TABLE command:",
-      "ANALYZE TABLE tableName COMPUTE DELTA STATISTICS",
+      "ANALYZE TABLE tableName COMPUTE DELTA STATISTICS"
     ],
     "sqlState" : "22000"
   },
