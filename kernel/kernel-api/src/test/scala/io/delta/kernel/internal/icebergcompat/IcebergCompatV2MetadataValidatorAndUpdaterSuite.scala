@@ -168,14 +168,14 @@ class IcebergCompatV2MetadataValidatorAndUpdaterSuite
           "intToLong",
           IntegerType.INTEGER,
           true,
-          FieldMetadata.empty(),
+          FieldMetadata.empty()).withTypeChanges(
           Seq(new TypeChange(IntegerType.INTEGER, LongType.LONG)).asJava))
       .add(
         new StructField(
           "decimalToDecimal",
           new DecimalType(10, 2),
           true,
-          FieldMetadata.empty(),
+          FieldMetadata.empty()).withTypeChanges(
           Seq(new TypeChange(new DecimalType(5, 2), new DecimalType(10, 2))).asJava))
 
     val metadata = getCompatEnabledMetadata(schema)
@@ -192,7 +192,7 @@ class IcebergCompatV2MetadataValidatorAndUpdaterSuite
           "dateToTimestamp",
           TimestampNTZType.TIMESTAMP_NTZ,
           true,
-          FieldMetadata.empty(),
+          FieldMetadata.empty()).withTypeChanges(
           Seq(new TypeChange(DateType.DATE, TimestampNTZType.TIMESTAMP_NTZ)).asJava))
 
     val metadata = getCompatEnabledMetadata(schema)

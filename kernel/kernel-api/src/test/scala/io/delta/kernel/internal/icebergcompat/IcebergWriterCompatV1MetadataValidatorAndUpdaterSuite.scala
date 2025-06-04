@@ -284,8 +284,9 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
           FieldMetadata.builder()
             .putLong(ColumnMapping.COLUMN_MAPPING_ID_KEY, 1)
             .putString(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, "col-1")
-            .build(),
-          Seq(new TypeChange(IntegerType.INTEGER, LongType.LONG)).asJava))
+            .build()).withTypeChanges(Seq(new TypeChange(
+          IntegerType.INTEGER,
+          LongType.LONG)).asJava))
 
     val metadata = getCompatEnabledMetadata(schema)
       .withMergedConfiguration(Map(ColumnMapping.COLUMN_MAPPING_MAX_COLUMN_ID_KEY -> "1").asJava)
@@ -305,7 +306,7 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
           FieldMetadata.builder()
             .putLong(ColumnMapping.COLUMN_MAPPING_ID_KEY, 1)
             .putString(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, "col-1")
-            .build(),
+            .build()).withTypeChanges(
           Seq(new TypeChange(ByteType.BYTE, new DecimalType(10, 0))).asJava))
 
     val metadata = getCompatEnabledMetadata(schema)
