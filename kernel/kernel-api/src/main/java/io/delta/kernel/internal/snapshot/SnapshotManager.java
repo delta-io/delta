@@ -75,8 +75,10 @@ public class SnapshotManager {
   public Snapshot buildLatestSnapshot(Engine engine, SnapshotQueryContext snapshotContext)
       throws TableNotFoundException {
     final LogSegment logSegment =
-        getLogSegmentForVersion(engine, Optional.empty() /* versionToLoad */);
-
+        snapshotContext
+            .getSnapshotMetrics()
+            .buildLogSegmentForVersionTimer
+            .time(() -> getLogSegmentForVersion(engine, Optional.empty() /* versionToLoad */));
     snapshotContext.setVersion(logSegment.getVersion());
     snapshotContext.setCheckpointVersion(logSegment.getCheckpointVersionOpt());
 
@@ -96,7 +98,11 @@ public class SnapshotManager {
       Engine engine, long version, SnapshotQueryContext snapshotContext)
       throws TableNotFoundException {
     final LogSegment logSegment =
-        getLogSegmentForVersion(engine, Optional.of(version) /* versionToLoadOpt */);
+        snapshotContext
+            .getSnapshotMetrics()
+            .buildLogSegmentForVersionTimer
+            .time(
+                () -> getLogSegmentForVersion(engine, Optional.of(version) /* versionToLoadOpt */));
 
     snapshotContext.setCheckpointVersion(logSegment.getCheckpointVersionOpt());
     snapshotContext.setVersion(logSegment.getVersion());
