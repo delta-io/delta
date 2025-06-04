@@ -17,12 +17,11 @@ package io.delta.kernel.defaults
 
 import java.io.File
 import java.time.{LocalDateTime, ZoneOffset}
-import java.util.Optional
 
 import scala.collection.immutable.Seq
 import scala.jdk.CollectionConverters.collectionAsScalaIterableConverter
 
-import io.delta.kernel.data.{ColumnarBatch, ColumnVector, FilteredColumnarBatch}
+import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
 import io.delta.kernel.defaults.internal.data.vector.DefaultGenericVector
 import io.delta.kernel.defaults.internal.parquet.ParquetSuiteBase
@@ -68,8 +67,7 @@ class TimestampStatsAndDataSkippingSuite extends DeltaTableWriteSuiteBase
           isNewTable = fileIndex == 0,
           schema,
           partCols = Seq.empty,
-          data = Seq(Map.empty[String, Literal] -> Seq(
-            new FilteredColumnarBatch(batch, Optional.empty()))))
+          data = Seq(Map.empty[String, Literal] -> Seq(batch.toFiltered(Option.empty))))
       }
 
       val sparkTablePath = new File(kernelPath, "spark-copy").getAbsolutePath
@@ -128,8 +126,7 @@ class TimestampStatsAndDataSkippingSuite extends DeltaTableWriteSuiteBase
             isNewTable = fileIndex == 0,
             schema,
             partCols = Seq.empty,
-            data = Seq(Map.empty[String, Literal] -> Seq(
-              new FilteredColumnarBatch(batch, Optional.empty()))))
+            data = Seq(Map.empty[String, Literal] -> Seq(batch.toFiltered(Option.empty))))
         }
 
         // Query with all predicates in UTC for this test.
@@ -218,8 +215,7 @@ class TimestampStatsAndDataSkippingSuite extends DeltaTableWriteSuiteBase
         isNewTable = true,
         schema,
         partCols = Seq.empty,
-        data = Seq(Map.empty[String, Literal] -> Seq(
-          new FilteredColumnarBatch(batch, Optional.empty()))))
+        data = Seq(Map.empty[String, Literal] -> Seq(batch.toFiltered(Option.empty))))
 
       val sparkLog = DeltaLog.forTable(spark, new Path(kernelPath))
 
