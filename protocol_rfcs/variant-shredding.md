@@ -37,7 +37,7 @@ typed_value | * | (optional) This can be any Parquet type, representing the data
 
 When Variant Shredding is supported (`writerFeatures` field of a table's `protocol` action contains `variantShredding`), writers:
 - must respect the `delta.enableVariantShredding` table property configuration. If `delta.enableVariantShredding=false`, a column of type `variant` must not be written as a shredded Variant, but as an unshredded Variant. If `delta.enableVariantShredding=true`, the writer can choose to shred a Variant column according to the [Parquet Variant Shredding specification](https://github.com/apache/parquet-format/blob/master/VariantShredding.md).
-- must ensure the `variantType` table feature is present in the table protocol's `writerFeatures`  and `readerFeatures` when enabling the `delta.enableVariantShredding` table property, i.e. setting `delta.enableVariantShredding=true`.
+- must ensure the `variantShredding` table feature is present in the table protocol's `writerFeatures`  and `readerFeatures` when enabling the `delta.enableVariantShredding` table property, i.e. setting `delta.enableVariantShredding=true`.
 
 ## Reader Requirements for Variant Shredding
 
