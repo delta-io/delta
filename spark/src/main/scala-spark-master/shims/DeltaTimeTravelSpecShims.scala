@@ -43,8 +43,8 @@ object DeltaTimeTravelSpecShims {
       newSpecOpt: Option[DeltaTimeTravelSpec]): Unit = (currSpecOpt, newSpecOpt) match {
     case (Some(currSpec), Some(newSpec))
       if currSpec.version != newSpec.version  ||
-        currSpec.getTimestamp(spark.sessionState.conf).getTime !=
-          newSpec.getTimestamp(spark.sessionState.conf).getTime =>
+        currSpec.getTimestampOpt(spark.sessionState.conf).map(_.getTime) !=
+          newSpec.getTimestampOpt(spark.sessionState.conf).map(_.getTime) =>
         throw DeltaErrors.multipleTimeTravelSyntaxUsed
     case _ =>
   }
