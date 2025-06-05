@@ -256,7 +256,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     if (!needsMetadataOrProtocolUpdate) {
       // TODO: fix this https://github.com/delta-io/delta/issues/4713
       // Return early if there is no metadata or protocol updates and isCreateOrReplace=false
-      return new TransactionImpl(
+      new TransactionImpl(
           false, // isCreateOrReplace
           table.getDataPath(),
           table.getLogPath(),
