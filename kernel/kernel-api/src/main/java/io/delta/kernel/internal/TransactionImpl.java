@@ -207,18 +207,19 @@ public class TransactionImpl implements Transaction {
       long committedVersion =
           transactionMetrics.totalCommitTimer.time(
               () -> commitWithRetry(engine, dataActions, transactionMetrics));
-      recordTransactionReport(
-          engine,
-          Optional.of(committedVersion),
-          clusteringColumnsOpt,
-          transactionMetrics,
-          Optional.empty() /* exception */);
+      TransactionReport transactionReport =
+          recordTransactionReport(
+              engine,
+              Optional.of(committedVersion),
+              clusteringColumnsOpt,
+              transactionMetrics,
+              Optional.empty() /* exception */);
       TransactionMetricsResult txnMetricsCaptured =
           transactionMetrics.captureTransactionMetricsResult();
       return new TransactionCommitResult(
           committedVersion,
           generatePostCommitHooks(committedVersion, txnMetricsCaptured),
-          txnMetricsCaptured);
+          transactionReport);
     } catch (Exception e) {
       recordTransactionReport(
           engine,
@@ -540,7 +541,7 @@ public class TransactionImpl implements Transaction {
     return Collections.emptyMap();
   }
 
-  private void recordTransactionReport(
+  private TransactionReport recordTransactionReport(
       Engine engine,
       Optional<Long> committedVersion,
       Optional<List<Column>> clusteringColumnsOpt,
@@ -557,6 +558,8 @@ public class TransactionImpl implements Transaction {
             readSnapshot.getSnapshotReport(),
             exception);
     engine.getMetricsReporters().forEach(reporter -> reporter.report(transactionReport));
+
+    return transactionReport;
   }
 
   private Optional<CRCInfo> buildPostCommitCrcInfoIfCurrentCrcAvailable(

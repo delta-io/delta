@@ -16,9 +16,13 @@
 package io.delta.kernel.internal.metrics
 
 import java.util.{Collections, Optional, UUID}
+
+import scala.collection.JavaConverters._
+
 import io.delta.kernel.expressions.{Column, Literal, Predicate}
 import io.delta.kernel.metrics.{ScanReport, SnapshotReport, TransactionReport}
 import io.delta.kernel.types.{IntegerType, StructType}
+
 import org.scalatest.funsuite.AnyFunSuite
 
 class MetricsReportSerializerSuite extends AnyFunSuite {
@@ -109,6 +113,12 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
       transactionReport.getSnapshotReportUUID().map(_.toString)
     val transactionMetrics = transactionReport.getTransactionMetrics
 
+    val clusterColString = transactionReport.getClusteringColumns
+      .asScala
+      .map(col =>
+        col.getNames.map(s => s""""$s"""").mkString("[", ",", "]"))
+      .mkString("[", ",", "]")
+
     val expectedJson =
       s"""
          |{"tablePath":"${transactionReport.getTablePath()}",
@@ -120,7 +130,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |"baseSnapshotVersion":${transactionReport.getBaseSnapshotVersion()},
          |"snapshotReportUUID":${optionToString(snapshotReportUUID)},
          |"committedVersion":${optionToString(transactionReport.getCommittedVersion())},
-         |"clusteringColumns":${transactionReport.getClusteringColumns()},
+         |"clusteringColumns":$clusterColString,
          |"transactionMetrics":{
          |"totalCommitDurationNs":${transactionMetrics.getTotalCommitDurationNs},
          |"numCommitAttempts":${transactionMetrics.getNumCommitAttempts},

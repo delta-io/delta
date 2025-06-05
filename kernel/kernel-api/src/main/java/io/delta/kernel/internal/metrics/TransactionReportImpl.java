@@ -19,16 +19,13 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.expressions.Column;
-import io.delta.kernel.internal.util.SchemaUtils;
 import io.delta.kernel.metrics.SnapshotReport;
 import io.delta.kernel.metrics.TransactionMetricsResult;
 import io.delta.kernel.metrics.TransactionReport;
-
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.stream.Collectors;
 
 /** A basic POJO implementation of {@link TransactionReport} for creating them */
 public class TransactionReportImpl extends DeltaOperationReportImpl implements TransactionReport {
@@ -38,7 +35,7 @@ public class TransactionReportImpl extends DeltaOperationReportImpl implements T
   private final long snapshotVersion;
   private final Optional<UUID> snapshotReportUUID;
   private final Optional<Long> committedVersion;
-  private final List<String[]> clusteringColumns;
+  private final List<Column> clusteringColumns;
   private final TransactionMetricsResult transactionMetrics;
 
   /**
@@ -67,8 +64,7 @@ public class TransactionReportImpl extends DeltaOperationReportImpl implements T
     this.engineInfo = requireNonNull(engineInfo);
     this.transactionMetrics = requireNonNull(transactionMetrics).captureTransactionMetricsResult();
     this.committedVersion = committedVersion;
-    this.clusteringColumns = requireNonNull(clusteringColumns).orElse(Collections.emptyList())
-                    .stream().map(Column::getNames).collect(Collectors.toList());
+    this.clusteringColumns = requireNonNull(clusteringColumns).orElse(Collections.emptyList());
     requireNonNull(snapshotReport);
     checkArgument(
         !snapshotReport.getException().isPresent(),
@@ -101,8 +97,7 @@ public class TransactionReportImpl extends DeltaOperationReportImpl implements T
   }
 
   @Override
-  public List<String[]> getClusteringColumns()
-  {
+  public List<Column> getClusteringColumns() {
     return clusteringColumns;
   }
 
