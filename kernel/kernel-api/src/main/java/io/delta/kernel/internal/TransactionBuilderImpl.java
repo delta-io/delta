@@ -254,8 +254,9 @@ public class TransactionBuilderImpl implements TransactionBuilder {
             || enablesDomainMetadataSupport; // domain metadata support added
 
     if (!needsMetadataOrProtocolUpdate) {
+      // TODO: fix this https://github.com/delta-io/delta/issues/4713
       // Return early if there is no metadata or protocol updates and isCreateOrReplace=false
-      new TransactionImpl(
+      return new TransactionImpl(
           false, // isCreateOrReplace
           table.getDataPath(),
           table.getLogPath(),
@@ -265,7 +266,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
           latestSnapshot.get().getProtocol(), // reuse latest protocol
           latestSnapshot.get().getMetadata(), // reuse latest metadata
           setTxnOpt,
-          Optional.empty(), /* clustering cols=empty */
+          resolvedClusteringColumns, /* clustering cols=empty */
           false /* shouldUpdateClusteringDomainMetadata=false */,
           false /* shouldUpdateMetadata=false */,
           false /* shouldUpdateProtocol=false */,
