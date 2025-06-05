@@ -867,10 +867,10 @@ object DeltaHistoryManager extends DeltaLogging {
             currentFile.getLen, currentFile.isDirectory, currentFile.getReplication,
             currentFile.getBlockSize, lastFile.getModificationTime + 1, currentFile.getPath)
           maybeDeleteFiles.append(currentFile)
-        } else if (FileNames.isCheckpointFile(currentFile)) {
-          // Only flush the buffer when find a checkpoint. This is because we don't want to delete
-          // the delta log files unless we have a checkpoint to ensure that non-expired subsequent
-          // delta logs are valid.
+        } else if (FileNames.isCheckpointFile(currentFile) && currentFile.getLen > 0) {
+          // Only flush the buffer when we find a checkpoint. This is because we don't want to
+          // delete the delta log files unless we have a checkpoint to ensure that non-expired
+          // subsequent delta logs are valid.
           val numParts = FileNames.numCheckpointParts(currentFile.getPath)
 
           if (numParts.isEmpty) { // Single-part or V2
