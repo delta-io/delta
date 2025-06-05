@@ -652,7 +652,9 @@ class IcebergWriterCompatV1Suite extends DeltaTableWriteSuiteBase with ColumnMap
           false,
           FieldMetadata.builder()
             .putLong(ColumnMapping.COLUMN_MAPPING_ID_KEY, 1)
-            .putString(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, "col-1").build(),
+            .putString(
+              ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
+              "col-1").build()).withTypeChanges(
           Seq(new TypeChange(IntegerType.INTEGER, LongType.LONG)).asJava))
 
       val tblProps = tblPropertiesIcebergWriterCompatV1Enabled ++
@@ -676,7 +678,9 @@ class IcebergWriterCompatV1Suite extends DeltaTableWriteSuiteBase with ColumnMap
           false,
           FieldMetadata.builder()
             .putLong(ColumnMapping.COLUMN_MAPPING_ID_KEY, 1)
-            .putString(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, "col-1").build(),
+            .putString(
+              ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
+              "col-1").build()).withTypeChanges(
           Seq(new TypeChange(DateType.DATE, TimestampNTZType.TIMESTAMP_NTZ)).asJava))
 
       val tblProps = tblPropertiesIcebergWriterCompatV1Enabled ++
