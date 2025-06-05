@@ -822,6 +822,32 @@ class DeltaTimeTravelSuite extends QueryTest
         Row(1) :: Row(1) :: Row(2) :: Nil)
     }
   }
+
+  test("Dataframe-based time travel works with different timestamp precisions") {
+    val tblName = "test_tab"
+    withTable(tblName) {
+      sql(s"CREATE TABLE spark_catalog.default.$tblName (a int) USING DELTA")
+      // Ensure that the current timestamp is different from the one in the table.
+      Thread.sleep(1000)
+      // Microsecond precision timestamp.
+      val current_time_micros = spark.sql("SELECT current_timestamp() as ts")
+        .select($"ts".cast("string"))
+        .head().getString(0)
+      // Millisecond precision timestamp.
+      val current_time_millis = new Timestamp(System.currentTimeMillis())
+      // Second precision timestamp.
+      val sdf = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
+      val current_time_seconds = sdf.format(new java.sql.Timestamp(System.currentTimeMillis()))
+
+      sql(s"INSERT INTO spark_catalog.default.$tblName VALUES (1)")
+      checkAnswer(spark.read.option("timestampAsOf", current_time_micros)
+        .table(s"spark_catalog.default.$tblName"), Seq.empty)
+      checkAnswer(spark.read.option("timestampAsOf", current_time_millis.toString)
+        .table(s"spark_catalog.default.$tblName"), Seq.empty)
+      checkAnswer(spark.read.option("timestampAsOf", current_time_seconds)
+        .table(s"spark_catalog.default.$tblName"), Seq.empty)
+    }
+  }
 }
 
 class DeltaTimeTravelWithCatalogOwnedBatch1Suite extends DeltaTimeTravelSuite {
