@@ -29,6 +29,7 @@ import io.delta.kernel.internal.SnapshotImpl
 import io.delta.kernel.internal.actions.DomainMetadata
 import io.delta.kernel.internal.clustering.ClusteringMetadataDomain
 import io.delta.kernel.internal.util.ColumnMapping
+import io.delta.kernel.internal.util.ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY
 import io.delta.kernel.types.{MapType, StructType}
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.utils.CloseableIterable
@@ -113,11 +114,15 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
 
   test("create a clustered table should succeed") {
     withTempDirAndEngine { (tablePath, engine) =>
-      createEmptyTable(
+      val commitResult = createEmptyTable(
         engine,
         tablePath,
         testPartitionSchema,
         clusteringColsOpt = Some(testClusteringColumns))
+
+      assertCommitResultHasClusteringCols(
+        commitResult,
+        expectedClusteringCols = testClusteringColumns)
 
       val table = Table.forPath(engine, tablePath)
       // Verify the clustering feature is included in the protocol
@@ -139,7 +144,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
 
   test("clustering column should store as physical name with column mapping") {
     withTempDirAndEngine { (tablePath, engine) =>
-      createEmptyTable(
+      val commitResult = createEmptyTable(
         engine,
         tablePath,
         testPartitionSchema,
@@ -153,13 +158,17 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
 
       // Verify the clustering domain metadata is written
       val schema = table.getLatestSnapshot(engine).getSchema
-      val col1 = schema.get("part1").getMetadata.get(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY)
-      val col2 = schema.get("part2").getMetadata.get(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY)
+      val col1 = schema.get("part1").getMetadata.getString(COLUMN_MAPPING_PHYSICAL_NAME_KEY)
+      val col2 = schema.get("part2").getMetadata.getString(COLUMN_MAPPING_PHYSICAL_NAME_KEY)
       val expectedDomainMetadata = new DomainMetadata(
         "delta.clustering",
         s"""{"clusteringColumns":[["$col1"],["$col2"]]}""",
         false)
       verifyClusteringDMAndCRC(snapshot, expectedDomainMetadata)
+
+      assertCommitResultHasClusteringCols(
+        commitResult,
+        expectedClusteringCols = Seq(new Column(col1), new Column(col2)))
     }
   }
 
@@ -259,13 +268,18 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
 
   test("update a clustered table with empty clustering columns should succeed") {
     withTempDirAndEngine { (tablePath, engine) =>
-      createEmptyTable(
+      val commitResult0 = createEmptyTable(
         engine,
         tablePath,
         testPartitionSchema,
         clusteringColsOpt = Some(testClusteringColumns))
+      assertCommitResultHasClusteringCols(
+        commitResult0,
+        expectedClusteringCols = testClusteringColumns)
+
       val table = Table.forPath(engine, tablePath)
-      updateTableMetadata(engine, tablePath, clusteringColsOpt = Some(List()))
+      val commitResult1 = updateTableMetadata(engine, tablePath, clusteringColsOpt = Some(List()))
+      assertCommitResultHasClusteringCols(commitResult1, expectedClusteringCols = Seq.empty)
 
       val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
       val expectedDomainMetadata = new DomainMetadata(
@@ -355,6 +369,9 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
           testPartitionSchema,
           clusteringColsOpt = Some(testClusteringColumns),
           data = Seq(Map.empty[String, Literal] -> dataClusteringBatches1))
+        assertCommitResultHasClusteringCols(
+          commitResult0,
+          expectedClusteringCols = testClusteringColumns)
 
         val expData = dataClusteringBatches1.flatMap(_.toTestRows)
 
@@ -370,6 +387,9 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
           engine,
           tablePath,
           data = Seq(Map.empty[String, Literal] -> dataClusteringBatches2))
+        assertCommitResultHasClusteringCols(
+          commitResult1,
+          expectedClusteringCols = testClusteringColumns)
 
         val expData = dataClusteringBatches1.flatMap(_.toTestRows) ++
           dataClusteringBatches2.flatMap(_.toTestRows)
