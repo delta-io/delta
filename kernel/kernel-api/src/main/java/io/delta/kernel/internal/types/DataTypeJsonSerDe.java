@@ -131,29 +131,7 @@ public class DataTypeJsonSerDe {
    *   "metadata" : { }
    * }
    *
-   * // Collated string type field serialized as:
-   * {
-   *   "name" : "s",
-   *   "type" : "string",
-   *   "nullable", false,
-   *   "metadata" : {
-   *     "__COLLATIONS": { "s": "ICU.de_DE" }
-   *   }
-   * }
    *
-   * // Array with collated strings field serialized as:
-   * {
-   *   "name" : "arr",
-   *   "type" : {
-   *     "type" : "array",
-   *     "elementType" : "string",
-   *     "containsNull" : false
-   *   }
-   *   "nullable" : false,
-   *   "metadata" : {
-   *     "__COLLATIONS": { "arr.element": "ICU.de_DE" }
-   *   }
-   * }
    * </pre>
    *
    * Note: Metadata for individual schema element (e.g. collations are handled when parsing
@@ -246,25 +224,72 @@ public class DataTypeJsonSerDe {
     return fixupFieldLevelMetadata(structField, metadata);
   }
 
+  /**
+   *
+   *
+   * <pre>
+   * // Collated string type field serialized as:
+   * {
+   *   "name" : "s",
+   *   "type" : "string",
+   *   "nullable", false,
+   *   "metadata" : {
+   *     "__COLLATIONS": { "s": "ICU.de_DE" }
+   *   }
+   * }
+   *
+   * // Array with collated strings field serialized as:
+   * {
+   *   "name" : "arr",
+   *   "type" : {
+   *     "type" : "array",
+   *     "elementType" : "string",
+   *     "containsNull" : false
+   *   }
+   *   "nullable" : false,
+   *   "metadata" : {
+   *     "__COLLATIONS": { "arr.element": "ICU.de_DE" }
+   *   }
+   * }
+   * </pre>
+   */
   private static StructField fixupFieldLevelMetadata(
       StructField structField, FieldMetadata metadata) {
-    if (structField.getMetadata().contains(StructField.COLLATIONS_METADATA_KEY)) {
+    if (structField.getMetadata().contains(StructField.COLLATIONS_METADATA_KEY)
+        || structField.getMetadata().contains(StructField.DELTA_TYPE_CHANGES_KEY)) {
       FieldMetadata collationsMetadata = metadata.getMetadata(StructField.COLLATIONS_METADATA_KEY);
+      if (collationsMetadata == null) {
+        collationsMetadata = FieldMetadata.empty();
+      }
+      Map<String, List<TypeChange>> pathToTypeChanges = parseTypeChangesFromMetadata(metadata);
       // Don't recurse on Structs because they would have already been constructed/fixed up in this
       // code path when assembling the child structs.
       SchemaIterable iterable =
           SchemaIterable.newSchemaIterableWithIgnoredRecursion(
               new StructType().add(structField), new Class<?>[] {StructType.class});
-
       Iterator<SchemaIterable.MutableSchemaElement> elements = iterable.newMutableIterator();
+      String fieldName = structField.getName();
+
       while (elements.hasNext()) {
         SchemaIterable.MutableSchemaElement element = elements.next();
-        String pathFromAncestor =
-            element.getPathFromNearestStructFieldAncestor(structField.getName());
-        if (collationsMetadata.contains(pathFromAncestor)) {
-          updateCollation(element, collationsMetadata, pathFromAncestor);
+        String pathFromAncestor = element.getPathFromNearestStructFieldAncestor("");
+        String pathWithFieldName =
+            pathFromAncestor.isEmpty()
+                ? fieldName
+                : String.format("%s.%s", fieldName, pathFromAncestor);
+        if (collationsMetadata.contains(pathWithFieldName)) {
+          updateCollation(element, collationsMetadata, pathWithFieldName);
+        }
+        List<TypeChange> changes = pathToTypeChanges.get(pathFromAncestor);
+        if (changes != null) {
+          if (isNested(element.getField().getDataType())) {
+            throw new KernelException(
+                format("Invalid data type for type change: \"%s\"", element.getField()));
+          }
+          element.updateField(element.getField().withTypeChanges(changes));
         }
       }
+
       structField =
           iterable
               .getSchema()
@@ -273,9 +298,16 @@ public class DataTypeJsonSerDe {
                   FieldMetadata.builder()
                       .fromMetadata(metadata)
                       .remove(StructField.COLLATIONS_METADATA_KEY)
+                      .remove(StructField.DELTA_TYPE_CHANGES_KEY)
                       .build());
     }
     return structField;
+  }
+
+  private static boolean isNested(DataType dataType) {
+    return dataType instanceof StructType
+        || dataType instanceof MapType
+        || dataType instanceof ArrayType;
   }
 
   private static void updateCollation(
@@ -290,6 +322,37 @@ public class DataTypeJsonSerDe {
     }
     StringType collatedType = new StringType(collationsMetadata.getString(pathFromAncestor));
     element.updateField(field.withDataType(collatedType));
+  }
+
+  /**
+   * Processes a FieldMetadata and a map of paths to type changes to create TypeChange objects. This
+   * function parses the type changes from the metadata and organizes them by path.
+   */
+  private static Map<String, List<TypeChange>> parseTypeChangesFromMetadata(
+      FieldMetadata metadata) {
+    Map<String, List<TypeChange>> pathToTypeChanges = new HashMap<>();
+    if (metadata == null || !metadata.contains(StructField.DELTA_TYPE_CHANGES_KEY)) {
+      return pathToTypeChanges;
+    }
+    FieldMetadata[] typeChangesArray =
+        metadata.getMetadataArray(StructField.DELTA_TYPE_CHANGES_KEY);
+    if (typeChangesArray == null) {
+      return pathToTypeChanges;
+    }
+    for (FieldMetadata changeMetadata : typeChangesArray) {
+      String fromTypeStr = changeMetadata.getString(StructField.FROM_TYPE_KEY);
+      String toTypeStr = changeMetadata.getString(StructField.TO_TYPE_KEY);
+      DataType fromType = nameToType(fromTypeStr);
+      DataType toType = nameToType(toTypeStr);
+      TypeChange typeChange = new TypeChange(fromType, toType);
+      // Empty string is default because it means type change is directly on struct field.
+      String path = "";
+      if (changeMetadata.contains(StructField.FIELD_PATH_KEY)) {
+        path = changeMetadata.getString(StructField.FIELD_PATH_KEY);
+      }
+      pathToTypeChanges.computeIfAbsent(path, k -> new ArrayList<>()).add(typeChange);
+    }
+    return pathToTypeChanges;
   }
 
   /** Parses a {@link FieldMetadata}. */
