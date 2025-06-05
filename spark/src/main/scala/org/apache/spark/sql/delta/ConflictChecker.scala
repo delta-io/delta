@@ -677,6 +677,11 @@ private[delta] class ConflictChecker(
     }
   }
 
+  private lazy val currentTransactionIsReplaceTable: Boolean = currentTransactionInfo.op match {
+    case _: DeltaOperations.ReplaceTable => true
+    case _ => false
+  }
+
   /**
    * Checks [[DomainMetadata]] to capture whether the current transaction conflicts with the
    * winning transaction at any domain.
@@ -721,9 +726,26 @@ private[delta] class ConflictChecker(
       case other => other
     }
 
+
+    // For the REPLACE TABLE command, if domain metadata of a given domain is added for the first
+    // time by the winning transaction, it may need to be marked as removed.
+    val replaceTableRemoveNewDomainMetadataEnabled = spark.conf.get(
+      DeltaSQLConf.DELTA_CONFLICT_DETECTION_ALLOW_REPLACE_TABLE_TO_REMOVE_NEW_DOMAIN_METADATA)
+    val (finalUpdatedActions, finalMergedDomainMetadata) =
+      if (replaceTableRemoveNewDomainMetadataEnabled && currentTransactionIsReplaceTable) {
+        val (domainMetadataActions, nonDomainMetadataActions) =
+          currentTransactionInfo.actions.partition(_.isInstanceOf[DomainMetadata])
+        val updatedDomainMetadataActions = DomainMetadataUtils.handleDomainMetadataForReplaceTable(
+          winningDomainMetadataMap.values.toSeq,
+          domainMetadataActions.map(_.asInstanceOf[DomainMetadata]))
+        ((nonDomainMetadataActions ++ updatedDomainMetadataActions), updatedDomainMetadataActions)
+      } else {
+        (updatedActions, mergedDomainMetadata)
+      }
+
     currentTransactionInfo = currentTransactionInfo.copy(
-      domainMetadata = mergedDomainMetadata.toSeq,
-      actions = updatedActions)
+      domainMetadata = finalMergedDomainMetadata.toSeq,
+      actions = finalUpdatedActions)
   }
 
   /**
