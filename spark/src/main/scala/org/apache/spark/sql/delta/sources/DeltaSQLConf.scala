@@ -1247,6 +1247,13 @@ trait DeltaSQLConfBase {
               |record count distribution histogram for all the files. To enable this feature
               |${DELTA_CHECKSUM_DV_METRICS_ENABLED.key} needs to be enabled as well. Only
               |applies to tables that use Deletion Vectors.""".stripMargin)
+
+  val DELTA_FILE_SIZE_HISTOGRAM_ENABLED =
+    buildConf("fileSizeHistogramMetrics.enabled")
+      .internal()
+      .doc(s"""When enabled, each delta transaction reports file size distribution histogram
+              |of all the files in the latest snapshot after the commit and histograms of new
+              |files added and old files removed.""".stripMargin)
       .booleanConf
       .createWithDefault(true)
 

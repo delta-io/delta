@@ -25,9 +25,12 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DeletedRecordCountsHistogram
 import org.apache.spark.sql.delta.stats.DeletedRecordCountsHistogramUtils
 import org.apache.spark.sql.delta.stats.FileSizeHistogram
+import org.apache.spark.sql.delta.stats.FileSizeHistogramUtils
+import org.apache.spark.sql.util.ScalaExtensions._
 
 import org.apache.spark.sql.{Column, DataFrame}
 import org.apache.spark.sql.functions.{coalesce, col, collect_set, count, last, lit, sum, when}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.util.Utils
 
 
@@ -75,6 +78,10 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
 
   // For implicits which re-use Encoder:
   import implicits._
+
+  protected def fileSizeHistogramEnabled: Boolean =
+    spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_FILE_SIZE_HISTOGRAM_ENABLED)
+
   /** Whether computedState is already computed or not */
   @volatile protected var _computedStateTriggered: Boolean = false
 
@@ -176,6 +183,11 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
 
     val histogramDVsAgg = Seq("deletedRecordCountsHistogramOpt" -> histogramDVsAggExpr)
 
+    val histogramAgg = if (fileSizeHistogramEnabled) {
+      FileSizeHistogramUtils.histogramAggregate(coalesce(col("add.size"), lit(-1L)).expr)
+    } else {
+      lit(null).cast(FileSizeHistogram.schema)
+    }
     Map(
       // sum may return null for empty data set.
       "sizeInBytes" -> coalesce(sum(col("add.size")), lit(0L)),
@@ -188,7 +200,7 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
       "domainMetadata" -> collect_set(col("domainMetadata")),
       "metadata" -> last(col("metaData"), ignoreNulls = true),
       "protocol" -> last(col("protocol"), ignoreNulls = true),
-      "fileSizeHistogram" -> lit(null).cast(FileSizeHistogram.schema)
+      "fileSizeHistogram" -> histogramAgg
     ) ++ persistentDVsAggs ++ histogramDVsAgg
   }
 
@@ -202,7 +214,8 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
   def numOfMetadata: Long = computedState.numOfMetadata
   def numOfProtocol: Long = computedState.numOfProtocol
   def setTransactions: Seq[SetTransaction] = computedState.setTransactions
-  def fileSizeHistogram: Option[FileSizeHistogram] = computedState.fileSizeHistogram
+  def fileSizeHistogram: Option[FileSizeHistogram] =
+    Option.when(fileSizeHistogramEnabled)(computedState.fileSizeHistogram).flatten
   def domainMetadata: Seq[DomainMetadata] = computedState.domainMetadata
   protected[delta] def sizeInBytesIfKnown: Option[Long] = Some(sizeInBytes)
   protected[delta] def setTransactionsIfKnown: Option[Seq[SetTransaction]] = Some(setTransactions)
@@ -248,7 +261,9 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
       domainMetadata = Nil,
       metadata = metadata,
       protocol = protocol,
-      deletedRecordCountsHistogramOpt = deletedRecordCountsHistogramOpt
+      deletedRecordCountsHistogramOpt = deletedRecordCountsHistogramOpt,
+      fileSizeHistogram =
+        Option.when(fileSizeHistogramEnabled)(FileSizeHistogramUtils.emptyHistogram)
     )
   }
 }
