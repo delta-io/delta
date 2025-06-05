@@ -52,7 +52,7 @@ class DeltaSharingUtilsSuite extends SparkFunSuite with SharedSparkContext {
          |    "expirationTimestamp": 1721350999999,
          |    "deltaSingleAction": {
          |      "add": {
-         |        "path": "70/part-00000-df2a2a20.c000.snappy.parquet",
+         |        "path": "c000.snappy.parquet",
          |        "partitionValues": {
          |          "col-partition": "3"
          |        },
@@ -78,7 +78,7 @@ class DeltaSharingUtilsSuite extends SparkFunSuite with SharedSparkContext {
          |    "deletionVectorFileId": "dv_file_id",
          |    "deltaSingleAction": {
          |      "add": {
-         |        "path": "70/part-00000-df2a2a20.c000.snappy.parquet",
+         |        "path": "c001.snappy.parquet",
          |        "partitionValues": {
          |          "col-partition": "3"
          |        },
@@ -91,7 +91,7 @@ class DeltaSharingUtilsSuite extends SparkFunSuite with SharedSparkContext {
          |        },
          |        "deletionVector": {
          |          "storageType": "p",
-         |          "pathOrInlineDv": ":encoded:placeholder:",
+         |          "pathOrInlineDv": "fakeurl",
          |          "offset": 1,
          |          "sizeInBytes": 34,
          |          "cardinality": 1
@@ -218,8 +218,11 @@ class DeltaSharingUtilsSuite extends SparkFunSuite with SharedSparkContext {
     val idToUrls = func(None).idToUrl
     assert(idToUrls.size == 3)
     assert(idToUrls.contains("add_file_id1"))
+    assert(idToUrls.get("add_file_id1") == Some("c000.snappy.parquet"))
     assert(idToUrls.contains("add_file_id2"))
+    assert(idToUrls.get("add_file_id2") == Some("c001.snappy.parquet"))
     assert(idToUrls.contains("dv_file_id"))
+    assert(idToUrls.get("dv_file_id") == Some("fakeurl"))
   }
 
   test("getRefresherForGetFilesWithStartingVersion with deletion vector") {
@@ -234,8 +237,11 @@ class DeltaSharingUtilsSuite extends SparkFunSuite with SharedSparkContext {
     val idToUrls = func(None).idToUrl
     assert(idToUrls.size == 3)
     assert(idToUrls.contains("add_file_id1"))
+    assert(idToUrls.get("add_file_id1") == Some("c000.snappy.parquet"))
     assert(idToUrls.contains("add_file_id2"))
+    assert(idToUrls.get("add_file_id2") == Some("c001.snappy.parquet"))
     assert(idToUrls.contains("dv_file_id"))
+    assert(idToUrls.get("dv_file_id") == Some("fakeurl"))
   }
 
   test("getRefresherForGetCDFFiles with deletion vector") {
@@ -249,8 +255,12 @@ class DeltaSharingUtilsSuite extends SparkFunSuite with SharedSparkContext {
     val idToUrls = func(None).idToUrl
     assert(idToUrls.size == 4)
     assert(idToUrls.contains("add_file_id1"))
+    assert(idToUrls.get("add_file_id1") == Some("c000.snappy.parquet"))
     assert(idToUrls.contains("add_file_id2"))
+    assert(idToUrls.get("add_file_id2") == Some("c001.snappy.parquet"))
     assert(idToUrls.contains("dv_file_id"))
+    assert(idToUrls.get("dv_file_id") == Some("fakeurl"))
     assert(idToUrls.contains("cdc_file_id"))
+    assert(idToUrls.get("cdc_file_id") == Some("_change_data/cdc.c000.snappy.parquet"))
   }
 }
