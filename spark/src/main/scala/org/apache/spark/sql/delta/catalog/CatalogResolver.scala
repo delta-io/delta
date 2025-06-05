@@ -29,13 +29,19 @@ import org.apache.spark.sql.connector.catalog.CatalogV2Implicits.MultipartIdenti
  * Helper object for resolving Delta tables using a *non-session* catalog.
  */
 object CatalogResolver {
-  def getDeltaTableFromCatalog(spark: SparkSession,
+  def getDeltaTableFromCatalog(
+      spark: SparkSession,
       catalog: CatalogPlugin,
       ident: Identifier): DeltaTableV2 = {
     catalog.asTableCatalog.loadTable(ident) match {
       case v2: DeltaTableV2 => v2
       case v1: V1Table if DeltaTableUtils.isDeltaTable(v1.v1Table) =>
-        DeltaTableV2(spark, new Path(v1.v1Table.location), Some(v1.v1Table))
+        DeltaTableV2(
+          spark,
+          path = new Path(v1.v1Table.location),
+          catalogTable = Some(v1.v1Table),
+          tableIdentifier = Some(ident.toString)
+        )
       case table => throw DeltaErrors.notADeltaTableException(
         DeltaTableIdentifier(table = Some(TableIdentifier(table.name()))))
     }
