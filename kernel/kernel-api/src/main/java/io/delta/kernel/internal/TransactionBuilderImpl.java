@@ -487,9 +487,9 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     // This is only done if clustering columns are explicitly set in this transaction.
     StructType updatedSchema = newMetadata.orElse(baseMetadata).getSchema();
     this.resolvedClusteringColumns =
-      initialClusteringColumns.isPresent() ?
-            initialClusteringColumns.map(
-                    cols -> SchemaUtils.casePreservingEligibleClusterColumns(updatedSchema, cols))
+        initialClusteringColumns.isPresent()
+            ? initialClusteringColumns.map(
+                cols -> SchemaUtils.casePreservingEligibleClusterColumns(updatedSchema, cols))
             : existingClusteringCols;
     shouldUpdateClusteringDomainMetadata = initialClusteringColumns.isPresent();
 

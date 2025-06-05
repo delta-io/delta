@@ -18,7 +18,6 @@ package io.delta.kernel.metrics;
 import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import io.delta.kernel.expressions.Column;
-
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -67,12 +66,11 @@ public interface TransactionReport extends DeltaOperationReport {
    * optional because clustering columns are not always defined for a table. Consumers of the
    * transaction report trigger clustering operations based on this list.
    *
-   * @return list of clustering columns for the table. The columns are physical
-   *  names of how the data is written in the data files. Each column is a array of strings
-   *  representing the column names, e.g. for a table with two clustering columns
-   *  "col1" and "col2.nestedCol2", the list will be [["col1"], ["col2", "nestedCol2"]].
+   * @return list of clustering columns for the table. The columns are physical names of how the
+   *     data is written in the data files. Each column can contain one or more elements
+   *     representing the hierarchy of the column names in case of nested columns.
    */
-  List<String[]> getClusteringColumns();
+  List<Column> getClusteringColumns();
 
   /**
    * @return the {@link SnapshotReport#getReportUUID} of the SnapshotReport for the transaction's
