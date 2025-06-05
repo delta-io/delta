@@ -24,6 +24,7 @@ import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.expressions.aggregate.TypedImperativeAggregate
 import org.apache.spark.sql.catalyst.trees.UnaryLike
 import org.apache.spark.sql.catalyst.util.GenericArrayData
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.functions.udf
 import org.apache.spark.sql.types.{ArrayType, DataType, LongType}
 import org.apache.spark.unsafe.Platform

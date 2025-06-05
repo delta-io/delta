@@ -28,6 +28,7 @@ import org.apache.spark.sql.delta.stats.FileSizeHistogram
 import org.apache.spark.sql.delta.stats.FileSizeHistogramUtils
 import org.apache.spark.sql.util.ScalaExtensions._
 
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.{Column, DataFrame}
 import org.apache.spark.sql.functions.{coalesce, col, collect_set, count, last, lit, sum, when}
 import org.apache.spark.sql.internal.SQLConf
