@@ -202,7 +202,7 @@ class IcebergCompatV2MetadataValidatorAndUpdaterSuite
       validateAndUpdateIcebergCompatV2Metadata(false, metadata, protocol)
     }
 
-    assert(e.getMessage.contains("icebergCompatV2 does not type widening present in table"))
+    assert(e.getMessage.contains("icebergCompatV2 does not support type widening present in table"))
   }
 
   Seq(true, false).foreach { isNewTable =>

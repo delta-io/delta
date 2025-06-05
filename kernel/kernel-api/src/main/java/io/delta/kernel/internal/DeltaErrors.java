@@ -301,7 +301,8 @@ public final class DeltaErrors {
   public static KernelException icebergCompatUnsupportedTypeWidening(
       String compatVersion, TypeChange typeChange) {
     throw new KernelException(
-        format("%s does not type widening present in table: %s.", compatVersion, typeChange));
+        format(
+            "%s does not support type widening present in table: %s.", compatVersion, typeChange));
   }
 
   public static KernelException icebergCompatUnsupportedTypePartitionColumn(

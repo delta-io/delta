@@ -690,7 +690,8 @@ class IcebergWriterCompatV1Suite extends DeltaTableWriteSuiteBase with ColumnMap
         createEmptyTable(engine, tablePath, schema, tableProperties = tblProps)
       }
 
-      assert(e.getMessage.contains("icebergCompatV2 does not type widening present in table"))
+      assert(
+        e.getMessage.contains("icebergCompatV2 does not support type widening present in table"))
     }
   }
 

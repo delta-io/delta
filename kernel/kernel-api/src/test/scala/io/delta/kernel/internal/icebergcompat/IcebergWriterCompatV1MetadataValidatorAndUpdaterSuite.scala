@@ -317,7 +317,7 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
       validateAndUpdateIcebergWriterCompatV1Metadata(false, metadata, protocol)
     }
 
-    assert(e.getMessage.contains("icebergCompatV2 does not type widening present in table"))
+    assert(e.getMessage.contains("icebergCompatV2 does not support type widening present in table"))
   }
 
   private def checkUnsupportedOrIncompatibleFeature(

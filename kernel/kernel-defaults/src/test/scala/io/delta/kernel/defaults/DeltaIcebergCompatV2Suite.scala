@@ -267,7 +267,8 @@ class DeltaIcebergCompatV2Suite extends DeltaTableWriteSuiteBase with ColumnMapp
         createEmptyTable(engine, tablePath, schema, tableProperties = tblProps)
       }
 
-      assert(e.getMessage.contains("icebergCompatV2 does not type widening present in table"))
+      assert(
+        e.getMessage.contains("icebergCompatV2 does not support type widening present in table"))
     }
   }
 
@@ -298,7 +299,8 @@ class DeltaIcebergCompatV2Suite extends DeltaTableWriteSuiteBase with ColumnMapp
             TableConfig.COLUMN_MAPPING_MODE.getKey -> "ID"))
       }
 
-      assert(e.getMessage.contains("icebergCompatV2 does not type widening present in table"))
+      assert(
+        e.getMessage.contains("icebergCompatV2 does not support type widening present in table"))
     }
   }
 
