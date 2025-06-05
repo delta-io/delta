@@ -412,6 +412,8 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
         """{"clusteringColumns":[["id"],["part1"]]}""",
         false)
 
+      val newClusteringCols = List(new Column("id"), new Column("part1")) // will be updated in v1
+
       {
         val commitResult0 = appendData(
           engine,
@@ -420,6 +422,9 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
           testPartitionSchema,
           clusteringColsOpt = Some(testClusteringColumns),
           data = Seq(Map.empty[String, Literal] -> dataClusteringBatches1))
+        assertCommitResultHasClusteringCols(
+          commitResult0,
+          expectedClusteringCols = testClusteringColumns)
 
         val expData = dataClusteringBatches1.flatMap(_.toTestRows)
 
@@ -434,7 +439,10 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
         val commitResult1 = updateTableMetadata(
           engine,
           tablePath,
-          clusteringColsOpt = Some(List(new Column("id"), new Column("part1"))))
+          clusteringColsOpt = Some(newClusteringCols))
+        assertCommitResultHasClusteringCols(
+          commitResult1,
+          expectedClusteringCols = newClusteringCols)
 
         verifyCommitResult(commitResult1, expVersion = 1, expIsReadyForCheckpoint = false)
         verifyClusteringDMAndCRC(
@@ -446,6 +454,9 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
           engine,
           tablePath,
           data = Seq(Map.empty[String, Literal] -> dataClusteringBatches2))
+        assertCommitResultHasClusteringCols(
+          commitResult2,
+          expectedClusteringCols = newClusteringCols)
 
         val expData = dataClusteringBatches1.flatMap(_.toTestRows) ++
           dataClusteringBatches2.flatMap(_.toTestRows)
