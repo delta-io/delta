@@ -122,19 +122,21 @@ class DeltaSharingUtilsSuite extends SparkFunSuite with SharedSparkContext {
     override def getTableVersion(table: Table, startingTimestamp: Option[String] = None): Long = 0
 
     override def getMetadata(
-                     table: Table,
-                     versionAsOf: Option[Long] = None,
-                     timestampAsOf: Option[String] = None): DeltaTableMetadata
-    = throw new UnsupportedOperationException
+      table: Table,
+      versionAsOf: Option[Long] = None,
+      timestampAsOf: Option[String] = None
+    ): DeltaTableMetadata =
+      throw new UnsupportedOperationException
 
     override def getFiles(
-                  table: Table,
-                  predicates: Seq[String],
-                  limit: Option[Long],
-                  versionAsOf: Option[Long],
-                  timestampAsOf: Option[String],
-                  jsonPredicateHints: Option[String],
-                  refreshToken: Option[String]): DeltaTableFiles = {
+      table: Table,
+      predicates: Seq[String],
+      limit: Option[Long],
+      versionAsOf: Option[Long],
+      timestampAsOf: Option[String],
+      jsonPredicateHints: Option[String],
+      refreshToken: Option[String]
+    ): DeltaTableFiles = {
       val file = getAddFileStr()
       val dv = getDeletionVectorStr()
       DeltaTableFiles(
@@ -156,9 +158,9 @@ class DeltaSharingUtilsSuite extends SparkFunSuite with SharedSparkContext {
     }
 
     override def getCDFFiles(
-                     table: Table,
-                     cdfOptions: Map[String, String],
-                     includeHistoricalMetadata: Boolean): DeltaTableFiles = {
+      table: Table,
+      cdfOptions: Map[String, String],
+      includeHistoricalMetadata: Boolean): DeltaTableFiles = {
       val file = getAddFileStr()
       val dv = getDeletionVectorStr()
       val cdc = getCdcStr()
