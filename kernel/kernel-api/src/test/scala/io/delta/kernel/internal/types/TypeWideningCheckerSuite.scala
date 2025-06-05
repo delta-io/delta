@@ -161,6 +161,22 @@ class TypeWideningCheckerSuite extends AnyFunSuite {
   }
 
   test("iceberg V2 unsupported type widening") {
+    /////////////////////////////////////////////////////////////////////////////////////
+    // Test generally unsupported widening operations
+    /////////////////////////////////////////////////////////////////////////////////////
+    assert(!TypeWideningChecker.isIcebergV2Compatible(StringType.STRING, BinaryType.BINARY))
+    assert(!TypeWideningChecker.isIcebergV2Compatible(IntegerType.INTEGER, StringType.STRING))
+    assert(!TypeWideningChecker.isIcebergV2Compatible(DateType.DATE, StringType.STRING))
+    assert(!TypeWideningChecker.isIcebergV2Compatible(DoubleType.DOUBLE, new DecimalType(10, 2)))
+    assert(!TypeWideningChecker.isIcebergV2Compatible(DateType.DATE, TimestampType.TIMESTAMP))
+    assert(!TypeWideningChecker.isIcebergV2Compatible(
+      TimestampNTZType.TIMESTAMP_NTZ,
+      DateType.DATE))
+
+    ////////////////////////////////////////////////////////////////////////////////////
+    // Test invalid widening that are generally supported by Delta but not by Iceberg V2
+    ////////////////////////////////////////////////////////////////////////////////////
+
     // Integer to Double widening (not supported by Iceberg)
     assert(!TypeWideningChecker.isIcebergV2Compatible(ByteType.BYTE, DoubleType.DOUBLE))
     assert(!TypeWideningChecker.isIcebergV2Compatible(ShortType.SHORT, DoubleType.DOUBLE))
