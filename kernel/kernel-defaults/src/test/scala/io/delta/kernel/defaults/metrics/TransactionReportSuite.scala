@@ -69,7 +69,9 @@ class TransactionReportSuite extends DeltaTableWriteSuiteBase with MetricsReport
         val txnCommitResult = timer.time(() =>
           transaction.commit(engine, actionsToCommit)) // Time the actual operation
         // Validate the txn metrics returned in txnCommitResult
-        validateTransactionMetrics(txnCommitResult.getTransactionMetrics, timer.totalDurationNs())
+        validateTransactionMetrics(
+          txnCommitResult.getTransactionReport.getTransactionMetrics,
+          timer.totalDurationNs())
       },
       expectException)
 
