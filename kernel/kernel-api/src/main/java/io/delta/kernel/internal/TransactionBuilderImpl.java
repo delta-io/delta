@@ -266,6 +266,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
           latestSnapshot.get().getProtocol(), // reuse latest protocol
           latestSnapshot.get().getMetadata(), // reuse latest metadata
           setTxnOpt,
+          // TODO: not yet initialized, fix it as part of #4713
           resolvedClusteringColumns, /* clustering cols=empty */
           false /* shouldUpdateClusteringDomainMetadata=false */,
           false /* shouldUpdateMetadata=false */,
