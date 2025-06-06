@@ -1,8 +1,8 @@
-# Catalog-managed tables
+# Catalog-Managed Tables
 **Associated Github issue for discussions: https://github.com/delta-io/delta/issues/4381**
 
 This RFC proposes a new reader-writer table feature `catalogManaged` which changes the way Delta Lake
-accesses tables.
+discovers and accesses tables.
 
 Today’s Delta protocol relies entirely on the filesystem for read-time discovery as well as
 write-time commit atomicity. This feature request is to allow catalog-managed Delta tables whose
@@ -14,11 +14,12 @@ primitives.
 Making the catalog the source of truth for commits to a table brings several important advantages:
 
 1. Allows the catalog to broker all commits to the tables it manages, and to reject filesystem-based
-   commits that would bypass the catalog. Otherwise, the catalog cannot reliably stay in sync with the
-   table state, nor can it reject invalid commits, because it doesn’t even know about writes until they
-   are already durable and visible to readers. For example, a catalog would want to block attempts to
-   drop the NOT NULL constraint on a column which is referenced by a FOREIGN KEY constraint in a
-   different table.
+   commits that would bypass the catalog. Otherwise, the catalog cannot reliably stay in sync with
+   the table state, nor can it reject invalid commits, because it doesn’t even know about writes
+   until they are already durable and visible to readers. For instance, a catalog might want to block
+   low-privilege writers from modifying table metadata (e.g. schema, table features, or table
+   properties) while still allowing normal reads and writes. Similarly, if a column is referenced by
+   a foreign key, the catalog might want to prevent dropping its NOT NULL constraint.
 
 2. Opens a clear path to transactions that could span multiple tables and/or involve non-table
    catalog updates. Otherwise, the catalog cannot participate in commit at all, because
@@ -51,8 +52,8 @@ Making the catalog the source of truth for commits to a table brings several imp
 
 > ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#delta-log-entries)***
 
-<ins>Delta Log Entries, also known as Delta files</ins>, are stored as JSON in a directory at the
-root of the table named `_delta_log`, and together with checkpoints make up the log of all changes
+<ins>Delta Log Entries, also known as Delta files</ins>, are JSON files stored in the `_delta_log`
+directory at the root of the table. Together with checkpoints, they make up the log of all changes
 that have occurred to a table. Delta files are the unit of atomicity for a table, and are named
 using the next available version number, zero-padded to 20 digits.
 
@@ -69,10 +70,10 @@ JSON document. A Delta file, corresponding to version `v`, contains an atomic se
 table's state, for example, adding or removing a file.</ins>
 
 <ins>**Note:** If the [`catalogManaged` table feature](#catalog-managed-tables) is enabled on the table,
-recently ratified commits may not yet be published to the `_delta_log` directory as normal Delta
+recently [ratified commits](#ratified-commit) may not yet be published to the `_delta_log` directory as normal Delta
 files - they may be stored directly by the catalog or reside in the `_delta_log/_staged_commits`
 directory. Delta clients must contact the table's managing catalog in order to find the information
-about the [ratified, potentially-unpublished commits](#publishing-commits).</ins>
+about these [ratified, potentially-unpublished commits](#publishing-commits).</ins>
 
 <ins>The `_delta_log/_staged_commits` directory is the staging area for [staged](#staged-commit)
 commits. Delta files in this directory have a UUID embedded into them and follow the pattern
@@ -166,21 +167,21 @@ There are several types of commits:
 1. **Proposed commit**:  A commit that a Delta client has proposed for the next version of the
    table. It could be _staged_ or _inline_. It will either become _ratified_ or be rejected.
 
-2. **Staged commit** <a name="staged-commit"></a>: A commit that is written to disk at
+2. <a name="staged-commit">**Staged commit**</a>: A commit that is written to disk at
    `_delta_log/_staged_commits/<v>.<uuid>.json`. It has the same content and format as a published
    Delta file.
     - Here, the `uuid` is a random UUID that is generated for each commit and `v` is the version
       which is proposed to be committed, zero-padded to 20 digits.
-    - The catalog stores only the location, not the content, of a staged commit.
-    - The mere existence of one of these files does not mean that the file has been ratified or even
+    - The mere existence of a staged commit does not mean that the file has been ratified or even
       proposed. It might correspond to a failed or in-progress commit attempt.
     - The catalog is the source of truth around which staged commits are ratified.
+    - The catalog stores only the location, not the content, of a staged (and ratified) commit.
 
-3. **Inline commit** <a name="inline-commit"></a>: A proposed commit that is not written to disk but
+3. <a name="inline-commit">**Inline commit**</a>: A proposed commit that is not written to disk but
    rather has its content sent to the catalog for the catalog to store directly.
 
-4. **Ratified commit**: A proposed commit that a catalog has determined has won the commit at the
-   desired version of the table.
+4. <a name="ratified-commit">**Ratified commit**</a>: A proposed commit that a catalog has
+   determined has won the commit at the desired version of the table.
     - The catalog must store ratified commits (that is, the staged commit's location or the inline
       commit's content) until they are published to the `_delta_log` directory.
     - A ratified commit may or may not yet be published.
@@ -188,11 +189,11 @@ There are several types of commits:
       have just atomically published it to the filesystem directly, relying on PUT-if-absent
       primitives to facilitate the ratification and publication all in one step.
 
-5. **Published commit** <a name="published-commit"></a>: A ratified commit that has been copied into
+5. <a name="published-commit">**Published commit**</a>: A ratified commit that has been copied into
    the `_delta_log` as a normal Delta file, i.e. `_delta_log/<v>.json`.
     - Here, the `v` is the version which is being committed, zero-padded to 20 digits.
     - The existence of a `<v>.json` file proves that the corresponding version `v` is ratified,
-      regardless of whether the table is catalog-managed for filesystem-based. The catalog is allowed
+      regardless of whether the table is catalog-managed or filesystem-based. The catalog is allowed
       to return information about published commits, but Delta clients can also use filesystem
       listing operations to directly discover them.
     - Published commits do not need to be stored by the catalog.
@@ -207,28 +208,33 @@ the logic required by the `catalogManaged` table feature. Among other things, it
   catalog component with the commit content
 
 The Delta client is also responsible for defining the client-side API that catalogs should target.
+That is, there must be _some_ API that the [catalog client](#catalog-client) can use to communicate
+to the Delta client the subset of catalog-managed information that the Delta client cares about.
+This protocol feature is concerned with what information Delta cares about, but leaves to Delta
+clients the design of the API they use to obtain that information from catalog clients.
 
 ## Terminology: Catalogs
 
-1. **Catalog**: A catalog is a entity which manages a Delta table, including its creation, writes,
+1. **Catalog**: A catalog is an entity which manages a Delta table, including its creation, writes,
    reads, and eventual deletion.
     - It could be backed by a database, a filesystem, or any other persistence mechanism.
-    - Each catalog has its own spec around how Delta clients should interact with them, and how they
-      perform a commit.
+    - Each catalog has its own spec around how catalog clients should interact with them, and how
+      they perform a commit.
 
-2. **Catalog Client**: The catalog always has a client-side component which the Delta client
-   interacts with directly.
-    - This client-side component has two primary responsibilities:
-        - implement any client-side catalog-specific logic (such as [publishing](#publishing-commits))
-        - communicate with the Catalog Server, if any
+2. <a name="catalog-client">**Catalog Client**</a>: The catalog always has a client-side component
+   which the Delta client interacts with directly. This client-side component has two primary
+   responsibilities:
+    - implement any client-side catalog-specific logic (such as staging or
+      [publishing](#publishing-commits) commits)
+    - communicate with the Catalog Server, if any
 
 3. **Catalog Server**: The catalog may also involve a server-side component which the client-side
    component would be responsible to communicate with.
     - This server is responsible for coordinating commits and potentially persisting table metadata
       and enforcing authorization policies.
     - Not all catalogs require a server; some may be entirely client-side, e.g. filesystem-backed
-      catalogs, or they may make use of a generic database server and implement all of the logic
-      client-side.
+      catalogs, or they may make use of a generic database server and implement all of the catalog's
+      business logic client-side.
 
 **NOTE**: This specification outlines the responsibilities and actions that catalogs must implement.
 This spec does its best not to assume any specific catalog _implementation_, though it does call out
@@ -300,9 +306,10 @@ informs the Delta client of commits [7, 9] as well as the latest ratified versio
 
 If this information is insufficient to construct a complete snapshot of the table, Delta clients
 must LIST the `_delta_log` directory to get information about the published commits. For commits
-that are both returned by the catalog and already published, Delta clients can choose to read
-either. Delta clients must ignore any files with versions greater than the latest ratified commit
-version returned by the catalog.
+that are both returned by the catalog and already published, Delta clients must treat the catalog's
+version as authoritative and read the commit returned by the catalog. Additionally, Delta clients
+must ignore any files with versions greater than the latest ratified commit version returned by the
+catalog.
 
 Combining these two sets of files and commits enables Delta clients to generate a snapshot at the
 latest version of the table.
@@ -348,7 +355,7 @@ provides the latest ratified commit information whenever a commit fails due to v
 Even after a commit is ratified, it is not discoverable through filesystem operations until it is
 [published](#publishing-commits).
 
-The catalog is responsible to implement an API (defined by the Delta client) that Delta clients can
+The catalog-client is responsible to implement an API (defined by the Delta client) that Delta clients can
 use to retrieve the latest ratified commit version (authoritative), as well as the set of ratified
 commits the catalog is still storing for the table. If some commits needed to complete the snapshot
 are not stored by the catalog, as they are already published, Delta clients can issue a filesystem
@@ -423,8 +430,8 @@ The `catalogManaged` table feature is supported and active when:
 
 When supported and active:
 
-- Writers must discover and access the table using catalog calls, which happens before the table's
-  protocol is known.
+- Writers must discover and access the table using catalog calls, which happens _before_ the table's
+  protocol is known. See [Table Discovery](#table-discovery) for more details.
 - The [in-commit-timestamps](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#in-commit-timestamps)
   table feature must be supported and active.
 - The `commitInfo` action must also contain a field `txnId` that stores a unique transaction
@@ -438,8 +445,29 @@ When supported and active:
 When supported and active:
 
 - Readers must discover the table using catalog calls, which happens before the table's protocol
-  is known.
+  is known. See [Table Discovery](#table-discovery) for more details.
 - Readers must contact the catalog for information about unpublished ratified commits.
+- Readers must follow the rules described in the [Reading Catalog-managed Tables](#reading-catalog-managed-tables)
+  section above. Noteably
+  - If the catalog said `v` is the latest version, clients must ignore any later versions that may
+    have been published
+  - When the catalog returns a ratified commit for version `v`, readers must
+  use that catalog-supplied commit and ignore any published Delta file for version `v` that might
+  also be present.
+
+## Table Discovery
+
+The requirements above state that readers and writers must discover and access the table using
+catalog calls, which occurs _before_ the table's protocol is known. This raises an important
+question: how can a client discover a `catalogManaged` Delta table without first knowing that it
+_is_, in fact, `catalogManaged` (according to the protocol)?
+
+To solve this, first note that, in practice, catalog-integrated engines already ask the catalog to
+resolve a table name to its storage location during the name resolution step. This protocol
+therefore encourages that the same name resolution step also indicate whether the table is
+catalog-managed. Surfacing this at the very moment the catalog returns the path imposes no extra
+round-trips, yet it lets the client decide — early and unambiguously — whether to follow the
+`catalogManaged` read and write rules.
 
 ## Sample Catalog Client API
 
