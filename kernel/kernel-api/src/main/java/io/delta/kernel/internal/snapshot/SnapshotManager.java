@@ -176,16 +176,8 @@ public class SnapshotManager {
         return new DelegateFileSystemClient(super.getFileSystemClient()) {
           @Override
           public CloseableIterator<FileStatus> listFrom(String filePath) throws IOException {
-            long startTime = System.nanoTime();
-            try {
-              return super.listFrom(filePath);
-            } finally {
-              // Always record timing, regardless of success or failure
-              snapshotContext
-                  .getSnapshotMetrics()
-                  .logSegmentListCallDurationTimer
-                  .record(System.nanoTime() - startTime);
-            }
+            snapshotContext.getSnapshotMetrics().logSegmentListCallCounter.increment();
+            return super.listFrom(filePath);
           }
         };
       }

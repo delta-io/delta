@@ -23,7 +23,6 @@ import java.util.Optional;
   "timestampToVersionResolutionDurationNs",
   "loadInitialDeltaActionsDurationNs",
   "timeToBuildLogSegmentForVersionNs",
-  "logSegmentListCallDurationNs",
   "numLogSegmentListCalls"
 })
 public interface SnapshotMetricsResult {
@@ -45,13 +44,6 @@ public interface SnapshotMetricsResult {
    *     construction. 0 if snapshot construction fails before this step.
    */
   long getTimeToBuildLogSegmentForVersionNs();
-
-  /**
-   * @return the total duration (ns) of all log segment list calls made during snapshot
-   *     construction. 0 if no list calls were made or if snapshot construction fails before this
-   *     step.
-   */
-  long getLogSegmentListCallDurationNs();
 
   /**
    * @return the total number of log segment list calls made during snapshot construction. 0 if no

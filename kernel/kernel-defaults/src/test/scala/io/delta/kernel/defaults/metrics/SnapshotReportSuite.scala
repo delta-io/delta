@@ -28,17 +28,18 @@ import io.delta.kernel.metrics.SnapshotReport
 
 import org.scalatest.funsuite.AnyFunSuite
 
-case class SnapshotReportExpectations(
-    expectException: Boolean = false,
-    expectedVersion: Optional[Long] = Optional.empty(),
-    expectedCheckpointVersion: Optional[Long] = Optional.empty(),
-    expectedProvidedTimestamp: Optional[Long] = Optional.empty(),
-    expectNonEmptyTimestampToVersionResolutionDuration: Boolean = false,
-    expectNonZeroLoadProtocolAndMetadataDuration: Boolean = true,
-    expectNonZeroBuildLogSegmentDuration: Boolean = true,
-    expectNonZeroListingBuildLogSegment: Boolean = true)
-
 class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
+
+  case class SnapshotReportExpectations(
+      expectedReportCount: Int,
+      expectException: Boolean,
+      expectedVersion: Optional[Long],
+      expectedCheckpointVersion: Optional[Long],
+      expectedProvidedTimestamp: Optional[Long],
+      expectNonEmptyTimestampToVersionResolutionDuration: Boolean = false,
+      expectNonZeroLoadProtocolAndMetadataDuration: Boolean = true,
+      expectNonZeroBuildLogSegmentDuration: Boolean = true,
+      expectNonZeroListingBuildLogSegment: Boolean = true)
 
   /**
    * Given a function [[f]] that generates a snapshot from a [[Table]], runs [[f]] and looks for
@@ -80,18 +81,17 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
    * generated [[SnapshotReport]]. Checks that the report is as expected.
    *
    * @param f function to generate a snapshot from a [[Table]] and engine
-   * @param expectedReportCount expected number of reports to be generated
    * @param path table path to query from
-   * @param expectations encapsulates all expectations for the snapshot report validation
+   * @param expectations encapsulates all the expected values and behaviors for the snapshot report.
+   *                     See [[SnapshotReportExpectations]] for detailed parameter descriptions.
    */
   def checkSnapshotReport(
       f: (Table, Engine) => Snapshot,
-      expectedReportCount: Int,
       path: String,
       expectations: SnapshotReportExpectations): Unit = {
 
     val (snapshotReport, duration, exception) =
-      getSnapshotReport(f, path, expectedReportCount, expectations.expectException)
+      getSnapshotReport(f, path, expectations.expectedReportCount, expectations.expectException)
 
     // Verify contents
     assert(snapshotReport.getTablePath == defaultEngine.getFileSystemClient.resolvePath(path))
@@ -139,11 +139,8 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
       assert(snapshotReport.getSnapshotMetrics.getTimeToBuildLogSegmentForVersionNs == 0)
     }
     if (expectations.expectNonZeroListingBuildLogSegment) {
-      assert(snapshotReport.getSnapshotMetrics.getLogSegmentListCallDurationNs > 0)
-      assert(snapshotReport.getSnapshotMetrics.getLogSegmentListCallDurationNs < duration)
       assert(snapshotReport.getSnapshotMetrics.getNumLogSegmentListCalls > 0)
     } else {
-      assert(snapshotReport.getSnapshotMetrics.getLogSegmentListCallDurationNs == 0)
       assert(snapshotReport.getSnapshotMetrics.getNumLogSegmentListCalls == 0)
     }
   }
@@ -163,24 +160,36 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
       // Test getLatestSnapshot
       checkSnapshotReport(
         (table, engine) => table.getLatestSnapshot(engine),
-        expectedReportCount = 1,
         path,
-        SnapshotReportExpectations(expectedVersion = Optional.of(1)))
+        SnapshotReportExpectations(
+          expectedReportCount = 1,
+          expectException = false,
+          expectedVersion = Optional.of(1),
+          expectedCheckpointVersion = Optional.empty(),
+          expectedProvidedTimestamp = Optional.empty() // No time travel by timestamp
+        ))
 
       // Test getSnapshotAsOfVersion
       checkSnapshotReport(
         (table, engine) => table.getSnapshotAsOfVersion(engine, 0),
-        expectedReportCount = 1,
         path,
-        SnapshotReportExpectations(expectedVersion = Optional.of(0)))
+        SnapshotReportExpectations(
+          expectedReportCount = 1,
+          expectException = false,
+          expectedVersion = Optional.of(0),
+          expectedCheckpointVersion = Optional.empty(),
+          expectedProvidedTimestamp = Optional.empty() // No time travel by timestamp
+        ))
 
       // Test getSnapshotAsOfTimestamp
       checkSnapshotReport(
         (table, engine) => table.getSnapshotAsOfTimestamp(engine, version0timestamp),
-        expectedReportCount = 2,
         path,
         SnapshotReportExpectations(
+          expectedReportCount = 2,
+          expectException = false,
           expectedVersion = Optional.of(0),
+          expectedCheckpointVersion = Optional.empty(),
           expectedProvidedTimestamp = Optional.of(version0timestamp),
           expectNonEmptyTimestampToVersionResolutionDuration = true))
     }
@@ -204,27 +213,34 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
       // Test getLatestSnapshot
       checkSnapshotReport(
         (table, engine) => table.getLatestSnapshot(engine),
-        expectedReportCount = 1,
         path,
         SnapshotReportExpectations(
+          expectedReportCount = 1,
+          expectException = false,
           expectedVersion = Optional.of(11),
-          expectedCheckpointVersion = Optional.of(10)))
+          expectedCheckpointVersion = Optional.of(10),
+          expectedProvidedTimestamp = Optional.empty() // No time travel by timestamp
+        ))
 
       // Test getSnapshotAsOfVersion
       checkSnapshotReport(
         (table, engine) => table.getSnapshotAsOfVersion(engine, 11),
-        expectedReportCount = 1,
         path,
         SnapshotReportExpectations(
+          expectedReportCount = 1,
+          expectException = false,
           expectedVersion = Optional.of(11),
-          expectedCheckpointVersion = Optional.of(10)))
+          expectedCheckpointVersion = Optional.of(10),
+          expectedProvidedTimestamp = Optional.empty() // No time travel by timestamp
+        ))
 
       // Test getSnapshotAsOfTimestamp
       checkSnapshotReport(
         (table, engine) => table.getSnapshotAsOfTimestamp(engine, version11timestamp),
-        expectedReportCount = 2,
         path,
         SnapshotReportExpectations(
+          expectedReportCount = 2,
+          expectException = false,
           expectedVersion = Optional.of(10),
           expectedCheckpointVersion = Optional.of(10),
           expectedProvidedTimestamp = Optional.of(version11timestamp),
@@ -243,21 +259,25 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
       // This fails during log segment building
       checkSnapshotReport(
         (table, engine) => table.getSnapshotAsOfVersion(engine, 1),
-        expectedReportCount = 1,
         path,
         SnapshotReportExpectations(
+          expectedReportCount = 1,
           expectException = true,
           expectedVersion = Optional.of(1),
+          expectedCheckpointVersion = Optional.empty(),
+          expectedProvidedTimestamp = Optional.empty(), // No time travel by timestamp
           expectNonZeroLoadProtocolAndMetadataDuration = false))
 
       // Test getSnapshotAsOfTimestamp with timestamp=0 (does not exist)
       // This fails during timestamp -> version resolution
       checkSnapshotReport(
         (table, engine) => table.getSnapshotAsOfTimestamp(engine, 0),
-        expectedReportCount = 2,
         path,
         SnapshotReportExpectations(
+          expectedReportCount = 2,
           expectException = true,
+          expectedVersion = Optional.empty(),
+          expectedCheckpointVersion = Optional.empty(),
           expectedProvidedTimestamp = Optional.of(0),
           expectNonEmptyTimestampToVersionResolutionDuration = true,
           expectNonZeroLoadProtocolAndMetadataDuration = false,
@@ -269,10 +289,12 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
       val currentTimeMillis = System.currentTimeMillis
       checkSnapshotReport(
         (table, engine) => table.getSnapshotAsOfTimestamp(engine, currentTimeMillis),
-        expectedReportCount = 2,
         path,
         SnapshotReportExpectations(
+          expectedReportCount = 2,
           expectException = true,
+          expectedVersion = Optional.empty(),
+          expectedCheckpointVersion = Optional.empty(),
           expectedProvidedTimestamp = Optional.of(currentTimeMillis),
           expectNonEmptyTimestampToVersionResolutionDuration = true,
           expectNonZeroLoadProtocolAndMetadataDuration = false,
@@ -289,32 +311,42 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
       // Test getLatestSnapshot
       checkSnapshotReport(
         (table, engine) => table.getLatestSnapshot(engine),
-        expectedReportCount = 1,
         path,
         SnapshotReportExpectations(
+          expectedReportCount = 1,
           expectException = true,
+          expectedVersion = Optional.empty(),
+          expectedCheckpointVersion = Optional.empty(),
+          expectedProvidedTimestamp = Optional.empty(), // No time travel by timestamp
           expectNonZeroLoadProtocolAndMetadataDuration = false))
 
       // Test getSnapshotAsOfVersion
       checkSnapshotReport(
         (table, engine) => table.getSnapshotAsOfVersion(engine, 0),
-        expectedReportCount = 1,
         path,
         SnapshotReportExpectations(
+          expectedReportCount = 1,
           expectException = true,
           expectedVersion = Optional.of(0),
+          expectedCheckpointVersion = Optional.empty(),
+          expectedProvidedTimestamp = Optional.empty(), // No time travel by timestamp
           expectNonZeroLoadProtocolAndMetadataDuration = false))
 
       // Test getSnapshotAsOfTimestamp
       checkSnapshotReport(
         (table, engine) => table.getSnapshotAsOfTimestamp(engine, 1000),
-        expectedReportCount = 1,
         path,
         SnapshotReportExpectations(
+          expectedReportCount = 1,
           expectException = true,
+          expectedVersion = Optional.empty(),
+          expectedCheckpointVersion = Optional.empty(),
           // Query will fail before timestamp -> version resolution. The failure
           // will happen when `getLatestSnapshot` is called.
-          expectNonZeroLoadProtocolAndMetadataDuration = false))
+          expectedProvidedTimestamp = Optional.empty(),
+          expectNonZeroLoadProtocolAndMetadataDuration = false,
+          // It will first build a lastest snapshot, and a logSegment is built there.
+          expectNonZeroBuildLogSegmentDuration = true))
     }
   }
 
@@ -331,20 +363,25 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
       // Test getLatestSnapshot
       checkSnapshotReport(
         (table, engine) => table.getLatestSnapshot(engine),
-        expectedReportCount = 1,
         path,
         SnapshotReportExpectations(
+          expectedReportCount = 1,
           expectException = true,
+          expectedVersion = Optional.empty(),
+          expectedCheckpointVersion = Optional.empty(),
+          expectedProvidedTimestamp = Optional.empty(), // No time travel by timestamp
           expectNonZeroLoadProtocolAndMetadataDuration = false))
 
       // Test getSnapshotAsOfVersion
       checkSnapshotReport(
         (table, engine) => table.getSnapshotAsOfVersion(engine, 2),
-        expectedReportCount = 1,
         path,
         SnapshotReportExpectations(
+          expectedReportCount = 1,
           expectException = true,
           expectedVersion = Optional.of(2),
+          expectedCheckpointVersion = Optional.empty(),
+          expectedProvidedTimestamp = Optional.empty(), // No time travel by timestamp
           expectNonZeroLoadProtocolAndMetadataDuration = false))
 
       // Test getSnapshotAsOfTimestamp
@@ -352,12 +389,15 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
         FileNames.deltaFile(new Path(tempDir.getCanonicalPath, "_delta_log"), 2)).lastModified()
       checkSnapshotReport(
         (table, engine) => table.getSnapshotAsOfTimestamp(engine, version2Timestamp),
-        expectedReportCount = 1,
         tempDir.getCanonicalPath,
         SnapshotReportExpectations(
+          expectedReportCount = 1,
           expectException = true,
           // Query will fail before timestamp -> version resolution. The failure
           // will happen when `getLatestSnapshot` is called.
+          expectedVersion = Optional.empty(),
+          expectedCheckpointVersion = Optional.empty(),
+          expectedProvidedTimestamp = Optional.empty(),
           expectNonZeroLoadProtocolAndMetadataDuration = false))
     }
   }
@@ -369,20 +409,26 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
     // Test getLatestSnapshot
     checkSnapshotReport(
       (table, engine) => table.getLatestSnapshot(engine),
-      expectedReportCount = 1,
       path,
       SnapshotReportExpectations(
+        expectedReportCount = 1,
         expectException = true,
-        expectedVersion = Optional.of(0)))
+        expectedVersion = Optional.of(0),
+        expectedCheckpointVersion = Optional.empty(),
+        expectedProvidedTimestamp = Optional.empty() // No time travel by timestamp
+      ))
 
     // Test getSnapshotAsOfVersion
     checkSnapshotReport(
       (table, engine) => table.getSnapshotAsOfVersion(engine, 0),
-      expectedReportCount = 1,
       path,
       SnapshotReportExpectations(
+        expectedReportCount = 1,
         expectException = true,
-        expectedVersion = Optional.of(0)))
+        expectedVersion = Optional.of(0),
+        expectedCheckpointVersion = Optional.empty(),
+        expectedProvidedTimestamp = Optional.empty() // No time travel by timestamp
+      ))
 
     // Test getSnapshotAsOfTimestamp
     // We use the timestamp of version 0
@@ -390,12 +436,16 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
       .lastModified()
     checkSnapshotReport(
       (table, engine) => table.getSnapshotAsOfTimestamp(engine, version0Timestamp),
-      expectedReportCount = 1,
       path,
       SnapshotReportExpectations(
+        expectedReportCount = 1,
         expectException = true,
         // Query will fail before timestamp -> version resolution. The failure
         // will happen when `getLatestSnapshot` is called.
-        expectedVersion = Optional.of(0)))
+        expectedVersion = Optional.of(0),
+        expectedCheckpointVersion = Optional.empty(),
+        expectedProvidedTimestamp = Optional.empty(),
+        // This is due to the `getLatestSnapshot` call
+        expectNonZeroLoadProtocolAndMetadataDuration = true))
   }
 }

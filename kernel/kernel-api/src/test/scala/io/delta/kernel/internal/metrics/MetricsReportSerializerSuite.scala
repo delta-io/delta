@@ -44,8 +44,6 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
       snapshotReport.getSnapshotMetrics().getLoadInitialDeltaActionsDurationNs()
     val buildLogSegmentDuration =
       snapshotReport.getSnapshotMetrics().getTimeToBuildLogSegmentForVersionNs()
-    val logSegmentListCallDuration =
-      snapshotReport.getSnapshotMetrics().getLogSegmentListCallDurationNs()
     val numLogSegmentListCalls =
       snapshotReport.getSnapshotMetrics().getNumLogSegmentListCalls()
     val exception: Optional[String] = snapshotReport.getException().map(_.toString)
@@ -62,7 +60,6 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |"timestampToVersionResolutionDurationNs":${timestampToVersionResolutionDuration},
          |"loadInitialDeltaActionsDurationNs":${loadProtocolAndMetadataDuration},
          |"timeToBuildLogSegmentForVersionNs":${buildLogSegmentDuration},
-         |"logSegmentListCallDurationNs":${logSegmentListCallDuration},
          |"numLogSegmentListCalls":${numLogSegmentListCalls}
          |}
          |}
@@ -75,9 +72,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
     snapshotContext1.getSnapshotMetrics.timestampToVersionResolutionTimer.record(10)
     snapshotContext1.getSnapshotMetrics.loadInitialDeltaActionsTimer.record(1000)
     snapshotContext1.getSnapshotMetrics.timeToBuildLogSegmentForVersionTimer.record(500)
-    // Record some log segment list call metrics
-    snapshotContext1.getSnapshotMetrics.logSegmentListCallDurationTimer.record(250)
-    snapshotContext1.getSnapshotMetrics.logSegmentListCallDurationTimer.record(150)
+    snapshotContext1.getSnapshotMetrics.logSegmentListCallCounter.increment(2)
     snapshotContext1.setVersion(25)
     snapshotContext1.setCheckpointVersion(Optional.of(20))
     val exception = new RuntimeException("something something failed")
@@ -100,7 +95,6 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
         |"timestampToVersionResolutionDurationNs":10,
         |"loadInitialDeltaActionsDurationNs":1000,
         |"timeToBuildLogSegmentForVersionNs":500,
-        |"logSegmentListCallDurationNs":400,
         |"numLogSegmentListCalls":2
         |}
         |}
