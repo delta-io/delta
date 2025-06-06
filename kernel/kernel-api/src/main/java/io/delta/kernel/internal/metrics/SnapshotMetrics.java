@@ -34,15 +34,19 @@ public class SnapshotMetrics {
 
   public final Timer timeToBuildLogSegmentForVersionTimer = new Timer();
 
+  public final Timer durationToGetCrcInfoTimer = new Timer();
+
   public SnapshotMetricsResult captureSnapshotMetricsResult() {
     return new SnapshotMetricsResult() {
 
       final Optional<Long> timestampToVersionResolutionDurationResult =
-          timestampToVersionResolutionTimer.totalDurationIfRecorded();
+              timestampToVersionResolutionTimer.totalDurationIfRecorded();
       final long loadInitialDeltaActionsDurationResult =
-          loadInitialDeltaActionsTimer.totalDurationNs();
+              loadInitialDeltaActionsTimer.totalDurationNs();
       final long timeToBuildLogSegmentForVersionDurationResult =
-          timeToBuildLogSegmentForVersionTimer.totalDurationNs();
+              timeToBuildLogSegmentForVersionTimer.totalDurationNs();
+      final long durationToGetCrcInfoDurationResult =
+              durationToGetCrcInfoTimer.totalDurationNs();
 
       @Override
       public Optional<Long> getTimestampToVersionResolutionDurationNs() {
@@ -58,17 +62,24 @@ public class SnapshotMetrics {
       public long getTimeToBuildLogSegmentForVersionNs() {
         return timeToBuildLogSegmentForVersionDurationResult;
       }
+
+      @Override
+      public long getDurationToGetCrcInfoNs() {
+        return durationToGetCrcInfoDurationResult;
+      }
     };
   }
 
   @Override
   public String toString() {
     return String.format(
-        "SnapshotMetrics(timestampToVersionResolutionTimer=%s, "
-            + "loadInitialDeltaActionsTimer=%s, "
-            + "timeToBuildLogSegmentForVersionTimer=%s)",
-        timestampToVersionResolutionTimer,
-        loadInitialDeltaActionsTimer,
-        timeToBuildLogSegmentForVersionTimer);
+            "SnapshotMetrics(timestampToVersionResolutionTimer=%s, "
+                    + "loadInitialDeltaActionsTimer=%s, "
+                    + "timeToBuildLogSegmentForVersionTimer=%s, "
+                    + "durationToGetCrcInfoTimer=%s)",
+            timestampToVersionResolutionTimer,
+            loadInitialDeltaActionsTimer,
+            timeToBuildLogSegmentForVersionTimer,
+            durationToGetCrcInfoTimer);
   }
 }
