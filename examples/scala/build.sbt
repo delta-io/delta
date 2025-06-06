@@ -169,3 +169,26 @@ lazy val root = (project in file("."))
     ),
     java17Settings
   )
+
+lazy val connect = (project in file("./connect"))
+  .settings(
+    run / fork := true,
+    name := "example",
+    scalaVersion := scala213,
+    mainClass := Some("example.DeltaConnect"),
+    libraryDependencies ++= Seq(
+      "io.delta" %% "delta-connect-client" % "4.0.0",
+      "org.apache.spark" %% "spark-connect-client-jvm" % "4.0.0"
+    ),
+    extraMavenRepo,
+    resolvers ++= Seq(
+      Resolver.mavenLocal,
+      "Delta" at "https://oss.sonatype.org/content/repositories/iodelta-1229"
+    ),
+    scalacOptions ++= Seq(
+      "-deprecation",
+      "-feature"
+    ),
+    java17Settings,
+    javaOptions += "--add-opens=java.base/java.nio=org.apache.arrow.memory.core,ALL-UNNAMED"
+  )
