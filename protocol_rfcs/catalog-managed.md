@@ -103,7 +103,7 @@ not attempt to directly interpret the contents of that directory. Refer to
 
 ~~Delta files use new-line delimited JSON format, where every action is stored as a single line JSON
 document. A delta file, `n.json`, contains an atomic set of [_actions_](#actions) that should be
-applied to the previous table state, `n-1.json`, in order to the construct `n`th snapshot of the
+applied to the previous table state, `n-1.json`, in order to construct the `n`th snapshot of the
 table. An action changes one aspect of the table's state, for example, adding or removing a file.~~ 
 
 ### Commit Provenance Information
@@ -118,7 +118,7 @@ table. An action changes one aspect of the table's state, for example, adding or
 > ***Change to [existing section](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#metadata-cleanup)***
 
 2. Identify the newest checkpoint that is not newer than the `cutOffCommit`. A checkpoint at the
-   `cutOffCommit` is ideal, but an older one will do. Lets call it `cutOffCheckpoint`. We need to
+   `cutOffCommit` is ideal, but an older one will do. Let's call it `cutOffCheckpoint`. We need to
    preserve the `cutOffCheckpoint` and all <ins>published</ins> commits after it, because we need
    them to enable time travel for commits between `cutOffCheckpoint` and the next available
    checkpoint.
@@ -263,8 +263,8 @@ for reading and writing Delta tables:
 
 A catalog-managed table can have a mix of (a) published and (b) ratified but non-published commits.
 The catalog is the source of truth for ratified commits. Also recall that ratified commits can be
-[staged commits](#staged-commit) that are persisted to the the `_delta_log/_staged_commits`
-directory, or [inline commits](#inline-commit) whose content the catalog stores directly.
+[staged commits](#staged-commit) that are persisted to the `_delta_log/_staged_commits` directory,
+or [inline commits](#inline-commit) whose content the catalog stores directly.
 
 For example, suppose the `_delta_log` directory contains the following files:
 
@@ -323,7 +323,7 @@ clients to avoid LISTing the filesystem altogether.
 
 ## Commit Protocol
 
-To start, Delta Clients send the desired actions to be commited to the client-side component of the
+To start, Delta Clients send the desired actions to be committed to the client-side component of the
 catalog.
 
 This component then has several options for proposing, ratifying, and publishing the commit,
@@ -448,7 +448,7 @@ When supported and active:
   is known. See [Table Discovery](#table-discovery) for more details.
 - Readers must contact the catalog for information about unpublished ratified commits.
 - Readers must follow the rules described in the [Reading Catalog-managed Tables](#reading-catalog-managed-tables)
-  section above. Noteably
+  section above. Notably
   - If the catalog said `v` is the latest version, clients must ignore any later versions that may
     have been published
   - When the catalog returns a ratified commit for version `v`, readers must
