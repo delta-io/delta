@@ -90,42 +90,17 @@ class DeltaVariantSuite
     withTable("tbl") {
       sql("CREATE TABLE tbl(s STRING) USING delta")
       assert(getProtocolForTable("tbl") == Protocol(1, 2))
-
-      // Should throw error
-      val e = intercept[SparkThrowable] {
-        sql("ALTER TABLE tbl ADD COLUMN v VARIANT")
-      }
-      // capture the existing protocol here.
-      // we will check the error message later in this test as we need to compare the
-      // expected schema and protocol
-      val deltaLog = DeltaLog.forTable(spark, TableIdentifier("tbl"))
-      val currentProtocol = deltaLog.unsafeVolatileSnapshot.protocol
-      val currentFeatures = currentProtocol.implicitlyAndExplicitlySupportedFeatures
-        .map(_.name)
-        .toSeq
-        .sorted
-        .mkString(", ")
-
-      // add table feature
-      sql(
-        s"ALTER TABLE tbl " +
-        s"SET TBLPROPERTIES('delta.feature.variantType' = 'supported')"
-      )
-
       sql("ALTER TABLE tbl ADD COLUMN v VARIANT")
-
-      // check previously thrown error message
-      checkError(
-        e,
-        "DELTA_FEATURES_REQUIRE_MANUAL_ENABLEMENT",
-        parameters = Map(
-          "unsupportedFeatures" -> VariantTypeTableFeature.name,
-          "supportedFeatures" -> currentFeatures
-        )
-      )
 
       sql("INSERT INTO tbl (SELECT 'foo', parse_json(cast(id + 99 as string)) FROM range(1))")
       assert(spark.table("tbl").selectExpr("v::int").head == Row(99))
+
+      sql("ALTER TABLE tbl ADD COLUMN v2 STRUCT<v21 VARIANT>")
+      sql("INSERT INTO tbl (SELECT 'bar', " +
+        "parse_json(cast(id + 100 as string)), struct(parse_json(cast(id + 101 as string))) " +
+        "FROM range(1))")
+      checkAnswer(spark.table("tbl").selectExpr("v::int"), Seq(Row(99), Row(100)))
+      checkAnswer(spark.table("tbl").selectExpr("v2.v21::int"), Seq(Row(null), Row(101)))
 
       assert(
         getProtocolForTable("tbl") ==
@@ -212,39 +187,22 @@ class DeltaVariantSuite
     }
   }
 
-  test("enabling 'FORCE_USE_PREVIEW_VARIANT_FEATURE' and adding a variant column hints to add " +
-       " the preview table feature") {
+  test("enabling 'FORCE_USE_PREVIEW_VARIANT_FEATURE' and adding a variant column adds the " +
+    "preview table feature") {
     withSQLConf(DeltaSQLConf.FORCE_USE_PREVIEW_VARIANT_FEATURE.key -> "true") {
       withTable("tbl") {
         sql("CREATE TABLE tbl(s STRING) USING delta")
 
-        val e = intercept[SparkThrowable] {
-          sql("ALTER TABLE tbl ADD COLUMN v VARIANT")
-        }
-
-        checkError(
-          e,
-          "DELTA_FEATURES_REQUIRE_MANUAL_ENABLEMENT",
-          parameters = Map(
-            "unsupportedFeatures" -> VariantTypePreviewTableFeature.name,
-            "supportedFeatures" -> DeltaLog.forTable(spark, TableIdentifier("tbl"))
-              .unsafeVolatileSnapshot
-              .protocol
-              .implicitlyAndExplicitlySupportedFeatures
-              .map(_.name)
-              .toSeq
-              .sorted
-              .mkString(", ")
-          )
-        )
-
-        sql(
-          s"ALTER TABLE tbl " +
-          s"SET TBLPROPERTIES('delta.feature.variantType-preview' = 'supported')"
-        )
         sql("ALTER TABLE tbl ADD COLUMN v VARIANT")
         sql("INSERT INTO tbl (SELECT 'foo', parse_json(cast(id + 99 as string)) FROM range(1))")
         assert(spark.table("tbl").selectExpr("v::int").head == Row(99))
+
+        sql("ALTER TABLE tbl ADD COLUMN v2 STRUCT<v21 VARIANT>")
+        sql("INSERT INTO tbl (SELECT 'bar', " +
+          "parse_json(cast(id + 100 as string)), struct(parse_json(cast(id + 101 as string))) " +
+          "FROM range(1))")
+        checkAnswer(spark.table("tbl").selectExpr("v::int"), Seq(Row(99), Row(100)))
+        checkAnswer(spark.table("tbl").selectExpr("v2.v21::int"), Seq(Row(null), Row(101)))
 
         assertVariantTypeTableFeatures(
           "tbl",

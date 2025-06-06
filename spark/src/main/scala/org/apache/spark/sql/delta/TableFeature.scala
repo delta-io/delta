@@ -683,6 +683,8 @@ trait BinaryVariantTableFeature {
 object VariantTypePreviewTableFeature extends ReaderWriterFeature(name = "variantType-preview")
   with FeatureAutomaticallyEnabledByMetadata
     with BinaryVariantTableFeature {
+  override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
+
   override def metadataRequiresFeatureToBeEnabled(
       protocol: Protocol, metadata: Metadata, spark: SparkSession): Boolean = {
     if (forcePreviewTableFeature) {
@@ -701,6 +703,8 @@ object VariantTypePreviewTableFeature extends ReaderWriterFeature(name = "varian
 object VariantTypeTableFeature extends ReaderWriterFeature(name = "variantType")
     with FeatureAutomaticallyEnabledByMetadata
     with BinaryVariantTableFeature {
+  override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
+
   override def metadataRequiresFeatureToBeEnabled(
       protocol: Protocol, metadata: Metadata, spark: SparkSession): Boolean = {
     if (forcePreviewTableFeature) {
