@@ -451,9 +451,9 @@ When supported and active:
   section above. Notably
   - If the catalog said `v` is the latest version, clients must ignore any later versions that may
     have been published
-  - When the catalog returns a ratified commit for version `v`, readers must
-  use that catalog-supplied commit and ignore any published Delta file for version `v` that might
-  also be present.
+  - When the catalog returns a ratified commit for version `v`, readers must use that
+    catalog-supplied commit and ignore any published Delta file for version `v` that might also be
+    present.
 
 ## Table Discovery
 
