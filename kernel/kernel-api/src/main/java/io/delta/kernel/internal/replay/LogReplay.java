@@ -138,6 +138,7 @@ public class LogReplay {
   private final Lazy<Tuple2<Protocol, Metadata>> lazyProtocolAndMetadata;
   private final Lazy<Map<String, DomainMetadata>> lazyActiveDomainMetadataMap;
   private final CrcInfoContext crcInfoContext;
+  private final SnapshotMetrics snapshotMetrics;
 
   public LogReplay(
       Path dataPath,
@@ -162,6 +163,7 @@ public class LogReplay {
                     .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue)));
 
     this.crcInfoContext = new CrcInfoContext(engine);
+    this.snapshotMetrics = snapshotMetrics;
   }
 
   /////////////////
@@ -598,7 +600,10 @@ public class LogReplay {
               .filter(
                   checksum ->
                       FileNames.getFileVersion(new Path(checksum.getPath())) >= crcReadLowerBound)
-              .flatMap(checksum -> ChecksumReader.getCRCInfo(engine, checksum));
+              .flatMap(
+                  checksum ->
+                      snapshotMetrics.durationToGetCrcInfoTimer.time(
+                          () -> ChecksumReader.getCRCInfo(engine, checksum)));
 
       if (!crcInfoOpt.isPresent()) {
         return snapshotHint;
