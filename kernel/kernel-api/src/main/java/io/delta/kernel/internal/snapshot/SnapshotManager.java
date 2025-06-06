@@ -176,6 +176,8 @@ public class SnapshotManager {
         return new DelegateFileSystemClient(super.getFileSystemClient()) {
           @Override
           public CloseableIterator<FileStatus> listFrom(String filePath) throws IOException {
+            // TODO: Also keep track of duration. Note that listing could be spread to
+            // iterating over the iterators.
             snapshotContext.getSnapshotMetrics().logSegmentListCallCounter.increment();
             return super.listFrom(filePath);
           }
