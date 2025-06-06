@@ -18,27 +18,157 @@ package io.delta.kernel.internal.catalogManaged
 
 import java.util.Collections
 
+import scala.collection.JavaConverters._
+
 import io.delta.kernel.TableManager
+import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.actions.Protocol
+import io.delta.kernel.internal.files.ParsedLogData
+import io.delta.kernel.internal.files.ParsedLogData.ParsedLogType
 import io.delta.kernel.internal.table.ResolvedTableInternal
-import io.delta.kernel.test.{ActionUtils, MockFileSystemClientUtils}
+import io.delta.kernel.test.{ActionUtils, MockFileSystemClientUtils, VectorTestUtils}
 import io.delta.kernel.types.{IntegerType, StructType}
 
 import org.scalatest.funsuite.AnyFunSuite
 
 class ResolvedTableBuilderSuite extends AnyFunSuite
-    with MockFileSystemClientUtils with ActionUtils {
+    with MockFileSystemClientUtils
+    with ActionUtils
+    with VectorTestUtils {
+
+  private val emptyMockEngine = createMockFSListFromEngine(Nil)
+  private val protocol = new Protocol(1, 2)
+  private val metadata = testMetadata(new StructType().add("c1", IntegerType.INTEGER))
+
+  ///////////////////////////////////////
+  // Builder Validation Tests -- START //
+  ///////////////////////////////////////
+
+  test("loadTable: null path throws NullPointerException") {
+    assertThrows[NullPointerException] {
+      TableManager.loadTable(null)
+    }
+  }
+
+  // ===== Version Tests ===== //
+
+  test("atVersion: negative version throws IllegalArgumentException") {
+    val builder = TableManager.loadTable(dataPath.toString).atVersion(-1)
+
+    val exMsg = intercept[IllegalArgumentException] {
+      builder.build(emptyMockEngine)
+    }.getMessage
+
+    assert(exMsg === "version must be >= 0")
+  }
+
+  // ===== Protocol and Metadata Tests ===== //
+
+  test("withProtocolAndMetadata: null protocol throws NullPointerException") {
+    assertThrows[NullPointerException] {
+      TableManager.loadTable(dataPath.toString)
+        .withProtocolAndMetadata(null, metadata)
+    }
+
+    assertThrows[NullPointerException] {
+      TableManager.loadTable(dataPath.toString)
+        .withProtocolAndMetadata(protocol, null)
+    }
+  }
+
+  test("withProtocolAndMetadata: only if version is provided") {
+    val exMsg = intercept[IllegalArgumentException] {
+      TableManager.loadTable(dataPath.toString)
+        .withProtocolAndMetadata(protocol, metadata)
+        .build(emptyMockEngine)
+    }.getMessage
+
+    assert(exMsg === "protocol and metadata can only be provided if a version is provided")
+  }
+
+  test("withProtocolAndMetadata: invalid readerVersion throws KernelException") {
+    val exMsg = intercept[KernelException] {
+      TableManager.loadTable(dataPath.toString)
+        .atVersion(10)
+        .withProtocolAndMetadata(new Protocol(999, 2), metadata)
+        .build(emptyMockEngine)
+    }.getMessage
+
+    assert(exMsg.contains("Unsupported Delta protocol reader version"))
+  }
+
+  test("withProtocolAndMetadata: unknown reader feature throws KernelException") {
+    val exMsg = intercept[KernelException] {
+      TableManager.loadTable(dataPath.toString)
+        .atVersion(10)
+        .withProtocolAndMetadata(
+          new Protocol(3, 7, Set("unknownReaderFeature").asJava, Collections.emptySet()),
+          metadata)
+        .build(emptyMockEngine)
+    }.getMessage
+
+    assert(exMsg.contains("Unsupported Delta table feature"))
+  }
+
+  // ===== LogData Tests ===== //
+
+  test("withLogData: null input throws NullPointerException") {
+    assertThrows[NullPointerException] {
+      TableManager.loadTable(dataPath.toString).withLogData(null)
+    }
+  }
+
+  Seq(
+    ParsedLogData.forInlineData(1, ParsedLogType.RATIFIED_INLINE_COMMIT, emptyColumnarBatch),
+    ParsedLogData.forFileStatus(logCompactionStatus(0, 1))).foreach { parsedLogData =>
+    val suffix = s"- type=${parsedLogData.`type`}"
+    test(s"withLogData: non-RATIFIED_STAGED_COMMIT throws IllegalArgumentException $suffix") {
+      val builder = TableManager
+        .loadTable(dataPath.toString)
+        .atVersion(1)
+        .withLogData(Collections.singletonList(parsedLogData))
+
+      val exMsg = intercept[IllegalArgumentException] {
+        builder.build(emptyMockEngine)
+      }.getMessage
+
+      assert(exMsg.contains("Only RATIFIED_STAGED_COMMIT log data is supported"))
+    }
+  }
+
+  test("withLogData: non-contiguous input throws IllegalArgumentException") {
+    val exMsg = intercept[IllegalArgumentException] {
+      TableManager.loadTable(dataPath.toString)
+        .atVersion(2)
+        .withLogData(parsedRatifiedStagedCommits(Seq(0, 2)).toList.asJava)
+        .build(emptyMockEngine)
+    }.getMessage
+
+    assert(exMsg.contains("Log data must be sorted and contiguous"))
+  }
+
+  test("withLogData: non-sorted input throws IllegalArgumentException") {
+    val exMsg = intercept[IllegalArgumentException] {
+      TableManager.loadTable(dataPath.toString)
+        .atVersion(2)
+        .withLogData(parsedRatifiedStagedCommits(Seq(2, 1, 0)).toList.asJava)
+        .build(emptyMockEngine)
+    }.getMessage
+
+    assert(exMsg.contains("Log data must be sorted and contiguous"))
+  }
+
+  /////////////////////////////////////
+  // Builder Validation Tests -- END //
+  /////////////////////////////////////
 
   test("if P & M are provided then LogSegment is not loaded") {
-    val testSchema = new StructType().add("c1", IntegerType.INTEGER)
-    val engine = createMockFSListFromEngine(Nil)
-
     val resolvedTable = TableManager
       .loadTable(dataPath.toString)
       .atVersion(13)
-      .withProtocolAndMetadata(new Protocol(1, 2), testMetadata(testSchema))
+      .withProtocolAndMetadata(protocol, metadata)
       .withLogData(Collections.emptyList())
-      .build(engine)
+      .build(emptyMockEngine)
       .asInstanceOf[ResolvedTableInternal]
 
     assert(!resolvedTable.getLazyLogSegment.isPresent)
