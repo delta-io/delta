@@ -18,15 +18,13 @@ package io.delta.sharing.spark
 
 import scala.reflect.ClassTag
 
-import org.apache.spark.{SharedSparkContext, SparkEnv, SparkFunSuite}
-import org.apache.spark.storage.BlockId
-import org.apache.spark.delta.sharing.TableRefreshResult
+import io.delta.sharing.client.{DeltaSharingClient, DeltaSharingRestClient}
+import io.delta.sharing.client.model.{DeltaTableFiles, DeltaTableMetadata, Table}
+import io.delta.sharing.spark.DeltaSharingUtils._
 
-import io.delta.sharing.client.model.Table
-import DeltaSharingUtils._
-import io.delta.sharing.client.DeltaSharingClient
-import io.delta.sharing.client.model.{DeltaTableFiles, DeltaTableMetadata}
-import io.delta.sharing.client.DeltaSharingRestClient
+import org.apache.spark.{SharedSparkContext, SparkEnv, SparkFunSuite}
+import org.apache.spark.delta.sharing.TableRefreshResult
+import org.apache.spark.storage.BlockId
 
 class DeltaSharingUtilsSuite extends SparkFunSuite with SharedSparkContext {
 
