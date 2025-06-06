@@ -20,10 +20,10 @@ import java.util.Optional;
 
 /** Stores the metrics results for a {@link SnapshotReport} */
 @JsonPropertyOrder({
-        "timestampToVersionResolutionDurationNs",
-        "loadInitialDeltaActionsDurationNs",
-        "timeToBuildLogSegmentForVersionNs",
-        "durationToGetCrcInfoNs"
+  "timestampToVersionResolutionDurationNs",
+  "loadInitialDeltaActionsDurationNs",
+  "timeToBuildLogSegmentForVersionNs",
+  "durationToGetCrcInfoNs"
 })
 public interface SnapshotMetricsResult {
 
