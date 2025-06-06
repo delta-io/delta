@@ -18,7 +18,6 @@ Here is the history of all the RFCs propose/accepted/rejected since Feb 6, 2024,
 
 | Date proposed | RFC file                                                                                                                         | Github issue                                  | RFC title                              |
 |:--------------|:---------------------------------------------------------------------------------------------------------------------------------|:----------------------------------------------|:---------------------------------------|
-| 2023-02-14    | [managed-commits.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/managed-commits.md)                             | https://github.com/delta-io/delta/issues/2598 | Managed Commits                        |
 | 2023-02-26    | [column-mapping-usage.tracking.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/column-mapping-usage-tracking.md) | https://github.com/delta-io/delta/issues/2682 | Column Mapping Usage Tracking          |
 | 2023-04-24    | [variant-type.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/variant-type.md)                                   | https://github.com/delta-io/delta/issues/2864 | Variant Data Type                      |
 | 2024-04-30    | [collated-string-type.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/collated-string-type.md)                   | https://github.com/delta-io/delta/issues/2894 | Collated String Type                   |
