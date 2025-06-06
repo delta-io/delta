@@ -36,34 +36,30 @@ class TypesSuite extends AnyFunSuite {
       StringType.STRING,
       TimestampType.TIMESTAMP,
       TimestampNTZType.TIMESTAMP_NTZ,
-      VariantType.VARIANT
-    )
-    
+      VariantType.VARIANT)
+
     primitiveTypes.foreach { dataType =>
       assert(!dataType.isNested(), s"Expected $dataType to not be nested")
     }
   }
-  
+
   test("isNested - nested types") {
     // Create instances of nested types
     val structFields = Arrays.asList(
       new StructField("field1", IntegerType.INTEGER, true),
-      new StructField("field2", StringType.STRING, true)
-    )
+      new StructField("field2", StringType.STRING, true))
     val structType = new StructType(structFields)
-    
+
     val arrayType = new ArrayType(
-      new StructField("element", IntegerType.INTEGER, true)
-    )
-    
+      new StructField("element", IntegerType.INTEGER, true))
+
     val mapType = new MapType(
       new StructField("key", StringType.STRING, false),
-      new StructField("value", IntegerType.INTEGER, true)
-    )
-    
+      new StructField("value", IntegerType.INTEGER, true))
+
     // All nested types should return true for isNested
     val nestedTypes = Seq(structType, arrayType, mapType)
-    
+
     nestedTypes.foreach { dataType =>
       assert(dataType.isNested(), s"Expected $dataType to be nested")
     }
