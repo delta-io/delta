@@ -497,8 +497,7 @@ interface CatalogManagedTable {
      * in which case the staged commit file path is returned; others may be inline, in which case
      * the inline commit content is returned.
      * 
-     * The returned commits are sorted in ascending version number. The returned commits may not be
-     * contiguous.
+     * The returned commits are sorted in ascending version number and are contiguous.
      *
      * If neither start nor end version is specified, the catalog will return all available ratified
      * commits (possibly empty, if all commits have been published).
