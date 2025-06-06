@@ -56,6 +56,11 @@ public class ArrayType extends DataType {
   }
 
   @Override
+  public boolean isNested() {
+    return true;
+  }
+
+  @Override
   public boolean equals(Object o) {
     if (this == o) {
       return true;
