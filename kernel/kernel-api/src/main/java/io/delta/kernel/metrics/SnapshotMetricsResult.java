@@ -47,7 +47,7 @@ public interface SnapshotMetricsResult {
 
   /**
    * @return the duration (ns) to get CRC information during snapshot construction. 0 if snapshot
-   *     construction fails before this step or if CRC validation is not performed.
+   *     construction fails before this step or if CRC is not read in loading snapshot.
    */
   long getDurationToGetCrcInfoNs();
 }
