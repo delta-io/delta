@@ -217,7 +217,8 @@ trait UniversalFormatSuiteBase extends IcebergCompatUtilsBase
   }
 
   test("REORG TABLE for table from None to corresponding icebergCompat version") {
-    withTempTableAndDir { case (id, loc) =>
+    // REORG only supports version up to 2
+    withTempTableAndDir { case (id, loc) if compatVersion < 3 =>
       executeSql(s"""
              | CREATE TABLE $id (ID INT) USING DELTA LOCATION $loc
              | """.stripMargin)
@@ -239,11 +240,13 @@ trait UniversalFormatSuiteBase extends IcebergCompatUtilsBase
         case num => assertAddFileIcebergCompatVersion(
           deltaLog.update(), icebergCompatVersion = num, count = prevNumAddFiles)
       }
+    case _ => // do nth
     }
   }
 
   test("REORG TABLE for table from icebergCompatVx to icebergCompatVx, should skip rewrite") {
-    withTempTableAndDir { case (id, loc) =>
+    // REORG only supports up to version 2
+    withTempTableAndDir { case (id, loc) if compatVersion < 3 =>
       executeSql(s"""
              | CREATE TABLE $id (ID INT) USING DELTA LOCATION $loc TBLPROPERTIES (
              |  'delta.universalFormat.enabledFormats' = 'iceberg',
@@ -269,11 +272,13 @@ trait UniversalFormatSuiteBase extends IcebergCompatUtilsBase
       assert(updatedSnapshot.getProperties(s"delta.enableIcebergCompatV$compatVersion") === "true")
       assert(snapshot.version == updatedSnapshot.version)
       checkFileNotRewritten(snapshot, updatedSnapshot)
+    case _ => // do nth
     }
   }
 
   test("REORG TABLE: file would not be rewritten again if we run command twice") {
-    withTempTableAndDir { case (id, loc) =>
+    // REORG only supports up to version 2
+    withTempTableAndDir { case (id, loc) if compatVersion < 3 =>
       val anotherCompatVersion = getCompatVersionOtherThan(compatVersion)
       executeSql(s"""
              | CREATE TABLE $id (ID INT) USING DELTA LOCATION $loc TBLPROPERTIES (
@@ -299,6 +304,7 @@ trait UniversalFormatSuiteBase extends IcebergCompatUtilsBase
       runReorgTableForUpgradeUniform(id, compatVersion)
       val snapshot2 = deltaLog.update()
       checkFileNotRewritten(snapshot1, snapshot2)
+    case _ => // do nth
     }
   }
 
