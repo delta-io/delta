@@ -81,24 +81,20 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
    * generated [[SnapshotReport]]. Checks that the report is as expected.
    *
    * @param f function to generate a snapshot from a [[Table]] and engine
-   * @param tablePath table path to query from
+   * @param path table path to query from
    * @param expectations encapsulates all the expected values and behaviors for the snapshot report.
    *                     See [[SnapshotReportExpectations]] for detailed parameter descriptions.
    */
   def checkSnapshotReport(
       f: (Table, Engine) => Snapshot,
-      tablePath: String,
+      path: String,
       expectations: SnapshotReportExpectations): Unit = {
 
     val (snapshotReport, duration, exception) =
-      getSnapshotReport(
-        f,
-        tablePath,
-        expectations.expectedReportCount,
-        expectations.expectException)
+      getSnapshotReport(f, path, expectations.expectedReportCount, expectations.expectException)
 
     // Verify contents
-    assert(snapshotReport.getTablePath == defaultEngine.getFileSystemClient.resolvePath(tablePath))
+    assert(snapshotReport.getTablePath == defaultEngine.getFileSystemClient.resolvePath(path))
     assert(snapshotReport.getOperationType == "Snapshot")
     exception match {
       case Some(e) =>
