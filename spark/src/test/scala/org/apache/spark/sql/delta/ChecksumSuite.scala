@@ -237,7 +237,10 @@ class ChecksumSuite
         val log = DeltaLog.forTable(spark, tempDir)
         val txn = log.startTransaction()
         val expected =
-          s"""Table size (bytes) - Expected: ${2*numAddFiles} Computed: $numAddFiles
+          s"""
+             |FileSizeHistogram mismatch in file sizes
+             |FileSizeHistogram mismatch in file counts
+             |Table size (bytes) - Expected: ${2*numAddFiles} Computed: $numAddFiles
              |Number of files - Expected: ${2*numAddFiles} Computed: $numAddFiles
           """.stripMargin.trim
 
