@@ -1400,10 +1400,21 @@ class DeltaSuite extends QueryTest
 
   test("SC-8727 - can't set negative num partitions") {
     withTempDir { tempDir =>
-      val caught = intercept[IllegalArgumentException] {
-        withSQLConf(("spark.databricks.delta.snapshotPartitions", "-1")) {}
+      var caught = intercept[IllegalArgumentException] {
+        withSQLConf(("spark.databricks.delta.snapshotPartitions", "-1")) {
+          // Why spark.delta.snapshotPartitions is set?
+          // assert(conf.getConfString("spark.delta.snapshotPartitions") == "2")
+          conf.unsetConf("spark.delta.snapshotPartitions")
+          conf.getConf(DeltaSQLConf.DELTA_SNAPSHOT_PARTITIONS)
+        }
       }
+      assert(caught.getMessage.contains("Delta snapshot partition number must be positive."))
 
+      caught = intercept[IllegalArgumentException] {
+        withSQLConf(("spark.delta.snapshotPartitions", "-1")) {
+          conf.getConf(DeltaSQLConf.DELTA_SNAPSHOT_PARTITIONS)
+        }
+      }
       assert(caught.getMessage.contains("Delta snapshot partition number must be positive."))
     }
   }
@@ -1411,19 +1422,41 @@ class DeltaSuite extends QueryTest
   test("SC-8727 - reconfigure num partitions") {
     withTempDir { tempDir =>
       withSQLConf(("spark.databricks.delta.snapshotPartitions", "410")) {
+        // Why spark.delta.snapshotPartitions is set?
+        // assert(conf.getConfString("spark.delta.snapshotPartitions") == "2")
+        conf.unsetConf("spark.delta.snapshotPartitions")
         spark.range(10).write.format("delta").save(tempDir.toString)
         val deltaLog = DeltaLog.forTable(spark, tempDir)
         assert(deltaLog.snapshot.stateDS.rdd.getNumPartitions == 410)
+      }
+    }
+
+    withTempDir { tempDir =>
+      withSQLConf(("spark.delta.snapshotPartitions", "420")) {
+        spark.range(10).write.format("delta").save(tempDir.toString)
+        val deltaLog = DeltaLog.forTable(spark, tempDir)
+        assert(deltaLog.snapshot.stateDS.rdd.getNumPartitions == 420)
       }
     }
   }
 
   test("SC-8727 - can't set zero num partitions") {
     withTempDir { tempDir =>
-      val caught = intercept[IllegalArgumentException] {
-        withSQLConf(("spark.databricks.delta.snapshotPartitions", "0")) {}
+      var caught = intercept[IllegalArgumentException] {
+        withSQLConf(("spark.databricks.delta.snapshotPartitions", "0")) {
+          // Why spark.delta.snapshotPartitions is set?
+          // assert(conf.getConfString("spark.delta.snapshotPartitions") == "2")
+          conf.unsetConf("spark.delta.snapshotPartitions")
+          conf.getConf(DeltaSQLConf.DELTA_SNAPSHOT_PARTITIONS)
+        }
       }
+      assert(caught.getMessage.contains("Delta snapshot partition number must be positive."))
 
+      caught = intercept[IllegalArgumentException] {
+        withSQLConf(("spark.delta.snapshotPartitions", "0")) {
+          conf.getConf(DeltaSQLConf.DELTA_SNAPSHOT_PARTITIONS)
+        }
+      }
       assert(caught.getMessage.contains("Delta snapshot partition number must be positive."))
     }
   }
