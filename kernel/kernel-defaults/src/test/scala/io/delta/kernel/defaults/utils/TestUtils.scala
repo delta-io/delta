@@ -28,10 +28,11 @@ import io.delta.kernel.{Scan, Snapshot, Table, TransactionCommitResult}
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector, FilteredColumnarBatch, MapValue, Row}
 import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.defaults.internal.data.vector.{DefaultGenericVector, DefaultStructVector}
+import io.delta.kernel.defaults.test.{LegacyTableManagerAdapter, NewTableManagerAdapter, ResolvedTableAdapter, TableManagerAdapter}
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.expressions.{Column, Predicate}
 import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
-import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl, TableImpl}
+import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl}
 import io.delta.kernel.internal.actions.DomainMetadata
 import io.delta.kernel.internal.checksum.{ChecksumReader, ChecksumWriter, CRCInfo}
 import io.delta.kernel.internal.clustering.ClusteringMetadataDomain
@@ -55,7 +56,25 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.plans.SQLHelper
 import org.scalatest.Assertions
 
-trait TestUtils extends Assertions with SQLHelper {
+trait TestUtils extends AbstractTestUtils {
+  override def getTableManagerAdapter: TableManagerAdapter = new LegacyTableManagerAdapter()
+}
+
+/**
+ * DO NOT MODIFY this trait -- this is just syntactic sugar to clearly indicate we are extending the
+ * "default" TestUtils which happens to use the legacy Kernel APIs
+ */
+trait TestUtilsWithLegacyKernel extends TestUtils
+
+trait TestUtilsWithNewKernel extends AbstractTestUtils {
+  override def getTableManagerAdapter: TableManagerAdapter = new NewTableManagerAdapter()
+}
+
+trait AbstractTestUtils extends Assertions with SQLHelper {
+
+  import io.delta.kernel.defaults.test.ResolvedTableAdapterImplicits._
+
+  def getTableManagerAdapter: TableManagerAdapter
 
   lazy val configuration = new Configuration()
   lazy val defaultEngine = DefaultEngine.create(configuration)
@@ -204,77 +223,75 @@ trait TestUtils extends Assertions with SQLHelper {
       .flatMap(_.getRows.toSeq)
   }
 
-  def readSnapshot(
-      snapshot: Snapshot,
-      readSchema: StructType = null,
+  /**
+   * Compares the rows in the tables latest snapshot with the expected answer and fails if they
+   * do not match. The comparison is order independent. If expectedSchema is provided, checks
+   * that the latest snapshot's schema is equivalent.
+   *
+   * @param path fully qualified path of the table to check
+   * @param expectedAnswer expected rows
+   * @param readCols subset of columns to read; if null then all columns will be read
+   * @param engine engine to use to read the table
+   * @param expectedSchema expected schema to check for; if null then no check is performed
+   * @param filter Filter to select a subset of rows form the table
+   * @param expectedRemainingFilter Remaining predicate out of the `filter` that is not enforced
+   *                                by Kernel.
+   * @param expectedVersion expected version of the latest snapshot for the table
+   */
+  def checkTable(
+      path: String,
+      expectedAnswer: Seq[TestRow],
+      readCols: Seq[String] = null,
+      engine: Engine = defaultEngine,
+      expectedSchema: StructType = null,
       filter: Predicate = null,
+      version: Option[Long] = None,
+      timestamp: Option[Long] = None,
       expectedRemainingFilter: Predicate = null,
-      engine: Engine = defaultEngine): Seq[Row] = {
+      expectedVersion: Option[Long] = None): Unit = {
+    assert(version.isEmpty || timestamp.isEmpty, "Cannot provide both a version and timestamp")
 
-    val result = ArrayBuffer[Row]()
-
-    var scanBuilder = snapshot.getScanBuilder()
-
-    if (readSchema != null) {
-      scanBuilder = scanBuilder.withReadSchema(readSchema)
+    val resolvedTableAdapter = if (version.isDefined) {
+      getTableManagerAdapter.getResolvedTableAdapterAtVersion(engine, path, version.get)
+    } else if (timestamp.isDefined) {
+      getTableManagerAdapter.getResolvedTableAdapterAtTimestamp(engine, path, timestamp.get)
+    } else {
+      getTableManagerAdapter.getResolvedTableAdapterAtLatest(engine, path)
     }
 
-    if (filter != null) {
-      scanBuilder = scanBuilder.withFilter(filter)
+    val readSchema = if (readCols == null) {
+      null
+    } else {
+      val schema = resolvedTableAdapter.getSchema()
+      new StructType(readCols.map(schema.get(_)).asJava)
     }
 
-    val scan = scanBuilder.build()
-
-    if (filter != null) {
-      val actRemainingPredicate = scan.getRemainingFilter()
+    if (expectedSchema != null) {
       assert(
-        actRemainingPredicate.toString === Optional.ofNullable(expectedRemainingFilter).toString)
+        expectedSchema == resolvedTableAdapter.getSchema(),
+        s"""
+           |Expected schema does not match actual schema:
+           |Expected schema: $expectedSchema
+           |Actual schema: ${resolvedTableAdapter.getSchema()}
+           |""".stripMargin)
     }
 
-    val scanState = scan.getScanState(engine);
-    val fileIter = scan.getScanFiles(engine)
+    val actualVersion = resolvedTableAdapter.getVersion()
 
-    val physicalDataReadSchema = ScanStateRow.getPhysicalDataReadSchema(engine, scanState)
-    fileIter.forEach { fileColumnarBatch =>
-      fileColumnarBatch.getRows().forEach { scanFileRow =>
-        val fileStatus = InternalScanFileUtils.getAddFileStatus(scanFileRow)
-        val physicalDataIter = engine.getParquetHandler().readParquetFiles(
-          singletonCloseableIterator(fileStatus),
-          physicalDataReadSchema,
-          Optional.empty())
-        var dataBatches: CloseableIterator[FilteredColumnarBatch] = null
-        try {
-          dataBatches = Scan.transformPhysicalData(
-            engine,
-            scanState,
-            scanFileRow,
-            physicalDataIter)
-
-          dataBatches.forEach { batch =>
-            val selectionVector = batch.getSelectionVector()
-            val data = batch.getData()
-
-            var i = 0
-            val rowIter = data.getRows()
-            try {
-              while (rowIter.hasNext) {
-                val row = rowIter.next()
-                if (!selectionVector.isPresent || selectionVector.get.getBoolean(i)) {
-                  // row is valid
-                  result.append(row)
-                }
-                i += 1
-              }
-            } finally {
-              rowIter.close()
-            }
-          }
-        } finally {
-          dataBatches.close()
-        }
-      }
+    expectedVersion.foreach { version =>
+      assert(
+        version == actualVersion,
+        s"Expected version $version does not match actual version $actualVersion}")
     }
-    result
+
+    val result =
+      readResolvedTableAdapter(
+        resolvedTableAdapter,
+        readSchema,
+        filter,
+        expectedRemainingFilter,
+        engine)
+    checkAnswer(result, expectedAnswer)
   }
 
   def readTableUsingKernel(
@@ -347,69 +364,91 @@ trait TestUtils extends Assertions with SQLHelper {
     new MapType(IntegerType.INTEGER, LongType.LONG, true),
     new StructType().add("s1", BooleanType.BOOLEAN).add("s2", IntegerType.INTEGER))
 
-  /**
-   * Compares the rows in the tables latest snapshot with the expected answer and fails if they
-   * do not match. The comparison is order independent. If expectedSchema is provided, checks
-   * that the latest snapshot's schema is equivalent.
-   *
-   * @param path fully qualified path of the table to check
-   * @param expectedAnswer expected rows
-   * @param readCols subset of columns to read; if null then all columns will be read
-   * @param engine engine to use to read the table
-   * @param expectedSchema expected schema to check for; if null then no check is performed
-   * @param filter Filter to select a subset of rows form the table
-   * @param expectedRemainingFilter Remaining predicate out of the `filter` that is not enforced
-   *                                by Kernel.
-   * @param expectedVersion expected version of the latest snapshot for the table
-   */
-  def checkTable(
-      path: String,
-      expectedAnswer: Seq[TestRow],
-      readCols: Seq[String] = null,
-      engine: Engine = defaultEngine,
-      expectedSchema: StructType = null,
+  def readSnapshot(
+      snapshot: Snapshot,
+      readSchema: StructType = null,
       filter: Predicate = null,
-      version: Option[Long] = None,
-      timestamp: Option[Long] = None,
       expectedRemainingFilter: Predicate = null,
-      expectedVersion: Option[Long] = None): Unit = {
-    assert(version.isEmpty || timestamp.isEmpty, "Cannot provide both a version and timestamp")
+      engine: Engine = defaultEngine): Seq[Row] = {
+    readResolvedTableAdapter(
+      snapshot.toTestAdapter,
+      readSchema,
+      filter,
+      expectedRemainingFilter,
+      engine)
+  }
 
-    val snapshot = if (version.isDefined) {
-      Table.forPath(engine, path)
-        .getSnapshotAsOfVersion(engine, version.get)
-    } else if (timestamp.isDefined) {
-      Table.forPath(engine, path)
-        .getSnapshotAsOfTimestamp(engine, timestamp.get)
-    } else {
-      latestSnapshot(path, engine)
+  def readResolvedTableAdapter(
+      resolvedTableAdapter: ResolvedTableAdapter,
+      readSchema: StructType = null,
+      filter: Predicate = null,
+      expectedRemainingFilter: Predicate = null,
+      engine: Engine = defaultEngine): Seq[Row] = {
+
+    val result = ArrayBuffer[Row]()
+
+    var scanBuilder = resolvedTableAdapter.getScanBuilder()
+
+    if (readSchema != null) {
+      scanBuilder = scanBuilder.withReadSchema(readSchema)
     }
 
-    val readSchema = if (readCols == null) {
-      null
-    } else {
-      val schema = snapshot.getSchema()
-      new StructType(readCols.map(schema.get(_)).asJava)
+    if (filter != null) {
+      scanBuilder = scanBuilder.withFilter(filter)
     }
 
-    if (expectedSchema != null) {
+    val scan = scanBuilder.build()
+
+    if (filter != null) {
+      val actRemainingPredicate = scan.getRemainingFilter()
       assert(
-        expectedSchema == snapshot.getSchema(),
-        s"""
-           |Expected schema does not match actual schema:
-           |Expected schema: $expectedSchema
-           |Actual schema: ${snapshot.getSchema()}
-           |""".stripMargin)
+        actRemainingPredicate.toString === Optional.ofNullable(expectedRemainingFilter).toString)
     }
 
-    expectedVersion.foreach { version =>
-      assert(
-        version == snapshot.getVersion(),
-        s"Expected version $version does not match actual version ${snapshot.getVersion()}")
-    }
+    val scanState = scan.getScanState(engine);
+    val fileIter = scan.getScanFiles(engine)
 
-    val result = readSnapshot(snapshot, readSchema, filter, expectedRemainingFilter, engine)
-    checkAnswer(result, expectedAnswer)
+    val physicalDataReadSchema = ScanStateRow.getPhysicalDataReadSchema(engine, scanState)
+    fileIter.forEach { fileColumnarBatch =>
+      fileColumnarBatch.getRows().forEach { scanFileRow =>
+        val fileStatus = InternalScanFileUtils.getAddFileStatus(scanFileRow)
+        val physicalDataIter = engine.getParquetHandler().readParquetFiles(
+          singletonCloseableIterator(fileStatus),
+          physicalDataReadSchema,
+          Optional.empty())
+        var dataBatches: CloseableIterator[FilteredColumnarBatch] = null
+        try {
+          dataBatches = Scan.transformPhysicalData(
+            engine,
+            scanState,
+            scanFileRow,
+            physicalDataIter)
+
+          dataBatches.forEach { batch =>
+            val selectionVector = batch.getSelectionVector()
+            val data = batch.getData()
+
+            var i = 0
+            val rowIter = data.getRows()
+            try {
+              while (rowIter.hasNext) {
+                val row = rowIter.next()
+                if (!selectionVector.isPresent || selectionVector.get.getBoolean(i)) {
+                  // row is valid
+                  result.append(row)
+                }
+                i += 1
+              }
+            } finally {
+              rowIter.close()
+            }
+          }
+        } finally {
+          dataBatches.close()
+        }
+      }
+    }
+    result
   }
 
   def checkAnswer(result: => Seq[Row], expectedAnswer: Seq[TestRow]): Unit = {
