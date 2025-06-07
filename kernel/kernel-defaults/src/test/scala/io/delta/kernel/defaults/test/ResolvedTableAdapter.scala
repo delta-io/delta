@@ -23,7 +23,7 @@ import io.delta.kernel.types.StructType
 object ResolvedTableAdapterImplicits {
   implicit class AdapterFromSnapshot(private val snapshot: Snapshot) extends AnyVal {
     def toTestAdapter: LegacyResolvedTableAdapter = snapshot match {
-      case impl: SnapshotImpl => impl.toTestAdapter
+      case impl: SnapshotImpl => new LegacyResolvedTableAdapter(impl)
       case _ => throw new IllegalArgumentException("Snapshot must be an instance of SnapshotImpl")
     }
   }

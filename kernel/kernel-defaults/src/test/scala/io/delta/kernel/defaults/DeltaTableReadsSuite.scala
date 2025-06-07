@@ -24,7 +24,7 @@ import scala.collection.JavaConverters._
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.Table
-import io.delta.kernel.defaults.utils.{AbstractTestUtils, TestRow, TestUtilsWithLegacyKernel}
+import io.delta.kernel.defaults.utils.{AbstractTestUtils, TestRow, TestUtils, TestUtilsWithLegacyKernel}
 import io.delta.kernel.exceptions.{InvalidTableException, KernelException, TableNotFoundException}
 import io.delta.kernel.internal.TableImpl
 import io.delta.kernel.internal.fs.Path
