@@ -32,7 +32,9 @@ import io.delta.kernel.engine.Engine
 import io.delta.kernel.expressions.{Column, Predicate}
 import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
 import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl, TableImpl}
+import io.delta.kernel.internal.actions.DomainMetadata
 import io.delta.kernel.internal.checksum.{ChecksumReader, ChecksumWriter, CRCInfo}
+import io.delta.kernel.internal.clustering.ClusteringMetadataDomain
 import io.delta.kernel.internal.data.ScanStateRow
 import io.delta.kernel.internal.fs.{Path => KernelPath}
 import io.delta.kernel.internal.stats.FileSizeHistogram
@@ -763,6 +765,12 @@ trait TestUtils extends Assertions with SQLHelper {
       Files.deleteIfExists(
         new File(FileNames.checksumFile(new Path(s"$tablePath/_delta_log"), v).toString).toPath))
 
+  def deleteChecksumFileForTableUsingHadoopFs(tablePath: String, versions: Seq[Int]): Unit =
+    versions.foreach(v =>
+      defaultEngine.getFileSystemClient.delete(FileNames.checksumFile(
+        new Path(s"$tablePath/_delta_log"),
+        v).toString))
+
   def rewriteChecksumFileToExcludeDomainMetadata(
       engine: Engine,
       tablePath: String,
@@ -799,6 +807,13 @@ trait TestUtils extends Assertions with SQLHelper {
     result
   }
 
+  def verifyClusteringDomainMetadata(
+      snapshot: SnapshotImpl,
+      expectedDomainMetadata: DomainMetadata): Unit = {
+    assert(snapshot.getActiveDomainMetadataMap.get(ClusteringMetadataDomain.DOMAIN_NAME)
+      == expectedDomainMetadata)
+  }
+
   /**
    * Verify checksum data matches the expected values in the snapshot.
    * @param snapshot Snapshot to verify the checksum against
@@ -816,7 +831,9 @@ trait TestUtils extends Assertions with SQLHelper {
       crcInfoOpt.isPresent,
       s"CRC information should be present for version ${snapshot.getVersion}")
     crcInfoOpt.toScala.foreach { crcInfo =>
-      // TODO: check metadata, protocol and file size.
+      // TODO: check file size.
+      assert(crcInfo.getProtocol === snapshot.asInstanceOf[SnapshotImpl].getProtocol)
+      assert(crcInfo.getMetadata.getSchema === snapshot.getSchema)
       assert(
         crcInfo.getNumFiles === collectScanFileRows(snapshot.getScanBuilder.build()).size,
         "Number of files in checksum should match snapshot")

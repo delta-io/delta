@@ -21,7 +21,7 @@ import java.io.File
 
 import org.apache.spark.sql.delta.DescribeDeltaHistorySuiteShims._
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, Metadata, Protocol, RemoveFile}
-import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CatalogOwnedTestBaseSuite}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -29,6 +29,7 @@ import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.scalactic.source.Position
 import org.scalatest.Tag
 
+import org.apache.spark.SparkConf
 import org.apache.spark.sql.{AnalysisException, Column, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.execution.streaming.MemoryStream
@@ -44,7 +45,7 @@ trait DescribeDeltaHistorySuiteBase
   with DeltaSQLCommandTest
   with DeltaTestUtilsForTempViews
   with MergeIntoMetricsBase
-  with CoordinatedCommitsBaseSuite {
+  with CatalogOwnedTestBaseSuite {
 
   import testImplicits._
 
@@ -162,18 +163,18 @@ trait DescribeDeltaHistorySuiteBase
       .asInstanceOf[Map[String, String]]
   }
 
-  // Returns necessary delta property json expected for the test. If coordinated commit is enabled,
+  // Returns necessary delta property json expected for the test. If Catalog-Owned is enabled,
   // a few properties will be automatically populated, and this method will take care of it.
   protected def getProperties(
       extraProperty: Option[Map[String, String]] = None): Map[String, String] = {
-    val coordinatedCommitsProperty = if (coordinatedCommitsEnabledInTests) {
-      getCoordinatedCommitsDefaultProperties()
+    val catalogOwnedProperty = if (catalogOwnedDefaultCreationEnabledInTests) {
+      Map(s"${DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key}" -> "false")
     } else {
       Map.empty[String, String]
     }
     // For history command, the output omits the empty config value, so we also need to
     // manually omit the value here.
-    val properties = coordinatedCommitsProperty.filterNot { case (_, value) => value == "{}" }
+    val properties = catalogOwnedProperty.filterNot { case (_, value) => value == "{}" }
     val finalProperties = extraProperty.map(properties ++ _).getOrElse(properties)
     finalProperties.asInstanceOf[Map[String, String]]
   }
@@ -1096,10 +1097,10 @@ trait DescribeDeltaHistorySuiteBase
       Seq(true, false).foreach { enableStats =>
         test(testName + s"enableCDF=${enableCDF} -  enableStats ${enableStats}") {
           withSQLConf(
-            DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> enableCDF.toString,
-            DeltaSQLConf.DELTA_COLLECT_STATS.key ->enableStats.toString,
-            DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true") {
-             f(enableCDF, enableStats)
+              DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> enableCDF.toString,
+              DeltaSQLConf.DELTA_COLLECT_STATS.key ->enableStats.toString,
+              DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true") {
+            f(enableCDF, enableStats)
           }
         }
       }
@@ -1560,3 +1561,10 @@ trait DescribeDeltaHistorySuiteBase
 
 class DescribeDeltaHistorySuite
   extends DescribeDeltaHistorySuiteBase with DeltaSQLCommandTest
+
+class DescribeDeltaHistoryWithCatalogOwnedBatch100Suite extends DescribeDeltaHistorySuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
+
+  override def sparkConf: SparkConf = super.sparkConf
+    .set(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey, "false")
+}

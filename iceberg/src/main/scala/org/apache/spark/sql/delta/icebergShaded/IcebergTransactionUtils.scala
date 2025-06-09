@@ -116,10 +116,6 @@ object IcebergTransactionUtils
       logicalToPhysicalPartitionNames: Map[String, String],
       statsParser: String => InternalRow,
       snapshot: Snapshot): DataFile = {
-    if (add.deletionVector != null) {
-      throw new UnsupportedOperationException("No support yet for DVs")
-    }
-
     var dataFileBuilder =
       convertFileAction(
         add, tablePath, partitionSpec, logicalToPhysicalPartitionNames, snapshot)

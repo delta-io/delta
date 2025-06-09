@@ -23,6 +23,7 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.types.DataTypeJsonSerDe;
+import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.types.*;
 import java.util.HashMap;
@@ -124,6 +125,20 @@ public class TransactionStateRow extends GenericRow {
     return Boolean.parseBoolean(
         getConfiguration(transactionState)
             .getOrDefault(TableConfig.ICEBERG_COMPAT_V3_ENABLED.getKey(), "false"));
+  }
+
+  /**
+   * Get the column mapping mode from the transaction state {@link Row} returned by {@link
+   * Transaction#getTransactionState(Engine)}
+   *
+   * @param transactionState
+   * @return ColumnMapping mode as {@link ColumnMapping.ColumnMappingMode}
+   */
+  public static ColumnMapping.ColumnMappingMode getColumnMappingMode(Row transactionState) {
+    String columnMappingModeStr =
+        getConfiguration(transactionState)
+            .getOrDefault(TableConfig.COLUMN_MAPPING_MODE.getKey(), "none");
+    return ColumnMapping.ColumnMappingMode.fromTableConfig(columnMappingModeStr);
   }
 
   /**

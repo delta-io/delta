@@ -20,13 +20,17 @@ import java.util.Collections.emptySet
 import scala.collection.JavaConverters._
 import scala.collection.immutable.Seq
 
-import io.delta.kernel.{Operation, Table}
+import io.delta.kernel.{Operation, Table, Transaction, TransactionCommitResult}
+import io.delta.kernel.data.Row
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.expressions.Column
 import io.delta.kernel.internal.{SnapshotImpl, TableConfig}
+import io.delta.kernel.internal.actions.DomainMetadata
+import io.delta.kernel.internal.clustering.ClusteringMetadataDomain
 import io.delta.kernel.internal.util.{ColumnMapping, ColumnMappingSuiteBase}
-import io.delta.kernel.types.{ArrayType, FieldMetadata, IntegerType, LongType, MapType, StringType, StructType}
+import io.delta.kernel.types.{ArrayType, DecimalType, FieldMetadata, IntegerType, LongType, MapType, StringType, StructType, TypeChange}
+import io.delta.kernel.utils.CloseableIterable
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
 
 import org.scalatest.prop.TableDrivenPropertyChecks.forAll
@@ -1173,7 +1177,7 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
         table,
         engine,
         newSchema,
-        "Cannot tighten the nullability of existing field a")
+        "Cannot tighten the nullability of existing field renamed_a")
     }
   }
 
@@ -1310,6 +1314,158 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
     }
   }
 
+  test("Updating schema should use the new clustering columns if passed") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val initialSchema = new StructType()
+        .add("a", StringType.STRING, true)
+        .add("b", StringType.STRING, true)
+        .add("c", IntegerType.INTEGER, true)
+
+      createEmptyTable(
+        engine,
+        tablePath,
+        initialSchema,
+        tableProperties = Map(
+          TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
+          TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true"),
+        clusteringColsOpt = Some(List(new Column("b"))))
+      assertColumnMapping(table.getLatestSnapshot(engine).getSchema.get("c"), 3)
+
+      val newSchema = new StructType()
+        .add("d", StringType.STRING, true)
+
+      val txn = table.createTransactionBuilder(
+        engine,
+        testEngineInfo,
+        Operation.MANUAL_UPDATE)
+        .withSchema(engine, newSchema)
+        .withClusteringColumns(engine, List(new Column("d")).asJava)
+        .build(engine)
+      txn.commit(engine, emptyIterable())
+
+      val snapshot = table.getLatestSnapshot(engine)
+      val structType = snapshot.getSchema
+      assertColumnMapping(structType.get("d"), 4, "d")
+      assert(getMaxFieldId(engine, tablePath) == 4)
+
+      val physicalName =
+        structType.get("d").getMetadata.get(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY)
+      val expectedDomainMetadata = new DomainMetadata(
+        "delta.clustering",
+        s"""{"clusteringColumns":[["$physicalName"]]}""",
+        false)
+
+      verifyClusteringDomainMetadata(snapshot.asInstanceOf[SnapshotImpl], expectedDomainMetadata)
+    }
+  }
+
+  private val typeWideningTestCases = Tables.Table(
+    (
+      "testName",
+      "initialType",
+      "newType",
+      "typeWideningEnabled",
+      "icebergV1Enabled",
+      "shouldSucceed",
+      "errorMessageFragment"),
+    (
+      "Integer widening (Int -> Long) with type widening enabled",
+      IntegerType.INTEGER,
+      LongType.LONG,
+      /* typeWideningEnabled= */ true,
+      /* icebergV1Enabled= */ false,
+      /* shouldSucceed= */ true,
+      ""),
+    (
+      "Integer widening (Int -> Long) with type widening disabled",
+      IntegerType.INTEGER,
+      LongType.LONG,
+      /* typeWideningEnabled= */ false,
+      /* icebergV1Enabled= */ false,
+      /* shouldSucceed= */ false,
+      "Cannot change the type of existing field id from integer to long"),
+    (
+      "Decimal precision and scale increase",
+      new DecimalType(10, 2),
+      new DecimalType(15, 5),
+      /* typeWideningEnabled= */ true,
+      /* icebergV1Enabled= */ false,
+      /* shouldSucceed= */ true,
+      ""),
+    (
+      "Decimal precision and scale increase with Iceberg V1 compatibility",
+      new DecimalType(10, 2),
+      new DecimalType(15, 5),
+      /* typeWideningEnabled= */ true,
+      /* icebergV1Enabled= */ true,
+      /* shouldSucceed= */ false,
+      "Cannot change the type of existing field id"))
+
+  forAll(typeWideningTestCases) {
+    (
+        testName,
+        initialType,
+        newType,
+        typeWideningEnabled,
+        icebergV1Enabled,
+        shouldSucceed,
+        errorMessageFragment) =>
+      test(s"Type widening scenarios $testName") {
+        withTempDirAndEngine { (tablePath, engine) =>
+          val table = Table.forPath(engine, tablePath)
+          val initialSchema = new StructType()
+            .add("id", initialType, true)
+            .add("data", StringType.STRING, true)
+
+          createEmptyTable(
+            engine,
+            tablePath,
+            initialSchema,
+            tableProperties = Map(
+              TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
+              TableConfig.TYPE_WIDENING_ENABLED.getKey -> typeWideningEnabled.toString,
+              TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey -> icebergV1Enabled.toString,
+              TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true"))
+
+          val currentSchema = table.getLatestSnapshot(engine).getSchema()
+          val newSchema = new StructType()
+            .add("id", newType, true, currentSchema.get("id").getMetadata)
+            .add("data", StringType.STRING, true, currentSchema.get("data").getMetadata)
+
+          if (shouldSucceed) {
+            // This should succeed because conditions allow type widening
+            table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
+              .withSchema(engine, newSchema)
+              .build(engine).commit(engine, emptyIterable())
+
+            val updatedSchema = table.getLatestSnapshot(engine).getSchema
+            assert(updatedSchema.get("id").getDataType == newType)
+            assert(updatedSchema.get("id").getTypeChanges.asScala ==
+              List(new TypeChange(initialType, newType)))
+
+            // Do an unrelated schema change. And ensure type change and type changes
+            // are still present.
+            table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
+              .withSchema(engine, newSchema.add("newField", StringType.STRING, true))
+              .build(engine).commit(engine, emptyIterable())
+
+            val lastSchema = table.getLatestSnapshot(engine).getSchema
+            assert(lastSchema.get("id").getDataType == newType)
+            assert(lastSchema.get("id").getTypeChanges.asScala ==
+              List(new TypeChange(initialType, newType)))
+          } else {
+            // This should fail because conditions don't allow type widening
+            assertSchemaEvolutionFails[KernelException](
+              table,
+              engine,
+              newSchema,
+              errorMessageFragment)
+          }
+        }
+      }
+  }
+
   def fieldMetadataForColumn(
       columnId: Long,
       physicalColumnId: String): FieldMetadata = {
@@ -1368,4 +1524,5 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
     TableConfig.COLUMN_MAPPING_MAX_COLUMN_ID
       .fromMetadata(getMetadata(engine, tablePath))
   }
+
 }

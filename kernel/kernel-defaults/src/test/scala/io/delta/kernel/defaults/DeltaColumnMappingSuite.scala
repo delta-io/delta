@@ -20,6 +20,7 @@ import scala.collection.immutable.Seq
 
 import io.delta.kernel.Table
 import io.delta.kernel.exceptions.InvalidConfigurationValueException
+import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.TableConfig
 import io.delta.kernel.internal.util.{ColumnMapping, ColumnMappingSuiteBase}
 import io.delta.kernel.types.{FieldMetadata, IntegerType, StringType, StructField, StructType}
@@ -231,6 +232,21 @@ class DeltaColumnMappingSuite extends DeltaTableWriteSuiteBase with ColumnMappin
       assert(getMetadataActionFromCommit(engine, table, version = 0).isDefined)
       assert(getMetadataActionFromCommit(engine, table, version = 1).isEmpty)
       assert(getMetadataActionFromCommit(engine, table, version = 2).isEmpty)
+    }
+  }
+
+  Seq("name", "id").foreach { cmMode =>
+    test(s"test writing data into a column mapping enabled table is blocked: $cmMode") {
+      withTempDirAndEngine { (tablePath, engine) =>
+        val props = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> cmMode)
+        createEmptyTable(engine, tablePath, testSchema, tableProperties = props)
+
+        val ex = intercept[UnsupportedOperationException] {
+          appendData(engine, tablePath, data = Seq(Map.empty[String, Literal] -> dataBatches1))
+        }
+        assert(ex.getMessage.contains(
+          "Writing into column mapping enabled table is not supported yet."))
+      }
     }
   }
 }

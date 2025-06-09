@@ -58,7 +58,7 @@ import org.apache.spark.sql.catalyst.trees.TreeNodeTag
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttribute
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
-import org.apache.spark.sql.connector.catalog.{Identifier, TableCatalog}
+import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Identifier, TableCatalog}
 import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
 import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTransform, Transform}
 import org.apache.spark.sql.errors.QueryCompilationErrors
@@ -816,7 +816,12 @@ class DeltaAnalysis(session: SparkSession)
         //             here we create a table to get the path, then overwrite it with the
         //             cloned table.
         val sourceConfig = sourceTbl.metadata.configuration.asJava
-        val newTable = catalog.createTable(ident, sourceTbl.schema, partitions, sourceConfig)
+        val newTable = catalog.createTable(
+            ident,
+            CatalogV2Util.structTypeToV2Columns(sourceTbl.schema),
+            partitions,
+            sourceConfig
+          )
         try {
           newTable match {
             case targetTable: DeltaTableV2 =>
