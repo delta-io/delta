@@ -61,6 +61,7 @@ class TableFeaturesSuite extends AnyFunSuite {
     "rowTracking",
     "domainMetadata",
     "icebergCompatV2",
+    "icebergCompatV3",
     "inCommitTimestamp",
     "icebergWriterCompatV1",
     "clustering")
@@ -238,6 +239,7 @@ class TableFeaturesSuite extends AnyFunSuite {
       "rowTracking",
       "domainMetadata",
       "icebergCompatV2",
+      "icebergCompatV3",
       "inCommitTimestamp",
       "appendOnly",
       "invariants",
@@ -569,6 +571,11 @@ class TableFeaturesSuite extends AnyFunSuite {
     testMetadata(tblProps = Map("delta.enableIcebergCompatV2" -> "true")))
 
   checkWriteSupported(
+    "validateKernelCanWriteToTable: protocol 7 with icebergCompatV3",
+    new Protocol(3, 7, emptySet(), singleton("icebergCompatV3")),
+    testMetadata(tblProps = Map("delta.enableIcebergCompatV3" -> "true")))
+
+  checkWriteSupported(
     "validateKernelCanWriteToTable: protocol 7 with v2Checkpoint, " +
       "metadata enables v2Checkpoint",
     new Protocol(3, 7, singleton("v2Checkpoint"), singleton("v2Checkpoint")),
@@ -578,6 +585,11 @@ class TableFeaturesSuite extends AnyFunSuite {
     "validateKernelCanWriteToTable: protocol 7 with icebergWriterCompatV1",
     new Protocol(3, 7, emptySet(), singleton("icebergWriterCompatV1")),
     testMetadata(tblProps = Map("delta.enableIcebergWriterCompatV1" -> "true")))
+
+  checkWriteSupported(
+    "validateKernelCanWriteToTable: protocol 7 with icebergWriterCompatV2",
+    new Protocol(3, 7, emptySet(), singleton("icebergWriterCompatV2")),
+    testMetadata(tblProps = Map("delta.enableIcebergWriterCompatV2" -> "true")))
 
   checkWriteSupported(
     "validateKernelCanWriteToTable: protocol 7 with clustering",
@@ -853,6 +865,27 @@ class TableFeaturesSuite extends AnyFunSuite {
           "generatedColumns",
           "changeDataFeed")),
       set("icebergCompatV2", "icebergWriterCompatV1", "deletionVectors")),
+    (
+      testMetadata(tblProps = Map(
+        "delta.enableIcebergWriterCompatV2" -> "true",
+        "delta.enableIcebergCompatV3" -> "true",
+        "delta.enableDeletionVectors" -> "true")),
+      new Protocol(3, 7),
+      new Protocol(
+        3,
+        7,
+        set("columnMapping", "deletionVectors"),
+        set(
+          "columnMapping",
+          "appendOnly",
+          "deletionVectors",
+          "invariants",
+          "icebergCompatV3",
+          "icebergWriterCompatV2",
+          "checkConstraints",
+          "generatedColumns",
+          "changeDataFeed")),
+      set("icebergCompatV3", "icebergWriterCompatV2", "deletionVectors")),
     (
       testMetadata(tblProps = Map("delta.enableIcebergWriterCompatV1" -> "true")),
       new Protocol(3, 7, set("columnMapping", "deletionVectors"), set("columnMapping")),

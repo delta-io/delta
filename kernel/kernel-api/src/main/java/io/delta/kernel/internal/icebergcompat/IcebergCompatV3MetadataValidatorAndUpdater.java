@@ -129,7 +129,8 @@ public class IcebergCompatV3MetadataValidatorAndUpdater
                       || dataType instanceof TimestampNTZType
                       || dataType instanceof ArrayType
                       || dataType instanceof MapType
-                      || dataType instanceof StructType);
+                      || dataType instanceof StructType
+                      || dataType instanceof VariantType);
                 });
 
         if (!matches.isEmpty()) {
