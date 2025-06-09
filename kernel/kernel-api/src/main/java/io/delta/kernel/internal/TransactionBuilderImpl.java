@@ -38,6 +38,7 @@ import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.clustering.ClusteringUtils;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.icebergcompat.IcebergCompatV2MetadataValidatorAndUpdater;
+import io.delta.kernel.internal.icebergcompat.IcebergCompatV3MetadataValidatorAndUpdater;
 import io.delta.kernel.internal.icebergcompat.IcebergUniversalFormatMetadataValidatorAndUpdater;
 import io.delta.kernel.internal.icebergcompat.IcebergWriterCompatV1MetadataValidatorAndUpdater;
 import io.delta.kernel.internal.lang.Lazy;
@@ -463,11 +464,18 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       newMetadata = icebergWriterCompatV1;
     }
 
+    // TODO: refactor this method to use a single validator and updater.
     Optional<Metadata> icebergCompatV2Metadata =
         IcebergCompatV2MetadataValidatorAndUpdater.validateAndUpdateIcebergCompatV2Metadata(
             isCreateOrReplace, newMetadata.orElse(baseMetadata), newProtocol.orElse(baseProtocol));
     if (icebergCompatV2Metadata.isPresent()) {
       newMetadata = icebergCompatV2Metadata;
+    }
+    Optional<Metadata> icebergCompatV3Metadata =
+        IcebergCompatV3MetadataValidatorAndUpdater.validateAndUpdateIcebergCompatV3Metadata(
+            isCreateOrReplace, newMetadata.orElse(baseMetadata), newProtocol.orElse(baseProtocol));
+    if (icebergCompatV3Metadata.isPresent()) {
+      newMetadata = icebergCompatV3Metadata;
     }
 
     /* ----- 4: Update the METADATA with column mapping info if applicable ----- */
