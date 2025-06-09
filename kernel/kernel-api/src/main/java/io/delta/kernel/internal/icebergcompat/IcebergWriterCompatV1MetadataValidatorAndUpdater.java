@@ -66,7 +66,7 @@ import java.util.stream.Stream;
  * TODO additional enforcements coming in (ie physicalName=fieldId)
  */
 public class IcebergWriterCompatV1MetadataValidatorAndUpdater
-    extends IcebergCompatMetadataValidatorAndUpdater {
+    extends IcebergWriterCompatMetadataValidatorAndUpdater {
 
   /**
    * Validates that any change to property {@link TableConfig#ICEBERG_WRITER_COMPAT_V1_ENABLED} is
@@ -86,18 +86,8 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
    */
   public static void validateIcebergWriterCompatV1Change(
       Map<String, String> oldConfig, Map<String, String> newConfig, boolean isNewTable) {
-    if (!isNewTable) {
-      boolean wasEnabled = TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.fromMetadata(oldConfig);
-      boolean isEnabled = TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.fromMetadata(newConfig);
-      if (!wasEnabled && isEnabled) {
-        throw DeltaErrors.enablingIcebergWriterCompatV1OnExistingTable(
-            TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey());
-      }
-      if (wasEnabled && !isEnabled) {
-        throw DeltaErrors.disablingIcebergWriterCompatV1OnExistingTable(
-            TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey());
-      }
-    }
+    validateIcebergWriterCompatChange(
+        oldConfig, newConfig, isNewTable, TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED);
   }
 
   /**
@@ -111,8 +101,8 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
    */
   public static Optional<Metadata> validateAndUpdateIcebergWriterCompatV1Metadata(
       boolean isCreatingNewTable, Metadata newMetadata, Protocol newProtocol) {
-    return INSTANCE.validateAndUpdateMetadata(
-        new IcebergCompatInputContext(isCreatingNewTable, newMetadata, newProtocol));
+    return validateAndUpdateIcebergWriterCompatMetadata(
+        isCreatingNewTable, newMetadata, newProtocol, INSTANCE);
   }
 
   /// //////////////////////////////////////////////////////////////////////////////

@@ -34,35 +34,8 @@ import io.delta.kernel.types.*;
 import java.util.*;
 import java.util.stream.Stream;
 
-/**
- * Performs the validations and updates necessary to support the table feature IcebergWriterCompatV3
- * when it is enabled by the table property "delta.enableIcebergWriterCompatV3".
- *
- * <p>Requires that the following table properties are set to the specified values. If they are set
- * to an invalid value, throws an exception. If they are not set, enable them if possible.
- *
- * <ul>
- *   <li>Requires icebergCompatV3 to be enabled.
- * </ul>
- *
- * <p>IcebergWriterCompatV3 (jumped from v1) skipped v2 to align with IcebergCompatV3 which maps to
- * iceberg format v3. Major changes are row tracking, DV, and new datatypes such as variant
- *
- * <p>Checks that required table features are enabled: icebergCompatWriterV3, icebergCompatV3,
- * columnMapping
- *
- * <p>Checks the following:
- *
- * <ul>
- *   <li>Checks that all table features supported in the table's protocol are in the allow-list of
- *       table features. This simultaneously ensures that any unsupported features are not present
- *       (e.g. CDF, variant type, etc).
- * </ul>
- *
- * TODO additional enforcements coming in (ie physicalName=fieldId)
- */
 public class IcebergWriterCompatV3MetadataValidatorAndUpdater
-    extends IcebergCompatMetadataValidatorAndUpdater {
+    extends IcebergWriterCompatMetadataValidatorAndUpdater {
 
   /**
    * Validates that any change to property {@link TableConfig#ICEBERG_WRITER_COMPAT_V3_ENABLED} is
@@ -82,18 +55,8 @@ public class IcebergWriterCompatV3MetadataValidatorAndUpdater
    */
   public static void validateIcebergWriterCompatV3Change(
       Map<String, String> oldConfig, Map<String, String> newConfig, boolean isNewTable) {
-    if (!isNewTable) {
-      boolean wasEnabled = TableConfig.ICEBERG_WRITER_COMPAT_V3_ENABLED.fromMetadata(oldConfig);
-      boolean isEnabled = TableConfig.ICEBERG_WRITER_COMPAT_V3_ENABLED.fromMetadata(newConfig);
-      if (!wasEnabled && isEnabled) {
-        throw DeltaErrors.enablingIcebergWriterCompatV3OnExistingTable(
-            TableConfig.ICEBERG_WRITER_COMPAT_V3_ENABLED.getKey());
-      }
-      if (wasEnabled && !isEnabled) {
-        throw DeltaErrors.disablingIcebergWriterCompatV3OnExistingTable(
-            TableConfig.ICEBERG_WRITER_COMPAT_V3_ENABLED.getKey());
-      }
-    }
+    validateIcebergWriterCompatChange(
+        oldConfig, newConfig, isNewTable, TableConfig.ICEBERG_WRITER_COMPAT_V3_ENABLED);
   }
 
   /**
@@ -107,8 +70,8 @@ public class IcebergWriterCompatV3MetadataValidatorAndUpdater
    */
   public static Optional<Metadata> validateAndUpdateIcebergWriterCompatV3Metadata(
       boolean isCreatingNewTable, Metadata newMetadata, Protocol newProtocol) {
-    return INSTANCE.validateAndUpdateMetadata(
-        new IcebergCompatInputContext(isCreatingNewTable, newMetadata, newProtocol));
+    return validateAndUpdateIcebergWriterCompatMetadata(
+        isCreatingNewTable, newMetadata, newProtocol, INSTANCE);
   }
 
   /// //////////////////////////////////////////////////////////////////////////////
