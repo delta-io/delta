@@ -23,6 +23,7 @@ import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.tablefeatures.TableFeature;
+import io.delta.kernel.types.*;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Predicate;
@@ -153,6 +154,42 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
    */
   interface IcebergCompatCheck {
     void check(IcebergCompatInputContext inputContext);
+  }
+
+  protected static boolean isSupportedDataTypesForV2(DataType dataType) {
+    return dataType instanceof ByteType
+        || dataType instanceof ShortType
+        || dataType instanceof IntegerType
+        || dataType instanceof LongType
+        || dataType instanceof FloatType
+        || dataType instanceof DoubleType
+        || dataType instanceof DecimalType
+        || dataType instanceof StringType
+        || dataType instanceof BinaryType
+        || dataType instanceof BooleanType
+        || dataType instanceof DateType
+        || dataType instanceof TimestampType
+        || dataType instanceof TimestampNTZType
+        || dataType instanceof ArrayType
+        || dataType instanceof MapType
+        || dataType instanceof StructType
+        || dataType instanceof VariantType;
+  }
+
+  protected static boolean isAllowedPartitionType(DataType dataType) {
+    return dataType instanceof ByteType
+        || dataType instanceof ShortType
+        || dataType instanceof IntegerType
+        || dataType instanceof LongType
+        || dataType instanceof FloatType
+        || dataType instanceof DoubleType
+        || dataType instanceof DecimalType
+        || dataType instanceof StringType
+        || dataType instanceof BinaryType
+        || dataType instanceof BooleanType
+        || dataType instanceof DateType
+        || dataType instanceof TimestampType
+        || dataType instanceof TimestampNTZType;
   }
 
   /////////////////////////////////////////////////////////////////////////////////

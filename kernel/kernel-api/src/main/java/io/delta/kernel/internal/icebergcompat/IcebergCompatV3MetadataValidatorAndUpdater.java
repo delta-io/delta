@@ -104,23 +104,8 @@ public class IcebergCompatV3MetadataValidatorAndUpdater
                 /* stopOnFirstMatch = */ false,
                 field -> {
                   DataType dataType = field.getDataType();
-                  return !(dataType instanceof ByteType
-                      || dataType instanceof ShortType
-                      || dataType instanceof IntegerType
-                      || dataType instanceof LongType
-                      || dataType instanceof FloatType
-                      || dataType instanceof DoubleType
-                      || dataType instanceof DecimalType
-                      || dataType instanceof StringType
-                      || dataType instanceof BinaryType
-                      || dataType instanceof BooleanType
-                      || dataType instanceof DateType
-                      || dataType instanceof TimestampType
-                      || dataType instanceof TimestampNTZType
-                      || dataType instanceof ArrayType
-                      || dataType instanceof MapType
-                      || dataType instanceof StructType
-                      || dataType instanceof VariantType);
+                  // IcebergCompatV3 supports variants and all the IcebergCompatV2 supported types
+                  return !isSupportedDataTypesForV2(dataType) && !(dataType instanceof VariantType);
                 });
 
         if (!matches.isEmpty()) {
@@ -145,21 +130,7 @@ public class IcebergCompatV3MetadataValidatorAndUpdater
                         partitionCol);
                     DataType dataType =
                         inputContext.newMetadata.getSchema().at(partitionFieldIndex).getDataType();
-                    boolean validType =
-                        dataType instanceof ByteType
-                            || dataType instanceof ShortType
-                            || dataType instanceof IntegerType
-                            || dataType instanceof LongType
-                            || dataType instanceof FloatType
-                            || dataType instanceof DoubleType
-                            || dataType instanceof DecimalType
-                            || dataType instanceof StringType
-                            || dataType instanceof BinaryType
-                            || dataType instanceof BooleanType
-                            || dataType instanceof DateType
-                            || dataType instanceof TimestampType
-                            || dataType instanceof TimestampNTZType;
-                    if (!validType) {
+                    if (!isAllowedPartitionType(dataType)) {
                       throw DeltaErrors.icebergCompatUnsupportedTypePartitionColumn(
                           INSTANCE.compatFeatureName(), dataType);
                     }

@@ -103,22 +103,7 @@ public class IcebergCompatV2MetadataValidatorAndUpdater
                 /* stopOnFirstMatch = */ false,
                 field -> {
                   DataType dataType = field.getDataType();
-                  return !(dataType instanceof ByteType
-                      || dataType instanceof ShortType
-                      || dataType instanceof IntegerType
-                      || dataType instanceof LongType
-                      || dataType instanceof FloatType
-                      || dataType instanceof DoubleType
-                      || dataType instanceof DecimalType
-                      || dataType instanceof StringType
-                      || dataType instanceof BinaryType
-                      || dataType instanceof BooleanType
-                      || dataType instanceof DateType
-                      || dataType instanceof TimestampType
-                      || dataType instanceof TimestampNTZType
-                      || dataType instanceof ArrayType
-                      || dataType instanceof MapType
-                      || dataType instanceof StructType);
+                  return !isSupportedDataTypesForV2(dataType);
                 });
 
         if (!matches.isEmpty()) {
