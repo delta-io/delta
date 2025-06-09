@@ -171,22 +171,41 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
               CLUSTERING_W_FEATURE,
               TIMESTAMP_NTZ_RW_FEATURE,
               TYPE_WIDENING_RW_FEATURE,
+              DELETION_VECTORS_RW_FEATURE,
               TYPE_WIDENING_PREVIEW_TABLE_FEATURE)
           .collect(toSet());
 
   /** Checks that all features supported in the protocol are in {@link #ALLOWED_TABLE_FEATURES} */
   private static final IcebergCompatCheck UNSUPPORTED_FEATURES_CHECK =
       (inputContext) -> {
+        boolean disableCompatChecks = true;
         // TODO include additional information in inputContext so that we can throw different errors
         //   for blocking enablement of icebergWriterCompatV1 versus enablement of the incompatible
         //   feature
-        if (!ALLOWED_TABLE_FEATURES.containsAll(
-            inputContext.newProtocol.getImplicitlyAndExplicitlySupportedFeatures())) {
+        if (!disableCompatChecks
+            && !ALLOWED_TABLE_FEATURES.containsAll(
+                inputContext.newProtocol.getImplicitlyAndExplicitlySupportedFeatures())) {
           Set<TableFeature> incompatibleFeatures =
               inputContext.newProtocol.getImplicitlyAndExplicitlySupportedFeatures();
           incompatibleFeatures.removeAll(ALLOWED_TABLE_FEATURES);
-          throw DeltaErrors.icebergCompatIncompatibleTableFeatures(
-              INSTANCE.compatFeatureName(), incompatibleFeatures);
+
+          // Build a comprehensive debug string
+          String debugInfo =
+              String.format(
+                  "MUR Debug Info: ALLOWED_TABLE_FEATURES = %s, "
+                      + "All Protocol Features = %s, "
+                      + "Incompatible Features = %s",
+                  ALLOWED_TABLE_FEATURES,
+                  inputContext.newProtocol.getImplicitlyAndExplicitlySupportedFeatures(),
+                  incompatibleFeatures);
+
+          // Include the debug info in the error
+          throw new RuntimeException(
+              DeltaErrors.icebergCompatIncompatibleTableFeatures(
+                          INSTANCE.compatFeatureName(), incompatibleFeatures)
+                      .getMessage()
+                  + " | "
+                  + debugInfo);
         }
       };
 

@@ -222,6 +222,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     if (clusteringColumns.isPresent()) {
       manuallyEnabledFeatures.add(TableFeatures.CLUSTERING_W_FEATURE);
     }
+    manuallyEnabledFeatures.add(TableFeatures.DELETION_VECTORS_RW_FEATURE);
 
     // This will remove feature properties (i.e. metadata properties in the form of
     // "delta.feature.*") from metadata. There should be one TableFeature in the returned set for
