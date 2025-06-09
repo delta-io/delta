@@ -82,7 +82,7 @@ class DeltaTableForNameSuite extends QueryTest
   }
 
   private def getTablePath(tableName: String): Path = {
-    new Path(FileUtils.getTempDirectory.toString + "/DeltaTableForNameSuite/" + tableName)
+    new Path(DummyCatalogWithNamespace.catalogDir + s"/$tableName")
   }
 
   private def setUpTable(catalog: String, schema: String, table: String): Unit = {
@@ -166,5 +166,13 @@ class DeltaTableForNameSuite extends QueryTest
     }
     checkError(exception = e, "DELTA_MISSING_DELTA_TABLE",
       parameters = Map("tableName" -> s"`$nonSessionCatalogNonDefaultSchema`.`$commonTblName`"))
+  }
+
+  test("forName fails with fully qualified non existent table") {
+    val e = intercept[AnalysisException] {
+      DeltaTable.forName(spark, s"$catalogName.$defaultSchema.invalid_table")
+    }
+    checkError(exception = e, "TABLE_OR_VIEW_NOT_FOUND",
+      parameters = Map("relationName" -> s"`$catalogName`.`$defaultSchema`.`invalid_table`"))
   }
 }

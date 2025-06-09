@@ -16,8 +16,7 @@
 
 package org.apache.spark.sql.delta.catalog
 
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaTableIdentifier}
-import org.apache.spark.sql.delta.sources.DeltaSourceUtils
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaTableIdentifier, DeltaTableUtils}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.SparkSession
@@ -27,15 +26,25 @@ import org.apache.spark.sql.connector.catalog.CatalogV2Implicits.CatalogHelper
 import org.apache.spark.sql.connector.catalog.CatalogV2Implicits.MultipartIdentifierHelper
 
 /**
- * Helper object for resolving tables using a *non-session* catalog.
+ * Helper object for resolving Delta tables using a *non-session* catalog.
  */
 object CatalogResolver {
-  private def asDeltaTable(spark: SparkSession, table: Table): DeltaTableV2 = table match {
-    case v2: DeltaTableV2 => v2
-    case v1: V1Table if DeltaSourceUtils.isDeltaTable(v1.v1Table.provider) =>
-      DeltaTableV2(spark, new Path(v1.v1Table.location), Some(v1.v1Table))
-    case _ => throw DeltaErrors.notADeltaTableException(
-      DeltaTableIdentifier(table = Some(TableIdentifier(table.name()))))
+  def getDeltaTableFromCatalog(
+      spark: SparkSession,
+      catalog: CatalogPlugin,
+      ident: Identifier): DeltaTableV2 = {
+    catalog.asTableCatalog.loadTable(ident) match {
+      case v2: DeltaTableV2 => v2
+      case v1: V1Table if DeltaTableUtils.isDeltaTable(v1.v1Table) =>
+        DeltaTableV2(
+          spark,
+          path = new Path(v1.v1Table.location),
+          catalogTable = Some(v1.v1Table),
+          tableIdentifier = Some(ident.toString)
+        )
+      case table => throw DeltaErrors.notADeltaTableException(
+        DeltaTableIdentifier(table = Some(TableIdentifier(table.name()))))
+    }
   }
 
   /**
@@ -46,20 +55,6 @@ object CatalogResolver {
       spark: SparkSession,
       catalog: String,
       ident: Seq[String]): (CatalogPlugin, Identifier) = {
-    (spark.sessionState.catalogManager.catalog(catalog),
-      MultipartIdentifierHelper(ident).asIdentifier)
-  }
-
-  def getDeltaTableFromCatalog(
-      spark: SparkSession,
-      catalog: CatalogPlugin,
-      ident: Identifier): DeltaTableV2 = {
-    val tblCatalog = catalog.asTableCatalog
-    if (tblCatalog.tableExists(ident)) {
-      asDeltaTable(spark, tblCatalog.loadTable(ident))
-    } else {
-      throw DeltaErrors.nonExistentDeltaTable(
-        DeltaTableIdentifier(table = Some(TableIdentifier(ident.name()))))
-    }
+    (spark.sessionState.catalogManager.catalog(catalog), ident.asIdentifier)
   }
 }
