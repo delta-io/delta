@@ -289,6 +289,19 @@ public class TableConfig<T> {
           "needs to be a boolean.",
           true);
 
+  /**
+   * Table property that enables modifying the table in accordance with the Delta-Iceberg Writer
+   * Compatibility V1 ({@code icebergCompatWriterV1}) protocol.
+   */
+  public static final TableConfig<Boolean> ICEBERG_WRITER_COMPAT_V3_ENABLED =
+      new TableConfig<>(
+          "delta.enableIcebergWriterCompatV3",
+          "false",
+          Boolean::valueOf,
+          value -> true,
+          "needs to be a boolean.",
+          true);
+
   public static class UniversalFormats {
 
     /**
@@ -358,6 +371,7 @@ public class TableConfig<T> {
               addConfig(this, ICEBERG_COMPAT_V2_ENABLED);
               addConfig(this, ICEBERG_COMPAT_V3_ENABLED);
               addConfig(this, ICEBERG_WRITER_COMPAT_V1_ENABLED);
+              addConfig(this, ICEBERG_WRITER_COMPAT_V3_ENABLED);
               addConfig(this, COLUMN_MAPPING_MAX_COLUMN_ID);
               addConfig(this, DATA_SKIPPING_NUM_INDEXED_COLS);
               addConfig(this, UNIVERSAL_FORMAT_ENABLED_FORMATS);

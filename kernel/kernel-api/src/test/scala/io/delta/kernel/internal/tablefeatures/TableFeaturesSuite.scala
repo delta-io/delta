@@ -64,6 +64,7 @@ class TableFeaturesSuite extends AnyFunSuite {
     "icebergCompatV3",
     "inCommitTimestamp",
     "icebergWriterCompatV1",
+    "icebergWriterCompatV3",
     "clustering")
 
   val legacyFeatures = Seq(
@@ -166,6 +167,10 @@ class TableFeaturesSuite extends AnyFunSuite {
     (
       "icebergWriterCompatV1",
       testMetadata(tblProps = Map("delta.enableIcebergWriterCompatV1" -> "true")),
+      true),
+    (
+      "icebergWriterCompatV3",
+      testMetadata(tblProps = Map("delta.enableIcebergWriterCompatV3" -> "true")),
       true),
     (
       "icebergWriterCompatV1",
@@ -847,6 +852,27 @@ class TableFeaturesSuite extends AnyFunSuite {
         set(),
         set("columnMapping", "appendOnly", "invariants", "icebergCompatV3")),
       set("icebergCompatV3", "columnMapping")),
+    (
+      testMetadata(tblProps = Map(
+        "delta.enableIcebergWriterCompatV3" -> "true",
+        "delta.enableIcebergCompatV3" -> "true",
+        "delta.enableDeletionVectors" -> "true")),
+      new Protocol(3, 7),
+      new Protocol(
+        3,
+        7,
+        set("columnMapping", "deletionVectors"),
+        set(
+          "columnMapping",
+          "appendOnly",
+          "deletionVectors",
+          "invariants",
+          "icebergCompatV3",
+          "icebergWriterCompatV3",
+          "checkConstraints",
+          "generatedColumns",
+          "changeDataFeed")),
+      set("icebergCompatV3", "icebergWriterCompatV3", "deletionVectors")),
     (
       testMetadata(tblProps = Map("delta.enableIcebergWriterCompatV1" -> "true")),
       new Protocol(1, 2),
