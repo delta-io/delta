@@ -118,6 +118,49 @@ public class TypeWideningChecker {
     return false;
   }
 
+  /**
+   * Checks if the type change is supported by Iceberg V3 schema evolution. This is required when
+   * Iceberg compatibility is enabled.
+   *
+   * @param sourceType The original data type
+   * @param targetType The target data type to widen to
+   * @return true if the type change is supported by Iceberg V2 (sourceType == targetType returns
+   *     true), false otherwise
+   */
+  public static boolean isIcebergV3Compatible(DataType sourceType, DataType targetType) {
+    // If types are the same, it's not a widening operation
+    if (sourceType.equals(targetType)) {
+      return true;
+    }
+
+    // Integer widening: Byte -> Short -> Int -> Long
+    if (isIntegerWidening(sourceType, targetType)) {
+      return true;
+    }
+
+    // Floating-point widening: Float -> Double
+    if (isFloatToDoubleWidening(sourceType, targetType)) {
+      return true;
+    }
+
+    // Check if it's a decimal widening with scale increase
+    if (sourceType instanceof DecimalType && targetType instanceof DecimalType) {
+      DecimalType sourceDecimal = (DecimalType) sourceType;
+      DecimalType targetDecimal = (DecimalType) targetType;
+
+      // If scale changes, are not supported by Iceberg
+      if (targetDecimal.getScale() != sourceDecimal.getScale()) {
+        return false;
+      }
+
+      // Precision increase with same scale is supported.
+      return targetDecimal.getPrecision() >= sourceDecimal.getPrecision();
+    }
+
+    // No other supported widening for Iceberg
+    return false;
+  }
+
   /** Checks if the type change is an integer widening (Byte -> Short -> Int -> Long). */
   private static boolean isIntegerWidening(DataType sourceType, DataType targetType) {
     if (sourceType instanceof ByteType) {
