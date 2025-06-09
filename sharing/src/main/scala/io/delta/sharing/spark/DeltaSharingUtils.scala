@@ -23,7 +23,7 @@ import java.util.{TimeZone, UUID}
 import scala.reflect.ClassTag
 
 import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.{DeletionVectorDescriptor, Metadata, Protocol}
 import com.google.common.hash.Hashing
 import io.delta.sharing.client.{DeltaSharingClient, DeltaSharingRestClient}
 import io.delta.sharing.client.model.{DeltaTableFiles, DeltaTableMetadata, Table}
@@ -32,7 +32,6 @@ import io.delta.sharing.client.util.JsonUtils
 import org.apache.spark.SparkEnv
 import org.apache.spark.delta.sharing.TableRefreshResult
 import org.apache.spark.internal.Logging
-import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.execution.datasources.FileFormat
 import org.apache.spark.storage.{BlockId, StorageLevel}
