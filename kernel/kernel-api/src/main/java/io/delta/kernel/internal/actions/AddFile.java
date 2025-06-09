@@ -91,7 +91,7 @@ public class AddFile extends RowBackedAction {
             dataFileStatus.getSize(),
             dataFileStatus.getModificationTime(),
             dataChange,
-            Optional.empty(), // deletionVector
+            dataFileStatus.getDeletionVectorDescriptor(),
             tagMapValue, // tags
             Optional.empty(), // baseRowId
             Optional.empty(), // defaultRowCommitVersion
@@ -116,8 +116,6 @@ public class AddFile extends RowBackedAction {
 
     checkArgument(path != null, "path is not nullable");
     checkArgument(partitionValues != null, "partitionValues is not nullable");
-    // TODO - Add support for DeletionVectorDescriptor
-    checkArgument(!deletionVector.isPresent(), "DeletionVectorDescriptor is unsupported");
 
     Map<Integer, Object> fieldMap = new HashMap<>();
     fieldMap.put(FULL_SCHEMA.indexOf("path"), path);
@@ -131,7 +129,20 @@ public class AddFile extends RowBackedAction {
         version -> fieldMap.put(FULL_SCHEMA.indexOf("defaultRowCommitVersion"), version));
     stats.ifPresent(
         stat -> fieldMap.put(FULL_SCHEMA.indexOf("stats"), stat.serializeAsJson(physicalSchema)));
+    deletionVector.ifPresent(
+        dv -> {
+          Map<Integer, Object> dvFieldMap = new HashMap<>();
+          StructType dvSchema = DeletionVectorDescriptor.READ_SCHEMA;
 
+          dvFieldMap.put(dvSchema.indexOf("storageType"), dv.getStorageType());
+          dvFieldMap.put(dvSchema.indexOf("pathOrInlineDv"), dv.getPathOrInlineDv());
+          dv.getOffset().ifPresent(offset -> dvFieldMap.put(dvSchema.indexOf("offset"), offset));
+          dvFieldMap.put(dvSchema.indexOf("sizeInBytes"), dv.getSizeInBytes());
+          dvFieldMap.put(dvSchema.indexOf("cardinality"), dv.getCardinality());
+
+          Row dvRow = new GenericRow(dvSchema, dvFieldMap);
+          fieldMap.put(FULL_SCHEMA.indexOf("deletionVector"), dvRow);
+        });
     return new GenericRow(FULL_SCHEMA, fieldMap);
   }
 
