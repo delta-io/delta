@@ -79,6 +79,8 @@ class IcebergFileManifest(
     _sizeInBytes.get
   }
 
+  override def supportAbsolutePath: Boolean = true
+
   def allFiles: Dataset[ConvertTargetFile] = {
     if (fileSparkResults.isEmpty) fileSparkResults = Some(getFileSparkResults())
     fileSparkResults.get
