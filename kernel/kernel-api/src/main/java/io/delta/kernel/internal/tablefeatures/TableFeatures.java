@@ -451,6 +451,24 @@ public class TableFeatures {
     }
   }
 
+  public static final TableFeature ICEBERG_WRITER_COMPAT_V2 = new IcebergWriterCompatV2();
+
+  private static class IcebergWriterCompatV2 extends TableFeature.WriterFeature
+      implements FeatureAutoEnabledByMetadata {
+    IcebergWriterCompatV2() {
+      super("icebergWriterCompatV2", /* minWriterVersion = */ 7);
+    }
+
+    @Override
+    public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
+      return TableConfig.ICEBERG_WRITER_COMPAT_V2_ENABLED.fromMetadata(metadata);
+    }
+
+    public @Override Set<TableFeature> requiredFeatures() {
+      return Collections.singleton(ICEBERG_COMPAT_V3_W_FEATURE);
+    }
+  }
+
   /////////////////////////////////////////////////////////////////////////////////
   /// END: Define the {@link TableFeature}s                                     ///
   /////////////////////////////////////////////////////////////////////////////////
