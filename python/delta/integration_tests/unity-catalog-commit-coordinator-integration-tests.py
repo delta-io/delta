@@ -351,7 +351,10 @@ class UnityCatalogManagedTableDDLSuite(UnityCatalogManagedTableTestBase):
             # CREATE TABLE is currently not supported by UC.
             single_col_df.writeTo(f"{CATALOG_NAME}.{SCHEMA}.created_table").using("delta").create()
         except AnalysisException as error:
-            assert(f"[SCHEMA_NOT_FOUND] The schema `spark_catalog`.`{SCHEMA}` cannot be found" in str(error))
+            assert(
+                f"[SCHEMA_NOT_FOUND] The schema `spark_catalog`.`{SCHEMA}` cannot be found"
+                in str(error)
+            )
 
     def test_sql_create(self) -> None:
         try:
@@ -359,7 +362,10 @@ class UnityCatalogManagedTableDDLSuite(UnityCatalogManagedTableTestBase):
             # 'spark_catalog'.
             spark.sql(f"CREATE TABLE {CATALOG_NAME}.{SCHEMA}.created_table (a int) USING DELTA")
         except AnalysisException as error:
-            assert(f"[SCHEMA_NOT_FOUND] The schema `spark_catalog`.`{SCHEMA}` cannot be found" in str(error))
+            assert(
+                f"[SCHEMA_NOT_FOUND] The schema `spark_catalog`.`{SCHEMA}` cannot be found"
+                in str(error)
+            )
 
     def test_create_non_catalog_owned(self) -> None:
         try:
@@ -367,7 +373,10 @@ class UnityCatalogManagedTableDDLSuite(UnityCatalogManagedTableTestBase):
             # 'spark_catalog'.
             spark.sql(f"CREATE TABLE {CATALOG_NAME}.{SCHEMA}.created_table (id int) USING DELTA")
         except AnalysisException as error:
-            assert(f"[SCHEMA_NOT_FOUND] The schema `spark_catalog`.`{SCHEMA}` cannot be found" in str(error))
+            assert(
+                f"[SCHEMA_NOT_FOUND] The schema `spark_catalog`.`{SCHEMA}` cannot be found"
+                in str(error)
+            )
 
     def test_clone_into_catalog_owned(self) -> None:
         try:
