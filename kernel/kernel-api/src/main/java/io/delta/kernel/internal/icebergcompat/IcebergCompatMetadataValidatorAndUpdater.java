@@ -15,6 +15,9 @@
  */
 package io.delta.kernel.internal.icebergcompat;
 
+import static io.delta.kernel.internal.tablefeatures.TableFeatures.TYPE_WIDENING_RW_FEATURE;
+import static io.delta.kernel.internal.tablefeatures.TableFeatures.TYPE_WIDENING_RW_PREVIEW_FEATURE;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Collections.singletonMap;
 
 import io.delta.kernel.exceptions.KernelException;
@@ -23,6 +26,8 @@ import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.tablefeatures.TableFeature;
+import io.delta.kernel.internal.types.TypeWideningChecker;
+import io.delta.kernel.internal.util.SchemaIterable;
 import io.delta.kernel.types.*;
 import java.util.List;
 import java.util.Optional;
@@ -54,19 +59,25 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
   /////////////////////////////////////////////////////////////////////////////////
   /** Defines the input context for the metadata validator and updater. */
   public static class IcebergCompatInputContext {
+    final String compatFeatureName;
     final boolean isCreatingNewTable;
     final Metadata newMetadata;
     final Protocol newProtocol;
 
     public IcebergCompatInputContext(
-        boolean isCreatingNewTable, Metadata newMetadata, Protocol newProtocol) {
+        String compatFeatureName,
+        boolean isCreatingNewTable,
+        Metadata newMetadata,
+        Protocol newProtocol) {
+      this.compatFeatureName = compatFeatureName;
       this.isCreatingNewTable = isCreatingNewTable;
       this.newMetadata = newMetadata;
       this.newProtocol = newProtocol;
     }
 
     public IcebergCompatInputContext withUpdatedMetadata(Metadata newMetadata) {
-      return new IcebergCompatInputContext(isCreatingNewTable, newMetadata, newProtocol);
+      return new IcebergCompatInputContext(
+          compatFeatureName, isCreatingNewTable, newMetadata, newProtocol);
     }
   }
 
@@ -152,9 +163,69 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
    * Defines checks for compatibility with the targeted iceberg features (icebergCompatV1 or
    * icebergCompatV2 etc.)
    */
-  interface IcebergCompatCheck {
+  protected interface IcebergCompatCheck {
     void check(IcebergCompatInputContext inputContext);
   }
+
+  protected static final IcebergCompatCheck CHECK_HAS_SUPPORTED_TYPE_WIDENING =
+      (inputContext) -> {
+        Protocol protocol = inputContext.newProtocol;
+        if (!protocol.supportsFeature(TYPE_WIDENING_RW_FEATURE)
+            && !protocol.supportsFeature(TYPE_WIDENING_RW_PREVIEW_FEATURE)) {
+          return;
+        }
+        for (SchemaIterable.SchemaElement element :
+            new SchemaIterable(inputContext.newMetadata.getSchema())) {
+          for (TypeChange typeChange : element.getField().getTypeChanges()) {
+            if (!TypeWideningChecker.isIcebergV2Compatible(
+                typeChange.getFrom(), typeChange.getTo())) {
+              throw DeltaErrors.icebergCompatUnsupportedTypeWidening(
+                  inputContext.compatFeatureName, typeChange);
+            }
+          }
+        }
+      };
+
+  protected static final IcebergCompatCheck CHECK_HAS_ALLOWED_PARTITION_TYPES =
+      (inputContext) ->
+          inputContext
+              .newMetadata
+              .getPartitionColNames()
+              .forEach(
+                  partitionCol -> {
+                    int partitionFieldIndex =
+                        inputContext.newMetadata.getSchema().indexOf(partitionCol);
+                    checkArgument(
+                        partitionFieldIndex != -1,
+                        "Partition column %s not found in the schema",
+                        partitionCol);
+                    DataType dataType =
+                        inputContext.newMetadata.getSchema().at(partitionFieldIndex).getDataType();
+                    boolean validType =
+                        dataType instanceof ByteType
+                            || dataType instanceof ShortType
+                            || dataType instanceof IntegerType
+                            || dataType instanceof LongType
+                            || dataType instanceof FloatType
+                            || dataType instanceof DoubleType
+                            || dataType instanceof DecimalType
+                            || dataType instanceof StringType
+                            || dataType instanceof BinaryType
+                            || dataType instanceof BooleanType
+                            || dataType instanceof DateType
+                            || dataType instanceof TimestampType
+                            || dataType instanceof TimestampNTZType;
+                    if (!validType) {
+                      throw DeltaErrors.icebergCompatUnsupportedTypePartitionColumn(
+                          inputContext.compatFeatureName, dataType);
+                    }
+                  });
+
+  protected static final IcebergCompatCheck CHECK_HAS_NO_PARTITION_EVOLUTION =
+          (inputContext) -> {
+            // TODO: Kernel doesn't support replace table yet. When it is supported, extend
+            // this to allow checking the partition columns aren't changed
+          };
 
   protected static boolean isSupportedDataTypesForV2(DataType dataType) {
     return dataType instanceof ByteType
@@ -177,22 +248,6 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
 
   protected static boolean isAdditionalSupportedDataTypesForV3(DataType dataType) {
     return dataType instanceof VariantType;
-  }
-
-  protected static boolean isAllowedPartitionType(DataType dataType) {
-    return dataType instanceof ByteType
-        || dataType instanceof ShortType
-        || dataType instanceof IntegerType
-        || dataType instanceof LongType
-        || dataType instanceof FloatType
-        || dataType instanceof DoubleType
-        || dataType instanceof DecimalType
-        || dataType instanceof StringType
-        || dataType instanceof BinaryType
-        || dataType instanceof BooleanType
-        || dataType instanceof DateType
-        || dataType instanceof TimestampType
-        || dataType instanceof TimestampNTZType;
   }
 
   /////////////////////////////////////////////////////////////////////////////////

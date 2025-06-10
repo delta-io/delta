@@ -52,7 +52,8 @@ public class IcebergCompatV3MetadataValidatorAndUpdater
   public static Optional<Metadata> validateAndUpdateIcebergCompatV3Metadata(
       boolean isCreatingNewTable, Metadata newMetadata, Protocol newProtocol) {
     return INSTANCE.validateAndUpdateMetadata(
-        new IcebergCompatInputContext(isCreatingNewTable, newMetadata, newProtocol));
+        new IcebergCompatInputContext(
+            INSTANCE.compatFeatureName(), isCreatingNewTable, newMetadata, newProtocol));
   }
 
   /**
@@ -190,9 +191,9 @@ public class IcebergCompatV3MetadataValidatorAndUpdater
     return Stream.of(
             ICEBERG_COMPAT_V3_CHECK_NO_LOWER_COMPAT_ENABLED,
             ICEBERG_COMPAT_V3_CHECK_HAS_SUPPORTED_TYPES,
-            ICEBERG_COMPAT_V3_CHECK_HAS_ALLOWED_PARTITION_TYPES,
-            ICEBERG_COMPAT_V3_CHECK_HAS_NO_PARTITION_EVOLUTION,
-            ICEBERG_COMPAT_V3_CHECK_HAS_SUPPORTED_TYPE_WIDENING)
+            CHECK_HAS_ALLOWED_PARTITION_TYPES,
+            CHECK_HAS_NO_PARTITION_EVOLUTION,
+            CHECK_HAS_SUPPORTED_TYPE_WIDENING)
         .collect(toList());
   }
 }
