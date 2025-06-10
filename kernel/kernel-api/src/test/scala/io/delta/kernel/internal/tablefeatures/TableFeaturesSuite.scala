@@ -179,10 +179,10 @@ class TableFeaturesSuite extends AnyFunSuite {
       "icebergWriterCompatV1",
       testMetadata(tblProps = Map("delta.enableIcebergWriterCompatV1" -> "false")),
       false),
-      (
-        "icebergWriterCompatV3",
-        testMetadata(tblProps = Map("delta.enableIcebergWriterCompatV3" -> "true")),
-        true),
+    (
+      "icebergWriterCompatV3",
+      testMetadata(tblProps = Map("delta.enableIcebergWriterCompatV3" -> "true")),
+      true),
     (
       "icebergWriterCompatV3",
       testMetadata(tblProps = Map("delta.enableIcebergWriterCompatV3" -> "false")),
@@ -905,8 +905,7 @@ class TableFeaturesSuite extends AnyFunSuite {
           "appendOnly",
           "invariants",
           "icebergCompatV3",
-          "icebergWriterCompatV3"
-        )),
+          "icebergWriterCompatV3")),
       set("icebergCompatV3", "columnMapping", "icebergWriterCompatV3")),
     (
       testMetadata(tblProps = Map(
