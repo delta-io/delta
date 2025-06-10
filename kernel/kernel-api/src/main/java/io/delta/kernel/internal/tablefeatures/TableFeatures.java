@@ -336,10 +336,8 @@ public class TableFeatures {
     }
 
     public @Override Set<TableFeature> requiredFeatures() {
-      Set<TableFeature> features = new HashSet<>();
-      features.add(COLUMN_MAPPING_RW_FEATURE);
-      features.add(ROW_TRACKING_W_FEATURE);
-      return features;
+      return Collections.unmodifiableSet(
+          new HashSet<>(Arrays.asList(COLUMN_MAPPING_RW_FEATURE, ROW_TRACKING_W_FEATURE)));
     }
   }
 

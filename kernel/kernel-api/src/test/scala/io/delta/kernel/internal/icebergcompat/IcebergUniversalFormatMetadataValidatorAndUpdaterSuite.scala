@@ -69,6 +69,19 @@ class IcebergUniversalFormatMetadataValidatorAndUpdaterSuite extends AnyFunSuite
     }
   }
 
+  test("validate should throw when both IcebergCompatV2 and V3 are enabled") {
+    val metadata = createMetadata(Map(
+      TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey -> "iceberg",
+      TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true",
+      TableConfig.ICEBERG_COMPAT_V3_ENABLED.getKey -> "true"))
+    val exc = intercept[InvalidConfigurationValueException] {
+      IcebergUniversalFormatMetadataValidatorAndUpdater.validate(metadata)
+    }
+    assert(exc.getMessage.contains(
+      "'delta.enableIcebergCompatV2' and 'delta.enableIcebergCompatV3' " +
+        "cannot be enabled at the same time."))
+  }
+
   def createMetadata(tblProps: Map[String, String] = Map.empty): Metadata = {
     val schema = new StructType()
       .add("c1", IntegerType.INTEGER)
