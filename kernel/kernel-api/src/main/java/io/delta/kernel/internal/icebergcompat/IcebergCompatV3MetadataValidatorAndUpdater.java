@@ -16,7 +16,6 @@
 package io.delta.kernel.internal.icebergcompat;
 
 import static io.delta.kernel.internal.tablefeatures.TableFeatures.*;
-import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Collections.singletonList;
 import static java.util.stream.Collectors.toList;
 
@@ -25,14 +24,11 @@ import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.tablefeatures.TableFeature;
-import io.delta.kernel.internal.types.TypeWideningChecker;
 import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
-import io.delta.kernel.internal.util.SchemaIterable;
 import io.delta.kernel.internal.util.SchemaUtils;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.*;
 import io.delta.kernel.utils.DataFileStatus;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Stream;
@@ -83,21 +79,6 @@ public class IcebergCompatV3MetadataValidatorAndUpdater
           (value) -> ColumnMappingMode.NAME == value || ColumnMappingMode.ID == value,
           ColumnMappingMode.NAME.value);
 
-  private static final IcebergCompatCheck ICEBERG_COMPAT_V3_CHECK_NO_LOWER_COMPAT_ENABLED =
-      (inputContext) -> {
-        List<String> incompatibleProperties =
-            Arrays.asList("delta.enableIcebergCompatV1", "delta.enableIcebergCompatV2");
-
-        incompatibleProperties.forEach(
-            prop -> {
-              if (Boolean.parseBoolean(
-                  inputContext.newMetadata.getConfiguration().getOrDefault(prop, "false"))) {
-                throw DeltaErrors.icebergCompatIncompatibleVersionEnabled(
-                    INSTANCE.compatFeatureName(), prop);
-              }
-            });
-      };
-
   private static final IcebergCompatCheck ICEBERG_COMPAT_V3_CHECK_HAS_SUPPORTED_TYPES =
       (inputContext) -> {
         List<Tuple2<List<String>, StructField>> matches =
@@ -116,52 +97,6 @@ public class IcebergCompatV3MetadataValidatorAndUpdater
           throw DeltaErrors.icebergCompatUnsupportedTypeColumns(
               INSTANCE.compatFeatureName(),
               matches.stream().map(tuple -> tuple._2.getDataType()).collect(toList()));
-        }
-      };
-
-  private static final IcebergCompatCheck ICEBERG_COMPAT_V3_CHECK_HAS_ALLOWED_PARTITION_TYPES =
-      (inputContext) ->
-          inputContext
-              .newMetadata
-              .getPartitionColNames()
-              .forEach(
-                  partitionCol -> {
-                    int partitionFieldIndex =
-                        inputContext.newMetadata.getSchema().indexOf(partitionCol);
-                    checkArgument(
-                        partitionFieldIndex != -1,
-                        "Partition column %s not found in the schema",
-                        partitionCol);
-                    DataType dataType =
-                        inputContext.newMetadata.getSchema().at(partitionFieldIndex).getDataType();
-                    if (!isAllowedPartitionType(dataType)) {
-                      throw DeltaErrors.icebergCompatUnsupportedTypePartitionColumn(
-                          INSTANCE.compatFeatureName(), dataType);
-                    }
-                  });
-
-  private static final IcebergCompatCheck ICEBERG_COMPAT_V3_CHECK_HAS_NO_PARTITION_EVOLUTION =
-      (inputContext) -> {
-        // TODO: Kernel doesn't support replace table yet. When it is supported, extend
-        // this to allow checking the partition columns aren't changed
-      };
-
-  private static final IcebergCompatCheck ICEBERG_COMPAT_V3_CHECK_HAS_SUPPORTED_TYPE_WIDENING =
-      (inputContext) -> {
-        Protocol protocol = inputContext.newProtocol;
-        if (!protocol.supportsFeature(TYPE_WIDENING_RW_FEATURE)
-            && !protocol.supportsFeature(TYPE_WIDENING_RW_PREVIEW_FEATURE)) {
-          return;
-        }
-        for (SchemaIterable.SchemaElement element :
-            new SchemaIterable(inputContext.newMetadata.getSchema())) {
-          for (TypeChange typeChange : element.getField().getTypeChanges()) {
-            if (!TypeWideningChecker.isIcebergV2Compatible(
-                typeChange.getFrom(), typeChange.getTo())) {
-              throw DeltaErrors.icebergCompatUnsupportedTypeWidening(
-                  INSTANCE.compatFeatureName(), typeChange);
-            }
-          }
         }
       };
 
@@ -189,8 +124,9 @@ public class IcebergCompatV3MetadataValidatorAndUpdater
   @Override
   List<IcebergCompatCheck> icebergCompatChecks() {
     return Stream.of(
-            ICEBERG_COMPAT_V3_CHECK_NO_LOWER_COMPAT_ENABLED,
             ICEBERG_COMPAT_V3_CHECK_HAS_SUPPORTED_TYPES,
+            CHECK_NO_COMPAT_V1_ENABLED,
+            CHECK_NO_COMPAT_V2_ENABLED,
             CHECK_HAS_ALLOWED_PARTITION_TYPES,
             CHECK_HAS_NO_PARTITION_EVOLUTION,
             CHECK_HAS_SUPPORTED_TYPE_WIDENING)

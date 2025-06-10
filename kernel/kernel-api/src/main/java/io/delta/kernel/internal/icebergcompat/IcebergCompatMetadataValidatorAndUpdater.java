@@ -15,10 +15,10 @@
  */
 package io.delta.kernel.internal.icebergcompat;
 
-import static io.delta.kernel.internal.tablefeatures.TableFeatures.TYPE_WIDENING_RW_FEATURE;
-import static io.delta.kernel.internal.tablefeatures.TableFeatures.TYPE_WIDENING_RW_PREVIEW_FEATURE;
+import static io.delta.kernel.internal.tablefeatures.TableFeatures.*;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Collections.singletonMap;
+import static java.util.stream.Collectors.toList;
 
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.internal.DeltaErrors;
@@ -28,7 +28,10 @@ import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.tablefeatures.TableFeature;
 import io.delta.kernel.internal.types.TypeWideningChecker;
 import io.delta.kernel.internal.util.SchemaIterable;
+import io.delta.kernel.internal.util.SchemaUtils;
+import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.*;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Predicate;
@@ -167,22 +170,64 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
     void check(IcebergCompatInputContext inputContext);
   }
 
-  protected static final IcebergCompatCheck CHECK_HAS_SUPPORTED_TYPE_WIDENING =
+  ///////////////////////////////////////////////////////////
+  /// Implementation of {@link IcebergCompatCheck}        ///
+  ///////////////////////////////////////////////////////////
+  protected static final IcebergCompatCheck CHECK_NO_COMPAT_V1_ENABLED =
       (inputContext) -> {
-        Protocol protocol = inputContext.newProtocol;
-        if (!protocol.supportsFeature(TYPE_WIDENING_RW_FEATURE)
-            && !protocol.supportsFeature(TYPE_WIDENING_RW_PREVIEW_FEATURE)) {
-          return;
+        if (Boolean.valueOf(
+            inputContext
+                .newMetadata
+                .getConfiguration()
+                .getOrDefault("delta.enableIcebergCompatV1", "false"))) {
+          throw DeltaErrors.icebergCompatIncompatibleVersionEnabled(
+              inputContext.compatFeatureName, "delta.enableIcebergCompatV1");
         }
-        for (SchemaIterable.SchemaElement element :
-            new SchemaIterable(inputContext.newMetadata.getSchema())) {
-          for (TypeChange typeChange : element.getField().getTypeChanges()) {
-            if (!TypeWideningChecker.isIcebergV2Compatible(
-                typeChange.getFrom(), typeChange.getTo())) {
-              throw DeltaErrors.icebergCompatUnsupportedTypeWidening(
-                  inputContext.compatFeatureName, typeChange);
-            }
-          }
+      };
+
+  protected static final IcebergCompatCheck CHECK_NO_COMPAT_V2_ENABLED =
+      (inputContext) -> {
+        if (Boolean.valueOf(
+            inputContext
+                .newMetadata
+                .getConfiguration()
+                .getOrDefault("delta.enableIcebergCompatV2", "false"))) {
+          throw DeltaErrors.icebergCompatIncompatibleVersionEnabled(
+              inputContext.compatFeatureName, "delta.enableIcebergCompatV2");
+        }
+      };
+
+  protected static final IcebergCompatCheck V2_CHECK_HAS_SUPPORTED_TYPES =
+      (inputContext) -> {
+        List<Tuple2<List<String>, StructField>> matches =
+            SchemaUtils.filterRecursively(
+                inputContext.newMetadata.getSchema(),
+                /* recurseIntoMapAndArrayTypes= */ true,
+                /* stopOnFirstMatch = */ false,
+                field -> {
+                  DataType dataType = field.getDataType();
+                  return !(dataType instanceof ByteType
+                      || dataType instanceof ShortType
+                      || dataType instanceof IntegerType
+                      || dataType instanceof LongType
+                      || dataType instanceof FloatType
+                      || dataType instanceof DoubleType
+                      || dataType instanceof DecimalType
+                      || dataType instanceof StringType
+                      || dataType instanceof BinaryType
+                      || dataType instanceof BooleanType
+                      || dataType instanceof DateType
+                      || dataType instanceof TimestampType
+                      || dataType instanceof TimestampNTZType
+                      || dataType instanceof ArrayType
+                      || dataType instanceof MapType
+                      || dataType instanceof StructType);
+                });
+
+        if (!matches.isEmpty()) {
+          throw DeltaErrors.icebergCompatUnsupportedTypeColumns(
+              inputContext.compatFeatureName,
+              matches.stream().map(tuple -> tuple._2.getDataType()).collect(toList()));
         }
       };
 
@@ -222,10 +267,10 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
                   });
 
   protected static final IcebergCompatCheck CHECK_HAS_NO_PARTITION_EVOLUTION =
-          (inputContext) -> {
-            // TODO: Kernel doesn't support replace table yet. When it is supported, extend
-            // this to allow checking the partition columns aren't changed
-          };
+      (inputContext) -> {
+        // TODO: Kernel doesn't support replace table yet. When it is supported, extend
+        // this to allow checking the partition columns aren't changed
+      };
 
   protected static boolean isSupportedDataTypesForV2(DataType dataType) {
     return dataType instanceof ByteType
@@ -249,6 +294,33 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
   protected static boolean isAdditionalSupportedDataTypesForV3(DataType dataType) {
     return dataType instanceof VariantType;
   }
+
+  protected static final IcebergCompatCheck CHECK_HAS_NO_DELETION_VECTORS =
+      (inputContext) -> {
+        if (inputContext.newProtocol.supportsFeature(DELETION_VECTORS_RW_FEATURE)) {
+          throw DeltaErrors.icebergCompatIncompatibleTableFeatures(
+              inputContext.compatFeatureName, Collections.singleton(DELETION_VECTORS_RW_FEATURE));
+        }
+      };
+
+  protected static final IcebergCompatCheck CHECK_HAS_SUPPORTED_TYPE_WIDENING =
+      (inputContext) -> {
+        Protocol protocol = inputContext.newProtocol;
+        if (!protocol.supportsFeature(TYPE_WIDENING_RW_FEATURE)
+            && !protocol.supportsFeature(TYPE_WIDENING_RW_PREVIEW_FEATURE)) {
+          return;
+        }
+        for (SchemaIterable.SchemaElement element :
+            new SchemaIterable(inputContext.newMetadata.getSchema())) {
+          for (TypeChange typeChange : element.getField().getTypeChanges()) {
+            if (!TypeWideningChecker.isIcebergV2Compatible(
+                typeChange.getFrom(), typeChange.getTo())) {
+              throw DeltaErrors.icebergCompatUnsupportedTypeWidening(
+                  inputContext.compatFeatureName, typeChange);
+            }
+          }
+        }
+      };
 
   /////////////////////////////////////////////////////////////////////////////////
   /// Implementation of {@link IcebergCompatMetadataValidatorAndUpdater}        ///
