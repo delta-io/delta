@@ -322,6 +322,25 @@ public class TableFeatures {
     }
   }
 
+  public static final TableFeature ICEBERG_COMPAT_V3_W_FEATURE = new IcebergCompatV3TableFeature();
+
+  private static class IcebergCompatV3TableFeature extends TableFeature.WriterFeature
+      implements FeatureAutoEnabledByMetadata {
+    IcebergCompatV3TableFeature() {
+      super("icebergCompatV3", /* minWriterVersion = */ 7);
+    }
+
+    @Override
+    public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
+      return TableConfig.ICEBERG_COMPAT_V3_ENABLED.fromMetadata(metadata);
+    }
+
+    public @Override Set<TableFeature> requiredFeatures() {
+      return Collections.unmodifiableSet(
+          new HashSet<>(Arrays.asList(COLUMN_MAPPING_RW_FEATURE, ROW_TRACKING_W_FEATURE)));
+    }
+  }
+
   /* ---- Start: type widening ---- */
   // Base class for typeWidening and typeWidening-preview features. Both features are same in terms
   // of behavior and given the feature is graduated, we will enable the `typeWidening` by default
@@ -459,6 +478,7 @@ public class TableFeatures {
               GENERATED_COLUMNS_W_FEATURE,
               DOMAIN_METADATA_W_FEATURE,
               ICEBERG_COMPAT_V2_W_FEATURE,
+              ICEBERG_COMPAT_V3_W_FEATURE,
               IDENTITY_COLUMNS_W_FEATURE,
               IN_COMMIT_TIMESTAMP_W_FEATURE,
               INVARIANTS_W_FEATURE,
