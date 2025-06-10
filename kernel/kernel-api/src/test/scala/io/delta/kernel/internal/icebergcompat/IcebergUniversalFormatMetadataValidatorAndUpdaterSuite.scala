@@ -54,8 +54,8 @@ class IcebergUniversalFormatMetadataValidatorAndUpdaterSuite extends AnyFunSuite
     Map(TableConfig.ICEBERG_COMPAT_V3_ENABLED.getKey -> "false"),
     Map[String, String]()).foreach { disableIcebergCompat =>
     test(
-      "validate should throw when iceberg universal format is enabled and "
-        + s"icebergCompatV2 isn't $disableIcebergCompat") {
+      "validate should throw when iceberg universal format is enabled but  "
+        + s"no IcebergCompat version is enabled: $disableIcebergCompat") {
       val metadata = createMetadata(Map(
         TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey -> "iceberg",
         "unrelated_key" -> "unrelated_value") ++ disableIcebergCompat)
