@@ -24,7 +24,6 @@ import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.tablefeatures.TableFeature;
-import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
 import io.delta.kernel.types.*;
 import io.delta.kernel.utils.DataFileStatus;
 import java.util.List;
@@ -71,12 +70,6 @@ public class IcebergCompatV2MetadataValidatorAndUpdater
   private static final IcebergCompatV2MetadataValidatorAndUpdater INSTANCE =
       new IcebergCompatV2MetadataValidatorAndUpdater();
 
-  private static final IcebergCompatRequiredTablePropertyEnforcer ICEBERG_COMPAT_V2_CM_REQUIREMENT =
-      new IcebergCompatRequiredTablePropertyEnforcer<>(
-          TableConfig.COLUMN_MAPPING_MODE,
-          (value) -> ColumnMappingMode.NAME == value || ColumnMappingMode.ID == value,
-          ColumnMappingMode.NAME.value);
-
   @Override
   String compatFeatureName() {
     return "icebergCompatV2";
@@ -89,7 +82,7 @@ public class IcebergCompatV2MetadataValidatorAndUpdater
 
   @Override
   List<IcebergCompatRequiredTablePropertyEnforcer> requiredDeltaTableProperties() {
-    return singletonList(ICEBERG_COMPAT_V2_CM_REQUIREMENT);
+    return singletonList(COLUMN_MAPPING_REQUIREMENT);
   }
 
   @Override
@@ -100,7 +93,7 @@ public class IcebergCompatV2MetadataValidatorAndUpdater
   @Override
   List<IcebergCompatCheck> icebergCompatChecks() {
     return Stream.of(
-            CHECK_NO_COMPAT_V1_ENABLED,
+            CHECK_ONLY_ICEBERG_COMPAT_V2_ENABLED,
             V2_CHECK_HAS_SUPPORTED_TYPES,
             CHECK_HAS_ALLOWED_PARTITION_TYPES,
             CHECK_HAS_NO_PARTITION_EVOLUTION,
