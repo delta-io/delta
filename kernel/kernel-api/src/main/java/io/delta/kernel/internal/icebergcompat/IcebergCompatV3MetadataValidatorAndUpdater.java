@@ -16,7 +16,6 @@
 package io.delta.kernel.internal.icebergcompat;
 
 import static io.delta.kernel.internal.tablefeatures.TableFeatures.*;
-import static java.util.Collections.singletonList;
 import static java.util.stream.Collectors.toList;
 
 import io.delta.kernel.internal.DeltaErrors;
@@ -79,6 +78,10 @@ public class IcebergCompatV3MetadataValidatorAndUpdater
           (value) -> ColumnMappingMode.NAME == value || ColumnMappingMode.ID == value,
           ColumnMappingMode.NAME.value);
 
+  private static final IcebergCompatRequiredTablePropertyEnforcer ROW_TRACKING_ENABLED =
+      new IcebergCompatRequiredTablePropertyEnforcer<>(
+          TableConfig.ROW_TRACKING_ENABLED, (value) -> value, "true");
+
   private static final IcebergCompatCheck ICEBERG_COMPAT_V3_CHECK_HAS_SUPPORTED_TYPES =
       (inputContext) -> {
         List<Tuple2<List<String>, StructField>> matches =
@@ -112,7 +115,7 @@ public class IcebergCompatV3MetadataValidatorAndUpdater
 
   @Override
   List<IcebergCompatRequiredTablePropertyEnforcer> requiredDeltaTableProperties() {
-    return singletonList(ICEBERG_COMPAT_V3_CM_REQUIREMENT);
+    return Stream.of(ICEBERG_COMPAT_V3_CM_REQUIREMENT, ROW_TRACKING_ENABLED).collect(toList());
   }
 
   @Override
