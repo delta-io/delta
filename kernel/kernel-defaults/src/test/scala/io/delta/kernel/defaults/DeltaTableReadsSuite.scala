@@ -34,8 +34,10 @@ import io.delta.kernel.types.{LongType, StructType}
 
 import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations}
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata}
+import org.apache.spark.sql.delta.implicits.stringEncoder
 
 import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
+import org.apache.spark.sql.functions.{col, current_timestamp, to_timestamp}
 import org.apache.spark.sql.functions.col
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -128,6 +130,29 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
     test(s"end-to-end usage: timestamp in written in PST read in $timeZone") {
       testTimestampTable("kernel-timestamp-PST", timeZone, pstTableExpectedResult)
     }
+  }
+
+  test(s"end-to-end usage: table with partition column in ISO8601 timestamp format") {
+    /*
+    str: string         | ts: timestamp (partition col)
+    ------------------------------------------------------------------------
+    2024-01-01 10:00:00 | 2024-01-01T10:00:00.000000Z
+    2024-01-02 12:30:00 | 2024-01-02T12:30:00.000000Z
+     */
+    def row00: TestRow = TestRow(
+      "2024-01-01 10:00:00",
+      1704103200000000L // 2024-01-01 10:00:00 UTC to micros since the epoch
+    )
+
+    def row11: TestRow = TestRow(
+      "2024-01-02 12:30:00",
+      1704198600000000L // 2024-01-02 12:30:00 UTC to micros since the epoch
+    )
+    def ISO8601PartitionColTableExpectedResult: Seq[TestRow] =
+      Seq(row00, row11)
+    checkTable(
+      goldenTablePath("kernel-timestamp-partition-col-ISO8601"),
+      ISO8601PartitionColTableExpectedResult)
   }
 
   //////////////////////////////////////////////////////////////////////////////////
@@ -937,10 +962,10 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       }
 
       // Setup part 1 of 2: create log files
-      (0 to 2).foreach { i =>
+      spark.range(10).write.format("delta").mode("overwrite").save(dir.getCanonicalPath)
+      (1 to 2).foreach { i =>
         val files = AddFile(i.toString, Map.empty, 1, 1, true) :: Nil
-        val metadata = if (i == 0) Metadata() :: Nil else Nil
-        log.startTransaction().commit(metadata ++ files, DeltaOperations.ManualUpdate)
+        log.startTransaction().commit(files, DeltaOperations.ManualUpdate)
       }
 
       // Setup part 2 of 2: edit lastModified times
@@ -1002,10 +1027,10 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
       val tableImpl = Table.forPath(defaultEngine, dir.getCanonicalPath).asInstanceOf[TableImpl]
 
-      (0 to 35).foreach { i =>
+      spark.range(10).write.format("delta").mode("overwrite").save(dir.getCanonicalPath)
+      (1 to 35).foreach { i =>
         val files = AddFile(i.toString, Map.empty, 1, 1, true) :: Nil
-        val metadata = if (i == 0) Metadata() :: Nil else Nil
-        log.startTransaction().commit(metadata ++ files, DeltaOperations.ManualUpdate)
+        log.startTransaction().commit(files, DeltaOperations.ManualUpdate)
       }
 
       (0 to 35).foreach { i =>

@@ -2524,6 +2524,12 @@ trait DeltaErrorsBase
       messageParameters = Array(feature))
   }
 
+  def dropTableFeatureFeatureIsADeltaProperty(feature: String): DeltaTableFeatureException = {
+    new DeltaTableFeatureException(
+      errorClass = "DELTA_FEATURE_DROP_FEATURE_IS_DELTA_PROPERTY",
+      messageParameters = Array(feature))
+  }
+
   def dropTableFeatureNotDeltaTableException(): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_ONLY_OPERATION",
@@ -2823,6 +2829,13 @@ trait DeltaErrorsBase
   def deltaTableFoundInExecutor(): Throwable = {
     new DeltaIllegalStateException(
       errorClass = "DELTA_TABLE_FOUND_IN_EXECUTOR",
+      messageParameters = Array.empty
+    )
+  }
+
+  def variantShreddingUnsupported(): Throwable = {
+    new DeltaSparkException(
+      errorClass = "DELTA_SHREDDING_TABLE_PROPERTY_DISABLED",
       messageParameters = Array.empty
     )
   }

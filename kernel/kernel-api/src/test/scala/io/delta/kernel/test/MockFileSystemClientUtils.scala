@@ -21,6 +21,7 @@ import scala.collection.JavaConverters._
 
 import io.delta.kernel.engine._
 import io.delta.kernel.internal.MockReadLastCheckpointFileJsonHandler
+import io.delta.kernel.internal.files.ParsedLogData
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
@@ -37,24 +38,38 @@ trait MockFileSystemClientUtils extends MockEngineUtils {
   val dataPath = new Path("/fake/path/to/table/")
   val logPath = new Path(dataPath, "_delta_log")
 
+  def parsedRatifiedStagedCommit(version: Long): ParsedLogData = {
+    ParsedLogData.forFileStatus(stagedCommitFile(version))
+  }
+
+  def parsedRatifiedStagedCommits(versions: Seq[Long]): Seq[ParsedLogData] = {
+    versions.map(parsedRatifiedStagedCommit)
+  }
+
+  /** Staged commit file status where the timestamp = 10*version */
+  def stagedCommitFile(v: Long): FileStatus =
+    FileStatus.of(FileNames.stagedCommitFile(logPath, v), v, v * 10)
+
   /** Delta file status where the timestamp = 10*version */
-  def deltaFileStatus(v: Long): FileStatus =
-    FileStatus.of(FileNames.deltaFile(logPath, v), v, v * 10)
+  def deltaFileStatus(v: Long, path: Path = logPath): FileStatus =
+    FileStatus.of(FileNames.deltaFile(path, v), v, v * 10)
 
   /** Compaction file status where the timestamp = 10*startVersion */
-  def logCompactionStatus(s: Long, e: Long): FileStatus =
-    FileStatus.of(FileNames.logCompactionPath(logPath, s, e).toString, s, s * 10)
+  def logCompactionStatus(s: Long, e: Long, path: Path = logPath): FileStatus =
+    FileStatus.of(FileNames.logCompactionPath(path, s, e).toString, s, s * 10)
 
   /** Delta file statuses where the timestamp = 10*version */
-  def deltaFileStatuses(deltaVersions: Seq[Long]): Seq[FileStatus] = {
+  def deltaFileStatuses(deltaVersions: Seq[Long], path: Path = logPath): Seq[FileStatus] = {
     assert(deltaVersions.size == deltaVersions.toSet.size)
-    deltaVersions.map(deltaFileStatus)
+    deltaVersions.map(v => deltaFileStatus(v, path))
   }
 
   /** Compaction file statuses where the timestamp = 10*startVersion */
-  def compactedFileStatuses(compactedVersions: Seq[(Long, Long)]): Seq[FileStatus] = {
+  def compactedFileStatuses(
+      compactedVersions: Seq[(Long, Long)],
+      path: Path = logPath): Seq[FileStatus] = {
     compactedVersions.map { case (s, e) =>
-      logCompactionStatus(s, e)
+      logCompactionStatus(s, e, path)
     }
   }
 
@@ -63,11 +78,24 @@ trait MockFileSystemClientUtils extends MockEngineUtils {
     FileStatus.of(FileNames.checksumFile(logPath, deltaVersion).toString, 10, 10)
   }
 
+  /** Classic checkpoint file status where the timestamp = 10*version */
+  def classicCheckpointFileStatus(v: Long): FileStatus = {
+    FileStatus.of(FileNames.checkpointFileSingular(logPath, v).toString, v, v * 10)
+  }
+
   /** Checkpoint file statuses where the timestamp = 10*version */
-  def singularCheckpointFileStatuses(checkpointVersions: Seq[Long]): Seq[FileStatus] = {
+  def singularCheckpointFileStatuses(
+      checkpointVersions: Seq[Long],
+      path: Path = logPath): Seq[FileStatus] = {
     assert(checkpointVersions.size == checkpointVersions.toSet.size)
     checkpointVersions.map(v =>
-      FileStatus.of(FileNames.checkpointFileSingular(logPath, v).toString, v, v * 10))
+      FileStatus.of(FileNames.checkpointFileSingular(path, v).toString, v, v * 10))
+  }
+
+  /** Multi-part checkpoint file status where the timestamp = 10*version */
+  def multiPartCheckpointFileStatus(version: Long, part: Integer, numParts: Integer): FileStatus = {
+    val path = FileNames.multiPartCheckpointFile(logPath, version, part, numParts)
+    FileStatus.of(path.toString, version, version * 10)
   }
 
   /** Checkpoint file statuses where the timestamp = 10*version */
@@ -78,6 +106,20 @@ trait MockFileSystemClientUtils extends MockEngineUtils {
     checkpointVersions.flatMap(v =>
       FileNames.checkpointFileWithParts(logPath, v, numParts).asScala
         .map(p => FileStatus.of(p.toString, v, v * 10)))
+  }
+
+  /** Checkpoint file status for a top-level V2 checkpoint file. */
+  def v2CheckpointFileStatus(
+      version: Long,
+      useUUID: Boolean = true,
+      fileType: String = "json"): FileStatus = {
+    val path = if (useUUID) {
+      val uuid = UUID.randomUUID().toString
+      FileNames.topLevelV2CheckpointFile(logPath, version, uuid, fileType).toString
+    } else {
+      FileNames.checkpointFileSingular(logPath, version).toString
+    }
+    FileStatus.of(path, version, version * 10)
   }
 
   /**
@@ -91,18 +133,7 @@ trait MockFileSystemClientUtils extends MockEngineUtils {
       checkpointVersions: Seq[(Long, Boolean, Int)],
       fileType: String): Seq[(FileStatus, Seq[FileStatus])] = {
     checkpointVersions.map { case (v, useUUID, numSidecars) =>
-      val topLevelFile = if (useUUID) {
-        FileStatus.of(
-          FileNames.topLevelV2CheckpointFile(
-            logPath,
-            v,
-            UUID.randomUUID().toString,
-            fileType).toString,
-          v,
-          v * 10)
-      } else {
-        FileStatus.of(FileNames.checkpointFileSingular(logPath, v).toString, v, v * 10)
-      }
+      val topLevelFile = v2CheckpointFileStatus(v, useUUID, fileType)
       val sidecars = (0 until numSidecars).map { _ =>
         FileStatus.of(
           FileNames.v2CheckpointSidecarFile(logPath, UUID.randomUUID().toString).toString,
@@ -151,6 +182,20 @@ trait MockFileSystemClientUtils extends MockEngineUtils {
 
   /**
    * Create a mock [[Engine]] to mock the [[FileSystemClient.listFrom]] calls using
+   * the given list of delta file statuses. When read, each file status will return
+   * a single `commitInfo` action with the an inCommitTimestamp set as per
+   * `deltaToICTMap`.
+   */
+  def createMockFSAndJsonEngineForICT(
+      contents: Seq[FileStatus],
+      deltaToICTMap: Map[Long, Long]): Engine = {
+    mockEngine(
+      fileSystemClient = new MockListFromFileSystemClient(listFromProvider(contents)),
+      jsonHandler = new MockReadICTFileJsonHandler(deltaToICTMap))
+  }
+
+  /**
+   * Create a mock [[Engine]] to mock the [[FileSystemClient.listFrom]] calls using
    * the given contents. The contents are filtered depending upon the list from path prefix.
    */
   def createMockFSListFromEngine(contents: Seq[FileStatus]): Engine = {
@@ -180,6 +225,8 @@ class MockListFromFileSystemClient(listFromProvider: String => Seq[FileStatus])
     listFromCalls = listFromCalls :+ filePath
     toCloseableIterator(listFromProvider(filePath).iterator.asJava)
   }
+
+  override def resolvePath(path: String): String = path
 
   def getListFromCalls: Seq[String] = listFromCalls
 }

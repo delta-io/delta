@@ -1686,6 +1686,16 @@ trait DeltaSQLConfBase {
       .checkValues(NonDeterministicPredicateWidening.list)
       .createWithDefault(NonDeterministicPredicateWidening.ON)
 
+  val DELTA_CONFLICT_DETECTION_ALLOW_REPLACE_TABLE_TO_REMOVE_NEW_DOMAIN_METADATA =
+    buildConf("conflictDetection.allowReplaceTableToRemoveNewDomainMetadata")
+      .doc("Whether to allow removing new domain metadatas from concurrent transactions during " +
+        "conflict resolution for a REPLACE TABLE operation. Note that this flag applies only " +
+        "to metadata domains where the table snapshot read by the REPLACE TABLE command did " +
+        "not contain a domain metadata of the same domain.")
+      .internal()
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_UNIFORM_ICEBERG_SYNC_CONVERT_ENABLED =
     buildConf("uniform.iceberg.sync.convert.enabled")
       .doc("If enabled, iceberg conversion will be done synchronously. " +

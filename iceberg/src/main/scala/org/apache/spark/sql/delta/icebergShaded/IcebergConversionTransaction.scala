@@ -109,6 +109,9 @@ class IcebergConversionTransaction(
     }
 
     private[icebergShaded]def hasCommitted: Boolean = committed
+
+    protected def currentSnapshotId: Option[Long] =
+      Option(txn.table().currentSnapshot()).map(_.snapshotId())
   }
 
   class NullHelper extends TransactionHelper(null) {
@@ -174,9 +177,7 @@ class IcebergConversionTransaction(
    *
    * e.g. OPTIMIZE
    */
-  class RewriteHelper(
-      rewriter: RewriteFiles,
-      startingSnapshotId: Option[Long]) extends TransactionHelper(rewriter) {
+  class RewriteHelper(rewriter: RewriteFiles) extends TransactionHelper(rewriter) {
 
     override def opType: String = "rewrite"
 
@@ -198,7 +199,7 @@ class IcebergConversionTransaction(
       if (removeBuffer.nonEmpty) {
         rewriter.rewriteFiles(removeBuffer.asJava, addBuffer.asJava, 0)
       }
-      startingSnapshotId.foreach(id => rewriter.validateFromSnapshot(id))
+      currentSnapshotId.foreach(rewriter.validateFromSnapshot)
       super.commit()
     }
   }
@@ -280,7 +281,7 @@ class IcebergConversionTransaction(
   }
 
   def getRewriteHelper: RewriteHelper = {
-    val ret = new RewriteHelper(txn.newRewrite(), startFromSnapshotId)
+    val ret = new RewriteHelper(txn.newRewrite())
     fileUpdates += ret
     ret
   }
@@ -311,18 +312,15 @@ class IcebergConversionTransaction(
     // the schema as part of this transaction
     if (newMetadata.schema != prevMetadata.schema || tableOp == REPLACE_TABLE) {
       val differenceStr = SchemaUtils.reportDifferences(prevMetadata.schema, newMetadata.schema)
-      if (newMetadata.schema != prevMetadata.schema) {
-        logInfo(log"Detected Delta schema update for table with name=" +
-          log"${MDC(DeltaLogKeys.TABLE_NAME, newMetadata.name)}, " +
-          log"id=${MDC(DeltaLogKeys.METADATA_ID, newMetadata.id)}:\n" +
-          log"${MDC(DeltaLogKeys.SCHEMA_DIFF, differenceStr)}; Setting new Iceberg schema:\n " +
-          log"${MDC(DeltaLogKeys.SCHEMA, icebergSchema)}")
-      } else {
-        logInfo(log"Detected REPLACE_TABLE operation for table with name=" +
-          log"${MDC(DeltaLogKeys.TABLE_NAME, newMetadata.name)}." +
-          log" Setting new Iceberg schema:\n ${MDC(DeltaLogKeys.SCHEMA, icebergSchema)}")
-      }
-
+      logInfo(
+        log"Detected schema update for table with name=" +
+        log"${MDC(DeltaLogKeys.TABLE_NAME, newMetadata.name)}, " +
+        log"id=${MDC(DeltaLogKeys.METADATA_ID, newMetadata.id)}:\n" +
+        log"${MDC(DeltaLogKeys.SCHEMA_DIFF, differenceStr)}, " +
+        s"tableOp=$tableOp, " +
+        log"Setting new Iceberg schema:\n " +
+        log"${MDC(DeltaLogKeys.SCHEMA, icebergSchema)}"
+      )
       txn.setSchema(icebergSchema).commit()
 
       recordDeltaEvent(

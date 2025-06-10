@@ -326,7 +326,7 @@ public class TableConfig<T> {
           v -> v,
           value -> true,
           "need to be a string.",
-          true);
+          false);
 
   public static final TableConfig<String> MATERIALIZED_ROW_COMMIT_VERSION_COLUMN_NAME =
       new TableConfig<>(
@@ -335,7 +335,7 @@ public class TableConfig<T> {
           v -> v,
           value -> true,
           "need to be a string.",
-          true);
+          false);
 
   /** All the valid properties that can be set on the table. */
   private static final Map<String, TableConfig<?>> VALID_PROPERTIES =

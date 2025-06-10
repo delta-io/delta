@@ -370,6 +370,7 @@ object TableFeature {
       InCommitTimestampTableFeature,
       VariantTypePreviewTableFeature,
       VariantTypeTableFeature,
+      VariantShreddingPreviewTableFeature,
       CatalogOwnedTableFeature,
       CoordinatedCommitsTableFeature,
       CheckpointProtectionTableFeature)
@@ -710,6 +711,17 @@ object VariantTypeTableFeature extends ReaderWriterFeature(name = "variantType")
       // feature is enabled so old tables with only the preview table feature can be read.
       !protocol.isFeatureSupported(VariantTypePreviewTableFeature)
     }
+  }
+}
+
+object VariantShreddingPreviewTableFeature
+    extends ReaderWriterFeature(name = "variantShredding-preview")
+    with FeatureAutomaticallyEnabledByMetadata {
+  override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
+
+  override def metadataRequiresFeatureToBeEnabled(
+      protocol: Protocol, metadata: Metadata, spark: SparkSession): Boolean = {
+    DeltaConfigs.ENABLE_VARIANT_SHREDDING.fromMetaData(metadata)
   }
 }
 

@@ -147,7 +147,7 @@ class DeltaRetentionSuite extends QueryTest
       val log1 = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
 
       val txn = startTxnWithManualLogCleanup(log1)
-      val files1 = (1 to 10).map(f => AddFile(f.toString, Map.empty, 1, 1, true))
+      val files1 = (1 to 10).map(f => createTestAddFile(encodedPath = f.toString))
       txn.commit(files1, testOp)
       val txn2 = log1.startTransaction()
       val files2 = (1 to 4).map(f => RemoveFile(f.toString, Some(clock.getTimeMillis())))
@@ -183,7 +183,7 @@ class DeltaRetentionSuite extends QueryTest
 
       // 1st day - commit 10 new files and remove them also same day.
       clock.advance(intervalStringToMillis("interval 1 days"))
-      val files1 = (1 to 4).map(f => AddFile(f.toString, Map.empty, 1, 1, true))
+      val files1 = (1 to 4).map(f => createTestAddFile(encodedPath = f.toString))
       deltaLog.startTransaction().commit(files1, testOp)
       val files2 = (1 to 4).map(f => RemoveFile(f.toString, Some(clock.getTimeMillis())))
       deltaLog.startTransaction().commit(files2, testOp)
@@ -222,7 +222,7 @@ class DeltaRetentionSuite extends QueryTest
       {
         clock.advance(intervalStringToMillis("interval 1 days"))
         val txn = deltaLog.startTransaction()
-        val files1 = (1 to 4).map(f => AddFile(f.toString, Map.empty, 1, 1, true))
+        val files1 = (1 to 4).map(f => createTestAddFile(encodedPath = f.toString))
         txn.commit(files1, testOp)
         val txn2 = deltaLog.startTransaction()
         val files2 = (1 to 4).map(f => RemoveFile(f.toString, Some(clock.getTimeMillis())))
@@ -245,7 +245,7 @@ class DeltaRetentionSuite extends QueryTest
       val log1 = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
 
       val txn = startTxnWithManualLogCleanup(log1)
-      val files1 = (1 to 10).map(f => AddFile(f.toString, Map.empty, 1, 1, true))
+      val files1 = (1 to 10).map(f => createTestAddFile(encodedPath = f.toString))
       txn.commit(files1, testOp)
       val txn2 = log1.startTransaction()
       val files2 = (1 to 4).map(f => RemoveFile(f.toString, Some(clock.getTimeMillis())))
@@ -328,9 +328,7 @@ class DeltaRetentionSuite extends QueryTest
       // query at time > TRANSACTION_ID_RETENTION_DURATION & there IS a new commit
       // We will only filter expired transactions when time is >= TRANSACTION_ID_RETENTION_DURATION
       // and a new commit has been made
-      val addFile = AddFile(
-        path = "fake/path/1", partitionValues = Map.empty, size = 1,
-        modificationTime = 1, dataChange = true)
+      val addFile = createTestAddFile(encodedPath = "fake/path/1")
       log.startTransaction().commitManually(addFile)
       assert(log.update().transactions.isEmpty)
       assert(log.snapshot.numOfSetTransactions == 0)
@@ -832,8 +830,8 @@ class DeltaRetentionSuite extends QueryTest
   }
 }
 
-class DeltaRetentionWithCoordinatedCommitsBatch1Suite extends DeltaRetentionSuite {
-  override val coordinatedCommitsBackfillBatchSize: Option[Int] = Some(1)
+class DeltaRetentionWithCatalogOwnedBatch1Suite extends DeltaRetentionSuite {
+  override val catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
 }
 
 /**
@@ -842,10 +840,10 @@ class DeltaRetentionWithCoordinatedCommitsBatch1Suite extends DeltaRetentionSuit
  * files. However, in this suite, delta files might be backfilled asynchronously, which means
  * setting the modification time will not work as expected.
  */
-class DeltaRetentionWithCoordinatedCommitsBatch2Suite extends QueryTest
+class DeltaRetentionWithCatalogOwnedBatch2Suite extends QueryTest
     with DeltaSQLCommandTest
     with DeltaRetentionSuiteBase {
-  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(2)
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
 
   override def getLogFiles(dir: File): Seq[File] =
     getDeltaFiles(dir) ++ getUnbackfilledDeltaFiles(dir) ++ getCheckpointFiles(dir)

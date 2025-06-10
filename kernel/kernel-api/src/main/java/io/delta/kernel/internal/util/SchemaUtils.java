@@ -17,6 +17,7 @@ package io.delta.kernel.internal.util;
 
 import static io.delta.kernel.internal.DeltaErrors.*;
 import static io.delta.kernel.internal.util.ColumnMapping.*;
+import static io.delta.kernel.internal.util.ColumnMapping.getColumnId;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.lang.String.format;
 
@@ -27,6 +28,7 @@ import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.skipping.StatsSchemaHelper;
+import io.delta.kernel.internal.types.TypeWideningChecker;
 import io.delta.kernel.types.*;
 import java.util.*;
 import java.util.function.Function;
@@ -87,7 +89,11 @@ public class SchemaUtils {
 
   /**
    * Performs the following validations on an updated table schema using the current schema as a
-   * base for validation. ColumnMapping must be enabled to call this
+   * base for validation. ColumnMapping must be enabled to call this.
+   *
+   * <p>Returns an updated schema if metadata (i.e. TypeChanges needs to be copied over from
+   * currentSchema and new type changes need to be recorded. Kernel is expected to handle this work
+   * instead of clients).
    *
    * <p>The following checks are performed:
    *
@@ -97,12 +103,10 @@ public class SchemaUtils {
    *   <li>Data types are supported
    *   <li>Physical column name consistency is preserved in the new schema
    *   <li>If IcebergWriterCompatV1 is enabled, that map struct keys have not changed
-   *   <li>ToDo: No new non-nullable fields are added or no tightening of nullable fields
    *   <li>ToDo: Nested IDs for array/map types are preserved in the new schema for IcebergCompatV2
-   *   <li>ToDo: No type changes
    * </ul>
    */
-  public static void validateUpdatedSchema(
+  public static Optional<StructType> validateUpdatedSchemaAndGetUpdatedSchema(
       Metadata currentMetadata,
       Metadata newMetadata,
       Set<String> clusteringColumnPhysicalNames,
@@ -117,14 +121,57 @@ public class SchemaUtils {
     int currentMaxFieldId =
         Integer.parseInt(
             currentMetadata.getConfiguration().getOrDefault(COLUMN_MAPPING_MAX_COLUMN_ID_KEY, "0"));
-    validateSchemaEvolution(
+    return validateSchemaEvolution(
         currentMetadata.getSchema(),
         newMetadata.getSchema(),
         ColumnMapping.getColumnMappingMode(newMetadata.getConfiguration()),
         clusteringColumnPhysicalNames,
         currentMaxFieldId,
         allowNewRequiredFields,
-        TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.fromMetadata(newMetadata.getConfiguration()));
+        TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.fromMetadata(newMetadata.getConfiguration()),
+        TableConfig.TYPE_WIDENING_ENABLED.fromMetadata(newMetadata.getConfiguration()));
+  }
+
+  /**
+   * Validates a given schema evolution by using field ID as the source of truth for identifying
+   * fields
+   *
+   * @param currentSchema the schema that is present the table schema _before_ the schema evolution
+   * @param newSchema the new schema that is present the table schema _after_ the schema evolution
+   * @param clusteringColumnPhysicalNames The clustering columns present in the table before the
+   *     schema update
+   * @param oldMaxFieldId the maximum field id in the table before the schema update
+   * @param allowNewRequiredFields If `false`, adding new required columns throws an error. If
+   *     `true`, new required columns are allowed
+   * @param icebergWriterCompatV1Enabled `true` if icebergCompatV1 is enabled on the table
+   * @return an updated schema if metadata (e.g. TypeChanges needs to be copied over from the old
+   *     schema
+   * @throws IllegalArgumentException if the schema evolution is invalid
+   */
+  // TODO: Consider renaming or refactoring to avoid returning the
+  // StructType here.
+  public static Optional<StructType> validateSchemaEvolutionById(
+      StructType currentSchema,
+      StructType newSchema,
+      Set<String> clusteringColumnPhysicalNames,
+      int oldMaxFieldId,
+      boolean allowNewRequiredFields,
+      boolean icebergWriterCompatV1Enabled,
+      boolean typeWideningEnabled) {
+    SchemaChanges schemaChanges = computeSchemaChangesById(currentSchema, newSchema);
+    validatePhysicalNameConsistency(schemaChanges.updatedFields());
+    // Validates that the updated schema does not contain breaking changes in terms of types and
+    // nullability
+    validateUpdatedSchemaCompatibility(
+        schemaChanges,
+        oldMaxFieldId,
+        allowNewRequiredFields,
+        icebergWriterCompatV1Enabled,
+        typeWideningEnabled);
+    validateClusteringColumnsNotDropped(
+        schemaChanges.removedFields(), clusteringColumnPhysicalNames);
+    return schemaChanges.updatedSchema();
+    // ToDo Potentially validate IcebergCompatV2 nested IDs
   }
 
   /**
@@ -392,36 +439,156 @@ public class SchemaUtils {
   }
 
   /* Compute the SchemaChanges using field IDs */
-  static SchemaChanges computeSchemaChangesById(
-      Map<Integer, StructField> currentFieldIdToField,
-      Map<Integer, StructField> updatedFieldIdToField) {
+  static SchemaChanges computeSchemaChangesById(StructType currentSchema, StructType newSchema) {
     SchemaChanges.Builder schemaDiff = SchemaChanges.builder();
-    for (Map.Entry<Integer, StructField> fieldInUpdatedSchema : updatedFieldIdToField.entrySet()) {
-      StructField existingField = currentFieldIdToField.get(fieldInUpdatedSchema.getKey());
-      StructField updatedField = fieldInUpdatedSchema.getValue();
-      // New field added
+    findAndAddRemovedFields(currentSchema, newSchema, schemaDiff);
+
+    // Given a schema like struct<a (id=1) : map<int,struct<b (id=2) : Int >>
+    // This map would contain:
+    // {<"", 1> : StructField("a", MapType),
+    // <"key", 1> : StructField("key", IntegerType),
+    // <"value", 1> : StructField("value", StructType),
+    // <"", 2>: StructField("b", IntegerType)}
+    Map<SchemaElementId, StructField> currentFieldIdToField = fieldsByElementId(currentSchema);
+    Set<Integer> addedFieldIds = new HashSet<>();
+    SchemaIterable newSchemaIterable = new SchemaIterable(newSchema);
+    Iterator<SchemaIterable.MutableSchemaElement> newSchemaIterator =
+        newSchemaIterable.newMutableIterator();
+
+    boolean newSchemaHasUpdates = false;
+    while (newSchemaIterator.hasNext()) {
+      SchemaIterable.MutableSchemaElement newElement = newSchemaIterator.next();
+      SchemaElementId id = getSchemaElementId(newElement);
+      if (addedFieldIds.contains(id.getId())) {
+        // Skip early if this is a descendant of an added field.
+        continue;
+      }
+
+      StructField existingField = currentFieldIdToField.get(id);
       if (existingField == null) {
-        schemaDiff.withAddedField(updatedField);
-      } else if (!existingField.equals(updatedField)) {
+        // If the field wasn't present in the schema before then it represents either
+        // a schema change or a newly added field. To check if it is a new struct field,
+        // we check the old schema for just the field ID (i.e. no nested path) to make
+        // a determination between these two cases.
+        // If new StructField where added to the schema example above (e.g
+        // <a (id=1) : map<int,struct<b (id=2) : Int, c (id=3) : Int>>> )
+        // This would eventually probe the currentFieldIdToField map for <"", 3> and
+        // find it is an addition.
+        SchemaElementId rootId = new SchemaElementId(/* nestedPath =*/ "", id.getId());
+        if (!currentFieldIdToField.containsKey(rootId)) {
+          addedFieldIds.add(id.getId());
+          schemaDiff.withAddedField(newElement.getNearestStructFieldAncestor());
+        }
+        // Getting here implies a structural change in nested maps/arrays which will be caught at
+        // when comparing the higher level element (or we added a field in the if statement above).
+        // This can be somewhat subtle, if this is a type change.
+        // Consider the case of the changing a field from Map to an Array. This would imply that
+        // path would be "element" here and either "key" or "value" in the previous schema. Nothing
+        // is done for the new "element" path if it isn't a field addition there must be at least
+        // one ancestor node in common (at least the nearest struct field) which would get added as
+        // an update below. This logic is inductive. If the previous schema was a array<array<x>>
+        // and was not a new addition and the new schema was array<array<array<x>>> then this path
+        // would be reached on element.element.element but the type the code would move past this
+        // block for element.element which would have a type change detected from x to array<x>.
+        // concretely if the new schema was <a id=1 : array<struct<b (id=2) : Int>>> then
+        // <"element, "1"> would be skipped here but the type change would be detected for <"", 1>
+        // from map to array.
+        continue;
+      }
+      StructField newField = newElement.getField();
+      List<TypeChange> existingTypeChanges = existingField.getTypeChanges();
+      if (!existingTypeChanges.isEmpty() && newField.getTypeChanges().isEmpty()) {
+        // Copy over type changes from existing field because new schemas
+        // might be constructed elsewhere and not have the persisted type
+        // change metadata.
+        newField = newField.withTypeChanges(existingTypeChanges);
+        newElement.updateField(newField);
+        newSchemaHasUpdates = true;
+      }
+
+      // Ensure the schemas are equal now, updating type changes from clients is not supported
+      // so they should be.
+      if (!existingTypeChanges.equals(newField.getTypeChanges())) {
+        throw new KernelException(
+            String.format(
+                "Detected a modified type changes field at '%s' %s != %s",
+                newElement.getNamePath(), existingTypeChanges, newField.getTypeChanges()));
+      }
+
+      if (!existingField.equals(newField)) {
+        if (!isNestedType(existingField)
+            && !isNestedType(newField)
+            && !existingField.getDataType().equivalent(newField.getDataType())) {
+          // Type changes only apply to non-nested types.  This loop evaluates both
+          // nested and non-nested, so we narrow down updates here. Actual type differences
+          // between nested types are validated against SchemaChanges returned by this
+          // function.
+          List<TypeChange> changes = new ArrayList<>(newField.getTypeChanges());
+          changes.add(new TypeChange(existingField.getDataType(), newField.getDataType()));
+          newElement.updateField(newField.withTypeChanges(changes));
+          newSchemaHasUpdates = true;
+        }
         // Field changed name, nullability, metadata or type
-        schemaDiff.withUpdatedField(existingField, updatedField);
+        schemaDiff.withUpdatedField(existingField, newField, newElement.getNamePath());
       }
     }
-
-    for (Map.Entry<Integer, StructField> entry : currentFieldIdToField.entrySet()) {
-      if (!updatedFieldIdToField.containsKey(entry.getKey())) {
-        schemaDiff.withRemovedField(entry.getValue());
-      }
+    if (newSchemaHasUpdates) {
+      schemaDiff.withUpdatedSchema(newSchemaIterable.getSchema());
     }
-
     return schemaDiff.build();
   }
 
+  private static boolean isNestedType(StructField existingField) {
+    // TODO: Make is nested a centralized concept
+    DataType d = existingField.getDataType();
+    return d instanceof StructType || d instanceof ArrayType || d instanceof MapType;
+  }
+
+  private static Map<SchemaElementId, StructField> fieldsByElementId(StructType schema) {
+    Map<SchemaElementId, StructField> fieldIdToField = new HashMap<>();
+    for (SchemaIterable.SchemaElement element : new SchemaIterable(schema)) {
+      SchemaElementId id = getSchemaElementId(element);
+      checkArgument(
+          !fieldIdToField.containsKey(id),
+          "Field %s with id %d already exists",
+          element.getNamePath(),
+          id);
+      fieldIdToField.put(id, element.getField());
+    }
+    return fieldIdToField;
+  }
+
+  private static SchemaElementId getSchemaElementId(SchemaIterable.SchemaElement element) {
+    int columnId = getColumnId(element.getNearestStructFieldAncestor());
+    return new SchemaElementId(element.getPathFromNearestStructFieldAncestor(""), columnId);
+  }
+
+  private static void findAndAddRemovedFields(
+      StructType currentSchema, StructType newSchema, SchemaChanges.Builder schemaDiff) {
+    // With schema: <a (id=1) : map<int,struct<b (id=2) : Int, c (id=3) : Int>>>
+    // contains {1: StructField("a", MapType), 3: StructField("c", IntegerType)}
+    Map<Integer, StructField> fieldIdToField = fieldsById(newSchema);
+    for (SchemaIterable.SchemaElement element : new SchemaIterable(currentSchema)) {
+      // Removed fields are always calculated at the Struct level.
+      // From the example above, we only "c" or "a" are removed, as all other StructFields
+      // returned by the iterator (e.g. a.key, a.value cannot be removed without a type
+      // change).
+      if (!element.isStructField()) {
+        continue;
+      }
+      StructField field = element.getField();
+      int columnId = getCheckedColumnId(field);
+      if (!fieldIdToField.containsKey(columnId)) {
+        schemaDiff.withRemovedField(element.getField());
+      }
+    }
+  }
+
   private static void validatePhysicalNameConsistency(
-      List<Tuple2<StructField, StructField>> updatedFields) {
-    for (Tuple2<StructField, StructField> updatedField : updatedFields) {
-      StructField currentField = updatedField._1;
-      StructField newField = updatedField._2;
+      List<SchemaChanges.SchemaUpdate> updatedFields) {
+    for (SchemaChanges.SchemaUpdate updatedField : updatedFields) {
+      StructField currentField = updatedField.before();
+      StructField newField = updatedField.after();
       if (!getPhysicalName(currentField).equals(getPhysicalName(newField))) {
         throw new IllegalArgumentException(
             String.format(
@@ -434,26 +601,32 @@ public class SchemaUtils {
     }
   }
 
-  /* Validate if a given schema evolution is safe for a given column mapping mode*/
-  private static void validateSchemaEvolution(
+  /*
+   * Validate if a given schema evolution is safe for a given column mapping mode
+   *
+   * <p>Returns an updated schema if metadata (i.e. TypeChanges needs to be copied
+   * over from currentSchema).
+   */
+  private static Optional<StructType> validateSchemaEvolution(
       StructType currentSchema,
       StructType newSchema,
       ColumnMappingMode columnMappingMode,
       Set<String> clusteringColumnPhysicalNames,
       int currentMaxFieldId,
       boolean allowNewRequiredFields,
-      boolean icebergWriterCompatV1Enabled) {
+      boolean icebergWriterCompatV1Enabled,
+      boolean typeWideningEnabled) {
     switch (columnMappingMode) {
       case ID:
       case NAME:
-        validateSchemaEvolutionById(
+        return validateSchemaEvolutionById(
             currentSchema,
             newSchema,
             clusteringColumnPhysicalNames,
             currentMaxFieldId,
             allowNewRequiredFields,
-            icebergWriterCompatV1Enabled);
-        return;
+            icebergWriterCompatV1Enabled,
+            typeWideningEnabled);
       case NONE:
         throw new UnsupportedOperationException(
             "Schema evolution without column mapping is not supported");
@@ -461,30 +634,6 @@ public class SchemaUtils {
         throw new UnsupportedOperationException(
             "Unknown column mapping mode: " + columnMappingMode);
     }
-  }
-
-  /**
-   * Validates a given schema evolution by using field ID as the source of truth for identifying
-   * fields
-   */
-  private static void validateSchemaEvolutionById(
-      StructType currentSchema,
-      StructType newSchema,
-      Set<String> clusteringColumnPhysicalNames,
-      int oldMaxFieldId,
-      boolean allowNewRequiredFields,
-      boolean icebergWriterCompatV1Enabled) {
-    Map<Integer, StructField> currentFieldsById = fieldsById(currentSchema);
-    Map<Integer, StructField> updatedFieldsById = fieldsById(newSchema);
-    SchemaChanges schemaChanges = computeSchemaChangesById(currentFieldsById, updatedFieldsById);
-    validatePhysicalNameConsistency(schemaChanges.updatedFields());
-    // Validates that the updated schema does not contain breaking changes in terms of types and
-    // nullability
-    validateUpdatedSchemaCompatibility(
-        schemaChanges, oldMaxFieldId, allowNewRequiredFields, icebergWriterCompatV1Enabled);
-    validateClusteringColumnsNotDropped(
-        schemaChanges.removedFields(), clusteringColumnPhysicalNames);
-    // ToDo Potentially validate IcebergCompatV2 nested IDs
   }
 
   private static void validateClusteringColumnsNotDropped(
@@ -509,7 +658,8 @@ public class SchemaUtils {
       SchemaChanges schemaChanges,
       int oldMaxFieldId,
       boolean allowNewRequiredFields,
-      boolean icebergWriterCompatV1Enabled) {
+      boolean icebergWriterCompatV1Enabled,
+      boolean typeWideningEnabled) {
     for (StructField addedField : schemaChanges.addedFields()) {
       if (!allowNewRequiredFields && !addedField.isNullable()) {
         throw new KernelException(
@@ -525,10 +675,8 @@ public class SchemaUtils {
       }
     }
 
-    for (Tuple2<StructField, StructField> updatedFields : schemaChanges.updatedFields()) {
-      // ToDo: See if recursion can be avoided by incorporating map key/value and array element
-      // updates in updatedFields
-      validateFieldCompatibility(updatedFields._1, updatedFields._2, icebergWriterCompatV1Enabled);
+    for (SchemaChanges.SchemaUpdate updatedFields : schemaChanges.updatedFields()) {
+      validateFieldCompatibility(updatedFields, icebergWriterCompatV1Enabled, typeWideningEnabled);
     }
   }
 
@@ -538,32 +686,18 @@ public class SchemaUtils {
    * tightened
    */
   private static void validateFieldCompatibility(
-      StructField existingField, StructField newField, boolean icebergWriterCompatV1Enabled) {
+      SchemaChanges.SchemaUpdate update,
+      boolean icebergWriterCompatV1Enabled,
+      boolean typeWideningEnabled) {
+    StructField existingField = update.before();
+    StructField newField = update.after();
     if (existingField.isNullable() && !newField.isNullable()) {
       throw new KernelException(
           String.format(
-              "Cannot tighten the nullability of existing field %s", existingField.getName()));
+              "Cannot tighten the nullability of existing field %s", update.getPathToAfterField()));
     }
 
-    // Both fields are structs, ensure there's no changes in the individual fields
-    // ToDo: Prevent additions, removals,
-    //  and type updates to struct fields when the struct is a map key
-    if (existingField.getDataType() instanceof StructType
-        && newField.getDataType() instanceof StructType) {
-      StructType existingStruct = (StructType) existingField.getDataType();
-      StructType newStruct = (StructType) newField.getDataType();
-      Map<Integer, StructField> existingNestedFields =
-          existingStruct.fields().stream()
-              .collect(Collectors.toMap(ColumnMapping::getColumnId, Function.identity()));
-
-      for (StructField newNestedField : newStruct.fields()) {
-        StructField existingNestedField = existingNestedFields.get(getColumnId(newNestedField));
-        if (existingNestedField != null) {
-          validateFieldCompatibility(
-              existingNestedField, newNestedField, icebergWriterCompatV1Enabled);
-        }
-      }
-    } else if (existingField.getDataType() instanceof MapType
+    if (existingField.getDataType() instanceof MapType
         && newField.getDataType() instanceof MapType) {
       MapType existingMapType = (MapType) existingField.getDataType();
       MapType newMapType = (MapType) newField.getDataType();
@@ -582,43 +716,94 @@ public class SchemaUtils {
                   newField.getName(), currentKeyType, newKeyType));
         }
       }
+    } else {
+      // Note because computeSchemaChangesById() adds all changed struct fields and any nested
+      // elements that have the same path but different types then the following scenarios are
+      // handled in this block.
+      // 1. This is non-leaf node (e.g. StructType, ArrayType) type, in which case it is sufficient
+      // to ensure that the types are of the same class. For a struct type there might be field
+      // additions or removals, which shouldn't be considered invalid schema transitions
+      // (and hence `equivalent(...)` is not used in this case). If the nested type changes
+      // (e.g. ArrayType to Primitive) then the classes would be different and the types by
+      // definition would not be equivalent.
+      //
+      // 2. This is a leaf node, in which case it sufficient to check that the types are equivalent
+      // (or once implemented the transition of types is valid).
+      //
+      // The subtle point here is for any non-leaf node change, the computed changes will include at
+      // least one ancestor change where the type change can be detected.
+      //
+      for (Class<?> clazz : new Class<?>[] {StructType.class, ArrayType.class}) {
+        if (existingField.getDataType().getClass() == clazz
+            && newField.getDataType().getClass() == clazz) {
+          return;
+        }
+      }
+      DataType existingType = existingField.getDataType();
+      DataType newType = newField.getDataType();
+      if (!existingType.equivalent(newType)) {
 
-      validateFieldCompatibility(
-          existingMapType.getKeyField(), newMapType.getKeyField(), icebergWriterCompatV1Enabled);
-      validateFieldCompatibility(
-          existingMapType.getValueField(),
-          newMapType.getValueField(),
-          icebergWriterCompatV1Enabled);
-    } else if (existingField.getDataType() instanceof ArrayType
-        && newField.getDataType() instanceof ArrayType) {
-      ArrayType existingArrayType = (ArrayType) existingField.getDataType();
-      ArrayType newArrayType = (ArrayType) newField.getDataType();
+        if (typeWideningEnabled) {
+          if ((icebergWriterCompatV1Enabled
+                  && TypeWideningChecker.isIcebergV2Compatible(existingType, newType))
+              || (!icebergWriterCompatV1Enabled
+                  && TypeWideningChecker.isWideningSupported(existingType, newType))) {
+            return;
+          }
+        }
+        throw new KernelException(
+            String.format(
+                "Cannot change the type of existing field %s from %s to %s",
+                existingField.getName(), existingField.getDataType(), newField.getDataType()));
+      }
+    }
+  }
 
-      validateFieldCompatibility(
-          existingArrayType.getElementField(),
-          newArrayType.getElementField(),
-          icebergWriterCompatV1Enabled);
-    } else if (!existingField.getDataType().equivalent(newField.getDataType())) {
-      throw new KernelException(
-          String.format(
-              "Cannot change the type of existing field %s from %s to %s",
-              existingField.getName(), existingField.getDataType(), newField.getDataType()));
+  /**
+   * A composite class that uniquely identifiers an element in a schema.
+   *
+   * <p>When column mapping is enabled, the every field in structs has a unique ID. For other nested
+   * types (maps and arrays), elements are identified from there path from the struct field.
+   */
+  private static class SchemaElementId {
+    private final String nestedPath;
+    private final int id;
+
+    SchemaElementId(String nestedPath, int id) {
+      this.nestedPath = nestedPath;
+      this.id = id;
+    }
+
+    public int getId() {
+      return id;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+      if (o == null || getClass() != o.getClass()) return false;
+      SchemaElementId that = (SchemaElementId) o;
+      return id == that.id && Objects.equals(nestedPath, that.nestedPath);
+    }
+
+    @Override
+    public int hashCode() {
+      return Objects.hash(nestedPath, id);
+    }
+
+    @Override
+    public String toString() {
+      return "SchemaElementId{" + "getPath='" + nestedPath + '\'' + ", id=" + id + '}';
     }
   }
 
   private static Map<Integer, StructField> fieldsById(StructType schema) {
-    List<Tuple2<List<String>, StructField>> columnPathToStructField =
-        filterRecursively(
-            schema,
-            true /* recurseIntoMapOrArrayElements */,
-            false /* stopOnFirstMatch */,
-            sf -> true);
     Map<Integer, StructField> columnIdToField = new HashMap<>();
-    for (Tuple2<List<String>, StructField> pathAndField : columnPathToStructField) {
-      StructField field = pathAndField._2;
-      checkArgument(hasColumnId(field), "Field %s is missing column id", field.getName());
-      checkArgument(hasPhysicalName(field), "Field %s is missing physical name", field.getName());
-      int columnId = getColumnId(field);
+    for (SchemaIterable.SchemaElement element : new SchemaIterable(schema)) {
+      if (!element.isStructField()) {
+        continue;
+      }
+      StructField field = element.getField();
+      int columnId = getCheckedColumnId(field);
       checkArgument(
           !columnIdToField.containsKey(columnId),
           "Field %s with id %d already exists",
@@ -628,6 +813,12 @@ public class SchemaUtils {
     }
 
     return columnIdToField;
+  }
+
+  private static int getCheckedColumnId(StructField field) {
+    checkArgument(hasColumnId(field), "Field %s is missing column id", field.getName());
+    checkArgument(hasPhysicalName(field), "Field %s is missing physical name", field.getName());
+    return ColumnMapping.getColumnId(field);
   }
 
   private static String escapeDots(String name) {

@@ -16,9 +16,7 @@
 package io.delta.kernel.statistics;
 
 import static io.delta.kernel.internal.DeltaErrors.unsupportedStatsDataType;
-import static java.time.ZoneOffset.UTC;
 import static java.time.format.DateTimeFormatter.ISO_LOCAL_DATE;
-import static java.time.temporal.ChronoUnit.MILLIS;
 
 import com.fasterxml.jackson.core.JsonGenerator;
 import io.delta.kernel.exceptions.KernelException;
@@ -31,10 +29,9 @@ import io.delta.kernel.types.*;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
-import java.time.Instant;
-import java.time.LocalDate;
-import java.time.ZonedDateTime;
+import java.time.*;
 import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
 import java.util.Collections;
 import java.util.Map;
 import java.util.Objects;
@@ -48,9 +45,7 @@ import java.util.Objects;
 public class DataFileStatistics {
   private static final DateTimeFormatter TIMESTAMP_FORMATTER =
       DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSX");
-
-  public static final int MICROSECONDS_PER_SECOND = 1_000_000;
-  public static final int NANOSECONDS_PER_MICROSECOND = 1_000;
+  public static final OffsetDateTime EPOCH = Instant.ofEpochSecond(0).atOffset(ZoneOffset.UTC);
 
   private final long numRecords;
   private final Map<Column, Literal> minValues;
@@ -315,17 +310,16 @@ public class DataFileStatistics {
     } else if (type instanceof DateType) {
       generator.writeString(
           LocalDate.ofEpochDay(((Number) value).longValue()).format(ISO_LOCAL_DATE));
-    } else if (type instanceof TimestampType || type instanceof TimestampNTZType) {
+    } else if (type instanceof TimestampType) {
       long epochMicros = (long) value;
-      long epochSeconds = epochMicros / MICROSECONDS_PER_SECOND;
-      int nanoAdjustment =
-          (int) (epochMicros % MICROSECONDS_PER_SECOND) * NANOSECONDS_PER_MICROSECOND;
-      if (nanoAdjustment < 0) {
-        nanoAdjustment += MICROSECONDS_PER_SECOND * NANOSECONDS_PER_MICROSECOND;
-      }
-      Instant instant = Instant.ofEpochSecond(epochSeconds, nanoAdjustment);
-      generator.writeString(
-          TIMESTAMP_FORMATTER.format(ZonedDateTime.ofInstant(instant.truncatedTo(MILLIS), UTC)));
+      LocalDateTime localDateTime = ChronoUnit.MICROS.addTo(EPOCH, epochMicros).toLocalDateTime();
+      LocalDateTime truncated = localDateTime.truncatedTo(ChronoUnit.MILLIS);
+      generator.writeString(TIMESTAMP_FORMATTER.format(truncated.atOffset(ZoneOffset.UTC)));
+    } else if (type instanceof TimestampNTZType) {
+      long epochMicros = (long) value;
+      LocalDateTime localDateTime = ChronoUnit.MICROS.addTo(EPOCH, epochMicros).toLocalDateTime();
+      LocalDateTime truncated = localDateTime.truncatedTo(ChronoUnit.MILLIS);
+      generator.writeString(truncated.format(DateTimeFormatter.ISO_LOCAL_DATE_TIME));
     } else {
       throw unsupportedStatsDataType(type);
     }

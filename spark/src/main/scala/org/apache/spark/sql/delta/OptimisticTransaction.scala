@@ -61,6 +61,7 @@ import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical.UnsetTableProperties
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.catalyst.util.{CharVarcharUtils, ResolveDefaultColumns}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{StructField, StructType}
 import org.apache.spark.util.{Clock, Utils}
 
@@ -296,6 +297,7 @@ trait OptimisticTransactionImpl extends DeltaTransaction
 
   /** Tracks if this transaction has already committed. */
   protected var committed: Option[CommittedTransaction] = None
+  def getCommitted: Option[CommittedTransaction] = committed
 
   /** Contains the execution instrumentation set via thread-local. No-op by default. */
   protected[delta] var executionObserver: TransactionExecutionObserver =
@@ -960,6 +962,18 @@ trait OptimisticTransactionImpl extends DeltaTransaction
       Protocol.upgradeProtocolFromMetadataForExistingTable(spark, metadata, protocol)
     if (requiredProtocolOpt.isDefined) {
       newProtocol = requiredProtocolOpt
+    }
+  }
+
+  // Make sure shredded writes are only performed if the shredding table property was set.
+  private def assertShreddingStateConsistent() = {
+    if (!DeltaConfigs.ENABLE_VARIANT_SHREDDING.fromMetaData(metadata)) {
+      val isVariantShreddingSchemaForced =
+        spark.sessionState.conf
+          .getConfString("spark.sql.variant.forceShreddingSchemaForTest", "").nonEmpty
+      if (isVariantShreddingSchemaForced) {
+        throw DeltaErrors.variantShreddingUnsupported()
+      }
     }
   }
 
@@ -2175,6 +2189,9 @@ trait OptimisticTransactionImpl extends DeltaTransaction
     val assertDeletionVectorWellFormed = getAssertDeletionVectorWellFormedFunc(spark, op)
     actions.foreach(assertDeletionVectorWellFormed)
 
+    // Make sure shredded writes are only performed if the shredding table property was set
+    assertShreddingStateConsistent()
+
     // Make sure this operation does not include default column values if the corresponding table
     // feature is not enabled.
     if (!protocol.isFeatureSupported(AllowColumnDefaultsTableFeature)) {
@@ -2758,17 +2775,15 @@ trait OptimisticTransactionImpl extends DeltaTransaction
       txnId = txnId,
       deltaLog = deltaLog,
       catalogTable = catalogTable,
-      snapshot = snapshot,
-      metadata = metadata,
-      protocol = protocol,
+      readSnapshot = snapshot,
       committedVersion = committedVersion,
       committedActions = committedActions,
       postCommitSnapshot = postCommitSnapshot,
       postCommitHooks = postCommitHooks.toSeq,
-      finalTxnExecutionTimeMs = txnExecutionTimeMs.get,
-      finalNeedsCheckpoint = needsCheckpoint,
-      finalPartitionsAddedToOpt = partitionsAddedToOpt,
-      finalIsBlindAppend = isBlindAppend
+      txnExecutionTimeMs = txnExecutionTimeMs.get,
+      needsCheckpoint = needsCheckpoint,
+      partitionsAddedToOpt = partitionsAddedToOpt,
+      isBlindAppend = isBlindAppend
     ))
 
   /** Register a hook that will be executed once a commit is successful. */

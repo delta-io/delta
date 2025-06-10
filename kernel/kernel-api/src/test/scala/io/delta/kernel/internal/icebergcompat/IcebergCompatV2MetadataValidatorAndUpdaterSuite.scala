@@ -161,6 +161,50 @@ class IcebergCompatV2MetadataValidatorAndUpdaterSuite
     validateAndUpdateIcebergCompatV2Metadata(isNewTable, metadata, protocol)
   }
 
+  test("compatible type widening is allowed with icebergCompatV2") {
+    val schema = new StructType()
+      .add(
+        new StructField(
+          "intToLong",
+          IntegerType.INTEGER,
+          true,
+          FieldMetadata.empty()).withTypeChanges(
+          Seq(new TypeChange(IntegerType.INTEGER, LongType.LONG)).asJava))
+      .add(
+        new StructField(
+          "decimalToDecimal",
+          new DecimalType(10, 2),
+          true,
+          FieldMetadata.empty()).withTypeChanges(
+          Seq(new TypeChange(new DecimalType(5, 2), new DecimalType(10, 2))).asJava))
+
+    val metadata = getCompatEnabledMetadata(schema)
+    val protocol = getCompatEnabledProtocol(TYPE_WIDENING_RW_FEATURE)
+
+    // This should not throw an exception
+    validateAndUpdateIcebergCompatV2Metadata(false, metadata, protocol)
+  }
+
+  test("incompatible type widening throws exception with icebergCompatV2") {
+    val schema = new StructType()
+      .add(
+        new StructField(
+          "dateToTimestamp",
+          TimestampNTZType.TIMESTAMP_NTZ,
+          true,
+          FieldMetadata.empty()).withTypeChanges(
+          Seq(new TypeChange(DateType.DATE, TimestampNTZType.TIMESTAMP_NTZ)).asJava))
+
+    val metadata = getCompatEnabledMetadata(schema)
+    val protocol = getCompatEnabledProtocol(TYPE_WIDENING_RW_FEATURE)
+
+    val e = intercept[KernelException] {
+      validateAndUpdateIcebergCompatV2Metadata(false, metadata, protocol)
+    }
+
+    assert(e.getMessage.contains("icebergCompatV2 does not support type widening present in table"))
+  }
+
   Seq(true, false).foreach { isNewTable =>
     test(s"protocol is missing required column mapping feature, isNewTable $isNewTable") {
       val schema = new StructType().add("col", BooleanType.BOOLEAN)
