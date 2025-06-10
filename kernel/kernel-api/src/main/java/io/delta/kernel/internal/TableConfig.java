@@ -245,10 +245,7 @@ public class TableConfig<T> {
   /**
    * Table property that enables modifying the table in accordance with the Delta-Iceberg
    * Compatibility V3 protocol.
-   *
-   * @see <a
-   *     href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#delta-iceberg-compatibility-v3">
-   *     Delta-Iceberg Compatibility V3 Protocol</a>
+   * TODO: add the delta protocol link once updated [https://github.com/delta-io/delta/issues/4574]
    */
   public static final TableConfig<Boolean> ICEBERG_COMPAT_V3_ENABLED =
       new TableConfig<>(

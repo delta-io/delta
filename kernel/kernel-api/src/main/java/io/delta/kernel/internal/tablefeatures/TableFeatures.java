@@ -336,7 +336,8 @@ public class TableFeatures {
     }
 
     public @Override Set<TableFeature> requiredFeatures() {
-      return Collections.singleton(COLUMN_MAPPING_RW_FEATURE);
+      return Collections.unmodifiableSet(
+          new HashSet<>(Arrays.asList(COLUMN_MAPPING_RW_FEATURE, ROW_TRACKING_W_FEATURE)));
     }
   }
 

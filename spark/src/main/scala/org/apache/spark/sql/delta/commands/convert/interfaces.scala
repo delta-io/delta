@@ -67,6 +67,8 @@ trait ConvertTargetFileManifest extends Closeable {
   /** Return the active files for a table in sequence */
   def getFiles: Iterator[ConvertTargetFile] = allFiles.toLocalIterator().asScala
 
+  /** All data file paths are required to be relative to table path when false */
+  def supportAbsolutePath: Boolean = false
   /** Return the number of files for the table */
   def numFiles: Long = allFiles.count()
 
