@@ -334,6 +334,9 @@ trait OptimisticTransactionImpl extends DeltaTransaction
 
   protected var commitInfo: CommitInfo = _
 
+  /** Whether the txn should trigger a checkpoint after the commit */
+  private[delta] var needsCheckpoint = false
+
   // Whether this transaction is creating a new table.
   private var isCreatingNewTable: Boolean = false
 
@@ -462,25 +465,18 @@ trait OptimisticTransactionImpl extends DeltaTransaction
     }
   }
 
+  /** The set of distinct partitions that contain added files by current transaction. */
+  protected[delta] var partitionsAddedToOpt: Option[mutable.HashSet[Map[String, String]]] = None
+
+  /** True if this transaction is a blind append. This is only valid after commit. */
+  protected[delta] var isBlindAppend: Boolean = false
+
   /**
    * The logSegment of the snapshot prior to the commit.
    * Will be updated only when retrying due to a conflict.
    */
   private[delta] var preCommitLogSegment: LogSegment =
     snapshot.logSegment.copy(checkpointProvider = snapshot.checkpointProvider)
-
-  private[delta] val readSnapshotTableCommitCoordinatorClientOpt:
-      Option[TableCommitCoordinatorClient] = {
-    if (snapshot.isCatalogOwned) {
-      // Catalog owned table's commit coordinator is always determined by the catalog.
-      CatalogOwnedTableUtils.populateTableCommitCoordinatorFromCatalog(
-        spark, catalogTable, snapshot)
-    } else {
-      // The commit-coordinator of a table shouldn't change. If it is changed by a concurrent
-      // commit, then it will be detected as a conflict and the transaction will anyway fail.
-      snapshot.getTableCommitCoordinatorForWrites
-    }
-  }
 
   /**
    * Generates a timestamp which is greater than the commit timestamp
@@ -1801,7 +1797,7 @@ trait OptimisticTransactionImpl extends DeltaTransaction
         numDistinctPartitionsInAdd = -1, // not tracking distinct partitions as of now
         numPartitionColumnsInTable = postCommitSnapshot.metadata.partitionColumns.size,
         isolationLevel = Serializable.toString,
-        coordinatedCommitsInfo = createCoordinatedCommitsStats(),
+        coordinatedCommitsInfo = createCoordinatedCommitsStats(newProtocol),
         numOfDomainMetadatas = numOfDomainMetadatas,
         txnId = Some(txnId))
 
@@ -1838,54 +1834,6 @@ trait OptimisticTransactionImpl extends DeltaTransaction
             throw e
         }
     }
-  }
-
-  def createCoordinatedCommitsStats(): CoordinatedCommitsStats = {
-    val (coordinatedCommitsType, metadataToUse) =
-      readSnapshotTableCommitCoordinatorClientOpt match {
-        // TODO: Capture the CO -> FS downgrade case when we start
-        //       supporting downgrade for CO.
-        case Some(_) if snapshot.isCatalogOwned =>                             // CO commit
-          (CoordinatedCommitType.CO_COMMIT, snapshot.metadata)
-        case Some(_) if metadata.coordinatedCommitsCoordinatorName.isEmpty =>  // CC -> FS
-          (CoordinatedCommitType.CC_TO_FS_DOWNGRADE_COMMIT, snapshot.metadata)
-        // Only the 0th commit to a table can be a FS -> CO upgrade for now.
-        // Upgrading an existing FS table to CO through ALTER TABLE is not supported yet.
-        case None if this.newProtocol.exists(_.readerAndWriterFeatureNames
-            .contains(CatalogOwnedTableFeature.name)) =>                       // FS -> CO
-          (CoordinatedCommitType.FS_TO_CO_UPGRADE_COMMIT, metadata)
-        case None if metadata.coordinatedCommitsCoordinatorName.isDefined =>   // FS -> CC
-          (CoordinatedCommitType.FS_TO_CC_UPGRADE_COMMIT, metadata)
-        case Some(_) =>                                                        // CC commit
-          (CoordinatedCommitType.CC_COMMIT, snapshot.metadata)
-        case None =>                                                           // FS commit
-          (CoordinatedCommitType.FS_COMMIT, snapshot.metadata)
-        // Errors out in rest of the cases.
-        case _ =>
-          throw new IllegalStateException(
-            "Unexpected state found when trying " +
-            s"to generate CoordinatedCommitsStats for table ${deltaLog.logPath}. " +
-            s"$readSnapshotTableCommitCoordinatorClientOpt, " +
-            s"$metadata, $snapshot, $catalogTable")
-      }
-    CoordinatedCommitsStats(
-      coordinatedCommitsType = coordinatedCommitsType.toString,
-      commitCoordinatorName = if (Set(CoordinatedCommitType.CO_COMMIT,
-        CoordinatedCommitType.FS_TO_CO_UPGRADE_COMMIT).contains(coordinatedCommitsType)) {
-        // The catalog for FS -> CO upgrade commit would be
-        // "CATALOG_EMPTY" because `catalogTable` is not available
-        // for the 0th FS commit.
-        catalogTable.flatMap { ct =>
-          CatalogOwnedTableUtils.getCatalogName(
-            spark,
-            identifier = ct.identifier)
-        }.getOrElse("CATALOG_MISSING")
-      } else {
-        metadataToUse.coordinatedCommitsCoordinatorName.getOrElse("NONE")
-      },
-      // For Catalog-Owned table, the coordinator conf for UC-CC is [[Map.empty]]
-      // so we don't distinguish between CO/CC here.
-      commitCoordinatorConf = metadataToUse.coordinatedCommitsCoordinatorConf)
   }
 
   /**
@@ -2463,7 +2411,7 @@ trait OptimisticTransactionImpl extends DeltaTransaction
     collectAutoOptimizeStats(numAdd, numRemove, actions.iterator)
     val info = currentTransactionInfo.commitInfo
       .map(_.copy(readVersion = None, isolationLevel = None)).orNull
-    setNeedsCheckpoint(attemptVersion, postCommitSnapshot)
+    needsCheckpoint = isCheckpointNeeded(attemptVersion, postCommitSnapshot)
     val doCollectCommitStats =
       needsCheckpoint || spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_FORCE_ALL_COMMIT_STATS)
 
@@ -2499,7 +2447,7 @@ trait OptimisticTransactionImpl extends DeltaTransaction
       numDistinctPartitionsInAdd = distinctPartitions.size,
       numPartitionColumnsInTable = postCommitSnapshot.metadata.partitionColumns.size,
       isolationLevel = isolationLevel.toString,
-      coordinatedCommitsInfo = createCoordinatedCommitsStats(),
+      coordinatedCommitsInfo = createCoordinatedCommitsStats(newProtocol),
       numOfDomainMetadatas = numOfDomainMetadatas,
       txnId = Some(txnId))
     recordDeltaEvent(deltaLog, DeltaLogging.DELTA_COMMIT_STATS_OPTYPE, data = stats)
