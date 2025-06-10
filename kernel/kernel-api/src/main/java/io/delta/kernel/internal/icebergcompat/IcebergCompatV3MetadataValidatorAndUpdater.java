@@ -25,7 +25,9 @@ import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.tablefeatures.TableFeature;
+import io.delta.kernel.internal.types.TypeWideningChecker;
 import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
+import io.delta.kernel.internal.util.SchemaIterable;
 import io.delta.kernel.internal.util.SchemaUtils;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.*;
@@ -105,7 +107,8 @@ public class IcebergCompatV3MetadataValidatorAndUpdater
                 field -> {
                   DataType dataType = field.getDataType();
                   // IcebergCompatV3 supports variants and all the IcebergCompatV2 supported types
-                  return !isSupportedDataTypesForV2(dataType) && !(dataType instanceof VariantType);
+                  return !isSupportedDataTypesForV2(dataType)
+                      && !isAdditionalSupportedDataTypesForV3(dataType);
                 });
 
         if (!matches.isEmpty()) {
@@ -142,6 +145,25 @@ public class IcebergCompatV3MetadataValidatorAndUpdater
         // this to allow checking the partition columns aren't changed
       };
 
+  private static final IcebergCompatCheck ICEBERG_COMPAT_V3_CHECK_HAS_SUPPORTED_TYPE_WIDENING =
+      (inputContext) -> {
+        Protocol protocol = inputContext.newProtocol;
+        if (!protocol.supportsFeature(TYPE_WIDENING_RW_FEATURE)
+            && !protocol.supportsFeature(TYPE_WIDENING_RW_PREVIEW_FEATURE)) {
+          return;
+        }
+        for (SchemaIterable.SchemaElement element :
+            new SchemaIterable(inputContext.newMetadata.getSchema())) {
+          for (TypeChange typeChange : element.getField().getTypeChanges()) {
+            if (!TypeWideningChecker.isIcebergV2Compatible(
+                typeChange.getFrom(), typeChange.getTo())) {
+              throw DeltaErrors.icebergCompatUnsupportedTypeWidening(
+                  INSTANCE.compatFeatureName(), typeChange);
+            }
+          }
+        }
+      };
+
   @Override
   String compatFeatureName() {
     return "icebergCompatV3";
@@ -159,7 +181,8 @@ public class IcebergCompatV3MetadataValidatorAndUpdater
 
   @Override
   List<TableFeature> requiredDependencyTableFeatures() {
-    return Stream.of(ICEBERG_COMPAT_V3_W_FEATURE, COLUMN_MAPPING_RW_FEATURE).collect(toList());
+    return Stream.of(ICEBERG_COMPAT_V3_W_FEATURE, COLUMN_MAPPING_RW_FEATURE, ROW_TRACKING_W_FEATURE)
+        .collect(toList());
   }
 
   @Override
@@ -168,7 +191,8 @@ public class IcebergCompatV3MetadataValidatorAndUpdater
             ICEBERG_COMPAT_V3_CHECK_NO_LOWER_COMPAT_ENABLED,
             ICEBERG_COMPAT_V3_CHECK_HAS_SUPPORTED_TYPES,
             ICEBERG_COMPAT_V3_CHECK_HAS_ALLOWED_PARTITION_TYPES,
-            ICEBERG_COMPAT_V3_CHECK_HAS_NO_PARTITION_EVOLUTION)
+            ICEBERG_COMPAT_V3_CHECK_HAS_NO_PARTITION_EVOLUTION,
+            ICEBERG_COMPAT_V3_CHECK_HAS_SUPPORTED_TYPE_WIDENING)
         .collect(toList());
   }
 }

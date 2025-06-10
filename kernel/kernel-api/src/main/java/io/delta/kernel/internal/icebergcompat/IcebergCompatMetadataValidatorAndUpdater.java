@@ -172,8 +172,11 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
         || dataType instanceof TimestampNTZType
         || dataType instanceof ArrayType
         || dataType instanceof MapType
-        || dataType instanceof StructType
-        || dataType instanceof VariantType;
+        || dataType instanceof StructType;
+  }
+
+  protected static boolean isAdditionalSupportedDataTypesForV3(DataType dataType) {
+    return dataType instanceof VariantType;
   }
 
   protected static boolean isAllowedPartitionType(DataType dataType) {
