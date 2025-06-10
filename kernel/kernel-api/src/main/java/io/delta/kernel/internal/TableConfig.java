@@ -287,7 +287,7 @@ public class TableConfig<T> {
 
   /**
    * Table property that enables modifying the table in accordance with the Delta-Iceberg Writer
-   * Compatibility V3 ({@code icebergCompatWriterV1}) protocol. V2 is skipped to align with the
+   * Compatibility V3 ({@code icebergCompatWriterV3}) protocol. V2 is skipped to align with the
    * iceberg v3 spec.
    */
   public static final TableConfig<Boolean> ICEBERG_WRITER_COMPAT_V3_ENABLED =
