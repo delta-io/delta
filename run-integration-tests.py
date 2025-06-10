@@ -377,7 +377,7 @@ def run_unity_catalog_commit_coordinator_integration_tests(root_dir, version, te
 
     python_root_dir = path.join(root_dir, "python")
     extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
-    packages = "io.delta:delta-%s_2.12:%s" % (get_artifact_name(version), version)
+    packages = "io.delta:delta-%s_2.13:%s" % (get_artifact_name(version), version)
     if extra_packages:
         packages += "," + extra_packages
 
