@@ -16,6 +16,7 @@
 
 package io.delta.kernel.utils;
 
+import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.statistics.DataFileStatistics;
 import java.util.Optional;
 
@@ -26,6 +27,7 @@ import java.util.Optional;
 public class DataFileStatus extends FileStatus {
 
   private final Optional<DataFileStatistics> statistics;
+  private final Optional<DeletionVectorDescriptor> dvDescriptor;
 
   /**
    * Create a new instance of {@link DataFileStatus}.
@@ -34,11 +36,17 @@ public class DataFileStatus extends FileStatus {
    * @param size File size in bytes.
    * @param modificationTime Last modification time of the file in epoch milliseconds.
    * @param statistics Optional column and file level statistics in the data file.
+   * @param dvDescriptor Optional Deletion Vector descriptor in the data file.
    */
   public DataFileStatus(
-      String path, long size, long modificationTime, Optional<DataFileStatistics> statistics) {
+      String path,
+      long size,
+      long modificationTime,
+      Optional<DataFileStatistics> statistics,
+      Optional<DeletionVectorDescriptor> dvDescriptor) {
     super(path, size, modificationTime);
     this.statistics = statistics;
+    this.dvDescriptor = dvDescriptor;
   }
 
   /**
@@ -48,6 +56,10 @@ public class DataFileStatus extends FileStatus {
    */
   public Optional<DataFileStatistics> getStatistics() {
     return statistics;
+  }
+
+  public Optional<DeletionVectorDescriptor> getDeletionVectorDescriptor() {
+    return dvDescriptor;
   }
 
   @Override
@@ -62,6 +74,8 @@ public class DataFileStatus extends FileStatus {
         + getModificationTime()
         + ", statistics="
         + statistics
+        + ", deletionVectorDescriptor="
+        + dvDescriptor
         + '}';
   }
 }

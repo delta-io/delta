@@ -338,6 +338,14 @@ public final class DeltaErrors {
             key));
   }
 
+  public static KernelException enablingIcebergWriterCompatV2OnExistingTable(String key) {
+    return new KernelException(
+        String.format(
+            "Cannot enable %s on an existing table. "
+                + "Enablement is only supported upon table creation.",
+            key));
+  }
+
   public static KernelException icebergWriterCompatInvalidPhysicalName(List<String> invalidFields) {
     return new KernelException(
         String.format(
@@ -347,6 +355,11 @@ public final class DeltaErrors {
   }
 
   public static KernelException disablingIcebergWriterCompatV1OnExistingTable(String key) {
+    return new KernelException(
+        String.format("Disabling %s on an existing table is not allowed.", key));
+  }
+
+  public static KernelException disablingIcebergWriterCompatV2OnExistingTable(String key) {
     return new KernelException(
         String.format("Disabling %s on an existing table is not allowed.", key));
   }
