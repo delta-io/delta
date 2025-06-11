@@ -44,7 +44,7 @@ import org.apache.spark.sql.delta.redirect.{RedirectFeature, TableRedirectConfig
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.stats._
-import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, JsonUtils}
+import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, JsonUtils, TransactionHelper}
 import org.apache.spark.sql.util.ScalaExtensions._
 import io.delta.storage.commit._
 import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
@@ -254,7 +254,7 @@ object OptimisticTransaction {
  *
  * This trait is not thread-safe.
  */
-trait OptimisticTransactionImpl extends DeltaTransaction
+trait OptimisticTransactionImpl extends TransactionHelper
   with TransactionalWrite
   with SQLMetricsReporting
   with DeltaScanGenerator
@@ -477,18 +477,6 @@ trait OptimisticTransactionImpl extends DeltaTransaction
    */
   private[delta] var preCommitLogSegment: LogSegment =
     snapshot.logSegment.copy(checkpointProvider = snapshot.checkpointProvider)
-
-  /**
-   * Generates a timestamp which is greater than the commit timestamp
-   * of the last snapshot. Note that this is only needed when the
-   * feature `inCommitTimestamps` is enabled.
-   */
-  protected[delta] def generateInCommitTimestampForFirstCommitAttempt(
-      currentTimestamp: Long): Option[Long] =
-    Option.when(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(metadata)) {
-      val lastCommitTimestamp = snapshot.timestamp
-      math.max(currentTimestamp, lastCommitTimestamp + 1)
-    }
 
   /** The end to end execution time of this transaction. */
   def txnExecutionTimeMs: Option[Long] = if (commitEndNano == -1) {
@@ -2591,14 +2579,6 @@ trait OptimisticTransactionImpl extends DeltaTransaction
   protected def incrementallyDeriveChecksum(
       attemptVersion: Long,
       currentTransactionInfo: CurrentTransactionInfo): Option[VersionChecksum] = {
-    // Don't include [[AddFile]]s in CRC if this commit is modifying the schema of table in some
-    // way. This is to make sure we don't carry any DROPPED column from previous CRC to this CRC
-    // forever and can start fresh from next commit.
-    // If the oldSnapshot itself is missing, we don't incrementally compute the checksum.
-    val allFilesInCrcWritePathEnabled =
-      Snapshot.allFilesInCrcWritePathEnabled(spark, snapshot) &&
-        (snapshot.version == -1 || snapshot.metadata.schema == metadata.schema)
-
     incrementallyDeriveChecksum(
       spark,
       deltaLog,
@@ -2609,7 +2589,7 @@ trait OptimisticTransactionImpl extends DeltaTransaction
       operationName = currentTransactionInfo.op.name,
       txnIdOpt = Some(currentTransactionInfo.txnId),
       previousVersionState = scala.Left(snapshot),
-      includeAddFilesInCrc = allFilesInCrcWritePathEnabled
+      includeAddFilesInCrc = Snapshot.shouldIncludeAddFilesInCrc(spark, snapshot, metadata)
     ).toOption
   }
 
