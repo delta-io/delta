@@ -140,16 +140,10 @@ trait ColumnMappingSuiteBase extends ActionUtils {
       nextFieldId,
       isNewTable,
       enableIcebergWriterCompatV1)
-    assertColumnMapping(
-      metadata.getSchema.get("b"),
-      nextFieldId,
-      isNewTable,
-      enableIcebergWriterCompatV1)
     val mapType = metadata.getSchema.get("b").getDataType.asInstanceOf[MapType]
     val innerStruct = mapType.getValueField.getDataType.asInstanceOf[StructType]
     assertColumnMapping(innerStruct.get("d"), nextFieldId, isNewTable, enableIcebergWriterCompatV1)
     assertColumnMapping(innerStruct.get("e"), nextFieldId, isNewTable, enableIcebergWriterCompatV1)
-    assertColumnMapping(innerStruct.get("f"), nextFieldId, isNewTable, enableIcebergWriterCompatV1)
     val innerArray = innerStruct.get("f").getDataType.asInstanceOf[ArrayType]
     val structInArray = innerArray.getElementField.getDataType.asInstanceOf[StructType]
     assertColumnMapping(
@@ -162,6 +156,12 @@ trait ColumnMappingSuiteBase extends ActionUtils {
       nextFieldId,
       isNewTable,
       enableIcebergWriterCompatV1)
+    assertColumnMapping(innerStruct.get("f"), nextFieldId, isNewTable, enableIcebergWriterCompatV1)
+    assertColumnMapping(
+      metadata.getSchema.get("b"),
+      nextFieldId,
+      isNewTable,
+      enableIcebergWriterCompatV1)
     assertColumnMapping(
       metadata.getSchema.get("c"),
       nextFieldId,
@@ -171,7 +171,7 @@ trait ColumnMappingSuiteBase extends ActionUtils {
     // verify nested ids
     if (enableIcebergCompatV2) {
       val colBPrefix = if (enableIcebergWriterCompatV1) {
-        "col-2."
+        "col-7."
       } else if (isNewTable) {
         "col-"
       } else {
@@ -203,7 +203,7 @@ trait ColumnMappingSuiteBase extends ActionUtils {
 
       // verify nested ids
       val colFPrefix = if (enableIcebergWriterCompatV1) {
-        "col-5."
+        "col-6."
       } else if (isNewTable) {
         "col-"
       } else {
