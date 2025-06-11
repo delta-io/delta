@@ -174,6 +174,10 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
                   || ColumnMapping.ColumnMappingMode.ID == value,
           ColumnMapping.ColumnMappingMode.NAME.value);
 
+  protected static final IcebergCompatRequiredTablePropertyEnforcer ROW_TRACKING_ENABLED =
+      new IcebergCompatRequiredTablePropertyEnforcer<>(
+          TableConfig.ROW_TRACKING_ENABLED, (value) -> value, "true");
+
   /**
    * Defines checks for compatibility with the targeted iceberg features (icebergCompatV1 or
    * icebergCompatV2 etc.)

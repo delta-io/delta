@@ -23,9 +23,6 @@ import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.tablefeatures.TableFeature;
-import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
-import io.delta.kernel.internal.util.SchemaUtils;
-import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.*;
 import io.delta.kernel.utils.DataFileStatus;
 import java.util.List;
@@ -72,37 +69,6 @@ public class IcebergCompatV3MetadataValidatorAndUpdater
   private static final IcebergCompatV3MetadataValidatorAndUpdater INSTANCE =
       new IcebergCompatV3MetadataValidatorAndUpdater();
 
-  private static final IcebergCompatRequiredTablePropertyEnforcer ICEBERG_COMPAT_V3_CM_REQUIREMENT =
-      new IcebergCompatRequiredTablePropertyEnforcer<>(
-          TableConfig.COLUMN_MAPPING_MODE,
-          (value) -> ColumnMappingMode.NAME == value || ColumnMappingMode.ID == value,
-          ColumnMappingMode.NAME.value);
-
-  private static final IcebergCompatRequiredTablePropertyEnforcer ROW_TRACKING_ENABLED =
-      new IcebergCompatRequiredTablePropertyEnforcer<>(
-          TableConfig.ROW_TRACKING_ENABLED, (value) -> value, "true");
-
-  private static final IcebergCompatCheck ICEBERG_COMPAT_V3_CHECK_HAS_SUPPORTED_TYPES =
-      (inputContext) -> {
-        List<Tuple2<List<String>, StructField>> matches =
-            SchemaUtils.filterRecursively(
-                inputContext.newMetadata.getSchema(),
-                /* recurseIntoMapAndArrayTypes= */ true,
-                /* stopOnFirstMatch = */ false,
-                field -> {
-                  DataType dataType = field.getDataType();
-                  // IcebergCompatV3 supports variants and all the IcebergCompatV2 supported types
-                  return !isSupportedDataTypesForV2(dataType)
-                      && !isAdditionalSupportedDataTypesForV3(dataType);
-                });
-
-        if (!matches.isEmpty()) {
-          throw DeltaErrors.icebergCompatUnsupportedTypeColumns(
-              INSTANCE.compatFeatureName(),
-              matches.stream().map(tuple -> tuple._2.getDataType()).collect(toList()));
-        }
-      };
-
   @Override
   String compatFeatureName() {
     return "icebergCompatV3";
@@ -115,7 +81,7 @@ public class IcebergCompatV3MetadataValidatorAndUpdater
 
   @Override
   List<IcebergCompatRequiredTablePropertyEnforcer> requiredDeltaTableProperties() {
-    return Stream.of(ICEBERG_COMPAT_V3_CM_REQUIREMENT, ROW_TRACKING_ENABLED).collect(toList());
+    return Stream.of(COLUMN_MAPPING_REQUIREMENT, ROW_TRACKING_ENABLED).collect(toList());
   }
 
   @Override
@@ -127,9 +93,8 @@ public class IcebergCompatV3MetadataValidatorAndUpdater
   @Override
   List<IcebergCompatCheck> icebergCompatChecks() {
     return Stream.of(
-            ICEBERG_COMPAT_V3_CHECK_HAS_SUPPORTED_TYPES,
-            CHECK_NO_COMPAT_V1_ENABLED,
-            CHECK_NO_COMPAT_V2_ENABLED,
+            V3_CHECK_HAS_SUPPORTED_TYPES,
+            CHECK_ONLY_ICEBERG_COMPAT_V3_ENABLED,
             CHECK_HAS_ALLOWED_PARTITION_TYPES,
             CHECK_HAS_NO_PARTITION_EVOLUTION,
             CHECK_HAS_SUPPORTED_TYPE_WIDENING)
