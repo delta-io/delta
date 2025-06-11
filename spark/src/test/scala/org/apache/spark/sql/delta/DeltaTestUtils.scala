@@ -568,34 +568,25 @@ trait DeltaDMLTestUtils
 
   import testImplicits._
 
-  protected var tempDir: File = _
-
   protected var deltaLog: DeltaLog = _
 
-  protected def tempPath: String = tempDir.getCanonicalPath
-
-  override protected def beforeEach(): Unit = {
-    super.beforeEach()
-    // Using a space in path to provide coverage for special characters.
-    tempDir = Utils.createTempDir(namePrefix = "spark test")
-    deltaLog = DeltaLog.forTable(spark, new Path(tempPath))
-  }
-
-  override protected def afterEach(): Unit = {
-    try {
-      Utils.deleteRecursively(tempDir)
-      DeltaLog.clearCache()
-    } finally {
-      super.afterEach()
-    }
-  }
+  protected def tableSQLIdentifier: String
 
   protected def append(df: DataFrame, partitionBy: Seq[String] = Nil): Unit = {
+    import DeltaTestUtils.TableIdentifierOrPath
+
     val dfw = df.write.format("delta").mode("append")
     if (partitionBy.nonEmpty) {
       dfw.partitionBy(partitionBy: _*)
     }
-    dfw.save(tempPath)
+    getTableIdentifierOrPath(tableSQLIdentifier) match {
+      case TableIdentifierOrPath.Identifier(id, _) => dfw.saveAsTable(id.toString)
+      // A cleaner way to write this is to just use `saveAsTable` where the
+      // table name is delta.`path`. However, it will throw an error when
+      // we use "append" mode and the table does not exist, so we use `save`
+      // here instead.
+      case TableIdentifierOrPath.Path(path, _) => dfw.save(path)
+    }
   }
 
   protected def withKeyValueData(
@@ -612,7 +603,7 @@ trait DeltaDMLTestUtils
       if (isKeyPartitioned) Seq(targetKeyValueNames._1) else Nil)
     withTempView("source") {
       source.toDF(sourceKeyValueNames._1, sourceKeyValueNames._2).createOrReplaceTempView("source")
-      thunk("source", s"delta.`$tempPath`")
+      thunk("source", tableSQLIdentifier)
     }
   }
 
@@ -632,12 +623,6 @@ trait DeltaDMLTestUtils
         .json(data.toDS)
     }
   }
-
-  protected def readDeltaTable(path: String): DataFrame = {
-    spark.read.format("delta").load(path)
-  }
-
-  protected def getDeltaFileStmt(path: String): String = s"SELECT * FROM delta.`$path`"
 
   /**
    * Finds the latest operation of the given type that ran on the test table and returns the
@@ -664,4 +649,36 @@ trait DeltaDMLTestUtils
       .drop(CDCReader.CDC_COMMIT_TIMESTAMP)
       .drop(CDCReader.CDC_COMMIT_VERSION)
   }
+}
+
+trait DeltaDMLByPathTestUtils extends DeltaDMLTestUtils {
+  self: SharedSparkSession =>
+
+  protected var tempDir: File = _
+
+  protected def tempPath: String = tempDir.getCanonicalPath
+
+  override protected def beforeEach(): Unit = {
+    super.beforeEach()
+    // Using a space in path to provide coverage for special characters.
+    tempDir = Utils.createTempDir(namePrefix = "spark test")
+    deltaLog = DeltaLog.forTable(spark, tempPath)
+  }
+
+  override protected def afterEach(): Unit = {
+    try {
+      Utils.deleteRecursively(tempDir)
+      DeltaLog.clearCache()
+    } finally {
+      super.afterEach()
+    }
+  }
+
+  override protected def tableSQLIdentifier: String = s"delta.`$tempPath`"
+
+  protected def readDeltaTable(path: String): DataFrame = {
+    spark.read.format("delta").load(path)
+  }
+
+  protected def getDeltaFileStmt(path: String): String = s"SELECT * FROM delta.`$path`"
 }

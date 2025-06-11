@@ -35,7 +35,9 @@ import org.apache.spark.sql.types._
 /**
  * Test mixin that enables type widening by default for all tests in the suite.
  */
-trait TypeWideningTestMixin extends DeltaSQLCommandTest with DeltaDMLTestUtils { self: QueryTest =>
+trait TypeWideningTestMixin
+  extends DeltaSQLCommandTest
+  with DeltaDMLByPathTestUtils { self: QueryTest =>
 
   import testImplicits._
 
