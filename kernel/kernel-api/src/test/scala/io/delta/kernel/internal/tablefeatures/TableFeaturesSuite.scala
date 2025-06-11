@@ -897,7 +897,7 @@ class TableFeaturesSuite extends AnyFunSuite {
       testMetadata(tblProps = Map("delta.enableIcebergWriterCompatV3" -> "true")),
       new Protocol(1, 2),
       new Protocol(
-        3,
+        2,
         7,
         set(),
         set(
@@ -905,8 +905,15 @@ class TableFeaturesSuite extends AnyFunSuite {
           "appendOnly",
           "invariants",
           "icebergCompatV3",
-          "icebergWriterCompatV3")),
-      set("icebergCompatV3", "columnMapping", "icebergWriterCompatV3")),
+          "icebergWriterCompatV3",
+          "domainMetadata",
+          "rowTracking")),
+      set(
+        "icebergCompatV3",
+        "columnMapping",
+        "icebergWriterCompatV3",
+        "domainMetadata",
+        "rowTracking")),
     (
       testMetadata(tblProps = Map(
         "delta.enableIcebergWriterCompatV3" -> "true",
@@ -921,12 +928,38 @@ class TableFeaturesSuite extends AnyFunSuite {
           "appendOnly",
           "deletionVectors",
           "invariants",
-          "icebergCompatV2",
+          "icebergCompatV3",
           "icebergWriterCompatV3",
           "checkConstraints",
           "generatedColumns",
-          "changeDataFeed")),
-      set("icebergCompatV2", "icebergWriterCompatV3", "deletionVectors")),
+          "changeDataFeed",
+          "domainMetadata",
+          "rowTracking")),
+      set(
+        "icebergCompatV3",
+        "icebergWriterCompatV3",
+        "deletionVectors",
+        "domainMetadata",
+        "rowTracking")),
+    (
+      testMetadata(tblProps = Map("delta.enableIcebergWriterCompatV3" -> "true")),
+      new Protocol(1, 1), // Minimal starting protocol with no features
+      new Protocol(
+        2,
+        7,
+        set(),
+        set(
+          "columnMapping",
+          "icebergCompatV3", // Added as dependency
+          "icebergWriterCompatV3",
+          "domainMetadata",
+          "rowTracking")),
+      set(
+        "icebergCompatV3",
+        "columnMapping",
+        "icebergWriterCompatV3",
+        "domainMetadata",
+        "rowTracking")),
     (
       testMetadata(tblProps = Map(
         "delta.enableIcebergWriterCompatV1" -> "true",
