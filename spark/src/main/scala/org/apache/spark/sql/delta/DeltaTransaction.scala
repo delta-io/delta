@@ -21,6 +21,7 @@ import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.DeltaOperations.Operation
 import org.apache.spark.sql.delta.actions.{AddFile, CommitInfo, Metadata, Protocol}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -63,15 +64,6 @@ trait DeltaTransaction extends DeltaLogging {
     DeltaConfigs.ISOLATION_LEVEL.fromMetaData(metadata)
   }
 
-  /** Whether the txn should trigger a checkpoint after the commit */
-  private[delta] var needsCheckpoint = false
-
-  /** The set of distinct partitions that contain added files by current transaction. */
-  protected[delta] var partitionsAddedToOpt: Option[mutable.HashSet[Map[String, String]]] = None
-
-  /** True if this transaction is a blind append. This is only valid after commit. */
-  protected[delta] var isBlindAppend: Boolean = false
-
   /**
    * Return the user-defined metadata for the operation.
    */
@@ -86,13 +78,74 @@ trait DeltaTransaction extends DeltaLogging {
   /** The current spark session */
   protected def spark: SparkSession = SparkSession.active
 
+  private[delta] lazy val readSnapshotTableCommitCoordinatorClientOpt:
+      Option[TableCommitCoordinatorClient] = {
+    if (snapshot.isCatalogOwned) {
+      // Catalog owned table's commit coordinator is always determined by the catalog.
+      CatalogOwnedTableUtils.populateTableCommitCoordinatorFromCatalog(
+        spark, catalogTable, snapshot)
+    } else {
+      // The commit-coordinator of a table shouldn't change. If it is changed by a concurrent
+      // commit, then it will be detected as a conflict and the transaction will anyway fail.
+      snapshot.getTableCommitCoordinatorForWrites
+    }
+  }
+
+  def createCoordinatedCommitsStats(newProtocol: Option[Protocol]) : CoordinatedCommitsStats = {
+    val (coordinatedCommitsType, metadataToUse) =
+      readSnapshotTableCommitCoordinatorClientOpt match {
+        // TODO: Capture the CO -> FS downgrade case when we start
+        //       supporting downgrade for CO.
+        case Some(_) if snapshot.isCatalogOwned =>                             // CO commit
+          (CoordinatedCommitType.CO_COMMIT, snapshot.metadata)
+        case Some(_) if metadata.coordinatedCommitsCoordinatorName.isEmpty =>  // CC -> FS
+          (CoordinatedCommitType.CC_TO_FS_DOWNGRADE_COMMIT, snapshot.metadata)
+        // Only the 0th commit to a table can be a FS -> CO upgrade for now.
+        // Upgrading an existing FS table to CO through ALTER TABLE is not supported yet.
+        case None if newProtocol.exists(_.readerAndWriterFeatureNames
+            .contains(CatalogOwnedTableFeature.name)) =>                       // FS -> CO
+          (CoordinatedCommitType.FS_TO_CO_UPGRADE_COMMIT, metadata)
+        case None if metadata.coordinatedCommitsCoordinatorName.isDefined =>   // FS -> CC
+          (CoordinatedCommitType.FS_TO_CC_UPGRADE_COMMIT, metadata)
+        case Some(_) =>                                                        // CC commit
+          (CoordinatedCommitType.CC_COMMIT, snapshot.metadata)
+        case None =>                                                           // FS commit
+          (CoordinatedCommitType.FS_COMMIT, snapshot.metadata)
+        // Errors out in rest of the cases.
+        case _ =>
+          throw new IllegalStateException(
+            "Unexpected state found when trying " +
+            s"to generate CoordinatedCommitsStats for table ${deltaLog.logPath}. " +
+            s"$readSnapshotTableCommitCoordinatorClientOpt, " +
+            s"$metadata, $snapshot, $catalogTable")
+      }
+    CoordinatedCommitsStats(
+      coordinatedCommitsType = coordinatedCommitsType.toString,
+      commitCoordinatorName = if (Set(CoordinatedCommitType.CO_COMMIT,
+        CoordinatedCommitType.FS_TO_CO_UPGRADE_COMMIT).contains(coordinatedCommitsType)) {
+        // The catalog for FS -> CO upgrade commit would be
+        // "CATALOG_EMPTY" because `catalogTable` is not available
+        // for the 0th FS commit.
+        catalogTable.flatMap { ct =>
+          CatalogOwnedTableUtils.getCatalogName(
+            spark,
+            identifier = ct.identifier)
+        }.getOrElse("CATALOG_MISSING")
+      } else {
+        metadataToUse.coordinatedCommitsCoordinatorName.getOrElse("NONE")
+      },
+      // For Catalog-Owned table, the coordinator conf for UC-CC is [[Map.empty]]
+      // so we don't distinguish between CO/CC here.
+      commitCoordinatorConf = metadataToUse.coordinatedCommitsCoordinatorConf)
+  }
+
   /**
-   * Sets needsCheckpoint if we should checkpoint the version that has just been committed.
+   * Determines if we should checkpoint the version that has just been committed.
    */
-  protected def setNeedsCheckpoint(
-      committedVersion: Long, postCommitSnapshot: Snapshot): Unit = {
+  protected def isCheckpointNeeded(
+      committedVersion: Long, postCommitSnapshot: Snapshot): Boolean = {
     def checkpointInterval = deltaLog.checkpointInterval(postCommitSnapshot.metadata)
-    needsCheckpoint = committedVersion != 0 && committedVersion % checkpointInterval == 0
+    committedVersion != 0 && committedVersion % checkpointInterval == 0
   }
 
   /** Runs a post-commit hook, handling any exceptions that occur. */
