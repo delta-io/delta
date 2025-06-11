@@ -165,14 +165,15 @@ public interface Transaction {
     // - generating the default value columns
     // - generating the generated columns
 
-    boolean isIcebergCompatV2Enabled = isIcebergCompatV2Enabled(transactionState);
+    boolean isIcebergCompatEnabled =
+        isIcebergCompatV2Enabled(transactionState) || isIcebergCompatV3Enabled(transactionState);
     blockIfColumnMappingEnabled(transactionState);
 
     // TODO: set the correct schema once writing into column mapping enabled table is supported.
     String tablePath = getTablePath(transactionState);
     return dataIter.map(
         filteredBatch -> {
-          if (isIcebergCompatV2Enabled) {
+          if (isIcebergCompatEnabled) {
             // don't remove the partition columns for iceberg compat v2 enabled tables
             return filteredBatch;
           }
