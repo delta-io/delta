@@ -27,14 +27,15 @@ import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.tablefeatures.TableFeature;
 import io.delta.kernel.internal.types.TypeWideningChecker;
+import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.SchemaIterable;
 import io.delta.kernel.internal.util.SchemaUtils;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.*;
-import java.util.Collections;
-import java.util.List;
-import java.util.Optional;
+import java.util.*;
 import java.util.function.Predicate;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * Contains interfaces and common utility classes for defining the iceberg conversion compatibility
@@ -94,7 +95,7 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
    * is not set, we will set it to a default value. It will also update the metadata to make it
    * compatible with Iceberg compat version targeted.
    */
-  static class IcebergCompatRequiredTablePropertyEnforcer<T> {
+  protected static class IcebergCompatRequiredTablePropertyEnforcer<T> {
     public final TableConfig<T> property;
     public final Predicate<T> validator;
     public final String autoSetValue;
@@ -162,6 +163,17 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
     }
   }
 
+  /////////////////////////////////////////////////////////////////////////////////
+  /// Implementation of {@link IcebergCompatRequiredTablePropertyEnforcer}      ///
+  /////////////////////////////////////////////////////////////////////////////////
+  protected static final IcebergCompatRequiredTablePropertyEnforcer COLUMN_MAPPING_REQUIREMENT =
+      new IcebergCompatRequiredTablePropertyEnforcer<>(
+          TableConfig.COLUMN_MAPPING_MODE,
+          (value) ->
+              ColumnMapping.ColumnMappingMode.NAME == value
+                  || ColumnMapping.ColumnMappingMode.ID == value,
+          ColumnMapping.ColumnMappingMode.NAME.value);
+
   /**
    * Defines checks for compatibility with the targeted iceberg features (icebergCompatV1 or
    * icebergCompatV2 etc.)
@@ -173,64 +185,79 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
   ///////////////////////////////////////////////////////////
   /// Implementation of {@link IcebergCompatCheck}        ///
   ///////////////////////////////////////////////////////////
-  protected static final IcebergCompatCheck CHECK_NO_COMPAT_V1_ENABLED =
-      (inputContext) -> {
-        if (Boolean.valueOf(
-            inputContext
-                .newMetadata
-                .getConfiguration()
-                .getOrDefault("delta.enableIcebergCompatV1", "false"))) {
+  protected static IcebergCompatCheck disallowOtherCompatVersions(List<String> incompatibleProps) {
+    return (inputContext) -> {
+      for (String prop : incompatibleProps) {
+        if (Boolean.parseBoolean(
+            inputContext.newMetadata.getConfiguration().getOrDefault(prop, "false"))) {
           throw DeltaErrors.icebergCompatIncompatibleVersionEnabled(
-              inputContext.compatFeatureName, "delta.enableIcebergCompatV1");
+              inputContext.compatFeatureName, prop);
         }
-      };
+      }
+    };
+  }
 
-  protected static final IcebergCompatCheck CHECK_NO_COMPAT_V2_ENABLED =
-      (inputContext) -> {
-        if (Boolean.valueOf(
-            inputContext
-                .newMetadata
-                .getConfiguration()
-                .getOrDefault("delta.enableIcebergCompatV2", "false"))) {
-          throw DeltaErrors.icebergCompatIncompatibleVersionEnabled(
-              inputContext.compatFeatureName, "delta.enableIcebergCompatV2");
-        }
-      };
+  protected static final IcebergCompatCheck CHECK_ONLY_ICEBERG_COMPAT_V2_ENABLED =
+      disallowOtherCompatVersions(
+          Arrays.asList("delta.enableIcebergCompatV1", "delta.enableIcebergCompatV3"));
+
+  protected static final IcebergCompatCheck CHECK_ONLY_ICEBERG_COMPAT_V3_ENABLED =
+      disallowOtherCompatVersions(
+          Arrays.asList("delta.enableIcebergCompatV1", "delta.enableIcebergCompatV2"));
+
+  protected static IcebergCompatCheck hasOnlySupportedTypes(
+      Set<Class<? extends DataType>> supportedTypes) {
+    return (inputContext) -> {
+      List<Tuple2<List<String>, StructField>> matches =
+          SchemaUtils.filterRecursively(
+              inputContext.newMetadata.getSchema(),
+              /* recurseIntoMapAndArrayTypes= */ true,
+              /* stopOnFirstMatch = */ false,
+              field -> {
+                DataType dataType = field.getDataType();
+                for (Class<? extends DataType> clazz : supportedTypes) {
+                  if (clazz.isInstance(dataType)) return false;
+                }
+                return true;
+              });
+
+      if (!matches.isEmpty()) {
+        throw DeltaErrors.icebergCompatUnsupportedTypeColumns(
+            inputContext.compatFeatureName,
+            matches.stream().map(tuple -> tuple._2.getDataType()).collect(toList()));
+      }
+    };
+  }
+
+  private static final Set<Class<? extends DataType>> V2_SUPPORTED_TYPES =
+      new HashSet<>(
+          Arrays.asList(
+              ByteType.class,
+              ShortType.class,
+              IntegerType.class,
+              LongType.class,
+              FloatType.class,
+              DoubleType.class,
+              DecimalType.class,
+              StringType.class,
+              BinaryType.class,
+              BooleanType.class,
+              DateType.class,
+              TimestampType.class,
+              TimestampNTZType.class,
+              ArrayType.class,
+              MapType.class,
+              StructType.class));
 
   protected static final IcebergCompatCheck V2_CHECK_HAS_SUPPORTED_TYPES =
-      (inputContext) -> {
-        List<Tuple2<List<String>, StructField>> matches =
-            SchemaUtils.filterRecursively(
-                inputContext.newMetadata.getSchema(),
-                /* recurseIntoMapAndArrayTypes= */ true,
-                /* stopOnFirstMatch = */ false,
-                field -> {
-                  DataType dataType = field.getDataType();
-                  return !(dataType instanceof ByteType
-                      || dataType instanceof ShortType
-                      || dataType instanceof IntegerType
-                      || dataType instanceof LongType
-                      || dataType instanceof FloatType
-                      || dataType instanceof DoubleType
-                      || dataType instanceof DecimalType
-                      || dataType instanceof StringType
-                      || dataType instanceof BinaryType
-                      || dataType instanceof BooleanType
-                      || dataType instanceof DateType
-                      || dataType instanceof TimestampType
-                      || dataType instanceof TimestampNTZType
-                      || dataType instanceof ArrayType
-                      || dataType instanceof MapType
-                      || dataType instanceof StructType);
-                });
+      hasOnlySupportedTypes(V2_SUPPORTED_TYPES);
 
-        if (!matches.isEmpty()) {
-          throw DeltaErrors.icebergCompatUnsupportedTypeColumns(
-              inputContext.compatFeatureName,
-              matches.stream().map(tuple -> tuple._2.getDataType()).collect(toList()));
-        }
-      };
+  protected static final IcebergCompatCheck V3_CHECK_HAS_SUPPORTED_TYPES =
+      hasOnlySupportedTypes(
+          Stream.concat(V2_SUPPORTED_TYPES.stream(), Stream.of(VariantType.class))
+              .collect(Collectors.toSet()));
 
+  // These are the common supported partition types for both Iceberg compat V2 and V3
   protected static final IcebergCompatCheck CHECK_HAS_ALLOWED_PARTITION_TYPES =
       (inputContext) ->
           inputContext
@@ -271,29 +298,6 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
         // TODO: Kernel doesn't support replace table yet. When it is supported, extend
         // this to allow checking the partition columns aren't changed
       };
-
-  protected static boolean isSupportedDataTypesForV2(DataType dataType) {
-    return dataType instanceof ByteType
-        || dataType instanceof ShortType
-        || dataType instanceof IntegerType
-        || dataType instanceof LongType
-        || dataType instanceof FloatType
-        || dataType instanceof DoubleType
-        || dataType instanceof DecimalType
-        || dataType instanceof StringType
-        || dataType instanceof BinaryType
-        || dataType instanceof BooleanType
-        || dataType instanceof DateType
-        || dataType instanceof TimestampType
-        || dataType instanceof TimestampNTZType
-        || dataType instanceof ArrayType
-        || dataType instanceof MapType
-        || dataType instanceof StructType;
-  }
-
-  protected static boolean isAdditionalSupportedDataTypesForV3(DataType dataType) {
-    return dataType instanceof VariantType;
-  }
 
   protected static final IcebergCompatCheck CHECK_HAS_NO_DELETION_VECTORS =
       (inputContext) -> {
