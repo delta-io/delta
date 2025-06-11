@@ -29,7 +29,7 @@ import io.delta.kernel.types.{DataType, DateType, FieldMetadata, IntegerType, Lo
 
 /** This suite tests reading or writing into Delta table that have `icebergCompatV2` enabled. */
 class DeltaIcebergCompatV2Suite extends DeltaTableWriteSuiteBase with ColumnMappingSuiteBase {
-  import io.delta.kernel.internal.icebergcompat.IcebergCompatV2MetadataValidatorAndUpdaterSuiteBase._
+  import io.delta.kernel.internal.icebergcompat.IcebergCompatMetadataValidatorAndUpdaterSuiteBase._
 
   (SIMPLE_TYPES ++ COMPLEX_TYPES).foreach {
     dataType: DataType =>
