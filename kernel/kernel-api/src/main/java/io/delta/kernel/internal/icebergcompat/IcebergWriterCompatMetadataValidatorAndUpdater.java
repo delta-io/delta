@@ -67,7 +67,8 @@ abstract class IcebergWriterCompatMetadataValidatorAndUpdater
       Protocol newProtocol,
       IcebergWriterCompatMetadataValidatorAndUpdater instance) {
     return instance.validateAndUpdateMetadata(
-        new IcebergCompatInputContext(instance.compatFeatureName(), isCreatingNewTable, newMetadata, newProtocol));
+        new IcebergCompatInputContext(
+            instance.compatFeatureName(), isCreatingNewTable, newMetadata, newProtocol));
   }
 
   /**
