@@ -100,8 +100,9 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
    */
   public static Optional<Metadata> validateAndUpdateIcebergWriterCompatV1Metadata(
       boolean isCreatingNewTable, Metadata newMetadata, Protocol newProtocol) {
-    return validateAndUpdateIcebergWriterCompatMetadata(
-        isCreatingNewTable, newMetadata, newProtocol, INSTANCE);
+    return INSTANCE.validateAndUpdateMetadata(
+        new IcebergCompatInputContext(
+            INSTANCE.compatFeatureName(), isCreatingNewTable, newMetadata, newProtocol));
   }
 
   /// //////////////////////////////////////////////////////////////////////////////
@@ -151,10 +152,6 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
               TYPE_WIDENING_RW_FEATURE,
               TYPE_WIDENING_RW_PREVIEW_FEATURE)
           .collect(toSet());
-
-  /** Checks that all features supported in the protocol are in {@link #ALLOWED_TABLE_FEATURES} */
-  private static final IcebergCompatCheck UNSUPPORTED_FEATURES_CHECK =
-      createUnsupportedFeaturesCheck(ALLOWED_TABLE_FEATURES, INSTANCE.compatFeatureName());
 
   /**
    * Checks that in the schema column mapping is set up such that the physicalName is equal to
@@ -211,16 +208,21 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
   }
 
   @Override
+  protected Set<TableFeature> getAllowedTableFeatures() {
+    return ALLOWED_TABLE_FEATURES;
+  }
+
+  @Override
   List<IcebergCompatCheck> icebergCompatChecks() {
     return Stream.of(
-            createUnsupportedFeaturesCheck(ALLOWED_TABLE_FEATURES, compatFeatureName()),
-            createUnsupportedTypesCheck(compatFeatureName()),
+            createUnsupportedFeaturesCheck(this), // Pass 'this' instance
+            UNSUPPORTED_TYPES_CHECK,
             PHYSICAL_NAMES_MATCH_FIELD_IDS_CHECK,
-            createInvariantsInactiveCheck(compatFeatureName()),
-            createChangeDataFeedInactiveCheck(compatFeatureName()),
-            createCheckConstraintsInactiveCheck(compatFeatureName()),
-            createIdentityColumnsInactiveCheck(compatFeatureName()),
-            createGeneratedColumnsInactiveCheck(compatFeatureName()))
+            INVARIANTS_INACTIVE_CHECK,
+            CHANGE_DATA_FEED_INACTIVE_CHECK,
+            CHECK_CONSTRAINTS_INACTIVE_CHECK,
+            IDENTITY_COLUMNS_INACTIVE_CHECK,
+            GENERATED_COLUMNS_INACTIVE_CHECK)
         .collect(toList());
   }
 }

@@ -21,8 +21,6 @@ import static java.util.stream.Collectors.toList;
 
 import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.TableConfig;
-import io.delta.kernel.internal.actions.Metadata;
-import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.tablefeatures.TableFeature;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.ColumnMapping;
@@ -61,16 +59,6 @@ abstract class IcebergWriterCompatMetadataValidatorAndUpdater
     }
   }
 
-  protected static Optional<Metadata> validateAndUpdateIcebergWriterCompatMetadata(
-      boolean isCreatingNewTable,
-      Metadata newMetadata,
-      Protocol newProtocol,
-      IcebergWriterCompatMetadataValidatorAndUpdater instance) {
-    return instance.validateAndUpdateMetadata(
-        new IcebergCompatInputContext(
-            instance.compatFeatureName(), isCreatingNewTable, newMetadata, newProtocol));
-  }
-
   /**
    * Common property enforcer for Column Mapping ID mode requirement. This is identical across all
    * Writer Compat versions.
@@ -87,42 +75,42 @@ abstract class IcebergWriterCompatMetadataValidatorAndUpdater
                   inputContext.newMetadata, inputContext.isCreatingNewTable));
 
   protected static IcebergCompatCheck createUnsupportedFeaturesCheck(
-      Set<TableFeature> allowedTableFeatures, String compatFeatureName) {
+      IcebergWriterCompatMetadataValidatorAndUpdater instance) {
     return (inputContext) -> {
+      Set<TableFeature> allowedTableFeatures = instance.getAllowedTableFeatures();
       if (!allowedTableFeatures.containsAll(
           inputContext.newProtocol.getImplicitlyAndExplicitlySupportedFeatures())) {
         Set<TableFeature> incompatibleFeatures =
             inputContext.newProtocol.getImplicitlyAndExplicitlySupportedFeatures();
         incompatibleFeatures.removeAll(allowedTableFeatures);
         throw DeltaErrors.icebergCompatIncompatibleTableFeatures(
-            compatFeatureName, incompatibleFeatures);
+            inputContext.compatFeatureName, incompatibleFeatures);
       }
     };
   }
 
   /**
    * Checks that there are no unsupported types in the schema. Data types {@link ByteType} and
-   * {@link ShortType} are unsupported for IcebergWriterCompatV1 tables.
+   * {@link ShortType} are unsupported for IcebergWriterCompatV1 and V3 tables.
    */
-  protected static IcebergCompatCheck createUnsupportedTypesCheck(String compatFeatureName) {
-    return (inputContext) -> {
-      List<Tuple2<List<String>, StructField>> matches =
-          SchemaUtils.filterRecursively(
-              inputContext.newMetadata.getSchema(),
-              /* recurseIntoMapAndArrayTypes= */ true,
-              /* stopOnFirstMatch = */ false,
-              field -> {
-                DataType dataType = field.getDataType();
-                return (dataType instanceof ByteType || dataType instanceof ShortType);
-              });
+  protected static final IcebergCompatCheck UNSUPPORTED_TYPES_CHECK =
+      (inputContext) -> {
+        List<Tuple2<List<String>, StructField>> matches =
+            SchemaUtils.filterRecursively(
+                inputContext.newMetadata.getSchema(),
+                /* recurseIntoMapAndArrayTypes= */ true,
+                /* stopOnFirstMatch = */ false,
+                field -> {
+                  DataType dataType = field.getDataType();
+                  return (dataType instanceof ByteType || dataType instanceof ShortType);
+                });
 
-      if (!matches.isEmpty()) {
-        throw DeltaErrors.icebergCompatUnsupportedTypeColumns(
-            compatFeatureName,
-            matches.stream().map(tuple -> tuple._2.getDataType()).collect(toList()));
-      }
-    };
-  }
+        if (!matches.isEmpty()) {
+          throw DeltaErrors.icebergCompatUnsupportedTypeColumns(
+              inputContext.compatFeatureName,
+              matches.stream().map(tuple -> tuple._2.getDataType()).collect(toList()));
+        }
+      };
 
   /**
    * Checks that in the schema column mapping is set up such that the physicalName is equal to
@@ -160,85 +148,83 @@ abstract class IcebergWriterCompatMetadataValidatorAndUpdater
    * Checks that the table feature `invariants` is not active in the table, meaning there are no
    * invariants stored in the table schema.
    */
-  protected static IcebergCompatCheck createInvariantsInactiveCheck(String compatFeatureName) {
-    return (inputContext) -> {
-      // Note - since Kernel currently does not support the table feature `invariants` we will not
-      // hit this check for E2E writes since we will fail early due to unsupported write
-      // If Kernel starts supporting the feature `invariants` this check will become applicable
-      if (TableFeatures.hasInvariants(inputContext.newMetadata.getSchema())) {
-        throw DeltaErrors.icebergCompatIncompatibleTableFeatures(
-            compatFeatureName, Collections.singleton(INVARIANTS_W_FEATURE));
-      }
-    };
-  }
+  protected static final IcebergCompatCheck INVARIANTS_INACTIVE_CHECK =
+      (inputContext) -> {
+        // Note - since Kernel currently does not support the table feature `invariants` we will not
+        // hit this check for E2E writes since we will fail early due to unsupported write
+        // If Kernel starts supporting the feature `invariants` this check will become applicable
+        if (TableFeatures.hasInvariants(inputContext.newMetadata.getSchema())) {
+          throw DeltaErrors.icebergCompatIncompatibleTableFeatures(
+              inputContext.compatFeatureName, Collections.singleton(INVARIANTS_W_FEATURE));
+        }
+      };
 
   /**
    * Checks that the table feature `changeDataFeed` is not active in the table, meaning the table
    * property `delta.enableChangeDataFeed` is not enabled.
    */
-  protected static IcebergCompatCheck createChangeDataFeedInactiveCheck(String compatFeatureName) {
-    // Note - since Kernel currently does not support the table feature `changeDataFeed` we will
-    // not hit this check for E2E writes since we will fail early due to unsupported write
-    // If Kernel starts supporting the feature `changeDataFeed` this check will become applicable
-    return (inputContext) -> {
-      if (TableConfig.CHANGE_DATA_FEED_ENABLED.fromMetadata(inputContext.newMetadata)) {
-        throw DeltaErrors.icebergCompatIncompatibleTableFeatures(
-            compatFeatureName, Collections.singleton(CHANGE_DATA_FEED_W_FEATURE));
-      }
-    };
-  }
+  protected static final IcebergCompatCheck CHANGE_DATA_FEED_INACTIVE_CHECK =
+      (inputContext) -> {
+        // Note - since Kernel currently does not support the table feature `changeDataFeed` we will
+        // not hit this check for E2E writes since we will fail early due to unsupported write
+        // If Kernel starts supporting the feature `changeDataFeed` this check will become
+        // applicable
+        if (TableConfig.CHANGE_DATA_FEED_ENABLED.fromMetadata(inputContext.newMetadata)) {
+          throw DeltaErrors.icebergCompatIncompatibleTableFeatures(
+              inputContext.compatFeatureName, Collections.singleton(CHANGE_DATA_FEED_W_FEATURE));
+        }
+      };
 
   /**
    * Checks that the table feature `checkConstraints` is not active in the table, meaning the table
    * has no check constraints stored in its metadata configuration.
    */
-  protected static IcebergCompatCheck createCheckConstraintsInactiveCheck(
-      String compatFeatureName) {
-    // Note - since Kernel currently does not support the table feature `checkConstraints` we will
-    // not hit this check for E2E writes since we will fail early due to unsupported write
-    // If Kernel starts supporting the feature `checkConstraints` this check will become
-    // applicable
-    return (inputContext) -> {
-      if (TableFeatures.hasCheckConstraints(inputContext.newMetadata)) {
-        throw DeltaErrors.icebergCompatIncompatibleTableFeatures(
-            compatFeatureName, Collections.singleton(CONSTRAINTS_W_FEATURE));
-      }
-    };
-  }
+  protected static final IcebergCompatCheck CHECK_CONSTRAINTS_INACTIVE_CHECK =
+      (inputContext) -> {
+        // Note - since Kernel currently does not support the table feature `checkConstraints` we
+        // will
+        // not hit this check for E2E writes since we will fail early due to unsupported write
+        // If Kernel starts supporting the feature `checkConstraints` this check will become
+        // applicable
+        if (TableFeatures.hasCheckConstraints(inputContext.newMetadata)) {
+          throw DeltaErrors.icebergCompatIncompatibleTableFeatures(
+              inputContext.compatFeatureName, Collections.singleton(CONSTRAINTS_W_FEATURE));
+        }
+      };
 
   /**
    * Checks that the table feature `identityColumns` is not active in the table, meaning no identity
    * columns exist in the table schema.
    */
-  protected static IcebergCompatCheck createIdentityColumnsInactiveCheck(String compatFeatureName) {
-    // Note - since Kernel currently does not support the table feature `identityColumns` we will
-    // not hit this check for E2E writes since we will fail early due to unsupported write
-    // If Kernel starts supporting the feature `identityColumns` this check will become applicable
-    return (inputContext) -> {
-      if (TableFeatures.hasIdentityColumns(inputContext.newMetadata)) {
-        throw DeltaErrors.icebergCompatIncompatibleTableFeatures(
-            compatFeatureName, Collections.singleton(IDENTITY_COLUMNS_W_FEATURE));
-      }
-    };
-  }
+  protected static final IcebergCompatCheck IDENTITY_COLUMNS_INACTIVE_CHECK =
+      (inputContext) -> {
+        // Note - since Kernel currently does not support the table feature `identityColumns` we
+        // will
+        // not hit this check for E2E writes since we will fail early due to unsupported write
+        // If Kernel starts supporting the feature `identityColumns` this check will become
+        // applicable
+        if (TableFeatures.hasIdentityColumns(inputContext.newMetadata)) {
+          throw DeltaErrors.icebergCompatIncompatibleTableFeatures(
+              inputContext.compatFeatureName, Collections.singleton(IDENTITY_COLUMNS_W_FEATURE));
+        }
+      };
 
   /**
    * Checks that the table feature `generatedColumns` is not active in the table, meaning no
    * generated columns exist in the table schema.
    */
-  protected static IcebergCompatCheck createGeneratedColumnsInactiveCheck(
-      String compatFeatureName) {
-    // Note - since Kernel currently does not support the table feature `generatedColumns` we will
-    // not hit this check for E2E writes since we will fail early due to unsupported write
-    // If Kernel starts supporting the feature `generatedColumns` this check will become
-    // applicable
-    return (inputContext) -> {
-      if (TableFeatures.hasGeneratedColumns(inputContext.newMetadata)) {
-        throw DeltaErrors.icebergCompatIncompatibleTableFeatures(
-            compatFeatureName, Collections.singleton(GENERATED_COLUMNS_W_FEATURE));
-      }
-    };
-  }
+  protected static final IcebergCompatCheck GENERATED_COLUMNS_INACTIVE_CHECK =
+      (inputContext) -> {
+        // Note - since Kernel currently does not support the table feature `generatedColumns` we
+        // will
+        // not hit this check for E2E writes since we will fail early due to unsupported write
+        // If Kernel starts supporting the feature `generatedColumns` this check will become
+        // applicable
+        if (TableFeatures.hasGeneratedColumns(inputContext.newMetadata)) {
+          throw DeltaErrors.icebergCompatIncompatibleTableFeatures(
+              inputContext.compatFeatureName, Collections.singleton(GENERATED_COLUMNS_W_FEATURE));
+        }
+      };
 
   @Override
   abstract String compatFeatureName();
@@ -254,4 +240,6 @@ abstract class IcebergWriterCompatMetadataValidatorAndUpdater
 
   @Override
   abstract List<IcebergCompatCheck> icebergCompatChecks();
+
+  abstract Set<TableFeature> getAllowedTableFeatures();
 }
