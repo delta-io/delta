@@ -17,6 +17,8 @@
 package io.delta.kernel.defaults.catalogManaged.client
 
 import java.io.IOException
+import java.net.URI
+import java.nio.file.Paths
 import java.util.concurrent.ConcurrentHashMap
 
 import scala.collection.JavaConverters._
@@ -28,16 +30,24 @@ import io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO
 import io.delta.kernel.internal.actions.{Metadata, Protocol}
 import io.delta.kernel.internal.files.ParsedLogData
 import io.delta.kernel.utils.FileStatus
+
 import org.slf4j.LoggerFactory
 
 trait InMemoryCatalogManagedTestClient extends AbstractCatalogManagedTestClient {
   private val logger = LoggerFactory.getLogger(classOf[InMemoryCatalogManagedTestClient])
 
+  implicit class OptionalOps[T](opt: java.util.Optional[T]) {
+    def toOption: Option[T] = if (opt.isPresent) Some(opt.get) else None
+  }
+
   ///////////////////////
   // In-Memory Catalog //
   ///////////////////////
 
-  case class CommitData(fileStatusOpt: Option[FileStatus])
+  case class CommitData(
+      fileStatusOpt: Option[FileStatus],
+      newProtocolOpt: Option[Protocol] = None,
+      newMetadataOpt: Option[Metadata] = None)
 
   class TableData {
     var maxRatifiedVersion = -1L
@@ -56,6 +66,8 @@ trait InMemoryCatalogManagedTestClient extends AbstractCatalogManagedTestClient 
 
       commits.put(commitVersion, commitData)
       maxRatifiedVersion = commitVersion
+      commitData.newProtocolOpt.foreach { p => latestProtocol = p }
+      commitData.newMetadataOpt.foreach { m => latestMetadata = m }
     }
 
     override def toString: String = {
@@ -95,7 +107,10 @@ trait InMemoryCatalogManagedTestClient extends AbstractCatalogManagedTestClient 
 
     val tableData = tables.computeIfAbsent(payload.getLogPath, _ => new TableData())
     val fileStatus = FileStatus.of(targetPath) // TODO figure out the right way to do this
-    val commitData = CommitData(Some(fileStatus))
+    val commitData = CommitData(
+      Some(fileStatus),
+      payload.getNewProtocolOpt.toOption,
+      payload.getNewMetadataOpt.toOption)
 
     tableData.commit(payload.getCommitVersion, commitData)
 
@@ -131,7 +146,7 @@ trait InMemoryCatalogManagedTestClient extends AbstractCatalogManagedTestClient 
       path: String,
       versionToLoadOpt: Option[Long],
       timestampToLoadOpt: Option[Long] = None,
-      injectProtocolMetadata: Boolean = false): ResolvedTable = {
+      injectProtocolMetadata: Boolean = true): ResolvedTable = {
     val logPath = s"$path/_delta_log"
 
     if (!tables.containsKey(logPath)) {
@@ -146,7 +161,9 @@ trait InMemoryCatalogManagedTestClient extends AbstractCatalogManagedTestClient 
       builder = builder.atVersion(versionToLoadOpt.get)
     }
 
-    // TODO: P & M
+    if (injectProtocolMetadata) {
+      builder = builder.withProtocolAndMetadata(tableData.latestProtocol, tableData.latestMetadata)
+    }
 
     val parsedLogData = tableData
       .commits
@@ -182,17 +199,19 @@ trait InMemoryCatalogManagedTestClient extends AbstractCatalogManagedTestClient 
     }
   }
 
-  private def copyFile(srcPath: String, destPath: String): Unit = {
+  private def copyFile(srcPath: String, dstPath: String): Unit = {
     import java.io.File
 
     import org.apache.commons.io.FileUtils
     try {
-      val srcFile = new File(srcPath)
-      val destFile = new File(destPath)
-      FileUtils.copyFile(srcFile, destFile)
+      val srcFile =
+        if (srcPath.startsWith("file:")) Paths.get(new URI(srcPath)).toFile else new File(srcPath)
+      val dstFile =
+        if (dstPath.startsWith("file:")) Paths.get(new URI(dstPath)).toFile else new File(dstPath)
+      FileUtils.copyFile(srcFile, dstFile)
     } catch {
       case ex: Exception =>
-        throw new IOException(s"Error copying file from $srcPath to $destPath", ex)
+        throw new IOException(s"Error copying file from $srcPath to $dstPath", ex)
     }
   }
 }

@@ -17,10 +17,8 @@
 package io.delta.kernel.defaults.catalogManaged
 
 import io.delta.kernel.defaults.catalogManaged.client.{AbstractCatalogManagedTestClient, InMemoryCatalogManagedTestClient}
-import io.delta.kernel.defaults.catalogManaged.utils.CatalogManagedTestUtils
+import io.delta.kernel.defaults.catalogManaged.utils.{CatalogManagedTestFixtures, CatalogManagedTestUtils}
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.internal.actions.Protocol
-import io.delta.kernel.types.{LongType, StructType}
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -33,13 +31,8 @@ class InMemoryCatalogManagedE2ESuite
 trait AbstractCatalogMangedE2ESuite
     extends AnyFunSuite
     with AbstractCatalogManagedTestClient
+    with CatalogManagedTestFixtures
     with CatalogManagedTestUtils {
-
-  val schema = new StructType().add("part1", LongType.LONG).add("col1", LongType.LONG)
-  val partCols = Seq("part1")
-  val metadata = testMetadata(schema, partCols)
-  val protocol = new Protocol(3, 7)
-  val partitionSize = 10
 
   test("basic read") {
     withTempDir { tempDir =>

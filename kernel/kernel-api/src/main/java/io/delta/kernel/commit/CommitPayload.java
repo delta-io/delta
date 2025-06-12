@@ -18,7 +18,10 @@ package io.delta.kernel.commit;
 
 import io.delta.kernel.annotation.Experimental;
 import io.delta.kernel.data.Row;
+import io.delta.kernel.internal.actions.Metadata;
+import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.utils.CloseableIterator;
+import java.util.Optional;
 
 @Experimental
 public interface CommitPayload {
@@ -27,4 +30,8 @@ public interface CommitPayload {
   long getCommitVersion();
 
   CloseableIterator<Row> getFinalizedActions();
+
+  Optional<Protocol> getNewProtocolOpt();
+
+  Optional<Metadata> getNewMetadataOpt();
 }

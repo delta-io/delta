@@ -18,19 +18,30 @@ package io.delta.kernel.internal.commit;
 
 import io.delta.kernel.commit.CommitPayload;
 import io.delta.kernel.data.Row;
+import io.delta.kernel.internal.actions.Metadata;
+import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.utils.CloseableIterator;
+import java.util.Optional;
 
 public class DefaultCommitPayload implements CommitPayload {
 
   private final String logPath;
   private final long commitVersion;
   private final CloseableIterator<Row> finalizedActions;
+  private final Optional<Protocol> newProtocolOpt;
+  private final Optional<Metadata> newMetadataOpt;
 
   public DefaultCommitPayload(
-      String logPath, long commitVersion, CloseableIterator<Row> finalizedActions) {
+      String logPath,
+      long commitVersion,
+      CloseableIterator<Row> finalizedActions,
+      Optional<Protocol> newProtocolOpt,
+      Optional<Metadata> newMetadataOpt) {
     this.logPath = logPath;
     this.commitVersion = commitVersion;
     this.finalizedActions = finalizedActions;
+    this.newProtocolOpt = newProtocolOpt;
+    this.newMetadataOpt = newMetadataOpt;
   }
 
   @Override
@@ -49,8 +60,23 @@ public class DefaultCommitPayload implements CommitPayload {
   }
 
   @Override
+  public Optional<Protocol> getNewProtocolOpt() {
+    return newProtocolOpt;
+  }
+
+  @Override
+  public Optional<Metadata> getNewMetadataOpt() {
+    return newMetadataOpt;
+  }
+
+  @Override
   public String toString() {
     return String.format(
-        "DefaultCommitPayload{logPath='%s', commitVersion=%d}", logPath, commitVersion);
+        "DefaultCommitPayload{logPath='%s', commitVersion=%d, newProtocolOpt=%s, "
+            + "newMetadataOpt=%s}",
+        logPath,
+        commitVersion,
+        newProtocolOpt.map(Object::toString).orElse("empty"),
+        newMetadataOpt.map(Object::toString).orElse("empty"));
   }
 }

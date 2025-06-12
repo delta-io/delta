@@ -1,9 +1,13 @@
 package io.delta.kernel.defaults.catalogManaged
 
+import java.net.URI
 import java.nio.file.{Files, Paths}
+import java.util.Optional
 
 import io.delta.kernel.catalogmanaged.CatalogManagedUtils
+import io.delta.kernel.commit.CommitPayload
 import io.delta.kernel.defaults.catalogManaged.client.InMemoryCatalogManagedTestClient
+import io.delta.kernel.defaults.catalogManaged.utils.CatalogManagedTestFixtures
 import io.delta.kernel.defaults.utils.TestUtils
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.commit.DefaultCommitPayload
@@ -18,7 +22,11 @@ import org.scalatest.funsuite.AnyFunSuite
  * Kernel itself.
  */
 class InMemoryCatalogManagedTestClientSuite
-    extends AnyFunSuite with InMemoryCatalogManagedTestClient with TestUtils {
+    extends AnyFunSuite
+    with InMemoryCatalogManagedTestClient
+    with CatalogManagedTestFixtures
+    with TestUtils {
+
   override def engine: Engine = defaultEngine
 
   test("forceCommit: (commitType=STAGED) creates staged commit file and adds commit in catalog") {
@@ -27,9 +35,7 @@ class InMemoryCatalogManagedTestClientSuite
       val logPath = s"$path/_delta_log"
       val commitVersion = 0L
 
-      forceCommit(
-        new DefaultCommitPayload(logPath, commitVersion, CloseableIterator.empty()),
-        CommitType.STAGED)
+      forceCommit(emptyCommitPayload(logPath, commitVersion), CommitType.STAGED)
 
       assert(tables.containsKey(logPath))
       val tableData = tables.get(logPath)
@@ -52,9 +58,7 @@ class InMemoryCatalogManagedTestClientSuite
       val logPath = s"$path/_delta_log"
       val commitVersion = 0L
 
-      forceCommit(
-        new DefaultCommitPayload(logPath, commitVersion, CloseableIterator.empty()),
-        CommitType.STAGED)
+      forceCommit(emptyCommitPayload(logPath, commitVersion), CommitType.STAGED)
 
       assert(tables.get(logPath).commits.containsKey(commitVersion))
 
@@ -71,25 +75,37 @@ class InMemoryCatalogManagedTestClientSuite
 
   test("loadTable: correctly parses commits from the catalog into ParsedLogData") {
     withTempDir { dir =>
-      val path = dir.getCanonicalPath
+      val path = dir.toURI.toString.stripSuffix("/")
       val logPath = s"$path/_delta_log"
 
       forceCommit(
-        new DefaultCommitPayload(logPath, 0L, CloseableIterator.empty()),
+        new DefaultCommitPayload(
+          logPath,
+          0L,
+          CloseableIterator.empty(),
+          Optional.of(protocol),
+          Optional.of(metadata)),
         CommitType.STAGED)
 
       publish(logPath, 0L)
 
-      forceCommit(
-        new DefaultCommitPayload(logPath, 1L, CloseableIterator.empty()),
-        CommitType.STAGED)
+      forceCommit(emptyCommitPayload(logPath, 1L), CommitType.STAGED)
 
       val table = loadTable(path, versionToLoadOpt = Some(1)).asInstanceOf[ResolvedTableInternal]
 
       val deltas = table.getLogSegment.getDeltas
       assert(deltas.size() == 2)
-      assert(FileNames.isStagedDeltaFile(deltas.get(0).getPath))
+      assert(FileNames.isPublishedDeltaFile(deltas.get(0).getPath))
       assert(FileNames.isStagedDeltaFile(deltas.get(1).getPath))
     }
+  }
+
+  private def emptyCommitPayload(logPath: String, version: Long): CommitPayload = {
+    new DefaultCommitPayload(
+      logPath,
+      version,
+      CloseableIterator.empty(),
+      Optional.empty(),
+      Optional.empty())
   }
 }

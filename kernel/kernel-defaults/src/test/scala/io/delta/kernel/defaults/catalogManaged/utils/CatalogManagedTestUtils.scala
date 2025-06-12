@@ -6,7 +6,7 @@ import scala.collection.JavaConverters._
 
 import io.delta.kernel.{Operation, Table, Transaction}
 import io.delta.kernel.data.{FilteredColumnarBatch, Row}
-import io.delta.kernel.defaults.catalogManaged.AbstractCatalogMangedE2ESuite
+import io.delta.kernel.defaults.catalogManaged.client.AbstractCatalogManagedTestClient
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
 import io.delta.kernel.defaults.utils.TestUtils
 import io.delta.kernel.expressions.Literal
@@ -16,8 +16,8 @@ import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.test.ActionUtils
 import io.delta.kernel.utils.CloseableIterator
 
-trait CatalogManagedTestUtils extends TestUtils with ActionUtils {
-  self: AbstractCatalogMangedE2ESuite =>
+trait CatalogManagedTestUtils extends TestUtils with ActionUtils with CatalogManagedTestFixtures {
+  self: AbstractCatalogManagedTestClient =>
 
   case class PartitionedData(partitionValues: Map[String, Literal], data: FilteredColumnarBatch)
 
@@ -69,7 +69,8 @@ trait CatalogManagedTestUtils extends TestUtils with ActionUtils {
       .build(engine)
       .asInstanceOf[TransactionImpl]
       .getFinalizedActions(engine, CloseableIterator.empty())
-    forceCommit(new DefaultCommitPayload(logPath, 0, finalizedActions))
+    forceCommit(
+      new DefaultCommitPayload(logPath, 0, finalizedActions, Optional.empty(), Optional.empty()))
   }
 
   // TODO: Fix the below.
@@ -91,6 +92,12 @@ trait CatalogManagedTestUtils extends TestUtils with ActionUtils {
     }.reduceLeft(_ combine _)
     val finalizedActions = txn.getFinalizedActions(engine, dataActions)
     // TODO: txn.getCommitPayload or something similar
-    forceCommit(new DefaultCommitPayload(logPath, commitVersion, finalizedActions))
+    forceCommit(
+      new DefaultCommitPayload(
+        logPath,
+        commitVersion,
+        finalizedActions,
+        Optional.empty(),
+        Optional.empty()))
   }
 }
