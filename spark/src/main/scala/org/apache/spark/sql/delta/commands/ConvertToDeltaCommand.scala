@@ -305,13 +305,10 @@ abstract class ConvertToDeltaCommandBase(
     val shouldCollectStats = collectStats && statsEnabled
     val statsBatchSize = conf.getConf(DeltaSQLConf.DELTA_IMPORT_BATCH_SIZE_STATS_COLLECTION)
     var numFiles = 0L
-    val useAbsolutePath = manifest.supportAbsolutePath
     manifest.getFiles.grouped(statsBatchSize).flatMap { batch =>
       val adds = batch.map(
         ConvertUtils.createAddFile(
-          _, txn.deltaLog.dataPath, fs, conf, Some(partitionSchema),
-          useAbsolutePath || deltaPath.isDefined
-        ))
+          _, txn.deltaLog.dataPath, fs, conf, Some(partitionSchema), deltaPath.isDefined))
       if (shouldCollectStats) {
         logInfo(
           log"Collecting stats for a batch of " +
