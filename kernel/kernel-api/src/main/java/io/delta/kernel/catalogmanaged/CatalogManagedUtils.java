@@ -22,6 +22,10 @@ import io.delta.kernel.internal.util.FileNames;
 public class CatalogManagedUtils {
   private CatalogManagedUtils() {}
 
+  public static String getStagedCommitsDirPath(String logPath) {
+    return new Path(logPath, FileNames.STAGED_COMMIT_DIRECTORY).toString();
+  }
+
   public static String getPublishedDeltaFilePath(String logPath, long version) {
     return FileNames.deltaFile(new Path(logPath), version);
   }

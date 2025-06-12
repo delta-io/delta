@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.delta.kernel.defaults.catalogManaged
+package io.delta.kernel.defaults.catalogManaged.client
 
 import io.delta.kernel.ResolvedTable
 import io.delta.kernel.commit.CommitPayload
@@ -22,15 +22,17 @@ import io.delta.kernel.engine.Engine
 
 trait AbstractCatalogManagedTestClient {
 
+  sealed trait CommitType
+  object CommitType {
+    case object STAGED extends CommitType
+    case object INLINE extends CommitType
+  }
+
   def engine: Engine
 
-  def forceCommit(payload: CommitPayload): Unit
+  def forceCommit(payload: CommitPayload, commitType: CommitType = CommitType.STAGED): Unit
 
   def publish(logPath: String, version: Long): Unit
-
-  def publish(logPath: String, versions: Seq[Long]): Unit = {
-    versions.foreach(v => publish(logPath, v))
-  }
 
   def loadTable(
       path: String,

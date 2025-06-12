@@ -47,4 +47,10 @@ public class DefaultCommitPayload implements CommitPayload {
   public CloseableIterator<Row> getFinalizedActions() {
     return finalizedActions;
   }
+
+  @Override
+  public String toString() {
+    return String.format(
+        "DefaultCommitPayload{logPath='%s', commitVersion=%d}", logPath, commitVersion);
+  }
 }

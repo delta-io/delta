@@ -14,50 +14,79 @@
  * limitations under the License.
  */
 
-package io.delta.kernel.defaults.catalogManaged
+package io.delta.kernel.defaults.catalogManaged.client
 
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 
+import scala.collection.JavaConverters._
+
 import io.delta.kernel.{ResolvedTable, TableManager}
 import io.delta.kernel.catalogmanaged.CatalogManagedUtils
 import io.delta.kernel.commit.CommitPayload
+import io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO
+import io.delta.kernel.internal.actions.{Metadata, Protocol}
+import io.delta.kernel.internal.files.ParsedLogData
 import io.delta.kernel.utils.FileStatus
+import org.slf4j.LoggerFactory
 
 trait InMemoryCatalogManagedTestClient extends AbstractCatalogManagedTestClient {
+  private val logger = LoggerFactory.getLogger(classOf[InMemoryCatalogManagedTestClient])
 
   ///////////////////////
   // In-Memory Catalog //
   ///////////////////////
 
-  // TODO: include Protocol and Metadata
   case class CommitData(fileStatusOpt: Option[FileStatus])
 
   class TableData {
     var maxRatifiedVersion = -1L
-    var commits = new java.util.HashMap[Long, CommitData]()
+    var latestProtocol: Protocol = null
+    var latestMetadata: Metadata = null
+    val commits = new java.util.HashMap[Long, CommitData]()
 
     def commit(commitVersion: Long, commitData: CommitData): Unit = {
       val expectedCommitVersion = maxRatifiedVersion + 1
 
       if (commitVersion != expectedCommitVersion) {
         // TODO: Implement all the right CommitException and Commit return types
-        throw new RuntimeException("Commit failed")
+        throw new RuntimeException(s"Commit failed. commitVersion $commitVersion did not equal " +
+          s"expected next commit version $expectedCommitVersion")
       }
 
       commits.put(commitVersion, commitData)
       maxRatifiedVersion = commitVersion
     }
+
+    override def toString: String = {
+      val commitsStr = commits.asScala.toSeq
+        .sortBy(_._1)
+        .map { case (version, commitData) =>
+          val fileInfo = commitData.fileStatusOpt.map(_.getPath)
+          s"\t\tv$version: $fileInfo"
+        }
+        .mkString("\n")
+
+      s"TableData\n\tmaxRatifiedVersion: $maxRatifiedVersion\n\tcommits:\n$commitsStr"
+    }
   }
 
   /** Map from LOG_PATH to TABLE_DATA */
-  private val tables = new ConcurrentHashMap[String, TableData]()
+  val tables = new ConcurrentHashMap[String, TableData]()
 
   /////////////////////////
   // API Implementations //
   /////////////////////////
 
-  override def forceCommit(payload: CommitPayload): Unit = {
+  override def forceCommit(payload: CommitPayload, commitType: CommitType): Unit = {
+    logger.info(s"payload: $payload")
+
+    assert(commitType == CommitType.STAGED, "Only CommitType.STAGED is supported.")
+
+    if (payload.getCommitVersion == 0) {
+      ensureLogDirAndStagedCommitsDirExists(payload.getLogPath)
+    }
+
     val targetPath = CatalogManagedUtils.getStagedCommitFilePath(
       payload.getLogPath,
       payload.getCommitVersion)
@@ -69,10 +98,14 @@ trait InMemoryCatalogManagedTestClient extends AbstractCatalogManagedTestClient 
     val commitData = CommitData(Some(fileStatus))
 
     tableData.commit(payload.getCommitVersion, commitData)
+
+    logger.info(s"Final state: ${toString()}")
   }
 
   override def publish(logPath: String, version: Long): Unit = {
-    if (tables.containsKey(logPath)) {
+    logger.info(s"publish: logPath=$logPath, version=$version")
+
+    if (!tables.containsKey(logPath)) {
       throw new RuntimeException(s"Table entry for logPath $logPath does not exist")
     }
 
@@ -90,13 +123,23 @@ trait InMemoryCatalogManagedTestClient extends AbstractCatalogManagedTestClient 
     copyFile(ratifiedCommitToPublish.fileStatusOpt.get.getPath, publishedPath)
 
     tableData.commits.remove(version)
+
+    logger.info(s"Final state: ${toString()}")
   }
 
   override def loadTable(
       path: String,
       versionToLoadOpt: Option[Long],
-      timestampToLoadOpt: Option[Long],
-      injectProtocolMetadata: Boolean): ResolvedTable = {
+      timestampToLoadOpt: Option[Long] = None,
+      injectProtocolMetadata: Boolean = false): ResolvedTable = {
+    val logPath = s"$path/_delta_log"
+
+    if (!tables.containsKey(logPath)) {
+      throw new RuntimeException(s"Table entry for logPath $logPath does not exist")
+    }
+
+    val tableData = tables.get(logPath)
+
     var builder = TableManager.loadTable(path)
 
     if (versionToLoadOpt.isDefined) {
@@ -105,12 +148,44 @@ trait InMemoryCatalogManagedTestClient extends AbstractCatalogManagedTestClient 
 
     // TODO: P & M
 
+    val parsedLogData = tableData
+      .commits
+      .asScala
+      .filter(_._2.fileStatusOpt.isDefined)
+      .map { case (_, commitData) => ParsedLogData.forFileStatus(commitData.fileStatusOpt.get) }
+      .toList
+      .asJava
+
+    builder = builder.withLogData(parsedLogData)
+
     builder.build(engine)
   }
 
+  override def toString: String = {
+    val tableEntries = tables.asScala.toSeq.sortBy(_._1).map { case (logPath, tableData) =>
+      s"\t$logPath: $tableData"
+    }.mkString("\n")
+
+    s"InMemoryCatalogManagedTestClient {\n$tableEntries\n}"
+  }
+
+  private def ensureLogDirAndStagedCommitsDirExists(logPath: String): Unit = {
+    val stagedCommitsPath = CatalogManagedUtils.getStagedCommitsDirPath(logPath)
+
+    // `mkdirs` will "Create a directory at the given path including parent directories".
+    if (
+      !wrapEngineExceptionThrowsIO(
+        () => engine.getFileSystemClient.mkdirs(stagedCommitsPath),
+        s"Creating directories for path $stagedCommitsPath")
+    ) {
+      throw new RuntimeException("Failed to create directory: $stagedCommitsPath")
+    }
+  }
+
   private def copyFile(srcPath: String, destPath: String): Unit = {
-    import org.apache.commons.io.FileUtils
     import java.io.File
+
+    import org.apache.commons.io.FileUtils
     try {
       val srcFile = new File(srcPath)
       val destFile = new File(destPath)
