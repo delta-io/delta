@@ -56,7 +56,11 @@ public class SchemaUtils {
 
     List<String> flattenColNames =
         new SchemaIterable(schema)
-            .stream().map(SchemaIterable.SchemaElement::getNamePath).collect(Collectors.toList());
+            .stream()
+                // Paths to struct fields are sufficient to find duplicate columns, as arrays/maps
+                // always have the same names.
+                .filter(SchemaIterable.SchemaElement::isStructField)
+                .map(SchemaIterable.SchemaElement::getNamePath).collect(Collectors.toList());
 
     // check there are no duplicate column names in the schema
     Set<String> uniqueColNames =
@@ -65,11 +69,12 @@ public class SchemaUtils {
     if (uniqueColNames.size() != flattenColNames.size()) {
       Set<String> uniqueCols = new HashSet<>();
       List<String> duplicateColumns =
-          flattenColNames.stream()
-              .map(String::toLowerCase)
-              .filter(n -> !uniqueCols.add(n))
-              .collect(Collectors.toList());
-      throw DeltaErrors.duplicateColumnsInSchema(schema, duplicateColumns);
+              flattenColNames.stream()
+                      .map(String::toLowerCase)
+                      .filter(n -> !uniqueCols.add(n))
+                      .sorted(String::compareTo)
+                      .collect(Collectors.toList());
+        throw DeltaErrors.duplicateColumnsInSchema(schema, duplicateColumns);
     }
 
     // Check the column names are valid
