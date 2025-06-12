@@ -349,12 +349,12 @@ public class ColumnMapping {
         .filter(SchemaIterable.MutableSchemaElement::isStructField)
         .forEach(
             mutableElement ->
-                mutableElement.updateField(
-                    assignColumnIdAndPhysicalNameToField(
+                assignColumnIdAndPhysicalNameToField(
                         mutableElement.getField(),
                         maxColumnId,
                         isNewTable,
-                        useColumnIdForPhysicalName)));
+                        useColumnIdForPhysicalName)
+                    .ifPresent(mutableElement::updateField));
     StructType newSchema = schemaIterable.getSchema();
 
     if (Boolean.parseBoolean(
@@ -400,8 +400,8 @@ public class ColumnMapping {
    *     ColumnMapping#COLUMN_MAPPING_ID_KEY} and the {@link
    *     ColumnMapping#COLUMN_MAPPING_PHYSICAL_NAME_KEY} keys
    */
-  private static StructField assignColumnIdAndPhysicalNameToField(
-      StructField field,
+  private static Optional<StructField> assignColumnIdAndPhysicalNameToField(
+      final StructField field,
       AtomicInteger maxColumnId,
       boolean isNewTable,
       boolean useColumnIdForPhysicalName) {
@@ -414,32 +414,36 @@ public class ColumnMapping {
                   + "Found this field with incomplete column mapping metadata: %s",
               field));
     }
-    if (!hasColumnId(field)) {
-      field =
-          field.withNewMetadata(
+    StructField newField = field;
+    if (!hasColumnId(newField)) {
+      newField =
+          newField.withNewMetadata(
               FieldMetadata.builder()
                   .fromMetadata(field.getMetadata())
                   .putLong(COLUMN_MAPPING_ID_KEY, maxColumnId.incrementAndGet())
                   .build());
     }
-    if (!hasPhysicalName(field)) {
+    if (!hasPhysicalName(newField)) {
       // re-use old display names as physical names when a table is updated
       String physicalName;
       if (useColumnIdForPhysicalName) {
-        long columnId = getColumnId(field);
+        long columnId = getColumnId(newField);
         physicalName = String.format("col-%s", columnId);
       } else {
-        physicalName = isNewTable ? "col-" + UUID.randomUUID() : field.getName();
+        physicalName = isNewTable ? "col-" + UUID.randomUUID() : newField.getName();
       }
 
-      field =
-          field.withNewMetadata(
+      newField =
+          newField.withNewMetadata(
               FieldMetadata.builder()
-                  .fromMetadata(field.getMetadata())
+                  .fromMetadata(newField.getMetadata())
                   .putString(COLUMN_MAPPING_PHYSICAL_NAME_KEY, physicalName)
                   .build());
     }
-    return field;
+    if (newField != field) {
+      return Optional.of(newField);
+    }
+    return Optional.empty();
   }
 
   private static boolean hasNestedColumnIds(StructField field) {
