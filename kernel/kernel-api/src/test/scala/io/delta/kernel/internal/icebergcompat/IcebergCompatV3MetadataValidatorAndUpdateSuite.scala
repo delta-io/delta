@@ -15,125 +15,44 @@
  */
 package io.delta.kernel.internal.icebergcompat
 
+import java.util.Optional
+
 import scala.collection.JavaConverters._
 
 import io.delta.kernel.exceptions.KernelException
+import io.delta.kernel.internal.TableConfig
 import io.delta.kernel.internal.actions.{Metadata, Protocol}
 import io.delta.kernel.internal.icebergcompat.IcebergCompatV3MetadataValidatorAndUpdater.validateAndUpdateIcebergCompatV3Metadata
 import io.delta.kernel.internal.tablefeatures.TableFeature
-import io.delta.kernel.internal.tablefeatures.TableFeatures.{COLUMN_MAPPING_RW_FEATURE, DELETION_VECTORS_RW_FEATURE, ICEBERG_COMPAT_V3_W_FEATURE, ROW_TRACKING_W_FEATURE, TYPE_WIDENING_RW_FEATURE, TYPE_WIDENING_RW_PREVIEW_FEATURE}
-import io.delta.kernel.internal.util.ColumnMappingSuiteBase
-import io.delta.kernel.test.VectorTestUtils
+import io.delta.kernel.internal.tablefeatures.TableFeatures.{COLUMN_MAPPING_RW_FEATURE, ICEBERG_COMPAT_V3_W_FEATURE, ROW_TRACKING_W_FEATURE, TYPE_WIDENING_RW_FEATURE}
 import io.delta.kernel.types._
 
-import org.scalatest.funsuite.AnyFunSuite
+import org.assertj.core.util.Maps
 
-trait IcebergCompatV3MetadataValidatorAndUpdaterSuiteBase extends AnyFunSuite
-    with VectorTestUtils with ColumnMappingSuiteBase {
+trait IcebergCompatV3MetadataValidatorAndUpdaterSuiteBase
+    extends IcebergCompatMetadataValidatorAndUpdaterSuiteBase {
 
-  import IcebergCompatV3MetadataValidatorAndUpdaterSuiteBase._
+  override def icebergCompatVersion: String = "V3"
 
-  /** When testing supported simple column types skip any types defined here */
-  def simpleTypesToSkip: Set[DataType]
+  override def supportedDataColumnTypes: Set[DataType] =
+    IcebergCompatMetadataValidatorAndUpdaterSuiteBase.SIMPLE_TYPES ++
+      IcebergCompatMetadataValidatorAndUpdaterSuiteBase.COMPLEX_TYPES ++ Set(VariantType.VARIANT)
 
-  /** Get a metadata with the given schema and partCols with the desired icebergCompat enabled */
-  def getCompatEnabledMetadata(
+  override def unsupportedDataColumnTypes: Set[DataType] = Set()
+
+  override def unsupportedPartitionColumnTypes: Set[DataType] =
+    IcebergCompatMetadataValidatorAndUpdaterSuiteBase.COMPLEX_TYPES ++ Set(VariantType.VARIANT)
+
+  override def isDeletionVectorsSupported: Boolean = true
+
+  override def withIcebergCompatAndCMEnabled(
       schema: StructType,
-      partCols: Seq[String] = Seq.empty): Metadata
-
-  /** Get a protocol with features needed for the desired icebergCompat plus the `tableFeatures` */
-  def getCompatEnabledProtocol(tableFeatures: TableFeature*): Protocol
-
-  /** Run the desired validate and update metadata method that triggers icebergCompatV3 checks */
-  def runValidateAndUpdateIcebergCompatV3Metadata(
-      isNewTable: Boolean,
-      metadata: Metadata,
-      protocol: Protocol): Unit
-
-  (SIMPLE_TYPES.diff(
-    simpleTypesToSkip) ++ SUPPORTED_DATA_COLUMN_ONLY_TYPES ++ COMPLEX_TYPES).foreach {
-    dataType: DataType =>
-      Seq(true, false).foreach { isNewTable =>
-        test(s"allowed data column types: $dataType, new table = $isNewTable") {
-          val schema = new StructType().add("col", dataType)
-          val metadata = getCompatEnabledMetadata(schema)
-          val protocol = getCompatEnabledProtocol()
-          runValidateAndUpdateIcebergCompatV3Metadata(isNewTable, metadata, protocol)
-        }
-      }
-  }
-
-  SIMPLE_TYPES.diff(simpleTypesToSkip).foreach {
-    dataType: DataType =>
-      Seq(true, false).foreach { isNewTable =>
-        test(s"allowed partition column types: $dataType, new table = $isNewTable") {
-          val schema = new StructType().add("col", dataType)
-          val metadata = getCompatEnabledMetadata(schema, Seq("col"))
-          val protocol = getCompatEnabledProtocol()
-          runValidateAndUpdateIcebergCompatV3Metadata(isNewTable, metadata, protocol)
-        }
-      }
-  }
-
-  UNSUPPORTED_PARTITION_COLUMN_TYPES.foreach {
-    dataType: DataType =>
-      Seq(true, false).foreach { isNewTable =>
-        test(s"disallowed partition column types: $dataType, new table = $isNewTable") {
-          val schema = new StructType().add("col", dataType)
-          val metadata = getCompatEnabledMetadata(schema, Seq("col"))
-          val protocol = getCompatEnabledProtocol()
-          val e = intercept[KernelException] {
-            runValidateAndUpdateIcebergCompatV3Metadata(isNewTable, metadata, protocol)
-          }
-          assert(e.getMessage.matches(
-            s"icebergCompatV3 does not support the data type .* for a partition column."))
-        }
-      }
-  }
-
-  Seq(true, false).foreach { isNewTable =>
-    test(s"can be enabled on a table with deletion vectors supported, isNewTable $isNewTable") {
-      val schema = new StructType().add("col", BooleanType.BOOLEAN)
-      val metadata = getCompatEnabledMetadata(schema)
-      val protocol = getCompatEnabledProtocol(DELETION_VECTORS_RW_FEATURE)
-      runValidateAndUpdateIcebergCompatV3Metadata(isNewTable, metadata, protocol)
-    }
-  }
-
-  Seq(true, false).foreach { isNewTable =>
-    test(s"can't enable icebergCompatV3 on a table with icebergCompatv1 enabled, " +
-      s"isNewTable = $isNewTable") {
-      val schema = new StructType().add("col", BooleanType.BOOLEAN)
-      val metadata = getCompatEnabledMetadata(schema)
-        .withMergedConfiguration(
-          Map("delta.enableIcebergCompatV1" -> "true").asJava)
-      val protocol = getCompatEnabledProtocol()
-
-      val ex = intercept[KernelException] {
-        runValidateAndUpdateIcebergCompatV3Metadata(isNewTable, metadata, protocol)
-      }
-      assert(ex.getMessage.contains(
-        "icebergCompatV3: Only one IcebergCompat version can be enabled. " +
-          "Incompatible version enabled: delta.enableIcebergCompatV1"))
-    }
-  }
-
-  Seq(true, false).foreach { isNewTable =>
-    test(s"can't enable icebergCompatV3 on a table with icebergCompatv2 enabled, " +
-      s"isNewTable = $isNewTable") {
-      val schema = new StructType().add("col", BooleanType.BOOLEAN)
-      val metadata = getCompatEnabledMetadata(schema)
-        .withMergedConfiguration(
-          Map("delta.enableIcebergCompatV2" -> "true").asJava)
-      val protocol = getCompatEnabledProtocol()
-
-      val ex = intercept[KernelException] {
-        runValidateAndUpdateIcebergCompatV3Metadata(isNewTable, metadata, protocol)
-      }
-      assert(ex.getMessage.contains(
-        "icebergCompatV3: Only one IcebergCompat version can be enabled. " +
-          "Incompatible version enabled: delta.enableIcebergCompatV2"))
-    }
+      columnMappingMode: String = "name",
+      partCols: Seq[String] = Seq.empty): Metadata = {
+    testMetadata(
+      schema,
+      partCols).withIcebergCompatV3AndCMEnabled(columnMappingMode).withMergedConfiguration(
+      Maps.newHashMap(TableConfig.ROW_TRACKING_ENABLED.getKey, "true"))
   }
 }
 
@@ -144,9 +63,11 @@ class IcebergCompatV3MetadataValidatorAndUpdaterSuite
 
   override def getCompatEnabledMetadata(
       schema: StructType,
+      columnMappingMode: String = "name",
       partCols: Seq[String] = Seq.empty): Metadata = {
     testMetadata(schema, partCols)
-      .withIcebergCompatV3AndCMEnabled()
+      .withIcebergCompatV3AndCMEnabled(columnMappingMode).withMergedConfiguration(
+        Maps.newHashMap(TableConfig.ROW_TRACKING_ENABLED.getKey, "true"))
   }
 
   override def getCompatEnabledProtocol(tableFeatures: TableFeature*): Protocol = {
@@ -156,62 +77,19 @@ class IcebergCompatV3MetadataValidatorAndUpdaterSuite
       ROW_TRACKING_W_FEATURE): _*)
   }
 
-  override def runValidateAndUpdateIcebergCompatV3Metadata(
+  override def validateAndUpdateIcebergCompatMetadata(
       isNewTable: Boolean,
       metadata: Metadata,
-      protocol: Protocol): Unit = {
+      protocol: Protocol): Optional[Metadata] = {
     validateAndUpdateIcebergCompatV3Metadata(isNewTable, metadata, protocol)
-  }
-
-  test("compatible type widening is allowed with icebergCompatV3") {
-    val schema = new StructType()
-      .add(
-        new StructField(
-          "intToLong",
-          IntegerType.INTEGER,
-          true,
-          FieldMetadata.empty()).withTypeChanges(
-          Seq(new TypeChange(IntegerType.INTEGER, LongType.LONG)).asJava))
-      .add(
-        new StructField(
-          "decimalToDecimal",
-          new DecimalType(10, 2),
-          true,
-          FieldMetadata.empty()).withTypeChanges(
-          Seq(new TypeChange(new DecimalType(5, 2), new DecimalType(10, 2))).asJava))
-
-    val metadata = getCompatEnabledMetadata(schema)
-    val protocol = getCompatEnabledProtocol(TYPE_WIDENING_RW_FEATURE)
-
-    // This should not throw an exception
-    validateAndUpdateIcebergCompatV3Metadata(false, metadata, protocol)
-  }
-
-  test("incompatible type widening throws exception with icebergCompatV3") {
-    val schema = new StructType()
-      .add(
-        new StructField(
-          "dateToTimestamp",
-          TimestampNTZType.TIMESTAMP_NTZ,
-          true,
-          FieldMetadata.empty()).withTypeChanges(
-          Seq(new TypeChange(DateType.DATE, TimestampNTZType.TIMESTAMP_NTZ)).asJava))
-
-    val metadata = getCompatEnabledMetadata(schema)
-    val protocol = getCompatEnabledProtocol(TYPE_WIDENING_RW_FEATURE)
-
-    val e = intercept[KernelException] {
-      validateAndUpdateIcebergCompatV3Metadata(false, metadata, protocol)
-    }
-
-    assert(e.getMessage.contains("icebergCompatV3 does not support type widening present in table"))
   }
 
   Seq(true, false).foreach { isNewTable =>
     test(s"protocol is missing required column mapping feature, isNewTable $isNewTable") {
       val schema = new StructType().add("col", BooleanType.BOOLEAN)
-      val metadata = testMetadata(schema, Seq.empty).withIcebergCompatV3AndCMEnabled()
-      val protocol = new Protocol(3, 7, Set.empty.asJava, Set("icebergCompatV3").asJava)
+      val metadata = getCompatEnabledMetadata(schema)
+      val protocol =
+        new Protocol(3, 7, Set.empty.asJava, Set("icebergCompatV3", "rowTracking").asJava)
       val e = intercept[KernelException] {
         validateAndUpdateIcebergCompatV3Metadata(isNewTable, metadata, protocol)
       }
@@ -241,28 +119,6 @@ class IcebergCompatV3MetadataValidatorAndUpdaterSuite
         assert(e.getMessage.contains(
           "The value 'none' for the property 'delta.columnMapping.mode' is" +
             " not compatible with icebergCompatV3 requirements"))
-      }
-    }
-  }
-
-  Seq("id", "name").foreach { existingCMMode =>
-    Seq(true, false).foreach { isNewTable =>
-      test(s"existing column mapping mode `$existingCMMode` is preserved " +
-        s"when icebergCompatV3 is enabled, isNewTable = $isNewTable") {
-        val metadata = testMetadata(cmTestSchema())
-          .withIcebergCompatV3Enabled
-          .withColumnMappingEnabled(existingCMMode)
-        val protocol = testProtocol(
-          ICEBERG_COMPAT_V3_W_FEATURE,
-          COLUMN_MAPPING_RW_FEATURE,
-          ROW_TRACKING_W_FEATURE)
-
-        assert(metadata.getConfiguration.get("delta.columnMapping.mode") === existingCMMode)
-
-        val updatedMetadata =
-          validateAndUpdateIcebergCompatV3Metadata(isNewTable, metadata, protocol)
-        // No metadata update is needed since already compatible column mapping mode
-        assert(!updatedMetadata.isPresent)
       }
     }
   }
