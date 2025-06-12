@@ -15,6 +15,8 @@
  */
 package io.delta.kernel.internal.icebergcompat
 
+import java.util.Optional
+
 import scala.collection.JavaConverters._
 
 import io.delta.kernel.exceptions.KernelException
@@ -28,6 +30,13 @@ import io.delta.kernel.types.{ByteType, DataType, DecimalType, FieldMetadata, In
 
 class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
     extends IcebergCompatV2MetadataValidatorAndUpdaterSuiteBase {
+
+  override def validateAndUpdateIcebergCompatMetadata(
+      isNewTable: Boolean,
+      metadata: Metadata,
+      protocol: Protocol): Optional[Metadata] = {
+    validateAndUpdateIcebergWriterCompatV1Metadata(isNewTable, metadata, protocol)
+  }
 
   val icebergWriterCompatV1EnabledProps = Map(
     TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey -> "true")
@@ -53,13 +62,6 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
   override def getCompatEnabledProtocol(tableFeatures: TableFeature*): Protocol = {
     testProtocol(tableFeatures ++
       Seq(ICEBERG_WRITER_COMPAT_V1, ICEBERG_COMPAT_V2_W_FEATURE, COLUMN_MAPPING_RW_FEATURE): _*)
-  }
-
-  override def runValidateAndUpdateIcebergCompatV2Metadata(
-      isNewTable: Boolean,
-      metadata: Metadata,
-      protocol: Protocol): Unit = {
-    validateAndUpdateIcebergWriterCompatV1Metadata(isNewTable, metadata, protocol)
   }
 
   test("checks are not enforced when table property is not enabled") {

@@ -44,7 +44,7 @@ import org.apache.spark.sql.delta.redirect.{RedirectFeature, TableRedirectConfig
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.stats._
-import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, JsonUtils}
+import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, JsonUtils, TransactionHelper}
 import org.apache.spark.sql.util.ScalaExtensions._
 import io.delta.storage.commit._
 import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
@@ -254,7 +254,7 @@ object OptimisticTransaction {
  *
  * This trait is not thread-safe.
  */
-trait OptimisticTransactionImpl extends DeltaTransaction
+trait OptimisticTransactionImpl extends TransactionHelper
   with TransactionalWrite
   with SQLMetricsReporting
   with DeltaScanGenerator
@@ -333,6 +333,9 @@ trait OptimisticTransactionImpl extends DeltaTransaction
   protected var commitEndNano = -1L;
 
   protected var commitInfo: CommitInfo = _
+
+  /** Whether the txn should trigger a checkpoint after the commit */
+  private[delta] var needsCheckpoint = false
 
   // Whether this transaction is creating a new table.
   private var isCreatingNewTable: Boolean = false
@@ -462,37 +465,18 @@ trait OptimisticTransactionImpl extends DeltaTransaction
     }
   }
 
+  /** The set of distinct partitions that contain added files by current transaction. */
+  protected[delta] var partitionsAddedToOpt: Option[mutable.HashSet[Map[String, String]]] = None
+
+  /** True if this transaction is a blind append. This is only valid after commit. */
+  protected[delta] var isBlindAppend: Boolean = false
+
   /**
    * The logSegment of the snapshot prior to the commit.
    * Will be updated only when retrying due to a conflict.
    */
   private[delta] var preCommitLogSegment: LogSegment =
     snapshot.logSegment.copy(checkpointProvider = snapshot.checkpointProvider)
-
-  private[delta] val readSnapshotTableCommitCoordinatorClientOpt:
-      Option[TableCommitCoordinatorClient] = {
-    if (snapshot.isCatalogOwned) {
-      // Catalog owned table's commit coordinator is always determined by the catalog.
-      CatalogOwnedTableUtils.populateTableCommitCoordinatorFromCatalog(
-        spark, catalogTable, snapshot)
-    } else {
-      // The commit-coordinator of a table shouldn't change. If it is changed by a concurrent
-      // commit, then it will be detected as a conflict and the transaction will anyway fail.
-      snapshot.getTableCommitCoordinatorForWrites
-    }
-  }
-
-  /**
-   * Generates a timestamp which is greater than the commit timestamp
-   * of the last snapshot. Note that this is only needed when the
-   * feature `inCommitTimestamps` is enabled.
-   */
-  protected[delta] def generateInCommitTimestampForFirstCommitAttempt(
-      currentTimestamp: Long): Option[Long] =
-    Option.when(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(metadata)) {
-      val lastCommitTimestamp = snapshot.timestamp
-      math.max(currentTimestamp, lastCommitTimestamp + 1)
-    }
 
   /** The end to end execution time of this transaction. */
   def txnExecutionTimeMs: Option[Long] = if (commitEndNano == -1) {
@@ -1801,7 +1785,7 @@ trait OptimisticTransactionImpl extends DeltaTransaction
         numDistinctPartitionsInAdd = -1, // not tracking distinct partitions as of now
         numPartitionColumnsInTable = postCommitSnapshot.metadata.partitionColumns.size,
         isolationLevel = Serializable.toString,
-        coordinatedCommitsInfo = createCoordinatedCommitsStats(),
+        coordinatedCommitsInfo = createCoordinatedCommitsStats(newProtocol),
         numOfDomainMetadatas = numOfDomainMetadatas,
         txnId = Some(txnId))
 
@@ -1838,54 +1822,6 @@ trait OptimisticTransactionImpl extends DeltaTransaction
             throw e
         }
     }
-  }
-
-  def createCoordinatedCommitsStats(): CoordinatedCommitsStats = {
-    val (coordinatedCommitsType, metadataToUse) =
-      readSnapshotTableCommitCoordinatorClientOpt match {
-        // TODO: Capture the CO -> FS downgrade case when we start
-        //       supporting downgrade for CO.
-        case Some(_) if snapshot.isCatalogOwned =>                             // CO commit
-          (CoordinatedCommitType.CO_COMMIT, snapshot.metadata)
-        case Some(_) if metadata.coordinatedCommitsCoordinatorName.isEmpty =>  // CC -> FS
-          (CoordinatedCommitType.CC_TO_FS_DOWNGRADE_COMMIT, snapshot.metadata)
-        // Only the 0th commit to a table can be a FS -> CO upgrade for now.
-        // Upgrading an existing FS table to CO through ALTER TABLE is not supported yet.
-        case None if this.newProtocol.exists(_.readerAndWriterFeatureNames
-            .contains(CatalogOwnedTableFeature.name)) =>                       // FS -> CO
-          (CoordinatedCommitType.FS_TO_CO_UPGRADE_COMMIT, metadata)
-        case None if metadata.coordinatedCommitsCoordinatorName.isDefined =>   // FS -> CC
-          (CoordinatedCommitType.FS_TO_CC_UPGRADE_COMMIT, metadata)
-        case Some(_) =>                                                        // CC commit
-          (CoordinatedCommitType.CC_COMMIT, snapshot.metadata)
-        case None =>                                                           // FS commit
-          (CoordinatedCommitType.FS_COMMIT, snapshot.metadata)
-        // Errors out in rest of the cases.
-        case _ =>
-          throw new IllegalStateException(
-            "Unexpected state found when trying " +
-            s"to generate CoordinatedCommitsStats for table ${deltaLog.logPath}. " +
-            s"$readSnapshotTableCommitCoordinatorClientOpt, " +
-            s"$metadata, $snapshot, $catalogTable")
-      }
-    CoordinatedCommitsStats(
-      coordinatedCommitsType = coordinatedCommitsType.toString,
-      commitCoordinatorName = if (Set(CoordinatedCommitType.CO_COMMIT,
-        CoordinatedCommitType.FS_TO_CO_UPGRADE_COMMIT).contains(coordinatedCommitsType)) {
-        // The catalog for FS -> CO upgrade commit would be
-        // "CATALOG_EMPTY" because `catalogTable` is not available
-        // for the 0th FS commit.
-        catalogTable.flatMap { ct =>
-          CatalogOwnedTableUtils.getCatalogName(
-            spark,
-            identifier = ct.identifier)
-        }.getOrElse("CATALOG_MISSING")
-      } else {
-        metadataToUse.coordinatedCommitsCoordinatorName.getOrElse("NONE")
-      },
-      // For Catalog-Owned table, the coordinator conf for UC-CC is [[Map.empty]]
-      // so we don't distinguish between CO/CC here.
-      commitCoordinatorConf = metadataToUse.coordinatedCommitsCoordinatorConf)
   }
 
   /**
@@ -2463,7 +2399,7 @@ trait OptimisticTransactionImpl extends DeltaTransaction
     collectAutoOptimizeStats(numAdd, numRemove, actions.iterator)
     val info = currentTransactionInfo.commitInfo
       .map(_.copy(readVersion = None, isolationLevel = None)).orNull
-    setNeedsCheckpoint(attemptVersion, postCommitSnapshot)
+    needsCheckpoint = isCheckpointNeeded(attemptVersion, postCommitSnapshot)
     val doCollectCommitStats =
       needsCheckpoint || spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_FORCE_ALL_COMMIT_STATS)
 
@@ -2499,7 +2435,7 @@ trait OptimisticTransactionImpl extends DeltaTransaction
       numDistinctPartitionsInAdd = distinctPartitions.size,
       numPartitionColumnsInTable = postCommitSnapshot.metadata.partitionColumns.size,
       isolationLevel = isolationLevel.toString,
-      coordinatedCommitsInfo = createCoordinatedCommitsStats(),
+      coordinatedCommitsInfo = createCoordinatedCommitsStats(newProtocol),
       numOfDomainMetadatas = numOfDomainMetadatas,
       txnId = Some(txnId))
     recordDeltaEvent(deltaLog, DeltaLogging.DELTA_COMMIT_STATS_OPTYPE, data = stats)
@@ -2643,14 +2579,6 @@ trait OptimisticTransactionImpl extends DeltaTransaction
   protected def incrementallyDeriveChecksum(
       attemptVersion: Long,
       currentTransactionInfo: CurrentTransactionInfo): Option[VersionChecksum] = {
-    // Don't include [[AddFile]]s in CRC if this commit is modifying the schema of table in some
-    // way. This is to make sure we don't carry any DROPPED column from previous CRC to this CRC
-    // forever and can start fresh from next commit.
-    // If the oldSnapshot itself is missing, we don't incrementally compute the checksum.
-    val allFilesInCrcWritePathEnabled =
-      Snapshot.allFilesInCrcWritePathEnabled(spark, snapshot) &&
-        (snapshot.version == -1 || snapshot.metadata.schema == metadata.schema)
-
     incrementallyDeriveChecksum(
       spark,
       deltaLog,
@@ -2661,7 +2589,7 @@ trait OptimisticTransactionImpl extends DeltaTransaction
       operationName = currentTransactionInfo.op.name,
       txnIdOpt = Some(currentTransactionInfo.txnId),
       previousVersionState = scala.Left(snapshot),
-      includeAddFilesInCrc = allFilesInCrcWritePathEnabled
+      includeAddFilesInCrc = Snapshot.shouldIncludeAddFilesInCrc(spark, snapshot, metadata)
     ).toOption
   }
 
