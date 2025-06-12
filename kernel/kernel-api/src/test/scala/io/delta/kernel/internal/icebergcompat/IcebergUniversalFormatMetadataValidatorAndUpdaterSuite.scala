@@ -51,20 +51,35 @@ class IcebergUniversalFormatMetadataValidatorAndUpdaterSuite extends AnyFunSuite
 
   Seq(
     Map(TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "false"),
-    Map[String, String]()).foreach { disableIcebergCompatV2 =>
+    Map(TableConfig.ICEBERG_COMPAT_V3_ENABLED.getKey -> "false"),
+    Map[String, String]()).foreach { disableIcebergCompat =>
     test(
-      "validate should throw when iceberg universal format is enabled and "
-        + s"icebergCompatV2 isn't $disableIcebergCompatV2") {
+      "validate should throw when iceberg universal format is enabled but  "
+        + s"no IcebergCompat version is enabled: $disableIcebergCompat") {
       val metadata = createMetadata(Map(
         TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey -> "iceberg",
-        "unrelated_key" -> "unrelated_value") ++ disableIcebergCompatV2)
+        "unrelated_key" -> "unrelated_value") ++ disableIcebergCompat)
       val exc = intercept[InvalidConfigurationValueException] {
         IcebergUniversalFormatMetadataValidatorAndUpdater.validate(metadata)
       }
       assert(exc.getMessage == "Invalid value for table property " +
         "'delta.universalFormat.enabledFormats': 'iceberg'. " +
-        "'delta.enableIcebergCompatV2' must be set to \"true\" to enable iceberg uniform format.")
+        "One of delta.enableIcebergCompatV2 or delta.enableIcebergCompatV3 " +
+        "must be set to \"true\" to enable iceberg uniform format.")
     }
+  }
+
+  test("validate should throw when both IcebergCompatV2 and V3 are enabled") {
+    val metadata = createMetadata(Map(
+      TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey -> "iceberg",
+      TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true",
+      TableConfig.ICEBERG_COMPAT_V3_ENABLED.getKey -> "true"))
+    val exc = intercept[InvalidConfigurationValueException] {
+      IcebergUniversalFormatMetadataValidatorAndUpdater.validate(metadata)
+    }
+    assert(exc.getMessage.contains(
+      "'delta.enableIcebergCompatV2' and 'delta.enableIcebergCompatV3' " +
+        "cannot be enabled at the same time."))
   }
 
   def createMetadata(tblProps: Map[String, String] = Map.empty): Metadata = {

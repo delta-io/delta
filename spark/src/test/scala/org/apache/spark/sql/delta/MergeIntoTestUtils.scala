@@ -28,7 +28,7 @@ import org.apache.spark.sql.test.SharedSparkSession
  * either [[MergeIntoSQLTestUtils]] or [[MergeIntoScalaTestUtils]] to run merge tests using the SQL
  * or Scala API resp.
  */
-trait MergeIntoTestUtils extends DeltaDMLTestUtils with MergeHelpers {
+trait MergeIntoTestUtils extends DeltaDMLByPathTestUtils with MergeHelpers {
   self: SharedSparkSession =>
 
   protected def executeMerge(

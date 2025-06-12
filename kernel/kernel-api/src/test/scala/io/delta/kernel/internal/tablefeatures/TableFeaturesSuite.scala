@@ -61,6 +61,7 @@ class TableFeaturesSuite extends AnyFunSuite {
     "rowTracking",
     "domainMetadata",
     "icebergCompatV2",
+    "icebergCompatV3",
     "inCommitTimestamp",
     "icebergWriterCompatV1",
     "clustering")
@@ -154,6 +155,14 @@ class TableFeaturesSuite extends AnyFunSuite {
       testMetadata(tblProps = Map("delta.enableIcebergCompatV2" -> "false")),
       false),
     (
+      "icebergCompatV3",
+      testMetadata(tblProps = Map("delta.enableIcebergCompatV3" -> "true")),
+      true),
+    (
+      "icebergCompatV3",
+      testMetadata(tblProps = Map("delta.enableIcebergCompatV3" -> "false")),
+      false),
+    (
       "inCommitTimestamp",
       testMetadata(tblProps = Map("delta.enableInCommitTimestamps" -> "true")),
       true),
@@ -238,6 +247,7 @@ class TableFeaturesSuite extends AnyFunSuite {
       "rowTracking",
       "domainMetadata",
       "icebergCompatV2",
+      "icebergCompatV3",
       "inCommitTimestamp",
       "appendOnly",
       "invariants",
@@ -569,6 +579,11 @@ class TableFeaturesSuite extends AnyFunSuite {
     testMetadata(tblProps = Map("delta.enableIcebergCompatV2" -> "true")))
 
   checkWriteSupported(
+    "validateKernelCanWriteToTable: protocol 7 with icebergCompatV3",
+    new Protocol(3, 7, emptySet(), singleton("icebergCompatV3")),
+    testMetadata(tblProps = Map("delta.enableIcebergCompatV3" -> "true")))
+
+  checkWriteSupported(
     "validateKernelCanWriteToTable: protocol 7 with v2Checkpoint, " +
       "metadata enables v2Checkpoint",
     new Protocol(3, 7, singleton("v2Checkpoint"), singleton("v2Checkpoint")),
@@ -792,6 +807,21 @@ class TableFeaturesSuite extends AnyFunSuite {
         set("columnMapping", "appendOnly", "invariants", "icebergCompatV2")),
       set("icebergCompatV2", "columnMapping")),
     (
+      testMetadata(tblProps = Map("delta.enableIcebergCompatV3" -> "true")),
+      new Protocol(1, 2),
+      new Protocol(
+        2,
+        7,
+        set(),
+        set(
+          "columnMapping",
+          "appendOnly",
+          "invariants",
+          "icebergCompatV3",
+          "domainMetadata",
+          "rowTracking")),
+      set("icebergCompatV3", "domainMetadata", "columnMapping", "rowTracking")),
+    (
       testMetadata(tblProps =
         Map("delta.enableIcebergCompatV2" -> "true", "delta.enableDeletionVectors" -> "true")),
       new Protocol(2, 5),
@@ -819,6 +849,21 @@ class TableFeaturesSuite extends AnyFunSuite {
         set("columnMapping", "deletionVectors"),
         set("columnMapping", "icebergCompatV2", "deletionVectors")),
       set("icebergCompatV2")),
+    (
+      testMetadata(tblProps =
+        Map("delta.enableIcebergCompatV3" -> "true")),
+      new Protocol(3, 7, set("columnMapping", "deletionVectors"), set("columnMapping")),
+      new Protocol(
+        3,
+        7,
+        set("columnMapping", "deletionVectors"),
+        set(
+          "columnMapping",
+          "icebergCompatV3",
+          "deletionVectors",
+          "domainMetadata",
+          "rowTracking")),
+      set("icebergCompatV3", "domainMetadata", "rowTracking")),
     (
       testMetadata(tblProps = Map("delta.enableIcebergWriterCompatV1" -> "true")),
       new Protocol(1, 2),
@@ -963,6 +1008,15 @@ class TableFeaturesSuite extends AnyFunSuite {
       // that is of partial (writer only) table feature support
       testMetadata(tblProps = Map("delta.enableIcebergCompatV2" -> "true")),
       new Protocol(2, 7, set(), set("columnMapping", "icebergCompatV2"))),
+    (
+      // try to enable the feature that is already supported on a protocol
+      // that is of partial (writer only) table feature support
+      testMetadata(tblProps = Map("delta.enableIcebergCompatV3" -> "true")),
+      new Protocol(
+        2,
+        7,
+        set(),
+        set("columnMapping", "icebergCompatV3", "domainMetadata", "rowTracking"))),
     (
       // try to enable the feature that is already supported on a protocol
       // that is of table feature support

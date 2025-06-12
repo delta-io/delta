@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.hooks
 import scala.collection.mutable
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.{DeltaLog, DeltaTransaction, Snapshot}
+import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
 import org.apache.spark.sql.delta.CommittedTransaction
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
