@@ -33,7 +33,11 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.internal.io.FileCommitProtocol
 import org.apache.spark.internal.io.FileCommitProtocol.TaskCommitMessage
 import org.apache.spark.sql.catalyst.expressions.Cast
-import org.apache.spark.sql.types.StringType
+import org.apache.spark.sql.delta.files.DeltaFileFormatWriter.PartitionedTaskAttemptContextImpl
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.types.{DataType, StringType, TimestampType}
+import org.apache.spark.util.Utils
 
 /**
  * Writes out the files to `path` and returns a list of them in `addedStatuses`. Includes
@@ -66,8 +70,6 @@ class DelayedCommitProtocol(
   // the filter themselves. See TransactionalWrite::writeFiles. This filter will be best-effort,
   // since there's no guarantee the stats will exist.
   @transient val addedStatuses = new ArrayBuffer[AddFile]
-
-  val timestampPartitionPattern = "yyyy-MM-dd HH:mm:ss[.S]"
 
   // Constants for CDC partition manipulation. Used only in newTaskTempFile(), but we define them
   // here to avoid building a new redundant regex for every file.
@@ -106,6 +108,9 @@ class DelayedCommitProtocol(
     addedFiles = new ArrayBuffer[(Map[String, String], String)]
   }
 
+  /** Prefix added in testing mode to all filenames to test special chars that need URL-encoding. */
+  val FILE_NAME_PREFIX = SQLConf.get.getConf(DeltaSQLConf.TEST_FILE_NAME_PREFIX)
+
   protected def getFileName(
       taskContext: TaskAttemptContext,
       ext: String,
@@ -116,30 +121,53 @@ class DelayedCommitProtocol(
     val split = taskContext.getTaskAttemptID.getTaskID.getId
     val uuid = UUID.randomUUID.toString
     // CDC files (CDC_PARTITION_COL = true) are named with "cdc-..." instead of "part-...".
-    if (partitionValues.get(CDC_PARTITION_COL).contains("true")) {
-      f"cdc-$split%05d-$uuid$ext"
-    } else {
-      f"part-$split%05d-$uuid$ext"
-    }
+    val typePrefix =
+      if (partitionValues.get(CDC_PARTITION_COL).contains("true")) "cdc-" else "part-"
+    f"${FILE_NAME_PREFIX}${typePrefix}${split}%05d-${uuid}${ext}"
   }
 
-  protected def parsePartitions(dir: String): Map[String, String] = {
-    // TODO: timezones?
+  protected def parsePartitions(
+      dir: String,
+      taskContext: TaskAttemptContext): Map[String, String] = {
     // TODO: enable validatePartitionColumns?
+    val useUtcNormalizedTimestamps = taskContext match {
+      case _: PartitionedTaskAttemptContextImpl => taskContext.getConfiguration.getBoolean(
+        DeltaSQLConf.UTC_TIMESTAMP_PARTITION_VALUES.key, true)
+      case _ => false
+    }
+
+    val partitionColumnToDataType: Map[String, DataType] =
+      taskContext.asInstanceOf[PartitionedTaskAttemptContextImpl]
+        .partitionColToDataType
+        .filter(partitionCol => partitionCol._2 == TimestampType)
+
     val dateFormatter = DateFormatter()
     val timestampFormatter =
-      TimestampFormatter(timestampPartitionPattern, java.util.TimeZone.getDefault)
+      TimestampFormatter(PartitionUtils.timestampPartitionPattern, java.util.TimeZone.getDefault)
+
+    /**
+     * ToDo: Remove the use of this PartitionUtils API with type inference logic
+     * since the types are already known from the Delta metadata!
+     *
+     * Currently types are passed to the PartitionUtils.parsePartition API to facilitate
+     * timestamp conversion to UTC. In all other cases, the type is just inferred as a String.
+     * Note: the passed in timestampFormatter and timezone detail
+     * is used for parsing from the string timestamp.
+     * If utc normalization is enabled the parsed partition value will be adjusted to UTC
+     * and output in iso8601 format.
+     */
     val parsedPartition =
       PartitionUtils
         .parsePartition(
           new Path(dir),
           typeInference = false,
           Set.empty,
-          Map.empty,
+          userSpecifiedDataTypes = partitionColumnToDataType,
           validatePartitionColumns = false,
           java.util.TimeZone.getDefault,
           dateFormatter,
-          timestampFormatter)
+          timestampFormatter,
+          useUtcNormalizedTimestamps)
         ._1
         .get
     parsedPartition
@@ -164,7 +192,8 @@ class DelayedCommitProtocol(
    */
   override def newTaskTempFile(
       taskContext: TaskAttemptContext, dir: Option[String], ext: String): String = {
-    val partitionValues = dir.map(parsePartitions).getOrElse(Map.empty[String, String])
+    val partitionValues = dir.map(dir => parsePartitions(dir, taskContext))
+      .getOrElse(Map.empty[String, String])
     val filename = getFileName(taskContext, ext, partitionValues)
     val relativePath = randomPrefixLength.map { prefixLength =>
       DeltaUtils.getRandomPrefix(prefixLength) // Generate a random prefix as a first choice

@@ -15,39 +15,38 @@
  */
 package io.delta.kernel;
 
-import java.util.List;
-import java.util.Map;
-
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Column;
+import java.util.List;
+import java.util.Map;
 
 /**
  * Contains the context for writing data to Delta table. The context is created for each partition
- * for partitioned table or once per table for un-partitioned table. It is created using
- * {@link Transaction#getWriteContext(Engine, Row, Map)} (String, Map, List)}.
+ * for partitioned table or once per table for un-partitioned table. It is created using {@link
+ * Transaction#getWriteContext(Engine, Row, Map)} (String, Map, List)}.
  *
  * @since 3.2.0
  */
 @Evolving
 public interface DataWriteContext {
-    /**
-     * Returns the target directory where the data should be written.
-     *
-     * @return fully qualified path of the target directory
-     */
-    String getTargetDirectory();
+  /**
+   * Returns the target directory where the data should be written.
+   *
+   * @return fully qualified path of the target directory
+   */
+  String getTargetDirectory();
 
-    /**
-     * Returns the list of {@link Column} that the connector can optionally collect statistics. Each
-     * {@link Column} is a reference to a top-level or nested column in the table.
-     * <p>
-     * Statistics collections can be skipped or collected for a partial list of the returned
-     * {@link Column}s. When stats are present in the written Delta log, they can be used to
-     * optimize query performance.
-     *
-     * @return schema of the statistics
-     */
-    List<Column> getStatisticsColumns();
+  /**
+   * Returns the list of {@link Column} that the connector can optionally collect statistics. Each
+   * {@link Column} is a reference to a top-level or nested column in the table.
+   *
+   * <p>Statistics collections can be skipped or collected for a partial list of the returned {@link
+   * Column}s. When stats are present in the written Delta log, they can be used to optimize query
+   * performance.
+   *
+   * @return schema of the statistics
+   */
+  List<Column> getStatisticsColumns();
 }

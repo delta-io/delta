@@ -101,7 +101,8 @@ class CatalogFileManifest(
     } else {
       val partitions = spark.sessionState.catalog.listPartitions(catalogTable.identifier)
       partitions.map { partition =>
-        val partitionDir = partition.storage.locationUri.map(_.toString())
+        // Convert URI into Path first to decode special characters.
+        val partitionDir = partition.storage.locationUri.map(new Path(_).toString())
           .getOrElse {
             val partitionDir =
               PartitionUtils.getPathFragment(partition.spec, catalogTable.partitionSchema)

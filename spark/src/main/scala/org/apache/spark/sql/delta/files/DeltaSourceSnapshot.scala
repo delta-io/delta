@@ -20,10 +20,12 @@ import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.{DeltaLog, DeltaTableUtils, Snapshot}
 import org.apache.spark.sql.delta.actions.SingleAction
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.sources.IndexedFile
 import org.apache.spark.sql.delta.stats.DataSkippingReader
 import org.apache.spark.sql.delta.util.StateCache
 
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.{Dataset, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.functions._
@@ -50,7 +52,8 @@ class DeltaSourceSnapshot(
     val (part, data) = filters.partition { e =>
       DeltaTableUtils.isPredicatePartitionColumnsOnly(e, partitionCols, spark)
     }
-    logInfo(s"Classified filters: partition: $part, data: $data")
+    logInfo(log"Classified filters: partition: ${MDC(DeltaLogKeys.PARTITION_FILTER, part)}, " +
+      log"data: ${MDC(DeltaLogKeys.DATA_FILTER, data)}")
     (part, data)
   }
 

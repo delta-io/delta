@@ -16,31 +16,27 @@
 
 package org.apache.spark.sql.delta
 
-// scalastyle:off import.ordering.noEmptyLine
-import java.io.PrintWriter
+// scalastyle:off typedlit
+import java.sql.{Date, Timestamp}
 
 import scala.collection.JavaConverters._
 
+import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
+import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
-import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, InvariantViolationException, SchemaUtils}
+import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, InvariantViolationException}
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import io.delta.tables.DeltaTableBuilder
 
-import org.apache.spark.SparkConf
-import org.apache.spark.sql.{AnalysisException, DataFrame, Dataset, QueryTest, Row}
+import org.apache.spark.sql.{AnalysisException, Column, DataFrame, Dataset, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.util.DateTimeUtils.{getZoneId, stringToDate, stringToTimestamp, toJavaDate, toJavaTimestamp}
 import org.apache.spark.sql.catalyst.util.quietly
 import org.apache.spark.sql.execution.streaming.MemoryStream
-import org.apache.spark.sql.functions.{current_timestamp, lit}
+import org.apache.spark.sql.functions.{lit, make_dt_interval, struct, typedLit}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.{StreamingQueryException, Trigger}
-import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.sql.types.{ArrayType, DateType, IntegerType, MetadataBuilder, StringType, StructField, StructType, TimestampType}
-import org.apache.spark.unsafe.types.UTF8String
+import org.apache.spark.sql.types.{ArrayType, DataType, DateType, IntegerType, LongType, MetadataBuilder, ShortType, StringType, StructField, StructType, TimestampType}
 
 trait GeneratedColumnSuiteBase
     extends GeneratedColumnTest
@@ -604,14 +600,157 @@ trait GeneratedColumnSuiteBase
     }
   }
 
-  test("validateGeneratedColumns: column type doesn't match expression type") {
-    val f1 = StructField("foo", IntegerType)
-    val f2 = withGenerationExpression(StructField("bar", IntegerType), "CAST(foo AS string)")
-    val schema = StructType(f1 :: f2 :: Nil)
-    val e = intercept[AnalysisException](validateGeneratedColumns(spark, schema))
-    errorContains(e.getMessage, "The expression type of the generated column bar is STRING, " +
-      "but the column type is INT")
+  protected def testTypeMismatch(
+      generatedColumnType: DataType,
+      generatedColumnNullable: Boolean,
+      generateAsExpression: Column,
+      expectSuccess: Boolean
+  ): Unit = {
+    val verb = if (expectSuccess) "matches" else "doesn't match"
+    val columnTypeString = if (generatedColumnNullable) {
+      generatedColumnType.sql
+    } else {
+      s"${generatedColumnType.sql} NOT NULL"
+    }
+    test(s"validateGeneratedColumns: column type ${columnTypeString}" +
+        s" $verb expression type $generateAsExpression") {
+      val f1 = StructField("nullableIntCol", IntegerType, nullable = true)
+      val f2 = withGenerationExpression(
+        StructField("genCol", generatedColumnType, nullable = generatedColumnNullable),
+        generateAsExpression.expr.sql)
+      val schema = StructType(f1 :: f2 :: Nil)
+      if (expectSuccess) {
+        validateGeneratedColumns(spark, schema)
+      } else {
+        val e = intercept[AnalysisException](validateGeneratedColumns(spark, schema))
+        val expressionTypeString = if (generateAsExpression.expr.resolved) {
+          generateAsExpression.expr.dataType.sql
+        } else {
+          val df1 = spark.createDataFrame(spark.emptyDataFrame.rdd, schema)
+            .select(generateAsExpression)
+          df1.schema.fields.head.dataType.sql
+        }
+        checkErrorMatchPVals(e,
+          "DELTA_GENERATED_COLUMNS_EXPR_TYPE_MISMATCH",
+          parameters = Map(
+            "columnName" -> "genCol",
+            "expressionType" -> s".*${expressionTypeString}.*",
+            "columnType" -> s".*${generatedColumnType.sql}.*"
+          ))
+      }
+    }
   }
+
+  testTypeMismatch(
+    generatedColumnType = IntegerType,
+    generatedColumnNullable = true,
+    generateAsExpression = $"nullableIntCol",
+    expectSuccess = true
+  )
+
+  testTypeMismatch(
+    generatedColumnType = IntegerType,
+    generatedColumnNullable = false,
+    generateAsExpression = $"nullableIntCol",
+    // Even though foo is nullable, we allow this and fail at runtime when foo actually contains
+    // a NULL value.
+    expectSuccess = true
+  )
+
+  testTypeMismatch(
+    generatedColumnType = IntegerType,
+    generatedColumnNullable = false,
+    generateAsExpression = lit(5),
+    expectSuccess = true
+  )
+
+
+  testTypeMismatch(
+    generatedColumnType = IntegerType,
+    generatedColumnNullable = false,
+    // We need to force this to be INT NULL not a VOID NULL.
+    generateAsExpression = typedLit[java.lang.Integer](null),
+    // Even though the expression is clearly nullable, we allow this and fail at runtime
+    // when actually generating a NULL value.
+    expectSuccess = true
+  )
+
+  testTypeMismatch(
+    generatedColumnType = IntegerType,
+    generatedColumnNullable = true,
+    // We need to force this to be INT NULL not a VOID NULL.
+    generateAsExpression = typedLit[java.lang.Integer](null),
+    expectSuccess = true
+  )
+
+  for (generatedColumnNullable <- BOOLEAN_DOMAIN) {
+    testTypeMismatch(
+      generatedColumnType = IntegerType,
+      generatedColumnNullable = generatedColumnNullable,
+      generateAsExpression = $"nullableIntCol".cast(StringType),
+      expectSuccess = false)
+
+    testTypeMismatch(
+      generatedColumnType = IntegerType,
+      generatedColumnNullable = generatedColumnNullable,
+      generateAsExpression = $"nullableIntCol".cast(LongType),
+      expectSuccess = false)
+
+    testTypeMismatch(
+      generatedColumnType = IntegerType,
+      generatedColumnNullable = generatedColumnNullable,
+      generateAsExpression = $"nullableIntCol".cast(ShortType),
+      expectSuccess = false)
+  }
+
+  testTypeMismatch(
+    generatedColumnType = StructType(Array(StructField("first", IntegerType, nullable = false))),
+    generatedColumnNullable = true,
+    generateAsExpression = struct($"nullableIntCol".as("first")),
+    // Even though foo is nullable, we allow this and fail at runtime when foo actually contains
+    // a NULL value.
+    expectSuccess = true
+  )
+
+  testTypeMismatch(
+    generatedColumnType =
+      StructType(Array(StructField("firstNullable", IntegerType, nullable = true))),
+    generatedColumnNullable = true,
+    generateAsExpression = struct($"nullableIntCol".as("firstNullable")),
+    expectSuccess = true
+  )
+
+  test("nullability mismatch fails at runtime") {
+    withTableName("tbl") { tbl =>
+      createTable(
+        tableName = tbl,
+        path = None,
+        schemaString = "base STRING, gen STRING",
+        generatedColumns = Map("gen" -> "concat(base, '-generated')"),
+        partitionColumns = Seq.empty,
+        // base is nullable, but gen isn't even though it's derived from base.
+        notNullColumns = Set("gen"))
+      // Perform a legal write.
+      Seq("1").toDF("base")
+        .write.format("delta").mode("append").saveAsTable(tbl)
+
+      // Perform an illegal write.
+      val e = intercept[DeltaInvariantViolationException] {
+        Seq(null.asInstanceOf[String]).toDF("base")
+          .write.format("delta").mode("append").saveAsTable(tbl)
+      }
+      checkError(e,
+        "DELTA_NOT_NULL_CONSTRAINT_VIOLATED",
+        parameters = Map("columnName" -> "gen"))
+
+      // Ensure the result is correct.
+      checkAnswer(
+        spark.read.table(tbl),
+        Row("1", "1-generated") :: Nil
+      )
+    }
+  }
+
 
   test("test partition transform expressions end to end") {
     withTableName("partition_transform_expressions") { table =>
@@ -629,8 +768,8 @@ trait GeneratedColumnSuiteBase
         .withColumn("time", $"time".cast(TimestampType))
         .write
         .format("delta")
-        .mode("append").
-        saveAsTable(table)
+        .mode("append")
+        .saveAsTable(table)
       checkAnswer(
         sql(s"SELECT * from $table"),
         Row(sqlTimestamp("2020-10-11 12:30:30"), sqlDate("2020-01-01"), sqlDate("2020-10-01"),
@@ -718,12 +857,12 @@ trait GeneratedColumnSuiteBase
       assert(tableSchema == spark.table(table).schema)
       // Insert a LONG to `c1` should fail rather than changing the `c1` type to LONG.
       checkError(
-        exception = intercept[AnalysisException] {
+        intercept[AnalysisException] {
           Seq(32767.toLong).toDF("c1").write.format("delta").mode("append")
             .option("mergeSchema", "true")
             .saveAsTable(table)
         },
-        errorClass = "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
+        "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
         parameters = Map(
           "columnName" -> "c1",
           "columnType" -> "INT",
@@ -753,14 +892,14 @@ trait GeneratedColumnSuiteBase
 
       // Insert an INT to `a` should fail rather than changing the `a` type to INT
       checkError(
-        exception = intercept[AnalysisException] {
+        intercept[AnalysisException] {
           Seq((32767, 32767)).toDF("a", "c1a")
             .selectExpr("a", "named_struct('a', c1a) as c1")
             .write.format("delta").mode("append")
             .option("mergeSchema", "true")
             .saveAsTable(table)
         },
-        errorClass = "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
+        "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
         parameters = Map(
           "columnName" -> "a",
           "columnType" -> "SMALLINT",
@@ -787,25 +926,17 @@ trait GeneratedColumnSuiteBase
 
   test("changing the type of nested field not referenced by a generated col") {
     withTableName("disallow_column_type_evolution") { table =>
-      createTable(table, None, "t STRUCT<a: SMALLINT, b: SMALLINT>, gen SMALLINT",
-        Map("gen" -> "CAST(HASH(t.a - 10s) AS SMALLINT)"), Nil)
+      createTable(table, None, "t STRUCT<a: SMALLINT, b: SMALLINT>, gen INT",
+        Map("gen" -> "HASH(t.a)"), Nil)
 
-      checkError(
-        exception = intercept[AnalysisException] {
-          Seq((32767.toShort, 32767)).toDF("a", "b")
-            .selectExpr("named_struct('a', a, 'b', b) as t")
-            .write.format("delta").mode("append")
-            .option("mergeSchema", "true")
-            .saveAsTable(table)
-        },
-        errorClass = "DELTA_GENERATED_COLUMNS_DATA_TYPE_MISMATCH",
-        parameters = Map(
-          "columnName" -> "t",
-          "columnType" -> "STRUCT<a: SMALLINT, b: SMALLINT>",
-          "dataType" -> "STRUCT<a: SMALLINT, b: INT>",
-          "generatedColumns" -> "gen -> CAST(HASH(t.a - 10s) AS SMALLINT)"
-        )
-      )
+      // changing the type of `t.b` should succeed since it is not being
+      // referenced by any CHECK constraints or generated columns.
+      Seq((32767.toShort, 32767)).toDF("a", "b")
+        .selectExpr("named_struct('a', a, 'b', b) as t")
+        .write.format("delta").mode("append")
+        .option("mergeSchema", "true")
+        .saveAsTable(table)
+      checkAnswer(spark.table(table), Row(Row(32767, 32767), 1249274084) :: Nil)
     }
   }
 
@@ -1006,28 +1137,25 @@ trait GeneratedColumnSuiteBase
 
   test("using generated columns should upgrade the protocol") {
     withTableName("upgrade_protocol") { table =>
-      def protocolVersions: (Int, Int) = {
-        sql(s"DESC DETAIL $table")
-          .select("minReaderVersion", "minWriterVersion")
-          .as[(Int, Int)]
-          .head()
-      }
-
-      // Use the default protocol versions when not using computed partitions
+      // Use the default protocol versions when not using computed partitions.
       createTable(table, None, "i INT", Map.empty, Seq.empty)
-      assert(protocolVersions == (1, 2))
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName = table))
+      assert(deltaLog.update().protocol == Protocol(1, 2))
       assert(DeltaLog.forTable(spark, TableIdentifier(tableName = table)).snapshot.version == 0)
 
-      // Protocol versions should be upgraded when using computed partitions
+      // Protocol versions should be upgraded when using computed partitions.
       replaceTable(
         table,
         None,
         defaultTestTableSchema,
         defaultTestTableGeneratedColumns,
         defaultTestTablePartitionColumns)
-      assert(protocolVersions == (1, 4))
+      assert(deltaLog.update().protocol == Protocol(1, 7).withFeatures(Seq(
+        AppendOnlyTableFeature,
+        InvariantsTableFeature,
+        GeneratedColumnsTableFeature)))
       // Make sure we did overwrite the table rather than deleting and re-creating.
-      assert(DeltaLog.forTable(spark, TableIdentifier(tableName = table)).snapshot.version == 1)
+      assert(DeltaLog.forTable(spark, TableIdentifier(tableName = table)).update().version == 1)
     }
   }
 
@@ -1126,6 +1254,18 @@ trait GeneratedColumnSuiteBase
         .collect()
         .toSeq
       assert("foo" :: Nil == comments)
+    }
+  }
+
+  test("generation expression allows timestampdiff & timestampadd") {
+    withTableName("generation_expression_timestamp_diff_add") { tableName =>
+      createTable(
+        tableName,
+        path = None,
+        schemaString = "c1 TIMESTAMP, c2 TIMESTAMP, c3 BIGINT, c4 TIMESTAMP",
+        generatedColumns =
+          Map("c3" -> "timestampdiff(MONTH, c1, c2)", "c4" -> "timestampadd(MONTH, 1, c1)"),
+        partitionColumns = Seq.empty)
     }
   }
 
@@ -1756,6 +1896,12 @@ trait GeneratedColumnSuiteBase
     val tableName1 = "gcEnabledCDCOn"
     val tableName2 = "gcEnabledCDCOff"
     withTable(tableName1, tableName2) {
+      def readCdf(startingVersion: Long): DataFrame = {
+        spark.read.format("delta").option("readChangeData", "true")
+          .option("startingVersion", startingVersion)
+          .table(tableName1)
+          .drop(CDCReader.CDC_COMMIT_TIMESTAMP)
+      }
 
       createTable(
         tableName1,
@@ -1770,24 +1916,26 @@ trait GeneratedColumnSuiteBase
         )
       )
 
+      checkAnswer(readCdf(startingVersion = 0), Seq())
+
       spark.range(100).repartition(10)
-        .withColumn("timeCol", current_timestamp())
+        .withColumn(
+          "timeCol", lit(sqlTimestamp("1970-01-01 00:00:00")) + make_dt_interval($"id"))
         .write
         .format("delta")
         .mode("append")
         .saveAsTable(tableName1)
 
-      spark.sql(s"DELETE FROM ${tableName1} WHERE id < 3")
+      spark.sql(s"DELETE FROM $tableName1 WHERE id < 3")
 
-      val changeData = spark.read.format("delta").option("readChangeData", "true")
-        .option("startingVersion", "2")
-        .table(tableName1)
-        .select("id", CDCReader.CDC_TYPE_COLUMN_NAME, CDCReader.CDC_COMMIT_VERSION)
-
-      val expected = spark.range(0, 3)
-        .withColumn(CDCReader.CDC_TYPE_COLUMN_NAME, lit("delete"))
-        .withColumn(CDCReader.CDC_COMMIT_VERSION, lit(2))
-      checkAnswer(changeData, expected)
+      checkAnswer(
+        readCdf(startingVersion = 2),
+        Seq(
+          Row(0, sqlTimestamp("1970-01-01 00:00:00"), sqlDate("1970-01-01"), "delete", 2),
+          Row(1, sqlTimestamp("1970-01-02 00:00:00"), sqlDate("1970-01-02"), "delete", 2),
+          Row(2, sqlTimestamp("1970-01-03 00:00:00"), sqlDate("1970-01-03"), "delete", 2)
+        )
+      )
 
       // Now write out the data frame of cdc to another table that has generated columns but not
       // cdc enabled.
@@ -1879,6 +2027,71 @@ trait GeneratedColumnSuiteBase
               "A column, variable, or function parameter with name `c2` cannot be resolved")
           }
         }
+      }
+    }
+  }
+
+  test("generated column metadata is not exposed in schema") {
+    val tableName = "table"
+    withTable(tableName) {
+      createDefaultTestTable(tableName)
+      Seq((1L, "foo", Timestamp.valueOf("2020-10-11 12:30:30"), 100, Date.valueOf("2020-11-12")))
+        .toDF("c1", "c3_p", "c5", "c6", "c8")
+        .write.format("delta").mode("append").saveAsTable(tableName)
+
+      val expectedSchema = new StructType()
+        .add("c1", LongType)
+        .add("c2_g", LongType)
+        .add("c3_p", StringType)
+        .add("c4_g_p", DateType)
+        .add("c5", TimestampType)
+        .add("c6", IntegerType)
+        .add("c7_g_p", IntegerType)
+        .add("c8", DateType)
+
+      assert(spark.read.table(tableName).schema === expectedSchema)
+
+      val ttDf = spark.read.option(DeltaOptions.VERSION_AS_OF, 0).table(tableName)
+      assert(ttDf.schema === expectedSchema)
+
+      val cdcDf = spark.read
+        .option(DeltaOptions.CDC_READ_OPTION, true)
+        .option(DeltaOptions.STARTING_VERSION_OPTION, 0)
+        .table(tableName)
+      assert(cdcDf.schema === expectedSchema
+        .add("_change_type", StringType)
+        .add("_commit_version", LongType)
+        .add("_commit_timestamp", TimestampType)
+      )
+
+      assert(spark.readStream.table(tableName).schema === expectedSchema)
+
+      val cdcStreamDf = spark.readStream
+        .option(DeltaOptions.CDC_READ_OPTION, true)
+        .option(DeltaOptions.STARTING_VERSION_OPTION, 0)
+        .table(tableName)
+      assert(cdcStreamDf.schema === expectedSchema
+        .add("_change_type", StringType)
+        .add("_commit_version", LongType)
+        .add("_commit_timestamp", TimestampType)
+      )
+    }
+  }
+
+  test("DML into table with generated column, char column and readSideCharPadding=true") {
+    val tableName = "table"
+    withTable(tableName) {
+      withSQLConf(SQLConf.READ_SIDE_CHAR_PADDING.key -> "true") {
+        createTable(tableName, None, "c1 INT, c2 CHAR(5), c3 INT", Map("c3" -> "c1 + 1"), Nil)
+        spark.sql(
+          s"""
+             |MERGE INTO $tableName AS TARGET
+             |USING (SELECT id as c1, cast(id AS CHAR(5)) as c2 FROM RANGE(10)) AS SOURCE
+             |ON TARGET.c1 = SOURCE.c1
+             |WHEN MATCHED THEN UPDATE SET c1 = SOURCE.c1, c2 = SOURCE.c2
+             |WHEN NOT MATCHED THEN INSERT (c1, c2) VALUES (SOURCE.c1, SOURCE.c2)
+             |""".stripMargin)
+        spark.sql(s"UPDATE $tableName SET c2 = 'upd' WHERE c1 = 1")
       }
     }
   }

@@ -22,14 +22,8 @@ import java.util.{TimeZone, UUID}
 
 import scala.reflect.ClassTag
 
-import org.apache.spark.sql.delta.{
-  ColumnMappingTableFeature,
-  DeletionVectorsTableFeature,
-  DeltaLog,
-  DeltaParquetFileFormat,
-  SnapshotDescriptor
-}
-import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
+import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.actions.{DeletionVectorDescriptor, Metadata, Protocol}
 import com.google.common.hash.Hashing
 import io.delta.sharing.client.{DeltaSharingClient, DeltaSharingRestClient}
 import io.delta.sharing.client.model.{DeltaTableFiles, DeltaTableMetadata, Table}
@@ -45,9 +39,26 @@ import org.apache.spark.storage.{BlockId, StorageLevel}
 object DeltaSharingUtils extends Logging {
 
   val STREAMING_SUPPORTED_READER_FEATURES: Seq[String] =
-    Seq(DeletionVectorsTableFeature.name, ColumnMappingTableFeature.name)
+    Seq(
+      DeletionVectorsTableFeature.name,
+      ColumnMappingTableFeature.name,
+      TimestampNTZTableFeature.name,
+      TypeWideningPreviewTableFeature.name,
+      TypeWideningTableFeature.name,
+      VariantTypePreviewTableFeature.name,
+      VariantTypeTableFeature.name
+    )
+
   val SUPPORTED_READER_FEATURES: Seq[String] =
-    Seq(DeletionVectorsTableFeature.name, ColumnMappingTableFeature.name)
+    Seq(
+      DeletionVectorsTableFeature.name,
+      ColumnMappingTableFeature.name,
+      TimestampNTZTableFeature.name,
+      TypeWideningPreviewTableFeature.name,
+      TypeWideningTableFeature.name,
+      VariantTypePreviewTableFeature.name,
+      VariantTypeTableFeature.name
+    )
 
   // The prefix will be used for block ids of all blocks that store the delta log in BlockManager.
   // It's used to ensure delta sharing queries don't mess up with blocks with other applications.
@@ -123,21 +134,37 @@ object DeltaSharingUtils extends Logging {
     )
   }
 
+  // Only absolute path (which is pre-signed url) need to be put in IdToUrl mapping.
+  // inline DV should be processed in place, and UUID should throw error.
+  def requiresIdToUrlForDV(deletionVectorOpt: Option[DeletionVectorDescriptor]): Boolean = {
+    deletionVectorOpt.isDefined &&
+      deletionVectorOpt.get.storageType == DeletionVectorDescriptor.PATH_DV_MARKER
+  }
+
   private def getTableRefreshResult(tableFiles: DeltaTableFiles): TableRefreshResult = {
     var minUrlExpiration: Option[Long] = None
+    // Collect the id to url mapping from the table files, which includes the file actions
+    // and deletion vectors.
     val idToUrl = tableFiles.lines
-      .map(
-        JsonUtils.fromJson[model.DeltaSharingSingleAction](_).unwrap
-      )
+      .map(JsonUtils.fromJson[model.DeltaSharingSingleAction](_).unwrap)
       .collect {
         case fileAction: model.DeltaSharingFileAction =>
+          val baseEntries = Seq(fileAction.id -> fileAction.path)
+          val dvEntries = if (requiresIdToUrlForDV(fileAction.getDeletionVectorOpt)) {
+            Seq(
+              fileAction.deletionVectorFileId -> fileAction.getDeletionVectorOpt.get.pathOrInlineDv
+            )
+          } else {
+            Seq.empty
+          }
           if (fileAction.expirationTimestamp != null) {
             minUrlExpiration = minUrlExpiration
               .filter(_ < fileAction.expirationTimestamp)
               .orElse(Some(fileAction.expirationTimestamp))
           }
-          fileAction.id -> fileAction.path
+          baseEntries ++ dvEntries
       }
+      .flatten
       .toMap
 
     TableRefreshResult(idToUrl, minUrlExpiration, tableFiles.refreshToken)
@@ -156,8 +183,7 @@ object DeltaSharingUtils extends Logging {
       limit: Option[Long],
       versionAsOf: Option[Long],
       timestampAsOf: Option[String],
-      jsonPredicateHints: Option[String],
-      refreshToken: Option[String]): RefresherFunction = { (_: Option[String]) =>
+      jsonPredicateHints: Option[String]): RefresherFunction = { refreshTokenOpt =>
     {
       val tableFiles = client
         .getFiles(
@@ -167,7 +193,7 @@ object DeltaSharingUtils extends Logging {
           versionAsOf = versionAsOf,
           timestampAsOf = timestampAsOf,
           jsonPredicateHints = jsonPredicateHints,
-          refreshToken = refreshToken
+          refreshToken = refreshTokenOpt
         )
       getTableRefreshResult(tableFiles)
     }
@@ -277,9 +303,11 @@ object DeltaSharingUtils extends Logging {
       partitionFiltersString: String,
       dataFiltersString: String,
       jsonPredicateHints: String,
+      limitHint: String,
       version: Long): String = {
     val fullQueryString = s"${options.versionAsOf}_${options.timestampAsOf}_" +
-      s"${partitionFiltersString}_${dataFiltersString}_${jsonPredicateHints}_${version}"
+      s"${partitionFiltersString}_${dataFiltersString}_${jsonPredicateHints}_${limitHint}_" +
+      s"${version}"
     Hashing.sha256().hashString(fullQueryString, UTF_8).toString
   }
 

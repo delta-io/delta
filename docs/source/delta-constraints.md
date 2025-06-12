@@ -65,4 +65,5 @@ You manage `CHECK` constraints using the `ALTER TABLE ADD CONSTRAINT` and `ALTER
 > SHOW TBLPROPERTIES default.people10m;
 ```
 
-.. include:: /shared/replacements.md
+.. <Delta> replace:: Delta Lake
+.. <AS> replace:: Apache Spark

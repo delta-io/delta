@@ -15,26 +15,21 @@
  */
 package io.delta.kernel.data;
 
-/**
- * Abstraction to represent a single map value in a {@link ColumnVector}.
- */
+/** Abstraction to represent a single map value in a {@link ColumnVector}. */
 public interface MapValue {
-    /**
-     * The number of elements in the map
-     */
-    int getSize();
+  /** The number of elements in the map */
+  int getSize();
 
-    /**
-     * A {@link ColumnVector} containing the keys. There are exactly {@link MapValue#getSize()} keys
-     * in the vector, and each key maps one-to-one to the value at the same index in
-     * {@link MapValue#getValues()}.
-     */
-    ColumnVector getKeys();
+  /**
+   * A {@link ColumnVector} containing the keys. There are exactly {@link MapValue#getSize()} keys
+   * in the vector, and each key maps one-to-one to the value at the same index in {@link
+   * MapValue#getValues()}.
+   */
+  ColumnVector getKeys();
 
-    /**
-     * A {@link ColumnVector} containing the values. There are exactly {@link MapValue#getSize()}
-     * values in the vector, and maps one-to-one to the keys in {@link MapValue#getKeys()}
-     */
-    ColumnVector getValues();
-
+  /**
+   * A {@link ColumnVector} containing the values. There are exactly {@link MapValue#getSize()}
+   * values in the vector, and maps one-to-one to the keys in {@link MapValue#getKeys()}
+   */
+  ColumnVector getValues();
 }

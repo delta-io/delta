@@ -25,7 +25,7 @@ import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, InvariantViolationException, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import io.delta.tables.DeltaTableBuilder
 
@@ -42,7 +42,8 @@ import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{ArrayType, DateType, IntegerType, MetadataBuilder, StringType, StructField, StructType, TimestampType}
 import org.apache.spark.unsafe.types.UTF8String
 
-trait GeneratedColumnTest extends QueryTest with SharedSparkSession with DeltaSQLCommandTest {
+trait GeneratedColumnTest extends QueryTest with SharedSparkSession with DeltaSQLCommandTest
+    with DeltaSQLTestUtils {
 
 
   protected def sqlDate(date: String): java.sql.Date = {

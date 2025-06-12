@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.commands.merge
 
 import org.apache.spark.sql.delta.metric.IncrementMetric
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.{AddFile, FileAction}
 import org.apache.spark.sql.delta.commands.MergeIntoCommandBase
 
@@ -90,7 +91,7 @@ trait InsertOnlyMergeExecutor extends MergeOutputGeneration {
           deltaTxn,
           dataSkippedFiles.get,
           columnsToDrop = Nil)
-        val targetDF = Dataset.ofRows(spark, targetPlan)
+        val targetDF = DataFrameUtils.ofRows(spark, targetPlan)
         sourceDF.join(targetDF, Column(condition), "leftanti")
       } else {
         sourceDF
@@ -193,7 +194,7 @@ trait InsertOnlyMergeExecutor extends MergeOutputGeneration {
       } else {
         expr
       }
-      new Column(Alias(exprAfterPassthru, name)())
+      Column(Alias(exprAfterPassthru, name)())
     }
   }
 
@@ -263,7 +264,7 @@ trait InsertOnlyMergeExecutor extends MergeOutputGeneration {
       seqToString(outputExprs))
 
     outputExprs.zip(outputColNames).map { case (expr, name) =>
-      new Column(Alias(expr, name)())
+      Column(Alias(expr, name)())
     }
   }
 }

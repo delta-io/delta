@@ -102,14 +102,25 @@ sealed trait DeltaReorgOperation {
 
 /**
  * Reorg operation to purge files with soft deleted rows.
+ * This operation will also try finding and removing the dropped columns from parquet files,
+ * if ever exists such column that does not present in the current table schema.
  */
-class DeltaPurgeOperation extends DeltaReorgOperation {
+class DeltaPurgeOperation extends DeltaReorgOperation with ReorgTableHelper {
   override def filterFilesToReorg(spark: SparkSession, snapshot: Snapshot, files: Seq[AddFile])
-    : Seq[AddFile] =
-    files.filter { file =>
-      (file.deletionVector != null && file.numPhysicalRecords.isEmpty) ||
+    : Seq[AddFile] = {
+    val physicalSchema = DeltaColumnMapping.renameColumns(snapshot.schema)
+    val protocol = snapshot.protocol
+    val metadata = snapshot.metadata
+    val filesWithDroppedColumns: Seq[AddFile] =
+      filterParquetFilesOnExecutors(spark, files, snapshot, ignoreCorruptFiles = false) {
+        schema => fileHasExtraColumns(schema, physicalSchema, protocol, metadata)
+      }
+    val filesWithDV: Seq[AddFile] = files.filter { file =>
+        (file.deletionVector != null && file.numPhysicalRecords.isEmpty) ||
         file.numDeletedRecords > 0L
     }
+    (filesWithDroppedColumns ++ filesWithDV).distinct
+  }
 }
 
 /**
@@ -120,8 +131,9 @@ class DeltaUpgradeUniformOperation(icebergCompatVersion: Int) extends DeltaReorg
     : Seq[AddFile] = {
     def shouldRewriteToBeIcebergCompatible(file: AddFile): Boolean = {
       if (file.tags == null) return true
-      val icebergCompatVersion = file.tags.getOrElse(AddFile.Tags.ICEBERG_COMPAT_VERSION.name, "0")
-      !icebergCompatVersion.exists(_.toString == icebergCompatVersion)
+      val fileIcebergCompatVersion =
+        file.tags.getOrElse(AddFile.Tags.ICEBERG_COMPAT_VERSION.name, "0")
+      fileIcebergCompatVersion != icebergCompatVersion.toString
     }
     files.filter(shouldRewriteToBeIcebergCompatible)
   }

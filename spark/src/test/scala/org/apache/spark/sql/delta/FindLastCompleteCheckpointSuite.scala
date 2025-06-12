@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta
 import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.CheckpointInstance.Format
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
-import org.apache.spark.sql.delta.managedcommit.ManagedCommitBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
 import org.apache.spark.sql.delta.storage.LocalLogStore
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
@@ -34,7 +34,7 @@ class FindLastCompleteCheckpointSuite
   extends QueryTest
   with SharedSparkSession
   with DeltaSQLCommandTest
-  with ManagedCommitBaseSuite {
+  with CoordinatedCommitsBaseSuite {
 
   protected override def sparkConf: SparkConf = {
     super.sparkConf

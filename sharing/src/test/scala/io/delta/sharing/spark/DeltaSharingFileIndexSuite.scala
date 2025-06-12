@@ -43,6 +43,7 @@ import org.apache.spark.sql.types.{FloatType, IntegerType}
 
 private object TestUtils {
   val paths = Seq("http://path1", "http://path2")
+  val refreshTokens = Seq("token1", "token2", "token3")
 
   val SparkConfForReturnExpTime = "spark.delta.sharing.fileindexsuite.returnexptime"
   val SparkConfForUrlExpirationMs = "spark.delta.sharing.fileindexsuite.urlExpirationMs"
@@ -84,14 +85,22 @@ private object TestUtils {
 class TestDeltaSharingClientForFileIndex(
     profileProvider: DeltaSharingProfileProvider,
     timeoutInSeconds: Int = 120,
-    numRetries: Int = 10,
+    numRetries: Int = 3,
     maxRetryDuration: Long = Long.MaxValue,
+    retrySleepInterval: Long = 1000,
     sslTrustAll: Boolean = false,
     forStreaming: Boolean = false,
     responseFormat: String = DeltaSharingRestClient.RESPONSE_FORMAT_DELTA,
     readerFeatures: String = "",
     queryTablePaginationEnabled: Boolean = false,
-    maxFilesPerReq: Int = 100000)
+    maxFilesPerReq: Int = 100000,
+    endStreamActionEnabled: Boolean = false,
+    enableAsyncQuery: Boolean = false,
+    asyncQueryPollIntervalMillis: Long = 10000L,
+    asyncQueryMaxDuration: Long = 600000L,
+    tokenExchangeMaxRetries: Int = 5,
+    tokenExchangeMaxRetryDurationInSeconds: Int = 60,
+    tokenRenewalThresholdInSeconds: Int = 600)
     extends DeltaSharingClient {
 
   import TestUtils._
@@ -146,6 +155,9 @@ class TestDeltaSharingClientForFileIndex(
     jsonPredicateHints.foreach(p => {
       savedJsonPredicateHints = savedJsonPredicateHints :+ p
     })
+    if (numGetFileCalls > 0 && refreshToken.isDefined) {
+      assert(refreshToken.get == refreshTokens(numGetFileCalls.min(2) - 1))
+    }
 
     DeltaTableFiles(
       version = 0,
@@ -155,6 +167,7 @@ class TestDeltaSharingClientForFileIndex(
         getAddFileStr1(paths(numGetFileCalls.min(1)), urlExpirationMsOpt),
         getAddFileStr2(urlExpirationMsOpt)
       ),
+      refreshToken = Some(refreshTokens(numGetFileCalls.min(2))),
       respondedFormat = DeltaSharingRestClient.RESPONSE_FORMAT_DELTA
     )
   }
@@ -401,7 +414,10 @@ class DeltaSharingFileIndexSuite
              |  {"op":"column","name":"id","valueType":"int"},
              |  {"op":"literal","value":"23","valueType":"int"}]
              |}""".stripMargin.replaceAll("\n", "").replaceAll(" ", "")
-
+        spark.sessionState.conf.setConfString(
+          "spark.delta.sharing.jsonPredicateV2Hints.enabled",
+          "false"
+        )
         fileIndex.listFiles(Seq(partitionSqlEq), Seq.empty)
         assert(testClient.savedJsonPredicateHints.size === 1)
         assert(expectedJson == testClient.savedJsonPredicateHints(0))
@@ -442,6 +458,10 @@ class DeltaSharingFileIndexSuite
         // With json predicates disabled, we should not get anything.
         spark.sessionState.conf
           .setConfString("spark.delta.sharing.jsonPredicateHints.enabled", "false")
+        spark.sessionState.conf.setConfString(
+          "spark.delta.sharing.jsonPredicateV2Hints.enabled",
+          "false"
+        )
         fileIndex.listFiles(Seq(partitionSqlEq), Seq.empty)
         assert(testClient.savedJsonPredicateHints.size === 0)
       }

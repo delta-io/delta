@@ -40,7 +40,7 @@ import org.apache.spark.sql.catalyst.expressions.InSet
 import org.apache.spark.sql.catalyst.expressions.Literal.TrueLiteral
 import org.apache.spark.sql.catalyst.plans.logical.Filter
 import org.apache.spark.sql.execution.FileSourceScanExec
-import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
+import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelationWithTable}
 import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.functions.{asc, col, expr, lit, map_values, struct}
 import org.apache.spark.sql.internal.SQLConf
@@ -215,9 +215,7 @@ class DeltaSuite extends QueryTest
 
     // Verify the correct partitioning schema is picked up
     val hadoopFsRelations = df.queryExecution.analyzed.collect {
-      case LogicalRelation(baseRelation, _, _, _) if
-      baseRelation.isInstanceOf[HadoopFsRelation] =>
-        baseRelation.asInstanceOf[HadoopFsRelation]
+      case LogicalRelationWithTable(h: HadoopFsRelation, _) => h
     }
     assert(hadoopFsRelations.size === 1)
     assert(hadoopFsRelations.head.partitionSchema.exists(_.name == "is_odd"))
@@ -1305,8 +1303,8 @@ class DeltaSuite extends QueryTest
           .save(tempDir.toString)
       }
       checkError(
-        exception = e,
-        errorClass = "DELTA_FAILED_TO_MERGE_FIELDS",
+        e,
+        "DELTA_FAILED_TO_MERGE_FIELDS",
         parameters = Map("currentField" -> "value", "updateField" -> "value"))
     }
   }
@@ -1448,7 +1446,7 @@ class DeltaSuite extends QueryTest
         val inputFiles = TahoeLogFileIndex(spark, deltaLog).inputFiles.toSeq
         assert(inputFiles.size == 5)
 
-        val filesToDelete = inputFiles.filter(_.split("/").last.startsWith("part-00001"))
+        val filesToDelete = inputFiles.filter(_.split("/").last.contains("part-00001"))
         assert(filesToDelete.size == 1)
         filesToDelete.foreach { f =>
           val deleted = tryDeleteNonRecursive(
@@ -1481,7 +1479,7 @@ class DeltaSuite extends QueryTest
         val inputFiles = TahoeLogFileIndex(spark, deltaLog).inputFiles.toSeq
         assert(inputFiles.size == 5)
 
-        val filesToCorrupt = inputFiles.filter(_.split("/").last.startsWith("part-00001"))
+        val filesToCorrupt = inputFiles.filter(_.split("/").last.contains("part-00001"))
         assert(filesToCorrupt.size == 1)
         val fs = tempDirPath.getFileSystem(deltaLog.newDeltaHadoopConf())
         filesToCorrupt.foreach { f =>
@@ -2036,7 +2034,8 @@ class DeltaSuite extends QueryTest
 
     // Now make a commit that comes from an "external" writer that deletes existing data and
     // changes the schema
-    val actions = Seq(Action.supportedProtocolVersion(), newMetadata) ++ files.map(_.remove)
+    val actions = Seq(Action.supportedProtocolVersion(
+      featuresToExclude = Seq(CatalogOwnedTableFeature)), newMetadata) ++ files.map(_.remove)
     deltaLog.store.write(
       FileNames.unsafeDeltaFile(deltaLog.logPath, snapshot.version + 1),
       actions.map(_.json).iterator,
@@ -2711,24 +2710,24 @@ class DeltaSuite extends QueryTest
       spark.conf.set("spark.databricks.delta.write.txnVersion", "0")
       spark.sql(s"INSERT INTO $tableName (col1, col2) VALUES (3, 0)")
       // this should throw an exception as the txn version is automatically reset
-      val e1 = intercept[IllegalArgumentException] {
+      val e1 = intercept[DeltaIllegalArgumentException] {
         spark.sql(s"INSERT INTO $tableName (col1, col2) VALUES (4, 0)")
       }
-      assert(e1.getMessage == "[DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS] " +
-        "Invalid options for idempotent Dataframe writes: " +
+      checkError(e1, "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS", "42616", Map("reason" -> (
         "Both spark.databricks.delta.write.txnAppId and spark.databricks.delta.write.txnVersion " +
-        "must be specified for idempotent Delta writes")
+          "must be specified for idempotent Delta writes")
+      ))
       // this write should succeed as it's using a newer version than the latest
       spark.conf.set("spark.databricks.delta.write.txnVersion", "10")
       spark.sql(s"INSERT INTO $tableName (col1, col2) VALUES (2, 0)")
       // this should throw an exception as the txn version is automatically reset
-      val e2 = intercept[IllegalArgumentException] {
+      val e2 = intercept[DeltaIllegalArgumentException] {
         spark.sql(s"INSERT INTO $tableName (col1, col2) VALUES (3, 0)")
       }
-      assert(e2.getMessage == "[DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS] " +
-        "Invalid options for idempotent Dataframe writes: " +
+      checkError(e2, "DELTA_INVALID_IDEMPOTENT_WRITES_OPTIONS", "42616", Map("reason" -> (
         "Both spark.databricks.delta.write.txnAppId and spark.databricks.delta.write.txnVersion " +
-        "must be specified for idempotent Delta writes")
+          "must be specified for idempotent Delta writes")
+      ))
 
       val res = spark.sql(s"SELECT col1 FROM $tableName")
         .orderBy(asc("col1"))

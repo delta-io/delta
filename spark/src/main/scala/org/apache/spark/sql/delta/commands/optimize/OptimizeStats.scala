@@ -30,6 +30,7 @@ case class OptimizeStats(
     var numPartitionsOptimized: Long = 0,
     var zOrderStats: Option[ZOrderStats] = None,
     var clusteringStats: Option[ClusteringStats] = None,
+    var numBins: Long = 0,
     var numBatches: Long = 0,
     var totalConsideredFiles: Long = 0,
     var totalFilesSkipped: Long = 0,
@@ -54,6 +55,7 @@ case class OptimizeStats(
       partitionsOptimized = numPartitionsOptimized,
       zOrderStats = zOrderStats,
       clusteringStats = clusteringStats,
+      numBins = numBins,
       numBatches = numBatches,
       totalConsideredFiles = totalConsideredFiles,
       totalFilesSkipped = totalFilesSkipped,
@@ -200,6 +202,7 @@ object FileSizeStatsWithHistogram {
  * @param partitionsOptimized Number of partitions optimized
  * @param zOrderStats Z-Order stats
  * @param clusteringStats Clustering stats
+ * @param numBins Number of bins
  * @param numBatches Number of batches
  * @param totalConsideredFiles Number of files considered for the Optimize operation.
  * @param totalFilesSkipped Number of files that are skipped from being Optimized.
@@ -227,6 +230,7 @@ case class OptimizeMetrics(
     partitionsOptimized: Long = 0,
     zOrderStats: Option[ZOrderStats] = None,
     clusteringStats: Option[ClusteringStats] = None,
+    numBins: Long,
     numBatches: Long,
     totalConsideredFiles: Long,
     totalFilesSkipped: Long = 0,

@@ -52,6 +52,8 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase
     "Negative case - more operations between merge and delta target",
     "test merge on temp view - basic - SQL TempView",
     "test merge on temp view - basic - Dataset TempView",
+    "test merge on temp view - basic - merge condition references subset of target cols - SQL TempView",
+    "test merge on temp view - basic - merge condition references subset of target cols - Dataset TempView",
     "test merge on temp view - subset cols - SQL TempView",
     "test merge on temp view - subset cols - Dataset TempView",
     "test merge on temp view - superset cols - SQL TempView",
@@ -60,11 +62,22 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase
     "test merge on temp view - nontrivial projection - Dataset TempView",
     "test merge on temp view - view with too many internal aliases - SQL TempView",
     "test merge on temp view - view with too many internal aliases - Dataset TempView",
+    "test merge on temp view - view with too many internal aliases - merge condition references subset of target cols - SQL TempView",
+    "test merge on temp view - view with too many internal aliases - merge condition references subset of target cols - Dataset TempView",
     "Update specific column works fine in temp views - SQL TempView",
     "Update specific column works fine in temp views - Dataset TempView"
     // scalastyle:on line.size.limit
     )
 
+  // Maps expected error classes to actual error classes. Used to handle error classes that are
+  // different when running using SQL vs. Scala.
+  override protected val mappedErrorClasses: Map[String, String] = Map(
+   "NON_LAST_MATCHED_CLAUSE_OMIT_CONDITION" -> "DELTA_NON_LAST_MATCHED_CLAUSE_OMIT_CONDITION",
+   "NON_LAST_NOT_MATCHED_BY_TARGET_CLAUSE_OMIT_CONDITION" ->
+     "DELTA_NON_LAST_NOT_MATCHED_CLAUSE_OMIT_CONDITION",
+   "NON_LAST_NOT_MATCHED_BY_SOURCE_CLAUSE_OMIT_CONDITION" ->
+     "DELTA_NON_LAST_NOT_MATCHED_BY_SOURCE_CLAUSE_OMIT_CONDITION"
+  )
 
   test("basic scala API") {
     withTable("source") {

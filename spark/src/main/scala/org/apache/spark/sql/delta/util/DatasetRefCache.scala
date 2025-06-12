@@ -42,9 +42,11 @@ import org.apache.spark.sql.{DataFrame, Dataset, Row, SparkSession}
  *
  * @param creator a function to create [[Dataset]].
  */
-class DatasetRefCache[T](creator: () => Dataset[T]) {
+class DatasetRefCache[T] private[util](creator: () => Dataset[T]) {
 
   private val holder = new AtomicReference[Dataset[T]]
+
+  private[delta] def invalidate() = holder.set(null)
 
   def get: Dataset[T] = Option(holder.get())
     .filter(_.sparkSession eq SparkSession.active)
@@ -54,4 +56,3 @@ class DatasetRefCache[T](creator: () => Dataset[T]) {
       df
     }
 }
-

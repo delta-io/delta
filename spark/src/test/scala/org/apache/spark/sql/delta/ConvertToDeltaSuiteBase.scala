@@ -29,6 +29,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.functions._
+import org.apache.spark.sql.streaming.Trigger
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
@@ -368,30 +369,32 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaSuiteBaseCommons
       val options = Map("checkpointLocation" -> checkpoint)
 
       // Add initial data to parquet file sink
-      val q = df.writeStream.options(options).format("parquet").start(dataLocation)
       stream.addData(1, 2, 3)
-      q.processAllAvailable()
-      q.stop()
+      df.writeStream
+        .options(options)
+        .format("parquet")
+        .trigger(Trigger.AvailableNow())
+        .start(dataLocation)
+        .awaitTermination()
 
       // Add non-streaming data: this should be ignored in conversion.
       spark.range(10, 20).write.mode("append").parquet(dataLocation)
       sql(s"CONVERT TO DELTA parquet.`$dataLocation`")
 
       // Write data to delta
-      val q2 = df.writeStream.options(options).format("delta").start(dataLocation)
+      stream.addData(4, 5, 6)
+      df.writeStream
+        .options(options)
+        .format("delta")
+        .trigger(Trigger.AvailableNow())
+        .start(dataLocation)
+        .awaitTermination()
 
-      try {
-        stream.addData(4, 5, 6)
-        q2.processAllAvailable()
-
-        // Should only read streaming data.
-        checkAnswer(
-          spark.read.format("delta").load(dataLocation),
-          (1 to 6).map { Row(_) }
-        )
-      } finally {
-        q2.stop()
-      }
+      // Should only read streaming data.
+      checkAnswer(
+        spark.read.format("delta").load(dataLocation),
+        (1 to 6).map { Row(_) }
+      )
     }
   }
 
@@ -407,10 +410,13 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaSuiteBaseCommons
       )
 
       // Add initial data to parquet file sink
-      val q = df.writeStream.options(options).format("parquet").start(dataLocation)
       stream.addData(1 to 5)
-      q.processAllAvailable()
-      q.stop()
+      df.writeStream
+        .options(options)
+        .format("parquet")
+        .trigger(Trigger.AvailableNow())
+        .start(dataLocation)
+        .awaitTermination()
 
       // Add non-streaming data: this should not be ignored in conversion.
       spark.range(11, 21).select('id.cast("int") as "col1")
@@ -421,20 +427,19 @@ trait ConvertToDeltaSuiteBase extends ConvertToDeltaSuiteBaseCommons
       }
 
       // Write data to delta
-      val q2 = df.writeStream.options(options).format("delta").start(dataLocation)
+      stream.addData(6 to 10)
+      df.writeStream
+        .options(options)
+        .format("delta")
+        .trigger(Trigger.AvailableNow())
+        .start(dataLocation)
+        .awaitTermination()
 
-      try {
-        stream.addData(6 to 10)
-        q2.processAllAvailable()
-
-        // Should read all data not just streaming data
-        checkAnswer(
-          spark.read.format("delta").load(dataLocation),
-          (1 to 20).map { Row(_) }
-        )
-      } finally {
-        q2.stop()
-      }
+      // Should read all data not just streaming data
+      checkAnswer(
+        spark.read.format("delta").load(dataLocation),
+        (1 to 20).map { Row(_) }
+      )
     }
   }
 
@@ -1380,6 +1385,40 @@ trait ConvertToDeltaHiveTableTests extends ConvertToDeltaTestUtils with DeltaSQL
 
       // Check data in the converted delta table.
       checkAnswer(sql(s"SELECT id FROM $tableName WHERE key1 = 0"), df1.select("id"))
+    }
+  }
+
+  test(s"catalog partition values contain special characters") {
+    // Add interesting special characters here for test
+    val specialChars = " ,;{}()\n\t=!@#$%^&*-?.+<_>|/"
+    val tableName = "ppqtable"
+    withTable(tableName) {
+      val valueA = s"${specialChars}some${specialChars}${specialChars}value${specialChars}A"
+      val valueB = s"${specialChars}some${specialChars}${specialChars}value${specialChars}B"
+      val valueC = s"${specialChars}some${specialChars}${specialChars}value${specialChars}C"
+      val valueD = s"${specialChars}some${specialChars}${specialChars}value${specialChars}D"
+
+      val df1 = spark.range(3).withColumn("key1", lit(valueA)).withColumn("key2", lit(valueB))
+      val df2 = spark.range(4, 7).withColumn("key1", lit(valueC)).withColumn("key2", lit(valueD))
+      df1.union(df2).write.format("parquet").partitionBy("key1", "key2").saveAsTable(tableName)
+
+      convertToDelta(tableName, Some("key1 string, key2 string"))
+
+      // missing one char from valueA, so no match
+      checkAnswer(
+        spark.table(tableName)
+          .where(s"key1 = '${specialChars}some${specialChars}value${specialChars}A'")
+          .select("id"), Nil)
+
+      checkAnswer(
+        spark.table(tableName).where(s"key1 = '$valueA' and key2 = '$valueB'")
+          .select("id"),
+        Row(0) :: Row(1) :: Row(2) :: Nil)
+
+      checkAnswer(
+        spark.table(tableName).where(s"key2 = '$valueD' and id > 4")
+          .select("id"),
+        Row(5) :: Row(6) :: Nil)
     }
   }
 }

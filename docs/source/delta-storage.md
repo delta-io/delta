@@ -66,11 +66,11 @@ In this default mode, <Delta> supports concurrent reads from multiple clusters, 
 
 This section explains how to quickly start reading and writing Delta tables on S3 using single-cluster mode. For a detailed explanation of the configuration, see [_](#setup-configuration-s3-multi-cluster).
 
-#. Use the following command to launch a Spark shell with <Delta> and S3 support (assuming you use Spark 3.5.0 which is pre-built for Hadoop 3.3.4):
+#. Use the following command to launch a Spark shell with <Delta> and S3 support (assuming you use Spark 3.5.3 which is pre-built for Hadoop 3.3.4):
 
    ```bash
    bin/spark-shell \
-    --packages io.delta:delta-spark_2.12:3.1.0,org.apache.hadoop:hadoop-aws:3.3.4 \
+    --packages io.delta:delta-spark_2.12:3.3.0,org.apache.hadoop:hadoop-aws:3.3.4 \
     --conf spark.hadoop.fs.s3a.access.key=<your-s3-access-key> \
     --conf spark.hadoop.fs.s3a.secret.key=<your-s3-secret-key>
    ```
@@ -91,7 +91,7 @@ For efficient listing of <Delta> metadata files on S3, set the configuration `de
 
   ```scala
   bin/spark-shell \
-    --packages io.delta:delta-spark_2.12:3.1.0,org.apache.hadoop:hadoop-aws:3.3.4 \
+    --packages io.delta:delta-spark_2.12:3.3.0,org.apache.hadoop:hadoop-aws:3.3.4 \
     --conf spark.hadoop.fs.s3a.access.key=<your-s3-access-key> \
     --conf spark.hadoop.fs.s3a.secret.key=<your-s3-secret-key> \
     --conf "spark.hadoop.delta.enableFastS3AListFrom=true
@@ -133,16 +133,27 @@ This mode supports concurrent writes to S3 from multiple clusters and has to be 
 #### Requirements (S3 multi-cluster)
 - All of the requirements listed in [_](#requirements-s3-single-cluster) section
 - In additon to S3 credentials, you also need DynamoDB operating permissions
+- To ensure proper coordination across clusters, it's crucial to maintain consistency in how tables are referenced. Always use the same scheme (e.g., all cluster refer the table path with either s3a:// or s3:// but not a combination of the two) and maintain case sensitivity when referring to a table from different clusters. For example, use s3a://mybucket/mytable consistently across all clusters. This consistency is vital because DynamoDB relies on the table path as a key to achieve put-if-absent semantics, and inconsistent references can lead to coordination issues. If the table is registered in a catalog, verify (use `DESCRIBE FORMATTED` or other equivalent commands) that the registered path matches the path used for writes from other clusters. By adhering to these guidelines, you can minimize the risk of coordination problems and ensure smooth operation across multiple clusters.
+  - In case the table should be referred using `s3` scheme Delta-Spark connector, following configs are needed:
+
+
+    ```
+    "spark.delta.logStore.s3.impl" = "io.delta.storage.S3DynamoDBLogStore"
+    "spark.io.delta.storage.S3DynamoDBLogStore.ddb.region" = "<region>"
+    "spark.io.delta.storage.S3DynamoDBLogStore.ddb.tableName" = "<dynamodb_table_name>"
+    "spark.hadoop.fs.s3.impl"="org.apache.hadoop.fs.s3a.S3AFileSystem"
+    # and any other config  key name that has `s3a` in it should be changed to `s3`
+    ```
 
 #### Quickstart (S3 multi-cluster)
 
 This section explains how to quickly start reading and writing Delta tables on S3 using multi-cluster mode.
 
-#. Use the following command to launch a Spark shell with <Delta> and S3 support (assuming you use Spark 3.5.0 which is pre-built for Hadoop 3.3.4):
+#. Use the following command to launch a Spark shell with <Delta> and S3 support (assuming you use Spark 3.5.3 which is pre-built for Hadoop 3.3.4):
 
    ```bash
    bin/spark-shell \
-    --packages io.delta:delta-spark_2.12:3.1.0,org.apache.hadoop:hadoop-aws:3.3.4,io.delta:delta-storage-s3-dynamodb:3.1.0 \
+    --packages io.delta:delta-spark_2.12:3,org.apache.hadoop:hadoop-aws:3.3.4,io.delta:delta-storage-s3-dynamodb:3.3.0 \
     --conf spark.hadoop.fs.s3a.access.key=<your-s3-access-key> \
     --conf spark.hadoop.fs.s3a.secret.key=<your-s3-secret-key> \
     --conf spark.delta.logStore.s3a.impl=io.delta.storage.S3DynamoDBLogStore \
@@ -553,4 +564,5 @@ spark.range(5).write.format("delta").save("cos://<your-cos-bucket>.service/<path
 spark.read.format("delta").load("cos://<your-cos-bucket>.service/<path-to-delta-table>").show()
 ```
 
-.. include:: /shared/replacements.md
+.. <Delta> replace:: Delta Lake
+.. <AS> replace:: Apache Spark

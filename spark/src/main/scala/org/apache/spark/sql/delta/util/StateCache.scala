@@ -18,7 +18,8 @@ package org.apache.spark.sql.delta.util
 
 import scala.collection.mutable.ArrayBuffer
 
-import org.apache.spark.sql.delta.Snapshot
+import org.apache.spark.sql.delta.{DataFrameUtils, Snapshot}
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
@@ -28,9 +29,9 @@ import org.apache.spark.sql.execution.{LogicalRDD, SQLExecution}
 import org.apache.spark.storage.StorageLevel
 
 /**
- * Machinary that caches the reconstructed state of a Delta table
+ * Machinery that caches the reconstructed state of a Delta table
  * using the RDD cache. The cache is designed so that the first access
- * will materialize the results.  However once uncache is called,
+ * will materialize the results.  However, once uncache is called,
  * all data will be flushed and will not be cached again.
  */
 trait StateCache extends DeltaLogging {
@@ -40,6 +41,7 @@ trait StateCache extends DeltaLogging {
   private var _isCached = true
   /** A list of RDDs that we need to uncache when we are done with this snapshot. */
   private val cached = ArrayBuffer[RDD[_]]()
+  private val cached_refs = ArrayBuffer[DatasetRefCache[_]]()
 
   /** Method to expose the value of _isCached for testing. */
   private[delta] def isCached: Boolean = _isCached
@@ -47,7 +49,7 @@ trait StateCache extends DeltaLogging {
   private val storageLevel = StorageLevel.fromString(
     spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_SNAPSHOT_CACHE_STORAGE_LEVEL))
 
-  class CachedDS[A](ds: Dataset[A], name: String) {
+  class CachedDS[A] private[StateCache](ds: Dataset[A], name: String) {
     // While we cache RDD to avoid re-computation in different spark sessions, `Dataset` can only be
     // reused by the session that created it to avoid session pollution. So we use `DatasetRefCache`
     // to re-create a new `Dataset` when the active session is changed. This is an optimization for
@@ -64,10 +66,10 @@ trait StateCache extends DeltaLogging {
           rdd.persist(storageLevel)
         }
         cached += rdd
-        val dsCache = new DatasetRefCache(() => {
+        val dsCache = datasetRefCache { () =>
           val logicalRdd = LogicalRDD(qe.analyzed.output, rdd)(spark)
-          Dataset.ofRows(spark, logicalRdd)
-        })
+          DataFrameUtils.ofRows(spark, logicalRdd)
+        }
         Some(dsCache)
       } else {
         None
@@ -92,14 +94,14 @@ trait StateCache extends DeltaLogging {
       if (cached.synchronized(isCached) && cachedDs.isDefined) {
         cachedDs.get.get
       } else {
-        Dataset.ofRows(spark, ds.queryExecution.logical)
+        DataFrameUtils.ofRows(spark, ds.queryExecution.logical)
       }
     }
 
     /**
      * Retrieves the cached RDD as a strongly-typed Dataset.
      */
-    def getDS: Dataset[A] = getDF.as[A](ds.exprEnc)
+    def getDS: Dataset[A] = getDF.as(ds.encoder)
   }
 
   /**
@@ -110,11 +112,18 @@ trait StateCache extends DeltaLogging {
     new CachedDS[A](ds, name)
   }
 
+  def datasetRefCache[A](creator: () => Dataset[A]): DatasetRefCache[A] = {
+    val dsCache = new DatasetRefCache(creator)
+    cached_refs += dsCache
+    dsCache
+  }
+
   /** Drop any cached data for this [[Snapshot]]. */
   def uncache(): Unit = cached.synchronized {
     if (isCached) {
       _isCached = false
       cached.foreach(_.unpersist(blocking = false))
+      cached_refs.foreach(_.invalidate())
     }
   }
 }

@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta.files
 
+import java.text.SimpleDateFormat
+
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{AddFile, RemoveFile}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
@@ -36,6 +38,9 @@ import org.apache.spark.sql.types.StructType
  * @param path The table's data path.
  * @param snapshot The snapshot where we read CDC from.
  * @param rowIndexFilters Map from <b>URI-encoded</b> file path to a row index filter type.
+ *
+ * Note: Please also consider other CDC-related file indexes like [[CdcAddFileIndex]]
+ * and [[TahoeChangeFileIndex]] when modifying this file index.
  */
 class TahoeRemoveFileIndex(
     spark: SparkSession,
@@ -62,9 +67,11 @@ class TahoeRemoveFileIndex(
           }
           // We add the metadata as faked partition columns in order to attach it on a per-file
           // basis.
+          val tsOpt = Option(ts)
+            .map(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS Z").format(_)).orNull
           val newPartitionVals = r.partitionValues +
             (CDC_COMMIT_VERSION -> version.toString) +
-            (CDC_COMMIT_TIMESTAMP -> Option(ts).map(_.toString).orNull) +
+            (CDC_COMMIT_TIMESTAMP -> tsOpt) +
             (CDC_TYPE_COLUMN_NAME -> CDC_TYPE_DELETE_STRING)
           AddFile(
             path = r.path,

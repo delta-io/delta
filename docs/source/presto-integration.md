@@ -138,4 +138,5 @@ Athena does not support reading manifests from [CSE-KMS](https://docs.aws.amazon
 
 .. <PrestoOr> replace:: Presto, Trino, or Athena
 .. <PrestoAnd> replace:: Presto, Trino, and Athena
-.. include:: /shared/replacements.md
+.. <Delta> replace:: Delta Lake
+.. <AS> replace:: Apache Spark

@@ -21,22 +21,27 @@ import java.io.FileNotFoundException
 import java.sql.Timestamp
 
 import scala.util.{Failure, Success, Try}
+import scala.util.control.NonFatal
 import scala.util.matching.Regex
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.files.DeltaSourceSnapshot
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.storage.{ClosableIterator, SupportsRewinding}
 import org.apache.spark.sql.delta.storage.ClosableIterator._
 import org.apache.spark.sql.delta.util.{DateTimeUtils, TimestampFormatter}
+import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.hadoop.fs.FileStatus
 
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
+import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
 import org.apache.spark.sql.connector.read.streaming
 import org.apache.spark.sql.connector.read.streaming.{ReadAllAvailable, ReadLimit, ReadMaxFiles, SupportsAdmissionControl, SupportsTriggerAvailableNow}
 import org.apache.spark.sql.execution.streaming._
@@ -153,6 +158,21 @@ trait DeltaSourceBase extends Source
     snapshotAtSourceInit.metadata.columnMappingMode != NoMapping
 
   /**
+   * Whether we are streaming from a table that has the type widening table feature enabled.
+   */
+  protected lazy val typeWideningEnabled: Boolean =
+    spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_ALLOW_TYPE_WIDENING_STREAMING_SOURCE) &&
+      TypeWidening.isSupported(snapshotAtSourceInit.protocol)
+
+  /**
+   * Whether we should track widening type changes to allow users to accept them and resume
+   * stream processing.
+   */
+  protected lazy val enableSchemaTrackingForTypeWidening: Boolean =
+    spark.sessionState.conf
+      .getConf(DeltaSQLConf.DELTA_TYPE_WIDENING_ENABLE_STREAMING_SCHEMA_TRACKING)
+
+  /**
    * The persisted schema from the schema log that must be used to read data files in this Delta
    * streaming source.
    */
@@ -189,13 +209,14 @@ trait DeltaSourceBase extends Source
               // Fallback for backward compat only, this should technically not be triggered
               .getOrElse {
                 val config = snapshotAtSourceInit.metadata.configuration
-                logWarning(s"Using snapshot's table configuration: $config")
+                logWarning(log"Using snapshot's table configuration: " +
+                  log"${MDC(DeltaLogKeys.CONFIG, config)}")
                 config
               }
           )
         val protocol: Protocol = customMetadata.protocol.getOrElse {
           val protocol = snapshotAtSourceInit.protocol
-          logWarning(s"Using snapshot's protocol: $protocol")
+          logWarning(log"Using snapshot's protocol: ${MDC(DeltaLogKeys.PROTOCOL, protocol)}")
           protocol
         }
         // The following are not important in stream reading
@@ -212,17 +233,18 @@ trait DeltaSourceBase extends Source
   @volatile protected var hasCheckedReadIncompatibleSchemaChangesOnStreamStart: Boolean = false
 
   override val schema: StructType = {
-    val schemaWithoutCDC = DeltaTableUtils.removeInternalMetadata(spark, readSchemaAtSourceInit)
-    if (options.readChangeFeed) {
-      CDCReader.cdcReadSchema(schemaWithoutCDC)
+    val readSchemaWithCdc = if (options.readChangeFeed) {
+      CDCReader.cdcReadSchema(readSchemaAtSourceInit)
     } else {
-      schemaWithoutCDC
+      readSchemaAtSourceInit
     }
+    DeltaTableUtils.removeInternalDeltaMetadata(
+      spark, DeltaTableUtils.removeInternalWriterMetadata(spark, readSchemaWithCdc))
   }
 
   // A dummy empty dataframe that can be returned at various point during streaming
-  protected val emptyDataFrame: DataFrame = spark.sqlContext.internalCreateDataFrame(
-    spark.sparkContext.emptyRDD[InternalRow], schema, isStreaming = true)
+  protected val emptyDataFrame: DataFrame =
+    DataFrameUtils.ofRows(spark, LocalRelation(schema).copy(isStreaming = true))
 
   /**
    * When `AvailableNow` is used, this offset will be the upper bound where this run of the query
@@ -236,7 +258,7 @@ trait DeltaSourceBase extends Source
   private var isTriggerAvailableNow = false
 
   override def prepareForTriggerAvailableNow(): Unit = {
-    logInfo("The streaming query reports to use Trigger.AvailableNow.")
+    logInfo(log"The streaming query reports to use Trigger.AvailableNow.")
     isTriggerAvailableNow = true
   }
 
@@ -257,7 +279,9 @@ trait DeltaSourceBase extends Source
     val offset = latestOffsetInternal(startOffsetOpt, ReadLimit.allAvailable())
     lastOffsetForTriggerAvailableNow = offset
     lastOffsetForTriggerAvailableNow.foreach { lastOffset =>
-      logInfo(s"lastOffset for Trigger.AvailableNow has set to ${lastOffset.json}")
+
+    logInfo(log"lastOffset for Trigger.AvailableNow has set to " +
+      log"${MDC(DeltaLogKeys.OFFSET, lastOffset.json)}")
     }
   }
 
@@ -326,9 +350,13 @@ trait DeltaSourceBase extends Source
         val (result, duration) = Utils.timeTakenMs {
           createDataFrame(filteredIndexedFiles)
         }
-        logInfo(s"Getting dataFrame for delta_log_path=${deltaLog.logPath} with " +
-          s"startVersion=$startVersion, startIndex=$startIndex, " +
-          s"isInitialSnapshot=$isInitialSnapshot, endOffset=$endOffset took timeMs=$duration ms")
+        logInfo(log"Getting dataFrame for delta_log_path=" +
+          log"${MDC(DeltaLogKeys.PATH, deltaLog.logPath)} with " +
+          log"startVersion=${MDC(DeltaLogKeys.START_VERSION, startVersion)}, " +
+          log"startIndex=${MDC(DeltaLogKeys.START_INDEX, startIndex)}, " +
+          log"isInitialSnapshot=${MDC(DeltaLogKeys.IS_INIT_SNAPSHOT, isInitialSnapshot)}, " +
+          log"endOffset=${MDC(DeltaLogKeys.END_INDEX, endOffset)} took timeMs=" +
+          log"${MDC(DeltaLogKeys.DURATION, duration)} ms")
         result
       } finally {
         fileActionsIter.close()
@@ -549,7 +577,7 @@ trait DeltaSourceBase extends Source
     }
 
     // Perform schema check if we need to, considering all escape flags.
-    if (!allowUnsafeStreamingReadOnColumnMappingSchemaChanges ||
+    if (!allowUnsafeStreamingReadOnColumnMappingSchemaChanges || typeWideningEnabled ||
         !forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart) {
       startVersionSnapshotOpt.foreach { snapshot =>
         checkReadIncompatibleSchemaChanges(
@@ -609,18 +637,34 @@ trait DeltaSourceBase extends Source
       (metadata, snapshotAtSourceInit.metadata)
     }
 
-    // Column mapping schema changes
-    if (!allowUnsafeStreamingReadOnColumnMappingSchemaChanges) {
-      assert(!trackingMetadataChange, "should not check schema change while tracking it")
+    // Table ID has changed during streaming
+    if (newMetadata.id != oldMetadata.id) {
+      throw DeltaErrors.differentDeltaTableReadByStreamingSource(
+        newTableId = newMetadata.id, oldTableId = oldMetadata.id)
+    }
 
-      if (!DeltaColumnMapping.hasNoColumnMappingSchemaChanges(newMetadata, oldMetadata,
-        allowUnsafeStreamingReadOnPartitionColumnChanges)) {
-        throw DeltaErrors.blockStreamingReadsWithIncompatibleColumnMappingSchemaChanges(
-          spark,
-          oldMetadata.schema,
-          newMetadata.schema,
-          detectedDuringStreaming = !validatedDuringStreamStart)
+    def shouldTrackSchema: Boolean =
+      if (typeWideningEnabled && enableSchemaTrackingForTypeWidening &&
+        TypeWidening.containsWideningTypeChanges(oldMetadata.schema, newMetadata.schema)) {
+        // If schema tracking is enabled for type widening, we will detect widening type changes and
+        // block the stream until the user sets `allowSourceColumnTypeChange` - similar to handling
+        // DROP/RENAME for column mapping.
+        true
+      } else if (allowUnsafeStreamingReadOnColumnMappingSchemaChanges) {
+        false
+      } else {
+        // Column mapping schema changes
+        assert(!trackingMetadataChange, "should not check schema change while tracking it")
+        !DeltaColumnMapping.hasNoColumnMappingSchemaChanges(newMetadata, oldMetadata,
+          allowUnsafeStreamingReadOnPartitionColumnChanges)
       }
+
+    if (shouldTrackSchema) {
+      throw DeltaErrors.blockStreamingReadsWithIncompatibleNonAdditiveSchemaChanges(
+        spark,
+        oldMetadata.schema,
+        newMetadata.schema,
+        detectedDuringStreaming = !validatedDuringStreamStart)
     }
 
     // Other standard read compatibility changes
@@ -641,6 +685,16 @@ trait DeltaSourceBase extends Source
       // nullable, or in other words, `schema` should not tighten nullability from `schemaChange`,
       // because we don't ever want to read back any nulls when the read schema is non-nullable.
       val shouldForbidTightenNullability = !forceEnableUnsafeReadOnNullabilityChange
+      // If schema tracking is disabled for type widening, we allow widening type changes to go
+      // through without requiring the user to set `allowSourceColumnTypeChange`. The schema change
+      // will cause the stream to fail with a retryable exception, and the stream will restart using
+      // the new schema.
+      val typeWideningMode =
+        if (typeWideningEnabled && !enableSchemaTrackingForTypeWidening) {
+          TypeWideningMode.AllTypeWidening
+        } else {
+         TypeWideningMode.NoTypeWidening
+        }
       if (!SchemaUtils.isReadCompatible(
           schemaChange, schema,
           forbidTightenNullability = shouldForbidTightenNullability,
@@ -655,6 +709,7 @@ trait DeltaSourceBase extends Source
             isStreamingFromColumnMappingTable &&
               allowUnsafeStreamingReadOnColumnMappingSchemaChanges &&
               backfilling,
+          typeWideningMode = typeWideningMode,
           // Partition column change will be ignored if user enable the unsafe flag
           newPartitionColumns = if (allowUnsafeStreamingReadOnPartitionColumnChanges) Seq.empty
             else newMetadata.partitionColumns,
@@ -670,7 +725,11 @@ trait DeltaSourceBase extends Source
         // and if it works (including that `schemaChange` should not tighten the nullability
         // constraint from `schema`), it is a retryable exception.
         val retryable = !backfilling && SchemaUtils.isReadCompatible(
-          schema, schemaChange, forbidTightenNullability = shouldForbidTightenNullability)
+          schema,
+          schemaChange,
+          forbidTightenNullability = shouldForbidTightenNullability,
+          typeWideningMode = typeWideningMode
+        )
         throw DeltaErrors.schemaChangedException(
           schema,
           schemaChange,
@@ -731,7 +790,7 @@ case class DeltaSource(
   protected var initialState: DeltaSourceSnapshot = null
   protected var initialStateVersion: Long = -1L
 
-  logInfo(s"Filters being pushed down: $filters")
+  logInfo(log"Filters being pushed down: ${MDC(DeltaLogKeys.FILTER, filters)}")
 
   /**
    * Get the changes starting from (startVersion, startIndex). The start point should not be
@@ -782,7 +841,7 @@ case class DeltaSource(
     val (result, duration) = Utils.timeTakenMs {
       var iter = if (isInitialSnapshot) {
         Iterator(1, 2).flatMapWithClose { // so that the filterAndIndexDeltaLogs call is lazy
-          case 1 => getSnapshotAt(fromVersion).toClosable
+          case 1 => getSnapshotAt(fromVersion)._1.toClosable
           case 2 => filterAndIndexDeltaLogs(fromVersion + 1)
         }
       } else {
@@ -811,9 +870,12 @@ case class DeltaSource(
         }
       iter
     }
-    logInfo(s"Getting file changes for delta_log_path=${deltaLog.logPath} with " +
-      s"fromVersion=$fromVersion, fromIndex=$fromIndex, isInitialSnapshot=$isInitialSnapshot " +
-      s"took timeMs=$duration ms")
+    logInfo(log"Getting file changes for delta_log_path=" +
+      log"${MDC(DeltaLogKeys.PATH, deltaLog.logPath)} with " +
+      log"fromVersion=${MDC(DeltaLogKeys.START_VERSION, fromVersion)}, " +
+      log"fromIndex=${MDC(DeltaLogKeys.START_INDEX, fromIndex)}, " +
+      log"isInitialSnapshot=${MDC(DeltaLogKeys.IS_INIT_SNAPSHOT, isInitialSnapshot)} " +
+      log"took timeMs=${MDC(DeltaLogKeys.DURATION, duration)} ms")
     result
   }
 
@@ -832,8 +894,10 @@ case class DeltaSource(
   /**
    * This method computes the initial snapshot to read when Delta Source was initialized on a fresh
    * stream.
+   * @return A tuple where the first element is an iterator of IndexedFiles and the second element
+   *         is the in-commit timestamp of the initial snapshot if available.
    */
-  protected def getSnapshotAt(version: Long): Iterator[IndexedFile] = {
+  protected def getSnapshotAt(version: Long): (Iterator[IndexedFile], Option[Long]) = {
     if (initialState == null || version != initialStateVersion) {
       super[DeltaSourceBase].cleanUpSnapshotResources()
       val snapshot = getSnapshotFromDeltaLog(version)
@@ -866,7 +930,12 @@ case class DeltaSource(
         )
       }
     }
-    addBeginAndEndIndexOffsetsForVersion(version, initialState.iterator())
+    val inCommitTimestampOpt =
+      Option.when(
+          DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(initialState.snapshot.metadata)) {
+        initialState.snapshot.timestamp
+      }
+    (addBeginAndEndIndexOffsetsForVersion(version, initialState.iterator()), inCommitTimestampOpt)
   }
 
   /**
@@ -1324,9 +1393,15 @@ case class DeltaSource(
         case StartingVersionLatest =>
           deltaLog.update().version + 1
         case StartingVersion(version) =>
-          // when starting from a given version, we don't need the snapshot of this version. So
-          // `mustBeRecreatable` is set to `false`.
-          deltaLog.history.checkVersionExists(version, mustBeRecreatable = false, allowOutOfRange)
+          if (!DeltaSource.validateProtocolAt(spark, deltaLog, version)) {
+            // When starting from a given version, we don't require that the snapshot of this
+            // version can be reconstructed, even though the input table is technically in an
+            // inconsistent state. If the snapshot cannot be reconstructed, then the protocol
+            // check is skipped, so this is technically not safe, but we keep it this way for
+            // historical reasons.
+            deltaLog.history.checkVersionExists(
+              version, catalogTableOpt = None, mustBeRecreatable = false, allowOutOfRange)
+          }
           version
       }
       Some(v)
@@ -1348,7 +1423,42 @@ case class DeltaSource(
 
 }
 
-object DeltaSource {
+object DeltaSource extends DeltaLogging {
+  /**
+   * Validate the protocol at a given version. If the snapshot reconstruction fails for any other
+   * reason than table feature exception, we suppress it. This allows to fallback to previous
+   * behavior where the starting version/timestamp was not mandatory to point to reconstructable
+   * snapshot.
+   *
+   * Returns true when the validation was performed and succeeded.
+   */
+  def validateProtocolAt(spark: SparkSession, deltaLog: DeltaLog, version: Long): Boolean = {
+    val alwaysValidateProtocol = spark.sessionState.conf.getConf(
+      DeltaSQLConf.FAST_DROP_FEATURE_STREAMING_ALWAYS_VALIDATE_PROTOCOL)
+    if (!alwaysValidateProtocol) return false
+
+    try {
+      // We attempt to construct a snapshot at the startingVersion in order to validate the
+      // protocol. If snapshot reconstruction fails, fall back to the old behavior where the
+      // only requirement was for the commit to exist.
+      deltaLog.getSnapshotAt(version)
+      return true
+    } catch {
+      case e: DeltaUnsupportedTableFeatureException =>
+        recordDeltaEvent(
+          deltaLog = deltaLog,
+          opType = "dropFeature.validateProtocolAt.unsupportedFeatureFound",
+          data = Map("message" -> e.getMessage))
+        throw e
+      case NonFatal(e) => // Suppress rest errors.
+        logWarning(log"Protocol validation failed with '${MDC(DeltaLogKeys.EXCEPTION, e)}'.")
+        recordDeltaEvent(
+          deltaLog = deltaLog,
+          opType = "dropFeature.validateProtocolAt.error",
+          data = Map("message" -> e.getMessage))
+    }
+    false
+  }
 
   /**
    * - If a commit version exactly matches the provided timestamp, we return it.
@@ -1374,10 +1484,12 @@ object DeltaSource {
     val tz = spark.sessionState.conf.sessionLocalTimeZone
     val commit = deltaLog.history.getActiveCommitAtTime(
       timestamp,
+      catalogTableOpt = None,
       canReturnLastCommit = true,
       mustBeRecreatable = false,
       canReturnEarliestCommit = true)
     if (commit.timestamp >= timestamp.getTime) {
+      validateProtocolAt(spark, deltaLog, commit.version)
       // Find the commit at the `timestamp` or the earliest commit
       commit.version
     } else {
@@ -1387,7 +1499,9 @@ object DeltaSource {
       //
       // Note2: In the use case of [[CDCReader]] timestamp passed in can exceed the latest commit
       // timestamp, caller doesn't expect exception, and can handle the non-existent version.
-      if (commit.version + 1 <= deltaLog.unsafeVolatileSnapshot.version || canExceedLatest) {
+      val latestNotExceeded = commit.version + 1 <= deltaLog.unsafeVolatileSnapshot.version
+      if (latestNotExceeded || canExceedLatest) {
+        if (latestNotExceeded) validateProtocolAt(spark, deltaLog, commit.version + 1)
         commit.version + 1
       } else {
         val commitTs = new Timestamp(commit.timestamp)

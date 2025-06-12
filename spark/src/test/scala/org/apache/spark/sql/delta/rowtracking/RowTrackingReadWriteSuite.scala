@@ -220,7 +220,7 @@ class RowTrackingReadWriteSuite extends RowIdTestUtils
       val errorRowIds = intercept[AnalysisException](sql(insertStmt1 + " VALUES(1, 2)"))
       checkError(
         errorRowIds,
-        errorClass = "UNRESOLVED_COLUMN.WITH_SUGGESTION",
+        "UNRESOLVED_COLUMN.WITH_SUGGESTION",
         parameters = errorRowIds.messageParameters,
         queryContext = Array(ExpectedContext(insertStmt1, 0, insertStmt1.length - 1)))
 
@@ -229,7 +229,7 @@ class RowTrackingReadWriteSuite extends RowIdTestUtils
       val errorRowCommitVersions = intercept[AnalysisException](sql(insertStmt2 + " VALUES(1, 2)"))
       checkError(
         errorRowCommitVersions,
-        errorClass = "UNRESOLVED_COLUMN.WITH_SUGGESTION",
+        "UNRESOLVED_COLUMN.WITH_SUGGESTION",
         parameters = errorRowCommitVersions.messageParameters,
         queryContext = Array(ExpectedContext(insertStmt2, 0, insertStmt2.length - 1)))
     }
@@ -285,7 +285,7 @@ class RowTrackingReadWriteSuite extends RowIdTestUtils
       }
       checkError(
         error,
-        errorClass = "UNRESOLVED_COLUMN.WITH_SUGGESTION",
+        "UNRESOLVED_COLUMN.WITH_SUGGESTION",
         parameters = error.messageParameters)
     }
 
@@ -303,7 +303,7 @@ class RowTrackingReadWriteSuite extends RowIdTestUtils
       }
       checkError(
         error,
-        errorClass = "UNRESOLVED_COLUMN.WITH_SUGGESTION",
+        "UNRESOLVED_COLUMN.WITH_SUGGESTION",
         parameters = error.messageParameters)
     }
   }

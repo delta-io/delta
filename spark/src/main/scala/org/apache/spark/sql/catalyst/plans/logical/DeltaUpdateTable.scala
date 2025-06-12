@@ -64,8 +64,8 @@ object DeltaUpdateTable {
    *        ->  `AttributeReference(a)` ++ Seq(b, c)
    *          ->  [a, b, c]
    */
-  def getTargetColNameParts(resolvedTargetCol: Expression, errMsg: String = null): Seq[String] = {
-
+  def getTargetColNameParts(
+      resolvedTargetCol: Expression, errMsg: => String = null): Seq[String] = {
     def extractRecursively(expr: Expression): Seq[String] = expr match {
       case attr: Attribute => Seq(attr.name)
 

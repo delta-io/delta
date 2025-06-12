@@ -26,7 +26,9 @@ The following <Delta> features break forward compatibility. Features are enabled
    V2 Checkpoints, [Delta Lake 3.0.0](https://github.com/delta-io/delta/releases/tag/v3.0.0),[V2 Checkpoint Spec](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#v2-spec)
    Domain metadata, [Delta Lake 3.0.0](https://github.com/delta-io/delta/releases/tag/v3.0.0),[Domain Metadata Spec](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#domain-metadata)
    Clustering, [Delta Lake 3.1.0](https://github.com/delta-io/delta/releases/tag/v3.1.0),[_](/delta-clustering.md)
+   Row Tracking, [Delta Lake 3.2.0](https://github.com/delta-io/delta/releases/tag/v3.2.0),[_](/delta-row-tracking.md)
    Type widening (Preview),[Delta Lake 3.2.0](https://github.com/delta-io/delta/releases/tag/v3.2.0),[_](/delta-type-widening.md)
+   Identity columns, [Delta Lake 3.3.0](https://github.com/delta-io/delta/releases/tag/v3.3.0),[_](/delta-batch.md#use-identity-columns)
 
 <a id="table-protocol"></a>
 
@@ -101,6 +103,7 @@ The following table shows minimum protocol versions required for <Delta> feature
    Change data feed,4,1,[_](/delta-change-data-feed.md)
    Generated columns,4,1,[_](/delta-batch.md#use-generated-columns)
    Column mapping,5,2,[_](/delta-column-mapping.md)
+   Identity columns,6,1,[_](/delta-batch.md#use-identity-columns)
    Table features read,7,1,[_](#table-features)
    Table features write,7,3,[_](#table-features)
    Deletion vectors,7,3,[_](/delta-deletion-vectors.md)
@@ -108,6 +111,7 @@ The following table shows minimum protocol versions required for <Delta> feature
    Iceberg Compatibility V1,7,2,[IcebergCompatV1](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#iceberg-compatibility-v1)
    V2 Checkpoints,7,3,[V2 Checkpoint Spec](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#v2-spec)
    Vacuum Protocol Check,7,3,[Vacuum Protocol Check Spec](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#vacuum-protocol-check)
+   Row Tracking,7,3,[_](/delta-row-tracking.md)
    Type widening (Preview),7,3,[_](/delta-type-widening.md)
 
 <a id="upgrade"></a>
@@ -141,4 +145,5 @@ To upgrade a table to a newer protocol version, use the `DeltaTable.upgradeTable
   delta.upgradeTableProtocol(1, 3) // Upgrades to readerVersion=1, writerVersion=3.
   ```
 
-.. include:: /shared/replacements.md
+.. <Delta> replace:: Delta Lake
+.. <AS> replace:: Apache Spark

@@ -55,8 +55,9 @@ case class PreprocessTableUpdate(sqlConf: SQLConf)
         throw DeltaErrors.notADeltaSourceException("UPDATE", Some(o))
     }
 
-    val generatedColumns = GeneratedColumn.getGeneratedColumns(index.snapshotAtAnalysis)
-    if (generatedColumns.nonEmpty && !deltaLogicalNode.isInstanceOf[LogicalRelation]) {
+    val generatedColumns = GeneratedColumn.getGeneratedColumns(index)
+    if (generatedColumns.nonEmpty &&
+        !GeneratedColumn.allowDMLTargetPlan(deltaLogicalNode, conf)) {
       // Disallow temp views referring to a Delta table that contains generated columns. When the
       // user doesn't provide expressions for generated columns, we need to create update
       // expressions for them automatically. Currently, we assume `update.child.output` is the same
@@ -66,6 +67,9 @@ case class PreprocessTableUpdate(sqlConf: SQLConf)
     }
 
     val targetColNameParts = update.updateColumns.map(DeltaUpdateTable.getTargetColNameParts(_))
+
+    IdentityColumn.blockIdentityColumnUpdate(index.snapshotAtAnalysis.schema, targetColNameParts)
+
     val alignedUpdateExprs = generateUpdateExpressions(
       targetSchema = update.child.schema,
       defaultExprs = update.child.output,

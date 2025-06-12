@@ -25,24 +25,22 @@ import io.delta.kernel.annotation.Evolving;
 @Evolving
 public class TableNotFoundException extends KernelException {
 
-    private final String tablePath;
+  private final String tablePath;
 
-    public TableNotFoundException(String tablePath) {
-        this(tablePath, null);
-    }
+  public TableNotFoundException(String tablePath) {
+    this(tablePath, null);
+  }
 
-    public TableNotFoundException(String tablePath, String context) {
-        super(String.format(
-                "Delta table at path `%s` is not found.%s",
-                tablePath,
-                context == null ? "" : " Context: " + context));
-        this.tablePath = tablePath;
-    }
+  public TableNotFoundException(String tablePath, String context) {
+    super(
+        String.format(
+            "Delta table at path `%s` is not found.%s",
+            tablePath, context == null ? "" : " Context: " + context));
+    this.tablePath = tablePath;
+  }
 
-    /**
-     * @return the provided path where no Delta table was found
-     */
-    public String getTablePath() {
-        return tablePath;
-    }
+  /** @return the provided path where no Delta table was found */
+  public String getTablePath() {
+    return tablePath;
+  }
 }

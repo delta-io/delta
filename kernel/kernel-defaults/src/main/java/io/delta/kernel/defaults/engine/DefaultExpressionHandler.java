@@ -15,12 +15,13 @@
  */
 package io.delta.kernel.defaults.engine;
 
-import java.util.Arrays;
-import java.util.Optional;
-import static java.lang.String.format;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.defaults.internal.data.vector.DefaultBooleanVector;
+import io.delta.kernel.defaults.internal.expressions.DefaultExpressionEvaluator;
+import io.delta.kernel.defaults.internal.expressions.DefaultPredicateEvaluator;
 import io.delta.kernel.engine.ExpressionHandler;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.ExpressionEvaluator;
@@ -28,39 +29,36 @@ import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.expressions.PredicateEvaluator;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StructType;
-import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+import java.util.Arrays;
+import java.util.Optional;
 
-import io.delta.kernel.defaults.internal.data.vector.DefaultBooleanVector;
-import io.delta.kernel.defaults.internal.expressions.DefaultExpressionEvaluator;
-import io.delta.kernel.defaults.internal.expressions.DefaultPredicateEvaluator;
-
-/**
- * Default implementation of {@link ExpressionHandler}
- */
+/** Default implementation of {@link ExpressionHandler} */
 public class DefaultExpressionHandler implements ExpressionHandler {
 
-    @Override
-    public ExpressionEvaluator getEvaluator(
-        StructType inputSchema,
-        Expression expression,
-        DataType outputType) {
-        return new DefaultExpressionEvaluator(inputSchema, expression, outputType);
-    }
+  @Override
+  public ExpressionEvaluator getEvaluator(
+      StructType inputSchema, Expression expression, DataType outputType) {
+    return new DefaultExpressionEvaluator(inputSchema, expression, outputType);
+  }
 
-    @Override
-    public PredicateEvaluator getPredicateEvaluator(StructType inputSchema, Predicate predicate) {
-        return new DefaultPredicateEvaluator(inputSchema, predicate);
-    }
+  @Override
+  public PredicateEvaluator getPredicateEvaluator(StructType inputSchema, Predicate predicate) {
+    return new DefaultPredicateEvaluator(inputSchema, predicate);
+  }
 
-    @Override
-    public ColumnVector createSelectionVector(boolean[] values, int from, int to) {
-        requireNonNull(values, "values is null");
-        int length = to - from;
-        checkArgument(length >= 0 && values.length > from && values.length >= to,
-            format("invalid range from=%s, to=%s, values length=%s", from, to, values.length));
+  @Override
+  public ColumnVector createSelectionVector(boolean[] values, int from, int to) {
+    requireNonNull(values, "values is null");
+    int length = to - from;
+    checkArgument(
+        length >= 0 && values.length > from && values.length >= to,
+        "invalid range from=%s, to=%s, values length=%s",
+        from,
+        to,
+        values.length);
 
-        // Make a copy of the `values` array.
-        boolean[] valuesCopy = Arrays.copyOfRange(values, from, to);
-        return new DefaultBooleanVector(length, Optional.empty(), valuesCopy);
-    }
+    // Make a copy of the `values` array.
+    boolean[] valuesCopy = Arrays.copyOfRange(values, from, to);
+    return new DefaultBooleanVector(length, Optional.empty(), valuesCopy);
+  }
 }

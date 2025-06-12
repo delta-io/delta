@@ -17,42 +17,48 @@
 package io.delta.kernel.engine;
 
 import io.delta.kernel.annotation.Evolving;
+import java.util.Collections;
+import java.util.List;
 
 /**
- * Interface encapsulating all clients needed by the Delta Kernel in order to read the
- * Delta table. Connectors are expected to pass an implementation of this interface when reading
- * a Delta table.
+ * Interface encapsulating all clients needed by the Delta Kernel in order to read the Delta table.
+ * Connectors are expected to pass an implementation of this interface when reading a Delta table.
  *
  * @since 3.0.0
  */
 @Evolving
 public interface Engine {
 
-    /**
-     * Get the connector provided {@link ExpressionHandler}.
-     *
-     * @return An implementation of {@link ExpressionHandler}.
-     */
-    ExpressionHandler getExpressionHandler();
+  /**
+   * Get the connector provided {@link ExpressionHandler}.
+   *
+   * @return An implementation of {@link ExpressionHandler}.
+   */
+  ExpressionHandler getExpressionHandler();
 
-    /**
-     * Get the connector provided {@link JsonHandler}.
-     *
-     * @return An implementation of {@link JsonHandler}.
-     */
-    JsonHandler getJsonHandler();
+  /**
+   * Get the connector provided {@link JsonHandler}.
+   *
+   * @return An implementation of {@link JsonHandler}.
+   */
+  JsonHandler getJsonHandler();
 
-    /**
-     * Get the connector provided {@link FileSystemClient}.
-     *
-     * @return An implementation of {@link FileSystemClient}.
-     */
-    FileSystemClient getFileSystemClient();
+  /**
+   * Get the connector provided {@link FileSystemClient}.
+   *
+   * @return An implementation of {@link FileSystemClient}.
+   */
+  FileSystemClient getFileSystemClient();
 
-    /**
-     * Get the connector provided {@link ParquetHandler}.
-     *
-     * @return An implementation of {@link ParquetHandler}.
-     */
-    ParquetHandler getParquetHandler();
+  /**
+   * Get the connector provided {@link ParquetHandler}.
+   *
+   * @return An implementation of {@link ParquetHandler}.
+   */
+  ParquetHandler getParquetHandler();
+
+  /** Get the engine's {@link MetricsReporter} instances to push reports to. */
+  default List<MetricsReporter> getMetricsReporters() {
+    return Collections.emptyList();
+  };
 }

@@ -15,9 +15,8 @@
  */
 package io.delta.kernel.exceptions;
 
-import java.util.Optional;
-
 import io.delta.kernel.annotation.Evolving;
+import java.util.Optional;
 
 /**
  * Thrown when trying to create a Delta table at a location where a Delta table already exists.
@@ -26,23 +25,22 @@ import io.delta.kernel.annotation.Evolving;
  */
 @Evolving
 public class TableAlreadyExistsException extends KernelException {
-    private final String tablePath;
-    private final Optional<String> context;
+  private final String tablePath;
+  private final Optional<String> context;
 
-    public TableAlreadyExistsException(String tablePath, String context) {
-        this.tablePath = tablePath;
-        this.context = Optional.ofNullable(context);
-    }
+  public TableAlreadyExistsException(String tablePath, String context) {
+    this.tablePath = tablePath;
+    this.context = Optional.ofNullable(context);
+  }
 
-    public TableAlreadyExistsException(String tablePath) {
-        this(tablePath, null);
-    }
+  public TableAlreadyExistsException(String tablePath) {
+    this(tablePath, null);
+  }
 
-    @Override
-    public String getMessage() {
-        return String.format(
-                "Delta table already exists at `%s`.%s",
-                tablePath,
-                context.map(c -> " Context: " + c).orElse(""));
-    }
+  @Override
+  public String getMessage() {
+    return String.format(
+        "Delta table already exists at `%s`.%s",
+        tablePath, context.map(c -> " Context: " + c).orElse(""));
+  }
 }

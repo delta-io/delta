@@ -39,6 +39,9 @@ import org.apache.spark.sql.types.StructType
  * @param path The table's data path.
  * @param snapshot The snapshot where we read CDC from.
  * @param rowIndexFilters Map from <b>URI-encoded</b> file path to a row index filter type.
+ *
+ * Note: Please also consider other CDC-related file indexes like [[TahoeChangeFileIndex]]
+ * and [[TahoeRemoveFileIndex]] when modifying this file index.
  */
 class CdcAddFileIndex(
     spark: SparkSession,

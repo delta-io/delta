@@ -17,22 +17,27 @@ package io.delta.kernel.defaults.internal.parquet
 
 import java.nio.file.{Files, Paths}
 import java.util.Optional
+
 import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
+
 import io.delta.kernel.data.{ColumnarBatch, FilteredColumnarBatch}
+import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
 import io.delta.kernel.expressions.{Column, Predicate}
 import io.delta.kernel.internal.util.ColumnMapping
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
-import io.delta.kernel.types.{ArrayType, DataType, MapType, StructType}
+import io.delta.kernel.types.{ArrayType, DataType, MapType, StructField, StructType}
 import io.delta.kernel.utils.{DataFileStatus, FileStatus}
+
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
-import org.apache.parquet.hadoop.metadata.ParquetMetadata
+import org.apache.parquet.hadoop.metadata.{ColumnPath, ParquetMetadata}
 
 trait ParquetSuiteBase extends TestUtils {
 
   implicit class DataFileStatusOps(dataFileStatus: DataFileStatus) {
+
     /**
      * Convert the [[DataFileStatus]] to a [[TestRow]].
      * (path, size, modification time, numRecords,
@@ -54,8 +59,7 @@ trait ParquetSuiteBase extends TestUtils {
               Seq(
                 Option(stats.getMinValues.get(column)).map(_.getValue).orNull,
                 Option(stats.getMaxValues.get(column)).map(_.getValue).orNull,
-                Option(stats.getNullCounts.get(column)).orNull
-              )
+                Option(stats.getNullCount.get(column)).orNull)
             } else {
               Seq(null, null, null)
             }
@@ -82,7 +86,7 @@ trait ParquetSuiteBase extends TestUtils {
    */
   def verifyFileMetadata(targetDir: String): Unit = {
     parquetFiles(targetDir).foreach { file =>
-      footer(file).getFileMetaData
+      footer(file.getPath).getFileMetaData
         .getKeyValueMetaData.containsKey("io.delta.kernel.default-parquet-writer")
     }
   }
@@ -92,8 +96,8 @@ trait ParquetSuiteBase extends TestUtils {
    * Use Kernel Parquet reader to read the data from the Parquet files.
    */
   def verifyContentUsingKernelReader(
-    actualFileDir: String,
-    expected: Seq[FilteredColumnarBatch]): Unit = {
+      actualFileDir: String,
+      expected: Seq[FilteredColumnarBatch]): Unit = {
 
     val dataSchema = expected.head.getData.getSchema
 
@@ -112,8 +116,8 @@ trait ParquetSuiteBase extends TestUtils {
    * Use Spark Parquet reader to read the data from the Parquet files.
    */
   def verifyContentUsingSparkReader(
-    actualFileDir: String,
-    expected: Seq[FilteredColumnarBatch]): Unit = {
+      actualFileDir: String,
+      expected: Seq[FilteredColumnarBatch]): Unit = {
 
     val dataSchema = expected.head.getData.getSchema;
 
@@ -127,22 +131,46 @@ trait ParquetSuiteBase extends TestUtils {
     checkAnswer(actualTestRows, expectedTestRows)
   }
 
-  /** Verify the field ids in Parquet files match the corresponding field ids in the Delta schema */
-  def verifyFieldIds(targetDir: String, deltaSchema: StructType): Unit = {
-    parquetFiles(targetDir).map(footer(_)).foreach {
+  /**
+   * Verify the field ids in Parquet files match the corresponding field ids in the Delta schema.
+   * If [[expectListMapEntryIds]] is true, verifies the array and map elements also have field ids
+   * the match the fields in nearest ancestor struct field (i.e array or map)
+   */
+  def verifyFieldIds(
+      targetDir: String,
+      deltaSchema: StructType,
+      expectNestedFiledIds: Boolean): Unit = {
+    parquetFiles(targetDir).map(_.getPath).map(footer(_)).foreach {
       footer =>
         val parquetSchema = footer.getFileMetaData.getSchema
 
-        def verifyFieldId(deltaFieldId: Long, columnPath: Array[String]): Unit = {
+        def verifyFieldId(deltaFieldId: Long, parquetColumnPath: Array[String]): Unit = {
+          val parquetFieldId = parquetSchema.getType(parquetColumnPath: _*).getId
+          assert(parquetFieldId != null)
+          assert(deltaFieldId === parquetFieldId.intValue())
+        }
+
+        def verifyNestedFieldId(
+            nearestAncestorStructField: StructField,
+            relativeNestedFieldPath: Array[String], // relative to the nearest ancestor struct field
+            columnPath: Array[String]): Unit = {
+          val deltaFieldId = nearestAncestorStructField.getMetadata
+            .getMetadata(ColumnMapping.COLUMN_MAPPING_NESTED_IDS_KEY)
+            .getLong(relativeNestedFieldPath.mkString("."))
+            .toInt
           val parquetFieldId = parquetSchema.getType(columnPath: _*).getId
           assert(parquetFieldId != null)
           assert(deltaFieldId === parquetFieldId.intValue())
         }
 
-        def visitDeltaType(basePath: Array[String], deltaType: DataType): Unit = {
+        def visitDeltaType(
+            basePathInParquet: Array[String],
+            nearestAncestorStructField: StructField,
+            baseRelativePathToAncestor: Array[String],
+            deltaType: DataType): Unit = {
           deltaType match {
             case struct: StructType =>
-              visitStructType(basePath, struct)
+              visitStructType(basePathInParquet, struct)
             case array: ArrayType =>
               // Arrays are stored as three-level structure in Parquet. There are two elements
               // between the array element and array itself. So in order to
@@ -155,24 +183,65 @@ trait ParquetSuiteBase extends TestUtils {
               //   }
               //  }
               // }
-              visitDeltaType(basePath :+ "list" :+ "element", array.getElementType)
+              val elemPathInParquet = basePathInParquet :+ "list" :+ "element"
+              val relativePathToNearestAncestor = baseRelativePathToAncestor :+ "element"
+              if (expectNestedFiledIds) {
+                verifyNestedFieldId(
+                  nearestAncestorStructField,
+                  relativePathToNearestAncestor,
+                  elemPathInParquet)
+              }
+              visitDeltaType(
+                elemPathInParquet,
+                nearestAncestorStructField,
+                relativePathToNearestAncestor,
+                array.getElementType)
             case map: MapType =>
               // reason for appending the "key_value" is same as the array type (see above)
-              visitDeltaType(basePath :+ "key_value" :+ "key", map.getKeyType)
-              visitDeltaType(basePath :+ "key_value" :+ "value", map.getValueType)
+              val keyPathInParquet = basePathInParquet :+ "key_value" :+ "key"
+              val valuePathInParquet = basePathInParquet :+ "key_value" :+ "value"
+              val keyRelativePathToNearestAncestor = baseRelativePathToAncestor :+ "key"
+              val valueRelativePathToNearestAncestor = baseRelativePathToAncestor :+ "value"
+
+              if (expectNestedFiledIds) {
+                verifyNestedFieldId(
+                  nearestAncestorStructField,
+                  keyRelativePathToNearestAncestor,
+                  keyPathInParquet)
+                verifyNestedFieldId(
+                  nearestAncestorStructField,
+                  valueRelativePathToNearestAncestor,
+                  valuePathInParquet)
+              }
+
+              visitDeltaType(
+                keyPathInParquet,
+                nearestAncestorStructField,
+                keyRelativePathToNearestAncestor,
+                map.getKeyType)
+
+              visitDeltaType(
+                valuePathInParquet,
+                nearestAncestorStructField,
+                valueRelativePathToNearestAncestor,
+                map.getValueType)
             case _ => // Primitive type - continue
           }
         }
 
-        def visitStructType(basePath: Array[String], structType: StructType): Unit = {
+        def visitStructType(basePathInParquet: Array[String], structType: StructType): Unit = {
           structType.fields.forEach { field =>
             val deltaFieldId = field.getMetadata
-              .get(ColumnMapping.COLUMN_MAPPING_ID_KEY).asInstanceOf[Long]
+              .getLong(ColumnMapping.COLUMN_MAPPING_ID_KEY)
             val physicalName = field.getMetadata
-              .get(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY).asInstanceOf[String]
+              .getString(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY)
 
-            verifyFieldId(deltaFieldId, basePath :+ physicalName)
-            visitDeltaType(basePath :+ physicalName, field.getDataType)
+            verifyFieldId(deltaFieldId, basePathInParquet :+ physicalName)
+            visitDeltaType(
+              basePathInParquet :+ physicalName,
+              nearestAncestorStructField = field,
+              baseRelativePathToAncestor = Array(physicalName),
+              field.getDataType)
           }
         }
 
@@ -185,14 +254,17 @@ trait ParquetSuiteBase extends TestUtils {
    * verify the data using the Kernel Parquet reader and Spark Parquet reader.
    */
   def writeToParquetUsingKernel(
-    filteredData: Seq[FilteredColumnarBatch],
-    location: String,
-    targetFileSize: Long = 1024 * 1024,
-    statsColumns: Seq[Column] = Seq.empty): Seq[DataFileStatus] = {
+      filteredData: Seq[FilteredColumnarBatch],
+      location: String,
+      targetFileSize: Long = 1024 * 1024,
+      statsColumns: Seq[Column] = Seq.empty): Seq[DataFileStatus] = {
     val conf = new Configuration(configuration);
     conf.setLong(ParquetFileWriter.TARGET_FILE_SIZE_CONF, targetFileSize)
-    val parquetWriter = new ParquetFileWriter(
-      conf, new Path(location), statsColumns.asJava)
+    val fileIO = new HadoopFileIO(conf)
+    val parquetWriter = ParquetFileWriter.multiFileWriter(
+      fileIO,
+      location,
+      statsColumns.asJava)
 
     parquetWriter.write(toCloseableIterator(filteredData.asJava.iterator())).toSeq
   }
@@ -211,7 +283,6 @@ trait ParquetSuiteBase extends TestUtils {
       readSchema: StructType,
       predicate: Optional[Predicate] = Optional.empty()): Seq[ColumnarBatch] = {
     val parquetFileList = parquetFiles(inputFileOrDir)
-      .map(FileStatus.of(_, 0, 0))
 
     val data = defaultEngine.getParquetHandler.readParquetFiles(
       toCloseableIterator(parquetFileList.asJava.iterator()),
@@ -229,23 +300,21 @@ trait ParquetSuiteBase extends TestUtils {
     var rowCount = 0L
     files.foreach { file =>
       // read parquet file using spark and count.
-      rowCount = rowCount + spark.read.parquet(file).count()
+      rowCount = rowCount + spark.read.parquet(file.getPath).count()
     }
 
     rowCount
   }
 
-  def parquetFiles(fileOrDir: String): Seq[String] = {
-    val fileOrDirPath = Paths.get(fileOrDir)
-    if (Files.isDirectory(fileOrDirPath)) {
-      Files.list(fileOrDirPath)
-        .iterator().asScala
-        .map(_.toString)
-        .filter(path => path.endsWith(".parquet"))
-        .toSeq
-    } else {
-      Seq(fileOrDir)
-    }
+  def parquetFiles(fileOrDir: String): Seq[FileStatus] = {
+    val fileOrDirPath = new Path(fileOrDir)
+    val hadoopFs = new Path(fileOrDir).getFileSystem(configuration)
+    hadoopFs.listStatus(fileOrDirPath)
+      .iterator
+      .filter(_.getPath.toString.endsWith(".parquet"))
+      .map(status =>
+        FileStatus.of(status.getPath.toString, status.getLen, status.getModificationTime))
+      .toSeq
   }
 
   def footer(path: String): ParquetMetadata = {
@@ -258,7 +327,8 @@ trait ParquetSuiteBase extends TestUtils {
 
   // Read the parquet files in actionFileDir using Spark Parquet reader
   def readParquetFilesUsingSpark(
-    actualFileDir: String, readSchema: StructType): Seq[TestRow] = {
+      actualFileDir: String,
+      readSchema: StructType): Seq[TestRow] = {
     spark.read
       .format("parquet")
       .parquet(actualFileDir)

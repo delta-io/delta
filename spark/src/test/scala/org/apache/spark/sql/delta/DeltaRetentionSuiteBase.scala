@@ -24,7 +24,7 @@ import scala.collection.mutable
 import org.apache.spark.sql.delta.DeltaOperations.Truncate
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{CheckpointMetadata, Metadata, SidecarFile}
-import org.apache.spark.sql.delta.managedcommit.ManagedCommitBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.FileNames
@@ -41,7 +41,7 @@ import org.apache.spark.util.ManualClock
 
 trait DeltaRetentionSuiteBase extends QueryTest
   with SharedSparkSession
-  with ManagedCommitBaseSuite {
+  with CatalogOwnedTestBaseSuite {
   protected val testOp = Truncate()
 
   protected override def sparkConf: SparkConf = super.sparkConf
@@ -89,10 +89,20 @@ trait DeltaRetentionSuiteBase extends QueryTest
     files.map(f => f.getName()).map(s => s.substring(0, s.indexOf(".")).toLong).toSet
   }
 
+  protected def getCrcFiles(dir: File): Seq[File] =
+    dir.listFiles().filter(f => FileNames.isChecksumFile(new Path(f.getCanonicalPath)))
+
+  protected def getCrcVersions(dir: File): Set[Long] =
+    getFileVersions(getCrcFiles(dir))
+
+  protected def getDeltaAndCrcFiles(dir: File): Seq[File] =
+    getDeltaFiles(dir) ++ getCrcFiles(dir)
+
+
   protected def getDeltaVersions(dir: File): Set[Long] = {
     val backfilledDeltaVersions = getFileVersions(getDeltaFiles(dir))
     val unbackfilledDeltaVersions = getUnbackfilledDeltaVersions(dir)
-    if (managedCommitEnabledInTests) {
+    if (catalogOwnedDefaultCreationEnabledInTests) {
       // The unbackfilled commit files (except commit 0) should be a superset of the backfilled
       // commit files since they're always deleted together in this suite.
       assert(
@@ -161,7 +171,6 @@ trait DeltaRetentionSuiteBase extends QueryTest
       dayNum: Int,
       fs: FileSystem,
       checkpointOnly: Boolean = false): Unit = {
-    val logDir = log.logPath.toUri.toString
     val paths = log
       .listFrom(version)
       .collect { case FileNames.CheckpointFile(f, v) if v == version => f.getPath }
@@ -171,7 +180,7 @@ trait DeltaRetentionSuiteBase extends QueryTest
       fs.setTimes(cpPath, day(startTime, dayNum) + version * 1000, 0)
     }
     if (!checkpointOnly) {
-      val deltaPath = new Path(logDir + f"/$version%020d.json")
+      val deltaPath = new Path(log.logPath, new Path(f"$version%020d.json"))
       if (fs.exists(deltaPath)) {
         // Add some second offset so that we don't have files with same timestamps
         fs.setTimes(deltaPath, day(startTime, dayNum) + version * 1000, 0)
@@ -186,7 +195,13 @@ trait DeltaRetentionSuiteBase extends QueryTest
   protected def day(startTime: Long, day: Int): Long =
     startTime + intervalStringToMillis(s"interval $day days")
 
-  // Create a sidecar file with given AddFiles inside it.
+  /**
+   * Creates a sidecar file with the given AddFiles.
+   *
+   * @param log The DeltaLog to which the sidecar file will be added.
+   * @param files A sequence of integers representing the AddFile indices.
+   * @return The name of the created sidecar file.
+   */
   protected def createSidecarFile(log: DeltaLog, files: Seq[Int]): String = {
     val sparkSession = spark
     // scalastyle:off sparkimplicits
@@ -194,7 +209,26 @@ trait DeltaRetentionSuiteBase extends QueryTest
     // scalastyle:on sparkimplicits
     var sidecarFileName: String = ""
     withTempDir { dir =>
-      val adds = files.map(i => createTestAddFile(i.toString))
+      val snapshot = log.unsafeVolatileSnapshot
+      val isRowTrackingEnabled = RowTracking.isEnabled(snapshot.protocol, snapshot.metadata)
+
+      val adds = files.map { i =>
+        val baseAddFile = createTestAddFile(i.toString)
+        if (isRowTrackingEnabled) {
+          // When [[RowTrackingFeature]] is enabled, assign `baseRowId` and
+          // `defaultRowCommitVersion` to match what would happen during actual commit.
+          // Otherwise, CRC validation will fail for subsequent commits after the first
+          // checkpoint, since the AddFiles from state reconstruction (checkpoint) differ
+          // from the incremental ones.
+          baseAddFile.copy(
+            baseRowId = Some((i - 1).toLong),
+            // Use 1L as the default row commit version for the mock AddFiles in the sidecar file.
+            defaultRowCommitVersion = Some(1L))
+        } else {
+          baseAddFile
+        }
+      }
+
       adds.map(_.wrap).toDF.repartition(1).write.mode("overwrite").parquet(dir.getAbsolutePath)
       val srcPath =
         new Path(dir.listFiles().filter(_.getName.endsWith("parquet")).head.getAbsolutePath)

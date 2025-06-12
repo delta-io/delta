@@ -239,6 +239,19 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
         """"writerFeatures":["testLegacyReaderWriter"]}}""")
 
   testActionSerDe(
+    "Protocol - json serialization/deserialization with several reader and writer features",
+    Protocol(
+      minReaderVersion = TABLE_FEATURES_MIN_READER_VERSION,
+      minWriterVersion = TABLE_FEATURES_MIN_WRITER_VERSION)
+      .withFeature(TestLegacyReaderWriterFeature)
+      .withFeature(TestReaderWriterFeature),
+    expectedJson =
+      s"""{"protocol":{"minReaderVersion":$TABLE_FEATURES_MIN_READER_VERSION,""" +
+        s""""minWriterVersion":$TABLE_FEATURES_MIN_WRITER_VERSION,""" +
+        """"readerFeatures":["testLegacyReaderWriter","testReaderWriter"],""" +
+        """"writerFeatures":["testLegacyReaderWriter","testReaderWriter"]}}""")
+
+  testActionSerDe(
     "Protocol - json serialization/deserialization with empty reader and writer features",
     Protocol(
       minReaderVersion = TABLE_FEATURES_MIN_READER_VERSION,
@@ -521,6 +534,11 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       metadata,
       expectedJson = """{"metaData":{"id":"testId","format":{"provider":"parquet",""" +
         """"options":{}},"partitionColumns":[],"configuration":{},"createdTime":2222}}""")
+    testActionSerDe(
+      "Metadata (with all defaults and empty createdTime) - json serialization/deserialization",
+      metadata.copy(createdTime = None),
+      expectedJson = """{"metaData":{"id":"testId","format":{"provider":"parquet",""" +
+        """"options":{}},"partitionColumns":[],"configuration":{}}}""")
   }
 
   {

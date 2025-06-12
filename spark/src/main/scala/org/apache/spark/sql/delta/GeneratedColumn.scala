@@ -19,6 +19,8 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import java.util.Locale
 
+import org.apache.spark.sql.delta.DataFrameUtils
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -31,11 +33,14 @@ import org.apache.spark.sql.{AnalysisException, Column, Dataset, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.Analyzer
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
+import org.apache.spark.sql.catalyst.expressions.objects.StaticInvoke
+import org.apache.spark.sql.catalyst.optimizer.CollapseProject
 import org.apache.spark.sql.catalyst.plans.logical.{LocalRelation, LogicalPlan, Project}
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
-import org.apache.spark.sql.catalyst.util.{quoteIfNeeded, CaseInsensitiveMap}
+import org.apache.spark.sql.catalyst.util.{quoteIfNeeded, CaseInsensitiveMap, CharVarcharCodegenUtils}
 import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.types.{Metadata => FieldMetadata}
 /**
@@ -107,7 +112,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
    * - The table writer protocol >= GeneratedColumn.MIN_WRITER_VERSION;
    * - It has a generation expression in the column metadata.
    */
-  def getGeneratedColumns(snapshot: Snapshot): Seq[StructField] = {
+  def getGeneratedColumns(snapshot: SnapshotDescriptor): Seq[StructField] = {
     if (satisfyGeneratedColumnProtocol(snapshot.protocol)) {
       snapshot.metadata.schema.partition(isGeneratedColumn)._1
     } else {
@@ -222,7 +227,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
         case Some(exprString) =>
           val expr = parseGenerationExpression(spark, exprString)
           validateColumnReferences(spark, f.name, expr, schema)
-          new Column(expr).alias(f.name)
+          Column(expr).alias(f.name)
         case None =>
           // Should not happen
           throw DeltaErrors.expressionsNotFoundInGeneratedColumn(f.name)
@@ -230,7 +235,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
     }
     val dfWithExprs = try {
       val plan = Project(selectExprs.map(_.expr.asInstanceOf[NamedExpression]), relation)
-      Dataset.ofRows(spark, plan)
+      DataFrameUtils.ofRows(spark, plan)
     } catch {
       case e: AnalysisException if e.getMessage != null =>
         val regexCandidates = Seq(
@@ -267,7 +272,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
     }
     // Compare the columns types defined in the schema and the expression types.
     generatedColumns.zip(dfWithExprs.schema).foreach { case (column, expr) =>
-      if (column.dataType != expr.dataType) {
+      if (!DataType.equalsIgnoreNullability(column.dataType, expr.dataType)) {
         throw DeltaErrors.generatedColumnsExprTypeMismatch(
           column.name, column.dataType, expr.dataType)
       }
@@ -278,14 +283,14 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
     val generationExprs = schema.flatMap { col =>
       getGenerationExpressionStr(col).map { exprStr =>
         val expr = parseGenerationExpression(SparkSession.active, exprStr)
-        new Column(expr).alias(col.name)
+        Column(expr).alias(col.name)
       }
     }
     if (generationExprs.isEmpty) {
       return Set.empty
     }
 
-    val df = Dataset.ofRows(SparkSession.active, new LocalRelation(toAttributes(schema)))
+    val df = DataFrameUtils.ofRows(SparkSession.active, new LocalRelation(toAttributes(schema)))
     val generatedColumnsAndColumnsUsedByGeneratedColumns =
       df.select(generationExprs: _*).queryExecution.analyzed match {
         case Project(exprs, _) =>
@@ -327,7 +332,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
     val partitionGenerationExprs = partitionSchema.flatMap { col =>
       getGenerationExpressionStr(col).map { exprStr =>
         val expr = parseGenerationExpression(SparkSession.active, exprStr)
-        new Column(expr).alias(col.name)
+        Column(expr).alias(col.name)
       }
     }
     if (partitionGenerationExprs.isEmpty) {
@@ -355,7 +360,7 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
       }
     }
 
-    val df = Dataset.ofRows(SparkSession.active, new LocalRelation(toAttributes(schema)))
+    val df = DataFrameUtils.ofRows(SparkSession.active, new LocalRelation(toAttributes(schema)))
     val extractedPartitionExprs =
       df.select(partitionGenerationExprs: _*).queryExecution.analyzed match {
         case Project(exprs, _) =>
@@ -583,6 +588,69 @@ object GeneratedColumn extends DeltaLogging with AnalysisHelper {
       ))
 
     resolvedPartitionFilters
+  }
+
+  /**
+   * Check whether executing DML (Merge or Update) with this plan as the target plan and
+   * generated column is allowed.
+   * It is already checked by the caller that the table is a Delta table, and that it has
+   * generated columns, so it is not checked again here.
+   *
+   * In general it is allowed to Merge or Update into a temporary view over a Delta table, but
+   * this is not allowed if the table contains a generated column. This is because the generated
+   * column definition is a SQL expression text, and it would not handle any transformation done by
+   * the view (e.g. if the view was `SELECT a as b, b as a FROM table`, the generated column would
+   * not handle the aliasing).
+   *
+   * This function checks if the target plan is a bare reference to the Delta table, or if the
+   * transformations are the result of internal processing introduced not by the user, but
+   * internally during analysis, which need to be taken into account and allowed.
+   *
+   * @param deltaLogicalPlan Target plan of the DML (Merge or Update)
+   * @param conf SQLConf object.
+   * @return true if allowed,
+   *         false if DeltaErrors.operationOnTempViewWithGenerateColsNotSupported should be thrown.
+   */
+  def allowDMLTargetPlan(deltaLogicalPlan: LogicalPlan, conf: SQLConf): Boolean = {
+    // Simple quick path: pure scan.
+    // It is already checked by PreprocessTable{Merge|Update} that this is a Delta scan.
+    deltaLogicalPlan.isInstanceOf[LogicalRelation] || (
+      CollapseProject(deltaLogicalPlan) match {
+        case Project(projectList, r: LogicalRelation) if conf.readSideCharPadding =>
+          // Check if s is a char padding applied to a.
+          def isCharPadding(s: StaticInvoke, a: Attribute): Boolean = {
+            s.staticObject == classOf[CharVarcharCodegenUtils] &&
+            s.functionName == "readSidePadding" &&
+            s.arguments.size == 2 &&
+            (s.arguments(0) match {
+              case arg: Attribute => arg.exprId == a.exprId
+              case _ => false
+            })
+          }
+
+          projectList.length == r.output.length &&
+          projectList.zip(r.output).forall {
+            // Attribute forwarding.
+            case (p: Attribute, a: Attribute) if p.exprId == a.exprId => true
+            // See Spark's ApplyCharTypePaddingHelper.readSidePadding which applies this projection.
+            // p alias must have the same name as input attribute a,
+            // and be char padding applied to it.
+            case (p: Alias, a: Attribute) if conf.resolver(p.name, a.name) =>
+              p.child match {
+                case s: StaticInvoke if isCharPadding(s, a) => true
+                case _ => false
+              }
+            case _ => false
+          }
+
+        // Pure scan.
+        // It is already checked by PreprocessTable{Merge|Update} that this is a Delta scan.
+        case _: LogicalRelation =>
+          true
+
+        case _ => false
+      }
+    )
   }
 
   private val DATE_FORMAT_YEAR_MONTH = "yyyy-MM"

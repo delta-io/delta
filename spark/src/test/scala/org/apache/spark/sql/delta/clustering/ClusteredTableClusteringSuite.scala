@@ -20,6 +20,7 @@ import org.apache.spark.sql.delta.skipping.ClusteredTableTestUtils
 import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.SparkFunSuite
@@ -100,6 +101,58 @@ class ClusteredTableClusteringSuite extends SparkFunSuite
         val files1 = getFiles(table)
         assert(files1.size == 2)
         assertClustered(files1)
+      }
+    }
+  }
+
+  test("optimize clustered table with batching") {
+    Seq(("1", 2), ("1g", 1)).foreach { case (batchSize, optimizeCommits) =>
+      withClusteredTable(
+        table = table,
+        schema = "col1 int, col2 int",
+        clusterBy = "col1, col2") {
+        addFiles(table, numFiles = 4)
+        val files0 = getFiles(table)
+        assert(files0.size === 4)
+        assertNotClustered(files0)
+
+        val totalSize = files0.toSeq.map(_.size).sum
+        val halfSize = totalSize / 2
+
+        withSQLConf(
+          DeltaSQLConf.DELTA_OPTIMIZE_BATCH_SIZE.key -> batchSize,
+          DeltaSQLConf.DELTA_OPTIMIZE_CLUSTERING_MIN_CUBE_SIZE.key -> halfSize.toString,
+          DeltaSQLConf.DELTA_OPTIMIZE_CLUSTERING_TARGET_CUBE_SIZE.key -> halfSize.toString) {
+          // Optimize should create 2 cubes, which will be in separate batches if the batch size
+          // is small enough
+          runOptimize(table) { metrics =>
+            assert(metrics.numFilesRemoved == 4)
+            assert(metrics.numFilesAdded == 2)
+          }
+
+          val files1 = getFiles(table)
+          assert(files1.size == 2)
+          assertClustered(files1)
+
+          val deltaLog = DeltaLog.forTable(spark, TableIdentifier(table))
+
+          val commits = deltaLog.history.getHistory(None)
+          assert(commits.filter(_.operation == "OPTIMIZE").length == optimizeCommits)
+        }
+      }
+    }
+  }
+
+  test("optimize clustered table with batching on an empty table") {
+    withClusteredTable(
+      table = table,
+      schema = "col1 int, col2 int",
+      clusterBy = "col1, col2") {
+      withSQLConf(DeltaSQLConf.DELTA_OPTIMIZE_BATCH_SIZE.key -> "1g") {
+        runOptimize(table) { metrics =>
+          assert(metrics.numFilesRemoved == 0)
+          assert(metrics.numFilesAdded == 0)
+        }
       }
     }
   }

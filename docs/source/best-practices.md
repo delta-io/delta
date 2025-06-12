@@ -186,4 +186,5 @@ You should not use [Spark caching](optimizations/delta-cache.md#delta-and-rdd-ca
 
 - The data that gets cached may not be updated if the table is accessed using a different identifier (for example, you do `spark.table(x).cache()` but then write to the table using `spark.write.save(/some/path)`.
 
-.. include:: /shared/replacements.md
+.. <Delta> replace:: Delta Lake
+.. <AS> replace:: Apache Spark

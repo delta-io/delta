@@ -337,4 +337,5 @@ The same `DataFrameWriter` options can be used to achieve the idempotent writes 
    }
    ```
 
-.. include:: /shared/replacements.md
+.. <Delta> replace:: Delta Lake
+.. <AS> replace:: Apache Spark

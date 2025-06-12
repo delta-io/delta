@@ -15,108 +15,99 @@
  */
 package io.delta.kernel.defaults.internal.data;
 
+import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.types.StructField;
+import io.delta.kernel.types.StructType;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
-import io.delta.kernel.data.ColumnVector;
-import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.types.StructField;
-import io.delta.kernel.types.StructType;
+public class DefaultColumnarBatch implements ColumnarBatch {
+  private final int size;
+  private final StructType schema;
+  private final List<ColumnVector> columnVectors;
 
-public class DefaultColumnarBatch
-    implements ColumnarBatch {
-    private final int size;
-    private final StructType schema;
-    private final List<ColumnVector> columnVectors;
+  public DefaultColumnarBatch(int size, StructType schema, ColumnVector[] columnVectors) {
+    this.schema = schema;
+    this.size = size;
+    this.columnVectors = Collections.unmodifiableList(Arrays.asList(columnVectors));
+  }
 
-    public DefaultColumnarBatch(
-        int size,
-        StructType schema,
-        ColumnVector[] columnVectors
-    ) {
-        this.schema = schema;
-        this.size = size;
-        this.columnVectors = Collections.unmodifiableList(Arrays.asList(columnVectors));
+  @Override
+  public StructType getSchema() {
+    return schema;
+  }
+
+  @Override
+  public ColumnVector getColumnVector(int ordinal) {
+    checkColumnOrdinal(ordinal);
+    return columnVectors.get(ordinal);
+  }
+
+  @Override
+  public ColumnarBatch withNewColumn(
+      int ordinal, StructField structField, ColumnVector columnVector) {
+    if (ordinal < 0 || ordinal > columnVectors.size()) {
+      throw new IllegalArgumentException("Invalid ordinal: " + ordinal);
     }
 
-    @Override
-    public StructType getSchema() {
-        return schema;
+    if (columnVector == null || columnVector.getSize() != size) {
+      throw new IllegalArgumentException(
+          "given vector size is not matching the current batch size");
     }
 
-    @Override
-    public ColumnVector getColumnVector(int ordinal) {
-        checkColumnOrdinal(ordinal);
-        return columnVectors.get(ordinal);
+    // Update the schema
+    ArrayList<StructField> newStructFields = new ArrayList<>(schema.fields());
+    newStructFields.ensureCapacity(schema.length() + 1);
+    newStructFields.add(ordinal, structField);
+    StructType newSchema = new StructType(newStructFields);
+
+    // Update the vectors
+    ArrayList<ColumnVector> newColumnVectors = new ArrayList<>(columnVectors);
+    newColumnVectors.ensureCapacity(columnVectors.size() + 1);
+    newColumnVectors.add(ordinal, columnVector);
+
+    return new DefaultColumnarBatch(size, newSchema, newColumnVectors.toArray(new ColumnVector[0]));
+  }
+
+  @Override
+  public ColumnarBatch withDeletedColumnAt(int ordinal) {
+    if (ordinal < 0 || ordinal >= columnVectors.size()) {
+      throw new IllegalArgumentException("Invalid ordinal: " + ordinal);
     }
 
-    @Override
-    public ColumnarBatch withNewColumn(int ordinal, StructField structField,
-        ColumnVector columnVector) {
-        if (ordinal < 0 || ordinal > columnVectors.size()) {
-            throw new IllegalArgumentException("Invalid ordinal: " + ordinal);
-        }
+    // Update the schema
+    ArrayList<StructField> newStructFields = new ArrayList<>(schema.fields());
+    newStructFields.remove(ordinal);
+    StructType newSchema = new StructType(newStructFields);
 
-        if (columnVector == null || columnVector.getSize() != size) {
-            throw new IllegalArgumentException(
-                "given vector size is not matching the current batch size");
-        }
+    // Update the vectors
+    ArrayList<ColumnVector> newColumnVectors = new ArrayList<>(columnVectors);
+    newColumnVectors.remove(ordinal);
 
-        // Update the schema
-        ArrayList<StructField> newStructFields = new ArrayList<>(schema.fields());
-        newStructFields.ensureCapacity(schema.length() + 1);
-        newStructFields.add(ordinal, structField);
-        StructType newSchema = new StructType(newStructFields);
+    return new DefaultColumnarBatch(size, newSchema, newColumnVectors.toArray(new ColumnVector[0]));
+  }
 
-        // Update the vectors
-        ArrayList<ColumnVector> newColumnVectors = new ArrayList<>(columnVectors);
-        newColumnVectors.ensureCapacity(columnVectors.size() + 1);
-        newColumnVectors.add(ordinal, columnVector);
-
-        return new DefaultColumnarBatch(
-            size, newSchema, newColumnVectors.toArray(new ColumnVector[0]));
+  @Override
+  public ColumnarBatch withNewSchema(StructType newSchema) {
+    if (!schema.equivalent(newSchema)) {
+      throw new IllegalArgumentException(
+          "Given new schema data type is not same as the existing schema");
     }
 
-    @Override
-    public ColumnarBatch withDeletedColumnAt(int ordinal) {
-        if (ordinal < 0 || ordinal >= columnVectors.size()) {
-            throw new IllegalArgumentException("Invalid ordinal: " + ordinal);
-        }
+    return new DefaultColumnarBatch(size, newSchema, columnVectors.toArray(new ColumnVector[0]));
+  }
 
-        // Update the schema
-        ArrayList<StructField> newStructFields = new ArrayList<>(schema.fields());
-        newStructFields.remove(ordinal);
-        StructType newSchema = new StructType(newStructFields);
+  @Override
+  public int getSize() {
+    return size;
+  }
 
-        // Update the vectors
-        ArrayList<ColumnVector> newColumnVectors = new ArrayList<>(columnVectors);
-        newColumnVectors.remove(ordinal);
-
-        return new DefaultColumnarBatch(
-            size, newSchema, newColumnVectors.toArray(new ColumnVector[0]));
+  private void checkColumnOrdinal(int ordinal) {
+    if (ordinal < 0 || ordinal >= columnVectors.size()) {
+      throw new IllegalArgumentException("invalid column ordinal: " + ordinal);
     }
-
-    @Override
-    public ColumnarBatch withNewSchema(StructType newSchema) {
-        if (!schema.equivalent(newSchema)) {
-            throw new IllegalArgumentException(
-                "Given new schema data type is not same as the existing schema");
-        }
-
-        return new DefaultColumnarBatch(
-            size, newSchema, columnVectors.toArray(new ColumnVector[0]));
-    }
-
-    @Override
-    public int getSize() {
-        return size;
-    }
-
-    private void checkColumnOrdinal(int ordinal) {
-        if (ordinal < 0 || ordinal >= columnVectors.size()) {
-            throw new IllegalArgumentException("invalid column ordinal: " + ordinal);
-        }
-    }
+  }
 }

@@ -24,9 +24,9 @@ import io.delta.kernel.annotation.Evolving;
  */
 @Evolving
 public class BooleanType extends BasePrimitiveType {
-    public static final BooleanType BOOLEAN = new BooleanType();
+  public static final BooleanType BOOLEAN = new BooleanType();
 
-    private BooleanType() {
-        super("boolean");
-    }
+  private BooleanType() {
+    super("boolean");
+  }
 }

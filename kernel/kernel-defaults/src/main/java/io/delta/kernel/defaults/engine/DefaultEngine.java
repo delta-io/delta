@@ -15,48 +15,64 @@
  */
 package io.delta.kernel.defaults.engine;
 
+import io.delta.kernel.defaults.engine.fileio.FileIO;
+import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO;
+import io.delta.kernel.engine.*;
+import java.util.Collections;
+import java.util.List;
 import org.apache.hadoop.conf.Configuration;
 
-import io.delta.kernel.engine.*;
+/** Default implementation of {@link Engine} based on Hadoop APIs. */
+public class DefaultEngine implements Engine {
+  private final FileIO fileIO;
 
-/**
- * Default implementation of {@link Engine} based on Hadoop APIs.
- */
-public class DefaultEngine
-    implements Engine {
-    private final Configuration hadoopConf;
+  protected DefaultEngine(FileIO fileIO) {
+    this.fileIO = fileIO;
+  }
 
-    protected DefaultEngine(Configuration hadoopConf) {
-        this.hadoopConf = hadoopConf;
-    }
+  @Override
+  public ExpressionHandler getExpressionHandler() {
+    return new DefaultExpressionHandler();
+  }
 
-    @Override
-    public ExpressionHandler getExpressionHandler() {
-        return new DefaultExpressionHandler();
-    }
+  @Override
+  public JsonHandler getJsonHandler() {
+    return new DefaultJsonHandler(fileIO);
+  }
 
-    @Override
-    public JsonHandler getJsonHandler() {
-        return new DefaultJsonHandler(hadoopConf);
-    }
+  @Override
+  public FileSystemClient getFileSystemClient() {
+    return new DefaultFileSystemClient(fileIO);
+  }
 
-    @Override
-    public FileSystemClient getFileSystemClient() {
-        return new DefaultFileSystemClient(hadoopConf);
-    }
+  @Override
+  public ParquetHandler getParquetHandler() {
+    return new DefaultParquetHandler(fileIO);
+  }
 
-    @Override
-    public ParquetHandler getParquetHandler() {
-        return new DefaultParquetHandler(hadoopConf);
-    }
+  @Override
+  public List<MetricsReporter> getMetricsReporters() {
+    return Collections.singletonList(new LoggingMetricsReporter());
+  };
 
-    /**
-     * Create an instance of {@link DefaultEngine}.
-     *
-     * @param hadoopConf Hadoop configuration to use.
-     * @return an instance of {@link DefaultEngine}.
-     */
-    public static DefaultEngine create(Configuration hadoopConf) {
-        return new DefaultEngine(hadoopConf);
-    }
+  /**
+   * Create an instance of {@link DefaultEngine}.
+   *
+   * @param hadoopConf Hadoop configuration to use.
+   * @return an instance of {@link DefaultEngine}.
+   */
+  public static DefaultEngine create(Configuration hadoopConf) {
+    return new DefaultEngine(new HadoopFileIO(hadoopConf));
+  }
+
+  /**
+   * Create an instance of {@link DefaultEngine}. It takes {@link FileIO} as an argument which is
+   * used for I/O related operations.
+   *
+   * @param fileIO File IO implementation to use for reading and writing files.
+   * @return an instance of {@link DefaultEngine}.
+   */
+  public static DefaultEngine create(FileIO fileIO) {
+    return new DefaultEngine(fileIO);
+  }
 }

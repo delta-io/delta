@@ -18,7 +18,10 @@ package org.apache.spark.sql.delta.files
 
 import java.util.{Date, UUID}
 
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.DeltaOptions
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
+import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileAlreadyExistsException, Path}
 import org.apache.hadoop.mapreduce._
@@ -26,7 +29,7 @@ import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat
 import org.apache.hadoop.mapreduce.task.TaskAttemptContextImpl
 
 import org.apache.spark._
-import org.apache.spark.internal.Logging
+import org.apache.spark.internal.{LoggingShims, MDC}
 import org.apache.spark.internal.io.{FileCommitProtocol, SparkHadoopWriterUtils}
 import org.apache.spark.shuffle.FetchFailedException
 import org.apache.spark.sql.SparkSession
@@ -43,6 +46,7 @@ import org.apache.spark.sql.execution.adaptive.AdaptiveSparkPlanExec
 import org.apache.spark.sql.execution.datasources._
 import org.apache.spark.sql.execution.datasources.FileFormatWriter._
 import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.types.DataType
 import org.apache.spark.util.{SerializableConfiguration, Utils}
 
 /**
@@ -51,7 +55,7 @@ import org.apache.spark.util.{SerializableConfiguration, Utils}
  *  values to data files. Specifically L123-126, L132, and L140 where it adds option
  *  WRITE_PARTITION_COLUMNS
  */
-object DeltaFileFormatWriter extends Logging {
+object DeltaFileFormatWriter extends LoggingShims {
 
   /**
    * A variable used in tests to check whether the output ordering of the query matches the
@@ -186,7 +190,7 @@ object DeltaFileFormatWriter extends Logging {
     // 1) When the planned write config is disabled.
     // 2) When the concurrent writers are enabled (in this case the required ordering of a
     //    V1 write command will be empty).
-    if (Utils.isTesting) outputOrderingMatched = orderingMatched
+    if (DeltaUtils.isTesting) outputOrderingMatched = orderingMatched
 
     if (writeFilesOpt.isDefined) {
       // build `WriteFilesSpec` for `WriteFiles`
@@ -246,7 +250,7 @@ object DeltaFileFormatWriter extends Logging {
       }
 
       // In testing, this is the only way to get hold of the actually executed plan written to file
-      if (Utils.isTesting) executedPlan = Some(planToExecute)
+      if (DeltaUtils.isTesting) executedPlan = Some(planToExecute)
 
       val rdd = planToExecute.execute()
 
@@ -260,6 +264,8 @@ object DeltaFileFormatWriter extends Logging {
 
       val jobTrackerID = SparkHadoopWriterUtils.createJobTrackerID(new Date())
       val ret = new Array[WriteTaskResult](rddWithNonEmptyPartitions.partitions.length)
+      val partitionColumnToDataType = description.partitionColumns
+        .map(attr => (attr.name, attr.dataType)).toMap
       sparkSession.sparkContext.runJob(
         rddWithNonEmptyPartitions,
         (taskContext: TaskContext, iter: Iterator[InternalRow]) => {
@@ -271,7 +277,8 @@ object DeltaFileFormatWriter extends Logging {
             sparkAttemptNumber = taskContext.taskAttemptId().toInt & Integer.MAX_VALUE,
             committer,
             iterator = iter,
-            concurrentOutputWriterSpec = concurrentOutputWriterSpec
+            concurrentOutputWriterSpec = concurrentOutputWriterSpec,
+            partitionColumnToDataType
           )
         },
         rddWithNonEmptyPartitions.partitions.indices,
@@ -295,18 +302,20 @@ object DeltaFileFormatWriter extends Logging {
       val ret = f
       val commitMsgs = ret.map(_.commitMsg)
 
-      logInfo(s"Start to commit write Job ${description.uuid}.")
+      logInfo(log"Start to commit write Job ${MDC(DeltaLogKeys.JOB_ID, description.uuid)}.")
       val (_, duration) = Utils.timeTakenMs { committer.commitJob(job, commitMsgs) }
-      logInfo(s"Write Job ${description.uuid} committed. Elapsed time: $duration ms.")
+      logInfo(log"Write Job ${MDC(DeltaLogKeys.JOB_ID, description.uuid)} committed. " +
+        log"Elapsed time: ${MDC(DeltaLogKeys.DURATION, duration)} ms.")
 
       processStats(description.statsTrackers, ret.map(_.summary.stats), duration)
-      logInfo(s"Finished processing stats for write job ${description.uuid}.")
+      logInfo(log"Finished processing stats for write job " +
+        log"${MDC(DeltaLogKeys.JOB_ID, description.uuid)}.")
 
       // return a set of all the partition paths that were updated during this job
       ret.map(_.summary.updatedPartitions).reduceOption(_ ++ _).getOrElse(Set.empty)
     } catch {
       case cause: Throwable =>
-        logError(s"Aborting job ${description.uuid}.", cause)
+        logError(log"Aborting job ${MDC(DeltaLogKeys.JOB_ID, description.uuid)}", cause)
         committer.abortJob(job)
         throw cause
     }
@@ -324,7 +333,7 @@ object DeltaFileFormatWriter extends Logging {
     val description = writeFilesSpec.description
 
     // In testing, this is the only way to get hold of the actually executed plan written to file
-    if (Utils.isTesting) executedPlan = Some(planForWrites)
+    if (DeltaUtils.isTesting) executedPlan = Some(planForWrites)
 
     writeAndCommit(job, description, committer) {
       val rdd = planForWrites.executeWrite(writeFilesSpec)
@@ -374,6 +383,14 @@ object DeltaFileFormatWriter extends Logging {
     }
   }
 
+   class PartitionedTaskAttemptContextImpl(
+       conf: Configuration,
+       taskId: TaskAttemptID,
+       partitionColumnToDataType: Map[String, DataType])
+     extends TaskAttemptContextImpl(conf, taskId) {
+     val partitionColToDataType: Map[String, DataType] = partitionColumnToDataType
+  }
+
   /** Writes data out in a single Spark task. */
   private def executeTask(
       description: WriteJobDescription,
@@ -383,7 +400,8 @@ object DeltaFileFormatWriter extends Logging {
       sparkAttemptNumber: Int,
       committer: FileCommitProtocol,
       iterator: Iterator[InternalRow],
-      concurrentOutputWriterSpec: Option[ConcurrentOutputWriterSpec]): WriteTaskResult = {
+      concurrentOutputWriterSpec: Option[ConcurrentOutputWriterSpec],
+      partitionColumnToDataType: Map[String, DataType]): WriteTaskResult = {
 
     val jobId = SparkHadoopWriterUtils.createJobID(jobTrackerID, sparkStageId)
     val taskId = new TaskID(jobId, TaskType.MAP, sparkPartitionId)
@@ -399,7 +417,11 @@ object DeltaFileFormatWriter extends Logging {
       hadoopConf.setBoolean("mapreduce.task.ismap", true)
       hadoopConf.setInt("mapreduce.task.partition", 0)
 
-      new TaskAttemptContextImpl(hadoopConf, taskAttemptId)
+      if (partitionColumnToDataType.isEmpty) {
+        new TaskAttemptContextImpl(hadoopConf, taskAttemptId)
+      } else {
+        new PartitionedTaskAttemptContextImpl(hadoopConf, taskAttemptId, partitionColumnToDataType)
+      }
     }
 
     committer.setupTask(taskAttemptContext)
@@ -432,7 +454,7 @@ object DeltaFileFormatWriter extends Logging {
       })(catchBlock = {
         // If there is an error, abort the task
         dataWriter.abort()
-        logError(s"Job $jobId aborted.")
+        logError(log"Job ${MDC(DeltaLogKeys.JOB_ID, jobId)} aborted.")
       }, finallyBlock = {
         dataWriter.close()
       })

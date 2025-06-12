@@ -20,61 +20,59 @@ package io.delta.kernel.internal.util;
  * correctly (that is, whether its preconditions were met).
  */
 public class Preconditions {
-    private Preconditions() {}
+  private Preconditions() {}
 
-    /**
-     * Precondition-style validation that throws {@link IllegalArgumentException}.
-     *
-     * @param isValid {@code true} if valid, {@code false} if an exception should be thrown
-     * @throws IllegalArgumentException if {@code isValid} is false
-     */
-    public static void checkArgument(boolean isValid)
-            throws IllegalArgumentException {
-        if (!isValid) {
-            throw new IllegalArgumentException();
-        }
+  /**
+   * Precondition-style validation that throws {@link IllegalArgumentException}.
+   *
+   * @param isValid {@code true} if valid, {@code false} if an exception should be thrown
+   * @throws IllegalArgumentException if {@code isValid} is false
+   */
+  public static void checkArgument(boolean isValid) throws IllegalArgumentException {
+    if (!isValid) {
+      throw new IllegalArgumentException();
     }
+  }
 
-    /**
-     * Precondition-style validation that throws {@link IllegalArgumentException}.
-     *
-     * @param isValid {@code true} if valid, {@code false} if an exception should be thrown
-     * @param message A String message for the exception.
-     * @throws IllegalArgumentException if {@code isValid} is false
-     */
-    public static void checkArgument(boolean isValid, String message)
-            throws IllegalArgumentException {
-        if (!isValid) {
-            throw new IllegalArgumentException(message);
-        }
+  /**
+   * Precondition-style validation that throws {@link IllegalArgumentException}.
+   *
+   * @param isValid {@code true} if valid, {@code false} if an exception should be thrown
+   * @param message A String message for the exception.
+   * @throws IllegalArgumentException if {@code isValid} is false
+   */
+  public static void checkArgument(boolean isValid, String message)
+      throws IllegalArgumentException {
+    if (!isValid) {
+      throw new IllegalArgumentException(message);
     }
+  }
 
-    /**
-     * Precondition-style validation that throws {@link IllegalArgumentException}.
-     *
-     * @param isValid {@code true} if valid, {@code false} if an exception should be thrown
-     * @param message A String message for the exception.
-     * @param args    Objects used to fill in {@code %s} placeholders in the message
-     * @throws IllegalArgumentException if {@code isValid} is false
-     */
-    public static void checkArgument(boolean isValid, String message, Object... args)
-            throws IllegalArgumentException {
-        if (!isValid) {
-            throw new IllegalArgumentException(
-                    String.format(String.valueOf(message), args));
-        }
+  /**
+   * Precondition-style validation that throws {@link IllegalArgumentException}.
+   *
+   * @param isValid {@code true} if valid, {@code false} if an exception should be thrown
+   * @param message A String message for the exception.
+   * @param args Objects used to fill in {@code %s} placeholders in the message
+   * @throws IllegalArgumentException if {@code isValid} is false
+   */
+  public static void checkArgument(boolean isValid, String message, Object... args)
+      throws IllegalArgumentException {
+    if (!isValid) {
+      throw new IllegalArgumentException(String.format(String.valueOf(message), args));
     }
+  }
 
-    /**
-     * Ensures the truth of an expression involving the state of the calling instance.
-     *
-     * @param expression a boolean expression
-     * @param errorMessage the exception message to use if the check fails
-     * @throws IllegalStateException if {@code expression} is false
-     */
-    public static void checkState(boolean expression, String errorMessage) {
-        if (!expression) {
-            throw new IllegalStateException(errorMessage);
-        }
+  /**
+   * Ensures the truth of an expression involving the state of the calling instance.
+   *
+   * @param expression a boolean expression
+   * @param errorMessage the exception message to use if the check fails
+   * @throws IllegalStateException if {@code expression} is false
+   */
+  public static void checkState(boolean expression, String errorMessage) {
+    if (!expression) {
+      throw new IllegalStateException(errorMessage);
     }
+  }
 }

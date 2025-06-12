@@ -21,11 +21,11 @@ import scala.language.implicitConversions
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
-import org.apache.spark.sql.functions.{array, current_date, lit, struct}
+import org.apache.spark.sql.functions.{array, lit, struct}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.internal.SQLConf.StoreAssignmentPolicy
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.sql.types.{ArrayType, IntegerType, LongType, MapType, NullType, StringType, StructField, StructType}
+import org.apache.spark.sql.types.{ArrayType, DateType, IntegerType, LongType, MapType, NullType, StringType, StructField, StructType}
 import org.apache.spark.util.Utils
 
 /**
@@ -499,10 +499,12 @@ trait MergeIntoSchemaEvolutionBaseTests {
     confs = Seq(SQLConf.CASE_SENSITIVE.key -> "false")
   )
 
-  testEvolution(s"case-sensitive insert")(
+  // TODO: Add a test for case-sensitive insert and column not in target
+
+  testEvolution("case-sensitive insert, column not in source")(
     targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
     sourceData = Seq((1, 1), (2, 2)).toDF("key", "VALUE"),
-    clauses = insert("(key, value, VALUE) VALUES (s.key, s.value, s.VALUE)") :: Nil,
+    clauses = insert("(key, value) VALUES (s.key, s.value)") :: Nil,
     expectErrorContains = "Cannot resolve s.value in INSERT clause",
     expectErrorWithoutEvolutionContains = "Cannot resolve s.value in INSERT clause",
     confs = Seq(SQLConf.CASE_SENSITIVE.key -> "true")
@@ -822,11 +824,15 @@ trait MergeIntoSchemaEvolutionBaseTests {
     targetData = Seq(500000).toDF("key"),
     sourceData = Seq(500000, 100000).toDF("key")
       .withColumn("generalDeduction",
-        struct(current_date().as("date"), array(struct(lit(0d).as("data"))))),
+        struct(
+          lit("2024-11-08").cast(DateType).as("date"),
+          array(struct(lit(0d).as("data"))))),
     clauses = update("*") :: insert("*") :: Nil,
     expected = Seq(500000, 100000).toDF("key")
       .withColumn("generalDeduction",
-        struct(current_date().as("date"), array(struct(lit(0d).as("data"))))),
+        struct(
+          lit("2024-11-08").cast(DateType).as("date"),
+          array(struct(lit(0d).as("data"))))),
     expectedWithoutEvolution = Seq(500000, 100000).toDF("key")
   )
 
@@ -1817,7 +1823,7 @@ trait MergeIntoNestedStructEvolutionTests {
       .add("key", StringType)
       .add("map", MapType(
           StringType,
-          new StructType().add("a", IntegerType).add("b", IntegerType).add("c", IntegerType))),
+          new StructType().add("b", IntegerType).add("a", IntegerType).add("c", IntegerType))),
     resultSchema = new StructType()
       .add("key", StringType)
       .add("map", MapType(
@@ -1869,7 +1875,7 @@ trait MergeIntoNestedStructEvolutionTests {
       .add("map", MapType(
           StringType,
           ArrayType(
-          new StructType().add("a", IntegerType).add("b", IntegerType).add("c", IntegerType)))),
+          new StructType().add("b", IntegerType).add("c", IntegerType).add("a", IntegerType)))),
     resultSchema = new StructType()
       .add("key", StringType)
       .add("map", MapType(
@@ -1932,11 +1938,11 @@ trait MergeIntoNestedStructEvolutionTests {
     sourceData = Seq((1, 10, 30, 1), (2, 20, 40, 2)).toDF("key", "a", "b", "value")
       .selectExpr("key", "map(named_struct('b', b, 'a', a), value) as x"),
     clauses = update("*") :: insert("*") :: Nil,
-    expected = Seq((1, 30, 10, 1), (2, 40, 20, 2), (3, 5, 6, 7))
+    expected = Seq((1, 10, 30, 1), (2, 20, 40, 2), (3, 5, 6, 7))
       .asInstanceOf[List[(Integer, Integer, Integer, Integer)]]
       .toDF("key", "a", "b", "value")
       .selectExpr("key", "map(named_struct('a', a, 'b', b), value) as x"),
-    expectedWithoutEvolution = Seq((1, 30, 10, 1), (2, 40, 20, 2), (3, 5, 6, 7))
+    expectedWithoutEvolution = Seq((1, 10, 30, 1), (2, 20, 40, 2), (3, 5, 6, 7))
       .asInstanceOf[List[(Integer, Integer, Integer, Integer)]]
       .toDF("key", "a", "b", "value")
       .selectExpr("key", "map(named_struct('a', a, 'b', b), value) as x")
@@ -2900,13 +2906,15 @@ trait MergeIntoNestedStructEvolutionTests {
   testEvolution("struct in different order")(
     targetData = Seq((1, (1, 10, 100)), (2, (2, 20, 200))).toDF("key", "x")
       .selectExpr("key", "named_struct('a', x._1, 'b', x._2, 'c', x._3) as x"),
-    sourceData = Seq((1, (100, 10, 1)), (3, (300, 30, 3))).toDF("key", "x")
+    sourceData = Seq((1, (1111, 111, 11)), (3, (3333, 333, 33))).toDF("key", "x")
       .selectExpr("key", "named_struct('c', x._1, 'b', x._2, 'a', x._3) as x"),
     clauses = update("*") :: insert("*") :: Nil,
-    expected = ((1, (1, 10, 100)) +: (2, (2, 20, 200)) +: (3, (3, 30, 300)) +: Nil).toDF("key", "x")
+    expected = ((1, (11, 111, 1111)) :: (2, (2, 20, 200)) :: (3, (33, 333, 3333)) :: Nil)
+      .toDF("key", "x")
       .selectExpr("key", "named_struct('a', x._1, 'b', x._2, 'c', x._3) as x"),
     expectedWithoutEvolution =
-      ((1, (1, 10, 100)) +: (2, (2, 20, 200)) +: (3, (3, 30, 300)) +: Nil).toDF("key", "x")
+      ((1, (11, 111, 1111)) :: (2, (2, 20, 200)) :: (3, (33, 333, 3333)) :: Nil)
+      .toDF("key", "x")
       .selectExpr("key", "named_struct('a', x._1, 'b', x._2, 'c', x._3) as x")
   )
 

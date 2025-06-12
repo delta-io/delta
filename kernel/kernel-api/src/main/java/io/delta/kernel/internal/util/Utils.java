@@ -16,11 +16,12 @@
 
 package io.delta.kernel.internal.util;
 
+import io.delta.kernel.annotation.Evolving;
+import io.delta.kernel.data.FilteredColumnarBatch;
+import io.delta.kernel.data.Row;
+import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
 import java.util.Iterator;
-
-import io.delta.kernel.annotation.Evolving;
-import io.delta.kernel.utils.CloseableIterator;
 
 /**
  * Various utility methods to help the connectors work with data objects returned by Kernel
@@ -29,102 +30,144 @@ import io.delta.kernel.utils.CloseableIterator;
  */
 @Evolving
 public class Utils {
-    /**
-     * Utility method to create a singleton {@link CloseableIterator}.
-     *
-     * @param elem Element to create iterator with.
-     * @param <T>  Element type.
-     * @return A {@link CloseableIterator} with just one element.
-     */
-    public static <T> CloseableIterator<T> singletonCloseableIterator(T elem) {
-        return new CloseableIterator<T>() {
-            private boolean accessed;
+  /**
+   * Utility method to create a singleton {@link CloseableIterator}.
+   *
+   * @param elem Element to create iterator with.
+   * @param <T> Element type.
+   * @return A {@link CloseableIterator} with just one element.
+   */
+  public static <T> CloseableIterator<T> singletonCloseableIterator(T elem) {
+    return new CloseableIterator<T>() {
+      private boolean accessed;
 
-            @Override
-            public void close() throws IOException {
-                // nothing to close
-            }
+      @Override
+      public void close() throws IOException {
+        // nothing to close
+      }
 
-            @Override
-            public boolean hasNext() {
-                return !accessed;
-            }
+      @Override
+      public boolean hasNext() {
+        return !accessed;
+      }
 
-            @Override
-            public T next() {
-                accessed = true;
-                return elem;
-            }
-        };
-    }
+      @Override
+      public T next() {
+        accessed = true;
+        return elem;
+      }
+    };
+  }
 
-    /**
-     * Convert a {@link Iterator} to {@link CloseableIterator}. Useful when passing normal iterators
-     * for arguments that require {@link CloseableIterator} type.
-     *
-     * @param iter {@link Iterator} instance
-     * @param <T>  Element type
-     * @return A {@link CloseableIterator} wrapping the given {@link Iterator}
-     */
-    public static <T> CloseableIterator<T> toCloseableIterator(Iterator<T> iter) {
-        return new CloseableIterator<T>() {
-            @Override
-            public void close() {}
+  /**
+   * Convert a {@link Iterator} to {@link CloseableIterator}. Useful when passing normal iterators
+   * for arguments that require {@link CloseableIterator} type.
+   *
+   * @param iter {@link Iterator} instance
+   * @param <T> Element type
+   * @return A {@link CloseableIterator} wrapping the given {@link Iterator}
+   */
+  public static <T> CloseableIterator<T> toCloseableIterator(Iterator<T> iter) {
+    return new CloseableIterator<T>() {
+      @Override
+      public void close() {}
 
-            @Override
-            public boolean hasNext() {
-                return iter.hasNext();
-            }
+      @Override
+      public boolean hasNext() {
+        return iter.hasNext();
+      }
 
-            @Override
-            public T next() {
-                return iter.next();
-            }
-        };
-    }
+      @Override
+      public T next() {
+        return iter.next();
+      }
+    };
+  }
 
-    /**
-     * Close the given one or more {@link AutoCloseable}s. {@link AutoCloseable#close()}
-     * will be called on all given non-null closeables. Will throw unchecked
-     * {@link RuntimeException} if an error occurs while closing. If multiple closeables causes
-     * exceptions in closing, the exceptions will be added as suppressed to the main exception
-     * that is thrown.
-     *
-     * @param closeables
-     */
-    public static void closeCloseables(AutoCloseable... closeables) {
-        RuntimeException exception = null;
-        for (AutoCloseable closeable : closeables) {
-            if (closeable == null) {
-                continue;
-            }
-            try {
-                closeable.close();
-            } catch (Exception ex) {
-                if (exception == null) {
-                    exception = new RuntimeException(ex);
-                } else {
-                    exception.addSuppressed(ex);
-                }
-            }
+  /**
+   * Close the given one or more {@link AutoCloseable}s. {@link AutoCloseable#close()} will be
+   * called on all given non-null closeables. Will throw unchecked {@link RuntimeException} if an
+   * error occurs while closing. If multiple closeables causes exceptions in closing, the exceptions
+   * will be added as suppressed to the main exception that is thrown.
+   *
+   * @param closeables
+   */
+  public static void closeCloseables(AutoCloseable... closeables) {
+    RuntimeException exception = null;
+    for (AutoCloseable closeable : closeables) {
+      if (closeable == null) {
+        continue;
+      }
+      try {
+        closeable.close();
+      } catch (Exception ex) {
+        if (exception == null) {
+          exception = new RuntimeException(ex);
+        } else {
+          exception.addSuppressed(ex);
         }
-        if (exception != null) {
-            throw exception;
-        }
+      }
+    }
+    if (exception != null) {
+      throw exception;
+    }
+  }
+
+  /**
+   * Close the given list of {@link AutoCloseable} objects. Any exception thrown is silently
+   * ignored.
+   *
+   * @param closeables
+   */
+  public static void closeCloseablesSilently(AutoCloseable... closeables) {
+    try {
+      closeCloseables(closeables);
+    } catch (Throwable throwable) {
+      // ignore
+    }
+  }
+
+  // Utility class to support `intoRows` below
+  private static class FilteredBatchToRowIter implements CloseableIterator<Row> {
+    private final CloseableIterator<FilteredColumnarBatch> sourceBatches;
+    private CloseableIterator<Row> current;
+    private boolean isClosed = false;
+
+    FilteredBatchToRowIter(CloseableIterator<FilteredColumnarBatch> sourceBatches) {
+      this.sourceBatches = sourceBatches;
     }
 
-    /**
-     * Close the given list of {@link AutoCloseable} objects. Any exception thrown is
-     * silently ignored.
-     *
-     * @param closeables
-     */
-    public static void closeCloseablesSilently(AutoCloseable... closeables) {
-        try {
-            closeCloseables(closeables);
-        } catch (Throwable throwable) {
-            // ignore
-        }
+    @Override
+    public boolean hasNext() {
+      if (isClosed) {
+        return false;
+      }
+      while ((current == null || !current.hasNext()) && sourceBatches.hasNext()) {
+        closeCloseables(current);
+        FilteredColumnarBatch next = sourceBatches.next();
+        current = next.getRows();
+      }
+      return current != null && current.hasNext();
     }
 
+    @Override
+    public Row next() {
+      if (!hasNext()) {
+        throw new java.util.NoSuchElementException("No more rows available");
+      }
+      return current.next();
+    }
+
+    @Override
+    public void close() throws IOException {
+      isClosed = true;
+      closeCloseables(current, sourceBatches);
+    }
+  }
+
+  /** Convert a ClosableIterator of FilteredColumnarBatch into a CloseableIterator of Row */
+  public static CloseableIterator<Row> intoRows(
+      CloseableIterator<FilteredColumnarBatch> sourceBatches) {
+    return new FilteredBatchToRowIter(sourceBatches);
+  }
 }

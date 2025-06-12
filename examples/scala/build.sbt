@@ -43,8 +43,12 @@ def getMajorMinor(version: String): (Int, Int) = {
   }
 }
 val lookupSparkVersion: PartialFunction[(Int, Int), String] = {
-  // versions 3.0.0 and above
-  case (major, minor) if major >= 3 => "3.5.0"
+  // version 4.0.0-preview1
+  case (major, minor) if major >= 4 => "4.0.0-preview1"
+  // versions 3.3.x+
+  case (major, minor) if major >= 3 && minor >=3 => "3.5.3"
+  // versions 3.0.0 to 3.2.x
+  case (major, minor) if major >= 3 && minor <=2 => "3.5.0"
   // versions 2.4.x
   case (major, minor) if major == 2 && minor == 4 => "3.4.0"
   // versions 2.3.x
@@ -119,27 +123,52 @@ lazy val extraMavenRepo = sys.env.get("EXTRA_MAVEN_REPO").toSeq.map { repo =>
   resolvers += "Delta" at repo
 }
 
+lazy val java17Settings = Seq(
+  fork := true,
+  javaOptions ++= Seq(
+    "--add-exports=java.base/sun.nio.ch=ALL-UNNAMED"
+  )
+)
+
+def getLibraryDependencies(
+    deltaVersion: String,
+    deltaArtifactName: String,
+    icebergSparkRuntimeArtifactName: String): Seq[ModuleID] = {
+  Seq(
+    "io.delta" %% deltaArtifactName % deltaVersion,
+    "org.apache.spark" %% "spark-sql" % lookupSparkVersion.apply(
+      getMajorMinor(deltaVersion)
+    ),
+    "org.apache.spark" %% "spark-hive" % lookupSparkVersion.apply(
+      getMajorMinor(deltaVersion)
+    ),
+    "org.apache.iceberg" % "iceberg-hive-metastore" % icebergVersion
+  ) ++ (getMajorMinor(deltaVersion) match {
+    case (major, _) if major >= 4 =>
+      // Don't include the iceberg dependencies for 4.0.0rc1
+      Seq()
+    case _ =>
+      Seq(
+        "io.delta" %% "delta-iceberg" % deltaVersion,
+        "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % icebergVersion,
+      )
+  })
+}
+
 lazy val root = (project in file("."))
   .settings(
     run / fork := true,
     name := "hello-world",
     crossScalaVersions := Seq(scala212, scala213),
-    libraryDependencies ++= Seq(
-      "io.delta" %% getDeltaArtifactName.value % getDeltaVersion.value,
-      "io.delta" %% "delta-iceberg" % getDeltaVersion.value,
-      "org.apache.spark" %% "spark-sql" % lookupSparkVersion.apply(
-        getMajorMinor(getDeltaVersion.value)
-      ),
-      "org.apache.spark" %% "spark-hive" % lookupSparkVersion.apply(
-        getMajorMinor(getDeltaVersion.value)
-      ),
-      "org.apache.iceberg" %% getIcebergSparkRuntimeArtifactName.value % icebergVersion,
-      "org.apache.iceberg" % "iceberg-hive-metastore" % icebergVersion
-    ),
+    libraryDependencies ++= getLibraryDependencies(
+      getDeltaVersion.value,
+      getDeltaArtifactName.value,
+      getIcebergSparkRuntimeArtifactName.value),
     extraMavenRepo,
     resolvers += Resolver.mavenLocal,
     scalacOptions ++= Seq(
       "-deprecation",
       "-feature"
-    )
+    ),
+    java17Settings
   )

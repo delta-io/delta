@@ -28,7 +28,7 @@ import scala.language.implicitConversions
 import org.apache.spark.sql.delta.DeltaHistoryManager.BufferingLogDeletionIterator
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{Action, CommitInfo, SingleAction}
-import org.apache.spark.sql.delta.managedcommit.ManagedCommitBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -44,7 +44,7 @@ class DeltaTimeTravelSuite extends QueryTest
   with SharedSparkSession
   with DeltaSQLTestUtils
   with DeltaSQLCommandTest
-  with ManagedCommitBaseSuite {
+  with CatalogOwnedTestBaseSuite {
 
   import testImplicits._
 
@@ -92,7 +92,7 @@ class DeltaTimeTravelSuite extends QueryTest
       val rangeEnd = rangeStart + 10
       spark.range(rangeStart, rangeEnd).write.format("delta").mode("append").save(location)
       val filePath = DeltaCommitFileProvider(deltaLog.update()).deltaFile(startVersion)
-      if (isICTEnabledForNewTables) {
+      if (isICTEnabledForNewTablesCatalogOwned) {
         InCommitTimestampTestUtils.overwriteICTInDeltaFile(deltaLog, filePath, Some(ts))
       } else {
         val file = new File(filePath.toUri)
@@ -140,7 +140,7 @@ class DeltaTimeTravelSuite extends QueryTest
       start - 2.seconds, // adjusts to start + 4 ms
       start + 10.seconds)
 
-    val commits = DeltaHistoryManager.getCommits(
+    val commits = DeltaHistoryManager.getCommitsWithNonIctTimestamps(
       deltaLog.store,
       deltaLog.logPath,
       0,
@@ -155,7 +155,7 @@ class DeltaTimeTravelSuite extends QueryTest
 
   historyTest("describe history timestamps are adjusted according to file timestamp") {
       (deltaLog, clock) =>
-    if (isICTEnabledForNewTables) {
+    if (isICTEnabledForNewTablesCatalogOwned) {
       // File timestamp adjustment is not needed when ICT is enabled.
       cancel("This test is not compatible with InCommitTimestamps.")
     }
@@ -209,11 +209,19 @@ class DeltaTimeTravelSuite extends QueryTest
         assert(history.getActiveCommitAtTime(start + (i * 20 + 10).minutes, true).version === i)
       }
 
-      val e = intercept[AnalysisException] {
+      val e = intercept[DeltaErrors.TemporallyUnstableInputException] {
         // This is 20 minutes after the last commit
         history.getActiveCommitAtTime(start + 200.minutes, false)
       }
-      assert(e.getMessage.contains("after the latest commit timestamp"))
+      checkError(
+        e,
+        "DELTA_TIMESTAMP_GREATER_THAN_COMMIT",
+        sqlState = "42816",
+        parameters = Map(
+          "providedTimestamp" -> "2018-10-24 17:34:18.0",
+          "tableName" -> "2018-10-24 17:14:18.0",
+          "maximumTimestamp" -> "2018-10-24 17:14:18")
+      )
       assert(history.getActiveCommitAtTime(start + 180.minutes, true).version === 9)
 
       val e2 = intercept[AnalysisException] {
@@ -522,18 +530,32 @@ class DeltaTimeTravelSuite extends QueryTest
       // Simulate getting the timestamp directly from Spark SQL
       val ts = getSparkFormattedTimestamps(start + 10.minutes)
 
-      val e1 = intercept[AnalysisException] {
+      val e1 = intercept[DeltaErrors.TemporallyUnstableInputException] {
         spark.read.format("delta").option("timestampAsOf", ts.head).load(tblLoc).collect()
       }
-      assert(e1.getMessage.contains("VERSION AS OF 0"))
-      assert(e1.getMessage.contains("TIMESTAMP AS OF '2018-10-24 14:14:18'"))
+      checkError(
+        e1,
+        "DELTA_TIMESTAMP_GREATER_THAN_COMMIT",
+        sqlState = "42816",
+        parameters = Map(
+          "providedTimestamp" -> "2018-10-24 14:24:18.0",
+          "tableName" -> "2018-10-24 14:14:18.0",
+          "maximumTimestamp" -> "2018-10-24 14:14:18")
+      )
 
-      val e2 = intercept[AnalysisException] {
+      val e2 = intercept[DeltaErrors.TemporallyUnstableInputException] {
         spark.read.format("delta").load(identifierWithTimestamp(tblLoc, start + 10.minutes))
           .collect()
       }
-      assert(e2.getMessage.contains("VERSION AS OF 0"))
-      assert(e2.getMessage.contains("TIMESTAMP AS OF '2018-10-24 14:14:18'"))
+      checkError(
+        e2,
+        "DELTA_TIMESTAMP_GREATER_THAN_COMMIT",
+        sqlState = "42816",
+        parameters = Map(
+          "providedTimestamp" -> "2018-10-24 14:24:18.0",
+          "tableName" -> "2018-10-24 14:14:18.0",
+          "maximumTimestamp" -> "2018-10-24 14:14:18")
+      )
 
       checkAnswer(
         spark.read.format("delta").option("timestampAsOf", "2018-10-24 14:14:18")
@@ -577,7 +599,7 @@ class DeltaTimeTravelSuite extends QueryTest
   }
 
   test("time travelling with adjusted timestamps") {
-    if (isICTEnabledForNewTables) {
+    if (isICTEnabledForNewTablesCatalogOwned) {
       // ICT Timestamps are always monotonically increasing. Therefore,
       // this test is not needed when ICT is enabled.
       cancel("This test is not compatible with InCommitTimestamps.")
@@ -771,9 +793,16 @@ class DeltaTimeTravelSuite extends QueryTest
         val ex2 = intercept[DeltaErrors.TemporallyUnstableInputException] {
           spark.sql(s"SELECT * from $tableName FOR TIMESTAMP AS OF '2018-10-24 20:14:18'")
         }
-        assert(ex2.getMessage contains
-          "The provided timestamp: 2018-10-24 20:14:18.0 is after the " +
-            "latest commit timestamp of\n2018-10-24 14:34:18.0")
+
+        checkError(
+          ex2,
+          "DELTA_TIMESTAMP_GREATER_THAN_COMMIT",
+          sqlState = "42816",
+          parameters = Map(
+            "providedTimestamp" -> "2018-10-24 20:14:18.0",
+            "tableName" -> "2018-10-24 14:34:18.0",
+            "maximumTimestamp" -> "2018-10-24 14:34:18")
+        )
       }
     }
   }
@@ -793,8 +822,34 @@ class DeltaTimeTravelSuite extends QueryTest
         Row(1) :: Row(1) :: Row(2) :: Nil)
     }
   }
+
+  test("Dataframe-based time travel works with different timestamp precisions") {
+    val tblName = "test_tab"
+    withTable(tblName) {
+      sql(s"CREATE TABLE spark_catalog.default.$tblName (a int) USING DELTA")
+      // Ensure that the current timestamp is different from the one in the table.
+      Thread.sleep(1000)
+      // Microsecond precision timestamp.
+      val current_time_micros = spark.sql("SELECT current_timestamp() as ts")
+        .select($"ts".cast("string"))
+        .head().getString(0)
+      // Millisecond precision timestamp.
+      val current_time_millis = new Timestamp(System.currentTimeMillis())
+      // Second precision timestamp.
+      val sdf = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
+      val current_time_seconds = sdf.format(new java.sql.Timestamp(System.currentTimeMillis()))
+
+      sql(s"INSERT INTO spark_catalog.default.$tblName VALUES (1)")
+      checkAnswer(spark.read.option("timestampAsOf", current_time_micros)
+        .table(s"spark_catalog.default.$tblName"), Seq.empty)
+      checkAnswer(spark.read.option("timestampAsOf", current_time_millis.toString)
+        .table(s"spark_catalog.default.$tblName"), Seq.empty)
+      checkAnswer(spark.read.option("timestampAsOf", current_time_seconds)
+        .table(s"spark_catalog.default.$tblName"), Seq.empty)
+    }
+  }
 }
 
-class DeltaTimeTravelWithManagedCommitBatch1Suite extends DeltaTimeTravelSuite {
-  override def managedCommitBackfillBatchSize: Option[Int] = Some(1)
+class DeltaTimeTravelWithCatalogOwnedBatch1Suite extends DeltaTimeTravelSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
 }

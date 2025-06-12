@@ -18,6 +18,7 @@ package io.delta.sharing.spark
 
 import java.io.{ByteArrayInputStream, FileNotFoundException}
 import java.net.{URI, URLDecoder, URLEncoder}
+import java.nio.charset.StandardCharsets
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable.{ArrayBuffer, Builder}
@@ -59,20 +60,22 @@ private[sharing] class DeltaSharingLogFileSystem extends FileSystem with Logging
       val iterator =
         SparkEnv.get.blockManager.get[String](getDeltaSharingLogBlockId(f.toString)) match {
           case Some(block) => block.data.asInstanceOf[Iterator[String]]
-          case _ => throw new FileNotFoundException(s"Cannot find block for delta log file: $f.")
+          case _ => throw new FileNotFoundException(s"Failed to open delta log file: $f.")
         }
       // Explicitly call hasNext to allow the reader lock on the block to be released.
       val arrayBuilder = Array.newBuilder[Byte]
       while (iterator.hasNext) {
         val actionJsonStr = iterator.next()
-        arrayBuilder ++= actionJsonStr.getBytes()
+        arrayBuilder ++= actionJsonStr.getBytes(StandardCharsets.UTF_8)
       }
       // We still have to load the full content of a delta log file in memory to serve them.
       // This still exposes the risk of OOM.
       new FSDataInputStream(new SeekableByteArrayInputStream(arrayBuilder.result()))
     } else {
-      val content = getBlockAndReleaseLockHelper[String](f, None)
-      new FSDataInputStream(new SeekableByteArrayInputStream(content.getBytes()))
+      val content = getBlockAndReleaseLockHelper[String](f, None, "open")
+      new FSDataInputStream(new SeekableByteArrayInputStream(
+        content.getBytes(StandardCharsets.UTF_8)
+      ))
     }
   }
 
@@ -99,7 +102,7 @@ private[sharing] class DeltaSharingLogFileSystem extends FileSystem with Logging
         modificationTime = 0L
       )
     } else {
-      getBlockAndReleaseLockHelper[DeltaSharingLogFileStatus](f, Some("_status"))
+      getBlockAndReleaseLockHelper[DeltaSharingLogFileStatus](f, Some("_status"), "getFileStatus")
     }
 
     new FileStatus(
@@ -125,7 +128,7 @@ private[sharing] class DeltaSharingLogFileSystem extends FileSystem with Logging
       SparkEnv.get.blockManager
         .get[DeltaSharingLogFileStatus](getDeltaSharingLogBlockId(f.toString)) match {
         case Some(block) => block.data.asInstanceOf[Iterator[DeltaSharingLogFileStatus]]
-        case _ => throw new FileNotFoundException(s"Failed to list files for path: $f.")
+        case _ => throw new FileNotFoundException(s"Failed to listStatus for path: $f.")
       }
 
     // Explicitly call hasNext to allow the reader lock on the block to be released.
@@ -183,10 +186,11 @@ private[sharing] class DeltaSharingLogFileSystem extends FileSystem with Logging
     super.close()
   }
 
-  private def getBlockAndReleaseLockHelper[T: ClassTag](f: Path, suffix: Option[String]): T = {
+  private def getBlockAndReleaseLockHelper[T: ClassTag](
+      f: Path, suffix: Option[String], caller: String): T = {
     val blockId = getDeltaSharingLogBlockId(suffix.foldLeft(f.toString)(_ + _))
     val result = SparkEnv.get.blockManager.getSingle[T](blockId).getOrElse {
-      throw new FileNotFoundException(f.toString)
+      throw new FileNotFoundException(s"Failed to $caller for $f.")
     }
     releaseLockHelper(blockId)
 
@@ -289,13 +293,6 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
           )
       }
     }
-  }
-
-  // Only absolute path (which is pre-signed url) need to be put in IdToUrl mapping.
-  // inline DV should be processed in place, and UUID should throw error.
-  private def requiresIdToUrlForDV(deletionVectorOpt: Option[DeletionVectorDescriptor]): Boolean = {
-    deletionVectorOpt.isDefined &&
-    deletionVectorOpt.get.storageType == DeletionVectorDescriptor.PATH_DV_MARKER
   }
 
   /**
@@ -622,7 +619,9 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
       minVersion,
       ArrayBuffer[String]()
     ) += protocolAndMetadataStr
-    versionToJsonLogSize(minVersion) += protocolAndMetadataStr.length
+    versionToJsonLogSize(minVersion) += protocolAndMetadataStr.getBytes(
+      StandardCharsets.UTF_8
+    ).length
     numFileActionsInMinVersion = versionToDeltaSharingFileActions
       .getOrElseUpdate(minVersion, ArrayBuffer[model.DeltaSharingFileAction]())
       .size
@@ -636,7 +635,7 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
             version,
             ArrayBuffer[String]()
           ) += metadataStr
-          versionToJsonLogSize(version) += metadataStr.length
+          versionToJsonLogSize(version) += metadataStr.getBytes(StandardCharsets.UTF_8).length
         }
     }
     // Write file actions to the delta log json file.
@@ -657,7 +656,7 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
 
           // 1. build it to url mapping
           idToUrl(fileAction.id) = fileAction.path
-          if (requiresIdToUrlForDV(fileAction.getDeletionVectorOpt)) {
+          if (DeltaSharingUtils.requiresIdToUrlForDV(fileAction.getDeletionVectorOpt)) {
             idToUrl(fileAction.deletionVectorFileId) =
               fileAction.getDeletionVectorOpt.get.pathOrInlineDv
           }
@@ -669,7 +668,7 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
             version,
             ArrayBuffer[String]()
           ) += actionJsonStr
-          versionToJsonLogSize(version) += actionJsonStr.length
+          versionToJsonLogSize(version) += actionJsonStr.getBytes(StandardCharsets.UTF_8).length
 
           // 3. process expiration timestamp
           if (fileAction.expirationTimestamp != null) {
@@ -766,11 +765,11 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
           )
         case protocol: model.DeltaSharingProtocol =>
           val protocolJsonStr = protocol.deltaProtocol.json + "\n"
-          jsonLogSize += protocolJsonStr.length
+          jsonLogSize += protocolJsonStr.getBytes(StandardCharsets.UTF_8).length
           jsonLogSeq += protocolJsonStr
         case metadata: model.DeltaSharingMetadata =>
           val metadataJsonStr = metadata.deltaMetadata.json + "\n"
-          jsonLogSize += metadataJsonStr.length
+          jsonLogSize += metadataJsonStr.getBytes(StandardCharsets.UTF_8).length
           jsonLogSeq += metadataJsonStr
         case _ =>
           throw new IllegalStateException(
@@ -793,14 +792,14 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
 
       // 1. build id to url mapping
       idToUrl(fileAction.id) = fileAction.path
-      if (requiresIdToUrlForDV(fileAction.getDeletionVectorOpt)) {
+      if (DeltaSharingUtils.requiresIdToUrlForDV(fileAction.getDeletionVectorOpt)) {
         idToUrl(fileAction.deletionVectorFileId) =
           fileAction.getDeletionVectorOpt.get.pathOrInlineDv
       }
 
       // 2. prepare json log content.
       val actionJsonStr = getActionWithDeltaSharingPath(fileAction, customTablePath) + "\n"
-      jsonLogSize += actionJsonStr.length
+      jsonLogSize += actionJsonStr.getBytes(StandardCharsets.UTF_8).length
       jsonLogSeq += actionJsonStr
 
       // 3. process expiration timestamp
@@ -834,7 +833,7 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
     )
     logInfo(
       s"It takes ${(System.currentTimeMillis() - startTime) / 1000.0}s to construct delta" +
-      s" log for $customTablePath with ${idToUrl.toMap.size} urls."
+      s" log for $customTablePath with ${jsonLogSize} bytes for ${idToUrl.toMap.size} urls."
     )
     ConstructedDeltaLogMetadata(
       idToUrl = idToUrl.toMap,
@@ -869,7 +868,7 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
     val fileStatusSeq = Seq(
       DeltaSharingLogFileStatus(
         path = jsonFilePath,
-        size = jsonLogStr.length,
+        size = jsonLogStr.getBytes(StandardCharsets.UTF_8).length,
         modificationTime = 0L
       )
     )

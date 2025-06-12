@@ -217,6 +217,28 @@ trait RowTrackingDeleteSuiteBase extends RowTrackingDeleteTestDimension {
       }
     }
   }
+
+  for {
+    isPartitioned <- BOOLEAN_DOMAIN
+  } {
+    test("DELETE preserves Row ID on tables with row IDs enabled using backfill,"
+      + s"isPartitioned=$isPartitioned") {
+      withSQLConf(DeltaSQLConf.DELTA_ROW_TRACKING_BACKFILL_ENABLED.key -> "true") {
+        withRowTrackingEnabled(enabled = false) {
+          withTable(testTableName) {
+            createTestTable(testTableName, isPartitioned, multipleFilesPerPartition = false)
+            val (log, snapshot) = DeltaLog.
+              forTableWithSnapshot(spark, TableIdentifier(testTableName))
+            assert(!RowTracking.isEnabled(snapshot.protocol, snapshot.metadata))
+            validateSuccessfulBackfillMetrics(expectedNumSuccessfulBatches = 1) {
+              triggerBackfillOnTestTableUsingAlterTable(testTableName, initialNumRows, log)
+            }
+            deleteAndValidateStableRowId(whereCondition = Some("id % 10 = 4"))
+          }
+        }
+      }
+    }
+  }
 }
 
 trait RowTrackingDeleteDvBase

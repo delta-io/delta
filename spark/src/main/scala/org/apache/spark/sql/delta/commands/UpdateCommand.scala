@@ -19,12 +19,16 @@ package org.apache.spark.sql.delta.commands
 // scalastyle:off import.ordering.noEmptyLine
 import java.util.concurrent.TimeUnit
 
+import scala.util.control.NonFatal
+
 import org.apache.spark.sql.delta.metric.IncrementMetric
 import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, FileAction}
+import org.apache.spark.sql.delta.ClassicColumnConversions._
+import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, FileAction}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader.{CDC_TYPE_COLUMN_NAME, CDC_TYPE_NOT_CDC, CDC_TYPE_UPDATE_POSTIMAGE, CDC_TYPE_UPDATE_PREIMAGE}
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkContext
@@ -35,6 +39,7 @@ import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference,
 import org.apache.spark.sql.catalyst.expressions.Literal.TrueLiteral
 import org.apache.spark.sql.catalyst.plans.QueryPlan
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.delta.DeltaOperations.Operation
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.{createMetric, createTimingMetric}
@@ -178,13 +183,13 @@ case class UpdateCommand(
         // Keep everything from the resolved target except a new TahoeFileIndex
         // that only involves the affected files instead of all files.
         val newTarget = DeltaTableUtils.replaceFileIndex(target, fileIndex)
-        val data = Dataset.ofRows(sparkSession, newTarget)
+        val data = DataFrameUtils.ofRows(sparkSession, newTarget)
         val incrUpdatedCountExpr = IncrementMetric(TrueLiteral, metrics("numUpdatedRows"))
         val pathsToRewrite =
           withStatusCode("DELTA", UpdateCommand.FINDING_TOUCHED_FILES_MSG) {
-            data.filter(new Column(updateCondition))
+            data.filter(Column(updateCondition))
               .select(input_file_name())
-              .filter(new Column(incrUpdatedCountExpr))
+              .filter(Column(incrUpdatedCountExpr))
               .distinct()
               .as[String]
               .collect()
@@ -295,9 +300,12 @@ case class UpdateCommand(
     txn.registerSQLMetrics(sparkSession, metrics)
 
     val finalActions = createSetTransaction(sparkSession, deltaLog).toSeq ++ totalActions
-    txn.commitIfNeeded(
+    val numRecordsStats = NumRecordsStats.fromActions(finalActions)
+    val operation = DeltaOperations.Update(condition)
+    validateNumRecords(finalActions, numRecordsStats, operation)
+    val commitVersion = txn.commitIfNeeded(
       actions = finalActions,
-      op = DeltaOperations.Update(condition),
+      op = operation,
       tags = RowTracking.addPreservedRowTrackingTagIfNotSet(txn.snapshot))
     sendDriverMetrics(sparkSession, metrics)
 
@@ -315,7 +323,10 @@ case class UpdateCommand(
         rewriteTimeMs,
         numDeletionVectorsAdded,
         numDeletionVectorsRemoved,
-        numDeletionVectorsUpdated)
+        numDeletionVectorsUpdated,
+        commitVersion = commitVersion,
+        numLogicalRecordsAdded = numRecordsStats.numLogicalRecordsAdded,
+        numLogicalRecordsRemoved = numRecordsStats.numLogicalRecordsRemoved)
     )
   }
 
@@ -346,19 +357,19 @@ case class UpdateCommand(
       spark, txn, "update", rootPath, inputLeafFiles.map(_.path), nameToAddFileMap)
     val newTarget = DeltaTableUtils.replaceFileIndex(target, baseRelation.location)
     val (targetDf, finalOutput, finalUpdateExpressions) = UpdateCommand.preserveRowTrackingColumns(
-      targetDfWithoutRowTrackingColumns = Dataset.ofRows(spark, newTarget),
+      targetDfWithoutRowTrackingColumns = DataFrameUtils.ofRows(spark, newTarget),
       snapshot = txn.snapshot,
       targetOutput = target.output,
       updateExpressions)
 
     val targetDfWithEvaluatedCondition = {
-      val evalDf = targetDf.withColumn(UpdateCommand.CONDITION_COLUMN_NAME, new Column(condition))
+      val evalDf = targetDf.withColumn(UpdateCommand.CONDITION_COLUMN_NAME, Column(condition))
       val copyAndUpdateRowsDf = if (copyUnmodifiedRows) {
         evalDf
       } else {
-        evalDf.filter(new Column(UpdateCommand.CONDITION_COLUMN_NAME))
+        evalDf.filter(Column(UpdateCommand.CONDITION_COLUMN_NAME))
       }
-      copyAndUpdateRowsDf.filter(new Column(incrTouchedCountExpr))
+      copyAndUpdateRowsDf.filter(Column(incrTouchedCountExpr))
     }
 
     val updatedDataFrame = UpdateCommand.withUpdatedColumns(
@@ -384,6 +395,106 @@ case class UpdateCommand(
       spark: SparkSession, txn: OptimisticTransaction): Boolean = {
     spark.conf.get(DeltaSQLConf.UPDATE_USE_PERSISTENT_DELETION_VECTORS) &&
       DeletionVectorUtils.deletionVectorsWritable(txn.snapshot)
+  }
+
+  /**
+   * Validates that the number of records does not change.
+   */
+  private def validateNumRecords(
+      actions: Seq[Action],
+      numRecordsStats: NumRecordsStats,
+      op: Operation): Unit = {
+    val deltaLog = tahoeFileIndex.deltaLog
+
+    (numRecordsStats.numLogicalRecordsAdded,
+      numRecordsStats.numLogicalRecordsRemoved,
+      numRecordsStats.numLogicalRecordsAddedInFilesWithDeletionVectors) match {
+      case (
+        Some(numAddedRecords),
+        Some(numRemovedRecords),
+        Some(numRecordsNotCopied)) =>
+        if (numAddedRecords != numRemovedRecords) {
+          logNumRecordsMismatch(deltaLog, actions, numRecordsStats, op)
+          if (conf.getConf(DeltaSQLConf.NUM_RECORDS_VALIDATION_ENABLED)) {
+            throw DeltaErrors.numRecordsMismatch(
+              operation = "UPDATE",
+              numAddedRecords,
+              numRemovedRecords
+            )
+          }
+        }
+
+        if (conf.getConf(DeltaSQLConf.COMMAND_INVARIANT_CHECKS_USE_UNRELIABLE)) {
+          // and also using regular (unreliable) metrics for baseline
+          validateMetricBasedCommandInvariants(
+            numAddedRecords, numRemovedRecords, numRecordsNotCopied, op, deltaLog)
+        }
+
+      case _ =>
+        recordDeltaEvent(deltaLog, opType = "delta.assertions.statsNotPresentForNumRecordsCheck")
+        logWarning(log"Could not validate number of records due to missing statistics.")
+    }
+  }
+
+  private def validateMetricBasedCommandInvariants(
+      numAddedRecords: Long,
+      numRemovedRecords: Long,
+      numRecordsNotCopied: Long,
+      op: Operation,
+      deltaLog: DeltaLog): Unit = try {
+
+    // Note: These are redundant w.r.t. validateNumRecords, but they ensure correct metrics.
+    val numRowsUpdated = CommandInvariantMetricValueFromSingle(metrics("numUpdatedRows"))
+    val numRowsCopied = CommandInvariantMetricValueFromSingle(metrics("numCopiedRows"))
+
+    // There's a bug where Spark eliminates the entire plan and just rewrites the input files 1:1
+    // for no-op updates and in this case we don't record any metrics.
+    if (numRowsUpdated.getOrDummy == 0 && numRowsCopied.getOrDummy == 0) {
+      return
+    }
+
+    checkCommandInvariant(
+      invariant = () =>
+        numRowsUpdated.getOrThrow + numRowsCopied.getOrThrow + numRecordsNotCopied
+          == numRemovedRecords,
+      label = "numRowsUpdated + numRowsCopied + numRecordsNotCopied == numRemovedRecords",
+      op = op,
+      deltaLog = deltaLog,
+      parameters = Map(
+        "numRowsUpdated" -> numRowsUpdated.getOrDummy,
+        "numRowsCopied" -> numRowsCopied.getOrDummy,
+        "numRemovedRecords" -> numRemovedRecords,
+        "numRecordsNotCopied" -> numRecordsNotCopied
+      )
+    )
+
+    checkCommandInvariant(
+      invariant = () =>
+        numRowsUpdated.getOrThrow + numRowsCopied.getOrDummy + numRecordsNotCopied
+          == numAddedRecords,
+      label = "numRowsUpdated + numRowsCopied + numRecordsNotCopied == numAddedRecords",
+      op = op,
+      deltaLog = deltaLog,
+      parameters = Map(
+        "numRowsUpdated" -> numRowsUpdated.getOrDummy,
+        "numRowsCopied" -> numRowsCopied.getOrDummy,
+        "numAddedRecords" -> numAddedRecords,
+        "numRecordsNotCopied" -> numRecordsNotCopied
+      )
+    )
+  } catch {
+    // Immediately re-throw actual command invariant violations, so we don't re-wrap them below.
+    case e: DeltaIllegalStateException if e.getErrorClass == "DELTA_COMMAND_INVARIANT_VIOLATION" =>
+      throw e
+    case NonFatal(e) =>
+      logWarning(log"Unexpected error in validateMetricBasedCommandInvariants", e)
+      checkCommandInvariant(
+        invariant = () => false,
+        label = "Unexpected error in validateMetricBasedCommandInvariants",
+        op = op,
+        deltaLog = deltaLog,
+        parameters = Map.empty
+      )
   }
 }
 
@@ -427,19 +538,19 @@ object UpdateCommand {
       shouldOutputCdc: Boolean): DataFrame = {
     val resultDf = if (shouldOutputCdc) {
       val namedUpdateCols = updateExpressions.zip(originalExpressions).map {
-        case (expr, targetCol) => new Column(expr).as(targetCol.name, targetCol.metadata)
+        case (expr, targetCol) => Column(expr).as(targetCol.name, targetCol.metadata)
       }
 
       // Build an array of output rows to be unpacked later. If the condition is matched, we
       // generate CDC pre and postimages in addition to the final output row; if the condition
       // isn't matched, we just generate a rewritten no-op row without any CDC events.
-      val preimageCols = originalExpressions.map(new Column(_)) :+
+      val preimageCols = originalExpressions.map(Column(_)) :+
         lit(CDC_TYPE_UPDATE_PREIMAGE).as(CDC_TYPE_COLUMN_NAME)
       val postimageCols = namedUpdateCols :+
         lit(CDC_TYPE_UPDATE_POSTIMAGE).as(CDC_TYPE_COLUMN_NAME)
-      val notCdcCol = new Column(CDC_TYPE_NOT_CDC).as(CDC_TYPE_COLUMN_NAME)
+      val notCdcCol = Column(CDC_TYPE_NOT_CDC).as(CDC_TYPE_COLUMN_NAME)
       val updatedDataCols = namedUpdateCols :+ notCdcCol
-      val noopRewriteCols = originalExpressions.map(new Column(_)) :+ notCdcCol
+      val noopRewriteCols = originalExpressions.map(Column(_)) :+ notCdcCol
       val packedUpdates = array(
         struct(preimageCols: _*),
         struct(postimageCols: _*),
@@ -460,7 +571,7 @@ object UpdateCommand {
         a => col(s"packedData.`${a.name}`").as(a.name, a.metadata)
       }
       dfWithEvaluatedCondition
-        .select(explode(new Column(packedData)).as("packedData"))
+        .select(explode(Column(packedData)).as("packedData"))
         .select(finalColumns: _*)
     } else {
       val finalCols = updateExpressions.zip(originalExpressions).map { case (update, original) =>
@@ -469,7 +580,7 @@ object UpdateCommand {
         } else {
           If(UnresolvedAttribute(CONDITION_COLUMN_NAME), update, original)
         }
-        new Column(updated).as(original.name, original.metadata)
+        Column(updated).as(original.name, original.metadata)
       }
 
       dfWithEvaluatedCondition.select(finalCols: _*)
@@ -540,5 +651,11 @@ case class UpdateMetric(
     rewriteTimeMs: Long,
     numDeletionVectorsAdded: Long,
     numDeletionVectorsRemoved: Long,
-    numDeletionVectorsUpdated: Long
+    numDeletionVectorsUpdated: Long,
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    commitVersion: Option[Long] = None,
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    numLogicalRecordsAdded: Option[Long] = None,
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    numLogicalRecordsRemoved: Option[Long] = None
 )

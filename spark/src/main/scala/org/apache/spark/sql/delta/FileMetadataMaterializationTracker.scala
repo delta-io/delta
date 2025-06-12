@@ -20,9 +20,12 @@ import java.util.concurrent.Semaphore
 import java.util.concurrent.atomic.AtomicInteger
 
 import org.apache.spark.sql.delta.FileMetadataMaterializationTracker.TaskLevelPermitAllocator
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
-import org.apache.spark.internal.Logging
+import org.apache.spark.internal.{LoggingShims, MDC}
+import org.apache.spark.sql.SparkSession
 
 /**
  * An instance of this class tracks and controls the materialization usage of a single command
@@ -40,7 +43,7 @@ import org.apache.spark.internal.Logging
  * Accessed by the thread materializing files and by the thread releasing resources after execution.
  *
  */
-class FileMetadataMaterializationTracker extends Logging {
+class FileMetadataMaterializationTracker extends LoggingShims {
 
   /** The number of permits allocated from the global file materialization semaphore */
   @volatile private var numPermitsFromSemaphore: Int = 0
@@ -49,6 +52,21 @@ class FileMetadataMaterializationTracker extends Logging {
   @volatile private var numOverAllocatedPermits: Int = 0
 
   private val materializationMetrics = new FileMetadataMaterializationMetrics()
+
+  /**
+   * @return The collected materialization metrics for this query.
+   */
+  def getMetrics(): FileMetadataMaterializationMetrics = {
+    materializationMetrics
+  }
+
+  /**
+   * Signals to execute the batch early in the event that we overallocated to
+   * materialize a task.
+   */
+  def executeBatchEarly(): Boolean = {
+    numOverAllocatedPermits > 0
+  }
 
   /**
    * A per task permit allocator which allows materializing a new task.
@@ -75,11 +93,12 @@ class FileMetadataMaterializationTracker extends Logging {
       materializationMetrics.overAllocFilesMaterializedCount += 1
     } else if (!FileMetadataMaterializationTracker.materializationSemaphore.tryAcquire(1)) {
       // we acquire the overAllocationLock for this thread
-      logInfo("Acquiring over allocation lock for this query.")
+      logInfo(log"Acquiring over allocation lock for this query.")
       val startTime = System.currentTimeMillis()
       FileMetadataMaterializationTracker.overAllocationLock.acquire(1)
       val waitTime = System.currentTimeMillis() - startTime
-      logInfo(s"Acquired over allocation lock for this query in $waitTime ms")
+      logInfo(log"Acquired over allocation lock for this query in " +
+        log"${MDC(DeltaLogKeys.TIME_MS, waitTime)} ms")
       materializationMetrics.overAllocWaitTimeMs += waitTime
       materializationMetrics.overAllocWaitCount += 1
       materializationMetrics.overAllocFilesMaterializedCount += 1
@@ -115,7 +134,7 @@ class FileMetadataMaterializationTracker extends Logging {
         permitsToRelease -= overAllocatedPermitsToRelease
         if (numOverAllocatedPermits == 0) {
           FileMetadataMaterializationTracker.overAllocationLock.release(1)
-          logInfo("Released over allocation lock.")
+          logInfo(log"Released over allocation lock.")
         }
       }
       numPermitsFromSemaphore -= permitsToRelease
@@ -166,6 +185,69 @@ object FileMetadataMaterializationTracker extends DeltaLogging {
   }
 
   /**
+   * Initialize materialization semaphore if this is the first query running on the cluster that
+   * uses the file materialization tracker.
+   */
+  private def initializeMaterializationSemaphore(spark: SparkSession): Unit = {
+    if (globalFileMaterializationLimit.compareAndSet(-1, spark.sessionState.conf.getConf(
+      DeltaSQLConf.DELTA_COMMAND_FILE_MATERIALIZATION_LIMIT))) {
+      if (globalFileMaterializationLimit.get() > 0) {
+        materializationSemaphore = new Semaphore(globalFileMaterializationLimit.get)
+      }
+    }
+  }
+
+  def withTracker(
+      origTxn: OptimisticTransaction,
+      spark: SparkSession,
+      metricsOpType: String)(f: FileMetadataMaterializationTracker => Unit): Unit = {
+    initializeMaterializationSemaphore(spark)
+    val shouldTrack = spark.conf.get(
+      DeltaSQLConf.DELTA_COMMAND_FILE_MATERIALIZATION_TRACKING_ENABLED)
+    val tracker = if (shouldTrack) {
+      new FileMetadataMaterializationTracker()
+    } else {
+      logInfo(log"File metadata materialization tracking is disabled for this query." +
+        log" Please set ${MDC(DeltaLogKeys.CONFIG_KEY,
+          DeltaSQLConf.DELTA_COMMAND_FILE_MATERIALIZATION_TRACKING_ENABLED.key)} " +
+        log"to true to enable it.")
+      noopTracker
+    }
+    try {
+      f(tracker)
+      val trackerMetrics = tracker.getMetrics()
+      logInfo(log"File metadata materialization metrics for the completed query: " +
+        log"${MDC(DeltaLogKeys.METRICS, trackerMetrics)}")
+      recordDeltaEvent(
+        deltaLog = origTxn.deltaLog,
+        opType = metricsOpType,
+        data = trackerMetrics)
+    } finally { tracker.releaseAllPermits()  }
+  }
+
+  /**
+   * @return - return a version of the FileMetadataMaterializationTracker where every operation
+   *         is a noop
+   */
+  val noopTracker:
+      FileMetadataMaterializationTracker = new FileMetadataMaterializationTracker() {
+
+    override def releasePermits(numPermits: Int): Unit = { }
+
+    override def createTaskLevelPermitAllocator() = new TaskLevelPermitAllocator(this) {
+      override def acquirePermit(): Unit = { }
+    }
+
+    override def executeBatchEarly(): Boolean = false
+
+    override def releaseAllPermits(): Unit = { }
+
+    override def getMetrics(): FileMetadataMaterializationMetrics = {
+      new FileMetadataMaterializationMetrics()
+    }
+  }
+
+  /**
    * A per task level allocator that controls permit allocation and releasing for the task
    */
   class TaskLevelPermitAllocator(tracker: FileMetadataMaterializationTracker) {
@@ -178,7 +260,7 @@ object FileMetadataMaterializationTracker extends DeltaLogging {
      */
     def acquirePermit(): Unit = {
       if (isNewTask) {
-        logInfo("Acquiring file materialization permits for a new task")
+        logInfo(log"Acquiring file materialization permits for a new task")
       }
       tracker.acquirePermit(isNewTask = isNewTask)
       isNewTask = false

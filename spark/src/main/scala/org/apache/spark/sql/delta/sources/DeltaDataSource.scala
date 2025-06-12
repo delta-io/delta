@@ -46,6 +46,7 @@ import org.apache.spark.sql.types.{DataType, VariantShims}
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
+
 /** A DataSource V1 for integrating Delta into Spark SQL batch and Streaming APIs. */
 class DeltaDataSource
   extends RelationProvider
@@ -75,9 +76,6 @@ class DeltaDataSource
       schema: Option[StructType],
       providerName: String,
       parameters: Map[String, String]): (String, StructType) = {
-    if (schema.nonEmpty && schema.get.nonEmpty) {
-      throw DeltaErrors.specifySchemaAtReadTimeException
-    }
     val path = parameters.getOrElse("path", {
       throw DeltaErrors.pathNotSpecifiedException
     })
@@ -89,7 +87,8 @@ class DeltaDataSource
       throw DeltaErrors.timeTravelNotSupportedException
     }
 
-    val (_, snapshot) = DeltaLog.forTableWithSnapshot(sqlContext.sparkSession, new Path(path))
+    val snapshot =
+      DeltaLog.forTableWithSnapshot(sqlContext.sparkSession, new Path(path))._2
     // This is the analyzed schema for Delta streaming
     val readSchema = {
       // Check if we would like to merge consecutive schema changes, this would allow customers
@@ -108,7 +107,15 @@ class DeltaDataSource
         .getOrElse(snapshot.schema)
     }
 
-    val schemaToUse = DeltaTableUtils.removeInternalMetadata(sqlContext.sparkSession, readSchema)
+    if (schema.nonEmpty && schema.get.nonEmpty &&
+      !DataType.equalsIgnoreCompatibleNullability(readSchema, schema.get)) {
+      throw DeltaErrors.specifySchemaAtReadTimeException
+    }
+
+    val schemaToUse = DeltaTableUtils.removeInternalDeltaMetadata(
+      sqlContext.sparkSession,
+      DeltaTableUtils.removeInternalWriterMetadata(sqlContext.sparkSession, readSchema)
+    )
     if (schemaToUse.isEmpty) {
       throw DeltaErrors.schemaNotSetException
     }
@@ -133,8 +140,8 @@ class DeltaDataSource
       throw DeltaErrors.pathNotSpecifiedException
     })
     val options = new DeltaOptions(parameters, sqlContext.sparkSession.sessionState.conf)
-    val (deltaLog, snapshot) =
-      DeltaLog.forTableWithSnapshot(sqlContext.sparkSession, new Path(path))
+    val snapshot =
+      DeltaLog.forTableWithSnapshot(sqlContext.sparkSession, new Path(path))._2
     val schemaTrackingLogOpt =
       DeltaDataSource.getMetadataTrackingLogForDeltaSource(
         sqlContext.sparkSession, snapshot, parameters,
@@ -150,7 +157,7 @@ class DeltaDataSource
     }
     DeltaSource(
       sqlContext.sparkSession,
-      deltaLog,
+      snapshot.deltaLog,
       options,
       snapshot,
       metadataPath,
@@ -305,32 +312,6 @@ object DeltaDataSource extends DatabricksLogging {
   }
 
   /**
-   * Extract the Delta path if `dataset` is created to load a Delta table. Otherwise returns `None`.
-   * Table UI in universe will call this.
-   */
-  def extractDeltaPath(dataset: Dataset[_]): Option[String] = {
-    if (dataset.isStreaming) {
-      dataset.queryExecution.logical match {
-        case logical: org.apache.spark.sql.execution.streaming.StreamingRelation =>
-          if (logical.dataSource.providingClass == classOf[DeltaDataSource]) {
-            CaseInsensitiveMap(logical.dataSource.options).get("path")
-          } else {
-            None
-          }
-        case _ => None
-      }
-    } else {
-      dataset.queryExecution.analyzed match {
-        case DeltaTable(tahoeFileIndex) =>
-          Some(tahoeFileIndex.path.toString)
-        case SubqueryAlias(_, DeltaTable(tahoeFileIndex)) =>
-          Some(tahoeFileIndex.path.toString)
-        case _ => None
-      }
-    }
-  }
-
-  /**
    * For Delta, we allow certain magic to be performed through the paths that are provided by users.
    * Normally, a user specified path should point to the root of a Delta table. However, some users
    * are used to providing specific partition values through the path, because of how expensive it
@@ -461,7 +442,6 @@ object DeltaDataSource extends DatabricksLogging {
       parameters: Map[String, String],
       sourceMetadataPathOpt: Option[String] = None,
       mergeConsecutiveSchemaChanges: Boolean = false): Option[DeltaSourceMetadataTrackingLog] = {
-    val options = new CaseInsensitiveStringMap(parameters.asJava)
 
     DeltaDataSource.extractSchemaTrackingLocationConfig(spark, parameters)
       .map { schemaTrackingLocation =>
@@ -473,7 +453,7 @@ object DeltaDataSource extends DatabricksLogging {
 
         DeltaSourceMetadataTrackingLog.create(
           spark, schemaTrackingLocation, sourceSnapshot,
-          Option(options.get(DeltaOptions.STREAMING_SOURCE_TRACKING_ID)),
+          parameters,
           sourceMetadataPathOpt,
           mergeConsecutiveSchemaChanges
         )

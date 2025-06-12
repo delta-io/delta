@@ -15,69 +15,67 @@
  */
 package io.delta.kernel.internal.actions;
 
-import java.util.*;
-
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.Row;
+import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
+import java.util.*;
 
-import io.delta.kernel.internal.data.GenericRow;
-
-/**
- * Delta log action representing a transaction identifier action.
- */
+/** Delta log action representing a transaction identifier action. */
 public class SetTransaction {
-    public static final StructType FULL_SCHEMA = new StructType()
-        .add("appId", StringType.STRING, false /* nullable */)
-        .add("version", LongType.LONG, false /* nullable*/)
-        .add("lastUpdated", LongType.LONG, true /* nullable*/);
+  public static final StructType FULL_SCHEMA =
+      new StructType()
+          .add("appId", StringType.STRING, false /* nullable */)
+          .add("version", LongType.LONG, false /* nullable*/)
+          .add("lastUpdated", LongType.LONG, true /* nullable*/);
 
-    public static SetTransaction fromColumnVector(ColumnVector vector, int rowId) {
-        if (vector.isNullAt(rowId)) {
-            return null;
-        }
-        return new SetTransaction(
-            vector.getChild(0).getString(rowId),
-            vector.getChild(1).getLong(rowId),
-            vector.getChild(2).isNullAt(rowId) ?
-                Optional.empty() : Optional.of(vector.getChild(2).getLong(rowId)));
+  public static SetTransaction fromColumnVector(ColumnVector vector, int rowId) {
+    if (vector.isNullAt(rowId)) {
+      return null;
     }
+    return new SetTransaction(
+        vector.getChild(0).getString(rowId),
+        vector.getChild(1).getLong(rowId),
+        vector.getChild(2).isNullAt(rowId)
+            ? Optional.empty()
+            : Optional.of(vector.getChild(2).getLong(rowId)));
+  }
 
-    private final String appId;
-    private final long version;
-    private final Optional<Long> lastUpdated;
+  private final String appId;
+  private final long version;
+  private final Optional<Long> lastUpdated;
 
-    public SetTransaction(String appId, Long version, Optional<Long> lastUpdated) {
-        this.appId = appId;
-        this.version = version;
-        this.lastUpdated = lastUpdated;
-    }
+  public SetTransaction(String appId, Long version, Optional<Long> lastUpdated) {
+    this.appId = appId;
+    this.version = version;
+    this.lastUpdated = lastUpdated;
+  }
 
-    public String getAppId() {
-        return appId;
-    }
+  public String getAppId() {
+    return appId;
+  }
 
-    public long getVersion() {
-        return version;
-    }
+  public long getVersion() {
+    return version;
+  }
 
-    public Optional<Long> getLastUpdated() {
-        return lastUpdated;
-    }
+  public Optional<Long> getLastUpdated() {
+    return lastUpdated;
+  }
 
-    /**
-     * Encode as a {@link Row} object with the schema {@link SetTransaction#FULL_SCHEMA}.
-     *
-     * @return {@link Row} object with the schema {@link SetTransaction#FULL_SCHEMA}
-     */
-    public Row toRow() {
-        Map<Integer, Object> setTransactionMap = new HashMap<>();
-        setTransactionMap.put(0, appId);
-        setTransactionMap.put(1, version);
-        setTransactionMap.put(2, lastUpdated.orElse(null));
+  /**
+   * Encode as a {@link Row} object with the schema {@link SetTransaction#FULL_SCHEMA}.
+   *
+   * @return {@link Row} object with the schema {@link SetTransaction#FULL_SCHEMA}
+   */
+  public Row toRow() {
+    Map<Integer, Object> setTransactionMap = new HashMap<>();
+    setTransactionMap.put(0, appId);
+    setTransactionMap.put(1, version);
+    setTransactionMap.put(2, lastUpdated.orElse(null));
 
-        return new GenericRow(SetTransaction.FULL_SCHEMA, setTransactionMap);
-    }
+    return new GenericRow(SetTransaction.FULL_SCHEMA, setTransactionMap);
+  }
 }

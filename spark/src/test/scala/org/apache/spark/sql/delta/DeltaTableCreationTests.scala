@@ -40,7 +40,9 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.NoSuchTableException
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, ExternalCatalogUtils, SessionCatalog}
 import org.apache.spark.sql.catalyst.parser.ParseException
+import org.apache.spark.sql.catalyst.util.ResolveDefaultColumnsUtils
 import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Identifier, Table, TableCatalog}
+import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{MetadataBuilder, StructType}
@@ -1207,7 +1209,7 @@ trait DeltaTableCreationTests
   test("create datasource table with a non-existing location") {
     withTempPath { dir =>
       withTable("t") {
-        spark.sql(s"CREATE TABLE t(a int, b int) USING delta LOCATION '${dir.toURI}'")
+        spark.sql(s"CREATE TABLE t(a int, b int) USING delta LOCATION '${dir.getAbsolutePath}'")
 
         val table = spark.sessionState.catalog.getTableMetadata(TableIdentifier("t"))
         assert(table.location == makeQualifiedPath(dir.getAbsolutePath))
@@ -1225,17 +1227,21 @@ trait DeltaTableCreationTests
     withTempPath { dir =>
       withTable("t1") {
         spark.sql(
-          s"CREATE TABLE t1(a int, b int) USING delta PARTITIONED BY(a) LOCATION '${dir.toURI}'")
+          s"""
+             |CREATE TABLE t1(a int, b int) USING delta PARTITIONED BY(a)
+             |LOCATION '${dir.getAbsolutePath}'
+             |""".stripMargin)
 
         val table = spark.sessionState.catalog.getTableMetadata(TableIdentifier("t1"))
         assert(table.location == makeQualifiedPath(dir.getAbsolutePath))
 
         Seq((1, 2)).toDF("a", "b")
-          .write.format("delta").mode("append").save(table.location.toString)
-        val read = spark.read.format("delta").load(table.location.toString)
+          .write.format("delta").mode("append").save(table.location.getPath)
+        val read = spark.read.format("delta").load(table.location.getPath)
         checkAnswer(read, Seq(Row(1, 2)))
 
-        val deltaLog = loadDeltaLog(table.location.toString)
+        val deltaLog = loadDeltaLog(table.location.getPath)
+        assert(deltaLog.update().version > 0)
         assertPartitionWithValueExists("a", "1", deltaLog)
       }
     }
@@ -1252,7 +1258,7 @@ trait DeltaTableCreationTests
             s"""
                |CREATE TABLE t
                |USING delta
-               |LOCATION '${dir.toURI}'
+               |LOCATION '${dir.getAbsolutePath}'
                |AS SELECT 3 as a, 4 as b, 1 as c, 2 as d
              """.stripMargin)
           val table = spark.sessionState.catalog.getTableMetadata(TableIdentifier("t"))
@@ -1262,6 +1268,7 @@ trait DeltaTableCreationTests
 
           // Query the data and the metadata directly via the DeltaLog
           val deltaLog = getDeltaLog(table)
+          assert(deltaLog.update().version >= 0)
 
           assertEqual(deltaLog.snapshot.schema, new StructType()
             .add("a", "integer").add("b", "integer")
@@ -1290,7 +1297,7 @@ trait DeltaTableCreationTests
                |CREATE TABLE t1
                |USING delta
                |PARTITIONED BY(a, b)
-               |LOCATION '${dir.toURI}'
+               |LOCATION '${dir.getAbsolutePath}'
                |AS SELECT 3 as a, 4 as b, 1 as c, 2 as d
              """.stripMargin)
           val table = spark.sessionState.catalog.getTableMetadata(TableIdentifier("t1"))
@@ -1380,12 +1387,12 @@ trait DeltaTableCreationTests
         dir.delete()
         Seq((3, 4)).toDF("a", "b")
           .write.format("delta")
-          .save(dir.toString)
+          .save(dir.getAbsolutePath)
         val ex = intercept[AnalysisException](spark.sql(
           s"""
              |CREATE TABLE t
              |USING delta
-             |LOCATION '${dir.toURI}'
+             |LOCATION '${dir.getAbsolutePath}'
              |AS SELECT 1 as a, 2 as b
              """.stripMargin))
         assert(ex.getMessage.contains("Cannot create table"))
@@ -1395,14 +1402,12 @@ trait DeltaTableCreationTests
     withTable("t") {
       withTempDir { dir =>
         dir.delete()
-        Seq((3, 4)).toDF("a", "b")
-          .write.format("parquet")
-          .save(dir.toString)
+        Seq((3, 4)).toDF("a", "b").write.format("parquet").save(dir.getCanonicalPath)
         val ex = intercept[AnalysisException](spark.sql(
           s"""
              |CREATE TABLE t
              |USING delta
-             |LOCATION '${dir.toURI}'
+             |LOCATION '${dir.getAbsolutePath}'
              |AS SELECT 1 as a, 2 as b
              """.stripMargin))
         assert(ex.getMessage.contains("Cannot create table"))
@@ -1474,13 +1479,14 @@ trait DeltaTableCreationTests
                |CREATE TABLE t(a string, `$specialChars` string)
                |USING delta
                |PARTITIONED BY(`$specialChars`)
-               |LOCATION '${dir.toURI}'
+               |LOCATION '${dir.getAbsolutePath}'
              """.stripMargin)
 
           assert(dir.listFiles().forall(_.toString.contains("_delta_log")))
           spark.sql(s"INSERT INTO TABLE t SELECT 1, 2")
 
-          val deltaLog = loadDeltaLog(dir.toString)
+          val deltaLog = loadDeltaLog(dir.getAbsolutePath)
+          assert(deltaLog.update().version > 0)
           assertPartitionWithValueExists(specialChars, "2", deltaLog)
 
           checkAnswer(spark.table("t"), Row("1", "2") :: Nil)
@@ -2387,8 +2393,8 @@ class DeltaTableCreationSuite
               s" LOCATION '${subdir.getCanonicalPath}'")
         }
         checkError(
-          exception = e,
-          errorClass = "DELTA_METADATA_ABSENT_EXISTING_CATALOG_TABLE",
+          e,
+          "DELTA_METADATA_ABSENT_EXISTING_CATALOG_TABLE",
           parameters = Map(
             "tableName" -> tableName,
             "tablePath" -> deltaLog.logPath.toString,
@@ -2402,6 +2408,194 @@ class DeltaTableCreationSuite
         sql(s"INSERT INTO $tbl VALUES ('21')")
         val data = sql(s"SELECT * FROM $tbl").collect()
         assert(data.length == 1)
+      }
+    }
+  }
+
+  private def schemaContainsExistsDefaultKey(testTableName: String): Boolean = {
+    val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(testTableName))
+    snapshot.metadata.schema.fields.exists(
+      _.metadata.contains(ResolveDefaultColumnsUtils.EXISTS_DEFAULT_COLUMN_METADATA_KEY))
+  }
+
+  private def withDeltaTableUsingExistsDefault(testFun: String => Unit): Unit = {
+    val testTableName = "test_table"
+    withTable(testTableName) {
+      withSQLConf(DeltaSQLConf.REMOVE_EXISTS_DEFAULT_FROM_SCHEMA.key -> "false") {
+        sql(s"""CREATE TABLE $testTableName (id INT, column_with_default INT DEFAULT 1)
+               |USING DELTA
+               |TBLPROPERTIES('delta.feature.allowColumnDefaults' = 'supported')""".stripMargin)
+
+        assert(schemaContainsExistsDefaultKey(testTableName))
+      }
+
+      testFun(testTableName)
+    }
+  }
+
+  test("Default column values: Writes do not remove EXISTS_DEFAULT from a table") {
+    val testTableName = "test_table"
+    val writeDF = spark.range(end = 1)
+      .withColumn("id", col("id").cast("int"))
+      .withColumn("column_with_default", col("id"))
+      .write
+      .format("delta")
+    val writeOperations = Seq(
+      () => { sql(s"ALTER TABLE $testTableName ALTER COLUMN id SET DEFAULT 2") },
+      () => { sql(s"ALTER TABLE $testTableName CLUSTER BY (id)") },
+      () => { sql(s"COMMENT ON TABLE $testTableName IS 'test comment'") },
+      () => { sql(s"INSERT INTO $testTableName VALUES (1, 1)") },
+      () => { writeDF.mode("append").saveAsTable(testTableName) },
+      () => { writeDF.mode("overwrite").saveAsTable(testTableName) },
+      () => { writeDF.mode("append")
+        .save(DeltaLog.forTable(spark, TableIdentifier(testTableName)).dataPath.toString) }
+    )
+
+    writeOperations.foreach { writeOperation =>
+      withDeltaTableUsingExistsDefault { testTableName =>
+        // Execute the operation and assert that it keep EXISTS_DEFAULT in the schema.
+        withSQLConf(DeltaSQLConf.REMOVE_EXISTS_DEFAULT_FROM_SCHEMA.key -> "true") {
+          writeOperation()
+          assert(schemaContainsExistsDefaultKey(testTableName),
+            s"Operation '$writeOperation' did remove EXISTS_DEFAULT from the schema.")
+        }
+      }
+    }
+  }
+
+  for ((shortName, createOperation) <- Seq(
+    "CREATE TABLE" -> (() => {
+      sql(s"""CREATE TABLE test_table(int_with_default INT DEFAULT 2)
+             |USING DELTA
+             |TBLPROPERTIES('delta.feature.allowColumnDefaults' = 'supported')""".stripMargin)
+    }),
+    "CREATE OR REPLACE TABLE that CREATES" -> (() => {
+      sql(s"""CREATE OR REPLACE TABLE test_table(int_with_default INT DEFAULT 2)
+             |USING DELTA
+             |TBLPROPERTIES('delta.feature.allowColumnDefaults' = 'supported')""".stripMargin)
+    }),
+    "REPLACE TABLE" -> (() => {
+      withSQLConf(DeltaSQLConf.REMOVE_EXISTS_DEFAULT_FROM_SCHEMA.key -> "false") {
+        sql("CREATE TABLE test_table(id INT) USING DELTA")
+      }
+      sql(s"""REPLACE TABLE test_table(int_with_default INT DEFAULT 2)
+             |USING DELTA
+             |TBLPROPERTIES ('delta.feature.allowColumnDefaults'= 'supported')""".stripMargin)
+    }),
+    "CREATE OR REPLACE TABLE that REPLACES" -> (() => {
+      withSQLConf(DeltaSQLConf.REMOVE_EXISTS_DEFAULT_FROM_SCHEMA.key -> "false") {
+        sql("CREATE TABLE test_table(id INT) USING DELTA")
+      }
+      sql(s"""CREATE OR REPLACE TABLE test_table(int_with_default INT DEFAULT 2)
+             |USING DELTA
+             |TBLPROPERTIES('delta.feature.allowColumnDefaults' = 'supported')""".stripMargin)
+    }))
+  ) {
+    test(s"Default column values: Storing 'EXISTS_DEFAULT' in $shortName with column defaults") {
+      val testTableName = "test_table"
+      for (removeExistsDefault <- Seq(true, false)) {
+        withTable(testTableName) {
+          withSQLConf(DeltaSQLConf.REMOVE_EXISTS_DEFAULT_FROM_SCHEMA.key ->
+            removeExistsDefault.toString) {
+            createOperation()
+            assert(schemaContainsExistsDefaultKey(testTableName) != removeExistsDefault)
+          }
+        }
+      }
+    }
+  }
+
+  test("Default column values: SHALLOW CLONE keeps EXISTS_DEFAULT") {
+    withDeltaTableUsingExistsDefault { testTableName =>
+      val targetTableName = "target_table"
+      withTable(targetTableName) {
+        sql(s"CREATE TABLE $targetTableName SHALLOW CLONE $testTableName")
+        assert(schemaContainsExistsDefaultKey(targetTableName),
+          s"SHALLOW CLONE did remove EXISTS_DEFAULT from the schema.")
+      }
+    }
+  }
+
+  test("Default column values: CONVERT TO DELTA keeps EXISTS_DEFAULT") {
+    withTable("test_table") {
+      withSQLConf("spark.databricks.delta.properties.defaults.columnMapping.mode" -> "none") {
+        spark.range(end = 1).write.format("parquet").saveAsTable("test_table")
+        // EXISTS_DEFAULT is used for the existing row.
+        sql("ALTER TABLE test_table ADD COLUMN new_column_with_a_default INT DEFAULT 1")
+
+        sql("CONVERT TO DELTA test_table")
+
+        checkAnswer(spark.table("test_table"), Row(0, 1) :: Nil)
+      }
+    }
+  }
+
+  test("Default column values: CREATE TABLE AS SELECT from a table with column defaults") {
+    for (sourceTableSchemaContainsKey <- Seq(true, false)) {
+      withTable("test_table", "test_table_2", "test_table_3", "test_table_4") {
+          // To test with the 'EXISTS_DEFAULT' key present in the source table, we disable removal.
+          withSQLConf(DeltaSQLConf.REMOVE_EXISTS_DEFAULT_FROM_SCHEMA.key
+            -> (!sourceTableSchemaContainsKey).toString) {
+            // Defaults are only possible for top level columns.
+            sql("""CREATE TABLE test_table(int_col INT DEFAULT 2)
+                  |USING DELTA
+                  |TBLPROPERTIES ('delta.feature.allowColumnDefaults' = 'supported')""".stripMargin)
+          }
+
+          def schemaContainsExistsKey(tableName: String): Boolean = {
+            val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(tableName))
+            snapshot.schema.fields.exists { field =>
+              field.metadata.contains(ResolveDefaultColumnsUtils.EXISTS_DEFAULT_COLUMN_METADATA_KEY)
+            }
+          }
+
+          def schemaContainsCurrentDefaultKey(tableName: String): Boolean = {
+            val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(tableName))
+            snapshot.schema.fields.exists { field =>
+              field.metadata.contains(
+                ResolveDefaultColumnsUtils.CURRENT_DEFAULT_COLUMN_METADATA_KEY)
+            }
+          }
+
+          def defaultsTableFeatureEnabled(tableName: String): Boolean = {
+            val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(tableName))
+            val isEnabled =
+              snapshot.protocol.writerFeatureNames.contains(AllowColumnDefaultsTableFeature.name)
+            assert(schemaContainsCurrentDefaultKey(tableName) === isEnabled)
+            isEnabled
+          }
+
+          assert(schemaContainsExistsKey("test_table") == sourceTableSchemaContainsKey)
+          assert(defaultsTableFeatureEnabled("test_table"))
+
+          // It is not possible to add a column with a default to a Delta table.
+          assertThrows[DeltaAnalysisException] {
+            sql("ALTER TABLE test_table ADD COLUMN new_column_with_a_default INT DEFAULT 0")
+          }
+
+          // @TODO: It is currently not possible to CTAS from a table with an active column default
+          //        without explicitly enabling the table feature.
+          assertThrows[AnalysisException] {
+            sql("CREATE TABLE test_table_2 USING DELTA AS SELECT * FROM test_table")
+          }
+
+          // @TODO: It is possible to CTAS from a table with an active column default when the table
+          //        feature is explicitly enabled. This copies the default values setting, which is
+          //        probably not the desired behaviour.
+          sql("""CREATE TABLE test_table_3
+                |USING DELTA
+                |TBLPROPERTIES ('delta.feature.allowColumnDefaults' = 'supported')
+                |AS SELECT * FROM test_table""".stripMargin)
+          assert(schemaContainsCurrentDefaultKey("test_table_3"))
+          assert(schemaContainsExistsKey("test_table_3") === false)
+          assert(defaultsTableFeatureEnabled("test_table_3"))
+
+          // Remove the active column default from the source table and CTAS from it.
+          sql("ALTER TABLE test_table ALTER COLUMN int_col DROP DEFAULT")
+          sql("CREATE TABLE test_table_4 USING DELTA AS SELECT * FROM test_table")
+          assert(schemaContainsCurrentDefaultKey("test_table_4") === false)
+          assert(schemaContainsExistsKey("test_table_4") === false)
+          assert(defaultsTableFeatureEnabled("test_table_4") === false)
       }
     }
   }
@@ -2427,6 +2621,7 @@ trait DeltaTableCreationColumnMappingSuiteBase extends DeltaColumnMappingSelecte
 
 class DeltaTableCreationIdColumnMappingSuite extends DeltaTableCreationSuite
   with DeltaColumnMappingEnableIdMode {
+
   override protected def getTableProperties(tableName: String): Map[String, String] = {
     // ignore comparing column mapping properties
     dropColumnMappingConfigurations(super.getTableProperties(tableName))
@@ -2435,6 +2630,7 @@ class DeltaTableCreationIdColumnMappingSuite extends DeltaTableCreationSuite
 
 class DeltaTableCreationNameColumnMappingSuite extends DeltaTableCreationSuite
   with DeltaColumnMappingEnableNameMode {
+
   override protected def getTableProperties(tableName: String): Map[String, String] = {
     // ignore comparing column mapping properties
     dropColumnMappingConfigurations(super.getTableProperties(tableName))

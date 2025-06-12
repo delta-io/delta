@@ -29,6 +29,7 @@ import org.apache.spark.SparkConf
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.functions.{col, floor, lit, max, struct}
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.types.LongType
 
 trait OptimizePartitionTableHelper extends QueryTest {
   def testPartition(str: String)(testFun: => Any): Unit = {
@@ -189,6 +190,93 @@ trait OptimizeZOrderSuiteBase extends OptimizePartitionTableHelper
           .zOrderingOnColumnWithNoStatsException(
             Seq[String]("nested.a.p1", "nested.b"), spark)
           .getMessage)
+      }
+    }
+  }
+
+  def optimizeWithBatching(
+      batchSize: String,
+      expectedCommits: Int,
+      condition: Option[String],
+      partitionFileCount: Map[String, Int]): Unit = {
+    withSQLConf(DELTA_OPTIMIZE_BATCH_SIZE.key -> batchSize) {
+      withTempDir { tempDir =>
+        def writeData(count: Int): Unit = {
+          spark.range(count).select('id, 'id % 5 as "part")
+            .coalesce(1)
+            .write
+            .partitionBy("part")
+            .format("delta")
+            .mode("append")
+            .save(tempDir.getAbsolutePath)
+        }
+
+        writeData(10)
+        writeData(100)
+
+        val data = spark.read.format("delta").load(tempDir.getAbsolutePath()).collect()
+
+        executeOptimizePath(tempDir.getAbsolutePath, Seq("id"), condition)
+
+        val df = spark.read.format("delta").load(tempDir.getAbsolutePath)
+        checkAnswer(df, data)
+
+        val deltaLog = loadDeltaLog(tempDir.getAbsolutePath)
+
+        val commits = deltaLog.history.getHistory(None)
+        assert(commits.filter(_.operation == "OPTIMIZE").length == expectedCommits)
+
+        val files = groupInputFilesByPartition(df.inputFiles, deltaLog)
+        for ((part, fileCount) <- partitionFileCount) {
+          assert(files(("part", part)).length == fileCount)
+        }
+      }
+    }
+  }
+
+  test("optimize command with batching") {
+    // Batch size of 1 byte means each bin will run in its own batch, and lead to 5 batches,
+    // one for each partition.
+    Seq(("1", 5), ("1g", 1)).foreach { case (batchSize, optimizeCommits) =>
+      // All partitions should be one file after optimizing
+      val partitionFileCount = (0 to 4).map(_.toString -> 1).toMap
+
+      optimizeWithBatching(batchSize, optimizeCommits, None, partitionFileCount)
+    }
+  }
+
+  test("optimize command with where clause and batching") {
+    // Batch size of 1 byte means each bin will run in its own batch, and lead to 2 batches
+    // for the two partitions we are optimizing.
+    Seq(("1", 2), ("1g", 1)).foreach { case (batchSize, optimizeCommits) =>
+      // First two partitions should have 1 file, last 3 should have two
+      val partitionFileCount = Map(
+        "0" -> 1,
+        "1" -> 1,
+        "2" -> 2,
+        "3" -> 2,
+        "4" -> 2
+      )
+      val files = optimizeWithBatching(batchSize, optimizeCommits, Some("part <= 1"),
+        partitionFileCount)
+    }
+  }
+
+  test("optimize an empty table with batching") {
+    // Batch size of 1 byte means each bin will run in its own batch
+    withSQLConf(DELTA_OPTIMIZE_BATCH_SIZE.key -> "1") {
+      withTempDir { tempDir =>
+        DeltaTable.create(spark)
+          .location(tempDir.getAbsolutePath())
+          .addColumn("id", LongType)
+          .addColumn("part", LongType)
+          .partitionedBy("part")
+          .execute()
+
+        // Just make sure it succeeds
+        executeOptimizePath(tempDir.getAbsolutePath, Seq("id"))
+
+        assert(spark.read.format("delta").load(tempDir.getAbsolutePath()).count() == 0)
       }
     }
   }

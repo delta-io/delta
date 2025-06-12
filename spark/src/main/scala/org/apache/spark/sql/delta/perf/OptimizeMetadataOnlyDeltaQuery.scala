@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.perf
 
-import org.apache.spark.internal.Logging
+import org.apache.spark.internal.LoggingShims
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.aggregate._
@@ -45,7 +45,7 @@ import java.util.Locale
  * - Query has no GROUP BY.
  * Example of valid query: SELECT COUNT(*), MIN(id), MAX(partition_col) FROM MyDeltaTable
  */
-trait OptimizeMetadataOnlyDeltaQuery extends Logging {
+trait OptimizeMetadataOnlyDeltaQuery extends LoggingShims {
   def optimizeQueryWithMetadata(plan: LogicalPlan): LogicalPlan = {
     plan.transformUpWithSubqueries {
       case agg@MetadataOptimizableAggregate(tahoeLogFileIndex) =>
@@ -111,7 +111,7 @@ trait OptimizeMetadataOnlyDeltaQuery extends Logging {
         Seq(InternalRow.fromSeq(rewrittenAggregationValues)))
       r
     } else {
-      logInfo(s"Query can't be optimized using metadata because stats are missing")
+      logInfo(log"Query can't be optimized using metadata because stats are missing")
       plan
     }
   }
@@ -336,7 +336,7 @@ trait OptimizeMetadataOnlyDeltaQuery extends Logging {
       }
     }
 
-    private def isStatsOptimizable(aggExprs: Seq[Alias]): Boolean = aggExprs.forall {
+    private def isStatsOptimizable(aggExprs: Seq[Expression]): Boolean = aggExprs.forall {
       case Alias(aggExpr: AggregateExpression, _) => getAggFunctionOptimizable(aggExpr).isDefined
       case Alias(ToPrettyString(aggExpr: AggregateExpression, _), _) =>
         getAggFunctionOptimizable(aggExpr).isDefined
@@ -352,23 +352,23 @@ trait OptimizeMetadataOnlyDeltaQuery extends Logging {
       case _ => false
     }
 
-    def unapply(plan: Aggregate): Option[TahoeLogFileIndex] = plan match {
-      case Aggregate(
-        Nil, // GROUP BY not supported
-        aggExprs: Seq[Alias @unchecked], // Underlying type is not checked because of type erasure.
-        // Alias type check is done in isStatsOptimizable.
-        PhysicalOperation(fields, Nil, DeltaTable(fileIndex: TahoeLogFileIndex)))
-          if fileIndex.partitionFilters.isEmpty &&
-            fieldsAreAttributeReference(fields) &&
-            isStatsOptimizable(aggExprs) => Some(fileIndex)
-      case Aggregate(
-        Nil,
-        aggExprs: Seq[Alias @unchecked],
-        // When all columns are selected, there are no Project/PhysicalOperation
-        DeltaTable(fileIndex: TahoeLogFileIndex))
-          if fileIndex.partitionFilters.isEmpty &&
-            isStatsOptimizable(aggExprs) => Some(fileIndex)
-      case _ => None
+    def unapply(plan: Aggregate): Option[TahoeLogFileIndex] = {
+      // GROUP BY is not supports. All AggregateExpression must be stats optimizable.
+      if (plan.groupingExpressions.nonEmpty ||
+        plan.aggregateExpressions.isEmpty ||
+        !isStatsOptimizable(plan.aggregateExpressions)) {
+        return None
+      }
+      plan.child match {
+        case PhysicalOperation(fields, Nil, DeltaTable(fileIndex: TahoeLogFileIndex))
+          if fileIndex.partitionFilters.isEmpty && fieldsAreAttributeReference(fields) =>
+          Some(fileIndex)
+        case DeltaTable(fileIndex: TahoeLogFileIndex) if fileIndex.partitionFilters.isEmpty =>
+          // When all columns are selected, there are no Project/PhysicalOperation
+          Some(fileIndex)
+        case _ =>
+          None
+      }
     }
   }
 }

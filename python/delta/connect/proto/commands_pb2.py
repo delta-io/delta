@@ -27,11 +27,12 @@ from google.protobuf import symbol_database as _symbol_database
 _sym_db = _symbol_database.Default()
 
 
-from delta.connect import base_pb2 as delta_dot_connect_dot_base__pb2
+from delta.connect.proto import base_pb2 as delta_dot_connect_dot_base__pb2
+from pyspark.sql.connect.proto import types_pb2 as spark_dot_connect_dot_types__pb2
 
 
 DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(
-    b'\n\x1c\x64\x65lta/connect/commands.proto\x12\rdelta.connect\x1a\x18\x64\x65lta/connect/base.proto"\\\n\x0c\x44\x65ltaCommand\x12<\n\x0b\x63lone_table\x18\x01 \x01(\x0b\x32\x19.delta.connect.CloneTableH\x00R\ncloneTableB\x0e\n\x0c\x63ommand_type"\xec\x02\n\nCloneTable\x12/\n\x05table\x18\x01 \x01(\x0b\x32\x19.delta.connect.DeltaTableR\x05table\x12\x16\n\x06target\x18\x02 \x01(\tR\x06target\x12\x1a\n\x07version\x18\x03 \x01(\x05H\x00R\x07version\x12\x1e\n\ttimestamp\x18\x04 \x01(\tH\x00R\ttimestamp\x12\x1d\n\nis_shallow\x18\x05 \x01(\x08R\tisShallow\x12\x18\n\x07replace\x18\x06 \x01(\x08R\x07replace\x12I\n\nproperties\x18\x07 \x03(\x0b\x32).delta.connect.CloneTable.PropertiesEntryR\nproperties\x1a=\n\x0fPropertiesEntry\x12\x10\n\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n\x05value\x18\x02 \x01(\tR\x05value:\x02\x38\x01\x42\x16\n\x14version_or_timestampB\x1a\n\x16io.delta.connect.protoP\x01\x62\x06proto3'
+    b'\n\x1c\x64\x65lta/connect/commands.proto\x12\rdelta.connect\x1a\x18\x64\x65lta/connect/base.proto\x1a\x19spark/connect/types.proto"\xad\x04\n\x0c\x44\x65ltaCommand\x12<\n\x0b\x63lone_table\x18\x01 \x01(\x0b\x32\x19.delta.connect.CloneTableH\x00R\ncloneTable\x12?\n\x0cvacuum_table\x18\x02 \x01(\x0b\x32\x1a.delta.connect.VacuumTableH\x00R\x0bvacuumTable\x12[\n\x16upgrade_table_protocol\x18\x03 \x01(\x0b\x32#.delta.connect.UpgradeTableProtocolH\x00R\x14upgradeTableProtocol\x12\x35\n\x08generate\x18\x04 \x01(\x0b\x32\x17.delta.connect.GenerateH\x00R\x08generate\x12O\n\x12\x63reate_delta_table\x18\x05 \x01(\x0b\x32\x1f.delta.connect.CreateDeltaTableH\x00R\x10\x63reateDeltaTable\x12R\n\x13\x61\x64\x64_feature_support\x18\x06 \x01(\x0b\x32 .delta.connect.AddFeatureSupportH\x00R\x11\x61\x64\x64\x46\x65\x61tureSupport\x12U\n\x14\x64rop_feature_support\x18\x07 \x01(\x0b\x32!.delta.connect.DropFeatureSupportH\x00R\x12\x64ropFeatureSupportB\x0e\n\x0c\x63ommand_type"\xec\x02\n\nCloneTable\x12/\n\x05table\x18\x01 \x01(\x0b\x32\x19.delta.connect.DeltaTableR\x05table\x12\x16\n\x06target\x18\x02 \x01(\tR\x06target\x12\x1a\n\x07version\x18\x03 \x01(\x05H\x00R\x07version\x12\x1e\n\ttimestamp\x18\x04 \x01(\tH\x00R\ttimestamp\x12\x1d\n\nis_shallow\x18\x05 \x01(\x08R\tisShallow\x12\x18\n\x07replace\x18\x06 \x01(\x08R\x07replace\x12I\n\nproperties\x18\x07 \x03(\x0b\x32).delta.connect.CloneTable.PropertiesEntryR\nproperties\x1a=\n\x0fPropertiesEntry\x12\x10\n\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n\x05value\x18\x02 \x01(\tR\x05value:\x02\x38\x01\x42\x16\n\x14version_or_timestamp"\x80\x01\n\x0bVacuumTable\x12/\n\x05table\x18\x01 \x01(\x0b\x32\x19.delta.connect.DeltaTableR\x05table\x12,\n\x0fretention_hours\x18\x02 \x01(\x01H\x00R\x0eretentionHours\x88\x01\x01\x42\x12\n\x10_retention_hours"\x95\x01\n\x14UpgradeTableProtocol\x12/\n\x05table\x18\x01 \x01(\x0b\x32\x19.delta.connect.DeltaTableR\x05table\x12%\n\x0ereader_version\x18\x02 \x01(\x05R\rreaderVersion\x12%\n\x0ewriter_version\x18\x03 \x01(\x05R\rwriterVersion"O\n\x08Generate\x12/\n\x05table\x18\x01 \x01(\x0b\x32\x19.delta.connect.DeltaTableR\x05table\x12\x12\n\x04mode\x18\x02 \x01(\tR\x04mode"\xd0\x08\n\x10\x43reateDeltaTable\x12\x38\n\x04mode\x18\x01 \x01(\x0e\x32$.delta.connect.CreateDeltaTable.ModeR\x04mode\x12"\n\ntable_name\x18\x02 \x01(\tH\x00R\ttableName\x88\x01\x01\x12\x1f\n\x08location\x18\x03 \x01(\tH\x01R\x08location\x88\x01\x01\x12\x1d\n\x07\x63omment\x18\x04 \x01(\tH\x02R\x07\x63omment\x88\x01\x01\x12@\n\x07\x63olumns\x18\x05 \x03(\x0b\x32&.delta.connect.CreateDeltaTable.ColumnR\x07\x63olumns\x12\x31\n\x14partitioning_columns\x18\x06 \x03(\tR\x13partitioningColumns\x12O\n\nproperties\x18\x07 \x03(\x0b\x32/.delta.connect.CreateDeltaTable.PropertiesEntryR\nproperties\x12-\n\x12\x63lustering_columns\x18\x08 \x03(\tR\x11\x63lusteringColumns\x1a\xc5\x03\n\x06\x43olumn\x12\x12\n\x04name\x18\x01 \x01(\tR\x04name\x12\x34\n\tdata_type\x18\x02 \x01(\x0b\x32\x17.spark.connect.DataTypeR\x08\x64\x61taType\x12\x1a\n\x08nullable\x18\x03 \x01(\x08R\x08nullable\x12\x33\n\x13generated_always_as\x18\x04 \x01(\tH\x00R\x11generatedAlwaysAs\x88\x01\x01\x12\x1d\n\x07\x63omment\x18\x05 \x01(\tH\x01R\x07\x63omment\x88\x01\x01\x12]\n\ridentity_info\x18\x06 \x01(\x0b\x32\x33.delta.connect.CreateDeltaTable.Column.IdentityInfoH\x02R\x0cidentityInfo\x88\x01\x01\x1al\n\x0cIdentityInfo\x12\x14\n\x05start\x18\x01 \x01(\x03R\x05start\x12\x12\n\x04step\x18\x02 \x01(\x03R\x04step\x12\x32\n\x15\x61llow_explicit_insert\x18\x03 \x01(\x08R\x13\x61llowExplicitInsertB\x16\n\x14_generated_always_asB\n\n\x08_commentB\x10\n\x0e_identity_info\x1a=\n\x0fPropertiesEntry\x12\x10\n\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n\x05value\x18\x02 \x01(\tR\x05value:\x02\x38\x01"z\n\x04Mode\x12\x14\n\x10MODE_UNSPECIFIED\x10\x00\x12\x0f\n\x0bMODE_CREATE\x10\x01\x12\x1d\n\x19MODE_CREATE_IF_NOT_EXISTS\x10\x02\x12\x10\n\x0cMODE_REPLACE\x10\x03\x12\x1a\n\x16MODE_CREATE_OR_REPLACE\x10\x04\x42\r\n\x0b_table_nameB\x0b\n\t_locationB\n\n\x08_comment"g\n\x11\x41\x64\x64\x46\x65\x61tureSupport\x12/\n\x05table\x18\x01 \x01(\x0b\x32\x19.delta.connect.DeltaTableR\x05table\x12!\n\x0c\x66\x65\x61ture_name\x18\x02 \x01(\tR\x0b\x66\x65\x61tureName"\xad\x01\n\x12\x44ropFeatureSupport\x12/\n\x05table\x18\x01 \x01(\x0b\x32\x19.delta.connect.DeltaTableR\x05table\x12!\n\x0c\x66\x65\x61ture_name\x18\x02 \x01(\tR\x0b\x66\x65\x61tureName\x12.\n\x10truncate_history\x18\x03 \x01(\x08H\x00R\x0ftruncateHistory\x88\x01\x01\x42\x13\n\x11_truncate_historyB\x1a\n\x16io.delta.connect.protoP\x01\x62\x06proto3'
 )
 
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, globals())
@@ -41,10 +42,32 @@ if _descriptor._USE_C_DESCRIPTORS == False:
     DESCRIPTOR._serialized_options = b"\n\026io.delta.connect.protoP\001"
     _CLONETABLE_PROPERTIESENTRY._options = None
     _CLONETABLE_PROPERTIESENTRY._serialized_options = b"8\001"
-    _DELTACOMMAND._serialized_start = 73
-    _DELTACOMMAND._serialized_end = 165
-    _CLONETABLE._serialized_start = 168
-    _CLONETABLE._serialized_end = 532
-    _CLONETABLE_PROPERTIESENTRY._serialized_start = 447
-    _CLONETABLE_PROPERTIESENTRY._serialized_end = 508
+    _CREATEDELTATABLE_PROPERTIESENTRY._options = None
+    _CREATEDELTATABLE_PROPERTIESENTRY._serialized_options = b"8\001"
+    _DELTACOMMAND._serialized_start = 101
+    _DELTACOMMAND._serialized_end = 658
+    _CLONETABLE._serialized_start = 661
+    _CLONETABLE._serialized_end = 1025
+    _CLONETABLE_PROPERTIESENTRY._serialized_start = 940
+    _CLONETABLE_PROPERTIESENTRY._serialized_end = 1001
+    _VACUUMTABLE._serialized_start = 1028
+    _VACUUMTABLE._serialized_end = 1156
+    _UPGRADETABLEPROTOCOL._serialized_start = 1159
+    _UPGRADETABLEPROTOCOL._serialized_end = 1308
+    _GENERATE._serialized_start = 1310
+    _GENERATE._serialized_end = 1389
+    _CREATEDELTATABLE._serialized_start = 1392
+    _CREATEDELTATABLE._serialized_end = 2496
+    _CREATEDELTATABLE_COLUMN._serialized_start = 1816
+    _CREATEDELTATABLE_COLUMN._serialized_end = 2269
+    _CREATEDELTATABLE_COLUMN_IDENTITYINFO._serialized_start = 2107
+    _CREATEDELTATABLE_COLUMN_IDENTITYINFO._serialized_end = 2215
+    _CREATEDELTATABLE_PROPERTIESENTRY._serialized_start = 940
+    _CREATEDELTATABLE_PROPERTIESENTRY._serialized_end = 1001
+    _CREATEDELTATABLE_MODE._serialized_start = 2334
+    _CREATEDELTATABLE_MODE._serialized_end = 2456
+    _ADDFEATURESUPPORT._serialized_start = 2498
+    _ADDFEATURESUPPORT._serialized_end = 2601
+    _DROPFEATURESUPPORT._serialized_start = 2604
+    _DROPFEATURESUPPORT._serialized_end = 2777
 # @@protoc_insertion_point(module_scope)

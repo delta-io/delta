@@ -49,6 +49,13 @@ object Constraints {
   /** A SQL expression to check for when writing out data. */
   case class Check(name: String, expression: Expression) extends Constraint
 
+  def getCheckConstraintNames(metadata: Metadata): Seq[String] = {
+    metadata.configuration.keys.collect {
+      case key if key.toLowerCase(Locale.ROOT).startsWith("delta.constraints.") =>
+        key.stripPrefix("delta.constraints.")
+    }.toSeq
+  }
+
   /**
    * Extract CHECK constraints from the table properties. Note that some CHECK constraints may also
    * come from schema metadata; these constraints were never released in a public API but are
@@ -99,7 +106,11 @@ object Constraints {
     metadata.configuration.filter {
       case (key, constraint) if key.toLowerCase(Locale.ROOT).startsWith("delta.constraints.") =>
         SchemaUtils.containsDependentExpression(
-          sparkSession, columnName, constraint, sparkSession.sessionState.conf.resolver)
+          sparkSession,
+          columnName,
+          constraint,
+          metadata.schema,
+          sparkSession.sessionState.conf.resolver)
       case _ => false
     }
   }

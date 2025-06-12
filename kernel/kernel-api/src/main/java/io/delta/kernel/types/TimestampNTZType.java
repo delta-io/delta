@@ -18,18 +18,18 @@ package io.delta.kernel.types;
 import io.delta.kernel.annotation.Evolving;
 
 /**
- * The timestamp without time zone type represents a local time in microsecond precision,
- * which is independent of time zone. Its valid range is
- * [0001-01-01T00:00:00.000000, 9999-12-31T23:59:59.999999]. To represent an absolute point
- * in time, use {@link TimestampType} instead.
+ * The timestamp without time zone type represents a local time in microsecond precision, which is
+ * independent of time zone. Its valid range is [0001-01-01T00:00:00.000000,
+ * 9999-12-31T23:59:59.999999]. To represent an absolute point in time, use {@link TimestampType}
+ * instead.
  *
  * @since 3.2.0
  */
 @Evolving
 public class TimestampNTZType extends BasePrimitiveType {
-    public static final TimestampNTZType TIMESTAMP_NTZ = new TimestampNTZType();
+  public static final TimestampNTZType TIMESTAMP_NTZ = new TimestampNTZType();
 
-    private TimestampNTZType() {
-        super("timestamp_ntz");
-    }
+  private TimestampNTZType() {
+    super("timestamp_ntz");
+  }
 }

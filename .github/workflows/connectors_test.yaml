@@ -1,9 +1,9 @@
-name: "Delta Connectors Tests"
+name: "Delta Connectors"
 on: [push, pull_request]
 jobs:
   build:
-    name: "Run tests"
-    runs-on: ubuntu-20.04
+    name: "DC: Scala ${{ matrix.scala }}"
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         # These Scala versions must match those in the build.sbt
@@ -16,7 +16,7 @@ jobs:
           distribution: 'zulu'
           java-version: '8'
       - name: Cache Scala, SBT
-        uses: actions/cache@v2
+        uses: actions/cache@v4
         with:
           path: |
             ~/.sbt

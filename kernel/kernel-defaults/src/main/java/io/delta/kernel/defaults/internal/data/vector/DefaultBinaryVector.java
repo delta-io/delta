@@ -15,80 +15,81 @@
  */
 package io.delta.kernel.defaults.internal.data.vector;
 
-import java.nio.ByteBuffer;
-import java.nio.charset.StandardCharsets;
-import java.util.Optional;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.types.BinaryType;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StringType;
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
+import java.util.Optional;
 
-import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+/** {@link io.delta.kernel.data.ColumnVector} implementation for binary type data. */
+public class DefaultBinaryVector extends AbstractColumnVector {
+  private final byte[][] values;
 
-/**
- * {@link io.delta.kernel.data.ColumnVector} implementation for binary type data.
- */
-public class DefaultBinaryVector
-    extends AbstractColumnVector {
-    private final byte[][] values;
+  /**
+   * Create an instance of {@link io.delta.kernel.data.ColumnVector} for binary type.
+   *
+   * @param size number of elements in the vector.
+   * @param values column vector values.
+   */
+  public DefaultBinaryVector(DataType dataType, int size, byte[][] values) {
+    super(size, dataType, Optional.empty());
+    checkArgument(
+        dataType instanceof StringType || dataType instanceof BinaryType,
+        "invalid type for binary vector: %s",
+        dataType);
+    this.values = requireNonNull(values, "values is null");
+    checkArgument(
+        values.length >= size,
+        "invalid number of values (%s) for given size (%s)",
+        values.length,
+        size);
+  }
 
-    /**
-     * Create an instance of {@link io.delta.kernel.data.ColumnVector} for binary type.
-     *
-     * @param size   number of elements in the vector.
-     * @param values column vector values.
-     */
-    public DefaultBinaryVector(DataType dataType, int size, byte[][] values) {
-        super(size, dataType, Optional.empty());
-        checkArgument(dataType instanceof StringType || dataType instanceof BinaryType,
-            "invalid type for binary vector: " + dataType);
-        this.values = requireNonNull(values, "values is null");
-        checkArgument(values.length >= size,
-            "invalid number of values (%s) for given size (%s)", values.length, size);
+  @Override
+  public boolean isNullAt(int rowId) {
+    checkValidRowId(rowId);
+    return values[rowId] == null;
+  }
+
+  /**
+   * Get the value at given {@code rowId}. The return value is undefined and can be anything, if the
+   * slot for {@code rowId} is null. The error check on {@code rowId} explicitly skipped for
+   * performance reasons.
+   *
+   * @param rowId
+   * @return
+   */
+  @Override
+  public String getString(int rowId) {
+    if (!(getDataType() instanceof StringType)) {
+      throw unsupportedDataAccessException("string");
     }
-
-    @Override
-    public boolean isNullAt(int rowId) {
-        checkValidRowId(rowId);
-        return values[rowId] == null;
+    checkValidRowId(rowId);
+    byte[] value = values[rowId];
+    if (value == null) {
+      return null;
     }
+    return StandardCharsets.UTF_8.decode(ByteBuffer.wrap(value)).toString();
+  }
 
-    /**
-     * Get the value at given {@code rowId}. The return value is undefined and can be
-     * anything, if the slot for {@code rowId} is null.
-     * The error check on {@code rowId} explicitly skipped for performance reasons.
-     *
-     * @param rowId
-     * @return
-     */
-    @Override
-    public String getString(int rowId) {
-        if (!(getDataType() instanceof StringType)) {
-            throw unsupportedDataAccessException("string");
-        }
-        checkValidRowId(rowId);
-        byte[] value = values[rowId];
-        if (value == null) {
-            return null;
-        }
-        return StandardCharsets.UTF_8.decode(ByteBuffer.wrap(value)).toString();
+  /**
+   * Get the value at given {@code rowId}. The return value is undefined and can be anything, if the
+   * slot for {@code rowId} is null. The error check on {@code rowId} explicitly skipped for
+   * performance reasons.
+   *
+   * @param rowId
+   * @return
+   */
+  @Override
+  public byte[] getBinary(int rowId) {
+    if (!(getDataType() instanceof BinaryType)) {
+      throw unsupportedDataAccessException("binary");
     }
-
-    /**
-     * Get the value at given {@code rowId}. The return value is undefined and can be
-     * anything, if the slot for {@code rowId} is null.
-     * The error check on {@code rowId} explicitly skipped for performance reasons.
-     *
-     * @param rowId
-     * @return
-     */
-    @Override
-    public byte[] getBinary(int rowId) {
-        if (!(getDataType() instanceof BinaryType)) {
-            throw unsupportedDataAccessException("binary");
-        }
-        checkValidRowId(rowId);
-        return values[rowId];
-    }
+    checkValidRowId(rowId);
+    return values[rowId];
+  }
 }

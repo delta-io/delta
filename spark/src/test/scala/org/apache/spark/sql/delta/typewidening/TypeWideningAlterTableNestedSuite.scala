@@ -57,8 +57,8 @@ trait TypeWideningAlterTableNestedTests {
     // Running ALTER TABLE CHANGE COLUMN on non-leaf fields is invalid.
     var alterTableSql = s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN s TYPE struct<a: short>"
     checkError(
-      exception = intercept[AnalysisException] { sql(alterTableSql) },
-      errorClass = "CANNOT_UPDATE_FIELD.STRUCT_TYPE",
+      intercept[AnalysisException] { sql(alterTableSql) },
+      "CANNOT_UPDATE_FIELD.STRUCT_TYPE",
       parameters = Map(
         "table" -> s"`spark_catalog`.`delta`.`$tempPath`",
         "fieldName" -> "`s`"
@@ -71,8 +71,8 @@ trait TypeWideningAlterTableNestedTests {
 
     alterTableSql = s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN m TYPE map<int, int>"
     checkError(
-      exception = intercept[AnalysisException] { sql(alterTableSql) },
-      errorClass = "CANNOT_UPDATE_FIELD.MAP_TYPE",
+      intercept[AnalysisException] { sql(alterTableSql) },
+      "CANNOT_UPDATE_FIELD.MAP_TYPE",
       parameters = Map(
         "table" -> s"`spark_catalog`.`delta`.`$tempPath`",
         "fieldName" -> "`m`"
@@ -85,8 +85,8 @@ trait TypeWideningAlterTableNestedTests {
 
     alterTableSql = s"ALTER TABLE delta.`$tempPath` CHANGE COLUMN a TYPE array<int>"
     checkError(
-      exception = intercept[AnalysisException] { sql(alterTableSql) },
-      errorClass = "CANNOT_UPDATE_FIELD.ARRAY_TYPE",
+      intercept[AnalysisException] { sql(alterTableSql) },
+      "CANNOT_UPDATE_FIELD.ARRAY_TYPE",
       parameters = Map(
         "table" -> s"`spark_catalog`.`delta`.`$tempPath`",
         "fieldName" -> "`a`"
@@ -107,38 +107,9 @@ trait TypeWideningAlterTableNestedTests {
 
     assert(readDeltaTable(tempPath).schema === new StructType()
       .add("s", new StructType()
-        .add("a", ShortType, nullable = true, metadata = new MetadataBuilder()
-          .putMetadataArray("delta.typeChanges", Array(
-            new MetadataBuilder()
-              .putString("toType", "short")
-              .putString("fromType", "byte")
-              .putLong("tableVersion", 2)
-              .build()
-          )).build()))
-      .add("m", MapType(IntegerType, IntegerType), nullable = true, metadata = new MetadataBuilder()
-          .putMetadataArray("delta.typeChanges", Array(
-            new MetadataBuilder()
-              .putString("toType", "integer")
-              .putString("fromType", "byte")
-              .putLong("tableVersion", 3)
-              .putString("fieldPath", "key")
-              .build(),
-            new MetadataBuilder()
-              .putString("toType", "integer")
-              .putString("fromType", "short")
-              .putLong("tableVersion", 4)
-              .putString("fieldPath", "value")
-              .build()
-          )).build())
-      .add("a", ArrayType(IntegerType), nullable = true, metadata = new MetadataBuilder()
-          .putMetadataArray("delta.typeChanges", Array(
-            new MetadataBuilder()
-              .putString("toType", "integer")
-              .putString("fromType", "short")
-              .putLong("tableVersion", 5)
-              .putString("fieldPath", "element")
-              .build()
-          )).build()))
+        .add("a", ShortType))
+      .add("m", MapType(IntegerType, IntegerType))
+      .add("a", ArrayType(IntegerType)))
 
     append(Seq((5, 6, 7, 8))
       .toDF("a", "b", "c", "d")
@@ -157,38 +128,9 @@ trait TypeWideningAlterTableNestedTests {
       "(s struct<a: short>, m map<int, int>, a array<int>)")
     assert(readDeltaTable(tempPath).schema === new StructType()
       .add("s", new StructType()
-        .add("a", ShortType, nullable = true, metadata = new MetadataBuilder()
-          .putMetadataArray("delta.typeChanges", Array(
-            new MetadataBuilder()
-              .putString("toType", "short")
-              .putString("fromType", "byte")
-              .putLong("tableVersion", 2)
-              .build()
-          )).build()))
-      .add("m", MapType(IntegerType, IntegerType), nullable = true, metadata = new MetadataBuilder()
-          .putMetadataArray("delta.typeChanges", Array(
-            new MetadataBuilder()
-              .putString("toType", "integer")
-              .putString("fromType", "byte")
-              .putLong("tableVersion", 2)
-              .putString("fieldPath", "key")
-              .build(),
-            new MetadataBuilder()
-              .putString("toType", "integer")
-              .putString("fromType", "short")
-              .putLong("tableVersion", 2)
-              .putString("fieldPath", "value")
-              .build()
-          )).build())
-      .add("a", ArrayType(IntegerType), nullable = true, metadata = new MetadataBuilder()
-          .putMetadataArray("delta.typeChanges", Array(
-            new MetadataBuilder()
-              .putString("toType", "integer")
-              .putString("fromType", "short")
-              .putLong("tableVersion", 2)
-              .putString("fieldPath", "element")
-              .build()
-          )).build()))
+        .add("a", ShortType))
+      .add("m", MapType(IntegerType, IntegerType))
+      .add("a", ArrayType(IntegerType)))
 
     append(Seq((5, 6, 7, 8))
       .toDF("a", "b", "c", "d")

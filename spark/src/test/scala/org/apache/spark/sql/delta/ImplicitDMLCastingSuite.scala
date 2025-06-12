@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import scala.annotation.tailrec
 import scala.collection.JavaConverters._
 
+import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.ImplicitDMLCastingSuiteShims._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaExceptionTestUtils, DeltaSQLCommandTest}
@@ -32,11 +33,14 @@ import org.apache.spark.sql.internal.SQLConf
  * These casts are added to convert values to the schema of a table.
  * INSERT operations are excluded as they are covered by InsertSuite and InsertSuiteEdge.
  */
-class ImplicitDMLCastingSuite extends QueryTest
+abstract class ImplicitDMLCastingSuite extends QueryTest
   with DeltaExceptionTestUtils
   with DeltaSQLCommandTest {
 
-  private case class TestConfiguration(
+  /** Implement the actual test for a specific DML command in subclasses. */
+  protected def commandTest(sqlConfig: SqlConfiguration, testConfig: TestConfiguration): Unit
+
+  protected case class TestConfiguration(
       sourceType: String,
       sourceTypeInErrorMessage: String,
       targetType: String,
@@ -49,7 +53,7 @@ class ImplicitDMLCastingSuite extends QueryTest
     override def toString: String = s"sourceType: $sourceType, targetType: $targetType"
   }
 
-  private case class SqlConfiguration(
+  protected case class SqlConfiguration(
       followAnsiEnabled: Boolean,
       ansiEnabled: Boolean,
       storeAssignmentPolicy: SQLConf.StoreAssignmentPolicy.Value) {
@@ -66,7 +70,7 @@ class ImplicitDMLCastingSuite extends QueryTest
         s" storeAssignmentPolicy: $storeAssignmentPolicy"
   }
 
-  private def expectLegacyCastingBehaviour(sqlConfig: SqlConfiguration): Boolean = {
+  protected def expectLegacyCastingBehaviour(sqlConfig: SqlConfiguration): Boolean = {
     (sqlConfig.followAnsiEnabled && !sqlConfig.ansiEnabled) ||
       (!sqlConfig.followAnsiEnabled &&
         sqlConfig.storeAssignmentPolicy == SQLConf.StoreAssignmentPolicy.LEGACY)
@@ -135,7 +139,7 @@ class ImplicitDMLCastingSuite extends QueryTest
    * Validate that a custom error is throws in case ansi.enabled is false, or a different
    * overflow error is case ansi.enabled is true.
    */
-  private def validateException(
+  protected def validateException(
       exception: Throwable, sqlConfig: SqlConfiguration, testConfig: TestConfiguration): Unit = {
     // Validate that the type of error matches the expected error type.
     castFailureCause(exception) match {
@@ -168,25 +172,52 @@ class ImplicitDMLCastingSuite extends QueryTest
       case None => assert(false, s"No arithmetic exception thrown: $exception")
     }
   }
-
-  Seq(true, false).foreach { followAnsiEnabled =>
-    Seq(true, false).foreach { ansiEnabled =>
+  for {
+    followAnsiEnabled <- BOOLEAN_DOMAIN
+    ansiEnabled <- BOOLEAN_DOMAIN
+    storeAssignmentPolicy <-
       Seq(SQLConf.StoreAssignmentPolicy.LEGACY, SQLConf.StoreAssignmentPolicy.ANSI)
-          .foreach { storeAssignmentPolicy =>
-        val sqlConfiguration =
-          SqlConfiguration(followAnsiEnabled, ansiEnabled, storeAssignmentPolicy)
-        testConfigurations.foreach { testConfiguration =>
-          updateTest(sqlConfiguration, testConfiguration)
-          mergeTests(sqlConfiguration, testConfiguration)
-          streamingMergeTest(sqlConfiguration, testConfiguration)
-        }
+    sqlConfiguration <-
+      Some(SqlConfiguration(followAnsiEnabled, ansiEnabled, storeAssignmentPolicy))
+    testConfiguration <- testConfigurations
+  } commandTest(sqlConfiguration, testConfiguration)
+
+
+  test("Details are part of the error message") {
+    val sourceTableName = "source_table_name"
+    val sourceValueType = "INT"
+    val targetTableName = "target_table_name"
+    val targetValueType = "LONG"
+    val valueColumnName = "value"
+
+    withTable(sourceTableName, targetTableName) {
+      sql(s"CREATE OR REPLACE TABLE $targetTableName(id LONG, $valueColumnName $sourceValueType) " +
+        "USING DELTA")
+      sql(s"CREATE OR REPLACE TABLE $sourceTableName(id LONG, $valueColumnName $targetValueType) " +
+        "USING DELTA")
+      sql(s"INSERT INTO $sourceTableName VALUES(0, 9223372036854775807)")
+
+      val userFacingError = interceptWithUnwrapping[DeltaArithmeticException] {
+        sql(s"""MERGE INTO $targetTableName t
+               |USING $sourceTableName s
+               |ON s.id = t.id
+               |WHEN NOT MATCHED THEN INSERT *""".stripMargin)
+      }
+      val expectedDetails =
+        Seq("DELTA_CAST_OVERFLOW_IN_TABLE_WRITE", sourceValueType, valueColumnName)
+      for (detail <- expectedDetails) {
+        assert(userFacingError.toString.contains(detail))
       }
     }
   }
+}
+
+class ImplicitUpdateCastingSuite extends ImplicitDMLCastingSuite {
 
   /** Test an UPDATE that requires to cast the update value that is part of the SET clause. */
-  private def updateTest(
-      sqlConfig: SqlConfiguration, testConfig: TestConfiguration): Unit = {
+  override protected def commandTest(
+      sqlConfig: SqlConfiguration,
+      testConfig: TestConfiguration): Unit = {
     val testName = s"UPDATE overflow $testConfig $sqlConfig"
     test(testName) {
       sqlConfig.withSqlSettings {
@@ -210,11 +241,14 @@ class ImplicitDMLCastingSuite extends QueryTest
       }
     }
   }
+}
 
+class ImplicitMergeCastingSuite extends ImplicitDMLCastingSuite {
 
   /** Tests for MERGE with overflows cause by the different conditions. */
-  private def mergeTests(
-      sqlConfig: SqlConfiguration, testConfig: TestConfiguration): Unit = {
+  override protected def commandTest(
+      sqlConfig: SqlConfiguration,
+      testConfig: TestConfiguration): Unit = {
     mergeTest(matchedCondition = s"WHEN MATCHED THEN UPDATE SET t.value = s.value",
       sqlConfig, testConfig)
 
@@ -228,8 +262,7 @@ class ImplicitDMLCastingSuite extends QueryTest
   private def mergeTest(
       matchedCondition: String,
       sqlConfig: SqlConfiguration,
-      testConfig: TestConfiguration
-  ): Unit = {
+      testConfig: TestConfiguration): Unit = {
     val testName = s"MERGE overflow in $matchedCondition $testConfig $sqlConfig"
     test(testName) {
       sqlConfig.withSqlSettings {
@@ -268,10 +301,14 @@ class ImplicitDMLCastingSuite extends QueryTest
       }
     }
   }
+}
+
+class ImplicitStreamingMergeCastingSuite extends ImplicitDMLCastingSuite {
 
   /** A merge that is executed for each batch of a stream and has to cast values before insert. */
-  private def streamingMergeTest(
-      sqlConfig: SqlConfiguration, testConfig: TestConfiguration): Unit = {
+  override protected def commandTest(
+      sqlConfig: SqlConfiguration,
+      testConfig: TestConfiguration): Unit = {
     val testName = s"Streaming MERGE overflow $testConfig $sqlConfig"
     test(testName) {
       sqlConfig.withSqlSettings {
@@ -314,34 +351,6 @@ class ImplicitDMLCastingSuite extends QueryTest
             validateException(exception, sqlConfig, testConfig)
           }
         }
-      }
-    }
-  }
-
-  test("Details are part of the error message") {
-    val sourceTableName = "source_table_name"
-    val sourceValueType = "INT"
-    val targetTableName = "target_table_name"
-    val targetValueType = "LONG"
-    val valueColumnName = "value"
-
-    withTable(sourceTableName, targetTableName) {
-      sql(s"CREATE OR REPLACE TABLE $targetTableName(id LONG, $valueColumnName $sourceValueType) " +
-        "USING DELTA")
-      sql(s"CREATE OR REPLACE TABLE $sourceTableName(id LONG, $valueColumnName $targetValueType) " +
-        "USING DELTA")
-      sql(s"INSERT INTO $sourceTableName VALUES(0, 9223372036854775807)")
-
-      val userFacingError = interceptWithUnwrapping[DeltaArithmeticException] {
-        sql(s"""MERGE INTO $targetTableName t
-               |USING $sourceTableName s
-               |ON s.id = t.id
-               |WHEN NOT MATCHED THEN INSERT *""".stripMargin)
-      }
-      val expectedDetails =
-        Seq("DELTA_CAST_OVERFLOW_IN_TABLE_WRITE", sourceValueType, valueColumnName)
-      for (detail <- expectedDetails) {
-        assert(userFacingError.toString.contains(detail))
       }
     }
   }

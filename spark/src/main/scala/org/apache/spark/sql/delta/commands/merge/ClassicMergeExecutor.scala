@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.commands.merge
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, FileAction}
 import org.apache.spark.sql.delta.commands.{DeletionVectorBitmapGenerator, DMLWithDeletionVectorsHelper, MergeIntoCommandBase}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader.{CDC_TYPE_COLUMN_NAME, CDC_TYPE_NOT_CDC}
@@ -131,7 +132,7 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
         deltaTxn,
         dataSkippedFiles,
         columnsToDrop)
-    val targetDF = Dataset.ofRows(spark, targetPlan)
+    val targetDF = DataFrameUtils.ofRows(spark, targetPlan)
       .withColumn(ROW_ID_COL, monotonically_increasing_id())
       .withColumn(FILE_NAME_COL, input_file_name())
 
@@ -246,7 +247,7 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
    */
   protected def generateFilterForModifiedRows(): Expression = {
     val matchedExpression = if (matchedClauses.nonEmpty) {
-      And(Column(condition).expr, clauseDisjunction(matchedClauses))
+      And(condition, clauseDisjunction(matchedClauses))
     } else {
       Literal.FalseLiteral
     }
@@ -311,7 +312,7 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
       filesToRewrite,
       columnsToDrop = Nil)
     val baseTargetDF = RowTracking.preserveRowTrackingColumns(
-      dfWithoutRowTrackingColumns = Dataset.ofRows(spark, targetPlan),
+      dfWithoutRowTrackingColumns = DataFrameUtils.ofRows(spark, targetPlan),
       snapshot = deltaTxn.snapshot)
 
     val joinType = if (writeUnmodifiedRows) {
@@ -331,6 +332,10 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
       } else {
         "fullOuter"
       }
+    }
+
+    if (joinType == "fullOuter" || joinType == "leftOuter") {
+      secondSourceScanWasFullScan = true
     }
 
     logDebug(s"""writeAllChanges using $joinType join:

@@ -18,8 +18,11 @@ package org.apache.spark.sql.delta.commands
 
 import java.util.concurrent.TimeUnit
 
+import scala.util.control.NonFatal
+
 import org.apache.spark.sql.delta.metric.IncrementMetric
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, FileAction}
 import org.apache.spark.sql.delta.commands.DeleteCommand.{rewritingFilesMsg, FINDING_TOUCHED_FILES_MSG}
 import org.apache.spark.sql.delta.commands.MergeIntoCommandBase.totalBytesAndDistinctPartitionValues
@@ -35,6 +38,7 @@ import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference,
 import org.apache.spark.sql.catalyst.expressions.Literal.TrueLiteral
 import org.apache.spark.sql.catalyst.plans.QueryPlan
 import org.apache.spark.sql.catalyst.plans.logical.{DeltaDelete, LogicalPlan}
+import org.apache.spark.sql.delta.DeltaOperations.Operation
 import org.apache.spark.sql.execution.command.LeafRunnableCommand
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.{createMetric, createTimingMetric}
@@ -125,10 +129,18 @@ case class DeleteCommand(
           return Seq.empty
         }
 
-        val deleteActions = performDelete(sparkSession, deltaLog, txn)
-        txn.commitIfNeeded(actions = deleteActions,
-          op = DeltaOperations.Delete(condition.toSeq),
+        val (deleteActions, deleteMetrics) = performDelete(sparkSession, deltaLog, txn)
+        val numRecordsStats = NumRecordsStats.fromActions(deleteActions)
+        val operation = DeltaOperations.Delete(condition.toSeq)
+        validateNumRecords(deleteActions, numRecordsStats, operation)
+        val commitVersion = txn.commitIfNeeded(
+          actions = deleteActions,
+          op = operation,
           tags = RowTracking.addPreservedRowTrackingTagIfNotSet(txn.snapshot))
+        recordDeltaEvent(
+          deltaLog,
+          "delta.dml.delete.stats",
+          data = deleteMetrics.copy(commitVersion = commitVersion))
       }
       // Re-cache all cached plans(including this relation itself, if it's cached) that refer to
       // this data source relation.
@@ -149,7 +161,7 @@ case class DeleteCommand(
   def performDelete(
       sparkSession: SparkSession,
       deltaLog: DeltaLog,
-      txn: OptimisticTransaction): Seq[Action] = {
+      txn: OptimisticTransaction): (Seq[Action], DeleteMetric) = {
     import org.apache.spark.sql.delta.implicits._
 
     var numRemovedFiles: Long = 0
@@ -294,16 +306,16 @@ case class DeleteCommand(
             // Keep everything from the resolved target except a new TahoeFileIndex
             // that only involves the affected files instead of all files.
             val newTarget = DeltaTableUtils.replaceFileIndex(target, fileIndex)
-            val data = Dataset.ofRows(sparkSession, newTarget)
+            val data = DataFrameUtils.ofRows(sparkSession, newTarget)
             val incrDeletedCountExpr = IncrementMetric(TrueLiteral, metrics("numDeletedRows"))
             val filesToRewrite =
               withStatusCode("DELTA", FINDING_TOUCHED_FILES_MSG) {
                 if (candidateFiles.isEmpty) {
                   Array.empty[String]
                 } else {
-                  data.filter(new Column(cond))
+                  data.filter(Column(cond))
                     .select(input_file_name())
-                    .filter(new Column(incrDeletedCountExpr))
+                    .filter(Column(incrDeletedCountExpr))
                     .distinct()
                     .as[String]
                     .collect()
@@ -328,7 +340,7 @@ case class DeleteCommand(
               // that only involves the affected files instead of all files.
               val newTarget = DeltaTableUtils.replaceFileIndex(target, baseRelation.location)
               val targetDF = RowTracking.preserveRowTrackingColumns(
-                dfWithoutRowTrackingColumns = Dataset.ofRows(sparkSession, newTarget),
+                dfWithoutRowTrackingColumns = DataFrameUtils.ofRows(sparkSession, newTarget),
                 snapshot = txn.snapshot)
               val filterCond = Not(EqualNullSafe(cond, Literal.TrueLiteral))
               val rewrittenActions = rewriteFiles(txn, targetDF, filterCond, filesToRewrite.length)
@@ -386,10 +398,8 @@ case class DeleteCommand(
     txn.registerSQLMetrics(sparkSession, metrics)
     sendDriverMetrics(sparkSession, metrics)
 
-    recordDeltaEvent(
-      deltaLog,
-      "delta.dml.delete.stats",
-      data = DeleteMetric(
+    val numRecordsStats = NumRecordsStats.fromActions(deleteActions)
+    val deleteMetric = DeleteMetric(
         condition = condition.map(_.sql).getOrElse("true"),
         numFilesTotal,
         numFilesAfterSkipping,
@@ -413,14 +423,16 @@ case class DeleteCommand(
         rewriteTimeMs,
         numDeletionVectorsAdded,
         numDeletionVectorsRemoved,
-        numDeletionVectorsUpdated)
-    )
+        numDeletionVectorsUpdated,
+        numLogicalRecordsAdded = numRecordsStats.numLogicalRecordsAdded,
+        numLogicalRecordsRemoved = numRecordsStats.numLogicalRecordsRemoved)
 
-    if (deleteActions.nonEmpty) {
+    val actionsToCommit = if (deleteActions.nonEmpty) {
       createSetTransaction(sparkSession, deltaLog).toSeq ++ deleteActions
     } else {
       Seq.empty
     }
+    (actionsToCommit, deleteMetric)
   }
 
   /**
@@ -446,15 +458,15 @@ case class DeleteCommand(
         // as table data, while all rows which don't match are removed from the rewritten table data
         // but do get included in the output as CDC events.
         baseData
-          .filter(new Column(incrTouchedCountExpr))
+          .filter(Column(incrTouchedCountExpr))
           .withColumn(
             CDC_TYPE_COLUMN_NAME,
-            new Column(If(filterCondition, CDC_TYPE_NOT_CDC, CDC_TYPE_DELETE))
+            Column(If(filterCondition, CDC_TYPE_NOT_CDC, CDC_TYPE_DELETE))
           )
       } else {
         baseData
-          .filter(new Column(incrTouchedCountExpr))
-          .filter(new Column(filterCondition))
+          .filter(Column(incrTouchedCountExpr))
+          .filter(Column(filterCondition))
       }
 
       txn.writeFiles(dfToWrite)
@@ -465,6 +477,111 @@ case class DeleteCommand(
       spark: SparkSession, txn: OptimisticTransaction): Boolean = {
     spark.conf.get(DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS) &&
       DeletionVectorUtils.deletionVectorsWritable(txn.snapshot)
+  }
+
+  /**
+   * Validates that the number of records does not increase.
+   *
+   * Note: ideally we would also compare the number of added/removed rows in the statistics with the
+   * number of deleted/copied rows in the SQL metrics, but unfortunately this is not possible, as
+   * sql metrics are not reliable when there are task or stage retries.
+   */
+  private def validateNumRecords(
+      actions: Seq[Action],
+      numRecordsStats: NumRecordsStats,
+      op: Operation): Unit = {
+    (numRecordsStats.numLogicalRecordsAdded,
+      numRecordsStats.numLogicalRecordsRemoved,
+      numRecordsStats.numLogicalRecordsAddedInFilesWithDeletionVectors) match {
+      case (
+        Some(numAddedRecords),
+        Some(numRemovedRecords),
+        Some(numRecordsNotCopied)) =>
+        if (numAddedRecords > numRemovedRecords) {
+          logNumRecordsMismatch(deltaLog, actions, numRecordsStats, op)
+          if (conf.getConf(DeltaSQLConf.NUM_RECORDS_VALIDATION_ENABLED)) {
+            throw DeltaErrors.numRecordsMismatch(
+              operation = "DELETE",
+              numAddedRecords,
+              numRemovedRecords
+            )
+          }
+        }
+
+        if (conf.getConf(DeltaSQLConf.COMMAND_INVARIANT_CHECKS_USE_UNRELIABLE)) {
+          // and also using regular (unreliable) metrics for baseline
+          validateMetricBasedCommandInvariants(
+            numAddedRecords, numRemovedRecords, numRecordsNotCopied, op, deltaLog)
+        }
+
+      case _ =>
+        recordDeltaEvent(deltaLog, opType = "delta.assertions.statsNotPresentForNumRecordsCheck")
+        logWarning(log"Could not validate number of records due to missing statistics.")
+    }
+  }
+
+  private def validateMetricBasedCommandInvariants(
+      numAddedRecords: Long,
+      numRemovedRecords: Long,
+      numRecordsNotCopied: Long,
+      op: Operation,
+      deltaLog: DeltaLog): Unit = try {
+
+    val numRowsDeleted = CommandInvariantMetricValueFromSingle(metrics("numDeletedRows"))
+    val numRowsCopied = CommandInvariantMetricValueFromSingle(metrics("numCopiedRows"))
+
+    val recordMetricsFromMetadata = conf.getConf(DeltaSQLConf.DELTA_DML_METRICS_FROM_METADATA)
+    if (numRowsDeleted.getOrDummy == 0 && !recordMetricsFromMetadata) {
+      // If we don't record metrics we can't use them to perform invariant checks.
+      return
+    }
+
+    checkCommandInvariant(
+      invariant = () =>
+        numRowsDeleted.getOrThrow + numRowsCopied.getOrThrow + numRecordsNotCopied
+          == numRemovedRecords,
+      label = "numRowsDeleted + numRowsCopied + numRecordsNotCopied + " +
+        "numRowsRemovedByMetadataOnlyDelete == numRemovedRecords",
+      op = op,
+      deltaLog = deltaLog,
+      parameters = Map(
+        "numRowsDeleted" -> numRowsDeleted.getOrDummy,
+        "numRowsCopied" -> numRowsCopied.getOrDummy,
+        "numRemovedRecords" -> numRemovedRecords,
+        "numRecordsNotCopied" -> numRecordsNotCopied
+      ),
+      additionalInfo = Map(
+        DeltaSQLConf.DELTA_DML_METRICS_FROM_METADATA.key -> recordMetricsFromMetadata.toString
+      )
+    )
+
+    checkCommandInvariant(
+      invariant = () => numRowsCopied.getOrThrow + numRecordsNotCopied == numAddedRecords,
+      label = "numRowsCopied + numRecordsNotCopied == numAddedRecords",
+      op = op,
+      deltaLog = deltaLog,
+      parameters = Map(
+        "numRowsCopied" -> numRowsCopied.getOrDummy,
+        "numAddedRecords" -> numAddedRecords,
+        "numRecordsNotCopied" -> numRecordsNotCopied
+      ),
+      additionalInfo = Map(
+        DeltaSQLConf.DELTA_DML_METRICS_FROM_METADATA.key -> recordMetricsFromMetadata.toString
+      )
+    )
+  } catch {
+    // Immediately re-throw actual command invariant violations, so we don't re-wrap them below.
+    case e: DeltaIllegalStateException if e.getErrorClass == "DELTA_COMMAND_INVARIANT_VIOLATION" =>
+      throw e
+    case NonFatal(e) =>
+      logWarning(log"Unexpected error in validateMetricBasedCommandInvariants", e)
+      checkCommandInvariant(
+        invariant = () => false,
+        label = "Unexpected error in validateMetricBasedCommandInvariants",
+        op = op,
+        deltaLog = deltaLog,
+        parameters = Map.empty
+      )
   }
 }
 
@@ -541,5 +658,12 @@ case class DeleteMetric(
     rewriteTimeMs: Long,
     numDeletionVectorsAdded: Long,
     numDeletionVectorsRemoved: Long,
-    numDeletionVectorsUpdated: Long
+    numDeletionVectorsUpdated: Long,
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    commitVersion: Option[Long] = None,
+    isWriteCommand: Boolean = false,
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    numLogicalRecordsAdded: Option[Long] = None,
+    @JsonDeserialize(contentAs = classOf[java.lang.Long])
+    numLogicalRecordsRemoved: Option[Long] = None
 )

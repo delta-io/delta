@@ -15,18 +15,14 @@
  */
 package io.delta.kernel.data;
 
-/**
- * Abstraction to represent a single array value in a {@link ColumnVector}.
- */
+/** Abstraction to represent a single array value in a {@link ColumnVector}. */
 public interface ArrayValue {
-    /**
-     * The number of elements in the array
-     */
-    int getSize();
+  /** The number of elements in the array */
+  int getSize();
 
-    /**
-     * A {@link ColumnVector} containing the array elements with exactly
-     * {@link ArrayValue#getSize()} elements.
-     */
-    ColumnVector getElements();
+  /**
+   * A {@link ColumnVector} containing the array elements with exactly {@link ArrayValue#getSize()}
+   * elements.
+   */
+  ColumnVector getElements();
 }

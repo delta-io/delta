@@ -2,7 +2,9 @@
 description: Learn how to read and write Delta tables from JVM applications without <AS>.
 ---
 
-# Delta Standalone
+# Delta Standalone (deprecated)
+
+.. warning:: Delta Standalone is deprecated and will be removed in a future release. We recommend using the [Delta Kernel](delta-kernel.md) APIs.
 
 The Delta Standalone library is a single-node Java library that can be used to read from and write to Delta tables. Specifically, this library provides APIs to interact with a table's metadata in the transaction log, implementing the [Delta Transaction Log Protocol](https://github.com/delta-io/delta/blob/master/PROTOCOL.md) to achieve the transactional guarantees of the <Delta> format. Notably, this project doesn't depend on <AS> and has only a few transitive dependencies. Therefore, it can be used by any processing engine or application to access Delta tables.
 
@@ -608,4 +610,6 @@ There are two ways to communicate with the Delta Lake community.
 <!--- Update this with a more detailed guide? -->
 - Before local debugging of `standalone` tests in IntelliJ, run all tests with `build/sbt standalone/test`. This helps IntelliJ recognize the golden tables as class resources.
 
-.. include:: /shared/replacements.md
+
+.. <Delta> replace:: Delta Lake
+.. <AS> replace:: Apache Spark

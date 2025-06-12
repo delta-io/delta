@@ -115,4 +115,5 @@ This exception can occur in the following cases:
 - When multiple writers are writing to an empty path at the same time.
 
 
-.. include:: /shared/replacements.md
+.. <Delta> replace:: Delta Lake
+.. <AS> replace:: Apache Spark

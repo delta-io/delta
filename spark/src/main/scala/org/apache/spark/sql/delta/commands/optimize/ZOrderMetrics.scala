@@ -22,8 +22,8 @@ package org.apache.spark.sql.delta.commands.optimize
 class ZOrderMetrics(zOrderBy: Seq[String]) {
 
   var strategyName: String = _
-  val inputStats = new ZCubeFileStatsCollector(zOrderBy)
-  val outputStats = new ZCubeFileStatsCollector(zOrderBy)
+  val inputStats = new ZCubeFileStatsCollector(zOrderBy, isFull = false)
+  val outputStats = new ZCubeFileStatsCollector(zOrderBy, isFull = false)
   var numOutputCubes = 0
 
   def getZOrderStats(): ZOrderStats = {

@@ -54,5 +54,5 @@ Yes. When you use <Delta>, you are using open <AS> APIs so you can easily port y
 Changing a column's type or dropping a column requires rewriting the table. For an example, see [Change column type](delta-batch.md#change-column-type).
 
 
-
-.. include:: /shared/replacements.md
+.. <Delta> replace:: Delta Lake
+.. <AS> replace:: Apache Spark

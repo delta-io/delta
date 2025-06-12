@@ -21,6 +21,7 @@ import java.util.Locale
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.actions.CommitInfo
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
 import org.apache.spark.sql.delta.sources.{DeltaSink, DeltaSQLConf}
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
 import org.apache.commons.io.FileUtils
@@ -37,9 +38,8 @@ import org.apache.spark.sql.streaming._
 import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
 
-class DeltaSinkSuite
+abstract class DeltaSinkTest
   extends StreamTest
-  with DeltaColumnMappingTestUtils
   with DeltaSQLCommandTest {
 
   override val streamingTimeout = 60.seconds
@@ -68,6 +68,14 @@ class DeltaSinkSuite
       }
     }
   }
+}
+
+class DeltaSinkSuite
+  extends DeltaSinkTest
+  with DeltaColumnMappingTestUtils
+  with CoordinatedCommitsBaseSuite  {
+
+  import testImplicits._
 
   test("append mode") {
     failAfter(streamingTimeout) {
@@ -235,7 +243,7 @@ class DeltaSinkSuite
 
         // Verify the correct partitioning schema has been inferred
         val hadoopFsRelations = outputDf.queryExecution.analyzed.collect {
-          case LogicalRelation(baseRelation, _, _, _) if
+          case LogicalRelationWithTable(baseRelation, _) if
               baseRelation.isInstanceOf[HadoopFsRelation] =>
             baseRelation.asInstanceOf[HadoopFsRelation]
         }
@@ -401,8 +409,8 @@ class DeltaSinkSuite
             .save(outputDir.getCanonicalPath)
         }
         checkError(
-          exception = e,
-          errorClass = "DELTA_FAILED_TO_MERGE_FIELDS",
+          e,
+          "DELTA_FAILED_TO_MERGE_FIELDS",
           parameters = Map("currentField" -> "id", "updateField" -> "id"))
       } finally {
         query.stop()
@@ -426,16 +434,20 @@ class DeltaSinkSuite
         .mode("append")
         .save(outputDir.getCanonicalPath)
 
-      val wrapperException = intercept[StreamingQueryException] {
-        val q = dsWriter.start(outputDir.getCanonicalPath)
-        inputData.addData(1, 2, 3)
-        q.processAllAvailable()
+      // More tests covering type changes can be found in [[DeltaSinkImplicitCastSuite]]. This only
+      // covers type changes disabled.
+      withSQLConf(DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS.key -> "false") {
+        val wrapperException = intercept[StreamingQueryException] {
+          val q = dsWriter.start(outputDir.getCanonicalPath)
+          inputData.addData(1, 2, 3)
+          q.processAllAvailable()
+        }
+        assert(wrapperException.cause.isInstanceOf[AnalysisException])
+        checkError(
+          wrapperException.cause.asInstanceOf[AnalysisException],
+          "DELTA_FAILED_TO_MERGE_FIELDS",
+          parameters = Map("currentField" -> "id", "updateField" -> "id"))
       }
-      assert(wrapperException.cause.isInstanceOf[AnalysisException])
-      checkError(
-        exception = wrapperException.cause.asInstanceOf[AnalysisException],
-        errorClass = "DELTA_FAILED_TO_MERGE_FIELDS",
-        parameters = Map("currentField" -> "id", "updateField" -> "id"))
     }
   }
 
@@ -605,6 +617,14 @@ class DeltaSinkSuite
     }
   }
 
+}
+
+class DeltaSinkWithCoordinatedCommitsBatch1Suite extends DeltaSinkSuite {
+  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(1)
+}
+
+class DeltaSinkWithCoordinatedCommitsBatch100Suite extends DeltaSinkSuite {
+  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(100)
 }
 
 abstract class DeltaSinkColumnMappingSuiteBase extends DeltaSinkSuite
