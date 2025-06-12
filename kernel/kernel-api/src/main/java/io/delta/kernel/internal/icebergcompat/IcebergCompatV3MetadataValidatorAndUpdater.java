@@ -89,11 +89,7 @@ public class IcebergCompatV3MetadataValidatorAndUpdater
    * @param dataFileStatus The {@link DataFileStatus} to validate.
    */
   public static void validateDataFileStatus(DataFileStatus dataFileStatus) {
-    if (!dataFileStatus.getStatistics().isPresent()) {
-      // presence of stats means always has a non-null `numRecords`
-      throw DeltaErrors.icebergCompatMissingNumRecordsStats(
-          INSTANCE.compatFeatureName(), dataFileStatus);
-    }
+    validateDataFileStatus(dataFileStatus, INSTANCE.compatFeatureName());
   }
 
   /// //////////////////////////////////////////////////////////////////////////////

@@ -32,6 +32,7 @@ import io.delta.kernel.internal.util.SchemaIterable;
 import io.delta.kernel.internal.util.SchemaUtils;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.*;
+import io.delta.kernel.utils.DataFileStatus;
 import java.util.*;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
@@ -398,4 +399,20 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
   abstract List<TableFeature> requiredDependencyTableFeatures();
 
   abstract List<IcebergCompatCheck> icebergCompatChecks();
+
+  /**
+   * Validate the given {@link DataFileStatus} that is being added as a {@code add} action to Delta
+   * Log. Currently, it checks that the statistics are not empty.
+   *
+   * @param dataFileStatus The {@link DataFileStatus} to validate.
+   * @param compatFeatureName The name of the compatibility feature being validated (e.g.
+   *     "icebergCompatV2").
+   */
+  protected static void validateDataFileStatus(
+      DataFileStatus dataFileStatus, String compatFeatureName) {
+    if (!dataFileStatus.getStatistics().isPresent()) {
+      // presence of stats means always has a non-null `numRecords`
+      throw DeltaErrors.icebergCompatMissingNumRecordsStats(compatFeatureName, dataFileStatus);
+    }
+  }
 }
