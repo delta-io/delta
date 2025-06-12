@@ -18,20 +18,54 @@ package io.delta.kernel.internal.icebergcompat;
 import static io.delta.kernel.internal.tablefeatures.TableFeatures.*;
 import static java.util.stream.Collectors.toList;
 
+import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.tablefeatures.TableFeature;
-import io.delta.kernel.types.*;
 import io.delta.kernel.utils.DataFileStatus;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Stream;
 
 /** Utility methods for validation and compatibility checks for Iceberg V3. */
 public class IcebergCompatV3MetadataValidatorAndUpdater
     extends IcebergCompatMetadataValidatorAndUpdater {
+
+  /**
+   * Validates that any change to property {@link TableConfig#ICEBERG_COMPAT_V3_ENABLED} is valid.
+   * Currently, the changes we support are
+   *
+   * <ul>
+   *   <li>No change in enablement (true to true or false to false)
+   *   <li>Enabling but only on a new table (false to true)
+   * </ul>
+   *
+   * The changes that we do not support and for which we throw an {@link KernelException} are
+   *
+   * <ul>
+   *   <li>Disabling on an existing table (true to false)
+   *   <li>Enabling on an existing table (false to true)
+   * </ul>
+   */
+  public static void validateIcebergCompatV3Change(
+      Map<String, String> oldConfig, Map<String, String> newConfig, boolean isNewTable) {
+    if (!isNewTable) {
+      boolean wasEnabled = TableConfig.ICEBERG_COMPAT_V3_ENABLED.fromMetadata(oldConfig);
+      boolean isEnabled = TableConfig.ICEBERG_COMPAT_V3_ENABLED.fromMetadata(newConfig);
+      if (!wasEnabled && isEnabled) {
+        throw DeltaErrors.enablingIcebergCompatFeatureOnExistingTable(
+            TableConfig.ICEBERG_COMPAT_V3_ENABLED.getKey());
+      }
+      if (wasEnabled && !isEnabled) {
+        throw DeltaErrors.disablingIcebergCompatFeatureOnExistingTable(
+            TableConfig.ICEBERG_COMPAT_V3_ENABLED.getKey());
+      }
+    }
+  }
+
   /**
    * Validate and update the given Iceberg V3 metadata.
    *

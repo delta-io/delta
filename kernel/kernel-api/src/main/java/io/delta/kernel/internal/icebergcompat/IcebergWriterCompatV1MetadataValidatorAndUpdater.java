@@ -90,11 +90,11 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
       boolean wasEnabled = TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.fromMetadata(oldConfig);
       boolean isEnabled = TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.fromMetadata(newConfig);
       if (!wasEnabled && isEnabled) {
-        throw DeltaErrors.enablingIcebergWriterCompatV1OnExistingTable(
+        throw DeltaErrors.enablingIcebergCompatFeatureOnExistingTable(
             TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey());
       }
       if (wasEnabled && !isEnabled) {
-        throw DeltaErrors.disablingIcebergWriterCompatV1OnExistingTable(
+        throw DeltaErrors.disablingIcebergCompatFeatureOnExistingTable(
             TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey());
       }
     }

@@ -451,6 +451,10 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         metadata ->
             IcebergWriterCompatV1MetadataValidatorAndUpdater.validateIcebergWriterCompatV1Change(
                 baseMetadata.getConfiguration(), metadata.getConfiguration(), isCreateOrReplace));
+    newMetadata.ifPresent(
+        metadata ->
+            IcebergCompatV3MetadataValidatorAndUpdater.validateIcebergCompatV3Change(
+                baseMetadata.getConfiguration(), metadata.getConfiguration(), isCreateOrReplace));
 
     // We must do our icebergWriterCompatV1 checks/updates FIRST since it has stricter column
     // mapping requirements (id mode) than icebergCompatV2. It also may enable icebergCompatV2.
@@ -635,6 +639,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     ColumnMapping.verifyColumnMappingChange(
         oldMetadata.getConfiguration(), newMetadata.getConfiguration(), isCreateOrReplace);
     IcebergWriterCompatV1MetadataValidatorAndUpdater.validateIcebergWriterCompatV1Change(
+        oldMetadata.getConfiguration(), newMetadata.getConfiguration(), isCreateOrReplace);
+    IcebergCompatV3MetadataValidatorAndUpdater.validateIcebergCompatV3Change(
         oldMetadata.getConfiguration(), newMetadata.getConfiguration(), isCreateOrReplace);
     IcebergUniversalFormatMetadataValidatorAndUpdater.validate(newMetadata);
     Optional<Metadata> updatedMetadata = Optional.empty();

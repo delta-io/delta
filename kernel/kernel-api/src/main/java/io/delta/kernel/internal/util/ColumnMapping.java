@@ -378,9 +378,13 @@ public class ColumnMapping {
     }
 
     if (Boolean.parseBoolean(
-        metadata
-            .getConfiguration()
-            .getOrDefault(TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey(), "false"))) {
+            metadata
+                .getConfiguration()
+                .getOrDefault(TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey(), "false"))
+        || Boolean.parseBoolean(
+            metadata
+                .getConfiguration()
+                .getOrDefault(TableConfig.ICEBERG_COMPAT_V3_ENABLED.getKey(), "false"))) {
       newSchema = rewriteFieldIdsForIceberg(newSchema, maxColumnId);
     }
 
