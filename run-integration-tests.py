@@ -400,11 +400,11 @@ def run_unity_catalog_commit_coordinator_integration_tests(root_dir, version, te
 
 def clear_artifact_cache():
     print("Clearing Delta artifacts from ivy2 and mvn cache")
-    ivy_caches_to_clear = [path for path in os.listdir(os.path.expanduser("~")) if path.startswith(".ivy")]
+    ivy_caches_to_clear = [filepath for filepath in os.listdir(os.path.expanduser("~")) if filepath.startswith(".ivy")]
     print(f"Clearing Ivy caches in: {ivy_caches_to_clear}")
-    for path in ivy_caches_to_clear:
-        delete_if_exists(os.path.expanduser(f"~/{path}/cache/io.delta"))
-        delete_if_exists(os.path.expanduser(f"~/{path}/local/io.delta"))
+    for filepath in ivy_caches_to_clear:
+        delete_if_exists(os.path.expanduser(f"~/{filepath}/cache/io.delta"))
+        delete_if_exists(os.path.expanduser(f"~/{filepath}/local/io.delta"))
     delete_if_exists(os.path.expanduser("~/.m2/repository/io/delta/"))
 
 
