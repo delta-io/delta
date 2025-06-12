@@ -416,7 +416,7 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
 
       val structType = table.getLatestSnapshot(engine).getSchema
       assertColumnMapping(structType.get("a"), 1)
-      assertColumnMapping(structType.get("map"), 4)
+      assertColumnMapping(structType.get("map"), 3)
 
       val mapType = structType.get("map").getDataType.asInstanceOf[MapType]
       val updatedArrayValue = mapType.getValueField.getDataType.asInstanceOf[ArrayType]
@@ -515,7 +515,7 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
 
       val structType = table.getLatestSnapshot(engine).getSchema
       assertColumnMapping(structType.get("a"), 1)
-      assertColumnMapping(structType.get("map"), 2)
+      assertColumnMapping(structType.get("map"), 3)
       val mapType = structType.get("map").getDataType.asInstanceOf[MapType]
       val updatedInnerStruct = mapType.getValueType.asInstanceOf[StructType]
 
@@ -569,7 +569,7 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
 
       val structType = table.getLatestSnapshot(engine).getSchema
       assertColumnMapping(structType.get("a"), 1)
-      assertColumnMapping(structType.get("map"), 2)
+      assertColumnMapping(structType.get("map"), 3)
       val mapType = structType.get("map").getDataType.asInstanceOf[MapType]
       val updatedInnerStruct = mapType.getValueType.asInstanceOf[StructType]
 
@@ -621,7 +621,7 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
 
       val structType = table.getLatestSnapshot(engine).getSchema
       assertColumnMapping(structType.get("a"), 1)
-      assertColumnMapping(structType.get("map"), 2)
+      assertColumnMapping(structType.get("map"), 4)
       val mapType = structType.get("map").getDataType.asInstanceOf[MapType]
       val updatedInnerStruct = mapType.getValueType.asInstanceOf[StructType]
 
@@ -677,7 +677,7 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
 
       val structType = table.getLatestSnapshot(engine).getSchema
       assertColumnMapping(structType.get("a"), 1)
-      assertColumnMapping(structType.get("map"), 2)
+      assertColumnMapping(structType.get("map"), 4)
       val mapType = structType.get("map").getDataType.asInstanceOf[MapType]
       val updatedInnerStruct = mapType.getValueType.asInstanceOf[StructType]
 
