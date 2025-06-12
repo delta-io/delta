@@ -31,7 +31,6 @@ import io.delta.kernel.internal.skipping.StatsSchemaHelper;
 import io.delta.kernel.internal.types.TypeWideningChecker;
 import io.delta.kernel.types.*;
 import java.util.*;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
@@ -55,7 +54,9 @@ public class SchemaUtils {
   public static void validateSchema(StructType schema, boolean isColumnMappingEnabled) {
     checkArgument(schema.length() > 0, "Schema should contain at least one column");
 
-    List<String> flattenColNames = flattenNestedFieldNames(schema);
+    List<String> flattenColNames =
+        new SchemaIterable(schema)
+            .stream().map(SchemaIterable.SchemaElement::getNamePath).collect(Collectors.toList());
 
     // check there are no duplicate column names in the schema
     Set<String> uniqueColNames =
@@ -307,27 +308,6 @@ public class SchemaUtils {
   }
 
   /**
-   * Finds `StructField`s that match a given check `f`. Returns the path to the column, and the
-   * field of all fields that match the check.
-   *
-   * @param schema The DataType to filter
-   * @param recurseIntoMapOrArrayElements This flag defines whether we should recurse into elements
-   *     types of ArrayType and MapType.
-   * @param f The function to check each StructField
-   * @param stopOnFirstMatch If true, stop the search when the first match is found
-   * @return A List of pairs, each containing a List of Strings (the path) and a StructField. If
-   *     {@code stopOnFirstMatch} is true, the list will contain at most one element.
-   */
-  public static List<Tuple2<List<String>, StructField>> filterRecursively(
-      DataType schema,
-      boolean recurseIntoMapOrArrayElements,
-      boolean stopOnFirstMatch,
-      Function<StructField, Boolean> f) {
-    return recurseIntoComplexTypes(
-        schema, new ArrayList<>(), recurseIntoMapOrArrayElements, stopOnFirstMatch, f);
-  }
-
-  /**
    * Collects all leaf columns from the given schema (including flattened columns only for
    * StructTypes), up to maxColumns. NOTE: If maxColumns = -1, we collect ALL leaf columns in the
    * schema.
@@ -347,96 +327,6 @@ public class SchemaUtils {
   /////////////////////////////////////////////////////////////////////////////////////////////////
   /// Private methods                                                                           ///
   /////////////////////////////////////////////////////////////////////////////////////////////////
-  /**
-   * Returns all column names in this schema as a flat list. For example, a schema like:
-   *
-   * <pre>
-   *   | - a
-   *   | | - 1
-   *   | | - 2
-   *   | - b
-   *   | - c
-   *   | | - nest
-   *   |   | - 3
-   *   will get flattened to: "a", "a.1", "a.2", "b", "c", "c.nest", "c.nest.3"
-   * </pre>
-   */
-  private static List<String> flattenNestedFieldNames(StructType schema) {
-    List<Tuple2<List<String>, StructField>> columnPathToStructFields =
-        filterRecursively(
-            schema,
-            true /* recurseIntoMapOrArrayElements */,
-            false /* stopOnFirstMatch */,
-            sf -> true);
-
-    return columnPathToStructFields.stream()
-        .map(t -> t._1)
-        .map(SchemaUtils::concatWithDot)
-        .collect(Collectors.toList());
-  }
-
-  private static List<Tuple2<List<String>, StructField>> recurseIntoComplexTypes(
-      DataType type,
-      List<String> columnPath,
-      boolean recurseIntoMapOrArrayElements,
-      boolean stopOnFirstMatch,
-      Function<StructField, Boolean> f) {
-    List<Tuple2<List<String>, StructField>> filtered = new ArrayList<>();
-
-    if (type instanceof StructType) {
-      StructType s = (StructType) type;
-      for (StructField sf : s.fields()) {
-        List<String> newColumnPath = new ArrayList<>(columnPath);
-        newColumnPath.add(sf.getName());
-
-        if (f.apply(sf)) {
-          filtered.add(new Tuple2<>(newColumnPath, sf));
-          if (stopOnFirstMatch) {
-            return filtered;
-          }
-        }
-
-        filtered.addAll(
-            recurseIntoComplexTypes(
-                sf.getDataType(),
-                newColumnPath,
-                recurseIntoMapOrArrayElements,
-                stopOnFirstMatch,
-                f));
-
-        if (stopOnFirstMatch && !filtered.isEmpty()) {
-          return filtered;
-        }
-      }
-    } else if (type instanceof ArrayType && recurseIntoMapOrArrayElements) {
-      ArrayType a = (ArrayType) type;
-      List<String> newColumnPath = new ArrayList<>(columnPath);
-      newColumnPath.add("element");
-      return recurseIntoComplexTypes(
-          a.getElementType(), newColumnPath, recurseIntoMapOrArrayElements, stopOnFirstMatch, f);
-    } else if (type instanceof MapType && recurseIntoMapOrArrayElements) {
-      MapType m = (MapType) type;
-      List<String> keyColumnPath = new ArrayList<>(columnPath);
-      keyColumnPath.add("key");
-      List<String> valueColumnPath = new ArrayList<>(columnPath);
-      valueColumnPath.add("value");
-      filtered.addAll(
-          recurseIntoComplexTypes(
-              m.getKeyType(), keyColumnPath, recurseIntoMapOrArrayElements, stopOnFirstMatch, f));
-      if (stopOnFirstMatch && !filtered.isEmpty()) {
-        return filtered;
-      }
-      filtered.addAll(
-          recurseIntoComplexTypes(
-              m.getValueType(),
-              valueColumnPath,
-              recurseIntoMapOrArrayElements,
-              stopOnFirstMatch,
-              f));
-    }
-
-    return filtered;
-  }
 
   /* Compute the SchemaChanges using field IDs */
   static SchemaChanges computeSchemaChangesById(StructType currentSchema, StructType newSchema) {
