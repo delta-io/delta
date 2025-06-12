@@ -990,7 +990,7 @@ class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with Colum
             false),
           true,
           fieldMetadataForMapColumn(
-            2,
+            3,
             ColumnMapping.getPhysicalName(currentSchema.get("map")),
             "map",
             4,
