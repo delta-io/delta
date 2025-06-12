@@ -98,6 +98,23 @@ class IcebergCompatV3MetadataValidatorAndUpdaterSuite
     }
   }
 
+  Seq("id", "name").foreach { existingCMMode =>
+    Seq(true, false).foreach { isNewTable =>
+      test(s"existing column mapping mode `$existingCMMode` is preserved " +
+        s"when icebergCompat is enabled, isNewTable = $isNewTable") {
+        val metadata = getCompatEnabledMetadata(cmTestSchema(), columnMappingMode = existingCMMode)
+        val protocol = getCompatEnabledProtocol()
+
+        assert(metadata.getConfiguration.get("delta.columnMapping.mode") === existingCMMode)
+
+        val updatedMetadata =
+          validateAndUpdateIcebergCompatMetadata(isNewTable, metadata, protocol)
+        // No metadata update is needed since already compatible column mapping mode
+        assert(!updatedMetadata.isPresent)
+      }
+    }
+  }
+
   Seq(true, false).foreach { isNewTable =>
     test(s"column mapping mode `name` is auto enabled when icebergCompatV3 is enabled, " +
       s"isNewTable = $isNewTable") {
@@ -122,35 +139,4 @@ class IcebergCompatV3MetadataValidatorAndUpdaterSuite
       }
     }
   }
-}
-
-object IcebergCompatV3MetadataValidatorAndUpdaterSuiteBase {
-  // Allowed simple types as data or partition columns
-  val SIMPLE_TYPES: Set[DataType] = Set(
-    BooleanType.BOOLEAN,
-    ByteType.BYTE,
-    ShortType.SHORT,
-    IntegerType.INTEGER,
-    LongType.LONG,
-    FloatType.FLOAT,
-    DoubleType.DOUBLE,
-    DateType.DATE,
-    TimestampType.TIMESTAMP,
-    TimestampNTZType.TIMESTAMP_NTZ,
-    StringType.STRING,
-    BinaryType.BINARY,
-    new DecimalType(10, 5))
-
-  // Allowed as data columns but not allowed as partition columns
-  val SUPPORTED_DATA_COLUMN_ONLY_TYPES: Set[DataType] = Set(VariantType.VARIANT)
-
-  // Allowed complex types as data columns
-  val COMPLEX_TYPES: Set[DataType] = Set(
-    new ArrayType(BooleanType.BOOLEAN, true),
-    new MapType(IntegerType.INTEGER, LongType.LONG, true),
-    new StructType().add("s1", BooleanType.BOOLEAN).add("s2", IntegerType.INTEGER))
-
-  // Unsupported partition column types
-  val UNSUPPORTED_PARTITION_COLUMN_TYPES: Set[DataType] =
-    COMPLEX_TYPES ++ SUPPORTED_DATA_COLUMN_ONLY_TYPES
 }

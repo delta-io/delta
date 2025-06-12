@@ -89,6 +89,23 @@ class IcebergCompatV2MetadataValidatorAndUpdaterSuite
     }
   }
 
+  Seq("id", "name").foreach { existingCMMode =>
+    Seq(true, false).foreach { isNewTable =>
+      test(s"existing column mapping mode `$existingCMMode` is preserved " +
+        s"when icebergCompat is enabled, isNewTable = $isNewTable") {
+        val metadata = getCompatEnabledMetadata(cmTestSchema(), columnMappingMode = existingCMMode)
+        val protocol = getCompatEnabledProtocol()
+
+        assert(metadata.getConfiguration.get("delta.columnMapping.mode") === existingCMMode)
+
+        val updatedMetadata =
+          validateAndUpdateIcebergCompatMetadata(isNewTable, metadata, protocol)
+        // No metadata update is needed since already compatible column mapping mode
+        assert(!updatedMetadata.isPresent)
+      }
+    }
+  }
+
   Seq(true, false).foreach { isNewTable =>
     test(s"column mapping mode `name` is auto enabled when icebergCompat is enabled, " +
       s"isNewTable = $isNewTable") {
