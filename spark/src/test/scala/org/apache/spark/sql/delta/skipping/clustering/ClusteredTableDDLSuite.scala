@@ -725,6 +725,25 @@ trait ClusteredTableDDLSuiteBase
     }
   }
 
+  test("create cluster with generated column") {
+    withTable(testTable) {
+      io.delta.tables.DeltaTable.create(spark)
+        .tableName(testTable)
+        .addColumn("c1", IntegerType)
+        .addColumn(
+          io.delta.tables.DeltaTable.columnBuilder(spark, "c2")
+            .dataType(IntegerType)
+            .generatedAlwaysAs("c1 + 10")
+            .build
+        )
+        .clusterBy("c2")
+        .execute()
+
+        val tableIdentifier = TableIdentifier(testTable)
+        verifyClusteringColumns(tableIdentifier, Seq("c2")) 
+    }
+  }
+
   test("optimize clustered table and trigger regular compaction") {
     withClusteredTable(testTable, "a INT, b STRING", "a, b") {
       val tableIdentifier = TableIdentifier(testTable)
