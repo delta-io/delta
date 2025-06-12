@@ -112,12 +112,14 @@ public class SchemaIterable implements Iterable<SchemaIterable.SchemaElement> {
     };
   }
 
-  Stream<SchemaElement> stream() {
-    return StreamSupport.stream(spliterator(), /* parallel = */false);
+  public Stream<SchemaElement> stream() {
+    return StreamSupport.stream(spliterator(), /* parallel = */ false);
   }
 
-  Stream<MutableSchemaElement> mutableStream() {
-    return StreamSupport.stream(Spliterators.spliteratorUnknownSize(newMutableIterator(), /*characteristics = */0), /* parallel = */false);
+  public Stream<MutableSchemaElement> mutableStream() {
+    return StreamSupport.stream(
+        Spliterators.spliteratorUnknownSize(newMutableIterator(), /*characteristics = */ 0),
+        /* parallel = */ false);
   }
 
   /**

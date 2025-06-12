@@ -220,17 +220,17 @@ public class ColumnMapping {
 
   /** Visible for testing */
   static int findMaxColumnId(StructType schema) {
-    return new SchemaIterable(schema).
-            stream()
-            .mapToInt(e -> {
-                int columnId = hasColumnId(e.getField()) ? getColumnId(e.getField()) : 0;
-                int nestedMaxId = hasNestedColumnIds(e.getField())
-                    ? getMaxNestedColumnId(e.getField())
-                    : 0;
-                return Math.max(columnId, nestedMaxId);
-              }
-            )
-            .max().orElse(0);
+    return new SchemaIterable(schema)
+        .stream()
+            .mapToInt(
+                e -> {
+                  int columnId = hasColumnId(e.getField()) ? getColumnId(e.getField()) : 0;
+                  int nestedMaxId =
+                      hasNestedColumnIds(e.getField()) ? getMaxNestedColumnId(e.getField()) : 0;
+                  return Math.max(columnId, nestedMaxId);
+                })
+            .max()
+            .orElse(0);
   }
 
   static boolean hasColumnId(StructField field) {
