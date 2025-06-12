@@ -161,6 +161,8 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
         List<String> invalidFields =
             new SchemaIterable(inputContext.newMetadata.getSchema())
                 .stream()
+                    // ID info is only on struct fields.
+                    .filter(SchemaIterable.SchemaElement::isStructField)
                     .filter(
                         element -> {
                           StructField field = element.getField();
