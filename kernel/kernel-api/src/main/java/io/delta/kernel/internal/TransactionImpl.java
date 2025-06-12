@@ -23,6 +23,7 @@ import static io.delta.kernel.internal.util.Preconditions.checkState;
 import static io.delta.kernel.internal.util.Utils.toCloseableIterator;
 
 import io.delta.kernel.*;
+import io.delta.kernel.annotation.Experimental;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.ConcurrentWriteException;
@@ -223,6 +224,21 @@ public class TransactionImpl implements Transaction {
           Optional.of(e) /* exception */);
       throw e;
     }
+  }
+
+  @Experimental
+  @VisibleForTesting
+  public CloseableIterator<Row> getFinalizedActions(
+      Engine engine, CloseableIterator<Row> dataActions) {
+    final List<Row> metadataActions = new ArrayList<>();
+    metadataActions.add(createCommitInfoSingleAction(generateCommitAction(engine).toRow()));
+    if (shouldUpdateMetadata) {
+      metadataActions.add(createMetadataSingleAction(metadata.toRow()));
+    }
+    if (shouldUpdateProtocol) {
+      metadataActions.add(createProtocolSingleAction(protocol.toRow()));
+    }
+    return Utils.toCloseableIterator(metadataActions.iterator()).combine(dataActions);
   }
 
   private long commitWithRetry(

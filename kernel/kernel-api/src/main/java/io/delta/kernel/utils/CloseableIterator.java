@@ -40,6 +40,42 @@ import java.util.function.Function;
 public interface CloseableIterator<T> extends Iterator<T>, Closeable {
 
   /**
+   * Return an empty CloseableIterator. {@link #hasNext()} is always false, {@link #next()} throws,
+   * and {@link #close()} is a no-op.
+   */
+  @SuppressWarnings("unchecked")
+  static <T> CloseableIterator<T> empty() {
+    return (CloseableIterator<T>) Empty.INSTANCE;
+  }
+
+  /** A singleton, no‐op empty iterator implementation. */
+  final class Empty<T> implements CloseableIterator<T> {
+    static final CloseableIterator<?> INSTANCE = new Empty<>();
+
+    private Empty() {}
+
+    @Override
+    public boolean hasNext() {
+      return false;
+    }
+
+    @Override
+    public T next() {
+      throw new NoSuchElementException("empty CloseableIterator");
+    }
+
+    @Override
+    public void close() throws IOException {
+      // nothing to do
+    }
+
+    @Override
+    public void remove() {
+      throw new UnsupportedOperationException("empty CloseableIterator");
+    }
+  }
+
+  /**
    * Represents the result of applying the filter condition in the {@link
    * #breakableFilter(Function)} method of a {@link CloseableIterator}. This enum determines how
    * each element in the iterator should be handled.
