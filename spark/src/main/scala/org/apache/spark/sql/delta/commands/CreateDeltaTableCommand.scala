@@ -171,7 +171,7 @@ case class CreateDeltaTableCommand(
       }
     }
 
-    val txn = startTxnForTableCreation(sparkSession, deltaLog, tableWithLocation)
+    var txn = startTxnForTableCreation(sparkSession, deltaLog, tableWithLocation)
 
     OptimisticTransaction.withActive(txn) {
       val result = query match {
@@ -185,7 +185,8 @@ case class CreateDeltaTableCommand(
             commandMetrics = Some(metrics))
         case Some(deltaWriter: WriteIntoDeltaLike) =>
           checkPathEmpty(txn)
-          handleCreateTableAsSelect(sparkSession, txn, deltaLog, deltaWriter, tableWithLocation)
+          txn = handleCreateTableAsSelect(
+            sparkSession, txn, deltaLog, deltaWriter, tableWithLocation)
           Nil
         case Some(query) =>
           checkPathEmpty(txn)
@@ -202,7 +203,8 @@ case class CreateDeltaTableCommand(
             configuration = tableWithLocation.properties + ("comment" -> table.comment.orNull),
             data = data,
             Some(tableWithLocation))
-          handleCreateTableAsSelect(sparkSession, txn, deltaLog, deltaWriter, tableWithLocation)
+          txn = handleCreateTableAsSelect(
+            sparkSession, txn, deltaLog, deltaWriter, tableWithLocation)
           Nil
         case _ =>
           handleCreateTable(sparkSession, txn, tableWithLocation, fs, hadoopConf)
@@ -258,13 +260,15 @@ case class CreateDeltaTableCommand(
    * CREATE TABLE AS SELECT
    * CREATE OR REPLACE TABLE AS SELECT
    * .saveAsTable in DataframeWriter API
+   *
+   * @return the txn used to make Delta commit
    */
   private def handleCreateTableAsSelect(
       sparkSession: SparkSession,
       txn: OptimisticTransaction,
       deltaLog: DeltaLog,
       deltaWriter: WriteIntoDeltaLike,
-      tableWithLocation: CatalogTable): Unit = {
+      tableWithLocation: CatalogTable): OptimisticTransaction = {
     val isManagedTable = tableWithLocation.tableType == CatalogTableType.MANAGED
     val options = new DeltaOptions(table.storage.properties, sparkSession.sessionState.conf)
 
@@ -334,6 +338,7 @@ case class CreateDeltaTableCommand(
       val (taggedCommitData, op) = doDeltaWrite(updatedWriter, updatedWriter.data.schema.asNullable)
       txn.commit(taggedCommitData.actions, op, tags = taggedCommitData.stringTags)
     }
+    txnToReturn
   }
 
   /**
