@@ -452,6 +452,24 @@ public class TableFeatures {
     }
   }
 
+  public static final TableFeature ICEBERG_WRITER_COMPAT_V3 = new IcebergWriterCompatV3();
+
+  private static class IcebergWriterCompatV3 extends TableFeature.WriterFeature
+      implements FeatureAutoEnabledByMetadata {
+    IcebergWriterCompatV3() {
+      super("icebergWriterCompatV3", /* minWriterVersion = */ 7);
+    }
+
+    @Override
+    public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
+      return TableConfig.ICEBERG_WRITER_COMPAT_V3_ENABLED.fromMetadata(metadata);
+    }
+
+    public @Override Set<TableFeature> requiredFeatures() {
+      return Collections.singleton(ICEBERG_COMPAT_V3_W_FEATURE);
+    }
+  }
+
   /////////////////////////////////////////////////////////////////////////////////
   /// END: Define the {@link TableFeature}s                                     ///
   /////////////////////////////////////////////////////////////////////////////////
@@ -490,7 +508,8 @@ public class TableFeatures {
               VARIANT_RW_FEATURE,
               VARIANT_RW_PREVIEW_FEATURE,
               VARIANT_SHREDDING_PREVIEW_RW_FEATURE,
-              ICEBERG_WRITER_COMPAT_V1));
+              ICEBERG_WRITER_COMPAT_V1,
+              ICEBERG_WRITER_COMPAT_V3));
 
   public static final Map<String, TableFeature> TABLE_FEATURE_MAP =
       Collections.unmodifiableMap(
