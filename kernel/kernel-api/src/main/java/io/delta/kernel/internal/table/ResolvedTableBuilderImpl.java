@@ -113,8 +113,8 @@ public class ResolvedTableBuilderImpl implements ResolvedTableBuilder {
     checkArgument(ctx.versionOpt.orElse(0L) >= 0, "version must be >= 0");
     validateProtocolAndMetadataOnlyIfVersionProvided();
     validateProtocolRead();
-    validateLogDatasOnlyRatifiedCommits();
-    validateLogDatasSortedContiguous();
+    validateLogDataContainsOnlyRatifiedCommits(); // TODO: delta-io/delta#4765 support other types
+    validateLogDataIsSortedContiguous();
   }
 
   private void validateProtocolAndMetadataOnlyIfVersionProvided() {
@@ -128,7 +128,7 @@ public class ResolvedTableBuilderImpl implements ResolvedTableBuilder {
         x -> TableFeatures.validateKernelCanReadTheTable(x._1, ctx.unresolvedPath));
   }
 
-  private void validateLogDatasOnlyRatifiedCommits() {
+  private void validateLogDataContainsOnlyRatifiedCommits() {
     for (ParsedLogData logData : ctx.logDatas) {
       checkArgument(
           logData.type == ParsedLogType.RATIFIED_STAGED_COMMIT,
@@ -136,7 +136,7 @@ public class ResolvedTableBuilderImpl implements ResolvedTableBuilder {
     }
   }
 
-  private void validateLogDatasSortedContiguous() {
+  private void validateLogDataIsSortedContiguous() {
     if (ctx.logDatas.size() > 1) {
       for (int i = 1; i < ctx.logDatas.size(); i++) {
         final ParsedLogData prev = ctx.logDatas.get(i - 1);
