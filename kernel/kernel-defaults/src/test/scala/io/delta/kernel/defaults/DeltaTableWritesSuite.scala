@@ -688,7 +688,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         val schema = if (includeTimestampNtz) goldenTableSchema
         else removeTimestampNtzTypeColumns(goldenTableSchema)
 
-        val data = readTableUsingKernel(engine, parquetAllTypes, schema).to[Seq]
+        val data = readTableUsingKernel(engine, parquetAllTypes, schema)
         val dataWithPartInfo = Seq(Map.empty[String, Literal] -> data)
 
         appendData(engine, tblPath, isNewTable = true, schema, Seq.empty, dataWithPartInfo)
@@ -736,7 +736,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
           "dateType",
           "timestampType") ++ (if (includeTimestampNtz) Seq("timestampNtzType") else Seq.empty)
         val casePreservingPartCols =
-          casePreservingPartitionColNames(schema, partCols.asJava).asScala.to[Seq]
+          casePreservingPartitionColNames(schema, partCols.asJava).asScala
 
         // get the partition values from the data batch at the given rowId
         def getPartitionValues(batch: ColumnarBatch, rowId: Int): Map[String, Literal] = {
@@ -770,7 +770,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
           }.toMap
         }
 
-        val data = readTableUsingKernel(engine, parquetAllTypes, schema).to[Seq]
+        val data = readTableUsingKernel(engine, parquetAllTypes, schema)
 
         // From the above table read data, convert each row as a new batch with partition info
         // Take the values of the partitionCols from the data and create a new batch with the
@@ -789,7 +789,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         }
 
         appendData(engine, tblPath, isNewTable = true, schema, partCols, dataWithPartInfo)
-        verifyCommitInfo(tblPath, version = 0, casePreservingPartCols, operation = WRITE)
+        verifyCommitInfo(tblPath, version = 0, casePreservingPartCols.toSeq, operation = WRITE)
 
         var expData = dataWithPartInfo.flatMap(_._2).flatMap(_.toTestRows)
 
