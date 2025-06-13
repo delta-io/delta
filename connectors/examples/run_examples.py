@@ -50,8 +50,11 @@ def run_sbt_proj(test_dir, proj, className, version, maven_repo, scala_version):
 
 def clear_artifact_cache():
     print("Clearing Delta artifacts from ivy2 and mvn cache")
-    delete_if_exists(os.path.expanduser("~/.ivy2/cache/io.delta"))
-    delete_if_exists(os.path.expanduser("~/.ivy2/local/io.delta"))
+    ivy_caches_to_clear = [filepath for filepath in os.listdir(os.path.expanduser("~")) if filepath.startswith(".ivy")]
+    print(f"Clearing Ivy caches in: {ivy_caches_to_clear}")
+    for filepath in ivy_caches_to_clear:
+        delete_if_exists(os.path.expanduser(f"~/{filepath}/cache/io.delta"))
+        delete_if_exists(os.path.expanduser(f"~/{filepath}/local/io.delta"))
     delete_if_exists(os.path.expanduser("~/.m2/repository/io/delta/"))
 
 def run_cmd(cmd, throw_on_error=True, env=None, stream_output=False, **kwargs):

@@ -61,7 +61,13 @@ def prepare(root_dir, use_spark_master):
     print("##### Preparing python tests & building packages #####")
     # Build package with python files in it
     sbt_path = path.join(root_dir, path.join("build", "sbt"))
-    delete_if_exists(os.path.expanduser("~/.ivy2/cache/io.delta"))
+    ivy_caches_to_clear = [
+        filepath for filepath in os.listdir(os.path.expanduser("~"))
+        if filepath.startswith(".ivy")
+    ]
+    print(f"Clearing Ivy caches in: {ivy_caches_to_clear}")
+    for filepath in ivy_caches_to_clear:
+        delete_if_exists(os.path.expanduser(f"~/{filepath}/cache/io.delta"))
     delete_if_exists(os.path.expanduser("~/.m2/repository/io/delta/"))
     sbt_command = [sbt_path]
     packages = ["spark/publishM2", "storage/publishM2"]
