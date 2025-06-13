@@ -31,13 +31,11 @@ def main():
     repo_root_dir = os.path.dirname(docs_root_dir)
 
     # --- dirs where docs are generated
-    spark_scaladoc_gen_dir = repo_root_dir + "/spark/target/scala-2.12/unidoc"
+    spark_scaladoc_gen_dir = repo_root_dir + "/spark/target/scala-2.13/unidoc"
     spark_javadoc_gen_dir = repo_root_dir + "/spark/target/javaunidoc"
     spark_pythondoc_dir = repo_root_dir + "/docs/apis/python"
     spark_pythondoc_gen_dir = spark_pythondoc_dir + "/_build/html"
 
-    standalone_javadoc_gen_dir = repo_root_dir + "/connectors/standalone/target/javaunidoc"
-    flink_javadoc_gen_dir = repo_root_dir + "/connectors/flink/target/javaunidoc"
     kernel_javadoc_gen_dir = repo_root_dir + "/kernelGroup/target/javaunidoc"
 
     # --- final dirs where the docs will be copied to
@@ -50,8 +48,6 @@ def main():
     spark_scaladoc_final_dir = all_scaladocs_final_dir + "/spark"
     spark_pythondoc_final_dir = all_pythondocs_final_dir + "/spark"
 
-    standalone_javadoc_final_dir = all_javadocs_final_dir + "/standalone"
-    flink_javadoc_final_dir = all_javadocs_final_dir + "/flink"
     kernel_javadoc_final_dir = all_javadocs_final_dir + "/kernel"
 
 
@@ -69,8 +65,6 @@ def main():
     jquery_path = spark_scaladoc_gen_dir + "/lib/jquery.min.js" # grab the JQuery library from Scaladocs
     all_javadoc_gen_dirs = [
         spark_javadoc_gen_dir,
-        standalone_javadoc_gen_dir,
-        flink_javadoc_gen_dir,
         kernel_javadoc_gen_dir,
     ]
     for javadoc_gen_dir in all_javadoc_gen_dirs:
@@ -87,8 +81,6 @@ def main():
         (spark_javadoc_gen_dir, spark_javadoc_final_dir),
         (spark_scaladoc_gen_dir, spark_scaladoc_final_dir),
         (spark_pythondoc_gen_dir, spark_pythondoc_final_dir),
-        (flink_javadoc_gen_dir, flink_javadoc_final_dir),
-        (standalone_javadoc_gen_dir, standalone_javadoc_final_dir),
         (kernel_javadoc_gen_dir, kernel_javadoc_final_dir),
     ]
 
