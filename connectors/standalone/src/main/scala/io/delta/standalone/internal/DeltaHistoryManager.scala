@@ -225,7 +225,7 @@ private[internal] case class DeltaHistoryManager(deltaLog: DeltaLogImpl) extends
     while (i < length - 1) {
       val prevTimestamp = commits(i).getTimestamp
       assert(commits(i).getVersion < commits(i + 1).getVersion, "Unordered commits provided.")
-      if (prevTimestamp >= commits(i + 1).getTimestamp) {
+      if (prevTimestamp > commits(i + 1).getTimestamp) {
         logWarning(s"Found Delta commit ${commits(i).getVersion} with a timestamp $prevTimestamp " +
           s"which is greater than the next commit timestamp ${commits(i + 1).getTimestamp}.")
         commits(i + 1) = commits(i + 1).withTimestamp(prevTimestamp + 1).asInstanceOf[T]
