@@ -164,7 +164,8 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
       "test-operation",
       "test-engine",
       Optional.of(2), /* committedVersion */
-      Optional.of(Collections.singletonList(new Column("test-clustering-col1"))),
+      Optional.of(Collections.singletonList(
+        new Column(Array[String]("test-clustering-col1", "nested")))),
       transactionMetrics1,
       snapshotReport1,
       Optional.of(exception))
@@ -181,7 +182,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |"baseSnapshotVersion":1,
          |"snapshotReportUUID":"${snapshotReport1.getReportUUID}",
          |"committedVersion":2,
-         |"clusteringColumns":[["test-clustering-col1"]],
+         |"clusteringColumns":[["test-clustering-col1","nested"]],
          |"transactionMetrics":{
          |"totalCommitDurationNs":200,
          |"numCommitAttempts":2,
