@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.coordinatedcommits
 
+import java.io.File
 import java.net.URI
 import java.util.{Optional, UUID}
 
@@ -57,9 +58,19 @@ trait UCCommitCoordinatorClientSuiteBase extends CommitCoordinatorClientImplSuit
   protected var ucClient: UCClient = _
 
   @Mock
-  protected val mockFactory: UCClientFactory = mock(classOf[UCClientFactory])
+  protected var mockFactory: UCClientFactory = _
 
   protected var ucCommitCoordinator: InMemoryUCCommitCoordinator = _
+
+  protected override def beforeAll(): Unit = {
+    val tmpDirName = System.getProperty("java.io.tmpdir")
+    val tmpDir = new File(tmpDirName)
+    if (!tmpDir.exists()) {
+      tmpDir.mkdirs()
+    }
+    super.beforeAll()
+    mockFactory = mock(classOf[UCClientFactory])
+  }
 
   override def beforeEach(): Unit = {
     super.beforeEach()
