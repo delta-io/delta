@@ -400,6 +400,10 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
 
   abstract List<IcebergCompatCheck> icebergCompatChecks();
 
+  /////////////////////////////
+  /// Helper function       ///
+  /////////////////////////////
+
   /**
    * Validate the given {@link DataFileStatus} that is being added as a {@code add} action to Delta
    * Log. Currently, it checks that the statistics are not empty.
@@ -413,6 +417,32 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
     if (!dataFileStatus.getStatistics().isPresent()) {
       // presence of stats means always has a non-null `numRecords`
       throw DeltaErrors.icebergCompatMissingNumRecordsStats(compatFeatureName, dataFileStatus);
+    }
+  }
+
+  /**
+   * Block the Iceberg Compat config related changes that we do not support and for which we throw
+   * an {@link KernelException},
+   *
+   * <ul>
+   *   <li>Disabling on an existing table (true to false)
+   *   <li>Enabling on an existing table (false to true)
+   * </ul>
+   */
+  protected static void blockConfigChangeOnExistingTable(
+      TableConfig<Boolean> tableConfig,
+      Map<String, String> oldConfig,
+      Map<String, String> newConfig,
+      boolean isNewTable) {
+    if (!isNewTable) {
+      boolean wasEnabled = tableConfig.fromMetadata(oldConfig);
+      boolean isEnabled = tableConfig.fromMetadata(newConfig);
+      if (!wasEnabled && isEnabled) {
+        throw DeltaErrors.enablingIcebergCompatFeatureOnExistingTable(tableConfig.getKey());
+      }
+      if (wasEnabled && !isEnabled) {
+        throw DeltaErrors.disablingIcebergCompatFeatureOnExistingTable(tableConfig.getKey());
+      }
     }
   }
 }

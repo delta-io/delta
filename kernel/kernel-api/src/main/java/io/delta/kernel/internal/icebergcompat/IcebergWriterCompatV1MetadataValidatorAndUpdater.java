@@ -86,18 +86,8 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
    */
   public static void validateIcebergWriterCompatV1Change(
       Map<String, String> oldConfig, Map<String, String> newConfig, boolean isNewTable) {
-    if (!isNewTable) {
-      boolean wasEnabled = TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.fromMetadata(oldConfig);
-      boolean isEnabled = TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.fromMetadata(newConfig);
-      if (!wasEnabled && isEnabled) {
-        throw DeltaErrors.enablingIcebergCompatFeatureOnExistingTable(
-            TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey());
-      }
-      if (wasEnabled && !isEnabled) {
-        throw DeltaErrors.disablingIcebergCompatFeatureOnExistingTable(
-            TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey());
-      }
-    }
+    blockConfigChangeOnExistingTable(
+        TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED, oldConfig, newConfig, isNewTable);
   }
 
   /**

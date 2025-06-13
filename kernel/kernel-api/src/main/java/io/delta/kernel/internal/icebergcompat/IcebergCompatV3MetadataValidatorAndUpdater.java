@@ -19,7 +19,6 @@ import static io.delta.kernel.internal.tablefeatures.TableFeatures.*;
 import static java.util.stream.Collectors.toList;
 
 import io.delta.kernel.exceptions.KernelException;
-import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
@@ -52,18 +51,8 @@ public class IcebergCompatV3MetadataValidatorAndUpdater
    */
   public static void validateIcebergCompatV3Change(
       Map<String, String> oldConfig, Map<String, String> newConfig, boolean isNewTable) {
-    if (!isNewTable) {
-      boolean wasEnabled = TableConfig.ICEBERG_COMPAT_V3_ENABLED.fromMetadata(oldConfig);
-      boolean isEnabled = TableConfig.ICEBERG_COMPAT_V3_ENABLED.fromMetadata(newConfig);
-      if (!wasEnabled && isEnabled) {
-        throw DeltaErrors.enablingIcebergCompatFeatureOnExistingTable(
-            TableConfig.ICEBERG_COMPAT_V3_ENABLED.getKey());
-      }
-      if (wasEnabled && !isEnabled) {
-        throw DeltaErrors.disablingIcebergCompatFeatureOnExistingTable(
-            TableConfig.ICEBERG_COMPAT_V3_ENABLED.getKey());
-      }
-    }
+    blockConfigChangeOnExistingTable(
+        TableConfig.ICEBERG_COMPAT_V3_ENABLED, oldConfig, newConfig, isNewTable);
   }
 
   /**
