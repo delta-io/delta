@@ -76,7 +76,8 @@ public class TableFeatures {
     }
   }
 
-  // TODO: support `catalogManaged` when the RFC is formally accepted into the protocol.
+  // TODO: [delta-io/delta#4763] Support `catalogManaged` when the RFC is formally accepted into the
+  //       protocol.
 
   public static final TableFeature CATALOG_MANAGED_R_W_FEATURE_PREVIEW =
       new CatalogManagedFeatureBase("catalogOwned-preview");

@@ -29,11 +29,11 @@ import org.scalatest.funsuite.AnyFunSuite
 
 class CatalogManagedEnablementSuite extends AnyFunSuite with TestUtils {
 
-  // TODO: This test uses the legacy Table and Snapshot APIs and so does not commit to any catalog.
-  //       For now, this test exists to ensure that setting `delta.feature.catalogOwned-preview`
-  //       correctly enables the catalogManaged table feature. When writer support is added, we will
-  //       extend this test to check that the right properties and table features (e.g. ICT) were
-  //       enabled.
+  // TODO: [delta-io/delta#4764] This test uses the legacy Table and Snapshot APIs and so does not
+  //       commit to any catalog. For now, this test exists to ensure that setting
+  //       `delta.feature.catalogOwned-preview` correctly enables the catalogManaged table feature.
+  //       When writer support is added, we will extend this test to check that the right properties
+  //       and table features (e.g. ICT) were enabled.
   test("setting delta.feature.catalogOwned-preview enables the catalogManaged table feature") {
     withTempDir { tempDir =>
       val table = Table.forPath(defaultEngine, tempDir.getAbsolutePath)
