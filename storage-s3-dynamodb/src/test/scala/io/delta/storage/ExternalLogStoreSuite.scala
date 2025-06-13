@@ -377,30 +377,30 @@ class ExternalLogStoreSuite extends org.apache.spark.sql.delta.PublicLogStoreSui
 
 class S3DynamoDBLogStoreSuite extends AnyFunSuite {
   test("getParam") {
-    import S3DynamoDBLogStore._
+    import BaseS3DynamoDBLogStore._, S3DynamoDBLogStore._
 
     val sparkPrefixKey = "spark.io.delta.storage.S3DynamoDBLogStore.ddb.tableName"
     val basePrefixKey = "io.delta.storage.S3DynamoDBLogStore.ddb.tableName"
 
     // Sanity check
-    require(sparkPrefixKey == SPARK_CONF_PREFIX + "." + DDB_CLIENT_TABLE)
-    require(basePrefixKey == BASE_CONF_PREFIX + "." + DDB_CLIENT_TABLE)
+    require(sparkPrefixKey == SPARK_CONF_PREFIX + "." + DYNAMO_DB_CONF_PREFIX + "." + DDB_CLIENT_TABLE)
+    require(basePrefixKey == BASE_CONF_PREFIX + "." + DYNAMO_DB_CONF_PREFIX + "." + DDB_CLIENT_TABLE)
 
     // Case 1: no parameters exist, should use default
-    assert(getParam(new Configuration(), DDB_CLIENT_TABLE, "default_table") == "default_table")
+    assert(getParam(new Configuration(), DDB_CLIENT_TABLE, "default_table", DYNAMO_DB_CONF_PREFIX) == "default_table")
 
     // Case 2: spark-prefix param only
     {
       val hadoopConf = new Configuration()
       hadoopConf.set(sparkPrefixKey, "some_other_table_2")
-      assert(getParam(hadoopConf, DDB_CLIENT_TABLE, "default_table") == "some_other_table_2")
+      assert(getParam(hadoopConf, DDB_CLIENT_TABLE, "default_table", DYNAMO_DB_CONF_PREFIX) == "some_other_table_2")
     }
 
     // Case 3: base-prefix param only
     {
       val hadoopConf = new Configuration()
       hadoopConf.set(basePrefixKey, "some_other_table_3")
-      assert(getParam(hadoopConf, DDB_CLIENT_TABLE, "default_table") == "some_other_table_3")
+      assert(getParam(hadoopConf, DDB_CLIENT_TABLE, "default_table", DYNAMO_DB_CONF_PREFIX) == "some_other_table_3")
     }
 
     // Case 4: both params set, same value
@@ -408,7 +408,7 @@ class S3DynamoDBLogStoreSuite extends AnyFunSuite {
       val hadoopConf = new Configuration()
       hadoopConf.set(sparkPrefixKey, "some_other_table_4")
       hadoopConf.set(basePrefixKey, "some_other_table_4")
-      assert(getParam(hadoopConf, DDB_CLIENT_TABLE, "default_table") == "some_other_table_4")
+      assert(getParam(hadoopConf, DDB_CLIENT_TABLE, "default_table", DYNAMO_DB_CONF_PREFIX) == "some_other_table_4")
     }
 
     // Case 5: both param set, different value
@@ -417,7 +417,7 @@ class S3DynamoDBLogStoreSuite extends AnyFunSuite {
       hadoopConf.set(sparkPrefixKey, "some_other_table_5a")
       hadoopConf.set(basePrefixKey, "some_other_table_5b")
       val e = intercept[IllegalArgumentException] {
-        getParam(hadoopConf, DDB_CLIENT_TABLE, "default_table")
+        getParam(hadoopConf, DDB_CLIENT_TABLE, "default_table", DYNAMO_DB_CONF_PREFIX)
       }.getMessage
       assert(e == (s"Configuration properties `$sparkPrefixKey=some_other_table_5a` and " +
         s"`$basePrefixKey=some_other_table_5b` have different values. Please set only one."))
