@@ -44,7 +44,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y make build-essential libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev wget curl llvm libncurses5-dev libncursesw5-dev xz-utils tk-dev libffi-dev liblzma-dev python3-openssl git
           sudo apt install libedit-dev
-          curl -LO https://github.com/bufbuild/buf/releases/download/v1.28.1/buf-Linux-x86_64.tar.gz
+          curl -LO https://github.com/bufbuild/buf/releases/download/v1.28.3/buf-Linux-x86_64.tar.gz
           mkdir -p ~/buf
           tar -xvzf buf-Linux-x86_64.tar.gz -C ~/buf --strip-components 1
           rm buf-Linux-x86_64.tar.gz
@@ -77,8 +77,8 @@ jobs:
           pipenv run pip install pyarrow==11.0.0
           pipenv run pip install pypandoc==1.3.3
           pipenv run pip install numpy==1.22.4
-          pipenv run pip install grpcio==1.67.0
-          pipenv run pip install grpcio-status==1.67.0
+          pipenv run pip install grpcio==1.67.1
+          pipenv run pip install grpcio-status==1.67.1
           pipenv run pip install googleapis-common-protos==1.65.0
           pipenv run pip install protobuf==5.29.1
           pipenv run pip install googleapis-common-protos-stubs==2.2.0

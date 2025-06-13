@@ -79,8 +79,8 @@ val hadoopVersionForHive2 = "2.7.2"
 val hive2Version = "2.3.3"
 val tezVersionForHive2 = "0.8.4"
 
-val protoVersion = "3.25.1"
-val grpcVersion = "1.62.2"
+val protoVersion = "4.29.3"
+val grpcVersion = "1.67.1"
 
 scalaVersion := default_scala_version.value
 
