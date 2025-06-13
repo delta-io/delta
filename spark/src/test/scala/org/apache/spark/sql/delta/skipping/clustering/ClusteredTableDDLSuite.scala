@@ -740,7 +740,7 @@ trait ClusteredTableDDLSuiteBase
         .execute()
 
         val tableIdentifier = TableIdentifier(testTable)
-        verifyClusteringColumns(tableIdentifier, Seq("c2")) 
+        verifyClusteringColumns(tableIdentifier, Seq("c2"))
     }
   }
 
