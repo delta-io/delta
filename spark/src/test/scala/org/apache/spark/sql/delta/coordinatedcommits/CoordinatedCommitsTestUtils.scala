@@ -93,6 +93,20 @@ trait CatalogOwnedTestBaseSuite
   def catalogOwnedDefaultCreationEnabledInTests: Boolean =
     catalogOwnedCoordinatorBackfillBatchSize.nonEmpty
 
+  /**
+   * Returns the commit coordinator client for the specified catalog.
+   *
+   * @param catalogName The name of the catalog to get the commit coordinator client for.
+   * @return The commit coordinator client for the specified catalog.
+   */
+  protected def getCatalogOwnedCommitCoordinatorClient(
+      catalogName: String): CommitCoordinatorClient = {
+    CatalogOwnedCommitCoordinatorProvider.getBuilder(catalogName).getOrElse {
+      throw new IllegalStateException(
+        s"Commit coordinator builder is not available for the specified catalog: $catalogName")
+    }.buildForCatalog(spark, catalogName)
+  }
+
   override protected def sparkConf: SparkConf = {
     if (catalogOwnedDefaultCreationEnabledInTests) {
       super.sparkConf.set(defaultCatalogOwnedFeatureEnabledKey, "supported")
