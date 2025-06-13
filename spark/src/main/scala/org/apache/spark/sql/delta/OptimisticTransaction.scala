@@ -1532,7 +1532,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     val metadataWithIctInfo = commitInfo.inCommitTimestamp
       .flatMap { inCommitTimestamp =>
         InCommitTimestampUtils.getUpdatedMetadataWithICTEnablementInfo(
-          inCommitTimestamp, snapshot, metadata, firstAttemptVersion)
+          spark, inCommitTimestamp, snapshot, metadata, firstAttemptVersion)
       }.getOrElse { return false }
     newMetadata = Some(metadataWithIctInfo)
     true
