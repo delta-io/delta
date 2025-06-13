@@ -200,6 +200,18 @@ public class ColumnMapping {
     return new Tuple2<>(new Column(physicalNameParts.toArray(new String[0])), currentType);
   }
 
+  public static String getPhysicalNameByFieldId(StructType schema, long fieldId) {
+    return schema.fields().stream()
+        .filter(
+            field -> {
+              long id = ColumnMapping.getColumnId(field);
+              return id == fieldId;
+            })
+        .map(ColumnMapping::getPhysicalName)
+        .findFirst()
+        .orElse(null);
+  }
+
   /**
    * Utility method to block writing into a table with column mapping enabled. Currently Kernel only
    * supports the metadata updates on tables with column mapping enabled. Data writes into such
