@@ -15,6 +15,8 @@
  */
 package io.delta.kernel.internal.icebergcompat
 
+import java.util.Optional
+
 import scala.collection.JavaConverters._
 
 import io.delta.kernel.exceptions.KernelException
@@ -22,12 +24,19 @@ import io.delta.kernel.internal.TableConfig
 import io.delta.kernel.internal.actions.{Metadata, Protocol}
 import io.delta.kernel.internal.icebergcompat.IcebergWriterCompatV1MetadataValidatorAndUpdater.validateAndUpdateIcebergWriterCompatV1Metadata
 import io.delta.kernel.internal.tablefeatures.TableFeature
-import io.delta.kernel.internal.tablefeatures.TableFeatures.{COLUMN_MAPPING_RW_FEATURE, ICEBERG_COMPAT_V2_W_FEATURE, ICEBERG_WRITER_COMPAT_V1}
+import io.delta.kernel.internal.tablefeatures.TableFeatures.{COLUMN_MAPPING_RW_FEATURE, ICEBERG_COMPAT_V2_W_FEATURE, ICEBERG_WRITER_COMPAT_V1, TYPE_WIDENING_RW_FEATURE}
 import io.delta.kernel.internal.util.ColumnMapping
-import io.delta.kernel.types.{ByteType, DataType, FieldMetadata, IntegerType, ShortType, StructType}
+import io.delta.kernel.types.{ByteType, DataType, DecimalType, FieldMetadata, IntegerType, LongType, ShortType, StructField, StructType, TypeChange}
 
 class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
     extends IcebergCompatV2MetadataValidatorAndUpdaterSuiteBase {
+
+  override def validateAndUpdateIcebergCompatMetadata(
+      isNewTable: Boolean,
+      metadata: Metadata,
+      protocol: Protocol): Optional[Metadata] = {
+    validateAndUpdateIcebergWriterCompatV1Metadata(isNewTable, metadata, protocol)
+  }
 
   val icebergWriterCompatV1EnabledProps = Map(
     TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey -> "true")
@@ -53,13 +62,6 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
   override def getCompatEnabledProtocol(tableFeatures: TableFeature*): Protocol = {
     testProtocol(tableFeatures ++
       Seq(ICEBERG_WRITER_COMPAT_V1, ICEBERG_COMPAT_V2_W_FEATURE, COLUMN_MAPPING_RW_FEATURE): _*)
-  }
-
-  override def runValidateAndUpdateIcebergCompatV2Metadata(
-      isNewTable: Boolean,
-      metadata: Metadata,
-      protocol: Protocol): Unit = {
-    validateAndUpdateIcebergWriterCompatV1Metadata(isNewTable, metadata, protocol)
   }
 
   test("checks are not enforced when table property is not enabled") {
@@ -272,6 +274,52 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
     val metadata = getCompatEnabledMetadata(cmTestSchema())
     validateAndUpdateIcebergWriterCompatV1Metadata(true, metadata, protocol)
     validateAndUpdateIcebergWriterCompatV1Metadata(false, metadata, protocol)
+  }
+
+  test("compatible type widening is allowed with icebergWriterCompatV1") {
+    val schema = new StructType()
+      .add(
+        new StructField(
+          "intToLong",
+          IntegerType.INTEGER,
+          true,
+          FieldMetadata.builder()
+            .putLong(ColumnMapping.COLUMN_MAPPING_ID_KEY, 1)
+            .putString(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, "col-1")
+            .build()).withTypeChanges(Seq(new TypeChange(
+          IntegerType.INTEGER,
+          LongType.LONG)).asJava))
+
+    val metadata = getCompatEnabledMetadata(schema)
+      .withMergedConfiguration(Map(ColumnMapping.COLUMN_MAPPING_MAX_COLUMN_ID_KEY -> "1").asJava)
+    val protocol = getCompatEnabledProtocol(TYPE_WIDENING_RW_FEATURE)
+
+    // This should not throw an exception
+    validateAndUpdateIcebergWriterCompatV1Metadata(false, metadata, protocol)
+  }
+
+  test("incompatible type widening throws exception with icebergWriterCompatV1") {
+    val schema = new StructType()
+      .add(
+        new StructField(
+          "intToLong",
+          IntegerType.INTEGER,
+          true,
+          FieldMetadata.builder()
+            .putLong(ColumnMapping.COLUMN_MAPPING_ID_KEY, 1)
+            .putString(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, "col-1")
+            .build()).withTypeChanges(
+          Seq(new TypeChange(ByteType.BYTE, new DecimalType(10, 0))).asJava))
+
+    val metadata = getCompatEnabledMetadata(schema)
+      .withMergedConfiguration(Map(ColumnMapping.COLUMN_MAPPING_MAX_COLUMN_ID_KEY -> "1").asJava)
+    val protocol = getCompatEnabledProtocol(TYPE_WIDENING_RW_FEATURE)
+
+    val e = intercept[KernelException] {
+      validateAndUpdateIcebergWriterCompatV1Metadata(false, metadata, protocol)
+    }
+
+    assert(e.getMessage.contains("icebergCompatV2 does not support type widening present in table"))
   }
 
   private def checkUnsupportedOrIncompatibleFeature(

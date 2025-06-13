@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.defaults
 
+import scala.collection.JavaConverters._
 import scala.collection.immutable.Seq
 import scala.reflect.ClassTag
 
@@ -23,12 +24,12 @@ import io.delta.kernel.data.Row
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.TableConfig
 import io.delta.kernel.internal.tablefeatures.TableFeatures
-import io.delta.kernel.internal.util.{ColumnMappingSuiteBase, VectorUtils}
-import io.delta.kernel.types.{DataType, StructType}
+import io.delta.kernel.internal.util.{ColumnMapping, ColumnMappingSuiteBase, VectorUtils}
+import io.delta.kernel.types.{DataType, DateType, FieldMetadata, IntegerType, LongType, StructField, StructType, TimestampNTZType, TypeChange}
 
 /** This suite tests reading or writing into Delta table that have `icebergCompatV2` enabled. */
 class DeltaIcebergCompatV2Suite extends DeltaTableWriteSuiteBase with ColumnMappingSuiteBase {
-  import io.delta.kernel.internal.icebergcompat.IcebergCompatV2MetadataValidatorAndUpdaterSuiteBase._
+  import io.delta.kernel.internal.icebergcompat.IcebergCompatMetadataValidatorAndUpdaterSuiteBase._
 
   (SIMPLE_TYPES ++ COMPLEX_TYPES).foreach {
     dataType: DataType =>
@@ -219,6 +220,87 @@ class DeltaIcebergCompatV2Suite extends DeltaTableWriteSuiteBase with ColumnMapp
         ver3Metadata.getMap(ver3Metadata.getSchema.indexOf("configuration")))
         .get("key")
       assert(result === "value")
+    }
+  }
+
+  test("compatible type widening is allowed with icebergCompatV2") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // Create a table with icebergCompatV2 and type widening enabled
+      val schema = new StructType()
+        .add(new StructField(
+          "intToLong",
+          LongType.LONG,
+          false).withTypeChanges(Seq(new TypeChange(IntegerType.INTEGER, LongType.LONG)).asJava))
+
+      val tblProps = Map(
+        TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true",
+        TableConfig.TYPE_WIDENING_ENABLED.getKey -> "true")
+
+      // This should not throw an exception
+      createEmptyTable(engine, tablePath, schema, tableProperties = tblProps)
+      appendData(engine, tablePath, data = Seq.empty)
+
+      val protocol = getProtocol(engine, tablePath)
+      assert(protocol.supportsFeature(TableFeatures.TYPE_WIDENING_RW_FEATURE))
+      val metadata = getMetadata(engine, tablePath)
+      assert(metadata.getSchema.get("intToLong").getTypeChanges.asScala == schema.get(
+        "intToLong").getTypeChanges.asScala)
+    }
+  }
+
+  test("incompatible type widening throws exception with icebergCompatV2") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // Try to create a table with icebergCompatV2 and incompatible type widening
+      val schema = new StructType()
+        .add(
+          new StructField(
+            "dateToTimestamp",
+            TimestampNTZType.TIMESTAMP_NTZ,
+            false).withTypeChanges(Seq(
+            new TypeChange(DateType.DATE, TimestampNTZType.TIMESTAMP_NTZ)).asJava))
+
+      val tblProps = Map(
+        TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true",
+        TableConfig.TYPE_WIDENING_ENABLED.getKey -> "true")
+
+      val e = intercept[KernelException] {
+        createEmptyTable(engine, tablePath, schema, tableProperties = tblProps)
+      }
+
+      assert(
+        e.getMessage.contains("icebergCompatV2 does not support type widening present in table"))
+    }
+  }
+
+  test(
+    "incompatible type widening throws exception with icebergCompatV2 enabled on existing table") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val schema = new StructType()
+        .add(new StructField(
+          "dateToTimestamp",
+          TimestampNTZType.TIMESTAMP_NTZ,
+          false,
+          FieldMetadata.builder()
+            .putLong(ColumnMapping.COLUMN_MAPPING_ID_KEY, 1)
+            .putString(
+              ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
+              "col-1").build()).withTypeChanges(
+          Seq(new TypeChange(DateType.DATE, TimestampNTZType.TIMESTAMP_NTZ)).asJava))
+
+      val tblProps = Map(TableConfig.TYPE_WIDENING_ENABLED.getKey -> "true")
+      createEmptyTable(engine, tablePath, schema, tableProperties = tblProps)
+
+      val e = intercept[KernelException] {
+        updateTableMetadata(
+          engine,
+          tablePath,
+          tableProperties = Map(
+            TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true",
+            TableConfig.COLUMN_MAPPING_MODE.getKey -> "ID"))
+      }
+
+      assert(
+        e.getMessage.contains("icebergCompatV2 does not support type widening present in table"))
     }
   }
 

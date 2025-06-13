@@ -28,7 +28,7 @@ import scala.language.implicitConversions
 import org.apache.spark.sql.delta.DeltaHistoryManager.BufferingLogDeletionIterator
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{Action, CommitInfo, SingleAction}
-import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -44,7 +44,7 @@ class DeltaTimeTravelSuite extends QueryTest
   with SharedSparkSession
   with DeltaSQLTestUtils
   with DeltaSQLCommandTest
-  with CoordinatedCommitsBaseSuite {
+  with CatalogOwnedTestBaseSuite {
 
   import testImplicits._
 
@@ -92,7 +92,7 @@ class DeltaTimeTravelSuite extends QueryTest
       val rangeEnd = rangeStart + 10
       spark.range(rangeStart, rangeEnd).write.format("delta").mode("append").save(location)
       val filePath = DeltaCommitFileProvider(deltaLog.update()).deltaFile(startVersion)
-      if (isICTEnabledForNewTables) {
+      if (isICTEnabledForNewTablesCatalogOwned) {
         InCommitTimestampTestUtils.overwriteICTInDeltaFile(deltaLog, filePath, Some(ts))
       } else {
         val file = new File(filePath.toUri)
@@ -155,7 +155,7 @@ class DeltaTimeTravelSuite extends QueryTest
 
   historyTest("describe history timestamps are adjusted according to file timestamp") {
       (deltaLog, clock) =>
-    if (isICTEnabledForNewTables) {
+    if (isICTEnabledForNewTablesCatalogOwned) {
       // File timestamp adjustment is not needed when ICT is enabled.
       cancel("This test is not compatible with InCommitTimestamps.")
     }
@@ -599,7 +599,7 @@ class DeltaTimeTravelSuite extends QueryTest
   }
 
   test("time travelling with adjusted timestamps") {
-    if (isICTEnabledForNewTables) {
+    if (isICTEnabledForNewTablesCatalogOwned) {
       // ICT Timestamps are always monotonically increasing. Therefore,
       // this test is not needed when ICT is enabled.
       cancel("This test is not compatible with InCommitTimestamps.")
@@ -822,8 +822,34 @@ class DeltaTimeTravelSuite extends QueryTest
         Row(1) :: Row(1) :: Row(2) :: Nil)
     }
   }
+
+  test("Dataframe-based time travel works with different timestamp precisions") {
+    val tblName = "test_tab"
+    withTable(tblName) {
+      sql(s"CREATE TABLE spark_catalog.default.$tblName (a int) USING DELTA")
+      // Ensure that the current timestamp is different from the one in the table.
+      Thread.sleep(1000)
+      // Microsecond precision timestamp.
+      val current_time_micros = spark.sql("SELECT current_timestamp() as ts")
+        .select($"ts".cast("string"))
+        .head().getString(0)
+      // Millisecond precision timestamp.
+      val current_time_millis = new Timestamp(System.currentTimeMillis())
+      // Second precision timestamp.
+      val sdf = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
+      val current_time_seconds = sdf.format(new java.sql.Timestamp(System.currentTimeMillis()))
+
+      sql(s"INSERT INTO spark_catalog.default.$tblName VALUES (1)")
+      checkAnswer(spark.read.option("timestampAsOf", current_time_micros)
+        .table(s"spark_catalog.default.$tblName"), Seq.empty)
+      checkAnswer(spark.read.option("timestampAsOf", current_time_millis.toString)
+        .table(s"spark_catalog.default.$tblName"), Seq.empty)
+      checkAnswer(spark.read.option("timestampAsOf", current_time_seconds)
+        .table(s"spark_catalog.default.$tblName"), Seq.empty)
+    }
+  }
 }
 
-class DeltaTimeTravelWithCoordinatedCommitsBatch1Suite extends DeltaTimeTravelSuite {
-  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(1)
+class DeltaTimeTravelWithCatalogOwnedBatch1Suite extends DeltaTimeTravelSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
 }

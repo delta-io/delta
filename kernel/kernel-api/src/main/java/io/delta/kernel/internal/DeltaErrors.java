@@ -23,6 +23,7 @@ import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.tablefeatures.TableFeature;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StructType;
+import io.delta.kernel.types.TypeChange;
 import io.delta.kernel.utils.DataFileStatus;
 import java.io.IOException;
 import java.sql.Timestamp;
@@ -221,6 +222,11 @@ public final class DeltaErrors {
     return new KernelException(msg);
   }
 
+  public static KernelException conflictWithReservedInternalColumnName(String columnName) {
+    return new KernelException(
+        format("Cannot use column name '%s' because it is reserved for internal use", columnName));
+  }
+
   public static KernelException invalidColumnName(String columnName, String unsupportedChars) {
     return new KernelException(
         format(
@@ -292,6 +298,13 @@ public final class DeltaErrors {
         format("%s does not support the data types: %s.", compatVersion, dataTypes));
   }
 
+  public static KernelException icebergCompatUnsupportedTypeWidening(
+      String compatVersion, TypeChange typeChange) {
+    throw new KernelException(
+        format(
+            "%s does not support type widening present in table: %s.", compatVersion, typeChange));
+  }
+
   public static KernelException icebergCompatUnsupportedTypePartitionColumn(
       String compatVersion, DataType dataType) {
     throw new KernelException(
@@ -343,6 +356,15 @@ public final class DeltaErrors {
       String tablePath, String partitionColumn) {
     String msgT = "Missing partition column '%s' in the data to be written to the table '%s'.";
     return new KernelException(format(msgT, partitionColumn, tablePath));
+  }
+
+  public static KernelException enablingClusteringOnPartitionedTableNotAllowed(
+      String tablePath, Set<String> partitionColNames, List<Column> clusteringCols) {
+    return new KernelException(
+        String.format(
+            "Cannot enable clustering on a partitioned table '%s'. "
+                + "Existing partition columns: '%s', Clustering columns: '%s'.",
+            tablePath, partitionColNames, clusteringCols));
   }
 
   public static KernelException concurrentTransaction(
@@ -407,6 +429,10 @@ public final class DeltaErrors {
     return new KernelException(
         "Feature 'rowTracking' is supported and depends on feature 'domainMetadata',"
             + " but 'domainMetadata' is unsupported");
+  }
+
+  public static KernelException cannotToggleRowTrackingOnExistingTable() {
+    return new KernelException("Row tracking support cannot be changed once the table is created.");
   }
 
   public static KernelException cannotModifyAppendOnlyTable(String tablePath) {

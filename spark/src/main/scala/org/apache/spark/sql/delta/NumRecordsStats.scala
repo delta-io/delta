@@ -30,7 +30,8 @@ case class NumRecordsStats (
     numDeletionVectorRecordsAdded: Long,
     numDeletionVectorRecordsRemoved: Long,
     numFilesAddedWithoutNumRecords: Long,
-    numFilesRemovedWithoutNumRecords: Long) {
+    numFilesRemovedWithoutNumRecords: Long,
+    numLogicalRecordsAddedInFilesWithDeletionVectorsPartial: Long) {
 
   def allFilesHaveNumRecords: Boolean =
     numFilesAddedWithoutNumRecords == 0 && numFilesRemovedWithoutNumRecords == 0
@@ -48,6 +49,14 @@ case class NumRecordsStats (
    */
   def numLogicalRecordsRemoved: Option[Long] = Option.when(numFilesRemovedWithoutNumRecords == 0)(
     numLogicalRecordsRemovedPartial)
+
+  /**
+   * The number of logical records in all AddFile actions that have a deletion vector or None
+   * if any file does not contain statistics.
+   */
+  def numLogicalRecordsAddedInFilesWithDeletionVectors: Option[Long] =
+    Option.when(numFilesAddedWithoutNumRecords == 0)(
+      numLogicalRecordsAddedInFilesWithDeletionVectorsPartial)
 }
 
 object NumRecordsStats {
@@ -60,6 +69,7 @@ object NumRecordsStats {
     var numLogicalRecordsRemovedPartial: Long = 0L
     var numDeletionVectorRecordsAdded = 0L
     var numDeletionVectorRecordsRemoved = 0L
+    var numLogicalRecordsAddedInFilesWithDeletionVectorsPartial = 0L
 
     actions.foreach {
       case a: AddFile =>
@@ -69,13 +79,17 @@ object NumRecordsStats {
           0L
         }
         numDeletionVectorRecordsAdded += a.numDeletedRecords
+        if (a.deletionVector != null) {
+          numLogicalRecordsAddedInFilesWithDeletionVectorsPartial +=
+            a.numLogicalRecords.getOrElse(0L)
+        }
       case r: RemoveFile =>
         numFilesRemoved += 1
         numLogicalRecordsRemovedPartial += r.numLogicalRecords.getOrElse {
           numFilesRemovedWithoutNumRecords += 1
           0L
         }
-        numDeletionVectorRecordsRemoved = r.numDeletedRecords
+        numDeletionVectorRecordsRemoved += r.numDeletedRecords
       case _ =>
         // Do nothing
     }
@@ -85,6 +99,9 @@ object NumRecordsStats {
       numDeletionVectorRecordsAdded = numDeletionVectorRecordsAdded,
       numDeletionVectorRecordsRemoved = numDeletionVectorRecordsRemoved,
       numFilesAddedWithoutNumRecords = numFilesAddedWithoutNumRecords,
-      numFilesRemovedWithoutNumRecords = numFilesRemovedWithoutNumRecords)
+      numFilesRemovedWithoutNumRecords = numFilesRemovedWithoutNumRecords,
+      numLogicalRecordsAddedInFilesWithDeletionVectorsPartial =
+        numLogicalRecordsAddedInFilesWithDeletionVectorsPartial
+    )
   }
 }

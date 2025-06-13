@@ -223,6 +223,28 @@ public class TableFeatures {
       new VariantTypeTableFeatureBase("variantType-preview");
   /* ---- End: variantType ---- */
 
+  /* ---- Start: variantShredding-preview ---- */
+  public static final TableFeature VARIANT_SHREDDING_PREVIEW_RW_FEATURE =
+      new VariantShreddingPreviewFeature();
+
+  private static class VariantShreddingPreviewFeature extends TableFeature.ReaderWriterFeature
+      implements FeatureAutoEnabledByMetadata {
+    VariantShreddingPreviewFeature() {
+      super("variantShredding-preview", /* minReaderVersion = */ 3, /* minWriterVersion = */ 7);
+    }
+
+    @Override
+    public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
+      return TableConfig.VARIANT_SHREDDING_ENABLED.fromMetadata(metadata);
+    }
+
+    @Override
+    public boolean hasKernelWriteSupport(Metadata metadata) {
+      return false; // TODO: yet to be implemented in Kernel
+    }
+  }
+  /* ---- End: variantShredding-preview ---- */
+
   public static final TableFeature DOMAIN_METADATA_W_FEATURE = new DomainMetadataFeature();
 
   private static class DomainMetadataFeature extends TableFeature.WriterFeature {
@@ -254,11 +276,7 @@ public class TableFeatures {
 
     @Override
     public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
-      if (TableConfig.ROW_TRACKING_ENABLED.fromMetadata(metadata)) {
-        throw new UnsupportedOperationException(
-            "Feature `rowTracking` is not yet supported in Kernel.");
-      }
-      return false;
+      return TableConfig.ROW_TRACKING_ENABLED.fromMetadata(metadata);
     }
 
     @Override
@@ -301,6 +319,25 @@ public class TableFeatures {
 
     public @Override Set<TableFeature> requiredFeatures() {
       return Collections.singleton(COLUMN_MAPPING_RW_FEATURE);
+    }
+  }
+
+  public static final TableFeature ICEBERG_COMPAT_V3_W_FEATURE = new IcebergCompatV3TableFeature();
+
+  private static class IcebergCompatV3TableFeature extends TableFeature.WriterFeature
+      implements FeatureAutoEnabledByMetadata {
+    IcebergCompatV3TableFeature() {
+      super("icebergCompatV3", /* minWriterVersion = */ 7);
+    }
+
+    @Override
+    public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
+      return TableConfig.ICEBERG_COMPAT_V3_ENABLED.fromMetadata(metadata);
+    }
+
+    public @Override Set<TableFeature> requiredFeatures() {
+      return Collections.unmodifiableSet(
+          new HashSet<>(Arrays.asList(COLUMN_MAPPING_RW_FEATURE, ROW_TRACKING_W_FEATURE)));
     }
   }
 
@@ -415,6 +452,24 @@ public class TableFeatures {
     }
   }
 
+  public static final TableFeature ICEBERG_WRITER_COMPAT_V3 = new IcebergWriterCompatV3();
+
+  private static class IcebergWriterCompatV3 extends TableFeature.WriterFeature
+      implements FeatureAutoEnabledByMetadata {
+    IcebergWriterCompatV3() {
+      super("icebergWriterCompatV3", /* minWriterVersion = */ 7);
+    }
+
+    @Override
+    public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
+      return TableConfig.ICEBERG_WRITER_COMPAT_V3_ENABLED.fromMetadata(metadata);
+    }
+
+    public @Override Set<TableFeature> requiredFeatures() {
+      return Collections.singleton(ICEBERG_COMPAT_V3_W_FEATURE);
+    }
+  }
+
   /////////////////////////////////////////////////////////////////////////////////
   /// END: Define the {@link TableFeature}s                                     ///
   /////////////////////////////////////////////////////////////////////////////////
@@ -441,6 +496,7 @@ public class TableFeatures {
               GENERATED_COLUMNS_W_FEATURE,
               DOMAIN_METADATA_W_FEATURE,
               ICEBERG_COMPAT_V2_W_FEATURE,
+              ICEBERG_COMPAT_V3_W_FEATURE,
               IDENTITY_COLUMNS_W_FEATURE,
               IN_COMMIT_TIMESTAMP_W_FEATURE,
               INVARIANTS_W_FEATURE,
@@ -451,7 +507,9 @@ public class TableFeatures {
               VACUUM_PROTOCOL_CHECK_RW_FEATURE,
               VARIANT_RW_FEATURE,
               VARIANT_RW_PREVIEW_FEATURE,
-              ICEBERG_WRITER_COMPAT_V1));
+              VARIANT_SHREDDING_PREVIEW_RW_FEATURE,
+              ICEBERG_WRITER_COMPAT_V1,
+              ICEBERG_WRITER_COMPAT_V3));
 
   public static final Map<String, TableFeature> TABLE_FEATURE_MAP =
       Collections.unmodifiableMap(

@@ -29,4 +29,13 @@ public class DeltaErrorsInternal {
         "Kernel APIs for creating remove file rows require that "
             + "file size be provided but found null file size");
   }
+
+  public static IllegalStateException invalidTimestampFormatForPartitionValue(
+      String partitionValue) {
+    return new IllegalStateException(
+        String.format(
+            "Invalid timestamp format for value: %s. Expected formats: "
+                + "'yyyy-MM-dd HH:mm:ss[.SSSSSS]' or ISO-8601 (e.g. 2020-01-01T00:00:00Z)'",
+            partitionValue));
+  }
 }

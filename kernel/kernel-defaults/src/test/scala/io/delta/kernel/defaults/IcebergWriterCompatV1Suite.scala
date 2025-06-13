@@ -23,11 +23,11 @@ import io.delta.kernel.data.Row
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.TableConfig
-import io.delta.kernel.internal.icebergcompat.IcebergCompatV2MetadataValidatorAndUpdaterSuiteBase.COMPLEX_TYPES
+import io.delta.kernel.internal.icebergcompat.IcebergCompatMetadataValidatorAndUpdaterSuiteBase.COMPLEX_TYPES
 import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.internal.util.{ColumnMapping, ColumnMappingSuiteBase}
 import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode
-import io.delta.kernel.types.{ByteType, DataType, FieldMetadata, IntegerType, ShortType, StructType, TimestampNTZType, VariantType}
+import io.delta.kernel.types.{ByteType, DataType, DateType, FieldMetadata, IntegerType, LongType, ShortType, StructField, StructType, TimestampNTZType, TypeChange, VariantType}
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
 
 import org.assertj.core.api.Assertions.assertThat
@@ -474,43 +474,11 @@ class IcebergWriterCompatV1Suite extends DeltaTableWriteSuiteBase with ColumnMap
     // We throw an error earlier for variant for some reason
     expectedErrorMessage = "Kernel doesn't support writing data of type: variant")
 
-  // For some reason rowTracking throws an UnsupportedOperationException (due to partial support?)
-  // so cannot use test fx here
-  test(
-    s"Cannot enable feature rowTracking on an existing table with icebergWriterCompatV1 enabled") {
-    withTempDirAndEngine { (tablePath, engine) =>
-      // Create existing table with icebergWriterCompatV1 enabled
-      createEmptyTable(
-        engine,
-        tablePath,
-        testSchema,
-        tableProperties = tblPropertiesIcebergWriterCompatV1Enabled)
-      verifyIcebergWriterCompatV1Enabled(tablePath, engine)
-      val e = intercept[UnsupportedOperationException] {
-        // Update the table such that we enable rowTracking
-        updateTableMetadata(
-          engine,
-          tablePath,
-          tableProperties = Map("delta.enableRowTracking" -> "true"))
-      }
-      assert(e.getMessage.contains("Feature `rowTracking` is not yet supported in Kernel"))
-    }
-  }
-
-  test(s"Cannot enable feature rowTracking and icebergWriterCompatV1 on a new table") {
-    withTempDirAndEngine { (tablePath, engine) =>
-      // Create table with IcebergCompatWriterV1 and rowTracking enabled
-      val e = intercept[UnsupportedOperationException] {
-        createEmptyTable(
-          engine,
-          tablePath,
-          testSchema,
-          tableProperties =
-            tblPropertiesIcebergWriterCompatV1Enabled ++ Map("delta.enableRowTracking" -> "true"))
-      }
-      assert(e.getMessage.contains("Feature `rowTracking` is not yet supported in Kernel"))
-    }
-  }
+  testIncompatibleTableFeature(
+    "rowTracking",
+    tablePropertiesToEnable = Map("delta.enableRowTracking" -> "true"),
+    expectedErrorMessage =
+      "Table features [rowTracking] are incompatible with icebergWriterCompatV1")
 
   // deletionVectors is blocked by both icebergCompatV2 and icebergWriterCompatV1; since the
   // icebergCompatV2 checks are executed first as part of ICEBERG_COMPAT_V2_ENABLED.postProcess we
@@ -671,6 +639,59 @@ class IcebergWriterCompatV1Suite extends DeltaTableWriteSuiteBase with ColumnMap
       assert(protocol.supportsFeature(TableFeatures.INVARIANTS_W_FEATURE))
       assert(protocol.supportsFeature(TableFeatures.TYPE_WIDENING_RW_FEATURE))
       // TODO in the future add clustering once they are supported
+    }
+  }
+
+  test("compatible type widening is allowed with icebergWriterCompatV1") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // Create a table with icebergWriterCompatV1 and type widening enabled
+      val schema = new StructType()
+        .add(new StructField(
+          "intToLong",
+          LongType.LONG,
+          false,
+          FieldMetadata.builder()
+            .putLong(ColumnMapping.COLUMN_MAPPING_ID_KEY, 1)
+            .putString(
+              ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
+              "col-1").build()).withTypeChanges(
+          Seq(new TypeChange(IntegerType.INTEGER, LongType.LONG)).asJava))
+
+      val tblProps = tblPropertiesIcebergWriterCompatV1Enabled ++
+        Map(TableConfig.TYPE_WIDENING_ENABLED.getKey -> "true")
+
+      // This should not throw an exception
+      createEmptyTable(engine, tablePath, schema, tableProperties = tblProps)
+
+      val protocol = getProtocol(engine, tablePath)
+      assert(protocol.supportsFeature(TableFeatures.TYPE_WIDENING_RW_FEATURE))
+    }
+  }
+
+  test("incompatible type widening throws exception with icebergWriterCompatV1 on new Table") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // Try to create a table with icebergWriterCompatV1 and incompatible type widening
+      val schema = new StructType()
+        .add(new StructField(
+          "dateToTimestamp",
+          TimestampNTZType.TIMESTAMP_NTZ,
+          false,
+          FieldMetadata.builder()
+            .putLong(ColumnMapping.COLUMN_MAPPING_ID_KEY, 1)
+            .putString(
+              ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY,
+              "col-1").build()).withTypeChanges(
+          Seq(new TypeChange(DateType.DATE, TimestampNTZType.TIMESTAMP_NTZ)).asJava))
+
+      val tblProps = tblPropertiesIcebergWriterCompatV1Enabled ++
+        Map(TableConfig.TYPE_WIDENING_ENABLED.getKey -> "true")
+
+      val e = intercept[KernelException] {
+        createEmptyTable(engine, tablePath, schema, tableProperties = tblProps)
+      }
+
+      assert(
+        e.getMessage.contains("icebergCompatV2 does not support type widening present in table"))
     }
   }
 

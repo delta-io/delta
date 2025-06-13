@@ -46,20 +46,19 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
     """{"clusteringColumns":[["part1"],["part2"]]}""",
     false)
 
-  private def verifyClusteringDomainMetadata(
-      snapshot: SnapshotImpl,
-      expectedDomainMetadata: DomainMetadata = testingDomainMetadata): Unit = {
-    assert(snapshot.getActiveDomainMetadataMap.get(ClusteringMetadataDomain.DOMAIN_NAME)
-      == expectedDomainMetadata)
-    // verifyChecksum will check the domain metadata in CRC against the latest snapshot.
-    verifyChecksum(snapshot.getDataPath.toString)
-  }
-
   override def commitTransaction(
       txn: Transaction,
       engine: Engine,
       dataActions: CloseableIterable[Row]): TransactionCommitResult = {
     executeCrcSimple(txn.commit(engine, dataActions), engine)
+  }
+
+  private def verifyClusteringDMAndCRC(
+      snapshot: SnapshotImpl,
+      expectedDomainMetadata: DomainMetadata): Unit = {
+    verifyClusteringDomainMetadata(snapshot, expectedDomainMetadata)
+    // verifyChecksum will check the domain metadata in CRC against the latest snapshot.
+    verifyChecksum(snapshot.getDataPath.toString)
   }
 
   test("build table txn: clustering column should be part of the schema") {
@@ -126,7 +125,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
       assertHasWriterFeature(snapshot, "clustering")
 
       // Verify the clustering domain metadata is written
-      verifyClusteringDomainMetadata(snapshot)
+      verifyClusteringDMAndCRC(snapshot, testingDomainMetadata)
 
       // Use Spark to read the table's clustering metadata domain and verify the result
       val deltaLog = DeltaLog.forTable(spark, new Path(tablePath))
@@ -160,7 +159,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
         "delta.clustering",
         s"""{"clusteringColumns":[["$col1"],["$col2"]]}""",
         false)
-      verifyClusteringDomainMetadata(snapshot, expectedDomainMetadata)
+      verifyClusteringDMAndCRC(snapshot, expectedDomainMetadata)
     }
   }
 
@@ -178,7 +177,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
       assertHasWriterFeature(snapshot, "clustering")
 
       // Verify the clustering domain metadata is written
-      verifyClusteringDomainMetadata(snapshot)
+      verifyClusteringDMAndCRC(snapshot, testingDomainMetadata)
     }
   }
 
@@ -190,7 +189,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
 
       val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
       assertHasWriterFeature(snapshot, "clustering")
-      verifyClusteringDomainMetadata(snapshot)
+      verifyClusteringDMAndCRC(snapshot, testingDomainMetadata)
     }
   }
 
@@ -210,7 +209,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
         "delta.clustering",
         """{"clusteringColumns":[["part1"]]}""",
         false)
-      verifyClusteringDomainMetadata(snapshot, expectedDomainMetadata)
+      verifyClusteringDMAndCRC(snapshot, expectedDomainMetadata)
     }
   }
 
@@ -234,7 +233,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
         "delta.clustering",
         """{"clusteringColumns":[["part2"],["id"]]}""",
         false)
-      verifyClusteringDomainMetadata(snapshot, expectedDomainMetadata)
+      verifyClusteringDMAndCRC(snapshot, expectedDomainMetadata)
     }
   }
 
@@ -254,7 +253,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
         """{"clusteringColumns":[["part2"]]}""",
         false)
       assertHasWriterFeature(snapshot, "clustering")
-      verifyClusteringDomainMetadata(snapshot, expectedDomainMetadata)
+      verifyClusteringDMAndCRC(snapshot, expectedDomainMetadata)
     }
   }
 
@@ -274,7 +273,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
         """{"clusteringColumns":[]}""",
         false)
       assertHasWriterFeature(snapshot, "clustering")
-      verifyClusteringDomainMetadata(snapshot, expectedDomainMetadata)
+      verifyClusteringDMAndCRC(snapshot, expectedDomainMetadata)
     }
   }
 
@@ -289,6 +288,32 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
       }
       assert(
         ex.getMessage.contains("Column 'column(`non-exist`)' was not found in the table schema"))
+    }
+  }
+
+  test("update a partitioned table with clustering columns should fail") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createEmptyTable(engine, tablePath, testPartitionSchema, partCols = testPartitionColumns)
+      // test case 1: update with non-empty clustering columns
+      val ex1 = intercept[KernelException] {
+        updateTableMetadata(
+          engine,
+          tablePath,
+          clusteringColsOpt = Some(List(new Column("non-exist"))))
+      }
+      assert(
+        ex1.getMessage.contains("Cannot enable clustering on a partitioned table"))
+
+      // test case 2: update with empty clustering columns,
+      // this would still be regarded as enabling clustering
+      val ex2 = intercept[KernelException] {
+        updateTableMetadata(
+          engine,
+          tablePath,
+          clusteringColsOpt = Some(List()))
+      }
+      assert(
+        ex2.getMessage.contains("Cannot enable clustering on a partitioned table"))
     }
   }
 
@@ -312,7 +337,9 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
         dataClusteringBatches1.flatMap(_.toTestRows))
 
       val table = Table.forPath(engine, tablePath)
-      verifyClusteringDomainMetadata(table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl])
+      verifyClusteringDMAndCRC(
+        table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl],
+        testingDomainMetadata)
     }
   }
 
@@ -334,7 +361,9 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
         verifyCommitResult(commitResult0, expVersion = 0, expIsReadyForCheckpoint = false)
         verifyCommitInfo(tablePath, version = 0, operation = WRITE)
         verifyWrittenContent(tablePath, testPartitionSchema, expData)
-        verifyClusteringDomainMetadata(table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl])
+        verifyClusteringDMAndCRC(
+          table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl],
+          testingDomainMetadata)
       }
       {
         val commitResult1 = appendData(
@@ -348,7 +377,9 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
         verifyCommitResult(commitResult1, expVersion = 1, expIsReadyForCheckpoint = false)
         verifyCommitInfo(tablePath, version = 1, partitionCols = null, operation = WRITE)
         verifyWrittenContent(tablePath, testPartitionSchema, expData)
-        verifyClusteringDomainMetadata(table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl])
+        verifyClusteringDMAndCRC(
+          table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl],
+          testingDomainMetadata)
       }
     }
   }
@@ -375,7 +406,9 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
         verifyCommitResult(commitResult0, expVersion = 0, expIsReadyForCheckpoint = false)
         verifyCommitInfo(tablePath, version = 0, operation = WRITE)
         verifyWrittenContent(tablePath, testPartitionSchema, expData)
-        verifyClusteringDomainMetadata(table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl])
+        verifyClusteringDMAndCRC(
+          table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl],
+          testingDomainMetadata)
       }
       {
         val commitResult1 = updateTableMetadata(
@@ -384,7 +417,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
           clusteringColsOpt = Some(List(new Column("id"), new Column("part1"))))
 
         verifyCommitResult(commitResult1, expVersion = 1, expIsReadyForCheckpoint = false)
-        verifyClusteringDomainMetadata(
+        verifyClusteringDMAndCRC(
           table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl],
           expectedDomainMetadataAfterUpdate)
       }
@@ -400,7 +433,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
         verifyCommitResult(commitResult2, expVersion = 2, expIsReadyForCheckpoint = false)
         verifyCommitInfo(tablePath, version = 2, partitionCols = null, operation = WRITE)
         verifyWrittenContent(tablePath, testPartitionSchema, expData)
-        verifyClusteringDomainMetadata(
+        verifyClusteringDMAndCRC(
           table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl],
           expectedDomainMetadataAfterUpdate)
       }

@@ -356,6 +356,8 @@ lazy val connectClient = (project in file("spark-connect/client"))
       // Return the location of the distribution directory.
       "-Ddelta.spark.home=" + distributionDir
     },
+    // Required for testing addFeatureSupport/dropFeatureSupport.
+    Test / envVars += ("DELTA_TESTING", "1"),
   )
 
 lazy val connectServer = (project in file("spark-connect/server"))
@@ -408,6 +410,8 @@ lazy val connectServer = (project in file("spark-connect/server"))
       // needed for the client. Including it causes classpath problems.
       ExclusionRule("org.apache.spark", "spark-connect-shims_2.13")
     ),
+    // Required for testing addFeatureSupport/dropFeatureSupport.
+    Test / envVars += ("DELTA_TESTING", "1"),
   )
 
 lazy val spark = (project in file("spark"))
@@ -664,6 +668,8 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
     javafmtCheckSettings,
     scalafmtCheckSettings,
     Test / javaOptions ++= Seq("-ea"),
+    // This allows generating tables with unsupported test table features in delta-spark
+    Test / envVars += ("DELTA_TESTING", "1"),
     libraryDependencies ++= Seq(
       "org.apache.hadoop" % "hadoop-client-runtime" % hadoopVersion,
       "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5",

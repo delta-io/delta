@@ -76,7 +76,7 @@ def run_python_integration_tests(root_dir, version, test_name, extra_maven_repo,
         run_cmd(["build/sbt", "publishM2"])
 
     test_dir = path.join(root_dir, path.join("examples", "python"))
-    files_to_skip = {"using_with_pip.py", "missing_delta_storage_jar.py", "image_storage.py"}
+    files_to_skip = {"using_with_pip.py", "missing_delta_storage_jar.py", "image_storage.py", "delta_connect.py"}
 
     test_files = [path.join(test_dir, f) for f in os.listdir(test_dir)
                   if path.isfile(path.join(test_dir, f)) and
@@ -377,7 +377,7 @@ def run_unity_catalog_commit_coordinator_integration_tests(root_dir, version, te
 
     python_root_dir = path.join(root_dir, "python")
     extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
-    packages = "io.delta:delta-%s_2.12:%s" % (get_artifact_name(version), version)
+    packages = "io.delta:delta-%s_2.13:%s" % (get_artifact_name(version), version)
     if extra_packages:
         packages += "," + extra_packages
 

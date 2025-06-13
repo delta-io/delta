@@ -546,6 +546,14 @@
     ],
     "sqlState" : "2200G"
   },
+  "DELTA_COMMAND_INVARIANT_VIOLATION" : {
+    "message" : [
+      "A command internal invariant was violated in '<operation>'.",
+      "Please retry the command.",
+      "Exception reference: <uuid>."
+    ],
+    "sqlState" : "XXKDS"
+  },
   "DELTA_COMMIT_INTERMEDIATE_REDIRECT_STATE" : {
     "message" : [
       "Cannot handle commit of table within redirect table state '<state>'."
@@ -1048,6 +1056,12 @@
       "Consider dropping them first before dropping this feature."
     ],
     "sqlState" : "55000"
+  },
+  "DELTA_FEATURE_DROP_FEATURE_IS_DELTA_PROPERTY" : {
+    "message" : [
+      "Cannot drop `<property>` from this table because this is a delta table property and not a table feature."
+    ],
+    "sqlState" : "42000"
   },
   "DELTA_FEATURE_DROP_FEATURE_NOT_PRESENT" : {
     "message" : [
@@ -1994,6 +2008,14 @@
     ],
     "sqlState" : "42P18"
   },
+  "DELTA_NUM_RECORDS_MISMATCH" : {
+    "message" : [
+      "Failed to validate the number of records in <operation>.",
+      "Added <numAddedRecords> records and removed <numRemovedRecords> records.",
+      "This is a bug."
+    ],
+    "sqlState" : "XXKDS"
+  },
   "DELTA_ONEOF_IN_TIMETRAVEL" : {
     "message" : [
       "Please either provide 'timestampAsOf' or 'versionAsOf' for time travel."
@@ -2193,13 +2215,8 @@
   "DELTA_ROW_ID_ASSIGNMENT_WITHOUT_STATS" : {
     "message" : [
       "Cannot assign row IDs without row count statistics.",
-      "Collect statistics for the table by running the following code and retry:",
-      "import org.apache.spark.sql.catalyst.TableIdentifier",
-      "import org.apache.spark.sql.delta.DeltaLog",
-      "import org.apache.spark.sql.delta.stats.StatisticsCollection",
-      "",
-      "val log = DeltaLog.forTable(spark, TableIdentifier(table_name))",
-      "StatisticsCollection.recompute(spark, log)"
+      "Collect statistics for the table by running the ANALYZE TABLE command:",
+      "ANALYZE TABLE tableName COMPUTE DELTA STATISTICS"
     ],
     "sqlState" : "22000"
   },
@@ -2300,6 +2317,12 @@
       "SHOW PARTITIONS is not allowed on a table that is not partitioned: <tableName>"
     ],
     "sqlState" : "42809"
+  },
+  "DELTA_SHREDDING_TABLE_PROPERTY_DISABLED" : {
+    "message" : [
+      "Attempted to write shredded Variants but the table does not support shredded writes. Consider setting the table property enableVariantShredding to true."
+    ],
+    "sqlState" : "0A000"
   },
   "DELTA_SOURCE_IGNORE_DELETE" : {
     "message" : [

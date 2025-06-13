@@ -1686,6 +1686,16 @@ trait DeltaSQLConfBase {
       .checkValues(NonDeterministicPredicateWidening.list)
       .createWithDefault(NonDeterministicPredicateWidening.ON)
 
+  val DELTA_CONFLICT_DETECTION_ALLOW_REPLACE_TABLE_TO_REMOVE_NEW_DOMAIN_METADATA =
+    buildConf("conflictDetection.allowReplaceTableToRemoveNewDomainMetadata")
+      .doc("Whether to allow removing new domain metadatas from concurrent transactions during " +
+        "conflict resolution for a REPLACE TABLE operation. Note that this flag applies only " +
+        "to metadata domains where the table snapshot read by the REPLACE TABLE command did " +
+        "not contain a domain metadata of the same domain.")
+      .internal()
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_UNIFORM_ICEBERG_SYNC_CONVERT_ENABLED =
     buildConf("uniform.iceberg.sync.convert.enabled")
       .doc("If enabled, iceberg conversion will be done synchronously. " +
@@ -2602,6 +2612,49 @@ trait DeltaSQLConfBase {
         |""".stripMargin)
     .booleanConf
     .createWithDefault(true)
+
+  //////////////////
+  // CORRECTNESS
+  //////////////////
+
+  val NUM_RECORDS_VALIDATION_ENABLED =
+    buildConf("numRecordsValidation.enabled")
+      .internal()
+      .doc(
+        """
+          |When enabled, adds a check to MERGE, UPDATE and DELETE that validates the number of
+          |records that were added and removed.
+          |
+          |- For MERGE without INSERT statements it checks that the number of records does not
+          |  increase.
+          |- For MERGE without DELETE statements it checks that the number of records does not
+          |  decrease.
+          |- For UPDATE statements it checks that the number of records does not change.
+          |- For DELETE statements it checks that the number of records does not increase.
+          |
+          |When disabled, we only log a warning.
+          |""".stripMargin
+      )
+      .booleanConf
+      .createWithDefault(true)
+
+
+  val COMMAND_INVARIANT_CHECKS_USE_UNRELIABLE =
+    buildConf("commandInvariantChecksUseUnreliable")
+      .internal()
+      .doc("When enabled all DML commands will check and log invariants using unreliable metrics.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val COMMAND_INVARIANT_CHECKS_THROW =
+    buildConf("commandInvariantChecksThrow")
+      .internal()
+      .doc(
+        """When disabled all DML commands using reliable metrics just log a warning on command
+          |invariant violation and proceed to commit.
+          |When enabled, it's decided by a per-command flag.""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

@@ -20,6 +20,7 @@ import java.util.{Collections, List => JList, Optional}
 
 import scala.collection.JavaConverters._
 
+import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.test.MockFileSystemClientUtils
 import io.delta.kernel.utils.FileStatus
 
@@ -31,11 +32,12 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils {
   private val deltaFs11List = deltaFileStatuses(Seq(11)).toList.asJava
   private val deltaFs12List = deltaFileStatuses(Seq(12)).toList.asJava
   private val deltasFs11To12List = deltaFileStatuses(Seq(11, 12)).toList.asJava
-  private val compactionFs3To5List = compactedFileStatuses(Seq((3, 5))).toList.asJava
+  private val compactionFs11To12List = compactedFileStatuses(Seq((11, 12))).toList.asJava
   private val badJsonsList = Collections.singletonList(
     FileStatus.of(s"${logPath.toString}/gibberish.json", 1, 1))
   private val badCheckpointsList = Collections.singletonList(
     FileStatus.of(s"${logPath.toString}/gibberish.checkpoint.parquet", 1, 1))
+  private val logPath2 = new Path("/another/fake/path/to/table/", "_delta_log")
 
   test("constructor -- valid case (empty)") {
     LogSegment.empty(logPath)
@@ -46,7 +48,7 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils {
       logPath,
       12,
       deltasFs11To12List,
-      Collections.emptyList(),
+      compactionFs11To12List,
       checkpointFs10List,
       Optional.empty(),
       1)
@@ -261,6 +263,54 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils {
     assert(exMsg === "Delta versions must be contiguous: [11, 13]")
   }
 
+  test("constructor -- delta commit files (JSON) outside of log path") {
+    val deltasForDifferentTable =
+      deltaFileStatuses(Seq(11, 12), logPath2).toList.asJava
+    val ex = intercept[RuntimeException] {
+      new LogSegment(
+        logPath,
+        12,
+        deltasForDifferentTable,
+        Collections.emptyList(),
+        checkpointFs10List,
+        Optional.empty(),
+        1)
+    }
+    assert(ex.getMessage.contains("doesn't belong in the transaction log"))
+  }
+
+  test("constructor -- compaction log files outside of log path") {
+    val compactionsForDifferentTable =
+      compactedFileStatuses(Seq((11, 12)), logPath2).toList.asJava
+    val ex = intercept[RuntimeException] {
+      new LogSegment(
+        logPath,
+        12,
+        deltasFs11To12List,
+        compactionsForDifferentTable,
+        checkpointFs10List,
+        Optional.empty(),
+        1)
+    }
+    assert(ex.getMessage.contains("doesn't belong in the transaction log"))
+  }
+
+  test("constructor -- checkpoint files (parquet) outside of log path") {
+    val checkpointsForDifferentTable =
+      singularCheckpointFileStatuses(Seq(10), logPath2).toList.asJava
+    val ex = intercept[RuntimeException] {
+      new LogSegment(
+        logPath,
+        12,
+        deltasFs11To12List,
+        Collections.emptyList(),
+        checkpointsForDifferentTable,
+        Optional.empty(),
+        1)
+    }
+    assert(ex.getMessage.contains("doesn't belong in the transaction log"))
+  }
+
   test("isComplete") {
     {
       // case 1: checkpoint and deltas => complete
@@ -447,6 +497,33 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils {
       Seq.range(0, 21),
       Seq((1, 3), (1, 5), (7, 10), (11, 14), (11, 12), (16, 20), (18, 20)),
       "16-20, 15, 11-14, 7-10, 6, 1-5, 0")
+  }
+
+  test("assertLogFilesBelongToTable should pass for correct log paths") {
+    val tablePath = new Path("s3://bucket/logPath")
+    val logFiles = List(
+      FileStatus.of("s3://bucket/logPath/deltafile1", 0L, 0L),
+      FileStatus.of("s3://bucket/logPath/deltafile2", 0L, 0L),
+      FileStatus.of("s3://bucket/logPath/checkpointfile1", 0L, 0L),
+      FileStatus.of("s3://bucket/logPath/checkpointfile2", 0L, 0L)).asJava
+
+    LogSegment.assertLogFilesBelongToTable(tablePath, logFiles)
+  }
+
+  test("assertLogFilesBelongToTable should fail for incorrect log paths") {
+    val tablePath = new Path("s3://bucket/logPath")
+    val logFiles = List(
+      FileStatus.of("s3://bucket/logPath/deltafile1", 0L, 0L),
+      FileStatus.of("s3://bucket/invalidLogPath/deltafile2", 0L, 0L),
+      FileStatus.of("s3://bucket/logPath/checkpointfile1", 0L, 0L),
+      FileStatus.of("s3://bucket/invalidLogPath/checkpointfile2", 0L, 0L)).asJava
+
+    // Test that files with incorrect log paths trigger the assertion
+    val ex = intercept[RuntimeException] {
+      LogSegment.assertLogFilesBelongToTable(tablePath, logFiles)
+    }
+    assert(ex.getMessage.contains("File (s3://bucket/invalidLogPath/deltafile2) " +
+      s"doesn't belong in the transaction log at $tablePath"))
   }
 
 }

@@ -19,7 +19,11 @@ import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 import java.util.Optional;
 
 /** Stores the metrics results for a {@link SnapshotReport} */
-@JsonPropertyOrder({"timestampToVersionResolutionDurationNs", "loadInitialDeltaActionsDurationNs"})
+@JsonPropertyOrder({
+  "timestampToVersionResolutionDurationNs",
+  "loadInitialDeltaActionsDurationNs",
+  "timeToBuildLogSegmentForVersionDurationNs"
+})
 public interface SnapshotMetricsResult {
 
   /**
@@ -33,4 +37,10 @@ public interface SnapshotMetricsResult {
    *     protocol and metadata). 0 if snapshot construction fails before log replay.
    */
   long getLoadInitialDeltaActionsDurationNs();
+
+  /**
+   * @return the duration (ns) to build the log segment for the specified version during snapshot
+   *     construction. 0 if snapshot construction fails before this step.
+   */
+  long getTimeToBuildLogSegmentForVersionNs();
 }
