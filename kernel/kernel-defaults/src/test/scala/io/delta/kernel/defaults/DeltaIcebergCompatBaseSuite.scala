@@ -46,7 +46,7 @@ trait DeltaIcebergCompatBaseSuite extends DeltaTableWriteSuiteBase with ColumnMa
 
   supportedDataColumnTypes.foreach {
     dataType: DataType =>
-      test(s"allowed data column types: $dataType on a new table") {
+      test(s"allowed data column types: $dataType on creating table") {
         withTempDirAndEngine { (tablePath, engine) =>
           val schema = new StructType().add("col", dataType)
           val tblProps = Map(icebergCompatEnabledKey -> "true")
@@ -57,7 +57,7 @@ trait DeltaIcebergCompatBaseSuite extends DeltaTableWriteSuiteBase with ColumnMa
 
   supportedPartitionColumnTypes.foreach {
     dataType: DataType =>
-      test(s"allowed partition column types: $dataType on a new table") {
+      test(s"allowed partition column types: $dataType on creating table") {
         withTempDirAndEngine { (tablePath, engine) =>
           val schema = new StructType().add("col", dataType)
           val partitionCols = Seq("col")
@@ -67,7 +67,7 @@ trait DeltaIcebergCompatBaseSuite extends DeltaTableWriteSuiteBase with ColumnMa
       }
   }
 
-  test(s"enable $icebergCompatVersion on a new table") {
+  test(s"enable $icebergCompatVersion on creating table") {
     withTempDirAndEngine { (tablePath, engine) =>
       val tblProps = Map(icebergCompatEnabledKey -> "true")
       createEmptyTable(engine, tablePath, cmTestSchema(), tableProperties = tblProps)
@@ -86,7 +86,7 @@ trait DeltaIcebergCompatBaseSuite extends DeltaTableWriteSuiteBase with ColumnMa
 
   test(s"compatible type widening is allowed with $icebergCompatVersion") {
     withTempDirAndEngine { (tablePath, engine) =>
-      // Create a table with icebergCompatV2 and type widening enabled
+      // Create a table with icebergCompat and type widening enabled
       val schema = new StructType()
         .add(new StructField(
           "intToLong",
@@ -111,7 +111,7 @@ trait DeltaIcebergCompatBaseSuite extends DeltaTableWriteSuiteBase with ColumnMa
 
   test(s"incompatible type widening throws exception with $icebergCompatVersion") {
     withTempDirAndEngine { (tablePath, engine) =>
-      // Try to create a table with icebergCompatV2 and incompatible type widening
+      // Try to create a table with icebergCompat and incompatible type widening
       val schema = new StructType()
         .add(
           new StructField(
