@@ -1212,6 +1212,7 @@ class InCommitTimestampSuite
         "AS SELECT * FROM range(3, 4)")
     }
   }
+
   testWithDefaultCommitCoordinatorUnset(
     "ICT enablement properties are dropped after a REPLACE with explicit enablement " +
       s"when the ${DeltaSQLConf.IN_COMMIT_TIMESTAMP_RETAIN_ENABLEMENT_INFO_FIX_ENABLED.key} " +
