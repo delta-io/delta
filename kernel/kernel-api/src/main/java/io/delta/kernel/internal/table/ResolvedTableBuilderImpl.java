@@ -25,6 +25,7 @@ import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.files.ParsedLogData;
 import io.delta.kernel.internal.files.ParsedLogData.ParsedLogType;
+import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.Clock;
 import io.delta.kernel.internal.util.Tuple2;
 import java.util.Collections;
@@ -90,7 +91,11 @@ public class ResolvedTableBuilderImpl implements ResolvedTableBuilder {
 
   @Override
   public ResolvedTableBuilder withProtocolAndMetadata(Protocol protocol, Metadata metadata) {
-    ctx.protocolAndMetadataOpt = Optional.of(new Tuple2<>(protocol, metadata));
+    ctx.protocolAndMetadataOpt =
+        Optional.of(
+            new Tuple2<>(
+                requireNonNull(protocol, "protocol is null"),
+                requireNonNull(metadata, "metadata is null")));
     return this;
   }
 
@@ -106,7 +111,41 @@ public class ResolvedTableBuilderImpl implements ResolvedTableBuilder {
 
   private void validateInputOnBuild() {
     checkArgument(ctx.versionOpt.orElse(0L) >= 0, "version must be >= 0");
-    // TODO: logData only ratified staged commits
-    // TODO: logData sorted and contiguous
+    validateProtocolAndMetadataOnlyIfVersionProvided();
+    validateProtocolRead();
+    validateLogDataContainsOnlyRatifiedCommits(); // TODO: delta-io/delta#4765 support other types
+    validateLogDataIsSortedContiguous();
+  }
+
+  private void validateProtocolAndMetadataOnlyIfVersionProvided() {
+    checkArgument(
+        ctx.versionOpt.isPresent() || !ctx.protocolAndMetadataOpt.isPresent(),
+        "protocol and metadata can only be provided if a version is provided");
+  }
+
+  private void validateProtocolRead() {
+    ctx.protocolAndMetadataOpt.ifPresent(
+        x -> TableFeatures.validateKernelCanReadTheTable(x._1, ctx.unresolvedPath));
+  }
+
+  private void validateLogDataContainsOnlyRatifiedCommits() {
+    for (ParsedLogData logData : ctx.logDatas) {
+      checkArgument(
+          logData.type == ParsedLogType.RATIFIED_STAGED_COMMIT,
+          "Only RATIFIED_STAGED_COMMIT log data is supported, but found: " + logData);
+    }
+  }
+
+  private void validateLogDataIsSortedContiguous() {
+    if (ctx.logDatas.size() > 1) {
+      for (int i = 1; i < ctx.logDatas.size(); i++) {
+        final ParsedLogData prev = ctx.logDatas.get(i - 1);
+        final ParsedLogData curr = ctx.logDatas.get(i);
+        checkArgument(
+            prev.version + 1 == curr.version,
+            String.format(
+                "Log data must be sorted and contiguous, but found: %s and %s", prev, curr));
+      }
+    }
   }
 }
