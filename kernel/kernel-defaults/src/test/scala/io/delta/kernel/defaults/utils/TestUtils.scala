@@ -28,7 +28,7 @@ import io.delta.kernel.{Scan, Snapshot, Table, TransactionCommitResult}
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector, FilteredColumnarBatch, MapValue, Row}
 import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.defaults.internal.data.vector.{DefaultGenericVector, DefaultStructVector}
-import io.delta.kernel.defaults.test.{LegacyTableManagerAdapter, NewTableManagerAdapter, ResolvedTableAdapter, TableManagerAdapter}
+import io.delta.kernel.defaults.test.{AbstractResolvedTableAdapter, AbstractTableManagerAdapter, LegacyTableManagerAdapter, TableManagerAdapter}
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.expressions.{Column, Predicate}
 import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
@@ -57,24 +57,24 @@ import org.apache.spark.sql.catalyst.plans.SQLHelper
 import org.scalatest.Assertions
 
 trait TestUtils extends AbstractTestUtils {
-  override def getTableManagerAdapter: TableManagerAdapter = new LegacyTableManagerAdapter()
+  override def getTableManagerAdapter: AbstractTableManagerAdapter = new LegacyTableManagerAdapter()
 }
 
 /**
  * DO NOT MODIFY this trait -- this is just syntactic sugar to clearly indicate we are extending the
  * "default" TestUtils which happens to use the legacy Kernel APIs
  */
-trait TestUtilsWithLegacyKernel extends TestUtils
+trait TestUtilsWithLegacyKernelAPIs extends TestUtils
 
-trait TestUtilsWithNewKernel extends AbstractTestUtils {
-  override def getTableManagerAdapter: TableManagerAdapter = new NewTableManagerAdapter()
+trait TestUtilsWithTableManagerAPIs extends AbstractTestUtils {
+  override def getTableManagerAdapter: AbstractTableManagerAdapter = new TableManagerAdapter()
 }
 
 trait AbstractTestUtils extends Assertions with SQLHelper {
 
   import io.delta.kernel.defaults.test.ResolvedTableAdapterImplicits._
 
-  def getTableManagerAdapter: TableManagerAdapter
+  def getTableManagerAdapter: AbstractTableManagerAdapter
 
   lazy val configuration = new Configuration()
   lazy val defaultEngine = DefaultEngine.create(configuration)
@@ -238,7 +238,7 @@ trait AbstractTestUtils extends Assertions with SQLHelper {
   }
 
   def readResolvedTableAdapter(
-      resolvedTableAdapter: ResolvedTableAdapter,
+      resolvedTableAdapter: AbstractResolvedTableAdapter,
       readSchema: StructType = null,
       filter: Predicate = null,
       expectedRemainingFilter: Predicate = null,

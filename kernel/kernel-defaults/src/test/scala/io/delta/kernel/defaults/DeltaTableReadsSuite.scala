@@ -24,7 +24,7 @@ import scala.collection.JavaConverters._
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.Table
-import io.delta.kernel.defaults.utils.{AbstractTestUtils, TestRow, TestUtils, TestUtilsWithLegacyKernel}
+import io.delta.kernel.defaults.utils.{AbstractTestUtils, TestRow, TestUtils, TestUtilsWithLegacyKernelAPIs}
 import io.delta.kernel.exceptions.{InvalidTableException, KernelException, TableNotFoundException}
 import io.delta.kernel.internal.TableImpl
 import io.delta.kernel.internal.fs.Path
@@ -39,10 +39,14 @@ import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
 import org.apache.spark.sql.functions.col
 import org.scalatest.funsuite.AnyFunSuite
 
-class LegacyDeltaTableReadsSuite extends AbstractDeltaTableReadsSuite with TestUtilsWithLegacyKernel
+class LegacyDeltaTableReadsSuite
+    extends AbstractDeltaTableReadsSuite
+    with TestUtilsWithLegacyKernelAPIs
 
 // TODO: uncomment when new Kernel APIs supports ScanBuilder
-// class NewDeltaTableReadsSuite extends AbstractDeltaTableReadsSuite with TestUtilsWithNewKernel
+// class DeltaTableReadsSuite extends
+//     AbstractDeltaTableReadsSuite
+//     with TestUtilsWithTableManagerAPIs
 
 trait AbstractDeltaTableReadsSuite extends AnyFunSuite { self: AbstractTestUtils =>
 

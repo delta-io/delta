@@ -20,7 +20,10 @@ import io.delta.kernel.{ResolvedTable, ScanBuilder, Snapshot}
 import io.delta.kernel.internal.SnapshotImpl
 import io.delta.kernel.types.StructType
 
+/** Implicit conversions that enable easy and succinct adapter creation in tests. */
 object ResolvedTableAdapterImplicits {
+
+  /** Converts a [[Snapshot]] to a [[LegacyResolvedTableAdapter]]. */
   implicit class AdapterFromSnapshot(private val snapshot: Snapshot) extends AnyVal {
     def toTestAdapter: LegacyResolvedTableAdapter = snapshot match {
       case impl: SnapshotImpl => new LegacyResolvedTableAdapter(impl)
@@ -28,19 +31,26 @@ object ResolvedTableAdapterImplicits {
     }
   }
 
+  /** Converts a [[ResolvedTable]] to a [[ResolvedTableAdapter]]. */
   implicit class AdapterFromResolvedTable(private val resolvedTable: ResolvedTable) extends AnyVal {
-    def toTestAdapter: NewResolvedTableAdapter = new NewResolvedTableAdapter(resolvedTable)
+    def toTestAdapter: ResolvedTableAdapter = new ResolvedTableAdapter(resolvedTable)
   }
 }
 
-trait ResolvedTableAdapter {
+/**
+ * Test framework adapter that provides a unified interface for **accessing** Delta tables.
+ *
+ * This trait abstracts over the differences between [[Snapshot]] (legacy API) and [[ResolvedTable]]
+ * (current API) via the [[LegacyResolvedTableAdapter]] and [[ResolvedTableAdapter]] child classes.
+ */
+trait AbstractResolvedTableAdapter {
   def getPath(): String
   def getVersion(): Long
   def getSchema(): StructType
   def getScanBuilder(): ScanBuilder
 }
 
-class LegacyResolvedTableAdapter(snapshot: SnapshotImpl) extends ResolvedTableAdapter {
+class LegacyResolvedTableAdapter(snapshot: SnapshotImpl) extends AbstractResolvedTableAdapter {
   override def getPath(): String = snapshot.getDataPath.toString
   override def getVersion(): Long = snapshot.getVersion
   override def getSchema(): StructType = snapshot.getSchema
@@ -48,7 +58,7 @@ class LegacyResolvedTableAdapter(snapshot: SnapshotImpl) extends ResolvedTableAd
 }
 
 // TODO: Use ResolvedTableInternal
-class NewResolvedTableAdapter(rt: ResolvedTable) extends ResolvedTableAdapter {
+class ResolvedTableAdapter(rt: ResolvedTable) extends AbstractResolvedTableAdapter {
   override def getPath(): String = rt.getPath
   override def getVersion(): Long = rt.getVersion
   override def getSchema(): StructType = rt.getSchema
