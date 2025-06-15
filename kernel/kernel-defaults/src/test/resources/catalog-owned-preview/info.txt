@@ -1,0 +1,51 @@
+# Below are the commands and instructions to create the `catalog-owned-preview` table.
+# Note that delta-spark:4.0.0 does not yet support *creating* catalogManaged tables.
+# So, for now, we create a normal table with ICT enabled and then
+# (a) manually add the `catalogOwned-preview`
+# (b) manually move and rename the published delta files into the _staged_commits directory.
+
+pyspark --packages io.delta:delta-spark_2.13:4.0.0 \
+    --conf "spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension" \
+    --conf "spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog"
+
+table_path = <table_path>
+
+# Commit 0: Create the table
+
+spark.sql(f"""
+CREATE TABLE delta.`{table_path}` (
+    part1 INT,
+    col1 INT
+)
+USING DELTA
+PARTITIONED BY (part1)
+""")
+
+# Commit 1: Insert 100 rows into part1=0
+
+spark.sql(f"""
+INSERT INTO delta.`{table_path}`
+SELECT
+    col1 DIV 100 as part1,
+    col1
+FROM (
+    SELECT explode(sequence(0, 99)) as col1
+)
+""")
+
+# Commit 2: Insert 100 rows into part1=1
+
+spark.sql(f"""
+INSERT INTO delta.`{table_path}`
+SELECT
+    col1 DIV 100 as part1,
+    col1
+FROM (
+    SELECT explode(sequence(100, 199)) as col1
+)
+""")
+
+# Then, add `"readerFeatures":["catalogOwned-preview"]` to the _delta_log/001.json protocol
+# Then, for commits version $v in [1, 2] move _delta_log/$v.json into
+# _delta_log/_staged_commits/$v.$uuid.json, where $uuid is taken from the commitInfo.txnId in
+# $v.json
