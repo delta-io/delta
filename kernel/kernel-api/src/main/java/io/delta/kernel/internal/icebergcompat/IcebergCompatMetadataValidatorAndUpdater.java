@@ -18,7 +18,6 @@ package io.delta.kernel.internal.icebergcompat;
 import static io.delta.kernel.internal.tablefeatures.TableFeatures.*;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Collections.singletonMap;
-import static java.util.stream.Collectors.toList;
 
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.internal.DeltaErrors;
@@ -29,8 +28,6 @@ import io.delta.kernel.internal.tablefeatures.TableFeature;
 import io.delta.kernel.internal.types.TypeWideningChecker;
 import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.SchemaIterable;
-import io.delta.kernel.internal.util.SchemaUtils;
-import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.*;
 import java.util.*;
 import java.util.function.Predicate;
@@ -208,23 +205,24 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
   protected static IcebergCompatCheck hasOnlySupportedTypes(
       Set<Class<? extends DataType>> supportedTypes) {
     return (inputContext) -> {
-      List<Tuple2<List<String>, StructField>> matches =
-          SchemaUtils.filterRecursively(
-              inputContext.newMetadata.getSchema(),
-              /* recurseIntoMapAndArrayTypes= */ true,
-              /* stopOnFirstMatch = */ false,
-              field -> {
-                DataType dataType = field.getDataType();
-                for (Class<? extends DataType> clazz : supportedTypes) {
-                  if (clazz.isInstance(dataType)) return false;
-                }
-                return true;
-              });
+      Set<DataType> matches =
+          new SchemaIterable(inputContext.newMetadata.getSchema())
+              .stream()
+                  .map(element -> element.getField().getDataType())
+                  .filter(
+                      dataType -> {
+                        for (Class<? extends DataType> clazz : supportedTypes) {
+                          if (clazz.isInstance(dataType)) return false;
+                        }
+                        return true;
+                      })
+                  .collect(Collectors.toSet());
 
       if (!matches.isEmpty()) {
+        List<DataType> unsupportedTypes = new ArrayList<>(matches);
+        unsupportedTypes.sort(Comparator.comparing(DataType::toString));
         throw DeltaErrors.icebergCompatUnsupportedTypeColumns(
-            inputContext.compatFeatureName,
-            matches.stream().map(tuple -> tuple._2.getDataType()).collect(toList()));
+            inputContext.compatFeatureName, unsupportedTypes);
       }
     };
   }

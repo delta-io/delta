@@ -19,6 +19,8 @@ import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.types.*;
 import java.util.*;
 import java.util.function.Consumer;
+import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
 
 /**
  * Utility class for iterating over schema structures and modifying them.
@@ -108,6 +110,16 @@ public class SchemaIterable implements Iterable<SchemaIterable.SchemaElement> {
         return iterator.next();
       }
     };
+  }
+
+  public Stream<SchemaElement> stream() {
+    return StreamSupport.stream(spliterator(), /* parallel = */ false);
+  }
+
+  public Stream<MutableSchemaElement> mutableStream() {
+    return StreamSupport.stream(
+        Spliterators.spliteratorUnknownSize(newMutableIterator(), /*characteristics = */ 0),
+        /* parallel = */ false);
   }
 
   /**

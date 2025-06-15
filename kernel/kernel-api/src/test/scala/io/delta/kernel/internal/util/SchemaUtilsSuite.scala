@@ -28,7 +28,7 @@ import io.delta.kernel.internal.TableConfig
 import io.delta.kernel.internal.actions.{Format, Metadata}
 import io.delta.kernel.internal.types.DataTypeJsonSerDe
 import io.delta.kernel.internal.util.ColumnMapping.{COLUMN_MAPPING_ID_KEY, COLUMN_MAPPING_MODE_KEY, COLUMN_MAPPING_PHYSICAL_NAME_KEY}
-import io.delta.kernel.internal.util.SchemaUtils.{computeSchemaChangesById, filterRecursively, validateSchema, validateUpdatedSchemaAndGetUpdatedSchema}
+import io.delta.kernel.internal.util.SchemaUtils.{computeSchemaChangesById, validateSchema, validateUpdatedSchemaAndGetUpdatedSchema}
 import io.delta.kernel.internal.util.VectorUtils.stringStringMapValue
 import io.delta.kernel.types.{ArrayType, ByteType, DataType, DoubleType, FieldMetadata, IntegerType, LongType, MapType, StringType, StructField, StructType, TypeChange}
 import io.delta.kernel.types.IntegerType.INTEGER
@@ -1457,127 +1457,6 @@ class SchemaUtilsSuite extends AnyFunSuite {
           }
           assert(e.getMessage.contains("Cannot change the type of existing field"))
         }
-      }
-  }
-
-  ///////////////////////////////////////////////////////////////////////////
-  // filterRecursively
-  ///////////////////////////////////////////////////////////////////////////
-  val testSchema = new StructType()
-    .add("a", INTEGER)
-    .add("b", INTEGER)
-    .add("c", LONG)
-    .add(
-      "s",
-      new StructType()
-        .add("a", TIMESTAMP)
-        .add("e", INTEGER)
-        .add("f", LONG)
-        .add(
-          "g",
-          new StructType()
-            .add("a", INTEGER)
-            .add("b", TIMESTAMP)
-            .add("c", LONG)).add(
-          "h",
-          new MapType(
-            new StructType().add("a", TIMESTAMP),
-            new StructType().add("b", INTEGER),
-            true)).add(
-          "i",
-          new ArrayType(
-            new StructType().add("b", TIMESTAMP),
-            true))).add(
-      "d",
-      new MapType(
-        new StructType().add("b", TIMESTAMP),
-        new StructType().add("a", INTEGER),
-        true)).add(
-      "e",
-      new ArrayType(
-        new StructType()
-          .add("f", TIMESTAMP)
-          .add("b", INTEGER),
-        true))
-  val flattenedTestSchema = {
-    SchemaUtils.filterRecursively(
-      testSchema,
-      /* visitListMapTypes = */ true,
-      /* stopOnFirstMatch = */ false,
-      (v1: StructField) => true).asScala.map(f => f._1.asScala.mkString(".") -> f._2).toMap
-  }
-  Seq(
-    // Format: (testPrefix, visitListMapTypes, stopOnFirstMatch, filter, expectedColumns)
-    (
-      "Filter by name 'b', stop on first match",
-      true,
-      true,
-      (field: StructField) => field.getName == "b",
-      Seq("b")),
-    (
-      "Filter by name 'b', visit all matches",
-      false,
-      false,
-      (field: StructField) => field.getName == "b",
-      Seq("b", "s.g.b")),
-    (
-      "Filter by name 'b', visit all matches including nested structures",
-      true,
-      false,
-      (field: StructField) => field.getName == "b",
-      Seq(
-        "b",
-        "s.g.b",
-        "s.h.value.b",
-        "s.i.element.b",
-        "d.key.b",
-        "e.element.b")),
-    (
-      "Filter by TIMESTAMP type, stop on first match",
-      false,
-      true,
-      (field: StructField) => field.getDataType == TIMESTAMP,
-      Seq("s.a")),
-    (
-      "Filter by TIMESTAMP type, visit all matches including nested structures",
-      true,
-      false,
-      (field: StructField) => field.getDataType == TIMESTAMP,
-      Seq(
-        "s.a",
-        "s.g.b",
-        "s.h.key.a",
-        "s.i.element.b",
-        "d.key.b",
-        "e.element.f")),
-    (
-      "Filter by TIMESTAMP type and name 'f', visit all matches",
-      true,
-      false,
-      (field: StructField) => field.getDataType == TIMESTAMP && field.getName == "f",
-      Seq("e.element.f")),
-    (
-      "Filter by non-existent field name 'z'",
-      true,
-      false,
-      (field: StructField) => field.getName == "z",
-      Seq())).foreach {
-    case (testDescription, visitListMapTypes, stopOnFirstMatch, filter, expectedColumns) =>
-      test(s"filterRecursively - $testDescription | " +
-        s"visitListMapTypes=$visitListMapTypes, stopOnFirstMatch=$stopOnFirstMatch") {
-
-        val results =
-          filterRecursively(
-            testSchema,
-            visitListMapTypes,
-            stopOnFirstMatch,
-            (v1: StructField) => filter(v1))
-            // convert to map of column path concatenated with '.' and the StructField
-            .asScala.map(f => (f._1.asScala.mkString("."), f._2)).toMap
-
-        // Assert that the number of results matches the expected columns
-        assert(results.size === expectedColumns.size)
-        assert(results === flattenedTestSchema.filterKeys(expectedColumns.contains))
       }
   }
 
