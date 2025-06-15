@@ -64,23 +64,23 @@ class CatalogManagedLogSegmentSuite extends AnyFunSuite
         assert(expectedExceptionClassOpt.get.isInstance(exception))
       } else {
         val resolvedTable = builder.build(engine).asInstanceOf[ResolvedTableInternal]
-        val logSegmentDeltas = resolvedTable.getLogSegment.getDeltas.asScala
+        val actualDeltaAndCommitFileStatuses = resolvedTable.getLogSegment.getDeltas.asScala
 
         // Check: we got the expected versions
         val actualDeltaAndCommitVersions =
-          logSegmentDeltas.map(x => FileNames.deltaVersion(x.getPath))
+          actualDeltaAndCommitFileStatuses.map(x => FileNames.deltaVersion(x.getPath))
         assert(actualDeltaAndCommitVersions sameElements expectedDeltaAndCommitVersionsOpt.get)
 
-        // Check: published deltas take priority over ratified commits when versions overlap
-        val expectedPublishedDeltaVersions =
-          deltaVersions.toSet.intersect(expectedDeltaAndCommitVersionsOpt.get.toSet)
+        // Check: ratified commits take priority over published deltas when versions overlap
+        val expectedRatifiedVersions =
+          ratifiedCommitVersions.toSet.intersect(actualDeltaAndCommitVersions.toSet)
 
-        logSegmentDeltas.map(_.getPath).foreach { path =>
+        actualDeltaAndCommitFileStatuses.map(_.getPath).foreach { path =>
           val version = FileNames.deltaVersion(path)
-          if (expectedPublishedDeltaVersions.contains(version)) {
-            assert(FileNames.isPublishedDeltaFile(path))
-          } else {
+          if (expectedRatifiedVersions.contains(version)) {
             assert(FileNames.isStagedDeltaFile(path))
+          } else {
+            assert(FileNames.isPublishedDeltaFile(path))
           }
         }
       }
