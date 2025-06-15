@@ -24,7 +24,7 @@ import scala.collection.JavaConverters._
 import io.delta.kernel.data.{ArrayValue, ColumnVector, MapValue}
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.actions.{Format, Metadata, Protocol}
-import io.delta.kernel.internal.tablefeatures.TableFeatures.{validateKernelCanReadTheTable, validateKernelCanWriteToTable, CLUSTERING_W_FEATURE, DOMAIN_METADATA_W_FEATURE, TABLE_FEATURES, TYPE_WIDENING_RW_FEATURE}
+import io.delta.kernel.internal.tablefeatures.TableFeatures.{validateKernelCanReadTheTable, validateKernelCanWriteToTable, TABLE_FEATURES}
 import io.delta.kernel.internal.util.InternalUtils.singletonStringColumnVector
 import io.delta.kernel.internal.util.VectorUtils.buildColumnVector
 import io.delta.kernel.types._
@@ -40,6 +40,7 @@ class TableFeaturesSuite extends AnyFunSuite {
   // Tests for [[TableFeature]] implementations                                                  //
   /////////////////////////////////////////////////////////////////////////////////////////////////
   val readerWriterFeatures = Seq(
+    "catalogOwned-preview",
     "columnMapping",
     "deletionVectors",
     "timestampNtz",
@@ -226,6 +227,7 @@ class TableFeaturesSuite extends AnyFunSuite {
       .collect(toList()).asScala
 
     val expected = Seq(
+      "catalogOwned-preview",
       "columnMapping",
       "v2Checkpoint",
       "variantType",

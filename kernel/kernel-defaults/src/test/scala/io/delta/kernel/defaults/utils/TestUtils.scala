@@ -28,10 +28,11 @@ import io.delta.kernel.{Scan, Snapshot, Table, TransactionCommitResult}
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector, FilteredColumnarBatch, MapValue, Row}
 import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.defaults.internal.data.vector.{DefaultGenericVector, DefaultStructVector}
+import io.delta.kernel.defaults.test.{AbstractResolvedTableAdapter, AbstractTableManagerAdapter, LegacyTableManagerAdapter, TableManagerAdapter}
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.expressions.{Column, Predicate}
 import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
-import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl, TableImpl}
+import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl}
 import io.delta.kernel.internal.actions.DomainMetadata
 import io.delta.kernel.internal.checksum.{ChecksumReader, ChecksumWriter, CRCInfo}
 import io.delta.kernel.internal.clustering.ClusteringMetadataDomain
@@ -55,7 +56,25 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.plans.SQLHelper
 import org.scalatest.Assertions
 
-trait TestUtils extends Assertions with SQLHelper {
+trait TestUtils extends AbstractTestUtils {
+  override def getTableManagerAdapter: AbstractTableManagerAdapter = new LegacyTableManagerAdapter()
+}
+
+/**
+ * DO NOT MODIFY this trait -- this is just syntactic sugar to clearly indicate we are extending the
+ * "default" TestUtils which happens to use the legacy Kernel APIs
+ */
+trait TestUtilsWithLegacyKernelAPIs extends TestUtils
+
+trait TestUtilsWithTableManagerAPIs extends AbstractTestUtils {
+  override def getTableManagerAdapter: AbstractTableManagerAdapter = new TableManagerAdapter()
+}
+
+trait AbstractTestUtils extends Assertions with SQLHelper {
+
+  import io.delta.kernel.defaults.test.ResolvedTableAdapterImplicits._
+
+  def getTableManagerAdapter: AbstractTableManagerAdapter
 
   lazy val configuration = new Configuration()
   lazy val defaultEngine = DefaultEngine.create(configuration)
@@ -210,10 +229,24 @@ trait TestUtils extends Assertions with SQLHelper {
       filter: Predicate = null,
       expectedRemainingFilter: Predicate = null,
       engine: Engine = defaultEngine): Seq[Row] = {
+    readResolvedTableAdapter(
+      snapshot.toTestAdapter,
+      readSchema,
+      filter,
+      expectedRemainingFilter,
+      engine)
+  }
+
+  def readResolvedTableAdapter(
+      resolvedTableAdapter: AbstractResolvedTableAdapter,
+      readSchema: StructType = null,
+      filter: Predicate = null,
+      expectedRemainingFilter: Predicate = null,
+      engine: Engine = defaultEngine): Seq[Row] = {
 
     val result = ArrayBuffer[Row]()
 
-    var scanBuilder = snapshot.getScanBuilder()
+    var scanBuilder = resolvedTableAdapter.getScanBuilder()
 
     if (readSchema != null) {
       scanBuilder = scanBuilder.withReadSchema(readSchema)
@@ -375,40 +408,46 @@ trait TestUtils extends Assertions with SQLHelper {
       expectedVersion: Option[Long] = None): Unit = {
     assert(version.isEmpty || timestamp.isEmpty, "Cannot provide both a version and timestamp")
 
-    val snapshot = if (version.isDefined) {
-      Table.forPath(engine, path)
-        .getSnapshotAsOfVersion(engine, version.get)
+    val resolvedTableAdapter = if (version.isDefined) {
+      getTableManagerAdapter.getResolvedTableAdapterAtVersion(engine, path, version.get)
     } else if (timestamp.isDefined) {
-      Table.forPath(engine, path)
-        .getSnapshotAsOfTimestamp(engine, timestamp.get)
+      getTableManagerAdapter.getResolvedTableAdapterAtTimestamp(engine, path, timestamp.get)
     } else {
-      latestSnapshot(path, engine)
+      getTableManagerAdapter.getResolvedTableAdapterAtLatest(engine, path)
     }
 
     val readSchema = if (readCols == null) {
       null
     } else {
-      val schema = snapshot.getSchema()
+      val schema = resolvedTableAdapter.getSchema()
       new StructType(readCols.map(schema.get(_)).asJava)
     }
 
     if (expectedSchema != null) {
       assert(
-        expectedSchema == snapshot.getSchema(),
+        expectedSchema == resolvedTableAdapter.getSchema(),
         s"""
            |Expected schema does not match actual schema:
            |Expected schema: $expectedSchema
-           |Actual schema: ${snapshot.getSchema()}
+           |Actual schema: ${resolvedTableAdapter.getSchema()}
            |""".stripMargin)
     }
 
+    val actualVersion = resolvedTableAdapter.getVersion()
+
     expectedVersion.foreach { version =>
       assert(
-        version == snapshot.getVersion(),
-        s"Expected version $version does not match actual version ${snapshot.getVersion()}")
+        version == actualVersion,
+        s"Expected version $version does not match actual version $actualVersion}")
     }
 
-    val result = readSnapshot(snapshot, readSchema, filter, expectedRemainingFilter, engine)
+    val result =
+      readResolvedTableAdapter(
+        resolvedTableAdapter,
+        readSchema,
+        filter,
+        expectedRemainingFilter,
+        engine)
     checkAnswer(result, expectedAnswer)
   }
 

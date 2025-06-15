@@ -423,31 +423,45 @@ class IcebergConverter(spark: SparkSession)
       logInfo(log"Committing iceberg snapshot expiration for uniform table " +
         log"[path = ${MDC(DeltaLogKeys.PATH, log.logPath)}] tableId=" +
         log"${MDC(DeltaLogKeys.TABLE_ID, log.tableId)}]")
-      val expireSnapshotHelper = icebergTxn.getExpireSnapshotHelper()
-      val table = icebergTxn.txn.table()
-      val tableLocation = LocationUtil.stripTrailingSlash(table.location)
-      val defaultWriteMetadataLocation = s"$tableLocation/metadata"
-      val writeMetadataLocation = LocationUtil.stripTrailingSlash(
-        table.properties().getOrDefault(
-          TableProperties.WRITE_METADATA_LOCATION, defaultWriteMetadataLocation))
-      if (snapshotToConvert.path.toString == writeMetadataLocation) {
-        // Don't attempt any file cleanup in the edge-case configuration
-        // that the data location (in Uniform the table root location)
-        // is the same as the Iceberg metadata location
-        expireSnapshotHelper.cleanExpiredFiles(false)
-      } else {
-        expireSnapshotHelper.deleteWith(path => {
-          if (path.startsWith(writeMetadataLocation)) {
-            table.io().deleteFile(path)
-          }
-        })
-      }
-      expireSnapshotHelper.commit()
+      expireIcebergSnapshot(snapshotToConvert, icebergTxn)
     }
 
     icebergTxn.commit()
     validateIcebergCommit(snapshotToConvert, cleanedCatalogTable)
     Some(snapshotToConvert.version, snapshotToConvert.timestamp)
+  }
+
+  /**
+   * Helper function to execute and commit Iceberg snapshot expiry
+   * @param snapshotToConvert the Delta snapshot that needs to be converted to Iceberg
+   * @param icebergTxn the IcebergConversionTransaction created in convertSnapshot, used
+   *                   to create a table object and expiration helper
+   */
+  private def expireIcebergSnapshot(
+      snapshotToConvert: Snapshot,
+      icebergTxn: IcebergConversionTransaction): Unit = {
+    val expireSnapshotHelper = icebergTxn.getExpireSnapshotHelper()
+    val table = icebergTxn.txn.table()
+    val tableLocation = LocationUtil.stripTrailingSlash(table.location)
+    val defaultWriteMetadataLocation = s"$tableLocation/metadata"
+    val writeMetadataLocation = LocationUtil.stripTrailingSlash(
+      table.properties().getOrDefault(
+        TableProperties.WRITE_METADATA_LOCATION, defaultWriteMetadataLocation))
+
+    if (snapshotToConvert.path.toString == writeMetadataLocation) {
+      // Don't attempt any file cleanup in the edge-case configuration
+      // that the data location (in Uniform the table root location)
+      // is the same as the Iceberg metadata location
+      expireSnapshotHelper.cleanExpiredFiles(false)
+    } else {
+      expireSnapshotHelper.deleteWith(path => {
+        if (path.startsWith(writeMetadataLocation)) {
+          table.io().deleteFile(path)
+        }
+      })
+    }
+
+    expireSnapshotHelper.commit()
   }
 
   // This is for newly enabling uniform table to

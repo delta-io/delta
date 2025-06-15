@@ -76,6 +76,28 @@ public class TableFeatures {
     }
   }
 
+  // TODO: [delta-io/delta#4763] Support `catalogManaged` when the RFC is formally accepted into the
+  //       protocol.
+
+  public static final TableFeature CATALOG_MANAGED_R_W_FEATURE_PREVIEW =
+      new CatalogManagedFeatureBase("catalogOwned-preview");
+
+  private static class CatalogManagedFeatureBase extends TableFeature.ReaderWriterFeature {
+    CatalogManagedFeatureBase(String featureName) {
+      super(featureName, /* minReaderVersion = */ 3, /* minWriterVersion = */ 7);
+    }
+
+    @Override
+    public boolean hasKernelWriteSupport(Metadata metadata) {
+      return false;
+    }
+
+    @Override
+    public Set<TableFeature> requiredFeatures() {
+      return Collections.singleton(IN_COMMIT_TIMESTAMP_W_FEATURE);
+    }
+  }
+
   public static final TableFeature INVARIANTS_W_FEATURE = new InvariantsFeature();
 
   private static class InvariantsFeature extends TableFeature.LegacyWriterFeature {
@@ -487,6 +509,7 @@ public class TableFeatures {
       Collections.unmodifiableList(
           Arrays.asList(
               APPEND_ONLY_W_FEATURE,
+              CATALOG_MANAGED_R_W_FEATURE_PREVIEW,
               CHECKPOINT_V2_RW_FEATURE,
               CHANGE_DATA_FEED_W_FEATURE,
               CLUSTERING_W_FEATURE,
@@ -677,15 +700,29 @@ public class TableFeatures {
     }
   }
 
+  /////////////////////////////
+  // Is feature X supported? //
+  /////////////////////////////
+
+  public static boolean isCatalogManagedSupported(Protocol protocol) {
+    return protocol.supportsFeature(CATALOG_MANAGED_R_W_FEATURE_PREVIEW);
+  }
+
   public static boolean isRowTrackingSupported(Protocol protocol) {
-    return protocol.getImplicitlyAndExplicitlySupportedFeatures().contains(ROW_TRACKING_W_FEATURE);
+    return protocol.supportsFeature(ROW_TRACKING_W_FEATURE);
   }
 
   public static boolean isDomainMetadataSupported(Protocol protocol) {
-    return protocol
-        .getImplicitlyAndExplicitlySupportedFeatures()
-        .contains(DOMAIN_METADATA_W_FEATURE);
+    return protocol.supportsFeature(DOMAIN_METADATA_W_FEATURE);
   }
+
+  public static boolean isClusteringTableFeatureSupported(Protocol protocol) {
+    return protocol.supportsFeature(CLUSTERING_W_FEATURE);
+  }
+
+  ///////////////////////////
+  // Does protocol have X? //
+  ///////////////////////////
 
   public static boolean hasInvariants(StructType tableSchema) {
     return !SchemaUtils.filterRecursively(
@@ -700,10 +737,6 @@ public class TableFeatures {
   public static boolean hasCheckConstraints(Metadata metadata) {
     return metadata.getConfiguration().keySet().stream()
         .anyMatch(s -> s.startsWith("delta.constraints."));
-  }
-
-  public static boolean isClusteringTableFeatureSupported(Protocol protocol) {
-    return protocol.supportsFeature(CLUSTERING_W_FEATURE);
   }
 
   public static boolean hasIdentityColumns(Metadata metadata) {
