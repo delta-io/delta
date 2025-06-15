@@ -16,7 +16,6 @@
 package io.delta.kernel.internal.icebergcompat;
 
 import static io.delta.kernel.internal.tablefeatures.TableFeatures.*;
-import static io.delta.kernel.internal.util.SchemaUtils.concatWithDot;
 import static java.util.stream.Collectors.toList;
 import static java.util.stream.Collectors.toSet;
 
@@ -28,8 +27,7 @@ import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.tablefeatures.TableFeature;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.ColumnMapping;
-import io.delta.kernel.internal.util.SchemaUtils;
-import io.delta.kernel.internal.util.Tuple2;
+import io.delta.kernel.internal.util.SchemaIterable;
 import io.delta.kernel.types.*;
 import java.util.*;
 import java.util.stream.Stream;
@@ -197,20 +195,19 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
    */
   private static final IcebergCompatCheck UNSUPPORTED_TYPES_CHECK =
       (inputContext) -> {
-        List<Tuple2<List<String>, StructField>> matches =
-            SchemaUtils.filterRecursively(
-                inputContext.newMetadata.getSchema(),
-                /* recurseIntoMapAndArrayTypes= */ true,
-                /* stopOnFirstMatch = */ false,
-                field -> {
-                  DataType dataType = field.getDataType();
-                  return (dataType instanceof ByteType || dataType instanceof ShortType);
-                });
+        Set<DataType> matches =
+            new SchemaIterable(inputContext.newMetadata.getSchema())
+                .stream()
+                    .map(element -> element.getField().getDataType())
+                    .filter(
+                        dataType -> dataType instanceof ByteType || dataType instanceof ShortType)
+                    .collect(toSet());
 
         if (!matches.isEmpty()) {
+          List<DataType> unsupportedTypes = new ArrayList<>(matches);
+          unsupportedTypes.sort(Comparator.comparing(DataType::toString));
           throw DeltaErrors.icebergCompatUnsupportedTypeColumns(
-              INSTANCE.compatFeatureName(),
-              matches.stream().map(tuple -> tuple._2.getDataType()).collect(toList()));
+              INSTANCE.compatFeatureName(), unsupportedTypes);
         }
       };
 
@@ -221,28 +218,31 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
    */
   private static final IcebergCompatCheck PHYSICAL_NAMES_MATCH_FIELD_IDS_CHECK =
       (inputContext) -> {
-        List<Tuple2<List<String>, StructField>> invalidFields =
-            SchemaUtils.filterRecursively(
-                inputContext.newMetadata.getSchema(),
-                /* recurseIntoMapAndArrayTypes= */ true,
-                /* stopOnFirstMatch = */ false,
-                field -> {
-                  String physicalName = ColumnMapping.getPhysicalName(field);
-                  long columnId = ColumnMapping.getColumnId(field);
-                  return !physicalName.equals(String.format("col-%s", columnId));
-                });
-        if (!invalidFields.isEmpty()) {
-          List<String> invalidFieldsFormatted =
-              invalidFields.stream()
-                  .map(
-                      pair ->
-                          String.format(
+        List<String> invalidFields =
+            new SchemaIterable(inputContext.newMetadata.getSchema())
+                .stream()
+                    // ID info is only on struct fields.
+                    .filter(SchemaIterable.SchemaElement::isStructField)
+                    .filter(
+                        element -> {
+                          StructField field = element.getField();
+                          String physicalName = ColumnMapping.getPhysicalName(field);
+                          long columnId = ColumnMapping.getColumnId(field);
+                          return !physicalName.equals(String.format("col-%s", columnId));
+                        })
+                    .map(
+                        element -> {
+                          StructField field = element.getField();
+                          return String.format(
                               "%s(physicalName='%s', columnId=%s)",
-                              concatWithDot(pair._1),
-                              ColumnMapping.getPhysicalName(pair._2),
-                              ColumnMapping.getColumnId(pair._2)))
-                  .collect(toList());
-          throw DeltaErrors.icebergWriterCompatInvalidPhysicalName(invalidFieldsFormatted);
+                              element.getNamePath(),
+                              ColumnMapping.getPhysicalName(field),
+                              ColumnMapping.getColumnId(field));
+                        })
+                    .collect(toList());
+
+        if (!invalidFields.isEmpty()) {
+          throw DeltaErrors.icebergWriterCompatInvalidPhysicalName(invalidFields);
         }
       };
 
