@@ -481,6 +481,27 @@ trait MergeIntoCommandBase extends LeafRunnableCommand
     }
   }
 
+  /**
+   * Check whether (part of) the give source dataframe is cached and logs an assertion or fails if
+   * it is. Query caching doesn't pin versions of delta tables and can lead to incorrect results so
+   * cached source plans must be materialized.
+   */
+  def checkSourcePlanIsNotCached(spark: SparkSession, source: LogicalPlan): Unit = {
+    val sourceIsCached = planContainsCachedRelation(DataFrameUtils.ofRows(spark, source))
+    if (sourceIsCached &&
+        spark.conf.get(DeltaSQLConf.MERGE_FAIL_SOURCE_CACHED_AFTER_MATERIALIZATION)) {
+      throw DeltaErrors.mergeConcurrentOperationCachedSourceException()
+    }
+
+    deltaAssert(
+      !sourceIsCached,
+      name = "merge.sourceCachedAfterMaterializationStep",
+      msg = "Cached source plans must be materialized in MERGE but the source only got cached " +
+        "after the decision to materialize was taken.",
+      deltaLog = targetDeltaLog
+    )
+  }
+
   override protected def prepareMergeSource(
       spark: SparkSession,
       source: LogicalPlan,
