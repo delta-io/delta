@@ -32,6 +32,7 @@ import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames, Json
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.streaming.StreamTest
 import org.apache.spark.sql.test.SharedSparkSession
@@ -1144,6 +1145,104 @@ class InCommitTimestampSuite
             row.getAs[Timestamp]("source_commit_timestamp").getTime == expectedTimestamp)
         }
       }}}
+    }
+  }
+
+  private def testICTEnablementPropertyRetention(
+      expectRetention: Boolean,
+      expectICTEnabled: Option[Boolean] = None)(runCommand: (String) => Unit): Unit = {
+    val ictConfOpt =
+      spark.conf.getOption(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey)
+    try {
+      spark.conf.unset(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey)
+      withTempDir { tempDir =>
+        spark.range(1).write.format("delta").save(tempDir.getAbsolutePath)
+        val deltaLog = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+        // Enable ICT at version 1 instead of 0 so that we can test the retention of
+        // enablement provenance properties as well.
+        spark.sql(
+          s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` " +
+            s"SET TBLPROPERTIES ('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'true')")
+        val enablementVersion =
+          DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.fromMetaData(
+            deltaLog.snapshot.metadata)
+        val enablementTimestamp =
+          DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.fromMetaData(
+            deltaLog.snapshot.metadata)
+        assert(enablementVersion.contains(1))
+        assert(enablementTimestamp.isDefined)
+
+        spark.range(2, 3).write.format("delta").mode("overwrite").save(tempDir.getAbsolutePath)
+
+        // Run the REPLACE/CLONE command.
+        runCommand(tempDir.getAbsolutePath)
+
+        val metadataAfterReplace = deltaLog.update().metadata
+        assert(
+          DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(
+            metadataAfterReplace) == expectICTEnabled.getOrElse(expectRetention))
+        if (expectRetention) {
+          assert(
+            DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.fromMetaData(
+              metadataAfterReplace) == enablementTimestamp)
+          assert(
+            DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.fromMetaData(
+              metadataAfterReplace) == enablementVersion)
+        } else {
+          Seq(
+            DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.key,
+            DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.key
+          ).foreach { key =>
+            assert(!metadataAfterReplace.configuration.contains(key))
+          }
+        }
+      }
+    } finally {
+      ictConfOpt.foreach { ictConf =>
+        spark.conf.set(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey, ictConf)
+      }
+    }
+  }
+
+  testWithDefaultCommitCoordinatorUnset(
+    "ICT enablement properties remain unchanged after a REPLACE with explicit enablement") {
+    testICTEnablementPropertyRetention(expectRetention = true) { tableDir =>
+      sql(s"REPLACE TABLE delta.`$tableDir` USING delta " +
+        s"TBLPROPERTIES ('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'true') " +
+        "AS SELECT * FROM range(3, 4)")
+    }
+  }
+
+  testWithDefaultCommitCoordinatorUnset(
+    "ICT enablement properties are dropped after a REPLACE with explicit enablement " +
+      s"when the ${DeltaSQLConf.IN_COMMIT_TIMESTAMP_RETAIN_ENABLEMENT_INFO_FIX_ENABLED.key} " +
+      s"is disabled") {
+    withSQLConf(
+      DeltaSQLConf.IN_COMMIT_TIMESTAMP_RETAIN_ENABLEMENT_INFO_FIX_ENABLED.key -> "false"
+    ) {
+      testICTEnablementPropertyRetention(
+        expectRetention = false, expectICTEnabled = Some(true)) { tableDir =>
+          sql(
+            s"REPLACE TABLE delta.`$tableDir` USING delta " +
+              s"TBLPROPERTIES ('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'true') " +
+              "AS SELECT * FROM range(3, 4)")
+      }
+    }
+  }
+
+  testWithDefaultCommitCoordinatorUnset(
+    "ICT enablement properties are dropped after a REPLACE with explicit disablement") {
+    testICTEnablementPropertyRetention(expectRetention = false) { tableDir =>
+      sql(s"REPLACE TABLE delta.`$tableDir` USING delta " +
+        s"TBLPROPERTIES ('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'false') " +
+        "AS SELECT * FROM range(3, 4)")
+    }
+  }
+
+  testWithDefaultCommitCoordinatorUnset(
+    "ICT is completely dropped after a REPLACE with no explicit disablement") {
+    testICTEnablementPropertyRetention(expectRetention = false) { tableDir =>
+      sql(s"REPLACE TABLE delta.`$tableDir` USING delta AS SELECT * FROM range(3, 4)")
     }
   }
 }

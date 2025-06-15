@@ -870,6 +870,7 @@ private[delta] class ConflictChecker(
     val nextAvailableVersion = winningCommitVersion + 1L
     val updatedMetadata =
       InCommitTimestampUtils.getUpdatedMetadataWithICTEnablementInfo(
+        spark,
         updatedCommitTimestamp,
         currentTransactionInfo.readSnapshot,
         currentTransactionInfo.metadata,

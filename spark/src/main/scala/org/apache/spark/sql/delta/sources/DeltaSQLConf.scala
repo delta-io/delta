@@ -704,6 +704,16 @@ trait DeltaSQLConfBase {
   // DynamoDB Commit Coordinator-specific configs end
   /////////////////////////////////////////////
 
+  val IN_COMMIT_TIMESTAMP_RETAIN_ENABLEMENT_INFO_FIX_ENABLED =
+    buildConf("inCommitTimestamp.retainEnablementInfoFix.enabled")
+      .internal()
+      .doc("When disabled, Delta can end up dropping " +
+        s"inCommitTimestampEnablementVersion and inCommitTimestampEnablementTimestamp " +
+        s"during a REPLACE or CLONE command. This accidental removal of these " +
+        s"properties can result in failures on time travel queries.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_UPDATE_CATALOG_LONG_FIELD_TRUNCATION_THRESHOLD =
     buildConf("catalog.update.longFieldTruncationThreshold")
       .internal()
