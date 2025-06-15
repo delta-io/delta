@@ -76,13 +76,22 @@ trait ColumnMappingSuiteBase extends ActionUtils {
         Maps.newHashMap(TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey, "true"))
     }
 
+    def withIcebergCompatV3Enabled: Metadata = {
+      metadata.withMergedConfiguration(
+        Maps.newHashMap(TableConfig.ICEBERG_COMPAT_V3_ENABLED.getKey, "true"))
+    }
+
     def withColumnMappingEnabled(mode: String = "name"): Metadata = {
       metadata.withMergedConfiguration(
         Maps.newHashMap(TableConfig.COLUMN_MAPPING_MODE.getKey, mode))
     }
 
-    def withIcebergCompatV2AndCMEnabled(): Metadata = {
-      metadata.withIcebergCompatV2Enabled.withColumnMappingEnabled()
+    def withIcebergCompatV2AndCMEnabled(columnMappingMode: String = "name"): Metadata = {
+      metadata.withIcebergCompatV2Enabled.withColumnMappingEnabled(columnMappingMode)
+    }
+
+    def withIcebergCompatV3AndCMEnabled(columnMappingMode: String = "name"): Metadata = {
+      metadata.withIcebergCompatV3Enabled.withColumnMappingEnabled(columnMappingMode)
     }
 
     def withIcebergWriterCompatV1Enabled: Metadata = {

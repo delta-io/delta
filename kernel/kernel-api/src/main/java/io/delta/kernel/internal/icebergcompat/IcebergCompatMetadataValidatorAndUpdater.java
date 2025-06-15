@@ -32,6 +32,7 @@ import io.delta.kernel.internal.util.SchemaIterable;
 import io.delta.kernel.internal.util.SchemaUtils;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.*;
+import io.delta.kernel.utils.DataFileStatus;
 import java.util.*;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
@@ -173,6 +174,10 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
               ColumnMapping.ColumnMappingMode.NAME == value
                   || ColumnMapping.ColumnMappingMode.ID == value,
           ColumnMapping.ColumnMappingMode.NAME.value);
+
+  protected static final IcebergCompatRequiredTablePropertyEnforcer ROW_TRACKING_ENABLED =
+      new IcebergCompatRequiredTablePropertyEnforcer<>(
+          TableConfig.ROW_TRACKING_ENABLED, (value) -> value, "true");
 
   /**
    * Defines checks for compatibility with the targeted iceberg features (icebergCompatV1 or
@@ -394,4 +399,50 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
   abstract List<TableFeature> requiredDependencyTableFeatures();
 
   abstract List<IcebergCompatCheck> icebergCompatChecks();
+
+  /////////////////////////////
+  /// Helper function       ///
+  /////////////////////////////
+
+  /**
+   * Validate the given {@link DataFileStatus} that is being added as a {@code add} action to Delta
+   * Log. Currently, it checks that the statistics are not empty.
+   *
+   * @param dataFileStatus The {@link DataFileStatus} to validate.
+   * @param compatFeatureName The name of the compatibility feature being validated (e.g.
+   *     "icebergCompatV2").
+   */
+  protected static void validateDataFileStatus(
+      DataFileStatus dataFileStatus, String compatFeatureName) {
+    if (!dataFileStatus.getStatistics().isPresent()) {
+      // presence of stats means always has a non-null `numRecords`
+      throw DeltaErrors.icebergCompatMissingNumRecordsStats(compatFeatureName, dataFileStatus);
+    }
+  }
+
+  /**
+   * Block the Iceberg Compat config related changes that we do not support and for which we throw
+   * an {@link KernelException},
+   *
+   * <ul>
+   *   <li>Disabling on an existing table (true to false)
+   *   <li>Enabling on an existing table (false to true)
+   * </ul>
+   */
+  protected static void blockConfigChangeOnExistingTable(
+      TableConfig<Boolean> tableConfig,
+      Map<String, String> oldConfig,
+      Map<String, String> newConfig,
+      boolean isNewTable) {
+    if (!isNewTable) {
+      boolean wasEnabled = tableConfig.fromMetadata(oldConfig);
+      boolean isEnabled = tableConfig.fromMetadata(newConfig);
+      if (!wasEnabled && isEnabled) {
+        throw DeltaErrors.enablingIcebergCompatFeatureOnExistingTable(tableConfig.getKey());
+      }
+      if (wasEnabled && !isEnabled) {
+        throw DeltaErrors.disablingIcebergCompatFeatureOnExistingTable(tableConfig.getKey());
+      }
+    }
+  }
 }

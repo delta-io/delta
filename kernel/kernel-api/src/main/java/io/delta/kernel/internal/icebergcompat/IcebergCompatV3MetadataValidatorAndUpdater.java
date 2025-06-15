@@ -16,32 +16,55 @@
 package io.delta.kernel.internal.icebergcompat;
 
 import static io.delta.kernel.internal.tablefeatures.TableFeatures.*;
-import static java.util.Collections.singletonList;
 import static java.util.stream.Collectors.toList;
 
+import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.tablefeatures.TableFeature;
-import io.delta.kernel.types.*;
 import io.delta.kernel.utils.DataFileStatus;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Stream;
 
-/** Utility methods for validation and compatibility checks for Iceberg V2. */
-public class IcebergCompatV2MetadataValidatorAndUpdater
+/** Utility methods for validation and compatibility checks for Iceberg V3. */
+public class IcebergCompatV3MetadataValidatorAndUpdater
     extends IcebergCompatMetadataValidatorAndUpdater {
+
   /**
-   * Validate and update the given Iceberg V2 metadata.
+   * Validates that any change to property {@link TableConfig#ICEBERG_COMPAT_V3_ENABLED} is valid.
+   * Currently, the changes we support are
+   *
+   * <ul>
+   *   <li>No change in enablement (true to true or false to false)
+   *   <li>Enabling but only on a new table (false to true)
+   * </ul>
+   *
+   * The changes that we do not support and for which we throw an {@link KernelException} are
+   *
+   * <ul>
+   *   <li>Disabling on an existing table (true to false)
+   *   <li>Enabling on an existing table (false to true)
+   * </ul>
+   */
+  public static void validateIcebergCompatV3Change(
+      Map<String, String> oldConfig, Map<String, String> newConfig, boolean isNewTable) {
+    blockConfigChangeOnExistingTable(
+        TableConfig.ICEBERG_COMPAT_V3_ENABLED, oldConfig, newConfig, isNewTable);
+  }
+
+  /**
+   * Validate and update the given Iceberg V3 metadata.
    *
    * @param newMetadata Metadata after the current updates
    * @param newProtocol Protocol after the current updates
    * @return The updated metadata if the metadata is valid and updated, otherwise empty.
-   * @throws UnsupportedOperationException if the metadata is not compatible with Iceberg V2
+   * @throws UnsupportedOperationException if the metadata is not compatible with Iceberg V3
    *     requirements
    */
-  public static Optional<Metadata> validateAndUpdateIcebergCompatV2Metadata(
+  public static Optional<Metadata> validateAndUpdateIcebergCompatV3Metadata(
       boolean isCreatingNewTable, Metadata newMetadata, Protocol newProtocol) {
     return INSTANCE.validateAndUpdateMetadata(
         new IcebergCompatInputContext(
@@ -59,40 +82,40 @@ public class IcebergCompatV2MetadataValidatorAndUpdater
   }
 
   /// //////////////////////////////////////////////////////////////////////////////
-  /// Define the compatibility and update checks for icebergCompatV2             ///
+  /// Define the compatibility and update checks for icebergCompatV3             ///
   /// //////////////////////////////////////////////////////////////////////////////
 
-  private static final IcebergCompatV2MetadataValidatorAndUpdater INSTANCE =
-      new IcebergCompatV2MetadataValidatorAndUpdater();
+  private static final IcebergCompatV3MetadataValidatorAndUpdater INSTANCE =
+      new IcebergCompatV3MetadataValidatorAndUpdater();
 
   @Override
   String compatFeatureName() {
-    return "icebergCompatV2";
+    return "icebergCompatV3";
   }
 
   @Override
   TableConfig<Boolean> requiredDeltaTableProperty() {
-    return TableConfig.ICEBERG_COMPAT_V2_ENABLED;
+    return TableConfig.ICEBERG_COMPAT_V3_ENABLED;
   }
 
   @Override
   List<IcebergCompatRequiredTablePropertyEnforcer> requiredDeltaTableProperties() {
-    return singletonList(COLUMN_MAPPING_REQUIREMENT);
+    return Stream.of(COLUMN_MAPPING_REQUIREMENT, ROW_TRACKING_ENABLED).collect(toList());
   }
 
   @Override
   List<TableFeature> requiredDependencyTableFeatures() {
-    return Stream.of(ICEBERG_COMPAT_V2_W_FEATURE, COLUMN_MAPPING_RW_FEATURE).collect(toList());
+    return Stream.of(ICEBERG_COMPAT_V3_W_FEATURE, COLUMN_MAPPING_RW_FEATURE, ROW_TRACKING_W_FEATURE)
+        .collect(toList());
   }
 
   @Override
   List<IcebergCompatCheck> icebergCompatChecks() {
     return Stream.of(
-            CHECK_ONLY_ICEBERG_COMPAT_V2_ENABLED,
-            V2_CHECK_HAS_SUPPORTED_TYPES,
+            V3_CHECK_HAS_SUPPORTED_TYPES,
+            CHECK_ONLY_ICEBERG_COMPAT_V3_ENABLED,
             CHECK_HAS_ALLOWED_PARTITION_TYPES,
             CHECK_HAS_NO_PARTITION_EVOLUTION,
-            CHECK_HAS_NO_DELETION_VECTORS,
             CHECK_HAS_SUPPORTED_TYPE_WIDENING)
         .collect(toList());
   }

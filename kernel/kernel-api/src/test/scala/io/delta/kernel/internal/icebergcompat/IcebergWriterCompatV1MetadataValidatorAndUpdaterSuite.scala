@@ -52,6 +52,7 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
 
   override def getCompatEnabledMetadata(
       schema: StructType,
+      columnMappingMode: String = "id",
       partCols: Seq[String] = Seq.empty): Metadata = {
     testMetadata(schema, partCols)
       .withMergedConfiguration((
