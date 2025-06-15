@@ -20,8 +20,7 @@ import java.math.{BigDecimal => BigDecimalJ}
 import java.sql.{Date, Timestamp}
 import java.util
 import java.util.Optional
-
-import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
+import io.delta.kernel.data.{ColumnVector, ColumnarBatch}
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
 import io.delta.kernel.defaults.internal.data.vector.{DefaultIntVector, DefaultStructVector}
 import io.delta.kernel.defaults.utils.DefaultKernelTestUtils.getValueAsObject
@@ -31,7 +30,6 @@ import io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE
 import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.internal.util.InternalUtils
 import io.delta.kernel.types._
-
 import org.scalatest.funsuite.AnyFunSuite
 
 class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBase {
@@ -635,6 +633,12 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
   }
 
   test("evaluate expression: starts with") {
+    Seq(
+      // collation
+      None,
+      Some(StringType.STRING.getCollationIdentifier)
+    ).foreach {
+      collationIdentifier =>
     val col1 = stringVector(Seq[String]("one", "two", "t%hree", "four", null, null, "%"))
     val col2 = stringVector(Seq[String]("o", "t", "T", "4", "f", null, null))
     val schema = new StructType()
@@ -642,7 +646,8 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       .add("col2", StringType.STRING)
     val input = new DefaultColumnarBatch(col1.getSize, schema, Array(col1, col2))
 
-    val startsWithExpressionLiteral = startsWith(new Column("col1"), Literal.ofString("t%"))
+    val startsWithExpressionLiteral = startsWith(new Column("col1"), Literal.ofString("t%"),
+      collationIdentifier)
     val expOutputVectorLiteral =
       booleanVector(Seq[BooleanJ](false, false, true, false, null, null, false))
     checkBooleanVectors(
@@ -652,7 +657,8 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
         BooleanType.BOOLEAN).eval(input),
       expOutputVectorLiteral)
 
-    val startsWithExpressionNullLiteral = startsWith(new Column("col1"), Literal.ofString(null))
+    val startsWithExpressionNullLiteral = startsWith(new Column("col1"), Literal.ofString(null),
+      collationIdentifier)
     val allNullVector =
       booleanVector(Seq[BooleanJ](null, null, null, null, null, null, null))
     checkBooleanVectors(
@@ -663,7 +669,8 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       allNullVector)
 
     // Two literal expressions on both sides
-    val startsWithExpressionAlwaysTrue = startsWith(Literal.ofString("ABC"), Literal.ofString("A"))
+    val startsWithExpressionAlwaysTrue = startsWith(Literal.ofString("ABC"), Literal.ofString("A"),
+      collationIdentifier)
     val allTrueVector = booleanVector(Seq[BooleanJ](true, true, true, true, true, true, true))
     checkBooleanVectors(
       new DefaultExpressionEvaluator(
@@ -673,7 +680,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       allTrueVector)
 
     val startsWithExpressionAlwaysFalse =
-      startsWith(Literal.ofString("ABC"), Literal.ofString("_B%"))
+      startsWith(Literal.ofString("ABC"), Literal.ofString("_B%"), collationIdentifier)
     val allFalseVector =
       booleanVector(Seq[BooleanJ](false, false, false, false, false, false, false))
     checkBooleanVectors(
@@ -688,7 +695,8 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     val schemaUnicode = new StructType().add("col", StringType.STRING)
     val inputUnicode =
       new DefaultColumnarBatch(colUnicode.getSize, schemaUnicode, Array(colUnicode))
-    val startsWithExpressionUnicode = startsWith(new Column("col"), Literal.ofString("中"))
+    val startsWithExpressionUnicode = startsWith(new Column("col"), Literal.ofString("中"),
+      collationIdentifier)
     val expOutputVectorLiteralUnicode = booleanVector(Seq[BooleanJ](true, true, false))
     checkBooleanVectors(
       new DefaultExpressionEvaluator(
@@ -702,7 +710,8 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     val schemaSurrogatePair = new StructType().add("col", StringType.STRING)
     val inputSurrogatePair =
       new DefaultColumnarBatch(colSurrogatePair.getSize, schemaUnicode, Array(colSurrogatePair))
-    val startsWithExpressionSurrogatePair = startsWith(new Column("col"), Literal.ofString("💕"))
+    val startsWithExpressionSurrogatePair = startsWith(new Column("col"), Literal.ofString("💕"),
+      collationIdentifier)
     val expOutputVectorLiteralSurrogatePair = booleanVector(Seq[BooleanJ](true, false, true))
     checkBooleanVectors(
       new DefaultExpressionEvaluator(
@@ -711,7 +720,8 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
         BooleanType.BOOLEAN).eval(inputSurrogatePair),
       expOutputVectorLiteralSurrogatePair)
 
-    val startsWithExpressionExpression = startsWith(new Column("col1"), new Column("col2"))
+    val startsWithExpressionExpression = startsWith(new Column("col1"), new Column("col2"),
+      collationIdentifier)
     val e = intercept[UnsupportedOperationException] {
       new DefaultExpressionEvaluator(
         schema,
@@ -723,7 +733,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     def checkUnsupportedTypes(colType: DataType, literalType: DataType): Unit = {
       val schema = new StructType()
         .add("col", colType)
-      val expr = startsWith(new Column("col"), Literal.ofNull(literalType))
+      val expr = startsWith(new Column("col"), Literal.ofNull(literalType), collationIdentifier)
       val input = new DefaultColumnarBatch(5, schema, Array(testColumnVector(5, colType)))
 
       val e = intercept[UnsupportedOperationException] {
@@ -741,9 +751,86 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     checkUnsupportedTypes(StringType.STRING, BooleanType.BOOLEAN)
     checkUnsupportedTypes(StringType.STRING, IntegerType.INTEGER)
     checkUnsupportedTypes(StringType.STRING, LongType.LONG)
+    }
   }
 
-  test("evaluate expression: comparators (=, <, <=, >, >=)") {
+  test("evaluate expression: starts with (unsupported collations)") {
+    Seq(
+      Some(CollationIdentifier.fromString("SPARK.UTF8_LCASE")),
+      Some(CollationIdentifier.fromString("ICU.sr_Cyrl_SRB")),
+      Some(CollationIdentifier.fromString("ICU.sr_Cyrl_SRB.75.1"))
+    ).foreach {
+      collationIdentifier =>
+        val col1 = stringVector(Seq[String]("one", "two", "t%hree", "four", null, null, "%"))
+        val col2 = stringVector(Seq[String]("o", "t", "T", "4", "f", null, null))
+        val schema = new StructType()
+          .add("col1", StringType.STRING)
+          .add("col2", StringType.STRING)
+        val input = new DefaultColumnarBatch(col1.getSize, schema, Array(col1, col2))
+
+        val startsWithExpressionLiteral = startsWith(new Column("col1"), Literal.ofString("t%"),
+          collationIdentifier)
+        checkUnsupportedCollation(
+          schema,
+          startsWithExpressionLiteral,
+          input,
+          collationIdentifier.get)
+
+        val startsWithExpressionNullLiteral = startsWith(new Column("col1"), Literal.ofString(null),
+          collationIdentifier)
+        checkUnsupportedCollation(
+          schema,
+          startsWithExpressionNullLiteral,
+          input,
+          collationIdentifier.get)
+
+        // Two literal expressions on both sides
+        val startsWithExpressionAlwaysTrue = startsWith(Literal.ofString("ABC"),
+          Literal.ofString("A"), collationIdentifier)
+        checkUnsupportedCollation(
+          schema,
+          startsWithExpressionAlwaysTrue,
+          input,
+          collationIdentifier.get)
+
+        val startsWithExpressionAlwaysFalse =
+          startsWith(Literal.ofString("ABC"), Literal.ofString("_B%"), collationIdentifier)
+        checkUnsupportedCollation(
+          schema,
+          startsWithExpressionAlwaysFalse,
+          input,
+          collationIdentifier.get)
+
+        // scalastyle:off nonascii
+        val colUnicode = stringVector(Seq[String]("中文", "中", "文"))
+        val schemaUnicode = new StructType().add("col", StringType.STRING)
+        val inputUnicode =
+          new DefaultColumnarBatch(colUnicode.getSize, schemaUnicode, Array(colUnicode))
+        val startsWithExpressionUnicode = startsWith(new Column("col"), Literal.ofString("中"),
+          collationIdentifier)
+        checkUnsupportedCollation(
+          schemaUnicode,
+          startsWithExpressionUnicode,
+          inputUnicode,
+          collationIdentifier.get)
+
+        // scalastyle:off nonascii
+        val colSurrogatePair = stringVector(Seq[String]("💕😉💕", "😉💕", "💕"))
+        val schemaSurrogatePair = new StructType().add("col", StringType.STRING)
+        val inputSurrogatePair =
+          new DefaultColumnarBatch(colSurrogatePair.getSize,
+            schemaSurrogatePair, Array(colSurrogatePair))
+        val startsWithExpressionSurrogatePair = startsWith(new Column("col"),
+          Literal.ofString("💕"), collationIdentifier)
+        checkUnsupportedCollation(
+          schemaSurrogatePair,
+          startsWithExpressionSurrogatePair,
+          inputSurrogatePair,
+          collationIdentifier.get)
+    }
+  }
+
+  test("evaluate expression: comparators (=, <, <=, >, >=, 'IS NOT DISTINCT FROM')") {
     val ASCII_MAX_CHARACTER = '\u007F'
     val UTF8_MAX_CHARACTER = new String(Character.toChars(Character.MAX_CODE_POINT))
 
@@ -897,6 +984,196 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
             testComparator(comparator, small1, nullLit, expectedResults(3))
             testComparator(comparator, nullLit, big, expectedResults(4))
             testComparator(comparator, nullLit, nullLit, expectedResults(5))
+        }
+    }
+  }
+
+  test("evaluate expression: collated comparators (=, <, <=, >, >=, 'IS NOT DISTINCT FROM')") {
+    val ASCII_MAX_CHARACTER = '\u007F'
+    val UTF8_MAX_CHARACTER = new String(Character.toChars(Character.MAX_CODE_POINT))
+
+    // Mapping of comparator to expected results for:
+    // comparator(small, big)
+    // comparator(big, small)
+    // comparator(small, small)
+    // comparator(small, null)
+    // comparator(big, null)
+    // comparator(null, null)
+    val comparatorToExpResults = Map[String, Seq[BooleanJ]](
+      "<" -> Seq(true, false, false, null, null, null),
+      "<=" -> Seq(true, false, true, null, null, null),
+      ">" -> Seq(false, true, false, null, null, null),
+      ">=" -> Seq(false, true, true, null, null, null),
+      "=" -> Seq(false, false, true, null, null, null),
+      "IS NOT DISTINCT FROM" -> Seq(false, false, true, false, false, true))
+
+    val literals =
+      Seq(
+        (ofString("apples"), ofString("oranges"), ofString("apples"), ofNull(StringType.STRING)),
+        (ofString(""), ofString("a"), ofString(""), ofNull(StringType.STRING)),
+        (ofString("abc"), ofString("abc0"), ofString("abc"), ofNull(StringType.STRING)),
+        (ofString("abc"), ofString("abcd"), ofString("abc"), ofNull(StringType.STRING)),
+        (ofString("abc"), ofString("abd"), ofString("abc"), ofNull(StringType.STRING)),
+        (
+          ofString("Abcabcabc"),
+          ofString("aBcabcabc"),
+          ofString("Abcabcabc"),
+          ofNull(StringType.STRING)),
+        (
+          ofString("abcabcabC"),
+          ofString("abcabcabc"),
+          ofString("abcabcabC"),
+          ofNull(StringType.STRING)),
+        // scalastyle:off nonascii
+        (ofString("abc"), ofString("世界"), ofString("abc"), ofNull(StringType.STRING)),
+        (ofString("世界"), ofString("你好"), ofString("世界"), ofNull(StringType.STRING)),
+        (ofString("你好122"), ofString("你好123"), ofString("你好122"), ofNull(StringType.STRING)),
+        (ofString("A"), ofString("Ā"), ofString("A"), ofNull(StringType.STRING)),
+        (ofString("»"), ofString("î"), ofString("»"), ofNull(StringType.STRING)),
+        (ofString("�"), ofString("🌼"), ofString("�"), ofNull(StringType.STRING)),
+        (
+          ofString("abcdef🚀"),
+          ofString(s"abcdef$UTF8_MAX_CHARACTER"),
+          ofString("abcdef🚀"),
+          ofNull(StringType.STRING)),
+        (
+          ofString("abcde�abcdef�abcdef�abcdef"),
+          ofString(s"abcde�$ASCII_MAX_CHARACTER"),
+          ofString("abcde�abcdef�abcdef�abcdef"),
+          ofNull(StringType.STRING)),
+        (
+          ofString("abcde�abcdef�abcdef�abcdef"),
+          ofString(s"abcde�$ASCII_MAX_CHARACTER"),
+          ofString("abcde�abcdef�abcdef�abcdef"),
+          ofNull(StringType.STRING)),
+        (
+          ofString("����"),
+          ofString(s"��$UTF8_MAX_CHARACTER"),
+          ofString("����"),
+          ofNull(StringType.STRING)),
+        (
+          ofString(s"a${UTF8_MAX_CHARACTER}d"),
+          ofString(s"a$UTF8_MAX_CHARACTER$ASCII_MAX_CHARACTER"),
+          ofString(s"a${UTF8_MAX_CHARACTER}d"),
+          ofNull(StringType.STRING)),
+        (
+          ofString("abcdefghijklm💞😉💕\n🥀🌹💐🌺🌷🌼🌻🌷🥀"),
+          ofString(s"abcdefghijklm💞😉💕\n🥀🌹💐🌺🌷🌼$UTF8_MAX_CHARACTER"),
+          ofString("abcdefghijklm💞😉💕\n🥀🌹💐🌺🌷🌼🌻🌷🥀"),
+          ofNull(StringType.STRING))
+        // scalastyle:on nonascii
+      )
+
+    Seq(
+      StringType.STRING.getCollationIdentifier,
+      CollationIdentifier.fromString("SPARK.UTF8_LCASE"),
+      CollationIdentifier.fromString("ICU.sr_Cyrl_SRB"),
+      CollationIdentifier.fromString("ICU.sr_Cyrl_SRB.75.1")
+    ).foreach (
+      collationIdentifier =>
+        literals.foreach {
+          case (small1, big, small2, nullLit) =>
+            comparatorToExpResults.foreach {
+              case (comparator, expectedResults) =>
+                testCollatedComparator(comparator, small1, big,
+                  expectedResults(0), collationIdentifier)
+                testCollatedComparator(comparator, big, small1,
+                  expectedResults(1), collationIdentifier)
+                testCollatedComparator(comparator, small1, small2,
+                  expectedResults(2), collationIdentifier)
+                testCollatedComparator(comparator, small1, nullLit,
+                  expectedResults(3), collationIdentifier)
+                testCollatedComparator(comparator, nullLit, big,
+                  expectedResults(4), collationIdentifier)
+                testCollatedComparator(comparator, nullLit, nullLit,
+                  expectedResults(5), collationIdentifier)
+            }
+        }
+    )
+  }
+
+  test("check CollatedPredicate with invalid types") {
+    Seq(
+      // predicateName
+      "=",
+      "<",
+      "<=",
+      ">",
+      ">=",
+      "IS NOT DISTINCT FROM",
+      "STARTS_WITH"
+    ).foreach {
+      predicateName =>
+        Seq(
+          // (expr1, expr2, dataType1, dataType2, schema)
+          (
+            Literal.ofString("apple"),
+            Literal.ofInt(1),
+            StringType.STRING,
+            IntegerType.INTEGER,
+            new StructType()
+          ),
+          (
+            Literal.ofString("apple"),
+            Literal.ofLong(1L),
+            new StringType(CollationIdentifier.fromString("SPARK.UTF8_LCASE")),
+            LongType.LONG,
+            new StructType()
+          ),
+          (
+            Literal.ofFloat(2.3f),
+            Literal.ofString("apple"),
+            FloatType.FLOAT,
+            StringType.STRING,
+            new StructType()
+          ),
+          (
+            Literal.ofDouble(2.3),
+            Literal.ofBoolean(false),
+            DoubleType.DOUBLE,
+            BooleanType.BOOLEAN,
+            new StructType()
+          ),
+          (
+            new Column(Array("col1", "col11")),
+            Literal.ofString("apple"),
+            IntegerType.INTEGER,
+            new StringType(CollationIdentifier.fromString("ICU.sr_Cyrl_SRB.75.1")),
+            new StructType()
+              .add("col1", new StructType()
+                .add("col11", IntegerType.INTEGER))
+          ),
+          (
+            new Column(Array("col1", "col11")),
+            new Column(Array("col1", "col12")),
+            DoubleType.DOUBLE,
+            FloatType.FLOAT,
+            new StructType()
+              .add("col1", new StructType()
+                .add("col11", DoubleType.DOUBLE)
+                .add("col12", FloatType.FLOAT))
+          )
+        ).foreach {
+          case (expr1, expr2, dataType1, dataType2, schema) =>
+            val expr = comparator(
+              predicateName, expr1, expr2, Some(StringType.STRING.getCollationIdentifier))
+            val input = zeroColumnBatch(rowCount = 1)
+
+            val e = intercept[UnsupportedOperationException] {
+              new DefaultExpressionEvaluator(
+                schema,
+                expr,
+                BooleanType.BOOLEAN).eval(input)
+            }
+
+            if (!predicateName.equals("STARTS_WITH")) {
+              assert(e.getMessage.contains(
+                s"""CollatedPredicate should be used to compare strings,
+                   | but got left type=$dataType1, right type=$dataType2"""
+                  .stripMargin.replace("\n", "")))
+            } else {
+              assert(e.getMessage.contains("'STARTS_WITH' expects STRING type inputs"))
+            }
         }
     }
   }
@@ -1398,6 +1675,46 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
   private def evaluator(inputSchema: StructType, expression: Expression, outputType: DataType)
       : DefaultExpressionEvaluator = {
     new DefaultExpressionEvaluator(inputSchema, expression, outputType)
+  }
+
+  private def checkUnsupportedCollation(schema: StructType, expression: Expression,
+                                        input: ColumnarBatch,
+                                        collationIdentifier: CollationIdentifier): Unit = {
+    val e = intercept[UnsupportedOperationException] {
+      evaluator(schema, expression, BooleanType.BOOLEAN).eval(input)
+    }
+    assert(e.getMessage.contains(
+      s"""Unsupported collation: "$collationIdentifier".
+         | Default Engine supports just "${StringType.STRING.getCollationIdentifier}"
+         | collation.""".stripMargin.replace("\n", "")))
+
+  }
+
+  private def testCollatedComparator(
+      comparatorName: String,
+      left: Expression,
+      right: Expression,
+      expResult: BooleanJ,
+      collationIdentifier: CollationIdentifier): Unit = {
+    val expression = comparator(comparatorName, left, right, Some(collationIdentifier))
+    val batch = zeroColumnBatch(rowCount = 1)
+
+    if (collationIdentifier.equals(StringType.STRING.getCollationIdentifier)) {
+      val outputVector = evaluator(batch.getSchema, expression, BooleanType.BOOLEAN).eval(batch)
+
+      assert(outputVector.getSize === 1)
+      assert(outputVector.getDataType === BooleanType.BOOLEAN)
+      assert(
+        outputVector.isNullAt(0) === (expResult == null),
+        s"Unexpected null value: ($left $comparatorName $right COLLATE $collationIdentifier)")
+      if (expResult != null) {
+        assert(
+          outputVector.getBoolean(0) === expResult,
+          s"Unexpected value: ($left $comparatorName $right COLLATE $collationIdentifier)")
+      }
+    } else {
+      checkUnsupportedCollation(batch.getSchema, expression, batch, collationIdentifier)
+    }
   }
 
   private def testComparator(
