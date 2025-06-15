@@ -83,6 +83,11 @@ public abstract class BasePrimitiveType extends DataType {
   }
 
   @Override
+  public boolean isNested() {
+    return false;
+  }
+
+  @Override
   public int hashCode() {
     return Objects.hash(primitiveTypeName);
   }
