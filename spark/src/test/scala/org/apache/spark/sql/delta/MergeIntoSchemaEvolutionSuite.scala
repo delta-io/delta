@@ -512,15 +512,15 @@ trait MergeIntoSchemaEvolutionBaseTests {
     targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
     sourceData = Seq((1, 1), (2, 2)).toDF("key", "VALUE"),
     clauses = insert("(key, value) VALUES (s.key, s.value)") :: Nil,
-    expectErrorContains = "Cannot resolve s.value in INSERT clause",
-    expectErrorWithoutEvolutionContains = "Cannot resolve s.value in INSERT clause",
+    expectErrorContains = "Cannot resolve value in INSERT clause",
+    expectErrorWithoutEvolutionContains = "Cannot resolve value in INSERT clause",
     confs = Seq(SQLConf.CASE_SENSITIVE.key -> "true")
   )
 
   testEvolution("case-insensitive update")(
     targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
     sourceData = Seq((1, 1), (2, 2)).toDF("key", "VALUE"),
-    clauses = update("key = s.key", "value = s.VALUE") :: Nil,
+    clauses = update("key = s.key", "t.value = s.VALUE") :: Nil,
     expected = Seq((0, 0), (1, 1), (3, 30)).toDF("key", "value"),
     expectedWithoutEvolution = Seq((0, 0), (1, 1), (3, 30)).toDF("key", "value"),
     confs = Seq(SQLConf.CASE_SENSITIVE.key -> "false")
@@ -529,16 +529,16 @@ trait MergeIntoSchemaEvolutionBaseTests {
   testEvolution("case-sensitive update")(
     targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
     sourceData = Seq((1, 1), (2, 2)).toDF("key", "VALUE"),
-    clauses = update("key = s.key", "value = s.VALUE") :: Nil,
+    clauses = update("t.key = s.key", "t.value = s.VALUE") :: Nil,
     expectErrorContains = "Cannot resolve s.VALUE",
-    expectErrorWithoutEvolutionContains = "Cannot resolve s.VALUE in UPDATE CLAUSE",
+    expectErrorWithoutEvolutionContains = "Cannot resolve VALUE in UPDATE CLAUSE",
     confs = Seq(SQLConf.CASE_SENSITIVE.key -> "true")
   )
 
   testEvolution("evolve non-lowercased columns in update")(
     targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
     sourceData = Seq((1, 100, "a"), (2, 200, "b")).toDF("key", "value", "newCol"),
-    clauses = update("t.key = s.key", "value = s.value, newCol = s.newCol") :: Nil,
+    clauses = update("t.value = s.value", " t.newCol = s.newCol") :: Nil,
     expected = Seq((0, 0, null), (1, 100, "a"), (3, 30, null)).toDF("key", "value", "newCol"),
     expectErrorWithoutEvolutionContains = "cannot resolve newCol in UPDATE clause"
   )
