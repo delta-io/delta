@@ -331,7 +331,15 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
         if (generatedColumns.find(f => resolver(f.name, targetCol.name)).nonEmpty) {
           None
         } else if (defaultExpr.nonEmpty) {
-          defaultExpr
+          if (conf.getConf(DeltaSQLConf.DELTA_MERGE_SCHEMA_EVOLUTION_FIX_NESTED_STRUCT_ALIGNMENT)) {
+            Some(castIfNeeded(
+              defaultExpr.get,
+              targetCol.dataType,
+              castingBehavior = MergeOrUpdateCastingBehavior(allowSchemaEvolution),
+              targetCol.name))
+          } else {
+            defaultExpr
+          }
         } else {
           // This is a new column or field added by schema evolution that doesn't have an assignment
           // in this MERGE clause. Set it to null.

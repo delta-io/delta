@@ -592,6 +592,15 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_MERGE_SCHEMA_EVOLUTION_FIX_NESTED_STRUCT_ALIGNMENT =
+    buildConf("schemaEvolution.merge.fixNestedStructAlignment")
+      .internal()
+      .doc("Internal flag covering a fix for a regression in schema evolution inside nested " +
+        "structs in MERGE. Disabling this fix may cause MERGE operations to fail when a new " +
+        "field is added to a struct that is omitted in at least one MATCHED clause.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_SCHEMA_TYPE_CHECK =
     buildConf("schema.typeCheck.enabled")
       .doc(
