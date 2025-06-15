@@ -18,7 +18,7 @@ package io.delta.kernel.defaults
 import scala.collection.JavaConverters._
 import scala.collection.immutable.Seq
 
-import io.delta.kernel.{Operation, Table, Transaction, TransactionBuilder}
+import io.delta.kernel.{Operation, Table, Transaction, TransactionBuilder, TransactionCommitResult}
 import io.delta.kernel.data.FilteredColumnarBatch
 import io.delta.kernel.defaults.utils.TestRow
 import io.delta.kernel.engine.Engine
@@ -205,7 +205,8 @@ trait DeltaReplaceTableSuiteBase extends DeltaTableWriteSuiteBase {
       transactionId: Option[(String, Long)] = None,
       tableProperties: Map[String, String] = Map.empty,
       domainsToAdd: Seq[(String, String)] = Seq.empty,
-      data: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])] = Seq.empty): Unit = {
+      data: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])] = Seq.empty)
+      : TransactionCommitResult = {
 
     val txn = getReplaceTransaction(
       engine,
@@ -237,7 +238,7 @@ trait DeltaReplaceTableSuiteBase extends DeltaTableWriteSuiteBase {
     val oldProtocol = getProtocol(engine, tablePath)
     val wasClusteredTable = oldProtocol.supportsFeature(TableFeatures.CLUSTERING_W_FEATURE)
 
-    commitReplaceTable(
+    val commitResult = commitReplaceTable(
       engine,
       tablePath,
       schema,
@@ -247,6 +248,7 @@ trait DeltaReplaceTableSuiteBase extends DeltaTableWriteSuiteBase {
       tableProperties,
       domainsToAdd,
       data)
+    assertCommitResultHasClusteringCols(commitResult, clusteringColumns.getOrElse(Seq.empty))
 
     verifyWrittenContent(
       tablePath,
