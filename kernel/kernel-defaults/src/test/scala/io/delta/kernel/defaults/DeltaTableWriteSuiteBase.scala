@@ -322,7 +322,8 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       withDomainMetadataSupported: Boolean = false,
       maxRetries: Int = -1,
       clusteringColsOpt: Option[List[Column]] = None,
-      logCompactionInterval: Int = 10): Transaction = {
+      logCompactionInterval: Int = 10,
+      rowIdHighWatermarkOpt: Option[Long] = None): Transaction = {
     // scalastyle:on argcount
 
     var txnBuilder = createWriteTxnBuilder(
@@ -345,6 +346,10 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
 
     if (withDomainMetadataSupported) {
       txnBuilder = txnBuilder.withDomainMetadataSupported()
+    }
+
+    if (rowIdHighWatermarkOpt.isDefined) {
+      txnBuilder = txnBuilder.withRowIdHighWatermark(rowIdHighWatermarkOpt.get)
     }
 
     if (maxRetries >= 0) {
@@ -432,7 +437,8 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       data: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])],
       clock: Clock = () => System.currentTimeMillis,
       tableProperties: Map[String, String] = null,
-      clusteringColsOpt: Option[List[Column]] = None): TransactionCommitResult = {
+      clusteringColsOpt: Option[List[Column]] = None,
+      rowIdHighWatermarkOpt: Option[Long] = None): TransactionCommitResult = {
 
     val txn = createTxn(
       engine,
@@ -442,7 +448,8 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       partCols,
       tableProperties,
       clock,
-      clusteringColsOpt = clusteringColsOpt)
+      clusteringColsOpt = clusteringColsOpt,
+      rowIdHighWatermarkOpt = rowIdHighWatermarkOpt)
     commitAppendData(engine, txn, data)
   }
 
