@@ -24,7 +24,7 @@ import scala.collection.JavaConverters._
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.Table
-import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
+import io.delta.kernel.defaults.utils.{AbstractTestUtils, TestRow, TestUtils, TestUtilsWithLegacyKernelAPIs}
 import io.delta.kernel.exceptions.{InvalidTableException, KernelException, TableNotFoundException}
 import io.delta.kernel.internal.TableImpl
 import io.delta.kernel.internal.fs.Path
@@ -33,15 +33,22 @@ import io.delta.kernel.internal.util.InternalUtils.daysSinceEpoch
 import io.delta.kernel.types.{LongType, StructType}
 
 import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations}
-import org.apache.spark.sql.delta.actions.{AddFile, Metadata}
-import org.apache.spark.sql.delta.implicits.stringEncoder
+import org.apache.spark.sql.delta.actions.AddFile
 
 import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
-import org.apache.spark.sql.functions.{col, current_timestamp, to_timestamp}
 import org.apache.spark.sql.functions.col
 import org.scalatest.funsuite.AnyFunSuite
 
-class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
+class LegacyDeltaTableReadsSuite
+    extends AbstractDeltaTableReadsSuite
+    with TestUtilsWithLegacyKernelAPIs
+
+// TODO: uncomment when new Kernel APIs supports ScanBuilder
+// class DeltaTableReadsSuite extends
+//     AbstractDeltaTableReadsSuite
+//     with TestUtilsWithTableManagerAPIs
+
+trait AbstractDeltaTableReadsSuite extends AnyFunSuite { self: AbstractTestUtils =>
 
   //////////////////////////////////////////////////////////////////////////////////
   // Timestamp type tests

@@ -104,7 +104,7 @@ The type widening feature can be removed from a Delta table using the `DROP FEAT
 
 .. note::
 
-Tables that enabled type widening using <Delta> 3.2 require dropping feature `typeWidening-preview` instead.
+  Tables that enabled type widening using <Delta> 3.2 require dropping feature `typeWidening-preview` instead.
 
 See [_](delta-drop-feature.md) for more information on dropping Delta table features.
 
