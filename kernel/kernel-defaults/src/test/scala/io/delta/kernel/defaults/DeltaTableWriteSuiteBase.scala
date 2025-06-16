@@ -619,4 +619,14 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
           emptyMap()))
       } else Optional.empty())
   }
+
+  protected def assertCommitResultHasClusteringCols(
+      commitResult: TransactionCommitResult,
+      expectedClusteringCols: Seq[Column]): Unit = {
+    val actualClusteringCols = commitResult.getTransactionReport.getClusteringColumns.asScala
+
+    assert(
+      actualClusteringCols === expectedClusteringCols,
+      s"Expected clustering columns: $expectedClusteringCols, but got: $actualClusteringCols")
+  }
 }
