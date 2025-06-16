@@ -21,7 +21,7 @@ import java.util.Optional
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
 import io.delta.kernel.internal.files.ParsedLogData.{ParsedLogCategory, ParsedLogType}
 import io.delta.kernel.internal.util.FileNames
-import io.delta.kernel.test.MockFileSystemClientUtils
+import io.delta.kernel.test.{MockFileSystemClientUtils, VectorTestUtils}
 import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.FileStatus
 
@@ -29,13 +29,7 @@ import org.scalatest.funsuite.AnyFunSuite
 import org.scalatest.matchers.must.Matchers.be
 import org.scalatest.matchers.should.Matchers.convertToAnyShouldWrapper
 
-class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils {
-
-  private val emptyColumnarBatch = new ColumnarBatch {
-    override def getSchema: StructType = null
-    override def getColumnVector(ordinal: Int): ColumnVector = null
-    override def getSize: Int = 0
-  }
+class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with VectorTestUtils {
 
   /////////////
   // General //
