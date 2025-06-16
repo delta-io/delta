@@ -1465,7 +1465,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       }
       val currentTransactionInfo = CurrentTransactionInfo(
         txnId = txnId,
-        readPredicates = readPredicates.asScala.toSeq,
+        readPredicates = readPredicates.asScala.toVector,
         readFiles = readFiles.toSet,
         readWholeTable = readTheWholeTable,
         readAppIds = readTxn.toSet,
