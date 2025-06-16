@@ -589,6 +589,10 @@ class TransactionReportSuite extends DeltaTableWriteSuiteBase with MetricsReport
                 new Column("name"),
                 new Column(Array[String]("nested", "nestedName"))).asJava)
             .build(engine))
+
+
+      // replace table (with no new clustering columns)
+
     }
   }
 
