@@ -40,24 +40,6 @@ abstract class IcebergWriterCompatMetadataValidatorAndUpdater
   /// Interfaces for defining validations and updates necessary to support IcebergWriterCompats
   // ///
   /////////////////////////////////////////////////////////////////////////////////
-  public static void validateIcebergWriterCompatChange(
-      Map<String, String> oldConfig,
-      Map<String, String> newConfig,
-      boolean isNewTable,
-      TableConfig<Boolean> writerCompatProperty) {
-    if (!isNewTable) {
-      boolean wasEnabled = writerCompatProperty.fromMetadata(oldConfig);
-      boolean isEnabled = writerCompatProperty.fromMetadata(newConfig);
-      if (!wasEnabled && isEnabled) {
-        throw DeltaErrors.enablingIcebergWriterCompatV1OnExistingTable(
-            writerCompatProperty.getKey());
-      }
-      if (wasEnabled && !isEnabled) {
-        throw DeltaErrors.disablingIcebergWriterCompatV1OnExistingTable(
-            writerCompatProperty.getKey());
-      }
-    }
-  }
 
   /**
    * Common property enforcer for Column Mapping ID mode requirement. This is identical across all
