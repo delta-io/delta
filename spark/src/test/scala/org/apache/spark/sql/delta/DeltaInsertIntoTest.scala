@@ -37,7 +37,10 @@ import org.apache.spark.sql.types.StructType
  * Each take a unique path through analysis. The abstractions below captures these different
  * inserts to allow more easily running tests with all or a subset of them.
  */
-trait DeltaInsertIntoTest extends QueryTest with DeltaDMLTestUtils with DeltaSQLCommandTest {
+trait DeltaInsertIntoTest
+  extends QueryTest
+  with DeltaDMLByPathTestUtils
+  with DeltaSQLCommandTest {
 
   val catalogName = "spark_catalog"
 

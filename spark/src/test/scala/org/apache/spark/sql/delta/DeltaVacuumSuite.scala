@@ -1491,6 +1491,7 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
   }
 
   test("running vacuum on a catalog owned managed table should fail") {
+    CatalogOwnedCommitCoordinatorProvider.clearBuilders()
     CatalogOwnedCommitCoordinatorProvider.registerBuilder(
       "spark_catalog", TrackingInMemoryCommitCoordinatorBuilder(batchSize = 3))
     withTable("t1") {

@@ -121,7 +121,7 @@ def generate_iceberg_jars():
     print(">>> Compiling JARs")
     with WorkingDirectory(iceberg_src_dir):
         # disable style checks (can fail with patches) and tests
-        build_args = "-x spotlessCheck -x checkstyleMain -x test -x integrationTest"
+        build_args = "-x spotlessCheck -x checkstyleMain -x test -x integrationTest -x javadoc"
         run_cmd("./gradlew :iceberg-core:build %s" % build_args)
         run_cmd("./gradlew :iceberg-parquet:build %s" % build_args)
         run_cmd("./gradlew :iceberg-hive-metastore:build %s" % build_args)

@@ -14,36 +14,34 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta
+package org.apache.spark.sql.delta.util
 
-import scala.collection.mutable
 import scala.util.control.NonFatal
 
+import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, CommittedTransaction, CoordinatedCommitsStats, CoordinatedCommitType, DeltaConfigs, DeltaLog, IsolationLevel, Snapshot}
 import org.apache.spark.sql.delta.DeltaOperations.Operation
-import org.apache.spark.sql.delta.actions.{AddFile, CommitInfo, Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.util.ScalaExtensions._
 
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 
 /**
- * Represents a transaction that maps to a delta table commit.
- *
- * An instance of this trait tracks the reads and writes as well as accumulates additional
- * information such as statistics of a single table throughout the life of a transaction.
+ * Contains helper methods for Delta transactions.
  */
-trait DeltaTransaction extends DeltaLogging {
-  val deltaLog: DeltaLog
-  val catalogTable: Option[CatalogTable]
-  val snapshot: Snapshot
+trait TransactionHelper extends DeltaLogging {
+  def deltaLog: DeltaLog
+  def catalogTable: Option[CatalogTable]
+  def snapshot: Snapshot
 
   /** Unique identifier for the transaction */
-  val txnId: String
+  def txnId: String
 
   /**
    * Returns the metadata for this transaction. The metadata refers to the metadata of the snapshot
@@ -53,9 +51,6 @@ trait DeltaTransaction extends DeltaLogging {
 
   /** The protocol of the snapshot that this transaction is reading at. */
   def protocol: Protocol
-
-  /** The end to end execution time of this transaction. */
-  def txnExecutionTimeMs: Option[Long]
 
   /**
    * Default [[IsolationLevel]] as set in table metadata.
@@ -168,4 +163,16 @@ trait DeltaTransaction extends DeltaLogging {
         hook.handleError(spark, e, version)
     }
   }
+
+  /**
+   * Generates a timestamp which is greater than the commit timestamp
+   * of the last snapshot. Note that this is only needed when the
+   * feature `inCommitTimestamps` is enabled.
+   */
+  protected[delta] def generateInCommitTimestampForFirstCommitAttempt(
+      currentTimestamp: Long): Option[Long] =
+    Option.when(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(metadata)) {
+      val lastCommitTimestamp = snapshot.timestamp
+      math.max(currentTimestamp, lastCommitTimestamp + 1)
+    }
 }
