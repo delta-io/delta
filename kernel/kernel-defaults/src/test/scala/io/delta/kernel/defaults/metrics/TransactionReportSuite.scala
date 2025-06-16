@@ -591,7 +591,52 @@ class TransactionReportSuite extends DeltaTableWriteSuiteBase with MetricsReport
             .build(engine))
 
       // replace table (with no new clustering columns)
+      checkTransactionReport(
+        generateCommitActions = (_, _) => CloseableIterable.emptyIterable(),
+        tablePath,
+        expectException = false,
+        expectedBaseSnapshotVersion = 2,
+        expectedNumAddFiles = 0,
+        expectedNumRemoveFiles = 1,
+        // protocol, metadata, commitInfo, remove file, domainMetadata (tombstone)
+        expectedNumTotalActions = 5,
+        expectedCommitVersion = Some(3),
+        expectedTotalRemoveFilesSizeInBytes = 100,
+        expectedTotalAddFilesSizeInBytes = 0,
+        buildTransaction = (transBuilder, engine) => {
+          transBuilder
+            .withSchema(engine, testSchema.add("id2", IntegerType.INTEGER))
+            .build(engine)
+        },
+        operation = Operation.REPLACE_TABLE)
 
+      // replace the table with new clustering columns
+      checkTransactionReport(
+        generateCommitActions = (_, _) => CloseableIterable.emptyIterable(),
+        tablePath,
+        expectException = false,
+        expectedBaseSnapshotVersion = 3,
+        expectedClusteringColumns = Seq(
+          new Column("id3"),
+          new Column(Array[String]("nested", "nestedName"))),
+        expectedNumAddFiles = 0,
+        expectedNumRemoveFiles = 0,
+        // protocol, metadata, commitInfo, domainMetadata (new one for clustering cols)
+        expectedNumTotalActions = 4,
+        expectedCommitVersion = Some(4),
+        expectedTotalRemoveFilesSizeInBytes = 0,
+        expectedTotalAddFilesSizeInBytes = 0,
+        buildTransaction = (transBuilder, engine) => {
+          transBuilder
+            .withSchema(engine, testSchema.add("id3", IntegerType.INTEGER))
+            .withClusteringColumns(
+              engine,
+              Seq(
+                new Column("id3"),
+                new Column(Array[String]("nested", "nestedName"))).asJava)
+            .build(engine)
+        },
+        operation = Operation.REPLACE_TABLE)
     }
   }
 
