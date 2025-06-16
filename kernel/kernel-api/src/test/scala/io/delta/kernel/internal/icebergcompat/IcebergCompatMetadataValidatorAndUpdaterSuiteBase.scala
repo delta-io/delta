@@ -202,7 +202,7 @@ trait IcebergCompatMetadataValidatorAndUpdaterSuiteBase extends AnyFunSuite
 
   Seq(true, false).foreach { isNewTable =>
     test(
-      s"can't enable icebergCompat$icebergCompatVersion on a table with icebergCompatv1 enabled, " +
+      s"can't enable icebergCompat$icebergCompatVersion on a table with icebergCompatV1 enabled, " +
         s"isNewTable = $isNewTable") {
       val schema = new StructType().add("col", BooleanType.BOOLEAN)
       val metadata = getCompatEnabledMetadata(schema)

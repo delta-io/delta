@@ -59,6 +59,19 @@ import java.util.stream.Stream;
  * </ul>
  */
 public abstract class IcebergCompatMetadataValidatorAndUpdater {
+
+  /**
+   * Returns whether Iceberg compatibility is enabled for the given table metadata. This checks if
+   * either `icebergCompatV2` or `icebergCompatV3` table property is enabled.
+   *
+   * @param metadata The table metadata to check.
+   * @return true if either Iceberg compatibility V2 or V3 is enabled; false otherwise.
+   */
+  public static Boolean isIcebergCompatEnabled(Metadata metadata) {
+    return TableConfig.ICEBERG_COMPAT_V2_ENABLED.fromMetadata(metadata)
+        || TableConfig.ICEBERG_COMPAT_V3_ENABLED.fromMetadata(metadata);
+  }
+
   /////////////////////////////////////////////////////////////////////////////////
   /// Interfaces for defining checks for the compat validation and updating     ///
   /////////////////////////////////////////////////////////////////////////////////
@@ -382,7 +395,7 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
       }
     }
 
-    // check for IcebergV2 compatibility checks
+    // check for Iceberg compatibility checks
     for (IcebergCompatCheck icebergCompatCheck : icebergCompatChecks()) {
       icebergCompatCheck.check(inputContext);
     }

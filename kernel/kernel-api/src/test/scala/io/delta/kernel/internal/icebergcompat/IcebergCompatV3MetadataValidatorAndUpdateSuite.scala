@@ -116,19 +116,21 @@ class IcebergCompatV3MetadataValidatorAndUpdaterSuite
   }
 
   Seq(true, false).foreach { isNewTable =>
-    test(s"column mapping mode `name` is auto enabled when icebergCompatV3 is enabled, " +
+    test(s"column mapping and row tracking are auto enabled when icebergCompatV3 is enabled, " +
       s"isNewTable = $isNewTable") {
       val metadata = testMetadata(cmTestSchema()).withIcebergCompatV3Enabled
       val protocol =
         testProtocol(ICEBERG_COMPAT_V3_W_FEATURE, COLUMN_MAPPING_RW_FEATURE, ROW_TRACKING_W_FEATURE)
 
       assert(!metadata.getConfiguration.containsKey("delta.columnMapping.mode"))
+      assert(!metadata.getConfiguration.containsKey("delta.rowTracking.enabled"))
 
       if (isNewTable) {
         val updatedMetadata =
           validateAndUpdateIcebergCompatV3Metadata(isNewTable, metadata, protocol)
         assert(updatedMetadata.isPresent)
         assert(updatedMetadata.get().getConfiguration.get("delta.columnMapping.mode") == "name")
+        assert(TableConfig.ROW_TRACKING_ENABLED.fromMetadata(updatedMetadata.get()) == true)
       } else {
         val e = intercept[KernelException] {
           validateAndUpdateIcebergCompatV3Metadata(isNewTable, metadata, protocol)
@@ -137,6 +139,25 @@ class IcebergCompatV3MetadataValidatorAndUpdaterSuite
           "The value 'none' for the property 'delta.columnMapping.mode' is" +
             " not compatible with icebergCompatV3 requirements"))
       }
+    }
+  }
+
+  Seq(true, false).foreach { isNewTable =>
+    test(
+      s"can't enable icebergCompatV3 on a table with icebergCompatV2 enabled, " +
+        s"isNewTable = $isNewTable") {
+      val schema = new StructType().add("col", BooleanType.BOOLEAN)
+      val metadata = getCompatEnabledMetadata(schema)
+        .withMergedConfiguration(
+          Map("delta.enableIcebergCompatV2" -> "true").asJava)
+      val protocol = getCompatEnabledProtocol()
+
+      val ex = intercept[KernelException] {
+        validateAndUpdateIcebergCompatMetadata(isNewTable, metadata, protocol)
+      }
+      assert(ex.getMessage.contains(
+        s"icebergCompat$icebergCompatVersion: Only one IcebergCompat version can be enabled. " +
+          "Incompatible version enabled: delta.enableIcebergCompatV2"))
     }
   }
 }
