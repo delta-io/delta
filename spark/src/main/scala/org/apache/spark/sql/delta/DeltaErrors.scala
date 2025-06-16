@@ -1325,6 +1325,9 @@ trait DeltaErrorsBase
     )
   }
 
+  def mergeConcurrentOperationCachedSourceException(): Throwable =
+    new DeltaRuntimeException(errorClass = "DELTA_MERGE_SOURCE_CACHED_DURING_EXECUTION")
+
   def columnOfTargetTableNotFoundInMergeException(targetCol: String,
       colNames: String): Throwable = {
     new DeltaAnalysisException(
