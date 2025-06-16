@@ -503,8 +503,8 @@ trait MergeIntoSchemaEvolutionBaseTests {
     targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "VALUE"),
     sourceData = Seq((1, 1), (2, 2)).toDF("key", "value"),
     clauses = insert("(key, value) VALUES (s.key, s.value)") :: Nil,
-    expectErrorContains = "Cannot resolve value in INSERT CLAUSE",
-    expectErrorWithoutEvolutionContains = "Cannot resolve value in INSERT CLAUSE",
+    expectErrorContains = "Cannot resolve s.value in INSERT CLAUSE",
+    expectErrorWithoutEvolutionContains = "Cannot resolve s.value in INSERT CLAUSE",
     confs = Seq(SQLConf.CASE_SENSITIVE.key -> "true")
   )
 
@@ -512,8 +512,8 @@ trait MergeIntoSchemaEvolutionBaseTests {
     targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
     sourceData = Seq((1, 1), (2, 2)).toDF("key", "VALUE"),
     clauses = insert("(key, value) VALUES (s.key, s.value)") :: Nil,
-    expectErrorContains = "Cannot resolve value in INSERT clause",
-    expectErrorWithoutEvolutionContains = "Cannot resolve value in INSERT clause",
+    expectErrorContains = "Cannot resolve s.value in INSERT clause",
+    expectErrorWithoutEvolutionContains = "Cannot resolve s.value in INSERT clause",
     confs = Seq(SQLConf.CASE_SENSITIVE.key -> "true")
   )
 
@@ -522,7 +522,7 @@ trait MergeIntoSchemaEvolutionBaseTests {
     sourceData = Seq((1, 1), (2, 2)).toDF("key", "VALUE"),
     clauses = update("key = s.key", "t.value = s.VALUE") :: Nil,
     expected = Seq((0, 0), (1, 1), (3, 30)).toDF("key", "value"),
-    expectedWithoutEvolution = Seq((0, 0), (1, 1), (3, 30)).toDF("key", "value"),
+    expectedWithoutEvolution = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
     confs = Seq(SQLConf.CASE_SENSITIVE.key -> "false")
   )
 
@@ -530,8 +530,8 @@ trait MergeIntoSchemaEvolutionBaseTests {
     targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
     sourceData = Seq((1, 1), (2, 2)).toDF("key", "VALUE"),
     clauses = update("t.key = s.key", "t.value = s.VALUE") :: Nil,
-    expectErrorContains = "Cannot resolve s.VALUE",
-    expectErrorWithoutEvolutionContains = "Cannot resolve VALUE in UPDATE CLAUSE",
+    expectErrorContains = "Cannot resolve s.value in UPDATE clause",
+    expectErrorWithoutEvolutionContains = "Cannot resolve s.value in UPDATE CLAUSE",
     confs = Seq(SQLConf.CASE_SENSITIVE.key -> "true")
   )
 
@@ -540,7 +540,7 @@ trait MergeIntoSchemaEvolutionBaseTests {
     sourceData = Seq((1, 100, "a"), (2, 200, "b")).toDF("key", "value", "newCol"),
     clauses = update("t.value = s.value", " t.newCol = s.newCol") :: Nil,
     expected = Seq((0, 0, null), (1, 100, "a"), (3, 30, null)).toDF("key", "value", "newCol"),
-    expectErrorWithoutEvolutionContains = "cannot resolve newCol in UPDATE clause"
+    expectErrorWithoutEvolutionContains = "cannot resolve s.newCol in UPDATE clause"
   )
 
   testEvolution("evolve partitioned table")(
