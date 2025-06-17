@@ -42,7 +42,7 @@ class UCCatalogManagedClientSuite extends AnyFunSuite {
 
   test("converts UC Commit into Kernel ParsedLogData.RATIFIED_STAGED_COMMIT") {
     val hadoopFS = hadoopCommitFileStatus(1)
-    val ucCommit = new Commit(1 /* version */, hadoopFS, 1 /* commitTimestamp */ )
+    val ucCommit = new Commit(1, hadoopFS, 1) /* version, fileStatus, timestamp */
 
     val kernelParsedLogData = UCCatalogManagedClient
       .getSortedKernelLogDataFromRatifiedCommits("ucTableId", Seq(ucCommit).asJava)
@@ -56,9 +56,9 @@ class UCCatalogManagedClientSuite extends AnyFunSuite {
   }
 
   test("sorts UC commits by version") {
-    val ucCommit1 = new Commit(1 /* version */, hadoopCommitFileStatus(1), 1)
-    val ucCommit2 = new Commit(2 /* version */, hadoopCommitFileStatus(2), 2)
-    val ucCommit3 = new Commit(3 /* version */, hadoopCommitFileStatus(3), 3)
+    val ucCommit1 = new Commit(1, hadoopCommitFileStatus(1), 1) /* version, fileStatus, timestamp */
+    val ucCommit2 = new Commit(2, hadoopCommitFileStatus(2), 2) /* version, fileStatus, timestamp */
+    val ucCommit3 = new Commit(3, hadoopCommitFileStatus(3), 3) /* version, fileStatus, timestamp */
 
     val ucCommitsUnsorted = Seq(ucCommit2, ucCommit3, ucCommit1).asJava
 
