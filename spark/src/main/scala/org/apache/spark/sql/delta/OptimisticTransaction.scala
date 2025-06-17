@@ -798,7 +798,22 @@ trait OptimisticTransactionImpl extends TransactionHelper
       isOverwritingSchema = true
     }
     // Update the metadata.
-    updateMetadataForNewTable(metadata)
+    val defaultCatalogOwnedFeatureEnabledKey =
+      TableFeatureProtocolUtils.defaultPropertyKey(CatalogOwnedTableFeature)
+    // Disable any potential default CO enablement from [[SparkSession]]
+    // before invoking `updateMetadataForNewTable`.
+    // This prevents any unintended modifications to the `newProtocol`.
+    // E.g., [[CatalogOwnedTableFeature]] and its dependent features
+    //       [[InCommitTimestampTableFeature]] & [[VacuumProtocolCheckTableFeature]].
+    val oldConfigValueOpt = spark.conf.getOption(defaultCatalogOwnedFeatureEnabledKey)
+    spark.conf.unset(defaultCatalogOwnedFeatureEnabledKey)
+    try {
+      updateMetadataForNewTable(metadata)
+    } finally {
+      oldConfigValueOpt.foreach { v =>
+        spark.conf.set(defaultCatalogOwnedFeatureEnabledKey, v)
+      }
+    }
     // Now the `txn.metadata` contains all the command-specified properties and all the default
     // properties. The latter might still contain Coordinated Commits configurations, so we need
     // to remove them and retain the Coordinated Commits configurations from the existing table.
@@ -806,42 +821,12 @@ trait OptimisticTransactionImpl extends TransactionHelper
       CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS
     var newConfs: Map[String, String] = newConfsWithoutCC ++ existingCCConfs ++
       existingUCTableIdConf
-
-    val isCatalogOwnedEnabledBeforeReplace = snapshot.protocol
-      .readerAndWriterFeatureNames.contains(CatalogOwnedTableFeature.name)
-    if (!isCatalogOwnedEnabledBeforeReplace) {
-      // Ignore the [[CatalogOwnedTableFeature]] if we are replacing an existing normal
-      // table *without* CatalogOwned enabled.
-      // This removes [[CatalogOwnedTableFeature]] that may have been added as a result of
-      // the CatalogOwned spark configuration that enables it by default.
-      // Users are *NOT* allowed to create a Catalog-Owned table with REPLACE TABLE
-      // so it's fine to filter it out here.
-      newProtocol = newProtocol.map(CatalogOwnedTableUtils.filterOutCatalogOwnedTableFeature)
-
-      val isICTEnabledBeforeReplace = existingICTConfs.nonEmpty ||
-        // To prevent any potential protocol downgrade issue we check the existing
-        // protocol as well.
-        snapshot.protocol.readerAndWriterFeatureNames
-          .contains(InCommitTimestampTableFeature.name)
-      // Note that we only need to get explicit ICT configurations from `newConfs` here,
-      // because all the default spark configurations should have been merged in the prior
-      // `updateMetadataForNewTable` call.
-      val isEnablingICTDuringReplace =
-        CoordinatedCommitsUtils.getExplicitICTConfigurations(newConfs).nonEmpty
-      if (!isICTEnabledBeforeReplace && !isEnablingICTDuringReplace) {
-        // If existing table does *not* have ICT enabled, and we are *not* trying
-        // to enable ICT manually through explicit overrides, then we should
-        // filter any unintended [[InCommitTimestampTableFeature]] out here.
-        newProtocol = newProtocol.map { p =>
-          p.copy(writerFeatures = p.writerFeatures.map(
-              _.filterNot(_ == InCommitTimestampTableFeature.name)))
-        }
-      }
-    }
     // We also need to retain the existing ICT dependency configurations, but only when the
     // existing table does have Coordinated Commits configurations or Catalog-Owned enabled.
     // Otherwise, we treat the ICT configurations the same as any other configurations,
     // by merging them from the default.
+    val isCatalogOwnedEnabledBeforeReplace = snapshot.protocol
+      .readerAndWriterFeatureNames.contains(CatalogOwnedTableFeature.name)
     if (existingCCConfs.nonEmpty || isCatalogOwnedEnabledBeforeReplace) {
       val newConfsWithoutICT = newConfs -- CoordinatedCommitsUtils.ICT_TABLE_PROPERTY_KEYS
       newConfs = newConfsWithoutICT ++ existingICTConfs
