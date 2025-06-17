@@ -20,13 +20,10 @@ import static java.util.stream.Collectors.toList;
 import static java.util.stream.Collectors.toSet;
 
 import io.delta.kernel.exceptions.KernelException;
-import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.tablefeatures.TableFeature;
-import io.delta.kernel.internal.util.ColumnMapping;
-import io.delta.kernel.internal.util.SchemaIterable;
 import io.delta.kernel.types.*;
 import java.util.*;
 import java.util.stream.Stream;
@@ -150,41 +147,6 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
               TYPE_WIDENING_RW_FEATURE,
               TYPE_WIDENING_RW_PREVIEW_FEATURE)
           .collect(toSet());
-
-  /**
-   * Checks that in the schema column mapping is set up such that the physicalName is equal to
-   * "col-[fieldId]". This check assumes column mapping is enabled (and so should be performed after
-   * that check).
-   */
-  private static final IcebergCompatCheck PHYSICAL_NAMES_MATCH_FIELD_IDS_CHECK =
-      (inputContext) -> {
-        List<String> invalidFields =
-            new SchemaIterable(inputContext.newMetadata.getSchema())
-                .stream()
-                    // ID info is only on struct fields.
-                    .filter(SchemaIterable.SchemaElement::isStructField)
-                    .filter(
-                        element -> {
-                          StructField field = element.getField();
-                          String physicalName = ColumnMapping.getPhysicalName(field);
-                          long columnId = ColumnMapping.getColumnId(field);
-                          return !physicalName.equals(String.format("col-%s", columnId));
-                        })
-                    .map(
-                        element -> {
-                          StructField field = element.getField();
-                          return String.format(
-                              "%s(physicalName='%s', columnId=%s)",
-                              element.getNamePath(),
-                              ColumnMapping.getPhysicalName(field),
-                              ColumnMapping.getColumnId(field));
-                        })
-                    .collect(toList());
-
-        if (!invalidFields.isEmpty()) {
-          throw DeltaErrors.icebergWriterCompatInvalidPhysicalName(invalidFields);
-        }
-      };
 
   @Override
   String compatFeatureName() {
