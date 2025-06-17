@@ -85,6 +85,7 @@ public class TransactionImpl implements Transaction {
   private final Optional<SetTransaction> setTxnOpt;
   private final Optional<List<Column>> clusteringColumnsOpt;
   private final boolean shouldUpdateProtocol;
+  private final boolean shouldUpdateClusteringDomainMetadata;
   private final Clock clock;
   private final DomainMetadataState domainMetadataState = new DomainMetadataState();
   private Metadata metadata;
@@ -106,6 +107,7 @@ public class TransactionImpl implements Transaction {
       Metadata metadata,
       Optional<SetTransaction> setTxnOpt,
       Optional<List<Column>> clusteringColumnsOpt,
+      boolean shouldUpdateClusteringDomainMetadata,
       boolean shouldUpdateMetadata,
       boolean shouldUpdateProtocol,
       int maxRetries,
@@ -121,6 +123,7 @@ public class TransactionImpl implements Transaction {
     this.metadata = metadata;
     this.setTxnOpt = setTxnOpt;
     this.clusteringColumnsOpt = clusteringColumnsOpt;
+    this.shouldUpdateClusteringDomainMetadata = shouldUpdateClusteringDomainMetadata;
     this.shouldUpdateMetadata = shouldUpdateMetadata;
     this.shouldUpdateProtocol = shouldUpdateProtocol;
     this.maxRetries = maxRetries;
@@ -204,21 +207,24 @@ public class TransactionImpl implements Transaction {
       long committedVersion =
           transactionMetrics.totalCommitTimer.time(
               () -> commitWithRetry(engine, dataActions, transactionMetrics));
-      recordTransactionReport(
-          engine,
-          Optional.of(committedVersion),
-          transactionMetrics,
-          Optional.empty() /* exception */);
+      TransactionReport transactionReport =
+          recordTransactionReport(
+              engine,
+              Optional.of(committedVersion),
+              clusteringColumnsOpt,
+              transactionMetrics,
+              Optional.empty() /* exception */);
       TransactionMetricsResult txnMetricsCaptured =
           transactionMetrics.captureTransactionMetricsResult();
       return new TransactionCommitResult(
           committedVersion,
           generatePostCommitHooks(committedVersion, txnMetricsCaptured),
-          txnMetricsCaptured);
+          transactionReport);
     } catch (Exception e) {
       recordTransactionReport(
           engine,
           Optional.empty() /* committedVersion */,
+          clusteringColumnsOpt,
           transactionMetrics,
           Optional.of(e) /* exception */);
       throw e;
@@ -535,9 +541,10 @@ public class TransactionImpl implements Transaction {
     return Collections.emptyMap();
   }
 
-  private void recordTransactionReport(
+  private TransactionReport recordTransactionReport(
       Engine engine,
       Optional<Long> committedVersion,
+      Optional<List<Column>> clusteringColumnsOpt,
       TransactionMetrics transactionMetrics,
       Optional<Exception> exception) {
     TransactionReport transactionReport =
@@ -546,10 +553,13 @@ public class TransactionImpl implements Transaction {
             operation.toString(),
             engineInfo,
             committedVersion,
+            clusteringColumnsOpt,
             transactionMetrics,
             readSnapshot.getSnapshotReport(),
             exception);
     engine.getMetricsReporters().forEach(reporter -> reporter.report(transactionReport));
+
+    return transactionReport;
   }
 
   private Optional<CRCInfo> buildPostCommitCrcInfoIfCurrentCrcAvailable(
@@ -772,7 +782,8 @@ public class TransactionImpl implements Transaction {
      */
     private void generateClusteringDomainMetadataIfNeeded() {
       if (TableFeatures.isClusteringTableFeatureSupported(protocol)
-          && clusteringColumnsOpt.isPresent()) {
+          && clusteringColumnsOpt.isPresent()
+          && shouldUpdateClusteringDomainMetadata) {
         DomainMetadata clusteringDomainMetadata =
             ClusteringUtils.getClusteringDomainMetadata(clusteringColumnsOpt.get());
         addDomain(
