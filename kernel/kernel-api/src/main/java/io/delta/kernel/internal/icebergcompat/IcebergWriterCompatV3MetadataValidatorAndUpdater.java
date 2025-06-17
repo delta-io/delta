@@ -1,0 +1,168 @@
+/*
+ * Copyright (2025) The Delta Lake Project Authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package io.delta.kernel.internal.icebergcompat;
+
+import io.delta.kernel.exceptions.KernelException;
+import io.delta.kernel.internal.TableConfig;
+import io.delta.kernel.internal.actions.Metadata;
+import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.tablefeatures.TableFeature;
+
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Stream;
+
+import static io.delta.kernel.internal.tablefeatures.TableFeatures.*;
+import static java.util.stream.Collectors.toList;
+import static java.util.stream.Collectors.toSet;
+
+public class IcebergWriterCompatV3MetadataValidatorAndUpdater
+    extends IcebergWriterCompatMetadataValidatorAndUpdater {
+
+  /**
+   * Validates that any change to property {@link TableConfig#ICEBERG_WRITER_COMPAT_V3_ENABLED} is
+   * valid. Currently, the changes we support are
+   *
+   * <ul>
+   *   <li>No change in enablement (true to true or false to false)
+   *   <li>Enabling but only on a new table (false to true)
+   * </ul>
+   *
+   * The changes that we do not support and for which we throw an {@link KernelException} are
+   *
+   * <ul>
+   *   <li>Disabling on an existing table (true to false)
+   *   <li>Enabling on an existing table (false to true)
+   * </ul>
+   */
+  public static void validateIcebergWriterCompatV3Change(
+      Map<String, String> oldConfig, Map<String, String> newConfig, boolean isNewTable) {
+    blockConfigChangeOnExistingTable(
+            TableConfig.ICEBERG_WRITER_COMPAT_V3_ENABLED, oldConfig, newConfig, isNewTable);
+  }
+
+  /**
+   * Validate and update the given Iceberg Writer Compat V3 metadata.
+   *
+   * @param newMetadata Metadata after the current updates
+   * @param newProtocol Protocol after the current updates
+   * @return The updated metadata if the metadata is valid and updated, otherwise empty.
+   * @throws UnsupportedOperationException if the metadata is not compatible with Iceberg Writer V3
+   *     requirements
+   */
+  public static Optional<Metadata> validateAndUpdateIcebergWriterCompatV3Metadata(
+      boolean isCreatingNewTable, Metadata newMetadata, Protocol newProtocol) {
+    return INSTANCE.validateAndUpdateMetadata(
+            new IcebergCompatInputContext(
+                    INSTANCE.compatFeatureName(), isCreatingNewTable, newMetadata, newProtocol));
+  }
+
+  /// //////////////////////////////////////////////////////////////////////////////
+  /// Define the compatibility and update checks for icebergWriterCompatV3       ///
+  /// //////////////////////////////////////////////////////////////////////////////
+
+  private static final IcebergWriterCompatV3MetadataValidatorAndUpdater INSTANCE =
+      new IcebergWriterCompatV3MetadataValidatorAndUpdater();
+
+  private static final IcebergCompatRequiredTablePropertyEnforcer ICEBERG_COMPAT_V3_ENABLED =
+      new IcebergCompatRequiredTablePropertyEnforcer<>(
+          TableConfig.ICEBERG_COMPAT_V3_ENABLED,
+          (value) -> value,
+          "true",
+          (inputContext) ->
+              IcebergCompatV3MetadataValidatorAndUpdater.validateAndUpdateIcebergCompatV3Metadata(
+                  inputContext.isCreatingNewTable,
+                  inputContext.newMetadata,
+                  inputContext.newProtocol));
+
+  /**
+   * Current set of allowed table features. This may evolve as the protocol evolves. This includes
+   * the incompatible legacy features (invariants, changeDataFeed, checkConstraints,
+   * identityColumns, generatedColumns) because they may be present in the table protocol even when
+   * they are not in use. In later checks we validate that these incompatible features are inactive
+   * in the table. See the protocol spec for more details.
+   */
+  private static Set<TableFeature> ALLOWED_TABLE_FEATURES =
+      Stream.of(
+              // Incompatible legacy table features
+              INVARIANTS_W_FEATURE,
+              CHANGE_DATA_FEED_W_FEATURE,
+              CONSTRAINTS_W_FEATURE,
+              IDENTITY_COLUMNS_W_FEATURE,
+              GENERATED_COLUMNS_W_FEATURE,
+              // Compatible table features
+              APPEND_ONLY_W_FEATURE,
+              COLUMN_MAPPING_RW_FEATURE,
+              ICEBERG_COMPAT_V3_W_FEATURE,
+              ICEBERG_WRITER_COMPAT_V3,
+              DOMAIN_METADATA_W_FEATURE,
+              VACUUM_PROTOCOL_CHECK_RW_FEATURE,
+              CHECKPOINT_V2_RW_FEATURE,
+              DELETION_VECTORS_RW_FEATURE,
+              VARIANT_RW_FEATURE,
+              VARIANT_SHREDDING_PREVIEW_RW_FEATURE,
+              VARIANT_RW_PREVIEW_FEATURE,
+              ROW_TRACKING_W_FEATURE,
+              IN_COMMIT_TIMESTAMP_W_FEATURE,
+              CLUSTERING_W_FEATURE,
+              TIMESTAMP_NTZ_RW_FEATURE,
+              TYPE_WIDENING_RW_FEATURE,
+              TYPE_WIDENING_RW_PREVIEW_FEATURE)
+          .collect(toSet());
+
+  @Override
+  String compatFeatureName() {
+    return "icebergWriterCompatV3";
+  }
+
+  @Override
+  TableConfig<Boolean> requiredDeltaTableProperty() {
+    return TableConfig.ICEBERG_WRITER_COMPAT_V3_ENABLED;
+  }
+
+  @Override
+  List<IcebergCompatRequiredTablePropertyEnforcer> requiredDeltaTableProperties() {
+    return Stream.of(CM_ID_MODE_ENABLED, ICEBERG_COMPAT_V3_ENABLED).collect(toList());
+  }
+
+  @Override
+  List<TableFeature> requiredDependencyTableFeatures() {
+    return Stream.of(
+            ICEBERG_WRITER_COMPAT_V3, ICEBERG_COMPAT_V3_W_FEATURE, COLUMN_MAPPING_RW_FEATURE)
+        .collect(toList());
+  }
+
+  @Override
+  List<IcebergCompatCheck> icebergCompatChecks() {
+    return Stream.of(
+                    createUnsupportedFeaturesCheck(this), // Pass 'this' instance
+                    UNSUPPORTED_TYPES_CHECK,
+                    PHYSICAL_NAMES_MATCH_FIELD_IDS_CHECK,
+                    INVARIANTS_INACTIVE_CHECK,
+                    CHANGE_DATA_FEED_INACTIVE_CHECK,
+                    CHECK_CONSTRAINTS_INACTIVE_CHECK,
+                    IDENTITY_COLUMNS_INACTIVE_CHECK,
+                    GENERATED_COLUMNS_INACTIVE_CHECK)
+            .collect(toList());
+  }
+
+  @Override
+  protected Set<TableFeature> getAllowedTableFeatures() {
+    return ALLOWED_TABLE_FEATURES;
+  }
+}
