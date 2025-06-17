@@ -32,6 +32,7 @@ import io.delta.kernel.types.*;
 import io.delta.kernel.utils.DataFileStatus;
 import java.util.*;
 import java.util.function.Predicate;
+import java.util.stream.Collectors;
 
 /**
  * Contains interfaces and common utility classes for defining the iceberg conversion compatibility
