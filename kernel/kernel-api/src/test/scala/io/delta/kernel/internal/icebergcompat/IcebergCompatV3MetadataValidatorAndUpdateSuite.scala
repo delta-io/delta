@@ -36,12 +36,12 @@ trait IcebergCompatV3MetadataValidatorAndUpdaterSuiteBase
 
   override def supportedDataColumnTypes: Set[DataType] =
     IcebergCompatMetadataValidatorAndUpdaterSuiteBase.SIMPLE_TYPES ++
-      IcebergCompatMetadataValidatorAndUpdaterSuiteBase.COMPLEX_TYPES ++ Set(VariantType.VARIANT)
+      IcebergCompatMetadataValidatorAndUpdaterSuiteBase.COMPLEX_TYPES
 
-  override def unsupportedDataColumnTypes: Set[DataType] = Set()
+  override def unsupportedDataColumnTypes: Set[DataType] = Set(VariantType.VARIANT)
 
   override def unsupportedPartitionColumnTypes: Set[DataType] =
-    IcebergCompatMetadataValidatorAndUpdaterSuiteBase.COMPLEX_TYPES ++ Set(VariantType.VARIANT)
+    IcebergCompatMetadataValidatorAndUpdaterSuiteBase.COMPLEX_TYPES
 
   override def isDeletionVectorsSupported: Boolean = true
 
@@ -130,7 +130,7 @@ class IcebergCompatV3MetadataValidatorAndUpdaterSuite
           validateAndUpdateIcebergCompatV3Metadata(isNewTable, metadata, protocol)
         assert(updatedMetadata.isPresent)
         assert(updatedMetadata.get().getConfiguration.get("delta.columnMapping.mode") == "name")
-        assert(TableConfig.ROW_TRACKING_ENABLED.fromMetadata(updatedMetadata.get()) == true)
+        assert(TableConfig.ROW_TRACKING_ENABLED.fromMetadata(updatedMetadata.get()))
       } else {
         val e = intercept[KernelException] {
           validateAndUpdateIcebergCompatV3Metadata(isNewTable, metadata, protocol)

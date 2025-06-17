@@ -44,102 +44,100 @@ class TransactionSuite extends AnyFunSuite with VectorTestUtils with MockEngineU
 
   import io.delta.kernel.TransactionSuite._
 
-  Seq((false, false), (true, false), (false, true)).foreach {
-    case (icebergCompatV2Enabled, icebergCompatV3Enabled) =>
-      test("transformLogicalData: un-partitioned table, " +
-        s"icebergCompatV2Enabled=$icebergCompatV2Enabled " +
-        s"icebergCompatV3Enabled=$icebergCompatV3Enabled") {
-        val transformedDateIter = transformLogicalData(
-          mockEngine(),
-          testTxnState(
-            testSchema,
-            enableIcebergCompatV2 = icebergCompatV2Enabled,
-            enableIcebergCompatV3 = icebergCompatV3Enabled),
-          testData(includePartitionCols = false),
-          Map.empty[String, Literal].asJava /* partition values */ )
-        transformedDateIter.map(_.getData).forEachRemaining(batch => {
-          assert(batch.getSchema === testSchema)
-        })
-      }
+  def withIcebergCompatVersions(testNamePrefix: String)(
+      body: (Boolean, Boolean) => Unit): Unit = {
+    Seq((false, false), (true, false), (false, true)).foreach {
+      case (v2, v3) =>
+        test(s"$testNamePrefix, icebergCompatV2Enabled=$v2 icebergCompatV3Enabled=$v3") {
+          body(v2, v3)
+        }
+    }
   }
 
-  Seq((false, false), (true, false), (false, true)).foreach {
+  withIcebergCompatVersions("transformLogicalData: un-partitioned table") {
     case (icebergCompatV2Enabled, icebergCompatV3Enabled) =>
-      test("transformLogicalData: partitioned table, " +
-        s"icebergCompatV2Enabled=$icebergCompatV2Enabled " +
-        s"icebergCompatV3Enabled=$icebergCompatV3Enabled") {
-        val transformedDateIter = transformLogicalData(
-          mockEngine(),
-          testTxnState(
-            testSchemaWithPartitions,
-            testPartitionColNames,
-            enableIcebergCompatV2 = icebergCompatV2Enabled,
-            enableIcebergCompatV3 = icebergCompatV3Enabled),
-          testData(includePartitionCols = true),
-          /* partition values */
-          Map("state" -> Literal.ofString("CA"), "country" -> Literal.ofString("USA")).asJava)
+      val transformedDateIter = transformLogicalData(
+        mockEngine(),
+        testTxnState(
+          testSchema,
+          enableIcebergCompatV2 = icebergCompatV2Enabled,
+          enableIcebergCompatV3 = icebergCompatV3Enabled),
+        testData(includePartitionCols = false),
+        Map.empty[String, Literal].asJava /* partition values */ )
+      transformedDateIter.map(_.getData).forEachRemaining(batch => {
+        assert(batch.getSchema === testSchema)
+      })
+  }
 
-        transformedDateIter.map(_.getData).forEachRemaining { batch =>
-          if (icebergCompatV2Enabled || icebergCompatV3Enabled) {
-            // when icebergCompatV2Enabled is true, the partition columns included in the output
-            assert(batch.getSchema === testSchemaWithPartitions)
-          } else {
-            assert(batch.getSchema === testSchema)
-          }
+  withIcebergCompatVersions("transformLogicalData: partitioned table") {
+    case (icebergCompatV2Enabled, icebergCompatV3Enabled) =>
+      val transformedDateIter = transformLogicalData(
+        mockEngine(),
+        testTxnState(
+          testSchemaWithPartitions,
+          testPartitionColNames,
+          enableIcebergCompatV2 = icebergCompatV2Enabled,
+          enableIcebergCompatV3 = icebergCompatV3Enabled),
+        testData(includePartitionCols = true),
+        /* partition values */
+        Map("state" -> Literal.ofString("CA"), "country" -> Literal.ofString("USA")).asJava)
+
+      transformedDateIter.map(_.getData).forEachRemaining { batch =>
+        if (icebergCompatV2Enabled || icebergCompatV3Enabled) {
+          // when icebergCompatV2Enabled is true, the partition columns included in the output
+          assert(batch.getSchema === testSchemaWithPartitions)
+        } else {
+          assert(batch.getSchema === testSchema)
         }
       }
   }
 
-  Seq((false, false), (true, false), (false, true)).foreach {
+  withIcebergCompatVersions("generateAppendActions: iceberg comaptibily checks") {
     case (icebergCompatV2Enabled, icebergCompatV3Enabled) =>
-      test(s"generateAppendActions: iceberg comaptibily checks, " +
-        s"icebergCompatV2Enabled=$icebergCompatV2Enabled " +
-        s"icebergCompatV3Enabled=$icebergCompatV3Enabled") {
-        val txnState = testTxnState(
-          testSchema,
-          enableIcebergCompatV2 = icebergCompatV2Enabled,
-          enableIcebergCompatV3 = icebergCompatV3Enabled)
-        val engine = mockEngine()
+      val txnState = testTxnState(
+        testSchema,
+        enableIcebergCompatV2 = icebergCompatV2Enabled,
+        enableIcebergCompatV3 = icebergCompatV3Enabled)
+      val engine = mockEngine()
 
-        Seq(
-          // missing stats
-          (
-            testDataFileStatuses(
-              "file1" -> testStats(Some(10)), // valid stats
-              "file2" -> None // missing stats
-            ),
-            "compatibility requires 'numRecords' statistic." // expected error message
-          )).foreach { case (actionRows, expectedErrorMsg) =>
-          if (icebergCompatV2Enabled || icebergCompatV3Enabled) {
-            val ex = intercept[KernelException] {
-              generateAppendActions(engine, txnState, actionRows, testDataWriteContext())
-                .forEachRemaining(_ => ()) // consume the iterator
-            }
-            assert(ex.getMessage.contains(expectedErrorMsg))
-          } else {
-            // when icebergCompatV2Enabled is disabled, no exception should be thrown
+      Seq(
+        // missing stats
+        (
+          testDataFileStatuses(
+            "file1" -> testStats(Some(10)), // valid stats
+            "file2" -> None // missing stats
+          ),
+          "compatibility requires 'numRecords' statistic." // expected error message
+        )).foreach { case (actionRows, expectedErrorMsg) =>
+        if (icebergCompatV2Enabled || icebergCompatV3Enabled) {
+          val ex = intercept[KernelException] {
             generateAppendActions(engine, txnState, actionRows, testDataWriteContext())
               .forEachRemaining(_ => ()) // consume the iterator
           }
+          assert(ex.getMessage.contains(expectedErrorMsg))
+        } else {
+          // when icebergCompatV2Enabled is disabled, no exception should be thrown
+          generateAppendActions(engine, txnState, actionRows, testDataWriteContext())
+            .forEachRemaining(_ => ()) // consume the iterator
+        }
+      }
+
+      // valid stats
+      val dataFileStatuses = testDataFileStatuses(
+        "file1" -> testStats(Some(10)),
+        "file2" -> testStats(Some(20)))
+      var actStats: Seq[String] = Seq.empty
+      generateAppendActions(engine, txnState, dataFileStatuses, testDataWriteContext())
+        .forEachRemaining { addActionRow =>
+          val addOrdinal = addActionRow.getSchema.indexOf("add")
+          val add = addActionRow.getStruct(addOrdinal)
+          val statsOrdinal = add.getSchema.indexOf("stats")
+          actStats = actStats :+ add.getString(statsOrdinal)
         }
 
-        // valid stats
-        val dataFileStatuses = testDataFileStatuses(
-          "file1" -> testStats(Some(10)),
-          "file2" -> testStats(Some(20)))
-        var actStats: Seq[String] = Seq.empty
-        generateAppendActions(engine, txnState, dataFileStatuses, testDataWriteContext())
-          .forEachRemaining { addActionRow =>
-            val addOrdinal = addActionRow.getSchema.indexOf("add")
-            val add = addActionRow.getStruct(addOrdinal)
-            val statsOrdinal = add.getSchema.indexOf("stats")
-            actStats = actStats :+ add.getString(statsOrdinal)
-          }
-
-        assert(actStats === Seq(
-          "{\"numRecords\":10,\"minValues\":{},\"maxValues\":{},\"nullCount\":{}}",
-          "{\"numRecords\":20,\"minValues\":{},\"maxValues\":{},\"nullCount\":{}}"))
-      }
+      assert(actStats === Seq(
+        "{\"numRecords\":10,\"minValues\":{},\"maxValues\":{},\"nullCount\":{}}",
+        "{\"numRecords\":20,\"minValues\":{},\"maxValues\":{},\"nullCount\":{}}"))
   }
 
   Seq(0, -1).foreach { numIndexedCols =>
