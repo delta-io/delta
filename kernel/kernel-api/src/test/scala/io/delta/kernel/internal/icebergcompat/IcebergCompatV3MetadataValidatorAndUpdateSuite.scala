@@ -20,16 +20,19 @@ import java.util.Optional
 import scala.collection.JavaConverters._
 
 import io.delta.kernel.exceptions.KernelException
+import io.delta.kernel.internal.TableConfig
 import io.delta.kernel.internal.actions.{Metadata, Protocol}
-import io.delta.kernel.internal.icebergcompat.IcebergCompatV2MetadataValidatorAndUpdater.validateAndUpdateIcebergCompatV2Metadata
+import io.delta.kernel.internal.icebergcompat.IcebergCompatV3MetadataValidatorAndUpdater.validateAndUpdateIcebergCompatV3Metadata
 import io.delta.kernel.internal.tablefeatures.TableFeature
-import io.delta.kernel.internal.tablefeatures.TableFeatures.{COLUMN_MAPPING_RW_FEATURE, ICEBERG_COMPAT_V2_W_FEATURE}
+import io.delta.kernel.internal.tablefeatures.TableFeatures.{COLUMN_MAPPING_RW_FEATURE, ICEBERG_COMPAT_V3_W_FEATURE, ROW_TRACKING_W_FEATURE, TYPE_WIDENING_RW_FEATURE}
 import io.delta.kernel.types._
 
-trait IcebergCompatV2MetadataValidatorAndUpdaterSuiteBase
+import org.assertj.core.util.Maps
+
+trait IcebergCompatV3MetadataValidatorAndUpdaterSuiteBase
     extends IcebergCompatMetadataValidatorAndUpdaterSuiteBase {
 
-  override def icebergCompatVersion: String = "V2"
+  override def icebergCompatVersion: String = "V3"
 
   override def supportedDataColumnTypes: Set[DataType] =
     IcebergCompatMetadataValidatorAndUpdaterSuiteBase.SIMPLE_TYPES ++
@@ -40,18 +43,21 @@ trait IcebergCompatV2MetadataValidatorAndUpdaterSuiteBase
   override def unsupportedPartitionColumnTypes: Set[DataType] =
     IcebergCompatMetadataValidatorAndUpdaterSuiteBase.COMPLEX_TYPES
 
-  override def isDeletionVectorsSupported: Boolean = false
+  override def isDeletionVectorsSupported: Boolean = true
 
   override def withIcebergCompatAndCMEnabled(
       schema: StructType,
       columnMappingMode: String = "name",
       partCols: Seq[String] = Seq.empty): Metadata = {
-    testMetadata(schema, partCols).withIcebergCompatV2AndCMEnabled(columnMappingMode)
+    testMetadata(
+      schema,
+      partCols).withIcebergCompatV3AndCMEnabled(columnMappingMode).withMergedConfiguration(
+      Maps.newHashMap(TableConfig.ROW_TRACKING_ENABLED.getKey, "true"))
   }
 }
 
-class IcebergCompatV2MetadataValidatorAndUpdaterSuite
-    extends IcebergCompatV2MetadataValidatorAndUpdaterSuiteBase {
+class IcebergCompatV3MetadataValidatorAndUpdaterSuite
+    extends IcebergCompatV3MetadataValidatorAndUpdaterSuiteBase {
 
   override def simpleTypesToSkip: Set[DataType] = Set.empty
 
@@ -60,32 +66,35 @@ class IcebergCompatV2MetadataValidatorAndUpdaterSuite
       columnMappingMode: String = "name",
       partCols: Seq[String] = Seq.empty): Metadata = {
     testMetadata(schema, partCols)
-      .withIcebergCompatV2AndCMEnabled(columnMappingMode)
+      .withIcebergCompatV3AndCMEnabled(columnMappingMode).withMergedConfiguration(
+        Maps.newHashMap(TableConfig.ROW_TRACKING_ENABLED.getKey, "true"))
   }
 
   override def getCompatEnabledProtocol(tableFeatures: TableFeature*): Protocol = {
-    testProtocol(tableFeatures ++ Seq(ICEBERG_COMPAT_V2_W_FEATURE, COLUMN_MAPPING_RW_FEATURE): _*)
+    testProtocol(tableFeatures ++ Seq(
+      ICEBERG_COMPAT_V3_W_FEATURE,
+      COLUMN_MAPPING_RW_FEATURE,
+      ROW_TRACKING_W_FEATURE): _*)
   }
 
   override def validateAndUpdateIcebergCompatMetadata(
       isNewTable: Boolean,
       metadata: Metadata,
       protocol: Protocol): Optional[Metadata] = {
-    validateAndUpdateIcebergCompatV2Metadata(isNewTable, metadata, protocol)
+    validateAndUpdateIcebergCompatV3Metadata(isNewTable, metadata, protocol)
   }
 
   Seq(true, false).foreach { isNewTable =>
     test(s"protocol is missing required column mapping feature, isNewTable $isNewTable") {
       val schema = new StructType().add("col", BooleanType.BOOLEAN)
-
-      val metadata = withIcebergCompatAndCMEnabled(schema, partCols = Seq.empty)
+      val metadata = getCompatEnabledMetadata(schema)
       val protocol =
-        new Protocol(3, 7, Set.empty.asJava, Set(s"icebergCompat$icebergCompatVersion").asJava)
+        new Protocol(3, 7, Set.empty.asJava, Set("icebergCompatV3", "rowTracking").asJava)
       val e = intercept[KernelException] {
-        validateAndUpdateIcebergCompatMetadata(isNewTable, metadata, protocol)
+        validateAndUpdateIcebergCompatV3Metadata(isNewTable, metadata, protocol)
       }
       assert(e.getMessage.contains(
-        s"icebergCompat$icebergCompatVersion: requires the feature 'columnMapping' to be enabled."))
+        "icebergCompatV3: requires the feature 'columnMapping' to be enabled."))
     }
   }
 
@@ -107,28 +116,48 @@ class IcebergCompatV2MetadataValidatorAndUpdaterSuite
   }
 
   Seq(true, false).foreach { isNewTable =>
-    test(s"column mapping mode `name` is auto enabled when icebergCompat is enabled, " +
+    test(s"column mapping and row tracking are auto enabled when icebergCompatV3 is enabled, " +
       s"isNewTable = $isNewTable") {
-      val metadata = testMetadata(cmTestSchema())
-        .withMergedConfiguration(
-          Map(s"delta.enableIcebergCompat$icebergCompatVersion" -> "true").asJava)
-      val protocol = getCompatEnabledProtocol()
+      val metadata = testMetadata(cmTestSchema()).withIcebergCompatV3Enabled
+      val protocol =
+        testProtocol(ICEBERG_COMPAT_V3_W_FEATURE, COLUMN_MAPPING_RW_FEATURE, ROW_TRACKING_W_FEATURE)
 
       assert(!metadata.getConfiguration.containsKey("delta.columnMapping.mode"))
+      assert(!metadata.getConfiguration.containsKey("delta.rowTracking.enabled"))
 
       if (isNewTable) {
         val updatedMetadata =
-          validateAndUpdateIcebergCompatMetadata(isNewTable, metadata, protocol)
+          validateAndUpdateIcebergCompatV3Metadata(isNewTable, metadata, protocol)
         assert(updatedMetadata.isPresent)
         assert(updatedMetadata.get().getConfiguration.get("delta.columnMapping.mode") == "name")
+        assert(TableConfig.ROW_TRACKING_ENABLED.fromMetadata(updatedMetadata.get()))
       } else {
         val e = intercept[KernelException] {
-          validateAndUpdateIcebergCompatMetadata(isNewTable, metadata, protocol)
+          validateAndUpdateIcebergCompatV3Metadata(isNewTable, metadata, protocol)
         }
         assert(e.getMessage.contains(
           "The value 'none' for the property 'delta.columnMapping.mode' is" +
-            s" not compatible with icebergCompat$icebergCompatVersion requirements"))
+            " not compatible with icebergCompatV3 requirements"))
       }
+    }
+  }
+
+  Seq(true, false).foreach { isNewTable =>
+    test(
+      s"can't enable icebergCompatV3 on a table with icebergCompatV2 enabled, " +
+        s"isNewTable = $isNewTable") {
+      val schema = new StructType().add("col", BooleanType.BOOLEAN)
+      val metadata = getCompatEnabledMetadata(schema)
+        .withMergedConfiguration(
+          Map("delta.enableIcebergCompatV2" -> "true").asJava)
+      val protocol = getCompatEnabledProtocol()
+
+      val ex = intercept[KernelException] {
+        validateAndUpdateIcebergCompatMetadata(isNewTable, metadata, protocol)
+      }
+      assert(ex.getMessage.contains(
+        s"icebergCompat$icebergCompatVersion: Only one IcebergCompat version can be enabled. " +
+          "Incompatible version enabled: delta.enableIcebergCompatV2"))
     }
   }
 }

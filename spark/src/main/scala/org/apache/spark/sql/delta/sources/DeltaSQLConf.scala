@@ -704,6 +704,16 @@ trait DeltaSQLConfBase {
   // DynamoDB Commit Coordinator-specific configs end
   /////////////////////////////////////////////
 
+  val IN_COMMIT_TIMESTAMP_RETAIN_ENABLEMENT_INFO_FIX_ENABLED =
+    buildConf("inCommitTimestamp.retainEnablementInfoFix.enabled")
+      .internal()
+      .doc("When disabled, Delta can end up dropping " +
+        s"inCommitTimestampEnablementVersion and inCommitTimestampEnablementTimestamp " +
+        s"during a REPLACE or CLONE command. This accidental removal of these " +
+        s"properties can result in failures on time travel queries.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_UPDATE_CATALOG_LONG_FIELD_TRUNCATION_THRESHOLD =
     buildConf("catalog.update.longFieldTruncationThreshold")
       .internal()
@@ -858,6 +868,32 @@ trait DeltaSQLConfBase {
            |${FileSourceOptions.IGNORE_MISSING_FILES} are enabled on the source.
            |This is done so to prevent irrecoverable data loss or unexpected results.
            |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val MERGE_MATERIALIZE_CACHED_SOURCE =
+    buildConf("merge.materializeCachedSource")
+      .internal()
+      .doc(
+        """
+          |When enabled, materialize the source in MERGE if it is cached (e.g. via df.cache()). This
+          |prevents incorrect results due to query caching not pinning the version of cached Delta
+          |tables.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val MERGE_FAIL_SOURCE_CACHED_AFTER_MATERIALIZATION =
+    buildConf("merge.failSourceCachedAfterMaterialization")
+      .internal()
+      .doc(
+        """
+          |Enables a check that fails the MERGE operation if the source was cached (using
+          |df.cache()) after the source materialization phase. Query caching doesn't pin the version
+          |of Delta tables and we should materialize cached source plans. In rare cases, the source
+          |might get cached after the decision to materialize, which could lead to incorrect results
+          |if we let the operation succeed.
+          |""".stripMargin)
       .booleanConf
       .createWithDefault(true)
 

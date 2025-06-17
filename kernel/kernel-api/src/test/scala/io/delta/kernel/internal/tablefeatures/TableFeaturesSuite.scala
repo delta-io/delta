@@ -24,7 +24,7 @@ import scala.collection.JavaConverters._
 import io.delta.kernel.data.{ArrayValue, ColumnVector, MapValue}
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.actions.{Format, Metadata, Protocol}
-import io.delta.kernel.internal.tablefeatures.TableFeatures.{validateKernelCanReadTheTable, validateKernelCanWriteToTable, CLUSTERING_W_FEATURE, DOMAIN_METADATA_W_FEATURE, TABLE_FEATURES, TYPE_WIDENING_RW_FEATURE}
+import io.delta.kernel.internal.tablefeatures.TableFeatures.{validateKernelCanReadTheTable, validateKernelCanWriteToTable, TABLE_FEATURES}
 import io.delta.kernel.internal.util.InternalUtils.singletonStringColumnVector
 import io.delta.kernel.internal.util.VectorUtils.buildColumnVector
 import io.delta.kernel.types._
@@ -40,6 +40,7 @@ class TableFeaturesSuite extends AnyFunSuite {
   // Tests for [[TableFeature]] implementations                                                  //
   /////////////////////////////////////////////////////////////////////////////////////////////////
   val readerWriterFeatures = Seq(
+    "catalogOwned-preview",
     "columnMapping",
     "deletionVectors",
     "timestampNtz",
@@ -64,6 +65,7 @@ class TableFeaturesSuite extends AnyFunSuite {
     "icebergCompatV3",
     "inCommitTimestamp",
     "icebergWriterCompatV1",
+    "icebergWriterCompatV3",
     "clustering")
 
   val legacyFeatures = Seq(
@@ -177,6 +179,14 @@ class TableFeaturesSuite extends AnyFunSuite {
     (
       "icebergWriterCompatV1",
       testMetadata(tblProps = Map("delta.enableIcebergWriterCompatV1" -> "false")),
+      false),
+    (
+      "icebergWriterCompatV3",
+      testMetadata(tblProps = Map("delta.enableIcebergWriterCompatV3" -> "true")),
+      true),
+    (
+      "icebergWriterCompatV3",
+      testMetadata(tblProps = Map("delta.enableIcebergWriterCompatV3" -> "false")),
       false)).foreach({ case (feature, metadata, expected) =>
     test(s"metadataRequiresFeatureToBeEnabled - $feature - $metadata") {
       val tableFeature = TableFeatures.getTableFeature(feature)
@@ -217,6 +227,7 @@ class TableFeaturesSuite extends AnyFunSuite {
       .collect(toList()).asScala
 
     val expected = Seq(
+      "catalogOwned-preview",
       "columnMapping",
       "v2Checkpoint",
       "variantType",
@@ -259,6 +270,7 @@ class TableFeaturesSuite extends AnyFunSuite {
       "typeWidening-preview",
       "typeWidening",
       "icebergWriterCompatV1",
+      "icebergWriterCompatV3",
       "clustering")
 
     assert(results.map(_.featureName()).toSet == expected.toSet)
@@ -595,6 +607,11 @@ class TableFeaturesSuite extends AnyFunSuite {
     testMetadata(tblProps = Map("delta.enableIcebergWriterCompatV1" -> "true")))
 
   checkWriteSupported(
+    "validateKernelCanWriteToTable: protocol 7 with icebergWriterCompatV3",
+    new Protocol(3, 7, emptySet(), singleton("icebergWriterCompatV3")),
+    testMetadata(tblProps = Map("delta.enableIcebergWriterCompatV3" -> "true")))
+
+  checkWriteSupported(
     "validateKernelCanWriteToTable: protocol 7 with clustering",
     new Protocol(3, 7, emptySet(), singleton("clustering")),
     testMetadata())
@@ -878,6 +895,73 @@ class TableFeaturesSuite extends AnyFunSuite {
           "icebergCompatV2",
           "icebergWriterCompatV1")),
       set("icebergCompatV2", "columnMapping", "icebergWriterCompatV1")),
+    (
+      testMetadata(tblProps = Map("delta.enableIcebergWriterCompatV3" -> "true")),
+      new Protocol(1, 2),
+      new Protocol(
+        2,
+        7,
+        set(),
+        set(
+          "columnMapping",
+          "appendOnly",
+          "invariants",
+          "icebergCompatV3",
+          "icebergWriterCompatV3",
+          "domainMetadata",
+          "rowTracking")),
+      set(
+        "icebergCompatV3",
+        "columnMapping",
+        "icebergWriterCompatV3",
+        "domainMetadata",
+        "rowTracking")),
+    (
+      testMetadata(tblProps = Map(
+        "delta.enableIcebergWriterCompatV3" -> "true",
+        "delta.enableDeletionVectors" -> "true")),
+      new Protocol(2, 5),
+      new Protocol(
+        3,
+        7,
+        set("columnMapping", "deletionVectors"),
+        set(
+          "columnMapping",
+          "appendOnly",
+          "deletionVectors",
+          "invariants",
+          "icebergCompatV3",
+          "icebergWriterCompatV3",
+          "checkConstraints",
+          "generatedColumns",
+          "changeDataFeed",
+          "domainMetadata",
+          "rowTracking")),
+      set(
+        "icebergCompatV3",
+        "icebergWriterCompatV3",
+        "deletionVectors",
+        "domainMetadata",
+        "rowTracking")),
+    (
+      testMetadata(tblProps = Map("delta.enableIcebergWriterCompatV3" -> "true")),
+      new Protocol(1, 1), // Minimal starting protocol with no features
+      new Protocol(
+        2,
+        7,
+        set(),
+        set(
+          "columnMapping",
+          "icebergCompatV3", // Added as dependency
+          "icebergWriterCompatV3",
+          "domainMetadata",
+          "rowTracking")),
+      set(
+        "icebergCompatV3",
+        "columnMapping",
+        "icebergWriterCompatV3",
+        "domainMetadata",
+        "rowTracking")),
     (
       testMetadata(tblProps = Map(
         "delta.enableIcebergWriterCompatV1" -> "true",
