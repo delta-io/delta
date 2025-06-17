@@ -34,6 +34,8 @@ public class SnapshotMetrics {
 
   public final Timer timeToBuildLogSegmentForVersionTimer = new Timer();
 
+  public final Timer durationToGetCrcInfoTimer = new Timer();
+
   public SnapshotMetricsResult captureSnapshotMetricsResult() {
     return new SnapshotMetricsResult() {
 
@@ -43,6 +45,7 @@ public class SnapshotMetrics {
           loadInitialDeltaActionsTimer.totalDurationNs();
       final long timeToBuildLogSegmentForVersionDurationResult =
           timeToBuildLogSegmentForVersionTimer.totalDurationNs();
+      final long durationToGetCrcInfoDurationResult = durationToGetCrcInfoTimer.totalDurationNs();
 
       @Override
       public Optional<Long> getTimestampToVersionResolutionDurationNs() {
@@ -58,6 +61,11 @@ public class SnapshotMetrics {
       public long getTimeToBuildLogSegmentForVersionNs() {
         return timeToBuildLogSegmentForVersionDurationResult;
       }
+
+      @Override
+      public long getDurationToGetCrcInfoNs() {
+        return durationToGetCrcInfoDurationResult;
+      }
     };
   }
 
@@ -66,9 +74,11 @@ public class SnapshotMetrics {
     return String.format(
         "SnapshotMetrics(timestampToVersionResolutionTimer=%s, "
             + "loadInitialDeltaActionsTimer=%s, "
-            + "timeToBuildLogSegmentForVersionTimer=%s)",
+            + "timeToBuildLogSegmentForVersionTimer=%s, "
+            + "durationToGetCrcInfoTimer=%s)",
         timestampToVersionResolutionTimer,
         loadInitialDeltaActionsTimer,
-        timeToBuildLogSegmentForVersionTimer);
+        timeToBuildLogSegmentForVersionTimer,
+        durationToGetCrcInfoTimer);
   }
 }

@@ -485,6 +485,42 @@ class DeltaReplaceTableSuite extends DeltaReplaceTableSuiteBase {
     }
   }
 
+  test("REPLACE is not supported on existing table with icebergCompatV3 feature") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createInitialTable(
+        engine,
+        tablePath,
+        tableProperties = Map(TableConfig.ICEBERG_COMPAT_V3_ENABLED.getKey -> "true"),
+        includeData = false // To avoid writing data with correct CM schema
+      )
+      assert(
+        intercept[UnsupportedOperationException] {
+          commitReplaceTable(engine, tablePath)
+        }.getMessage.contains("REPLACE TABLE is not yet supported on IcebergCompatV3 tables"))
+    }
+  }
+
+  test("REPLACE is not supported when enabling icebergCompatV3 feature") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createInitialTable(
+        engine,
+        tablePath,
+        tableProperties = Map(
+          TableConfig.COLUMN_MAPPING_MODE.getKey -> "name"),
+        includeData = false // To avoid writing data with correct CM schema
+      )
+      assert(
+        intercept[UnsupportedOperationException] {
+          commitReplaceTable(
+            engine,
+            tablePath,
+            tableProperties = Map(
+              TableConfig.ICEBERG_COMPAT_V3_ENABLED.getKey -> "true",
+              TableConfig.COLUMN_MAPPING_MODE.getKey -> "name"))
+        }.getMessage.contains("REPLACE TABLE is not yet supported on IcebergCompatV3 tables"))
+    }
+  }
+
   test("REPLACE is not supported on existing table with rowTracking feature") {
     withTempDirAndEngine { (tablePath, engine) =>
       createInitialTable(
