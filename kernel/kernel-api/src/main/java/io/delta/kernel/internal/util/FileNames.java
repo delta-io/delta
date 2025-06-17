@@ -190,6 +190,10 @@ public final class FileNames {
     return String.format("%s/%020d.%s.json", stagedCommitPath, version, UUID.randomUUID());
   }
 
+  public static String stagedCommitFile(String logPath, long version) {
+    return stagedCommitFile(new Path(logPath), version);
+  }
+
   /** Example: /a/_sidecars/3a0d65cd-4056-49b8-937b-95f9e3ee90e5.parquet */
   public static String sidecarFile(Path path, String sidecar) {
     return String.format("%s/%s/%s", path.toString(), SIDECAR_DIRECTORY, sidecar);
