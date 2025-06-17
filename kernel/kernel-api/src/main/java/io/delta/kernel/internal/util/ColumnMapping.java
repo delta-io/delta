@@ -26,6 +26,7 @@ import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.data.TransactionStateRow;
+import io.delta.kernel.internal.icebergcompat.IcebergCompatMetadataValidatorAndUpdater;
 import io.delta.kernel.types.*;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -356,10 +357,7 @@ public class ColumnMapping {
                   useColumnIdForPhysicalName));
     }
 
-    if (Boolean.parseBoolean(
-        metadata
-            .getConfiguration()
-            .getOrDefault(TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey(), "false"))) {
+    if (IcebergCompatMetadataValidatorAndUpdater.isIcebergCompatEnabled(metadata)) {
       newSchema = rewriteFieldIdsForIceberg(newSchema, maxColumnId);
     }
 

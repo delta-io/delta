@@ -85,8 +85,8 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
    */
   public static void validateIcebergWriterCompatV1Change(
       Map<String, String> oldConfig, Map<String, String> newConfig, boolean isNewTable) {
-    validateIcebergWriterCompatChange(
-        oldConfig, newConfig, isNewTable, TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED);
+    blockConfigChangeOnExistingTable(
+        TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED, oldConfig, newConfig, isNewTable);
   }
 
   /**

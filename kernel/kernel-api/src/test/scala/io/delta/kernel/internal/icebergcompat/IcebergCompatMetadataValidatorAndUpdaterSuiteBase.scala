@@ -46,6 +46,7 @@ trait IcebergCompatMetadataValidatorAndUpdaterSuiteBase extends AnyFunSuite
   /** Get a metadata with the given schema and partCols with the desired icebergCompat enabled */
   def getCompatEnabledMetadata(
       schema: StructType,
+      columnMappingMode: String = "name",
       partCols: Seq[String] = Seq.empty): Metadata
 
   /** Get a protocol with features needed for the desired icebergCompat plus the `tableFeatures` */
@@ -58,7 +59,10 @@ trait IcebergCompatMetadataValidatorAndUpdaterSuiteBase extends AnyFunSuite
       protocol: Protocol): Optional[Metadata]
 
   /** Returns a [[Metadata]] instance with IcebergCompat feature and column mapping mode enabled */
-  def withIcebergCompatAndCMEnabled(schema: StructType, partCols: Seq[String]): Metadata
+  def withIcebergCompatAndCMEnabled(
+      schema: StructType,
+      columnMappingMode: String,
+      partCols: Seq[String]): Metadata
 
   /** Get the set of supported data column types */
   def supportedDataColumnTypes: Set[DataType]
@@ -72,11 +76,7 @@ trait IcebergCompatMetadataValidatorAndUpdaterSuiteBase extends AnyFunSuite
   /** Whether deletion vectors are supported */
   def isDeletionVectorsSupported: Boolean
 
-  /** Get the set of required table features */
-  def requiredTableFeatures: Set[TableFeature]
-
   // Common test cases that apply to both writer and compat versions
-
   supportedDataColumnTypes.diff(simpleTypesToSkip).foreach {
     dataType: DataType =>
       Seq(true, false).foreach { isNewTable =>
@@ -94,7 +94,7 @@ trait IcebergCompatMetadataValidatorAndUpdaterSuiteBase extends AnyFunSuite
       Seq(true, false).foreach { isNewTable =>
         test(s"allowed partition column types: $dataType, new table = $isNewTable") {
           val schema = new StructType().add("col", dataType)
-          val metadata = getCompatEnabledMetadata(schema, Seq("col"))
+          val metadata = getCompatEnabledMetadata(schema, partCols = Seq("col"))
           val protocol = getCompatEnabledProtocol()
           validateAndUpdateIcebergCompatMetadata(isNewTable, metadata, protocol)
         }
@@ -122,7 +122,7 @@ trait IcebergCompatMetadataValidatorAndUpdaterSuiteBase extends AnyFunSuite
       Seq(true, false).foreach { isNewTable =>
         test(s"disallowed partition column types: $dataType, new table = $isNewTable") {
           val schema = new StructType().add("col", dataType)
-          val metadata = getCompatEnabledMetadata(schema, Seq("col"))
+          val metadata = getCompatEnabledMetadata(schema, partCols = Seq("col"))
           val protocol = getCompatEnabledProtocol()
           val e = intercept[KernelException] {
             validateAndUpdateIcebergCompatMetadata(isNewTable, metadata, protocol)
@@ -200,30 +200,9 @@ trait IcebergCompatMetadataValidatorAndUpdaterSuiteBase extends AnyFunSuite
       s"icebergCompat$icebergCompatVersion does not support type widening present in table"))
   }
 
-  Seq("id", "name").foreach { existingCMMode =>
-    Seq(true, false).foreach { isNewTable =>
-      test(s"existing column mapping mode `$existingCMMode` is preserved " +
-        s"when icebergCompat is enabled, isNewTable = $isNewTable") {
-        val metadata = testMetadata(cmTestSchema())
-          .withMergedConfiguration(
-            Map(
-              s"delta.enableIcebergCompat$icebergCompatVersion" -> "true",
-              "delta.columnMapping.mode" -> existingCMMode).asJava)
-        val protocol = getCompatEnabledProtocol()
-
-        assert(metadata.getConfiguration.get("delta.columnMapping.mode") === existingCMMode)
-
-        val updatedMetadata =
-          validateAndUpdateIcebergCompatMetadata(isNewTable, metadata, protocol)
-        // No metadata update is needed since already compatible column mapping mode
-        assert(!updatedMetadata.isPresent)
-      }
-    }
-  }
-
   Seq(true, false).foreach { isNewTable =>
     test(
-      s"can't enable icebergCompat$icebergCompatVersion on a table with icebergCompatv1 enabled, " +
+      s"can't enable icebergCompat$icebergCompatVersion on a table with icebergCompatV1 enabled, " +
         s"isNewTable = $isNewTable") {
       val schema = new StructType().add("col", BooleanType.BOOLEAN)
       val metadata = getCompatEnabledMetadata(schema)
