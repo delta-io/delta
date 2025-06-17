@@ -260,8 +260,8 @@ public class SnapshotManager {
   }
 
   /**
-   * Recall: Right now, we are only supporting sorted and contiguous log datas of type {@link
-   * ParsedLogType#RATIFIED_STAGED_COMMIT}s.
+   * [delta-io/delta#4765]: Right now, we are only supporting sorted and contiguous log datas of
+   * type {@link ParsedLogType#RATIFIED_STAGED_COMMIT}s.
    */
   public LogSegment getLogSegmentForVersion(
       Engine engine, Optional<Long> versionToLoadOpt, List<ParsedLogData> parsedLogDatas) {
@@ -604,6 +604,20 @@ public class SnapshotManager {
   // getLogSegment utils //
   /////////////////////////
 
+  /**
+   * Filters and concats (a) a list of published Deltas (from cloud LIST call), and (b) a list of
+   * {@link ParsedLogData} injected by the {@link TableManager}, to return a new list of all Deltas
+   * since the latest complete checkpoint, up to and including the target version to load.
+   *
+   * <ul>
+   *   <li>Assumes that {@code allPublishedDeltas} is sorted and contiguous.
+   *   <li>Assumes that {@code parsedLogDatas} is sorted and contiguous.
+   *   <li>[delta-io/delta#4765] For now, only accepts parsedLogData of type {@link
+   *       ParsedLogType#RATIFIED_STAGED_COMMIT}
+   *   <li>If there is both a published Delta and a ratified staged commit for the same version,
+   *       prioritizes the ratified staged commit
+   * </ul>
+   */
   private List<ParsedLogData> getAllDeltasAfterCheckpointWithCatalogPriority(
       List<ParsedLogData> allPublishedDeltas,
       List<ParsedLogData> parsedLogDatas,
