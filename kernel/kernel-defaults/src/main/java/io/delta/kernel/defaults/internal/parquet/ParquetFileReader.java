@@ -129,7 +129,8 @@ public class ParquetFileReader {
                   protected ReadSupport<Object> getReadSupport() {
                     return readSupport;
                   }
-                }.withFilter(parquetPredicate.map(FilterCompat::get).orElse(FilterCompat.NOOP))
+                }.withConf(confCopy)
+                    .withFilter(parquetPredicate.map(FilterCompat::get).orElse(FilterCompat.NOOP))
                     // Disable the record level filtering as the `parquet-mr` evaluates
                     // the filter once the entire record has been materialized. Instead,
                     // we use the predicate to prune the row groups which is more efficient.
