@@ -511,6 +511,222 @@ class DeltaRetentionSuite extends QueryTest
     }
   }
 
+  (Seq(("Default", Seq.empty[(String, String)])) ++ CheckpointPolicy.ALL.map {
+    case CheckpointPolicy.Classic =>
+      Seq(
+        ("Classic", Seq(
+          DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey -> CheckpointPolicy.Classic.name)),
+        ("Multipart", Seq(
+          DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey -> CheckpointPolicy.Classic.name,
+          DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE.key -> "1"))
+      )
+    case CheckpointPolicy.V2 =>
+      V2Checkpoint.Format.ALL_AS_STRINGS.map { v2CheckpointFormat =>
+        (s"V2 $v2CheckpointFormat",
+          Seq(DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey -> CheckpointPolicy.V2.name,
+            DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> v2CheckpointFormat))
+      }
+  }.flatten).foreach { case (chkConfigName, chkConfig) =>
+  test(s"cleanup does not delete the checkpoint if it is required by non-expired versions. " +
+    s"Config: $chkConfigName.") {
+    withSQLConf(chkConfig: _*) {
+    withTempDir { tempDir =>
+      val startTime = getStartTimeForRetentionTest
+      val clock = new ManualClock(startTime)
+      val actualTestStartTime = System.currentTimeMillis()
+      val tableReference = s"delta.`${tempDir.getCanonicalPath()}`"
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
+      val logPath = new File(log.logPath.toUri)
+      val minChksCount = if (chkConfigName == "Multipart") { 2 } else { 1 }
+
+      // commit 0
+      spark.sql(
+        s"""CREATE TABLE $tableReference (id Int) USING delta
+           | TBLPROPERTIES('delta.enableChangeDataFeed' = true)
+        """.stripMargin)
+      // Set time for commit 0 to ensure that the commits don't need timestamp adjustment.
+      val commit0Time = clock.getTimeMillis()
+      new File(FileNames.unsafeDeltaFile(log.logPath, 0).toUri).setLastModified(commit0Time)
+      new File(FileNames.checksumFile(log.logPath, 0).toUri).setLastModified(commit0Time)
+
+      def commitNewVersion(version: Long): Unit = {
+        spark.sql(s"INSERT INTO $tableReference VALUES (1)")
+
+        val deltaFile = new File(FileNames.unsafeDeltaFile(log.logPath, version).toUri)
+        val time = clock.getTimeMillis() + version * 1000
+        deltaFile.setLastModified(time)
+        val crcFile = new File(FileNames.checksumFile(log.logPath, version).toUri)
+        crcFile.setLastModified(time)
+        val chks = getCheckpointFiles(logPath)
+          .filter(f => FileNames.checkpointVersion(new Path(f.getCanonicalPath)) == version)
+
+        if (version % 10 == 0) {
+          assert(chks.length >= minChksCount)
+          chks.foreach { chk =>
+              assert(chk.exists())
+              chk.setLastModified(time)
+          }
+        } else { assert(chks.isEmpty) }
+      }
+
+      // Day 0: Add commits 1 to 15 --> creates 1 checkpoint at Day 0 for version 10
+      (1L to 15L).foreach(commitNewVersion)
+
+      // ensure that the checkpoint at version 10 exists
+      val checkpoint10Files = getCheckpointFiles(logPath)
+        .filter(f => FileNames.checkpointVersion(new Path(f.getCanonicalPath)) == 10)
+      assert(checkpoint10Files.length >= minChksCount)
+      assert(checkpoint10Files.forall(_.exists))
+      val deltaFiles = (0 to 15).map { i =>
+        new File(FileNames.unsafeDeltaFile(log.logPath, i).toUri)
+      }
+      deltaFiles.foreach { f =>
+        assert(f.exists())
+      }
+
+      // Day 35: Add commits 16 to 25 --> creates a checkpoint at Day 35 for version 20
+      clock.setTime(day(startTime, 35))
+      (16L to 25L).foreach(commitNewVersion)
+
+      assert(checkpoint10Files.forall(_.exists))
+      deltaFiles.foreach { f =>
+        assert(f.exists())
+      }
+
+      // auto cleanup is disabled in DeltaRetentionSuiteBase so tests have control when it happens
+      cleanUpExpiredLogs(log)
+
+      // assert that the checkpoint from day 0 (at version 10) and all the commits after
+      // that are still there
+      assert(checkpoint10Files.forall(_.exists))
+      deltaFiles.foreach { f =>
+        val version = FileNames.deltaVersion(new Path(f.toString()))
+        if (version < 10) {
+          assert(!f.exists, version)
+        } else {
+          assert(f.exists, version)
+        }
+      }
+
+      // Validate we can time travel to version >=10
+      val earliestExpectedChkVersion = 10
+      (0 to 25).map { version =>
+        val sqlCommand = s"SELECT * FROM $tableReference VERSION AS OF $version"
+        if (version < earliestExpectedChkVersion) {
+          val ex = intercept[org.apache.spark.sql.delta.VersionNotFoundException] {
+            spark.sql(sqlCommand).collect()
+          }
+          assert(ex.userVersion === version)
+          assert(ex.earliest === earliestExpectedChkVersion)
+          assert(ex.latest === 25)
+        } else {
+          spark.sql(sqlCommand).collect()
+        }
+      }
+
+      // Validate CDF - SELECT * FROM table_changes_by_path('table', X, Y)
+      (0 to 24).map { version =>
+        val sqlCommand = s"SELECT * FROM " +
+          s"table_changes_by_path('${tempDir.getCanonicalPath}', $version, 25)"
+        if (version < earliestExpectedChkVersion) {
+          if (catalogOwnedDefaultCreationEnabledInTests) {
+            intercept[IllegalStateException] {
+              spark.sql(sqlCommand).collect()
+            }
+          } else {
+            intercept[org.apache.spark.sql.delta.DeltaFileNotFoundException] {
+              spark.sql(sqlCommand).collect()
+            }
+          }
+        } else {
+          spark.sql(sqlCommand).collect()
+        }
+      }
+    }
+    }
+  }
+  }
+
+  test(s"cleanup does not delete the JSON logs if the multi-part checkpoint is incomplete.") {
+    withSQLConf(DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE.key -> "1") {
+    withTempDir { tempDir =>
+      val startTime = getStartTimeForRetentionTest
+      val clock = new ManualClock(startTime)
+      val actualTestStartTime = System.currentTimeMillis()
+      val tableReference = s"delta.`${tempDir.getCanonicalPath()}`"
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
+      val logPath = new File(log.logPath.toUri)
+
+      // commit 0
+      spark.sql(
+        s"""CREATE TABLE $tableReference (id Int) USING delta
+           | TBLPROPERTIES('delta.enableChangeDataFeed' = true)
+        """.stripMargin)
+      // Set time for commit 0 to ensure that the commits don't need timestamp adjustment.
+      val commit0Time = clock.getTimeMillis()
+      new File(FileNames.unsafeDeltaFile(log.logPath, 0).toUri).setLastModified(commit0Time)
+      new File(FileNames.checksumFile(log.logPath, 0).toUri).setLastModified(commit0Time)
+
+      def commitNewVersion(version: Long): Unit = {
+        spark.sql(s"INSERT INTO $tableReference VALUES (1)")
+
+        val deltaFile = new File(FileNames.unsafeDeltaFile(log.logPath, version).toUri)
+        val time = clock.getTimeMillis() + version * 1000
+        deltaFile.setLastModified(time)
+        val crcFile = new File(FileNames.checksumFile(log.logPath, version).toUri)
+        crcFile.setLastModified(time)
+        val chks = getCheckpointFiles(logPath)
+          .filter(f => FileNames.checkpointVersion(new Path(f.getCanonicalPath)) == version)
+
+        if (version % 10 == 0) {
+          assert(chks.length >= 2) // Multipart checkpoints
+          chks.foreach { chk =>
+              assert(chk.exists())
+              chk.setLastModified(time)
+          }
+        } else { assert(chks.isEmpty) }
+      }
+
+      // Day 0: Add commits 1 to 15 --> creates 1 checkpoint at Day 0 for version 10
+      (1L to 15L).foreach(commitNewVersion)
+
+      // ensure that the checkpoint at version 10 exists
+      val checkpoint10Files = getCheckpointFiles(logPath)
+        .filter(f => FileNames.checkpointVersion(new Path(f.getCanonicalPath)) == 10)
+      assert(checkpoint10Files.length >= 2) // Multipart checkpoints
+      assert(checkpoint10Files.forall(_.exists))
+      val deltaFiles = (0 to 15).map { i =>
+        new File(FileNames.unsafeDeltaFile(log.logPath, i).toUri)
+      }
+      deltaFiles.foreach { f =>
+        assert(f.exists())
+      }
+
+      // Day 35: Add commits 16 to 25 --> creates a checkpoint at Day 35 for version 20
+      clock.setTime(day(startTime, 35))
+      (16L to 25L).foreach(commitNewVersion)
+
+      assert(checkpoint10Files.forall(_.exists))
+      deltaFiles.foreach { f =>
+        assert(f.exists())
+      }
+
+      checkpoint10Files.lastOption.foreach { lastPart =>
+        lastPart.delete() // delete the last part to simulate incomplete checkpoint
+      }
+
+      // auto cleanup is disabled in DeltaRetentionSuiteBase so tests have control when it happens
+      cleanUpExpiredLogs(log)
+
+      // assert that delta logs are not deleted due to missing checkpoint part
+      deltaFiles.foreach { f =>
+        val version = FileNames.deltaVersion(new Path(f.toString()))
+        assert(f.exists, s"version $version should not be deleted")
+      }
+    }
+    }
+  }
+
   test("Metadata cleanup respects requireCheckpointProtectionBeforeVersion") {
     // Commits should be cleaned up to the latest checkpoint.
     testRequireCheckpointProtectionBeforeVersion(
@@ -642,6 +858,186 @@ class DeltaRetentionSuite extends QueryTest
       expectedCommitsAfterCleanup = Range.inclusive(0, 15).toSet,
       // Α checkpoint is automatically created every 10 commits.
       expectedCheckpointsAfterCleanup = Set(1, 10))
+
+  test("Cleanup is allowed if a checkpoint already exists at the boundary") {
+    withSQLConf(DeltaSQLConf.ALLOW_METADATA_CLEANUP_WHEN_ALL_PROTOCOLS_SUPPORTED.key -> "false") {
+      testRequireCheckpointProtectionBeforeVersion(
+        createNumCommitsOutsideRetentionPeriod = 8,
+        createNumCommitsWithinRetentionPeriod = 8,
+        // Metadata cleanup should attempt to clean before version 8.
+        createCheckpoints = Set(0, 8),
+        requireCheckpointProtectionBeforeVersion = 10,
+        unsupportedFeatureStartVersion = Some(8),
+        expectedCommitsAfterCleanup = (8 to 15),
+        expectedCheckpointsAfterCleanup = Set(8, 10))
+    }
+  }
+
+  test("Metadata cleanup protocol validation positive tests.") {
+    withSQLConf(
+        DeltaSQLConf.ALLOW_METADATA_CLEANUP_CHECKPOINT_EXISTENCE_CHECK_DISABLED.key -> "true") {
+      // In all tests below, we cannot satisfy the version requirement and thus fallback
+      // to protocol validations. We identify we support all features and proceed to
+      // metadata cleanup.
+      testRequireCheckpointProtectionBeforeVersion(
+        createNumCommitsOutsideRetentionPeriod = 8,
+        createNumCommitsWithinRetentionPeriod = 8,
+        createCheckpoints = Set(8),
+        requireCheckpointProtectionBeforeVersion = 10,
+        expectedCommitsAfterCleanup = (8 to 15),
+        expectedCheckpointsAfterCleanup = Set(8, 10))
+
+      // The protocol contains unsupported feature but at requireCheckpointProtectionBeforeVersion.
+      testRequireCheckpointProtectionBeforeVersion(
+        createNumCommitsOutsideRetentionPeriod = 8,
+        createNumCommitsWithinRetentionPeriod = 8,
+        createCheckpoints = Set(8),
+        requireCheckpointProtectionBeforeVersion = 10,
+        unsupportedFeatureStartVersion = Some(10),
+        expectedCommitsAfterCleanup = (8 to 15),
+        expectedCheckpointsAfterCleanup = Set(8, 10))
+
+      // The protocol contains unsupported feature but after
+      // requireCheckpointProtectionBeforeVersion.
+      testRequireCheckpointProtectionBeforeVersion(
+        createNumCommitsOutsideRetentionPeriod = 8,
+        createNumCommitsWithinRetentionPeriod = 8,
+        createCheckpoints = Set(8),
+        requireCheckpointProtectionBeforeVersion = 10,
+        unsupportedFeatureStartVersion = Some(11),
+        expectedCommitsAfterCleanup = (8 to 15),
+        expectedCheckpointsAfterCleanup = Set(8, 10))
+
+      // The protocol contains unsupported feature before requireCheckpointProtectionBeforeVersion
+      // but right after the boundary version where the cleanup ends.
+      testRequireCheckpointProtectionBeforeVersion(
+        createNumCommitsOutsideRetentionPeriod = 8,
+        createNumCommitsWithinRetentionPeriod = 8,
+        // Metadata cleanup should attempt to clean before version 8.
+        createCheckpoints = Set(0, 8),
+        requireCheckpointProtectionBeforeVersion = 10,
+        unsupportedFeatureStartVersion = Some(9),
+        expectedCommitsAfterCleanup = (8 to 15),
+        expectedCheckpointsAfterCleanup = Set(8, 10))
+
+      // Other corner cases.
+      testRequireCheckpointProtectionBeforeVersion(
+        createNumCommitsOutsideRetentionPeriod = 8,
+        createNumCommitsWithinRetentionPeriod = 8,
+        createCheckpoints = Set(1, 8),
+        requireCheckpointProtectionBeforeVersion = 10,
+        expectedCommitsAfterCleanup = (8 to 15),
+        expectedCheckpointsAfterCleanup = Set(8, 10))
+
+      testRequireCheckpointProtectionBeforeVersion(
+        createNumCommitsOutsideRetentionPeriod = 8,
+        createNumCommitsWithinRetentionPeriod = 8,
+        createCheckpoints = Set(0, 8),
+        requireCheckpointProtectionBeforeVersion = 10,
+        expectedCommitsAfterCleanup = (8 to 15),
+        expectedCheckpointsAfterCleanup = Set(8, 10))
+    }
+  }
+
+  test("Metadata cleanup protocol validation negative tests.") {
+    withSQLConf(
+        DeltaSQLConf.ALLOW_METADATA_CLEANUP_CHECKPOINT_EXISTENCE_CHECK_DISABLED.key -> "true") {
+      // In all tests below, we cannot satisfy the version requirement and thus fallback
+      // to protocol validations. We should detect the start version version includes a
+      // non-supported feature and skip the cleanup.
+      testRequireCheckpointProtectionBeforeVersion(
+        createNumCommitsOutsideRetentionPeriod = 8,
+        createNumCommitsWithinRetentionPeriod = 8,
+        createCheckpoints = Set(8),
+        requireCheckpointProtectionBeforeVersion = 10,
+        // Unsupported feature in the first version.
+        unsupportedFeatureStartVersion = Some(0),
+        unsupportedFeatureEndVersion = Some(1),
+        expectedCommitsAfterCleanup = (0 to 15),
+        expectedCheckpointsAfterCleanup = Set(8, 10))
+
+      testRequireCheckpointProtectionBeforeVersion(
+        createNumCommitsOutsideRetentionPeriod = 8,
+        createNumCommitsWithinRetentionPeriod = 8,
+        createCheckpoints = Set(0, 8),
+        requireCheckpointProtectionBeforeVersion = 10,
+        // Unsupported feature right before the boundary version where the cleanup ends.
+        unsupportedFeatureStartVersion = Some(7),
+        expectedCommitsAfterCleanup = (0 to 15),
+        expectedCheckpointsAfterCleanup = Set(0, 8, 10))
+
+      testRequireCheckpointProtectionBeforeVersion(
+        createNumCommitsOutsideRetentionPeriod = 8,
+        createNumCommitsWithinRetentionPeriod = 8,
+        createCheckpoints = Set(8),
+        requireCheckpointProtectionBeforeVersion = 10,
+        // Unsupported feature in intermediate versions.
+        unsupportedFeatureStartVersion = Some(4),
+        unsupportedFeatureEndVersion = Some(7),
+        expectedCommitsAfterCleanup = (0 to 15),
+        expectedCheckpointsAfterCleanup = Set(8, 10))
+
+      testRequireCheckpointProtectionBeforeVersion(
+        createNumCommitsOutsideRetentionPeriod = 8,
+        createNumCommitsWithinRetentionPeriod = 8,
+        createCheckpoints = Set(8),
+        requireCheckpointProtectionBeforeVersion = 10,
+        // Unsupported feature in dropped at the boundary version.
+        unsupportedFeatureStartVersion = Some(4),
+        unsupportedFeatureEndVersion = Some(8),
+        expectedCommitsAfterCleanup = (0 to 15),
+        expectedCheckpointsAfterCleanup = Set(8, 10))
+
+      // The protocol contains unsupported feature before requireCheckpointProtectionBeforeVersion
+      // but at the boundary version where the cleanup ends.
+      testRequireCheckpointProtectionBeforeVersion(
+        createNumCommitsOutsideRetentionPeriod = 8,
+        createNumCommitsWithinRetentionPeriod = 8,
+        // Metadata cleanup should attempt to clean before version 8.
+        createCheckpoints = Set(0, 8),
+        requireCheckpointProtectionBeforeVersion = 10,
+        unsupportedFeatureStartVersion = Some(8),
+        expectedCommitsAfterCleanup = (0 to 15),
+        expectedCheckpointsAfterCleanup = Set(0, 8, 10))
+
+      testRequireCheckpointProtectionBeforeVersion(
+        createNumCommitsOutsideRetentionPeriod = 8,
+        createNumCommitsWithinRetentionPeriod = 8,
+        // Metadata cleanup should attempt to clean before version 8.
+        createCheckpoints = Set(0, 8),
+        requireCheckpointProtectionBeforeVersion = 10,
+        // Make sure we correctly validate the protocol of the checkpoint version.
+        unsupportedFeature = TestUnsupportedWriterFeature,
+        unsupportedFeatureStartVersion = Some(8),
+        expectedCommitsAfterCleanup = (0 to 15),
+        expectedCheckpointsAfterCleanup = Set(0, 8, 10))
+    }
+  }
+
+  test("Metadata cleanup protocol validation with incomplete CRCs.") {
+    withSQLConf(
+        DeltaSQLConf.ALLOW_METADATA_CLEANUP_CHECKPOINT_EXISTENCE_CHECK_DISABLED.key -> "true") {
+      // We fall back to protocol validations which cannot be completed due to missing
+      // protocol in one of the CRCs.
+      testRequireCheckpointProtectionBeforeVersion(
+        createNumCommitsOutsideRetentionPeriod = 8,
+        createNumCommitsWithinRetentionPeriod = 8,
+        createCheckpoints = Set(8),
+        requireCheckpointProtectionBeforeVersion = 10,
+        incompleteCRCVersion = Some(3),
+        expectedCommitsAfterCleanup = (0 to 15),
+        expectedCheckpointsAfterCleanup = Set(8, 10))
+
+      // Similar to above but a CRC file is missing.
+      testRequireCheckpointProtectionBeforeVersion(
+        createNumCommitsOutsideRetentionPeriod = 8,
+        createNumCommitsWithinRetentionPeriod = 8,
+        createCheckpoints = Set(8),
+        requireCheckpointProtectionBeforeVersion = 10,
+        missingCRCVersion = Some(3),
+        expectedCommitsAfterCleanup = (0 to 15),
+        expectedCheckpointsAfterCleanup = Set(8, 10))
+    }
   }
 }
 
