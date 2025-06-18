@@ -629,7 +629,7 @@ class DeltaRetentionSuite extends QueryTest
         val sqlCommand = s"SELECT * FROM " +
           s"table_changes_by_path('${tempDir.getCanonicalPath}', $version, 25)"
         if (version < earliestExpectedChkVersion) {
-          if (catalogOwnedDefaultCreationEnabledInTests) {
+          if (coordinatedCommitsEnabledInTests) {
             intercept[IllegalStateException] {
               spark.sql(sqlCommand).collect()
             }
