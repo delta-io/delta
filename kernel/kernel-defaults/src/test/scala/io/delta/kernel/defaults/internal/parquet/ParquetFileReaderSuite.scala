@@ -15,19 +15,39 @@
  */
 package io.delta.kernel.defaults.internal.parquet
 
+import java.io.File
 import java.math.BigDecimal
 import java.util.TimeZone
 
 import io.delta.golden.GoldenTableUtils.{goldenTableFile, goldenTablePath}
+import io.delta.kernel.Table
+import io.delta.kernel.defaults.FakeFileSystem
+import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestRow}
 import io.delta.kernel.test.VectorTestUtils
 import io.delta.kernel.types._
 
+import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.internal.SQLConf
 import org.scalatest.funsuite.AnyFunSuite
 
 class ParquetFileReaderSuite extends AnyFunSuite
     with ParquetSuiteBase with VectorTestUtils with ExpressionTestUtils {
+
+  test("ParquetFileReader with filesystem options") {
+    // Create Hadoop file system options for `FakeFileSystem`. If Delta doesn't pick up them,
+    // it won't be able to read/write any files using `fake://`.
+    val configuration = new Configuration()
+    configuration.set("fs.fake.impl", classOf[FakeFileSystem].getName)
+    configuration.set("fs.fake.impl.disable.cache", "true")
+    val engineWithConfig = DefaultEngine.create(configuration)
+
+    val source = new File(getTestResourceFilePath("basic-with-checkpoint"))
+    val table = Table.forPath(engineWithConfig, s"fake://${source.getCanonicalPath}")
+
+    // This fails if config is not set correctly.
+    val snapshot = table.getLatestSnapshot(engineWithConfig)
+  }
 
   test("decimals encoded using dictionary encoding ") {
     // Below golden tables contains three decimal columns
