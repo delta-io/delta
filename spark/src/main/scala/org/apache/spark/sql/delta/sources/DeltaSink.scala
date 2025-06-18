@@ -179,7 +179,8 @@ case class DeltaSink(
 
     val typeWideningMode = if (canMergeSchema && TypeWidening.isEnabled(protocol, metadata)) {
         TypeWideningMode.TypeEvolution(
-          uniformIcebergCompatibleOnly = UniversalFormat.icebergEnabled(metadata))
+          uniformIcebergCompatibleOnly = UniversalFormat.icebergEnabled(metadata),
+          allowAutomaticWidening = sqlConf.getConf(DeltaSQLConf.DELTA_ALLOW_AUTOMATIC_WIDENING))
       } else {
         TypeWideningMode.NoTypeWidening
       }

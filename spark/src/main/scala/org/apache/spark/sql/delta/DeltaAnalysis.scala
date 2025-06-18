@@ -1010,7 +1010,8 @@ class DeltaAnalysis(session: SparkSession)
 
     if (typeWideningEnabled && schemaEvolutionEnabled) {
       TypeWideningMode.TypeEvolution(
-        uniformIcebergCompatibleOnly = UniversalFormat.icebergEnabled(snapshot.metadata))
+        uniformIcebergCompatibleOnly = UniversalFormat.icebergEnabled(snapshot.metadata),
+        allowAutomaticWidening = session.conf.get(DeltaSQLConf.DELTA_ALLOW_AUTOMATIC_WIDENING))
     } else {
       TypeWideningMode.NoTypeWidening
     }

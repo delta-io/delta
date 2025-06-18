@@ -52,6 +52,47 @@ trait TypeWideningMergeIntoSchemaEvolutionTests
 
   import testImplicits._
 
+  test(s"MERGE - always automatic type widening TINYINT -> DOUBLE") {
+    withTable("source") {
+      sql(s"CREATE TABLE delta.`$tempPath` (a short) USING DELTA")
+      sql("CREATE TABLE source (a double) USING DELTA")
+      sql("INSERT INTO source VALUES (3.0), (-10.5)")
+
+      withSQLConf(DeltaSQLConf.DELTA_ALLOW_AUTOMATIC_WIDENING.key -> "always") {
+        // Merge double values. This should succeed and widen the short column to double.
+        executeMerge(
+          tgt = s"delta.`$tempPath` t",
+          src = "source",
+          cond = "0 = 1",
+          clauses = insert("*")
+        )
+        assert(readDeltaTable(tempPath).schema("a").dataType === DoubleType)
+        checkAnswer(readDeltaTable(tempPath),
+          Seq(3.0, -10.5).toDF("a"))
+      }
+    }
+  }
+
+  test(s"MERGE - never automatic type widening TINYINT -> INT") {
+    withTable("source") {
+      sql(s"CREATE TABLE delta.`$tempPath` (a short) USING DELTA")
+      sql("CREATE TABLE source (a int) USING DELTA")
+      sql("INSERT INTO source VALUES (1), (2)")
+
+      withSQLConf(DeltaSQLConf.DELTA_ALLOW_AUTOMATIC_WIDENING.key -> "never",
+        SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.LEGACY.toString) {
+        // Merge int values into short column. This should not widen the target schema.
+        executeMerge(
+          tgt = s"delta.`$tempPath` t",
+          src = "source",
+          cond = "0 = 1",
+          clauses = insert("*")
+        )
+        assert(readDeltaTable(tempPath).schema("a").dataType === ShortType)
+      }
+    }
+  }
+
   for {
     testCase <- supportedTestCases
   } {

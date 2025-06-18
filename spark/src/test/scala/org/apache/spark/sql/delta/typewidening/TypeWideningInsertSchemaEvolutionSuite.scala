@@ -21,6 +21,7 @@ import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.Path
 
+import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{DataFrame, Dataset, QueryTest, Row, SaveMode}
 import org.apache.spark.sql.catalyst.plans.logical.{AppendData, LogicalPlan}
@@ -57,6 +58,100 @@ trait TypeWideningInsertSchemaEvolutionTests
 
   import testImplicits._
   import scala.collection.JavaConverters._
+
+  for {
+    testCase <- alterTableOnlySupportedTestCases ++ supportedTestCases
+  } {
+    test(s"INSERT - always automatic type widening " +
+      s"${testCase.fromType.sql} -> ${testCase.toType.sql}") {
+      append(testCase.initialValuesDF)
+
+      withSQLConf(DeltaSQLConf.DELTA_ALLOW_AUTOMATIC_WIDENING.key -> "always") {
+        testCase.additionalValuesDF
+          .write
+          .format("delta")
+          .mode("append")
+          .option("mergeSchema", "true")
+          .insertInto(s"delta.`$tempPath`")
+      }
+
+      assert(readDeltaTable(tempPath).schema("value").dataType === testCase.toType)
+      checkAnswerWithTolerance(
+        actualDf = readDeltaTable(tempPath).select("value"),
+        expectedDf = testCase.expectedResult.select($"value".cast(testCase.toType)),
+        toType = testCase.toType
+      )
+    }
+  }
+
+  for {
+    testCase <- alterTableOnlySupportedTestCases ++ supportedTestCases
+  } {
+    test(s"INSERT - never automatic type widening " +
+      s"${testCase.fromType.sql} -> ${testCase.toType.sql}") {
+      append(testCase.initialValuesDF)
+
+      withSQLConf(SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.LEGACY.toString,
+        DeltaSQLConf.DELTA_ALLOW_AUTOMATIC_WIDENING.key -> "never") {
+        testCase.additionalValuesDF
+          .write
+          .format("delta")
+          .mode("append")
+          .option("mergeSchema", "true")
+          .insertInto(s"delta.`$tempPath`")
+      }
+
+      assert(readDeltaTable(tempPath).schema("value").dataType === testCase.fromType)
+    }
+  }
+
+  for {
+    testCase <- alterTableOnlySupportedTestCases
+  } {
+    test(s"INSERT - logs for missed opportunity for conversion " +
+      s"${testCase.fromType.sql} -> ${testCase.toType.sql}") {
+      append(testCase.initialValuesDF)
+
+      val events = Log4jUsageLogger.track {
+        withSQLConf(SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.LEGACY.toString) {
+          testCase.additionalValuesDF
+          .write
+          .format("delta")
+          .mode("append")
+          .option("mergeSchema", "true")
+          .insertInto(s"delta.`$tempPath`")
+          }
+      }
+
+      assert(readDeltaTable(tempPath).schema("value").dataType === testCase.fromType)
+      assert(events.exists(event => event.metric == "tahoeEvent" &&
+        event.tags.get("opType") == Option("delta.typeWidening.missedAutomaticWidening")))
+    }
+  }
+
+  for {
+    testCase <- supportedTestCases
+  } {
+    test(s"INSERT - no logs for lack of missed opportunity for conversion " +
+      s"${testCase.fromType.sql} -> ${testCase.toType.sql}") {
+      append(testCase.initialValuesDF)
+
+      val events = Log4jUsageLogger.track {
+        withSQLConf(SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.LEGACY.toString) {
+          testCase.additionalValuesDF
+            .write
+            .format("delta")
+            .mode("append")
+            .option("mergeSchema", "true")
+            .insertInto(s"delta.`$tempPath`")
+        }
+      }
+
+      assert(readDeltaTable(tempPath).schema("value").dataType === testCase.toType)
+      assert(!events.exists(event => event.metric == "tahoeEvent" &&
+        event.tags.get("opType") == Option("delta.typeWidening.missedAutomaticWidening")))
+    }
+  }
 
   for {
     testCase <- supportedTestCases

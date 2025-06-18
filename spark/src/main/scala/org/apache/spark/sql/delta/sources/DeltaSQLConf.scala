@@ -1345,6 +1345,23 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  object AllowAutomaticWideningMode extends Enumeration {
+    val NEVER, SAME_FAMILY_TYPE, ALWAYS = Value
+  }
+
+  val DELTA_ALLOW_AUTOMATIC_WIDENING =
+    buildConf("typeWidening.allowAutomaticWidening")
+      .doc("Controls the scope of enabled widening conversions in automatic schema widening " +
+        "during schema evolution. This flag is guarded by the flag \"delta.enableTypeWidening\"" +
+        "All supported widenings are enabled with \"always\" selected, which allows some " +
+        "conversions between integer types and floating numbers. The value \"same_family_type\" " +
+        "fallbacks to the default behavior of the guarding flag. \"never\" allows no widenings.")
+      .internal()
+      .stringConf
+      .transform(_.toUpperCase(Locale.ROOT))
+      .checkValues(AllowAutomaticWideningMode.values.map(_.toString))
+      .createWithDefault(AllowAutomaticWideningMode.SAME_FAMILY_TYPE.toString)
+
   val DELTA_TYPE_WIDENING_ENABLE_STREAMING_SCHEMA_TRACKING =
     buildConf("typeWidening.enableStreamingSchemaTracking")
       .doc("Whether to enable schema tracking when streaming from a Delta source that had a " +

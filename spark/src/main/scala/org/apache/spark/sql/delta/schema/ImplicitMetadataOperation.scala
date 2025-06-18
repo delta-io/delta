@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta.schema
 
 import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
+import org.apache.spark.sql.delta.sources.DeltaSQLConf.AllowAutomaticWideningMode
 import org.apache.spark.sql.delta.skipping.clustering.temp.ClusterBySpec
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{DomainMetadata, Metadata, Protocol}
@@ -222,7 +223,8 @@ object ImplicitMetadataOperation {
 
       val typeWideningMode = if (TypeWidening.isEnabled(txn.protocol, txn.metadata)) {
         TypeWideningMode.TypeEvolution(
-          uniformIcebergCompatibleOnly = UniversalFormat.icebergEnabled(txn.metadata))
+          uniformIcebergCompatibleOnly = UniversalFormat.icebergEnabled(txn.metadata),
+          allowAutomaticWidening = spark.conf.get(DeltaSQLConf.DELTA_ALLOW_AUTOMATIC_WIDENING))
       } else {
         TypeWideningMode.NoTypeWidening
       }

@@ -17,6 +17,8 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.DecimalPrecisionTypeCoercionShims
+import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.sources.DeltaSQLConf.AllowAutomaticWideningMode
 import org.apache.spark.sql.util.ScalaExtensions._
 
 import org.apache.spark.sql.types.{AtomicType, DecimalType}
@@ -38,7 +40,7 @@ import org.apache.spark.sql.types.{AtomicType, DecimalType}
  * `uniformIcebergCompatibleOnly = truet`, to ensure that we don't automatically apply a type change
  * that would break Iceberg compatibility.
  */
-sealed trait TypeWideningMode {
+sealed trait TypeWideningMode extends DeltaLogging {
   def getWidenedType(fromType: AtomicType, toType: AtomicType): Option[AtomicType]
 
   def shouldWidenTo(fromType: AtomicType, toType: AtomicType): Boolean =
@@ -54,19 +56,60 @@ object TypeWideningMode {
   }
 
   /** All supported type widening changes are allowed. */
-  case object AllTypeWidening extends TypeWideningMode {
+  case object AllTypeWidening
+    extends TypeWideningMode {
     override def getWidenedType(fromType: AtomicType, toType: AtomicType): Option[AtomicType] =
-      Option.when(TypeWidening.isTypeChangeSupported(fromType = fromType, toType = toType))(toType)
+      Option.when(TypeWidening.isTypeChangeSupported(
+        fromType = fromType,
+        toType = toType))(toType)
   }
 
   /**
    * Type changes that are eligible to be applied automatically during schema evolution are allowed.
    * Can be restricted to only type changes supported by Iceberg.
    */
-  case class TypeEvolution(uniformIcebergCompatibleOnly: Boolean) extends TypeWideningMode {
-    override def getWidenedType(fromType: AtomicType, toType: AtomicType): Option[AtomicType] =
-        Option.when(TypeWidening.isTypeChangeSupportedForSchemaEvolution(
-          fromType = fromType, toType = toType, uniformIcebergCompatibleOnly))(toType)
+  case class TypeEvolution(
+                            uniformIcebergCompatibleOnly: Boolean,
+                            allowAutomaticWidening: String) extends TypeWideningMode {
+    private def logMissedWidening(fromType: AtomicType, toType: AtomicType): Unit = {
+      // Check if widening is possible under the least restricting conditions.
+      if (TypeEvolution(uniformIcebergCompatibleOnly = false,
+        allowAutomaticWidening = AllowAutomaticWideningMode.ALWAYS.toString)
+        .canWiden(fromType, toType)) {
+        recordDeltaEvent(null,
+          opType = "delta.typeWidening.missedAutomaticWidening",
+          data = Map(
+            "fromType" -> fromType.sql,
+            "toType" -> toType.sql,
+            "uniformIcebergCompatibleOnly" -> uniformIcebergCompatibleOnly,
+            "allowAutomaticWidening" -> allowAutomaticWidening,
+          ))
+      }
+    }
+
+    private def canWiden(fromType: AtomicType, toType: AtomicType): Boolean = {
+      if (allowAutomaticWidening == AllowAutomaticWideningMode.ALWAYS.toString) {
+        TypeWidening.isTypeChangeSupported(
+          fromType = fromType,
+          toType = toType,
+          uniformIcebergCompatibleOnly)
+      } else if (allowAutomaticWidening == AllowAutomaticWideningMode.SAME_FAMILY_TYPE.toString) {
+        TypeWidening.isTypeChangeSupportedForSchemaEvolution(
+          fromType = fromType, toType = toType, uniformIcebergCompatibleOnly)
+      } else {
+        false
+      }
+    }
+
+    override def getWidenedType(fromType: AtomicType, toType: AtomicType): Option[AtomicType] = {
+      val result = Option.when(canWiden(fromType, toType))(toType)
+
+      if (result.isEmpty) {
+        logMissedWidening(fromType = fromType, toType = toType)
+      }
+
+      result
+    }
   }
 
   /**
