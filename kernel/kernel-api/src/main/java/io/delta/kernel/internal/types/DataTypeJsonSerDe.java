@@ -282,7 +282,7 @@ public class DataTypeJsonSerDe {
         }
         List<TypeChange> changes = pathToTypeChanges.get(pathFromAncestor);
         if (changes != null) {
-          if (isNested(element.getField().getDataType())) {
+          if (element.getField().getDataType().isNested()) {
             throw new KernelException(
                 format("Invalid data type for type change: \"%s\"", element.getField()));
           }
@@ -302,12 +302,6 @@ public class DataTypeJsonSerDe {
                       .build());
     }
     return structField;
-  }
-
-  private static boolean isNested(DataType dataType) {
-    return dataType instanceof StructType
-        || dataType instanceof MapType
-        || dataType instanceof ArrayType;
   }
 
   private static void updateCollation(

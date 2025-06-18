@@ -84,6 +84,11 @@ public class MapType extends DataType {
   }
 
   @Override
+  public boolean isNested() {
+    return true;
+  }
+
+  @Override
   public int hashCode() {
     return Objects.hash(keyField, valueField);
   }

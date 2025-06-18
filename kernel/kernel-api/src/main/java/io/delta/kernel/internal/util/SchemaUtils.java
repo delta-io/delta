@@ -412,8 +412,8 @@ public class SchemaUtils {
       }
 
       if (!existingField.equals(newField)) {
-        if (!isNestedType(existingField)
-            && !isNestedType(newField)
+        if (!existingField.getDataType().isNested()
+            && !newField.getDataType().isNested()
             && !existingField.getDataType().equivalent(newField.getDataType())) {
           // Type changes only apply to non-nested types.  This loop evaluates both
           // nested and non-nested, so we narrow down updates here. Actual type differences
@@ -432,12 +432,6 @@ public class SchemaUtils {
       schemaDiff.withUpdatedSchema(newSchemaIterable.getSchema());
     }
     return schemaDiff.build();
-  }
-
-  private static boolean isNestedType(StructField existingField) {
-    // TODO: Make is nested a centralized concept
-    DataType d = existingField.getDataType();
-    return d instanceof StructType || d instanceof ArrayType || d instanceof MapType;
   }
 
   private static Map<SchemaElementId, StructField> fieldsByElementId(StructType schema) {
