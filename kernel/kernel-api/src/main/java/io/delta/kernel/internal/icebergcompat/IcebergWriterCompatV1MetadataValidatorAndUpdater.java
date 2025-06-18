@@ -122,33 +122,13 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
                   inputContext.newProtocol));
 
   /**
-   * Current set of allowed table features. This may evolve as the protocol evolves. This includes
-   * the incompatible legacy features (invariants, changeDataFeed, checkConstraints,
-   * identityColumns, generatedColumns) because they may be present in the table protocol even when
-   * they are not in use. In later checks we validate that these incompatible features are inactive
-   * in the table. See the protocol spec for more details.
+   * Current set of allowed table features for Iceberg writer compat V1. This combines the common
+   * features with V1-specific features (ICEBERG_COMPAT_V2_W_FEATURE, ICEBERG_WRITER_COMPAT_V1).
    */
   private static Set<TableFeature> ALLOWED_TABLE_FEATURES =
-      Stream.of(
-              // Incompatible legacy table features
-              INVARIANTS_W_FEATURE,
-              CHANGE_DATA_FEED_W_FEATURE,
-              CONSTRAINTS_W_FEATURE,
-              IDENTITY_COLUMNS_W_FEATURE,
-              GENERATED_COLUMNS_W_FEATURE,
-              // Compatible table features
-              APPEND_ONLY_W_FEATURE,
-              COLUMN_MAPPING_RW_FEATURE,
-              ICEBERG_COMPAT_V2_W_FEATURE,
-              ICEBERG_WRITER_COMPAT_V1,
-              DOMAIN_METADATA_W_FEATURE,
-              VACUUM_PROTOCOL_CHECK_RW_FEATURE,
-              CHECKPOINT_V2_RW_FEATURE,
-              IN_COMMIT_TIMESTAMP_W_FEATURE,
-              CLUSTERING_W_FEATURE,
-              TIMESTAMP_NTZ_RW_FEATURE,
-              TYPE_WIDENING_RW_FEATURE,
-              TYPE_WIDENING_RW_PREVIEW_FEATURE)
+      Stream.concat(
+              COMMON_ALLOWED_FEATURES.stream(),
+              Stream.of(ICEBERG_COMPAT_V2_W_FEATURE, ICEBERG_WRITER_COMPAT_V1))
           .collect(toSet());
 
   /**
@@ -215,15 +195,7 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
 
   @Override
   List<IcebergCompatCheck> icebergCompatChecks() {
-    return Stream.of(
-            createUnsupportedFeaturesCheck(this), // Pass 'this' instance
-            UNSUPPORTED_TYPES_CHECK,
-            PHYSICAL_NAMES_MATCH_FIELD_IDS_CHECK,
-            INVARIANTS_INACTIVE_CHECK,
-            CHANGE_DATA_FEED_INACTIVE_CHECK,
-            CHECK_CONSTRAINTS_INACTIVE_CHECK,
-            IDENTITY_COLUMNS_INACTIVE_CHECK,
-            GENERATED_COLUMNS_INACTIVE_CHECK)
+    return Stream.concat(Stream.of(createUnsupportedFeaturesCheck(this)), COMMON_CHECKS.stream())
         .collect(toList());
   }
 }
