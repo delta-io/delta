@@ -34,6 +34,10 @@ import io.delta.kernel.engine.Engine
  * [[io.delta.kernel.defaults.utils.TestUtilsWithTableManagerAPIs]].
  */
 trait AbstractTableManagerAdapter {
+
+  /** Does this adapter support resolving a timestamp to a version? */
+  def supportsTimestampResolution: Boolean
+
   def getResolvedTableAdapterAtLatest(engine: Engine, path: String): AbstractResolvedTableAdapter
 
   def getResolvedTableAdapterAtVersion(
@@ -51,6 +55,8 @@ trait AbstractTableManagerAdapter {
  * Legacy implementation using the [[Table.forPath]] API which then wraps a [[Snapshot]].
  */
 class LegacyTableManagerAdapter extends AbstractTableManagerAdapter {
+  override def supportsTimestampResolution: Boolean = true
+
   override def getResolvedTableAdapterAtLatest(
       engine: Engine,
       path: String): AbstractResolvedTableAdapter = {
@@ -77,6 +83,8 @@ class LegacyTableManagerAdapter extends AbstractTableManagerAdapter {
  * [[ResolvedTable]].
  */
 class TableManagerAdapter extends AbstractTableManagerAdapter {
+  override def supportsTimestampResolution: Boolean = false
+
   override def getResolvedTableAdapterAtLatest(
       engine: Engine,
       path: String): AbstractResolvedTableAdapter = {
