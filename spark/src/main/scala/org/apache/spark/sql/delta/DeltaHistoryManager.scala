@@ -809,6 +809,9 @@ object DeltaHistoryManager extends DeltaLogging {
     private val maybeDeleteFiles = new mutable.ArrayBuffer[FileStatus]()
     private var lastFile: FileStatus = _
     private var hasNextCalled: Boolean = false
+    // A map to keep track of multi-part checkpoints.
+    val checkpointMap = new scala.collection.mutable.HashMap[(Long, Int),
+      collection.mutable.Buffer[FileStatus]]()
 
     private def init(): Unit = {
       if (underlying.hasNext) {
@@ -856,12 +859,7 @@ object DeltaHistoryManager extends DeltaLogging {
      */
     private def queueFilesInBuffer(): Unit = {
       var continueBuffering = true
-      while (continueBuffering) {
-        if (!underlying.hasNext) {
-          flushBuffer()
-          return
-        }
-
+      while (continueBuffering && underlying.hasNext) {
         var currentFile = underlying.next()
         require(currentFile != null, "FileStatus iterator returned null")
         if (needsTimeAdjustment(currentFile)) {
@@ -869,10 +867,31 @@ object DeltaHistoryManager extends DeltaLogging {
             currentFile.getLen, currentFile.isDirectory, currentFile.getReplication,
             currentFile.getBlockSize, lastFile.getModificationTime + 1, currentFile.getPath)
           maybeDeleteFiles.append(currentFile)
+        } else if (FileNames.isCheckpointFile(currentFile) && currentFile.getLen > 0) {
+          // Only flush the buffer when we find a checkpoint. This is because we don't want to
+          // delete the delta log files unless we have a checkpoint to ensure that non-expired
+          // subsequent delta logs are valid.
+          val numParts = FileNames.numCheckpointParts(currentFile.getPath)
+
+          if (numParts.isEmpty) { // Single-part or V2
+            flushBuffer()
+            maybeDeleteFiles.append(currentFile)
+            continueBuffering = false
+          } else {
+            // Multi-part checkpoint
+            val mpKey = versionGetter(currentFile.getPath) -> numParts.get
+            val partBuffer = checkpointMap.getOrElse(mpKey, mutable.ArrayBuffer())
+            partBuffer.append(currentFile)
+            checkpointMap.put(mpKey, partBuffer)
+            if (numParts.get == partBuffer.size) {
+              flushBuffer()
+              partBuffer.foreach(f => maybeDeleteFiles.append(f))
+              checkpointMap.remove(mpKey)
+              continueBuffering = false
+            }
+          }
         } else {
-          flushBuffer()
           maybeDeleteFiles.append(currentFile)
-          continueBuffering = false
         }
         lastFile = currentFile
       }
