@@ -90,4 +90,8 @@ public class DeltaLogFile {
   public long getVersion() {
     return version;
   }
+
+  public boolean isCheckpointFile() {
+    return (logType == LogType.SIDECAR || logType==LogType.MULTIPART_CHECKPOINT || logType==LogType.CHECKPOINT_CLASSIC);
+  }
 }

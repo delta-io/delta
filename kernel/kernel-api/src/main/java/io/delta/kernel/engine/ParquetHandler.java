@@ -27,6 +27,7 @@ import java.io.IOException;
 import java.nio.file.FileAlreadyExistsException;
 import java.util.List;
 import java.util.Optional;
+import io.delta.kernel.internal.util.Tuple2;
 
 /**
  * Provides Parquet file related functionalities to Delta Kernel. Connectors can leverage this
@@ -56,9 +57,9 @@ public interface ParquetHandler {
    * @param predicate Optional predicate which the Parquet reader can optionally use to prune rows
    *     that don't satisfy the predicate. Because pruning is optional and may be incomplete, caller
    *     is still responsible apply the predicate on the data returned by this method.
-   * @return an iterator of {@link ColumnarBatch}s containing the data in columnar format. It is the
-   *     responsibility of the caller to close the iterator. The data returned is in the same as the
-   *     order of files given in {@code scanFileIter}.
+   * @return an iterator of {@link Tuple2} containing the filename and {@link ColumnarBatch} pairs
+   *     in columnar format. It is the responsibility of the caller to close the iterator. The data 
+   *     returned is in the same as the order of files given in {@code scanFileIter}.
    * @throws IOException if an I/O error occurs during the read.
    */
   CloseableIterator<ColumnarBatch> readParquetFiles(
@@ -66,6 +67,43 @@ public interface ParquetHandler {
       StructType physicalSchema,
       Optional<Predicate> predicate)
       throws IOException;
+
+  /**
+   * Read the Parquet format files at the given locations and return the data as tuples of filename
+   * and {@link ColumnarBatch} with the columns requested by {@code physicalSchema}.
+   *
+   * <p>This method is similar to {@link #readParquetFiles(CloseableIterator, StructType, Optional)}
+   * but returns tuples where the first element is the filename and the second element is the
+   * columnar batch from that file.
+   *
+   * <p>If {@code physicalSchema} has a {@link StructField} with column name {@link
+   * StructField#METADATA_ROW_INDEX_COLUMN_NAME} and the field is a metadata column {@link
+   * StructField#isMetadataColumn()} the column must be populated with the file row index.
+   *
+   * <p>How does a column in {@code physicalSchema} match to the column in the Parquet file? If the
+   * {@link StructField} has a field id in the {@code metadata} with key `parquet.field.id` the
+   * column is attempted to match by id. If the column is not found by id, the column is matched by
+   * name. When trying to find the column in Parquet by name, first case-sensitive match is used. If
+   * not found then a case-insensitive match is attempted.
+   *
+   * @param fileIter Iterator of files to read data from.
+   * @param physicalSchema Select list of columns to read from the Parquet file.
+   * @param predicate Optional predicate which the Parquet reader can optionally use to prune rows
+   *     that don't satisfy the predicate. Because pruning is optional and may be incomplete, caller
+   *     is still responsible apply the predicate on the data returned by this method.
+   * @return an iterator of {@link Tuple2} containing filename and {@link ColumnarBatch} pairs
+   *     in columnar format. It is the responsibility of the caller to close the iterator. The data 
+   *     returned is in the same as the order of files given in {@code fileIter}.
+   * @throws IOException if an I/O error occurs during the read.
+   */
+
+  default CloseableIterator<Tuple2<String, ColumnarBatch>> readParquetFiles2(
+      CloseableIterator<FileStatus> fileIter,
+      StructType physicalSchema,
+      Optional<Predicate> predicate)
+      throws IOException {
+    throw new UnsupportedOperationException("readParquetFiles2 is not supported by this implementation");
+  }
 
   /**
    * Write the given data batches to a Parquet files. Try to keep the Parquet file size to given

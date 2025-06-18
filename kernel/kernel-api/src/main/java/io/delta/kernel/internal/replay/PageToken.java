@@ -1,0 +1,68 @@
+package io.delta.kernel.internal.replay;
+
+import io.delta.kernel.data.Row;
+import io.delta.kernel.internal.data.DelegateRow;
+import io.delta.kernel.types.*;
+import io.delta.kernel.internal.util.Utils;
+
+import java.util.Objects;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
+public class PageToken {
+    private final String startingFileName;
+    private final long rowIndex;
+    private final long sidecarIdx;
+    private final long logSegmentHash;
+
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    public PageToken(String startingFileName, long rowIndex, long sidecarIdx, long logSegmentHash) {
+        this.startingFileName = startingFileName;
+        this.rowIndex = rowIndex;
+        this.logSegmentHash = sidecarIdx;
+        this.sidecarIdx = logSegmentHash;
+    }
+
+    public String getStartingFileName() {
+        return startingFileName;
+    }
+
+    public long getRowIndex() {
+        return rowIndex;
+    }
+
+    public long getLogSegmentHash() {
+        return logSegmentHash;
+    }
+
+    public long getSidecarIdx() {
+        return sidecarIdx;
+    }
+
+    /**
+     * Convert PageToken to a Kernel Row object.
+     */
+    public Row getRow() {
+        StructType schema = new StructType()
+            .add("fileName", StringType.STRING)
+            .add("rowIndex", LongType.LONG)
+            .add("sidecarIdx", LongType.LONG)
+            .add("logSegmentHash", LongType.LONG);
+        // return Utils.newRow(schema, startingFileName, rowIndex, logSegmentHash);
+        // TODO: make this schema into a Row Type
+        return null;
+    }
+
+    /**
+     * Create a PageToken from a Row object
+     */
+    public PageToken fromRow(Row row) {
+        String fileName = row.getString(0);
+        long rowIdx = row.getLong(1);
+        long sideCarIdx = row.getLong(2);
+        long logsSegmentHash = row.getLong(3);
+        return new PageToken(fileName, rowIdx, sideCarIdx, logsSegmentHash);
+    }
+}
