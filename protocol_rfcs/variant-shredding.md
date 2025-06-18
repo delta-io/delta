@@ -51,7 +51,8 @@ When Variant type is supported (`readerFeatures` field of a table's `protocol` a
 ### Statistics for Variant Columns
 
 - The `nullCount` stat for a Variant column is a LONG representing the nullcount for the Variant column itself (nullcount stats are not captured for individual paths within the Variant).
-- In JSON, the `minValues` and `maxValues` stats for a Variant column are [binary-encoded](https://github.com/apache/parquet-format/blob/master/VariantEncoding.md) Variant values, with the `metadata` and `value` columns serialized to strings using [z85](https://rfc.zeromq.org/spec/32/) encoding (see example below).
+- The `minValues` and `maxValues` stats for a Variant column are Variant objects, where the object keys are [normalized JSON path expressions](https://www.rfc-editor.org/rfc/rfc9535.html#name-normalized-paths), and the object values are the primitive Variant values representing the lower and upper bound for that field.
+- In JSON, the `minValues` and `maxValues` stats for a Variant column are [binary-encoded](https://github.com/apache/parquet-format/blob/master/VariantEncoding.md) Variant values, concatenating the `metadata` and `value`, and serialized to strings using [z85](https://rfc.zeromq.org/spec/32/) encoding (see example below).
 - In Parquet, the `minValues` and `maxValues` stats for a Variant column are Parquet Variant columns, following the Parquet Variant [encoding](https://github.com/apache/parquet-format/blob/master/VariantEncoding.md) and [shredding](https://github.com/apache/parquet-format/blob/master/VariantShredding.md) specifications.
 - In Parquet, the Variant `minValues` and `maxValues` stats are allowed to be shredded, but it is not required.
 - Each path in the Variant `minValues` (`maxValues`) value is the independently computed min (max) stat for the corresponding path in the file's Variant data, so e.g. `minValues.v:a` and `minValues.v:b` could come from different rows in the file.
@@ -68,16 +69,10 @@ For a table with a single Variant column (`varCol: variant`) in its data schema,
     "varCol": 2
   }
   "minValues": {
-    "varCol": {
-      "metadata": "0rSr50S#>uv/"
-      "value": "0S&u501fz*ze0(tB98CpzF61K0SSog3i"
-    }
+    "varCol": "0S&u501fk+ze0(tB98CpzF6vU0rJl95HpNdvjbtatpi(cu0wW^cTu"
   },
   "maxValues": {
-    "varCol": {
-      "metadata": "0rSr50S#>uv/"
-      "value": "0S&u500<bRC42A9vqZe*0rJl65Cb#"
-    }
+    "varCol": "0S&u500&]LC42A9vqZe}wb#-i1}-a+cT!xdbWhT9cTx}7v<+K"
   }
 }
 ```
@@ -89,18 +84,14 @@ The corresponding human-readable form is:
   }
   "minValues": {
     "varCol": {
-      "a": "min-string"
-      "b": {
-        "c": 10
-      }
+      "$['a']" : "min-string",
+      "$['b']['c']" : 1
     }
   },
   "maxValues": {
     "varCol": {
-      "a": "variant"
-      "b": {
-        "c": 500
-      }
+      "$['a']" : "variant",
+      "$['b']['c']" : 100
     }
   }
 }
