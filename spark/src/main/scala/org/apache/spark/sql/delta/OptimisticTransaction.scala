@@ -374,8 +374,29 @@ trait OptimisticTransactionImpl extends TransactionHelper
   def readVersion: Long = snapshot.version
 
   /** Creates new metadata with global Delta configuration defaults. */
-  private def withGlobalConfigDefaults(metadata: Metadata): Metadata = {
-    val conf = spark.sessionState.conf
+  private def withGlobalConfigDefaults(
+      metadata: Metadata,
+      unsetDefaultCatalogOwnedConf: Boolean = false): Metadata = {
+    val conf = if (unsetDefaultCatalogOwnedConf) {
+      // Disable any potential default CO enablement from [[SparkSession]] during REPLACE commands.
+      // This prevents any unintended modifications to the `newProtocol`.
+      // E.g., [[CatalogOwnedTableFeature]] and its dependent features
+      //       [[InCommitTimestampTableFeature]] & [[VacuumProtocolCheckTableFeature]].
+      //
+      // Note that this does *not* affect global spark conf state as we are modifying
+      // the copy of `spark.sessionState.conf`. Thus, `defaultCatalogOwnedFeatureEnabledKey`
+      // will remain unchanged for any concurrent operations that use the same SparkSession.
+      val defaultCatalogOwnedFeatureEnabledKey =
+        TableFeatureProtocolUtils.defaultPropertyKey(CatalogOwnedTableFeature)
+      // Isolate the spark conf to be used in the subsequent [[DeltaConfigs.mergeGlobalConfigs]]
+      // by cloning the existing configuration.
+      val clonedConf = spark.sessionState.conf.clone()
+      // Unset default CC conf on the cloned spark conf.
+      clonedConf.unsetConf(defaultCatalogOwnedFeatureEnabledKey)
+      clonedConf
+    } else {
+      spark.sessionState.conf
+    }
     metadata.copy(configuration = DeltaConfigs.mergeGlobalConfigs(
       conf, metadata.configuration))
   }
@@ -544,7 +565,10 @@ trait OptimisticTransactionImpl extends TransactionHelper
       // We need to ignore the default properties when trying to create an exact copy of a table
       // (as in CLONE and SHALLOW CLONE).
       if (!ignoreDefaultProperties) {
-        newMetadataTmp = withGlobalConfigDefaults(newMetadataTmp)
+        newMetadataTmp = withGlobalConfigDefaults(
+          newMetadataTmp,
+          // Unset default CatalogOwned enablement if this is an active REPLACE command.
+          unsetDefaultCatalogOwnedConf = readVersion != -1 && isCreatingNewTable)
       }
       isCreatingNewTable = true
     }
@@ -798,22 +822,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       isOverwritingSchema = true
     }
     // Update the metadata.
-    val defaultCatalogOwnedFeatureEnabledKey =
-      TableFeatureProtocolUtils.defaultPropertyKey(CatalogOwnedTableFeature)
-    // Disable any potential default CO enablement from [[SparkSession]]
-    // before invoking `updateMetadataForNewTable`.
-    // This prevents any unintended modifications to the `newProtocol`.
-    // E.g., [[CatalogOwnedTableFeature]] and its dependent features
-    //       [[InCommitTimestampTableFeature]] & [[VacuumProtocolCheckTableFeature]].
-    val oldConfigValueOpt = spark.conf.getOption(defaultCatalogOwnedFeatureEnabledKey)
-    spark.conf.unset(defaultCatalogOwnedFeatureEnabledKey)
-    try {
-      updateMetadataForNewTable(metadata)
-    } finally {
-      oldConfigValueOpt.foreach { v =>
-        spark.conf.set(defaultCatalogOwnedFeatureEnabledKey, v)
-      }
-    }
+    updateMetadataForNewTable(metadata)
     // Now the `txn.metadata` contains all the command-specified properties and all the default
     // properties. The latter might still contain Coordinated Commits configurations, so we need
     // to remove them and retain the Coordinated Commits configurations from the existing table.
