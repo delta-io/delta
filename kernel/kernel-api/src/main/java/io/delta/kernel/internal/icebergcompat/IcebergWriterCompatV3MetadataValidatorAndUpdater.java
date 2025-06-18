@@ -78,16 +78,20 @@ public class IcebergWriterCompatV3MetadataValidatorAndUpdater
   private static final IcebergWriterCompatV3MetadataValidatorAndUpdater INSTANCE =
       new IcebergWriterCompatV3MetadataValidatorAndUpdater();
 
-  private static final IcebergCompatRequiredTablePropertyEnforcer ICEBERG_COMPAT_V3_ENABLED =
-      new IcebergCompatRequiredTablePropertyEnforcer<>(
-          TableConfig.ICEBERG_COMPAT_V3_ENABLED,
-          (value) -> value,
-          "true",
-          (inputContext) ->
-              IcebergCompatV3MetadataValidatorAndUpdater.validateAndUpdateIcebergCompatV3Metadata(
-                  inputContext.isCreatingNewTable,
-                  inputContext.newMetadata,
-                  inputContext.newProtocol));
+  /**
+   * Enforcer for Iceberg compatibility V3. Ensures the ICEBERG_COMPAT_V3_ENABLED property is set to
+   * "true" and delegates validation to the V3 metadata validator.
+   */
+  private static final IcebergCompatRequiredTablePropertyEnforcer<Boolean>
+      ICEBERG_COMPAT_V3_ENABLED =
+          createIcebergCompatEnforcer(
+              TableConfig.ICEBERG_COMPAT_V3_ENABLED,
+              (inputContext) ->
+                  IcebergCompatV3MetadataValidatorAndUpdater
+                      .validateAndUpdateIcebergCompatV3Metadata(
+                          inputContext.isCreatingNewTable,
+                          inputContext.newMetadata,
+                          inputContext.newProtocol));
 
   /**
    * Current set of allowed table features for Iceberg writer compat V3. This combines the common

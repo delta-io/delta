@@ -57,6 +57,21 @@ abstract class IcebergWriterCompatMetadataValidatorAndUpdater
                   inputContext.newMetadata, inputContext.isCreatingNewTable));
 
   /**
+   * Creates an IcebergCompatRequiredTablePropertyEnforcer for enabling a specific Iceberg
+   * compatibility version. The enforcer ensures the property is set to "true" and delegates
+   * validation to the appropriate metadata validator.
+   *
+   * @param tableConfigProperty the table configuration property to enforce
+   * @param postProcessor the version-specific validation and metadata update processor
+   * @return configured enforcer for the specified Iceberg compatibility version
+   */
+  protected static IcebergCompatRequiredTablePropertyEnforcer<Boolean> createIcebergCompatEnforcer(
+      TableConfig<Boolean> tableConfigProperty, PostMetadataProcessor postProcessor) {
+    return new IcebergCompatRequiredTablePropertyEnforcer<>(
+        tableConfigProperty, (value) -> value, "true", postProcessor);
+  }
+
+  /**
    * Common set of allowed table features shared across all Iceberg writer compatibility versions.
    * This includes the incompatible legacy features (invariants, changeDataFeed, checkConstraints,
    * identityColumns, generatedColumns) because they may be present in the table protocol even when

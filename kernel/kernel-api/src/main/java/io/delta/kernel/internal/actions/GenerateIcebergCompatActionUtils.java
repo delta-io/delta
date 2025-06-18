@@ -159,15 +159,6 @@ public final class GenerateIcebergCompatActionUtils {
     return SingleAction.createAddFileSingleAction(addFile.toRow());
   }
 
-  public static Row generateIcebergCompatWriterV3AddAction(
-      Row transactionState,
-      DataFileStatus fileStatus,
-      Map<String, Literal> partitionValues,
-      boolean dataChange) {
-    return generateIcebergCompatWriterV3AddAction(
-        transactionState, fileStatus, partitionValues, dataChange, Collections.emptyMap());
-  }
-
   /**
    * Create a remove action {@link Row} that can be passed to {@link Transaction#commit(Engine,
    * CloseableIterable)} from an Iceberg remove.

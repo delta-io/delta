@@ -110,16 +110,20 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
   private static final IcebergWriterCompatV1MetadataValidatorAndUpdater INSTANCE =
       new IcebergWriterCompatV1MetadataValidatorAndUpdater();
 
-  private static final IcebergCompatRequiredTablePropertyEnforcer ICEBERG_COMPAT_V2_ENABLED =
-      new IcebergCompatRequiredTablePropertyEnforcer<>(
-          TableConfig.ICEBERG_COMPAT_V2_ENABLED,
-          (value) -> value,
-          "true",
-          (inputContext) ->
-              IcebergCompatV2MetadataValidatorAndUpdater.validateAndUpdateIcebergCompatV2Metadata(
-                  inputContext.isCreatingNewTable,
-                  inputContext.newMetadata,
-                  inputContext.newProtocol));
+  /**
+   * Enforcer for Iceberg compatibility V2 (required by V1). Ensures the ICEBERG_COMPAT_V2_ENABLED
+   * property is set to "true" and delegates validation to the V2 metadata validator.
+   */
+  private static final IcebergCompatRequiredTablePropertyEnforcer<Boolean>
+      ICEBERG_COMPAT_V2_ENABLED =
+          createIcebergCompatEnforcer(
+              TableConfig.ICEBERG_COMPAT_V2_ENABLED,
+              (inputContext) ->
+                  IcebergCompatV2MetadataValidatorAndUpdater
+                      .validateAndUpdateIcebergCompatV2Metadata(
+                          inputContext.isCreatingNewTable,
+                          inputContext.newMetadata,
+                          inputContext.newProtocol));
 
   /**
    * Current set of allowed table features for Iceberg writer compat V1. This combines the common
