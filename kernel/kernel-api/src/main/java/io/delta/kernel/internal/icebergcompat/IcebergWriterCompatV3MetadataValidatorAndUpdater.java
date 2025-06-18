@@ -15,21 +15,20 @@
  */
 package io.delta.kernel.internal.icebergcompat;
 
+import static io.delta.kernel.internal.tablefeatures.TableFeatures.*;
+import static java.util.stream.Collectors.toList;
+import static java.util.stream.Collectors.toSet;
+
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.tablefeatures.TableFeature;
-
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Stream;
-
-import static io.delta.kernel.internal.tablefeatures.TableFeatures.*;
-import static java.util.stream.Collectors.toList;
-import static java.util.stream.Collectors.toSet;
 
 public class IcebergWriterCompatV3MetadataValidatorAndUpdater
     extends IcebergWriterCompatMetadataValidatorAndUpdater {
@@ -53,7 +52,7 @@ public class IcebergWriterCompatV3MetadataValidatorAndUpdater
   public static void validateIcebergWriterCompatV3Change(
       Map<String, String> oldConfig, Map<String, String> newConfig, boolean isNewTable) {
     blockConfigChangeOnExistingTable(
-            TableConfig.ICEBERG_WRITER_COMPAT_V3_ENABLED, oldConfig, newConfig, isNewTable);
+        TableConfig.ICEBERG_WRITER_COMPAT_V3_ENABLED, oldConfig, newConfig, isNewTable);
   }
 
   /**
@@ -68,8 +67,8 @@ public class IcebergWriterCompatV3MetadataValidatorAndUpdater
   public static Optional<Metadata> validateAndUpdateIcebergWriterCompatV3Metadata(
       boolean isCreatingNewTable, Metadata newMetadata, Protocol newProtocol) {
     return INSTANCE.validateAndUpdateMetadata(
-            new IcebergCompatInputContext(
-                    INSTANCE.compatFeatureName(), isCreatingNewTable, newMetadata, newProtocol));
+        new IcebergCompatInputContext(
+            INSTANCE.compatFeatureName(), isCreatingNewTable, newMetadata, newProtocol));
   }
 
   /// //////////////////////////////////////////////////////////////////////////////
@@ -150,15 +149,15 @@ public class IcebergWriterCompatV3MetadataValidatorAndUpdater
   @Override
   List<IcebergCompatCheck> icebergCompatChecks() {
     return Stream.of(
-                    createUnsupportedFeaturesCheck(this), // Pass 'this' instance
-                    UNSUPPORTED_TYPES_CHECK,
-                    PHYSICAL_NAMES_MATCH_FIELD_IDS_CHECK,
-                    INVARIANTS_INACTIVE_CHECK,
-                    CHANGE_DATA_FEED_INACTIVE_CHECK,
-                    CHECK_CONSTRAINTS_INACTIVE_CHECK,
-                    IDENTITY_COLUMNS_INACTIVE_CHECK,
-                    GENERATED_COLUMNS_INACTIVE_CHECK)
-            .collect(toList());
+            createUnsupportedFeaturesCheck(this), // Pass 'this' instance
+            UNSUPPORTED_TYPES_CHECK,
+            PHYSICAL_NAMES_MATCH_FIELD_IDS_CHECK,
+            INVARIANTS_INACTIVE_CHECK,
+            CHANGE_DATA_FEED_INACTIVE_CHECK,
+            CHECK_CONSTRAINTS_INACTIVE_CHECK,
+            IDENTITY_COLUMNS_INACTIVE_CHECK,
+            GENERATED_COLUMNS_INACTIVE_CHECK)
+        .collect(toList());
   }
 
   @Override
