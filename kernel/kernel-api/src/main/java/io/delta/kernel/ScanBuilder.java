@@ -65,4 +65,7 @@ public interface ScanBuilder {
 
   /** @return Build the {@link Scan instance} */
   Scan build();
+
+  /** Build a Paginated Scan here*/
+  PaginatedScan buildPaginatedScan(String pageToken, long pageSize);
 }

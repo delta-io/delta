@@ -28,12 +28,16 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.*;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.data.ScanStateRow;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.metrics.ScanMetrics;
 import io.delta.kernel.internal.metrics.ScanReportImpl;
 import io.delta.kernel.internal.metrics.Timer;
 import io.delta.kernel.internal.replay.LogReplay;
+import io.delta.kernel.internal.replay.LogReplayUtils;
+import io.delta.kernel.internal.replay.PaginatedAddFilesIterator;
+import io.delta.kernel.internal.replay.PaginationContext;
 import io.delta.kernel.internal.skipping.DataSkippingPredicate;
 import io.delta.kernel.internal.skipping.DataSkippingUtils;
 import io.delta.kernel.internal.util.*;
@@ -67,7 +71,6 @@ public class ScanImpl implements Scan {
   private boolean accessedScanFiles;
   private final SnapshotReport snapshotReport;
   private final ScanMetrics scanMetrics = new ScanMetrics();
-
   public ScanImpl(
       StructType snapshotSchema,
       StructType readSchema,
@@ -105,6 +108,12 @@ public class ScanImpl implements Scan {
     return getScanFiles(engine, false);
   }
 
+  public CloseableIterator<FilteredColumnarBatch> getScanFiles(
+          Engine engine, boolean includeStats) {
+    return getScanFiles(engine, includeStats, null);
+  }
+
+
   /**
    * Get an iterator of data files in this version of scan that survived the predicate pruning.
    *
@@ -117,8 +126,9 @@ public class ScanImpl implements Scan {
    * @param includeStats whether to read and include the JSON statistics
    * @return the surviving scan files as {@link FilteredColumnarBatch}s
    */
-  public CloseableIterator<FilteredColumnarBatch> getScanFiles(
-      Engine engine, boolean includeStats) {
+  protected CloseableIterator<FilteredColumnarBatch> getScanFiles(
+          Engine engine, boolean includeStats, PaginationContext paginationContext) { // inject two hash set here
+
     if (accessedScanFiles) {
       throw new IllegalStateException("Scan files are already fetched from this instance");
     }
@@ -165,7 +175,7 @@ public class ScanImpl implements Scan {
                       predicate ->
                           rewritePartitionPredicateOnCheckpointFileSchema(
                               predicate, partitionColToStructFieldMap.get())),
-              scanMetrics);
+              scanMetrics, paginationContext);
 
       // Apply partition pruning
       scanFileIter = applyPartitionPruning(engine, scanFileIter);
@@ -183,6 +193,24 @@ public class ScanImpl implements Scan {
       reportReporter.reportError(e);
       throw e;
     }
+  }
+
+  /**
+   * Only used for testing
+   * */
+  @VisibleForTesting
+  public CloseableIterator<FilteredColumnarBatch> getPaginatedScanFiles(Engine engine, long numOfAddFilesToSkip, long pageSize,
+                                                                        String startingLogFileName, long sidecarIdx) {
+    //fetch hashset here
+    boolean isHashSetCached = false;
+    HashSet<LogReplayUtils.UniqueFileActionTuple> tombstonesFromJson = new HashSet<>();
+    HashSet<LogReplayUtils.UniqueFileActionTuple> addFilesFromJson = new HashSet<>();
+    PaginationContext paginationContext = new PaginationContext(startingLogFileName,numOfAddFilesToSkip, sidecarIdx, pageSize,
+        isHashSetCached, tombstonesFromJson, addFilesFromJson);
+    CloseableIterator<FilteredColumnarBatch> scanFileIter = getScanFiles(engine, false, paginationContext);
+    System.out.println("fetch the original iterator successfully");
+    CloseableIterator<FilteredColumnarBatch> paginatedIter= new PaginatedAddFilesIterator(scanFileIter, paginationContext);
+    return paginatedIter;
   }
 
   @Override

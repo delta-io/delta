@@ -214,10 +214,11 @@ public class LogReplay {
    * </ol>
    */
   public CloseableIterator<FilteredColumnarBatch> getAddFilesAsColumnarBatches(
-      Engine engine,
-      boolean shouldReadStats,
-      Optional<Predicate> checkpointPredicate,
-      ScanMetrics scanMetrics) {
+          Engine engine,
+          boolean shouldReadStats,
+          Optional<Predicate> checkpointPredicate,
+          ScanMetrics scanMetrics,
+          PaginationContext paginationContext) {
     // We do not need to look at any `remove` files from the checkpoints. Skip the column to save
     // I/O. Note that we are still going to process the row groups. Adds and removes are randomly
     // scattered through checkpoint part files, so row group push down is unlikely to be useful.
@@ -227,8 +228,8 @@ public class LogReplay {
             getLogReplayFiles(logSegment),
             getAddRemoveReadSchema(shouldReadStats),
             getAddReadSchema(shouldReadStats),
-            checkpointPredicate);
-    return new ActiveAddFilesIterator(engine, addRemoveIter, dataPath, scanMetrics);
+            checkpointPredicate, paginationContext);
+    return new ActiveAddFilesIterator(engine, addRemoveIter, dataPath, scanMetrics, paginationContext);
   }
 
   ////////////////////

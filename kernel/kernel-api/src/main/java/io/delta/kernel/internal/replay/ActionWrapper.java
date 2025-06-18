@@ -25,13 +25,15 @@ public class ActionWrapper {
   private final long version;
   /* Timestamp of the commit file if isFromCheckpoint=false */
   private final Optional<Long> timestamp;
+  private final String fileName;
 
   ActionWrapper(
-      ColumnarBatch data, boolean isFromCheckpoint, long version, Optional<Long> timestamp) {
+      ColumnarBatch data, boolean isFromCheckpoint, long version, Optional<Long> timestamp, String fileName) {
     this.columnarBatch = data;
     this.isFromCheckpoint = isFromCheckpoint;
     this.version = version;
     this.timestamp = timestamp;
+    this.fileName = fileName;
   }
 
   public ColumnarBatch getColumnarBatch() {
@@ -49,4 +51,9 @@ public class ActionWrapper {
   public Optional<Long> getTimestamp() {
     return timestamp;
   }
+
+  public String getFileName() {
+    return fileName;
+  }
+
 }

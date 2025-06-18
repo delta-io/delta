@@ -16,6 +16,7 @@
 
 package io.delta.kernel.internal;
 
+import io.delta.kernel.PaginatedScan;
 import io.delta.kernel.Scan;
 import io.delta.kernel.ScanBuilder;
 import io.delta.kernel.expressions.Predicate;
@@ -84,5 +85,19 @@ public class ScanBuilderImpl implements ScanBuilder {
         predicate,
         dataPath,
         snapshotReport);
+  }
+
+  @Override
+  public PaginatedScan buildPaginatedScan(String pageToken, long pageSize) {
+    return new PaginatedScanImpl(snapshotSchema,
+        readSchema,
+        protocol,
+        metadata,
+        logReplay,
+        predicate,
+        dataPath,
+        snapshotReport,
+        pageToken,
+        pageSize);
   }
 }

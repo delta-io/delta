@@ -23,6 +23,7 @@ import io.delta.kernel.defaults.internal.parquet.ParquetFileWriter;
 import io.delta.kernel.engine.ParquetHandler;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Predicate;
+import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.*;
@@ -31,6 +32,7 @@ import io.delta.storage.LogStore;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.*;
+import io.delta.kernel.internal.util.Tuple2;
 
 /** Default implementation of {@link ParquetHandler} based on Hadoop APIs. */
 public class DefaultParquetHandler implements ParquetHandler {
@@ -123,4 +125,60 @@ public class DefaultParquetHandler implements ParquetHandler {
       Utils.closeCloseables(data);
     }
   }
+
+
+  @Override
+  public CloseableIterator<Tuple2<String, ColumnarBatch>> readParquetFiles2(
+      CloseableIterator<FileStatus> fileIter,
+      StructType physicalSchema,
+      Optional<Predicate> predicate)
+      throws IOException {
+    return new CloseableIterator<Tuple2<String, ColumnarBatch>>() {
+      private final ParquetFileReader batchReader = new ParquetFileReader(fileIO);
+      private CloseableIterator<ColumnarBatch> currentFileReader;
+      private String currentFileName;
+
+      @Override
+      public void close() throws IOException {
+        Utils.closeCloseables(currentFileReader, fileIter);
+      }
+
+      @Override
+      public boolean hasNext() {
+
+        if (currentFileReader != null && currentFileReader.hasNext()) {
+
+        //  System.out.println("in has next: current file still has batches" + currentFileName);
+          return true;
+        } else {
+          // There is no file in reading or the current file being read has no more data.
+          // Initialize the next file reader or return false if there are no more files to
+          // read.
+          Utils.closeCloseables(currentFileReader);
+          currentFileReader = null;
+          currentFileName = null;
+          if (fileIter.hasNext()) {
+            FileStatus fileStatus = fileIter.next();
+            currentFileName = new Path(fileStatus.getPath()).getName();
+          //  System.out.println("current file name: " + currentFileName);
+            currentFileReader = batchReader.read(fileStatus, physicalSchema, predicate); // where real reading happens
+            return hasNext(); // recurse since it's possible the loaded file is empty
+          } else {
+          //  System.out.println("no files are left");
+            return false;
+          }
+        }
+      }
+
+      @Override
+      public Tuple2<String, ColumnarBatch> next() {
+        boolean isLastBatchFile = false;
+        if(!currentFileReader.hasNext()) {
+          isLastBatchFile = true;
+        }
+        return new Tuple2<>(currentFileName, currentFileReader.next());
+      }
+    };
+  }
+
 }

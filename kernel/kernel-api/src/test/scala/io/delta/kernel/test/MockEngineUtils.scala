@@ -24,7 +24,6 @@ import io.delta.kernel.engine._
 import io.delta.kernel.expressions.{Column, Expression, ExpressionEvaluator, Predicate, PredicateEvaluator}
 import io.delta.kernel.internal.actions.CommitInfo
 import io.delta.kernel.internal.fs.Path
-import io.delta.kernel.internal.util.{FileNames, Utils}
 import io.delta.kernel.types.{DataType, StructType}
 import io.delta.kernel.utils.{CloseableIterator, DataFileStatus, FileStatus}
 
