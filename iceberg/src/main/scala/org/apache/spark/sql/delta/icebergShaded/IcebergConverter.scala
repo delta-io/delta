@@ -371,8 +371,11 @@ class IcebergConverter(spark: SparkSession)
 
         val actionsToConvert = DeltaFileProviderUtils.parallelReadAndParseDeltaFilesAsIterator(
           log, spark, deltaFiles)
+        var deltaVersion = prevSnapshot.version
         actionsToConvert.foreach { actionsIter =>
           try {
+            deltaVersion += 1
+            // TODO: get rid of this grouped batching behavior
             actionsIter.grouped(actionBatchSize).foreach { actionStrs =>
               val actions = actionStrs.map(Action.fromJson)
               needsExpireSnapshot ||= existsOptimize(actions)
@@ -380,7 +383,8 @@ class IcebergConverter(spark: SparkSession)
               runIcebergConversionForActions(
                 icebergTxn,
                 actions,
-                prevConvertedSnapshotOpt)
+                prevConvertedSnapshotOpt,
+                deltaVersion)
             }
           } finally {
             actionsIter.close()
@@ -411,7 +415,7 @@ class IcebergConverter(spark: SparkSession)
           .grouped(actionBatchSize)
           .foreach { actions =>
             needsExpireSnapshot ||= existsOptimize(actions)
-            runIcebergConversionForActions(icebergTxn, actions, None)
+            runIcebergConversionForActions(icebergTxn, actions, None, snapshotToConvert.version)
         }
 
         // Always attempt to update table metadata (schema/properties) for REPLACE_TABLE
@@ -461,7 +465,7 @@ class IcebergConverter(spark: SparkSession)
       })
     }
 
-    expireSnapshotHelper.commit()
+    expireSnapshotHelper.commit(snapshotToConvert.version)
   }
 
   // This is for newly enabling uniform table to
@@ -523,11 +527,14 @@ class IcebergConverter(spark: SparkSession)
   /**
    * Build an iceberg TransactionHelper from the provided txn, and commit the set of changes
    * specified by the actionsToCommit.
+   *
+   * For iceberg v3+, deltaVersion will be used to set iceberg snapshot sequence number
    */
   private[delta] def runIcebergConversionForActions(
       icebergTxn: IcebergConversionTransaction,
       actionsToCommit: Seq[Action],
-      prevSnapshotOpt: Option[Snapshot]): Unit = {
+      prevSnapshotOpt: Option[Snapshot],
+      deltaVersion: Long): Unit = {
     prevSnapshotOpt match {
       case None =>
         // If we don't have a previous snapshot, that implies that the table is either being
@@ -539,7 +546,7 @@ class IcebergConverter(spark: SparkSession)
           case _ => throw new IllegalStateException(s"Must provide only AddFiles when creating " +
             s"or replacing an Iceberg Table.")
         }
-        appendHelper.commit()
+        appendHelper.commit(deltaVersion)
 
       case Some(_) =>
         // We have to go through the seq of actions twice, once to figure out the TransactionHelper
@@ -589,7 +596,7 @@ class IcebergConverter(spark: SparkSession)
               rewriteHelper.add(action.remove)
             }
           }
-          rewriteHelper.commit()
+          rewriteHelper.commit(deltaVersion)
         } else if ((hasAdds && hasRemoves) || !allDeltaActionsCaptured) {
           val overwriteHelper = icebergTxn.getOverwriteHelper
           addsAndRemoves.foreach { action =>
@@ -599,7 +606,7 @@ class IcebergConverter(spark: SparkSession)
               overwriteHelper.add(action.remove)
             }
           }
-          overwriteHelper.commit()
+          overwriteHelper.commit(deltaVersion)
         } else if (hasAdds) {
           if (!hasRemoves && !hasDataChange && allDeltaActionsCaptured) {
             logInfo(log"Skip Iceberg conversion for commit that only has AddFiles " +
@@ -608,12 +615,12 @@ class IcebergConverter(spark: SparkSession)
           } else {
             val appendHelper = icebergTxn.getAppendOnlyHelper
               addsAndRemoves.foreach(action => appendHelper.add(action.add))
-              appendHelper.commit()
+              appendHelper.commit(deltaVersion)
           }
         } else if (hasRemoves) {
           val removeHelper = icebergTxn.getRemoveOnlyHelper
           addsAndRemoves.foreach(action => removeHelper.add(action.remove))
-          removeHelper.commit()
+          removeHelper.commit(deltaVersion)
         }
     }
   }
