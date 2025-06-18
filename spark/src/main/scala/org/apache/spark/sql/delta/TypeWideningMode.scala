@@ -82,7 +82,7 @@ object TypeWideningMode {
             "fromType" -> fromType.sql,
             "toType" -> toType.sql,
             "uniformIcebergCompatibleOnly" -> uniformIcebergCompatibleOnly,
-            "allowAutomaticWidening" -> allowAutomaticWidening,
+            "allowAutomaticWidening" -> allowAutomaticWidening
           ))
       }
     }
