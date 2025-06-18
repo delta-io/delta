@@ -40,7 +40,11 @@ public class FilteredColumnarBatch {
   private final Optional<Long> numOfTrueRows;
   private final Optional<String> fileName; // which file this batch belongs to
 
-  public FilteredColumnarBatch(ColumnarBatch data, Optional<ColumnVector> selectionVector, long numOfTrueRows, String fileName) {
+  public FilteredColumnarBatch(
+      ColumnarBatch data,
+      Optional<ColumnVector> selectionVector,
+      long numOfTrueRows,
+      String fileName) {
     this.data = data;
     this.selectionVector = selectionVector;
     this.numOfTrueRows = Optional.of(numOfTrueRows);

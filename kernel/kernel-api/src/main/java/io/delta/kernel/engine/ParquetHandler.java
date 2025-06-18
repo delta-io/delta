@@ -20,6 +20,7 @@ import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.data.*;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Predicate;
+import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.*;
@@ -27,7 +28,6 @@ import java.io.IOException;
 import java.nio.file.FileAlreadyExistsException;
 import java.util.List;
 import java.util.Optional;
-import io.delta.kernel.internal.util.Tuple2;
 
 /**
  * Provides Parquet file related functionalities to Delta Kernel. Connectors can leverage this
@@ -58,7 +58,7 @@ public interface ParquetHandler {
    *     that don't satisfy the predicate. Because pruning is optional and may be incomplete, caller
    *     is still responsible apply the predicate on the data returned by this method.
    * @return an iterator of {@link Tuple2} containing the filename and {@link ColumnarBatch} pairs
-   *     in columnar format. It is the responsibility of the caller to close the iterator. The data 
+   *     in columnar format. It is the responsibility of the caller to close the iterator. The data
    *     returned is in the same as the order of files given in {@code scanFileIter}.
    * @throws IOException if an I/O error occurs during the read.
    */
@@ -91,18 +91,18 @@ public interface ParquetHandler {
    * @param predicate Optional predicate which the Parquet reader can optionally use to prune rows
    *     that don't satisfy the predicate. Because pruning is optional and may be incomplete, caller
    *     is still responsible apply the predicate on the data returned by this method.
-   * @return an iterator of {@link Tuple2} containing filename and {@link ColumnarBatch} pairs
-   *     in columnar format. It is the responsibility of the caller to close the iterator. The data 
+   * @return an iterator of {@link Tuple2} containing filename and {@link ColumnarBatch} pairs in
+   *     columnar format. It is the responsibility of the caller to close the iterator. The data
    *     returned is in the same as the order of files given in {@code fileIter}.
    * @throws IOException if an I/O error occurs during the read.
    */
-
   default CloseableIterator<Tuple2<String, ColumnarBatch>> readParquetFiles2(
       CloseableIterator<FileStatus> fileIter,
       StructType physicalSchema,
       Optional<Predicate> predicate)
       throws IOException {
-    throw new UnsupportedOperationException("readParquetFiles2 is not supported by this implementation");
+    throw new UnsupportedOperationException(
+        "readParquetFiles2 is not supported by this implementation");
   }
 
   /**

@@ -89,7 +89,8 @@ public class ScanBuilderImpl implements ScanBuilder {
 
   @Override
   public PaginatedScan buildPaginatedScan(String pageToken, long pageSize) {
-    return new PaginatedScanImpl(snapshotSchema,
+    return new PaginatedScanImpl(
+        snapshotSchema,
         readSchema,
         protocol,
         metadata,

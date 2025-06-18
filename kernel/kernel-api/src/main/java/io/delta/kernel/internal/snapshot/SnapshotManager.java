@@ -78,6 +78,9 @@ public class SnapshotManager {
     final LogSegment logSegment =
         getLogSegmentForVersion(engine, Optional.empty() /* versionToLoad */);
 
+    // compare hash value in page token to new hash value computed
+    // throw exception if the log segment has changed & no cache is saved
+
     snapshotContext.setVersion(logSegment.getVersion());
     snapshotContext.setCheckpointVersion(logSegment.getCheckpointVersionOpt());
 
@@ -99,8 +102,23 @@ public class SnapshotManager {
     final LogSegment logSegment =
         getLogSegmentForVersion(engine, Optional.of(version) /* versionToLoadOpt */);
 
+    // compare hash value in page token to new hash value computed
+    // throw exception if the log segment has changed & no cache is saved
+
     snapshotContext.setCheckpointVersion(logSegment.getCheckpointVersionOpt());
     snapshotContext.setVersion(logSegment.getVersion());
+
+    return createSnapshot(logSegment, engine, snapshotContext);
+  }
+
+  // for pagination P2 req: server calls this function if log segment is cached.
+  // tip: this function can be used as a helper for two functions above (to reduce duplicate code)
+  public Snapshot buildSnapshotWithLogSegment(
+      Engine engine, SnapshotQueryContext snapshotContext, LogSegment logSegment)
+      throws TableNotFoundException {
+
+    snapshotContext.setVersion(logSegment.getVersion());
+    snapshotContext.setCheckpointVersion(logSegment.getCheckpointVersionOpt());
 
     return createSnapshot(logSegment, engine, snapshotContext);
   }
@@ -194,6 +212,7 @@ public class SnapshotManager {
     // Note: LogReplay now loads the protocol and metadata (P & M) lazily. Nonetheless, SnapshotImpl
     //       is still constructed with an "eagerly"-loaded P & M.
 
+    /** maybe compare the init segment with the cached log segment here */
     LogReplay logReplay =
         new LogReplay(
             tablePath,

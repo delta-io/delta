@@ -71,6 +71,7 @@ public class ScanImpl implements Scan {
   private boolean accessedScanFiles;
   private final SnapshotReport snapshotReport;
   private final ScanMetrics scanMetrics = new ScanMetrics();
+
   public ScanImpl(
       StructType snapshotSchema,
       StructType readSchema,
@@ -109,10 +110,9 @@ public class ScanImpl implements Scan {
   }
 
   public CloseableIterator<FilteredColumnarBatch> getScanFiles(
-          Engine engine, boolean includeStats) {
+      Engine engine, boolean includeStats) {
     return getScanFiles(engine, includeStats, null);
   }
-
 
   /**
    * Get an iterator of data files in this version of scan that survived the predicate pruning.
@@ -127,7 +127,9 @@ public class ScanImpl implements Scan {
    * @return the surviving scan files as {@link FilteredColumnarBatch}s
    */
   protected CloseableIterator<FilteredColumnarBatch> getScanFiles(
-          Engine engine, boolean includeStats, PaginationContext paginationContext) { // inject two hash set here
+      Engine engine,
+      boolean includeStats,
+      PaginationContext paginationContext) { // inject two hash set here
 
     if (accessedScanFiles) {
       throw new IllegalStateException("Scan files are already fetched from this instance");
@@ -175,7 +177,8 @@ public class ScanImpl implements Scan {
                       predicate ->
                           rewritePartitionPredicateOnCheckpointFileSchema(
                               predicate, partitionColToStructFieldMap.get())),
-              scanMetrics, paginationContext);
+              scanMetrics,
+              paginationContext);
 
       // Apply partition pruning
       scanFileIter = applyPartitionPruning(engine, scanFileIter);
@@ -195,21 +198,32 @@ public class ScanImpl implements Scan {
     }
   }
 
-  /**
-   * Only used for testing
-   * */
+  /** Only used for testing */
   @VisibleForTesting
-  public CloseableIterator<FilteredColumnarBatch> getPaginatedScanFiles(Engine engine, long numOfAddFilesToSkip, long pageSize,
-                                                                        String startingLogFileName, long sidecarIdx) {
-    //fetch hashset here
+  public CloseableIterator<FilteredColumnarBatch> getPaginatedScanFiles(
+      Engine engine,
+      long numOfAddFilesToSkip,
+      long pageSize,
+      String startingLogFileName,
+      long sidecarIdx) {
+    // fetch hashset here
     boolean isHashSetCached = false;
     HashSet<LogReplayUtils.UniqueFileActionTuple> tombstonesFromJson = new HashSet<>();
     HashSet<LogReplayUtils.UniqueFileActionTuple> addFilesFromJson = new HashSet<>();
-    PaginationContext paginationContext = new PaginationContext(startingLogFileName,numOfAddFilesToSkip, sidecarIdx, pageSize,
-        isHashSetCached, tombstonesFromJson, addFilesFromJson);
-    CloseableIterator<FilteredColumnarBatch> scanFileIter = getScanFiles(engine, false, paginationContext);
+    PaginationContext paginationContext =
+        new PaginationContext(
+            startingLogFileName,
+            numOfAddFilesToSkip,
+            sidecarIdx,
+            pageSize,
+            isHashSetCached,
+            tombstonesFromJson,
+            addFilesFromJson);
+    CloseableIterator<FilteredColumnarBatch> scanFileIter =
+        getScanFiles(engine, false, paginationContext);
     System.out.println("fetch the original iterator successfully");
-    CloseableIterator<FilteredColumnarBatch> paginatedIter= new PaginatedAddFilesIterator(scanFileIter, paginationContext);
+    CloseableIterator<FilteredColumnarBatch> paginatedIter =
+        new PaginatedAddFilesIterator(scanFileIter, paginationContext);
     return paginatedIter;
   }
 

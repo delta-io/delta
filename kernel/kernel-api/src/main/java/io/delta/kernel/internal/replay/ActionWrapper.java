@@ -28,7 +28,11 @@ public class ActionWrapper {
   private final String fileName;
 
   ActionWrapper(
-      ColumnarBatch data, boolean isFromCheckpoint, long version, Optional<Long> timestamp, String fileName) {
+      ColumnarBatch data,
+      boolean isFromCheckpoint,
+      long version,
+      Optional<Long> timestamp,
+      String fileName) {
     this.columnarBatch = data;
     this.isFromCheckpoint = isFromCheckpoint;
     this.version = version;
@@ -55,5 +59,4 @@ public class ActionWrapper {
   public String getFileName() {
     return fileName;
   }
-
 }

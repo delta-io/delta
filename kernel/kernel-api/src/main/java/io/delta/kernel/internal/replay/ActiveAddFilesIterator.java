@@ -79,25 +79,28 @@ public class ActiveAddFilesIterator implements CloseableIterator<FilteredColumna
   private ScanMetrics metrics;
 
   // default constructor
-  ActiveAddFilesIterator(Engine engine, CloseableIterator<ActionWrapper> iter, Path tableRoot, ScanMetrics metrics) {
+  ActiveAddFilesIterator(
+      Engine engine, CloseableIterator<ActionWrapper> iter, Path tableRoot, ScanMetrics metrics) {
     this(engine, iter, tableRoot, metrics, null);
   }
 
   // pass in a hash set here, as an optional parameter
   // if no value is passed -> create a new hashset; otherwise use the hashset injected
   ActiveAddFilesIterator(
-      Engine engine, CloseableIterator<ActionWrapper> iter, Path tableRoot, ScanMetrics metrics,
+      Engine engine,
+      CloseableIterator<ActionWrapper> iter,
+      Path tableRoot,
+      ScanMetrics metrics,
       PaginationContext paginationContext) {
     this.engine = engine;
     this.tableRoot = tableRoot;
     this.iter = iter;
     this.next = Optional.empty();
     this.metrics = metrics;
-    if(paginationContext.isHashSetCached) {
+    if (paginationContext.isHashSetCached) {
       this.tombstonesFromJson = paginationContext.tombstonesFromJson;
       this.addFilesFromJson = paginationContext.addFilesFromJson;
-    }
-    else {
+    } else {
       this.tombstonesFromJson = new HashSet<>();
       this.addFilesFromJson = new HashSet<>();
     }
@@ -236,7 +239,7 @@ public class ActiveAddFilesIterator implements CloseableIterator<FilteredColumna
         if (!alreadyDeleted) {
           doSelect = true;
           selectionVectorBuffer[rowId] = true;
-          numOfTrueRows ++;
+          numOfTrueRows++;
           metrics.activeAddFilesCounter.increment();
         }
       } else {
@@ -290,7 +293,13 @@ public class ActiveAddFilesIterator implements CloseableIterator<FilteredColumna
                           .createSelectionVector(selectionVectorBuffer, 0, addsVector.getSize()),
                   "Create selection vector for selected scan files"));
     }
-    next = Optional.of(new FilteredColumnarBatch(scanAddFiles, selectionColumnVector, numOfTrueRows, fileName)); // add file name here
+    next =
+        Optional.of(
+            new FilteredColumnarBatch(
+                scanAddFiles,
+                selectionColumnVector,
+                numOfTrueRows,
+                fileName)); // add file name here
   }
 
   public static String getAddFilePath(ColumnVector addFileVector, int rowId) {

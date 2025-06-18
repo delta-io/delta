@@ -24,6 +24,7 @@ import io.delta.kernel.engine.ParquetHandler;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.*;
@@ -32,7 +33,6 @@ import io.delta.storage.LogStore;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.*;
-import io.delta.kernel.internal.util.Tuple2;
 
 /** Default implementation of {@link ParquetHandler} based on Hadoop APIs. */
 public class DefaultParquetHandler implements ParquetHandler {
@@ -126,7 +126,6 @@ public class DefaultParquetHandler implements ParquetHandler {
     }
   }
 
-
   @Override
   public CloseableIterator<Tuple2<String, ColumnarBatch>> readParquetFiles2(
       CloseableIterator<FileStatus> fileIter,
@@ -148,7 +147,7 @@ public class DefaultParquetHandler implements ParquetHandler {
 
         if (currentFileReader != null && currentFileReader.hasNext()) {
 
-        //  System.out.println("in has next: current file still has batches" + currentFileName);
+          //  System.out.println("in has next: current file still has batches" + currentFileName);
           return true;
         } else {
           // There is no file in reading or the current file being read has no more data.
@@ -160,11 +159,13 @@ public class DefaultParquetHandler implements ParquetHandler {
           if (fileIter.hasNext()) {
             FileStatus fileStatus = fileIter.next();
             currentFileName = new Path(fileStatus.getPath()).getName();
-          //  System.out.println("current file name: " + currentFileName);
-            currentFileReader = batchReader.read(fileStatus, physicalSchema, predicate); // where real reading happens
+            //  System.out.println("current file name: " + currentFileName);
+            currentFileReader =
+                batchReader.read(
+                    fileStatus, physicalSchema, predicate); // where real reading happens
             return hasNext(); // recurse since it's possible the loaded file is empty
           } else {
-          //  System.out.println("no files are left");
+            //  System.out.println("no files are left");
             return false;
           }
         }
@@ -173,12 +174,11 @@ public class DefaultParquetHandler implements ParquetHandler {
       @Override
       public Tuple2<String, ColumnarBatch> next() {
         boolean isLastBatchFile = false;
-        if(!currentFileReader.hasNext()) {
+        if (!currentFileReader.hasNext()) {
           isLastBatchFile = true;
         }
         return new Tuple2<>(currentFileName, currentFileReader.next());
       }
     };
   }
-
 }
