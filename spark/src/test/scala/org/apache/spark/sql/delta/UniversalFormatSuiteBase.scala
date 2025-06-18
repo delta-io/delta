@@ -135,6 +135,26 @@ trait UniversalFormatSuiteBase extends IcebergCompatUtilsBase
     }
   }
 
+  test("create new UniForm table via clone") {
+    withTempTableAndDir { case (id, loc) =>
+      executeSql(s"""
+              |CREATE TABLE $id (ID INT) USING DELTA  TBLPROPERTIES (
+              | 'delta.columnMapping.mode' = 'name')
+              | LOCATION $loc """.stripMargin)
+      executeSql(s"""
+              |INSERT INTO $id values (1) """.stripMargin)
+      withTempTableAndDir { case (cloneId, loc1) =>
+        executeSql(s"""
+              |CREATE TABLE $cloneId SHALLOW CLONE $id TBLPROPERTIES (
+              |  'delta.universalFormat.enabledFormats' = 'iceberg',
+              |  'delta.enableIcebergCompatV$compatVersion' = 'true',
+              |  'delta.columnMapping.mode' = 'name'
+              |) LOCATION $loc1 """.stripMargin)
+        assertUniFormIcebergProtocolAndProperties(cloneId)
+      }
+    }
+  }
+
   test("enable UniForm on existing table with IcebergCompat enabled") {
     allReaderWriterVersions.foreach { case (r, w) =>
       withTempTableAndDir { case (id, loc) =>

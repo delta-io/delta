@@ -102,7 +102,7 @@ class IcebergConversionTransaction(
     def add(add: AddFile): Unit = throw new UnsupportedOperationException
     def add(remove: RemoveFile): Unit = throw new UnsupportedOperationException
 
-    def commit(): Unit = {
+    def commit(deltaCommitVersion: Long): Unit = {
       assert(!committed, "Already committed.")
       impl.commit()
       committed = true
@@ -118,7 +118,7 @@ class IcebergConversionTransaction(
     override def opType: String = "null"
     override def add(add: AddFile): Unit = {}
     override def add(remove: RemoveFile): Unit = {}
-    override def commit(): Unit = {}
+    override def commit(deltaCommitVersion: Long): Unit = {}
   }
   /**
    * API for appending new files in a table.
@@ -195,12 +195,12 @@ class IcebergConversionTransaction(
       removeBuffer += remove.toDataFile
     }
 
-    override def commit(): Unit = {
+    override def commit(deltaCommitVersion: Long): Unit = {
       if (removeBuffer.nonEmpty) {
         rewriter.rewriteFiles(removeBuffer.asJava, addBuffer.asJava, 0)
       }
       currentSnapshotId.foreach(rewriter.validateFromSnapshot)
-      super.commit()
+      super.commit(deltaCommitVersion)
     }
   }
 
