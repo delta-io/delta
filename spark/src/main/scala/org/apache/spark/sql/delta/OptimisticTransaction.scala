@@ -341,7 +341,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
   private var isCreatingNewTable: Boolean = false
 
   // Whether this transaction is overwriting the existing schema (i.e. overwriteSchema = true).
-  // When overwriting schema (and data) of a table, `isCreatingNewTable` should not be true.
+  // When overwriting schema (and data) of a table, `isCreatingNewTable` should not be true,
+  // except for config REUSE_COLUMN_METADATA_DURING_REPLACE_TABLE is set to true.
   private var isOverwritingSchema: Boolean = false
 
   // Whether this is a transaction that can select any new protocol, potentially downgrading
@@ -788,6 +789,14 @@ trait OptimisticTransactionImpl extends TransactionHelper
       CoordinatedCommitsUtils.getExplicitCCConfigurations(snapshot.metadata.configuration)
     val existingICTConfs =
       CoordinatedCommitsUtils.getExplicitICTConfigurations(snapshot.metadata.configuration)
+    val oldMappingMode = snapshot.metadata.columnMappingMode
+    val newMappingMode = metadata.columnMappingMode
+    val shouldReuseColumnMetadataForReplaceTable =
+      spark.conf.get(DeltaSQLConf.REUSE_COLUMN_METADATA_DURING_REPLACE_TABLE)
+
+    if (oldMappingMode == newMappingMode && shouldReuseColumnMetadataForReplaceTable) {
+      isOverwritingSchema = true
+    }
     // Update the metadata.
     updateMetadataForNewTable(metadata)
     // Now the `txn.metadata` contains all the command-specified properties and all the default
@@ -1465,7 +1474,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       }
       val currentTransactionInfo = CurrentTransactionInfo(
         txnId = txnId,
-        readPredicates = readPredicates.asScala.toSeq,
+        readPredicates = readPredicates.asScala.toVector,
         readFiles = readFiles.toSet,
         readWholeTable = readTheWholeTable,
         readAppIds = readTxn.toSet,

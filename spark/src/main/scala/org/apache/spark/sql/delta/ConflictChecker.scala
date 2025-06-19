@@ -53,7 +53,7 @@ import org.apache.spark.sql.types.StructType
  */
 private[delta] case class CurrentTransactionInfo(
     val txnId: String,
-    val readPredicates: Seq[DeltaTableReadPredicate],
+    val readPredicates: Vector[DeltaTableReadPredicate],
     val readFiles: Set[AddFile],
     val readWholeTable: Boolean,
     val readAppIds: Set[String],
