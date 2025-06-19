@@ -37,7 +37,8 @@ class TypeWideningStreamingSourceSuite extends TypeWideningStreamingSourceTests
 trait TypeWideningStreamingSourceTests
   extends StreamTest
   with SQLTestUtils
-  with TypeWideningTestMixin {
+  with TypeWideningTestMixin
+  with DeltaExcludedBySparkVersionTestMixinShims {
 
   import testImplicits._
 
@@ -541,7 +542,8 @@ trait TypeWideningStreamingSourceTests
       }
     }
   }
-  test("always automatic type change in delta source writing to a delta sink") {
+
+  testSparkMasterOnly("always automatic type change in delta source writing to a delta sink") {
     withTempDir { sourceDir =>
       withTempDir { sinkDir =>
         sql(s"CREATE TABLE delta.`$sourceDir` (a double) USING DELTA")

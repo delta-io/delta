@@ -33,7 +33,8 @@ class TypeWideningMergeIntoSchemaEvolutionSuite
     extends QueryTest
     with DeltaDMLTestUtils
     with TypeWideningTestMixin
-    with TypeWideningMergeIntoSchemaEvolutionTests {
+    with TypeWideningMergeIntoSchemaEvolutionTests
+    with DeltaExcludedBySparkVersionTestMixinShims {
 
   protected override def sparkConf: SparkConf = {
     super.sparkConf
@@ -48,11 +49,14 @@ trait TypeWideningMergeIntoSchemaEvolutionTests
     extends MergeIntoSQLTestUtils
     with MergeIntoSchemaEvolutionMixin
     with TypeWideningTestCases {
-  self: QueryTest with TypeWideningTestMixin with DeltaDMLTestUtils =>
+  self: QueryTest
+    with TypeWideningTestMixin
+    with DeltaDMLTestUtils
+    with DeltaExcludedBySparkVersionTestMixinShims =>
 
   import testImplicits._
 
-  test(s"MERGE - always automatic type widening TINYINT -> DOUBLE") {
+  testSparkMasterOnly(s"MERGE - always automatic type widening TINYINT -> DOUBLE") {
     withTable("source") {
       sql(s"CREATE TABLE delta.`$tempPath` (a short) USING DELTA")
       sql("CREATE TABLE source (a double) USING DELTA")
