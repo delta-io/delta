@@ -56,26 +56,36 @@ object TypeWideningMode {
   }
 
   /** All supported type widening changes are allowed. */
-  case object AllTypeWidening
-    extends TypeWideningMode {
+  case object AllTypeWidening extends TypeWideningMode {
     override def getWidenedType(fromType: AtomicType, toType: AtomicType): Option[AtomicType] =
-      Option.when(TypeWidening.isTypeChangeSupported(
-        fromType = fromType,
-        toType = toType))(toType)
+      Option.when(TypeWidening.isTypeChangeSupported(fromType = fromType, toType = toType))(toType)
   }
 
   /**
    * Type changes that are eligible to be applied automatically during schema evolution are allowed.
-   * Can be restricted to only type changes supported by Iceberg.
+   *
+   * uniformIcebergCompatibleOnly: Restricts widenings to those supported by Iceberg.
+   * allowAutomaticWidening: Controls widening behavior. Options:
+   *   - 'always': enables all supported widenings,
+   *   - 'same_family_type': uses default behavior,
+   *   - 'never': disables all widenings.
    */
   case class TypeEvolution(
-                            uniformIcebergCompatibleOnly: Boolean,
-                            allowAutomaticWidening: String) extends TypeWideningMode {
+      uniformIcebergCompatibleOnly: Boolean,
+      allowAutomaticWidening: AllowAutomaticWideningMode.Value) extends TypeWideningMode {
+    override def getWidenedType(fromType: AtomicType, toType: AtomicType): Option[AtomicType] = {
+      Option.when(canWiden(fromType, toType))(toType).orElse {
+        logMissedWidening(fromType = fromType, toType = toType)
+        None
+      }
+    }
+
     private def logMissedWidening(fromType: AtomicType, toType: AtomicType): Unit = {
       // Check if widening is possible under the least restricting conditions.
-      if (TypeEvolution(uniformIcebergCompatibleOnly = false,
-        allowAutomaticWidening = AllowAutomaticWideningMode.ALWAYS.toString)
-        .canWiden(fromType, toType)) {
+      val allowTypeEvolution = TypeEvolution(
+        uniformIcebergCompatibleOnly = false,
+        allowAutomaticWidening = AllowAutomaticWideningMode.ALWAYS)
+      if (allowTypeEvolution.canWiden(fromType, toType)) {
         recordDeltaEvent(null,
           opType = "delta.typeWidening.missedAutomaticWidening",
           data = Map(
@@ -88,27 +98,17 @@ object TypeWideningMode {
     }
 
     private def canWiden(fromType: AtomicType, toType: AtomicType): Boolean = {
-      if (allowAutomaticWidening == AllowAutomaticWideningMode.ALWAYS.toString) {
+      if (allowAutomaticWidening == AllowAutomaticWideningMode.ALWAYS) {
         TypeWidening.isTypeChangeSupported(
           fromType = fromType,
           toType = toType,
           uniformIcebergCompatibleOnly)
-      } else if (allowAutomaticWidening == AllowAutomaticWideningMode.SAME_FAMILY_TYPE.toString) {
+      } else if (allowAutomaticWidening == AllowAutomaticWideningMode.SAME_FAMILY_TYPE) {
         TypeWidening.isTypeChangeSupportedForSchemaEvolution(
           fromType = fromType, toType = toType, uniformIcebergCompatibleOnly)
       } else {
         false
       }
-    }
-
-    override def getWidenedType(fromType: AtomicType, toType: AtomicType): Option[AtomicType] = {
-      val result = Option.when(canWiden(fromType, toType))(toType)
-
-      if (result.isEmpty) {
-        logMissedWidening(fromType = fromType, toType = toType)
-      }
-
-      result
     }
   }
 

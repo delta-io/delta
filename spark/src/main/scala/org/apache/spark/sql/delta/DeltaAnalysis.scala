@@ -37,6 +37,7 @@ import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources._
+import org.apache.spark.sql.delta.sources.DeltaSQLConf.AllowAutomaticWideningMode
 import org.apache.spark.sql.delta.util.AnalysisHelper
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 import org.apache.hadoop.fs.Path
@@ -1011,7 +1012,7 @@ class DeltaAnalysis(session: SparkSession)
     if (typeWideningEnabled && schemaEvolutionEnabled) {
       TypeWideningMode.TypeEvolution(
         uniformIcebergCompatibleOnly = UniversalFormat.icebergEnabled(snapshot.metadata),
-        allowAutomaticWidening = session.conf.get(DeltaSQLConf.DELTA_ALLOW_AUTOMATIC_WIDENING))
+        allowAutomaticWidening = AllowAutomaticWideningMode.fromConf(conf))
     } else {
       TypeWideningMode.NoTypeWidening
     }

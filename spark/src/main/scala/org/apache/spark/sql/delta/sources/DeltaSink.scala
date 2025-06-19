@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.actions.{FileAction, Metadata, Protocol, SetTr
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{ImplicitMetadataOperation, SchemaMergingUtils, SchemaUtils}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf.AllowAutomaticWideningMode
 import org.apache.hadoop.fs.Path
 
 // scalastyle:off import.ordering.noEmptyLine
@@ -180,7 +181,7 @@ case class DeltaSink(
     val typeWideningMode = if (canMergeSchema && TypeWidening.isEnabled(protocol, metadata)) {
         TypeWideningMode.TypeEvolution(
           uniformIcebergCompatibleOnly = UniversalFormat.icebergEnabled(metadata),
-          allowAutomaticWidening = sqlConf.getConf(DeltaSQLConf.DELTA_ALLOW_AUTOMATIC_WIDENING))
+          allowAutomaticWidening = AllowAutomaticWideningMode.fromConf(sqlConf))
       } else {
         TypeWideningMode.NoTypeWidening
       }

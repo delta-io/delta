@@ -22,6 +22,7 @@ import scala.collection.mutable
 
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.sources.DeltaSQLConf.AllowAutomaticWideningMode
 
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.analysis._
@@ -298,7 +299,7 @@ object ResolveDeltaMergeInto {
           case DeltaTable(index) if TypeWidening.isEnabled(index.protocol, index.metadata) =>
             TypeWideningMode.TypeEvolution(
               uniformIcebergCompatibleOnly = UniversalFormat.icebergEnabled(index.metadata),
-              allowAutomaticWidening = conf.getConf(DeltaSQLConf.DELTA_ALLOW_AUTOMATIC_WIDENING))
+              allowAutomaticWidening = AllowAutomaticWideningMode.fromConf(conf))
         }.getOrElse(TypeWideningMode.NoTypeWidening)
 
       // The implicit conversions flag allows any type to be merged from source to target if Spark
