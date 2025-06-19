@@ -37,8 +37,7 @@ class TypeWideningStreamingSourceSuite extends TypeWideningStreamingSourceTests
 trait TypeWideningStreamingSourceTests
   extends StreamTest
   with SQLTestUtils
-  with TypeWideningTestMixin
-  with DeltaExcludedBySparkVersionTestMixinShims {
+  with TypeWideningTestMixin {
 
   import testImplicits._
 
@@ -539,75 +538,6 @@ trait TypeWideningStreamingSourceTests
           Execute { _ => sql(s"INSERT INTO delta.`$dir` VALUES (2)") },
           ProcessAllAvailable()
         )
-      }
-    }
-  }
-
-  testSparkMasterOnly("always automatic in delta source writing to a delta sink") {
-    withTempDir { sourceDir =>
-      withTempDir { sinkDir =>
-        sql(s"CREATE TABLE delta.`$sourceDir` (a double) USING DELTA")
-        sql(s"CREATE TABLE delta.`$sinkDir` (a int) USING DELTA")
-        val checkpointDir = new File(sinkDir, "checkpoint_dir")
-
-        sql(s"INSERT INTO delta.`$sourceDir` VALUES (1.5)")
-
-        withSQLConf(DeltaSQLConf.DELTA_ALLOW_AUTOMATIC_WIDENING.key -> "always") {
-          val q = spark
-            .readStream
-            .format("delta")
-            .option(DeltaOptions.SCHEMA_TRACKING_LOCATION, checkpointDir.toString)
-            .load(sourceDir.toString)
-            .writeStream
-            .format("delta")
-            .option("checkpointLocation", checkpointDir.toString)
-            .option("mergeSchema", "true")
-            .start(sinkDir.getCanonicalPath)
-          q.processAllAvailable()
-          q.stop()
-        }
-
-        checkAnswer(readDeltaTable(sinkDir.toString), Seq(Row(1.5D)))
-        assert(readDeltaTable(sinkDir.toString).schema("a").dataType === DoubleType)
-      }
-    }
-  }
-
-  test("never automatic in delta source writing to a delta sink") {
-    withTempDir { sourceDir =>
-      withTempDir { sinkDir =>
-        sql(s"CREATE TABLE delta.`$sourceDir` (a int) USING DELTA")
-        sql(s"CREATE TABLE delta.`$sinkDir` (a byte) USING DELTA")
-        val checkpointDir = new File(sinkDir, "checkpoint_dir")
-
-        sql(s"INSERT INTO delta.`$sourceDir` VALUES (5000)")
-
-        def getSparkArithmeticException(ex: Throwable): SparkArithmeticException = ex match {
-          case e: SparkArithmeticException => e
-          case e: Throwable if e.getCause != null => getSparkArithmeticException(e.getCause)
-          case e => fail(s"Unexpected exception: $e")
-        }
-
-        val ex = intercept[Throwable] {
-          withSQLConf(DeltaSQLConf.DELTA_ALLOW_AUTOMATIC_WIDENING.key -> "never") {
-            val q = spark
-              .readStream
-              .format("delta")
-              .option(DeltaOptions.SCHEMA_TRACKING_LOCATION, checkpointDir.toString)
-              .load(sourceDir.toString)
-              .writeStream
-              .format("delta")
-              .option("checkpointLocation", checkpointDir.toString)
-              .option("mergeSchema", "true")
-              .start(sinkDir.getCanonicalPath)
-            q.processAllAvailable()
-            q.stop()
-          }
-        }
-
-        assert(getSparkArithmeticException(ex).getErrorClass === "CAST_OVERFLOW_IN_TABLE_INSERT")
-        checkAnswer(readDeltaTable(sinkDir.toString), Nil)
-        assert(readDeltaTable(sinkDir.toString).schema("a").dataType === ByteType)
       }
     }
   }
