@@ -82,10 +82,10 @@ object TypeWideningMode {
 
     private def logMissedWidening(fromType: AtomicType, toType: AtomicType): Unit = {
       // Check if widening is possible under the least restricting conditions.
-      val allowTypeEvolution = TypeEvolution(
+      val allowAllTypeEvolution = TypeEvolution(
         uniformIcebergCompatibleOnly = false,
         allowAutomaticWidening = AllowAutomaticWideningMode.ALWAYS)
-      if (allowTypeEvolution.canWiden(fromType, toType)) {
+      if (allowAllTypeEvolution.canWiden(fromType, toType)) {
         recordDeltaEvent(null,
           opType = "delta.typeWidening.missedAutomaticWidening",
           data = Map(
