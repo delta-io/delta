@@ -543,7 +543,7 @@ trait TypeWideningStreamingSourceTests
     }
   }
 
-  testSparkMasterOnly("always automatic type change in delta source writing to a delta sink") {
+  testSparkMasterOnly("always automatic in delta source writing to a delta sink") {
     withTempDir { sourceDir =>
       withTempDir { sinkDir =>
         sql(s"CREATE TABLE delta.`$sourceDir` (a double) USING DELTA")
@@ -573,7 +573,7 @@ trait TypeWideningStreamingSourceTests
     }
   }
 
-  test("never automatic type change in delta source writing to a delta sink") {
+  test("never automatic in delta source writing to a delta sink") {
     withTempDir { sourceDir =>
       withTempDir { sinkDir =>
         sql(s"CREATE TABLE delta.`$sourceDir` (a int) USING DELTA")
