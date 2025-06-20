@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.rowid
 
-import org.apache.spark.sql.delta.{DeltaConfigs, DeltaIllegalStateException, DeltaLog, RowId}
+import org.apache.spark.sql.delta.{DeltaConfigs, DeltaIllegalStateException, DeltaLog, DeltaUnsupportedOperationException, RowId}
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -182,10 +182,10 @@ class RowIdCloneSuite
           withSQLConf(DeltaSQLConf.DELTA_COLLECT_STATS.key -> "true") {
             spark.range(0).write.format("delta").saveAsTable("target")
           }
-          val err = intercept[DeltaIllegalStateException] {
+          val err = intercept[DeltaUnsupportedOperationException] {
             cloneTable(targetTableName = "target", sourceTableName = "source")
           }
-          checkError(err, "DELTA_ROW_ID_ASSIGNMENT_WITHOUT_STATS")
+          checkError(err, "DELTA_CLONE_WITH_ROW_TRACKING_WITHOUT_STATS")
         }
       }
     }

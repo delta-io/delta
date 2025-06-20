@@ -1728,7 +1728,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
         deltaLog.protocolWrite(snapshot.protocol)
       }
 
-      allActions = RowId.assignFreshRowIds(protocol, snapshot, allActions)
+      allActions = RowId.assignFreshRowIds(protocol, snapshot, allActions, op)
       allActions = DefaultRowCommitVersion
         .assignIfMissing(protocol, allActions, getFirstAttemptVersion)
 
@@ -2122,7 +2122,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       deltaLog.protocolWrite(snapshot.protocol)
     }
 
-    finalActions = RowId.assignFreshRowIds(protocol, snapshot, finalActions.toIterator).toList
+    finalActions = RowId.assignFreshRowIds(protocol, snapshot, finalActions.toIterator, op).toList
     finalActions = DefaultRowCommitVersion
       .assignIfMissing(protocol, finalActions.toIterator, getFirstAttemptVersion).toList
 
