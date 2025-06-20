@@ -33,8 +33,7 @@ class TypeWideningMergeIntoSchemaEvolutionSuite
     extends QueryTest
     with DeltaDMLTestUtils
     with TypeWideningTestMixin
-    with TypeWideningMergeIntoSchemaEvolutionTests
-    with DeltaExcludedBySparkVersionTestMixinShims {
+    with TypeWideningMergeIntoSchemaEvolutionTests {
 
   protected override def sparkConf: SparkConf = {
     super.sparkConf
@@ -46,13 +45,11 @@ class TypeWideningMergeIntoSchemaEvolutionSuite
  * Tests covering type widening during schema evolution in MERGE INTO.
  */
 trait TypeWideningMergeIntoSchemaEvolutionTests
-    extends MergeIntoSQLTestUtils
+    extends DeltaExcludedBySparkVersionTestMixinShims
+    with MergeIntoSQLTestUtils
     with MergeIntoSchemaEvolutionMixin
     with TypeWideningTestCases {
-  self: QueryTest
-    with TypeWideningTestMixin
-    with DeltaDMLTestUtils
-    with DeltaExcludedBySparkVersionTestMixinShims =>
+  self: QueryTest with TypeWideningTestMixin with DeltaDMLTestUtils =>
 
   import testImplicits._
 
