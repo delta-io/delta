@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.delta.DeltaConfigs._
 import org.apache.spark.sql.delta.actions.{Action, AddFile, Metadata, Protocol}
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
@@ -43,7 +44,7 @@ object IcebergCompatV1 extends IcebergCompatBase(
   version = 1,
   icebergFormatVersion = 1,
   config = DeltaConfigs.ICEBERG_COMPAT_V1_ENABLED,
-  requiredTableFeatures = Seq(ColumnMappingTableFeature),
+  tableFeature = IcebergCompatV1TableFeature,
   requiredTableProperties = Seq(RequireColumnMapping),
   incompatibleTableFeatures = Set(DeletionVectorsTableFeature),
   checks = Seq(
@@ -60,7 +61,7 @@ object IcebergCompatV2 extends IcebergCompatBase(
   version = 2,
   icebergFormatVersion = 1,
   config = DeltaConfigs.ICEBERG_COMPAT_V2_ENABLED,
-  requiredTableFeatures = Seq(ColumnMappingTableFeature),
+  tableFeature = IcebergCompatV2TableFeature,
   requiredTableProperties = Seq(RequireColumnMapping),
   incompatibleTableFeatures = Set(DeletionVectorsTableFeature),
   checks = Seq(
@@ -89,15 +90,20 @@ object IcebergCompatV2 extends IcebergCompatBase(
  *                @see [[RequiredDeltaTableProperty]]
  */
 case class IcebergCompatBase(
-    version: Integer,
-    icebergFormatVersion: Integer,
+    version: Int,
+    icebergFormatVersion: Int,
     config: DeltaConfig[Option[Boolean]],
-    requiredTableFeatures: Seq[TableFeature],
+    tableFeature: TableFeature,
     requiredTableProperties: Seq[RequiredDeltaTableProperty[_<:Any]],
     incompatibleTableFeatures: Set[TableFeature] = Set.empty,
     checks: Seq[IcebergCompatCheck]) extends DeltaLogging {
   def isEnabled(metadata: Metadata): Boolean = config.fromMetaData(metadata).getOrElse(false)
 
+  /**
+   * @return true if the feature should be auto enabled on the table created / updated with
+   *         the schema
+   */
+  def shouldAutoEnable(schema: StructType, properties: Map[String, String]): Boolean = false
   /**
    * Expected to be called after the newest metadata and protocol have been ~ finalized.
    *
@@ -138,7 +144,7 @@ case class IcebergCompatBase(
         val tblPropertyUpdates = scala.collection.mutable.Map.empty[String, String]
 
         // Check we have all required table features
-        requiredTableFeatures.foreach { f =>
+        tableFeature.requiredFeatures.foreach { f =>
           (prevProtocol.isFeatureSupported(f), newestProtocol.isFeatureSupported(f)) match {
             case (_, true) => // all good
             case (false, false) => // txn has not supported it! auto-add the table feature
