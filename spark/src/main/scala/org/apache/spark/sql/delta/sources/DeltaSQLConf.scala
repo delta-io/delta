@@ -2315,6 +2315,17 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val REUSE_COLUMN_METADATA_DURING_REPLACE_TABLE =
+    buildConf("columnMapping.reuseColumnMetadataDuringReplace")
+      .internal()
+      .doc(
+        """
+          |If enabled, when a column mapping table is replaced, the new schema will reuse as many
+          |old schema's column mapping metadata (field id and physical name) as possible.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val ALLOW_COLUMN_MAPPING_REMOVAL =
     buildConf("columnMapping.allowRemoval")
       .internal()

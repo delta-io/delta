@@ -16,19 +16,14 @@
 package io.delta.kernel.internal.icebergcompat;
 
 import static io.delta.kernel.internal.tablefeatures.TableFeatures.*;
-import static io.delta.kernel.internal.util.SchemaUtils.concatWithDot;
 import static java.util.stream.Collectors.toList;
 import static java.util.stream.Collectors.toSet;
 
 import io.delta.kernel.exceptions.KernelException;
-import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.tablefeatures.TableFeature;
-import io.delta.kernel.internal.util.ColumnMapping;
-import io.delta.kernel.internal.util.SchemaUtils;
-import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.*;
 import java.util.*;
 import java.util.stream.Stream;
@@ -85,8 +80,8 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
    */
   public static void validateIcebergWriterCompatV1Change(
       Map<String, String> oldConfig, Map<String, String> newConfig, boolean isNewTable) {
-    validateIcebergWriterCompatChange(
-        oldConfig, newConfig, isNewTable, TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED);
+    blockConfigChangeOnExistingTable(
+        TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED, oldConfig, newConfig, isNewTable);
   }
 
   /**
@@ -152,38 +147,6 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
               TYPE_WIDENING_RW_FEATURE,
               TYPE_WIDENING_RW_PREVIEW_FEATURE)
           .collect(toSet());
-
-  /**
-   * Checks that in the schema column mapping is set up such that the physicalName is equal to
-   * "col-[fieldId]". This check assumes column mapping is enabled (and so should be performed after
-   * that check).
-   */
-  private static final IcebergCompatCheck PHYSICAL_NAMES_MATCH_FIELD_IDS_CHECK =
-      (inputContext) -> {
-        List<Tuple2<List<String>, StructField>> invalidFields =
-            SchemaUtils.filterRecursively(
-                inputContext.newMetadata.getSchema(),
-                /* recurseIntoMapAndArrayTypes= */ true,
-                /* stopOnFirstMatch = */ false,
-                field -> {
-                  String physicalName = ColumnMapping.getPhysicalName(field);
-                  long columnId = ColumnMapping.getColumnId(field);
-                  return !physicalName.equals(String.format("col-%s", columnId));
-                });
-        if (!invalidFields.isEmpty()) {
-          List<String> invalidFieldsFormatted =
-              invalidFields.stream()
-                  .map(
-                      pair ->
-                          String.format(
-                              "%s(physicalName='%s', columnId=%s)",
-                              concatWithDot(pair._1),
-                              ColumnMapping.getPhysicalName(pair._2),
-                              ColumnMapping.getColumnId(pair._2)))
-                  .collect(toList());
-          throw DeltaErrors.icebergWriterCompatInvalidPhysicalName(invalidFieldsFormatted);
-        }
-      };
 
   @Override
   String compatFeatureName() {

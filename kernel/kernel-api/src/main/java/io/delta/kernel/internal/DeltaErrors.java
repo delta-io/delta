@@ -330,7 +330,7 @@ public final class DeltaErrors {
         format("%s: requires the feature '%s' to be enabled.", compatVersion, feature));
   }
 
-  public static KernelException enablingIcebergWriterCompatV1OnExistingTable(String key) {
+  public static KernelException enablingIcebergCompatFeatureOnExistingTable(String key) {
     return new KernelException(
         String.format(
             "Cannot enable %s on an existing table. "
@@ -346,7 +346,7 @@ public final class DeltaErrors {
             invalidFields));
   }
 
-  public static KernelException disablingIcebergWriterCompatV1OnExistingTable(String key) {
+  public static KernelException disablingIcebergCompatFeatureOnExistingTable(String key) {
     return new KernelException(
         String.format("Disabling %s on an existing table is not allowed.", key));
   }
