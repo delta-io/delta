@@ -499,7 +499,14 @@ trait MergeIntoSchemaEvolutionBaseTests {
     confs = Seq(SQLConf.CASE_SENSITIVE.key -> "false")
   )
 
-  // TODO: Add a test for case-sensitive insert and column not in target
+//  testEvolution("case-sensitive insert, column not in target")(
+//    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "VALUE"),
+//    sourceData = Seq((1, 1), (2, 2)).toDF("key", "value"),
+//    clauses = insert("(key, value) VALUES (s.key, s.value)") :: Nil,
+//    expectErrorContains = "Cannot resolve s.value in INSERT CLAUSE",
+//    expectErrorWithoutEvolutionContains = "Cannot resolve s.value in INSERT CLAUSE",
+//    confs = Seq(SQLConf.CASE_SENSITIVE.key -> "true")
+//  )
 
   testEvolution("case-sensitive insert, column not in source")(
     targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
@@ -508,6 +515,34 @@ trait MergeIntoSchemaEvolutionBaseTests {
     expectErrorContains = "Cannot resolve s.value in INSERT clause",
     expectErrorWithoutEvolutionContains = "Cannot resolve s.value in INSERT clause",
     confs = Seq(SQLConf.CASE_SENSITIVE.key -> "true")
+  )
+
+  testEvolution("case-insensitive update")(
+    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
+    sourceData = Seq((1, 1, "extra1"), (2, 2, "extra2")).toDF("key", "value", "EXTRA"),
+    clauses = update(set = "key = s.key, value = s.value, extra = s.extra") :: Nil,
+    expected = ((0, 0, null) +: (1, 1, "extra1") +: (3, 30, null) +: Nil)
+      .toDF("key", "value", "extra"),
+    expectErrorWithoutEvolutionContains = "Cannot resolve extra in UPDATE clause",
+    confs = Seq(SQLConf.CASE_SENSITIVE.key -> "false")
+  )
+
+  testEvolution("case-sensitive update")(
+    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
+    sourceData = Seq((1, 1, "extra1"), (2, 2, "extra2")).toDF("key", "value", "EXTRA"),
+    clauses = update(set = "key = s.key, value = s.value, extra = s.extra") :: Nil,
+    expectErrorContains = "Cannot resolve s.extra in UPDATE clause",
+    expectErrorWithoutEvolutionContains = "Cannot resolve s.extra in UPDATE CLAUSE",
+    confs = Seq(SQLConf.CASE_SENSITIVE.key -> "true")
+  )
+
+  testEvolution("evolve non-lowercased columns in update")(
+    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
+    sourceData = Seq((1, 100, "a"), (2, 200, "b")).toDF("key", "value", "newCol"),
+    clauses = update(set = "value = s.value, newCol = s.newCol") :: Nil,
+    expected = ((0, 0, null) +: (1, 100, "a") +: (3, 30, null) +: Nil)
+      .toDF("key", "value", "newCol"),
+    expectErrorWithoutEvolutionContains = "column `newCol` not found given columns"
   )
 
   testEvolution("evolve partitioned table")(
