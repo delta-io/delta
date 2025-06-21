@@ -5,9 +5,13 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.types.*;
 
 public class PageToken {
+  /** Variables to know where last page ends (current page starts) */
   private final String startingFileName;
+
   private final long rowIndex;
   private final long sidecarIdx;
+
+  /** Variables for validating query params */
   private final long logSegmentHash;
 
   private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -27,12 +31,12 @@ public class PageToken {
     return rowIndex;
   }
 
-  public long getLogSegmentHash() {
-    return logSegmentHash;
-  }
-
   public long getSidecarIdx() {
     return sidecarIdx;
+  }
+
+  public long getLogSegmentHash() {
+    return logSegmentHash;
   }
 
   /** Convert PageToken to a Kernel Row object. */
@@ -49,7 +53,7 @@ public class PageToken {
   }
 
   /** Create a PageToken from a Row object */
-  public PageToken fromRow(Row row) {
+  public static PageToken fromRow(Row row) {
     String fileName = row.getString(0);
     long rowIdx = row.getLong(1);
     long sideCarIdx = row.getLong(2);

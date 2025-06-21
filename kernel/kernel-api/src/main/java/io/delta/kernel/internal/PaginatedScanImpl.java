@@ -1,6 +1,7 @@
 package io.delta.kernel.internal;
 
 import io.delta.kernel.PaginatedScan;
+import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
@@ -14,15 +15,13 @@ import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import java.util.HashSet;
 import java.util.Optional;
-import java.util.Set;
 
 public class PaginatedScanImpl implements PaginatedScan {
 
-  private final String startingLogFileName;
-  private final long numOfAddFilesToSkip;
   private final long pageSize;
-  private PageToken pageToken;
+  private final PageToken pageToken;
   private final ScanImpl baseScan;
+  private PaginatedAddFilesIterator paginatedIter;
 
   public PaginatedScanImpl(
       StructType snapshotSchema,
@@ -33,7 +32,7 @@ public class PaginatedScanImpl implements PaginatedScan {
       Optional<Predicate> filter,
       Path dataPath,
       SnapshotReport snapshotReport,
-      String pageTokenString,
+      Row pageTokenInRow,
       long pageSize) {
     baseScan =
         new ScanImpl(
@@ -45,11 +44,11 @@ public class PaginatedScanImpl implements PaginatedScan {
             filter,
             dataPath,
             snapshotReport);
-    this.pageToken = decodePageToken(pageTokenString);
-    // TODO: if we need check table version and predicates here?
-    assert pageToken != null;
-    this.startingLogFileName = pageToken.getStartingFileName();
-    this.numOfAddFilesToSkip = pageToken.getRowIndex();
+    assert pageTokenInRow != null;
+    this.pageToken = decodePageToken(pageTokenInRow);
+    // TODO: validation 1. LopReplay.getLogSegment() 2. data Path 3. snapshotReport.getVersion();
+    // [maybe can use snapshotReport.getCheckpointVersion()]
+    // TODO: not sure how to check: 1. predicate(filter) 2. Kernel Version ID
     this.pageSize = pageSize;
   }
 
@@ -70,16 +69,15 @@ public class PaginatedScanImpl implements PaginatedScan {
 
   public CloseableIterator<FilteredColumnarBatch> getScanFiles(
       Engine engine, boolean includeStates) {
-
-    // hash set related
-    boolean isHashSetCached = false; // default to be false
+    // TODO: update code here
+    boolean isHashSetCached = false;
     HashSet<LogReplayUtils.UniqueFileActionTuple> tombstonesFromJson = new HashSet<>();
     HashSet<LogReplayUtils.UniqueFileActionTuple> addFilesFromJson = new HashSet<>();
 
     PaginationContext paginationContext =
         new PaginationContext(
-            startingLogFileName,
-            numOfAddFilesToSkip,
+            pageToken.getStartingFileName(),
+            pageToken.getRowIndex(),
             pageToken.getSidecarIdx(),
             pageSize,
             isHashSetCached,
@@ -88,39 +86,22 @@ public class PaginatedScanImpl implements PaginatedScan {
 
     CloseableIterator<FilteredColumnarBatch> scanFileIter =
         baseScan.getScanFiles(engine, includeStates, paginationContext);
-    PaginatedAddFilesIterator paginatedIter =
-        new PaginatedAddFilesIterator(scanFileIter, paginationContext);
-    this.pageToken =
-        new PageToken(
-            paginatedIter.getNextStartingLogFileName(),
-            paginatedIter.getNumAddFilesToSkipForNextPage(),
-            0,
-            0); // update page token
+    this.paginatedIter = new PaginatedAddFilesIterator(scanFileIter, paginationContext);
     return paginatedIter;
   }
 
-  // TODO: remove these two methods, page token received should be of Row Type
-  private PageToken decodePageToken(String pageTokenString) {
-    return null;
-  }
-
-  private String encodePageToken(PageToken pageToken) {
-    return "ada";
-  }
-
   // TODO: implement following methods
-  @Override
-  public String getNewPageTokenString() {
-    return encodePageToken(this.pageToken);
+  private PageToken decodePageToken(Row pageTokenInRow) {
+    return PageToken.fromRow(pageTokenInRow);
   }
 
   @Override
-  public Set<LogReplayUtils.UniqueFileActionTuple> getTombStoneFromJson() {
-    return null;
+  public Row getNewPageToken() {
+    return paginatedIter.getNewPageToken().getRow();
   }
 
   @Override
-  public Set<LogReplayUtils.UniqueFileActionTuple> getAddFilesFromJson() {
+  public ColumnarBatch getTombStoneHashsets() {
     return null;
   }
 }

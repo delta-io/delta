@@ -55,9 +55,8 @@ public class PaginatedAddFilesIterator implements CloseableIterator<FilteredColu
         numAddFilesRead = 0;
       }
       long numActiveAddFiles =
-          batch
-              .getNumOfTrueRows(); // lower long: primitive / Long: box primitive - this can be
-                                   // null; long is preferred.
+          batch.getNumOfTrueRows(); // lower long: primitive / Long: box primitive - this can be
+      // null; long is preferred.
       // TODO: change number of AddFiles Skipped to rowNum
       long rowNum = batch.getData().getSize(); // number of rows
 
@@ -127,16 +126,13 @@ public class PaginatedAddFilesIterator implements CloseableIterator<FilteredColu
     }
   }
 
-  public long getNumAddFilesToSkipForNextPage() {
-    return numAddFilesRead;
-  }
-
-  public String getNextStartingLogFileName() {
-    return lastLogFileName;
-  }
-
-  public PageToken getNextPageToken() {
+  public PageToken getNewPageToken() {
     // return sidecarIdx-1 because first file is re-read.
+    // check if hasNext() is false? if it's true, throw exception?
+    if (hasNext()) {
+      // TODO: what exception should be thrown here?
+      throw new RuntimeException("Page token is unavailable at this point!!!");
+    }
     return new PageToken(lastLogFileName, numAddFilesRead, sidecarIdx - 1, -1);
   }
 }
