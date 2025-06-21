@@ -102,7 +102,7 @@ class IcebergConversionTransaction(
     def add(add: AddFile): Unit = throw new UnsupportedOperationException
     def add(remove: RemoveFile): Unit = throw new UnsupportedOperationException
 
-    def commit(deltaCommitVersion: Long): Unit = {
+    def commit(expectedSequenceNumber: Long): Unit = {
       assert(!committed, "Already committed.")
       impl.commit()
       committed = true
