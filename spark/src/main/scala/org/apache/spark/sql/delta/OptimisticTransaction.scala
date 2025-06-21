@@ -374,8 +374,29 @@ trait OptimisticTransactionImpl extends TransactionHelper
   def readVersion: Long = snapshot.version
 
   /** Creates new metadata with global Delta configuration defaults. */
-  private def withGlobalConfigDefaults(metadata: Metadata): Metadata = {
-    val conf = spark.sessionState.conf
+  private def withGlobalConfigDefaults(
+      metadata: Metadata,
+      unsetDefaultCatalogOwnedConf: Boolean = false): Metadata = {
+    val conf = if (unsetDefaultCatalogOwnedConf) {
+      // Disable any potential default CO enablement from [[SparkSession]] during REPLACE commands.
+      // This prevents any unintended modifications to the `newProtocol`.
+      // E.g., [[CatalogOwnedTableFeature]] and its dependent features
+      //       [[InCommitTimestampTableFeature]] & [[VacuumProtocolCheckTableFeature]].
+      //
+      // Note that this does *not* affect global spark conf state as we are modifying
+      // the copy of `spark.sessionState.conf`. Thus, `defaultCatalogOwnedFeatureEnabledKey`
+      // will remain unchanged for any concurrent operations that use the same SparkSession.
+      val defaultCatalogOwnedFeatureEnabledKey =
+        TableFeatureProtocolUtils.defaultPropertyKey(CatalogOwnedTableFeature)
+      // Isolate the spark conf to be used in the subsequent [[DeltaConfigs.mergeGlobalConfigs]]
+      // by cloning the existing configuration.
+      val clonedConf = spark.sessionState.conf.clone()
+      // Unset default CC conf on the cloned spark conf.
+      clonedConf.unsetConf(defaultCatalogOwnedFeatureEnabledKey)
+      clonedConf
+    } else {
+      spark.sessionState.conf
+    }
     metadata.copy(configuration = DeltaConfigs.mergeGlobalConfigs(
       conf, metadata.configuration))
   }
@@ -544,7 +565,10 @@ trait OptimisticTransactionImpl extends TransactionHelper
       // We need to ignore the default properties when trying to create an exact copy of a table
       // (as in CLONE and SHALLOW CLONE).
       if (!ignoreDefaultProperties) {
-        newMetadataTmp = withGlobalConfigDefaults(newMetadataTmp)
+        newMetadataTmp = withGlobalConfigDefaults(
+          newMetadataTmp,
+          // Unset default CatalogOwned enablement if this is an active REPLACE command.
+          unsetDefaultCatalogOwnedConf = readVersion != -1 && isCreatingNewTable)
       }
       isCreatingNewTable = true
     }
@@ -806,42 +830,12 @@ trait OptimisticTransactionImpl extends TransactionHelper
       CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS
     var newConfs: Map[String, String] = newConfsWithoutCC ++ existingCCConfs ++
       existingUCTableIdConf
-
-    val isCatalogOwnedEnabledBeforeReplace = snapshot.protocol
-      .readerAndWriterFeatureNames.contains(CatalogOwnedTableFeature.name)
-    if (!isCatalogOwnedEnabledBeforeReplace) {
-      // Ignore the [[CatalogOwnedTableFeature]] if we are replacing an existing normal
-      // table *without* CatalogOwned enabled.
-      // This removes [[CatalogOwnedTableFeature]] that may have been added as a result of
-      // the CatalogOwned spark configuration that enables it by default.
-      // Users are *NOT* allowed to create a Catalog-Owned table with REPLACE TABLE
-      // so it's fine to filter it out here.
-      newProtocol = newProtocol.map(CatalogOwnedTableUtils.filterOutCatalogOwnedTableFeature)
-
-      val isICTEnabledBeforeReplace = existingICTConfs.nonEmpty ||
-        // To prevent any potential protocol downgrade issue we check the existing
-        // protocol as well.
-        snapshot.protocol.readerAndWriterFeatureNames
-          .contains(InCommitTimestampTableFeature.name)
-      // Note that we only need to get explicit ICT configurations from `newConfs` here,
-      // because all the default spark configurations should have been merged in the prior
-      // `updateMetadataForNewTable` call.
-      val isEnablingICTDuringReplace =
-        CoordinatedCommitsUtils.getExplicitICTConfigurations(newConfs).nonEmpty
-      if (!isICTEnabledBeforeReplace && !isEnablingICTDuringReplace) {
-        // If existing table does *not* have ICT enabled, and we are *not* trying
-        // to enable ICT manually through explicit overrides, then we should
-        // filter any unintended [[InCommitTimestampTableFeature]] out here.
-        newProtocol = newProtocol.map { p =>
-          p.copy(writerFeatures = p.writerFeatures.map(
-              _.filterNot(_ == InCommitTimestampTableFeature.name)))
-        }
-      }
-    }
     // We also need to retain the existing ICT dependency configurations, but only when the
     // existing table does have Coordinated Commits configurations or Catalog-Owned enabled.
     // Otherwise, we treat the ICT configurations the same as any other configurations,
     // by merging them from the default.
+    val isCatalogOwnedEnabledBeforeReplace = snapshot.protocol
+      .readerAndWriterFeatureNames.contains(CatalogOwnedTableFeature.name)
     if (existingCCConfs.nonEmpty || isCatalogOwnedEnabledBeforeReplace) {
       val newConfsWithoutICT = newConfs -- CoordinatedCommitsUtils.ICT_TABLE_PROPERTY_KEYS
       newConfs = newConfsWithoutICT ++ existingICTConfs
