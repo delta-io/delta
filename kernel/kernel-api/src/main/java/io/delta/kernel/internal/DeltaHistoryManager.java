@@ -390,7 +390,7 @@ public final class DeltaHistoryManager {
     while (commits.hasNext()) {
       Commit newElem = commits.next();
       assert (prevVersion < newElem.version); // Verify commits are ordered
-      if (prevTimestamp >= newElem.timestamp) {
+      if (prevTimestamp > newElem.timestamp) {
         logger.warn(
             "Found Delta commit {} with a timestamp {} which is greater than the next "
                 + "commit timestamp {}.",
