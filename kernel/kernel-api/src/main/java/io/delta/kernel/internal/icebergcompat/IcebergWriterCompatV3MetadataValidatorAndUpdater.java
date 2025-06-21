@@ -24,46 +24,17 @@ import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.tablefeatures.TableFeature;
-import io.delta.kernel.types.*;
-import java.util.*;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Stream;
 
-/**
- * Performs the validations and updates necessary to support the table feature IcebergWriterCompatV1
- * when it is enabled by the table property "delta.enableIcebergWriterCompatV1".
- *
- * <p>Requires that the following table properties are set to the specified values. If they are set
- * to an invalid value, throws an exception. If they are not set, enable them if possible.
- *
- * <ul>
- *   <li>Requires ID column mapping mode (cannot be enabled on existing table).
- *   <li>Requires icebergCompatV2 to be enabled.
- * </ul>
- *
- * <p>Checks that required table features are enabled: icebergCompatWriterV1, icebergCompatV2,
- * columnMapping
- *
- * <p>Checks the following:
- *
- * <ul>
- *   <li>Checks that all table features supported in the table's protocol are in the allow-list of
- *       table features. This simultaneously ensures that any unsupported features are not present
- *       (e.g. CDF, variant type, etc).
- *   <li>Checks that there are no fields with data type byte or short.
- *   <li>Checks that the table feature `invariants` is not active in the table (i.e. there are no
- *       invariants in the table schema). This is a special case where the incompatible feature
- *       `invariants` is in the allow-list of features since it is included by default in the table
- *       protocol for new tables. Since it is incompatible we must verify that it is inactive in the
- *       table.
- * </ul>
- *
- * TODO additional enforcements coming in (ie physicalName=fieldId)
- */
-public class IcebergWriterCompatV1MetadataValidatorAndUpdater
+public class IcebergWriterCompatV3MetadataValidatorAndUpdater
     extends IcebergWriterCompatMetadataValidatorAndUpdater {
 
   /**
-   * Validates that any change to property {@link TableConfig#ICEBERG_WRITER_COMPAT_V1_ENABLED} is
+   * Validates that any change to property {@link TableConfig#ICEBERG_WRITER_COMPAT_V3_ENABLED} is
    * valid. Currently, the changes we support are
    *
    * <ul>
@@ -78,22 +49,22 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
    *   <li>Enabling on an existing table (false to true)
    * </ul>
    */
-  public static void validateIcebergWriterCompatV1Change(
+  public static void validateIcebergWriterCompatV3Change(
       Map<String, String> oldConfig, Map<String, String> newConfig, boolean isNewTable) {
     blockConfigChangeOnExistingTable(
-        TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED, oldConfig, newConfig, isNewTable);
+        TableConfig.ICEBERG_WRITER_COMPAT_V3_ENABLED, oldConfig, newConfig, isNewTable);
   }
 
   /**
-   * Validate and update the given Iceberg Writer Compat V1 metadata.
+   * Validate and update the given Iceberg Writer Compat V3 metadata.
    *
    * @param newMetadata Metadata after the current updates
    * @param newProtocol Protocol after the current updates
    * @return The updated metadata if the metadata is valid and updated, otherwise empty.
-   * @throws UnsupportedOperationException if the metadata is not compatible with Iceberg Writer V1
+   * @throws UnsupportedOperationException if the metadata is not compatible with Iceberg Writer V3
    *     requirements
    */
-  public static Optional<Metadata> validateAndUpdateIcebergWriterCompatV1Metadata(
+  public static Optional<Metadata> validateAndUpdateIcebergWriterCompatV3Metadata(
       boolean isCreatingNewTable, Metadata newMetadata, Protocol newProtocol) {
     return INSTANCE.validateAndUpdateMetadata(
         new IcebergCompatInputContext(
@@ -101,67 +72,75 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
   }
 
   /// //////////////////////////////////////////////////////////////////////////////
-  /// Define the compatibility and update checks for icebergWriterCompatV1       ///
+  /// Define the compatibility and update checks for icebergWriterCompatV3       ///
   /// //////////////////////////////////////////////////////////////////////////////
 
-  private static final IcebergWriterCompatV1MetadataValidatorAndUpdater INSTANCE =
-      new IcebergWriterCompatV1MetadataValidatorAndUpdater();
+  private static final IcebergWriterCompatV3MetadataValidatorAndUpdater INSTANCE =
+      new IcebergWriterCompatV3MetadataValidatorAndUpdater();
 
   /**
-   * Enforcer for Iceberg compatibility V2 (required by V1). Ensures the ICEBERG_COMPAT_V2_ENABLED
-   * property is set to "true" and delegates validation to the V2 metadata validator.
+   * Enforcer for Iceberg compatibility V3. Ensures the ICEBERG_COMPAT_V3_ENABLED property is set to
+   * "true" and delegates validation to the V3 metadata validator.
    */
   private static final IcebergCompatRequiredTablePropertyEnforcer<Boolean>
-      ICEBERG_COMPAT_V2_ENABLED =
+      ICEBERG_COMPAT_V3_ENABLED =
           createIcebergCompatEnforcer(
-              TableConfig.ICEBERG_COMPAT_V2_ENABLED,
+              TableConfig.ICEBERG_COMPAT_V3_ENABLED,
               (inputContext) ->
-                  IcebergCompatV2MetadataValidatorAndUpdater
-                      .validateAndUpdateIcebergCompatV2Metadata(
+                  IcebergCompatV3MetadataValidatorAndUpdater
+                      .validateAndUpdateIcebergCompatV3Metadata(
                           inputContext.isCreatingNewTable,
                           inputContext.newMetadata,
                           inputContext.newProtocol));
 
   /**
-   * Current set of allowed table features for Iceberg writer compat V1. This combines the common
-   * features with V1-specific features (ICEBERG_COMPAT_V2_W_FEATURE, ICEBERG_WRITER_COMPAT_V1).
+   * Current set of allowed table features for Iceberg writer compat V3. This combines the common
+   * features with V3-specific features including variant support, deletion vectors, and row
+   * tracking.
    */
   private static Set<TableFeature> ALLOWED_TABLE_FEATURES =
       Stream.concat(
               COMMON_ALLOWED_FEATURES.stream(),
-              Stream.of(ICEBERG_COMPAT_V2_W_FEATURE, ICEBERG_WRITER_COMPAT_V1))
+              Stream.of(
+                  ICEBERG_COMPAT_V3_W_FEATURE,
+                  ICEBERG_WRITER_COMPAT_V3,
+                  DELETION_VECTORS_RW_FEATURE,
+                  VARIANT_RW_FEATURE,
+                  VARIANT_SHREDDING_PREVIEW_RW_FEATURE,
+                  VARIANT_RW_PREVIEW_FEATURE,
+                  ROW_TRACKING_W_FEATURE))
           .collect(toSet());
 
   @Override
   String compatFeatureName() {
-    return "icebergWriterCompatV1";
+    return "icebergWriterCompatV3";
   }
 
   @Override
   TableConfig<Boolean> requiredDeltaTableProperty() {
-    return TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED;
+    return TableConfig.ICEBERG_WRITER_COMPAT_V3_ENABLED;
   }
 
   @Override
   List<IcebergCompatRequiredTablePropertyEnforcer> requiredDeltaTableProperties() {
-    return Stream.of(CM_ID_MODE_ENABLED, ICEBERG_COMPAT_V2_ENABLED).collect(toList());
+    return Stream.of(CM_ID_MODE_ENABLED, ICEBERG_COMPAT_V3_ENABLED).collect(toList());
   }
 
   @Override
   List<TableFeature> requiredDependencyTableFeatures() {
     return Stream.of(
-            ICEBERG_WRITER_COMPAT_V1, ICEBERG_COMPAT_V2_W_FEATURE, COLUMN_MAPPING_RW_FEATURE)
+            ICEBERG_WRITER_COMPAT_V3, ICEBERG_COMPAT_V3_W_FEATURE, COLUMN_MAPPING_RW_FEATURE)
         .collect(toList());
-  }
-
-  @Override
-  protected Set<TableFeature> getAllowedTableFeatures() {
-    return ALLOWED_TABLE_FEATURES;
   }
 
   @Override
   List<IcebergCompatCheck> icebergCompatChecks() {
     return Stream.concat(Stream.of(createUnsupportedFeaturesCheck(this)), COMMON_CHECKS.stream())
         .collect(toList());
+  }
+
+  @Override
+  protected Set<TableFeature> getAllowedTableFeatures() {
+    return ALLOWED_TABLE_FEATURES;
   }
 }
