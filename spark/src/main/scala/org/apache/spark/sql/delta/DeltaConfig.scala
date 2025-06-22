@@ -25,7 +25,7 @@ import org.apache.spark.sql.delta.hooks.AutoCompactType
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.{DataSkippingReader, StatisticsCollection}
-import org.apache.spark.sql.delta.util.JsonUtils
+import org.apache.spark.sql.delta.util.{JsonUtils, DeltaSqlParserUtils}
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.util.{DateTimeConstants, IntervalUtils}
@@ -600,7 +600,7 @@ trait DeltaConfigsBase extends DeltaLogging {
     "dataSkippingStatsColumns",
     null,
     v => Option(v),
-    vOpt => vOpt.forall(v => StatisticsCollection.parseDeltaStatsColumnNames(v).isDefined),
+    vOpt => vOpt.forall(v => DeltaSqlParserUtils.parseMultipartColumnList(v).isDefined),
     """
       |The dataSkippingStatsColumns parameter is a comma-separated list of case-insensitive column
       |identifiers. Each column identifier can consist of letters, digits, and underscores.
@@ -613,6 +613,29 @@ trait DeltaConfigsBase extends DeltaLogging {
       |leaf field's name of a struct column, or the name of a struct column. When a struct column's
       |name is specified in dataSkippingStatsColumns, statistics for all its leaf fields will be
       |collected.
+      |""".stripMargin)
+
+  /**
+   * The names of specific columns to use for hierarchical clustering. If present, Liquid will
+   * prioritize clustering the data files based on those columns.
+   */
+  val HIERARCHICAL_CLUSTERING_COLUMNS = buildConfig[Option[String]](
+    "liquid.hierarchicalClusteringColumns",
+    null,
+    v => Option(v),
+    vOpt => vOpt.forall(v => DeltaSqlParserUtils.parseMultipartColumnList(v).isDefined),
+    """
+      |The hierarchicalClusteringColumns parameter is a comma-separated list of
+      |case-insensitive column names. Each column identifier can consist of letters, digits,
+      |and underscores. Multiple column names can be listed, separated by commas.
+      |
+      |E.g. 'delta.liquid.hierarchicalClusteringColumns' = 'col1, col2, col3'
+      |
+      |If a column identifier includes special characters such as !@#$%^&*()_+-={}|[]:";'<>,.?/,
+      |the column name should be enclosed in backticks (`) to escape the special characters.
+      |
+      |When column names are specified in hierarchicalClusteringColumns, Liquid will prioritize
+      |clustering the data files based on those columns.
       |""".stripMargin)
 
   val SYMLINK_FORMAT_MANIFEST_ENABLED = buildConfig[Boolean](

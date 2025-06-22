@@ -39,6 +39,7 @@ import org.apache.spark.sql.delta.schema.SchemaUtils.transformSchema
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DeltaStatistics._
 import org.apache.spark.sql.delta.stats.StatisticsCollection.getIndexedColumns
+import org.apache.spark.sql.delta.util.DeltaSqlParserUtils
 import org.apache.spark.sql.util.ScalaExtensions._
 
 import org.apache.spark.sql._
@@ -414,37 +415,6 @@ object StatisticsCollection extends DeltaCommand {
   val UTF8_MAX_CHARACTER = new String(Character.toChars(Character.MAX_CODE_POINT))
 
   /**
-   * The SQL grammar already includes a `multipartIdentifierList` rule for parsing a string into a
-   * list of multi-part identifiers. We just expose it here, with a custom parser and AstBuilder.
-   */
-  private class SqlParser extends AbstractSqlParser {
-    override val astBuilder = new AstBuilder {
-      override def visitMultipartIdentifierList(ctx: MultipartIdentifierListContext)
-      : Seq[UnresolvedAttribute] = ParserUtils.withOrigin(ctx) {
-        ctx.multipartIdentifier.asScala.toSeq.map(typedVisit[Seq[String]])
-          .map(new UnresolvedAttribute(_))
-      }
-    }
-    def parseMultipartIdentifierList(sqlText: String): Seq[UnresolvedAttribute] = {
-      parse(sqlText) { parser =>
-        astBuilder.visitMultipartIdentifierList(parser.multipartIdentifierList())
-      }
-    }
-  }
-  private val parser = new SqlParser
-
-  /** Parses a comma-separated list of column names; returns None if parsing fails. */
-  def parseDeltaStatsColumnNames(deltaStatsColNames: String): Option[Seq[UnresolvedAttribute]] = {
-    // The parser rejects empty lists, so handle that specially here.
-    if (deltaStatsColNames.trim.isEmpty) return Some(Nil)
-    try {
-      Some(parser.parseMultipartIdentifierList(deltaStatsColNames))
-    } catch {
-      case _: ParseException => None
-    }
-  }
-
-  /**
    * This method is the wrapper method to validates the DATA_SKIPPING_STATS_COLUMNS value of
    * metadata.
    */
@@ -510,7 +480,7 @@ object StatisticsCollection extends DeltaCommand {
       schema: StructType, partitionColumns: Seq[String], deltaStatsColumnsConfigs: String): Unit = {
     val partitionColumnSet = partitionColumns.map(_.toLowerCase(Locale.ROOT)).toSet
     val visitedColumns = ArrayBuffer.empty[String]
-    parseDeltaStatsColumnNames(deltaStatsColumnsConfigs).foreach { columns =>
+    DeltaSqlParserUtils.parseMultipartColumnList(deltaStatsColumnsConfigs).foreach { columns =>
       columns.foreach { columnAttribute =>
         val columnFullPath = columnAttribute.nameParts
         // Delta statistics columns must not be partitioned column.
