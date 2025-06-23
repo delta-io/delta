@@ -1,21 +1,23 @@
 package io.delta.kernel.engine;
 
 import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.internal.fs.Path;
 
 public class ParquetReadResult {
 
   private final ColumnarBatch data;
-  private final String fileName;
+  private final Path filePath;
 
-  public ParquetReadResult(ColumnarBatch data, String fileName) {
+  public ParquetReadResult(ColumnarBatch data, Path filePath) {
     this.data = data;
-    this.fileName = fileName;
+    this.filePath = filePath;
   }
-  public ColumnarBatch getData(){
+
+  public ColumnarBatch getData() {
     return this.data;
   }
 
-  public  String getFileName(){
-    return this.fileName;
+  public Path getFileName() {
+    return this.filePath;
   }
 }
