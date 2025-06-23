@@ -16,22 +16,25 @@
 
 package io.delta.unity;
 
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+
 import io.delta.kernel.ResolvedTable;
 import io.delta.kernel.TableManager;
 import io.delta.kernel.annotation.Experimental;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.files.ParsedLogData;
-import io.delta.kernel.utils.FileStatus;
 import io.delta.storage.commit.Commit;
 import io.delta.storage.commit.GetCommitsResponse;
 import io.delta.storage.commit.uccommitcoordinator.UCClient;
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorException;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import org.apache.hadoop.fs.Path;
 import org.slf4j.Logger;
@@ -48,53 +51,66 @@ public class UCCatalogManagedClient {
   private static final Logger logger = LoggerFactory.getLogger(UCCatalogManagedClient.class);
 
   private final UCClient ucClient;
-  private final String ucTableId;
-  private final String tablePath;
 
-  public UCCatalogManagedClient(UCClient ucClient, String ucTableId, String tablePath) {
+  public UCCatalogManagedClient(UCClient ucClient) {
     this.ucClient = Objects.requireNonNull(ucClient, "ucClient is null");
-    this.ucTableId = Objects.requireNonNull(ucTableId, "ucTableId is null");
-    this.tablePath = Objects.requireNonNull(tablePath, "tablePath is null");
   }
 
   /**
    * Loads a Kernel {@link ResolvedTable} at a specific version.
    *
    * @param engine The Delta Kernel {@link Engine} to use for loading the table.
+   * @param ucTableId The Unity Catalog table ID, which is a unique identifier for the table in UC.
+   * @param tablePath The path to the Delta table in the underlying storage system.
    * @param version The version of the table to load.
-   * @throws IOException if there's an error during the commit process, such as network issues.
-   * @throws UCCommitCoordinatorException if there's an error specific to Unity Catalog such as the
-   *     table not being found.
    */
-  public ResolvedTable loadTable(Engine engine, long version)
-      throws UCCommitCoordinatorException, IOException {
+  public ResolvedTable loadTable(Engine engine, String ucTableId, String tablePath, long version) {
     Objects.requireNonNull(engine, "engine is null");
+    Objects.requireNonNull(ucTableId, "ucTableId is null");
+    Objects.requireNonNull(tablePath, "tablePath is null");
+    checkArgument(version >= 0, "version must be non-negative");
 
     logger.info("[{}] Loading table at version {}", ucTableId, version);
-
-    final GetCommitsResponse response = getRatifiedCommitsFromUC(version);
-
-    validateLoadTableVersionExists(version, response.getLatestTableVersion());
-
+    final GetCommitsResponse response = getRatifiedCommitsFromUC(ucTableId, tablePath, version);
+    validateLoadTableVersionExists(ucTableId, version, response.getLatestTableVersion());
     final List<ParsedLogData> logData =
         getSortedKernelLogDataFromRatifiedCommits(ucTableId, response.getCommits());
 
-    return TableManager.loadTable(tablePath).atVersion(version).withLogData(logData).build(engine);
+    return timeOperation(
+        "TableManager.loadTable",
+        ucTableId,
+        () ->
+            TableManager.loadTable(tablePath)
+                .atVersion(version)
+                .withLogData(logData)
+                .build(engine));
   }
 
-  private GetCommitsResponse getRatifiedCommitsFromUC(long version)
-      throws IOException, UCCommitCoordinatorException {
+  private GetCommitsResponse getRatifiedCommitsFromUC(
+      String ucTableId, String tablePath, long version) {
     logger.info(
         "[{}] Invoking the UCClient to get ratified commits at version {}", ucTableId, version);
 
-    return ucClient.getCommits(
+    return timeOperation(
+        "UCClient.getCommits",
         ucTableId,
-        new Path(tablePath).toUri(),
-        Optional.empty() /* startVersion */,
-        Optional.of(version) /* endVersion */);
+        () -> {
+          try {
+            return ucClient.getCommits(
+                ucTableId,
+                new Path(tablePath).toUri(),
+                Optional.empty() /* startVersion */,
+                Optional.of(version) /* endVersion */);
+          } catch (IOException ex) {
+            throw new UncheckedIOException(ex);
+          } catch (UCCommitCoordinatorException ex) {
+            throw new RuntimeException(ex);
+          }
+        });
   }
 
-  private void validateLoadTableVersionExists(long tableVersionToLoad, long maxRatifiedVersion) {
+  private void validateLoadTableVersionExists(
+      String ucTableId, long tableVersionToLoad, long maxRatifiedVersion) {
     if (tableVersionToLoad > maxRatifiedVersion) {
       throw new IllegalArgumentException(
           String.format(
@@ -103,26 +119,51 @@ public class UCCatalogManagedClient {
     }
   }
 
+  /**
+   * Converts a list of ratified commits into a sorted list of {@link ParsedLogData} for use in
+   * loading a Delta table.
+   */
   @VisibleForTesting
   static List<ParsedLogData> getSortedKernelLogDataFromRatifiedCommits(
       String ucTableId, List<Commit> commits) {
     final List<ParsedLogData> result =
-        commits.stream()
-            .sorted(Comparator.comparingLong(Commit::getVersion))
-            .map(
-                commit -> {
-                  final org.apache.hadoop.fs.FileStatus hadoopFS = commit.getFileStatus();
-                  final io.delta.kernel.utils.FileStatus kernelFS =
-                      FileStatus.of(
-                          hadoopFS.getPath().toString(),
-                          hadoopFS.getLen(),
-                          hadoopFS.getModificationTime());
-                  return ParsedLogData.forFileStatus(kernelFS);
-                })
-            .collect(Collectors.toList());
+        timeOperation(
+            "Sort and convert UC ratified commits into Kernel ParsedLogData",
+            ucTableId,
+            () ->
+                commits.stream()
+                    .sorted(Comparator.comparingLong(Commit::getVersion))
+                    .map(
+                        commit ->
+                            ParsedLogData.forFileStatus(
+                                hadoopFileStatusToKernelFileStatus(commit.getFileStatus())))
+                    .collect(Collectors.toList()));
 
     logger.debug("[{}] Created ParsedLogData from ratified commits: {}", ucTableId, result);
 
     return result;
+  }
+
+  private static io.delta.kernel.utils.FileStatus hadoopFileStatusToKernelFileStatus(
+      org.apache.hadoop.fs.FileStatus hadoopFS) {
+    return io.delta.kernel.utils.FileStatus.of(
+        hadoopFS.getPath().toString(), hadoopFS.getLen(), hadoopFS.getModificationTime());
+  }
+
+  /** Times an operation and logs the duration. */
+  private static <T> T timeOperation(
+      String operationName, String ucTableId, Supplier<T> operation) {
+    final long startTime = System.nanoTime();
+    try {
+      final T result = operation.get();
+      final long durationMs = (System.nanoTime() - startTime) / 1_000_000;
+      logger.info("[{}] {} completed in {} ms", ucTableId, operationName, durationMs);
+      return result;
+    } catch (Exception e) {
+      final long durationMs = (System.nanoTime() - startTime) / 1_000_000;
+      logger.warn(
+          "[{}] {} failed after {} ms: {}", ucTableId, operationName, durationMs, e.getMessage());
+      throw e;
+    }
   }
 }

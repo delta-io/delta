@@ -26,23 +26,19 @@ import org.apache.hadoop.fs.{FileStatus => HadoopFileStatus, Path}
 import org.scalatest.funsuite.AnyFunSuite
 
 /** Unit tests for [[UCCatalogManagedClient]]. */
-class UCCatalogManagedClientSuite extends AnyFunSuite {
+class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestUtils {
 
-  def hadoopCommitFileStatus(version: Int): HadoopFileStatus = {
-    val filePath = FileNames.stagedCommitFile("fake/logPath", version)
-
-    new HadoopFileStatus(
-      version, /* length */
-      false, /* isDir */
-      version, /* blockReplication */
-      version, /* blockSize */
-      version, /* modificationTime */
-      new Path(filePath))
+  test("constructor throws on invalid input") {
+    assertThrows[NullPointerException] {
+      new UCCatalogManagedClient(null)
+    }
   }
 
+  // TODO: loadTable throws on invalid input. We need a non-null UCClient in order to test this.
+
   test("converts UC Commit into Kernel ParsedLogData.RATIFIED_STAGED_COMMIT") {
-    val hadoopFS = hadoopCommitFileStatus(1)
-    val ucCommit = new Commit(1, hadoopFS, 1) /* version, fileStatus, timestamp */
+    val ucCommit = createCommit(1)
+    val hadoopFS = ucCommit.getFileStatus
 
     val kernelParsedLogData = UCCatalogManagedClient
       .getSortedKernelLogDataFromRatifiedCommits("ucTableId", Seq(ucCommit).asJava)
@@ -56,11 +52,7 @@ class UCCatalogManagedClientSuite extends AnyFunSuite {
   }
 
   test("sorts UC commits by version") {
-    val ucCommit1 = new Commit(1, hadoopCommitFileStatus(1), 1) /* version, fileStatus, timestamp */
-    val ucCommit2 = new Commit(2, hadoopCommitFileStatus(2), 2) /* version, fileStatus, timestamp */
-    val ucCommit3 = new Commit(3, hadoopCommitFileStatus(3), 3) /* version, fileStatus, timestamp */
-
-    val ucCommitsUnsorted = Seq(ucCommit2, ucCommit3, ucCommit1).asJava
+    val ucCommitsUnsorted = Seq(createCommit(1), createCommit(2), createCommit(3)).asJava
 
     val kernelParsedLogData = UCCatalogManagedClient
       .getSortedKernelLogDataFromRatifiedCommits("ucTableId", ucCommitsUnsorted)
