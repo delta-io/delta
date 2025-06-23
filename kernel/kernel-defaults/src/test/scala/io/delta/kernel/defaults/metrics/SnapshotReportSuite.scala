@@ -119,36 +119,47 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
 
     // Since we cannot know the actual durations of these we sanity check that they are > 0 and
     // less than the total operation duration whenever they are expected to be non-zero/non-empty
+    val metrics = snapshotReport.getSnapshotMetrics
+
+    // ===== Metric: getTimestampToVersionResolutionDurationNs ends =====
     if (expectations.expectNonEmptyTimestampToVersionResolutionDuration) {
-      assert(snapshotReport.getSnapshotMetrics.getTimestampToVersionResolutionDurationNs.isPresent)
-      assert(snapshotReport.getSnapshotMetrics.getTimestampToVersionResolutionDurationNs.get > 0)
-      assert(snapshotReport.getSnapshotMetrics.getTimestampToVersionResolutionDurationNs.get <
+      assert(metrics.getTimestampToVersionResolutionDurationNs.isPresent)
+      assert(metrics.getTimestampToVersionResolutionDurationNs.get > 0)
+      assert(metrics.getTimestampToVersionResolutionDurationNs.get <
         duration)
     } else {
-      assert(!snapshotReport.getSnapshotMetrics.getTimestampToVersionResolutionDurationNs.isPresent)
+      assert(!metrics.getTimestampToVersionResolutionDurationNs.isPresent)
     }
+
+    // ===== Metric: getLoadInitialDeltaActionsDurationNs ends =====
     if (expectations.expectNonZeroLoadProtocolAndMetadataDuration) {
-      assert(snapshotReport.getSnapshotMetrics.getLoadInitialDeltaActionsDurationNs > 0)
-      assert(snapshotReport.getSnapshotMetrics.getLoadInitialDeltaActionsDurationNs < duration)
+      assert(metrics.getLoadInitialDeltaActionsDurationNs > 0)
+      assert(metrics.getLoadInitialDeltaActionsDurationNs < duration)
     } else {
-      assert(snapshotReport.getSnapshotMetrics.getLoadInitialDeltaActionsDurationNs == 0)
+      assert(metrics.getLoadInitialDeltaActionsDurationNs == 0)
     }
+
+    // ===== Metric: getTimeToBuildLogSegmentForVersionNs ends =====
     if (expectations.expectNonZeroBuildLogSegmentDuration) {
-      assert(snapshotReport.getSnapshotMetrics.getTimeToBuildLogSegmentForVersionNs > 0)
-      assert(snapshotReport.getSnapshotMetrics.getTimeToBuildLogSegmentForVersionNs < duration)
+      assert(metrics.getTimeToBuildLogSegmentForVersionNs > 0)
+      assert(metrics.getTimeToBuildLogSegmentForVersionNs < duration)
     } else {
-      assert(snapshotReport.getSnapshotMetrics.getTimeToBuildLogSegmentForVersionNs == 0)
+      assert(metrics.getTimeToBuildLogSegmentForVersionNs == 0)
     }
+
+    // ===== Metric: getDurationToGetCrcInfoNs ends =====
     if (expectations.expectNonZeroDurationToGetCrcInfo) {
-      assert(snapshotReport.getSnapshotMetrics.getDurationToGetCrcInfoNs > 0)
-      assert(snapshotReport.getSnapshotMetrics.getDurationToGetCrcInfoNs < duration)
+      assert(metrics.getDurationToGetCrcInfoNs > 0)
+      assert(metrics.getDurationToGetCrcInfoNs < duration)
     } else {
-      assert(snapshotReport.getSnapshotMetrics.getDurationToGetCrcInfoNs == 0)
+      assert(metrics.getDurationToGetCrcInfoNs == 0)
     }
+
+    // ===== Metric: loadLogSegmentCloudListCallCount ends =====
     if (expectations.expectNonZeroListingBuildLogSegment) {
-      assert(snapshotReport.getSnapshotMetrics.getNumLogSegmentListCalls > 0)
+      assert(metrics.loadLogSegmentCloudListCallCount() > 0)
     } else {
-      assert(snapshotReport.getSnapshotMetrics.getNumLogSegmentListCalls == 0)
+      assert(metrics.loadLogSegmentCloudListCallCount() == 0)
     }
   }
 
@@ -290,7 +301,8 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
           expectNonEmptyTimestampToVersionResolutionDuration = true,
           expectNonZeroLoadProtocolAndMetadataDuration = false,
           expectNonZeroBuildLogSegmentDuration = false,
-          expectNonZeroDurationToGetCrcInfo = false))
+          expectNonZeroDurationToGetCrcInfo = false,
+          expectNonZeroListingBuildLogSegment = false))
 
       // Test getSnapshotAsOfTimestamp with timestamp=currentTime (does not exist)
       // This fails during timestamp -> version resolution
@@ -307,7 +319,8 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
           expectNonEmptyTimestampToVersionResolutionDuration = true,
           expectNonZeroLoadProtocolAndMetadataDuration = false,
           expectNonZeroBuildLogSegmentDuration = false,
-          expectNonZeroDurationToGetCrcInfo = false))
+          expectNonZeroDurationToGetCrcInfo = false,
+          expectNonZeroListingBuildLogSegment = false))
     }
   }
 

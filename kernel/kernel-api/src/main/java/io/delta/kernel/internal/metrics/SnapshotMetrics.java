@@ -36,7 +36,7 @@ public class SnapshotMetrics {
 
   public final Timer durationToGetCrcInfoTimer = new Timer();
 
-  public final Counter logSegmentListCallCounter = new Counter();
+  public final Counter loadLogSegmentCloudListCallCounter = new Counter();
 
   public SnapshotMetricsResult captureSnapshotMetricsResult() {
     return new SnapshotMetricsResult() {
@@ -48,7 +48,8 @@ public class SnapshotMetrics {
       final long timeToBuildLogSegmentForVersionDurationResult =
           timeToBuildLogSegmentForVersionTimer.totalDurationNs();
       final long durationToGetCrcInfoDurationResult = durationToGetCrcInfoTimer.totalDurationNs();
-      final long numLogSegmentListCalls = logSegmentListCallCounter.value();
+      final long loadLogSegmentCloudListCallCountResult =
+          loadLogSegmentCloudListCallCounter.value();
 
       @Override
       public Optional<Long> getTimestampToVersionResolutionDurationNs() {
@@ -71,8 +72,8 @@ public class SnapshotMetrics {
       }
 
       @Override
-      public long getNumLogSegmentListCalls() {
-        return numLogSegmentListCalls;
+      public long loadLogSegmentCloudListCallCount() {
+        return loadLogSegmentCloudListCallCountResult;
       }
     };
   }
@@ -84,10 +85,11 @@ public class SnapshotMetrics {
             + "loadInitialDeltaActionsTimer=%s, "
             + "timeToBuildLogSegmentForVersionTimer=%s, "
             + "durationToGetCrcInfoTimer=%s, "
-            + "logSegmentListCallCounter=%s)",
+            + "loadLogSegmentCloudListCallCounter=%s)",
         timestampToVersionResolutionTimer,
         loadInitialDeltaActionsTimer,
+        timeToBuildLogSegmentForVersionTimer,
         durationToGetCrcInfoTimer,
-        timeToBuildLogSegmentForVersionTimer);
+        loadLogSegmentCloudListCallCounter);
   }
 }

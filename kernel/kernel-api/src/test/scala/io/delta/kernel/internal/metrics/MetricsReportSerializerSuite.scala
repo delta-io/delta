@@ -46,10 +46,10 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
       snapshotReport.getSnapshotMetrics().getLoadInitialDeltaActionsDurationNs()
     val buildLogSegmentDuration =
       snapshotReport.getSnapshotMetrics().getTimeToBuildLogSegmentForVersionNs()
-    val numLogSegmentListCalls =
-      snapshotReport.getSnapshotMetrics().getNumLogSegmentListCalls()
     val durationToGetCrcInfo =
       snapshotReport.getSnapshotMetrics().getDurationToGetCrcInfoNs()
+    val loadLogSegmentCloudListCallCount =
+      snapshotReport.getSnapshotMetrics().loadLogSegmentCloudListCallCount()
     val exception: Optional[String] = snapshotReport.getException().map(_.toString)
     val expectedJson =
       s"""
@@ -64,9 +64,8 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |"timestampToVersionResolutionDurationNs":${timestampToVersionResolutionDuration},
          |"loadInitialDeltaActionsDurationNs":${loadProtocolAndMetadataDuration},
          |"timeToBuildLogSegmentForVersionNs":${buildLogSegmentDuration},
-         |"durationToGetCrcInfoNs":${durationToGetCrcInfo}
-         |"timeToBuildLogSegmentForVersionNs":${buildLogSegmentDuration},
-         |"numLogSegmentListCalls":${numLogSegmentListCalls}
+         |"durationToGetCrcInfoNs":${durationToGetCrcInfo},
+         |"loadLogSegmentCloudListCallCount":${loadLogSegmentCloudListCallCount}
          |}
          |}
          |""".stripMargin.replaceAll("\n", "")
@@ -79,7 +78,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
     snapshotContext1.getSnapshotMetrics.loadInitialDeltaActionsTimer.record(1000)
     snapshotContext1.getSnapshotMetrics.timeToBuildLogSegmentForVersionTimer.record(500)
     snapshotContext1.getSnapshotMetrics.durationToGetCrcInfoTimer.record(250)
-    snapshotContext1.getSnapshotMetrics.logSegmentListCallCounter.increment(2)
+    snapshotContext1.getSnapshotMetrics.loadLogSegmentCloudListCallCounter.increment(2)
     snapshotContext1.setVersion(25)
     snapshotContext1.setCheckpointVersion(Optional.of(20))
     val exception = new RuntimeException("something something failed")
@@ -91,22 +90,22 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
     // Manually check expected JSON
     val expectedJson =
       s"""
-        |{"tablePath":"/table/path",
-        |"operationType":"Snapshot",
-        |"reportUUID":"${snapshotReport1.getReportUUID()}",
-        |"exception":"$exception",
-        |"version":25,
-        |"checkpointVersion":20,
-        |"providedTimestamp":0,
-        |"snapshotMetrics":{
-        |"timestampToVersionResolutionDurationNs":10,
-        |"loadInitialDeltaActionsDurationNs":1000,
-        |"timeToBuildLogSegmentForVersionNs":500,
-        |"durationToGetCrcInfoNs":250
-        |"numLogSegmentListCalls":2
-        |}
-        |}
-        |""".stripMargin.replaceAll("\n", "")
+         |{"tablePath":"/table/path",
+         |"operationType":"Snapshot",
+         |"reportUUID":"${snapshotReport1.getReportUUID()}",
+         |"exception":"$exception",
+         |"version":25,
+         |"checkpointVersion":20,
+         |"providedTimestamp":0,
+         |"snapshotMetrics":{
+         |"timestampToVersionResolutionDurationNs":10,
+         |"loadInitialDeltaActionsDurationNs":1000,
+         |"timeToBuildLogSegmentForVersionNs":500,
+         |"durationToGetCrcInfoNs":250,
+         |"loadLogSegmentCloudListCallCount":2
+         |}
+         |}
+         |""".stripMargin.replaceAll("\n", "")
     assert(expectedJson == MetricsReportSerializers.serializeSnapshotReport(snapshotReport1))
 
     // Check with test function

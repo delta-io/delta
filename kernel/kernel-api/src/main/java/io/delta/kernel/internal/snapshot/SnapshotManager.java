@@ -181,7 +181,7 @@ public class SnapshotManager {
           public CloseableIterator<FileStatus> listFrom(String filePath) throws IOException {
             // TODO: Also keep track of duration. Note that listing could be spread to
             // iterating over the iterators.
-            snapshotContext.getSnapshotMetrics().logSegmentListCallCounter.increment();
+            snapshotContext.getSnapshotMetrics().loadLogSegmentCloudListCallCounter.increment();
             return super.listFrom(filePath);
           }
         };
