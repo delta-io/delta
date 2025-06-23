@@ -17,6 +17,8 @@
 package io.delta.kernel;
 
 import io.delta.kernel.annotation.Evolving;
+import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StructType;
@@ -65,4 +67,10 @@ public interface ScanBuilder {
 
   /** @return Build the {@link Scan instance} */
   Scan build();
+
+  /** Build a Paginated Scan here */
+  PaginatedScan buildPaginatedScan(Row pageToken, long pageSize);
+
+  /** Build a Paginated Scan with optional tombstone hashsets injected * */
+  PaginatedScan buildPaginatedScan(Row pageToken, long pageSize, ColumnarBatch tombstone);
 }
