@@ -11,7 +11,7 @@ public interface PaginatedScan extends Scan {
   @Override
   CloseableIterator<FilteredColumnarBatch> getScanFiles(Engine engine);
 
-  Row getNewPageToken();
+  Row getCurrentPageToken();
 
-  ColumnarBatch getTombStoneHashsets();
+  ColumnarBatch getLogReplayHashsets();
 }

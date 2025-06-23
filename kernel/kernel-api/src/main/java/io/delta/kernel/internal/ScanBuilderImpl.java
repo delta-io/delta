@@ -90,7 +90,7 @@ public class ScanBuilderImpl implements ScanBuilder {
   }
 
   @Override
-  public PaginatedScan buildPaginatedScan(Row pageToken, long pageSize) {
+  public PaginatedScan buildPaginated(long pageSize, Row pageToken, ColumnarBatch logReplayHashsets) {
     return new PaginatedScanImpl(
         snapshotSchema,
         readSchema,
@@ -102,10 +102,5 @@ public class ScanBuilderImpl implements ScanBuilder {
         snapshotReport,
         pageToken,
         pageSize);
-  }
-
-  @Override
-  public PaginatedScan buildPaginatedScan(Row pageToken, long pageSize, ColumnarBatch tombstones) {
-    return null;
   }
 }
