@@ -27,6 +27,7 @@ import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.checksum.CRCInfo;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.metrics.SnapshotReportImpl;
 import io.delta.kernel.internal.replay.CreateCheckpointIterator;
@@ -49,8 +50,7 @@ public class SnapshotImpl implements Snapshot {
   private final Metadata metadata;
   private final LogSegment logSegment;
   private Optional<Long> inCommitTimestampOpt;
-  private final SnapshotQueryContext snapshotContext;
-  private SnapshotReport snapshotReport;
+  private Lazy<SnapshotReport> lazySnapshotReport;
 
   public SnapshotImpl(
       Path dataPath,
@@ -67,8 +67,12 @@ public class SnapshotImpl implements Snapshot {
     this.protocol = protocol;
     this.metadata = metadata;
     this.inCommitTimestampOpt = Optional.empty();
-    this.snapshotContext = snapshotContext;
-    this.snapshotReport = null;
+
+    // We create the actual Snapshot report lazily (on first access) instead of eagerly in this
+    // constructor because some Snapshot metrics, like {@link
+    // io.delta.kernel.metrics.SnapshotMetricsResult#getLoadSnapshotTotalDurationNs}, are only
+    // completed *after* the Snapshot has been constructed.
+    this.lazySnapshotReport = new Lazy<>(() -> SnapshotReportImpl.forSuccess(snapshotContext));
   }
 
   /////////////////
@@ -128,7 +132,7 @@ public class SnapshotImpl implements Snapshot {
   @Override
   public ScanBuilder getScanBuilder() {
     return new ScanBuilderImpl(
-        dataPath, protocol, metadata, getSchema(), logReplay, snapshotReport);
+        dataPath, protocol, metadata, getSchema(), logReplay, getSnapshotReport());
   }
 
   ///////////////////
@@ -147,21 +151,8 @@ public class SnapshotImpl implements Snapshot {
     return protocol;
   }
 
-  /**
-   * Get the {@link SnapshotReport} for this snapshot. This is generated lazily (on first access)
-   * instead of in the constructor because some Snapshot metrics, like {@link
-   * io.delta.kernel.metrics.SnapshotMetricsResult#getLoadSnapshotTotalDurationNs}, are only
-   * completed *after* the Snapshot has been constructed.
-   */
   public SnapshotReport getSnapshotReport() {
-    if (snapshotReport == null) {
-      synchronized (this) {
-        if (snapshotReport == null) {
-          snapshotReport = SnapshotReportImpl.forSuccess(snapshotContext);
-        }
-      }
-    }
-    return snapshotReport;
+    return lazySnapshotReport.get();
   }
 
   /**
