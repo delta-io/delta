@@ -17,7 +17,7 @@ public class ParquetReadResult {
     return this.data;
   }
 
-  public Path getFileName() {
+  public Path getFilePath() {
     return this.filePath;
   }
 }
