@@ -194,8 +194,7 @@ class DummyCatalogWithNamespace extends DummyCatalog with SupportsNamespaces {
   // To load a catalog into spark CatalogPlugin calls the Catalog's no-arg constructor and
   // then Catalog.initialize. To have a consistent state across different invocations
   // in the same test, this catalog impl uses a hard coded path.
-  override lazy val tempDir: Path = new Path(
-    FileUtils.getTempDirectory.toString + "/DeltaTableForNameSuite")
+  override lazy val tempDir: Path = DummyCatalogWithNamespace.catalogDir
   // scalastyle:off deltahadoopconfiguration
   override lazy val fs: FileSystem =
     tempDir.getFileSystem(spark.sessionState.newHadoopConf())
@@ -307,4 +306,8 @@ class DummyCatalogWithNamespace extends DummyCatalog with SupportsNamespaces {
   override def loadNamespaceMetadata(namespace: Array[String]): util.Map[String, String] = {
     new util.HashMap[String, String]()
   }
+}
+
+object DummyCatalogWithNamespace {
+  val catalogDir: Path = new Path(Utils.createTempDir().getAbsolutePath)
 }

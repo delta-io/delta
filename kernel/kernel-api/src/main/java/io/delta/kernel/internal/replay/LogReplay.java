@@ -138,6 +138,7 @@ public class LogReplay {
   private final Lazy<Tuple2<Protocol, Metadata>> lazyProtocolAndMetadata;
   private final Lazy<Map<String, DomainMetadata>> lazyActiveDomainMetadataMap;
   private final CrcInfoContext crcInfoContext;
+  private final SnapshotMetrics snapshotMetrics;
 
   public LogReplay(
       Path dataPath,
@@ -162,6 +163,7 @@ public class LogReplay {
                     .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue)));
 
     this.crcInfoContext = new CrcInfoContext(engine);
+    this.snapshotMetrics = snapshotMetrics;
   }
 
   /////////////////
@@ -254,31 +256,30 @@ public class LogReplay {
   private Lazy<Tuple2<Protocol, Metadata>> createLazyProtocolAndMetadata(
       Engine engine, Optional<SnapshotHint> hint, SnapshotMetrics snapshotMetrics) {
     return new Lazy<>(
-        () -> {
-          final long targetVersion = getVersion();
+        () ->
+            snapshotMetrics.loadInitialDeltaActionsTimer.time(
+                () -> {
+                  final long targetVersion = getVersion();
 
-          // Ignore the snapshot hint whose version is larger than the snapshot version.
-          Optional<SnapshotHint> baseHint = hint;
-          if (hint.isPresent() && hint.get().getVersion() > targetVersion) {
-            baseHint = Optional.empty();
-          }
+                  // Ignore the snapshot hint whose version is larger than the snapshot version.
+                  Optional<SnapshotHint> baseHint = hint;
+                  if (hint.isPresent() && hint.get().getVersion() > targetVersion) {
+                    baseHint = Optional.empty();
+                  }
 
-          final Optional<SnapshotHint> newestHint =
-              crcInfoContext.maybeGetNewerSnapshotHintAndUpdateCache(
-                  engine, getLogSegment(), baseHint, targetVersion);
+                  final Optional<SnapshotHint> newestHint =
+                      crcInfoContext.maybeGetNewerSnapshotHintAndUpdateCache(
+                          engine, getLogSegment(), baseHint, targetVersion);
 
-          return snapshotMetrics.loadInitialDeltaActionsTimer.time(
-              () -> {
-                Tuple2<Protocol, Metadata> protocolAndMetadata =
-                    loadTableProtocolAndMetadata(
-                        engine, getLogSegment(), newestHint, targetVersion);
+                  Tuple2<Protocol, Metadata> protocolAndMetadata =
+                      loadTableProtocolAndMetadata(
+                          engine, getLogSegment(), newestHint, targetVersion);
 
-                TableFeatures.validateKernelCanReadTheTable(
-                    protocolAndMetadata._1, dataPath.toString());
+                  TableFeatures.validateKernelCanReadTheTable(
+                      protocolAndMetadata._1, dataPath.toString());
 
-                return protocolAndMetadata;
-              });
-        });
+                  return protocolAndMetadata;
+                }));
   }
 
   /**
@@ -598,7 +599,10 @@ public class LogReplay {
               .filter(
                   checksum ->
                       FileNames.getFileVersion(new Path(checksum.getPath())) >= crcReadLowerBound)
-              .flatMap(checksum -> ChecksumReader.getCRCInfo(engine, checksum));
+              .flatMap(
+                  checksum ->
+                      snapshotMetrics.durationToGetCrcInfoTimer.time(
+                          () -> ChecksumReader.getCRCInfo(engine, checksum)));
 
       if (!crcInfoOpt.isPresent()) {
         return snapshotHint;

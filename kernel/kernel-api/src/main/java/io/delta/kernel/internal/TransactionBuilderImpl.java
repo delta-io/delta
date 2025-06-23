@@ -38,6 +38,7 @@ import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.clustering.ClusteringUtils;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.icebergcompat.IcebergCompatV2MetadataValidatorAndUpdater;
+import io.delta.kernel.internal.icebergcompat.IcebergCompatV3MetadataValidatorAndUpdater;
 import io.delta.kernel.internal.icebergcompat.IcebergUniversalFormatMetadataValidatorAndUpdater;
 import io.delta.kernel.internal.icebergcompat.IcebergWriterCompatV1MetadataValidatorAndUpdater;
 import io.delta.kernel.internal.lang.Lazy;
@@ -82,6 +83,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   // case-preserved column names or physical column names if column mapping is enabled.
   // This would only be set after schema resolution and must align with the resolved schema.
   private Optional<List<Column>> resolvedClusteringColumns = Optional.empty();
+  private boolean shouldUpdateClusteringDomainMetadata = false;
 
   protected final TableImpl table;
   protected Optional<StructType> schema = Optional.empty();
@@ -253,6 +255,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
             || enablesDomainMetadataSupport; // domain metadata support added
 
     if (!needsMetadataOrProtocolUpdate) {
+      // TODO: fix this https://github.com/delta-io/delta/issues/4713
       // Return early if there is no metadata or protocol updates and isCreateOrReplace=false
       new TransactionImpl(
           false, // isCreateOrReplace
@@ -264,7 +267,9 @@ public class TransactionBuilderImpl implements TransactionBuilder {
           latestSnapshot.get().getProtocol(), // reuse latest protocol
           latestSnapshot.get().getMetadata(), // reuse latest metadata
           setTxnOpt,
-          Optional.empty(), /* clustering cols=empty */
+          // TODO: not yet initialized, fix it as part of #4713
+          resolvedClusteringColumns, /* clustering cols=empty */
+          false /* shouldUpdateClusteringDomainMetadata=false */,
           false /* shouldUpdateMetadata=false */,
           false /* shouldUpdateProtocol=false */,
           maxRetries,
@@ -331,6 +336,14 @@ public class TransactionBuilderImpl implements TransactionBuilder {
 
     // Block this for now - in a future PR we will enable this
     if (operation == Operation.REPLACE_TABLE) {
+      if (newProtocol
+          .orElse(baseProtocol)
+          .supportsFeature(TableFeatures.ICEBERG_COMPAT_V3_W_FEATURE)) {
+        // Block this for now to be safe, we will return to this in the future
+        // once replace for rowTracking is enabled
+        throw new UnsupportedOperationException(
+            "REPLACE TABLE is not yet supported on IcebergCompatV3 tables");
+      }
       if (newProtocol.orElse(baseProtocol).supportsFeature(TableFeatures.ROW_TRACKING_W_FEATURE)) {
         // Block this for now to be safe, we will return to this in the future
         throw new UnsupportedOperationException(
@@ -349,6 +362,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         newMetadata.orElse(baseMetadata),
         setTxnOpt,
         resolvedClusteringColumns,
+        shouldUpdateClusteringDomainMetadata,
         newMetadata.isPresent() || isCreateOrReplace /* shouldUpdateMetadata */,
         newProtocol.isPresent() || isCreateOrReplace /* shouldUpdateProtocol */,
         maxRetries,
@@ -450,6 +464,10 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         metadata ->
             IcebergWriterCompatV1MetadataValidatorAndUpdater.validateIcebergWriterCompatV1Change(
                 baseMetadata.getConfiguration(), metadata.getConfiguration(), isCreateOrReplace));
+    newMetadata.ifPresent(
+        metadata ->
+            IcebergCompatV3MetadataValidatorAndUpdater.validateIcebergCompatV3Change(
+                baseMetadata.getConfiguration(), metadata.getConfiguration(), isCreateOrReplace));
 
     // We must do our icebergWriterCompatV1 checks/updates FIRST since it has stricter column
     // mapping requirements (id mode) than icebergCompatV2. It also may enable icebergCompatV2.
@@ -463,11 +481,18 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       newMetadata = icebergWriterCompatV1;
     }
 
+    // TODO: refactor this method to use a single validator and updater.
     Optional<Metadata> icebergCompatV2Metadata =
         IcebergCompatV2MetadataValidatorAndUpdater.validateAndUpdateIcebergCompatV2Metadata(
             isCreateOrReplace, newMetadata.orElse(baseMetadata), newProtocol.orElse(baseProtocol));
     if (icebergCompatV2Metadata.isPresent()) {
       newMetadata = icebergCompatV2Metadata;
+    }
+    Optional<Metadata> icebergCompatV3Metadata =
+        IcebergCompatV3MetadataValidatorAndUpdater.validateAndUpdateIcebergCompatV3Metadata(
+            isCreateOrReplace, newMetadata.orElse(baseMetadata), newProtocol.orElse(baseProtocol));
+    if (icebergCompatV3Metadata.isPresent()) {
+      newMetadata = icebergCompatV3Metadata;
     }
 
     /* ----- 4: Update the METADATA with column mapping info if applicable ----- */
@@ -483,9 +508,12 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     // Get the physical names of clustering columns based on the updated schema.
     // This is only done if clustering columns are explicitly set in this transaction.
     StructType updatedSchema = newMetadata.orElse(baseMetadata).getSchema();
-    resolvedClusteringColumns =
-        initialClusteringColumns.map(
-            cols -> SchemaUtils.casePreservingEligibleClusterColumns(updatedSchema, cols));
+    this.resolvedClusteringColumns =
+        initialClusteringColumns.isPresent()
+            ? initialClusteringColumns.map(
+                cols -> SchemaUtils.casePreservingEligibleClusterColumns(updatedSchema, cols))
+            : existingClusteringCols;
+    shouldUpdateClusteringDomainMetadata = initialClusteringColumns.isPresent();
 
     /* ----- 6: Update the METADATA with materialized row tracking column name if applicable----- */
     Optional<Metadata> rowTrackingMetadata =
@@ -627,6 +655,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     ColumnMapping.verifyColumnMappingChange(
         oldMetadata.getConfiguration(), newMetadata.getConfiguration(), isCreateOrReplace);
     IcebergWriterCompatV1MetadataValidatorAndUpdater.validateIcebergWriterCompatV1Change(
+        oldMetadata.getConfiguration(), newMetadata.getConfiguration(), isCreateOrReplace);
+    IcebergCompatV3MetadataValidatorAndUpdater.validateIcebergCompatV3Change(
         oldMetadata.getConfiguration(), newMetadata.getConfiguration(), isCreateOrReplace);
     IcebergUniversalFormatMetadataValidatorAndUpdater.validate(newMetadata);
     Optional<Metadata> updatedMetadata = Optional.empty();

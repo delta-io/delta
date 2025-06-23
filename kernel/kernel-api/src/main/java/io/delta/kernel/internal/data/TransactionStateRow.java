@@ -115,6 +115,19 @@ public class TransactionStateRow extends GenericRow {
   }
 
   /**
+   * Get the iceberg compatibility enabled or not from the transaction state {@link Row} returned by
+   * {@link Transaction#getTransactionState(Engine)}
+   *
+   * @param transactionState Transaction state state {@link Row}
+   * @return True if iceberg compatibility is enabled, false otherwise.
+   */
+  public static boolean isIcebergCompatV3Enabled(Row transactionState) {
+    return Boolean.parseBoolean(
+        getConfiguration(transactionState)
+            .getOrDefault(TableConfig.ICEBERG_COMPAT_V3_ENABLED.getKey(), "false"));
+  }
+
+  /**
    * Get the column mapping mode from the transaction state {@link Row} returned by {@link
    * Transaction#getTransactionState(Engine)}
    *

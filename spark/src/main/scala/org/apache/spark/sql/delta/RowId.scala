@@ -86,7 +86,8 @@ object RowId {
   private[delta] def assignFreshRowIds(
       protocol: Protocol,
       snapshot: Snapshot,
-      actions: Iterator[Action]): Iterator[Action] = {
+      actions: Iterator[Action],
+      operation: DeltaOperations.Operation): Iterator[Action] = {
     if (!isSupported(protocol)) return actions
 
     val oldHighWatermark = extractHighWatermark(snapshot).getOrElse(MISSING_HIGH_WATER_MARK)
@@ -97,7 +98,12 @@ object RowId {
       case a: AddFile if a.baseRowId.isEmpty =>
         val baseRowId = newHighWatermark + 1L
         newHighWatermark += a.numPhysicalRecords.getOrElse {
-          throw DeltaErrors.rowIdAssignmentWithoutStats
+          operation match {
+            case op: DeltaOperations.Clone =>
+              throw DeltaErrors.cloneWithRowTrackingWithoutStats()
+            case _ =>
+              throw DeltaErrors.rowIdAssignmentWithoutStats
+          }
         }
         a.copy(baseRowId = Some(baseRowId))
       case d: DomainMetadata if RowTrackingMetadataDomain.isSameDomain(d) =>

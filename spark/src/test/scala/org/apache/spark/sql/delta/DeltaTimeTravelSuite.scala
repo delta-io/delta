@@ -236,8 +236,8 @@ class DeltaTimeTravelSuite extends QueryTest
    * timestamps come from the input.
    */
   private def createFileStatuses(modTimes: Long*): Iterator[FileStatus] = {
-    modTimes.zipWithIndex.map { case (time, version) =>
-      new FileStatus(10L, false, 1, 10L, time, new Path(version.toString))
+    modTimes.zipWithIndex.map { case (time, version) => new FileStatus(
+      10L, false, 1, 10L, time, FileNames.checkpointFileSingular(new Path("/foo"), version))
     }.iterator
   }
 
@@ -249,8 +249,8 @@ class DeltaTimeTravelSuite extends QueryTest
   private def testBufferingLogDeletionIterator(
       maxTimestamp: Long,
       maxVersion: Long)(inputTimestamps: Seq[Long], deleted: Seq[Long]): Unit = {
-    val i = new BufferingLogDeletionIterator(
-      createFileStatuses(inputTimestamps: _*), maxTimestamp, maxVersion, _.getName.toLong)
+    val i = new BufferingLogDeletionIterator(createFileStatuses(inputTimestamps: _*),
+      maxTimestamp, maxVersion, FileNames.getFileVersion)
     deleted.foreach { ts =>
       assert(i.hasNext, s"Was supposed to delete $ts, but iterator returned hasNext: false")
       assert(i.next().getModificationTime === ts, "Returned files out of order!")
@@ -264,12 +264,12 @@ class DeltaTimeTravelSuite extends QueryTest
     assert(!i1.hasNext)
 
     testBufferingLogDeletionIterator(maxTimestamp = 100, maxVersion = 100)(
-      inputTimestamps = Seq(10),
+      inputTimestamps = Seq(10, 11),
       deleted = Seq(10)
     )
 
     testBufferingLogDeletionIterator(maxTimestamp = 100, maxVersion = 100)(
-      inputTimestamps = Seq(10, 15, 25),
+      inputTimestamps = Seq(10, 15, 25, 26),
       deleted = Seq(10, 15, 25)
     )
   }
@@ -294,9 +294,9 @@ class DeltaTimeTravelSuite extends QueryTest
       deleted = Seq(5, 10, 11)
     )
 
-    // When it is 12, we can return all
+    // When it is 12, we can return all, except last one
     testBufferingLogDeletionIterator(maxTimestamp = 12, maxVersion = 100)(
-      inputTimestamps = Seq(5, 10, 8, 12),
+      inputTimestamps = Seq(5, 10, 8, 12, 13),
       deleted = Seq(5, 10, 11, 12)
     )
 
@@ -308,7 +308,7 @@ class DeltaTimeTravelSuite extends QueryTest
 
     // When it is 11, we can delete both 10 and 8
     testBufferingLogDeletionIterator(maxTimestamp = 11, maxVersion = 100)(
-      inputTimestamps = Seq(5, 10, 8),
+      inputTimestamps = Seq(5, 10, 8, 12),
       deleted = Seq(5, 10, 11)
     )
   }
@@ -333,9 +333,9 @@ class DeltaTimeTravelSuite extends QueryTest
       deleted = Seq(5, 10, 11)
     )
 
-    // When it is version 3, we can return all
+    // When it is version 3, we can return all, except last one
     testBufferingLogDeletionIterator(maxTimestamp = 100, maxVersion = 3)(
-      inputTimestamps = Seq(5, 10, 8, 12),
+      inputTimestamps = Seq(5, 10, 8, 12, 13),
       deleted = Seq(5, 10, 11, 12)
     )
 
@@ -347,7 +347,7 @@ class DeltaTimeTravelSuite extends QueryTest
 
     // When we can delete up to version 2, we can return up to version 2
     testBufferingLogDeletionIterator(maxTimestamp = 100, maxVersion = 2)(
-      inputTimestamps = Seq(5, 10, 8),
+      inputTimestamps = Seq(5, 10, 8, 12),
       deleted = Seq(5, 10, 11)
     )
   }
@@ -388,7 +388,7 @@ class DeltaTimeTravelSuite extends QueryTest
     }
 
     testBufferingLogDeletionIterator(maxTimestamp = 12, maxVersion = 100)(
-      inputTimestamps = Seq(5, 10, 8, 9),
+      inputTimestamps = Seq(5, 10, 8, 9, 13),
       deleted = Seq(5, 10, 11, 12)
     )
 
@@ -400,7 +400,7 @@ class DeltaTimeTravelSuite extends QueryTest
     }
 
     testBufferingLogDeletionIterator(maxTimestamp = 100, maxVersion = 3)(
-      inputTimestamps = Seq(5, 10, 8, 9),
+      inputTimestamps = Seq(5, 10, 8, 9, 13),
       deleted = Seq(5, 10, 11, 12)
     )
 
@@ -413,7 +413,7 @@ class DeltaTimeTravelSuite extends QueryTest
 
     // Test the first element causing cascading adjustments
     testBufferingLogDeletionIterator(maxTimestamp = 12, maxVersion = 100)(
-      inputTimestamps = Seq(10, 8, 9),
+      inputTimestamps = Seq(10, 8, 9, 13),
       deleted = Seq(10, 11, 12)
     )
 
@@ -425,7 +425,7 @@ class DeltaTimeTravelSuite extends QueryTest
     }
 
     testBufferingLogDeletionIterator(maxTimestamp = 100, maxVersion = 2)(
-      inputTimestamps = Seq(10, 8, 9),
+      inputTimestamps = Seq(10, 8, 9, 13),
       deleted = Seq(10, 11, 12)
     )
 
@@ -443,7 +443,7 @@ class DeltaTimeTravelSuite extends QueryTest
     }
 
     testBufferingLogDeletionIterator(maxTimestamp = 17, maxVersion = 100)(
-      inputTimestamps = Seq(5, 10, 8, 9, 12, 15, 14, 14), // 5, 10, 11, 12, 13, 15, 16, 17
+      inputTimestamps = Seq(5, 10, 8, 9, 12, 15, 14, 14, 18), // 5, 10, 11, 12, 13, 15, 16, 17, 18
       deleted = Seq(5, 10, 11, 12, 13, 15, 16, 17)
     )
   }
@@ -820,6 +820,32 @@ class DeltaTimeTravelSuite extends QueryTest
           |SELECT * FROM $tblName VERSION AS OF '1'
           |""".stripMargin),
         Row(1) :: Row(1) :: Row(2) :: Nil)
+    }
+  }
+
+  test("Dataframe-based time travel works with different timestamp precisions") {
+    val tblName = "test_tab"
+    withTable(tblName) {
+      sql(s"CREATE TABLE spark_catalog.default.$tblName (a int) USING DELTA")
+      // Ensure that the current timestamp is different from the one in the table.
+      Thread.sleep(1000)
+      // Microsecond precision timestamp.
+      val current_time_micros = spark.sql("SELECT current_timestamp() as ts")
+        .select($"ts".cast("string"))
+        .head().getString(0)
+      // Millisecond precision timestamp.
+      val current_time_millis = new Timestamp(System.currentTimeMillis())
+      // Second precision timestamp.
+      val sdf = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
+      val current_time_seconds = sdf.format(new java.sql.Timestamp(System.currentTimeMillis()))
+
+      sql(s"INSERT INTO spark_catalog.default.$tblName VALUES (1)")
+      checkAnswer(spark.read.option("timestampAsOf", current_time_micros)
+        .table(s"spark_catalog.default.$tblName"), Seq.empty)
+      checkAnswer(spark.read.option("timestampAsOf", current_time_millis.toString)
+        .table(s"spark_catalog.default.$tblName"), Seq.empty)
+      checkAnswer(spark.read.option("timestampAsOf", current_time_seconds)
+        .table(s"spark_catalog.default.$tblName"), Seq.empty)
     }
   }
 }

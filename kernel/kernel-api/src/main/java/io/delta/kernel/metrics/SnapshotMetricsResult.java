@@ -23,7 +23,8 @@ import java.util.Optional;
   "timestampToVersionResolutionDurationNs",
   "loadInitialDeltaActionsDurationNs",
   "timeToBuildLogSegmentForVersionNs",
-  "numLogSegmentListCalls"
+  "durationToGetCrcInfoNs",
+        "numLogSegmentListCalls"
 })
 public interface SnapshotMetricsResult {
 
@@ -44,6 +45,12 @@ public interface SnapshotMetricsResult {
    *     construction. 0 if snapshot construction fails before this step.
    */
   long getTimeToBuildLogSegmentForVersionNs();
+
+  /**
+   * @return the duration (ns) to get CRC information during snapshot construction. 0 if snapshot
+   *     construction fails before this step or if CRC is not read in loading snapshot.
+   */
+  long getDurationToGetCrcInfoNs();
 
   /**
    * @return the total number of log segment list calls made during snapshot construction. 0 if no

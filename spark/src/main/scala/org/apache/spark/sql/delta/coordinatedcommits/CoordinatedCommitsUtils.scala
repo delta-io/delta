@@ -44,6 +44,9 @@ import org.apache.spark.sql.connector.catalog.CatalogPlugin
 import org.apache.spark.util.Utils
 
 object CatalogOwnedTableUtils {
+  /** The default catalog name only used for testing. */
+  val DEFAULT_CATALOG_NAME_FOR_TESTING: String = "spark_catalog"
+
   // Populate table commit coordinator using table identifier inside CatalogTable.
   def populateTableCommitCoordinatorFromCatalog(
       spark: SparkSession,
@@ -72,8 +75,10 @@ object CatalogOwnedTableUtils {
         // in-memory commit coordinator. In this case, we return table commit coordinator
         // registered in the provider so that it can still test CatalogOwned table feature
         // capability.
-        CatalogOwnedCommitCoordinatorProvider.getBuilder("spark_catalog")
-          .flatMap(builder => Some(builder.buildForCatalog(spark, "spark_catalog")))
+        CatalogOwnedCommitCoordinatorProvider.getBuilder(DEFAULT_CATALOG_NAME_FOR_TESTING)
+          .flatMap{ builder =>
+            Some(builder.buildForCatalog(spark, DEFAULT_CATALOG_NAME_FOR_TESTING))
+          }
           .map { cc =>
             return Some(TableCommitCoordinatorClient(
               cc,
