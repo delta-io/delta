@@ -77,8 +77,8 @@ public class DefaultParquetHandler implements ParquetHandler {
           currentFileName = null;
           if (fileIter.hasNext()) {
             FileStatus fileStatus = fileIter.next();
+            currentFileReader = batchReader.read(fileStatus, physicalSchema, predicate);
             currentFileName = new Path(fileStatus.getPath()).getName();
-            currentFileReader = batchReader.read(fileIter.next(), physicalSchema, predicate);
             return hasNext(); // recurse since it's possible the loaded file is empty
           } else {
             return false;
