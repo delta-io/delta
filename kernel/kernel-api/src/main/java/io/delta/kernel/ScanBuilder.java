@@ -16,6 +16,7 @@
 
 package io.delta.kernel;
 
+import com.sun.istack.internal.Nullable;
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.Row;
@@ -68,9 +69,13 @@ public interface ScanBuilder {
   /** @return Build the {@link Scan instance} */
   Scan build();
 
-  /** Build a Paginated Scan here */
-  PaginatedScan buildPaginatedScan(Row pageToken, long pageSize);
-
-  /** Build a Paginated Scan with optional tombstone hashsets injected * */
-  PaginatedScan buildPaginatedScan(Row pageToken, long pageSize, ColumnarBatch tombstone);
+  /**
+   * Build a Paginated Scan with optional page token and optional log replay hashsets.
+   *
+   * @param pageSize             Maximum number of AddFiles to return in this page.
+   * @param pageToken            Optional page token representing the current scan position; null to start from the beginning.
+   * @param logReplayHashsets    Optional tombstone hashsets to filter out deleted files; null if not applicable.
+   * @return A {@link PaginatedScan} configured for pagination.
+   */
+  PaginatedScan buildPaginated(long pageSize, @Nullable Row pageToken, @Nullable ColumnarBatch logReplayHashsets);
 }
