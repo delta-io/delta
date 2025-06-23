@@ -338,6 +338,12 @@ object IcebergConstants {
   val ICEBERG_TBLPROP_METADATA_LOCATION = "metadata_location"
   val ICEBERG_PROVIDER = "iceberg"
   val ICEBERG_NAME_MAPPING_PROPERTY = "schema.name-mapping.default"
+
+  // Reserved field ID for the `_row_id` column
+  // Iceberg spec: https://iceberg.apache.org/spec/?h=row#reserved-field-ids
+  val ICEBERG_ROW_TRACKING_ROW_ID_FIELD_ID = 2147483540L
+  // Reserved field ID for the `_last_updated_sequence_number` column
+  val ICEBERG_ROW_TRACKING_LAST_UPDATED_SEQUENCE_NUMBER_FIELD_ID = 2147483539L
 }
 
 object HudiConstants {

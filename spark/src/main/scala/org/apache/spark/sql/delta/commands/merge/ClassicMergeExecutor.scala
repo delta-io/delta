@@ -432,6 +432,7 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
         (if (cdcEnabled) Seq(CDC_TYPE_NOT_CDC) else Seq())
 
     // Generate output columns.
+    val needSetRowTrackingFieldIdForUniform = IcebergCompat.isGeqEnabled(deltaTxn.metadata, 3)
     val outputCols = generateWriteAllChangesOutputCols(
       targetWriteCols,
       rowIdColumnExpressionOpt,
@@ -439,7 +440,8 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
       outputColNames,
       noopCopyExprs,
       clausesWithPrecompConditions,
-      cdcEnabled
+      cdcEnabled,
+      needSetRowTrackingFieldIdForUniform = needSetRowTrackingFieldIdForUniform
     )
 
     val preOutputDF = if (cdcEnabled) {
@@ -450,7 +452,9 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
           noopCopyExprs,
           rowIdColumnExpressionOpt.map(_.name),
           rowCommitVersionColumnExpressionOpt.map(_.name),
-          deduplicateCDFDeletes)
+          deduplicateCDFDeletes,
+          needSetRowTrackingFieldIdForUniform = needSetRowTrackingFieldIdForUniform
+      )
     } else {
       // change data capture is off, just output the normal data
       joinedAndPrecomputedConditionsDF

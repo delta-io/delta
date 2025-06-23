@@ -133,12 +133,13 @@ trait RowIdTestUtils extends RowTrackingTestUtils with DeltaSQLCommandTest {
   implicit class DataFrameRowIdColumn(df: DataFrame) {
     def withMaterializedRowIdColumn(
         materializedColumnName: String, rowIdColumn: Column): DataFrame =
-      RowId.preserveRowIdsUnsafe(df, materializedColumnName, rowIdColumn)
+      RowId.preserveRowIdsUnsafe(
+        df, materializedColumnName, rowIdColumn, shouldSetIcebergReservedFieldId = false)
 
     def withMaterializedRowCommitVersionColumn(
         materializedColumnName: String, rowCommitVersionColumn: Column): DataFrame =
       RowCommitVersion.preserveRowCommitVersionsUnsafe(
-        df, materializedColumnName, rowCommitVersionColumn)
+        df, materializedColumnName, rowCommitVersionColumn, shouldSetIcebergReservedFieldId = false)
   }
 
   def extractMaterializedRowCommitVersionColumnName(log: DeltaLog): Option[String] = {

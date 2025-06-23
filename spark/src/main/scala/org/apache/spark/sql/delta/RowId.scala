@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.delta.DeltaColumnMapping.PARQUET_FIELD_ID_METADATA_KEY
 import org.apache.spark.sql.delta.actions.{Action, AddFile, DomainMetadata, Metadata, Protocol}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.propertyKey
 import org.apache.spark.sql.util.ScalaExtensions._
@@ -183,17 +184,22 @@ object RowId {
   val QUALIFIED_COLUMN_NAME = s"${FileFormat.METADATA_NAME}.${ROW_ID}"
 
   /** Column metadata to be used in conjunction [[QUALIFIED_COLUMN_NAME]] to mark row id columns */
-  def columnMetadata(materializedColumnName: String): types.Metadata =
-    RowIdMetadataStructField.metadata(materializedColumnName)
+  def columnMetadata(
+      materializedColumnName: String,
+      shouldSetIcebergReservedFieldId: Boolean): types.Metadata =
+    RowIdMetadataStructField.metadata(materializedColumnName, shouldSetIcebergReservedFieldId)
 
   /**
    * The field readers can use to access the generated row id column. The scanner's internal column
    * name is obtained from the table's metadata.
    */
-  def createRowIdField(protocol: Protocol, metadata: Metadata, nullable: Boolean)
-  : Option[StructField] =
+  def createRowIdField(
+    protocol: Protocol,
+    metadata: Metadata,
+    nullable: Boolean,
+    shouldSetIcebergReservedFieldId: Boolean): Option[StructField] =
     MaterializedRowId.getMaterializedColumnName(protocol, metadata)
-      .map(RowIdMetadataStructField(_, nullable))
+      .map(RowIdMetadataStructField(_, nullable, shouldSetIcebergReservedFieldId))
 
   /*
    * A specialization of [[FileSourceGeneratedMetadataStructField]] used to represent RowId columns.
@@ -209,13 +215,30 @@ object RowId {
 
     val ROW_ID_METADATA_COL_ATTR_KEY = "__row_id_metadata_col"
 
-    def metadata(materializedColumnName: String): types.Metadata = new MetadataBuilder()
-      .withMetadata(
-        FileSourceGeneratedMetadataStructField.metadata(RowId.ROW_ID, materializedColumnName))
-      .putBoolean(ROW_ID_METADATA_COL_ATTR_KEY, value = true)
-      .build()
+    def metadata(
+        materializedColumnName: String,
+        shouldSetIcebergReservedFieldId: Boolean): types.Metadata = {
+      val metadataBuilder = new MetadataBuilder()
+        .withMetadata(
+          FileSourceGeneratedMetadataStructField.metadata(RowId.ROW_ID, materializedColumnName))
+        .putBoolean(ROW_ID_METADATA_COL_ATTR_KEY, value = true)
 
-    def apply(materializedColumnName: String, nullable: Boolean = false): StructField =
+      // If IcebergCompatV3 or higher is enabled, assign the field ID of Delta row id column
+      // to match the reserved `_row_id` field defined in the Iceberg spec.
+      // This ensures that Iceberg can recognize and track the same column for row lineage purposes.
+      if (shouldSetIcebergReservedFieldId) {
+        metadataBuilder.putLong(
+          PARQUET_FIELD_ID_METADATA_KEY,
+          IcebergConstants.ICEBERG_ROW_TRACKING_ROW_ID_FIELD_ID
+        )
+      }
+      metadataBuilder.build()
+    }
+
+    def apply(
+         materializedColumnName: String,
+         nullable: Boolean = false,
+         shouldSetIcebergReservedFieldId: Boolean): StructField =
       StructField(
         RowId.ROW_ID,
         LongType,
@@ -223,7 +246,7 @@ object RowId {
         // actual Row ID expression is created using a projection injected before the optimizer pass
         // by the [[GenerateRowIDs] rule at which point the Row ID field is non-nullable.
         nullable,
-        metadata = metadata(materializedColumnName))
+        metadata = metadata(materializedColumnName, shouldSetIcebergReservedFieldId))
 
     def unapply(field: StructField): Option[StructField] =
       if (isRowIdColumn(field)) Some(field) else None
@@ -241,8 +264,14 @@ object RowId {
 
   object RowIdMetadataAttribute {
     /** Creates an attribute for writing out the materialized column name */
-    def apply(materializedColumnName: String): AttributeReference =
-      DataTypeUtils.toAttribute(RowIdMetadataStructField(materializedColumnName))
+    def apply(
+        materializedColumnName: String,
+        shouldSetIcebergReservedFieldId: Boolean): AttributeReference =
+      DataTypeUtils
+        .toAttribute(
+          RowIdMetadataStructField(
+            materializedColumnName,
+            shouldSetIcebergReservedFieldId = shouldSetIcebergReservedFieldId))
         .withName(materializedColumnName)
 
     def unapply(attr: Attribute): Option[Attribute] =
@@ -302,7 +331,10 @@ object RowId {
       snapshot.protocol, snapshot.metadata, snapshot.deltaLog.tableId)
 
     val rowIdColumn = DeltaTableUtils.getFileMetadataColumn(dataFrame).getField(ROW_ID)
-    preserveRowIdsUnsafe(dataFrame, materializedColumnName, rowIdColumn)
+    val shouldSetIcebergReservedFieldId = IcebergCompat.isGeqEnabled(snapshot.metadata, 3)
+
+    preserveRowIdsUnsafe(
+      dataFrame, materializedColumnName, rowIdColumn, shouldSetIcebergReservedFieldId)
   }
 
   /**
@@ -314,9 +346,12 @@ object RowId {
   private[delta] def preserveRowIdsUnsafe(
       dataFrame: DataFrame,
       materializedColumnName: String,
-      rowIdColumn: Column): DataFrame = {
+      rowIdColumn: Column,
+      shouldSetIcebergReservedFieldId: Boolean): DataFrame = {
     dataFrame
       .withColumn(materializedColumnName, rowIdColumn)
-      .withMetadata(materializedColumnName, columnMetadata(materializedColumnName))
+      .withMetadata(
+        materializedColumnName,
+        columnMetadata(materializedColumnName, shouldSetIcebergReservedFieldId))
   }
 }

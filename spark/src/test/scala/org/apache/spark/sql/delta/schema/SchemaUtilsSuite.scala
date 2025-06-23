@@ -2118,7 +2118,10 @@ class SchemaUtilsSuite extends QueryTest
           col("*"),
           col("_metadata.row_id").as("row_id")
         )
-        .withMetadata("row_id", RowId.RowIdMetadataStructField.metadata("name"))
+        .withMetadata(
+          "row_id",
+          RowId.RowIdMetadataStructField.metadata("name", shouldSetIcebergReservedFieldId = false)
+        )
 
       val tableSchema = new StructType().add("id", LongType)
       val normalized =
@@ -2141,8 +2144,14 @@ class SchemaUtilsSuite extends QueryTest
           col("_metadata.row_id").as("row_id"),
           col("_metadata.row_commit_version").as("row_commit_version")
         )
-        .withMetadata("row_id", RowId.RowIdMetadataStructField.metadata("name"))
-        .withMetadata("row_commit_version", RowCommitVersion.MetadataStructField.metadata("name"))
+        .withMetadata(
+          "row_id",
+          RowId.RowIdMetadataStructField.metadata("name", shouldSetIcebergReservedFieldId = false))
+        .withMetadata(
+          "row_commit_version",
+          RowCommitVersion.MetadataStructField.metadata(
+            "name", shouldSetIcebergReservedFieldId = false)
+        )
 
       val tableSchema = new StructType().add("id", LongType)
         val normalized =
