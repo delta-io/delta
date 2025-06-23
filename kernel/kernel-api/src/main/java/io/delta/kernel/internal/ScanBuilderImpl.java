@@ -16,8 +16,11 @@
 
 package io.delta.kernel.internal;
 
+import io.delta.kernel.PaginatedScan;
 import io.delta.kernel.Scan;
 import io.delta.kernel.ScanBuilder;
+import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.data.Row;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
@@ -84,5 +87,25 @@ public class ScanBuilderImpl implements ScanBuilder {
         predicate,
         dataPath,
         snapshotReport);
+  }
+
+  @Override
+  public PaginatedScan buildPaginatedScan(Row pageToken, long pageSize) {
+    return new PaginatedScanImpl(
+        snapshotSchema,
+        readSchema,
+        protocol,
+        metadata,
+        logReplay,
+        predicate,
+        dataPath,
+        snapshotReport,
+        pageToken,
+        pageSize);
+  }
+
+  @Override
+  public PaginatedScan buildPaginatedScan(Row pageToken, long pageSize, ColumnarBatch tombstones) {
+    return null;
   }
 }
