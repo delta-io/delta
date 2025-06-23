@@ -256,30 +256,40 @@ public class LogReplay {
   private Lazy<Tuple2<Protocol, Metadata>> createLazyProtocolAndMetadata(
       Engine engine, Optional<SnapshotHint> hint, SnapshotMetrics snapshotMetrics) {
     return new Lazy<>(
-        () ->
-            snapshotMetrics.loadInitialDeltaActionsTimer.time(
-                () -> {
-                  final long targetVersion = getVersion();
+        () -> {
+          final Tuple2<Protocol, Metadata> result =
+              snapshotMetrics.loadInitialDeltaActionsTimer.time(
+                  () -> {
+                    final long targetVersion = getVersion();
 
-                  // Ignore the snapshot hint whose version is larger than the snapshot version.
-                  Optional<SnapshotHint> baseHint = hint;
-                  if (hint.isPresent() && hint.get().getVersion() > targetVersion) {
-                    baseHint = Optional.empty();
-                  }
+                    // Ignore the snapshot hint whose version is larger than the snapshot version.
+                    Optional<SnapshotHint> baseHint = hint;
+                    if (hint.isPresent() && hint.get().getVersion() > targetVersion) {
+                      baseHint = Optional.empty();
+                    }
 
-                  final Optional<SnapshotHint> newestHint =
-                      crcInfoContext.maybeGetNewerSnapshotHintAndUpdateCache(
-                          engine, getLogSegment(), baseHint, targetVersion);
+                    final Optional<SnapshotHint> newestHint =
+                        crcInfoContext.maybeGetNewerSnapshotHintAndUpdateCache(
+                            engine, getLogSegment(), baseHint, targetVersion);
 
-                  Tuple2<Protocol, Metadata> protocolAndMetadata =
-                      loadTableProtocolAndMetadata(
-                          engine, getLogSegment(), newestHint, targetVersion);
+                    Tuple2<Protocol, Metadata> protocolAndMetadata =
+                        loadTableProtocolAndMetadata(
+                            engine, getLogSegment(), newestHint, targetVersion);
 
-                  TableFeatures.validateKernelCanReadTheTable(
-                      protocolAndMetadata._1, dataPath.toString());
+                    TableFeatures.validateKernelCanReadTheTable(
+                        protocolAndMetadata._1, dataPath.toString());
 
-                  return protocolAndMetadata;
-                }));
+                    return protocolAndMetadata;
+                  });
+
+          logger.info(
+              "[{}] Took {}ms to load Protocol and Metadata at version {}",
+              dataPath.toString(),
+              snapshotMetrics.loadInitialDeltaActionsTimer.totalDurationMs(),
+              getVersion());
+
+          return result;
+        });
   }
 
   /**

@@ -77,7 +77,7 @@ public class SnapshotManager {
    * @throws TableNotFoundException if the table does not exist
    * @throws InvalidTableException if the table is in an invalid state
    */
-  public Snapshot buildLatestSnapshot(Engine engine, SnapshotQueryContext snapshotContext)
+  public SnapshotImpl buildLatestSnapshot(Engine engine, SnapshotQueryContext snapshotContext)
       throws TableNotFoundException {
     final LogSegment logSegment =
         snapshotContext
@@ -125,7 +125,7 @@ public class SnapshotManager {
    * @throws TableNotFoundException if the table does not exist
    * @throws InvalidTableException if the table is in an invalid state
    */
-  public Snapshot getSnapshotForTimestamp(
+  public SnapshotImpl getSnapshotForTimestamp(
       Engine engine,
       SnapshotImpl latestSnapshot,
       long millisSinceEpochUTC,
@@ -192,20 +192,11 @@ public class SnapshotManager {
 
   private SnapshotImpl createSnapshot(
       LogSegment initSegment, Engine engine, SnapshotQueryContext snapshotContext) {
-    final String startingFromStr =
-        initSegment
-            .getCheckpointVersionOpt()
-            .map(v -> format("starting from checkpoint version %s.", v))
-            .orElse(".");
-    logger.info("{}: Loading version {} {}", tablePath, initSegment.getVersion(), startingFromStr);
-
-    long startTimeMillis = System.currentTimeMillis();
-
     // Note: LogReplay now loads the protocol and metadata (P & M) only when invoked (as opposed to
     //       eagerly in its constructor). Nonetheless, we invoke it right away, so SnapshotImpl is
     //       still constructed with an "eagerly"-loaded P & M.
 
-    LogReplay logReplay =
+    final LogReplay logReplay =
         new LogReplay(
             tablePath,
             engine,
@@ -221,16 +212,6 @@ public class SnapshotManager {
             logReplay.getProtocol(),
             logReplay.getMetadata(),
             snapshotContext);
-
-    // Push snapshot report to engine
-    engine.getMetricsReporters().forEach(reporter -> reporter.report(snapshot.getSnapshotReport()));
-
-    logger.info(
-        "{}: Took {}ms to construct the snapshot (loading protocol and metadata) for {} {}",
-        tablePath,
-        System.currentTimeMillis() - startTimeMillis,
-        initSegment.getVersion(),
-        startingFromStr);
 
     final SnapshotHint hint =
         new SnapshotHint(snapshot.getVersion(), snapshot.getProtocol(), snapshot.getMetadata());

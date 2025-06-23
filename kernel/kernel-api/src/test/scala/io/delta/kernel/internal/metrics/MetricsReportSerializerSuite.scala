@@ -40,6 +40,8 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
   }
 
   private def testSnapshotReport(snapshotReport: SnapshotReport): Unit = {
+    val loadSnapshotTotalDuration =
+      snapshotReport.getSnapshotMetrics().getLoadSnapshotTotalDurationNs()
     val timestampToVersionResolutionDuration = optionToString(
       snapshotReport.getSnapshotMetrics().getTimestampToVersionResolutionDurationNs())
     val loadProtocolAndMetadataDuration =
@@ -59,6 +61,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |"checkpointVersion":${optionToString(snapshotReport.getCheckpointVersion())},
          |"providedTimestamp":${optionToString(snapshotReport.getProvidedTimestamp())},
          |"snapshotMetrics":{
+         |"loadSnapshotTotalDurationNs":${loadSnapshotTotalDuration},
          |"timestampToVersionResolutionDurationNs":${timestampToVersionResolutionDuration},
          |"loadInitialDeltaActionsDurationNs":${loadProtocolAndMetadataDuration},
          |"timeToBuildLogSegmentForVersionNs":${buildLogSegmentDuration},
@@ -71,6 +74,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
 
   test("SnapshotReport serializer") {
     val snapshotContext1 = SnapshotQueryContext.forTimestampSnapshot("/table/path", 0)
+    snapshotContext1.getSnapshotMetrics.loadSnapshotTotalTimer.record(2000)
     snapshotContext1.getSnapshotMetrics.timestampToVersionResolutionTimer.record(10)
     snapshotContext1.getSnapshotMetrics.loadInitialDeltaActionsTimer.record(1000)
     snapshotContext1.getSnapshotMetrics.timeToBuildLogSegmentForVersionTimer.record(500)
@@ -94,6 +98,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
         |"checkpointVersion":20,
         |"providedTimestamp":0,
         |"snapshotMetrics":{
+        |"loadSnapshotTotalDurationNs":2000,
         |"timestampToVersionResolutionDurationNs":10,
         |"loadInitialDeltaActionsDurationNs":1000,
         |"timeToBuildLogSegmentForVersionNs":500,

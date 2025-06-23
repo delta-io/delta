@@ -49,7 +49,8 @@ public class SnapshotImpl implements Snapshot {
   private final Metadata metadata;
   private final LogSegment logSegment;
   private Optional<Long> inCommitTimestampOpt;
-  private final SnapshotReport snapshotReport;
+  private final SnapshotQueryContext snapshotContext;
+  private SnapshotReport snapshotReport;
 
   public SnapshotImpl(
       Path dataPath,
@@ -66,7 +67,8 @@ public class SnapshotImpl implements Snapshot {
     this.protocol = protocol;
     this.metadata = metadata;
     this.inCommitTimestampOpt = Optional.empty();
-    this.snapshotReport = SnapshotReportImpl.forSuccess(snapshotContext);
+    this.snapshotContext = snapshotContext;
+    this.snapshotReport = null;
   }
 
   /////////////////
@@ -145,7 +147,20 @@ public class SnapshotImpl implements Snapshot {
     return protocol;
   }
 
+  /**
+   * Get the {@link SnapshotReport} for this snapshot. This is generated lazily (on first access)
+   * instead of in the constructor because some Snapshot metrics, like {@link
+   * io.delta.kernel.metrics.SnapshotMetricsResult#getLoadSnapshotTotalDurationNs}, are only
+   * completed *after* the Snapshot has been constructed.
+   */
   public SnapshotReport getSnapshotReport() {
+    if (snapshotReport == null) {
+      synchronized (this) {
+        if (snapshotReport == null) {
+          snapshotReport = SnapshotReportImpl.forSuccess(snapshotContext);
+        }
+      }
+    }
     return snapshotReport;
   }
 
