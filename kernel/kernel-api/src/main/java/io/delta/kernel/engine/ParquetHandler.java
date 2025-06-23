@@ -61,7 +61,7 @@ public interface ParquetHandler {
    *     order of files given in {@code scanFileIter}.
    * @throws IOException if an I/O error occurs during the read.
    */
-  CloseableIterator<ColumnarBatch> readParquetFiles(
+  CloseableIterator<ParquetReadResult> readParquetFiles(
       CloseableIterator<FileStatus> fileIter,
       StructType physicalSchema,
       Optional<Predicate> predicate)

@@ -27,6 +27,7 @@ import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO;
 import io.delta.kernel.defaults.internal.parquet.ParquetFileReader;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.engine.ParquetHandler;
+import io.delta.kernel.engine.ParquetReadResult;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.types.StructType;

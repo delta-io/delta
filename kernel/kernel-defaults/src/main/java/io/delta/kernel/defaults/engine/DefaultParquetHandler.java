@@ -21,6 +21,7 @@ import io.delta.kernel.defaults.engine.fileio.FileIO;
 import io.delta.kernel.defaults.internal.parquet.ParquetFileReader;
 import io.delta.kernel.defaults.internal.parquet.ParquetFileWriter;
 import io.delta.kernel.engine.ParquetHandler;
+import io.delta.kernel.engine.ParquetReadResult;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.util.Utils;
@@ -28,6 +29,8 @@ import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.*;
 import io.delta.kernel.utils.FileStatus;
 import io.delta.storage.LogStore;
+import org.apache.hadoop.fs.Path;
+
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.*;
@@ -46,14 +49,15 @@ public class DefaultParquetHandler implements ParquetHandler {
   }
 
   @Override
-  public CloseableIterator<ColumnarBatch> readParquetFiles(
+  public CloseableIterator<ParquetReadResult> readParquetFiles(
       CloseableIterator<FileStatus> fileIter,
       StructType physicalSchema,
       Optional<Predicate> predicate)
       throws IOException {
-    return new CloseableIterator<ColumnarBatch>() {
+    return new CloseableIterator<ParquetReadResult>() {
       private final ParquetFileReader batchReader = new ParquetFileReader(fileIO);
       private CloseableIterator<ColumnarBatch> currentFileReader;
+      private String currentFileName;
 
       @Override
       public void close() throws IOException {
@@ -70,7 +74,10 @@ public class DefaultParquetHandler implements ParquetHandler {
           // read.
           Utils.closeCloseables(currentFileReader);
           currentFileReader = null;
+          currentFileName = null;
           if (fileIter.hasNext()) {
+            FileStatus fileStatus = fileIter.next();
+            currentFileName = new Path(fileStatus.getPath()).getName();
             currentFileReader = batchReader.read(fileIter.next(), physicalSchema, predicate);
             return hasNext(); // recurse since it's possible the loaded file is empty
           } else {
@@ -80,8 +87,8 @@ public class DefaultParquetHandler implements ParquetHandler {
       }
 
       @Override
-      public ColumnarBatch next() {
-        return currentFileReader.next();
+      public ParquetReadResult next() {
+        return new ParquetReadResult(currentFileReader.next(), currentFileName);
       }
     };
   }
