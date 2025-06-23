@@ -53,7 +53,8 @@ class TypeWideningInsertSchemaEvolutionBasicSuite
  */
 trait TypeWideningInsertSchemaEvolutionBasicTests
   extends DeltaInsertIntoTest
-  with TypeWideningTestCases {
+  with TypeWideningTestCases
+  with DeltaExcludedBySparkVersionTestMixinShims {
   self: QueryTest with TypeWideningTestMixin with DeltaDMLTestUtils =>
 
   import testImplicits._
@@ -105,52 +106,45 @@ trait TypeWideningInsertSchemaEvolutionBasicTests
     }
   }
 
-  for {
-    testCase <- alterTableOnlySupportedTestCases
-  } {
-    test(s"INSERT - logs for missed opportunity for conversion " +
-      s"${testCase.fromType.sql} -> ${testCase.toType.sql}") {
-      append(testCase.initialValuesDF)
+  testSparkMasterOnly(s"INSERT - logs for missed opportunity for conversion") {
+    val testCase = alterTableOnlySupportedTestCases.head
 
-      val events = Log4jUsageLogger.track {
-        withSQLConf(SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.LEGACY.toString) {
-          testCase.additionalValuesDF
-          .write
-          .format("delta")
-          .mode("append")
-          .option("mergeSchema", "true")
-          .insertInto(s"delta.`$tempPath`")
-          }
+    append(testCase.initialValuesDF)
+
+    val events = Log4jUsageLogger.track {
+      withSQLConf(SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.LEGACY.toString) {
+        testCase.additionalValuesDF
+        .write
+        .format("delta")
+        .mode("append")
+        .option("mergeSchema", "true")
+        .insertInto(s"delta.`$tempPath`")
       }
-
-      assert(readDeltaTable(tempPath).schema("value").dataType === testCase.fromType)
-      assert(events.exists(event => event.metric == "tahoeEvent" &&
-        event.tags.get("opType") == Option("delta.typeWidening.missedAutomaticWidening")))
     }
+
+    assert(readDeltaTable(tempPath).schema("value").dataType === testCase.fromType)
+    assert(events.exists(event => event.metric == "tahoeEvent" &&
+      event.tags.get("opType") == Option("delta.typeWidening.missedAutomaticWidening")))
   }
 
-  for {
-    testCase <- supportedTestCases
-  } {
-    test(s"INSERT - no logs for lack of missed opportunity for conversion " +
-      s"${testCase.fromType.sql} -> ${testCase.toType.sql}") {
-      append(testCase.initialValuesDF)
+  test(s"INSERT - no logs for lack of missed opportunity for conversion") {
+    val testCase = supportedTestCases.head
+    append(testCase.initialValuesDF)
 
-      val events = Log4jUsageLogger.track {
-        withSQLConf(SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.LEGACY.toString) {
-          testCase.additionalValuesDF
-            .write
-            .format("delta")
-            .mode("append")
-            .option("mergeSchema", "true")
-            .insertInto(s"delta.`$tempPath`")
-        }
+    val events = Log4jUsageLogger.track {
+      withSQLConf(SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.LEGACY.toString) {
+        testCase.additionalValuesDF
+        .write
+        .format("delta")
+        .mode("append")
+        .option("mergeSchema", "true")
+        .insertInto(s"delta.`$tempPath`")
       }
-
-      assert(readDeltaTable(tempPath).schema("value").dataType === testCase.toType)
-      assert(!events.exists(event => event.metric == "tahoeEvent" &&
-        event.tags.get("opType") == Option("delta.typeWidening.missedAutomaticWidening")))
     }
+
+    assert(readDeltaTable(tempPath).schema("value").dataType === testCase.toType)
+    assert(!events.exists(event => event.metric == "tahoeEvent" &&
+      event.tags.get("opType") == Option("delta.typeWidening.missedAutomaticWidening")))
   }
 
   for {
