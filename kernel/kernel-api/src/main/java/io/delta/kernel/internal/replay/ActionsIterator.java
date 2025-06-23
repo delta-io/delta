@@ -327,8 +327,8 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     int sidecarIndex = columnarBatch.getSchema().fieldNames().indexOf(LogReplay.SIDECAR_FIELD_NAME);
     ColumnVector sidecarVector = columnarBatch.getColumnVector(sidecarIndex);
     if (startingLogFileName.isPresent() && lastEmitSidecarIdx == -1)
-      lastEmitSidecarIdx = 1; // check if pagination is enabled
-    int sidecarCnt = 0;
+      lastEmitSidecarIdx = 0; // check if pagination is enabled
+    int sidecarCnt = 0; //sidecar idx starts from 1
     for (int i = 0; i < columnarBatch.getSize(); i++) {
       SidecarFile sidecarFile = SidecarFile.fromColumnVector(sidecarVector, i);
       if (sidecarFile == null) {

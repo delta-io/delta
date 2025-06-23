@@ -19,11 +19,13 @@ import java.io.ByteArrayInputStream
 import java.util
 import java.util.Optional
 
-import io.delta.kernel.data.{ColumnarBatch, ColumnVector, FilteredColumnarBatch, Row}
+import io.delta.kernel.data.{ColumnVector, ColumnarBatch, FilteredColumnarBatch, Row}
 import io.delta.kernel.engine._
 import io.delta.kernel.expressions.{Column, Expression, ExpressionEvaluator, Predicate, PredicateEvaluator}
 import io.delta.kernel.internal.actions.CommitInfo
 import io.delta.kernel.internal.fs.Path
+import io.delta.kernel.internal.util.FileNames
+import io.delta.kernel.internal.util.Utils
 import io.delta.kernel.types.{DataType, StructType}
 import io.delta.kernel.utils.{CloseableIterator, DataFileStatus, FileStatus}
 

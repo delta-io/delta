@@ -41,8 +41,8 @@ public class PaginatedAddFilesIterator implements CloseableIterator<FilteredColu
     if (nextBatch != null) {
       return true;
     }
-    if (numAddFilesReturned >= pageSize) {
-      return false; // page limit reached
+    if(numAddFilesReturned >= pageSize) {
+      return false;
     }
     while (originalIterator.hasNext()) {
       FilteredColumnarBatch batch = originalIterator.next(); //
@@ -58,7 +58,7 @@ public class PaginatedAddFilesIterator implements CloseableIterator<FilteredColu
           batch.getNumOfTrueRows(); // lower long: primitive / Long: box primitive - this can be
       // null; long is preferred.
       // TODO: change number of AddFiles Skipped to rowNum
-      long rowNum = batch.getData().getSize(); // number of rows
+      long rowNum = batch.getData().getSize(); // number of rows, if 5 AddFile and 7 RemoveFile -> this is 12.
 
       System.out.println("numActiveAddFiles: " + numActiveAddFiles);
       System.out.println("numTotalAddFiles: " + batch.getData().getColumnVector(0).getSize());
@@ -68,21 +68,23 @@ public class PaginatedAddFilesIterator implements CloseableIterator<FilteredColu
        * sidecarIdx;
        */
       // if hash set is cached, first read file must be starting log file
-      if (sidecarIdx == -1 && startingLogFileName.compareTo(fileName) < 0) {
+      // TODO: how to correctly skip batches in V2 checkpoint files?
+      if (sidecarIdx == -1 && startingLogFileName.compareTo(fileName) < 0 ) {
         // skip whole batch
         numAddFilesRead += numActiveAddFiles;
       } else if (startingLogFileName.equals(fileName)
           && numAddFilesRead + numActiveAddFiles <= numAddFilesToSkip) {
         // skip whole batch
         numAddFilesRead += numActiveAddFiles;
-      } else if (numAddFilesReturned + numActiveAddFiles > pageSize) {
+      } else if (numAddFilesReturned + numActiveAddFiles >= pageSize) {
         System.out.println("pagination comes to an end");
         // This is the last batch to read.
         nextBatch = batch;
         numAddFilesReturned += numActiveAddFiles;
         numAddFilesRead += numActiveAddFiles;
+        System.out.println("numAddFilesReturned: " + numAddFilesReturned);
         // terminate current pagination
-        return false;
+        return true;
       } else if (startingLogFileName.equals(fileName)
           && numAddFilesRead + numActiveAddFiles > numAddFilesToSkip
           && numAddFilesRead < numAddFilesToSkip) {
@@ -133,6 +135,6 @@ public class PaginatedAddFilesIterator implements CloseableIterator<FilteredColu
       // TODO: what exception should be thrown here?
       throw new RuntimeException("Page token is unavailable at this point!!!");
     }
-    return new PageToken(lastLogFileName, numAddFilesRead, sidecarIdx - 1, -1);
+    return new PageToken(lastLogFileName, numAddFilesRead, sidecarIdx, -1);
   }
 }
