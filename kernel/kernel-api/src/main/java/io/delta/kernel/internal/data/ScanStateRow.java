@@ -32,7 +32,7 @@ import java.util.stream.IntStream;
 
 /** Encapsulate the scan state (common info for all scan files) as a {@link Row} */
 public class ScanStateRow extends GenericRow {
-  private static final StructType SCHEMA =
+  public static final StructType SCHEMA =
       new StructType()
           .add("configuration", new MapType(StringType.STRING, StringType.STRING, false))
           .add("logicalSchemaString", StringType.STRING)

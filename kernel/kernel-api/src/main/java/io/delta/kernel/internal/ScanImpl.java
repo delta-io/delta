@@ -233,7 +233,7 @@ public class ScanImpl implements Scan {
     return removeAlwaysTrue(partitionAndDataFilters.map(filters -> filters._2));
   }
 
-  private Optional<Predicate> getPartitionsFilters() {
+  public Optional<Predicate> getPartitionsFilters() {
     return removeAlwaysTrue(partitionAndDataFilters.map(filters -> filters._1));
   }
 

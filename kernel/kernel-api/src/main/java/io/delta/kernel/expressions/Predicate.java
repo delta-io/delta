@@ -134,6 +134,9 @@ public class Predicate extends ScalarExpression {
     return super.toString();
   }
 
-  private static final Set<String> BINARY_OPERATORS =
+  public static final Set<String> BINARY_OPERATORS =
       Stream.of("<", "<=", ">", ">=", "=", "AND", "OR").collect(Collectors.toSet());
+
+  public static final Set<String> UNARY_OPERATORS =
+      Stream.of("NOT", "IS_NOT_NULL", "IS_NULL").collect(Collectors.toSet());
 }

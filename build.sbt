@@ -55,7 +55,8 @@ Global / default_scala_version := scala212
 val LATEST_RELEASED_SPARK_VERSION = "3.5.3"
 val SPARK_MASTER_VERSION = "4.0.1-SNAPSHOT"
 val sparkVersion = settingKey[String]("Spark version")
-spark / sparkVersion := getSparkVersion()
+sparkDsv2 / sparkVersion := getSparkVersion()
+sparkDsv1 / sparkVersion := getSparkVersion()
 connectCommon / sparkVersion := getSparkVersion()
 connectClient / sparkVersion := getSparkVersion()
 connectServer / sparkVersion := getSparkVersion()
@@ -362,7 +363,7 @@ lazy val connectClient = (project in file("spark-connect/client"))
 
 lazy val connectServer = (project in file("spark-connect/server"))
   .dependsOn(connectCommon % "compile->compile;test->test;provided->provided")
-  .dependsOn(spark % "compile->compile;test->test;provided->provided")
+  .dependsOn(sparkDsv1 % "compile->compile;test->test;provided->provided")
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings(
     name := "delta-connect-server",
@@ -414,12 +415,39 @@ lazy val connectServer = (project in file("spark-connect/server"))
     Test / envVars += ("DELTA_TESTING", "1"),
   )
 
-lazy val spark = (project in file("spark"))
+
+lazy val sparkDsv2 = (project in file("dsv2"))
+  .enablePlugins(ScalafmtPlugin)
+  .dependsOn(kernelApi)
+  .dependsOn(kernelDefaults)
+  .dependsOn(sparkDsv1 % "test->test")
+  .settings(
+    name := "delta-spark-dsv2",
+    commonSettings,
+
+    Test / javaOptions ++= Seq(
+      "-ea",
+      s"-Dlog4j.configuration=file:${baseDirectory.value}/src/test/resources/log4j.properties"
+    ),
+    libraryDependencies ++= Seq(
+      "org.apache.spark" %% "spark-core" % "3.5.1" % "provided",
+      "org.apache.spark" %% "spark-sql" % "3.5.1" % "provided",
+
+      // Test deps
+      "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
+      "org.apache.spark" %% "spark-catalyst" % "3.5.1" % "test" classifier "tests",
+      "org.apache.spark" %% "spark-core" % "3.5.1" % "test" classifier "tests",
+      "org.apache.spark" %% "spark-sql" % "3.5.1" % "test" classifier "tests",
+      "org.apache.spark" %% "spark-hive" % "3.5.1" % "test" classifier "tests"
+    )
+  )
+
+lazy val sparkDsv1 = (project in file("spark"))
   .dependsOn(storage)
   .enablePlugins(Antlr4Plugin)
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings (
-    name := "delta-spark",
+    name := "delta-spark-dsv1",
     commonSettings,
     scalaStyleSettings,
     sparkMimaSettings,
@@ -505,7 +533,7 @@ lazy val spark = (project in file("spark"))
   )
 
 lazy val contribs = (project in file("contribs"))
-  .dependsOn(spark % "compile->compile;test->test;provided->provided")
+  .dependsOn(sparkDsv1 % "compile->compile;test->test;provided->provided")
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings (
     name := "delta-contribs",
@@ -544,7 +572,7 @@ lazy val contribs = (project in file("contribs"))
   ).configureUnidoc()
 
 lazy val sharing = (project in file("sharing"))
-  .dependsOn(spark % "compile->compile;test->test;provided->provided")
+  .dependsOn(sparkDsv1 % "compile->compile;test->test;provided->provided")
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings(
     name := "delta-sharing-spark",
@@ -658,7 +686,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
   .dependsOn(kernelApi % "test->test")
   .dependsOn(storage)
   .dependsOn(storage % "test->test") // Required for InMemoryCommitCoordinator for tests
-  .dependsOn(spark % "test->test")
+  .dependsOn(sparkDsv1 % "test->test")
   .dependsOn(goldenTables % "test")
   .settings(
     name := "delta-kernel-defaults",
@@ -726,7 +754,7 @@ lazy val storage = (project in file("storage"))
 
 lazy val storageS3DynamoDB = (project in file("storage-s3-dynamodb"))
   .dependsOn(storage % "compile->compile;test->test;provided->provided")
-  .dependsOn(spark % "test->test")
+  .dependsOn(sparkDsv1 % "test->test")
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings (
     name := "delta-storage-s3-dynamodb",
@@ -752,7 +780,7 @@ val icebergSparkRuntimeArtifactName = {
 
 lazy val testDeltaIcebergJar = (project in file("testDeltaIcebergJar"))
   // delta-iceberg depends on delta-spark! So, we need to include it during our test.
-  .dependsOn(spark % "test")
+  .dependsOn(sparkDsv1 % "test")
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings(
     name := "test-delta-iceberg-jar",
@@ -782,7 +810,7 @@ val deltaIcebergSparkIncludePrefixes = Seq(
 // It will fail the first time, just re-run it.
 // scalastyle:off println
 lazy val iceberg = (project in file("iceberg"))
-  .dependsOn(spark % "compile->compile;test->test;provided->provided")
+  .dependsOn(sparkDsv1 % "compile->compile;test->test;provided->provided")
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings (
     name := "delta-iceberg",
@@ -852,7 +880,7 @@ lazy val iceberg = (project in file("iceberg"))
 lazy val generateIcebergJarsTask = TaskKey[Unit]("generateIcebergJars", "Generate Iceberg JARs")
 
 lazy val icebergShaded = (project in file("icebergShaded"))
-  .dependsOn(spark % "provided")
+  .dependsOn(sparkDsv1 % "provided")
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings (
     name := "iceberg-shaded",
@@ -883,7 +911,7 @@ lazy val icebergShaded = (project in file("icebergShaded"))
   )
 
 lazy val hudi = (project in file("hudi"))
-  .dependsOn(spark % "compile->compile;test->test;provided->provided")
+  .dependsOn(sparkDsv1 % "compile->compile;test->test;provided->provided")
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings (
     name := "delta-hudi",
@@ -1376,7 +1404,7 @@ TODO (TD): Tests are failing for some reason
 lazy val compatibility = (project in file("connectors/oss-compatibility-tests"))
   // depend on standalone test codes as well
   .dependsOn(standalone % "compile->compile;test->test")
-  .dependsOn(spark % "test -> compile")
+  .dependsOn(sparkDsv1 % "test -> compile")
   .settings(
     name := "compatibility",
     commonSettings,
@@ -1395,7 +1423,7 @@ lazy val compatibility = (project in file("connectors/oss-compatibility-tests"))
  */
 
 lazy val goldenTables = (project in file("connectors/golden-tables"))
-  .dependsOn(spark % "test") // depends on delta-spark
+  .dependsOn(sparkDsv1 % "test") // depends on delta-spark
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings(
     name := "golden-tables",
@@ -1422,7 +1450,7 @@ def sqlDeltaImportScalaVersion(scalaBinaryVersion: String): String = {
 }
 
 lazy val sqlDeltaImport = (project in file("connectors/sql-delta-import"))
-  .dependsOn(spark)
+  .dependsOn(sparkDsv1)
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings (
     name := "sql-delta-import",
@@ -1583,6 +1611,17 @@ val createTargetClassesDir = taskKey[Unit]("create target classes dir")
  * Project groups *
  ******************
  */
+
+lazy val spark = (project in file("spark-aggregator"))
+  .aggregate(sparkDsv1, sparkDsv2)
+  .settings(
+    name := "delta-spark",
+    commonSettings,
+    skipReleaseSettings,
+    crossScalaVersions := Nil,
+    publishArtifact := false,
+    publish / skip := true
+  )
 
 // Don't use these groups for any other projects
 lazy val sparkGroup = project
