@@ -17,6 +17,7 @@
 package io.delta.kernel;
 
 import io.delta.kernel.annotation.Experimental;
+import io.delta.kernel.commit.Committer;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.types.StructType;
 import java.util.List;
@@ -64,4 +65,6 @@ public interface ResolvedTable {
 
   /** @return a scan builder for constructing scans to read data from this table */
   ScanBuilder getScanBuilder();
+
+  Committer getCommitter();
 }
