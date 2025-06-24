@@ -38,7 +38,6 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap
  */
 class TypeWideningInsertSchemaEvolutionBasicSuite
     extends QueryTest
-    with DeltaDMLTestUtils
     with TypeWideningTestMixin
     with TypeWideningInsertSchemaEvolutionBasicTests {
 
