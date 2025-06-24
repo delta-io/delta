@@ -43,6 +43,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -98,12 +99,11 @@ public class TableImpl implements Table {
   @Override
   public Snapshot getLatestSnapshot(Engine engine) throws TableNotFoundException {
     SnapshotQueryContext snapshotContext = SnapshotQueryContext.forLatestSnapshot(tablePath);
-    try {
-      return snapshotManager.buildLatestSnapshot(engine, snapshotContext);
-    } catch (Exception e) {
-      snapshotContext.recordSnapshotErrorReport(engine, e);
-      throw e;
-    }
+    return loadSnapshotWithMetrics(
+        engine,
+        () -> snapshotManager.buildLatestSnapshot(engine, snapshotContext),
+        snapshotContext,
+        "AT LATEST");
   }
 
   @Override
@@ -111,12 +111,11 @@ public class TableImpl implements Table {
       throws TableNotFoundException {
     SnapshotQueryContext snapshotContext =
         SnapshotQueryContext.forVersionSnapshot(tablePath, versionId);
-    try {
-      return snapshotManager.getSnapshotAt(engine, versionId, snapshotContext);
-    } catch (Exception e) {
-      snapshotContext.recordSnapshotErrorReport(engine, e);
-      throw e;
-    }
+    return loadSnapshotWithMetrics(
+        engine,
+        () -> snapshotManager.getSnapshotAt(engine, versionId, snapshotContext),
+        snapshotContext,
+        String.format("AS OF VERSION %d", versionId));
   }
 
   @Override
@@ -125,13 +124,13 @@ public class TableImpl implements Table {
     SnapshotQueryContext snapshotContext =
         SnapshotQueryContext.forTimestampSnapshot(tablePath, millisSinceEpochUTC);
     SnapshotImpl latestSnapshot = (SnapshotImpl) getLatestSnapshot(engine);
-    try {
-      return snapshotManager.getSnapshotForTimestamp(
-          engine, latestSnapshot, millisSinceEpochUTC, snapshotContext);
-    } catch (Exception e) {
-      snapshotContext.recordSnapshotErrorReport(engine, e);
-      throw e;
-    }
+    return loadSnapshotWithMetrics(
+        engine,
+        () ->
+            snapshotManager.getSnapshotForTimestamp(
+                engine, latestSnapshot, millisSinceEpochUTC, snapshotContext),
+        snapshotContext,
+        String.format("AS OF TIMESTAMP %d", millisSinceEpochUTC));
   }
 
   @Override
@@ -322,6 +321,35 @@ public class TableImpl implements Table {
       // thrown an KernelException. So, clearly, this can't be the last commit, so we can safely
       // return commit.version + 1 as the version that is at or after the input timestamp.
       return commit.getVersion() + 1;
+    }
+  }
+
+  /** Helper method that loads a snapshot with proper metrics recording, logging, and reporting. */
+  private Snapshot loadSnapshotWithMetrics(
+      Engine engine,
+      Supplier<SnapshotImpl> loadSnapshot,
+      SnapshotQueryContext snapshotContext,
+      String queryString)
+      throws TableNotFoundException {
+    try {
+      final SnapshotImpl snapshot =
+          snapshotContext.getSnapshotMetrics().loadSnapshotTotalTimer.time(loadSnapshot);
+
+      logger.info(
+          "[{}] Took {}ms to load snapshot (version = {}) for snapshot query {}",
+          tablePath,
+          snapshotContext.getSnapshotMetrics().loadSnapshotTotalTimer.totalDurationMs(),
+          snapshot.getVersion(),
+          queryString);
+
+      engine
+          .getMetricsReporters()
+          .forEach(reporter -> reporter.report(snapshot.getSnapshotReport()));
+
+      return snapshot;
+    } catch (Exception e) {
+      snapshotContext.recordSnapshotErrorReport(engine, e);
+      throw e;
     }
   }
 

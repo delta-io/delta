@@ -119,14 +119,24 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
 
     // Since we cannot know the actual durations of these we sanity check that they are > 0 and
     // less than the total operation duration whenever they are expected to be non-zero/non-empty
+
     val metrics = snapshotReport.getSnapshotMetrics
+
+    // ===== Metric: getLoadSnapshotTotalDurationNs =====
+    if (!expectations.expectException) {
+      assert(metrics.getLoadSnapshotTotalDurationNs > 0)
+      assert(metrics.getLoadSnapshotTotalDurationNs <= duration)
+    } else {
+      assert(metrics.getLoadSnapshotTotalDurationNs >= 0)
+    }
 
     // ===== Metric: getTimestampToVersionResolutionDurationNs =====
     if (expectations.expectNonEmptyTimestampToVersionResolutionDuration) {
       assert(metrics.getTimestampToVersionResolutionDurationNs.isPresent)
       assert(metrics.getTimestampToVersionResolutionDurationNs.get > 0)
-      assert(metrics.getTimestampToVersionResolutionDurationNs.get <
-        duration)
+      assert(metrics.getTimestampToVersionResolutionDurationNs.get < duration)
+      assert(metrics.getTimestampToVersionResolutionDurationNs.get <=
+        metrics.getLoadSnapshotTotalDurationNs)
     } else {
       assert(!metrics.getTimestampToVersionResolutionDurationNs.isPresent)
     }
@@ -135,6 +145,7 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
     if (expectations.expectNonZeroLoadProtocolAndMetadataDuration) {
       assert(metrics.getLoadInitialDeltaActionsDurationNs > 0)
       assert(metrics.getLoadInitialDeltaActionsDurationNs < duration)
+      assert(metrics.getLoadInitialDeltaActionsDurationNs <= metrics.getLoadSnapshotTotalDurationNs)
     } else {
       assert(metrics.getLoadInitialDeltaActionsDurationNs == 0)
     }
@@ -143,6 +154,7 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
     if (expectations.expectNonZeroBuildLogSegmentDuration) {
       assert(metrics.getTimeToBuildLogSegmentForVersionNs > 0)
       assert(metrics.getTimeToBuildLogSegmentForVersionNs < duration)
+      assert(metrics.getTimeToBuildLogSegmentForVersionNs <= metrics.getLoadSnapshotTotalDurationNs)
     } else {
       assert(metrics.getTimeToBuildLogSegmentForVersionNs == 0)
     }
@@ -151,6 +163,7 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
     if (expectations.expectNonZeroDurationToGetCrcInfo) {
       assert(metrics.getDurationToGetCrcInfoNs > 0)
       assert(metrics.getDurationToGetCrcInfoNs < duration)
+      assert(metrics.getDurationToGetCrcInfoNs <= metrics.getLoadSnapshotTotalDurationNs)
     } else {
       assert(metrics.getDurationToGetCrcInfoNs == 0)
     }

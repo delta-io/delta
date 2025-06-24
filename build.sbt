@@ -414,6 +414,24 @@ lazy val connectServer = (project in file("spark-connect/server"))
     Test / envVars += ("DELTA_TESTING", "1"),
   )
 
+lazy val deltaSuiteGenerator = (project in file("spark/delta-suite-generator"))
+  .disablePlugins(ScalafmtPlugin)
+  .settings (
+    name := "delta-suite-generator",
+    commonSettings,
+    scalaStyleSettings,
+    libraryDependencies ++= Seq(
+      "org.scala-lang.modules" %% "scala-collection-compat" % "2.11.0",
+      "org.scalameta" %% "scalameta" % "4.13.5",
+      "org.scalameta" %% "scalafmt-core" % "3.9.6",
+      "commons-cli" % "commons-cli" % "1.9.0",
+      "commons-codec" % "commons-codec" % "1.17.2",
+      "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
+    ),
+    Compile / mainClass := Some("io.delta.suitegenerator.ModularSuiteGenerator"),
+    Test / baseDirectory := (ThisBuild / baseDirectory).value,
+  )
+
 lazy val spark = (project in file("spark"))
   .dependsOn(storage)
   .enablePlugins(Antlr4Plugin)

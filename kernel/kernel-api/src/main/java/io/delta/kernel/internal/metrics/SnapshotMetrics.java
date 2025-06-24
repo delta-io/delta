@@ -28,6 +28,8 @@ import java.util.Optional;
  */
 public class SnapshotMetrics {
 
+  public final Timer loadSnapshotTotalTimer = new Timer();
+
   public final Timer timestampToVersionResolutionTimer = new Timer();
 
   public final Timer loadInitialDeltaActionsTimer = new Timer();
@@ -40,7 +42,7 @@ public class SnapshotMetrics {
 
   public SnapshotMetricsResult captureSnapshotMetricsResult() {
     return new SnapshotMetricsResult() {
-
+      final long loadSnapshotTotalDurationResult = loadSnapshotTotalTimer.totalDurationNs();
       final Optional<Long> timestampToVersionResolutionDurationResult =
           timestampToVersionResolutionTimer.totalDurationIfRecorded();
       final long loadInitialDeltaActionsDurationResult =
@@ -50,6 +52,11 @@ public class SnapshotMetrics {
       final long durationToGetCrcInfoDurationResult = durationToGetCrcInfoTimer.totalDurationNs();
       final long loadLogSegmentCloudListCallCountResult =
           loadLogSegmentCloudListCallCounter.value();
+
+      @Override
+      public long getLoadSnapshotTotalDurationNs() {
+        return loadSnapshotTotalDurationResult;
+      }
 
       @Override
       public Optional<Long> getTimestampToVersionResolutionDurationNs() {
@@ -81,11 +88,14 @@ public class SnapshotMetrics {
   @Override
   public String toString() {
     return String.format(
-        "SnapshotMetrics(timestampToVersionResolutionTimer=%s, "
+        "SnapshotMetrics("
+            + "loadSnapshotTotalTimer=%s,"
+            + "timestampToVersionResolutionTimer=%s, "
             + "loadInitialDeltaActionsTimer=%s, "
             + "timeToBuildLogSegmentForVersionTimer=%s, "
             + "durationToGetCrcInfoTimer=%s, "
             + "loadLogSegmentCloudListCallCounter=%s)",
+        loadSnapshotTotalTimer,
         timestampToVersionResolutionTimer,
         loadInitialDeltaActionsTimer,
         timeToBuildLogSegmentForVersionTimer,

@@ -107,7 +107,8 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
       noopCopyExprs: Seq[Expression],
       clausesWithPrecompConditions: Seq[DeltaMergeIntoClause],
       cdcEnabled: Boolean,
-      shouldCountDeletedRows: Boolean = true): IndexedSeq[Column] = {
+      shouldCountDeletedRows: Boolean = true,
+      needSetRowTrackingFieldIdForUniform: Boolean): IndexedSeq[Column] = {
 
     val numOutputCols = targetWriteColNames.size
 
@@ -206,11 +207,12 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
       if (rowIdColumnExpressionOpt.exists(_.name == name)) {
         // Add Row ID metadata to allow writing the column.
         Column(Alias(caseWhen, name)(
-          explicitMetadata = Some(RowId.columnMetadata(name))))
+          explicitMetadata = Some(RowId.columnMetadata(name, needSetRowTrackingFieldIdForUniform))))
       } else if (rowCommitVersionColumnExpressionOpt.exists(_.name == name)) {
         // Add Row Commit Versions metadata to allow writing the column.
         Column(Alias(caseWhen, name)(
-          explicitMetadata = Some(RowCommitVersion.columnMetadata(name))))
+          explicitMetadata = Some(
+            RowCommitVersion.columnMetadata(name, needSetRowTrackingFieldIdForUniform))))
       } else {
         Column(Alias(caseWhen, name)())
       }
@@ -392,7 +394,8 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
       noopCopyExprs: Seq[Expression],
       rowIdColumnNameOpt: Option[String],
       rowCommitVersionColumnNameOpt: Option[String],
-      deduplicateDeletes: DeduplicateCDFDeletes): DataFrame = {
+      deduplicateDeletes: DeduplicateCDFDeletes,
+      needSetRowTrackingFieldIdForUniform: Boolean): DataFrame = {
     import org.apache.spark.sql.delta.commands.cdc.CDCReader._
     // The main partition just needs to swap in the CDC_TYPE_NOT_CDC value.
     val mainDataOutput =
@@ -464,7 +467,9 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
         cdcToMainDataArray,
         rowIdColumnNameOpt,
         rowCommitVersionColumnNameOpt,
-        outputColNames)
+        outputColNames,
+        needSetRowTrackingFieldIdForUniform
+      )
     } else {
       packAndExplodeCDCOutput(
         sourceDf,
@@ -473,7 +478,8 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
         rowIdColumnNameOpt,
         rowCommitVersionColumnNameOpt,
         outputColNames,
-        dedupColumns = Nil)
+        dedupColumns = Nil,
+        needSetRowTrackingFieldIdForUniform)
     }
   }
 
@@ -505,13 +511,16 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
       rowIdColumnNameOpt: Option[String],
       rowCommitVersionColumnNameOpt: Option[String],
       outputColNames: Seq[String],
-      dedupColumns: Seq[Column]): DataFrame = {
+      dedupColumns: Seq[Column],
+      needSetRowTrackingFieldIdForUniform: Boolean): DataFrame = {
     val unpackedCols = outputColNames.map { name =>
       if (rowIdColumnNameOpt.contains(name)) {
         // Add metadata to allow writing the column although it is not part of the schema.
-        col(s"packedData.`$name`").as(name, RowId.columnMetadata(name))
+        col(s"packedData.`$name`").as(name,
+          RowId.columnMetadata(name, needSetRowTrackingFieldIdForUniform))
       } else if (rowCommitVersionColumnNameOpt.contains(name)) {
-        col(s"packedData.`$name`").as(name, RowCommitVersion.columnMetadata(name))
+        col(s"packedData.`$name`").as(name,
+          RowCommitVersion.columnMetadata(name, needSetRowTrackingFieldIdForUniform))
       } else {
         col(s"packedData.`$name`").as(name)
       }
@@ -547,7 +556,8 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
       cdcToMainDataArray: Column,
       rowIdColumnNameOpt: Option[String],
       rowCommitVersionColumnNameOpt: Option[String],
-      outputColNames: Seq[String]): DataFrame = {
+      outputColNames: Seq[String],
+      needSetRowTrackingFieldIdForUniform: Boolean): DataFrame = {
     val dedupColumns = if (deduplicateDeletes.includesInserts) {
       Seq(col(TARGET_ROW_INDEX_COL), col(SOURCE_ROW_INDEX_COL))
     } else {
@@ -561,7 +571,8 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
       rowIdColumnNameOpt,
       rowCommitVersionColumnNameOpt,
       outputColNames,
-      dedupColumns
+      dedupColumns,
+      needSetRowTrackingFieldIdForUniform
     )
 
     val cdcDfWithIncreasingIds = if (deduplicateDeletes.includesInserts) {

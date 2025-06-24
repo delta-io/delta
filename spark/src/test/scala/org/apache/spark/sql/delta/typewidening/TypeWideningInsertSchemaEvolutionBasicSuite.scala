@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.typewidening
 
+import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -35,11 +36,11 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap
  * Suite covering widening columns and fields type as part of automatic schema evolution in INSERT
  * when the type widening table feature is supported.
  */
-class TypeWideningInsertSchemaEvolutionSuite
+class TypeWideningInsertSchemaEvolutionBasicSuite
     extends QueryTest
     with DeltaDMLTestUtils
     with TypeWideningTestMixin
-    with TypeWideningInsertSchemaEvolutionTests {
+    with TypeWideningInsertSchemaEvolutionBasicTests {
 
   protected override def sparkConf: SparkConf = {
     super.sparkConf
@@ -50,13 +51,101 @@ class TypeWideningInsertSchemaEvolutionSuite
 /**
  * Tests covering type widening during schema evolution in INSERT.
  */
-trait TypeWideningInsertSchemaEvolutionTests
+trait TypeWideningInsertSchemaEvolutionBasicTests
   extends DeltaInsertIntoTest
-  with TypeWideningTestCases {
+  with TypeWideningTestCases
+  with DeltaExcludedBySparkVersionTestMixinShims {
   self: QueryTest with TypeWideningTestMixin with DeltaDMLTestUtils =>
 
   import testImplicits._
   import scala.collection.JavaConverters._
+
+  for {
+    testCase <- alterTableOnlySupportedTestCases ++ supportedTestCases
+  } {
+    test(s"INSERT - always automatic type widening " +
+      s"${testCase.fromType.sql} -> ${testCase.toType.sql}") {
+      append(testCase.initialValuesDF)
+
+      withSQLConf(DeltaSQLConf.DELTA_ALLOW_AUTOMATIC_WIDENING.key -> "always") {
+        testCase.additionalValuesDF
+          .write
+          .format("delta")
+          .mode("append")
+          .option("mergeSchema", "true")
+          .insertInto(s"delta.`$tempPath`")
+      }
+
+      assert(readDeltaTable(tempPath).schema("value").dataType === testCase.toType)
+      checkAnswerWithTolerance(
+        actualDf = readDeltaTable(tempPath).select("value"),
+        expectedDf = testCase.expectedResult.select($"value".cast(testCase.toType)),
+        toType = testCase.toType
+      )
+    }
+  }
+
+  for {
+    testCase <- alterTableOnlySupportedTestCases ++ supportedTestCases
+  } {
+    test(s"INSERT - never automatic type widening " +
+      s"${testCase.fromType.sql} -> ${testCase.toType.sql}") {
+      append(testCase.initialValuesDF)
+
+      withSQLConf(SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.LEGACY.toString,
+        DeltaSQLConf.DELTA_ALLOW_AUTOMATIC_WIDENING.key -> "never") {
+        testCase.additionalValuesDF
+          .write
+          .format("delta")
+          .mode("append")
+          .option("mergeSchema", "true")
+          .insertInto(s"delta.`$tempPath`")
+      }
+
+      assert(readDeltaTable(tempPath).schema("value").dataType === testCase.fromType)
+    }
+  }
+
+  testSparkMasterOnly(s"INSERT - logs for missed opportunity for conversion") {
+    val testCase = alterTableOnlySupportedTestCases.head
+
+    append(testCase.initialValuesDF)
+
+    val events = Log4jUsageLogger.track {
+      withSQLConf(SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.LEGACY.toString) {
+        testCase.additionalValuesDF
+        .write
+        .format("delta")
+        .mode("append")
+        .option("mergeSchema", "true")
+        .insertInto(s"delta.`$tempPath`")
+      }
+    }
+
+    assert(readDeltaTable(tempPath).schema("value").dataType === testCase.fromType)
+    assert(events.exists(event => event.metric == "tahoeEvent" &&
+      event.tags.get("opType") == Option("delta.typeWidening.missedAutomaticWidening")))
+  }
+
+  test(s"INSERT - no logs for lack of missed opportunity for conversion") {
+    val testCase = supportedTestCases.head
+    append(testCase.initialValuesDF)
+
+    val events = Log4jUsageLogger.track {
+      withSQLConf(SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.LEGACY.toString) {
+        testCase.additionalValuesDF
+        .write
+        .format("delta")
+        .mode("append")
+        .option("mergeSchema", "true")
+        .insertInto(s"delta.`$tempPath`")
+      }
+    }
+
+    assert(readDeltaTable(tempPath).schema("value").dataType === testCase.toType)
+    assert(!events.exists(event => event.metric == "tahoeEvent" &&
+      event.tags.get("opType") == Option("delta.typeWidening.missedAutomaticWidening")))
+  }
 
   for {
     testCase <- supportedTestCases
@@ -177,131 +266,4 @@ trait TypeWideningInsertSchemaEvolutionTests
     assert(readDeltaTable(tempPath).schema == new StructType().add("a", IntegerType))
     checkAnswer(readDeltaTable(tempPath), Row(1))
   }
-
-  testInserts("top-level type evolution")(
-    initialData = TestData("a int, b short", Seq("""{ "a": 1, "b": 2 }""")),
-    partitionBy = Seq("a"),
-    overwriteWhere = "a" -> 1,
-    insertData = TestData("a int, b int", Seq("""{ "a": 1, "b": 4 }""")),
-    expectedResult = ExpectedResult.Success(new StructType()
-      .add("a", IntegerType)
-      .add("b", IntegerType))
-  )
-
-  testInserts("top-level type evolution with column upcast")(
-    initialData = TestData("a int, b short, c int", Seq("""{ "a": 1, "b": 2, "c": 3 }""")),
-    partitionBy = Seq("a"),
-    overwriteWhere = "a" -> 1,
-    insertData = TestData("a int, b int, c short", Seq("""{ "a": 1, "b": 5, "c": 6 }""")),
-    expectedResult = ExpectedResult.Success(new StructType()
-      .add("a", IntegerType)
-      .add("b", IntegerType)
-      .add("c", IntegerType))
-  )
-
-  testInserts("top-level type evolution with schema evolution")(
-    initialData = TestData("a int, b short", Seq("""{ "a": 1, "b": 2 }""")),
-    partitionBy = Seq("a"),
-    overwriteWhere = "a" -> 1,
-    insertData = TestData("a int, b int, c int", Seq("""{ "a": 1, "b": 4, "c": 5 }""")),
-    expectedResult = ExpectedResult.Success(new StructType()
-      .add("a", IntegerType)
-      .add("b", IntegerType)
-      .add("c", IntegerType)),
-    // SQL INSERT by name doesn't support schema evolution.
-    excludeInserts = insertsSQL.intersect(insertsByName)
-  )
-
-
-  testInserts("nested type evolution by position")(
-    initialData = TestData(
-      "key int, s struct<x: short, y: short>, m map<string, short>, a array<short>",
-      Seq("""{ "key": 1, "s": { "x": 1, "y": 2 }, "m": { "p": 3 }, "a": [4] }""")),
-    partitionBy = Seq("key"),
-    overwriteWhere = "key" -> 1,
-    insertData = TestData(
-      "key int, s struct<x: short, y: int>, m map<string, int>, a array<int>",
-      Seq("""{ "key": 1, "s": { "x": 4, "y": 5 }, "m": { "p": 6 }, "a": [7] }""")),
-    expectedResult = ExpectedResult.Success(new StructType()
-      .add("key", IntegerType)
-      .add("s", new StructType()
-        .add("x", ShortType)
-        .add("y", IntegerType))
-      .add("m", MapType(StringType, IntegerType))
-      .add("a", ArrayType(IntegerType)))
-  )
-
-
-  testInserts("nested type evolution with struct evolution by position")(
-    initialData = TestData(
-      "key int, s struct<x: short, y: short>, m map<string, short>, a array<short>",
-      Seq("""{ "key": 1, "s": { "x": 1, "y": 2 }, "m": { "p": 3 }, "a": [4] }""")),
-    partitionBy = Seq("key"),
-    overwriteWhere = "key" -> 1,
-    insertData = TestData(
-      "key int, s struct<x: short, y: int, z: int>, m map<string, int>, a array<int>",
-      Seq("""{ "key": 1, "s": { "x": 4, "y": 5, "z": 8 }, "m": { "p": 6 }, "a": [7] }""")),
-    expectedResult = ExpectedResult.Success(new StructType()
-      .add("key", IntegerType)
-      .add("s", new StructType()
-        .add("x", ShortType)
-        .add("y", IntegerType)
-        .add("z", IntegerType))
-      .add("m", MapType(StringType, IntegerType))
-      .add("a", ArrayType(IntegerType)))
-  )
-
-
-  testInserts("nested struct type evolution with field upcast")(
-    initialData = TestData(
-      "key int, s struct<x: int, y: short>",
-      Seq("""{ "key": 1, "s": { "x": 1, "y": 2 } }""")),
-    partitionBy = Seq("key"),
-    overwriteWhere = "key" -> 1,
-    insertData = TestData(
-      "key int, s struct<x: short, y: int>",
-      Seq("""{ "key": 1, "s": { "x": 4, "y": 5 } }""")),
-    expectedResult = ExpectedResult.Success(new StructType()
-      .add("key", IntegerType)
-      .add("s", new StructType()
-        .add("x", IntegerType)
-        .add("y", IntegerType)))
-  )
-
-  // Interestingly, we introduced a special case to handle schema evolution / casting for structs
-  // directly nested into an array. This doesn't always work with maps or with elements that
-  // aren't a struct (see other tests).
-  testInserts("nested struct type evolution with field upcast in array")(
-    initialData = TestData(
-      "key int, a array<struct<x: int, y: short>>",
-      Seq("""{ "key": 1, "a": [ { "x": 1, "y": 2 } ] }""")),
-    partitionBy = Seq("key"),
-    overwriteWhere = "key" -> 1,
-    insertData = TestData(
-      "key int, a array<struct<x: short, y: int>>",
-      Seq("""{ "key": 1, "a": [ { "x": 3, "y": 4 } ] }""")),
-    expectedResult = ExpectedResult.Success(new StructType()
-      .add("key", IntegerType)
-      .add("a", ArrayType(new StructType()
-        .add("x", IntegerType)
-        .add("y", IntegerType))))
-  )
-
-  // maps now allow type evolution for INSERT by position and name in SQL and dataframe.
-  testInserts("nested struct type evolution with field upcast in map")(
-    initialData = TestData(
-      "key int, m map<string, struct<x: int, y: short>>",
-      Seq("""{ "key": 1, "m": { "a": { "x": 1, "y": 2 } } }""")),
-    partitionBy = Seq("key"),
-    overwriteWhere = "key" -> 1,
-    insertData = TestData(
-      "key int, m map<string, struct<x: short, y: int>>",
-      Seq("""{ "key": 1, "m": { "a": { "x": 3, "y": 4 } } }""")),
-    expectedResult = ExpectedResult.Success(new StructType()
-      .add("key", IntegerType)
-      // Type evolution was applied in the map.
-      .add("m", MapType(StringType, new StructType()
-        .add("x", IntegerType)
-        .add("y", IntegerType))))
-  )
 }

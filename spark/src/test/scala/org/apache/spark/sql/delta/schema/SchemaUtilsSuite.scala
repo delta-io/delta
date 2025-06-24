@@ -29,6 +29,7 @@ import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils._
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.sources.DeltaSQLConf.AllowAutomaticWideningMode
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import io.delta.tables.DeltaTable
@@ -2117,7 +2118,10 @@ class SchemaUtilsSuite extends QueryTest
           col("*"),
           col("_metadata.row_id").as("row_id")
         )
-        .withMetadata("row_id", RowId.RowIdMetadataStructField.metadata("name"))
+        .withMetadata(
+          "row_id",
+          RowId.RowIdMetadataStructField.metadata("name", shouldSetIcebergReservedFieldId = false)
+        )
 
       val tableSchema = new StructType().add("id", LongType)
       val normalized =
@@ -2140,8 +2144,14 @@ class SchemaUtilsSuite extends QueryTest
           col("_metadata.row_id").as("row_id"),
           col("_metadata.row_commit_version").as("row_commit_version")
         )
-        .withMetadata("row_id", RowId.RowIdMetadataStructField.metadata("name"))
-        .withMetadata("row_commit_version", RowCommitVersion.MetadataStructField.metadata("name"))
+        .withMetadata(
+          "row_id",
+          RowId.RowIdMetadataStructField.metadata("name", shouldSetIcebergReservedFieldId = false))
+        .withMetadata(
+          "row_commit_version",
+          RowCommitVersion.MetadataStructField.metadata(
+            "name", shouldSetIcebergReservedFieldId = false)
+        )
 
       val tableSchema = new StructType().add("id", LongType)
         val normalized =
@@ -2568,7 +2578,9 @@ class SchemaUtilsSuite extends QueryTest
       mergeSchemas(
         base,
         update,
-        typeWideningMode = TypeWideningMode.TypeEvolution(uniformIcebergCompatibleOnly = false),
+        typeWideningMode = TypeWideningMode.TypeEvolution(
+          uniformIcebergCompatibleOnly = false,
+          allowAutomaticWidening = AllowAutomaticWideningMode.default),
         keepExistingType = true
       )
     assert(mergedSchema === expected)
@@ -2577,8 +2589,12 @@ class SchemaUtilsSuite extends QueryTest
   private val allTypeWideningModes = Set(
     NoTypeWidening,
     AllTypeWidening,
-    TypeEvolution(uniformIcebergCompatibleOnly = false),
-    TypeEvolution(uniformIcebergCompatibleOnly = true),
+    TypeEvolution(
+      uniformIcebergCompatibleOnly = false,
+      allowAutomaticWidening = AllowAutomaticWideningMode.default),
+    TypeEvolution(
+      uniformIcebergCompatibleOnly = true,
+      allowAutomaticWidening = AllowAutomaticWideningMode.default),
     AllTypeWideningToCommonWiderType,
     TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly = false),
     TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly = true)
@@ -2625,8 +2641,12 @@ class SchemaUtilsSuite extends QueryTest
     for (typeWideningMode <- Seq(
         NoTypeWidening,
         AllTypeWidening,
-        TypeEvolution(uniformIcebergCompatibleOnly = false),
-        TypeEvolution(uniformIcebergCompatibleOnly = true))) {
+        TypeEvolution(
+          uniformIcebergCompatibleOnly = false,
+          allowAutomaticWidening = AllowAutomaticWideningMode.default),
+        TypeEvolution(
+          uniformIcebergCompatibleOnly = true,
+          allowAutomaticWidening = AllowAutomaticWideningMode.default))) {
       // Narrowing is not allowed.
       expectAnalysisErrorClass("DELTA_MERGE_INCOMPATIBLE_DATATYPE",
         Map("currentDataType" -> "LongType", "updateDataType" -> "IntegerType")) {
@@ -2665,9 +2685,13 @@ class SchemaUtilsSuite extends QueryTest
     val wide = new StructType().add("a", toType)
 
     for (typeWideningMode <- Seq(
-        TypeEvolution(uniformIcebergCompatibleOnly = false),
+        TypeEvolution(
+          uniformIcebergCompatibleOnly = false,
+          allowAutomaticWidening = AllowAutomaticWideningMode.default),
         TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly = false),
-        TypeEvolution(uniformIcebergCompatibleOnly = true),
+        TypeEvolution(
+          uniformIcebergCompatibleOnly = true,
+          allowAutomaticWidening = AllowAutomaticWideningMode.default),
         TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly = true))) {
       expectAnalysisErrorClass(
         "DELTA_MERGE_INCOMPATIBLE_DATATYPE",
@@ -2701,7 +2725,9 @@ class SchemaUtilsSuite extends QueryTest
     }
 
     for (typeWideningMode <- Seq(
-        TypeEvolution(uniformIcebergCompatibleOnly = false),
+        TypeEvolution(
+          uniformIcebergCompatibleOnly = false,
+          allowAutomaticWidening = AllowAutomaticWideningMode.default),
         TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly = false))) {
         // Unsupported type changes by Iceberg are allowed without Iceberg compatibility.
       val merged = mergeSchemas(narrow, wide, typeWideningMode = typeWideningMode)
@@ -2709,7 +2735,9 @@ class SchemaUtilsSuite extends QueryTest
     }
 
     for (typeWideningMode <- Seq(
-        TypeEvolution(uniformIcebergCompatibleOnly = true),
+        TypeEvolution(
+          uniformIcebergCompatibleOnly = true,
+          allowAutomaticWidening = AllowAutomaticWideningMode.default),
         TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly = true))) {
       // Widening is blocked for unsupported type changes with Iceberg compatibility.
       checkAnalysisException {
@@ -2724,9 +2752,13 @@ class SchemaUtilsSuite extends QueryTest
     assert(merged === wide)
 
     for (typeWideningMode <- Seq(
-        TypeEvolution(uniformIcebergCompatibleOnly = true),
+        TypeEvolution(
+          uniformIcebergCompatibleOnly = true,
+          allowAutomaticWidening = AllowAutomaticWideningMode.default),
         TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly = true),
-        TypeEvolution(uniformIcebergCompatibleOnly = true))) {
+        TypeEvolution(
+          uniformIcebergCompatibleOnly = true,
+          allowAutomaticWidening = AllowAutomaticWideningMode.default))) {
       // Rejected either because this is a narrowing type change, or for the bidirectional mode,
       // because it is not supported by Iceberg.
       checkAnalysisException {
