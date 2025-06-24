@@ -2,7 +2,6 @@ package io.delta.dsv2.table
 
 import scala.collection.JavaConverters._
 
-import io.delta.dsv2.read.DeltaScanBuilder
 import io.delta.dsv2.utils.SchemaUtils
 import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.exceptions.TableNotFoundException
@@ -62,7 +61,7 @@ class DeltaTable(path: String)
   }
 
   override def newScanBuilder(options: CaseInsensitiveStringMap): ScanBuilder = {
-    new DeltaScanBuilder(kernelTable, kernelEngine)
+    throw new UnsupportedOperationException("todo: fix the scan")
   }
 }
 

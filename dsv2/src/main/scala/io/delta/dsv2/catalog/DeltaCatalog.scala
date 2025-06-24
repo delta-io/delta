@@ -1,14 +1,13 @@
 package io.delta.dsv2.catalog
 
 import java.util
-
 import scala.collection.JavaConverters._
-
 import io.delta.dsv2.catalog.DeltaCatalog.logger
+import io.delta.dsv2.table.DeltaTable
+import io.delta.dsv2.utils.SchemaUtils
 import io.delta.kernel.Operation
 import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.exceptions.TableNotFoundException
-
 import org.apache.hadoop.conf.Configuration
 import org.apache.spark.sql.catalyst.analysis.NoSuchTableException
 import org.apache.spark.sql.connector.catalog._
@@ -35,25 +34,13 @@ class DeltaCatalog extends TableCatalog {
   }
 
   override def loadTable(ident: Identifier): Table = {
-    logger.info(s"Scott > DeltaCatalog > loadTable :: ident=$ident")
-
-    if (inMemoryTables.contains(ident.name())) {
-      logger.info(s"Scott > DeltaCatalog > loadTable :: ident=$ident, table exists")
-      return inMemoryTables(ident.name())
-    }
-    val path = tableIdentifierToPath(ident)
-
     try {
-      io.delta.kernel.Table.forPath(engine, path)
+      new DeltaTable(tableIdentifierToPath(ident))
     } catch {
       case _: TableNotFoundException =>
         logger.info(s"Scott > DeltaCatalog > loadTable :: ident=$ident, table does not exist")
         throw new NoSuchTableException(ident)
     }
-
-    val table = new DeltaTable(path)
-    inMemoryTables.put(ident.name(), table)
-    table
   }
 
   override def createTable(
@@ -91,17 +78,11 @@ class DeltaCatalog extends TableCatalog {
     logger.info(s"createTable: resultVersion=${result.getVersion}")
 
     val table = new DeltaTable(path)
-    inMemoryTables.put(ident.name(), table)
     table
   }
 
   override def dropTable(ident: Identifier): Boolean = {
-    if (inMemoryTables.contains(ident.name())) {
-      inMemoryTables.remove(ident.name())
-      true
-    } else {
-      false
-    }
+    true
   }
 
   override def renameTable(oldIdent: Identifier, newIdent: Identifier): Unit = {
@@ -113,7 +94,13 @@ class DeltaCatalog extends TableCatalog {
   }
 
   override def tableExists(ident: Identifier): Boolean = {
-    inMemoryTables.contains(ident.name())
+    try {
+      new DeltaTable(tableIdentifierToPath(ident))
+      true
+    } catch {
+      case _: TableNotFoundException =>
+       false
+    }
   }
 
   override def name(): String = catalogName
@@ -139,7 +126,4 @@ class DeltaCatalog extends TableCatalog {
 
 object DeltaCatalog {
   val logger = org.slf4j.LoggerFactory.getLogger(this.getClass)
-
-  // identifier -> table
-  val inMemoryTables = scala.collection.mutable.Map[String, DeltaTable]()
 }
