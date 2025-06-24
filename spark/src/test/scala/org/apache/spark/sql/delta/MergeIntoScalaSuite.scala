@@ -32,6 +32,7 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase
   with MergeIntoScalaTestUtils
   with MergeIntoNotMatchedBySourceSuite
   with DeltaSQLCommandTest
+  with DeltaDMLByPathTestUtils
   with DeltaTestUtilsForTempViews
   with DeltaExcludedTestMixin {
 
@@ -41,14 +42,14 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase
     // Exclude tempViews, because DeltaTable.forName does not resolve them correctly, so no one can
     // use them anyway with the Scala API.
     // scalastyle:off line.size.limit
-    "basic case - merge to view on a Delta table by path, partitioned: true skippingEnabled: true useSqlView: true",
-    "basic case - merge to view on a Delta table by path, partitioned: true skippingEnabled: true useSqlView: false",
-    "basic case - merge to view on a Delta table by path, partitioned: false skippingEnabled: true useSqlView: true",
-    "basic case - merge to view on a Delta table by path, partitioned: false skippingEnabled: true useSqlView: false",
-    "basic case - merge to view on a Delta table by path, partitioned: true skippingEnabled: false useSqlView: true",
-    "basic case - merge to view on a Delta table by path, partitioned: true skippingEnabled: false useSqlView: false",
-    "basic case - merge to view on a Delta table by path, partitioned: false skippingEnabled: false useSqlView: true",
-    "basic case - merge to view on a Delta table by path, partitioned: false skippingEnabled: false useSqlView: false",
+    "basic case - merge to view on a Delta table, partitioned: true skippingEnabled: true useSqlView: true",
+    "basic case - merge to view on a Delta table, partitioned: true skippingEnabled: true useSqlView: false",
+    "basic case - merge to view on a Delta table, partitioned: false skippingEnabled: true useSqlView: true",
+    "basic case - merge to view on a Delta table, partitioned: false skippingEnabled: true useSqlView: false",
+    "basic case - merge to view on a Delta table, partitioned: true skippingEnabled: false useSqlView: true",
+    "basic case - merge to view on a Delta table, partitioned: true skippingEnabled: false useSqlView: false",
+    "basic case - merge to view on a Delta table, partitioned: false skippingEnabled: false useSqlView: true",
+    "basic case - merge to view on a Delta table, partitioned: false skippingEnabled: false useSqlView: false",
     "Negative case - more operations between merge and delta target",
     "test merge on temp view - basic - SQL TempView",
     "test merge on temp view - basic - Dataset TempView",
