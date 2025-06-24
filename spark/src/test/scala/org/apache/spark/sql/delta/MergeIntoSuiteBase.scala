@@ -41,12 +41,11 @@ import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
 
-abstract class MergeIntoSuiteBase
+trait MergeIntoSuiteBaseMixin
     extends QueryTest
     with SharedSparkSession
     with DeltaSQLTestUtils
     with ScanReportHelper
-    with DeltaTestUtilsForTempViews
     with MergeIntoTestUtils
     with MergeIntoSchemaEvolutionMixin
     with MergeIntoSchemaEvolutionAllTests
@@ -56,6 +55,422 @@ abstract class MergeIntoSuiteBase
   // Maps expected error classes to actual error classes. Used to handle error classes that are
   // different when running using SQL vs. Scala.
   protected val mappedErrorClasses: Map[String, String] = Map.empty
+
+  // scalastyle:off argcount
+  def testNestedDataSupport(name: String, namePrefix: String = "nested data support")(
+      source: String,
+      target: String,
+      update: Seq[String],
+      insert: String = null,
+      targetSchema: StructType = null,
+      sourceSchema: StructType = null,
+      result: String = null,
+      errorStrs: Seq[String] = null,
+      confs: Seq[(String, String)] = Seq.empty): Unit = {
+    // scalastyle:on argcount
+
+    require(result == null ^ errorStrs == null, "either set the result or the error strings")
+
+    val testName =
+      if (result != null) s"$namePrefix - $name" else s"$namePrefix - analysis error - $name"
+
+    test(testName) {
+      withSQLConf(confs: _*) {
+        withJsonData(source, target, targetSchema, sourceSchema) { case (sourceName, targetName) =>
+          val fieldNames = spark.table(targetName).schema.fieldNames
+          val fieldNamesStr = fieldNames.mkString("`", "`, `", "`")
+          val keyName = s"`${fieldNames.head}`"
+
+          def execMerge() = executeMerge(
+            target = s"$targetName t",
+            source = s"$sourceName s",
+            condition = s"s.$keyName = t.$keyName",
+            update = update.mkString(", "),
+            insert = Option(insert).getOrElse(s"($fieldNamesStr) VALUES ($fieldNamesStr)"))
+
+          if (result != null) {
+            execMerge()
+            val expectedDf = readFromJSON(strToJsonSeq(result), targetSchema)
+            checkAnswer(spark.table(targetName), expectedDf)
+          } else {
+            val e = intercept[AnalysisException] {
+              execMerge()
+            }
+            errorStrs.foreach { s => errorContains(e.getMessage, s) }
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Test runner to cover analysis exception in MERGE INTO.
+   */
+  protected def testMergeAnalysisException(
+      name: String)(
+      mergeOn: String,
+      mergeClauses: MergeClause*)(
+      expectedErrorClass: String,
+      expectedMessageParameters: Map[String, String]): Unit = {
+    test(s"analysis errors - $name") {
+      withKeyValueData(
+        source = Seq.empty,
+        target = Seq.empty,
+        sourceKeyValueNames = ("key", "srcValue"),
+        targetKeyValueNames = ("key", "tgtValue")) { case (sourceName, targetName) =>
+        val ex = intercept[AnalysisException] {
+          executeMerge(s"$targetName t", s"$sourceName s", mergeOn, mergeClauses: _*)
+        }
+
+        // Spark 3.5 and below uses QueryContext, Spark 4.0 and above uses ExpectedContext.
+        // Implicitly convert to ExpectedContext when needed for compatibility.
+        implicit def toExpectedContext(ctxs: Array[QueryContext]): Array[ExpectedContext] =
+          ctxs.map { ctx =>
+            ExpectedContext(ctx.fragment(), ctx.startIndex(), ctx.stopIndex())
+          }
+
+        checkError(
+          exception = ex,
+          mappedErrorClasses.getOrElse(expectedErrorClass, expectedErrorClass),
+          parameters = expectedMessageParameters,
+          queryContext = ex.getQueryContext
+        )
+      }
+    }
+  }
+
+  protected def withJsonData(
+      source: Seq[String],
+      target: Seq[String],
+      schema: StructType = null,
+      sourceSchema: StructType = null)(
+      thunk: (String, String) => Unit): Unit = {
+
+    def toDF(strs: Seq[String]) = {
+      if (sourceSchema != null && strs == source) {
+        spark.read.schema(sourceSchema).json(strs.toDS)
+      } else if (schema != null) {
+        spark.read.schema(schema).json(strs.toDS)
+      } else {
+        spark.read.json(strs.toDS)
+      }
+    }
+    append(toDF(target), Nil)
+    withTempView("source") {
+      toDF(source).createOrReplaceTempView("source")
+      thunk("source", s"delta.`$tempPath`")
+    }
+  }
+
+  protected implicit def strToJsonSeq(str: String): Seq[String] = {
+    str.split("\n").filter(_.trim.length > 0)
+  }
+
+  protected def insertOnlyMergeFeatureFlagOff(sourceName: String, targetName: String): Unit = {
+    executeMerge(
+      tgt = s"$targetName t",
+      src = s"$sourceName s",
+      cond = "s.key = t.key",
+      insert(values = "(key, value) VALUES (s.key, s.value)"))
+
+    checkAnswer(sql(s"SELECT key, value FROM $targetName"),
+      Row(1, 1) :: Row(3, 30) :: Nil)
+
+    val metrics = spark.sql(s"DESCRIBE HISTORY $targetName LIMIT 1")
+      .select("operationMetrics")
+      .collect().head.getMap(0).asInstanceOf[Map[String, String]]
+    assert(metrics.contains("numTargetFilesRemoved"))
+    // If insert-only code path is not used, then the general code path will rewrite existing
+    // target files when DVs are not enabled.
+    if (!spark.conf.get(DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS)) {
+      assert(metrics("numTargetFilesRemoved").toInt > 0)
+    }
+  }
+
+  def testMergeWithRepartition(
+      name: String,
+      partitionColumns: Seq[String],
+      srcRange: Range,
+      expectLessFilesWithRepartition: Boolean,
+      clauses: MergeClause*): Unit = {
+    test(s"merge with repartition - $name",
+      DisableAdaptiveExecution("AQE coalese would partition number")) {
+      withTempView("source") {
+        withTempDir { basePath =>
+          val tgt1 = basePath + "target"
+          val tgt2 = basePath + "targetRepartitioned"
+
+          val df = spark.range(100).withColumn("part1", 'id % 5).withColumn("part2", 'id % 3)
+          df.write.format("delta").partitionBy(partitionColumns: _*).save(tgt1)
+          df.write.format("delta").partitionBy(partitionColumns: _*).save(tgt2)
+          val cond = "src.id = t.id"
+          val src = srcRange.toDF("id")
+            .withColumn("part1", 'id % 5)
+            .withColumn("part2", 'id % 3)
+            .createOrReplaceTempView("source")
+          // execute merge without repartition
+          withSQLConf(DeltaSQLConf.MERGE_REPARTITION_BEFORE_WRITE.key -> "false") {
+            executeMerge(
+              tgt = s"delta.`$tgt1` as t",
+              src = "source src",
+              cond = cond,
+              clauses = clauses: _*)
+          }
+          // execute merge with repartition - default behavior
+          executeMerge(
+            tgt = s"delta.`$tgt2` as t",
+            src = "source src",
+            cond = cond,
+            clauses = clauses: _*)
+          checkAnswer(
+            io.delta.tables.DeltaTable.forPath(tgt2).toDF,
+            io.delta.tables.DeltaTable.forPath(tgt1).toDF
+          )
+          val filesAfterNoRepartition = DeltaLog.forTable(spark, tgt1).snapshot.numOfFiles
+          val filesAfterRepartition = DeltaLog.forTable(spark, tgt2).snapshot.numOfFiles
+          // check if there are fewer are number of files for merge with repartition
+          if (expectLessFilesWithRepartition) {
+            assert(filesAfterNoRepartition > filesAfterRepartition)
+          } else {
+            assert(filesAfterNoRepartition === filesAfterRepartition)
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Test whether data skipping on matched predicates of a merge command is performed.
+   * @param name The name of the test case.
+   * @param source The source for merge.
+   * @param target The target for merge.
+   * @param dataSkippingOnTargetOnly The boolean variable indicates whether
+   *                                 when matched clauses are on target fields only.
+   *                                 Data Skipping should be performed before inner join if
+   *                                 this variable is true.
+   * @param isMatchedOnly The boolean variable indicates whether the merge command only
+   *                      contains when matched clauses.
+   * @param mergeClauses Merge Clauses.
+   */
+  protected def testMergeDataSkippingOnMatchPredicates(
+      name: String)(
+      source: Seq[(Int, Int)],
+      target: Seq[(Int, Int)],
+      dataSkippingOnTargetOnly: Boolean,
+      isMatchedOnly: Boolean,
+      mergeClauses: MergeClause*)(
+      result: Seq[(Int, Int)]): Unit = {
+    test(s"data skipping with matched predicates - $name") {
+      withKeyValueData(source, target) { case (sourceName, targetName) =>
+        val stats = performMergeAndCollectStatsForDataSkippingOnMatchPredicates(
+          sourceName,
+          targetName,
+          result,
+          mergeClauses)
+        // Data skipping on match predicates should only be performed when it's a
+        // matched only merge.
+        if (isMatchedOnly) {
+          // The number of files removed/added should be 0 because of the additional predicates.
+          assert(stats.targetFilesRemoved == 0)
+          assert(stats.targetFilesAdded == 0)
+          // Verify that the additional predicates on data skipping
+          // before inner join filters file out for match predicates only
+          // on target.
+          if (dataSkippingOnTargetOnly) {
+            assert(stats.targetBeforeSkipping.files.get > stats.targetAfterSkipping.files.get)
+          }
+        } else {
+          if (!spark.conf.get(DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS)) {
+            assert(stats.targetFilesRemoved > 0)
+          }
+          // If there is no insert clause and the flag is enabled, data skipping should be
+          // performed on targetOnly predicates.
+          // However, with insert clauses, it's expected that no additional data skipping
+          // is performed on matched clauses.
+          assert(stats.targetBeforeSkipping.files.get == stats.targetAfterSkipping.files.get)
+          assert(stats.targetRowsUpdated == 0)
+        }
+      }
+    }
+  }
+
+  protected def performMergeAndCollectStatsForDataSkippingOnMatchPredicates(
+      sourceName: String,
+      targetName: String,
+      result: Seq[(Int, Int)],
+      mergeClauses: Seq[MergeClause]): MergeStats = {
+    var events: Seq[UsageRecord] = Seq.empty
+    // Perform merge on merge condition with matched clauses.
+    events = Log4jUsageLogger.track {
+      executeMerge(s"$targetName t", s"$sourceName s", "s.key = t.key", mergeClauses: _*)
+    }
+    val deltaPath = if (targetName.startsWith("delta.`")) {
+      targetName.stripPrefix("delta.`").stripSuffix("`")
+    } else targetName
+
+    checkAnswer(
+      readDeltaTable(deltaPath),
+      result.map { case (k, v) => Row(k, v) })
+
+    // Verify merge stats from usage events
+    val mergeStats = events.filter { e =>
+      e.metric == MetricDefinitions.EVENT_TAHOE.name &&
+        e.tags.get("opType").contains("delta.dml.merge.stats")
+    }
+
+    assert(mergeStats.size == 1)
+
+    JsonUtils.fromJson[MergeStats](mergeStats.head.blob)
+  }
+
+  /**
+   * @param function the unsupported function.
+   * @param functionType The type of the unsupported expression to be tested.
+   * @param sourceData the data in the source table.
+   * @param targetData the data in the target table.
+   * @param mergeCondition the merge condition containing the unsupported expression.
+   * @param clauseCondition the clause condition containing the unsupported expression.
+   * @param clauseAction the clause action containing the unsupported expression.
+   * @param expectExceptionInAction whether expect exception thrown in action.
+   * @param customConditionErrorRegex the customized error regex for condition.
+   * @param customActionErrorRegex the customized error regex for action.
+   */
+  def testUnsupportedExpression(
+      function: String,
+      functionType: String,
+      sourceData: => DataFrame,
+      targetData: => DataFrame,
+      mergeCondition: String,
+      clauseCondition: String,
+      clauseAction: String,
+      expectExceptionInAction: Option[Boolean] = None,
+      customConditionErrorRegex: Option[String] = None,
+      customActionErrorRegex: Option[String] = None) {
+    test(s"$functionType functions in merge" +
+      s" - expect exception in action: ${expectExceptionInAction.getOrElse(true)}") {
+      withTable("source", "target") {
+        sourceData.write.format("delta").saveAsTable("source")
+        targetData.write.format("delta").saveAsTable("target")
+
+        val expectedErrorRegex = "(?s).*(?i)unsupported.*(?i).*Invalid expressions.*"
+
+        def checkExpression(
+            expectException: Boolean,
+            condition: Option[String] = None,
+            clause: Option[MergeClause] = None,
+            expectedRegex: Option[String] = None) {
+          if (expectException) {
+            val dataBeforeException = spark.read.format("delta").table("target").collect()
+            val e = intercept[Exception] {
+              executeMerge(
+                tgt = "target as t",
+                src = "source as s",
+                cond = condition.getOrElse("s.a = t.a"),
+                clause.getOrElse(update(set = "b = s.b"))
+              )
+            }
+
+            def extractErrorClass(e: Throwable): String =
+              e match {
+                case dt: DeltaThrowable => s"\\[${dt.getErrorClass}\\] "
+                case _ => ""
+              }
+
+            val (message, errorClass) = if (e.getCause != null) {
+              (e.getCause.getMessage, extractErrorClass(e.getCause))
+            } else (e.getMessage, extractErrorClass(e))
+            assert(message.matches(errorClass + expectedRegex.getOrElse(expectedErrorRegex)))
+            checkAnswer(spark.read.format("delta").table("target"), dataBeforeException)
+          } else {
+            executeMerge(
+              tgt = "target as t",
+              src = "source as s",
+              cond = condition.getOrElse("s.a = t.a"),
+              clause.getOrElse(update(set = "b = s.b"))
+            )
+          }
+        }
+
+        // on merge condition
+        checkExpression(
+          expectException = true,
+          condition = Option(mergeCondition),
+          expectedRegex = customConditionErrorRegex
+        )
+
+        // on update condition
+        checkExpression(
+          expectException = true,
+          clause = Option(update(condition = clauseCondition, set = "b = s.b")),
+          expectedRegex = customConditionErrorRegex
+        )
+
+        // on update action
+        checkExpression(
+          expectException = expectExceptionInAction.getOrElse(true),
+          clause = Option(update(set = s"b = $clauseAction")),
+          expectedRegex = customActionErrorRegex
+        )
+
+        // on insert condition
+        checkExpression(
+          expectException = true,
+          clause = Option(
+            insert(values = "(a, b, c) VALUES (s.a, s.b, s.c)", condition = clauseCondition)),
+          expectedRegex = customConditionErrorRegex
+        )
+
+        sql("update source set a = 2")
+        // on insert action
+        checkExpression(
+          expectException = expectExceptionInAction.getOrElse(true),
+          clause = Option(insert(values = s"(a, b, c) VALUES ($clauseAction, s.b, s.c)")),
+          expectedRegex = customActionErrorRegex
+        )
+      }
+    }
+  }
+
+  protected def testExtendedMerge(
+      name: String,
+      namePrefix: String = "extended syntax")(
+      source: Seq[(Int, Int)],
+      target: Seq[(Int, Int)],
+      mergeOn: String,
+      mergeClauses: MergeClause*)(
+      result: Seq[(Int, Int)]): Unit = {
+    Seq(true, false).foreach { isPartitioned =>
+      test(s"$namePrefix - $name - isPartitioned: $isPartitioned ") {
+        withKeyValueData(source, target, isPartitioned) { case (sourceName, targetName) =>
+          withSQLConf(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED.key -> "true") {
+            executeMerge(s"$targetName t", s"$sourceName s", mergeOn, mergeClauses: _*)
+          }
+          val deltaPath = if (targetName.startsWith("delta.`")) {
+            targetName.stripPrefix("delta.`").stripSuffix("`")
+          } else targetName
+          checkAnswer(
+            readDeltaTable(deltaPath),
+            result.map { case (k, v) => Row(k, v) })
+        }
+      }
+    }
+  }
+
+  protected lazy val expectedOpTypes: Set[String] = Set(
+    "delta.dml.merge.materializeSource",
+    "delta.dml.merge.findTouchedFiles",
+    "delta.dml.merge.writeAllChanges",
+    "delta.dml.merge")
+
+  protected lazy val expectedOpTypesInsertOnly: Set[String] = Set(
+    "delta.dml.merge.materializeSource",
+    "delta.dml.merge.findTouchedFiles",
+    "delta.dml.merge.writeInsertsOnlyWhenNoMatches",
+    "delta.dml.merge")
+}
+
+trait MergeIntoBasicTests extends MergeIntoSuiteBaseMixin {
+  import testImplicits._
 
   Seq(true, false).foreach { isPartitioned =>
     test(s"basic case - merge to Delta table by path, isPartitioned: $isPartitioned") {
@@ -76,43 +491,6 @@ abstract class MergeIntoSuiteBase
             Row(21, 21) :: // Update
             Row(-10, 13) :: // Insert
             Nil)
-      }
-    }
-  }
-
-  Seq(true, false).foreach { skippingEnabled =>
-    Seq(true, false).foreach { partitioned =>
-      Seq(true, false).foreach { useSQLView =>
-        test("basic case - merge to view on a Delta table by path, " +
-          s"partitioned: $partitioned skippingEnabled: $skippingEnabled useSqlView: $useSQLView") {
-          withTable("delta_target", "source") {
-            withSQLConf(DeltaSQLConf.DELTA_STATS_SKIPPING.key -> skippingEnabled.toString) {
-              Seq((1, 1), (0, 3), (1, 6)).toDF("key1", "value").createOrReplaceTempView("source")
-              val partitions = if (partitioned) "key2" :: Nil else Nil
-              append(Seq((2, 2), (1, 4)).toDF("key2", "value"), partitions)
-              if (useSQLView) {
-                sql(s"CREATE OR REPLACE TEMP VIEW delta_target AS " +
-                  s"SELECT * FROM delta.`$tempPath` t")
-              } else {
-                readDeltaTable(tempPath).createOrReplaceTempView("delta_target")
-              }
-
-              executeMerge(
-                target = "delta_target",
-                source = "source src",
-                condition = "src.key1 = key2 AND src.value < delta_target.value",
-                update = "key2 = 20 + key1, value = 20 + src.value",
-                insert = "(key2, value) VALUES (key1 - 10, src.value + 10)")
-
-              checkAnswer(sql("SELECT key2, value FROM delta_target"),
-                Row(2, 2) :: // No change
-                  Row(21, 21) :: // Update
-                  Row(-10, 13) :: // Insert
-                  Row(-9, 16) :: // Insert
-                  Nil)
-            }
-          }
-        }
       }
     }
   }
@@ -255,7 +633,7 @@ abstract class MergeIntoSuiteBase
     }
   }
 
-  protected def testNullCase(name: String)(
+  private def testNullCase(name: String)(
       target: Seq[(JInt, JInt)],
       source: Seq[(JInt, JInt)],
       condition: String,
@@ -414,455 +792,7 @@ abstract class MergeIntoSuiteBase
     }
   }
 
-  test("same column names in source and target") {
-    withTable("source") {
-      Seq((1, 5), (2, 9)).toDF("key", "value").createOrReplaceTempView("source")
-      append(Seq((2, 2), (1, 4)).toDF("key", "value"))
-
-      executeMerge(
-        target = s"delta.`$tempPath` as target",
-        source = "source src",
-        condition = "src.key = target.key",
-        update = "target.key = 20 + src.key, target.value = 20 + src.value",
-        insert = "(key, value) VALUES (src.key - 10, src.value + 10)")
-
-      checkAnswer(
-        readDeltaTable(tempPath),
-        Row(21, 25) :: // Update
-          Row(22, 29) :: // Update
-          Nil)
-    }
-  }
-
-  test("Source is a query") {
-    withTable("source") {
-      Seq((1, 6, "a"), (0, 3, "b")).toDF("key1", "value", "others")
-        .createOrReplaceTempView("source")
-      append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
-
-      executeMerge(
-        target = s"delta.`$tempPath` as trg",
-        source = "(SELECT key1, value, others FROM source) src",
-        condition = "src.key1 = trg.key2",
-        update = "trg.key2 = 20 + key1, value = 20 + src.value",
-        insert = "(trg.key2, value) VALUES (key1 - 10, src.value + 10)")
-
-      checkAnswer(
-        readDeltaTable(tempPath),
-        Row(2, 2) :: // No change
-          Row(21, 26) :: // Update
-          Row(-10, 13) :: // Insert
-          Nil)
-
-      withCrossJoinEnabled {
-        executeMerge(
-        target = s"delta.`$tempPath` as trg",
-        source = "(SELECT 5 as key1, 5 as value) src",
-        condition = "src.key1 = trg.key2",
-        update = "trg.key2 = 20 + key1, value = 20 + src.value",
-        insert = "(trg.key2, value) VALUES (key1 - 10, src.value + 10)")
-      }
-
-      checkAnswer(readDeltaTable(tempPath),
-        Row(2, 2) ::
-          Row(21, 26) ::
-          Row(-10, 13) ::
-          Row(-5, 15) :: // new row
-          Nil)
-    }
-  }
-
-  test("self merge") {
-    append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
-
-    executeMerge(
-      target = s"delta.`$tempPath` as target",
-      source = s"delta.`$tempPath` as src",
-      condition = "src.key2 = target.key2",
-      update = "key2 = 20 + src.key2, value = 20 + src.value",
-      insert = "(key2, value) VALUES (src.key2 - 10, src.value + 10)")
-
-    checkAnswer(readDeltaTable(tempPath),
-      Row(22, 22) :: // UPDATE
-        Row(21, 24) :: // UPDATE
-        Nil)
-  }
-
-  test("order by + limit in source query #1") {
-    withTable("source") {
-      Seq((1, 6, "a"), (0, 3, "b")).toDF("key1", "value", "others")
-        .createOrReplaceTempView("source")
-      append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
-
-      executeMerge(
-        target = s"delta.`$tempPath` as trg",
-        source = "(SELECT key1, value, others FROM source order by key1 limit 1) src",
-        condition = "src.key1 = trg.key2",
-        update = "trg.key2 = 20 + key1, value = 20 + src.value",
-        insert = "(trg.key2, value) VALUES (key1 - 10, src.value + 10)")
-
-      checkAnswer(readDeltaTable(tempPath),
-        Row(1, 4) :: // No change
-          Row(2, 2) :: // No change
-          Row(-10, 13) :: // Insert
-          Nil)
-    }
-  }
-
-  test("order by + limit in source query #2") {
-    withTable("source") {
-      Seq((1, 6, "a"), (0, 3, "b")).toDF("key1", "value", "others")
-        .createOrReplaceTempView("source")
-      append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
-
-      executeMerge(
-        target = s"delta.`$tempPath` as trg",
-        source = "(SELECT key1, value, others FROM source order by value DESC limit 1) src",
-        condition = "src.key1 = trg.key2",
-        update = "trg.key2 = 20 + key1, value = 20 + src.value",
-        insert = "(trg.key2, value) VALUES (key1 - 10, src.value + 10)")
-
-      checkAnswer(readDeltaTable(tempPath),
-        Row(2, 2) :: // No change
-          Row(21, 26) :: // UPDATE
-          Nil)
-    }
-  }
-
-  testQuietly("Negative case - more than one source rows match the same target row") {
-    withTable("source") {
-      Seq((1, 1), (0, 3), (1, 5)).toDF("key1", "value").createOrReplaceTempView("source")
-      append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
-
-      val e = intercept[Exception] {
-        executeMerge(
-          target = s"delta.`$tempPath` as target",
-          source = "source src",
-          condition = "src.key1 = target.key2",
-          update = "key2 = 20 + key1, value = 20 + src.value",
-          insert = "(key2, value) VALUES (key1 - 10, src.value + 10)")
-      }.toString
-
-      val expectedEx = DeltaErrors.multipleSourceRowMatchingTargetRowInMergeException(spark)
-      assert(e.contains(expectedEx.getMessage))
-    }
-  }
-
-  test("More than one target rows match the same source row") {
-    withTable("source") {
-      Seq((1, 5), (2, 9)).toDF("key1", "value").createOrReplaceTempView("source")
-      append(Seq((2, 2), (1, 4)).toDF("key2", "value"), Seq("key2"))
-
-      withCrossJoinEnabled {
-        executeMerge(
-          target = s"delta.`$tempPath` as target",
-          source = "source src",
-          condition = "key1 = 1",
-          update = "key2 = 20 + key1, value = 20 + src.value",
-          insert = "(key2, value) VALUES (key1 - 10, src.value + 10)")
-      }
-
-      checkAnswer(readDeltaTable(tempPath),
-        Row(-8, 19) :: // Insert
-          Row(21, 25) :: // Update
-          Row(21, 25) :: // Update
-          Nil)
-    }
-  }
-
-  Seq(true, false).foreach { isPartitioned =>
-    test(s"Merge table using different data types - implicit casting, parts: $isPartitioned") {
-      withTable("source") {
-        Seq((1, "5"), (3, "9"), (3, "a")).toDF("key1", "value").createOrReplaceTempView("source")
-        val partitions = if (isPartitioned) "key2" :: Nil else Nil
-        append(Seq((2, 2), (1, 4)).toDF("key2", "value"), partitions)
-
-        executeMerge(
-          target = s"delta.`$tempPath` as target",
-          source = "source src",
-          condition = "key1 = key2",
-          update = "key2 = 33 + cast(key2 as double), value = '20'",
-          insert = "(key2, value) VALUES ('44', try_cast(src.value as double) + 10)")
-
-        checkAnswer(readDeltaTable(tempPath),
-          Row(44, 19) :: // Insert
-          // NULL is generated when the type casting does not work for some values)
-          Row(44, null) :: // Insert
-          Row(34, 20) :: // Update
-          Row(2, 2) :: // No change
-          Nil)
-      }
-    }
-  }
-
-  test("Negative case - basic syntax analysis") {
-    withTable("source") {
-      Seq((1, 1), (0, 3)).toDF("key1", "value").createOrReplaceTempView("source")
-      append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
-
-      // insert expressions have target table reference
-      var e = intercept[AnalysisException] {
-        executeMerge(
-          target = s"delta.`$tempPath` as target",
-          source = "source src",
-          condition = "src.key1 = target.key2",
-          update = "key2 = key1, value = src.value",
-          insert = "(key2, value) VALUES (3, src.value + key2)")
-      }.getMessage
-
-      errorContains(e, "cannot resolve key2")
-
-      // to-update columns have source table reference
-      e = intercept[AnalysisException] {
-        executeMerge(
-          target = s"delta.`$tempPath` as target",
-          source = "source src",
-          condition = "src.key1 = target.key2",
-          update = "key1 = 1, value = 2",
-          insert = "(key2, value) VALUES (3, 4)")
-      }.getMessage
-
-      errorContains(e, "Cannot resolve key1 in UPDATE clause")
-      errorContains(e, "key2") // should show key2 as a valid name in target columns
-
-      // to-insert columns have source table reference
-      e = intercept[AnalysisException] {
-        executeMerge(
-          target = s"delta.`$tempPath` as target",
-          source = "source src",
-          condition = "src.key1 = target.key2",
-          update = "key2 = 1, value = 2",
-          insert = "(key1, value) VALUES (3, 4)")
-      }.getMessage
-
-      errorContains(e, "Cannot resolve key1 in INSERT clause")
-      errorContains(e, "key2") // should contain key2 as a valid name in target columns
-
-      // ambiguous reference
-      e = intercept[AnalysisException] {
-        executeMerge(
-          target = s"delta.`$tempPath` as target",
-          source = "source src",
-          condition = "src.key1 = target.key2",
-          update = "key2 = 1, value = value",
-          insert = "(key2, value) VALUES (3, 4)")
-      }.getMessage
-
-      Seq("value", "is ambiguous", "could be").foreach(x => errorContains(e, x))
-
-      // non-deterministic search condition
-      e = intercept[AnalysisException] {
-        executeMerge(
-          target = s"delta.`$tempPath` as target",
-          source = "source src",
-          condition = "src.key1 = target.key2 and rand() > 0.5",
-          update = "key2 = 1, value = 2",
-          insert = "(key2, value) VALUES (3, 4)")
-      }.getMessage
-
-      errorContains(e, "Non-deterministic functions are not supported in the search condition")
-
-      // aggregate function
-      e = intercept[AnalysisException] {
-        executeMerge(
-          target = s"delta.`$tempPath` as target",
-          source = "source src",
-          condition = "src.key1 = target.key2 and max(target.key2) > 20",
-          update = "key2 = 1, value = 2",
-          insert = "(key2, value) VALUES (3, 4)")
-      }.getMessage
-
-      errorContains(e, "Aggregate functions are not supported in the search condition")
-    }
-  }
-
-  test("Merge should use the same SparkSession consistently") {
-    withTempDir { dir =>
-      withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "false") {
-        val r = dir.getCanonicalPath
-        val sourcePath = s"$r/source"
-        val targetPath = s"$r/target"
-        val numSourceRecords = 20
-        spark.range(numSourceRecords)
-          .withColumn("x", $"id")
-          .withColumn("y", $"id")
-          .write.mode("overwrite").format("delta").save(sourcePath)
-        spark.range(1)
-          .withColumn("x", $"id")
-          .write.mode("overwrite").format("delta").save(targetPath)
-        val spark2 = spark.newSession
-        spark2.conf.set(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "true")
-        val target = io.delta.tables.DeltaTable.forPath(spark2, targetPath)
-        val source = spark.read.format("delta").load(sourcePath).alias("s")
-        val merge = target.alias("t")
-          .merge(source, "t.id = s.id")
-          .whenMatched.updateExpr(Map("t.x" -> "t.x + 1"))
-          .whenNotMatched.insertAll()
-          .execute()
-        // The target table should have the same number of rows as the source after the merge
-        assert(spark.read.format("delta").load(targetPath).count() == numSourceRecords)
-      }
-    }
-  }
-
-  testSparkMasterOnly("Variant type") {
-    withTable("source") {
-      // Insert ("0", 0), ("1", 1)
-      val dstDf = sql(
-        """SELECT parse_json(cast(id as string)) v, id i
-        FROM range(2)""")
-      append(dstDf)
-      // Insert ("1", 2), ("2", 3)
-      // The first row will update, the second will insert.
-      sql(
-        s"""SELECT parse_json(cast(id as string)) v, id + 1 i
-              FROM range(1, 3)""").createOrReplaceTempView("source")
-
-      executeMerge(
-        target = s"delta.`$tempPath` as trgNew",
-        source = "source src",
-        condition = "to_json(src.v) = to_json(trgNew.v)",
-        update = "i = 10 + src.i + trgNew.i, v = trgNew.v",
-        insert = """(i, v) VALUES (i + 100, parse_json('"inserted"'))""")
-
-      checkAnswer(readDeltaTable(tempPath).selectExpr("i", "to_json(v)"),
-        Row(0, "0") :: // No change
-          Row(13, "1") :: // Update
-          Row(103, "\"inserted\"") :: // Insert
-          Nil)
-    }
-  }
-
-  // Enable this test in OSS when Spark has the change to report better errors
-  // when MERGE is not supported.
-  ignore("Negative case - non-delta target") {
-    withTable("source", "target") {
-      Seq((1, 1), (0, 3), (1, 5)).toDF("key1", "value").createOrReplaceTempView("source")
-      Seq((1, 1), (0, 3), (1, 5)).toDF("key2", "value").write.saveAsTable("target")
-
-      val e = intercept[AnalysisException] {
-        executeMerge(
-          target = "target",
-          source = "source src",
-          condition = "src.key1 = target.key2",
-          update = "key2 = 20 + key1, value = 20 + src.value",
-          insert = "(key2, value) VALUES (key1 - 10, src.value + 10)")
-      }.getMessage
-      assert(e.contains("does not support MERGE") ||
-        // The MERGE Scala API is for Delta only and reports error differently.
-        e.contains("is not a Delta table") ||
-        e.contains("MERGE destination only supports Delta sources"))
-    }
-  }
-
-  test("Negative case - update assignments conflict because " +
-    "same column with different references") {
-    withTable("source") {
-      Seq((1, 1), (0, 3), (1, 5)).toDF("key1", "value").createOrReplaceTempView("source")
-      append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
-      val e = intercept[AnalysisException] {
-        executeMerge(
-          target = s"delta.`$tempPath` as t",
-          source = "source s",
-          condition = "s.key1 = t.key2",
-          update = "key2 = key1, t.key2 = key1",
-          insert = "(key2, value) VALUES (3, 4)")
-      }.getMessage
-
-      errorContains(e, "there is a conflict from these set columns")
-    }
-  }
-
-  test("Negative case - more operations between merge and delta target") {
-    withTempView("source", "target") {
-      Seq((1, 1), (0, 3), (1, 5)).toDF("key1", "value").createOrReplaceTempView("source")
-      append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
-      spark.read.format("delta").load(tempPath).filter("value <> 0").createTempView("target")
-
-      val e = intercept[AnalysisException] {
-        executeMerge(
-          target = "target",
-          source = "source src",
-          condition = "src.key1 = target.key2",
-          update = "key2 = 20 + key1, value = 20 + src.value",
-          insert = "(key2, value) VALUES (key1 - 10, src.value + 10)")
-      }.getMessage
-      errorContains(e, "Expect a full scan of Delta sources, but found a partial scan")
-    }
-  }
-
-  test("Negative case - MERGE to the child directory") {
-    val df = Seq((1, 1), (0, 3), (1, 5)).toDF("key2", "value")
-    val partitions = "key2" :: Nil
-    append(df, partitions)
-
-    val e = intercept[AnalysisException] {
-      executeMerge(
-        target = s"delta.`$tempPath/key2=1` target",
-        source = "(SELECT 5 as key1, 5 as value) src",
-        condition = "src.key1 = target.key2",
-        update = "key2 = 20 + key1, value = 20 + src.value",
-        insert = "(key2, value) VALUES (key1 - 10, src.value + 10)")
-    }.getMessage
-    errorContains(e, "Expect a full scan of Delta sources, but found a partial scan")
-  }
-
-  test(s"special character in path - matched delete") {
-    val source = s"$tempDir/sou rce~"
-    val target = s"$tempDir/tar get>"
-    spark.range(0, 10, 2).write.format("delta").save(source)
-    spark.range(10).write.format("delta").save(target)
-    executeMerge(
-      tgt = s"delta.`$target` t",
-      src = s"delta.`$source` s",
-      cond = "t.id = s.id",
-      clauses = delete())
-    checkAnswer(readDeltaTable(target), Seq(1, 3, 5, 7, 9).toDF("id"))
-  }
-
-  test(s"special character in path - matched update") {
-    val source = s"$tempDir/sou rce("
-    val target = s"$tempDir/tar get*"
-    spark.range(0, 10, 2).write.format("delta").save(source)
-    spark.range(10).write.format("delta").save(target)
-    executeMerge(
-      tgt = s"delta.`$target` t",
-      src = s"delta.`$source` s",
-      cond = "t.id = s.id",
-      clauses = update(set = "id = t.id * 10"))
-    checkAnswer(readDeltaTable(target), Seq(0, 1, 20, 3, 40, 5, 60, 7, 80, 9).toDF("id"))
-  }
-
-  Seq(true, false).foreach { isPartitioned =>
-    test(s"single file, isPartitioned: $isPartitioned") {
-      withTable("source") {
-        val df = spark.range(5).selectExpr("id as key1", "id as key2", "id as col1").repartition(1)
-
-        val partitions = if (isPartitioned) "key1" :: "key2" :: Nil else Nil
-        append(df, partitions)
-
-        df.createOrReplaceTempView("source")
-
-        executeMerge(
-          target = s"delta.`$tempPath` target",
-          source = "(SELECT key1 as srcKey, key2, col1 FROM source where key1 < 3) AS source",
-          condition = "srcKey = target.key1",
-          update = "target.key1 = srcKey - 1000, target.key2 = source.key2 + 1000, " +
-            "target.col1 = source.col1",
-          insert = "(key1, key2, col1) VALUES (srcKey, source.key2, source.col1)")
-
-        checkAnswer(readDeltaTable(tempPath),
-          Row(-998, 1002, 2) :: // Update
-            Row(-999, 1001, 1) :: // Update
-            Row(-1000, 1000, 0) :: // Update
-            Row(4, 4, 4) :: // No change
-            Row(3, 3, 3) :: // No change
-            Nil)
-      }
-    }
-  }
-
-  protected def testLocalPredicates(name: String)(
+  private def testLocalPredicates(name: String)(
       target: Seq[(String, String, String)],
       source: Seq[(String, String)],
       condition: String,
@@ -993,83 +923,256 @@ abstract class MergeIntoSuiteBase
     }
   }
 
-  test("merge into cached table") {
-    // Merge with a cached target only works in the join-based implementation right now
-    withTable("source") {
-      append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
-      Seq((1, 1), (0, 3), (3, 3)).toDF("key1", "value").createOrReplaceTempView("source")
-      spark.table(s"delta.`$tempPath`").cache()
-      spark.table(s"delta.`$tempPath`").collect()
+  private def testNullCaseInsertOnly(name: String)(
+    target: Seq[(JInt, JInt)],
+    source: Seq[(JInt, JInt)],
+    condition: String,
+    expectedResults: Seq[(JInt, JInt)],
+    insertCondition: Option[String] = None) = {
+    Seq(true, false).foreach { isPartitioned =>
+      test(s"basic case - null handling - $name, isPartitioned: $isPartitioned") {
+        withView("sourceView") {
+          val partitions = if (isPartitioned) "key" :: Nil else Nil
+          append(target.toDF("key", "value"), partitions)
+          source.toDF("key", "value").createOrReplaceTempView("sourceView")
+          withSQLConf(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED.key -> "true") {
+            if (insertCondition.isDefined) {
+              executeMerge(
+                s"delta.`$tempPath` as t",
+                "sourceView s",
+                condition,
+                insert("(t.key, t.value) VALUES (s.key, s.value)",
+                  condition = insertCondition.get))
+            } else {
+              executeMerge(
+                s"delta.`$tempPath` as t",
+                "sourceView s",
+                condition,
+                insert("(t.key, t.value) VALUES (s.key, s.value)"))
+            }
+          }
+          checkAnswer(
+            readDeltaTable(tempPath),
+            expectedResults.map { r => Row(r._1, r._2) }
+          )
 
-      append(Seq((100, 100), (3, 5)).toDF("key2", "value"))
-      // cache is in effect, as the above change is not reflected
-      checkAnswer(spark.table(s"delta.`$tempPath`"),
-        Row(2, 2) :: Row(1, 4) :: Row(100, 100) :: Row(3, 5) :: Nil)
-
-      executeMerge(
-        target = s"delta.`$tempPath` as trgNew",
-        source = "source src",
-        condition = "src.key1 = key2",
-        update = "value = trgNew.value + 3",
-        insert = "(key2, value) VALUES (key1, src.value + 10)")
-
-      checkAnswer(spark.table(s"delta.`$tempPath`"),
-        Row(100, 100) :: // No change (newly inserted record)
-          Row(2, 2) :: // No change
-          Row(1, 7) :: // Update
-          Row(3, 8) :: // Update (on newly inserted record)
-          Row(0, 13) :: // Insert
-          Nil)
+          Utils.deleteRecursively(new File(tempPath))
+        }
+      }
     }
   }
 
-  // scalastyle:off argcount
-  def testNestedDataSupport(name: String, namePrefix: String = "nested data support")(
-      source: String,
-      target: String,
-      update: Seq[String],
-      insert: String = null,
-      targetSchema: StructType = null,
-      sourceSchema: StructType = null,
-      result: String = null,
-      errorStrs: Seq[String] = null,
-      confs: Seq[(String, String)] = Seq.empty): Unit = {
-    // scalastyle:on argcount
+  testNullCaseInsertOnly("insert only merge - null in source") (
+    target = Seq((1, 1)),
+    source = Seq((1, 10), (2, 20), (null, null)),
+    condition = "s.key = t.key",
+    expectedResults = Seq(
+      (1, 1),         // Existing value
+      (2, 20),        // Insert
+      (null, null)    // Insert
+    ))
 
-    require(result == null ^ errorStrs == null, "either set the result or the error strings")
+  testNullCaseInsertOnly("insert only merge - null value in both source and target")(
+    target = Seq((1, 1), (null, null)),
+    source = Seq((1, 10), (2, 20), (null, 0)),
+    condition = "s.key = t.key",
+    expectedResults = Seq(
+      (null, null),   // No change as null in source does not match null in target
+      (1, 1),         // Existing value
+      (2, 20),        // Insert
+      (null, 0)       // Insert
+    ))
 
-    val testName =
-      if (result != null) s"$namePrefix - $name" else s"$namePrefix - analysis error - $name"
+  testNullCaseInsertOnly("insert only merge - null in insert clause")(
+    target = Seq((1, 1), (2, 20)),
+    source = Seq((1, 10), (3, 30), (null, 0)),
+    condition = "s.key = t.key",
+    expectedResults = Seq(
+      (1, 1),         // Existing value
+      (2, 20),        // Existing value
+      (null, 0)       // Insert
+    ),
+    insertCondition = Some("s.key IS NULL")
+  )
+}
 
-    test(testName) {
-      withSQLConf(confs: _*) {
-        withJsonData(source, target, targetSchema, sourceSchema) { case (sourceName, targetName) =>
-          val fieldNames = spark.table(targetName).schema.fieldNames
-          val fieldNamesStr = fieldNames.mkString("`", "`, `", "`")
-          val keyName = s"`${fieldNames.head}`"
+trait MergeIntoTempViewsTests extends MergeIntoSuiteBaseMixin with DeltaTestUtilsForTempViews {
+  import testImplicits._
 
-          def execMerge() = executeMerge(
-            target = s"$targetName t",
-            source = s"$sourceName s",
-            condition = s"s.$keyName = t.$keyName",
-            update = update.mkString(", "),
-            insert = Option(insert).getOrElse(s"($fieldNamesStr) VALUES ($fieldNamesStr)"))
+  Seq(true, false).foreach { skippingEnabled =>
+    Seq(true, false).foreach { partitioned =>
+      Seq(true, false).foreach { useSQLView =>
+        test("basic case - merge to view on a Delta table by path, " +
+          s"partitioned: $partitioned skippingEnabled: $skippingEnabled useSqlView: $useSQLView") {
+          withTable("delta_target", "source") {
+            withSQLConf(DeltaSQLConf.DELTA_STATS_SKIPPING.key -> skippingEnabled.toString) {
+              Seq((1, 1), (0, 3), (1, 6)).toDF("key1", "value").createOrReplaceTempView("source")
+              val partitions = if (partitioned) "key2" :: Nil else Nil
+              append(Seq((2, 2), (1, 4)).toDF("key2", "value"), partitions)
+              if (useSQLView) {
+                sql(s"CREATE OR REPLACE TEMP VIEW delta_target AS " +
+                  s"SELECT * FROM delta.`$tempPath` t")
+              } else {
+                readDeltaTable(tempPath).createOrReplaceTempView("delta_target")
+              }
 
-          if (result != null) {
-            execMerge()
-            val expectedDf = readFromJSON(strToJsonSeq(result), targetSchema)
-            checkAnswer(spark.table(targetName), expectedDf)
-          } else {
-            val e = intercept[AnalysisException] {
-              execMerge()
+              executeMerge(
+                target = "delta_target",
+                source = "source src",
+                condition = "src.key1 = key2 AND src.value < delta_target.value",
+                update = "key2 = 20 + key1, value = 20 + src.value",
+                insert = "(key2, value) VALUES (key1 - 10, src.value + 10)")
+
+              checkAnswer(sql("SELECT key2, value FROM delta_target"),
+                Row(2, 2) :: // No change
+                  Row(21, 21) :: // Update
+                  Row(-10, 13) :: // Insert
+                  Row(-9, 16) :: // Insert
+                  Nil)
             }
-            errorStrs.foreach { s => errorContains(e.getMessage, s) }
           }
         }
       }
     }
   }
 
+  test("Negative case - more operations between merge and delta target") {
+    withTempView("source", "target") {
+      Seq((1, 1), (0, 3), (1, 5)).toDF("key1", "value").createOrReplaceTempView("source")
+      append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
+      spark.read.format("delta").load(tempPath).filter("value <> 0").createTempView("target")
+
+      val e = intercept[AnalysisException] {
+        executeMerge(
+          target = "target",
+          source = "source src",
+          condition = "src.key1 = target.key2",
+          update = "key2 = 20 + key1, value = 20 + src.value",
+          insert = "(key2, value) VALUES (key1 - 10, src.value + 10)")
+      }.getMessage
+      errorContains(e, "Expect a full scan of Delta sources, but found a partial scan")
+    }
+  }
+
+  /**
+   * Ensure we can successfully remove the temp view from the target plan during MERGE analysis.
+   * Failing to do so can cause MERGE execution to fail later on as it is assumed the target plan is
+   * a simple logical relation by then without projections.
+   */
+  private def checkStripViewFromTarget(target: String): Unit = {
+    val targetViewPlan = sql(s"SELECT * FROM $target").queryExecution.analyzed.collect {
+      case v: View => v
+    }
+    assert(targetViewPlan.size === 1,
+      s"Expected 1 view in target plan, got ${targetViewPlan.size}")
+    DeltaViewHelper.stripTempViewForMerge(targetViewPlan.head, conf) match {
+      case SubqueryAlias(_, _: LogicalRelation) =>
+      case _ =>
+        fail(s"DeltaViewHelper.stripTempViewForMerge doesn't correctly handle" +
+          s"removing the view from plan:\n${targetViewPlan.head}")
+    }
+  }
+
+  private def testTempViews(name: String)(
+      text: String,
+      mergeCondition: String,
+      expectedResult: ExpectedResult[Seq[Row]],
+      checkViewStripped: Boolean = true): Unit = {
+    testWithTempView(s"test merge on temp view - $name") { isSQLTempView =>
+      withTable("tab") {
+        withTempView("src") {
+          Seq((0, 3), (1, 2)).toDF("key", "value").write.format("delta").saveAsTable("tab")
+          createTempViewFromSelect(text, isSQLTempView)
+          sql("CREATE TEMP VIEW src AS SELECT * FROM VALUES (1, 2), (3, 4) AS t(a, b)")
+
+          def runMerge(): Unit =
+            executeMerge(
+              target = "v",
+              source = "src",
+              condition = mergeCondition,
+              update = "v.value = src.b + 1",
+              insert = "(v.key, v.value) VALUES (src.a, src.b)")
+
+          expectedResult match {
+            case ExpectedResult.Failure(checkError) =>
+              val ex = intercept[AnalysisException] {
+                runMerge()
+              }
+              checkError(ex)
+            case ExpectedResult.Success(expectedRows: Seq[Row]) =>
+              if (checkViewStripped) {
+                checkStripViewFromTarget(target = "v")
+              }
+              runMerge()
+              checkAnswer(spark.table("v"), expectedRows)
+          }
+        }
+      }
+    }
+  }
+
+  testTempViews("basic")(
+    text = "SELECT * FROM tab",
+    mergeCondition = "src.a = v.key AND src.b = v.value",
+    expectedResult = ExpectedResult.Success(Seq(Row(0, 3), Row(1, 3), Row(3, 4)))
+  )
+
+  testTempViews("basic - merge condition references subset of target cols")(
+    text = "SELECT * FROM tab",
+    mergeCondition = "src.a = v.key",
+    expectedResult = ExpectedResult.Success(Seq(Row(0, 3), Row(1, 3), Row(3, 4)))
+  )
+
+  testTempViews("subset cols")(
+    text = "SELECT key FROM tab",
+    mergeCondition = "src.a = v.key AND src.b = v.value",
+    expectedResult = ExpectedResult.Failure { ex =>
+      assert(ex.getErrorClass === "UNRESOLVED_COLUMN.WITH_SUGGESTION")
+    }
+  )
+
+  testTempViews("superset cols")(
+    text = "SELECT key, value, 1 FROM tab",
+    mergeCondition = "src.a = v.key AND src.b = v.value",
+    // The analyzer can't tell whether the table originally had the extra column or not.
+    expectedResult = ExpectedResult.Failure { ex =>
+      checkErrorMatchPVals(
+        ex,
+        "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS",
+        parameters = Map(
+          "schemaDiff" -> "(?s)Latest schema is missing field.*",
+          "legacyFlagMessage" -> ""
+      ))
+    }
+  )
+
+  testTempViews("nontrivial projection")(
+    text = "SELECT value as key, key as value FROM tab",
+    mergeCondition = "src.a = v.key AND src.b = v.value",
+    expectedResult = ExpectedResult.Success(Seq(Row(2, 1), Row(2, 1), Row(3, 0), Row(4, 3))),
+    // The view doesn't get stripped by DeltaViewHelper.stripTempViewForMerge during analysis in
+    // this case, doing it would be incorrect since the view is not a simple projection.
+    // We really shouldn't support this use case altogether but due to historical reasons we have to
+    // keep supporting it.
+    checkViewStripped = false
+  )
+
+
+  testTempViews("view with too many internal aliases")(
+    text = "SELECT * FROM (SELECT * FROM tab AS t1) AS t2",
+    mergeCondition = "src.a = v.key AND src.b = v.value",
+    expectedResult = ExpectedResult.Success(Seq(Row(0, 3), Row(1, 3), Row(3, 4)))
+  )
+
+  testTempViews("view with too many internal aliases - merge condition references subset of " +
+      s"target cols")(
+    text = "SELECT * FROM (SELECT * FROM tab AS t1) AS t2",
+    mergeCondition = "src.a = v.key",
+    expectedResult = ExpectedResult.Success(Seq(Row(0, 3), Row(1, 3), Row(3, 4)))
+  )
+}
+
+trait MergeIntoNestedDataTests extends MergeIntoSuiteBaseMixin {
   testNestedDataSupport("no update when not matched, only insert")(
     source = """
         { "key": { "x": "X3", "y": 3}, "value": { "a": 300, "b": "B300" } }""",
@@ -1609,43 +1712,686 @@ abstract class MergeIntoSuiteBase
     insert = "(key, value) VALUES (s.key, s.value)",
     result = """{ "key": "A", "value": { "a": { "x": 20, "y": 10 }, "b": 2 } }""",
     confs = (DeltaSQLConf.DELTA_RESOLVE_MERGE_UPDATE_STRUCTS_BY_NAME.key, "false") +: Nil)
+}
 
-
-  /**
-   * Test runner to cover analysis exception in MERGE INTO.
-   */
-  protected def testMergeAnalysisException(
+trait MergeIntoUnlimitedMergeClausesTests extends MergeIntoSuiteBaseMixin {
+  private def testUnlimitedClauses(
       name: String)(
+      source: Seq[(Int, Int)],
+      target: Seq[(Int, Int)],
       mergeOn: String,
       mergeClauses: MergeClause*)(
-      expectedErrorClass: String,
-      expectedMessageParameters: Map[String, String]): Unit = {
-    test(s"analysis errors - $name") {
-      withKeyValueData(
-        source = Seq.empty,
-        target = Seq.empty,
-        sourceKeyValueNames = ("key", "srcValue"),
-        targetKeyValueNames = ("key", "tgtValue")) { case (sourceName, targetName) =>
-        val ex = intercept[AnalysisException] {
-          executeMerge(s"$targetName t", s"$sourceName s", mergeOn, mergeClauses: _*)
-        }
+      result: Seq[(Int, Int)]): Unit =
+    testExtendedMerge(name, "unlimited clauses")(source, target, mergeOn, mergeClauses : _*)(result)
 
-        // Spark 3.5 and below uses QueryContext, Spark 4.0 and above uses ExpectedContext.
-        // Implicitly convert to ExpectedContext when needed for compatibility.
-        implicit def toExpectedContext(ctxs: Array[QueryContext]): Array[ExpectedContext] =
-          ctxs.map { ctx =>
-            ExpectedContext(ctx.fragment(), ctx.startIndex(), ctx.stopIndex())
-          }
+  testUnlimitedClauses("two conditional update + two conditional delete + insert")(
+    source = (0, 0) :: (1, 100) :: (3, 300) :: (4, 400) :: (5, 500) :: Nil,
+    target = (1, 10) :: (2, 20) :: (3, 30) :: (4, 40) :: Nil,
+    mergeOn = "s.key = t.key",
+    delete(condition = "s.key < 2"),
+    delete(condition = "s.key > 4"),
+    update(condition = "s.key == 3", set = "key = s.key, value = s.value"),
+    update(condition = "s.key == 4", set = "key = s.key, value = 2 * s.value"),
+    insert(condition = null, values = "(key, value) VALUES (s.key, s.value)"))(
+    result = Seq(
+      (0, 0),    // insert (0, 0)
+                 // delete (1, 10)
+      (2, 20),   // neither updated nor deleted as it didn't match
+      (3, 300),  // update (3, 30)
+      (4, 800),  // update (4, 40)
+      (5, 500)   // insert (5, 500)
+    ))
 
-        checkError(
-          exception = ex,
-          mappedErrorClasses.getOrElse(expectedErrorClass, expectedErrorClass),
-          parameters = expectedMessageParameters,
-          queryContext = ex.getQueryContext
-        )
+  testUnlimitedClauses("two conditional delete + conditional update + update + insert")(
+    source = (0, 0) :: (1, 100) :: (2, 200) :: (3, 300) :: (4, 400) :: Nil,
+    target = (1, 10) :: (2, 20) :: (3, 30) :: (4, 40) :: Nil,
+    mergeOn = "s.key = t.key",
+    delete(condition = "s.key < 2"),
+    delete(condition = "s.key > 3"),
+    update(condition = "s.key == 2", set = "key = s.key, value = s.value"),
+    update(condition = null, set = "key = s.key, value = 2 * s.value"),
+    insert(condition = null, values = "(key, value) VALUES (s.key, s.value)"))(
+    result = Seq(
+      (0, 0),   // insert (0, 0)
+                // delete (1, 10)
+      (2, 200), // update (2, 20)
+      (3, 600)  // update (3, 30)
+                // delete (4, 40)
+    ))
+
+  testUnlimitedClauses("conditional delete + two conditional update + two conditional insert")(
+    source = (1, 100) :: (2, 200) :: (3, 300) :: (4, 400) :: (6, 600) :: Nil,
+    target = (1, 10) :: (2, 20) :: (3, 30) :: Nil,
+    mergeOn = "s.key = t.key",
+    delete(condition = "s.key < 2"),
+    update(condition = "s.key == 2", set = "key = s.key, value = s.value"),
+    update(condition = "s.key == 3", set = "key = s.key, value = 2 * s.value"),
+    insert(condition = "s.key < 5", values = "(key, value) VALUES (s.key, s.value)"),
+    insert(condition = "s.key > 5", values = "(key, value) VALUES (s.key, 1 + s.value)"))(
+    result = Seq(
+                // delete (1, 10)
+      (2, 200), // update (2, 20)
+      (3, 600), // update (3, 30)
+      (4, 400), // insert (4, 400)
+      (6, 601)  // insert (6, 600)
+    ))
+
+  testUnlimitedClauses("conditional update + update + conditional delete + conditional insert")(
+    source = (1, 100) :: (2, 200) :: (3, 300) :: (4, 400) :: (5, 500) :: Nil,
+    target = (0, 0) :: (1, 10) :: (2, 20) :: (3, 30) :: Nil,
+    mergeOn = "s.key = t.key",
+    update(condition = "s.key < 2", set = "key = s.key, value = s.value"),
+    update(condition = "s.key < 3", set = "key = s.key, value = 2 * s.value"),
+    delete(condition = "s.key < 4"),
+    insert(condition = "s.key > 4", values = "(key, value) VALUES (s.key, s.value)"))(
+    result = Seq(
+      (0, 0),   // no change
+      (1, 100), // (1, 10) updated by matched_0
+      (2, 400), // (2, 20) updated by matched_1
+                // (3, 30) deleted by matched_2
+      (5, 500)  // (5, 500) inserted
+    ))
+
+  testUnlimitedClauses("conditional insert + insert")(
+    source = (1, 100) :: (2, 200) :: (3, 300) :: (4, 400) :: (5, 500) :: Nil,
+    target = (0, 0) :: (1, 10) :: (2, 20) :: (3, 30) :: Nil,
+    mergeOn = "s.key = t.key",
+    insert(condition = "s.key < 5", values = "(key, value) VALUES (s.key, s.value)"),
+    insert(condition = null, values = "(key, value) VALUES (s.key, s.value + 1)"))(
+    result = Seq(
+      (0, 0),   // no change
+      (1, 10),  // no change
+      (2, 20),  // no change
+      (3, 30),  // no change
+      (4, 400), // (4, 400) inserted by notMatched_0
+      (5, 501)  // (5, 501) inserted by notMatched_1
+    ))
+
+  testUnlimitedClauses("2 conditional inserts")(
+    source = (1, 100) :: (2, 200) :: (3, 300) :: (4, 400) :: (5, 500) :: (6, 600) :: Nil,
+    target = (0, 0) :: (1, 10) :: (2, 20) :: (3, 30) :: Nil,
+    mergeOn = "s.key = t.key",
+    insert(condition = "s.key < 5", values = "(key, value) VALUES (s.key, s.value)"),
+    insert(condition = "s.key = 5", values = "(key, value) VALUES (s.key, s.value + 1)"))(
+    result = Seq(
+      (0, 0),   // no change
+      (1, 10),  // no change
+      (2, 20),  // no change
+      (3, 30),  // no change
+      (4, 400), // (4, 400) inserted by notMatched_0
+      (5, 501)  // (5, 501) inserted by notMatched_1
+                // (6, 600) not inserted as not insert condition matched
+    ))
+
+  testUnlimitedClauses("update/delete (no matches) + conditional insert + insert")(
+    source = (4, 400) :: (5, 500) :: Nil,
+    target = (0, 0) :: (1, 10) :: (2, 20) :: (3, 30) :: Nil,
+    mergeOn = "s.key = t.key",
+    update(condition = "t.key = 0", set = "key = s.key, value = s.value"),
+    delete(condition = null),
+    insert(condition = "s.key < 5", values = "(key, value) VALUES (s.key, s.value)"),
+    insert(condition = null, values = "(key, value) VALUES (s.key, s.value + 1)"))(
+    result = Seq(
+      (0, 0),   // no change
+      (1, 10),  // no change
+      (2, 20),  // no change
+      (3, 30),  // no change
+      (4, 400), // (4, 400) inserted by notMatched_0
+      (5, 501)  // (5, 501) inserted by notMatched_1
+    ))
+
+  testUnlimitedClauses("update/delete (no matches) + 2 conditional inserts")(
+    source = (4, 400) :: (5, 500) :: (6, 600)  :: Nil,
+    target = (0, 0) :: (1, 10) :: (2, 20) :: (3, 30) :: Nil,
+    mergeOn = "s.key = t.key",
+    update(condition = "t.key = 0", set = "key = s.key, value = s.value"),
+    delete(condition = null),
+    insert(condition = "s.key < 5", values = "(key, value) VALUES (s.key, s.value)"),
+    insert(condition = "s.key = 5", values = "(key, value) VALUES (s.key, s.value + 1)"))(
+    result = Seq(
+      (0, 0),   // no change
+      (1, 10),  // no change
+      (2, 20),  // no change
+      (3, 30),  // no change
+      (4, 400), // (4, 400) inserted by notMatched_0
+      (5, 501)  // (5, 501) inserted by notMatched_1
+                // (6, 600) not inserted as not insert condition matched
+    ))
+
+  testUnlimitedClauses("2 update + 2 delete + 4 insert")(
+    source = (1, 100) :: (2, 200) :: (3, 300) :: (4, 400) :: (5, 500) :: (6, 600) :: (7, 700) ::
+      (8, 800) :: (9, 900) :: Nil,
+    target = (0, 0) :: (1, 10) :: (2, 20) :: (3, 30) :: (4, 40) :: Nil,
+    mergeOn = "s.key = t.key",
+    update(condition = "s.key == 1", set = "key = s.key, value = s.value"),
+    delete(condition = "s.key == 2"),
+    update(condition = "s.key == 3", set = "key = s.key, value = 2 * s.value"),
+    delete(condition = null),
+    insert(condition = "s.key == 5", values = "(key, value) VALUES (s.key, s.value)"),
+    insert(condition = "s.key == 6", values = "(key, value) VALUES (s.key, 1 + s.value)"),
+    insert(condition = "s.key == 7", values = "(key, value) VALUES (s.key, 2 + s.value)"),
+    insert(condition = null, values = "(key, value) VALUES (s.key, 3 + s.value)"))(
+    result = Seq(
+      (0, 0),    // no change
+      (1, 100),  // (1, 10) updated by matched_0
+                 // (2, 20) deleted by matched_1
+      (3, 600),  // (3, 30) updated by matched_2
+                 // (4, 40) deleted by matched_3
+      (5, 500),  // (5, 500) inserted by notMatched_0
+      (6, 601),  // (6, 600) inserted by notMatched_1
+      (7, 702),  // (7, 700) inserted by notMatched_2
+      (8, 803),  // (8, 800) inserted by notMatched_3
+      (9, 903)   // (9, 900) inserted by notMatched_3
+    ))
+
+  testMergeAnalysisException("error on multiple insert clauses without condition")(
+    mergeOn = "s.key = t.key",
+    update(condition = "s.key == 3", set = "key = s.key, value = 2 * srcValue"),
+    insert(condition = null, values = "(key, value) VALUES (s.key, srcValue)"),
+    insert(condition = null, values = "(key, value) VALUES (s.key, 1 + srcValue)"))(
+    expectedErrorClass = "NON_LAST_NOT_MATCHED_BY_TARGET_CLAUSE_OMIT_CONDITION",
+    expectedMessageParameters = Map.empty)
+
+  testMergeAnalysisException("error on multiple update clauses without condition")(
+    mergeOn = "s.key = t.key",
+    update(condition = "s.key == 3", set = "key = s.key, value = 2 * srcValue"),
+    update(condition = null, set = "key = s.key, value = 3 * srcValue"),
+    update(condition = null, set = "key = s.key, value = 4 * srcValue"),
+    insert(condition = null, values = "(key, value) VALUES (s.key, srcValue)"))(
+    expectedErrorClass = "NON_LAST_MATCHED_CLAUSE_OMIT_CONDITION",
+    expectedMessageParameters = Map.empty)
+
+  testMergeAnalysisException("error on multiple update/delete clauses without condition")(
+    mergeOn = "s.key = t.key",
+    update(condition = "s.key == 3", set = "key = s.key, value = 2 * srcValue"),
+    delete(condition = null),
+    update(condition = null, set = "key = s.key, value = 4 * srcValue"),
+    insert(condition = null, values = "(key, value) VALUES (s.key, srcValue)"))(
+    expectedErrorClass = "NON_LAST_MATCHED_CLAUSE_OMIT_CONDITION",
+    expectedMessageParameters = Map.empty)
+
+  testMergeAnalysisException(
+    "error on non-empty condition following empty condition for update clauses")(
+    mergeOn = "s.key = t.key",
+    update(condition = null, set = "key = s.key, value = 2 * srcValue"),
+    update(condition = "s.key < 3", set = "key = s.key, value = srcValue"),
+    insert(condition = null, values = "(key, value) VALUES (s.key, srcValue)"))(
+    expectedErrorClass = "NON_LAST_MATCHED_CLAUSE_OMIT_CONDITION",
+    expectedMessageParameters = Map.empty)
+
+  testMergeAnalysisException(
+    "error on non-empty condition following empty condition for insert clauses")(
+    mergeOn = "s.key = t.key",
+    update(condition = null, set = "key = s.key, value = srcValue"),
+    insert(condition = null, values = "(key, value) VALUES (s.key, srcValue)"),
+    insert(condition = "s.key < 3", values = "(key, value) VALUES (s.key, srcValue)"))(
+    expectedErrorClass = "NON_LAST_NOT_MATCHED_BY_TARGET_CLAUSE_OMIT_CONDITION",
+    expectedMessageParameters = Map.empty)
+}
+
+trait MergeIntoSuiteBaseMiscTests extends MergeIntoSuiteBaseMixin {
+  import testImplicits._
+
+  test("same column names in source and target") {
+    withTable("source") {
+      Seq((1, 5), (2, 9)).toDF("key", "value").createOrReplaceTempView("source")
+      append(Seq((2, 2), (1, 4)).toDF("key", "value"))
+
+      executeMerge(
+        target = s"delta.`$tempPath` as target",
+        source = "source src",
+        condition = "src.key = target.key",
+        update = "target.key = 20 + src.key, target.value = 20 + src.value",
+        insert = "(key, value) VALUES (src.key - 10, src.value + 10)")
+
+      checkAnswer(
+        readDeltaTable(tempPath),
+        Row(21, 25) :: // Update
+          Row(22, 29) :: // Update
+          Nil)
+    }
+  }
+
+  test("Source is a query") {
+    withTable("source") {
+      Seq((1, 6, "a"), (0, 3, "b")).toDF("key1", "value", "others")
+        .createOrReplaceTempView("source")
+      append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
+
+      executeMerge(
+        target = s"delta.`$tempPath` as trg",
+        source = "(SELECT key1, value, others FROM source) src",
+        condition = "src.key1 = trg.key2",
+        update = "trg.key2 = 20 + key1, value = 20 + src.value",
+        insert = "(trg.key2, value) VALUES (key1 - 10, src.value + 10)")
+
+      checkAnswer(
+        readDeltaTable(tempPath),
+        Row(2, 2) :: // No change
+          Row(21, 26) :: // Update
+          Row(-10, 13) :: // Insert
+          Nil)
+
+      withCrossJoinEnabled {
+        executeMerge(
+        target = s"delta.`$tempPath` as trg",
+        source = "(SELECT 5 as key1, 5 as value) src",
+        condition = "src.key1 = trg.key2",
+        update = "trg.key2 = 20 + key1, value = 20 + src.value",
+        insert = "(trg.key2, value) VALUES (key1 - 10, src.value + 10)")
+      }
+
+      checkAnswer(readDeltaTable(tempPath),
+        Row(2, 2) ::
+          Row(21, 26) ::
+          Row(-10, 13) ::
+          Row(-5, 15) :: // new row
+          Nil)
+    }
+  }
+
+  test("self merge") {
+    append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
+
+    executeMerge(
+      target = s"delta.`$tempPath` as target",
+      source = s"delta.`$tempPath` as src",
+      condition = "src.key2 = target.key2",
+      update = "key2 = 20 + src.key2, value = 20 + src.value",
+      insert = "(key2, value) VALUES (src.key2 - 10, src.value + 10)")
+
+    checkAnswer(readDeltaTable(tempPath),
+      Row(22, 22) :: // UPDATE
+        Row(21, 24) :: // UPDATE
+        Nil)
+  }
+
+  test("order by + limit in source query #1") {
+    withTable("source") {
+      Seq((1, 6, "a"), (0, 3, "b")).toDF("key1", "value", "others")
+        .createOrReplaceTempView("source")
+      append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
+
+      executeMerge(
+        target = s"delta.`$tempPath` as trg",
+        source = "(SELECT key1, value, others FROM source order by key1 limit 1) src",
+        condition = "src.key1 = trg.key2",
+        update = "trg.key2 = 20 + key1, value = 20 + src.value",
+        insert = "(trg.key2, value) VALUES (key1 - 10, src.value + 10)")
+
+      checkAnswer(readDeltaTable(tempPath),
+        Row(1, 4) :: // No change
+          Row(2, 2) :: // No change
+          Row(-10, 13) :: // Insert
+          Nil)
+    }
+  }
+
+  test("order by + limit in source query #2") {
+    withTable("source") {
+      Seq((1, 6, "a"), (0, 3, "b")).toDF("key1", "value", "others")
+        .createOrReplaceTempView("source")
+      append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
+
+      executeMerge(
+        target = s"delta.`$tempPath` as trg",
+        source = "(SELECT key1, value, others FROM source order by value DESC limit 1) src",
+        condition = "src.key1 = trg.key2",
+        update = "trg.key2 = 20 + key1, value = 20 + src.value",
+        insert = "(trg.key2, value) VALUES (key1 - 10, src.value + 10)")
+
+      checkAnswer(readDeltaTable(tempPath),
+        Row(2, 2) :: // No change
+          Row(21, 26) :: // UPDATE
+          Nil)
+    }
+  }
+
+  testQuietly("Negative case - more than one source rows match the same target row") {
+    withTable("source") {
+      Seq((1, 1), (0, 3), (1, 5)).toDF("key1", "value").createOrReplaceTempView("source")
+      append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
+
+      val e = intercept[Exception] {
+        executeMerge(
+          target = s"delta.`$tempPath` as target",
+          source = "source src",
+          condition = "src.key1 = target.key2",
+          update = "key2 = 20 + key1, value = 20 + src.value",
+          insert = "(key2, value) VALUES (key1 - 10, src.value + 10)")
+      }.toString
+
+      val expectedEx = DeltaErrors.multipleSourceRowMatchingTargetRowInMergeException(spark)
+      assert(e.contains(expectedEx.getMessage))
+    }
+  }
+
+  test("More than one target rows match the same source row") {
+    withTable("source") {
+      Seq((1, 5), (2, 9)).toDF("key1", "value").createOrReplaceTempView("source")
+      append(Seq((2, 2), (1, 4)).toDF("key2", "value"), Seq("key2"))
+
+      withCrossJoinEnabled {
+        executeMerge(
+          target = s"delta.`$tempPath` as target",
+          source = "source src",
+          condition = "key1 = 1",
+          update = "key2 = 20 + key1, value = 20 + src.value",
+          insert = "(key2, value) VALUES (key1 - 10, src.value + 10)")
+      }
+
+      checkAnswer(readDeltaTable(tempPath),
+        Row(-8, 19) :: // Insert
+          Row(21, 25) :: // Update
+          Row(21, 25) :: // Update
+          Nil)
+    }
+  }
+
+  Seq(true, false).foreach { isPartitioned =>
+    test(s"Merge table using different data types - implicit casting, parts: $isPartitioned") {
+      withTable("source") {
+        Seq((1, "5"), (3, "9"), (3, "a")).toDF("key1", "value").createOrReplaceTempView("source")
+        val partitions = if (isPartitioned) "key2" :: Nil else Nil
+        append(Seq((2, 2), (1, 4)).toDF("key2", "value"), partitions)
+
+        executeMerge(
+          target = s"delta.`$tempPath` as target",
+          source = "source src",
+          condition = "key1 = key2",
+          update = "key2 = 33 + cast(key2 as double), value = '20'",
+          insert = "(key2, value) VALUES ('44', try_cast(src.value as double) + 10)")
+
+        checkAnswer(readDeltaTable(tempPath),
+          Row(44, 19) :: // Insert
+          // NULL is generated when the type casting does not work for some values)
+          Row(44, null) :: // Insert
+          Row(34, 20) :: // Update
+          Row(2, 2) :: // No change
+          Nil)
       }
     }
   }
+
+  test("Negative case - basic syntax analysis") {
+    withTable("source") {
+      Seq((1, 1), (0, 3)).toDF("key1", "value").createOrReplaceTempView("source")
+      append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
+
+      // insert expressions have target table reference
+      var e = intercept[AnalysisException] {
+        executeMerge(
+          target = s"delta.`$tempPath` as target",
+          source = "source src",
+          condition = "src.key1 = target.key2",
+          update = "key2 = key1, value = src.value",
+          insert = "(key2, value) VALUES (3, src.value + key2)")
+      }.getMessage
+
+      errorContains(e, "cannot resolve key2")
+
+      // to-update columns have source table reference
+      e = intercept[AnalysisException] {
+        executeMerge(
+          target = s"delta.`$tempPath` as target",
+          source = "source src",
+          condition = "src.key1 = target.key2",
+          update = "key1 = 1, value = 2",
+          insert = "(key2, value) VALUES (3, 4)")
+      }.getMessage
+
+      errorContains(e, "Cannot resolve key1 in UPDATE clause")
+      errorContains(e, "key2") // should show key2 as a valid name in target columns
+
+      // to-insert columns have source table reference
+      e = intercept[AnalysisException] {
+        executeMerge(
+          target = s"delta.`$tempPath` as target",
+          source = "source src",
+          condition = "src.key1 = target.key2",
+          update = "key2 = 1, value = 2",
+          insert = "(key1, value) VALUES (3, 4)")
+      }.getMessage
+
+      errorContains(e, "Cannot resolve key1 in INSERT clause")
+      errorContains(e, "key2") // should contain key2 as a valid name in target columns
+
+      // ambiguous reference
+      e = intercept[AnalysisException] {
+        executeMerge(
+          target = s"delta.`$tempPath` as target",
+          source = "source src",
+          condition = "src.key1 = target.key2",
+          update = "key2 = 1, value = value",
+          insert = "(key2, value) VALUES (3, 4)")
+      }.getMessage
+
+      Seq("value", "is ambiguous", "could be").foreach(x => errorContains(e, x))
+
+      // non-deterministic search condition
+      e = intercept[AnalysisException] {
+        executeMerge(
+          target = s"delta.`$tempPath` as target",
+          source = "source src",
+          condition = "src.key1 = target.key2 and rand() > 0.5",
+          update = "key2 = 1, value = 2",
+          insert = "(key2, value) VALUES (3, 4)")
+      }.getMessage
+
+      errorContains(e, "Non-deterministic functions are not supported in the search condition")
+
+      // aggregate function
+      e = intercept[AnalysisException] {
+        executeMerge(
+          target = s"delta.`$tempPath` as target",
+          source = "source src",
+          condition = "src.key1 = target.key2 and max(target.key2) > 20",
+          update = "key2 = 1, value = 2",
+          insert = "(key2, value) VALUES (3, 4)")
+      }.getMessage
+
+      errorContains(e, "Aggregate functions are not supported in the search condition")
+    }
+  }
+
+  test("Merge should use the same SparkSession consistently") {
+    withTempDir { dir =>
+      withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "false") {
+        val r = dir.getCanonicalPath
+        val sourcePath = s"$r/source"
+        val targetPath = s"$r/target"
+        val numSourceRecords = 20
+        spark.range(numSourceRecords)
+          .withColumn("x", $"id")
+          .withColumn("y", $"id")
+          .write.mode("overwrite").format("delta").save(sourcePath)
+        spark.range(1)
+          .withColumn("x", $"id")
+          .write.mode("overwrite").format("delta").save(targetPath)
+        val spark2 = spark.newSession
+        spark2.conf.set(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "true")
+        val target = io.delta.tables.DeltaTable.forPath(spark2, targetPath)
+        val source = spark.read.format("delta").load(sourcePath).alias("s")
+        val merge = target.alias("t")
+          .merge(source, "t.id = s.id")
+          .whenMatched.updateExpr(Map("t.x" -> "t.x + 1"))
+          .whenNotMatched.insertAll()
+          .execute()
+        // The target table should have the same number of rows as the source after the merge
+        assert(spark.read.format("delta").load(targetPath).count() == numSourceRecords)
+      }
+    }
+  }
+
+  testSparkMasterOnly("Variant type") {
+    withTable("source") {
+      // Insert ("0", 0), ("1", 1)
+      val dstDf = sql(
+        """SELECT parse_json(cast(id as string)) v, id i
+        FROM range(2)""")
+      append(dstDf)
+      // Insert ("1", 2), ("2", 3)
+      // The first row will update, the second will insert.
+      sql(
+        s"""SELECT parse_json(cast(id as string)) v, id + 1 i
+              FROM range(1, 3)""").createOrReplaceTempView("source")
+
+      executeMerge(
+        target = s"delta.`$tempPath` as trgNew",
+        source = "source src",
+        condition = "to_json(src.v) = to_json(trgNew.v)",
+        update = "i = 10 + src.i + trgNew.i, v = trgNew.v",
+        insert = """(i, v) VALUES (i + 100, parse_json('"inserted"'))""")
+
+      checkAnswer(readDeltaTable(tempPath).selectExpr("i", "to_json(v)"),
+        Row(0, "0") :: // No change
+          Row(13, "1") :: // Update
+          Row(103, "\"inserted\"") :: // Insert
+          Nil)
+    }
+  }
+
+  // Enable this test in OSS when Spark has the change to report better errors
+  // when MERGE is not supported.
+  ignore("Negative case - non-delta target") {
+    withTable("source", "target") {
+      Seq((1, 1), (0, 3), (1, 5)).toDF("key1", "value").createOrReplaceTempView("source")
+      Seq((1, 1), (0, 3), (1, 5)).toDF("key2", "value").write.saveAsTable("target")
+
+      val e = intercept[AnalysisException] {
+        executeMerge(
+          target = "target",
+          source = "source src",
+          condition = "src.key1 = target.key2",
+          update = "key2 = 20 + key1, value = 20 + src.value",
+          insert = "(key2, value) VALUES (key1 - 10, src.value + 10)")
+      }.getMessage
+      assert(e.contains("does not support MERGE") ||
+        // The MERGE Scala API is for Delta only and reports error differently.
+        e.contains("is not a Delta table") ||
+        e.contains("MERGE destination only supports Delta sources"))
+    }
+  }
+
+  test("Negative case - update assignments conflict because " +
+    "same column with different references") {
+    withTable("source") {
+      Seq((1, 1), (0, 3), (1, 5)).toDF("key1", "value").createOrReplaceTempView("source")
+      append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
+      val e = intercept[AnalysisException] {
+        executeMerge(
+          target = s"delta.`$tempPath` as t",
+          source = "source s",
+          condition = "s.key1 = t.key2",
+          update = "key2 = key1, t.key2 = key1",
+          insert = "(key2, value) VALUES (3, 4)")
+      }.getMessage
+
+      errorContains(e, "there is a conflict from these set columns")
+    }
+  }
+
+  test("Negative case - MERGE to the child directory") {
+    val df = Seq((1, 1), (0, 3), (1, 5)).toDF("key2", "value")
+    val partitions = "key2" :: Nil
+    append(df, partitions)
+
+    val e = intercept[AnalysisException] {
+      executeMerge(
+        target = s"delta.`$tempPath/key2=1` target",
+        source = "(SELECT 5 as key1, 5 as value) src",
+        condition = "src.key1 = target.key2",
+        update = "key2 = 20 + key1, value = 20 + src.value",
+        insert = "(key2, value) VALUES (key1 - 10, src.value + 10)")
+    }.getMessage
+    errorContains(e, "Expect a full scan of Delta sources, but found a partial scan")
+  }
+
+  test(s"special character in path - matched delete") {
+    val source = s"$tempDir/sou rce~"
+    val target = s"$tempDir/tar get>"
+    spark.range(0, 10, 2).write.format("delta").save(source)
+    spark.range(10).write.format("delta").save(target)
+    executeMerge(
+      tgt = s"delta.`$target` t",
+      src = s"delta.`$source` s",
+      cond = "t.id = s.id",
+      clauses = delete())
+    checkAnswer(readDeltaTable(target), Seq(1, 3, 5, 7, 9).toDF("id"))
+  }
+
+  test(s"special character in path - matched update") {
+    val source = s"$tempDir/sou rce("
+    val target = s"$tempDir/tar get*"
+    spark.range(0, 10, 2).write.format("delta").save(source)
+    spark.range(10).write.format("delta").save(target)
+    executeMerge(
+      tgt = s"delta.`$target` t",
+      src = s"delta.`$source` s",
+      cond = "t.id = s.id",
+      clauses = update(set = "id = t.id * 10"))
+    checkAnswer(readDeltaTable(target), Seq(0, 1, 20, 3, 40, 5, 60, 7, 80, 9).toDF("id"))
+  }
+
+  Seq(true, false).foreach { isPartitioned =>
+    test(s"single file, isPartitioned: $isPartitioned") {
+      withTable("source") {
+        val df = spark.range(5).selectExpr("id as key1", "id as key2", "id as col1").repartition(1)
+
+        val partitions = if (isPartitioned) "key1" :: "key2" :: Nil else Nil
+        append(df, partitions)
+
+        df.createOrReplaceTempView("source")
+
+        executeMerge(
+          target = s"delta.`$tempPath` target",
+          source = "(SELECT key1 as srcKey, key2, col1 FROM source where key1 < 3) AS source",
+          condition = "srcKey = target.key1",
+          update = "target.key1 = srcKey - 1000, target.key2 = source.key2 + 1000, " +
+            "target.col1 = source.col1",
+          insert = "(key1, key2, col1) VALUES (srcKey, source.key2, source.col1)")
+
+        checkAnswer(readDeltaTable(tempPath),
+          Row(-998, 1002, 2) :: // Update
+            Row(-999, 1001, 1) :: // Update
+            Row(-1000, 1000, 0) :: // Update
+            Row(4, 4, 4) :: // No change
+            Row(3, 3, 3) :: // No change
+            Nil)
+      }
+    }
+  }
+
+  test("merge into cached table") {
+    // Merge with a cached target only works in the join-based implementation right now
+    withTable("source") {
+      append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
+      Seq((1, 1), (0, 3), (3, 3)).toDF("key1", "value").createOrReplaceTempView("source")
+      spark.table(s"delta.`$tempPath`").cache()
+      spark.table(s"delta.`$tempPath`").collect()
+
+      append(Seq((100, 100), (3, 5)).toDF("key2", "value"))
+      // cache is in effect, as the above change is not reflected
+      checkAnswer(spark.table(s"delta.`$tempPath`"),
+        Row(2, 2) :: Row(1, 4) :: Row(100, 100) :: Row(3, 5) :: Nil)
+
+      executeMerge(
+        target = s"delta.`$tempPath` as trgNew",
+        source = "source src",
+        condition = "src.key1 = key2",
+        update = "value = trgNew.value + 3",
+        insert = "(key2, value) VALUES (key1, src.value + 10)")
+
+      checkAnswer(spark.table(s"delta.`$tempPath`"),
+        Row(100, 100) :: // No change (newly inserted record)
+          Row(2, 2) :: // No change
+          Row(1, 7) :: // Update
+          Row(3, 8) :: // Update (on newly inserted record)
+          Row(0, 13) :: // Insert
+          Nil)
+    }
+  }
+
 
   testMergeAnalysisException("update condition - ambiguous reference")(
     mergeOn = "s.key = t.key",
@@ -1748,31 +2494,6 @@ abstract class MergeIntoSuiteBase
     expectedErrorClass = "TABLE_OR_VIEW_NOT_FOUND",
     expectedMessageParameters = Map("relationName" -> "`s`"))
 
-
-  protected def testExtendedMerge(
-      name: String,
-      namePrefix: String = "extended syntax")(
-      source: Seq[(Int, Int)],
-      target: Seq[(Int, Int)],
-      mergeOn: String,
-      mergeClauses: MergeClause*)(
-      result: Seq[(Int, Int)]): Unit = {
-    Seq(true, false).foreach { isPartitioned =>
-      test(s"$namePrefix - $name - isPartitioned: $isPartitioned ") {
-        withKeyValueData(source, target, isPartitioned) { case (sourceName, targetName) =>
-          withSQLConf(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED.key -> "true") {
-            executeMerge(s"$targetName t", s"$sourceName s", mergeOn, mergeClauses: _*)
-          }
-          val deltaPath = if (targetName.startsWith("delta.`")) {
-            targetName.stripPrefix("delta.`").stripSuffix("`")
-          } else targetName
-          checkAnswer(
-            readDeltaTable(deltaPath),
-            result.map { case (k, v) => Row(k, v) })
-        }
-      }
-    }
-  }
 
   protected def testMergeErrorOnMultipleMatches(
       name: String,
@@ -2062,29 +2783,6 @@ abstract class MergeIntoSuiteBase
     }
   }
 
-  protected def withJsonData(
-      source: Seq[String],
-      target: Seq[String],
-      schema: StructType = null,
-      sourceSchema: StructType = null)(
-      thunk: (String, String) => Unit): Unit = {
-
-    def toDF(strs: Seq[String]) = {
-      if (sourceSchema != null && strs == source) {
-        spark.read.schema(sourceSchema).json(strs.toDS)
-      } else if (schema != null) {
-        spark.read.schema(schema).json(strs.toDS)
-      } else {
-        spark.read.json(strs.toDS)
-      }
-    }
-    append(toDF(target), Nil)
-    withTempView("source") {
-      toDF(source).createOrReplaceTempView("source")
-      thunk("source", s"delta.`$tempPath`")
-    }
-  }
-
   test("extended syntax - nested data - conditions and actions") {
     withJsonData(
       source =
@@ -2111,10 +2809,6 @@ abstract class MergeIntoSuiteBase
           """{ "key": { "x": "X3", "y": 3}, "value" : { "a": 300, "b": "B300" } }"""  // inserted
         ).toDS))
     }
-  }
-
-  protected implicit def strToJsonSeq(str: String): Seq[String] = {
-    str.split("\n").filter(_.trim.length > 0)
   }
 
   def testStar(
@@ -2227,78 +2921,6 @@ abstract class MergeIntoSuiteBase
   )
 
 
-  protected def testNullCaseInsertOnly(name: String)(
-    target: Seq[(JInt, JInt)],
-    source: Seq[(JInt, JInt)],
-    condition: String,
-    expectedResults: Seq[(JInt, JInt)],
-    insertCondition: Option[String] = None) = {
-    Seq(true, false).foreach { isPartitioned =>
-      test(s"basic case - null handling - $name, isPartitioned: $isPartitioned") {
-        withView("sourceView") {
-          val partitions = if (isPartitioned) "key" :: Nil else Nil
-          append(target.toDF("key", "value"), partitions)
-          source.toDF("key", "value").createOrReplaceTempView("sourceView")
-          withSQLConf(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED.key -> "true") {
-            if (insertCondition.isDefined) {
-              executeMerge(
-                s"delta.`$tempPath` as t",
-                "sourceView s",
-                condition,
-                insert("(t.key, t.value) VALUES (s.key, s.value)",
-                  condition = insertCondition.get))
-            } else {
-              executeMerge(
-                s"delta.`$tempPath` as t",
-                "sourceView s",
-                condition,
-                insert("(t.key, t.value) VALUES (s.key, s.value)"))
-            }
-          }
-          checkAnswer(
-            readDeltaTable(tempPath),
-            expectedResults.map { r => Row(r._1, r._2) }
-          )
-
-          Utils.deleteRecursively(new File(tempPath))
-        }
-      }
-    }
-  }
-
-  testNullCaseInsertOnly("insert only merge - null in source") (
-    target = Seq((1, 1)),
-    source = Seq((1, 10), (2, 20), (null, null)),
-    condition = "s.key = t.key",
-    expectedResults = Seq(
-      (1, 1),         // Existing value
-      (2, 20),        // Insert
-      (null, null)    // Insert
-    ))
-
-  testNullCaseInsertOnly("insert only merge - null value in both source and target")(
-    target = Seq((1, 1), (null, null)),
-    source = Seq((1, 10), (2, 20), (null, 0)),
-    condition = "s.key = t.key",
-    expectedResults = Seq(
-      (null, null),   // No change as null in source does not match null in target
-      (1, 1),         // Existing value
-      (2, 20),        // Insert
-      (null, 0)       // Insert
-    ))
-
-  testNullCaseInsertOnly("insert only merge - null in insert clause")(
-    target = Seq((1, 1), (2, 20)),
-    source = Seq((1, 10), (3, 30), (null, 0)),
-    condition = "s.key = t.key",
-    expectedResults = Seq(
-      (1, 1),         // Existing value
-      (2, 20),        // Existing value
-      (null, 0)       // Insert
-    ),
-    insertCondition = Some("s.key IS NULL")
-  )
-
   test("insert only merge - turn off feature flag") {
     withSQLConf(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED.key -> "false") {
       withKeyValueData(
@@ -2307,27 +2929,6 @@ abstract class MergeIntoSuiteBase
       ) { case (sourceName, targetName) =>
         insertOnlyMergeFeatureFlagOff(sourceName, targetName)
       }
-    }
-  }
-
-  protected def insertOnlyMergeFeatureFlagOff(sourceName: String, targetName: String): Unit = {
-    executeMerge(
-      tgt = s"$targetName t",
-      src = s"$sourceName s",
-      cond = "s.key = t.key",
-      insert(values = "(key, value) VALUES (s.key, s.value)"))
-
-    checkAnswer(sql(s"SELECT key, value FROM $targetName"),
-      Row(1, 1) :: Row(3, 30) :: Nil)
-
-    val metrics = spark.sql(s"DESCRIBE HISTORY $targetName LIMIT 1")
-      .select("operationMetrics")
-      .collect().head.getMap(0).asInstanceOf[Map[String, String]]
-    assert(metrics.contains("numTargetFilesRemoved"))
-    // If insert-only code path is not used, then the general code path will rewrite existing
-    // target files when DVs are not enabled.
-    if (!spark.conf.get(DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS)) {
-      assert(metrics("numTargetFilesRemoved").toInt > 0)
     }
   }
 
@@ -2346,58 +2947,6 @@ abstract class MergeIntoSuiteBase
     target = (1, 1) :: Nil,
     mergeOn = "s.key = t.key",
     insert(condition = "s.value = 20", values = "(key, value) VALUES (s.key, s.value)"))
-
-  def testMergeWithRepartition(
-      name: String,
-      partitionColumns: Seq[String],
-      srcRange: Range,
-      expectLessFilesWithRepartition: Boolean,
-      clauses: MergeClause*): Unit = {
-    test(s"merge with repartition - $name",
-      DisableAdaptiveExecution("AQE coalese would partition number")) {
-      withTempView("source") {
-        withTempDir { basePath =>
-          val tgt1 = basePath + "target"
-          val tgt2 = basePath + "targetRepartitioned"
-
-          val df = spark.range(100).withColumn("part1", 'id % 5).withColumn("part2", 'id % 3)
-          df.write.format("delta").partitionBy(partitionColumns: _*).save(tgt1)
-          df.write.format("delta").partitionBy(partitionColumns: _*).save(tgt2)
-          val cond = "src.id = t.id"
-          val src = srcRange.toDF("id")
-            .withColumn("part1", 'id % 5)
-            .withColumn("part2", 'id % 3)
-            .createOrReplaceTempView("source")
-          // execute merge without repartition
-          withSQLConf(DeltaSQLConf.MERGE_REPARTITION_BEFORE_WRITE.key -> "false") {
-            executeMerge(
-              tgt = s"delta.`$tgt1` as t",
-              src = "source src",
-              cond = cond,
-              clauses = clauses: _*)
-          }
-          // execute merge with repartition - default behavior
-          executeMerge(
-            tgt = s"delta.`$tgt2` as t",
-            src = "source src",
-            cond = cond,
-            clauses = clauses: _*)
-          checkAnswer(
-            io.delta.tables.DeltaTable.forPath(tgt2).toDF,
-            io.delta.tables.DeltaTable.forPath(tgt1).toDF
-          )
-          val filesAfterNoRepartition = DeltaLog.forTable(spark, tgt1).snapshot.numOfFiles
-          val filesAfterRepartition = DeltaLog.forTable(spark, tgt2).snapshot.numOfFiles
-          // check if there are fewer are number of files for merge with repartition
-          if (expectLessFilesWithRepartition) {
-            assert(filesAfterNoRepartition > filesAfterRepartition)
-          } else {
-            assert(filesAfterNoRepartition === filesAfterRepartition)
-          }
-        }
-      }
-    }
-  }
 
   testMergeWithRepartition(
     name = "partition on multiple columns",
@@ -2607,90 +3156,6 @@ abstract class MergeIntoSuiteBase
     }
   }
 
-  /**
-   * Test whether data skipping on matched predicates of a merge command is performed.
-   * @param name The name of the test case.
-   * @param source The source for merge.
-   * @param target The target for merge.
-   * @param dataSkippingOnTargetOnly The boolean variable indicates whether
-   *                                 when matched clauses are on target fields only.
-   *                                 Data Skipping should be performed before inner join if
-   *                                 this variable is true.
-   * @param isMatchedOnly The boolean variable indicates whether the merge command only
-   *                      contains when matched clauses.
-   * @param mergeClauses Merge Clauses.
-   */
-  protected def testMergeDataSkippingOnMatchPredicates(
-      name: String)(
-      source: Seq[(Int, Int)],
-      target: Seq[(Int, Int)],
-      dataSkippingOnTargetOnly: Boolean,
-      isMatchedOnly: Boolean,
-      mergeClauses: MergeClause*)(
-      result: Seq[(Int, Int)]): Unit = {
-    test(s"data skipping with matched predicates - $name") {
-      withKeyValueData(source, target) { case (sourceName, targetName) =>
-        val stats = performMergeAndCollectStatsForDataSkippingOnMatchPredicates(
-          sourceName,
-          targetName,
-          result,
-          mergeClauses)
-        // Data skipping on match predicates should only be performed when it's a
-        // matched only merge.
-        if (isMatchedOnly) {
-          // The number of files removed/added should be 0 because of the additional predicates.
-          assert(stats.targetFilesRemoved == 0)
-          assert(stats.targetFilesAdded == 0)
-          // Verify that the additional predicates on data skipping
-          // before inner join filters file out for match predicates only
-          // on target.
-          if (dataSkippingOnTargetOnly) {
-            assert(stats.targetBeforeSkipping.files.get > stats.targetAfterSkipping.files.get)
-          }
-        } else {
-          if (!spark.conf.get(DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS)) {
-            assert(stats.targetFilesRemoved > 0)
-          }
-          // If there is no insert clause and the flag is enabled, data skipping should be
-          // performed on targetOnly predicates.
-          // However, with insert clauses, it's expected that no additional data skipping
-          // is performed on matched clauses.
-          assert(stats.targetBeforeSkipping.files.get == stats.targetAfterSkipping.files.get)
-          assert(stats.targetRowsUpdated == 0)
-        }
-      }
-    }
-  }
-
-  protected def performMergeAndCollectStatsForDataSkippingOnMatchPredicates(
-      sourceName: String,
-      targetName: String,
-      result: Seq[(Int, Int)],
-      mergeClauses: Seq[MergeClause]): MergeStats = {
-    var events: Seq[UsageRecord] = Seq.empty
-    // Perform merge on merge condition with matched clauses.
-    events = Log4jUsageLogger.track {
-      executeMerge(s"$targetName t", s"$sourceName s", "s.key = t.key", mergeClauses: _*)
-    }
-    val deltaPath = if (targetName.startsWith("delta.`")) {
-      targetName.stripPrefix("delta.`").stripSuffix("`")
-    } else targetName
-
-    checkAnswer(
-      readDeltaTable(deltaPath),
-      result.map { case (k, v) => Row(k, v) })
-
-    // Verify merge stats from usage events
-    val mergeStats = events.filter { e =>
-      e.metric == MetricDefinitions.EVENT_TAHOE.name &&
-        e.tags.get("opType").contains("delta.dml.merge.stats")
-    }
-
-    assert(mergeStats.size == 1)
-
-    JsonUtils.fromJson[MergeStats](mergeStats.head.blob)
-  }
-
   testMergeDataSkippingOnMatchPredicates("match conditions on target fields only")(
     source = Seq((1, 100), (3, 300), (5, 500)),
     target = Seq((1, 10), (2, 20), (3, 30)),
@@ -2740,223 +3205,6 @@ abstract class MergeIntoSuiteBase
     update(condition = "t.key == 1 AND t.value == 5", set = "*"))(
     result = Seq((1, 10), (2, 20), (3, 30)))
 
-  /* unlimited number of merge clauses tests */
-
-  protected def testUnlimitedClauses(
-      name: String)(
-      source: Seq[(Int, Int)],
-      target: Seq[(Int, Int)],
-      mergeOn: String,
-      mergeClauses: MergeClause*)(
-      result: Seq[(Int, Int)]): Unit =
-    testExtendedMerge(name, "unlimited clauses")(source, target, mergeOn, mergeClauses : _*)(result)
-
-  testUnlimitedClauses("two conditional update + two conditional delete + insert")(
-    source = (0, 0) :: (1, 100) :: (3, 300) :: (4, 400) :: (5, 500) :: Nil,
-    target = (1, 10) :: (2, 20) :: (3, 30) :: (4, 40) :: Nil,
-    mergeOn = "s.key = t.key",
-    delete(condition = "s.key < 2"),
-    delete(condition = "s.key > 4"),
-    update(condition = "s.key == 3", set = "key = s.key, value = s.value"),
-    update(condition = "s.key == 4", set = "key = s.key, value = 2 * s.value"),
-    insert(condition = null, values = "(key, value) VALUES (s.key, s.value)"))(
-    result = Seq(
-      (0, 0),    // insert (0, 0)
-                 // delete (1, 10)
-      (2, 20),   // neither updated nor deleted as it didn't match
-      (3, 300),  // update (3, 30)
-      (4, 800),  // update (4, 40)
-      (5, 500)   // insert (5, 500)
-    ))
-
-  testUnlimitedClauses("two conditional delete + conditional update + update + insert")(
-    source = (0, 0) :: (1, 100) :: (2, 200) :: (3, 300) :: (4, 400) :: Nil,
-    target = (1, 10) :: (2, 20) :: (3, 30) :: (4, 40) :: Nil,
-    mergeOn = "s.key = t.key",
-    delete(condition = "s.key < 2"),
-    delete(condition = "s.key > 3"),
-    update(condition = "s.key == 2", set = "key = s.key, value = s.value"),
-    update(condition = null, set = "key = s.key, value = 2 * s.value"),
-    insert(condition = null, values = "(key, value) VALUES (s.key, s.value)"))(
-    result = Seq(
-      (0, 0),   // insert (0, 0)
-                // delete (1, 10)
-      (2, 200), // update (2, 20)
-      (3, 600)  // update (3, 30)
-                // delete (4, 40)
-    ))
-
-  testUnlimitedClauses("conditional delete + two conditional update + two conditional insert")(
-    source = (1, 100) :: (2, 200) :: (3, 300) :: (4, 400) :: (6, 600) :: Nil,
-    target = (1, 10) :: (2, 20) :: (3, 30) :: Nil,
-    mergeOn = "s.key = t.key",
-    delete(condition = "s.key < 2"),
-    update(condition = "s.key == 2", set = "key = s.key, value = s.value"),
-    update(condition = "s.key == 3", set = "key = s.key, value = 2 * s.value"),
-    insert(condition = "s.key < 5", values = "(key, value) VALUES (s.key, s.value)"),
-    insert(condition = "s.key > 5", values = "(key, value) VALUES (s.key, 1 + s.value)"))(
-    result = Seq(
-                // delete (1, 10)
-      (2, 200), // update (2, 20)
-      (3, 600), // update (3, 30)
-      (4, 400), // insert (4, 400)
-      (6, 601)  // insert (6, 600)
-    ))
-
-  testUnlimitedClauses("conditional update + update + conditional delete + conditional insert")(
-    source = (1, 100) :: (2, 200) :: (3, 300) :: (4, 400) :: (5, 500) :: Nil,
-    target = (0, 0) :: (1, 10) :: (2, 20) :: (3, 30) :: Nil,
-    mergeOn = "s.key = t.key",
-    update(condition = "s.key < 2", set = "key = s.key, value = s.value"),
-    update(condition = "s.key < 3", set = "key = s.key, value = 2 * s.value"),
-    delete(condition = "s.key < 4"),
-    insert(condition = "s.key > 4", values = "(key, value) VALUES (s.key, s.value)"))(
-    result = Seq(
-      (0, 0),   // no change
-      (1, 100), // (1, 10) updated by matched_0
-      (2, 400), // (2, 20) updated by matched_1
-                // (3, 30) deleted by matched_2
-      (5, 500)  // (5, 500) inserted
-    ))
-
-  testUnlimitedClauses("conditional insert + insert")(
-    source = (1, 100) :: (2, 200) :: (3, 300) :: (4, 400) :: (5, 500) :: Nil,
-    target = (0, 0) :: (1, 10) :: (2, 20) :: (3, 30) :: Nil,
-    mergeOn = "s.key = t.key",
-    insert(condition = "s.key < 5", values = "(key, value) VALUES (s.key, s.value)"),
-    insert(condition = null, values = "(key, value) VALUES (s.key, s.value + 1)"))(
-    result = Seq(
-      (0, 0),   // no change
-      (1, 10),  // no change
-      (2, 20),  // no change
-      (3, 30),  // no change
-      (4, 400), // (4, 400) inserted by notMatched_0
-      (5, 501)  // (5, 501) inserted by notMatched_1
-    ))
-
-  testUnlimitedClauses("2 conditional inserts")(
-    source = (1, 100) :: (2, 200) :: (3, 300) :: (4, 400) :: (5, 500) :: (6, 600) :: Nil,
-    target = (0, 0) :: (1, 10) :: (2, 20) :: (3, 30) :: Nil,
-    mergeOn = "s.key = t.key",
-    insert(condition = "s.key < 5", values = "(key, value) VALUES (s.key, s.value)"),
-    insert(condition = "s.key = 5", values = "(key, value) VALUES (s.key, s.value + 1)"))(
-    result = Seq(
-      (0, 0),   // no change
-      (1, 10),  // no change
-      (2, 20),  // no change
-      (3, 30),  // no change
-      (4, 400), // (4, 400) inserted by notMatched_0
-      (5, 501)  // (5, 501) inserted by notMatched_1
-                // (6, 600) not inserted as not insert condition matched
-    ))
-
-  testUnlimitedClauses("update/delete (no matches) + conditional insert + insert")(
-    source = (4, 400) :: (5, 500) :: Nil,
-    target = (0, 0) :: (1, 10) :: (2, 20) :: (3, 30) :: Nil,
-    mergeOn = "s.key = t.key",
-    update(condition = "t.key = 0", set = "key = s.key, value = s.value"),
-    delete(condition = null),
-    insert(condition = "s.key < 5", values = "(key, value) VALUES (s.key, s.value)"),
-    insert(condition = null, values = "(key, value) VALUES (s.key, s.value + 1)"))(
-    result = Seq(
-      (0, 0),   // no change
-      (1, 10),  // no change
-      (2, 20),  // no change
-      (3, 30),  // no change
-      (4, 400), // (4, 400) inserted by notMatched_0
-      (5, 501)  // (5, 501) inserted by notMatched_1
-    ))
-
-  testUnlimitedClauses("update/delete (no matches) + 2 conditional inserts")(
-    source = (4, 400) :: (5, 500) :: (6, 600)  :: Nil,
-    target = (0, 0) :: (1, 10) :: (2, 20) :: (3, 30) :: Nil,
-    mergeOn = "s.key = t.key",
-    update(condition = "t.key = 0", set = "key = s.key, value = s.value"),
-    delete(condition = null),
-    insert(condition = "s.key < 5", values = "(key, value) VALUES (s.key, s.value)"),
-    insert(condition = "s.key = 5", values = "(key, value) VALUES (s.key, s.value + 1)"))(
-    result = Seq(
-      (0, 0),   // no change
-      (1, 10),  // no change
-      (2, 20),  // no change
-      (3, 30),  // no change
-      (4, 400), // (4, 400) inserted by notMatched_0
-      (5, 501)  // (5, 501) inserted by notMatched_1
-                // (6, 600) not inserted as not insert condition matched
-    ))
-
-  testUnlimitedClauses("2 update + 2 delete + 4 insert")(
-    source = (1, 100) :: (2, 200) :: (3, 300) :: (4, 400) :: (5, 500) :: (6, 600) :: (7, 700) ::
-      (8, 800) :: (9, 900) :: Nil,
-    target = (0, 0) :: (1, 10) :: (2, 20) :: (3, 30) :: (4, 40) :: Nil,
-    mergeOn = "s.key = t.key",
-    update(condition = "s.key == 1", set = "key = s.key, value = s.value"),
-    delete(condition = "s.key == 2"),
-    update(condition = "s.key == 3", set = "key = s.key, value = 2 * s.value"),
-    delete(condition = null),
-    insert(condition = "s.key == 5", values = "(key, value) VALUES (s.key, s.value)"),
-    insert(condition = "s.key == 6", values = "(key, value) VALUES (s.key, 1 + s.value)"),
-    insert(condition = "s.key == 7", values = "(key, value) VALUES (s.key, 2 + s.value)"),
-    insert(condition = null, values = "(key, value) VALUES (s.key, 3 + s.value)"))(
-    result = Seq(
-      (0, 0),    // no change
-      (1, 100),  // (1, 10) updated by matched_0
-                 // (2, 20) deleted by matched_1
-      (3, 600),  // (3, 30) updated by matched_2
-                 // (4, 40) deleted by matched_3
-      (5, 500),  // (5, 500) inserted by notMatched_0
-      (6, 601),  // (6, 600) inserted by notMatched_1
-      (7, 702),  // (7, 700) inserted by notMatched_2
-      (8, 803),  // (8, 800) inserted by notMatched_3
-      (9, 903)   // (9, 900) inserted by notMatched_3
-    ))
-
-  testMergeAnalysisException("error on multiple insert clauses without condition")(
-    mergeOn = "s.key = t.key",
-    update(condition = "s.key == 3", set = "key = s.key, value = 2 * srcValue"),
-    insert(condition = null, values = "(key, value) VALUES (s.key, srcValue)"),
-    insert(condition = null, values = "(key, value) VALUES (s.key, 1 + srcValue)"))(
-    expectedErrorClass = "NON_LAST_NOT_MATCHED_BY_TARGET_CLAUSE_OMIT_CONDITION",
-    expectedMessageParameters = Map.empty)
-
-  testMergeAnalysisException("error on multiple update clauses without condition")(
-    mergeOn = "s.key = t.key",
-    update(condition = "s.key == 3", set = "key = s.key, value = 2 * srcValue"),
-    update(condition = null, set = "key = s.key, value = 3 * srcValue"),
-    update(condition = null, set = "key = s.key, value = 4 * srcValue"),
-    insert(condition = null, values = "(key, value) VALUES (s.key, srcValue)"))(
-    expectedErrorClass = "NON_LAST_MATCHED_CLAUSE_OMIT_CONDITION",
-    expectedMessageParameters = Map.empty)
-
-  testMergeAnalysisException("error on multiple update/delete clauses without condition")(
-    mergeOn = "s.key = t.key",
-    update(condition = "s.key == 3", set = "key = s.key, value = 2 * srcValue"),
-    delete(condition = null),
-    update(condition = null, set = "key = s.key, value = 4 * srcValue"),
-    insert(condition = null, values = "(key, value) VALUES (s.key, srcValue)"))(
-    expectedErrorClass = "NON_LAST_MATCHED_CLAUSE_OMIT_CONDITION",
-    expectedMessageParameters = Map.empty)
-
-  testMergeAnalysisException(
-    "error on non-empty condition following empty condition for update clauses")(
-    mergeOn = "s.key = t.key",
-    update(condition = null, set = "key = s.key, value = 2 * srcValue"),
-    update(condition = "s.key < 3", set = "key = s.key, value = srcValue"),
-    insert(condition = null, values = "(key, value) VALUES (s.key, srcValue)"))(
-    expectedErrorClass = "NON_LAST_MATCHED_CLAUSE_OMIT_CONDITION",
-    expectedMessageParameters = Map.empty)
-
-  testMergeAnalysisException(
-    "error on non-empty condition following empty condition for insert clauses")(
-    mergeOn = "s.key = t.key",
-    update(condition = null, set = "key = s.key, value = srcValue"),
-    insert(condition = null, values = "(key, value) VALUES (s.key, srcValue)"),
-    insert(condition = "s.key < 3", values = "(key, value) VALUES (s.key, srcValue)"))(
-    expectedErrorClass = "NON_LAST_NOT_MATCHED_BY_TARGET_CLAUSE_OMIT_CONDITION",
-    expectedMessageParameters = Map.empty)
-
-  /* end unlimited number of merge clauses tests */
-
   test("SC-70829 - prevent re-resolution with star and schema evolution") {
     val source = "source"
     val target = "target"
@@ -2973,114 +3221,6 @@ abstract class MergeIntoSuiteBase
           cond = "s.id = t.id AND t.date >= date_sub(current_date(), 3)",
           update(set = "*"),
           insert(values = "*"))
-      }
-    }
-  }
-
-  /**
-   * @param function the unsupported function.
-   * @param functionType The type of the unsupported expression to be tested.
-   * @param sourceData the data in the source table.
-   * @param targetData the data in the target table.
-   * @param mergeCondition the merge condition containing the unsupported expression.
-   * @param clauseCondition the clause condition containing the unsupported expression.
-   * @param clauseAction the clause action containing the unsupported expression.
-   * @param expectExceptionInAction whether expect exception thrown in action.
-   * @param customConditionErrorRegex the customized error regex for condition.
-   * @param customActionErrorRegex the customized error regex for action.
-   */
-  def testUnsupportedExpression(
-      function: String,
-      functionType: String,
-      sourceData: => DataFrame,
-      targetData: => DataFrame,
-      mergeCondition: String,
-      clauseCondition: String,
-      clauseAction: String,
-      expectExceptionInAction: Option[Boolean] = None,
-      customConditionErrorRegex: Option[String] = None,
-      customActionErrorRegex: Option[String] = None) {
-    test(s"$functionType functions in merge" +
-      s" - expect exception in action: ${expectExceptionInAction.getOrElse(true)}") {
-      withTable("source", "target") {
-        sourceData.write.format("delta").saveAsTable("source")
-        targetData.write.format("delta").saveAsTable("target")
-
-        val expectedErrorRegex = "(?s).*(?i)unsupported.*(?i).*Invalid expressions.*"
-
-        def checkExpression(
-            expectException: Boolean,
-            condition: Option[String] = None,
-            clause: Option[MergeClause] = None,
-            expectedRegex: Option[String] = None) {
-          if (expectException) {
-            val dataBeforeException = spark.read.format("delta").table("target").collect()
-            val e = intercept[Exception] {
-              executeMerge(
-                tgt = "target as t",
-                src = "source as s",
-                cond = condition.getOrElse("s.a = t.a"),
-                clause.getOrElse(update(set = "b = s.b"))
-              )
-            }
-
-            def extractErrorClass(e: Throwable): String =
-              e match {
-                case dt: DeltaThrowable => s"\\[${dt.getErrorClass}\\] "
-                case _ => ""
-              }
-
-            val (message, errorClass) = if (e.getCause != null) {
-              (e.getCause.getMessage, extractErrorClass(e.getCause))
-            } else (e.getMessage, extractErrorClass(e))
-            assert(message.matches(errorClass + expectedRegex.getOrElse(expectedErrorRegex)))
-            checkAnswer(spark.read.format("delta").table("target"), dataBeforeException)
-          } else {
-            executeMerge(
-              tgt = "target as t",
-              src = "source as s",
-              cond = condition.getOrElse("s.a = t.a"),
-              clause.getOrElse(update(set = "b = s.b"))
-            )
-          }
-        }
-
-        // on merge condition
-        checkExpression(
-          expectException = true,
-          condition = Option(mergeCondition),
-          expectedRegex = customConditionErrorRegex
-        )
-
-        // on update condition
-        checkExpression(
-          expectException = true,
-          clause = Option(update(condition = clauseCondition, set = "b = s.b")),
-          expectedRegex = customConditionErrorRegex
-        )
-
-        // on update action
-        checkExpression(
-          expectException = expectExceptionInAction.getOrElse(true),
-          clause = Option(update(set = s"b = $clauseAction")),
-          expectedRegex = customActionErrorRegex
-        )
-
-        // on insert condition
-        checkExpression(
-          expectException = true,
-          clause = Option(
-            insert(values = "(a, b, c) VALUES (s.a, s.b, s.c)", condition = clauseCondition)),
-          expectedRegex = customConditionErrorRegex
-        )
-
-        sql("update source set a = 2")
-        // on insert action
-        checkExpression(
-          expectException = expectExceptionInAction.getOrElse(true),
-          clause = Option(insert(values = s"(a, b, c) VALUES ($clauseAction, s.b, s.c)")),
-          expectedRegex = customActionErrorRegex
-        )
       }
     }
   }
@@ -3105,123 +3245,6 @@ abstract class MergeIntoSuiteBase
     clauseAction = "max(s.c)",
     customConditionErrorRegex =
       Option("Aggregate functions are not supported in the .* condition of MERGE operation.*")
-  )
-
-  /**
-   * Ensure we can successfully remove the temp view from the target plan during MERGE analysis.
-   * Failing to do so can cause MERGE execution to fail later on as it is assumed the target plan is
-   * a simple logical relation by then without projections.
-   */
-  protected def checkStripViewFromTarget(target: String): Unit = {
-    val targetViewPlan = sql(s"SELECT * FROM $target").queryExecution.analyzed.collect {
-      case v: View => v
-    }
-    assert(targetViewPlan.size === 1,
-      s"Expected 1 view in target plan, got ${targetViewPlan.size}")
-    DeltaViewHelper.stripTempViewForMerge(targetViewPlan.head, conf) match {
-      case SubqueryAlias(_, _: LogicalRelation) =>
-      case _ =>
-        fail(s"DeltaViewHelper.stripTempViewForMerge doesn't correctly handle" +
-          s"removing the view from plan:\n${targetViewPlan.head}")
-    }
-  }
-
-  protected def testTempViews(name: String)(
-      text: String,
-      mergeCondition: String,
-      expectedResult: ExpectedResult[Seq[Row]],
-      checkViewStripped: Boolean = true): Unit = {
-    testWithTempView(s"test merge on temp view - $name") { isSQLTempView =>
-      withTable("tab") {
-        withTempView("src") {
-          Seq((0, 3), (1, 2)).toDF("key", "value").write.format("delta").saveAsTable("tab")
-          createTempViewFromSelect(text, isSQLTempView)
-          sql("CREATE TEMP VIEW src AS SELECT * FROM VALUES (1, 2), (3, 4) AS t(a, b)")
-
-          def runMerge(): Unit =
-            executeMerge(
-              target = "v",
-              source = "src",
-              condition = mergeCondition,
-              update = "v.value = src.b + 1",
-              insert = "(v.key, v.value) VALUES (src.a, src.b)")
-
-          expectedResult match {
-            case ExpectedResult.Failure(checkError) =>
-              val ex = intercept[AnalysisException] {
-                runMerge()
-              }
-              checkError(ex)
-            case ExpectedResult.Success(expectedRows: Seq[Row]) =>
-              if (checkViewStripped) {
-                checkStripViewFromTarget(target = "v")
-              }
-              runMerge()
-              checkAnswer(spark.table("v"), expectedRows)
-          }
-        }
-      }
-    }
-  }
-
-  testTempViews("basic")(
-    text = "SELECT * FROM tab",
-    mergeCondition = "src.a = v.key AND src.b = v.value",
-    expectedResult = ExpectedResult.Success(Seq(Row(0, 3), Row(1, 3), Row(3, 4)))
-  )
-
-  testTempViews("basic - merge condition references subset of target cols")(
-    text = "SELECT * FROM tab",
-    mergeCondition = "src.a = v.key",
-    expectedResult = ExpectedResult.Success(Seq(Row(0, 3), Row(1, 3), Row(3, 4)))
-  )
-
-  testTempViews("subset cols")(
-    text = "SELECT key FROM tab",
-    mergeCondition = "src.a = v.key AND src.b = v.value",
-    expectedResult = ExpectedResult.Failure { ex =>
-      assert(ex.getErrorClass === "UNRESOLVED_COLUMN.WITH_SUGGESTION")
-    }
-  )
-
-  testTempViews("superset cols")(
-    text = "SELECT key, value, 1 FROM tab",
-    mergeCondition = "src.a = v.key AND src.b = v.value",
-    // The analyzer can't tell whether the table originally had the extra column or not.
-    expectedResult = ExpectedResult.Failure { ex =>
-      checkErrorMatchPVals(
-        ex,
-        "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS",
-        parameters = Map(
-          "schemaDiff" -> "(?s)Latest schema is missing field.*",
-          "legacyFlagMessage" -> ""
-      ))
-    }
-  )
-
-  testTempViews("nontrivial projection")(
-    text = "SELECT value as key, key as value FROM tab",
-    mergeCondition = "src.a = v.key AND src.b = v.value",
-    expectedResult = ExpectedResult.Success(Seq(Row(2, 1), Row(2, 1), Row(3, 0), Row(4, 3))),
-    // The view doesn't get stripped by DeltaViewHelper.stripTempViewForMerge during analysis in
-    // this case, doing it would be incorrect since the view is not a simple projection.
-    // We really shouldn't support this use case altogether but due to historical reasons we have to
-    // keep supporting it.
-    checkViewStripped = false
-  )
-
-
-  testTempViews("view with too many internal aliases")(
-    text = "SELECT * FROM (SELECT * FROM tab AS t1) AS t2",
-    mergeCondition = "src.a = v.key AND src.b = v.value",
-    expectedResult = ExpectedResult.Success(Seq(Row(0, 3), Row(1, 3), Row(3, 4)))
-  )
-
-  testTempViews("view with too many internal aliases - merge condition references subset of " +
-      s"target cols")(
-    text = "SELECT * FROM (SELECT * FROM tab AS t1) AS t2",
-    mergeCondition = "src.a = v.key",
-    expectedResult = ExpectedResult.Success(Seq(Row(0, 3), Row(1, 3), Row(3, 4)))
   )
 
   test("merge correctly handle field metadata") {
@@ -3335,12 +3358,6 @@ abstract class MergeIntoSuiteBase
     assert(opTypes == expectedOpTypes)
   }
 
-  protected lazy val expectedOpTypes: Set[String] = Set(
-    "delta.dml.merge.materializeSource",
-    "delta.dml.merge.findTouchedFiles",
-    "delta.dml.merge.writeAllChanges",
-    "delta.dml.merge")
-
   test("insert only merge - recorded operation") {
     var events: Seq[UsageRecord] = Seq.empty
     withKeyValueData(
@@ -3409,12 +3426,6 @@ abstract class MergeIntoSuiteBase
     assert(opTypes == expectedOpTypesInsertOnly)
   }
 
-  protected lazy val expectedOpTypesInsertOnly: Set[String] = Set(
-    "delta.dml.merge.materializeSource",
-    "delta.dml.merge.findTouchedFiles",
-    "delta.dml.merge.writeInsertsOnlyWhenNoMatches",
-    "delta.dml.merge")
-
   test("merge execution is recorded with QueryExecutionListener") {
     withKeyValueData(
       source = (0, 0) :: (1, 10) :: Nil,
@@ -3476,7 +3487,6 @@ abstract class MergeIntoSuiteBase
     }
   }
 }
-
 
 @SQLUserDefinedType(udt = classOf[SimpleTestUDT])
 case class SimpleTest(value: Int)

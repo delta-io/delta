@@ -24,6 +24,7 @@ import scala.collection.JavaConverters._
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.DeltaTestUtils.{modifyCommitTimestamp, BOOLEAN_DOMAIN}
+import org.apache.spark.sql.delta.cdc.CDCEnabled
 import org.apache.spark.sql.delta.commands.cdc.CDCReader._
 import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -44,14 +45,12 @@ import org.apache.spark.sql.types.{LongType, StringType, StructType}
 
 abstract class DeltaCDCSuiteBase
   extends QueryTest
+  with CDCEnabled
   with SharedSparkSession
   with CheckCDCAnswer
   with DeltaSQLCommandTest {
 
   import testImplicits._
-
-  override protected def sparkConf: SparkConf = super.sparkConf
-    .set(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "true")
 
   /** Represents path or metastore table name */
   abstract case class TblId(id: String)

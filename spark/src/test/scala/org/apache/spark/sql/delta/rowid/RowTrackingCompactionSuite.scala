@@ -20,6 +20,7 @@ import java.io.File
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.commands.optimize.OptimizeMetrics
+import org.apache.spark.sql.delta.deletionvectors.PersistentDVEnabled
 import org.apache.spark.sql.delta.hooks.AutoCompact
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -240,16 +241,11 @@ trait RowTrackingAutoCompactionTests extends RowTrackingCompactionTests {
   }
 }
 
-trait RowTrackingPurgeTests extends RowTrackingCompactionTests with DeletionVectorsTestUtils {
+trait RowTrackingPurgeTests extends RowTrackingCompactionTests with PersistentDVEnabled {
 
   override protected val numSoftDeletedRows: Int = 3
 
   override protected def commandName: String = "purge"
-
-  override def beforeAll(): Unit = {
-    super.beforeAll()
-    enableDeletionVectorsInNewTables(spark.conf)
-  }
 
   override protected def createTable(
       dir: File,

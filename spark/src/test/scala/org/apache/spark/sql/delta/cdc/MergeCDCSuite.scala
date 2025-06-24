@@ -28,6 +28,7 @@ import org.apache.spark.SparkConf
 import org.apache.spark.sql.{DataFrame, QueryTest}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions.lit
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
 
 /**
@@ -38,18 +39,23 @@ import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
 class MergeCDCCoreSuite extends MergeCDCTests
 class MergeCDCSuite extends MergeIntoSQLSuite with MergeCDCTests
 
+trait CDCEnabled extends SharedSparkSession {
+  override protected def sparkConf: SparkConf = super.sparkConf
+    .set(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "true")
+}
+
 /**
  * Tests for MERGE INTO in CDC output mode.
  *
  */
 trait MergeCDCTests extends QueryTest
+  with CDCEnabled
   with MergeIntoSQLTestUtils
   with DeltaColumnMappingTestUtils
   with DeltaSQLCommandTest {
   import testImplicits._
 
   override protected def sparkConf: SparkConf = super.sparkConf
-    .set(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "true")
     .set(DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS.key, "false")
 
   // scalastyle:off argcount
