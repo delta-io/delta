@@ -23,7 +23,7 @@ import scala.collection.JavaConverters._
 import io.delta.kernel.TableManager
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.actions.Protocol
-import io.delta.kernel.internal.files.ParsedLogData
+import io.delta.kernel.internal.files.{ParsedChecksumData, ParsedLogData}
 import io.delta.kernel.internal.files.ParsedLogData.ParsedLogType
 import io.delta.kernel.internal.table.ResolvedTableInternal
 import io.delta.kernel.test.{ActionUtils, MockFileSystemClientUtils, VectorTestUtils}
@@ -119,7 +119,7 @@ class ResolvedTableBuilderSuite extends AnyFunSuite
   }
 
   Seq(
-    ParsedLogData.forInlineData(1, ParsedLogType.CHECKSUM, emptyColumnarBatch),
+    ParsedChecksumData.forInlineChecksum(1, emptyColumnarBatch),
     ParsedLogData.forFileStatus(logCompactionStatus(0, 1))).foreach { parsedLogData =>
     val suffix = s"- type=${parsedLogData.`type`}"
     test(s"withLogData: non-DELTA parsed log data throws IllegalArgumentException $suffix") {

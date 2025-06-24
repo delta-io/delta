@@ -68,37 +68,12 @@ public class ParsedLogData {
       return ParsedLogCompactionData.forFileStatus(fileStatus);
     } else if (FileNames.isCheckpointFile(path)) {
       return ParsedCheckpointData.forFileStatus(fileStatus);
-    }
-
-    final long version;
-    final ParsedLogType type;
-
-    if (FileNames.isCommitFile(path)) {
-      version = FileNames.deltaVersion(path);
-      type = ParsedLogType.DELTA;
+    } else if (FileNames.isCommitFile(path)) {
+      return ParsedDeltaData.forFileStatus(fileStatus);
     } else if (FileNames.isChecksumFile(path)) {
-      version = FileNames.checksumVersion(path);
-      type = ParsedLogType.CHECKSUM;
+      return ParsedChecksumData.forFileStatus(fileStatus);
     } else {
       throw new IllegalArgumentException("Unknown log file type: " + path);
-    }
-
-    return new ParsedLogData(version, type, Optional.of(fileStatus), Optional.empty());
-  }
-
-  public static ParsedLogData forInlineData(
-      long version, ParsedLogType type, ColumnarBatch inlineData) {
-    switch (type.category) {
-      case LOG_COMPACTION:
-        throw new IllegalArgumentException(
-            "For LOG_COMPACTION, use ParsedLogCompactionData.forInlineData() instead");
-      case CHECKPOINT:
-        return ParsedCheckpointData.forInlineData(version, type, inlineData);
-      case DELTA: // fall through
-      case CHECKSUM:
-        return new ParsedLogData(version, type, Optional.empty(), Optional.of(inlineData));
-      default:
-        throw new IllegalArgumentException("Unknown inline data log type: " + type.category);
     }
   }
 

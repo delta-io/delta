@@ -33,7 +33,7 @@ public class ParsedLogCompactionData extends ParsedLogData {
         startEnd._1, startEnd._2, Optional.of(fileStatus), Optional.empty());
   }
 
-  public static ParsedLogCompactionData forInlineData(
+  public static ParsedLogCompactionData forInlineLogCompaction(
       int start, int end, ColumnarBatch inlineData) {
     return new ParsedLogCompactionData(start, end, Optional.empty(), Optional.of(inlineData));
   }

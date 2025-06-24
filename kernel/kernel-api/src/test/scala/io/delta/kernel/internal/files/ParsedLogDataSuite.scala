@@ -45,7 +45,7 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
 
   test("Throws on version < 0") {
     val exMsg = intercept[IllegalArgumentException] {
-      ParsedLogData.forInlineData(-1, ParsedLogType.DELTA, emptyColumnarBatch)
+      ParsedDeltaData.forInlineDelta(-1, emptyColumnarBatch)
     }.getMessage
     assert(exMsg === "version must be non-negative")
   }
@@ -71,7 +71,8 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
   ////////////
 
   test("Can construct ratified inline commit using forInlineData") {
-    ParsedLogData.forInlineData(10, ParsedLogType.DELTA, emptyColumnarBatch)
+    val parsed = ParsedDeltaData.forInlineDelta(10, emptyColumnarBatch)
+    assert(parsed.`type` == ParsedLogType.DELTA)
   }
 
   test("Correctly parses published delta file") {
@@ -116,14 +117,14 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
   // Checkpoints //
   /////////////////
 
-  test("Can construct Inline classic checkpoint using forInlineData") {
-    ParsedLogData.forInlineData(10, ParsedLogType.CLASSIC_CHECKPOINT, emptyColumnarBatch)
-    ParsedCheckpointData.forInlineData(10, ParsedLogType.CLASSIC_CHECKPOINT, emptyColumnarBatch)
+  test("Can construct inline classic checkpoint using forInlineData") {
+    val parsed = ParsedCheckpointData.forInlineClassicCheckpoint(10, emptyColumnarBatch)
+    assert(parsed.`type` == ParsedLogType.CLASSIC_CHECKPOINT)
   }
 
-  test("Can construct Inline v2 checkpoint using forInlineData") {
-    ParsedLogData.forInlineData(10, ParsedLogType.V2_CHECKPOINT, emptyColumnarBatch)
-    ParsedCheckpointData.forInlineData(10, ParsedLogType.V2_CHECKPOINT, emptyColumnarBatch)
+  test("Can construct inline v2 checkpoint using forInlineData") {
+    val parsed = ParsedCheckpointData.forInlineV2Checkpoint(10, emptyColumnarBatch)
+    assert(parsed.`type` == ParsedLogType.V2_CHECKPOINT)
   }
 
   test("Correctly parses classic checkpoint file") {
@@ -177,21 +178,9 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
   ////////////////////////////
 
   test("Can construct inline multi-part checkpoint using forInlineData") {
-    ParsedMultiPartCheckpointData.forInlineData(10, 1, 3, emptyColumnarBatch)
-  }
-
-  test("Throws on inline multi-part checkpoint using wrong factory method") {
-    val exMsg1 = intercept[IllegalArgumentException] {
-      ParsedLogData.forInlineData(10, ParsedLogType.MULTIPART_CHECKPOINT, emptyColumnarBatch)
-    }.getMessage
-    assert(exMsg1 ==
-      "For MULTIPART_CHECKPOINT, use ParsedMultiPartCheckpointData.forInlineData() instead")
-
-    val exMsg2 = intercept[IllegalArgumentException] {
-      ParsedCheckpointData.forInlineData(10, ParsedLogType.MULTIPART_CHECKPOINT, emptyColumnarBatch)
-    }.getMessage
-    assert(exMsg2 ==
-      "For MULTIPART_CHECKPOINT, use ParsedMultiPartCheckpointData.forInlineData() instead")
+    val parsed =
+      ParsedMultiPartCheckpointData.forInlineMultiPartCheckpoint(10, 1, 3, emptyColumnarBatch)
+    assert(parsed.`type` == ParsedLogType.MULTIPART_CHECKPOINT)
   }
 
   test("Correctly parses multi-part checkpoint file") {
@@ -262,12 +251,11 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
     val multi_12_3_m = ParsedCheckpointData.forFileStatus(multiPartCheckpointFileStatus(12, 1, 3))
     val v2_12_m = ParsedCheckpointData.forFileStatus(v2CheckpointFileStatus(12))
 
-    val classic_12_i =
-      ParsedCheckpointData.forInlineData(12, ParsedLogType.CLASSIC_CHECKPOINT, emptyColumnarBatch)
-    val v2_12_i =
-      ParsedCheckpointData.forInlineData(12, ParsedLogType.V2_CHECKPOINT, emptyColumnarBatch)
+    val classic_12_i = ParsedCheckpointData.forInlineClassicCheckpoint(12, emptyColumnarBatch)
+    val v2_12_i = ParsedCheckpointData.forInlineV2Checkpoint(12, emptyColumnarBatch)
 
-    val multi_12_3_i = ParsedMultiPartCheckpointData.forInlineData(12, 1, 3, emptyColumnarBatch)
+    val multi_12_3_i =
+      ParsedMultiPartCheckpointData.forInlineMultiPartCheckpoint(12, 1, 3, emptyColumnarBatch)
     val multi_12_4_m = ParsedCheckpointData.forFileStatus(multiPartCheckpointFileStatus(12, 1, 4))
 
     val v2_aaa = ParsedCheckpointData.forFileStatus(
@@ -301,15 +289,7 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
   /////////////////////
 
   test("Can construct inline log compaction using forInlineData") {
-    ParsedLogCompactionData.forInlineData(10, 20, emptyColumnarBatch)
-  }
-
-  test("Throws on inline log compaction using wrong factory") {
-    val exMsg = intercept[IllegalArgumentException] {
-      ParsedLogData.forInlineData(10, ParsedLogType.LOG_COMPACTION, emptyColumnarBatch)
-    }.getMessage
-    assert(exMsg ==
-      "For LOG_COMPACTION, use ParsedLogCompactionData.forInlineData() instead")
+    ParsedLogCompactionData.forInlineLogCompaction(10, 20, emptyColumnarBatch)
   }
 
   test("Correctly parses log compaction file") {
@@ -328,21 +308,21 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
 
   test("Throws on log compaction with startVersion < 0") {
     val exMsg = intercept[IllegalArgumentException] {
-      ParsedLogCompactionData.forInlineData(-1, 3, emptyColumnarBatch)
+      ParsedLogCompactionData.forInlineLogCompaction(-1, 3, emptyColumnarBatch)
     }.getMessage
     assert(exMsg === "startVersion and endVersion must be non-negative")
   }
 
   test("Throws on log compaction with endVersion < 0") {
     val exMsg = intercept[IllegalArgumentException] {
-      ParsedLogCompactionData.forInlineData(1, -1, emptyColumnarBatch)
+      ParsedLogCompactionData.forInlineLogCompaction(1, -1, emptyColumnarBatch)
     }.getMessage
     assert(exMsg === "version must be non-negative")
   }
 
   test("Throws on log compaction with startVersion > endVersion") {
     val exMsg = intercept[IllegalArgumentException] {
-      ParsedLogCompactionData.forInlineData(3, 1, emptyColumnarBatch)
+      ParsedLogCompactionData.forInlineLogCompaction(3, 1, emptyColumnarBatch)
     }.getMessage
     assert(exMsg === "startVersion must be less than endVersion")
   }
@@ -366,7 +346,8 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
   //////////////
 
   test("Can construct checksum file using forInlineData") {
-    ParsedLogData.forInlineData(5, ParsedLogType.CHECKSUM, emptyColumnarBatch)
+    val parsed = ParsedChecksumData.forInlineChecksum(5, emptyColumnarBatch)
+    assert(parsed.`type` == ParsedLogType.CHECKSUM)
   }
 
   test("Correctly parses checksum file") {
@@ -401,13 +382,14 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
     val parsed = ParsedLogData.forFileStatus(deltaFileStatus(5))
     // scalastyle:off line.size.limit
     val expected =
-      "ParsedLogData{version=5, type=DELTA, source=FileStatus{path='/fake/path/to/table/_delta_log/00000000000000000005.json', size=5, modificationTime=50}}"
+      "ParsedDeltaData{version=5, type=DELTA, source=FileStatus{path='/fake/path/to/table/_delta_log/00000000000000000005.json', size=5, modificationTime=50}}"
     // scalastyle:on line.size.limit
     assert(parsed.toString === expected)
   }
 
   test("multi-part checkpoint toString") {
-    val parsed = ParsedMultiPartCheckpointData.forInlineData(10, 1, 3, emptyColumnarBatch)
+    val parsed =
+      ParsedMultiPartCheckpointData.forInlineMultiPartCheckpoint(10, 1, 3, emptyColumnarBatch)
     // scalastyle:off line.size.limit
     val expected =
       "ParsedMultiPartCheckpointData{version=10, type=MULTIPART_CHECKPOINT, source=inline, part=1, numParts=3}"
@@ -416,7 +398,7 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
   }
 
   test("log compaction toString") {
-    val parsed = ParsedLogCompactionData.forInlineData(10, 20, emptyColumnarBatch)
+    val parsed = ParsedLogCompactionData.forInlineLogCompaction(10, 20, emptyColumnarBatch)
     // scalastyle:off line.size.limit
     val expected =
       "ParsedLogCompactionData{version=20, type=LOG_COMPACTION, source=inline, startVersion=10}"
