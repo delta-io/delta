@@ -100,11 +100,11 @@ public class ParsedCheckpointData extends ParsedLogData
    * instead of going to the cloud store to read a file status.
    */
   protected int getTieBreaker(ParsedCheckpointData that) {
-    if (this.isInline() && that.isMaterialized()) {
+    if (this.isInline() && that.isFile()) {
       return 1; // Prefer this
-    } else if (this.isMaterialized() && that.isInline()) {
+    } else if (this.isFile() && that.isInline()) {
       return -1; // Prefer that
-    } else if (this.isMaterialized() && that.isMaterialized()) {
+    } else if (this.isFile() && that.isFile()) {
       return this.getFileStatus().getPath().compareTo(that.getFileStatus().getPath());
     } else {
       return 0;

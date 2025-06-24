@@ -45,7 +45,7 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
 
   test("Throws on version < 0") {
     val exMsg = intercept[IllegalArgumentException] {
-      ParsedLogData.forInlineData(-1, ParsedLogType.RATIFIED_INLINE_COMMIT, emptyColumnarBatch)
+      ParsedLogData.forInlineData(-1, ParsedLogType.DELTA, emptyColumnarBatch)
     }.getMessage
     assert(exMsg === "version must be non-negative")
   }
@@ -54,14 +54,14 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
     val fileStatusOpt = Optional.of(deltaFileStatus(5))
     val inlineDataOpt = Optional.of(emptyColumnarBatch)
     val exMsg = intercept[IllegalArgumentException] {
-      new ParsedLogData(10, ParsedLogType.PUBLISHED_DELTA, fileStatusOpt, inlineDataOpt)
+      new ParsedLogData(10, ParsedLogType.DELTA, fileStatusOpt, inlineDataOpt)
     }.getMessage
     assert(exMsg === "Exactly one of fileStatusOpt or inlineDataOpt must be present")
   }
 
   test("Throws on both fileStatusOpt and inlineDataOpt empty") {
     val exMsg = intercept[IllegalArgumentException] {
-      new ParsedLogData(10, ParsedLogType.PUBLISHED_DELTA, Optional.empty(), Optional.empty())
+      new ParsedLogData(10, ParsedLogType.DELTA, Optional.empty(), Optional.empty())
     }.getMessage
     assert(exMsg === "Exactly one of fileStatusOpt or inlineDataOpt must be present")
   }
@@ -70,16 +70,8 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
   // Deltas //
   ////////////
 
-  test("Cannot construct Ratified staged commit using forInlineData") {
-    val exMsg = intercept[IllegalArgumentException] {
-      ParsedLogData.forInlineData(10, ParsedLogType.RATIFIED_STAGED_COMMIT, emptyColumnarBatch)
-    }.getMessage
-    assert(exMsg ==
-      "For PUBLISHED_DELTA|RATIFIED_STAGED_COMMIT, use ParsedLogData.forFileStatus() instead")
-  }
-
-  test("Can construct Ratified inline commit using forInlineData") {
-    ParsedLogData.forInlineData(10, ParsedLogType.RATIFIED_INLINE_COMMIT, emptyColumnarBatch)
+  test("Can construct ratified inline commit using forInlineData") {
+    ParsedLogData.forInlineData(10, ParsedLogType.DELTA, emptyColumnarBatch)
   }
 
   test("Correctly parses published delta file") {
@@ -87,9 +79,9 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
     val parsed = ParsedLogData.forFileStatus(fileStatus)
 
     assert(parsed.version == 5)
-    assert(parsed.`type` == ParsedLogType.PUBLISHED_DELTA)
+    assert(parsed.`type` == ParsedLogType.DELTA)
     assert(parsed.getCategory == ParsedLogCategory.DELTA)
-    assert(parsed.isMaterialized)
+    assert(parsed.isFile)
     assert(!parsed.isInline)
     assert(parsed.getFileStatus == fileStatus)
   }
@@ -99,9 +91,9 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
     val parsed = ParsedLogData.forFileStatus(fileStatus)
 
     assert(parsed.version == 5)
-    assert(parsed.`type` == ParsedLogType.RATIFIED_STAGED_COMMIT)
+    assert(parsed.`type` == ParsedLogType.DELTA)
     assert(parsed.getCategory == ParsedLogCategory.DELTA)
-    assert(parsed.isMaterialized)
+    assert(parsed.isFile)
     assert(!parsed.isInline)
     assert(parsed.getFileStatus == fileStatus)
   }
@@ -142,7 +134,7 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
     assert(parsed.version == 10)
     assert(parsed.`type` == ParsedLogType.CLASSIC_CHECKPOINT)
     assert(parsed.getCategory == ParsedLogCategory.CHECKPOINT)
-    assert(parsed.isMaterialized)
+    assert(parsed.isFile)
     assert(!parsed.isInline)
     assert(parsed.getFileStatus == fileStatus)
   }
@@ -165,7 +157,7 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
     assert(parsed.version == 20)
     assert(parsed.`type` == ParsedLogType.V2_CHECKPOINT)
     assert(parsed.getCategory == ParsedLogCategory.CHECKPOINT)
-    assert(parsed.isMaterialized)
+    assert(parsed.isFile)
     assert(!parsed.isInline)
     assert(parsed.getFileStatus == fileStatus)
   }
@@ -211,7 +203,7 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
     assert(parsed.version == 15)
     assert(parsed.`type` == ParsedLogType.MULTIPART_CHECKPOINT)
     assert(parsed.getCategory == ParsedLogCategory.CHECKPOINT)
-    assert(parsed.isMaterialized)
+    assert(parsed.isFile)
     assert(!parsed.isInline)
     assert(parsed.getFileStatus == chkpt_15_1_3)
     assert(parsed.part == 1)
@@ -327,7 +319,7 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
     assert(parsed.version == 30)
     assert(parsed.`type` == ParsedLogType.LOG_COMPACTION)
     assert(parsed.getCategory == ParsedLogCategory.LOG_COMPACTION)
-    assert(parsed.isMaterialized)
+    assert(parsed.isFile)
     assert(!parsed.isInline)
     assert(parsed.getFileStatus == fileStatus)
     assert(parsed.startVersion == 25)
@@ -409,7 +401,7 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
     val parsed = ParsedLogData.forFileStatus(deltaFileStatus(5))
     // scalastyle:off line.size.limit
     val expected =
-      "ParsedLogData{version=5, type=PUBLISHED_DELTA, source=FileStatus{path='/fake/path/to/table/_delta_log/00000000000000000005.json', size=5, modificationTime=50}}"
+      "ParsedLogData{version=5, type=DELTA, source=FileStatus{path='/fake/path/to/table/_delta_log/00000000000000000005.json', size=5, modificationTime=50}}"
     // scalastyle:on line.size.limit
     assert(parsed.toString === expected)
   }

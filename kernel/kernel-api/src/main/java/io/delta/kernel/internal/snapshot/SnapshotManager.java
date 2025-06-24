@@ -229,7 +229,7 @@ public class SnapshotManager {
 
   /**
    * [delta-io/delta#4765]: Right now, we are only supporting sorted and contiguous log datas of
-   * type {@link ParsedLogType#RATIFIED_STAGED_COMMIT}s.
+   * type {@link ParsedLogType#DELTA}s (written to file).
    */
   public LogSegment getLogSegmentForVersion(
       Engine engine, Optional<Long> versionToLoadOpt, List<ParsedLogData> parsedLogDatas) {
@@ -581,7 +581,7 @@ public class SnapshotManager {
    *   <li>Assumes that {@code allPublishedDeltas} is sorted and contiguous.
    *   <li>Assumes that {@code parsedLogDatas} is sorted and contiguous.
    *   <li>[delta-io/delta#4765] For now, only accepts parsedLogData of type {@link
-   *       ParsedLogType#RATIFIED_STAGED_COMMIT}
+   *       ParsedLogType#DELTA} (written to file).
    *   <li>If there is both a published Delta and a ratified staged commit for the same version,
    *       prioritizes the ratified staged commit
    * </ul>
@@ -593,7 +593,7 @@ public class SnapshotManager {
       long versionToLoad) {
     final List<ParsedLogData> allPublishedDeltasAfterCheckpoint =
         allPublishedDeltas.stream()
-            .filter(x -> x.type == ParsedLogType.PUBLISHED_DELTA)
+            .filter(x -> x.type == ParsedLogType.DELTA && x.isFile())
             .filter(x -> latestCompleteCheckpointVersion < x.version && x.version <= versionToLoad)
             .collect(Collectors.toList());
 
@@ -603,7 +603,7 @@ public class SnapshotManager {
 
     final List<ParsedLogData> allRatifiedCommitsAfterCheckpoint =
         parsedLogDatas.stream()
-            .filter(x -> x.type == ParsedLogType.RATIFIED_STAGED_COMMIT)
+            .filter(x -> x.type == ParsedLogType.DELTA && x.isFile())
             .filter(x -> latestCompleteCheckpointVersion < x.version && x.version <= versionToLoad)
             .collect(Collectors.toList());
 
