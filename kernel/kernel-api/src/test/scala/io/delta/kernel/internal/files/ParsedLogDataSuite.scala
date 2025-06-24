@@ -18,8 +18,6 @@ package io.delta.kernel.internal.files
 
 import java.util.Optional
 
-import io.delta.kernel.data.ColumnarBatch
-// No longer need to import enums - using class-based approach
 import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.test.{MockFileSystemClientUtils, VectorTestUtils}
 import io.delta.kernel.utils.FileStatus
