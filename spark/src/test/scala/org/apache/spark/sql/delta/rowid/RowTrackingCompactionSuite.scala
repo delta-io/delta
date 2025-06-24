@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.rowid
 import java.io.File
 
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION
 import org.apache.spark.sql.delta.commands.optimize.OptimizeMetrics
 import org.apache.spark.sql.delta.hooks.AutoCompact
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -166,7 +167,34 @@ trait RowTrackingCompactionTests extends RowTrackingCompactionTestsBase {
           withMaterializedRowTrackingColumns = false)
       }
       val log = DeltaLog.forTable(spark, dir)
-      assert(!rowTrackingMarkedAsPreservedForCommit(log)(runCompaction(dir, applyFilter = false)))
+      assert(!rowTrackingMarkedAsPreservedForCommit(log) {
+        runCompaction(dir, applyFilter = false)
+      })
+    }
+  }
+
+  test("Row tracking marked as not preserved when row tracking is supported but " +
+    "disabled") {
+    withTempDir { dir =>
+      withRowTrackingEnabled(enabled = false) {
+        createTable(
+          dir,
+          rowTrackingEnabled = false,
+          partitioned = false,
+          withMaterializedRowTrackingColumns = false)
+      }
+
+      sql(
+        s"""
+           |ALTER TABLE delta.`${dir.getAbsolutePath}`
+           |SET TBLPROPERTIES (
+           |'$rowTrackingFeatureName' = 'supported',
+           |'delta.minWriterVersion' = $TABLE_FEATURES_MIN_WRITER_VERSION)""".stripMargin)
+
+      val log = DeltaLog.forTable(spark, dir)
+      assert(!rowTrackingMarkedAsPreservedForCommit(log) {
+        runCompaction(dir, applyFilter = false)
+      })
     }
   }
 

@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.rowid
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
+import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION
 import org.apache.spark.sql.delta.cdc.UpdateCDCSuite
 import org.apache.spark.sql.delta.rowtracking.RowTrackingTestUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -159,9 +160,28 @@ trait RowTrackingUpdateCommonTests extends RowTrackingUpdateSuiteBase {
     withRowTrackingEnabled(enabled = false) {
       withRowIdTestTable(isPartitioned = false) {
         val log = DeltaLog.forTable(spark, TableIdentifier(targetTableName))
-        assert(
-          !rowTrackingMarkedAsPreservedForCommit(log)(executeUpdate(
-            targetTableName, where = None, newVersion = -1L)))
+        assert(!rowTrackingMarkedAsPreservedForCommit(log) {
+          executeUpdate(targetTableName, where = None, newVersion = -1L)
+        })
+      }
+    }
+  }
+
+  test("Row tracking marked as not preserved when row tracking is supported " +
+    "but disabled") {
+    withRowTrackingEnabled(enabled = false) {
+      withRowIdTestTable(isPartitioned = false) {
+        sql(
+          s"""
+             |ALTER TABLE $targetTableName
+             |SET TBLPROPERTIES (
+             |'$rowTrackingFeatureName' = 'supported',
+             |'delta.minWriterVersion' = $TABLE_FEATURES_MIN_WRITER_VERSION)""".stripMargin)
+
+        val log = DeltaLog.forTable(spark, TableIdentifier(targetTableName))
+        assert(!rowTrackingMarkedAsPreservedForCommit(log) {
+          executeUpdate(targetTableName, where = None, newVersion = -1L)
+        })
       }
     }
   }

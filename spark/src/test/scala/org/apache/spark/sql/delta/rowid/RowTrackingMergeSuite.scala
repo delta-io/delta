@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.rowid
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
@@ -494,11 +495,33 @@ trait RowTrackingMergeCommonTests extends RowTrackingMergeSuiteBase {
     withRowTrackingEnabled(enabled = false) {
       withTestTable(TARGET_TABLE_NAME, partitionedTarget = false) {
         val log = DeltaLog.forTable(spark, TableIdentifier(TARGET_TABLE_NAME))
-        assert(!rowTrackingMarkedAsPreservedForCommit(log)(
+        assert(!rowTrackingMarkedAsPreservedForCommit(log) {
           executeMerge(
             TARGET_TABLE_NAME,
             SOURCE_TABLE_NAME,
-            clauses = update("*"), insert("*"))))
+            clauses = update("*"), insert("*"))
+        })
+      }
+    }
+  }
+
+  test("Row tracking marked as not preserved when row tracking is supported but disabled") {
+    withRowTrackingEnabled(enabled = false) {
+      withTestTable(TARGET_TABLE_NAME, partitionedTarget = false) {
+        sql(
+          s"""
+             |ALTER TABLE $TARGET_TABLE_NAME
+             |SET TBLPROPERTIES (
+             |'$rowTrackingFeatureName' = 'supported',
+             |'delta.minWriterVersion' = $TABLE_FEATURES_MIN_WRITER_VERSION)""".stripMargin)
+
+        val log = DeltaLog.forTable(spark, TableIdentifier(TARGET_TABLE_NAME))
+        assert(!rowTrackingMarkedAsPreservedForCommit(log) {
+          executeMerge(
+            TARGET_TABLE_NAME,
+            SOURCE_TABLE_NAME,
+            clauses = update("*"), insert("*"))
+        })
       }
     }
   }

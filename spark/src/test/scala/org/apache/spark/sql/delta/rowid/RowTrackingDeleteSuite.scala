@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.rowid
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
+import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.SparkConf
@@ -211,9 +212,29 @@ trait RowTrackingDeleteSuiteBase extends RowTrackingDeleteTestDimension {
       withTable(testTableName) {
         createTestTable(testTableName, isPartitioned = false, multipleFilesPerPartition = false)
         val log = DeltaLog.forTable(spark, TableIdentifier(testTableName))
-        assert(
-          !rowTrackingMarkedAsPreservedForCommit(log)(
-            executeDelete(whereCondition = Some("id = 5"))))
+        assert(!rowTrackingMarkedAsPreservedForCommit(log) {
+          executeDelete(whereCondition = Some("id = 5"))
+        })
+      }
+    }
+  }
+
+  test("Row tracking marked as not preserved when row tracking is supported but disabled") {
+    withRowTrackingEnabled(enabled = false) {
+      withTable(testTableName) {
+        createTestTable(testTableName, isPartitioned = false, multipleFilesPerPartition = false)
+
+        sql(
+          s"""
+             |ALTER TABLE $testTableName
+             |SET TBLPROPERTIES (
+             |'$rowTrackingFeatureName' = 'supported',
+             |'delta.minWriterVersion' = $TABLE_FEATURES_MIN_WRITER_VERSION)""".stripMargin)
+
+        val log = DeltaLog.forTable(spark, TableIdentifier(testTableName))
+        assert(!rowTrackingMarkedAsPreservedForCommit(log) {
+          executeDelete(whereCondition = Some("id = 5"))
+        })
       }
     }
   }
