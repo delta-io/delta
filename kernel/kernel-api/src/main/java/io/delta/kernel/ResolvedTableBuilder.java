@@ -37,15 +37,50 @@ import java.util.List;
  */
 @Experimental
 public interface ResolvedTableBuilder {
+  /**
+   * Configures the builder to resolve the table at a specific version.
+   *
+   * @param version the version number to resolve to
+   * @return a new builder instance configured for the specified version
+   */
   ResolvedTableBuilder atVersion(long version);
 
   // TODO: atTimestamp
 
+  /**
+   * Provides parsed log data to optimize table resolution.
+   *
+   * <p>When log data is provided, Kernel can avoid reading from the filesystem for information that
+   * is already available in the parsed data, improving performance.
+   *
+   * @param logData the parsed log data to use for optimization
+   * @return a new builder instance with the provided log data
+   */
   /** For now, only log datas of type {@link ParsedLogType#RATIFIED_STAGED_COMMIT}s are supported */
   ResolvedTableBuilder withLogData(List<ParsedLogData> logData);
 
-  // TODO: P & M must be public interfaces, not internal classes
+  /**
+   * Provides protocol and metadata information to optimize table resolution.
+   *
+   * <p>When protocol and metadata are provided, Kernel can avoid reading this information from the
+   * filesystem, improving performance.
+   *
+   * @param protocol the protocol information
+   * @param metadata the metadata information
+   * @return a new builder instance with the provided protocol and metadata
+   */
+  // TODO: [delta-io/delta#4820] Public Protocol API
+  // TODO: [delta-io/delta#4821] Public Metadata API
   ResolvedTableBuilder withProtocolAndMetadata(Protocol protocol, Metadata metadata);
 
+  /**
+   * Constructs the {@link ResolvedTable} using the provided engine.
+   *
+   * <p>This method will read any missing information from the filesystem using the provided engine
+   * to complete the table resolution process.
+   *
+   * @param engine the engine to use for filesystem operations
+   * @return the resolved table instance
+   */
   ResolvedTable build(Engine engine);
 }
