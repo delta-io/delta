@@ -90,7 +90,8 @@ public class ScanBuilderImpl implements ScanBuilder {
   }
 
   @Override
-  public PaginatedScan buildPaginated(long pageSize, Row pageToken, ColumnarBatch logReplayHashsets) {
+  public PaginatedScan buildPaginated(
+      long pageSize, Row pageToken, ColumnarBatch logReplayHashsets) {
     return null;
   }
 }
