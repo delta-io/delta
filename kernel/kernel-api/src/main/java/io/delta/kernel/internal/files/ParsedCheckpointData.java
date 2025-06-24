@@ -49,14 +49,15 @@ public class ParsedCheckpointData extends ParsedLogData
     return new ParsedCheckpointData(version, type, Optional.of(fileStatus), Optional.empty());
   }
 
-  public static ParsedCheckpointData forInlineData(
-      long version, ParsedLogType type, ColumnarBatch inlineData) {
-    if (type == ParsedLogType.MULTIPART_CHECKPOINT) {
-      throw new IllegalArgumentException(
-          "For MULTIPART_CHECKPOINT, use ParsedMultiPartCheckpointData.forInlineData() instead");
-    }
+  public static ParsedCheckpointData forInlineClassicCheckpoint(
+      long version, ColumnarBatch inlineData) {
+    return new ParsedCheckpointData(
+        version, ParsedLogType.CLASSIC_CHECKPOINT, Optional.empty(), Optional.of(inlineData));
+  }
 
-    return new ParsedCheckpointData(version, type, Optional.empty(), Optional.of(inlineData));
+  public static ParsedCheckpointData forInlineV2Checkpoint(long version, ColumnarBatch inlineData) {
+    return new ParsedCheckpointData(
+        version, ParsedLogType.V2_CHECKPOINT, Optional.empty(), Optional.of(inlineData));
   }
 
   protected ParsedCheckpointData(

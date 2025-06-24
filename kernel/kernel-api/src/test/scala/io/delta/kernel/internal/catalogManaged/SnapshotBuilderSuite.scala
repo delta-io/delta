@@ -27,8 +27,12 @@ import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.SnapshotImpl
 import io.delta.kernel.internal.actions.Protocol
+<<<<<<< HEAD:kernel/kernel-api/src/test/scala/io/delta/kernel/internal/catalogManaged/SnapshotBuilderSuite.scala
 import io.delta.kernel.internal.commit.DefaultFileSystemManagedTableOnlyCommitter
 import io.delta.kernel.internal.files.ParsedLogData
+=======
+import io.delta.kernel.internal.files.{ParsedChecksumData, ParsedLogData}
+>>>>>>> 7e9f9b0a3 (refactor first pass):kernel/kernel-api/src/test/scala/io/delta/kernel/internal/catalogManaged/ResolvedTableBuilderSuite.scala
 import io.delta.kernel.internal.files.ParsedLogData.ParsedLogType
 import io.delta.kernel.internal.table.SnapshotBuilderImpl
 import io.delta.kernel.test.{ActionUtils, MockFileSystemClientUtils, MockSnapshotUtils, VectorTestUtils}
@@ -235,7 +239,7 @@ class SnapshotBuilderSuite extends AnyFunSuite
   }
 
   Seq(
-    ParsedLogData.forInlineData(1, ParsedLogType.CHECKSUM, emptyColumnarBatch),
+    ParsedChecksumData.forInlineChecksum(1, emptyColumnarBatch),
     ParsedLogData.forFileStatus(logCompactionStatus(0, 1))).foreach { parsedLogData =>
     val suffix = s"- type=${parsedLogData.`type`}"
     test(s"withLogData: non-DELTA parsed log data throws IllegalArgumentException $suffix") {
