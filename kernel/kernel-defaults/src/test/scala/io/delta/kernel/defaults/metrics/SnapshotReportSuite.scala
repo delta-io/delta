@@ -118,31 +118,53 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
 
     // Since we cannot know the actual durations of these we sanity check that they are > 0 and
     // less than the total operation duration whenever they are expected to be non-zero/non-empty
+
+    val metrics = snapshotReport.getSnapshotMetrics
+
+    // ===== Metric: getLoadSnapshotTotalDurationNs =====
+    if (!expectations.expectException) {
+      assert(metrics.getLoadSnapshotTotalDurationNs > 0)
+      assert(metrics.getLoadSnapshotTotalDurationNs <= duration)
+    } else {
+      assert(metrics.getLoadSnapshotTotalDurationNs >= 0)
+    }
+
+    // ===== Metric: getTimestampToVersionResolutionDurationNs =====
     if (expectations.expectNonEmptyTimestampToVersionResolutionDuration) {
-      assert(snapshotReport.getSnapshotMetrics.getTimestampToVersionResolutionDurationNs.isPresent)
-      assert(snapshotReport.getSnapshotMetrics.getTimestampToVersionResolutionDurationNs.get > 0)
-      assert(snapshotReport.getSnapshotMetrics.getTimestampToVersionResolutionDurationNs.get <
-        duration)
+      assert(metrics.getTimestampToVersionResolutionDurationNs.isPresent)
+      assert(metrics.getTimestampToVersionResolutionDurationNs.get > 0)
+      assert(metrics.getTimestampToVersionResolutionDurationNs.get < duration)
+      assert(metrics.getTimestampToVersionResolutionDurationNs.get <=
+        metrics.getLoadSnapshotTotalDurationNs)
     } else {
-      assert(!snapshotReport.getSnapshotMetrics.getTimestampToVersionResolutionDurationNs.isPresent)
+      assert(!metrics.getTimestampToVersionResolutionDurationNs.isPresent)
     }
+
+    // ===== Metric: getLoadInitialDeltaActionsDurationNs =====
     if (expectations.expectNonZeroLoadProtocolAndMetadataDuration) {
-      assert(snapshotReport.getSnapshotMetrics.getLoadInitialDeltaActionsDurationNs > 0)
-      assert(snapshotReport.getSnapshotMetrics.getLoadInitialDeltaActionsDurationNs < duration)
+      assert(metrics.getLoadInitialDeltaActionsDurationNs > 0)
+      assert(metrics.getLoadInitialDeltaActionsDurationNs < duration)
+      assert(metrics.getLoadInitialDeltaActionsDurationNs <= metrics.getLoadSnapshotTotalDurationNs)
     } else {
-      assert(snapshotReport.getSnapshotMetrics.getLoadInitialDeltaActionsDurationNs == 0)
+      assert(metrics.getLoadInitialDeltaActionsDurationNs == 0)
     }
+
+    // ===== Metric: getTimeToBuildLogSegmentForVersionNs =====
     if (expectations.expectNonZeroBuildLogSegmentDuration) {
-      assert(snapshotReport.getSnapshotMetrics.getTimeToBuildLogSegmentForVersionNs > 0)
-      assert(snapshotReport.getSnapshotMetrics.getTimeToBuildLogSegmentForVersionNs < duration)
+      assert(metrics.getTimeToBuildLogSegmentForVersionNs > 0)
+      assert(metrics.getTimeToBuildLogSegmentForVersionNs < duration)
+      assert(metrics.getTimeToBuildLogSegmentForVersionNs <= metrics.getLoadSnapshotTotalDurationNs)
     } else {
-      assert(snapshotReport.getSnapshotMetrics.getTimeToBuildLogSegmentForVersionNs == 0)
+      assert(metrics.getTimeToBuildLogSegmentForVersionNs == 0)
     }
+
+    // ===== Metric: getDurationToGetCrcInfoNs =====
     if (expectations.expectNonZeroDurationToGetCrcInfo) {
-      assert(snapshotReport.getSnapshotMetrics.getDurationToGetCrcInfoNs > 0)
-      assert(snapshotReport.getSnapshotMetrics.getDurationToGetCrcInfoNs < duration)
+      assert(metrics.getDurationToGetCrcInfoNs > 0)
+      assert(metrics.getDurationToGetCrcInfoNs < duration)
+      assert(metrics.getDurationToGetCrcInfoNs <= metrics.getLoadSnapshotTotalDurationNs)
     } else {
-      assert(snapshotReport.getSnapshotMetrics.getDurationToGetCrcInfoNs == 0)
+      assert(metrics.getDurationToGetCrcInfoNs == 0)
     }
   }
 

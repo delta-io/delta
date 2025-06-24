@@ -20,12 +20,20 @@ import java.util.Optional;
 
 /** Stores the metrics results for a {@link SnapshotReport} */
 @JsonPropertyOrder({
+  "loadSnapshotTotalDurationNs",
   "timestampToVersionResolutionDurationNs",
   "loadInitialDeltaActionsDurationNs",
   "timeToBuildLogSegmentForVersionNs",
   "durationToGetCrcInfoNs"
 })
 public interface SnapshotMetricsResult {
+
+  /**
+   * @return the total duration (ns) to load the snapshot, including all steps such as resolving
+   *     timestamp to version, LISTing the _delta_log, building the log segment, and determining the
+   *     latest protocol and metadata.
+   */
+  long getLoadSnapshotTotalDurationNs();
 
   /**
    * @return the duration (ns) to resolve the provided timestamp to a table version for timestamp
