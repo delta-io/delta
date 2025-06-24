@@ -72,10 +72,13 @@ public interface ScanBuilder {
   /**
    * Build a Paginated Scan with optional page token and optional log replay hashsets.
    *
-   * @param pageSize             Maximum number of AddFiles to return in this page.
-   * @param pageToken            Optional page token representing the current scan position; null to start from the beginning.
-   * @param logReplayHashsets    Optional tombstone hashsets to filter out deleted files; null if not applicable.
+   * @param pageSize Maximum number of AddFiles to return in this page.
+   * @param pageToken Optional page token representing the current scan position; null to start from
+   *     the beginning.
+   * @param logReplayHashsets Optional tombstone hashsets to filter out deleted files; null if not
+   *     applicable.
    * @return A {@link PaginatedScan} configured for pagination.
    */
-  PaginatedScan buildPaginated(long pageSize, @Nullable Row pageToken, @Nullable ColumnarBatch logReplayHashsets);
+  PaginatedScan buildPaginated(
+      long pageSize, @Nullable Row pageToken, @Nullable ColumnarBatch logReplayHashsets);
 }
