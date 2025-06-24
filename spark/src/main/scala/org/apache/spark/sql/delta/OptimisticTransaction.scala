@@ -1197,7 +1197,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     val (actionsIter, acStatsCollector) =
       collectAutoOptimizeStats(actions.toIterator)
     // Consume the iterator to hydrate the stats collector.
-    actionsIter.toList
+    actionsIter.foreach(_ => ())
     acStatsCollector.finalizeStats(tableId)
   }
 
