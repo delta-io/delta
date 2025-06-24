@@ -5,6 +5,7 @@ import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.utils.CloseableIterator;
+import java.util.Optional;
 
 /** Extension of {@link Scan} that supports pagination. */
 public interface PaginatedScan extends Scan {
@@ -19,17 +20,20 @@ public interface PaginatedScan extends Scan {
   CloseableIterator<FilteredColumnarBatch> getScanFiles(Engine engine);
 
   /**
-   * Returns the page token representing the current position of the iterator. If this method is
-   * called while the iterator is partially consumed, the returned token corresponds to the next
-   * unconsumed element. This token can be passed back in a subsequent paginated scan to resume
-   * reading from the same position.
+   * Returns a page token representing the current position in the iterator. If the iterator is
+   * partially consumed, the token corresponds to the next unconsumed element, allowing the scan to
+   * be resumed from that point in a subsequent paginated request.
    *
-   * <p>The token may also contain additional metadata for validation purposes (e.g., to detect
-   * mismatches caused by query params or log segment changes).
+   * <p>If the scan has been fully consumed (i.e., no more pages remain), this method returns {@code
+   * Optional.empty()}.
    *
-   * @return a {@link Row} encoding the current scan position and optional validation info.
+   * <p>The returned token may also include metadata for validation purposes, such as detecting
+   * changes in query parameters or log segments between requests.
+   *
+   * @return an {@link Optional} {@link Row} encoding the current scan position and validation
+   *     metadata.
    */
-  Row getCurrentPageToken();
+  Optional<Row> getCurrentPageToken();
 
   /**
    * Returns the log replay hashsets as a {@link ColumnarBatch}. This data can optionally be cached
