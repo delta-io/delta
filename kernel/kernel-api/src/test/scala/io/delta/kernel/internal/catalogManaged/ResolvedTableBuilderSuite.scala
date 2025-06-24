@@ -24,7 +24,6 @@ import io.delta.kernel.TableManager
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.actions.Protocol
 import io.delta.kernel.internal.files.{ParsedChecksumData, ParsedLogData}
-// No longer need ParsedLogType import - using class-based approach
 import io.delta.kernel.internal.table.ResolvedTableInternal
 import io.delta.kernel.test.{ActionUtils, MockFileSystemClientUtils, VectorTestUtils}
 import io.delta.kernel.types.{IntegerType, StructType}
