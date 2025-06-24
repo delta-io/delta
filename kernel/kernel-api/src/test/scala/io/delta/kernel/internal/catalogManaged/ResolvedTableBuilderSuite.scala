@@ -119,10 +119,10 @@ class ResolvedTableBuilderSuite extends AnyFunSuite
   }
 
   Seq(
-    ParsedLogData.forInlineData(1, ParsedLogType.RATIFIED_INLINE_COMMIT, emptyColumnarBatch),
+    ParsedLogData.forInlineData(1, ParsedLogType.CHECKSUM, emptyColumnarBatch),
     ParsedLogData.forFileStatus(logCompactionStatus(0, 1))).foreach { parsedLogData =>
     val suffix = s"- type=${parsedLogData.`type`}"
-    test(s"withLogData: non-RATIFIED_STAGED_COMMIT throws IllegalArgumentException $suffix") {
+    test(s"withLogData: non-DELTA parsed log data throws IllegalArgumentException $suffix") {
       val builder = TableManager
         .loadTable(dataPath.toString)
         .atVersion(1)
@@ -132,7 +132,7 @@ class ResolvedTableBuilderSuite extends AnyFunSuite
         builder.build(emptyMockEngine)
       }.getMessage
 
-      assert(exMsg.contains("Only RATIFIED_STAGED_COMMIT log data is supported"))
+      assert(exMsg.contains("Only DELTA (commit) log data (written to file) is supported"))
     }
   }
 

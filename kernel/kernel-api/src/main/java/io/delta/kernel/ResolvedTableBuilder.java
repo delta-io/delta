@@ -41,7 +41,9 @@ public interface ResolvedTableBuilder {
 
   // TODO: atTimestamp
 
-  /** For now, only log datas of type {@link ParsedLogType#RATIFIED_STAGED_COMMIT}s are supported */
+  /**
+   * For now, only log datas of type {@link ParsedLogType#DELTA}s (written to file) are supported.
+   */
   ResolvedTableBuilder withLogData(List<ParsedLogData> logData);
 
   // TODO: P & M must be public interfaces, not internal classes

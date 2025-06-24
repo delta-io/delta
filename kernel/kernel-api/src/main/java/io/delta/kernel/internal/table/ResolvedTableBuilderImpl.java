@@ -82,7 +82,9 @@ public class ResolvedTableBuilderImpl implements ResolvedTableBuilder {
     return this;
   }
 
-  /** For now, only log datas of type {@link ParsedLogType#RATIFIED_STAGED_COMMIT}s are supported */
+  /**
+   * For now, only log datas of type {@link ParsedLogType#DELTA}s (written to file) are supported.
+   */
   @Override
   public ResolvedTableBuilderImpl withLogData(List<ParsedLogData> logDatas) {
     ctx.logDatas = requireNonNull(logDatas, "logDatas is null");
@@ -131,8 +133,8 @@ public class ResolvedTableBuilderImpl implements ResolvedTableBuilder {
   private void validateLogDataContainsOnlyRatifiedCommits() {
     for (ParsedLogData logData : ctx.logDatas) {
       checkArgument(
-          logData.type == ParsedLogType.RATIFIED_STAGED_COMMIT,
-          "Only RATIFIED_STAGED_COMMIT log data is supported, but found: " + logData);
+          logData.type == ParsedLogType.DELTA && logData.isFile(),
+          "Only DELTA (commit) log data (written to file) is supported, but found: " + logData);
     }
   }
 
