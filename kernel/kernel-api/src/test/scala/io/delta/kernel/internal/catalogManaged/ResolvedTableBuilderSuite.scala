@@ -24,7 +24,7 @@ import io.delta.kernel.TableManager
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.actions.Protocol
 import io.delta.kernel.internal.files.{ParsedChecksumData, ParsedLogData}
-import io.delta.kernel.internal.files.ParsedLogData.ParsedLogType
+// No longer need ParsedLogType import - using class-based approach
 import io.delta.kernel.internal.table.ResolvedTableInternal
 import io.delta.kernel.test.{ActionUtils, MockFileSystemClientUtils, VectorTestUtils}
 import io.delta.kernel.types.{IntegerType, StructType}
@@ -119,9 +119,9 @@ class ResolvedTableBuilderSuite extends AnyFunSuite
   }
 
   Seq(
-    ParsedChecksumData.forInlineChecksum(1, emptyColumnarBatch),
+    ParsedChecksumData.forInlineData(1, emptyColumnarBatch),
     ParsedLogData.forFileStatus(logCompactionStatus(0, 1))).foreach { parsedLogData =>
-    val suffix = s"- type=${parsedLogData.`type`}"
+    val suffix = s"- type=${parsedLogData.getClass.getSimpleName}"
     test(s"withLogData: non-DELTA parsed log data throws IllegalArgumentException $suffix") {
       val builder = TableManager
         .loadTable(dataPath.toString)

@@ -20,8 +20,8 @@ import io.delta.kernel.annotation.Experimental;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.files.ParsedDeltaData;
 import io.delta.kernel.internal.files.ParsedLogData;
-import io.delta.kernel.internal.files.ParsedLogData.ParsedLogType;
 import java.util.List;
 
 /**
@@ -41,9 +41,7 @@ public interface ResolvedTableBuilder {
 
   // TODO: atTimestamp
 
-  /**
-   * For now, only log datas of type {@link ParsedLogType#DELTA}s (written to file) are supported.
-   */
+  /** For now, only log datas of type {@link ParsedDeltaData}s (written to file) are supported. */
   ResolvedTableBuilder withLogData(List<ParsedLogData> logData);
 
   // TODO: P & M must be public interfaces, not internal classes

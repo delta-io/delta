@@ -16,57 +16,23 @@
 
 package io.delta.kernel.internal.files;
 
-import static io.delta.kernel.internal.util.Preconditions.checkArgument;
-
 import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.utils.FileStatus;
 import java.util.Optional;
 
-public class ParsedCheckpointData extends ParsedLogData
+public abstract class ParsedCheckpointData extends ParsedLogData
     implements Comparable<ParsedCheckpointData> {
 
-  public static ParsedCheckpointData forFileStatus(FileStatus fileStatus) {
-    final String path = fileStatus.getPath();
-
-    if (FileNames.isMultiPartCheckpointFile(path)) {
-      return ParsedMultiPartCheckpointData.forFileStatus(fileStatus);
-    }
-
-    final long version;
-    final ParsedLogType type;
-
-    if (FileNames.isClassicCheckpointFile(path)) {
-      version = FileNames.checkpointVersion(path);
-      type = ParsedLogType.CLASSIC_CHECKPOINT;
-    } else if (FileNames.isV2CheckpointFile(path)) {
-      version = FileNames.checkpointVersion(path);
-      type = ParsedLogType.V2_CHECKPOINT;
-    } else {
-      throw new IllegalArgumentException("File is not a recognized checkpoint type: " + path);
-    }
-
-    return new ParsedCheckpointData(version, type, Optional.of(fileStatus), Optional.empty());
-  }
-
-  public static ParsedCheckpointData forInlineClassicCheckpoint(
-      long version, ColumnarBatch inlineData) {
-    return new ParsedCheckpointData(
-        version, ParsedLogType.CLASSIC_CHECKPOINT, Optional.empty(), Optional.of(inlineData));
-  }
-
-  public static ParsedCheckpointData forInlineV2Checkpoint(long version, ColumnarBatch inlineData) {
-    return new ParsedCheckpointData(
-        version, ParsedLogType.V2_CHECKPOINT, Optional.empty(), Optional.of(inlineData));
-  }
-
   protected ParsedCheckpointData(
-      long version,
-      ParsedLogType type,
-      Optional<FileStatus> fileStatusOpt,
-      Optional<ColumnarBatch> inlineDataOpt) {
-    super(version, type, fileStatusOpt, inlineDataOpt);
-    checkArgument(type.category == ParsedLogCategory.CHECKPOINT, "Must be a checkpoint");
+      long version, Optional<FileStatus> fileStatusOpt, Optional<ColumnarBatch> inlineDataOpt) {
+    super(version, fileStatusOpt, inlineDataOpt);
+  }
+
+  protected abstract int getCheckpointTypePriority();
+
+  @Override
+  public Class<? extends ParsedLogData> getParentCategoryClass() {
+    return ParsedCheckpointData.class;
   }
 
   /** Here, returning 1 means that `this` is preferred over (i.e. greater than) `that`. */
@@ -77,22 +43,21 @@ public class ParsedCheckpointData extends ParsedLogData
       return Long.compare(version, that.version);
     }
 
-    // Compare types.
-    if (type != that.type) {
-      return Integer.compare(type.ordinal(), that.type.ordinal());
+    // Compare types by priority.
+    int thisTypePriority = this.getCheckpointTypePriority();
+    int thatTypePriority = that.getCheckpointTypePriority();
+    if (thisTypePriority != thatTypePriority) {
+      return Integer.compare(thisTypePriority, thatTypePriority);
     }
 
     // Use type-specific tiebreakers if versions and types are the same.
-    switch (type) {
-      case CLASSIC_CHECKPOINT:
-      case V2_CHECKPOINT:
-        return getTieBreaker(that);
-      case MULTIPART_CHECKPOINT:
-        final ParsedMultiPartCheckpointData thisCasted = (ParsedMultiPartCheckpointData) this;
-        final ParsedMultiPartCheckpointData thatCasted = (ParsedMultiPartCheckpointData) that;
-        return thisCasted.compareToMultiPart(thatCasted);
-      default:
-        throw new IllegalStateException("Unexpected type: " + type);
+    if (this instanceof ParsedMultiPartCheckpointData
+        && that instanceof ParsedMultiPartCheckpointData) {
+      final ParsedMultiPartCheckpointData thisCasted = (ParsedMultiPartCheckpointData) this;
+      final ParsedMultiPartCheckpointData thatCasted = (ParsedMultiPartCheckpointData) that;
+      return thisCasted.compareToMultiPart(thatCasted);
+    } else {
+      return getTieBreaker(that);
     }
   }
 
