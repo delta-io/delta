@@ -2,7 +2,6 @@ package io.delta.dsv2.catalog
 
 import java.util
 import scala.collection.JavaConverters._
-import io.delta.dsv2.catalog.DeltaCatalog.logger
 import io.delta.dsv2.table.DeltaTable
 import io.delta.dsv2.utils.SchemaUtils
 import io.delta.kernel.Operation
@@ -25,7 +24,6 @@ class DeltaCatalog extends TableCatalog {
   }
 
   override def initialize(name: String, options: CaseInsensitiveStringMap): Unit = {
-    logger.info(s"Scott > DeltaCatalog > initialize :: name=$name, options=$options")
     this.catalogName = name
   }
 
@@ -35,10 +33,11 @@ class DeltaCatalog extends TableCatalog {
 
   override def loadTable(ident: Identifier): Table = {
     try {
-      new DeltaTable(tableIdentifierToPath(ident))
+      val table = new DeltaTable(tableIdentifierToPath(ident))
+      table.schema()
+      table
     } catch {
       case _: TableNotFoundException =>
-        logger.info(s"Scott > DeltaCatalog > loadTable :: ident=$ident, table does not exist")
         throw new NoSuchTableException(ident)
     }
   }
@@ -54,18 +53,15 @@ class DeltaCatalog extends TableCatalog {
       tableIdentifierToPath(ident)
     }
 
-    logger.info(
-      s"createTable: ident=$ident, schema=$schema, " +
-        s"partitions=${partitions.mkString("Array(", ", ", ")")}, properties=$properties, " +
-        s"path=$path")
-
-    val partitionCols = partitions.map(extractPartitionColumn)
+    if (partitions.length > 0) {
+      throw new UnsupportedOperationException("partition table is not supported")
+    }
 
     val result = io.delta.kernel.Table
       .forPath(engine, path)
       .createTransactionBuilder(engine, "kernel-spark-dsv2", Operation.CREATE_TABLE)
       .withSchema(engine, SchemaUtils.convertSparkSchemaToKernelSchema(schema))
-      .withPartitionColumns(engine, partitionCols.toList.asJava)
+      .withPartitionColumns(engine, new util.ArrayList[String]())
       .withTableProperties(
         engine,
         properties.asScala
@@ -74,9 +70,6 @@ class DeltaCatalog extends TableCatalog {
           .asJava)
       .build(engine)
       .commit(engine, io.delta.kernel.utils.CloseableIterable.emptyIterable())
-
-    logger.info(s"createTable: resultVersion=${result.getVersion}")
-
     val table = new DeltaTable(path)
     table
   }
@@ -95,35 +88,14 @@ class DeltaCatalog extends TableCatalog {
 
   override def tableExists(ident: Identifier): Boolean = {
     try {
-      new DeltaTable(tableIdentifierToPath(ident))
+      val table = new DeltaTable(tableIdentifierToPath(ident))
+      table.schema()
       true
     } catch {
       case _: TableNotFoundException =>
-       false
+        false
     }
   }
 
   override def name(): String = catalogName
-
-  private def extractPartitionColumn(transform: Transform): String = {
-    logger.info(s"transform: $transform")
-    // Check if the transform is an identity transform
-    if (transform.name() == "identity" && transform.references().nonEmpty) {
-      // Get the first reference, which should be the column
-      transform.references()(0) match {
-        case namedRef: NamedReference =>
-          logger.info(s"namedRef: $namedRef")
-          logger.info(
-            s"namedRef.fieldNames: ${namedRef.fieldNames().mkString("Array(", ", ", ")")}")
-          namedRef.fieldNames().mkString(".")
-        case _ => throw new RuntimeException("bad aa")
-      }
-    } else {
-      throw new RuntimeException("bad bb")
-    }
-  }
-}
-
-object DeltaCatalog {
-  val logger = org.slf4j.LoggerFactory.getLogger(this.getClass)
 }

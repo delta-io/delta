@@ -12,7 +12,6 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.spark.sql.connector.catalog.{SupportsRead, Table, TableCapability}
 import org.apache.spark.sql.connector.expressions.{Expressions, Transform}
 import org.apache.spark.sql.connector.read.ScanBuilder
-import org.apache.spark.sql.connector.write.{LogicalWriteInfo, WriteBuilder}
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
@@ -28,14 +27,8 @@ class DeltaTable(path: String)
   override def name(): String = s"delta.`$path`"
 
   override def schema(): StructType = {
-    try {
-      val schema = SchemaUtils.convertKernelSchemaToSparkSchema(
-        kernelTable.getLatestSnapshot(kernelEngine).getSchema())
-      schema
-    } catch {
-      case e: TableNotFoundException =>
-        new StructType()
-    }
+      SchemaUtils.convertKernelSchemaToSparkSchema(
+        kernelTable.getLatestSnapshot(kernelEngine).getSchema)
   }
 
   override def capabilities(): java.util.Set[TableCapability] = {
@@ -63,8 +56,4 @@ class DeltaTable(path: String)
   override def newScanBuilder(options: CaseInsensitiveStringMap): ScanBuilder = {
     throw new UnsupportedOperationException("todo: fix the scan")
   }
-}
-
-object DeltaTable {
-  val logger = org.slf4j.LoggerFactory.getLogger(this.getClass)
 }
