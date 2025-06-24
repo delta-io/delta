@@ -133,8 +133,9 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
     if (expectations.expectNonEmptyTimestampToVersionResolutionDuration) {
       assert(metrics.getTimestampToVersionResolutionDurationNs.isPresent)
       assert(metrics.getTimestampToVersionResolutionDurationNs.get > 0)
-      assert(metrics.getTimestampToVersionResolutionDurationNs.get <
-        duration)
+      assert(metrics.getTimestampToVersionResolutionDurationNs.get < duration)
+      assert(metrics.getTimestampToVersionResolutionDurationNs.get <=
+        metrics.getLoadSnapshotTotalDurationNs)
     } else {
       assert(!metrics.getTimestampToVersionResolutionDurationNs.isPresent)
     }
@@ -143,6 +144,7 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
     if (expectations.expectNonZeroLoadProtocolAndMetadataDuration) {
       assert(metrics.getLoadInitialDeltaActionsDurationNs > 0)
       assert(metrics.getLoadInitialDeltaActionsDurationNs < duration)
+      assert(metrics.getLoadInitialDeltaActionsDurationNs <= metrics.getLoadSnapshotTotalDurationNs)
     } else {
       assert(metrics.getLoadInitialDeltaActionsDurationNs == 0)
     }
@@ -151,6 +153,7 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
     if (expectations.expectNonZeroBuildLogSegmentDuration) {
       assert(metrics.getTimeToBuildLogSegmentForVersionNs > 0)
       assert(metrics.getTimeToBuildLogSegmentForVersionNs < duration)
+      assert(metrics.getTimeToBuildLogSegmentForVersionNs <= metrics.getLoadSnapshotTotalDurationNs)
     } else {
       assert(metrics.getTimeToBuildLogSegmentForVersionNs == 0)
     }
@@ -159,6 +162,7 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
     if (expectations.expectNonZeroDurationToGetCrcInfo) {
       assert(metrics.getDurationToGetCrcInfoNs > 0)
       assert(metrics.getDurationToGetCrcInfoNs < duration)
+      assert(metrics.getDurationToGetCrcInfoNs <= metrics.getLoadSnapshotTotalDurationNs)
     } else {
       assert(metrics.getDurationToGetCrcInfoNs == 0)
     }
