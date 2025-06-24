@@ -374,11 +374,15 @@ trait OptimisticTransactionImpl extends TransactionHelper
   def readVersion: Long = snapshot.version
 
   /** Creates new metadata with global Delta configuration defaults. */
-  private def withGlobalConfigDefaults(
-      metadata: Metadata,
-      unsetDefaultCatalogOwnedConf: Boolean = false): Metadata = {
-    val conf = if (unsetDefaultCatalogOwnedConf) {
-      // Disable any potential default CO enablement from [[SparkSession]] during REPLACE commands.
+  private def withGlobalConfigDefaults(metadata: Metadata): Metadata = {
+    val isActiveReplaceCommand = isCreatingNewTable && readVersion != -1
+    val conf = if (isActiveReplaceCommand &&
+                   CatalogOwnedTableUtils.defaultCatalogOwnedEnabled(spark)) {
+      // Unset default CatalogOwned enablement iff:
+      // 0. `isCreatingNewTable` indicates that this either is a REPLACE or CREATE command.
+      // 1. `readVersion != 1` indicates the table already exists.
+      //    - 0) and 1) suggest that this is an active REPLACE command.
+      // 2. Default CC enablement is set in the spark conf.
       // This prevents any unintended modifications to the `newProtocol`.
       // E.g., [[CatalogOwnedTableFeature]] and its dependent features
       //       [[InCommitTimestampTableFeature]] & [[VacuumProtocolCheckTableFeature]].
@@ -390,7 +394,9 @@ trait OptimisticTransactionImpl extends TransactionHelper
         TableFeatureProtocolUtils.defaultPropertyKey(CatalogOwnedTableFeature)
       // Isolate the spark conf to be used in the subsequent [[DeltaConfigs.mergeGlobalConfigs]]
       // by cloning the existing configuration.
-      val clonedConf = spark.sessionState.conf.clone()
+      val clonedConf = spark.synchronized {
+        spark.sessionState.conf.clone()
+      }
       // Unset default CC conf on the cloned spark conf.
       clonedConf.unsetConf(defaultCatalogOwnedFeatureEnabledKey)
       clonedConf
@@ -565,10 +571,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       // We need to ignore the default properties when trying to create an exact copy of a table
       // (as in CLONE and SHALLOW CLONE).
       if (!ignoreDefaultProperties) {
-        newMetadataTmp = withGlobalConfigDefaults(
-          newMetadataTmp,
-          // Unset default CatalogOwned enablement if this is an active REPLACE command.
-          unsetDefaultCatalogOwnedConf = readVersion != -1 && isCreatingNewTable)
+        newMetadataTmp = withGlobalConfigDefaults(newMetadataTmp)
       }
       isCreatingNewTable = true
     }
