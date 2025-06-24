@@ -16,11 +16,14 @@
 
 package org.apache.spark.sql.delta.util
 
+import scala.collection.mutable
+import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, CommittedTransaction, CoordinatedCommitsStats, CoordinatedCommitType, DeltaConfigs, DeltaLog, IsolationLevel, Snapshot}
+import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumnInfo}
+import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, CommitStats, CommittedTransaction, CoordinatedCommitsStats, CoordinatedCommitType, DeltaConfigs, DeltaLog, IsolationLevel, Snapshot}
 import org.apache.spark.sql.delta.DeltaOperations.Operation
-import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, CommitInfo, DomainMetadata, Metadata, Protocol, RemoveFile, SetTransaction}
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
@@ -175,4 +178,174 @@ trait TransactionHelper extends DeltaLogging {
       val lastCommitTimestamp = snapshot.timestamp
       math.max(currentTimestamp, lastCommitTimestamp + 1)
     }
+
+  /**
+   * Computes and emits commit stats for the current transaction.
+   */
+  class CommitStatsComputer {
+    private var bytesNew: Long = 0L
+    private var numAdd: Int = 0
+    private var numOfDomainMetadatas: Int = 0
+    private var numRemove: Int = 0
+    private var numSetTransaction: Int = 0
+    private var numCdcFiles: Int = 0
+    private var cdcBytesNew: Long = 0L
+    private var numAbsolutePaths = 0
+    // We don't expect commits to have more than 2 billion actions
+    private var numActions: Int = 0
+    private val partitionsAdded = mutable.HashSet.empty[Map[String, String]]
+    private var newProtocolOpt = Option.empty[Protocol]
+    private var newMetadataOpt = Option.empty[Metadata]
+
+    private var inputActionsIteratorOpt = Option.empty[Iterator[Action]]
+
+
+    private def assertStateBeforeFinalization(): Unit = {
+      assert(
+        inputActionsIteratorOpt.isDefined,
+        "addToCommitStats must be called before finalizing commit stats")
+      assert(
+        !inputActionsIteratorOpt.get.hasNext,
+        "The actions iterator must be consumed before finalizing commit stats")
+    }
+
+    /**
+     * Takes in an iterator of actions and processes them to compute commit stats.
+     * The commit stats are computed as a side effect of the iterator processing
+     * and are only populated after the returned iterator is fully consumed.
+     * Note that this function will not consume the input iterator.
+     * @param actions An iterator of actions that are being committed in this transaction.
+     * @return An iterator of actions. This is will return the same actions as the
+     *         input iterator, but with the commit stats computed as a side effect.
+     */
+    def addToCommitStats(actions: Iterator[Action]): Iterator[Action] = {
+      assert(inputActionsIteratorOpt.isEmpty,
+        "addToCommitStats should only be called once per transaction")
+      inputActionsIteratorOpt = Some(actions)
+      actions.map { action =>
+        numActions += 1
+        action match {
+          case a: AddFile =>
+            numAdd += 1
+            if (a.pathAsUri.isAbsolute) numAbsolutePaths += 1
+            partitionsAdded += a.partitionValues
+            if (a.dataChange) bytesNew += a.size
+          case r: RemoveFile =>
+            numRemove += 1
+          case c: AddCDCFile =>
+            numCdcFiles += 1
+            cdcBytesNew += c.size
+          case _: SetTransaction =>
+            numSetTransaction += 1
+          case _: DomainMetadata =>
+            numOfDomainMetadatas += 1
+          case m: Metadata =>
+            newMetadataOpt = Some(m)
+          case p: Protocol =>
+            newProtocolOpt = Some(p)
+          case _ => ()
+        }
+        action
+      }
+    }
+
+    // scalastyle:off argcount
+    /**
+     * Finalizes the commit stats and emits them as a Delta event.
+     * This must be called after
+     * 1. [[addToCommitStats]] has been called on the actions iterator AND
+     * 2. after the actions iterator returned by [[addToCommitStats]]
+     *  has been fully consumed.
+     * @param spark The Spark session.
+     * @param attemptVersion The version of the table which is being written to the log.
+     * @param startVersion The version of the table which was read at the start of the transaction.
+     * @param commitDurationMs The duration of the commit in milliseconds.
+     * @param fsWriteDurationMs The duration of the file system write of the commit in milliseconds.
+     * @param txnExecutionTimeMs The total execution time of the transaction in milliseconds.
+     * @param stateReconstructionDurationMs The duration of post commit snapshot construction in
+     *   milliseconds.
+     * @param postCommitSnapshot The snapshot constructed after the commit.
+     * @param computedNeedsCheckpoint Whether a checkpoint needs to be created after this commit.
+     *  Computed in `setNeedsCheckpoint`.
+     * @param isolationLevel The isolation level used for this transaction.
+     * @param commitSizeBytes The total size of the commit in bytes, computed as the sum of
+     *  the JSON sizes of all actions in the commit.
+     * @param commitInfo The commit info for this transaction.
+     * @return A HashSet containing the partitions that were added in the transaction.
+     */
+    def finalizeAndEmitCommitStats(
+        spark: SparkSession,
+        attemptVersion: Long,
+        startVersion: Long,
+        commitDurationMs: Long,
+        fsWriteDurationMs: Long,
+        txnExecutionTimeMs: Long,
+        stateReconstructionDurationMs: Long,
+        postCommitSnapshot: Snapshot,
+        computedNeedsCheckpoint: Boolean,
+        isolationLevel: IsolationLevel,
+        commitInfoOpt: Option[CommitInfo],
+        commitSizeBytes: Long): Unit = {
+      assertStateBeforeFinalization()
+
+      val doCollectCommitStats =
+        computedNeedsCheckpoint ||
+          spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_FORCE_ALL_COMMIT_STATS)
+      // Stats that force an expensive snapshot state reconstruction:
+      val numFilesTotal = if (doCollectCommitStats) postCommitSnapshot.numOfFiles else -1L
+      val sizeInBytesTotal = if (doCollectCommitStats) postCommitSnapshot.sizeInBytes else -1L
+      val commitInfoToEmit = commitInfoOpt match {
+        case Some(ci) => ci.copy(readVersion = None, isolationLevel = None)
+        case None => null
+      }
+      val stats = CommitStats(
+        startVersion = startVersion,
+        commitVersion = attemptVersion,
+        readVersion = postCommitSnapshot.version,
+        txnDurationMs = txnExecutionTimeMs,
+        commitDurationMs = commitDurationMs,
+        fsWriteDurationMs = fsWriteDurationMs,
+        stateReconstructionDurationMs = stateReconstructionDurationMs,
+        numAdd = numAdd,
+        numRemove = numRemove,
+        numSetTransaction = numSetTransaction,
+        bytesNew = bytesNew,
+        numFilesTotal = numFilesTotal,
+        sizeInBytesTotal = sizeInBytesTotal,
+        numCdcFiles = numCdcFiles,
+        cdcBytesNew = cdcBytesNew,
+        protocol = postCommitSnapshot.protocol,
+        commitSizeBytes = commitSizeBytes,
+        checkpointSizeBytes = postCommitSnapshot.checkpointSizeInBytes(),
+        totalCommitsSizeSinceLastCheckpoint = postCommitSnapshot.deltaFileSizeInBytes(),
+        checkpointAttempt = computedNeedsCheckpoint,
+        info = commitInfoToEmit,
+        newMetadata = newMetadataOpt,
+        numAbsolutePathsInAdd = numAbsolutePaths,
+        numDistinctPartitionsInAdd = partitionsAdded.size,
+        numPartitionColumnsInTable = postCommitSnapshot.metadata.partitionColumns.size,
+        isolationLevel = isolationLevel.toString,
+        coordinatedCommitsInfo = createCoordinatedCommitsStats(newProtocolOpt),
+        numOfDomainMetadatas = numOfDomainMetadatas,
+        txnId = Some(txnId))
+      recordDeltaEvent(deltaLog, DeltaLogging.DELTA_COMMIT_STATS_OPTYPE, data = stats)
+    }
+
+    /**
+     * Returns the partitions that were added in this transaction.
+     */
+    def getPartitionsAddedByTransaction: mutable.HashSet[Map[String, String]] = {
+      assertStateBeforeFinalization()
+      partitionsAdded
+    }
+
+    /**
+     * Returns the number of actions that were added in this transaction.
+     */
+    def getNumActions: Int = {
+      assertStateBeforeFinalization()
+      numActions
+    }
+  }
+  // scalastyle:on argcount
 }

@@ -160,7 +160,7 @@ trait CloneTableSuiteBase extends QueryTest
       "readVersion" -> "0",
       "numAbsolutePathsInAdd" -> s"$numAbsolutePathsInAdd",
       "startVersion" -> "-1",
-      "numDistinctPartitionsInAdd" -> "-1") // distinct Parts are not tracked in commitLarge flow
+      "numDistinctPartitionsInAdd" -> "5")
     runAndValidateClone(
       source,
       clone,
