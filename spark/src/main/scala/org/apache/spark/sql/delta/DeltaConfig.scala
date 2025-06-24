@@ -25,7 +25,7 @@ import org.apache.spark.sql.delta.hooks.AutoCompactType
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.{DataSkippingReader, StatisticsCollection}
-import org.apache.spark.sql.delta.util.JsonUtils
+import org.apache.spark.sql.delta.util.{DeltaSqlParserUtils, JsonUtils}
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.util.{DateTimeConstants, IntervalUtils}
@@ -600,7 +600,7 @@ trait DeltaConfigsBase extends DeltaLogging {
     "dataSkippingStatsColumns",
     null,
     v => Option(v),
-    vOpt => vOpt.forall(v => StatisticsCollection.parseDeltaStatsColumnNames(v).isDefined),
+    vOpt => vOpt.forall(v => DeltaSqlParserUtils.parseMultipartColumnList(v).isDefined),
     """
       |The dataSkippingStatsColumns parameter is a comma-separated list of case-insensitive column
       |identifiers. Each column identifier can consist of letters, digits, and underscores.
