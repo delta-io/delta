@@ -33,7 +33,7 @@ public class ParsedLogCompactionData extends ParsedLogData {
         startEnd._1, startEnd._2, Optional.of(fileStatus), Optional.empty());
   }
 
-  public static ParsedLogCompactionData forInlineLogCompaction(
+  public static ParsedLogCompactionData forInlineData(
       int start, int end, ColumnarBatch inlineData) {
     return new ParsedLogCompactionData(start, end, Optional.empty(), Optional.of(inlineData));
   }
@@ -46,12 +46,17 @@ public class ParsedLogCompactionData extends ParsedLogData {
       long endVersion,
       Optional<FileStatus> fileStatusOpt,
       Optional<ColumnarBatch> inlineDataOpt) {
-    super(endVersion, ParsedLogType.LOG_COMPACTION, fileStatusOpt, inlineDataOpt);
+    super(endVersion, fileStatusOpt, inlineDataOpt);
     checkArgument(
         startVersion >= 0 && endVersion >= 0, "startVersion and endVersion must be non-negative");
     checkArgument(startVersion < endVersion, "startVersion must be less than endVersion");
     this.startVersion = startVersion;
     this.endVersion = endVersion;
+  }
+
+  @Override
+  public Class<? extends ParsedLogData> getParentCategoryClass() {
+    return ParsedLogCompactionData.class;
   }
 
   @Override

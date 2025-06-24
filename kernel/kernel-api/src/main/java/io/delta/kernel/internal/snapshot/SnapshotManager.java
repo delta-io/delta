@@ -27,9 +27,11 @@ import io.delta.kernel.internal.*;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.checkpoints.*;
 import io.delta.kernel.internal.commit.DefaultFileSystemManagedTableOnlyCommitter;
+import io.delta.kernel.internal.files.ParsedCheckpointData;
+import io.delta.kernel.internal.files.ParsedChecksumData;
+import io.delta.kernel.internal.files.ParsedDeltaData;
+import io.delta.kernel.internal.files.ParsedLogCompactionData;
 import io.delta.kernel.internal.files.ParsedLogData;
-import io.delta.kernel.internal.files.ParsedLogData.ParsedLogCategory;
-import io.delta.kernel.internal.files.ParsedLogData.ParsedLogType;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.lang.ListUtils;
@@ -229,7 +231,7 @@ public class SnapshotManager {
 
   /**
    * [delta-io/delta#4765]: Right now, we are only supporting sorted and contiguous log datas of
-   * type {@link ParsedLogType#DELTA}s (written to file).
+   * type {@link ParsedDeltaData}s (written to file).
    */
   public LogSegment getLogSegmentForVersion(
       Engine engine, Optional<Long> versionToLoadOpt, List<ParsedLogData> parsedLogDatas) {
@@ -322,32 +324,32 @@ public class SnapshotManager {
     // Step 5: Partition $listedFileStatuses into the checkpoints, deltas, and compactions. //
     //////////////////////////////////////////////////////////////////////////////////////////
 
-    final Map<ParsedLogData.ParsedLogCategory, List<ParsedLogData>> partitionedFiles =
+    final Map<Class<? extends ParsedLogData>, List<ParsedLogData>> partitionedFiles =
         listedFileStatuses.stream()
             .map(ParsedLogData::forFileStatus)
             .collect(
                 Collectors.groupingBy(
-                    ParsedLogData::getCategory,
+                    ParsedLogData::getParentCategoryClass,
                     LinkedHashMap::new, // Ensure order is maintained
                     Collectors.toList()));
 
     final List<ParsedLogData> allPublishedDeltas =
-        partitionedFiles.getOrDefault(ParsedLogCategory.DELTA, Collections.emptyList());
+        partitionedFiles.getOrDefault(ParsedDeltaData.class, Collections.emptyList());
 
     final List<FileStatus> listedCheckpointFileStatuses =
-        partitionedFiles.getOrDefault(ParsedLogCategory.CHECKPOINT, Collections.emptyList())
-            .stream()
+        partitionedFiles.getOrDefault(ParsedCheckpointData.class, Collections.emptyList()).stream()
             .map(ParsedLogData::getFileStatus)
             .collect(Collectors.toList());
 
     final List<FileStatus> listedCompactionFileStatuses =
-        partitionedFiles.getOrDefault(ParsedLogCategory.LOG_COMPACTION, Collections.emptyList())
+        partitionedFiles
+            .getOrDefault(ParsedLogCompactionData.class, Collections.emptyList())
             .stream()
             .map(ParsedLogData::getFileStatus)
             .collect(Collectors.toList());
 
     final List<FileStatus> listedChecksumFileStatuses =
-        partitionedFiles.getOrDefault(ParsedLogCategory.CHECKSUM, Collections.emptyList()).stream()
+        partitionedFiles.getOrDefault(ParsedChecksumData.class, Collections.emptyList()).stream()
             .map(ParsedLogData::getFileStatus)
             .collect(Collectors.toList());
 
@@ -580,8 +582,8 @@ public class SnapshotManager {
    * <ul>
    *   <li>Assumes that {@code allPublishedDeltas} is sorted and contiguous.
    *   <li>Assumes that {@code parsedLogDatas} is sorted and contiguous.
-   *   <li>[delta-io/delta#4765] For now, only accepts parsedLogData of type {@link
-   *       ParsedLogType#DELTA} (written to file).
+   *   <li>[delta-io/delta#4765] For now, only accepts parsedLogData of type {@link ParsedDeltaData}
+   *       (written to file).
    *   <li>If there is both a published Delta and a ratified staged commit for the same version,
    *       prioritizes the ratified staged commit
    * </ul>
@@ -593,7 +595,7 @@ public class SnapshotManager {
       long versionToLoad) {
     final List<ParsedLogData> allPublishedDeltasAfterCheckpoint =
         allPublishedDeltas.stream()
-            .filter(x -> x.type == ParsedLogType.DELTA && x.isFile())
+            .filter(x -> x instanceof ParsedDeltaData && x.isFile())
             .filter(x -> latestCompleteCheckpointVersion < x.version && x.version <= versionToLoad)
             .collect(Collectors.toList());
 
@@ -603,7 +605,7 @@ public class SnapshotManager {
 
     final List<ParsedLogData> allRatifiedCommitsAfterCheckpoint =
         parsedLogDatas.stream()
-            .filter(x -> x.type == ParsedLogType.DELTA && x.isFile())
+            .filter(x -> x instanceof ParsedDeltaData && x.isFile())
             .filter(x -> latestCompleteCheckpointVersion < x.version && x.version <= versionToLoad)
             .collect(Collectors.toList());
 

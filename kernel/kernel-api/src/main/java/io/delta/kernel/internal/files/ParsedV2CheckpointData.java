@@ -21,25 +21,25 @@ import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.utils.FileStatus;
 import java.util.Optional;
 
-public class ParsedChecksumData extends ParsedLogData {
+public class ParsedV2CheckpointData extends ParsedCheckpointData {
 
-  public static ParsedChecksumData forFileStatus(FileStatus fileStatus) {
+  public static ParsedV2CheckpointData forFileStatus(FileStatus fileStatus) {
     final String path = fileStatus.getPath();
-    final long version = FileNames.checksumVersion(path);
-    return new ParsedChecksumData(version, Optional.of(fileStatus), Optional.empty());
+    final long version = FileNames.checkpointVersion(path);
+    return new ParsedV2CheckpointData(version, Optional.of(fileStatus), Optional.empty());
   }
 
-  public static ParsedChecksumData forInlineData(long version, ColumnarBatch inlineData) {
-    return new ParsedChecksumData(version, Optional.empty(), Optional.of(inlineData));
+  public static ParsedV2CheckpointData forInlineData(long version, ColumnarBatch inlineData) {
+    return new ParsedV2CheckpointData(version, Optional.empty(), Optional.of(inlineData));
   }
 
-  private ParsedChecksumData(
+  private ParsedV2CheckpointData(
       long version, Optional<FileStatus> fileStatusOpt, Optional<ColumnarBatch> inlineDataOpt) {
     super(version, fileStatusOpt, inlineDataOpt);
   }
 
   @Override
-  public Class<? extends ParsedLogData> getParentCategoryClass() {
-    return ParsedChecksumData.class;
+  protected int getCheckpointTypePriority() {
+    return 2; // Classic (0) < MultiPart (1) < V2 (2). V2 has the highest priority.
   }
 }

@@ -29,12 +29,17 @@ public class ParsedDeltaData extends ParsedLogData {
     return new ParsedDeltaData(version, Optional.of(fileStatus), Optional.empty());
   }
 
-  public static ParsedDeltaData forInlineDelta(long version, ColumnarBatch inlineData) {
+  public static ParsedDeltaData forInlineData(long version, ColumnarBatch inlineData) {
     return new ParsedDeltaData(version, Optional.empty(), Optional.of(inlineData));
   }
 
-  private ParsedDeltaData(
+  public ParsedDeltaData(
       long version, Optional<FileStatus> fileStatusOpt, Optional<ColumnarBatch> inlineDataOpt) {
-    super(version, ParsedLogType.DELTA, fileStatusOpt, inlineDataOpt);
+    super(version, fileStatusOpt, inlineDataOpt);
+  }
+
+  @Override
+  public Class<? extends ParsedLogData> getParentCategoryClass() {
+    return ParsedDeltaData.class;
   }
 }
