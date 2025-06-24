@@ -56,6 +56,8 @@ public class UCCatalogManagedClient {
     this.ucClient = Objects.requireNonNull(ucClient, "ucClient is null");
   }
 
+  // TODO: [delta-io/delta#4817] loadTable API that takes in a UC TableInfo object
+
   /**
    * Loads a Kernel {@link ResolvedTable} at a specific version.
    *
@@ -70,7 +72,7 @@ public class UCCatalogManagedClient {
     Objects.requireNonNull(tablePath, "tablePath is null");
     checkArgument(version >= 0, "version must be non-negative");
 
-    logger.info("[{}] Loading table at version {}", ucTableId, version);
+    logger.info("[{}] Resolving table at version {}", ucTableId, version);
     final GetCommitsResponse response = getRatifiedCommitsFromUC(ucTableId, tablePath, version);
     validateLoadTableVersionExists(ucTableId, version, response.getLatestTableVersion());
     final List<ParsedLogData> logData =
