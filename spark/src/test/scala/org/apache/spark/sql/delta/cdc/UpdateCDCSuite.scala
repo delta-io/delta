@@ -24,15 +24,11 @@ import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.test.DeltaExcludedTestMixin
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
-import org.apache.spark.SparkConf
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.catalyst.TableIdentifier
 
-class UpdateCDCSuite extends UpdateSQLSuite with DeltaColumnMappingTestUtils {
+class UpdateCDCSuite extends UpdateSQLSuite with CDCEnabled with DeltaColumnMappingTestUtils {
   import testImplicits._
-
-  override protected def sparkConf: SparkConf = super.sparkConf
-    .set(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "true")
 
   test("CDC for unconditional update") {
     append(Seq((1, 1), (2, 2), (3, 3), (4, 4)).toDF("key", "value"))

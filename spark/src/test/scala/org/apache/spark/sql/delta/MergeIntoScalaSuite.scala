@@ -28,7 +28,10 @@ import org.apache.spark.sql.catalyst.plans.logical.{Assignment, DeltaMergeIntoCl
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.StructType
 
-class MergeIntoScalaSuite extends MergeIntoSuiteBase
+class MergeIntoScalaSuite extends MergeIntoBasicTests
+  with MergeIntoNestedDataTests
+  with MergeIntoUnlimitedMergeClausesTests
+  with MergeIntoSuiteBaseMiscTests
   with MergeIntoScalaTestUtils
   with MergeIntoNotMatchedBySourceSuite
   with DeltaSQLCommandTest
@@ -36,38 +39,6 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase
   with DeltaExcludedTestMixin {
 
   import testImplicits._
-
-  override def excluded: Seq[String] = super.excluded ++ Seq(
-    // Exclude tempViews, because DeltaTable.forName does not resolve them correctly, so no one can
-    // use them anyway with the Scala API.
-    // scalastyle:off line.size.limit
-    "basic case - merge to view on a Delta table by path, partitioned: true skippingEnabled: true useSqlView: true",
-    "basic case - merge to view on a Delta table by path, partitioned: true skippingEnabled: true useSqlView: false",
-    "basic case - merge to view on a Delta table by path, partitioned: false skippingEnabled: true useSqlView: true",
-    "basic case - merge to view on a Delta table by path, partitioned: false skippingEnabled: true useSqlView: false",
-    "basic case - merge to view on a Delta table by path, partitioned: true skippingEnabled: false useSqlView: true",
-    "basic case - merge to view on a Delta table by path, partitioned: true skippingEnabled: false useSqlView: false",
-    "basic case - merge to view on a Delta table by path, partitioned: false skippingEnabled: false useSqlView: true",
-    "basic case - merge to view on a Delta table by path, partitioned: false skippingEnabled: false useSqlView: false",
-    "Negative case - more operations between merge and delta target",
-    "test merge on temp view - basic - SQL TempView",
-    "test merge on temp view - basic - Dataset TempView",
-    "test merge on temp view - basic - merge condition references subset of target cols - SQL TempView",
-    "test merge on temp view - basic - merge condition references subset of target cols - Dataset TempView",
-    "test merge on temp view - subset cols - SQL TempView",
-    "test merge on temp view - subset cols - Dataset TempView",
-    "test merge on temp view - superset cols - SQL TempView",
-    "test merge on temp view - superset cols - Dataset TempView",
-    "test merge on temp view - nontrivial projection - SQL TempView",
-    "test merge on temp view - nontrivial projection - Dataset TempView",
-    "test merge on temp view - view with too many internal aliases - SQL TempView",
-    "test merge on temp view - view with too many internal aliases - Dataset TempView",
-    "test merge on temp view - view with too many internal aliases - merge condition references subset of target cols - SQL TempView",
-    "test merge on temp view - view with too many internal aliases - merge condition references subset of target cols - Dataset TempView",
-    "Update specific column works fine in temp views - SQL TempView",
-    "Update specific column works fine in temp views - Dataset TempView"
-    // scalastyle:on line.size.limit
-    )
 
   // Maps expected error classes to actual error classes. Used to handle error classes that are
   // different when running using SQL vs. Scala.
@@ -696,6 +667,9 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase
     }
   }
 
+  /* Exclude tempViews, because DeltaTable.forName does not resolve them correctly, so no one can
+   * use them anyway with the Scala API.
+
   // Scala API won't hit the resolution exception.
   testWithTempView("Update specific column works fine in temp views") { isSQLTempView =>
     withJsonData(
@@ -718,6 +692,7 @@ class MergeIntoScalaSuite extends MergeIntoSuiteBase
       )
     }
   }
+   */
 
   test("delta merge into clause with invalid data type.") {
     import org.apache.spark.sql.catalyst.dsl.expressions._

@@ -20,6 +20,7 @@ import java.io.File
 
 import scala.util.control.NonFatal
 
+import org.apache.spark.sql.delta.deletionvectors.PersistentDVEnabled
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.hadoop.fs.Path
 import org.scalatest.concurrent.Eventually
@@ -410,9 +411,5 @@ trait DeltaSourceDeletionVectorTests extends StreamTest
 
 class DeltaSourceDeletionVectorsSuite extends DeltaSourceSuiteBase
   with DeltaSQLCommandTest
-  with DeltaSourceDeletionVectorTests {
-  override def beforeAll(): Unit = {
-    super.beforeAll()
-    enableDeletionVectorsInNewTables(spark.conf)
-  }
-}
+  with DeltaSourceDeletionVectorTests
+  with PersistentDVEnabled

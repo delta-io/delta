@@ -32,7 +32,11 @@ import org.apache.spark.sql.functions.udf
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
 
-class MergeIntoSQLSuite extends MergeIntoSuiteBase
+class MergeIntoSQLSuite extends MergeIntoBasicTests
+  with MergeIntoTempViewsTests
+  with MergeIntoNestedDataTests
+  with MergeIntoUnlimitedMergeClausesTests
+  with MergeIntoSuiteBaseMiscTests
   with MergeIntoSQLTestUtils
   with MergeIntoNotMatchedBySourceSuite
   with DeltaSQLCommandTest
@@ -185,7 +189,7 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase
     }
   }
 
-  def testNondeterministicOrder(insertOnly: Boolean): Unit = {
+  private def testNondeterministicOrder(insertOnly: Boolean): Unit = {
     withTable("target") {
       // For the spark sql random() function the seed is fixed for both invocations
       val trueRandom = () => Math.random()

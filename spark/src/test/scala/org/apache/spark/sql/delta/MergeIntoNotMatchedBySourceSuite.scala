@@ -21,7 +21,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.Row
 
-trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBase {
+trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBaseMixin {
   import testImplicits._
 
   /**

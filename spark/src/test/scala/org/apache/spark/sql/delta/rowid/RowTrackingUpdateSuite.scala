@@ -18,8 +18,9 @@ package org.apache.spark.sql.delta.rowid
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
-import org.apache.spark.sql.delta.cdc.UpdateCDCSuite
-import org.apache.spark.sql.delta.rowtracking.RowTrackingTestUtils
+import org.apache.spark.sql.delta.cdc.{CDCEnabled, UpdateCDCSuite}
+import org.apache.spark.sql.delta.deletionvectors.PersistentDVDisabled
+import org.apache.spark.sql.delta.rowtracking.{RowTrackingDisabled, RowTrackingEnabled}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.SparkConf
@@ -225,12 +226,7 @@ trait RowTrackingUpdateDVTests extends RowTrackingUpdateSuiteBase
 
 }
 
-trait RowTrackingCDFTests extends RowTrackingUpdateSuiteBase {
-
-  override protected def sparkConf: SparkConf = {
-    super.sparkConf.set(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "true")
-  }
-}
+trait RowTrackingCDFTests extends RowTrackingUpdateSuiteBase with CDCEnabled
 
 class RowTrackingUpdateSuite extends RowTrackingUpdateCommonTests
 
@@ -261,10 +257,7 @@ class RowTrackingUpdateCDFNameColumnMappingSuite extends RowTrackingUpdateCommon
   with RowTrackingCDFTests with DeltaColumnMappingEnableNameMode
 
 // Base trait for UPDATE tests that will run post-merge only
-trait UpdateWithRowTrackingTests extends UpdateSQLSuite with RowTrackingTestUtils {
-  override protected def sparkConf: SparkConf = super.sparkConf
-    .set(DeltaConfigs.ROW_TRACKING_ENABLED.defaultTablePropertyKey, "true")
-
+trait UpdateWithRowTrackingTests extends UpdateSQLSuite with RowTrackingEnabled {
   override def excluded: Seq[String] = super.excluded ++
     Seq(
       // TODO: UPDATE on views can't find metadata column
@@ -291,37 +284,29 @@ trait UpdateWithRowTrackingTests extends UpdateSQLSuite with RowTrackingTestUtil
 }
 
 // UPDATE + row tracking
-class UpdateWithRowTrackingSuite extends UpdateSQLSuite with UpdateWithRowTrackingTests {
-  override protected def sparkConf: SparkConf = super.sparkConf
-    .set(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey, "false")
-}
+class UpdateWithRowTrackingSuite
+  extends UpdateSQLSuite
+  with UpdateWithRowTrackingTests
+  with PersistentDVDisabled
 
 // UPDATE + CDC + row tracking
-class UpdateWithRowTrackingCDCSuite extends UpdateCDCSuite with UpdateWithRowTrackingTests {
-  override protected def sparkConf: SparkConf = super.sparkConf
-    .set(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey, "false")
-}
+class UpdateWithRowTrackingCDCSuite
+  extends UpdateCDCSuite
+  with UpdateWithRowTrackingTests
+  with PersistentDVDisabled
 
 // Tests with only the table feature enabled. Should not break any tests, unless row count stats
 // are missing.
-trait UpdateWithRowTrackingTableFeatureTests extends UpdateSQLSuite with RowTrackingTestUtils {
-  override protected def sparkConf: SparkConf = super.sparkConf
-    .set(DeltaConfigs.ROW_TRACKING_ENABLED.defaultTablePropertyKey, "false")
-    .set(defaultRowTrackingFeatureProperty, "supported")
-}
+trait UpdateWithRowTrackingTableFeatureTests extends UpdateSQLSuite with RowTrackingDisabled
 
 // UPDATE + row tracking table feature
 class UpdateWithRowTrackingTableFeatureSuite
   extends UpdateSQLSuite
-  with UpdateWithRowTrackingTableFeatureTests {
-  override protected def sparkConf: SparkConf = super.sparkConf
-    .set(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey, "false")
-}
+  with UpdateWithRowTrackingTableFeatureTests
+  with PersistentDVDisabled
 
 // UPDATE + CDC + row tracking table feature
 class UpdateWithRowTrackingTableFeatureCDCSuite
   extends UpdateCDCSuite
-  with UpdateWithRowTrackingTableFeatureTests {
-  override protected def sparkConf: SparkConf = super.sparkConf
-    .set(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey, "false")
-}
+  with UpdateWithRowTrackingTableFeatureTests
+  with PersistentDVDisabled
