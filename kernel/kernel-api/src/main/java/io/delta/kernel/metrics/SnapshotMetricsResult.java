@@ -64,5 +64,5 @@ public interface SnapshotMetricsResult {
    * @return the total number of log segment list calls made during snapshot construction. 0 if no
    *     list calls were made or if snapshot construction fails before this step.
    */
-  long loadLogSegmentCloudListCallCount();
+  long getLoadLogSegmentCloudListCallCount();
 }

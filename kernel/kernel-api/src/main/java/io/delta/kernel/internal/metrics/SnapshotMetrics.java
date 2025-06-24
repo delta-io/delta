@@ -79,7 +79,7 @@ public class SnapshotMetrics {
       }
 
       @Override
-      public long loadLogSegmentCloudListCallCount() {
+      public long getLoadLogSegmentCloudListCallCount() {
         return loadLogSegmentCloudListCallCountResult;
       }
     };

@@ -51,7 +51,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
     val durationToGetCrcInfo =
       snapshotReport.getSnapshotMetrics().getDurationToGetCrcInfoNs()
     val loadLogSegmentCloudListCallCount =
-      snapshotReport.getSnapshotMetrics().loadLogSegmentCloudListCallCount()
+      snapshotReport.getSnapshotMetrics().getLoadLogSegmentCloudListCallCount()
     val exception: Optional[String] = snapshotReport.getException().map(_.toString)
     val expectedJson =
       s"""
