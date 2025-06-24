@@ -37,10 +37,20 @@ import java.util.Optional;
 public class FilteredColumnarBatch {
   private final ColumnarBatch data;
   private final Optional<ColumnVector> selectionVector;
+  private final String fileName;
+  private final long numOfTrueRows;
 
   public FilteredColumnarBatch(ColumnarBatch data, Optional<ColumnVector> selectionVector) {
     this.data = data;
     this.selectionVector = selectionVector;
+    this.fileName = null;
+    this.numOfTrueRows = -1;
+  }
+  public FilteredColumnarBatch(ColumnarBatch data, Optional<ColumnVector> selectionVector, String fileName,  long numOfTrueRows) {
+    this.data = data;
+    this.selectionVector = selectionVector;
+    this.fileName = fileName;
+    this.numOfTrueRows = numOfTrueRows;
   }
 
   /**
@@ -64,6 +74,13 @@ public class FilteredColumnarBatch {
     return selectionVector;
   }
 
+  public long getNumOfTrueRows() {
+    return numOfTrueRows;
+  }
+
+  public String getFileName() {
+    return fileName;
+  }
   /**
    * Iterator of rows that survived the filter.
    *

@@ -338,7 +338,7 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
             CloseableIterator<ColumnarBatch> dataIter =
                 getActionsIterFromSinglePartOrV2Checkpoint(nextFile, fileName);
             long version = checkpointVersion(nextFilePath);
-            return combine(dataIter, true /* isFromCheckpoint */, version, Optional.empty());
+            return combine(dataIter, true /* isFromCheckpoint */, version, Optional.empty(), fileName);
           }
         case MULTIPART_CHECKPOINT:
         case SIDECAR:
@@ -361,7 +361,7 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
                     checkpointPredicate);
 
             long version = checkpointVersion(nextFilePath);
-            return combine(dataIter, true /* isFromCheckpoint */, version, Optional.empty());
+            return combine(dataIter, true /* isFromCheckpoint */, version, Optional.empty(), fileName);
           }
         default:
           throw new IOException("Unrecognized log type: " + nextLogFile.getLogType());
@@ -393,7 +393,7 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
         dataIter,
         false /* isFromCheckpoint */,
         fileVersion,
-        Optional.of(nextFile.getModificationTime()) /* timestamp */);
+        Optional.of(nextFile.getModificationTime()) /* timestamp */, new Path(nextFile.getPath()).getName());
   }
 
   /**
@@ -407,7 +407,8 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
       CloseableIterator<ColumnarBatch> fileReadDataIter,
       boolean isFromCheckpoint,
       long version,
-      Optional<Long> timestamp) {
+      Optional<Long> timestamp,
+      String fileName) {
     // For delta files, we want to use the inCommitTimestamp from commitInfo
     // as the commit timestamp for the file.
     // Since CommitInfo should be the first action in the delta when inCommitTimestamp is
@@ -438,7 +439,7 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
             rewoundFileReadDataIter.next(),
             isFromCheckpoint,
             version,
-            finalResolvedCommitTimestamp);
+            finalResolvedCommitTimestamp,fileName);
       }
 
       @Override
