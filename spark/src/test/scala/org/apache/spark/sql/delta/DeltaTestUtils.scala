@@ -42,7 +42,7 @@ import org.scalatest.BeforeAndAfterEach
 
 import org.apache.spark.{SparkContext, SparkFunSuite, SparkThrowable}
 import org.apache.spark.scheduler.{JobFailed, SparkListener, SparkListenerJobEnd, SparkListenerJobStart}
-import org.apache.spark.sql.{AnalysisException, DataFrame, SparkSession}
+import org.apache.spark.sql.{AnalysisException, DataFrame, DataFrameWriter, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.util.{quietly, FailFastMode}
@@ -573,20 +573,11 @@ trait DeltaDMLTestUtils
   protected def tableSQLIdentifier: String
 
   protected def append(df: DataFrame, partitionBy: Seq[String] = Nil): Unit = {
-    import DeltaTestUtils.TableIdentifierOrPath
-
     val dfw = df.write.format("delta").mode("append")
     if (partitionBy.nonEmpty) {
       dfw.partitionBy(partitionBy: _*)
     }
-    getTableIdentifierOrPath(tableSQLIdentifier) match {
-      case TableIdentifierOrPath.Identifier(id, _) => dfw.saveAsTable(id.toString)
-      // A cleaner way to write this is to just use `saveAsTable` where the
-      // table name is delta.`path`. However, it will throw an error when
-      // we use "append" mode and the table does not exist, so we use `save`
-      // here instead.
-      case TableIdentifierOrPath.Path(path, _) => dfw.save(path)
-    }
+    writeDeltaTable(dfw, tableSQLIdentifier)
   }
 
   protected def withKeyValueData(
@@ -621,6 +612,27 @@ trait DeltaDMLTestUtils
       spark.read
         .option("mode", FailFastMode.name)
         .json(data.toDS)
+    }
+  }
+
+  /**
+   * Reads a delta table by its identifier. The identifier can either be the table name or table
+   * path that is in the form of delta.`tablePath`.
+   */
+  protected def readDeltaTableByIdentifier(tableIdentifier: String): DataFrame = {
+    spark.read.format("delta").table(tableIdentifier)
+  }
+
+  protected def writeDeltaTable[T](dfw: DataFrameWriter[T], tableName: String): Unit = {
+    import DeltaTestUtils.TableIdentifierOrPath
+
+    getTableIdentifierOrPath(tableName) match {
+      case TableIdentifierOrPath.Identifier(id, _) => dfw.saveAsTable(id.toString)
+      // A cleaner way to write this is to just use `saveAsTable` where the
+      // table name is delta.`path`. However, it will throw an error when
+      // we use "append" mode and the table does not exist, so we use `save`
+      // here instead.
+      case TableIdentifierOrPath.Path(path, _) => dfw.save(path)
     }
   }
 
@@ -679,6 +691,4 @@ trait DeltaDMLByPathTestUtils extends DeltaDMLTestUtils {
   protected def readDeltaTable(path: String): DataFrame = {
     spark.read.format("delta").load(path)
   }
-
-  protected def getDeltaFileStmt(path: String): String = s"SELECT * FROM delta.`$path`"
 }

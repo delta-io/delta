@@ -36,6 +36,7 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase
   with MergeIntoSQLTestUtils
   with MergeIntoNotMatchedBySourceSuite
   with DeltaSQLCommandTest
+  with DeltaDMLByPathTestUtils
   with DeltaTestUtilsForTempViews {
 
   import testImplicits._

@@ -39,7 +39,6 @@ import org.apache.spark.sql.execution.adaptive.DisableAdaptiveExecution
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
-import org.apache.spark.util.Utils
 
 abstract class MergeIntoSuiteBase
     extends QueryTest
@@ -57,33 +56,10 @@ abstract class MergeIntoSuiteBase
   // different when running using SQL vs. Scala.
   protected val mappedErrorClasses: Map[String, String] = Map.empty
 
-  Seq(true, false).foreach { isPartitioned =>
-    test(s"basic case - merge to Delta table by path, isPartitioned: $isPartitioned") {
-      withTable("source") {
-        val partitions = if (isPartitioned) "key2" :: Nil else Nil
-        append(Seq((2, 2), (1, 4)).toDF("key2", "value"), partitions)
-        Seq((1, 1), (0, 3)).toDF("key1", "value").createOrReplaceTempView("source")
-
-        executeMerge(
-          target = s"delta.`$tempPath`",
-          source = "source src",
-          condition = "src.key1 = key2",
-          update = "key2 = 20 + key1, value = 20 + src.value",
-          insert = "(key2, value) VALUES (key1 - 10, src.value + 10)")
-
-        checkAnswer(readDeltaTable(tempPath),
-          Row(2, 2) :: // No change
-            Row(21, 21) :: // Update
-            Row(-10, 13) :: // Insert
-            Nil)
-      }
-    }
-  }
-
   Seq(true, false).foreach { skippingEnabled =>
     Seq(true, false).foreach { partitioned =>
       Seq(true, false).foreach { useSQLView =>
-        test("basic case - merge to view on a Delta table by path, " +
+        test("basic case - merge to view on a Delta table, " +
           s"partitioned: $partitioned skippingEnabled: $skippingEnabled useSqlView: $useSQLView") {
           withTable("delta_target", "source") {
             withSQLConf(DeltaSQLConf.DELTA_STATS_SKIPPING.key -> skippingEnabled.toString) {
@@ -92,9 +68,10 @@ abstract class MergeIntoSuiteBase
               append(Seq((2, 2), (1, 4)).toDF("key2", "value"), partitions)
               if (useSQLView) {
                 sql(s"CREATE OR REPLACE TEMP VIEW delta_target AS " +
-                  s"SELECT * FROM delta.`$tempPath` t")
+                  s"SELECT * FROM $tableSQLIdentifier t")
               } else {
-                readDeltaTable(tempPath).createOrReplaceTempView("delta_target")
+                readDeltaTableByIdentifier(tableSQLIdentifier)
+                  .createOrReplaceTempView("delta_target")
               }
 
               executeMerge(
@@ -119,30 +96,22 @@ abstract class MergeIntoSuiteBase
 
   Seq(true, false).foreach { skippingEnabled =>
     Seq(true, false).foreach { isPartitioned =>
-     test("basic case - merge to Delta table by name, " +
+     test("basic case - merge to Delta table, " +
          s"isPartitioned: $isPartitioned skippingEnabled: $skippingEnabled") {
-        withTable("delta_target", "source") {
+        withTable("source") {
           withSQLConf(DeltaSQLConf.DELTA_STATS_SKIPPING.key -> skippingEnabled.toString) {
             Seq((1, 1), (0, 3), (1, 6)).toDF("key1", "value").createOrReplaceTempView("source")
-            val partitionByClause = if (isPartitioned) "PARTITIONED BY (key2)" else ""
-            sql(
-              s"""
-                |CREATE TABLE delta_target(key2 INT, value INT)
-                |USING delta
-                |OPTIONS('path'='$tempPath')
-                |$partitionByClause
-               """.stripMargin)
-
-            append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
+            val partitions = if (isPartitioned) "key2" :: Nil else Nil
+            append(Seq((2, 2), (1, 4)).toDF("key2", "value"), partitions)
 
             executeMerge(
-              target = "delta_target",
+              target = s"$tableSQLIdentifier tgt",
               source = "source src",
-              condition = "src.key1 = key2 AND src.value < delta_target.value",
+              condition = "src.key1 = key2 AND src.value < tgt.value",
               update = "key2 = 20 + key1, value = 20 + src.value",
               insert = "(key2, value) VALUES (key1 - 10, src.value + 10)")
 
-            checkAnswer(sql("SELECT key2, value FROM delta_target"),
+            checkAnswer(readDeltaTableByIdentifier(tableSQLIdentifier),
               Row(2, 2) :: // No change
                 Row(21, 21) :: // Update
                 Row(-10, 13) :: // Insert
@@ -160,13 +129,13 @@ abstract class MergeIntoSuiteBase
       Seq((1, 1), (0, 3)).toDF("key1", "value").createOrReplaceTempView("source")
 
       executeMerge(
-        target = s"delta.`$tempPath` as trgNew",
+        target = s"$tableSQLIdentifier as trgNew",
         source = "source src",
         condition = "src.key1 = key2",
         update = "key2 = 20 + key2, value = trgNew.value + src.value",
         insert = "(key2, value) VALUES (key1 - 10, src.value + 10)")
 
-      checkAnswer(readDeltaTable(tempPath),
+      checkAnswer(readDeltaTableByIdentifier(tableSQLIdentifier),
         Row(2, 2) :: // No change
           Row(21, 5) :: // Update
           Row(-10, 13) :: // Insert
@@ -180,13 +149,13 @@ abstract class MergeIntoSuiteBase
       Seq((1, 1), (0, 3)).toDF("key1", "value").createOrReplaceTempView("source")
 
       executeMerge(
-        target = s"delta.`$tempPath` as trgNew",
+        target = s"$tableSQLIdentifier as trgNew",
         source = "source src",
         condition = "src.key1 = key2",
         update = "value = trgNew.value + src.value, key2 = 20 + key2",
         insert = "(value, key2) VALUES (src.value + 10, key1 - 10)")
 
-      checkAnswer(readDeltaTable(tempPath),
+      checkAnswer(readDeltaTableByIdentifier(tableSQLIdentifier),
         Row(2, 2) :: // No change
           Row(21, 5) :: // Update
           Row(-10, 13) :: // Insert
@@ -200,13 +169,13 @@ abstract class MergeIntoSuiteBase
       Seq((1, 1), (0, 3)).toDF("key1", "value").createOrReplaceTempView("source")
 
       executeMerge(
-        target = s"delta.`$tempPath` as trgNew",
+        target = s"$tableSQLIdentifier as trgNew",
         source = "source src",
         condition = "src.key1 = key2",
         update = "value = trgNew.value + 3",
         insert = "(key2, value) VALUES (key1 - 10, src.value + 10)")
 
-      checkAnswer(readDeltaTable(tempPath),
+      checkAnswer(readDeltaTableByIdentifier(tableSQLIdentifier),
         Row(2, 2) :: // No change
           Row(1, 7) :: // Update
           Row(-10, 13) :: // Insert
@@ -220,13 +189,13 @@ abstract class MergeIntoSuiteBase
       Seq((1, 1), (0, 3), (3, 5)).toDF("key1", "value").createOrReplaceTempView("source")
 
       executeMerge(
-        tgt = s"delta.`$tempPath` as trgNew",
+        tgt = s"$tableSQLIdentifier as trgNew",
         src = "source src",
         cond = "src.key1 = key2",
         insert(condition = "key1 = 0", values = "(key2, value) VALUES (src.key1, src.value + 3)"),
         insert(values = "(key2, value) VALUES (src.key1 - 10, src.value + 10)"))
 
-      checkAnswer(readDeltaTable(tempPath),
+      checkAnswer(readDeltaTableByIdentifier(tableSQLIdentifier),
         Row(2, 2) :: // No change
           Row(1, 4) :: // No change
           Row(0, 6) :: // Insert
@@ -241,13 +210,13 @@ abstract class MergeIntoSuiteBase
       Seq((1, 1), (0, 3)).toDF("key1", "value").createOrReplaceTempView("source")
 
       executeMerge(
-        tgt = s"delta.`$tempPath` as trgNew",
+        tgt = s"$tableSQLIdentifier as trgNew",
         src = "source src",
         cond = "src.key1 = key2",
         update(condition = "key2 = 5", set = "value = src.value + 3"),
         insert(values = "(key2, value) VALUES (src.key1 - 10, src.value + 10)"))
 
-      checkAnswer(readDeltaTable(tempPath),
+      checkAnswer(readDeltaTableByIdentifier(tableSQLIdentifier),
         Row(2, 2) :: // No change
           Row(1, 4) :: // No change
           Row(-10, 13) :: // Insert
@@ -268,18 +237,16 @@ abstract class MergeIntoSuiteBase
           source.toDF("key", "value").createOrReplaceTempView("sourceView")
 
           executeMerge(
-            target = s"delta.`$tempPath` as t",
+            target = s"$tableSQLIdentifier as t",
             source = "sourceView s",
             condition = condition,
             update = "t.value = s.value",
             insert = "(t.key, t.value) VALUES (s.key, s.value)")
 
           checkAnswer(
-            readDeltaTable(tempPath),
+            readDeltaTableByIdentifier(tableSQLIdentifier),
             expectedResults.map { r => Row(r._1, r._2) }
           )
-
-          Utils.deleteRecursively(new File(tempPath))
         }
       }
     }
@@ -367,13 +334,13 @@ abstract class MergeIntoSuiteBase
       append(Seq.empty[(Int, Int)].toDF("key2", "value"))
 
       executeMerge(
-        target = s"delta.`$tempPath` as target",
+        target = s"$tableSQLIdentifier as target",
         source = "source src",
         condition = "src.key1 = target.key2",
         update = "key2 = 20 + key1, value = 20 + src.value",
         insert = "(key2, value) VALUES (key1 - 10, src.value + 10)")
 
-      checkAnswer(readDeltaTable(tempPath),
+      checkAnswer(readDeltaTableByIdentifier(tableSQLIdentifier),
         Row(-5, 15) :: // Insert
           Nil)
     }
@@ -385,13 +352,13 @@ abstract class MergeIntoSuiteBase
       append(Seq.empty[(Int, Int)].toDF("key2", "value"))
 
       executeMerge(
-        target = s"delta.`$tempPath` as target",
+        target = s"$tableSQLIdentifier as target",
         source = "source src",
         condition = "src.key1 = target.key2",
         update = "key2 = 20 + key1, value = 20 + src.value",
         insert = "(key2, value) VALUES (key1 - 10, src.value + 10)")
 
-      checkAnswer(readDeltaTable(tempPath), Nil)
+      checkAnswer(readDeltaTableByIdentifier(tableSQLIdentifier), Nil)
     }
   }
 
@@ -401,13 +368,13 @@ abstract class MergeIntoSuiteBase
       append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
 
       executeMerge(
-        target = s"delta.`$tempPath` as target",
+        target = s"$tableSQLIdentifier as target",
         source = "source src",
         condition = "src.key1 = target.key2",
         update = "key2 = 20 + key1, value = 20 + src.value",
         insert = "(key2, value) VALUES (key1 - 10, src.value + 10)")
 
-      checkAnswer(readDeltaTable(tempPath),
+      checkAnswer(readDeltaTableByIdentifier(tableSQLIdentifier),
         Row(21, 25) ::   // Update
           Row(22, 29) :: // Update
           Nil)
@@ -420,14 +387,14 @@ abstract class MergeIntoSuiteBase
       append(Seq((2, 2), (1, 4)).toDF("key", "value"))
 
       executeMerge(
-        target = s"delta.`$tempPath` as target",
+        target = s"$tableSQLIdentifier as target",
         source = "source src",
         condition = "src.key = target.key",
         update = "target.key = 20 + src.key, target.value = 20 + src.value",
         insert = "(key, value) VALUES (src.key - 10, src.value + 10)")
 
       checkAnswer(
-        readDeltaTable(tempPath),
+        readDeltaTableByIdentifier(tableSQLIdentifier),
         Row(21, 25) :: // Update
           Row(22, 29) :: // Update
           Nil)
@@ -441,14 +408,14 @@ abstract class MergeIntoSuiteBase
       append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
 
       executeMerge(
-        target = s"delta.`$tempPath` as trg",
+        target = s"$tableSQLIdentifier as trg",
         source = "(SELECT key1, value, others FROM source) src",
         condition = "src.key1 = trg.key2",
         update = "trg.key2 = 20 + key1, value = 20 + src.value",
         insert = "(trg.key2, value) VALUES (key1 - 10, src.value + 10)")
 
       checkAnswer(
-        readDeltaTable(tempPath),
+        readDeltaTableByIdentifier(tableSQLIdentifier),
         Row(2, 2) :: // No change
           Row(21, 26) :: // Update
           Row(-10, 13) :: // Insert
@@ -456,14 +423,14 @@ abstract class MergeIntoSuiteBase
 
       withCrossJoinEnabled {
         executeMerge(
-        target = s"delta.`$tempPath` as trg",
+        target = s"$tableSQLIdentifier as trg",
         source = "(SELECT 5 as key1, 5 as value) src",
         condition = "src.key1 = trg.key2",
         update = "trg.key2 = 20 + key1, value = 20 + src.value",
         insert = "(trg.key2, value) VALUES (key1 - 10, src.value + 10)")
       }
 
-      checkAnswer(readDeltaTable(tempPath),
+      checkAnswer(readDeltaTableByIdentifier(tableSQLIdentifier),
         Row(2, 2) ::
           Row(21, 26) ::
           Row(-10, 13) ::
@@ -476,13 +443,13 @@ abstract class MergeIntoSuiteBase
     append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
 
     executeMerge(
-      target = s"delta.`$tempPath` as target",
-      source = s"delta.`$tempPath` as src",
+      target = s"$tableSQLIdentifier as target",
+      source = s"$tableSQLIdentifier as src",
       condition = "src.key2 = target.key2",
       update = "key2 = 20 + src.key2, value = 20 + src.value",
       insert = "(key2, value) VALUES (src.key2 - 10, src.value + 10)")
 
-    checkAnswer(readDeltaTable(tempPath),
+    checkAnswer(readDeltaTableByIdentifier(tableSQLIdentifier),
       Row(22, 22) :: // UPDATE
         Row(21, 24) :: // UPDATE
         Nil)
@@ -495,13 +462,13 @@ abstract class MergeIntoSuiteBase
       append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
 
       executeMerge(
-        target = s"delta.`$tempPath` as trg",
+        target = s"$tableSQLIdentifier as trg",
         source = "(SELECT key1, value, others FROM source order by key1 limit 1) src",
         condition = "src.key1 = trg.key2",
         update = "trg.key2 = 20 + key1, value = 20 + src.value",
         insert = "(trg.key2, value) VALUES (key1 - 10, src.value + 10)")
 
-      checkAnswer(readDeltaTable(tempPath),
+      checkAnswer(readDeltaTableByIdentifier(tableSQLIdentifier),
         Row(1, 4) :: // No change
           Row(2, 2) :: // No change
           Row(-10, 13) :: // Insert
@@ -516,13 +483,13 @@ abstract class MergeIntoSuiteBase
       append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
 
       executeMerge(
-        target = s"delta.`$tempPath` as trg",
+        target = s"$tableSQLIdentifier as trg",
         source = "(SELECT key1, value, others FROM source order by value DESC limit 1) src",
         condition = "src.key1 = trg.key2",
         update = "trg.key2 = 20 + key1, value = 20 + src.value",
         insert = "(trg.key2, value) VALUES (key1 - 10, src.value + 10)")
 
-      checkAnswer(readDeltaTable(tempPath),
+      checkAnswer(readDeltaTableByIdentifier(tableSQLIdentifier),
         Row(2, 2) :: // No change
           Row(21, 26) :: // UPDATE
           Nil)
@@ -536,7 +503,7 @@ abstract class MergeIntoSuiteBase
 
       val e = intercept[Exception] {
         executeMerge(
-          target = s"delta.`$tempPath` as target",
+          target = s"$tableSQLIdentifier as target",
           source = "source src",
           condition = "src.key1 = target.key2",
           update = "key2 = 20 + key1, value = 20 + src.value",
@@ -555,14 +522,14 @@ abstract class MergeIntoSuiteBase
 
       withCrossJoinEnabled {
         executeMerge(
-          target = s"delta.`$tempPath` as target",
+          target = s"$tableSQLIdentifier as target",
           source = "source src",
           condition = "key1 = 1",
           update = "key2 = 20 + key1, value = 20 + src.value",
           insert = "(key2, value) VALUES (key1 - 10, src.value + 10)")
       }
 
-      checkAnswer(readDeltaTable(tempPath),
+      checkAnswer(readDeltaTableByIdentifier(tableSQLIdentifier),
         Row(-8, 19) :: // Insert
           Row(21, 25) :: // Update
           Row(21, 25) :: // Update
@@ -578,13 +545,13 @@ abstract class MergeIntoSuiteBase
         append(Seq((2, 2), (1, 4)).toDF("key2", "value"), partitions)
 
         executeMerge(
-          target = s"delta.`$tempPath` as target",
+          target = s"$tableSQLIdentifier as target",
           source = "source src",
           condition = "key1 = key2",
           update = "key2 = 33 + cast(key2 as double), value = '20'",
           insert = "(key2, value) VALUES ('44', try_cast(src.value as double) + 10)")
 
-        checkAnswer(readDeltaTable(tempPath),
+        checkAnswer(readDeltaTableByIdentifier(tableSQLIdentifier),
           Row(44, 19) :: // Insert
           // NULL is generated when the type casting does not work for some values)
           Row(44, null) :: // Insert
@@ -603,7 +570,7 @@ abstract class MergeIntoSuiteBase
       // insert expressions have target table reference
       var e = intercept[AnalysisException] {
         executeMerge(
-          target = s"delta.`$tempPath` as target",
+          target = s"$tableSQLIdentifier as target",
           source = "source src",
           condition = "src.key1 = target.key2",
           update = "key2 = key1, value = src.value",
@@ -615,7 +582,7 @@ abstract class MergeIntoSuiteBase
       // to-update columns have source table reference
       e = intercept[AnalysisException] {
         executeMerge(
-          target = s"delta.`$tempPath` as target",
+          target = s"$tableSQLIdentifier as target",
           source = "source src",
           condition = "src.key1 = target.key2",
           update = "key1 = 1, value = 2",
@@ -628,7 +595,7 @@ abstract class MergeIntoSuiteBase
       // to-insert columns have source table reference
       e = intercept[AnalysisException] {
         executeMerge(
-          target = s"delta.`$tempPath` as target",
+          target = s"$tableSQLIdentifier as target",
           source = "source src",
           condition = "src.key1 = target.key2",
           update = "key2 = 1, value = 2",
@@ -641,7 +608,7 @@ abstract class MergeIntoSuiteBase
       // ambiguous reference
       e = intercept[AnalysisException] {
         executeMerge(
-          target = s"delta.`$tempPath` as target",
+          target = s"$tableSQLIdentifier as target",
           source = "source src",
           condition = "src.key1 = target.key2",
           update = "key2 = 1, value = value",
@@ -653,7 +620,7 @@ abstract class MergeIntoSuiteBase
       // non-deterministic search condition
       e = intercept[AnalysisException] {
         executeMerge(
-          target = s"delta.`$tempPath` as target",
+          target = s"$tableSQLIdentifier as target",
           source = "source src",
           condition = "src.key1 = target.key2 and rand() > 0.5",
           update = "key2 = 1, value = 2",
@@ -665,7 +632,7 @@ abstract class MergeIntoSuiteBase
       // aggregate function
       e = intercept[AnalysisException] {
         executeMerge(
-          target = s"delta.`$tempPath` as target",
+          target = s"$tableSQLIdentifier as target",
           source = "source src",
           condition = "src.key1 = target.key2 and max(target.key2) > 20",
           update = "key2 = 1, value = 2",
@@ -719,13 +686,13 @@ abstract class MergeIntoSuiteBase
               FROM range(1, 3)""").createOrReplaceTempView("source")
 
       executeMerge(
-        target = s"delta.`$tempPath` as trgNew",
+        target = s"$tableSQLIdentifier as trgNew",
         source = "source src",
         condition = "to_json(src.v) = to_json(trgNew.v)",
         update = "i = 10 + src.i + trgNew.i, v = trgNew.v",
         insert = """(i, v) VALUES (i + 100, parse_json('"inserted"'))""")
 
-      checkAnswer(readDeltaTable(tempPath).selectExpr("i", "to_json(v)"),
+      checkAnswer(readDeltaTableByIdentifier(tableSQLIdentifier).selectExpr("i", "to_json(v)"),
         Row(0, "0") :: // No change
           Row(13, "1") :: // Update
           Row(103, "\"inserted\"") :: // Insert
@@ -762,7 +729,7 @@ abstract class MergeIntoSuiteBase
       append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
       val e = intercept[AnalysisException] {
         executeMerge(
-          target = s"delta.`$tempPath` as t",
+          target = s"$tableSQLIdentifier as t",
           source = "source s",
           condition = "s.key1 = t.key2",
           update = "key2 = key1, t.key2 = key1",
@@ -777,7 +744,7 @@ abstract class MergeIntoSuiteBase
     withTempView("source", "target") {
       Seq((1, 1), (0, 3), (1, 5)).toDF("key1", "value").createOrReplaceTempView("source")
       append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
-      spark.read.format("delta").load(tempPath).filter("value <> 0").createTempView("target")
+      readDeltaTableByIdentifier(tableSQLIdentifier).filter("value <> 0").createTempView("target")
 
       val e = intercept[AnalysisException] {
         executeMerge(
@@ -792,45 +759,57 @@ abstract class MergeIntoSuiteBase
   }
 
   test("Negative case - MERGE to the child directory") {
-    val df = Seq((1, 1), (0, 3), (1, 5)).toDF("key2", "value")
-    val partitions = "key2" :: Nil
-    append(df, partitions)
+    withTempDir { tempDir =>
+      val tempPath = tempDir.getCanonicalPath
+      val df = Seq((1, 1), (0, 3), (1, 5)).toDF("key2", "value")
+      val partitions = "key2" :: Nil
+      df.write.format("delta").mode("append").partitionBy(partitions: _*).save(tempPath)
+      append(df, partitions)
 
-    val e = intercept[AnalysisException] {
-      executeMerge(
-        target = s"delta.`$tempPath/key2=1` target",
-        source = "(SELECT 5 as key1, 5 as value) src",
-        condition = "src.key1 = target.key2",
-        update = "key2 = 20 + key1, value = 20 + src.value",
-        insert = "(key2, value) VALUES (key1 - 10, src.value + 10)")
-    }.getMessage
-    errorContains(e, "Expect a full scan of Delta sources, but found a partial scan")
+      val e = intercept[AnalysisException] {
+        executeMerge(
+          target = s"delta.`$tempPath/key2=1` target",
+          source = "(SELECT 5 as key1, 5 as value) src",
+          condition = "src.key1 = target.key2",
+          update = "key2 = 20 + key1, value = 20 + src.value",
+          insert = "(key2, value) VALUES (key1 - 10, src.value + 10)")
+      }.getMessage
+      errorContains(e, "Expect a full scan of Delta sources, but found a partial scan")
+    }
   }
 
   test(s"special character in path - matched delete") {
-    val source = s"$tempDir/sou rce~"
-    val target = s"$tempDir/tar get>"
-    spark.range(0, 10, 2).write.format("delta").save(source)
-    spark.range(10).write.format("delta").save(target)
-    executeMerge(
-      tgt = s"delta.`$target` t",
-      src = s"delta.`$source` s",
-      cond = "t.id = s.id",
-      clauses = delete())
-    checkAnswer(readDeltaTable(target), Seq(1, 3, 5, 7, 9).toDF("id"))
+    withTempDir { tempDir =>
+      val source = s"$tempDir/sou rce~"
+      val target = s"$tempDir/tar get>"
+      spark.range(0, 10, 2).write.format("delta").save(source)
+      spark.range(10).write.format("delta").save(target)
+      executeMerge(
+        tgt = s"delta.`$target` t",
+        src = s"delta.`$source` s",
+        cond = "t.id = s.id",
+        clauses = delete())
+      checkAnswer(
+        readDeltaTableByIdentifier(s"delta.`$target`"),
+        Seq(1, 3, 5, 7, 9).toDF("id"))
+    }
   }
 
   test(s"special character in path - matched update") {
-    val source = s"$tempDir/sou rce("
-    val target = s"$tempDir/tar get*"
-    spark.range(0, 10, 2).write.format("delta").save(source)
-    spark.range(10).write.format("delta").save(target)
-    executeMerge(
-      tgt = s"delta.`$target` t",
-      src = s"delta.`$source` s",
-      cond = "t.id = s.id",
-      clauses = update(set = "id = t.id * 10"))
-    checkAnswer(readDeltaTable(target), Seq(0, 1, 20, 3, 40, 5, 60, 7, 80, 9).toDF("id"))
+    withTempDir { tempDir =>
+      val source = s"$tempDir/sou rce("
+      val target = s"$tempDir/tar get*"
+      spark.range(0, 10, 2).write.format("delta").save(source)
+      spark.range(10).write.format("delta").save(target)
+      executeMerge(
+        tgt = s"delta.`$target` t",
+        src = s"delta.`$source` s",
+        cond = "t.id = s.id",
+        clauses = update(set = "id = t.id * 10"))
+      checkAnswer(
+        readDeltaTableByIdentifier(s"delta.`$target`"),
+        Seq(0, 1, 20, 3, 40, 5, 60, 7, 80, 9).toDF("id"))
+    }
   }
 
   Seq(true, false).foreach { isPartitioned =>
@@ -844,14 +823,14 @@ abstract class MergeIntoSuiteBase
         df.createOrReplaceTempView("source")
 
         executeMerge(
-          target = s"delta.`$tempPath` target",
+          target = s"$tableSQLIdentifier target",
           source = "(SELECT key1 as srcKey, key2, col1 FROM source where key1 < 3) AS source",
           condition = "srcKey = target.key1",
           update = "target.key1 = srcKey - 1000, target.key2 = source.key2 + 1000, " +
             "target.col1 = source.col1",
           insert = "(key1, key2, col1) VALUES (srcKey, source.key2, source.col1)")
 
-        checkAnswer(readDeltaTable(tempPath),
+        checkAnswer(readDeltaTableByIdentifier(tableSQLIdentifier),
           Row(-998, 1002, 2) :: // Update
             Row(-999, 1001, 1) :: // Update
             Row(-1000, 1000, 0) :: // Update
@@ -877,7 +856,7 @@ abstract class MergeIntoSuiteBase
         // Local predicates are likely to be pushed down leading empty join conditions
         // and cross-join being used
         withCrossJoinEnabled { executeMerge(
-          target = s"delta.`$tempPath` trg",
+          target = s"$tableSQLIdentifier trg",
           source = "source src",
           condition = condition,
           update = "key2 = src.key1, value = src.value, op = 'update'",
@@ -885,11 +864,9 @@ abstract class MergeIntoSuiteBase
         }
 
         checkAnswer(
-          readDeltaTable(tempPath),
+          readDeltaTableByIdentifier(tableSQLIdentifier),
           expectedResults.map { r => Row(r._1, r._2, r._3) }
         )
-
-        Utils.deleteRecursively(new File(tempPath))
       }
     }}
   }
@@ -978,13 +955,13 @@ abstract class MergeIntoSuiteBase
           .createOrReplaceTempView("source")
 
         executeMerge(
-          target = s"delta.`$tempPath`",
+          target = s"$tableSQLIdentifier",
           source = "source src",
           condition = "src.key1 = key2",
           update = "key2 = 20 + key1, value = 20 + src.value",
           insert = "(key2, value) VALUES (key1 - 10, src.value + 10)")
 
-        checkAnswer(readDeltaTable(tempPath),
+        checkAnswer(readDeltaTableByIdentifier(tableSQLIdentifier),
           Row(2, 2) :: // No change
             Row(21, 21) :: // Update
             Row(-10, 13) :: // Insert
@@ -998,22 +975,22 @@ abstract class MergeIntoSuiteBase
     withTable("source") {
       append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
       Seq((1, 1), (0, 3), (3, 3)).toDF("key1", "value").createOrReplaceTempView("source")
-      spark.table(s"delta.`$tempPath`").cache()
-      spark.table(s"delta.`$tempPath`").collect()
+      spark.table(tableSQLIdentifier).cache()
+      spark.table(tableSQLIdentifier).collect()
 
       append(Seq((100, 100), (3, 5)).toDF("key2", "value"))
       // cache is in effect, as the above change is not reflected
-      checkAnswer(spark.table(s"delta.`$tempPath`"),
+      checkAnswer(spark.table(tableSQLIdentifier),
         Row(2, 2) :: Row(1, 4) :: Row(100, 100) :: Row(3, 5) :: Nil)
 
       executeMerge(
-        target = s"delta.`$tempPath` as trgNew",
+        target = s"$tableSQLIdentifier as trgNew",
         source = "source src",
         condition = "src.key1 = key2",
         update = "value = trgNew.value + 3",
         insert = "(key2, value) VALUES (key1, src.value + 10)")
 
-      checkAnswer(spark.table(s"delta.`$tempPath`"),
+      checkAnswer(spark.table(tableSQLIdentifier),
         Row(100, 100) :: // No change (newly inserted record)
           Row(2, 2) :: // No change
           Row(1, 7) :: // Update
@@ -1763,11 +1740,8 @@ abstract class MergeIntoSuiteBase
           withSQLConf(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED.key -> "true") {
             executeMerge(s"$targetName t", s"$sourceName s", mergeOn, mergeClauses: _*)
           }
-          val deltaPath = if (targetName.startsWith("delta.`")) {
-            targetName.stripPrefix("delta.`").stripSuffix("`")
-          } else targetName
           checkAnswer(
-            readDeltaTable(deltaPath),
+            readDeltaTableByIdentifier(targetName),
             result.map { case (k, v) => Row(k, v) })
         }
       }
@@ -2045,7 +2019,7 @@ abstract class MergeIntoSuiteBase
       append(targetData.toDF("key", "value"), Nil)
       sourceData.toDF("key", "value", "extra").createOrReplaceTempView("source")
       executeMerge(
-        s"delta.`$tempPath` t",
+        s"$tableSQLIdentifier t",
         "source s",
         cond = "s.key = t.key",
         update(condition = "s.key < 2", set = "key = s.key, value = s.value + s.extra"),
@@ -2053,7 +2027,7 @@ abstract class MergeIntoSuiteBase
         insert(condition = "s.key > 1", values = "(key, value) VALUES (s.key, s.value + s.extra)"))
 
       checkAnswer(
-        readDeltaTable(tempPath),
+        readDeltaTableByIdentifier(tableSQLIdentifier),
         Seq(
           Row(1, 110),  // (1, 1) updated by condition, but not (2, 2) or (3, 3)
           Row(3, 3),    // neither updated nor deleted as it matched neither condition
@@ -2081,7 +2055,7 @@ abstract class MergeIntoSuiteBase
     append(toDF(target), Nil)
     withTempView("source") {
       toDF(source).createOrReplaceTempView("source")
-      thunk("source", s"delta.`$tempPath`")
+      thunk("source", tableSQLIdentifier)
     }
   }
 
@@ -2104,7 +2078,7 @@ abstract class MergeIntoSuiteBase
         insert(condition = "s.key.x < 'X4'", values = "(key, value) VALUES (s.key, s.value)"))
 
       checkAnswer(
-        readDeltaTable(tempPath),
+        readDeltaTableByIdentifier(tableSQLIdentifier),
         spark.read.json(Seq(
           """{ "key": { "x": "X1", "y": 1}, "value" : { "a": 100, "b": "B100" } }""", // updated
           """{ "key": { "x": "X2", "y": 2}, "value" : { "a": 2,   "b": "B2"   } }""", // not updated
@@ -2135,11 +2109,8 @@ abstract class MergeIntoSuiteBase
           executeMerge(s"$targetName t", s"$sourceName s", "s.key = t.key", mergeClauses: _*)
         if (result != null) {
           execMerge()
-          val deltaPath = if (targetName.startsWith("delta.`")) {
-            targetName.stripPrefix("delta.`").stripSuffix("`")
-          } else targetName
           checkAnswer(
-            readDeltaTable(deltaPath),
+            readDeltaTableByIdentifier(targetName),
             readFromJSON(result))
         } else {
           val e = intercept[AnalysisException] { execMerge() }
@@ -2242,25 +2213,23 @@ abstract class MergeIntoSuiteBase
           withSQLConf(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED.key -> "true") {
             if (insertCondition.isDefined) {
               executeMerge(
-                s"delta.`$tempPath` as t",
+                s"$tableSQLIdentifier as t",
                 "sourceView s",
                 condition,
                 insert("(t.key, t.value) VALUES (s.key, s.value)",
                   condition = insertCondition.get))
             } else {
               executeMerge(
-                s"delta.`$tempPath` as t",
+                s"$tableSQLIdentifier as t",
                 "sourceView s",
                 condition,
                 insert("(t.key, t.value) VALUES (s.key, s.value)"))
             }
           }
           checkAnswer(
-            readDeltaTable(tempPath),
+            readDeltaTableByIdentifier(tableSQLIdentifier),
             expectedResults.map { r => Row(r._1, r._2) }
           )
-
-          Utils.deleteRecursively(new File(tempPath))
         }
       }
     }
@@ -2440,11 +2409,8 @@ abstract class MergeIntoSuiteBase
             withSQLConf(DeltaSQLConf.MERGE_MATCHED_ONLY_ENABLED.key -> s"$matchedOnlyEnabled") {
               executeMerge(s"$targetName t", s"$sourceName s", mergeOn, mergeClauses: _*)
             }
-            val deltaPath = if (targetName.startsWith("delta.`")) {
-              targetName.stripPrefix("delta.`").stripSuffix("`")
-            } else targetName
             checkAnswer(
-              readDeltaTable(deltaPath),
+              readDeltaTableByIdentifier(targetName),
               result.map { case (k, v) => Row(k, v) })
           }
         }
@@ -2499,17 +2465,15 @@ abstract class MergeIntoSuiteBase
             source.toDF("key", "value").createOrReplaceTempView("sourceView")
 
             executeMerge(
-              tgt = s"delta.`$tempPath` as t",
+              tgt = s"$tableSQLIdentifier as t",
               src = "sourceView s",
               cond = mergeOn,
               update("t.value = s.value"))
 
             checkAnswer(
-              readDeltaTable(tempPath),
+              readDeltaTableByIdentifier(tableSQLIdentifier),
               result.map { r => Row(r._1, r._2) }
             )
-
-            Utils.deleteRecursively(new File(tempPath))
           }
         }
       }
@@ -2550,7 +2514,7 @@ abstract class MergeIntoSuiteBase
           insert = "(key, value) VALUES (s.key, s.value)")
       }.head
 
-      checkAnswer(sql(getDeltaFileStmt(tempPath)),
+      checkAnswer(readDeltaTableByIdentifier(tableSQLIdentifier),
         Row(1, 10) ::  // Updated
         Row(2, 2) ::   // File should be skipped
         Nil)
@@ -2672,12 +2636,9 @@ abstract class MergeIntoSuiteBase
     events = Log4jUsageLogger.track {
       executeMerge(s"$targetName t", s"$sourceName s", "s.key = t.key", mergeClauses: _*)
     }
-    val deltaPath = if (targetName.startsWith("delta.`")) {
-      targetName.stripPrefix("delta.`").stripSuffix("`")
-    } else targetName
 
     checkAnswer(
-      readDeltaTable(deltaPath),
+      readDeltaTableByIdentifier(targetName),
       result.map { case (k, v) => Row(k, v) })
 
     // Verify merge stats from usage events
@@ -3317,7 +3278,7 @@ abstract class MergeIntoSuiteBase
           deleteNotMatched(condition = "t.key > 5"))
       }
 
-      checkAnswer(sql(getDeltaFileStmt(tempPath)), Seq(
+      checkAnswer(readDeltaTableByIdentifier(targetName), Seq(
         Row(0, 0),   // inserted
         Row(1, 1),   // existed previously
         Row(2, 20),  // updated
@@ -3358,7 +3319,7 @@ abstract class MergeIntoSuiteBase
         }
       }
 
-      checkAnswer(sql(getDeltaFileStmt(tempPath)), Seq(
+      checkAnswer(readDeltaTableByIdentifier(targetName), Seq(
         Row(1, 1),  // existed previously
         Row(2, 2),  // existed previously
         Row(3, 3),  // existed previously
@@ -3393,7 +3354,7 @@ abstract class MergeIntoSuiteBase
           insert(condition = "s.key < 1", values = "(key, value) VALUES (s.key, s.value)"))
       }
 
-      checkAnswer(sql(getDeltaFileStmt(tempPath)), Seq(
+      checkAnswer(readDeltaTableByIdentifier(targetName), Seq(
         Row(0, 0),   // inserted
         Row(1, 1),   // existed previously
         Row(2, 2),   // existed previously
@@ -3442,13 +3403,14 @@ abstract class MergeIntoSuiteBase
       val part4 = "part%4"
 
       for (part <- Seq(part1, part2, part3)) {
-        spark.range(0, 3, 1, 1)
-          .toDF("key")
-          .withColumn("value", functions.lit(part))
-          .write.format("delta")
-          .partitionBy("value")
-          .mode("append")
-          .save(tempPath)
+        writeDeltaTable(
+          spark.range(0, 3, 1, 1)
+            .toDF("key")
+            .withColumn("value", functions.lit(part))
+            .write.format("delta")
+            .partitionBy("value")
+            .mode("append"),
+          tableSQLIdentifier)
       }
 
       Seq(
@@ -3459,7 +3421,7 @@ abstract class MergeIntoSuiteBase
       ).toDF("key", "value").createOrReplaceTempView("source")
 
       executeMerge(
-        tgt = s"delta.`$tempPath` t",
+        tgt = s"$tableSQLIdentifier t",
         src = "source s",
         cond = "t.key = s.key AND t.value = s.value",
         delete(condition = s"s.value = '$part2'"),
@@ -3467,7 +3429,7 @@ abstract class MergeIntoSuiteBase
         insert("*")
       )
       checkAnswer(
-        readDeltaTable(tempPath),
+        readDeltaTableByIdentifier(tableSQLIdentifier),
         Row(-1, part1) :: Row(1, part1) :: Row(2, part1) ::
           Row(2, part2) ::
           Row(-1, part3) :: Row(-1, part3) :: Row(-1, part3) ::

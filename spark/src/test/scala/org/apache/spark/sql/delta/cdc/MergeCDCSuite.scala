@@ -44,6 +44,7 @@ class MergeCDCSuite extends MergeIntoSQLSuite with MergeCDCTests
  */
 trait MergeCDCTests extends QueryTest
   with MergeIntoSQLTestUtils
+  with DeltaDMLByPathTestUtils
   with DeltaColumnMappingTestUtils
   with DeltaSQLCommandTest {
   import testImplicits._
