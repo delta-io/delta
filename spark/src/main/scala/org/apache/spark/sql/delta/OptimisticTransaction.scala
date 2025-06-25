@@ -394,9 +394,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
         TableFeatureProtocolUtils.defaultPropertyKey(CatalogOwnedTableFeature)
       // Isolate the spark conf to be used in the subsequent [[DeltaConfigs.mergeGlobalConfigs]]
       // by cloning the existing configuration.
-      val clonedConf = spark.synchronized {
-        spark.sessionState.conf.clone()
-      }
+      // Note: [[SQLConf.clone]] is already atomic so no extra synchronization is needed.
+      val clonedConf = spark.sessionState.conf.clone()
       // Unset default CC conf on the cloned spark conf.
       clonedConf.unsetConf(defaultCatalogOwnedFeatureEnabledKey)
       clonedConf
