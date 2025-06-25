@@ -1163,13 +1163,42 @@ trait OptimisticTransactionImpl extends TransactionHelper
     logError(e.getMessage)
   }
 
-  def collectAutoOptimizeStats(numAdd: Long, numRemove: Long, actions: Iterator[Action]): Unit = {
-    // Early exit if no files were added or removed.
-    if (numAdd == 0 && numRemove == 0) return
+  /**
+   * Collects auto optimize stats from the given actions.
+   * This method computes the stats as a side effect of iterating through the actions.
+   * The computed stats are only available after the returned iterator is fully consumed.
+   * `finalizeStats` must be called on the returned collector to finalize the stats.
+   * @param actions An iterator of actions that are being committed in this transaction.
+   * @return A tuple containing:
+   *         1. An iterator of actions with the auto optimize stats computed as a side effect.
+   *         2. An instance of [[AutoCompactPartitionStatsCollector]] that contains the
+   *          computed stats.
+   */
+  private def collectAutoOptimizeStats(
+      actions: Iterator[Action]): (Iterator[Action], AutoCompactPartitionStatsCollector) = {
     val collector = createAutoCompactStatsCollector()
-    if (collector.isInstanceOf[DisabledAutoCompactPartitionStatsCollector]) return
-    AutoCompactPartitionStats.instance(spark)
-      .collectPartitionStats(collector, deltaLog.tableId, actions)
+    if (collector.isInstanceOf[DisabledAutoCompactPartitionStatsCollector]) {
+      return (actions, collector)
+    }
+    val actionsIter = AutoCompactPartitionStats.instance(spark)
+      .collectPartitionStats(collector, actions)
+    (actionsIter, collector)
+  }
+
+  /**
+   * Collects auto optimize stats from the given actions and finalizes the stats.
+   * This method consumes the actions iterator to compute the stats and then finalizes them.
+   * @param actions A sequence of actions that are being committed in this transaction.
+   * @param tableId The ID of the table for which the stats are being collected.
+   */
+  def collectAutoOptimizeStatsAndFinalize(
+      actions: Seq[Action],
+      tableId: String): Unit = {
+    val (actionsIter, acStatsCollector) =
+      collectAutoOptimizeStats(actions.toIterator)
+    // Consume the iterator to hydrate the stats collector.
+    actionsIter.foreach(_ => ())
+    acStatsCollector.finalizeStats(tableId)
   }
 
   /**
@@ -1669,20 +1698,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
         tags = if (tags.nonEmpty) Some(tags) else None,
         txnId = Some(txnId))
 
-      // We don't expect commits to have more than 2 billion actions
-      var commitSize: Int = 0
-      var numAbsolutePaths: Int = 0
-      var numAddFiles: Int = 0
-      var numRemoveFiles: Int = 0
-      var numSetTransaction: Int = 0
-      var bytesNew: Long = 0L
-      var numOfDomainMetadatas: Long = 0L
-      var addFilesHistogram: Option[FileSizeHistogram] = None
-      var removeFilesHistogram: Option[FileSizeHistogram] = None
       val assertDeletionVectorWellFormed = getAssertDeletionVectorWellFormedFunc(spark, op)
-      // Initialize everything needed to maintain auto-compaction stats.
-      partitionsAddedToOpt = Some(new mutable.HashSet[Map[String, String]])
-      val acStatsCollector = createAutoCompactStatsCollector()
       updateMetadataWithCoordinatedCommitsConfs()
       updateMetadataWithInCommitTimestamp(commitInfo)
 
@@ -1691,22 +1707,9 @@ trait OptimisticTransactionImpl extends TransactionHelper
           nonProtocolMetadataActions ++
           newProtocol.toIterator
       allActions = allActions.map { action =>
-        commitSize += 1
         action match {
           case a: AddFile =>
-            numAddFiles += 1
-            if (a.pathAsUri.isAbsolute) numAbsolutePaths += 1
             assertDeletionVectorWellFormed(a)
-            partitionsAddedToOpt.get += a.partitionValues
-            acStatsCollector.collectPartitionStatsForAdd(a)
-            if (a.dataChange) bytesNew += a.size
-            addFilesHistogram.foreach(_.insert(a.size))
-          case r: RemoveFile =>
-            numRemoveFiles += 1
-            acStatsCollector.collectPartitionStatsForRemove(r)
-            removeFilesHistogram.foreach(_.insert(r.getFileSize))
-          case _: SetTransaction =>
-            numSetTransaction += 1
           case p: Protocol =>
             recordProtocolChanges(
               "delta.protocol.change",
@@ -1716,12 +1719,12 @@ trait OptimisticTransactionImpl extends TransactionHelper
             DeltaTableV2.withEnrichedUnsupportedTableException(catalogTable) {
               deltaLog.protocolWrite(p)
             }
-          case d: DomainMetadata =>
-            numOfDomainMetadatas += 1
           case _ =>
         }
         action
       }
+      val (allActions2, acStatsCollector) = collectAutoOptimizeStats(allActions)
+      allActions = allActions2
 
       // Validate protocol support, specifically writer features.
       DeltaTableV2.withEnrichedUnsupportedTableException(catalogTable) {
@@ -1732,12 +1735,18 @@ trait OptimisticTransactionImpl extends TransactionHelper
       allActions = DefaultRowCommitVersion
         .assignIfMissing(protocol, allActions, getFirstAttemptVersion)
 
+      val commitStatsComputer = new CommitStatsComputer()
+      allActions = commitStatsComputer.addToCommitStats(allActions)
       executionObserver.beginDoCommit()
       if (readVersion < 0) {
         deltaLog.createLogDirectoriesIfNotExists()
       }
       val fsWriteStartNano = System.nanoTime()
       val jsonActions = allActions.map(_.json)
+      var commitSizeBytes = 0L
+      jsonActions.map { action =>
+          commitSizeBytes += action.size
+      }
       val effectiveTableCommitCoordinatorClient =
         readSnapshotTableCommitCoordinatorClientOpt.getOrElse {
           TableCommitCoordinatorClient(
@@ -1754,7 +1763,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       // TODO(coordinated-commits): Use the right timestamp method on top of CommitInfo once ICT is
       //  merged.
       // If the metadata didn't change, `newMetadata` is empty, and we can re-use the old id.
-      acStatsCollector.finalizeStats(newMetadata.map(_.id).getOrElse(this.snapshot.metadata.id))
+      acStatsCollector.finalizeStats(newMetadata.map(_.id).getOrElse(snapshot.metadata.id))
       spark.sessionState.conf.setConf(
         DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION,
         Some(attemptVersion))
@@ -1763,43 +1772,33 @@ trait OptimisticTransactionImpl extends TransactionHelper
       // NOTE: commitLarge cannot run postCommitHooks (such as the CheckpointHook).
       // Instead, manually run any necessary actions in updateAndCheckpoint.
       val postCommitSnapshot = updateAndCheckpoint(
-        spark, deltaLog, commitSize, attemptVersion, commitResponse.getCommit, txnId)
+        spark,
+        deltaLog,
+        commitStatsComputer.getNumActions,
+        attemptVersion,
+        commitResponse.getCommit,
+        txnId)
       setCommitted(attemptVersion, postCommitSnapshot, committedActions = Seq.empty)
       val postCommitReconstructionTime = System.nanoTime()
-      var stats = CommitStats(
-        startVersion = readVersion,
-        commitVersion = attemptVersion,
-        readVersion = postCommitSnapshot.version,
-        txnDurationMs = NANOSECONDS.toMillis(commitEndNano - txnStartTimeNs),
+      commitStatsComputer.finalizeAndEmitCommitStats(
+        spark,
+        attemptVersion,
+        snapshot.version,
         commitDurationMs = NANOSECONDS.toMillis(commitEndNano - commitStartNano),
         fsWriteDurationMs = NANOSECONDS.toMillis(commitEndNano - fsWriteStartNano),
+        txnExecutionTimeMs = NANOSECONDS.toMillis(commitEndNano - txnStartTimeNs),
         stateReconstructionDurationMs =
-          NANOSECONDS.toMillis(postCommitReconstructionTime - commitEndNano),
-        numAdd = numAddFiles,
-        numRemove = numRemoveFiles,
-        numSetTransaction = numSetTransaction,
-        bytesNew = bytesNew,
-        numFilesTotal = postCommitSnapshot.numOfFiles,
-        sizeInBytesTotal = postCommitSnapshot.sizeInBytes,
-        numCdcFiles = 0,
-        cdcBytesNew = 0,
-        protocol = postCommitSnapshot.protocol,
-        commitSizeBytes = jsonActions.map(_.size).sum,
-        checkpointSizeBytes = postCommitSnapshot.checkpointSizeInBytes(),
-        totalCommitsSizeSinceLastCheckpoint = 0L,
-        checkpointAttempt = true,
-        info = Option(commitInfo).map(_.copy(readVersion = None, isolationLevel = None)).orNull,
-        newMetadata = Some(metadata),
-        numAbsolutePathsInAdd = numAbsolutePaths,
-        numDistinctPartitionsInAdd = -1, // not tracking distinct partitions as of now
-        numPartitionColumnsInTable = postCommitSnapshot.metadata.partitionColumns.size,
-        isolationLevel = Serializable.toString,
-        coordinatedCommitsInfo = createCoordinatedCommitsStats(newProtocol),
-        numOfDomainMetadatas = numOfDomainMetadatas,
-        txnId = Some(txnId))
+            NANOSECONDS.toMillis(postCommitReconstructionTime - commitEndNano),
+        postCommitSnapshot,
+        // We manually triggered a checkpoint in `updateAndCheckpoint` above.
+        computedNeedsCheckpoint = true,
+        isolationLevel = Serializable,
+        commitInfoOpt = Some(commitInfo),
+        commitSizeBytes = commitSizeBytes
+      )
+      partitionsAddedToOpt = Some(commitStatsComputer.getPartitionsAddedByTransaction)
 
       executionObserver.transactionCommitted()
-      recordDeltaEvent(deltaLog, DeltaLogging.DELTA_COMMIT_STATS_OPTYPE, data = stats)
       (attemptVersion, postCommitSnapshot)
     } catch {
       case e: Throwable =>
@@ -2373,83 +2372,29 @@ trait OptimisticTransactionImpl extends TransactionHelper
       preCommitLogSegment,
       catalogTable)
     val postCommitReconstructionTime = System.nanoTime()
-
-    // Post stats
-    // Here, we efficiently calculate various stats (number of each different action, number of
-    // bytes per action, etc.) by iterating over all actions, case matching by type, and updating
-    // variables. This is more efficient than a functional approach.
-    var numAbsolutePaths = 0
-    val distinctPartitions = new mutable.HashSet[Map[String, String]]
-
-    var bytesNew: Long = 0L
-    var numAdd: Int = 0
-    var numOfDomainMetadatas: Long = 0L
-    var numRemove: Int = 0
-    var numSetTransaction: Int = 0
-    var numCdcFiles: Int = 0
-    var cdcBytesNew: Long = 0L
-    actions.foreach {
-      case a: AddFile =>
-        numAdd += 1
-        if (a.pathAsUri.isAbsolute) numAbsolutePaths += 1
-        distinctPartitions += a.partitionValues
-        if (a.dataChange) bytesNew += a.size
-      case r: RemoveFile =>
-        numRemove += 1
-      case c: AddCDCFile =>
-        numCdcFiles += 1
-        cdcBytesNew += c.size
-      case _: SetTransaction =>
-        numSetTransaction += 1
-      case _: DomainMetadata =>
-        numOfDomainMetadatas += 1
-      case _ =>
-    }
-    collectAutoOptimizeStats(numAdd, numRemove, actions.iterator)
-    val info = currentTransactionInfo.commitInfo
-      .map(_.copy(readVersion = None, isolationLevel = None)).orNull
     needsCheckpoint = isCheckpointNeeded(attemptVersion, postCommitSnapshot)
-    val doCollectCommitStats =
-      needsCheckpoint || spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_FORCE_ALL_COMMIT_STATS)
-
-    // Stats that force an expensive snapshot state reconstruction:
-    val numFilesTotal = if (doCollectCommitStats) postCommitSnapshot.numOfFiles else -1L
-    val sizeInBytesTotal = if (doCollectCommitStats) postCommitSnapshot.sizeInBytes else -1L
-
-    val stats = CommitStats(
+    collectAutoOptimizeStatsAndFinalize(actions, deltaLog.tableId)
+    val commitStatsComputer = new CommitStatsComputer()
+    // Add to commit stats and consume the returned iterator.
+    commitStatsComputer.addToCommitStats(actions.toIterator).foreach(_ => ())
+    val commitSizeBytes = jsonActions.map(_.length).sum
+    commitStatsComputer.finalizeAndEmitCommitStats(
+      spark,
+      attemptVersion,
       startVersion = snapshot.version,
-      commitVersion = attemptVersion,
-      readVersion = postCommitSnapshot.version,
-      txnDurationMs = NANOSECONDS.toMillis(commitEndNano - txnStartNano),
       commitDurationMs = NANOSECONDS.toMillis(commitEndNano - commitStartNano),
       fsWriteDurationMs = NANOSECONDS.toMillis(commitEndNano - fsWriteStartNano),
+      txnExecutionTimeMs = NANOSECONDS.toMillis(commitEndNano - txnStartNano),
       stateReconstructionDurationMs =
         NANOSECONDS.toMillis(postCommitReconstructionTime - commitEndNano),
-      numAdd = numAdd,
-      numRemove = numRemove,
-      numSetTransaction = numSetTransaction,
-      bytesNew = bytesNew,
-      numFilesTotal = numFilesTotal,
-      sizeInBytesTotal = sizeInBytesTotal,
-      numCdcFiles = numCdcFiles,
-      cdcBytesNew = cdcBytesNew,
-      protocol = postCommitSnapshot.protocol,
-      commitSizeBytes = jsonActions.map(_.size).sum,
-      checkpointSizeBytes = postCommitSnapshot.checkpointSizeInBytes(),
-      totalCommitsSizeSinceLastCheckpoint = postCommitSnapshot.deltaFileSizeInBytes(),
-      checkpointAttempt = needsCheckpoint,
-      info = info,
-      newMetadata = newMetadata,
-      numAbsolutePathsInAdd = numAbsolutePaths,
-      numDistinctPartitionsInAdd = distinctPartitions.size,
-      numPartitionColumnsInTable = postCommitSnapshot.metadata.partitionColumns.size,
-      isolationLevel = isolationLevel.toString,
-      coordinatedCommitsInfo = createCoordinatedCommitsStats(newProtocol),
-      numOfDomainMetadatas = numOfDomainMetadatas,
-      txnId = Some(txnId))
-    recordDeltaEvent(deltaLog, DeltaLogging.DELTA_COMMIT_STATS_OPTYPE, data = stats)
+      postCommitSnapshot = postCommitSnapshot,
+      computedNeedsCheckpoint = needsCheckpoint,
+      isolationLevel = isolationLevel,
+      commitInfoOpt = currentTransactionInfo.commitInfo,
+      commitSizeBytes = commitSizeBytes
+    )
+    partitionsAddedToOpt = Some(commitStatsComputer.getPartitionsAddedByTransaction)
 
-    partitionsAddedToOpt = Some(distinctPartitions)
     postCommitSnapshot
   }
 
