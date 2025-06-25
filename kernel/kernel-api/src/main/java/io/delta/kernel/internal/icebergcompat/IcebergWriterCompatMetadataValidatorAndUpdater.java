@@ -21,6 +21,8 @@ import static java.util.stream.Collectors.toSet;
 
 import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.TableConfig;
+import io.delta.kernel.internal.actions.Metadata;
+import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.tablefeatures.TableFeature;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.ColumnMapping;
@@ -39,6 +41,25 @@ abstract class IcebergWriterCompatMetadataValidatorAndUpdater
   /// Interfaces for defining validations and updates necessary to support IcebergWriterCompats
   // ///
   /////////////////////////////////////////////////////////////////////////////////
+
+  /**
+   * Validate and update the given Iceberg Writer Compat metadata.
+   *
+   * @param newMetadata Metadata after the current updates
+   * @param newProtocol Protocol after the current updates
+   * @return The updated metadata if the metadata is valid and updated, otherwise empty.
+   * @throws UnsupportedOperationException if the metadata is not compatible with Iceberg Writer
+   *     version. requirements
+   */
+  public static Optional<Metadata> validateAndUpdateIcebergWriterCompatMetadata(
+      boolean isCreatingNewTable,
+      Metadata newMetadata,
+      Protocol newProtocol,
+      IcebergWriterCompatMetadataValidatorAndUpdater INSTANCE) {
+    return INSTANCE.validateAndUpdateMetadata(
+        new IcebergCompatInputContext(
+            INSTANCE.compatFeatureName(), isCreatingNewTable, newMetadata, newProtocol));
+  }
 
   /**
    * Common property enforcer for Column Mapping ID mode requirement. This is identical across all

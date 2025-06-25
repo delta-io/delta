@@ -20,13 +20,10 @@ import static java.util.stream.Collectors.toList;
 
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.internal.TableConfig;
-import io.delta.kernel.internal.actions.Metadata;
-import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.tablefeatures.TableFeature;
 import io.delta.kernel.utils.DataFileStatus;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.stream.Stream;
 
 /** Utility methods for validation and compatibility checks for Iceberg V3. */
@@ -56,22 +53,6 @@ public class IcebergCompatV3MetadataValidatorAndUpdater
   }
 
   /**
-   * Validate and update the given Iceberg V3 metadata.
-   *
-   * @param newMetadata Metadata after the current updates
-   * @param newProtocol Protocol after the current updates
-   * @return The updated metadata if the metadata is valid and updated, otherwise empty.
-   * @throws UnsupportedOperationException if the metadata is not compatible with Iceberg V3
-   *     requirements
-   */
-  public static Optional<Metadata> validateAndUpdateIcebergCompatV3Metadata(
-      boolean isCreatingNewTable, Metadata newMetadata, Protocol newProtocol) {
-    return INSTANCE.validateAndUpdateMetadata(
-        new IcebergCompatInputContext(
-            INSTANCE.compatFeatureName(), isCreatingNewTable, newMetadata, newProtocol));
-  }
-
-  /**
    * Validate the given {@link DataFileStatus} that is being added as a {@code add} action to Delta
    * Log. Currently, it checks that the statistics are not empty.
    *
@@ -87,6 +68,11 @@ public class IcebergCompatV3MetadataValidatorAndUpdater
 
   private static final IcebergCompatV3MetadataValidatorAndUpdater INSTANCE =
       new IcebergCompatV3MetadataValidatorAndUpdater();
+
+  public static IcebergCompatMetadataValidatorAndUpdater
+      getIcebergCompatV3MetadataValidatorAndUpdaterInstance() {
+    return INSTANCE;
+  }
 
   @Override
   String compatFeatureName() {

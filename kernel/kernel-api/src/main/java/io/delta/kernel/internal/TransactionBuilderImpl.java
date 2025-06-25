@@ -473,24 +473,34 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     // mapping requirements (id mode) than icebergCompatV2. It also may enable icebergCompatV2.
     Optional<Metadata> icebergWriterCompatV1 =
         IcebergWriterCompatV1MetadataValidatorAndUpdater
-            .validateAndUpdateIcebergWriterCompatV1Metadata(
+            .validateAndUpdateIcebergWriterCompatMetadata(
                 isCreateOrReplace,
                 newMetadata.orElse(baseMetadata),
-                newProtocol.orElse(baseProtocol));
+                newProtocol.orElse(baseProtocol),
+                IcebergWriterCompatV1MetadataValidatorAndUpdater
+                    .getIcebergWriterCompatV1MetadataValidatorAndUpdaterInstance());
     if (icebergWriterCompatV1.isPresent()) {
       newMetadata = icebergWriterCompatV1;
     }
 
     // TODO: refactor this method to use a single validator and updater.
     Optional<Metadata> icebergCompatV2Metadata =
-        IcebergCompatV2MetadataValidatorAndUpdater.validateAndUpdateIcebergCompatV2Metadata(
-            isCreateOrReplace, newMetadata.orElse(baseMetadata), newProtocol.orElse(baseProtocol));
+        IcebergCompatV2MetadataValidatorAndUpdater.validateAndUpdateIcebergCompatMetadata(
+            isCreateOrReplace,
+            newMetadata.orElse(baseMetadata),
+            newProtocol.orElse(baseProtocol),
+            IcebergCompatV2MetadataValidatorAndUpdater
+                .getIcebergCompatV2MetadataValidatorAndUpdaterInstance());
     if (icebergCompatV2Metadata.isPresent()) {
       newMetadata = icebergCompatV2Metadata;
     }
     Optional<Metadata> icebergCompatV3Metadata =
-        IcebergCompatV3MetadataValidatorAndUpdater.validateAndUpdateIcebergCompatV3Metadata(
-            isCreateOrReplace, newMetadata.orElse(baseMetadata), newProtocol.orElse(baseProtocol));
+        IcebergCompatV3MetadataValidatorAndUpdater.validateAndUpdateIcebergCompatMetadata(
+            isCreateOrReplace,
+            newMetadata.orElse(baseMetadata),
+            newProtocol.orElse(baseProtocol),
+            IcebergCompatV3MetadataValidatorAndUpdater
+                .getIcebergCompatV3MetadataValidatorAndUpdaterInstance());
     if (icebergCompatV3Metadata.isPresent()) {
       newMetadata = icebergCompatV3Metadata;
     }

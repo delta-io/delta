@@ -21,8 +21,6 @@ import static java.util.stream.Collectors.toSet;
 
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.internal.TableConfig;
-import io.delta.kernel.internal.actions.Metadata;
-import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.tablefeatures.TableFeature;
 import io.delta.kernel.types.*;
 import java.util.*;
@@ -84,22 +82,6 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
         TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED, oldConfig, newConfig, isNewTable);
   }
 
-  /**
-   * Validate and update the given Iceberg Writer Compat V1 metadata.
-   *
-   * @param newMetadata Metadata after the current updates
-   * @param newProtocol Protocol after the current updates
-   * @return The updated metadata if the metadata is valid and updated, otherwise empty.
-   * @throws UnsupportedOperationException if the metadata is not compatible with Iceberg Writer V1
-   *     requirements
-   */
-  public static Optional<Metadata> validateAndUpdateIcebergWriterCompatV1Metadata(
-      boolean isCreatingNewTable, Metadata newMetadata, Protocol newProtocol) {
-    return INSTANCE.validateAndUpdateMetadata(
-        new IcebergCompatInputContext(
-            INSTANCE.compatFeatureName(), isCreatingNewTable, newMetadata, newProtocol));
-  }
-
   /// //////////////////////////////////////////////////////////////////////////////
   /// Define the compatibility and update checks for icebergWriterCompatV1       ///
   /// //////////////////////////////////////////////////////////////////////////////
@@ -107,16 +89,22 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
   private static final IcebergWriterCompatV1MetadataValidatorAndUpdater INSTANCE =
       new IcebergWriterCompatV1MetadataValidatorAndUpdater();
 
+  public static IcebergWriterCompatMetadataValidatorAndUpdater
+      getIcebergWriterCompatV1MetadataValidatorAndUpdaterInstance() {
+    return INSTANCE;
+  }
+
   private static final IcebergCompatRequiredTablePropertyEnforcer ICEBERG_COMPAT_V2_ENABLED =
       new IcebergCompatRequiredTablePropertyEnforcer<>(
           TableConfig.ICEBERG_COMPAT_V2_ENABLED,
           (value) -> value,
           "true",
           (inputContext) ->
-              IcebergCompatV2MetadataValidatorAndUpdater.validateAndUpdateIcebergCompatV2Metadata(
+              IcebergCompatV2MetadataValidatorAndUpdater.validateAndUpdateIcebergCompatMetadata(
                   inputContext.isCreatingNewTable,
                   inputContext.newMetadata,
-                  inputContext.newProtocol));
+                  inputContext.newProtocol,
+                  INSTANCE));
 
   /**
    * Current set of allowed table features. This may evolve as the protocol evolves. This includes
