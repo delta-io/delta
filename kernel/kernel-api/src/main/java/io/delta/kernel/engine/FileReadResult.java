@@ -30,7 +30,7 @@ public class FileReadResult {
   private final String filePath;
 
   /**
-   * Constructs a {@code ParquetReadResult} object with the given data and file path.
+   * Constructs a {@code FileReadResult} object with the given data and file path.
    *
    * @param data the columnar batch of data read from the file
    * @param filePath the path of the file from which the data was read
