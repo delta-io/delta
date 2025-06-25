@@ -80,7 +80,6 @@ object DeltaToIcebergConvert
                            provided: Map[String, String]): Map[String, String] =
         IcebergCompat
           .anyEnabled(deltaProperties)
-          .filter(_.icebergFormatVersion != 1) // version 1 is default
           .map(IcebergTableProperties.FORMAT_VERSION -> _.icebergFormatVersion.toString)
           .toMap
     }

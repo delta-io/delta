@@ -42,7 +42,7 @@ import org.apache.spark.sql.types._
 
 object IcebergCompatV1 extends IcebergCompatBase(
   version = 1,
-  icebergFormatVersion = 1,
+  icebergFormatVersion = 2,
   config = DeltaConfigs.ICEBERG_COMPAT_V1_ENABLED,
   tableFeature = IcebergCompatV1TableFeature,
   requiredTableProperties = Seq(RequireColumnMapping),
@@ -59,7 +59,7 @@ object IcebergCompatV1 extends IcebergCompatBase(
 
 object IcebergCompatV2 extends IcebergCompatBase(
   version = 2,
-  icebergFormatVersion = 1,
+  icebergFormatVersion = 2,
   config = DeltaConfigs.ICEBERG_COMPAT_V2_ENABLED,
   tableFeature = IcebergCompatV2TableFeature,
   requiredTableProperties = Seq(RequireColumnMapping),
