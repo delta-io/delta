@@ -2,6 +2,8 @@ package io.delta.kernel.engine;
 
 import io.delta.kernel.data.ColumnarBatch;
 
+import java.util.Objects;
+
 /**
  * Represents the result of reading a batch of data in a Parquet file.
  *
@@ -20,8 +22,8 @@ public class ParquetReadResult {
    * @param filePath the path of the file from which the data was read
    */
   public ParquetReadResult(ColumnarBatch data, String filePath) {
-    this.data = data;
-    this.filePath = filePath;
+    this.data = Objects.requireNonNull(data, "data must not be null");
+    this.filePath = Objects.requireNonNull(filePath, "filePath must not be null");
   }
 
   /**
