@@ -27,6 +27,17 @@ public interface TableManager {
   // TODO static ResolvedTable forPathAtTimestamp(Engine engine, String path, long timestamp);
 
   // TODO: Take in a Committer for write support.
+
+  /**
+   * Creates a builder for loading a Delta table at the given path.
+   *
+   * <p>The returned builder can be configured to load the table at a specific version or with
+   * additional metadata to optimize the loading process.
+   *
+   * @param path the file system path to the Delta table
+   * @return a {@link ResolvedTableBuilder} that can be used to load a {@link ResolvedTable} at the
+   *     given path
+   */
   static ResolvedTableBuilder loadTable(String path) {
     return new ResolvedTableBuilderImpl(path);
   }
