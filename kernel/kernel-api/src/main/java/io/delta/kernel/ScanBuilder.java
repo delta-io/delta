@@ -71,7 +71,7 @@ public interface ScanBuilder {
   /**
    * Build a Paginated Scan with a required page size and an optional page token.
    *
-   * @param pageSize Maximum number of AddFiles to return in this page.
+   * @param pageSize Maximum number of Scan Files to return in this page.
    * @param pageToken Optional page token representing the current scan position; empty to start
    *     from the beginning.
    * @return A {@link PaginatedScan} configured for pagination.

@@ -14,19 +14,14 @@ import java.util.Optional;
  * result set would be expensive in terms of memory or compute resources.
  *
  * <p>Pagination is achieved via a combination of {@code pageSize} and {@code pageToken}. The {@code
- * pageSize} controls how many Parquet data files are returned in each page, while the {@code
- * pageToken} encodes the location of next batch to read and is used to resume the scan from exactly
- * where the last page ended. For the first page, the {@code pageToken} should be {@code
- * Optional.empty()} or empty.
+ * pageSize} controls how many Scan files are returned in each page, while the {@code pageToken}
+ * encodes the location of next batch to read and is used to resume the scan from exactly where the
+ * last page ended. For the first page, the {@code pageToken} should be {@code Optional.empty()}.
  *
  * <p>Consumers typically use {@link PaginatedScan} in a loop: they call {@code getScanFiles()} to
- * retrieve an iterator over the current page's scan files, After consuming the iterator, then call
- * {@code getCurrentPageToken()} to retrieve a token to pass into the next page request. This allows
- * users to scan the dataset incrementally, resuming from where they left off.
- *
- * <p>Implementations must ensure that the {@code pageToken} is opaque and self-describing;
- * consumers should not inspect or modify the token, but only pass it back to the scan API to
- * continue pagination.
+ * retrieve an iterator over the current page's scan files, After consuming the iterator, users
+ * should call {@code getCurrentPageToken()} to retrieve a token to pass into the next page request.
+ * This allows users to scan the dataset incrementally, resuming from where they left off.
  */
 public interface PaginatedScan extends Scan {
 
@@ -54,10 +49,9 @@ public interface PaginatedScan extends Scan {
    * <p>The returned token also includes metadata for validation purposes, such as detecting changes
    * in query parameters or log segments between requests.
    *
-   * <p><strong>Usage note:</strong> Callers should invoke {@code getCurrentPageToken()} only after
-   * finishing consumption of the current iterator. It is not required to consume the entire
-   * iterator; the returned page token will always point to the beginning of the next batch in the
-   * iterator.
+   * <p>Callers should invoke {@code getCurrentPageToken()} only after finishing consumption of the
+   * current iterator. Actually it is not required to consume the entire iterator; the returned page
+   * token will always point to the beginning of the next batch in the iterator.
    *
    * @return an {@link Optional} {@link Row} encoding the current scan position and validation
    *     metadata.
