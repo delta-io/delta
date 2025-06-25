@@ -55,6 +55,7 @@ import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
 import io.delta.kernel.internal.util.SchemaUtils;
 import io.delta.kernel.internal.util.Tuple2;
+import io.delta.kernel.transaction.UpdateTableTransactionBuilder;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 import java.util.*;
@@ -62,7 +63,7 @@ import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class TransactionBuilderImpl implements TransactionBuilder {
+public class TransactionBuilderImpl implements TransactionBuilder, UpdateTableTransactionBuilder {
   private static final Logger logger = LoggerFactory.getLogger(TransactionBuilderImpl.class);
 
   private final long currentTimeMillis = System.currentTimeMillis();
@@ -103,6 +104,38 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     this.engineInfo = engineInfo;
     this.operation = operation;
   }
+
+  ///////////////////////////////////////////
+  // UpdateTableTransactionBuilder methods //
+  ///////////////////////////////////////////
+
+  @Override
+  public TransactionBuilderImpl withUpdatedSchema(StructType updatedSchema) {
+    this.schema = Optional.of(updatedSchema); // will be verified as part of the build() call
+    return this;
+  }
+
+  @Override
+  public TransactionBuilderImpl withTableProperties(Map<String, String> properties) {
+    this.tableProperties =
+        Optional.of(Collections.unmodifiableMap(TableConfig.validateDeltaProperties(properties)));
+    return this;
+  }
+
+  @Override
+  public TransactionBuilderImpl withTransactionId(String applicationId, long transactionVersion) {
+    SetTransaction txnId =
+        new SetTransaction(
+            requireNonNull(applicationId, "applicationId is null"),
+            transactionVersion,
+            Optional.of(currentTimeMillis));
+    this.setTxnOpt = Optional.of(txnId);
+    return this;
+  }
+
+  ////////////////////////////////
+  // TransactionBuilder methods //
+  ////////////////////////////////
 
   @Override
   public TransactionBuilder withSchema(Engine engine, StructType newSchema) {
@@ -152,24 +185,16 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   @Override
   public TransactionBuilder withTransactionId(
       Engine engine, String applicationId, long transactionVersion) {
-    SetTransaction txnId =
-        new SetTransaction(
-            requireNonNull(applicationId, "applicationId is null"),
-            transactionVersion,
-            Optional.of(currentTimeMillis));
-    this.setTxnOpt = Optional.of(txnId);
-    return this;
+    return withTransactionId(applicationId, transactionVersion);
   }
 
   @Override
   public TransactionBuilder withTableProperties(Engine engine, Map<String, String> properties) {
-    this.tableProperties =
-        Optional.of(Collections.unmodifiableMap(TableConfig.validateDeltaProperties(properties)));
-    return this;
+    return withTableProperties(properties);
   }
 
   @Override
-  public TransactionBuilder withTablePropertiesRemoved(Set<String> propertyKeys) {
+  public TransactionBuilderImpl withTablePropertiesRemoved(Set<String> propertyKeys) {
     checkArgument(
         propertyKeys.stream().noneMatch(key -> key.toLowerCase(Locale.ROOT).startsWith("delta.")),
         "Unsetting 'delta.' table properties is currently unsupported");
@@ -198,7 +223,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   }
 
   @Override
-  public Transaction build(Engine engine) {
+  public TransactionImpl build(Engine engine) {
     if (operation == Operation.REPLACE_TABLE) {
       throw new UnsupportedOperationException("REPLACE TABLE is not yet supported");
     }

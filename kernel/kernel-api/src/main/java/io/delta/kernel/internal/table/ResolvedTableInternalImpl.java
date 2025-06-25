@@ -18,8 +18,8 @@ package io.delta.kernel.internal.table;
 
 import static java.util.Objects.requireNonNull;
 
+import io.delta.kernel.Operation;
 import io.delta.kernel.ScanBuilder;
-import io.delta.kernel.commit.Committer;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.ScanBuilderImpl;
 import io.delta.kernel.internal.actions.DomainMetadata;
@@ -35,6 +35,7 @@ import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.util.Clock;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.metrics.SnapshotReport;
+import io.delta.kernel.transaction.UpdateTableTransactionBuilder;
 import io.delta.kernel.types.StructType;
 import java.util.List;
 import java.util.Map;
@@ -117,8 +118,9 @@ public class ResolvedTableInternalImpl implements ResolvedTableInternal {
   }
 
   @Override
-  public Committer getCommitter() {
-    throw new UnsupportedOperationException("not implemented");
+  public UpdateTableTransactionBuilder buildUpdateTableTransaction(
+      String engineInfo, Operation operation) {
+    return null;
   }
 
   ///////////////////////////////////////

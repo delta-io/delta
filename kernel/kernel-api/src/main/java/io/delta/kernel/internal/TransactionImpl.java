@@ -23,6 +23,8 @@ import static io.delta.kernel.internal.util.Preconditions.checkState;
 import static io.delta.kernel.internal.util.Utils.toCloseableIterator;
 
 import io.delta.kernel.*;
+import io.delta.kernel.commit.CommitPayload;
+import io.delta.kernel.commit.Committer;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.ConcurrentWriteException;
@@ -66,7 +68,7 @@ import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class TransactionImpl implements Transaction {
+public class TransactionImpl implements Transaction, io.delta.kernel.transaction.Transaction {
   private static final Logger logger = LoggerFactory.getLogger(TransactionImpl.class);
 
   public static final int DEFAULT_READ_VERSION = 1;
@@ -132,9 +134,44 @@ public class TransactionImpl implements Transaction {
     this.currentCrcInfo = readSnapshot.getCurrentCrcInfo();
   }
 
+  /////////////////////////////////////////////////////
+  // io.delta.kernel.transaction.Transaction methods //
+  /////////////////////////////////////////////////////
+
+  @Override
+  public StructType getSchema() {
+    return metadata.getSchema();
+  }
+
+  @Override
+  public List<Column> getPartitionColumns() {
+    return VectorUtils.<String>toJavaList(metadata.getPartitionColumns()).stream()
+        .map(Column::new)
+        .collect(Collectors.toList());
+  }
+
+  @Override
+  public Row getTransactionState() {
+    return TransactionStateRow.of(metadata, dataPath.toString(), maxRetries);
+  }
+
+  @Override
+  public Committer getCommitter() {
+    throw new UnsupportedOperationException("not implemented");
+  }
+
+  @Override
+  public CommitPayload getCommitPayload(CloseableIterator<Row> dataActions) {
+    return null;
+  }
+
+  /////////////////////////////////////////
+  // io.delta.kernel.Transaction methods //
+  /////////////////////////////////////////
+
   @Override
   public Row getTransactionState(Engine engine) {
-    return TransactionStateRow.of(metadata, dataPath.toString(), maxRetries);
+    return getTransactionState();
   }
 
   @Override
@@ -144,7 +181,7 @@ public class TransactionImpl implements Transaction {
 
   @Override
   public StructType getSchema(Engine engine) {
-    return metadata.getSchema();
+    return getSchema();
   }
 
   @Override
