@@ -22,7 +22,7 @@ import scala.collection.JavaConverters._
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.TableConfig
 import io.delta.kernel.internal.actions.{Metadata, Protocol}
-import io.delta.kernel.internal.icebergcompat.IcebergWriterCompatV1MetadataValidatorAndUpdater.validateAndUpdateIcebergWriterCompatV1Metadata
+import io.delta.kernel.internal.icebergcompat.IcebergWriterCompatMetadataValidatorAndUpdater.validateAndUpdateIcebergWriterCompatMetadata
 import io.delta.kernel.internal.tablefeatures.TableFeature
 import io.delta.kernel.internal.tablefeatures.TableFeatures.{COLUMN_MAPPING_RW_FEATURE, ICEBERG_COMPAT_V2_W_FEATURE, ICEBERG_WRITER_COMPAT_V1, TYPE_WIDENING_RW_FEATURE}
 import io.delta.kernel.internal.util.ColumnMapping
@@ -35,7 +35,12 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
       isNewTable: Boolean,
       metadata: Metadata,
       protocol: Protocol): Optional[Metadata] = {
-    validateAndUpdateIcebergWriterCompatV1Metadata(isNewTable, metadata, protocol)
+    IcebergWriterCompatMetadataValidatorAndUpdater.validateAndUpdateIcebergWriterCompatMetadata(
+      isNewTable,
+      metadata,
+      protocol,
+      IcebergWriterCompatV1MetadataValidatorAndUpdater
+        .getIcebergWriterCompatV1MetadataValidatorAndUpdaterInstance)
   }
 
   val icebergWriterCompatV1EnabledProps = Map(
