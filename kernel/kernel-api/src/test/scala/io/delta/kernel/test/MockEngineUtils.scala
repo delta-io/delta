@@ -111,9 +111,9 @@ trait BaseMockParquetHandler extends ParquetHandler with MockEngineUtils {
     throw new UnsupportedOperationException("not supported in this test suite")
 
   override def readParquetFilesV2(
-                                 fileIter: CloseableIterator[FileStatus],
-                                 physicalSchema: StructType,
-                                 predicate: Optional[Predicate]): CloseableIterator[ParquetReadResult] =
+      fileIter: CloseableIterator[FileStatus],
+      physicalSchema: StructType,
+      predicate: Optional[Predicate]): CloseableIterator[ParquetReadResult] =
     throw new UnsupportedOperationException("not supported in this test suite")
 
   override def writeParquetFiles(
