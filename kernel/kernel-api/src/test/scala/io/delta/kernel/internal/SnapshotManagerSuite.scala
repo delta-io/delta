@@ -782,9 +782,9 @@ trait SidecarIteratorProvider extends VectorTestUtils {
     override def getSchema: StructType = SidecarFile.READ_SCHEMA
 
     override def getColumnVector(ordinal: Int): ColumnVector = ordinal match {
-      case 0 => stringVector(sidecars.map(_.getPath.toString)) // path
+      case 0 => stringVector(sidecars.map(_.getPath)) // path
       case 1 => longVector(sidecars.map(_.getSize): _*) // size
-      case 2 => longVector(sidecars.map(_.getModificationTime): _*) // mod time
+      case 2 => longVector(sidecars.map(_.getModificationTime): _*) // modification time
     }
 
     override def getSize: Int = sidecars.length
@@ -794,7 +794,7 @@ trait SidecarIteratorProvider extends VectorTestUtils {
   def singletonSidecarParquetIterator(sidecars: Seq[FileStatus])
       : CloseableIterator[FileReadResult] = {
     val batch = buildSidecarBatch(sidecars)
-    val filePath = if (sidecars.nonEmpty) sidecars.head.getPath.toString else "<no_file>"
+    val filePath = if (sidecars.nonEmpty) sidecars.head.getPath else "<no_file>"
     val result = new FileReadResult(batch, filePath)
     Utils.singletonCloseableIterator(result)
   }
