@@ -19,7 +19,6 @@ package io.delta.kernel.internal;
 import io.delta.kernel.PaginatedScan;
 import io.delta.kernel.Scan;
 import io.delta.kernel.ScanBuilder;
-import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.actions.Metadata;
@@ -90,8 +89,7 @@ public class ScanBuilderImpl implements ScanBuilder {
   }
 
   @Override
-  public PaginatedScan buildPaginated(
-      long pageSize, Row pageToken, ColumnarBatch logReplayHashsets) {
-    return null;
+  public PaginatedScan buildPaginated(long pageSize, Optional<Row> pageToken) {
+    throw new UnsupportedOperationException("not implemented");
   }
 }
