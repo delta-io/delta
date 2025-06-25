@@ -43,6 +43,18 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
         .getIcebergWriterCompatV1MetadataValidatorAndUpdaterInstance)
   }
 
+  def validateAndUpdateIcebergWriterCompatMetadata(
+      isNewTable: Boolean,
+      metadata: Metadata,
+      protocol: Protocol): Optional[Metadata] = {
+    IcebergWriterCompatMetadataValidatorAndUpdater.validateAndUpdateIcebergWriterCompatMetadata(
+      isNewTable,
+      metadata,
+      protocol,
+      IcebergWriterCompatV1MetadataValidatorAndUpdater
+        .getIcebergWriterCompatV1MetadataValidatorAndUpdaterInstance)
+  }
+
   val icebergWriterCompatV1EnabledProps = Map(
     TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey -> "true")
 
@@ -75,7 +87,7 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
     val schema = new StructType().add("col", ByteType.BYTE)
     val metadata = testMetadata(schema)
     assert(!TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.fromMetadata(metadata))
-    validateAndUpdateIcebergWriterCompatV1Metadata(
+    validateAndUpdateIcebergWriterCompatMetadata(
       true, /* isNewTable */
       metadata,
       getCompatEnabledProtocol())
@@ -90,7 +102,7 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
         val metadata = getCompatEnabledMetadata(schema)
         val protocol = getCompatEnabledProtocol()
         val e = intercept[KernelException] {
-          validateAndUpdateIcebergWriterCompatV1Metadata(isNewTable, metadata, protocol)
+          validateAndUpdateIcebergWriterCompatMetadata(isNewTable, metadata, protocol)
         }
         assert(e.getMessage.contains(
           s"icebergWriterCompatV1 does not support the data types: "))
@@ -118,7 +130,7 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
 
         if (isNewTable) {
           val updatedMetadata =
-            validateAndUpdateIcebergWriterCompatV1Metadata(isNewTable, metadata, protocol)
+            validateAndUpdateIcebergWriterCompatMetadata(isNewTable, metadata, protocol)
           assert(updatedMetadata.isPresent)
           assert(updatedMetadata.get().getConfiguration.get("delta.columnMapping.mode") == "id")
           // We correctly populate the column mapping metadata
@@ -129,7 +141,7 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
             enableIcebergWriterCompatV1 = true)
         } else {
           val e = intercept[KernelException] {
-            validateAndUpdateIcebergWriterCompatV1Metadata(isNewTable, metadata, protocol)
+            validateAndUpdateIcebergWriterCompatMetadata(isNewTable, metadata, protocol)
           }
           assert(e.getMessage.contains(
             "The value 'none' for the property 'delta.columnMapping.mode' is" +
@@ -150,7 +162,7 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
         val protocol = getCompatEnabledProtocol()
 
         val e = intercept[KernelException] {
-          validateAndUpdateIcebergWriterCompatV1Metadata(isNewTable, metadata, protocol)
+          validateAndUpdateIcebergWriterCompatMetadata(isNewTable, metadata, protocol)
         }
         assert(e.getMessage.contains(
           s"The value '$cmMode' for the property 'delta.columnMapping.mode' is" +
@@ -174,7 +186,7 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
       val protocol = getCompatEnabledProtocol()
 
       val e = intercept[KernelException] {
-        validateAndUpdateIcebergWriterCompatV1Metadata(isNewTable, metadata, protocol)
+        validateAndUpdateIcebergWriterCompatMetadata(isNewTable, metadata, protocol)
       }
       assert(e.getMessage.contains(
         "IcebergWriterCompatV1 requires column mapping field physical names be equal to "
@@ -199,7 +211,7 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
       val protocol = getCompatEnabledProtocol()
 
       val updatedMetadata =
-        validateAndUpdateIcebergWriterCompatV1Metadata(isNewTable, metadata, protocol)
+        validateAndUpdateIcebergWriterCompatMetadata(isNewTable, metadata, protocol)
       // No metadata update happens
       assert(!updatedMetadata.isPresent)
     }
@@ -218,12 +230,12 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
 
       if (isNewTable) {
         val updatedMetadata =
-          validateAndUpdateIcebergWriterCompatV1Metadata(isNewTable, metadata, protocol)
+          validateAndUpdateIcebergWriterCompatMetadata(isNewTable, metadata, protocol)
         assert(updatedMetadata.isPresent)
         assert(TableConfig.ICEBERG_COMPAT_V2_ENABLED.fromMetadata(updatedMetadata.get))
       } else {
         val e = intercept[KernelException] {
-          validateAndUpdateIcebergWriterCompatV1Metadata(isNewTable, metadata, protocol)
+          validateAndUpdateIcebergWriterCompatMetadata(isNewTable, metadata, protocol)
         }
         assert(e.getMessage.contains(
           "The value 'false' for the property 'delta.enableIcebergCompatV2' is" +
@@ -242,7 +254,7 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
       val protocol = getCompatEnabledProtocol()
 
       val e = intercept[KernelException] {
-        validateAndUpdateIcebergWriterCompatV1Metadata(isNewTable, metadata, protocol)
+        validateAndUpdateIcebergWriterCompatMetadata(isNewTable, metadata, protocol)
       }
       assert(e.getMessage.contains(
         "The value 'false' for the property 'delta.enableIcebergCompatV2' is" +
@@ -278,8 +290,8 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
       "timestampNtz")
     val protocol = new Protocol(3, 7, readerFeatures.asJava, writerFeatures.asJava)
     val metadata = getCompatEnabledMetadata(cmTestSchema())
-    validateAndUpdateIcebergWriterCompatV1Metadata(true, metadata, protocol)
-    validateAndUpdateIcebergWriterCompatV1Metadata(false, metadata, protocol)
+    validateAndUpdateIcebergWriterCompatMetadata(true, metadata, protocol)
+    validateAndUpdateIcebergWriterCompatMetadata(false, metadata, protocol)
   }
 
   test("compatible type widening is allowed with icebergWriterCompatV1") {
@@ -301,7 +313,7 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
     val protocol = getCompatEnabledProtocol(TYPE_WIDENING_RW_FEATURE)
 
     // This should not throw an exception
-    validateAndUpdateIcebergWriterCompatV1Metadata(false, metadata, protocol)
+    validateAndUpdateIcebergWriterCompatMetadata(false, metadata, protocol)
   }
 
   test("incompatible type widening throws exception with icebergWriterCompatV1") {
@@ -322,7 +334,7 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
     val protocol = getCompatEnabledProtocol(TYPE_WIDENING_RW_FEATURE)
 
     val e = intercept[KernelException] {
-      validateAndUpdateIcebergWriterCompatV1Metadata(false, metadata, protocol)
+      validateAndUpdateIcebergWriterCompatMetadata(false, metadata, protocol)
     }
 
     assert(e.getMessage.contains("icebergCompatV2 does not support type widening present in table"))
@@ -343,7 +355,7 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
     val metadata = getCompatEnabledMetadata(cmTestSchema())
     Seq(true, false).foreach { isNewTable =>
       val e = intercept[KernelException] {
-        validateAndUpdateIcebergWriterCompatV1Metadata(isNewTable, metadata, protocol)
+        validateAndUpdateIcebergWriterCompatMetadata(isNewTable, metadata, protocol)
       }
       assert(e.getMessage.contains(expectedErrorMessageContains))
     }
@@ -380,7 +392,7 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
     Seq(true, false).foreach { isNewTable =>
       test(s"cannot enable with $tableFeature active, isNewTable = $isNewTable") {
         val e = intercept[KernelException] {
-          validateAndUpdateIcebergWriterCompatV1Metadata(
+          validateAndUpdateIcebergWriterCompatMetadata(
             isNewTable,
             activeFeatureMetadata,
             getCompatEnabledProtocol())
@@ -455,7 +467,7 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
           val writerFeatures = Set("icebergWriterCompatV1", featureToIncludeStr)
           val protocol = new Protocol(3, 7, readerFeatures.asJava, writerFeatures.asJava)
           val e = intercept[KernelException] {
-            validateAndUpdateIcebergWriterCompatV1Metadata(isNewTable, metadata, protocol)
+            validateAndUpdateIcebergWriterCompatMetadata(isNewTable, metadata, protocol)
           }
           // Since we run icebergCompatV2 validation as part of
           // ICEBERG_COMPAT_V2_ENABLED.postProcess we actually hit the missing feature error in the
