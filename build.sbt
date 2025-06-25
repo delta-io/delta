@@ -715,6 +715,26 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
     unidocSourceFilePatterns += SourceFilePattern("io/delta/kernel/"),
   ).configureUnidoc(docTitle = "Delta Kernel Defaults")
 
+lazy val unity = (project in file("unity"))
+  .enablePlugins(ScalafmtPlugin)
+  .dependsOn(kernelApi % "compile->compile;test->test")
+  .dependsOn(kernelDefaults % "test->test")
+  .dependsOn(storage)
+  .settings (
+    name := "delta-unity",
+    commonSettings,
+    javaOnlyReleaseSettings,
+    javafmtCheckSettings,
+    javaCheckstyleSettings("dev/kernel-checkstyle.xml"),
+    scalaStyleSettings,
+    scalafmtCheckSettings,
+    libraryDependencies ++= Seq(
+      "org.apache.hadoop" % "hadoop-common" % hadoopVersion % "provided",
+      "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
+    ),
+    unidocSourceFilePatterns += SourceFilePattern("io/delta/unity/"),
+  ).configureUnidoc()
+
 // TODO javastyle tests
 // TODO unidoc
 // TODO(scott): figure out a better way to include tests in this project
