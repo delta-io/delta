@@ -24,7 +24,6 @@ import io.delta.kernel.engine.ParquetHandler;
 import io.delta.kernel.engine.ParquetReadResult;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Predicate;
-import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.*;
@@ -56,7 +55,7 @@ public class DefaultParquetHandler implements ParquetHandler {
     return new CloseableIterator<ParquetReadResult>() {
       private final ParquetFileReader batchReader = new ParquetFileReader(fileIO);
       private CloseableIterator<ColumnarBatch> currentFileReader;
-      private Path currentFilePath;
+      private String currentFilePath;
 
       @Override
       public void close() throws IOException {
@@ -77,7 +76,7 @@ public class DefaultParquetHandler implements ParquetHandler {
           if (fileIter.hasNext()) {
             FileStatus fileStatus = fileIter.next();
             currentFileReader = batchReader.read(fileStatus, physicalSchema, predicate);
-            currentFilePath = new Path(fileStatus.getPath());
+            currentFilePath = fileStatus.getPath();
             return hasNext(); // recurse since it's possible the loaded file is empty
           } else {
             return false;

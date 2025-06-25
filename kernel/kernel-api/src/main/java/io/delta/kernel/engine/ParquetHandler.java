@@ -56,9 +56,9 @@ public interface ParquetHandler {
    * @param predicate Optional predicate which the Parquet reader can optionally use to prune rows
    *     that don't satisfy the predicate. Because pruning is optional and may be incomplete, caller
    *     is still responsible apply the predicate on the data returned by this method.
-   * @return an iterator of {@link ColumnarBatch}s containing the data in columnar format. It is the
-   *     responsibility of the caller to close the iterator. The data returned is in the same as the
-   *     order of files given in {@code scanFileIter}.
+   * @return an iterator of {@link ParquetReadResult}s containing the data in columnar format along
+   *     with metadata. It is the responsibility of the caller to close the iterator. The data
+   *     returned is in the same as the order of files given in {@code scanFileIter}.
    * @throws IOException if an I/O error occurs during the read.
    */
   CloseableIterator<ParquetReadResult> readParquetFiles(
