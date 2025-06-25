@@ -31,8 +31,8 @@ import io.delta.kernel.engine.Engine;
  */
 public class CommitFailedException extends Exception {
 
-  public boolean retryable;
-  public boolean conflict;
+  public final boolean retryable;
+  public final boolean conflict;
 
   public CommitFailedException(boolean retryable, boolean conflict, String message) {
     super(message);
