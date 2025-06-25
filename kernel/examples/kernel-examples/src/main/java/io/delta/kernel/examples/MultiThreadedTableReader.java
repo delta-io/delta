@@ -244,7 +244,7 @@ public class MultiThreadedTableReader
                         engine.getParquetHandler().readParquetFiles(
                             singletonCloseableIterator(fileStatus),
                             physicalReadSchema,
-                            Optional.empty());
+                            Optional.empty()).map(_.getData);
 
                     try (
                         CloseableIterator<FilteredColumnarBatch> dataIter =
