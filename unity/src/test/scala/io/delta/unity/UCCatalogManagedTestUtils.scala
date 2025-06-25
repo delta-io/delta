@@ -16,12 +16,13 @@
 
 package io.delta.unity
 
+import io.delta.kernel.defaults.utils.TestUtils
 import io.delta.kernel.internal.util.FileNames
 import io.delta.storage.commit.Commit
 
 import org.apache.hadoop.fs.{FileStatus => HadoopFileStatus, Path}
 
-trait UCCatalogManagedTestUtils {
+trait UCCatalogManagedTestUtils extends TestUtils {
   def hadoopCommitFileStatus(version: Long): HadoopFileStatus = {
     val filePath = FileNames.stagedCommitFile("fake/logPath", version)
 

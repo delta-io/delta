@@ -29,6 +29,8 @@ import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
 import io.delta.storage.commit.uccommitcoordinator.{InvalidTargetTableException, UCClient}
 
 object InMemoryUCClient {
+
+  /** Internal data structure to track table state including commits and version information. */
   class TableData {
     private var maxRatifiedVersion = -1L
     private val commits: ArrayBuffer[Commit] = ArrayBuffer.empty
@@ -53,6 +55,13 @@ object InMemoryUCClient {
   }
 }
 
+/**
+ * In-memory Unity Catalog client implementation for testing.
+ *
+ * Provides a mock implementation of UCClient that stores all table data in memory. This is  useful
+ * for unit tests that need to simulate Unity Catalog operations without connecting to an actual UC
+ * service.
+ */
 class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
 
   import InMemoryUCClient._

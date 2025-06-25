@@ -34,7 +34,23 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
     }
   }
 
-  // TODO: loadTable throws on invalid input. We need a non-null UCClient in order to test this.
+  test("loadTable throws on invalid input") {
+    val ucClient = new InMemoryUCClient("ucMetastoreId")
+    val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
+
+    assertThrows[NullPointerException] {
+      ucCatalogManagedClient.loadTable(null, "ucTableId", "tablePath", 1L)
+    }
+    assertThrows[NullPointerException] {
+      ucCatalogManagedClient.loadTable(defaultEngine, null, "tablePath", 1L)
+    }
+    assertThrows[NullPointerException] {
+      ucCatalogManagedClient.loadTable(defaultEngine, "ucTableId", null, 1L)
+    }
+    assertThrows[IllegalArgumentException] {
+      ucCatalogManagedClient.loadTable(defaultEngine, "ucTableId", "tablePath", -1L)
+    }
+  }
 
   test("converts UC Commit into Kernel ParsedLogData.RATIFIED_STAGED_COMMIT") {
     val ucCommit = createCommit(1)
