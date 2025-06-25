@@ -18,9 +18,11 @@ package org.apache.spark.sql.delta
 
 import java.io.File
 import java.util.TimeZone
+import java.util.UUID
 
 import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.DeltaTestUtils._
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -30,6 +32,7 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.SaveMode
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.test.SharedSparkSession
 
@@ -37,15 +40,24 @@ class ChecksumSuite
   extends QueryTest
   with SharedSparkSession
   with DeltaTestUtilsBase
-  with DeltaSQLCommandTest {
+  with DeltaSQLCommandTest
+  with CatalogOwnedTestBaseSuite {
 
   override def sparkConf: SparkConf = super.sparkConf
     .set(DeltaSQLConf.INCREMENTAL_COMMIT_FORCE_VERIFY_IN_TESTS, false)
 
+  /** Helper method to create a temp table w/ random suffix for name-based testing. */
+  private def withTempTable(f: String => Unit): Unit = {
+    val testTableName = s"test_table_${UUID.randomUUID().toString.replace("-", "")}"
+    withTable(testTableName) {
+      f(testTableName)
+    }
+  }
+
   test(s"A Checksum should be written after every commit when " +
     s"${DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key} is true") {
     def testChecksumFile(writeChecksumEnabled: Boolean): Unit = {
-      withTempDir { tempDir =>
+      withTempTable { tableName =>
         withSQLConf(
           DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> writeChecksumEnabled.toString) {
           def checksumExists(deltaLog: DeltaLog, version: Long): Boolean = {
@@ -53,13 +65,13 @@ class ChecksumSuite
             checksumFile.exists()
           }
 
-          // Setup the log
-          val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
-          val initialTxn = log.startTransaction()
-          initialTxn.commitManually(createTestAddFile())
+          // Set up the log by explicitly creating the table otherwise we can't
+          // construct the DeltaLog via the table name.
+          sql(s"CREATE TABLE $tableName USING delta")
 
           // Commit the txn
-          val txn = log.startTransaction()
+          val log = DeltaLog.forTable(spark, TableIdentifier(tableName))
+          val txn = log.startTransaction(log.initialCatalogTable)
           val txnCommitVersion = txn.commit(Seq.empty, DeltaOperations.Truncate())
           assert(checksumExists(log, txnCommitVersion) == writeChecksumEnabled)
         }
@@ -82,13 +94,13 @@ class ChecksumSuite
         DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "false",
         DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> incrementalCommitEnabled.toString
       ) {
-        withTempDir { tempDir =>
+        withTempTable { tableName =>
           // Set the timezone to UTC to avoid triggering force verification of all files in CRC
           // for non utc environments.
           setTimeZone("UTC")
           val df = spark.range(1)
-          df.write.format("delta").mode("append").save(tempDir.getCanonicalPath)
-          val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+          df.write.format("delta").mode("append").saveAsTable(tableName)
+          val log = DeltaLog.forTable(spark, TableIdentifier(tableName))
           log
             .startTransaction()
             .commit(Seq(createTestAddFile()), DeltaOperations.Write(SaveMode.Append))
@@ -107,7 +119,7 @@ class ChecksumSuite
   }
 
   def testIncrementalChecksumWrites(tableMutationOperation: String => Unit): Unit = {
-    withTempDir { tempDir =>
+    withTempTable { tableName =>
       withSQLConf(
         DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true",
         DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key ->"true") {
@@ -116,10 +128,10 @@ class ChecksumSuite
           .format("delta")
           .partitionBy("id")
           .mode("append")
-          .save(tempDir.getCanonicalPath)
+          .saveAsTable(tableName)
 
-        tableMutationOperation(tempDir.getCanonicalPath)
-        val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+        tableMutationOperation(tableName)
+        val log = DeltaLog.forTable(spark, TableIdentifier(tableName))
         val checksumOpt = log.snapshot.checksumOpt
         assert(checksumOpt.isDefined)
         val checksum = checksumOpt.get
@@ -130,20 +142,20 @@ class ChecksumSuite
   }
 
   test("Incremental checksums: INSERT") {
-    testIncrementalChecksumWrites { tablePath =>
-      sql(s"INSERT INTO delta.`$tablePath` SELECT *, 1 FROM range(10, 20)")
+    testIncrementalChecksumWrites { tableName =>
+      sql(s"INSERT INTO $tableName SELECT *, 1 FROM range(10, 20)")
     }
   }
 
   test("Incremental checksums: UPDATE") {
-    testIncrementalChecksumWrites { tablePath =>
-      sql(s"UPDATE delta.`$tablePath` SET id2 = id + 1 WHERE id % 2 = 0")
+    testIncrementalChecksumWrites { tableName =>
+      sql(s"UPDATE $tableName SET id2 = id + 1 WHERE id % 2 = 0")
     }
   }
 
   test("Incremental checksums: DELETE") {
-    testIncrementalChecksumWrites { tablePath =>
-      sql(s"DELETE FROM delta.`$tablePath` WHERE id % 2 = 0")
+    testIncrementalChecksumWrites { tableName =>
+      sql(s"DELETE FROM $tableName WHERE id % 2 = 0")
     }
   }
 
@@ -155,14 +167,18 @@ class ChecksumSuite
       // or Metadata will trigger a failure earlier than the full validation.
       DeltaSQLConf.USE_PROTOCOL_AND_METADATA_FROM_CHECKSUM_ENABLED.key -> "false"
     ) {
-      withTempDir { tempDir =>
-        spark.range(10).write.format("delta").save(tempDir.getCanonicalPath)
+      withTempTable { tableName =>
+        spark
+          .range(10)
+          .write
+          .format("delta")
+          .saveAsTable(tableName)
         spark.range(1)
           .write
           .format("delta")
           .mode("append")
-          .save(tempDir.getCanonicalPath)
-        val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+          .saveAsTable(tableName)
+        val log = DeltaLog.forTable(spark, TableIdentifier(tableName))
         val checksumOpt = log.readChecksum(1)
         assert(checksumOpt.isDefined)
         val checksum = checksumOpt.get
@@ -181,7 +197,7 @@ class ChecksumSuite
           Seq(corruptedChecksumJson).toIterator,
           overwrite = true)
         DeltaLog.clearCache()
-        val log2 = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+        val log2 = DeltaLog.forTable(spark, TableIdentifier(tableName))
         val usageLogs = Log4jUsageLogger.track {
           intercept[DeltaIllegalStateException] {
             log2.checkpoint()
@@ -216,9 +232,13 @@ class ChecksumSuite
       DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_ENABLED.key -> "false",
       DeltaSQLConf.USE_PROTOCOL_AND_METADATA_FROM_CHECKSUM_ENABLED.key -> "true"
     ) {
-      withTempDir { tempDir =>
+      withTempTable { tableName =>
         import testImplicits._
         val numAddFiles = 10
+
+        // Explicitly create the table w/o any AddFile for the subsequent
+        // DeltaLog construction.
+        sql(s"CREATE TABLE $tableName USING delta")
 
         // Procedure:
         // 1. Populate the table with several files
@@ -232,9 +252,12 @@ class ChecksumSuite
         // 5. Create a new snapshot and manually validate the .crc
 
         val files = (1 to numAddFiles).map(i => createTestAddFile(encodedPath = i.toString))
-        DeltaLog.forTable(spark, tempDir).startTransaction().commitWriteAppend(files: _*)
+        DeltaLog
+          .forTable(spark, TableIdentifier(tableName))
+          .startTransaction()
+          .commitWriteAppend(files: _*)
 
-        val log = DeltaLog.forTable(spark, tempDir)
+        val log = DeltaLog.forTable(spark, TableIdentifier(tableName))
         val txn = log.startTransaction()
         val expected =
           s"""Table size (bytes) - Expected: ${2*numAddFiles} Computed: $numAddFiles
@@ -251,4 +274,16 @@ class ChecksumSuite
       }
     }
   }
+}
+
+class ChecksumWithCatalogOwnedBatch1Suite extends ChecksumSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
+}
+
+class ChecksumWithCatalogOwnedBatch2Suite extends ChecksumSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
+}
+
+class ChecksumWithCatalogOwnedBatch100Suite extends ChecksumSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }
