@@ -1762,6 +1762,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       }
       // TODO(coordinated-commits): Use the right timestamp method on top of CommitInfo once ICT is
       //  merged.
+      partitionsAddedToOpt = Some(commitStatsComputer.getPartitionsAddedByTransaction)
       // If the metadata didn't change, `newMetadata` is empty, and we can re-use the old id.
       acStatsCollector.finalizeStats(newMetadata.map(_.id).getOrElse(snapshot.metadata.id))
       spark.sessionState.conf.setConf(
@@ -1796,7 +1797,6 @@ trait OptimisticTransactionImpl extends TransactionHelper
         commitInfoOpt = Some(commitInfo),
         commitSizeBytes = commitSizeBytes
       )
-      partitionsAddedToOpt = Some(commitStatsComputer.getPartitionsAddedByTransaction)
 
       executionObserver.transactionCommitted()
       (attemptVersion, postCommitSnapshot)
@@ -2373,10 +2373,11 @@ trait OptimisticTransactionImpl extends TransactionHelper
       catalogTable)
     val postCommitReconstructionTime = System.nanoTime()
     needsCheckpoint = isCheckpointNeeded(attemptVersion, postCommitSnapshot)
-    collectAutoOptimizeStatsAndFinalize(actions, deltaLog.tableId)
     val commitStatsComputer = new CommitStatsComputer()
     // Add to commit stats and consume the returned iterator.
     commitStatsComputer.addToCommitStats(actions.toIterator).foreach(_ => ())
+    partitionsAddedToOpt = Some(commitStatsComputer.getPartitionsAddedByTransaction)
+    collectAutoOptimizeStatsAndFinalize(actions, deltaLog.tableId)
     val commitSizeBytes = jsonActions.map(_.length).sum
     commitStatsComputer.finalizeAndEmitCommitStats(
       spark,
@@ -2393,7 +2394,6 @@ trait OptimisticTransactionImpl extends TransactionHelper
       commitInfoOpt = currentTransactionInfo.commitInfo,
       commitSizeBytes = commitSizeBytes
     )
-    partitionsAddedToOpt = Some(commitStatsComputer.getPartitionsAddedByTransaction)
 
     postCommitSnapshot
   }
