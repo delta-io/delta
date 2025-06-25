@@ -49,11 +49,16 @@ public class ParsedMultiPartCheckpointData extends ParsedCheckpointData {
       int numParts,
       Optional<FileStatus> fileStatusOpt,
       Optional<ColumnarBatch> inlineDataOpt) {
-    super(version, ParsedLogType.MULTIPART_CHECKPOINT, fileStatusOpt, inlineDataOpt);
+    super(version, fileStatusOpt, inlineDataOpt);
     checkArgument(numParts > 0, "numParts must be greater than 0");
     checkArgument(part > 0 && part <= numParts, "part must be between 1 and numParts");
     this.part = part;
     this.numParts = numParts;
+  }
+
+  @Override
+  protected int getCheckpointTypePriority() {
+    return 1; // Classic (0) < MultiPart (1) < V2 (2). MultiPart has middle priority.
   }
 
   @Override

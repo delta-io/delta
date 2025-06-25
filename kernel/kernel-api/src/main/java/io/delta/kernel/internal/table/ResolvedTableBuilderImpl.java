@@ -23,8 +23,8 @@ import io.delta.kernel.ResolvedTableBuilder;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.files.ParsedDeltaData;
 import io.delta.kernel.internal.files.ParsedLogData;
-import io.delta.kernel.internal.files.ParsedLogData.ParsedLogType;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.Clock;
 import io.delta.kernel.internal.util.Tuple2;
@@ -82,7 +82,7 @@ public class ResolvedTableBuilderImpl implements ResolvedTableBuilder {
     return this;
   }
 
-  /** For now, only log datas of type {@link ParsedLogType#RATIFIED_STAGED_COMMIT}s are supported */
+  /** For now, only log datas of type {@link ParsedDeltaData}s (written to file) are supported. */
   @Override
   public ResolvedTableBuilderImpl withLogData(List<ParsedLogData> logDatas) {
     ctx.logDatas = requireNonNull(logDatas, "logDatas is null");
@@ -131,8 +131,8 @@ public class ResolvedTableBuilderImpl implements ResolvedTableBuilder {
   private void validateLogDataContainsOnlyRatifiedCommits() {
     for (ParsedLogData logData : ctx.logDatas) {
       checkArgument(
-          logData.type == ParsedLogType.RATIFIED_STAGED_COMMIT,
-          "Only RATIFIED_STAGED_COMMIT log data is supported, but found: " + logData);
+          logData instanceof ParsedDeltaData && logData.isFile(),
+          "Only DELTA (commit) log data (written to file) is supported, but found: " + logData);
     }
   }
 

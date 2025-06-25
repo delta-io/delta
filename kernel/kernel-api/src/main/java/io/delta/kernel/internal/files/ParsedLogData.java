@@ -30,79 +30,26 @@ import java.util.Optional;
  * status) or stored inline (as a columnar batch).
  */
 // TODO: Move this to be a public API
-public class ParsedLogData {
-
-  ///////////////////////////////////////
-  // Static enums, fields, and methods //
-  ///////////////////////////////////////
-
-  public enum ParsedLogCategory {
-    DELTA,
-    LOG_COMPACTION,
-    CHECKPOINT,
-    CHECKSUM
-  }
-
-  public enum ParsedLogType {
-    PUBLISHED_DELTA(ParsedLogCategory.DELTA),
-    RATIFIED_STAGED_COMMIT(ParsedLogCategory.DELTA),
-    RATIFIED_INLINE_COMMIT(ParsedLogCategory.DELTA),
-    LOG_COMPACTION(ParsedLogCategory.LOG_COMPACTION),
-    CHECKSUM(ParsedLogCategory.CHECKSUM),
-
-    // Note that the order of these checkpoint enum values is important for comparison of checkpoint
-    // files as we prefer V2 > MULTI_PART > CLASSIC.
-    CLASSIC_CHECKPOINT(ParsedLogCategory.CHECKPOINT),
-    MULTIPART_CHECKPOINT(ParsedLogCategory.CHECKPOINT),
-    V2_CHECKPOINT(ParsedLogCategory.CHECKPOINT);
-
-    public final ParsedLogCategory category;
-
-    ParsedLogType(ParsedLogCategory category) {
-      this.category = category;
-    }
-  }
+public abstract class ParsedLogData {
 
   public static ParsedLogData forFileStatus(FileStatus fileStatus) {
     final String path = fileStatus.getPath();
 
-    if (FileNames.isLogCompactionFile(path)) {
+    if (FileNames.isCommitFile(path)) {
+      return ParsedDeltaData.forFileStatus(fileStatus);
+    } else if (FileNames.isLogCompactionFile(path)) {
       return ParsedLogCompactionData.forFileStatus(fileStatus);
-    } else if (FileNames.isCheckpointFile(path)) {
-      return ParsedCheckpointData.forFileStatus(fileStatus);
-    }
-
-    final long version;
-    final ParsedLogType type;
-
-    if (FileNames.isPublishedDeltaFile(path)) {
-      version = FileNames.deltaVersion(path);
-      type = ParsedLogType.PUBLISHED_DELTA;
-    } else if (FileNames.isStagedDeltaFile(path)) {
-      version = FileNames.deltaVersion(path);
-      type = ParsedLogType.RATIFIED_STAGED_COMMIT;
     } else if (FileNames.isChecksumFile(path)) {
-      version = FileNames.checksumVersion(path);
-      type = ParsedLogType.CHECKSUM;
+      return ParsedChecksumData.forFileStatus(fileStatus);
+    } else if (FileNames.isClassicCheckpointFile(path)) {
+      return ParsedClassicCheckpointData.forFileStatus(fileStatus);
+    } else if (FileNames.isV2CheckpointFile(path)) {
+      return ParsedV2CheckpointData.forFileStatus(fileStatus);
+    } else if (FileNames.isMultiPartCheckpointFile(path)) {
+      return ParsedMultiPartCheckpointData.forFileStatus(fileStatus);
     } else {
       throw new IllegalArgumentException("Unknown log file type: " + path);
     }
-
-    return new ParsedLogData(version, type, Optional.of(fileStatus), Optional.empty());
-  }
-
-  public static ParsedLogData forInlineData(
-      long version, ParsedLogType type, ColumnarBatch inlineData) {
-    if (type == ParsedLogType.PUBLISHED_DELTA || type == ParsedLogType.RATIFIED_STAGED_COMMIT) {
-      throw new IllegalArgumentException(
-          "For PUBLISHED_DELTA|RATIFIED_STAGED_COMMIT, use ParsedLogData.forFileStatus() instead");
-    } else if (type == ParsedLogType.LOG_COMPACTION) {
-      throw new IllegalArgumentException(
-          "For LOG_COMPACTION, use ParsedLogCompactionData.forInlineData() instead");
-    } else if (type.category == ParsedLogCategory.CHECKPOINT) {
-      return ParsedCheckpointData.forInlineData(version, type, inlineData);
-    }
-    return new ParsedLogData(version, type, Optional.empty(), Optional.of(inlineData));
   }
 
   ///////////////////////////////
@@ -110,26 +57,21 @@ public class ParsedLogData {
   ///////////////////////////////
 
   public final long version;
-  public final ParsedLogType type;
   public final Optional<FileStatus> fileStatusOpt;
   public final Optional<ColumnarBatch> inlineDataOpt;
 
   protected ParsedLogData(
-      long version,
-      ParsedLogType type,
-      Optional<FileStatus> fileStatusOpt,
-      Optional<ColumnarBatch> inlineDataOpt) {
+      long version, Optional<FileStatus> fileStatusOpt, Optional<ColumnarBatch> inlineDataOpt) {
     checkArgument(
         fileStatusOpt.isPresent() ^ inlineDataOpt.isPresent(),
         "Exactly one of fileStatusOpt or inlineDataOpt must be present");
     checkArgument(version >= 0, "version must be non-negative");
     this.version = version;
-    this.type = type;
     this.fileStatusOpt = fileStatusOpt;
     this.inlineDataOpt = inlineDataOpt;
   }
 
-  public boolean isMaterialized() {
+  public boolean isFile() {
     return fileStatusOpt.isPresent();
   }
 
@@ -138,9 +80,9 @@ public class ParsedLogData {
   }
 
   /**
-   * Callers must check {@link #isMaterialized()} before calling this method.
+   * Callers must check {@link #isFile()} before calling this method.
    *
-   * @throws NoSuchElementException if {@link #isMaterialized()} is false
+   * @throws NoSuchElementException if {@link #isFile()} is false
    */
   public FileStatus getFileStatus() {
     return fileStatusOpt.get();
@@ -155,9 +97,7 @@ public class ParsedLogData {
     return inlineDataOpt.get();
   }
 
-  public ParsedLogCategory getCategory() {
-    return type.category;
-  }
+  public abstract Class<? extends ParsedLogData> getParentCategoryClass();
 
   /** Protected method for subclasses to override to add output to {@link #toString}. */
   protected void appendAdditionalToStringFields(StringBuilder sb) {
@@ -171,14 +111,13 @@ public class ParsedLogData {
     }
     ParsedLogData that = (ParsedLogData) o;
     return version == that.version
-        && type == that.type
         && Objects.equals(fileStatusOpt, that.fileStatusOpt)
         && Objects.equals(inlineDataOpt, that.inlineDataOpt);
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(version, type, fileStatusOpt, inlineDataOpt);
+    return Objects.hash(version, fileStatusOpt, inlineDataOpt);
   }
 
   @Override
@@ -187,10 +126,8 @@ public class ParsedLogData {
         new StringBuilder(getClass().getSimpleName())
             .append("{version=")
             .append(version)
-            .append(", type=")
-            .append(type)
             .append(", source=");
-    if (isMaterialized()) {
+    if (isFile()) {
       sb.append(fileStatusOpt.get());
     } else {
       sb.append("inline");

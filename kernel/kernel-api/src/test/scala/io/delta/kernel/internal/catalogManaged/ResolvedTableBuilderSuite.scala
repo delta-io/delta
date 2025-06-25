@@ -23,8 +23,7 @@ import scala.collection.JavaConverters._
 import io.delta.kernel.TableManager
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.actions.Protocol
-import io.delta.kernel.internal.files.ParsedLogData
-import io.delta.kernel.internal.files.ParsedLogData.ParsedLogType
+import io.delta.kernel.internal.files.{ParsedChecksumData, ParsedLogData}
 import io.delta.kernel.internal.table.ResolvedTableInternal
 import io.delta.kernel.test.{ActionUtils, MockFileSystemClientUtils, VectorTestUtils}
 import io.delta.kernel.types.{IntegerType, StructType}
@@ -119,10 +118,10 @@ class ResolvedTableBuilderSuite extends AnyFunSuite
   }
 
   Seq(
-    ParsedLogData.forInlineData(1, ParsedLogType.RATIFIED_INLINE_COMMIT, emptyColumnarBatch),
+    ParsedChecksumData.forInlineData(1, emptyColumnarBatch),
     ParsedLogData.forFileStatus(logCompactionStatus(0, 1))).foreach { parsedLogData =>
-    val suffix = s"- type=${parsedLogData.`type`}"
-    test(s"withLogData: non-RATIFIED_STAGED_COMMIT throws IllegalArgumentException $suffix") {
+    val suffix = s"- type=${parsedLogData.getClass.getSimpleName}"
+    test(s"withLogData: non-DELTA parsed log data throws IllegalArgumentException $suffix") {
       val builder = TableManager
         .loadTable(dataPath.toString)
         .atVersion(1)
@@ -132,7 +131,7 @@ class ResolvedTableBuilderSuite extends AnyFunSuite
         builder.build(emptyMockEngine)
       }.getMessage
 
-      assert(exMsg.contains("Only RATIFIED_STAGED_COMMIT log data is supported"))
+      assert(exMsg.contains("Only DELTA (commit) log data (written to file) is supported"))
     }
   }
 
