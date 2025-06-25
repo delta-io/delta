@@ -37,9 +37,9 @@ object InMemoryUCClient {
    * internal mutable state. This class is designed to be safely accessed by multiple threads
    * concurrently.
    */
-  class TableData {
-    private var maxRatifiedVersion = -1L
-    private val commits: ArrayBuffer[Commit] = ArrayBuffer.empty
+  class TableData(
+      private var maxRatifiedVersion: Long = -1L,
+      private val commits: ArrayBuffer[Commit] = ArrayBuffer.empty) {
 
     /** @return the maximum ratified version, or -1 if no commits have been made. */
     def getMaxRatifiedVersion: Long = synchronized {
@@ -151,6 +151,15 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
   }
 
   override def close(): Unit = {}
+
+  private[unity] def createTableIfNotExistsOrThrow(
+      ucTableId: String,
+      tableData: TableData): Unit = {
+    tables.putIfAbsent(ucTableId, tableData) match {
+      case null => // Successfully added
+      case _ => throw new IllegalArgumentException(s"Table $ucTableId already exists")
+    }
+  }
 
   private[unity] def getTablesCopy: Map[String, TableData] = {
     tables.asScala.toMap
