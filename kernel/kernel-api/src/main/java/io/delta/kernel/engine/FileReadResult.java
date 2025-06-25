@@ -40,20 +40,12 @@ public class FileReadResult {
     this.filePath = Objects.requireNonNull(filePath, "filePath must not be null");
   }
 
-  /**
-   * Returns the {@link ColumnarBatch} of data that was read from the file.
-   *
-   * @return the columnar data
-   */
+  /** @return {@link ColumnarBatch} of data that was read from the file. */
   public ColumnarBatch getData() {
     return data;
   }
 
-  /**
-   * Returns the path of the Parquet file that this data was read from.
-   *
-   * @return the full file path as a string
-   */
+  /** @return the path of the file that this data was read from. */
   public String getFilePath() {
     return filePath;
   }
