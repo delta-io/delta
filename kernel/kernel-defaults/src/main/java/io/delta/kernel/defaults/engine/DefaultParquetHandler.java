@@ -20,8 +20,8 @@ import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.defaults.engine.fileio.FileIO;
 import io.delta.kernel.defaults.internal.parquet.ParquetFileReader;
 import io.delta.kernel.defaults.internal.parquet.ParquetFileWriter;
+import io.delta.kernel.engine.FileReadResult;
 import io.delta.kernel.engine.ParquetHandler;
-import io.delta.kernel.engine.ParquetReadResult;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.util.Utils;
@@ -47,12 +47,12 @@ public class DefaultParquetHandler implements ParquetHandler {
   }
 
   @Override
-  public CloseableIterator<ParquetReadResult> readParquetFilesV2(
+  public CloseableIterator<FileReadResult> readParquetFiles(
       CloseableIterator<FileStatus> fileIter,
       StructType physicalSchema,
       Optional<Predicate> predicate)
       throws IOException {
-    return new CloseableIterator<ParquetReadResult>() {
+    return new CloseableIterator<FileReadResult>() {
       private final ParquetFileReader batchReader = new ParquetFileReader(fileIO);
       private CloseableIterator<ColumnarBatch> currentFileReader;
       private String currentFilePath;
@@ -85,50 +85,8 @@ public class DefaultParquetHandler implements ParquetHandler {
       }
 
       @Override
-      public ParquetReadResult next() {
-        return new ParquetReadResult(currentFileReader.next(), currentFilePath);
-      }
-    };
-  }
-
-  @Deprecated
-  @Override
-  public CloseableIterator<ColumnarBatch> readParquetFiles(
-      CloseableIterator<FileStatus> fileIter,
-      StructType physicalSchema,
-      Optional<Predicate> predicate)
-      throws IOException {
-    return new CloseableIterator<ColumnarBatch>() {
-      private final ParquetFileReader batchReader = new ParquetFileReader(fileIO);
-      private CloseableIterator<ColumnarBatch> currentFileReader;
-
-      @Override
-      public void close() throws IOException {
-        Utils.closeCloseables(currentFileReader, fileIter);
-      }
-
-      @Override
-      public boolean hasNext() {
-        if (currentFileReader != null && currentFileReader.hasNext()) {
-          return true;
-        } else {
-          // There is no file in reading or the current file being read has no more data.
-          // Initialize the next file reader or return false if there are no more files to
-          // read.
-          Utils.closeCloseables(currentFileReader);
-          currentFileReader = null;
-          if (fileIter.hasNext()) {
-            currentFileReader = batchReader.read(fileIter.next(), physicalSchema, predicate);
-            return hasNext(); // recurse since it's possible the loaded file is empty
-          } else {
-            return false;
-          }
-        }
-      }
-
-      @Override
-      public ColumnarBatch next() {
-        return currentFileReader.next();
+      public FileReadResult next() {
+        return new FileReadResult(currentFileReader.next(), currentFilePath);
       }
     };
   }

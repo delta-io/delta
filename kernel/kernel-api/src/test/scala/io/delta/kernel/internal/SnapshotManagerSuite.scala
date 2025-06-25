@@ -21,6 +21,7 @@ import scala.collection.JavaConverters._
 import scala.reflect.ClassTag
 
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
+import io.delta.kernel.engine.FileReadResult
 import io.delta.kernel.exceptions.{InvalidTableException, TableNotFoundException}
 import io.delta.kernel.expressions.Predicate
 import io.delta.kernel.internal.checkpoints.{CheckpointInstance, CheckpointMetaData, SidecarFile}
@@ -775,22 +776,34 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
 }
 
 trait SidecarIteratorProvider extends VectorTestUtils {
-  def singletonSidecarIterator(sidecars: Seq[FileStatus])
-      : CloseableIterator[ColumnarBatch] = Utils.singletonCloseableIterator(
-    new ColumnarBatch {
-      override def getSchema: StructType = SidecarFile.READ_SCHEMA
 
-      override def getColumnVector(ordinal: Int): ColumnVector = {
-        ordinal match {
-          case 0 => stringVector(sidecars.map(_.getPath)) // path
-          case 1 => longVector(sidecars.map(_.getSize): _*) // size
-          case 2 =>
-            longVector(sidecars.map(_.getModificationTime): _*); // modification time
-        }
-      }
+  // Shared helper to construct the batch
+  private def buildSidecarBatch(sidecars: Seq[FileStatus]): ColumnarBatch = new ColumnarBatch {
+    override def getSchema: StructType = SidecarFile.READ_SCHEMA
 
-      override def getSize: Int = sidecars.length
-    })
+    override def getColumnVector(ordinal: Int): ColumnVector = ordinal match {
+      case 0 => stringVector(sidecars.map(_.getPath.toString)) // path
+      case 1 => longVector(sidecars.map(_.getSize): _*) // size
+      case 2 => longVector(sidecars.map(_.getModificationTime): _*) // mod time
+    }
+
+    override def getSize: Int = sidecars.length
+  }
+
+  // For Parquet (ColumnarBatch + filePath)
+  def singletonSidecarParquetIterator(sidecars: Seq[FileStatus])
+      : CloseableIterator[FileReadResult] = {
+    val batch = buildSidecarBatch(sidecars)
+    val filePath = if (sidecars.nonEmpty) sidecars.head.getPath.toString else "<no_file>"
+    val result = new FileReadResult(batch, filePath)
+    Utils.singletonCloseableIterator(result)
+  }
+
+  // For JSON (only ColumnarBatch)
+  def singletonSidecarJsonIterator(sidecars: Seq[FileStatus]): CloseableIterator[ColumnarBatch] = {
+    val batch = buildSidecarBatch(sidecars)
+    Utils.singletonCloseableIterator(batch)
+  }
 }
 
 class MockSidecarParquetHandler(sidecars: Seq[FileStatus])
@@ -798,8 +811,8 @@ class MockSidecarParquetHandler(sidecars: Seq[FileStatus])
   override def readParquetFiles(
       fileIter: CloseableIterator[FileStatus],
       physicalSchema: StructType,
-      predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] =
-    singletonSidecarIterator(sidecars)
+      predicate: Optional[Predicate]): CloseableIterator[FileReadResult] =
+    singletonSidecarParquetIterator(sidecars)
 }
 
 class MockSidecarJsonHandler(sidecars: Seq[FileStatus])
@@ -809,7 +822,7 @@ class MockSidecarJsonHandler(sidecars: Seq[FileStatus])
       fileIter: CloseableIterator[FileStatus],
       physicalSchema: StructType,
       predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] =
-    singletonSidecarIterator(sidecars)
+    singletonSidecarJsonIterator(sidecars)
 }
 
 class MockReadLastCheckpointFileJsonHandler(

@@ -19,12 +19,12 @@ import io.delta.kernel.data.ColumnarBatch;
 import java.util.Objects;
 
 /**
- * Represents the result of reading a batch of data in a Parquet file.
+ * Represents the result of reading a batch of data in a file.
  *
  * <p>Encapsulates both the data read (as a {@link ColumnarBatch}) and the full path of the file *
  * from which the data was read.
  */
-public class ParquetReadResult {
+public class FileReadResult {
 
   private final ColumnarBatch data;
   private final String filePath;
@@ -35,7 +35,7 @@ public class ParquetReadResult {
    * @param data the columnar batch of data read from the file
    * @param filePath the path of the file from which the data was read
    */
-  public ParquetReadResult(ColumnarBatch data, String filePath) {
+  public FileReadResult(ColumnarBatch data, String filePath) {
     this.data = Objects.requireNonNull(data, "data must not be null");
     this.filePath = Objects.requireNonNull(filePath, "filePath must not be null");
   }

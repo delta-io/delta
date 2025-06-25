@@ -27,6 +27,7 @@ import static io.delta.kernel.internal.util.Utils.toCloseableIterator;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.engine.FileReadResult;
 import io.delta.kernel.expressions.*;
 import io.delta.kernel.internal.checkpoints.SidecarFile;
 import io.delta.kernel.internal.fs.Path;
@@ -228,7 +229,8 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
                       .readParquetFiles(
                           singletonCloseableIterator(file),
                           finalReadSchema,
-                          checkpointPredicateIncludingSidecars),
+                          checkpointPredicateIncludingSidecars)
+                      .map(FileReadResult::getData),
               "Reading parquet log file `%s` with readSchema=%s and predicate=%s",
               file,
               finalReadSchema,
@@ -353,8 +355,8 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
                     () ->
                         engine
                             .getParquetHandler()
-                            .readParquetFiles(
-                                checkpointFiles, deltaReadSchema, checkpointPredicate),
+                            .readParquetFiles(checkpointFiles, deltaReadSchema, checkpointPredicate)
+                            .map(FileReadResult::getData),
                     "Reading checkpoint sidecars [%s] with readSchema=%s and predicate=%s",
                     checkpointFiles,
                     deltaReadSchema,

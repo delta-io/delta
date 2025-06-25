@@ -241,7 +241,7 @@ trait TestUtils extends Assertions with SQLHelper {
         val physicalDataIter = engine.getParquetHandler().readParquetFiles(
           singletonCloseableIterator(fileStatus),
           physicalDataReadSchema,
-          Optional.empty())
+          Optional.empty()).map(_.getData)
         var dataBatches: CloseableIterator[FilteredColumnarBatch] = null
         try {
           dataBatches = Scan.transformPhysicalData(
@@ -299,7 +299,8 @@ trait TestUtils extends Assertions with SQLHelper {
           Optional.empty())
         var dataBatches: CloseableIterator[FilteredColumnarBatch] = null
         try {
-          dataBatches = Scan.transformPhysicalData(engine, scanState, scanFile, physicalDataIter)
+          dataBatches =
+            Scan.transformPhysicalData(engine, scanState, scanFile, physicalDataIter.map(_.getData))
           dataBatches.forEach { dataBatch => result = result :+ dataBatch }
         } finally {
           Utils.closeCloseables(dataBatches)
