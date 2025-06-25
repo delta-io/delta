@@ -15,17 +15,16 @@ class Dsv2BasicSuite extends QueryTest with SharedSparkSession {
         StaticSQLConf.SPARK_SESSION_EXTENSIONS.key,
         classOf[DeltaSparkSessionExtension].getName)
       .set(SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key,
-        "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+        "org.apache.spark.sql.delta.catalog.DeltaCatalog") // DSV1
       .set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-      .set("spark.sql.catalog.dsv1", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
       .set("spark.sql.catalog.dsv2", "io.delta.dsv2.catalog.DeltaCatalog")
     val sparkSession = SparkSession.builder().config(conf).getOrCreate()
     sparkSession.sql(
-      s"CREATE OR REPLACE TABLE delta.`/tmp/spark_warehouse/table`" +
-        s" USING DELTA AS SELECT col1 as id FROM VALUES 0,1,2,3,4;")
+      s"CREATE OR REPLACE TABLE delta.`/tmp/spark_warehouse/table3`" +
+        s" (id integer) USING DELTA")
     val exception = intercept[UnsupportedOperationException] {
     sparkSession.sql(
-      s"SELECT * FROM dsv2.namespace.table").collect()
+      s"SELECT * FROM dsv2.delta.`/tmp/spark_warehouse/table3`").collect()
     }
     assert(exception.getMessage.contains("todo"))
   }

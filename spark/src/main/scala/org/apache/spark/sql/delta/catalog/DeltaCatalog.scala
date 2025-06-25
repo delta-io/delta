@@ -71,7 +71,6 @@ class DeltaCatalog extends DelegatingCatalogExtension
   with SupportsPathIdentifier
   with DeltaLogging {
 
-
   val spark = SparkSession.active
 
   private lazy val isUnityCatalog: Boolean = {

@@ -20,7 +20,8 @@ class DeltaCatalog extends TableCatalog {
   private lazy val engine = DefaultEngine.create(new Configuration())
 
   def tableIdentifierToPath(ident: Identifier): String = {
-    s"/tmp/spark_warehouse/${ident.name()}"
+    assert(ident.namespace().length == 1 && ident.namespace().head == "delta")
+    ident.name()
   }
 
   override def initialize(name: String, options: CaseInsensitiveStringMap): Unit = {
@@ -47,11 +48,7 @@ class DeltaCatalog extends TableCatalog {
       schema: StructType,
       partitions: Array[Transform],
       properties: util.Map[String, String]): Table = {
-    val path = if (properties.containsKey("path")) {
-      properties.get("path")
-    } else {
-      tableIdentifierToPath(ident)
-    }
+    val path = tableIdentifierToPath(ident)
 
     if (partitions.length > 0) {
       throw new UnsupportedOperationException("partition table is not supported")

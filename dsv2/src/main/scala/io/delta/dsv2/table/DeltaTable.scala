@@ -1,15 +1,13 @@
 package io.delta.dsv2.table
 
 import scala.collection.JavaConverters._
-
 import io.delta.dsv2.utils.SchemaUtils
 import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.exceptions.TableNotFoundException
 import io.delta.kernel.internal.SnapshotImpl
 import io.delta.kernel.internal.util.VectorUtils
-
 import org.apache.hadoop.conf.Configuration
-import org.apache.spark.sql.connector.catalog.{SupportsRead, Table, TableCapability}
+import org.apache.spark.sql.connector.catalog.{Column, SupportsRead, Table, TableCapability}
 import org.apache.spark.sql.connector.expressions.{Expressions, Transform}
 import org.apache.spark.sql.connector.read.ScanBuilder
 import org.apache.spark.sql.types.StructType
@@ -26,6 +24,7 @@ class DeltaTable(path: String)
 
   override def name(): String = s"delta.`$path`"
 
+  // TODO: this is deprecated product.
   override def schema(): StructType = {
       SchemaUtils.convertKernelSchemaToSparkSchema(
         kernelTable.getLatestSnapshot(kernelEngine).getSchema)
