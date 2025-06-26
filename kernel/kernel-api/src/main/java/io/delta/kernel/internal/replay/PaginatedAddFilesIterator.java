@@ -13,7 +13,7 @@ public class PaginatedAddFilesIterator implements CloseableIterator<FilteredColu
   private final long pageSize; // max num of files to return in this page
 
   private long numAddFilesReturned = 0;
-  private String lastLogFileName = null;
+  private String lastLogFileName = null; //when reading first page, lastLogFileName is absent
   private long rowIdxInLastFile = 0;
   private FilteredColumnarBatch nextBatch = null;
 
@@ -33,8 +33,8 @@ public class PaginatedAddFilesIterator implements CloseableIterator<FilteredColu
     }
     if (originalIterator.hasNext()) {
       FilteredColumnarBatch batch = originalIterator.next();
-      String fileName = batch.getFileName();// TODO: get parquet reader merged first
-      if (fileName ==null || !fileName.equals(lastLogFileName)) {
+      String fileName = batch.getFileName();// TODO: get parquet reader PR merged first
+      if (!fileName.equals(lastLogFileName)) {
         lastLogFileName = fileName;
         System.out.println("fileName " + fileName);
         rowIdxInLastFile = 0;//row idx starts from 1
