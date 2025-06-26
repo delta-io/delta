@@ -24,15 +24,19 @@ import io.delta.kernel.internal.files.ParsedLogData;
 public class CommitResponse {
 
   // TODO: Create a DeltaLogData extends ParsedLogData that includes commit timestamp information.
+  private final ParsedLogData commitLogData;
+
+  public CommitResponse(ParsedLogData commitLogData) {
+    this.commitLogData = commitLogData;
+  }
+
   /**
    * The parsed log data resulting from the commit operation. Note that for catalog-managed tables,
    * this may be the ratified staged commit, the ratified inline commit, or even a published Delta
    * file that the {@link Committer} implementation decided to publish after committing to the
    * managing catalog.
    */
-  public final ParsedLogData commitLogData;
-
-  public CommitResponse(ParsedLogData commitLogData) {
-    this.commitLogData = commitLogData;
+  public ParsedLogData getCommitLogData() {
+    return commitLogData;
   }
 }

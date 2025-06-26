@@ -41,41 +41,14 @@ import java.util.Optional;
 @Experimental
 public class CommitPayload {
 
-  /** The version of the Delta table this commit is targeting. */
-  public final long version;
-
-  /** The path to the Delta log directory. */
-  public final String logPath;
-
-  /** All Delta actions (data and metadata) that are part of this commit. */
-  public final CloseableIterator<Row> finalizedActions;
-
-  /** The {@link CommitInfo} that is being written as part of this commit. */
-  public final CommitInfo commitInfo;
-
-  /**
-   * The {@link Protocol} that was read at the beginning of the commit. Empty if a new table is
-   * being created.
-   */
-  public final Optional<Protocol> readProtocolOpt;
-
-  /**
-   * The {@link Metadata} that was read at the beginning of the commit. Empty if a new table is
-   * being created.
-   */
-  public final Optional<Metadata> readMetadataOpt;
-
-  /**
-   * The {@link Protocol} that is being written as part of this commit. Empty if the protocol is not
-   * being changed.
-   */
-  public final Optional<Protocol> newProtocolOpt;
-
-  /**
-   * The {@link Metadata} that is being written as part of this commit. Empty if the metadata is not
-   * being changed.
-   */
-  public final Optional<Metadata> newMetadataOpt;
+  private final long version;
+  private final String logPath;
+  private final CloseableIterator<Row> finalizedActions;
+  private final CommitInfo commitInfo;
+  private final Optional<Protocol> readProtocolOpt;
+  private final Optional<Metadata> readMetadataOpt;
+  private final Optional<Protocol> newProtocolOpt;
+  private final Optional<Metadata> newMetadataOpt;
 
   public CommitPayload(
       long version,
@@ -95,5 +68,57 @@ public class CommitPayload {
     this.readMetadataOpt = requireNonNull(readMetadataOpt, "readMetadataOpt is null");
     this.newProtocolOpt = requireNonNull(newProtocolOpt, "newProtocolOpt is null");
     this.newMetadataOpt = requireNonNull(newMetadataOpt, "newMetadataOpt is null");
+  }
+
+  /** The version of the Delta table this commit is targeting. */
+  public long getVersion() {
+    return version;
+  }
+
+  /** The path to the Delta log directory. */
+  public String getLogPath() {
+    return logPath;
+  }
+
+  /** All Delta actions (data and metadata) that are part of this commit. */
+  public CloseableIterator<Row> getFinalizedActions() {
+    return finalizedActions;
+  }
+
+  /** The {@link CommitInfo} that is being written as part of this commit. */
+  public CommitInfo getCommitInfo() {
+    return commitInfo;
+  }
+
+  /**
+   * The {@link Protocol} that was read at the beginning of the commit. Empty if a new table is
+   * being created.
+   */
+  public Optional<Protocol> getReadProtocolOpt() {
+    return readProtocolOpt;
+  }
+
+  /**
+   * The {@link Metadata} that was read at the beginning of the commit. Empty if a new table is
+   * being created.
+   */
+  public Optional<Metadata> getReadMetadataOpt() {
+    return readMetadataOpt;
+  }
+
+  /**
+   * The {@link Protocol} that is being written as part of this commit. Empty if the protocol is not
+   * being changed.
+   */
+  public Optional<Protocol> getNewProtocolOpt() {
+    return newProtocolOpt;
+  }
+
+  /**
+   * The {@link Metadata} that is being written as part of this commit. Empty if the metadata is not
+   * being changed.
+   */
+  public Optional<Metadata> getNewMetadataOpt() {
+    return newMetadataOpt;
   }
 }

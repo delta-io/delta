@@ -31,8 +31,8 @@ import io.delta.kernel.engine.Engine;
  */
 public class CommitFailedException extends Exception {
 
-  public final boolean retryable;
-  public final boolean conflict;
+  private final boolean retryable;
+  private final boolean conflict;
 
   public CommitFailedException(boolean retryable, boolean conflict, String message) {
     super(message);
@@ -45,5 +45,15 @@ public class CommitFailedException extends Exception {
     super(message, cause);
     this.retryable = retryable;
     this.conflict = conflict;
+  }
+
+  /** Returns whether the commit can be retried. */
+  public boolean isRetryable() {
+    return retryable;
+  }
+
+  /** Returns whether the commit failed due to a conflict. */
+  public boolean isConflict() {
+    return conflict;
   }
 }
