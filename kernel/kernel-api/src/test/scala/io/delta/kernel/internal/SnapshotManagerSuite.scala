@@ -137,13 +137,6 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       val v2Checkpoints =
         v2CheckpointFileStatuses(v2CheckpointSpec, topLevelFileType)
 
-      val v2CheckpointFileName = if (v2CheckpointSpec.nonEmpty) {
-        val firstV2Version = v2CheckpointSpec.head._1
-        s"${"%020d".format(firstV2Version)}.checkpoint.$topLevelFileType"
-      } else {
-        "no-v2-checkpoint"
-      }
-
       val checkpointFiles = v2Checkpoints.flatMap {
         case (topLevelCheckpointFile, sidecars) =>
           Seq(topLevelCheckpointFile) ++ sidecars
@@ -170,12 +163,20 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
       val compactions = compactedFileStatuses(compactionVersions)
 
+      val v2CheckpointFileName = if (expectedV2Checkpoint.nonEmpty) {
+        expectedV2Checkpoint.head.getPath
+      } else {
+        "no-v2-checkpoint"
+      }
       val logSegment = snapshotManager.getLogSegmentForVersion(
         createMockFSListFromEngine(
           listFromProvider(deltas ++ compactions ++ checkpointFiles)("/"),
-          new MockSidecarParquetHandler(expectedSidecars, v2CheckpointFileName),
+          new MockSidecarParquetHandler(expectedSidecars, "TODO"),
           new MockSidecarJsonHandler(expectedSidecars)),
         versionToLoad)
+
+        System.out.println(expectedV2Checkpoint.length)
+        System.out.println(v2CheckpointFileName)
 
       val expectedDeltas = deltaFileStatuses(
         deltaVersions.filter { v =>
@@ -797,12 +798,10 @@ trait SidecarIteratorProvider extends VectorTestUtils {
     override def getSize: Int = sidecars.length
   }
 
-  def singletonSidecarParquetIterator(sidecars: Seq[FileStatus], V2CheckpointFileName: String)
+  def singletonSidecarParquetIterator(sidecars: Seq[FileStatus], v2CheckpointFileName: String)
       : CloseableIterator[FileReadResult] = {
     val batch = buildSidecarBatch(sidecars)
-    val filePath = V2CheckpointFileName
-    val result = new FileReadResult(batch, filePath)
-    Utils.singletonCloseableIterator(result)
+    Utils.singletonCloseableIterator(new FileReadResult(batch, v2CheckpointFileName))
   }
 
   // TODO: extend FileReadResult for JSON read result
