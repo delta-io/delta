@@ -50,7 +50,7 @@ val all_scala_versions = Seq(scala212, scala213)
 // sbt 'set default_scala_version := 2.13.13' [commands]
 // FIXME Why not use scalaVersion?
 val default_scala_version = settingKey[String]("Default Scala version")
-Global / default_scala_version := scala212
+Global / default_scala_version := scala213
 
 val LATEST_RELEASED_SPARK_VERSION = "3.5.3"
 val SPARK_MASTER_VERSION = "4.0.1-SNAPSHOT"
@@ -90,7 +90,7 @@ crossScalaVersions := Nil
 // For Java 11 use the following on command line
 // sbt 'set targetJvm := "11"' [commands]
 val targetJvm = settingKey[String]("Target JVM version")
-Global / targetJvm := "8"
+Global / targetJvm := "11"
 
 lazy val javaVersion = sys.props.getOrElse("java.version", "Unknown")
 lazy val javaVersionInt = javaVersion.split("\\.")(0).toInt
@@ -197,7 +197,7 @@ def crossSparkSettings(): Seq[Setting[_]] = getSparkVersion() match {
   case LATEST_RELEASED_SPARK_VERSION => Seq(
     scalaVersion := default_scala_version.value,
     crossScalaVersions := all_scala_versions,
-    targetJvm := "8",
+    targetJvm := "11",
     // For adding staged Spark RC versions, e.g.:
     // resolvers += "Apache Spark 3.5.0 (RC1) Staging" at "https://repository.apache.org/content/repositories/orgapachespark-1444/",
     Compile / unmanagedSourceDirectories += (Compile / baseDirectory).value / "src" / "main" / "scala-spark-3.5",
@@ -451,6 +451,11 @@ lazy val spark = (project in file("spark"))
       "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
       // For DynamoDBCommitStore
       "com.amazonaws" % "aws-java-sdk" % "1.12.262" % "provided",
+      "com.fasterxml.jackson.core" % "jackson-databind" % "2.17.0",
+      "com.fasterxml.jackson.core" % "jackson-core" % "2.17.0",
+      "com.fasterxml.jackson.core" % "jackson-annotations" % "2.17.0",
+      "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % "2.17.0",
+      "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.17.0",
 
       // Test deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
@@ -602,8 +607,8 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
       "org.roaringbitmap" % "RoaringBitmap" % "0.9.25",
       "org.slf4j" % "slf4j-api" % "1.7.36",
 
-      "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5",
-      "com.fasterxml.jackson.core" % "jackson-core" % "2.13.5",
+      "com.fasterxml.jackson.core" % "jackson-databind" % "2.17.0",
+      "com.fasterxml.jackson.core" % "jackson-core" % "2.17.0",
       "com.fasterxml.jackson.core" % "jackson-annotations" % "2.13.5",
       "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % "2.13.5",
 
@@ -690,8 +695,8 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
     Test / envVars += ("DELTA_TESTING", "1"),
     libraryDependencies ++= Seq(
       "org.apache.hadoop" % "hadoop-client-runtime" % hadoopVersion,
-      "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5",
-      "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % "2.13.5",
+      "com.fasterxml.jackson.core" % "jackson-databind" % "2.17.0",
+      "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % "2.17.0",
       "org.apache.parquet" % "parquet-hadoop" % "1.12.3",
 
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
@@ -715,6 +720,35 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
     unidocSourceFilePatterns += SourceFilePattern("io/delta/kernel/"),
   ).configureUnidoc(docTitle = "Delta Kernel Defaults")
 
+lazy val sparkDsv2 = (project in file("dsv2"))
+  .enablePlugins(ScalafmtPlugin, JavaFormatterPlugin)
+  .dependsOn(kernelApi)
+  .dependsOn(kernelDefaults)
+  .dependsOn(unity)
+  .dependsOn(storage)
+  .dependsOn(spark % "test->test")
+  .settings(
+    name := "delta-spark-dsv2",
+    commonSettings,
+
+    Test / javaOptions ++= Seq(
+      "-ea",
+      s"-Dlog4j.configuration=file:${baseDirectory.value}/src/test/resources/log4j.properties"
+    ),
+    libraryDependencies ++= Seq(
+      "org.apache.spark" %% "spark-core" % "3.5.6" % "provided",
+      "org.apache.spark" %% "spark-sql" % "3.5.6" % "provided",
+
+      // Unity Catalog dependencies
+      "io.unitycatalog" % "unitycatalog-client" % "0.2.1" % "provided",
+      // Test deps
+      "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
+      "org.apache.spark" %% "spark-catalyst" % "3.5.6" % "test" classifier "tests",
+      "org.apache.spark" %% "spark-core" % "3.5.6" % "test" classifier "tests",
+      "org.apache.spark" %% "spark-sql" % "3.5.6" % "test" classifier "tests",
+      "org.apache.spark" %% "spark-hive" % "3.5.6" % "test" classifier "tests"
+    )
+  )
 lazy val unity = (project in file("unity"))
   .enablePlugins(ScalafmtPlugin)
   .dependsOn(kernelApi % "compile->compile;test->test")
@@ -1322,7 +1356,7 @@ lazy val standalone = (project in file("connectors/standalone"))
       "com.github.mjakubowski84" %% "parquet4s-core" % parquet4sVersion excludeAll (
         ExclusionRule("org.slf4j", "slf4j-api")
         ),
-      "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.12.3",
+      "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.17.0",
       "org.json4s" %% "json4s-jackson" % "3.7.0-M11" excludeAll (
         ExclusionRule("com.fasterxml.jackson.core"),
         ExclusionRule("com.fasterxml.jackson.module")
