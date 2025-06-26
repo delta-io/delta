@@ -35,9 +35,9 @@ class InMemoryUCClientSuite extends AnyFunSuite with UCCatalogManagedTestUtils {
       tableId: String,
       versions: Seq[Long]): InMemoryUCClient = {
     val client = new InMemoryUCClient("ucMetastoreId")
-    val tableData = new InMemoryUCClient.TableData
-    versions.foreach { v => tableData.appendCommit(createCommit(v)) }
-    client.tables.put(tableId, tableData)
+    versions.foreach { v =>
+      client.commitWithDefaults(tableId, fakeURI, Optional.of(createCommit(v)))
+    }
     client
   }
 
@@ -98,6 +98,25 @@ class InMemoryUCClientSuite extends AnyFunSuite with UCCatalogManagedTestUtils {
     val client = getInMemoryUCClientWithCommitsForTableId("tableId", 0L to 5L)
     val response = client.getCommits("tableId", fakeURI, Optional.of(2L), Optional.of(4L))
     assert(response.getCommits.asScala.map(_.getVersion) sameElements (2L to 4L).toList)
+  }
+
+  test("concurrent table creation (via committing version 0) => only one commit succeeds") {
+    val client = new InMemoryUCClient("ucMetastoreId")
+    val tableId = "race-table"
+
+    val results = (0 until 10).par.map { _ =>
+      try {
+        client.commitWithDefaults(tableId, fakeURI, Optional.of(createCommit(0L)))
+        "success"
+      } catch {
+        case _: CommitFailedException => "failed"
+      }
+    }
+
+    assert(results.count(_ == "success") == 1) // Only one should succeed in committing version 0
+    assert(results.count(_ == "failed") == 9)
+    assert(client.getTablesCopy.size == 1)
+    assert(client.getTablesCopy(tableId).getMaxRatifiedVersion == 0L)
   }
 
 }

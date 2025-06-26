@@ -94,19 +94,50 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
   import InMemoryUCClient._
 
   /** Map from UC_TABLE_ID to TABLE_DATA */
-  val tables = new ConcurrentHashMap[String, TableData]()
+  private val tables = new ConcurrentHashMap[String, TableData]()
 
   override def getMetastoreId: String = ucMetastoreId
+
+  /** Convenience method for tests to commit with default parameters. */
+  def commitWithDefaults(
+      tableId: String,
+      tableUri: URI,
+      commit: Optional[Commit],
+      lastKnownBackfilledVersion: Optional[JLong] = Optional.empty(),
+      disown: Boolean = false,
+      newMetadata: Optional[AbstractMetadata] = Optional.empty(),
+      newProtocol: Optional[AbstractProtocol] = Optional.empty()): Unit = {
+    this.commit(
+      tableId,
+      tableUri,
+      commit,
+      lastKnownBackfilledVersion,
+      disown,
+      newMetadata,
+      newProtocol)
+  }
 
   override def commit(
       tableId: String,
       tableUri: URI,
-      commit: Optional[Commit],
+      commit: Optional[Commit] = Optional.empty(),
       lastKnownBackfilledVersion: Optional[JLong],
       disown: Boolean,
       newMetadata: Optional[AbstractMetadata],
       newProtocol: Optional[AbstractProtocol]): Unit = {
-    throw new UnsupportedOperationException("Not implemented yet")
+    Seq(
+      (lastKnownBackfilledVersion.isPresent, "lastKnownBackfilledVersion"),
+      (disown, "disown"),
+      (newMetadata.isPresent, "newMetadata"),
+      (newProtocol.isPresent, "newProtocol")).foreach { case (isUnsupported, name) =>
+      if (isUnsupported) {
+        throw new UnsupportedOperationException(s"$name not supported yet in InMemoryUCClient")
+      }
+    }
+
+    if (!commit.isPresent) return
+
+    createTableIfNotExists(tableId).appendCommit(commit.get())
   }
 
   override def getCommits(
@@ -120,6 +151,14 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
   }
 
   override def close(): Unit = {}
+
+  private[unity] def getTablesCopy: Map[String, TableData] = {
+    tables.asScala.toMap
+  }
+
+  private def createTableIfNotExists(tableId: String): TableData = {
+    tables.computeIfAbsent(tableId, _ => new TableData)
+  }
 
   /** Retrieves table data for the given table ID or throws an exception if not found. */
   private def getTableDataElseThrow(tableId: String): TableData = {
