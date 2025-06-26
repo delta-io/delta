@@ -466,6 +466,8 @@ lazy val spark = (project in file("spark"))
       "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
       "org.apache.spark" %% "spark-hive" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.hadoop" % "hadoop-aws" % "3.3.4" % "test", // Use version compatible with your Hadoop
+      "com.amazonaws" % "aws-java-sdk-s3" % "1.12.262" % "test", // Use version compatible with hadoop-aws
       "org.mockito" % "mockito-inline" % "4.11.0" % "test",
     ),
     Compile / packageBin / mappings := (Compile / packageBin / mappings).value ++

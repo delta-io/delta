@@ -73,7 +73,8 @@ public class UCCatalogManagedClient {
     checkArgument(version >= 0, "version must be non-negative");
 
     logger.info("[{}] Resolving table at version {}", ucTableId, version);
-    final GetCommitsResponse response = getRatifiedCommitsFromUC(ucTableId, tablePath, version);
+    final GetCommitsResponse response = getRatifiedCommitsFromUC(ucTableId, tablePath);
+    System.out.println("response" + response.getLatestTableVersion() + response.getCommits());
     validateLoadTableVersionExists(ucTableId, version, response.getLatestTableVersion());
     final List<ParsedLogData> logData =
         getSortedKernelLogDataFromRatifiedCommits(ucTableId, response.getCommits());
@@ -86,6 +87,28 @@ public class UCCatalogManagedClient {
                 .atVersion(version)
                 .withLogData(logData)
                 .build(engine));
+  }
+
+  private GetCommitsResponse getRatifiedCommitsFromUC(String ucTableId, String tablePath) {
+    logger.info(
+        "[{}] Invoking the UCClient to get ratified commits at latest version {}", ucTableId);
+
+    return timeOperation(
+        "UCClient.getCommits",
+        ucTableId,
+        () -> {
+          try {
+            return ucClient.getCommits(
+                ucTableId,
+                new Path(tablePath).toUri(),
+                Optional.empty() /* startVersion */,
+                Optional.empty() /* endVersion */);
+          } catch (IOException ex) {
+            throw new UncheckedIOException(ex);
+          } catch (UCCommitCoordinatorException ex) {
+            throw new RuntimeException(ex);
+          }
+        });
   }
 
   private GetCommitsResponse getRatifiedCommitsFromUC(

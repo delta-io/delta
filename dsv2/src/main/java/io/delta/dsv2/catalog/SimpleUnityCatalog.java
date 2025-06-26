@@ -64,18 +64,19 @@ public class SimpleUnityCatalog implements TableCatalog {
     try {
       // Get the table ID from Unity Catalog
       String fullTableName =
-          String.format("%s.%s.%s", catalogName, ident.namespace()[0], ident.name());
+          String.format(
+              "%s.%s.%s", "managed_iceberg_bugbash_pupr", ident.namespace()[0], ident.name());
       TableInfo tableInfo = tablesApi.getTable(fullTableName);
       // Load the table using UCCatalogManagedClient
       ResolvedTable table =
           ucCatalogManagedClient.loadTable(
-              engine, tableInfo.getTableId(), tableInfo.getStorageLocation(), 2);
+              engine, tableInfo.getTableId(), tableInfo.getStorageLocation(), 1);
       return new DeltaCcv2Table(table, ident);
     } catch (ApiException e) {
       if (e.getCode() == 404) {
         throw new NoSuchTableException(ident);
       }
-      throw new RuntimeException("Failed to load table", e);
+      throw new RuntimeException("Failed to load table" + e);
     }
   }
 
