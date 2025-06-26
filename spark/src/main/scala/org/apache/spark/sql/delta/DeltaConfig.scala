@@ -43,19 +43,32 @@ case class DeltaConfig[T](
     alternateKeys: Seq[String] = Seq.empty) {
   /**
    * Recover the saved value of this configuration from `Metadata`. If undefined, fall back to
-   * alternate keys, returning defaultValue if none match.
+   * alternate keys, returning defaultValue if none matches.
    */
   def fromMetaData(metadata: Metadata): T = {
     fromMap(metadata.configuration)
   }
 
+  /**
+   * Recover the saved value of this configuration from `Metadata`. If undefined, fall back to
+   * alternate keys, returning `None` if none matches.
+   */
+  protected[delta] def fromMetaDataOption(metadata: Metadata): Option[T] = {
+    fromMapOption(metadata.configuration)
+  }
+
   def fromMap(configs: Map[String, String]): T = {
-    for (usedKey <- key +: alternateKeys) {
-      configs.get(usedKey).map { value =>
-        return fromString(value)
+    fromMapOption(configs).getOrElse(fromString(defaultValue))
+  }
+
+  protected[delta] def fromMapOption(configs: Map[String, String]): Option[T] = {
+    for (k <- key +: alternateKeys) {
+      configs.get(k) match {
+        case Some(value) => return Some(fromString(value))
+        case None => // keep looking
       }
     }
-    fromString(defaultValue)
+    None
   }
 
   /** Validate the setting for this configuration */
