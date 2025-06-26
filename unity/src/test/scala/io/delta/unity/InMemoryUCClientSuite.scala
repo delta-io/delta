@@ -30,18 +30,6 @@ import org.scalatest.funsuite.AnyFunSuite
 /** Unit tests for [[InMemoryUCClient]]. */
 class InMemoryUCClientSuite extends AnyFunSuite with UCCatalogManagedTestUtils {
 
-  private val fakeURI = new URI("s3://bucket/table")
-
-  private def getInMemoryUCClientWithCommitsForTableId(
-      tableId: String,
-      versions: Seq[Long]): InMemoryUCClient = {
-    val client = new InMemoryUCClient("ucMetastoreId")
-    versions.foreach { v =>
-      client.commitWithDefaults(tableId, fakeURI, Optional.of(createCommit(v)))
-    }
-    client
-  }
-
   private def testGetCommitsFiltering(
       allVersions: Seq[Long],
       startVersionOpt: Optional[JLong],
@@ -49,8 +37,7 @@ class InMemoryUCClientSuite extends AnyFunSuite with UCCatalogManagedTestUtils {
       expectedVersions: Seq[Long]): Unit = {
     val client = getInMemoryUCClientWithCommitsForTableId("tableId", allVersions)
     val response = client.getCommits("tableId", fakeURI, startVersionOpt, endVersionOpt)
-    val actualVersions = response.getCommits.asScala.map(_.getVersion).toSeq
-    val expectedVersions = expectedVersions
+    val actualVersions = response.getCommits.asScala.map(_.getVersion)
 
     assert(actualVersions == expectedVersions)
   }
