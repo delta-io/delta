@@ -19,10 +19,7 @@ package io.delta.unity
 import scala.collection.JavaConverters._
 
 import io.delta.kernel.internal.files.ParsedLogData.ParsedLogType
-import io.delta.kernel.internal.util.FileNames
-import io.delta.storage.commit.Commit
 
-import org.apache.hadoop.fs.{FileStatus => HadoopFileStatus, Path}
 import org.scalatest.funsuite.AnyFunSuite
 
 /** Unit tests for [[UCCatalogManagedClient]]. */
@@ -39,16 +36,16 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
     val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
 
     assertThrows[NullPointerException] {
-      ucCatalogManagedClient.loadTable(null, "ucTableId", "tablePath", 1L)
+      ucCatalogManagedClient.loadTable(null, "ucTableId", "tablePath", 0L) // engine is null
     }
     assertThrows[NullPointerException] {
-      ucCatalogManagedClient.loadTable(defaultEngine, null, "tablePath", 1L)
+      ucCatalogManagedClient.loadTable(defaultEngine, null, "tablePath", 0L) // ucTableId is null
     }
     assertThrows[NullPointerException] {
-      ucCatalogManagedClient.loadTable(defaultEngine, "ucTableId", null, 1L)
+      ucCatalogManagedClient.loadTable(defaultEngine, "ucTableId", null, 0L) // tablePath is null
     }
     assertThrows[IllegalArgumentException] {
-      ucCatalogManagedClient.loadTable(defaultEngine, "ucTableId", "tablePath", -1L)
+      ucCatalogManagedClient.loadTable(defaultEngine, "ucTableId", "tablePath", -1L) // version < 0
     }
   }
 

@@ -16,6 +16,7 @@
 
 package io.delta.unity
 
+import java.lang.{Long => JLong}
 import java.net.URI
 import java.util.Optional
 
@@ -39,6 +40,19 @@ class InMemoryUCClientSuite extends AnyFunSuite with UCCatalogManagedTestUtils {
       client.commitWithDefaults(tableId, fakeURI, Optional.of(createCommit(v)))
     }
     client
+  }
+
+  private def testGetCommitsFiltering(
+      allVersions: Seq[Long],
+      startVersionOpt: Optional[JLong],
+      endVersionOpt: Optional[JLong],
+      expectedVersions: Seq[Long]): Unit = {
+    val client = getInMemoryUCClientWithCommitsForTableId("tableId", allVersions)
+    val response = client.getCommits("tableId", fakeURI, startVersionOpt, endVersionOpt)
+    val actualVersions = response.getCommits.asScala.map(_.getVersion).toSeq
+    val expectedVersions = expectedVersions
+
+    assert(actualVersions == expectedVersions)
   }
 
   test("TableData::appendCommit throws if commit version is not maxRatifiedVersion + 1") {
@@ -77,27 +91,35 @@ class InMemoryUCClientSuite extends AnyFunSuite with UCCatalogManagedTestUtils {
   }
 
   test("getCommits returns all commits if no startVersion or endVersion filter") {
-    val client = getInMemoryUCClientWithCommitsForTableId("tableId", 0L to 5L)
-    val response = client.getCommits("tableId", fakeURI, Optional.empty(), Optional.empty())
-    assert(response.getCommits.asScala.map(_.getVersion) sameElements (0L to 5L).toList)
+    testGetCommitsFiltering(
+      allVersions = 0L to 5L,
+      startVersionOpt = Optional.empty(),
+      endVersionOpt = Optional.empty(),
+      expectedVersions = 0L to 5L)
   }
 
   test("getCommits filters by startVersion") {
-    val client = getInMemoryUCClientWithCommitsForTableId("tableId", 0L to 5L)
-    val response = client.getCommits("tableId", fakeURI, Optional.of(2L), Optional.empty())
-    assert(response.getCommits.asScala.map(_.getVersion) sameElements (2L to 5L).toList)
+    testGetCommitsFiltering(
+      allVersions = 0L to 5L,
+      startVersionOpt = Optional.of(2L),
+      endVersionOpt = Optional.empty(),
+      expectedVersions = 2L to 5L)
   }
 
   test("getCommits filters by endVersion") {
-    val client = getInMemoryUCClientWithCommitsForTableId("tableId", 0L to 5L)
-    val response = client.getCommits("tableId", fakeURI, Optional.empty(), Optional.of(3L))
-    assert(response.getCommits.asScala.map(_.getVersion) sameElements (0L to 3L).toList)
+    testGetCommitsFiltering(
+      allVersions = 0L to 5L,
+      startVersionOpt = Optional.empty(),
+      endVersionOpt = Optional.of(3L),
+      expectedVersions = 0L to 3L)
   }
 
   test("getCommits filters by startVersion and endVersion") {
-    val client = getInMemoryUCClientWithCommitsForTableId("tableId", 0L to 5L)
-    val response = client.getCommits("tableId", fakeURI, Optional.of(2L), Optional.of(4L))
-    assert(response.getCommits.asScala.map(_.getVersion) sameElements (2L to 4L).toList)
+    testGetCommitsFiltering(
+      allVersions = 0L to 5L,
+      startVersionOpt = Optional.of(2L),
+      endVersionOpt = Optional.of(4L),
+      expectedVersions = 2L to 4L)
   }
 
   test("concurrent table creation (via committing version 0) => only one commit succeeds") {
