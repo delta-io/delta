@@ -1762,7 +1762,6 @@ trait OptimisticTransactionImpl extends TransactionHelper
       }
       // TODO(coordinated-commits): Use the right timestamp method on top of CommitInfo once ICT is
       //  merged.
-      partitionsAddedToOpt = Some(commitStatsComputer.getPartitionsAddedByTransaction)
       // If the metadata didn't change, `newMetadata` is empty, and we can re-use the old id.
       acStatsCollector.finalizeStats(newMetadata.map(_.id).getOrElse(snapshot.metadata.id))
       spark.sessionState.conf.setConf(
