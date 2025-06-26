@@ -21,7 +21,7 @@ import java.util.Objects;
 /**
  * Represents the result of reading a batch of data in a file.
  *
- * <p>Encapsulates both the data read (as a {@link ColumnarBatch}) and the full path of the file *
+ * <p>Encapsulates both the data read (as a {@link ColumnarBatch}) and the full path of the file
  * from which the data was read.
  */
 public class FileReadResult {

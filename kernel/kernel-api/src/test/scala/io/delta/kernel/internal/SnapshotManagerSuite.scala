@@ -136,6 +136,14 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
     topLevelFileTypes.foreach { topLevelFileType =>
       val v2Checkpoints =
         v2CheckpointFileStatuses(v2CheckpointSpec, topLevelFileType)
+
+      val v2CheckpointFileName = if (v2CheckpointSpec.nonEmpty) {
+        val firstV2Version = v2CheckpointSpec.head._1
+        s"${"%020d".format(firstV2Version)}.checkpoint.$topLevelFileType"
+      } else {
+        "no-v2-checkpoint"
+      }
+
       val checkpointFiles = v2Checkpoints.flatMap {
         case (topLevelCheckpointFile, sidecars) =>
           Seq(topLevelCheckpointFile) ++ sidecars
@@ -165,7 +173,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       val logSegment = snapshotManager.getLogSegmentForVersion(
         createMockFSListFromEngine(
           listFromProvider(deltas ++ compactions ++ checkpointFiles)("/"),
-          new MockSidecarParquetHandler(expectedSidecars),
+          new MockSidecarParquetHandler(expectedSidecars, v2CheckpointFileName),
           new MockSidecarJsonHandler(expectedSidecars)),
         versionToLoad)
 
@@ -777,7 +785,6 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
 trait SidecarIteratorProvider extends VectorTestUtils {
 
-  // Shared helper to construct the batch
   private def buildSidecarBatch(sidecars: Seq[FileStatus]): ColumnarBatch = new ColumnarBatch {
     override def getSchema: StructType = SidecarFile.READ_SCHEMA
 
@@ -790,29 +797,28 @@ trait SidecarIteratorProvider extends VectorTestUtils {
     override def getSize: Int = sidecars.length
   }
 
-  // For Parquet (ColumnarBatch + filePath)
-  def singletonSidecarParquetIterator(sidecars: Seq[FileStatus])
+  def singletonSidecarParquetIterator(sidecars: Seq[FileStatus], V2CheckpointFileName: String)
       : CloseableIterator[FileReadResult] = {
     val batch = buildSidecarBatch(sidecars)
-    val filePath = if (sidecars.nonEmpty) sidecars.head.getPath else "<no_file>"
+    val filePath = V2CheckpointFileName
     val result = new FileReadResult(batch, filePath)
     Utils.singletonCloseableIterator(result)
   }
 
-  // For JSON (only ColumnarBatch)
+  // TODO: extend FileReadResult for JSON read result
   def singletonSidecarJsonIterator(sidecars: Seq[FileStatus]): CloseableIterator[ColumnarBatch] = {
     val batch = buildSidecarBatch(sidecars)
     Utils.singletonCloseableIterator(batch)
   }
 }
 
-class MockSidecarParquetHandler(sidecars: Seq[FileStatus])
+class MockSidecarParquetHandler(sidecars: Seq[FileStatus], v2CheckpointFileName: String)
     extends BaseMockParquetHandler with SidecarIteratorProvider {
   override def readParquetFiles(
       fileIter: CloseableIterator[FileStatus],
       physicalSchema: StructType,
       predicate: Optional[Predicate]): CloseableIterator[FileReadResult] =
-    singletonSidecarParquetIterator(sidecars)
+    singletonSidecarParquetIterator(sidecars, v2CheckpointFileName)
 }
 
 class MockSidecarJsonHandler(sidecars: Seq[FileStatus])
