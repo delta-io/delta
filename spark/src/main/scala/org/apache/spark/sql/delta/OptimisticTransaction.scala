@@ -1796,6 +1796,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
         commitInfoOpt = Some(commitInfo),
         commitSizeBytes = commitSizeBytes
       )
+      partitionsAddedToOpt = Some(commitStatsComputer.getPartitionsAddedByTransaction)
 
       executionObserver.transactionCommitted()
       (attemptVersion, postCommitSnapshot)
