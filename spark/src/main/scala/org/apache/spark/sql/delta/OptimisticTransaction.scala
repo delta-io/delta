@@ -2373,6 +2373,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       catalogTable)
     val postCommitReconstructionTime = System.nanoTime()
     needsCheckpoint = isCheckpointNeeded(attemptVersion, postCommitSnapshot)
+    collectAutoOptimizeStatsAndFinalize(actions, deltaLog.tableId)
     val commitStatsComputer = new CommitStatsComputer()
     // Add to commit stats and consume the returned iterator.
     commitStatsComputer.addToCommitStats(actions.toIterator).foreach(_ => ())
