@@ -18,7 +18,7 @@ VERSION = get_version_from_sbt()
 MAJOR_VERSION = int(VERSION.split(".")[0])
 
 if MAJOR_VERSION < 4:
-    packages_arg = ['delta']
+    packages_arg = ['delta', 'delta.exceptions']
     install_requires_arg = ['pyspark>=3.5.2,<3.6.0', 'importlib_metadata>=1.0.0']
     python_requires_arg = '>=3.6'
 else:  # MAJOR_VERSION >= 4
