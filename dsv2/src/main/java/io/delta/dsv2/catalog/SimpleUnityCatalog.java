@@ -71,7 +71,7 @@ public class SimpleUnityCatalog implements TableCatalog {
       ResolvedTable table =
           ucCatalogManagedClient.loadTable(
               engine, tableInfo.getTableId(), tableInfo.getStorageLocation(), 1);
-      return new DeltaCcv2Table(table, ident);
+      return new DeltaCcv2Table(table, ident, engine);
     } catch (ApiException e) {
       if (e.getCode() == 404) {
         throw new NoSuchTableException(ident);
@@ -152,11 +152,13 @@ public class SimpleUnityCatalog implements TableCatalog {
       this.ucCatalogManagedClient = new UCCatalogManagedClient(ucCcClient);
       this.tablesApi = new TablesApi(ucApiClient);
       Configuration conf = new Configuration();
-//        conf.set("fs.s3a.path.style.access", "true");
-      conf.set("fs.s3a.region", "us-west-2");
-      conf.set("fs.s3a.aws.credentials.provider",
-              "org.apache.hadoop.fs.s3a.TemporaryAWSCredentialsProvider");
-      conf.set("fs.s3a.endpoint", "s3.us-west-2.amazonaws.com");
+      //        conf.set("fs.s3a.path.style.access", "true");
+      conf.set("fs.s3.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem");
+      conf.set("fs.s3.region", "us-west-2");
+      conf.set(
+          "fs.s3.aws.credentials.provider",
+          "org.apache.hadoop.fs.s3a.TemporaryAWSCredentialsProvider");
+      conf.set("fs.s3.endpoint", "s3.us-west-2.amazonaws.com");
 
       // Initialize engine (this would typically be injected or obtained from a factory)
       this.engine = DefaultEngine.create(conf);

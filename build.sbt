@@ -468,6 +468,10 @@ lazy val spark = (project in file("spark"))
       "org.apache.spark" %% "spark-hive" % sparkVersion.value % "test" classifier "tests",
       "org.apache.hadoop" % "hadoop-aws" % "3.3.4" % "test", // Use version compatible with your Hadoop
       "com.amazonaws" % "aws-java-sdk-s3" % "1.12.262" % "test", // Use version compatible with hadoop-aws
+      "com.amazonaws" % "aws-java-sdk-core" % "1.12.262",
+      "org.apache.httpcomponents" % "httpclient" % "4.5.13",
+      "org.apache.httpcomponents" % "httpcore" % "4.4.15",
+      "commons-codec" % "commons-codec" % "1.15",
       "org.mockito" % "mockito-inline" % "4.11.0" % "test",
     ),
     Compile / packageBin / mappings := (Compile / packageBin / mappings).value ++

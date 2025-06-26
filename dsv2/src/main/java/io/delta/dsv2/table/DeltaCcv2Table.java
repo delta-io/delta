@@ -1,8 +1,9 @@
 package io.delta.dsv2.table;
 
+import io.delta.dsv2.read.DeltaScanBuilder;
 import io.delta.dsv2.utils.SchemaUtils;
 import io.delta.kernel.ResolvedTable;
-import io.delta.kernel.defaults.engine.DefaultEngine;
+import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import java.util.HashSet;
 import java.util.List;
@@ -22,11 +23,13 @@ public class DeltaCcv2Table implements Table, SupportsRead {
 
   private final ResolvedTable resolvedTable;
   private final Identifier tableIdentifier;
-  private DefaultEngine kernelEngine;
+  private Engine kernelEngine;
 
-  public DeltaCcv2Table(ResolvedTable resolvedTable, Identifier tableIdentifier) {
+  public DeltaCcv2Table(
+      ResolvedTable resolvedTable, Identifier tableIdentifier, Engine kernelEngine) {
     this.resolvedTable = resolvedTable;
     this.tableIdentifier = tableIdentifier;
+    this.kernelEngine = kernelEngine;
   }
 
   @Override
@@ -67,6 +70,6 @@ public class DeltaCcv2Table implements Table, SupportsRead {
 
   @Override
   public ScanBuilder newScanBuilder(CaseInsensitiveStringMap options) {
-    throw new UnsupportedOperationException("todo: fix the scan");
+    return new DeltaScanBuilder(resolvedTable, kernelEngine);
   }
 }
