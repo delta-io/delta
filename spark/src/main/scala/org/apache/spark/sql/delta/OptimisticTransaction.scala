@@ -2375,8 +2375,6 @@ trait OptimisticTransactionImpl extends TransactionHelper
     val commitStatsComputer = new CommitStatsComputer()
     // Add to commit stats and consume the returned iterator.
     commitStatsComputer.addToCommitStats(actions.toIterator).foreach(_ => ())
-    partitionsAddedToOpt = Some(commitStatsComputer.getPartitionsAddedByTransaction)
-    collectAutoOptimizeStatsAndFinalize(actions, deltaLog.tableId)
     val commitSizeBytes = jsonActions.map(_.length).sum
     commitStatsComputer.finalizeAndEmitCommitStats(
       spark,
