@@ -2391,6 +2391,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       commitInfoOpt = currentTransactionInfo.commitInfo,
       commitSizeBytes = commitSizeBytes
     )
+    partitionsAddedToOpt = Some(commitStatsComputer.getPartitionsAddedByTransaction)
 
     postCommitSnapshot
   }
