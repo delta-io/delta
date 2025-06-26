@@ -151,9 +151,15 @@ public class SimpleUnityCatalog implements TableCatalog {
       this.ucCcClient = new UCTokenBasedRestClient(uri, token);
       this.ucCatalogManagedClient = new UCCatalogManagedClient(ucCcClient);
       this.tablesApi = new TablesApi(ucApiClient);
+      Configuration conf = new Configuration();
+//        conf.set("fs.s3a.path.style.access", "true");
+      conf.set("fs.s3a.region", "us-west-2");
+      conf.set("fs.s3a.aws.credentials.provider",
+              "org.apache.hadoop.fs.s3a.TemporaryAWSCredentialsProvider");
+      conf.set("fs.s3a.endpoint", "s3.us-west-2.amazonaws.com");
 
       // Initialize engine (this would typically be injected or obtained from a factory)
-      this.engine = DefaultEngine.create(new Configuration());
+      this.engine = DefaultEngine.create(conf);
     } catch (Exception e) {
       throw new RuntimeException("Failed to initialize Unity Catalog client", e);
     }
