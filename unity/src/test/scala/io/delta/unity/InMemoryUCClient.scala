@@ -137,7 +137,7 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
 
     if (!commit.isPresent) return
 
-    createTableIfNotExists(tableId).appendCommit(commit.get())
+    getOrCreateTableIfNotExists(tableId).appendCommit(commit.get())
   }
 
   override def getCommits(
@@ -156,7 +156,8 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
     tables.asScala.toMap
   }
 
-  private def createTableIfNotExists(tableId: String): TableData = {
+  /** Retrieves the table data for the given table ID, creating it if it does not exist. */
+  private def getOrCreateTableIfNotExists(tableId: String): TableData = {
     tables.computeIfAbsent(tableId, _ => new TableData)
   }
 
