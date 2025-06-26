@@ -21,6 +21,8 @@ import java.time.{Instant, OffsetDateTime}
 import java.time.temporal.ChronoUnit
 import java.util.Optional
 
+import io.delta.kernel.internal.PaginatedScanImpl
+import io.delta.kernel.internal.replay.PaginatedAddFilesIterator
 import scala.collection.JavaConverters._
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
@@ -1583,6 +1585,123 @@ class ScanSuite extends AnyFunSuite with TestUtils
           .getScanBuilder()
           .withFilter(greaterThan(col("id"), ofInt(0)))
           .build())
+    }
+  }
+
+  //////////////////////////////////////////////////////////////////////////////////
+  // Pagination tests for PaginatedScan
+  //////////////////////////////////////////////////////////////////////////////////
+
+  //TODO: test page size < JSON file size
+  //TODO: test page size = JSON file size (page size = 10)
+  test("getPaginatedScanFiles - basic pagination with single JSON file") {
+    withTempDir { tempDir =>
+      /**
+       Creates a Delta table with 10 Parquet files
+       Each file contains 10 rows
+       _delta_log/00000000000000000000.json contains 10 AddFile actions — one per file
+       parquet 0: 0 - 9
+       parquet 1: 10 -19
+       parquet 9: 90 -99
+       * */
+      spark.range(0, 100, 1, 10).write.format("delta").save(tempDir.getCanonicalPath)
+
+      val snapshot = latestSnapshot(tempDir.getCanonicalPath)
+      // Try read first page (with size = 12)
+      val paginatedScan =
+        snapshot.getScanBuilder().buildPaginated(12, Optional.empty()).asInstanceOf[PaginatedScanImpl]
+
+      if (paginatedScan != null) {
+        System.out.println("has built a real paginated scan")
+      }
+
+      // Create a custom engine with batch size 5
+      val hadoopConf = new org.apache.hadoop.conf.Configuration()
+      hadoopConf.set("delta.kernel.default.json.reader.batch-size", "5")
+      val customEngine = DefaultEngine.create(hadoopConf)
+      System.out.println("has get engine lalala")
+
+      val paginatedIter = paginatedScan.getScanFiles(customEngine)
+      val firstPageFiles = paginatedIter.asScala.toSeq
+      assert(firstPageFiles.nonEmpty, "First page should contain some files")
+
+      // Verify we got at most 12 AddFiles across all batches
+      val fileCounts: Seq[Long] = firstPageFiles.map(_.getNumOfTrueRows.toLong)
+      val totalFileCountsReturned = fileCounts.sum
+      println(s"Num of batches returned in page = ${fileCounts.length}")
+
+      // Log additional pagination state info
+      val paginatedAddFilesIter = {
+        paginatedIter.asInstanceOf[PaginatedAddFilesIterator]
+      }
+
+      val nextRowIndex = paginatedAddFilesIter.getNewPageToken.getRowIndex
+      val nextStartingFile = paginatedAddFilesIter.getNewPageToken.getStartingFileName
+      assert(totalFileCountsReturned <= 12, s"First page should contain at most 12 files, got $totalFileCountsReturned")
+
+      println(s"nextStartingFile = ${nextStartingFile.toString}")
+      println(s"nextRowIndex = ${nextRowIndex.toString}")
+      println(s"Total Parquet Files fetched = ${totalFileCountsReturned.toString}")
+
+      paginatedIter.close()
+    }
+  }
+
+  test("getPaginatedScanFiles - basic pagination with multiple JSON files") {
+    withTempDir { tempDir =>
+      val tablePath = tempDir.getCanonicalPath
+
+      // Create multiple commits to generate multiple JSON files
+      // First commit: files 0-4 (5 files)
+      spark.range(0, 50, 1, 5).write.format("delta").save(tablePath)
+
+      // Second commit: files 5-9 (5 more files)
+      spark.range(50, 100, 1, 5).write.format("delta").mode("append").save(tablePath)
+
+      // Third commit: files 10-14 (5 more files)
+      spark.range(100, 150, 1, 5).write.format("delta").mode("append").save(tablePath)
+      // This should create: 00000000000000000000.json, 00000000000000000001.json, 00000000000000000002.json
+
+      val snapshot = latestSnapshot(tempDir.getCanonicalPath)
+      // Try read first page (with size = 9)
+      val paginatedScan =
+        snapshot.getScanBuilder().buildPaginated(9, Optional.empty()).asInstanceOf[PaginatedScanImpl]
+
+      // Create a custom engine with batch size 4
+      val hadoopConf = new org.apache.hadoop.conf.Configuration()
+      hadoopConf.set("delta.kernel.default.json.reader.batch-size", "4")
+      hadoopConf.set("delta.kernel.default.parquet.reader.batch-size", "4")
+      val customEngine = DefaultEngine.create(hadoopConf)
+
+      val paginatedIter = paginatedScan.getScanFiles(customEngine)
+      val firstPageFiles = paginatedIter.asScala.toSeq
+
+      assert(firstPageFiles.nonEmpty, "First page should contain files")
+
+      // Verify we got at most 10 AddFiles across all batches
+      val fileCounts: Seq[Long] = firstPageFiles.map(_.getNumOfTrueRows.toLong)
+      val totalAddFiles = fileCounts.sum
+      println(s"Num of batches returned in page = ${fileCounts.length}")
+
+      // Get pagination state info
+      val paginatedAddFilesIter = paginatedIter.asInstanceOf[PaginatedAddFilesIterator]
+      val lastRowIndex = paginatedAddFilesIter.getNewPageToken.getRowIndex()
+      val nextStartingFile = paginatedAddFilesIter.getNewPageToken.getStartingFileName()
+
+      println(s"lastRowIndex = ${lastRowIndex.toString}")
+      println(s"nextStartingFile = ${nextStartingFile.toString}")
+      println(s"totalAddFiles = ${totalAddFiles.toString}")
+
+      assert(totalAddFiles <= 10, s"First page should contain at most 10 files, got $totalAddFiles")
+      assert(totalAddFiles > 0, s"Should have some files, got $totalAddFiles")
+
+      paginatedIter.close()
+
+      // Verify that pagination spans multiple JSON files using a separate scan instance
+      val verificationScan = snapshot.getScanBuilder().build()
+      val allFiles = collectScanFileRows(verificationScan)
+      val totalFilesInTable = allFiles.length
+      assert(totalFilesInTable == 15, s"Should have 15 total files, got $totalFilesInTable")
     }
   }
 

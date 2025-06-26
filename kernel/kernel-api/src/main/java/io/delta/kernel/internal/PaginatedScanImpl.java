@@ -19,7 +19,7 @@ import java.util.Optional;
 public class PaginatedScanImpl implements PaginatedScan {
 
   private final long pageSize;
-  private final PageToken pageToken;
+  private final Optional<PageToken> pageToken;
   private final ScanImpl baseScan;
   private PaginatedAddFilesIterator paginatedIter;
 
@@ -32,7 +32,7 @@ public class PaginatedScanImpl implements PaginatedScan {
       Optional<Predicate> filter,
       Path dataPath,
       SnapshotReport snapshotReport,
-      Row pageTokenInRow,
+      Optional<Row> pageTokenInRow,
       long pageSize) {
     baseScan =
         new ScanImpl(
@@ -44,7 +44,7 @@ public class PaginatedScanImpl implements PaginatedScan {
             filter,
             dataPath,
             snapshotReport);
-    this.pageToken = null;
+    this.pageToken = pageTokenInRow.map(PageToken::fromRow);
     this.pageSize = pageSize;
   }
 
@@ -74,11 +74,6 @@ public class PaginatedScanImpl implements PaginatedScan {
     System.out.println("successfully fetch iterator");
     this.paginatedIter = new PaginatedAddFilesIterator(scanFileIter, paginationContext);
     return paginatedIter;
-  }
-
-  // TODO: implement following methods
-  private PageToken decodePageToken(Row pageTokenInRow) {
-    return PageToken.fromRow(pageTokenInRow);
   }
 
   @Override
