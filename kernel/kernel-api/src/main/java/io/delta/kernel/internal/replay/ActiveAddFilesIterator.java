@@ -154,6 +154,7 @@ public class ActiveAddFilesIterator implements CloseableIterator<FilteredColumna
     final ActionWrapper _next = iter.next();
     final ColumnarBatch addRemoveColumnarBatch = _next.getColumnarBatch();
     final boolean isFromCheckpoint = _next.isFromCheckpoint();
+    final String fileName = _next.getFileName();
 
     // Step 1: Update `tombstonesFromJson` with all the RemoveFiles in this columnar batch, if
     //         and only if this batch is not from a checkpoint.
@@ -189,6 +190,7 @@ public class ActiveAddFilesIterator implements CloseableIterator<FilteredColumna
         prepareSelectionVectorBuffer(selectionVectorBuffer, addsVector.getSize());
     boolean atLeastOneUnselected = false;
 
+    long numOfTrueRows = 0L;
     for (int rowId = 0; rowId < addsVector.getSize(); rowId++) {
       if (addsVector.isNullAt(rowId)) {
         atLeastOneUnselected = true;
@@ -222,6 +224,7 @@ public class ActiveAddFilesIterator implements CloseableIterator<FilteredColumna
         if (!alreadyDeleted) {
           doSelect = true;
           selectionVectorBuffer[rowId] = true;
+          numOfTrueRows++;
           metrics.activeAddFilesCounter.increment();
         }
       } else {
@@ -275,7 +278,7 @@ public class ActiveAddFilesIterator implements CloseableIterator<FilteredColumna
                           .createSelectionVector(selectionVectorBuffer, 0, addsVector.getSize()),
                   "Create selection vector for selected scan files"));
     }
-    next = Optional.of(new FilteredColumnarBatch(scanAddFiles, selectionColumnVector));
+    next = Optional.of(new FilteredColumnarBatch(scanAddFiles, selectionColumnVector, fileName, numOfTrueRows));
   }
 
   public static String getAddFilePath(ColumnVector addFileVector, int rowId) {
