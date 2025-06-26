@@ -30,16 +30,39 @@ import io.delta.storage.commit.uccommitcoordinator.{InvalidTargetTableException,
 
 object InMemoryUCClient {
 
-  /** Internal data structure to track table state including commits and version information. */
+  /**
+   * Internal data structure to track table state including commits and version information.
+   *
+   * Thread Safety: All public methods are synchronized to ensure thread-safe access to the
+   * internal mutable state. This class is designed to be safely accessed by multiple threads
+   * concurrently.
+   */
   class TableData {
     private var maxRatifiedVersion = -1L
     private val commits: ArrayBuffer[Commit] = ArrayBuffer.empty
 
-    def getMaxRatifiedVersion: Long = maxRatifiedVersion
+    /** @return the maximum ratified version, or -1 if no commits have been made. */
+    def getMaxRatifiedVersion: Long = synchronized {
+      maxRatifiedVersion
+    }
 
-    def getCommits: List[Commit] = commits.toList
+    /** @return An immutable list of all commits. */
+    def getCommits: List[Commit] = synchronized { commits.toList }
 
-    def appendCommit(commit: Commit): Unit = {
+    /** @return commits filtered by version range. */
+    def getCommitsInRange(
+        startVersion: Optional[JLong],
+        endVersion: Optional[JLong]): List[Commit] = synchronized {
+      commits
+        .filter { commit =>
+          startVersion.orElse(0L) <= commit.getVersion &&
+          commit.getVersion <= endVersion.orElse(Long.MaxValue)
+        }
+        .toList
+    }
+
+    /** Appends a new commit to this table. */
+    def appendCommit(commit: Commit): Unit = synchronized {
       val expectedCommitVersion = maxRatifiedVersion + 1
 
       if (commit.getVersion != expectedCommitVersion) {
@@ -58,9 +81,13 @@ object InMemoryUCClient {
 /**
  * In-memory Unity Catalog client implementation for testing.
  *
- * Provides a mock implementation of UCClient that stores all table data in memory. This is  useful
+ * Provides a mock implementation of UCClient that stores all table data in memory. This is useful
  * for unit tests that need to simulate Unity Catalog operations without connecting to an actual UC
  * service.
+ *
+ * Thread Safety: This implementation is thread-safe for concurrent access. Multiple threads can
+ * safely perform operations on different tables simultaneously. Operations on the same table are
+ * internally synchronized by the [[TableData]] class.
  */
 class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
 
@@ -88,24 +115,17 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
       startVersion: Optional[JLong],
       endVersion: Optional[JLong]): GetCommitsResponse = {
     val tableData = getTableDataElseThrow(tableId)
-
-    val commits = tableData
-      .getCommits
-      .filter { x =>
-        startVersion.orElse(0) <= x.getVersion &&
-        x.getVersion <= endVersion.orElse(Long.MaxValue)
-      }
-
-    new GetCommitsResponse(commits.asJava, tableData.getMaxRatifiedVersion)
+    val filteredCommits = tableData.getCommitsInRange(startVersion, endVersion)
+    new GetCommitsResponse(filteredCommits.asJava, tableData.getMaxRatifiedVersion)
   }
 
   override def close(): Unit = {}
 
+  /** Retrieves table data for the given table ID or throws an exception if not found. */
   private def getTableDataElseThrow(tableId: String): TableData = {
-    if (!tables.containsKey(tableId)) {
-      throw new InvalidTargetTableException(s"Table not found: $tableId")
+    Option(tables.get(tableId)) match {
+      case Some(tableData) => tableData
+      case None => throw new InvalidTargetTableException(s"Table not found: $tableId")
     }
-
-    tables.get(tableId)
   }
 }
