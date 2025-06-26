@@ -18,16 +18,14 @@ package org.apache.spark.sql.delta
 
 import java.io.File
 import java.util.TimeZone
-import java.util.UUID
 
 import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.DeltaTestUtils._
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
-import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
@@ -41,33 +39,24 @@ class ChecksumSuite
   with SharedSparkSession
   with DeltaTestUtilsBase
   with DeltaSQLCommandTest
+  with DeltaSQLTestUtils
   with CatalogOwnedTestBaseSuite {
 
   override def sparkConf: SparkConf = super.sparkConf
     .set(DeltaSQLConf.INCREMENTAL_COMMIT_FORCE_VERIFY_IN_TESTS, false)
 
-  /** Helper method to create a temp table w/ random suffix for name-based testing. */
-  private def withTempTable(f: String => Unit): Unit = {
-    val testTableName = s"test_table_${UUID.randomUUID().toString.replace("-", "")}"
-    withTable(testTableName) {
-      f(testTableName)
-    }
-  }
-
   test(s"A Checksum should be written after every commit when " +
     s"${DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key} is true") {
     def testChecksumFile(writeChecksumEnabled: Boolean): Unit = {
-      withTempTable { tableName =>
+      // Set up the log by explicitly creating the table otherwise we can't
+      // construct the DeltaLog via the table name.
+      withTempTable(createTable = true) { tableName =>
         withSQLConf(
           DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> writeChecksumEnabled.toString) {
           def checksumExists(deltaLog: DeltaLog, version: Long): Boolean = {
             val checksumFile = new File(FileNames.checksumFile(deltaLog.logPath, version).toUri)
             checksumFile.exists()
           }
-
-          // Set up the log by explicitly creating the table otherwise we can't
-          // construct the DeltaLog via the table name.
-          sql(s"CREATE TABLE $tableName USING delta")
 
           // Commit the txn
           val log = DeltaLog.forTable(spark, TableIdentifier(tableName))
@@ -94,7 +83,7 @@ class ChecksumSuite
         DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "false",
         DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> incrementalCommitEnabled.toString
       ) {
-        withTempTable { tableName =>
+        withTempTable(createTable = false) { tableName =>
           // Set the timezone to UTC to avoid triggering force verification of all files in CRC
           // for non utc environments.
           setTimeZone("UTC")
@@ -119,7 +108,7 @@ class ChecksumSuite
   }
 
   def testIncrementalChecksumWrites(tableMutationOperation: String => Unit): Unit = {
-    withTempTable { tableName =>
+    withTempTable(createTable = false) { tableName =>
       withSQLConf(
         DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true",
         DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key ->"true") {
@@ -167,7 +156,7 @@ class ChecksumSuite
       // or Metadata will trigger a failure earlier than the full validation.
       DeltaSQLConf.USE_PROTOCOL_AND_METADATA_FROM_CHECKSUM_ENABLED.key -> "false"
     ) {
-      withTempTable { tableName =>
+      withTempTable(createTable = false) { tableName =>
         spark
           .range(10)
           .write
@@ -232,13 +221,11 @@ class ChecksumSuite
       DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_ENABLED.key -> "false",
       DeltaSQLConf.USE_PROTOCOL_AND_METADATA_FROM_CHECKSUM_ENABLED.key -> "true"
     ) {
-      withTempTable { tableName =>
+      // Explicitly create the table w/o any AddFile for the subsequent
+      // DeltaLog construction.
+      withTempTable(createTable = true) { tableName =>
         import testImplicits._
         val numAddFiles = 10
-
-        // Explicitly create the table w/o any AddFile for the subsequent
-        // DeltaLog construction.
-        sql(s"CREATE TABLE $tableName USING delta")
 
         // Procedure:
         // 1. Populate the table with several files
