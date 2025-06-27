@@ -8,12 +8,14 @@ public class PageToken {
   // TODO: should this be full file path or file name?
   private final String startingFileName;
 
+  private final long sidecarIdx;
   private final long rowIndex;
 
   /** TODO: Variables for validating query params */
-  public PageToken(String startingFileName, long rowIndex) {
+  public PageToken(String startingFileName, long rowIndex, long sidecarIdx) {
     this.startingFileName = startingFileName;
     this.rowIndex = rowIndex;
+    this.sidecarIdx = sidecarIdx;
   }
 
   public String getStartingFileName() {
@@ -37,6 +39,7 @@ public class PageToken {
   public static PageToken fromRow(Row row) {
     String fileName = row.getString(0);
     long rowIdx = row.getLong(1);
-    return new PageToken(fileName, rowIdx);
+    long sidecarIdx = row.getLong(2);
+    return new PageToken(fileName, rowIdx, sidecarIdx);
   }
 }
