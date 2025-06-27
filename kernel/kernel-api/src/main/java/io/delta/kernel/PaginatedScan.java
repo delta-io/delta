@@ -16,10 +16,7 @@
 package io.delta.kernel;
 
 import io.delta.kernel.data.FilteredColumnarBatch;
-import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
-import io.delta.kernel.utils.CloseableIterator;
-import java.util.Optional;
 
 /**
  * Extension of {@link Scan} that supports pagination.
@@ -41,11 +38,10 @@ import java.util.Optional;
 public interface PaginatedScan extends Scan {
 
   /**
-   * Get an iterator of Scan files for the current page.
+   * Get a paginated iterator of Scan files for the current page.
    *
    * @param engine {@link Engine} instance to use in Delta Kernel.
    * @return iterator of {@link FilteredColumnarBatch}s for the current page.
    */
-  @Override
-  CloseableIterator<FilteredColumnarBatch> getScanFiles(Engine engine);
+  PaginatedAddFilesIterator getPaginatedScanFiles(Engine engine);
 }
