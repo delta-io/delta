@@ -5,6 +5,7 @@ import io.delta.kernel.types.*;
 
 public class PageToken {
   /** Variables to know where last page ends (current page starts) */
+  //TODO: should this be full file path or file name?
   private final String startingFileName;
 
   private final long rowIndex;

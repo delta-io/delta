@@ -1,7 +1,7 @@
 package io.delta.kernel.internal;
 
-import io.delta.kernel.PaginatedAddFilesIterator;
 import io.delta.kernel.PaginatedScan;
+import io.delta.kernel.PaginatedAddFilesIterator;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
@@ -63,11 +63,12 @@ public class PaginatedScanImpl implements PaginatedScan {
     return this.getScanFiles(engine, false);
   }
 
-  public PaginatedAddFilesIterator getScanFiles(Engine engine, boolean includeStates) {
-    PaginationContext paginationContext = new PaginationContext(pageSize);
+  public PaginatedAddFilesIterator getScanFiles(
+      Engine engine, boolean includeStates) {
+    PaginationContext paginationContext = new PaginationContext(pageSize,pageToken);
     System.out.println("try fetching scan iter 2");
     CloseableIterator<FilteredColumnarBatch> scanFileIter =
-        baseScan.getScanFiles(engine, includeStates);
+        baseScan.getScanFiles(engine, includeStates, paginationContext);
     System.out.println("successfully fetch iterator");
     return new PaginatedAddFilesIteratorImpl(scanFileIter, paginationContext);
   }

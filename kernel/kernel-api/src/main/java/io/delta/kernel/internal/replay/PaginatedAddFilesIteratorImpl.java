@@ -22,6 +22,8 @@ public class PaginatedAddFilesIteratorImpl implements PaginatedAddFilesIterator 
       Iterator<FilteredColumnarBatch> originalIterator, PaginationContext paginationContext) {
     this.originalIterator = originalIterator;
     this.pageSize = paginationContext.pageSize;
+    this.lastLogFileName = paginationContext.lastReadLogFileName;
+    this.rowIdxInLastFile = paginationContext.lastReadRowIdxInFile;
   }
 
   @Override
