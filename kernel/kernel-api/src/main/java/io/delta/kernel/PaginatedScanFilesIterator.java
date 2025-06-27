@@ -29,7 +29,7 @@ import io.delta.kernel.utils.CloseableIterator;
  */
 public interface PaginatedScanFilesIterator extends CloseableIterator<FilteredColumnarBatch> {
   /**
-   * Returns a page token representing the starting position of next page. This token can be used to
+   * Returns a page token representing the starting position of next page. This token is used to
    * resume the scan from the exact position current page ends in a subsequent request. Page token
    * also contains metadata for validation purpose, such as detecting changes in query parameters or
    * the underlying log files.
