@@ -215,7 +215,8 @@ public class LogReplay {
       Engine engine,
       boolean shouldReadStats,
       Optional<Predicate> checkpointPredicate,
-      ScanMetrics scanMetrics, PaginationContext paginationContext) {
+      ScanMetrics scanMetrics,
+      PaginationContext paginationContext) {
     // We do not need to look at any `remove` files from the checkpoints. Skip the column to save
     // I/O. Note that we are still going to process the row groups. Adds and removes are randomly
     // scattered through checkpoint part files, so row group push down is unlikely to be useful.

@@ -42,7 +42,7 @@ public class PaginatedAddFilesIteratorImpl implements PaginatedAddFilesIterator 
       if (!fileName.equals(currentLogFileName)) {
         currentLogFileName = fileName;
         System.out.println("fileName " + fileName);
-        currentRowIdxInLastFile = 0;// row idx starts from 1
+        currentRowIdxInLastFile = 0; // row idx starts from 1
       }
       long numActiveAddFiles = nextBatch.getNumOfTrueRows();
       long rowNum = nextBatch.getData().getSize();
@@ -52,8 +52,9 @@ public class PaginatedAddFilesIteratorImpl implements PaginatedAddFilesIterator 
       System.out.println("numTotalAddFiles: " + nextBatch.getData().getColumnVector(0).getSize());
       System.out.println("numOfRows: " + rowNum);
 
-      if(startingLogFileName!=null && currentLogFileName.compareTo(startingLogFileName) > 0 ||
-          (currentLogFileName.equals(startingLogFileName) && currentRowIdxInLastFile < startingRowIdxInLastFile)) {
+      if (startingLogFileName != null && currentLogFileName.compareTo(startingLogFileName) > 0
+          || (currentLogFileName.equals(startingLogFileName)
+              && currentRowIdxInLastFile < startingRowIdxInLastFile)) {
         continue;
       }
       numAddFilesReturned += numActiveAddFiles;

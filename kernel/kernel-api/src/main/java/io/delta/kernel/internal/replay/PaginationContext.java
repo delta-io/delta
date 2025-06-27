@@ -7,11 +7,11 @@ public class PaginationContext {
   public String lastReadLogFileName = null;
   public long lastReadRowIdxInFile = -1;
 
-  public PaginationContext(long pageSize,  Optional<PageToken> pageToken) {
+  public PaginationContext(long pageSize, Optional<PageToken> pageToken) {
     this.pageSize = pageSize;
-    if(pageToken.isPresent()) {
+    if (pageToken.isPresent()) {
       this.lastReadLogFileName = pageToken.get().getStartingFileName();
-      this.lastReadRowIdxInFile =  pageToken.get().getRowIndex();
+      this.lastReadRowIdxInFile = pageToken.get().getRowIndex();
     }
   }
 

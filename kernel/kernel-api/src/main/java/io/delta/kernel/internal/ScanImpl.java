@@ -171,7 +171,8 @@ public class ScanImpl implements Scan {
                       predicate ->
                           rewritePartitionPredicateOnCheckpointFileSchema(
                               predicate, partitionColToStructFieldMap.get())),
-              scanMetrics, paginationContext);
+              scanMetrics,
+              paginationContext);
 
       // Apply partition pruning
       scanFileIter = applyPartitionPruning(engine, scanFileIter);
