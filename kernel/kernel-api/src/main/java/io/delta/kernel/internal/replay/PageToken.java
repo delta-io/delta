@@ -66,9 +66,13 @@ public class PageToken {
               + inputSchema);
     }
 
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < PAGE_TOKEN_SCHEMA.length(); i++) {
       if (row.isNullAt(i)) {
-        throw new IllegalArgumentException("Invalid Page Token: field at index " + i + " is null");
+        throw new IllegalArgumentException(
+            "Invalid Page Token: required field '"
+                + PAGE_TOKEN_SCHEMA.at(i).getName()
+                + "' is null at index "
+                + i);
       }
     }
 
