@@ -1608,7 +1608,7 @@ class ScanSuite extends AnyFunSuite with TestUtils
       val snapshot = latestSnapshot(tempDir.getCanonicalPath)
       // Try read first page (with size = 12)
       val paginatedScan =
-        snapshot.getScanBuilder().buildPaginated(
+        snapshot.getScanBuilder().buildPaginatedScan(
           12,
           Optional.empty()).asInstanceOf[PaginatedScanImpl]
 
@@ -1622,7 +1622,7 @@ class ScanSuite extends AnyFunSuite with TestUtils
       val customEngine = DefaultEngine.create(hadoopConf)
       System.out.println("has get engine lalala")
 
-      val paginatedIter = paginatedScan.getPaginatedScanFiles(customEngine)
+      val paginatedIter = paginatedScan.getScanFiles(customEngine)
       val firstPageFiles = paginatedIter.asScala.toSeq
       assert(firstPageFiles.nonEmpty, "First page should contain some files")
 
@@ -1663,7 +1663,7 @@ class ScanSuite extends AnyFunSuite with TestUtils
       val snapshot = latestSnapshot(tempDir.getCanonicalPath)
       // Try read first page (with size = 9)
       val paginatedScan =
-        snapshot.getScanBuilder().buildPaginated(
+        snapshot.getScanBuilder().buildPaginatedScan(
           9,
           Optional.empty()).asInstanceOf[PaginatedScanImpl]
 
@@ -1673,7 +1673,7 @@ class ScanSuite extends AnyFunSuite with TestUtils
       hadoopConf.set("delta.kernel.default.parquet.reader.batch-size", "4")
       val customEngine = DefaultEngine.create(hadoopConf)
 
-      val paginatedIter = paginatedScan.getPaginatedScanFiles(customEngine)
+      val paginatedIter = paginatedScan.getScanFiles(customEngine)
       val firstPageFiles = paginatedIter.asScala.toSeq
 
       assert(firstPageFiles.nonEmpty, "First page should contain files")
@@ -1730,7 +1730,7 @@ class ScanSuite extends AnyFunSuite with TestUtils
 
       // This should create: 00000000000000000010.checkpoint.parquet(checkpoint file), 00000000000000000011.json, 00000000000000000012.json
       val snapshot = latestSnapshot(tablePath)
-      val scan = snapshot.getScanBuilder().buildPaginated(
+      val scan = snapshot.getScanBuilder().buildPaginatedScan(
         15,
         Optional.empty()).asInstanceOf[PaginatedScanImpl]
 
@@ -1741,7 +1741,7 @@ class ScanSuite extends AnyFunSuite with TestUtils
       val customEngine = DefaultEngine.create(hadoopConf)
 
       // Test pagination starting from the checkpoint (should be processed first)
-      val paginatedIter = scan.getPaginatedScanFiles(customEngine);
+      val paginatedIter = scan.getScanFiles(customEngine);
       val firstPageFiles = paginatedIter.asScala.toSeq
 
       assert(firstPageFiles.nonEmpty, "First page should contain files")

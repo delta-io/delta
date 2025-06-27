@@ -48,12 +48,6 @@ public class PaginatedScanImpl implements PaginatedScan {
   }
 
   @Override
-  public PaginatedAddFilesIterator getPaginatedScanFiles(Engine engine) {
-    System.out.println("try fetching scan iter 1 ");
-    return this.getPaginatedScanFiles(engine, false);
-  }
-
-  @Override
   public Optional<Predicate> getRemainingFilter() {
     return baseScan.getRemainingFilter();
   }
@@ -64,11 +58,12 @@ public class PaginatedScanImpl implements PaginatedScan {
   }
 
   @Override
-  public CloseableIterator<FilteredColumnarBatch> getScanFiles(Engine engine) {
-    return baseScan.getScanFiles(engine);
+  public PaginatedAddFilesIterator getScanFiles(Engine engine) {
+    System.out.println("try fetching scan iter 1 ");
+    return this.getScanFiles(engine, false);
   }
 
-  public PaginatedAddFilesIterator getPaginatedScanFiles(
+  public PaginatedAddFilesIterator getScanFiles(
       Engine engine, boolean includeStates) {
     PaginationContext paginationContext = new PaginationContext(pageSize);
     System.out.println("try fetching scan iter 2");
