@@ -7,12 +7,13 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 
+/** Page Token Class for Pagination Support */
 public class PageToken {
   /** Variables to know where last page ends (current page starts) */
-  private final String startingFileName;
+  private final String startingFileName; // starting Log File Name (also last read log file name)
 
-  private final long rowIndex;
-  private final long sidecarIndex;
+  private final long rowIndex; // the index of last row in the last consumed batch
+  private final long sidecarIndex; // the index of sidecar checkpoint file consumed
 
   /** Variables for validating query params */
   private final String kernelVersion;
@@ -22,7 +23,7 @@ public class PageToken {
   private final long predicateHash;
   private final long logSegmentHash;
 
-  /** Global schema for PageToken Row representation */
+  /** Schema for PageToken Row representation */
   public static final StructType PAGE_TOKEN_SCHEMA =
       new StructType()
           .add("logFileName", StringType.STRING)
@@ -55,7 +56,6 @@ public class PageToken {
   }
 
   public static PageToken fromRow(Row row) {
-    // Validate that the input row schema matches the expected PageToken schema
     StructType inputSchema = row.getSchema();
     if (!PAGE_TOKEN_SCHEMA.equals(inputSchema)) {
       throw new IllegalArgumentException(
@@ -66,7 +66,6 @@ public class PageToken {
               + inputSchema);
     }
 
-    // Validate that none of the fields are null/empty
     for (int i = 0; i < 8; i++) {
       if (row.isNullAt(i)) {
         throw new IllegalArgumentException("Invalid Page Token: field at index " + i + " is null");
@@ -84,7 +83,6 @@ public class PageToken {
         row.getLong(7)); // logSegmentHash
   }
 
-  /** Convert PageToken to a Kernel Row object. */
   public Row toRow() {
     Map<Integer, Object> pageTokenMap = new HashMap<>();
     pageTokenMap.put(0, startingFileName);

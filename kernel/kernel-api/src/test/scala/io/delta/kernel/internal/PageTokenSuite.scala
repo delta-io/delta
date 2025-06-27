@@ -1,3 +1,6 @@
+package io.delta.kernel.internal
+
+import java.util
 import java.util.{HashMap, Map}
 
 import scala.collection.JavaConverters._
@@ -13,15 +16,14 @@ import org.scalatest.funsuite.AnyFunSuite
 
 class PageTokenSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
-  // Test data constants
   private val TEST_FILE_NAME = "test_file.json"
   private val TEST_ROW_INDEX = 42L
   private val TEST_SIDECAR_INDEX = 5L
-  private val TEST_KERNEL_VERSION = "3.0.0"
+  private val TEST_KERNEL_VERSION = "4.0.0"
   private val TEST_TABLE_PATH = "/path/to/table"
-  private val TEST_TABLE_VERSION = 123L
-  private val TEST_PREDICATE_HASH = 456L
-  private val TEST_LOG_SEGMENT_HASH = 789L
+  private val TEST_TABLE_VERSION = 5L
+  private val TEST_PREDICATE_HASH = 123L
+  private val TEST_LOG_SEGMENT_HASH = 456L
 
   private val expectedPageToken = new PageToken(
     TEST_FILE_NAME,
@@ -51,19 +53,26 @@ class PageTokenSuite extends AnyFunSuite with MockFileSystemClientUtils {
   }
 
   test("Test PageToken.toRow with valid data") {
-    //  val row = expectedPageToken.toRow()
-    //  assert(row.equals(expectedRow))
-    // no function to compare two rows
+    val row = expectedPageToken.toRow
+    assert(row.getSchema.equals(PageToken.PAGE_TOKEN_SCHEMA))
+
+    assert(row.getString(0) == TEST_FILE_NAME)
+    assert(row.getLong(1) == TEST_ROW_INDEX)
+    assert(row.getLong(2) == TEST_SIDECAR_INDEX)
+    assert(row.getString(3) == TEST_KERNEL_VERSION)
+    assert(row.getString(4) == TEST_TABLE_PATH)
+    assert(row.getLong(5) == TEST_TABLE_VERSION)
+    assert(row.getLong(6) == TEST_PREDICATE_HASH)
+    assert(row.getLong(7) == TEST_LOG_SEGMENT_HASH)
   }
 
   test("E2E: PageToken round-trip: toRow -> fromRow") {
-    val row = expectedPageToken.toRow()
+    val row = expectedPageToken.toRow
     val reconstructedPageToken = PageToken.fromRow(row)
     assert(reconstructedPageToken.equals(expectedPageToken))
   }
 
   test("PageToken.fromRow throws exception when input row has invalid schema") {
-    // Create a schema with wrong field names
     val invalidSchema = new StructType()
       .add("wrongFieldName", StringType.STRING)
       .add("rowIndexInFile", LongType.LONG)
