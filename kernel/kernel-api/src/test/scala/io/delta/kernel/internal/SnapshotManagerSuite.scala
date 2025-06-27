@@ -171,12 +171,9 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       val logSegment = snapshotManager.getLogSegmentForVersion(
         createMockFSListFromEngine(
           listFromProvider(deltas ++ compactions ++ checkpointFiles)("/"),
-          new MockSidecarParquetHandler(expectedSidecars, "TODO"),
+          new MockSidecarParquetHandler(expectedSidecars, v2CheckpointFileName),
           new MockSidecarJsonHandler(expectedSidecars)),
         versionToLoad)
-
-        System.out.println(expectedV2Checkpoint.length)
-        System.out.println(v2CheckpointFileName)
 
       val expectedDeltas = deltaFileStatuses(
         deltaVersions.filter { v =>
