@@ -48,28 +48,4 @@ public interface PaginatedScan extends Scan {
    */
   @Override
   CloseableIterator<FilteredColumnarBatch> getScanFiles(Engine engine);
-
-  /**
-   * Returns a page token representing the current position in the ScanFiles iterator, allowing the
-   * scan to be resumed from that point in a subsequent request. If the iterator is partially
-   * consumed, the token corresponds to the next unconsumed element.
-   *
-   * <p>Note: Since {@code getScanFiles()} returns an iterator over batches, this page token assumes
-   * that the current batch has been fully consumed. As a result, the token points to the start of
-   * the next batch.
-   *
-   * <p>If the scan has been fully consumed (i.e., no more pages remain), this method returns {@code
-   * Optional.empty()}.
-   *
-   * <p>The returned token also includes metadata for validation purposes, such as detecting changes
-   * in query parameters or underlying delta log content between requests.
-   *
-   * <p>Callers should invoke {@code getCurrentPageToken()} only after finishing consumption of the
-   * current iterator. If they don't consume the entire iterator; then the returned page token will
-   * always point to the beginning of the next batch in the iterator.
-   *
-   * @return an {@link Optional} {@link Row} encoding the current scan position and validation
-   *     metadata.
-   */
-  Optional<Row> getCurrentPageToken();
 }
