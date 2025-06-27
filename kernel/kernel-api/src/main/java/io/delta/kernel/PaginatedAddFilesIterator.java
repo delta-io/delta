@@ -21,8 +21,8 @@ import io.delta.kernel.utils.CloseableIterator;
 
 /**
  * An iterator over {@link FilteredColumnarBatch}, each representing a batch of Scan Files in a
- * paginated scan. This iterator also exposes a page token that can be used to resume the scan from
- * the exact position current page ends in a subsequent request.
+ * paginated scan. This iterator also exposes the page token that can be used to resume the scan
+ * from the exact position current page ends in a subsequent request.
  *
  * <p>This interface extends {@link CloseableIterator} and should be closed when the iteration is
  * complete.
@@ -36,7 +36,8 @@ public interface PaginatedAddFilesIterator extends CloseableIterator<FilteredCol
    *
    * <p>The page token represents the position of current iterator at the time it's called. If the
    * iterator is only partially consumed, the returned token will always point to the beginning of
-   * the next unconsumed {@link FilteredColumnarBatch}.
+   * the next unconsumed {@link FilteredColumnarBatch}. This method will return Option.empty() if
+   * all data in the Scan is consumed (no more non-empty pages remain).
    *
    * <p>Note: Each page is expected to fully include each {@link FilteredColumnarBatch}. That is,
    * pages do not split batches — the token always refers to the start of the next full batch, never

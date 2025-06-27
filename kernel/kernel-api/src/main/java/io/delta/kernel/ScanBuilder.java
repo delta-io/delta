@@ -76,5 +76,5 @@ public interface ScanBuilder {
    *     from the beginning.
    * @return A {@link PaginatedScan} configured for pagination.
    */
-  PaginatedScan buildPaginated(long pageSize, Optional<Row> pageToken);
+  PaginatedScan buildPaginatedScan(long pageSize, Optional<Row> pageToken);
 }
