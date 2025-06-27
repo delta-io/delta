@@ -69,12 +69,10 @@ class InMemoryUCClientSuite extends AnyFunSuite with UCCatalogManagedTestUtils {
 
   test("getCommits throws InvalidTargetTableException for non-existent table") {
     val client = new InMemoryUCClient("ucMetastoreId")
-    val tableId = "non-existent-table"
-
     val exception = intercept[InvalidTargetTableException] {
-      client.getCommits(tableId, new URI("s3://bucket/table"), Optional.empty(), Optional.empty())
+      client.getCommits("abcd", new URI("s3://bucket/table"), Optional.empty(), Optional.empty())
     }
-    assert(exception.getMessage.contains(s"Table not found: $tableId"))
+    assert(exception.getMessage.contains(s"Table not found: abcd"))
   }
 
   test("getCommits returns all commits if no startVersion or endVersion filter") {

@@ -163,9 +163,7 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
 
   /** Retrieves table data for the given table ID or throws an exception if not found. */
   private def getTableDataElseThrow(tableId: String): TableData = {
-    Option(tables.get(tableId)) match {
-      case Some(tableData) => tableData
-      case None => throw new InvalidTargetTableException(s"Table not found: $tableId")
-    }
+    Option(tables.get(tableId))
+      .getOrElse(throw new InvalidTargetTableException(s"Table not found: $tableId"))
   }
 }
