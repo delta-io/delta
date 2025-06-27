@@ -13,7 +13,7 @@ public class PaginatedAddFilesIterator implements CloseableIterator<FilteredColu
   private final long pageSize; // max num of files to return in this page
 
   private long numAddFilesReturned = 0;
-  private String lastLogFileName = null; //when reading first page, lastLogFileName is absent
+  private String lastLogFileName = null; // when reading first page, lastLogFileName is absent
   private long rowIdxInLastFile = 0;
   private FilteredColumnarBatch nextBatch = null;
 
@@ -33,14 +33,15 @@ public class PaginatedAddFilesIterator implements CloseableIterator<FilteredColu
     }
     if (originalIterator.hasNext()) {
       FilteredColumnarBatch batch = originalIterator.next();
-      String fileName = batch.getFileName();// TODO: get parquet reader PR merged first
+      String fileName = batch.getFileName(); // TODO: get parquet reader PR merged first
       if (!fileName.equals(lastLogFileName)) {
         lastLogFileName = fileName;
         System.out.println("fileName " + fileName);
-        rowIdxInLastFile = 0;//row idx starts from 1
+        rowIdxInLastFile = 0; // row idx starts from 1
       }
       long numActiveAddFiles = batch.getNumOfTrueRows();
-      long rowNum = batch.getData().getSize(); // number of rows, if 5 AddFile and 7 RemoveFile -> this is 12.
+      long rowNum =
+          batch.getData().getSize(); // number of rows, if 5 AddFile and 7 RemoveFile -> this is 12.
 
       System.out.println("numActiveAddFiles: " + numActiveAddFiles);
       System.out.println("numTotalAddFiles: " + batch.getData().getColumnVector(0).getSize());

@@ -40,7 +40,7 @@ public class FilteredColumnarBatch {
   private final Optional<String> fileName;
   private final long numOfTrueRows;
 
-  //TODO: refactor all usages of filtered columnar batch?
+  // TODO: refactor all usages of filtered columnar batch?
   public FilteredColumnarBatch(ColumnarBatch data, Optional<ColumnVector> selectionVector) {
     this.data = data;
     this.selectionVector = selectionVector;
@@ -48,7 +48,11 @@ public class FilteredColumnarBatch {
     this.numOfTrueRows = -1;
   }
 
-  public FilteredColumnarBatch(ColumnarBatch data, Optional<ColumnVector> selectionVector, String fileName,  long numOfTrueRows) {
+  public FilteredColumnarBatch(
+      ColumnarBatch data,
+      Optional<ColumnVector> selectionVector,
+      String fileName,
+      long numOfTrueRows) {
     this.data = data;
     this.selectionVector = selectionVector;
     this.fileName = Optional.of(fileName);

@@ -7,6 +7,5 @@ public class PaginationContext {
     this.pageSize = pageSize;
   }
 
-  public static final PaginationContext EMPTY =
-      new PaginationContext(0);
+  public static final PaginationContext EMPTY = new PaginationContext(0);
 }

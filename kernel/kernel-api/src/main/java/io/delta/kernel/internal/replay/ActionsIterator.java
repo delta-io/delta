@@ -338,7 +338,8 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
             CloseableIterator<ColumnarBatch> dataIter =
                 getActionsIterFromSinglePartOrV2Checkpoint(nextFile, fileName);
             long version = checkpointVersion(nextFilePath);
-            return combine(dataIter, true /* isFromCheckpoint */, version, Optional.empty(), fileName);
+            return combine(
+                dataIter, true /* isFromCheckpoint */, version, Optional.empty(), fileName);
           }
         case MULTIPART_CHECKPOINT:
         case SIDECAR:
@@ -361,7 +362,12 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
                     checkpointPredicate);
 
             long version = checkpointVersion(nextFilePath);
-            return combine(dataIter, true /* isFromCheckpoint */, version, Optional.empty(), fileName);//TODO: this is wrong, wait for parquet reader to merge
+            return combine(
+                dataIter,
+                true /* isFromCheckpoint */,
+                version,
+                Optional.empty(),
+                fileName); // TODO: this is wrong, wait for parquet reader to merge
           }
         default:
           throw new IOException("Unrecognized log type: " + nextLogFile.getLogType());
@@ -393,7 +399,8 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
         dataIter,
         false /* isFromCheckpoint */,
         fileVersion,
-        Optional.of(nextFile.getModificationTime()) /* timestamp */, new Path(nextFile.getPath()).getName());
+        Optional.of(nextFile.getModificationTime()) /* timestamp */,
+        new Path(nextFile.getPath()).getName());
   }
 
   /**
@@ -439,7 +446,8 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
             rewoundFileReadDataIter.next(),
             isFromCheckpoint,
             version,
-            finalResolvedCommitTimestamp, fileName);
+            finalResolvedCommitTimestamp,
+            fileName);
       }
 
       @Override

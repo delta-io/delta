@@ -21,8 +21,6 @@ import java.time.{Instant, OffsetDateTime}
 import java.time.temporal.ChronoUnit
 import java.util.Optional
 
-import io.delta.kernel.internal.PaginatedScanImpl
-import io.delta.kernel.internal.replay.PaginatedAddFilesIterator
 import scala.collection.JavaConverters._
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
@@ -37,6 +35,8 @@ import io.delta.kernel.engine.{Engine, JsonHandler, ParquetHandler}
 import io.delta.kernel.expressions._
 import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.internal.{InternalScanFileUtils, ScanImpl, TableConfig}
+import io.delta.kernel.internal.PaginatedScanImpl
+import io.delta.kernel.internal.replay.PaginatedAddFilesIterator
 import io.delta.kernel.internal.util.InternalUtils
 import io.delta.kernel.types._
 import io.delta.kernel.types.IntegerType.INTEGER
@@ -1592,24 +1592,26 @@ class ScanSuite extends AnyFunSuite with TestUtils
   // Pagination tests for PaginatedScan
   //////////////////////////////////////////////////////////////////////////////////
 
-  //TODO: test page size < JSON file size
-  //TODO: test page size = JSON file size (page size = 10)
+  // TODO: test page size < JSON file size
+  // TODO: test page size = JSON file size (page size = 10)
   test("getPaginatedScanFiles - basic pagination with single JSON file") {
     withTempDir { tempDir =>
       /**
-       Creates a Delta table with 10 Parquet files
-       Each file contains 10 rows
-       _delta_log/00000000000000000000.json contains 10 AddFile actions — one per file
-       parquet 0: 0 - 9
-       parquet 1: 10 -19
-       parquet 9: 90 -99
-       * */
+       *       Creates a Delta table with 10 Parquet files
+       *       Each file contains 10 rows
+       *       _delta_log/00000000000000000000.json contains 10 AddFile actions — one per file
+       *       parquet 0: 0 - 9
+       *       parquet 1: 10 -19
+       *       parquet 9: 90 -99
+       */
       spark.range(0, 100, 1, 10).write.format("delta").save(tempDir.getCanonicalPath)
 
       val snapshot = latestSnapshot(tempDir.getCanonicalPath)
       // Try read first page (with size = 12)
       val paginatedScan =
-        snapshot.getScanBuilder().buildPaginated(12, Optional.empty()).asInstanceOf[PaginatedScanImpl]
+        snapshot.getScanBuilder().buildPaginated(
+          12,
+          Optional.empty()).asInstanceOf[PaginatedScanImpl]
 
       if (paginatedScan != null) {
         System.out.println("has built a real paginated scan")
@@ -1637,7 +1639,9 @@ class ScanSuite extends AnyFunSuite with TestUtils
 
       val nextRowIndex = paginatedAddFilesIter.getNewPageToken.getRowIndex
       val nextStartingFile = paginatedAddFilesIter.getNewPageToken.getStartingFileName
-      assert(totalFileCountsReturned <= 12, s"First page should contain at most 12 files, got $totalFileCountsReturned")
+      assert(
+        totalFileCountsReturned <= 12,
+        s"First page should contain at most 12 files, got $totalFileCountsReturned")
 
       println(s"nextStartingFile = ${nextStartingFile.toString}")
       println(s"nextRowIndex = ${nextRowIndex.toString}")
@@ -1665,7 +1669,9 @@ class ScanSuite extends AnyFunSuite with TestUtils
       val snapshot = latestSnapshot(tempDir.getCanonicalPath)
       // Try read first page (with size = 9)
       val paginatedScan =
-        snapshot.getScanBuilder().buildPaginated(9, Optional.empty()).asInstanceOf[PaginatedScanImpl]
+        snapshot.getScanBuilder().buildPaginated(
+          9,
+          Optional.empty()).asInstanceOf[PaginatedScanImpl]
 
       // Create a custom engine with batch size 4
       val hadoopConf = new org.apache.hadoop.conf.Configuration()
@@ -1730,7 +1736,9 @@ class ScanSuite extends AnyFunSuite with TestUtils
 
       // This should create: 00000000000000000010.checkpoint.parquet(checkpoint file), 00000000000000000011.json, 00000000000000000012.json
       val snapshot = latestSnapshot(tablePath)
-      val scan = snapshot.getScanBuilder().buildPaginated(15, Optional.empty()).asInstanceOf[PaginatedScanImpl]
+      val scan = snapshot.getScanBuilder().buildPaginated(
+        15,
+        Optional.empty()).asInstanceOf[PaginatedScanImpl]
 
       // Create a custom engine with batch size 5
       val hadoopConf = new org.apache.hadoop.conf.Configuration()
@@ -1766,7 +1774,9 @@ class ScanSuite extends AnyFunSuite with TestUtils
       val verificationScan = snapshot.getScanBuilder().build()
       val allFiles = collectScanFileRows(verificationScan)
       val totalFilesInTable = allFiles.length
-      assert(totalFilesInTable == 26, s"Should have 26 total files (13 commits * 2 files each), got $totalFilesInTable")
+      assert(
+        totalFilesInTable == 26,
+        s"Should have 26 total files (13 commits * 2 files each), got $totalFilesInTable")
     }
   }
 
@@ -1788,7 +1798,7 @@ class ScanSuite extends AnyFunSuite with TestUtils
           .write.format("delta").mode("append").save(tablePath)
       }
     }
-    */
+   */
 
     // Check what checkpoint files were actually created
     val logDir = new java.io.File(s"$tablePath/_delta_log")
@@ -1798,12 +1808,12 @@ class ScanSuite extends AnyFunSuite with TestUtils
     val jsonFiles = logDir.listFiles().filter(_.getName.endsWith(".json")).sortBy(_.getName)
 
     /**
-     * V2-checkpoint file
-     * 00000000000000000002.checkpoint.e8fa2696-9728-4e9c-b285-634743fdd4fb.parquet
-     * Sidecar files
-     * 00000000000000000002.checkpoint.0000000001.0000000002.055454d8-329c-4e0e-864d-7f867075af33.parquet
-     * 00000000000000000002.checkpoint.0000000002.0000000002.33321cc1-9c55-4d1f-8511-fafe6d2e1133.parquet
-     * */
+   * V2-checkpoint file
+   * 00000000000000000002.checkpoint.e8fa2696-9728-4e9c-b285-634743fdd4fb.parquet
+   * Sidecar files
+   * 00000000000000000002.checkpoint.0000000001.0000000002.055454d8-329c-4e0e-864d-7f867075af33.parquet
+   * 00000000000000000002.checkpoint.0000000002.0000000002.33321cc1-9c55-4d1f-8511-fafe6d2e1133.parquet
+   * */
     println(s"Final checkpoint files: ${checkpointFiles.map(_.getName).mkString(", ")}")
     println(s"Final sidecar checkpoint files: ${sidecarFiles.map(_.getName).mkString(", ")}")
     println(s"JSON files: ${jsonFiles.map(_.getName).mkString(", ")}")
@@ -1874,7 +1884,7 @@ class ScanSuite extends AnyFunSuite with TestUtils
     }
 
   }
-  */
+   */
 
   Seq(
     "spark-variant-checkpoint",
