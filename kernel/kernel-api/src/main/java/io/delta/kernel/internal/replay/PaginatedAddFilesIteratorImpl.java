@@ -1,12 +1,12 @@
 package io.delta.kernel.internal.replay;
 
+import io.delta.kernel.PaginatedAddFilesIterator;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
-import io.delta.kernel.PaginatedAddFilesIterator;
 
 public class PaginatedAddFilesIteratorImpl implements PaginatedAddFilesIterator {
 
