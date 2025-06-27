@@ -800,7 +800,7 @@ trait SidecarIteratorProvider extends VectorTestUtils {
     Utils.singletonCloseableIterator(new FileReadResult(batch, v2CheckpointFileName))
   }
 
-  // TODO: extend FileReadResult for JSON read result
+  // TODO: [delta-io/delta#4849] extend FileReadResult for JSON read result
   def singletonSidecarJsonIterator(sidecars: Seq[FileStatus]): CloseableIterator[ColumnarBatch] = {
     val batch = buildSidecarBatch(sidecars)
     Utils.singletonCloseableIterator(batch)
