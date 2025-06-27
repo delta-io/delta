@@ -1,6 +1,7 @@
 package io.delta.kernel.internal;
 
 import io.delta.kernel.PaginatedScan;
+import io.delta.kernel.PaginatedAddFilesIterator;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
@@ -47,9 +48,9 @@ public class PaginatedScanImpl implements PaginatedScan {
   }
 
   @Override
-  public CloseableIterator<FilteredColumnarBatch> getScanFiles(Engine engine) {
+  public PaginatedAddFilesIterator getPaginatedScanFiles(Engine engine) {
     System.out.println("try fetching scan iter 1 ");
-    return this.getScanFiles(engine, false);
+    return this.getPaginatedScanFiles(engine, false);
   }
 
   @Override
@@ -62,19 +63,18 @@ public class PaginatedScanImpl implements PaginatedScan {
     return baseScan.getScanState(engine);
   }
 
-  public CloseableIterator<FilteredColumnarBatch> getScanFiles(
+  @Override
+  public CloseableIterator<FilteredColumnarBatch> getScanFiles(Engine engine) {
+    return baseScan.getScanFiles(engine);
+  }
+
+  public PaginatedAddFilesIterator getPaginatedScanFiles(
       Engine engine, boolean includeStates) {
     PaginationContext paginationContext = new PaginationContext(pageSize);
     System.out.println("try fetching scan iter 2");
     CloseableIterator<FilteredColumnarBatch> scanFileIter =
         baseScan.getScanFiles(engine, includeStates);
     System.out.println("successfully fetch iterator");
-    this.paginatedIter = new PaginatedAddFilesIterator(scanFileIter, paginationContext);
-    return paginatedIter;
-  }
-
-  @Override
-  public Optional<Row> getCurrentPageToken() {
-    return Optional.of(paginatedIter.getNewPageToken().getRow());
+    return new PaginatedAddFilesIteratorImpl(scanFileIter, paginationContext);
   }
 }

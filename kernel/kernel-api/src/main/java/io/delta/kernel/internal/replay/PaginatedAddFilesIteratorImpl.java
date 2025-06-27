@@ -1,13 +1,14 @@
 package io.delta.kernel.internal.replay;
 
 import io.delta.kernel.data.FilteredColumnarBatch;
-import io.delta.kernel.utils.CloseableIterator;
+import io.delta.kernel.data.Row;
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
+import io.delta.kernel.PaginatedAddFilesIterator;
 
-public class PaginatedAddFilesIterator implements CloseableIterator<FilteredColumnarBatch> {
+public class PaginatedAddFilesIteratorImpl implements PaginatedAddFilesIterator {
 
   private final Iterator<FilteredColumnarBatch> originalIterator;
   private final long pageSize; // max num of files to return in this page
@@ -17,7 +18,7 @@ public class PaginatedAddFilesIterator implements CloseableIterator<FilteredColu
   private long rowIdxInLastFile = 0;
   private FilteredColumnarBatch nextBatch = null;
 
-  public PaginatedAddFilesIterator(
+  public PaginatedAddFilesIteratorImpl(
       Iterator<FilteredColumnarBatch> originalIterator, PaginationContext paginationContext) {
     this.originalIterator = originalIterator;
     this.pageSize = paginationContext.pageSize;
@@ -74,7 +75,7 @@ public class PaginatedAddFilesIterator implements CloseableIterator<FilteredColu
     }
   }
 
-  public PageToken getNewPageToken() {
-    return new PageToken(lastLogFileName, rowIdxInLastFile);
+  public Row getCurrentPageToken() {
+    return new PageToken(lastLogFileName, rowIdxInLastFile).getRow();
   }
 }

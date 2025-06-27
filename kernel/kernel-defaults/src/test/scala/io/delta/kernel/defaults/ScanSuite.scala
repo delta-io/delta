@@ -36,7 +36,6 @@ import io.delta.kernel.expressions._
 import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.internal.{InternalScanFileUtils, ScanImpl, TableConfig}
 import io.delta.kernel.internal.PaginatedScanImpl
-import io.delta.kernel.internal.replay.PaginatedAddFilesIterator
 import io.delta.kernel.internal.util.InternalUtils
 import io.delta.kernel.types._
 import io.delta.kernel.types.IntegerType.INTEGER
@@ -1623,7 +1622,7 @@ class ScanSuite extends AnyFunSuite with TestUtils
       val customEngine = DefaultEngine.create(hadoopConf)
       System.out.println("has get engine lalala")
 
-      val paginatedIter = paginatedScan.getScanFiles(customEngine)
+      val paginatedIter = paginatedScan.getPaginatedScanFiles(customEngine)
       val firstPageFiles = paginatedIter.asScala.toSeq
       assert(firstPageFiles.nonEmpty, "First page should contain some files")
 
@@ -1632,19 +1631,14 @@ class ScanSuite extends AnyFunSuite with TestUtils
       val totalFileCountsReturned = fileCounts.sum
       println(s"Num of batches returned in page = ${fileCounts.length}")
 
-      // Log additional pagination state info
-      val paginatedAddFilesIter = {
-        paginatedIter.asInstanceOf[PaginatedAddFilesIterator]
-      }
-
-      val nextRowIndex = paginatedAddFilesIter.getNewPageToken.getRowIndex
-      val nextStartingFile = paginatedAddFilesIter.getNewPageToken.getStartingFileName
+      //val nextRowIndex = paginatedIter.getCurrentPageToken.getRowIndex
+      //val nextStartingFile = paginatedIter.getCurrentPageToken.getStartingFileName
       assert(
         totalFileCountsReturned <= 12,
         s"First page should contain at most 12 files, got $totalFileCountsReturned")
 
-      println(s"nextStartingFile = ${nextStartingFile.toString}")
-      println(s"nextRowIndex = ${nextRowIndex.toString}")
+     //println(s"nextStartingFile = ${nextStartingFile.toString}")
+      //println(s"nextRowIndex = ${nextRowIndex.toString}")
       println(s"Total Parquet Files fetched = ${totalFileCountsReturned.toString}")
 
       paginatedIter.close()
@@ -1679,7 +1673,7 @@ class ScanSuite extends AnyFunSuite with TestUtils
       hadoopConf.set("delta.kernel.default.parquet.reader.batch-size", "4")
       val customEngine = DefaultEngine.create(hadoopConf)
 
-      val paginatedIter = paginatedScan.getScanFiles(customEngine)
+      val paginatedIter = paginatedScan.getPaginatedScanFiles(customEngine)
       val firstPageFiles = paginatedIter.asScala.toSeq
 
       assert(firstPageFiles.nonEmpty, "First page should contain files")
@@ -1690,12 +1684,12 @@ class ScanSuite extends AnyFunSuite with TestUtils
       println(s"Num of batches returned in page = ${fileCounts.length}")
 
       // Get pagination state info
-      val paginatedAddFilesIter = paginatedIter.asInstanceOf[PaginatedAddFilesIterator]
-      val lastRowIndex = paginatedAddFilesIter.getNewPageToken.getRowIndex()
-      val nextStartingFile = paginatedAddFilesIter.getNewPageToken.getStartingFileName()
+//      val paginatedAddFilesIter = paginatedIter.asInstanceOf[PaginatedAddFilesIterator]
+    //  val lastRowIndex = paginatedAddFilesIter.getNewPageToken.getRowIndex()
+    //  val nextStartingFile = paginatedAddFilesIter.getNewPageToken.getStartingFileName()
 
-      println(s"lastRowIndex = ${lastRowIndex.toString}")
-      println(s"nextStartingFile = ${nextStartingFile.toString}")
+   //   println(s"lastRowIndex = ${lastRowIndex.toString}")
+   //   println(s"nextStartingFile = ${nextStartingFile.toString}")
       println(s"totalAddFiles = ${totalAddFiles.toString}")
 
       assert(totalAddFiles <= 10, s"First page should contain at most 10 files, got $totalAddFiles")
@@ -1747,7 +1741,7 @@ class ScanSuite extends AnyFunSuite with TestUtils
       val customEngine = DefaultEngine.create(hadoopConf)
 
       // Test pagination starting from the checkpoint (should be processed first)
-      val paginatedIter = scan.getScanFiles(customEngine);
+      val paginatedIter = scan.getPaginatedScanFiles(customEngine);
       val firstPageFiles = paginatedIter.asScala.toSeq
 
       assert(firstPageFiles.nonEmpty, "First page should contain files")
@@ -1757,13 +1751,13 @@ class ScanSuite extends AnyFunSuite with TestUtils
       val totalAddFiles = fileCounts.sum
 
       // Get pagination state info
-      val paginatedAddFilesIter = paginatedIter.asInstanceOf[PaginatedAddFilesIterator]
-      val lastRowIndex = paginatedAddFilesIter.getNewPageToken.getRowIndex()
-      val nextStartingFile = paginatedAddFilesIter.getNewPageToken.getStartingFileName()
+//      val paginatedAddFilesIter = paginatedIter.asInstanceOf[PaginatedAddFilesIterator]
+//      val lastRowIndex = paginatedAddFilesIter.getNewPageToken.getRowIndex()
+//      val nextStartingFile = paginatedAddFilesIter.getNewPageToken.getStartingFileName()
 
-      println(s"lastRowIndex = ${lastRowIndex.toString}")
-      println(s"nextStartingFile = ${nextStartingFile.toString}")
-      println(s"totalAddFiles = ${totalAddFiles.toString}")
+//      println(s"lastRowIndex = ${lastRowIndex.toString}")
+ //     println(s"nextStartingFile = ${nextStartingFile.toString}"
+      //     println(s"totalAddFiles = ${totalAddFiles.toString}")
 
       assert(totalAddFiles == 19, s"First page should contain 19 files, got $totalAddFiles")
       assert(totalAddFiles > 0, s"Should have some files, got $totalAddFiles")
