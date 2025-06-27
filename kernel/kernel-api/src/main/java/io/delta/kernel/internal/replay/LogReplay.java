@@ -226,7 +226,8 @@ public class LogReplay {
             getLogReplayFiles(getLogSegment()),
             getAddRemoveReadSchema(shouldReadStats),
             getAddReadSchema(shouldReadStats),
-            checkpointPredicate);
+            checkpointPredicate,
+            paginationContext);
     return new ActiveAddFilesIterator(engine, addRemoveIter, dataPath, scanMetrics);
   }
 
