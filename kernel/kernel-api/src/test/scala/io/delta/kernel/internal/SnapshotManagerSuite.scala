@@ -20,7 +20,7 @@ import java.util.{Arrays, Collections, Optional}
 import scala.collection.JavaConverters._
 import scala.reflect.ClassTag
 
-import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
+import io.delta.kernel.data.{ColumnVector, ColumnarBatch}
 import io.delta.kernel.engine.FileReadResult
 import io.delta.kernel.exceptions.{InvalidTableException, TableNotFoundException}
 import io.delta.kernel.expressions.Predicate
@@ -31,7 +31,6 @@ import io.delta.kernel.internal.util.{FileNames, Utils}
 import io.delta.kernel.test.{BaseMockJsonHandler, BaseMockParquetHandler, MockFileSystemClientUtils, MockListFromFileSystemClient, VectorTestUtils}
 import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
-
 import org.scalatest.funsuite.AnyFunSuite
 
 class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
@@ -162,16 +161,15 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       }.getOrElse((Seq.empty, Seq.empty))
 
       val compactions = compactedFileStatuses(compactionVersions)
-
-      val v2CheckpointFileName = if (expectedV2Checkpoint.nonEmpty) {
-        expectedV2Checkpoint.head.getPath
-      } else {
-        "no-v2-checkpoint"
-      }
+      val mockSidecarParquetHandler = if (expectedSidecars.nonEmpty) {
+          new MockSidecarParquetHandler(expectedSidecars, expectedV2Checkpoint.head.getPath)
+        } else {
+          new BaseMockParquetHandler {}
+        }
       val logSegment = snapshotManager.getLogSegmentForVersion(
         createMockFSListFromEngine(
           listFromProvider(deltas ++ compactions ++ checkpointFiles)("/"),
-          new MockSidecarParquetHandler(expectedSidecars, v2CheckpointFileName),
+          mockSidecarParquetHandler,
           new MockSidecarJsonHandler(expectedSidecars)),
         versionToLoad)
 
