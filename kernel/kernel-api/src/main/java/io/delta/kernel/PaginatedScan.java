@@ -43,5 +43,6 @@ public interface PaginatedScan extends Scan {
    * @param engine {@link Engine} instance to use in Delta Kernel.
    * @return iterator of {@link FilteredColumnarBatch}s for the current page.
    */
-  PaginatedAddFilesIterator getPaginatedScanFiles(Engine engine);
+  @Override
+  PaginatedAddFilesIterator getScanFiles(Engine engine);
 }
