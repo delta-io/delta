@@ -13,6 +13,7 @@ import io.unitycatalog.client.api.TablesApi;
 import io.unitycatalog.client.model.TableInfo;
 import java.net.URI;
 import java.util.Map;
+import java.util.Optional;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.catalyst.analysis.NoSuchNamespaceException;
 import org.apache.spark.sql.catalyst.analysis.NoSuchTableException;
@@ -29,6 +30,7 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 public class SimpleUnityCatalog implements TableCatalog {
 
   private String catalogName;
+  private String warehouseName;
   private ApiClient ucApiClient;
   private UCClient ucCcClient;
   private UCCatalogManagedClient ucCatalogManagedClient;
@@ -56,6 +58,30 @@ public class SimpleUnityCatalog implements TableCatalog {
   }
 
   @Override
+  public Table loadTable(Identifier ident, String version) throws NoSuchTableException {
+    if (ident.namespace().length != 1) {
+      throw new NoSuchTableException(ident);
+    }
+
+    try {
+      // Get the table ID from Unity Catalog
+      String fullTableName =
+              String.format("%s.%s.%s", warehouseName, ident.namespace()[0], ident.name());
+      TableInfo tableInfo = tablesApi.getTable(fullTableName);
+      // Load the table using UCCatalogManagedClient
+      ResolvedTable table =
+              ucCatalogManagedClient.loadTable(
+                      engine, tableInfo.getTableId(), tableInfo.getStorageLocation(), Optional.of(Long.valueOf(version)));
+      return new DeltaCcv2Table(table, ident, engine);
+    } catch (ApiException e) {
+      if (e.getCode() == 404) {
+        throw new NoSuchTableException(ident);
+      }
+      throw new RuntimeException("Failed to load table" + e);
+    }
+  }
+
+  @Override
   public Table loadTable(Identifier ident) throws NoSuchTableException {
     if (ident.namespace().length != 1) {
       throw new NoSuchTableException(ident);
@@ -64,13 +90,12 @@ public class SimpleUnityCatalog implements TableCatalog {
     try {
       // Get the table ID from Unity Catalog
       String fullTableName =
-          String.format(
-              "%s.%s.%s", "managed_iceberg_bugbash_pupr", ident.namespace()[0], ident.name());
+          String.format("%s.%s.%s", warehouseName, ident.namespace()[0], ident.name());
       TableInfo tableInfo = tablesApi.getTable(fullTableName);
       // Load the table using UCCatalogManagedClient
       ResolvedTable table =
           ucCatalogManagedClient.loadTable(
-              engine, tableInfo.getTableId(), tableInfo.getStorageLocation(), 1);
+              engine, tableInfo.getTableId(), tableInfo.getStorageLocation(), Optional.empty());
       return new DeltaCcv2Table(table, ident, engine);
     } catch (ApiException e) {
       if (e.getCode() == 404) {
@@ -100,7 +125,7 @@ public class SimpleUnityCatalog implements TableCatalog {
 
     try {
       String fullTableName =
-          String.format("%s.%s.%s", catalogName, ident.namespace()[0], ident.name());
+          String.format("%s.%s.%s", warehouseName, ident.namespace()[0], ident.name());
       tablesApi.deleteTable(fullTableName);
       return true;
     } catch (ApiException e) {
@@ -133,6 +158,8 @@ public class SimpleUnityCatalog implements TableCatalog {
       throw new IllegalArgumentException(
           String.format("token must be specified for catalog '%s'", name));
     }
+
+    this.warehouseName = options.get("warehouse");
 
     try {
       // Initialize API client
@@ -181,7 +208,7 @@ public class SimpleUnityCatalog implements TableCatalog {
 
     try {
       String fullTableName =
-          String.format("%s.%s.%s", catalogName, ident.namespace()[0], ident.name());
+          String.format("%s.%s.%s", warehouseName, ident.namespace()[0], ident.name());
       tablesApi.getTable(fullTableName);
       return true;
     } catch (ApiException e) {

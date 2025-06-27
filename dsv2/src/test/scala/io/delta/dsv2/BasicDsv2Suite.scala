@@ -20,12 +20,13 @@ class Dsv2BasicSuite extends QueryTest with SharedSparkSession {
       .set("spark.sql.catalog.dsv2", "io.delta.dsv2.catalog.SimpleUnityCatalog")
       .set("spark.sql.catalog.dsv2.uri", "mask")
       .set("spark.sql.catalog.dsv2.token", "mask")
+      .set("spark.sql.catalog.dsv2.warehouse", "managed_iceberg_bugbash_pupr")
 
     val sparkSession = SparkSession.builder().config(conf).getOrCreate()
     println("======== printing result")
 
     // Get the DataFrame and its schema
-    val df = sparkSession.sql("SELECT * FROM dsv2.hxin.ccv2test")
+    val df = sparkSession.sql("SELECT * FROM dsv2.hxin.ccv2test VERSION AS OF 1")
     val schema = df.schema
     val columnNames = schema.fieldNames
     val rows = df.collect()
