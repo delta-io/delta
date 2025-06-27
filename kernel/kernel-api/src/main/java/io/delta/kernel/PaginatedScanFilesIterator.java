@@ -27,7 +27,7 @@ import io.delta.kernel.utils.CloseableIterator;
  * <p>This interface extends {@link CloseableIterator} and should be closed when the iteration is
  * complete.
  */
-public interface PaginatedAddFilesIterator extends CloseableIterator<FilteredColumnarBatch> {
+public interface PaginatedScanFilesIterator extends CloseableIterator<FilteredColumnarBatch> {
   /**
    * Returns a page token representing the starting position of next page. This token can be used to
    * resume the scan from the exact position current page ends in a subsequent request. Page token

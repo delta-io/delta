@@ -44,5 +44,5 @@ public interface PaginatedScan extends Scan {
    * @return iterator of {@link FilteredColumnarBatch}s for the current page.
    */
   @Override
-  PaginatedAddFilesIterator getScanFiles(Engine engine);
+  PaginatedScanFilesIterator getScanFiles(Engine engine);
 }
