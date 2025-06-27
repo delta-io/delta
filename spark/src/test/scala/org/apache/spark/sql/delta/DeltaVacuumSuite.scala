@@ -1629,4 +1629,3 @@ class DeltaLiteVacuumSuite
     }
   }
 }
-
