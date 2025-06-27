@@ -5,9 +5,27 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.utils.CloseableIterator;
 
 /**
+ * An iterator over {@link FilteredColumnarBatch}, each representing a batch of Scan Files in a
+ * paginated scan. This iterator also exposes a page token that can be used to resume the scan from
+ * the exact position current page ends in a subsequent request.
  *
-* */
+ * <p>This interface extends {@link CloseableIterator} and should be closed when the iteration is
+ * complete.
+ */
 public interface PaginatedAddFilesIterator extends CloseableIterator<FilteredColumnarBatch> {
-  /** get Current Page Token */
+  /**
+   * Returns a page token representing the starting position of next page. This token can be used to
+   * resume the scan from the exact position current page ends in a subsequent request. Page token
+   * also contains metadata for validation purpose, such as detecting changes in query parameters or
+   * the underlying log files.
+   *
+   * <p>The page token represents the position of current iterator at the time it's called. If the
+   * iterator is only partially consumed, the returned token will always point to the beginning of
+   * the next unconsumed {@link FilteredColumnarBatch}.
+   *
+   * <p>Note: Each page is expected to fully include each {@link FilteredColumnarBatch}. That is,
+   * pages do not split batches — the token always refers to the start of the next full batch, never
+   * to a position within a batch.
+   */
   Row getCurrentPageToken();
 }
