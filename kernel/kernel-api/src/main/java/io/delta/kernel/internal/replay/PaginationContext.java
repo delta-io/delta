@@ -4,7 +4,7 @@ import java.util.Optional;
 
 public class PaginationContext {
   public final long pageSize;
-  public String lastReadLogFileName = "invalid/file/name";
+  public String lastReadLogFileName = null;
   public long lastReadRowIdxInFile = -1;
 
   public PaginationContext(long pageSize,  Optional<PageToken> pageToken) {

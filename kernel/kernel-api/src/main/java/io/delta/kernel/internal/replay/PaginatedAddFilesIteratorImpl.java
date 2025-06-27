@@ -52,10 +52,8 @@ public class PaginatedAddFilesIteratorImpl implements PaginatedAddFilesIterator 
       System.out.println("numTotalAddFiles: " + nextBatch.getData().getColumnVector(0).getSize());
       System.out.println("numOfRows: " + rowNum);
 
-      if(currentLogFileName.compareTo(startingLogFileName) < 0 ||
+      if(startingLogFileName!=null && currentLogFileName.compareTo(startingLogFileName) > 0 ||
           (currentLogFileName.equals(startingLogFileName) && currentRowIdxInLastFile < startingRowIdxInLastFile)) {
-        //skip this batch
-        nextBatch = originalIterator.next();
         continue;
       }
       numAddFilesReturned += numActiveAddFiles;
