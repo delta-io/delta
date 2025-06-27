@@ -14,16 +14,18 @@ public class PaginatedAddFilesIteratorImpl implements PaginatedAddFilesIterator 
   private final long pageSize; // max num of files to return in this page
 
   private long numAddFilesReturned = 0;
-  private String lastLogFileName = null; // when reading first page, lastLogFileName is absent
-  private long rowIdxInLastFile = 0;
+  private String currentLogFileName = null; // when reading first page, lastLogFileName is absent
+  private long currentRowIdxInLastFile = 0;
   private FilteredColumnarBatch nextBatch = null;
+  private String startingLogFileName;
+  private long startingRowIdxInLastFile;
 
   public PaginatedAddFilesIteratorImpl(
       Iterator<FilteredColumnarBatch> originalIterator, PaginationContext paginationContext) {
     this.originalIterator = originalIterator;
     this.pageSize = paginationContext.pageSize;
-    this.lastLogFileName = paginationContext.lastReadLogFileName;
-    this.rowIdxInLastFile = paginationContext.lastReadRowIdxInFile;
+    this.startingLogFileName = paginationContext.lastReadLogFileName;
+    this.startingRowIdxInLastFile = paginationContext.lastReadRowIdxInFile;
   }
 
   @Override
@@ -34,25 +36,29 @@ public class PaginatedAddFilesIteratorImpl implements PaginatedAddFilesIterator 
     if (numAddFilesReturned >= pageSize) {
       return false;
     }
-    if (originalIterator.hasNext()) {
-      FilteredColumnarBatch batch = originalIterator.next();
-      String fileName = batch.getFileName(); // TODO: get parquet reader PR merged first
-      if (!fileName.equals(lastLogFileName)) {
-        lastLogFileName = fileName;
+    while (originalIterator.hasNext()) {
+      nextBatch = originalIterator.next();
+      String fileName = nextBatch.getFileName(); // TODO: get parquet reader PR merged first
+      if (!fileName.equals(currentLogFileName)) {
+        currentLogFileName = fileName;
         System.out.println("fileName " + fileName);
-        rowIdxInLastFile = 0; // row idx starts from 1
+        currentRowIdxInLastFile = 0;// row idx starts from 1
       }
-      long numActiveAddFiles = batch.getNumOfTrueRows();
-      long rowNum =
-          batch.getData().getSize(); // number of rows, if 5 AddFile and 7 RemoveFile -> this is 12.
+      long numActiveAddFiles = nextBatch.getNumOfTrueRows();
+      long rowNum = nextBatch.getData().getSize();
+      currentRowIdxInLastFile += rowNum;
 
       System.out.println("numActiveAddFiles: " + numActiveAddFiles);
-      System.out.println("numTotalAddFiles: " + batch.getData().getColumnVector(0).getSize());
+      System.out.println("numTotalAddFiles: " + nextBatch.getData().getColumnVector(0).getSize());
       System.out.println("numOfRows: " + rowNum);
 
-      nextBatch = batch;
+      if(currentLogFileName.compareTo(startingLogFileName) < 0 ||
+          (currentLogFileName.equals(startingLogFileName) && currentRowIdxInLastFile < startingRowIdxInLastFile)) {
+        //skip this batch
+        nextBatch = originalIterator.next();
+        continue;
+      }
       numAddFilesReturned += numActiveAddFiles;
-      rowIdxInLastFile += rowNum;
       System.out.println("numAddFilesReturned: " + numAddFilesReturned);
       return true;
     }
@@ -78,6 +84,6 @@ public class PaginatedAddFilesIteratorImpl implements PaginatedAddFilesIterator 
   }
 
   public Row getCurrentPageToken() {
-    return new PageToken(lastLogFileName, rowIdxInLastFile).getRow();
+    return new PageToken(currentLogFileName, currentRowIdxInLastFile).getRow();
   }
 }
