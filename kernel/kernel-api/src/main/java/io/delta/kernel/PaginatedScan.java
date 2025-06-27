@@ -32,8 +32,9 @@ import io.delta.kernel.engine.Engine;
  *
  * <p>Consumers typically use {@link PaginatedScan} in a loop: they call {@code getScanFiles()} to
  * retrieve an iterator over the current page's scan files. After consuming the iterator, users
- * should call {@code getCurrentPageToken()} to retrieve a token to pass into the next page request.
- * This allows users to scan the dataset incrementally, resuming from where they left off.
+ * should call {@link PaginatedScanFilesIterator#getCurrentPageToken} to retrieve a token to pass
+ * into the next page request. This allows users to scan the dataset incrementally, resuming from
+ * where they left off.
  */
 public interface PaginatedScan extends Scan {
 

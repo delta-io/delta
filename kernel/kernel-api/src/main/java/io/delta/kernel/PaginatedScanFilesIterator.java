@@ -38,10 +38,6 @@ public interface PaginatedScanFilesIterator extends CloseableIterator<FilteredCo
    * iterator is only partially consumed, the returned token will always point to the beginning of
    * the next unconsumed {@link FilteredColumnarBatch}. This method will return Option.empty() if
    * all data in the Scan is consumed (no more non-empty pages remain).
-   *
-   * <p>Note: Each page is expected to fully include each {@link FilteredColumnarBatch}. That is,
-   * pages do not split batches — the token always refers to the start of the next full batch, never
-   * to a position within a batch.
    */
   Row getCurrentPageToken();
 }
