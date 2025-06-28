@@ -19,6 +19,7 @@ package io.delta.kernel;
 import io.delta.kernel.annotation.Experimental;
 import io.delta.kernel.commit.Committer;
 import io.delta.kernel.expressions.Column;
+import io.delta.kernel.transaction.ReplaceTableTransactionBuilder;
 import io.delta.kernel.transaction.UpdateTableTransactionBuilder;
 import io.delta.kernel.types.StructType;
 import java.util.List;
@@ -71,4 +72,6 @@ public interface ResolvedTable {
   Committer getCommitter();
 
   UpdateTableTransactionBuilder buildUpdateTableTransaction(String engineInfo, Operation operation);
+
+  ReplaceTableTransactionBuilder buildReplaceTableTransaction(String engineInfo);
 }

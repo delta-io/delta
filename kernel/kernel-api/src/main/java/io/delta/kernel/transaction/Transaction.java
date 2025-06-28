@@ -1,7 +1,6 @@
 package io.delta.kernel.transaction;
 
 import io.delta.kernel.commit.CommitPayload;
-import io.delta.kernel.commit.Committer;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.types.StructType;
@@ -17,7 +16,9 @@ public interface Transaction {
 
   Row getTransactionState();
 
-  Committer getCommitter();
+  void addDomainMetadata(String domain, String config);
+
+  void removeDomainMetadata(String domain);
 
   CommitPayload getCommitPayload(CloseableIterator<Row> dataActions);
 
