@@ -6,6 +6,8 @@ import java.util.Set;
 public interface UpdateTableTransactionBuilder
     extends BaseTransactionBuilder<UpdateTableTransactionBuilder> {
 
+  UpdateTableTransactionBuilder withSetTransactionId(String applicationId, long transactionVersion);
+
   UpdateTableTransactionBuilder withUpdatedSchema(StructType updatedSchema);
 
   UpdateTableTransactionBuilder withTablePropertiesRemoved(Set<String> propertyKeys);
