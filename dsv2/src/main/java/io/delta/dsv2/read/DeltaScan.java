@@ -50,7 +50,6 @@ public class DeltaScan implements org.apache.spark.sql.connector.read.Scan, Batc
       while (rowIterator.hasNext()) {
         Row row = rowIterator.next();
         String serializedScanFileRow = JsonUtils.rowToJson(row);
-        logger.info("serializedScanFileRow: " + serializedScanFileRow);
         DeltaInputPartition inputPartition =
             new DeltaInputPartition(serializedScanFileRow, serializedScanState);
         scanFileAsInputPartitions.add(inputPartition);

@@ -10,7 +10,11 @@ import io.delta.unity.UCCatalogManagedClient;
 import io.unitycatalog.client.ApiClient;
 import io.unitycatalog.client.ApiException;
 import io.unitycatalog.client.api.TablesApi;
+import io.unitycatalog.client.api.TemporaryCredentialsApi;
+import io.unitycatalog.client.model.GenerateTemporaryTableCredential;
 import io.unitycatalog.client.model.TableInfo;
+import io.unitycatalog.client.model.TableOperation;
+import io.unitycatalog.client.model.TemporaryCredentials;
 import java.net.URI;
 import java.util.Map;
 import java.util.Optional;
@@ -35,7 +39,7 @@ public class SimpleUnityCatalog implements TableCatalog {
   private UCClient ucCcClient;
   private UCCatalogManagedClient ucCatalogManagedClient;
   private TablesApi tablesApi;
-  private Engine engine;
+  private TemporaryCredentialsApi temporaryCredentialsApi;
 
   @Override
   public Identifier[] listTables(String[] namespace) throws NoSuchNamespaceException {
@@ -66,18 +70,29 @@ public class SimpleUnityCatalog implements TableCatalog {
     try {
       // Get the table ID from Unity Catalog
       String fullTableName =
-              String.format("%s.%s.%s", warehouseName, ident.namespace()[0], ident.name());
+          String.format("%s.%s.%s", warehouseName, ident.namespace()[0], ident.name());
       TableInfo tableInfo = tablesApi.getTable(fullTableName);
+
+      // Generate temporary credentials for the table
+      TemporaryCredentials temporaryCredentials =
+          generateTemporaryTableCredentials(tableInfo.getTableId());
+
+      // Create a new Engine instance with the proper credentials
+      Engine engine = createEngineWithCredentials(temporaryCredentials);
+
       // Load the table using UCCatalogManagedClient
       ResolvedTable table =
-              ucCatalogManagedClient.loadTable(
-                      engine, tableInfo.getTableId(), tableInfo.getStorageLocation(), Optional.of(Long.valueOf(version)));
+          ucCatalogManagedClient.loadTable(
+              engine,
+              tableInfo.getTableId(),
+              tableInfo.getStorageLocation(),
+              Optional.of(Long.valueOf(version)));
       return new DeltaCcv2Table(table, ident, engine);
     } catch (ApiException e) {
       if (e.getCode() == 404) {
         throw new NoSuchTableException(ident);
       }
-      throw new RuntimeException("Failed to load table" + e);
+      throw new RuntimeException("Failed to load table: " + e.getMessage(), e);
     }
   }
 
@@ -92,6 +107,14 @@ public class SimpleUnityCatalog implements TableCatalog {
       String fullTableName =
           String.format("%s.%s.%s", warehouseName, ident.namespace()[0], ident.name());
       TableInfo tableInfo = tablesApi.getTable(fullTableName);
+
+      // Generate temporary credentials for the table
+      TemporaryCredentials temporaryCredentials =
+          generateTemporaryTableCredentials(tableInfo.getTableId());
+
+      // Create a new Engine instance with the proper credentials
+      Engine engine = createEngineWithCredentials(temporaryCredentials);
+
       // Load the table using UCCatalogManagedClient
       ResolvedTable table =
           ucCatalogManagedClient.loadTable(
@@ -101,8 +124,43 @@ public class SimpleUnityCatalog implements TableCatalog {
       if (e.getCode() == 404) {
         throw new NoSuchTableException(ident);
       }
-      throw new RuntimeException("Failed to load table" + e);
+      throw new RuntimeException("Failed to load table: " + e.getMessage(), e);
     }
+  }
+
+  /** Generates temporary credentials for accessing a table. */
+  private TemporaryCredentials generateTemporaryTableCredentials(String tableId) {
+    try {
+      // Try READ_WRITE first, fall back to READ if necessary
+      try {
+        return temporaryCredentialsApi.generateTemporaryTableCredentials(
+            new GenerateTemporaryTableCredential()
+                .tableId(tableId)
+                .operation(TableOperation.READ_WRITE));
+      } catch (ApiException e) {
+        return temporaryCredentialsApi.generateTemporaryTableCredentials(
+            new GenerateTemporaryTableCredential().tableId(tableId).operation(TableOperation.READ));
+      }
+    } catch (ApiException e) {
+      throw new RuntimeException("Failed to generate temporary credentials", e);
+    }
+  }
+
+  /** Creates a new Engine instance with credentials configured for the given storage location. */
+  private Engine createEngineWithCredentials(TemporaryCredentials credentials) {
+    Configuration conf = new Configuration();
+
+    // Set up base configuration
+    conf.set("fs.s3.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem");
+    // S3 credentials
+    conf.set("fs.s3a.access.key", credentials.getAwsTempCredentials().getAccessKeyId());
+    conf.set("fs.s3a.secret.key", credentials.getAwsTempCredentials().getSecretAccessKey());
+    conf.set("fs.s3a.session.token", credentials.getAwsTempCredentials().getSessionToken());
+    conf.set("fs.s3a.path.style.access", "true");
+    conf.set("fs.s3.impl.disable.cache", "true");
+    conf.set("fs.s3a.impl.disable.cache", "true");
+    // Create and return a new Engine instance with these credentials
+    return DefaultEngine.create(conf);
   }
 
   @Override
@@ -178,17 +236,7 @@ public class SimpleUnityCatalog implements TableCatalog {
       this.ucCcClient = new UCTokenBasedRestClient(uri, token);
       this.ucCatalogManagedClient = new UCCatalogManagedClient(ucCcClient);
       this.tablesApi = new TablesApi(ucApiClient);
-      Configuration conf = new Configuration();
-      //        conf.set("fs.s3a.path.style.access", "true");
-      conf.set("fs.s3.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem");
-      conf.set("fs.s3.region", "us-west-2");
-      conf.set(
-          "fs.s3.aws.credentials.provider",
-          "org.apache.hadoop.fs.s3a.TemporaryAWSCredentialsProvider");
-      conf.set("fs.s3.endpoint", "s3.us-west-2.amazonaws.com");
-
-      // Initialize engine (this would typically be injected or obtained from a factory)
-      this.engine = DefaultEngine.create(conf);
+      this.temporaryCredentialsApi = new TemporaryCredentialsApi(ucApiClient);
     } catch (Exception e) {
       throw new RuntimeException("Failed to initialize Unity Catalog client", e);
     }
