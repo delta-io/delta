@@ -25,13 +25,22 @@ abstract class DeltaPartitionReader<T> implements PartitionReader<T> {
 
   protected DeltaPartitionReader(DeltaInputPartition deltaInputPartition) throws IOException {
     Configuration conf = new Configuration();
-    //        conf.set("fs.s3a.path.style.access", "true");
+    // Set up S3 configuration
     conf.set("fs.s3.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem");
-    conf.set("fs.s3.region", "us-west-2");
+
+    // Use credentials from input partition
+    conf.set("fs.s3a.access.key", deltaInputPartition.getAccessKey());
+    conf.set("fs.s3a.secret.key", deltaInputPartition.getSecretKey());
+    conf.set("fs.s3a.session.token", deltaInputPartition.getSessionToken());
     conf.set(
-        "fs.s3.aws.credentials.provider",
+        "fs.s3a.aws.credentials.provider",
         "org.apache.hadoop.fs.s3a.TemporaryAWSCredentialsProvider");
+    conf.set("fs.s3a.path.style.access", "true");
+    conf.set("fs.s3.impl.disable.cache", "true");
+    conf.set("fs.s3a.impl.disable.cache", "true");
+    conf.set("fs.s3.region", "us-west-2");
     conf.set("fs.s3.endpoint", "s3.us-west-2.amazonaws.com");
+
     this.engine = DefaultEngine.create(conf);
 
     this.scanFileRow =

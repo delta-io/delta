@@ -24,12 +24,29 @@ public class DeltaCcv2Table implements Table, SupportsRead {
   private final ResolvedTable resolvedTable;
   private final Identifier tableIdentifier;
   private Engine kernelEngine;
+  // Hack fields for credentials
+  private final String accessKey;
+  private final String secretKey;
+  private final String sessionToken;
 
   public DeltaCcv2Table(
-      ResolvedTable resolvedTable, Identifier tableIdentifier, Engine kernelEngine) {
+      ResolvedTable resolvedTable,
+      Identifier tableIdentifier,
+      Engine kernelEngine,
+      String accessKey,
+      String secretKey,
+      String sessionToken) {
     this.resolvedTable = resolvedTable;
     this.tableIdentifier = tableIdentifier;
     this.kernelEngine = kernelEngine;
+    this.accessKey = accessKey;
+    this.secretKey = secretKey;
+    this.sessionToken = sessionToken;
+  }
+
+  @Override
+  public ScanBuilder newScanBuilder(CaseInsensitiveStringMap options) {
+    return new DeltaScanBuilder(resolvedTable, kernelEngine, accessKey, secretKey, sessionToken);
   }
 
   @Override
@@ -66,10 +83,5 @@ public class DeltaCcv2Table implements Table, SupportsRead {
     } catch (TableNotFoundException e) {
       return new Transform[0];
     }
-  }
-
-  @Override
-  public ScanBuilder newScanBuilder(CaseInsensitiveStringMap options) {
-    return new DeltaScanBuilder(resolvedTable, kernelEngine);
   }
 }

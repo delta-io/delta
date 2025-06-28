@@ -4,14 +4,38 @@ import org.apache.spark.sql.connector.read.InputPartition;
 
 /** Serialized and sent from the Driver to the Executors */
 class DeltaInputPartition implements InputPartition, java.io.Serializable {
-  private static final long serialVersionUID = 1L;
 
   private final String serializedScanFileRow;
   private final String serializedScanState;
+  // hack fields for AWS credentials
+  private final String accessKey;
+  private final String secretKey;
+  private final String sessionToken;
 
-  public DeltaInputPartition(String serializedScanFileRow, String serializedScanState) {
+  public DeltaInputPartition(
+      String serializedScanFileRow,
+      String serializedScanState,
+      String accessKey,
+      String secretKey,
+      String sessionToken) {
     this.serializedScanFileRow = serializedScanFileRow;
     this.serializedScanState = serializedScanState;
+    this.accessKey = accessKey;
+    this.secretKey = secretKey;
+    this.sessionToken = sessionToken;
+  }
+
+  // Add getters for the new fields
+  public String getAccessKey() {
+    return accessKey;
+  }
+
+  public String getSecretKey() {
+    return secretKey;
+  }
+
+  public String getSessionToken() {
+    return sessionToken;
   }
 
   public String getSerializedScanFileRow() {

@@ -12,24 +12,31 @@ import org.apache.spark.sql.connector.read.Batch;
 import org.apache.spark.sql.connector.read.InputPartition;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
 import org.apache.spark.sql.types.StructType;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public class DeltaScan implements org.apache.spark.sql.connector.read.Scan, Batch {
-
-  private static final Logger logger = LoggerFactory.getLogger(DeltaScan.class);
-
   private final Scan kernelScan;
   private final Engine tableEngine;
   private final StructType sparkReadSchema;
   private final String serializedScanState;
+  private final String accessKey;
+  private final String secretKey;
+  private final String sessionToken;
   private InputPartition[] cachedPartitions;
 
-  public DeltaScan(Scan kernelScan, Engine tableEngine, StructType sparkReadSchema) {
+  public DeltaScan(
+      Scan kernelScan,
+      Engine tableEngine,
+      StructType sparkReadSchema,
+      String accessKey,
+      String secretKey,
+      String sessionToken) {
     this.kernelScan = kernelScan;
     this.tableEngine = tableEngine;
     this.sparkReadSchema = sparkReadSchema;
     this.serializedScanState = JsonUtils.rowToJson(kernelScan.getScanState(tableEngine));
+    this.accessKey = accessKey;
+    this.secretKey = secretKey;
+    this.sessionToken = sessionToken;
   }
 
   /**
@@ -50,8 +57,10 @@ public class DeltaScan implements org.apache.spark.sql.connector.read.Scan, Batc
       while (rowIterator.hasNext()) {
         Row row = rowIterator.next();
         String serializedScanFileRow = JsonUtils.rowToJson(row);
+
         DeltaInputPartition inputPartition =
-            new DeltaInputPartition(serializedScanFileRow, serializedScanState);
+            new DeltaInputPartition(
+                serializedScanFileRow, serializedScanState, accessKey, secretKey, sessionToken);
         scanFileAsInputPartitions.add(inputPartition);
       }
     }

@@ -77,17 +77,20 @@ public class SimpleUnityCatalog implements TableCatalog {
       TemporaryCredentials temporaryCredentials =
           generateTemporaryTableCredentials(tableInfo.getTableId());
 
+      // Extract credentials
+      String accessKey = temporaryCredentials.getAwsTempCredentials().getAccessKeyId();
+      String secretKey = temporaryCredentials.getAwsTempCredentials().getSecretAccessKey();
+      String sessionToken = temporaryCredentials.getAwsTempCredentials().getSessionToken();
+
       // Create a new Engine instance with the proper credentials
       Engine engine = createEngineWithCredentials(temporaryCredentials);
 
       // Load the table using UCCatalogManagedClient
       ResolvedTable table =
           ucCatalogManagedClient.loadTable(
-              engine,
-              tableInfo.getTableId(),
-              tableInfo.getStorageLocation(),
-              Optional.of(Long.valueOf(version)));
-      return new DeltaCcv2Table(table, ident, engine);
+              engine, tableInfo.getTableId(), tableInfo.getStorageLocation(), Optional.empty());
+
+      return new DeltaCcv2Table(table, ident, engine, accessKey, secretKey, sessionToken);
     } catch (ApiException e) {
       if (e.getCode() == 404) {
         throw new NoSuchTableException(ident);
@@ -112,6 +115,11 @@ public class SimpleUnityCatalog implements TableCatalog {
       TemporaryCredentials temporaryCredentials =
           generateTemporaryTableCredentials(tableInfo.getTableId());
 
+      // Extract credentials
+      String accessKey = temporaryCredentials.getAwsTempCredentials().getAccessKeyId();
+      String secretKey = temporaryCredentials.getAwsTempCredentials().getSecretAccessKey();
+      String sessionToken = temporaryCredentials.getAwsTempCredentials().getSessionToken();
+
       // Create a new Engine instance with the proper credentials
       Engine engine = createEngineWithCredentials(temporaryCredentials);
 
@@ -119,7 +127,8 @@ public class SimpleUnityCatalog implements TableCatalog {
       ResolvedTable table =
           ucCatalogManagedClient.loadTable(
               engine, tableInfo.getTableId(), tableInfo.getStorageLocation(), Optional.empty());
-      return new DeltaCcv2Table(table, ident, engine);
+
+      return new DeltaCcv2Table(table, ident, engine, accessKey, secretKey, sessionToken);
     } catch (ApiException e) {
       if (e.getCode() == 404) {
         throw new NoSuchTableException(ident);
