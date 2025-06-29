@@ -190,7 +190,8 @@ public interface Transaction {
             }
             data = data.withDeletedColumnAt(partitionColIndex);
           }
-          return new FilteredColumnarBatch(data, filteredBatch.getSelectionVector(), filteredBatch.getFilePath());
+          return new FilteredColumnarBatch(
+              data, filteredBatch.getSelectionVector(), filteredBatch.getFilePath());
         });
   }
 
