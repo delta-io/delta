@@ -338,7 +338,8 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
             // checkpoint file and any potential sidecars. Otherwise, look for any other
             // parts of the current multipart checkpoint.
             CloseableIterator<FileReadResult> dataIter =
-                getActionsIterFromSinglePartOrV2Checkpoint(nextFile, fileName).map(batch -> new FileReadResult(batch, nextFile.getPath()));
+                getActionsIterFromSinglePartOrV2Checkpoint(nextFile, fileName)
+                    .map(batch -> new FileReadResult(batch, nextFile.getPath()));
             long version = checkpointVersion(nextFilePath);
             return combine(dataIter, true /* isFromCheckpoint */, version, Optional.empty());
           }
@@ -355,7 +356,8 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
                     () ->
                         engine
                             .getParquetHandler()
-                            .readParquetFiles(checkpointFiles, deltaReadSchema, checkpointPredicate),
+                            .readParquetFiles(
+                                checkpointFiles, deltaReadSchema, checkpointPredicate),
                     "Reading checkpoint sidecars [%s] with readSchema=%s and predicate=%s",
                     checkpointFiles,
                     deltaReadSchema,
@@ -385,7 +387,8 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
                 engine
                     .getJsonHandler()
                     .readJsonFiles(
-                        singletonCloseableIterator(nextFile), deltaReadSchema, Optional.empty()).map(batch -> new FileReadResult(batch, nextFile.getPath())),
+                        singletonCloseableIterator(nextFile), deltaReadSchema, Optional.empty())
+                    .map(batch -> new FileReadResult(batch, nextFile.getPath())),
             "Reading JSON log file `%s` with readSchema=%s",
             nextFile,
             deltaReadSchema);
@@ -418,8 +421,10 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     Optional<Long> inCommitTimestampOpt = Optional.empty();
     if (!isFromCheckpoint && fileReadDataIter.hasNext()) {
       FileReadResult fileReadResult = fileReadDataIter.next();
-      rewoundFileReadDataIter = singletonCloseableIterator(fileReadResult).combine(fileReadDataIter);
-      inCommitTimestampOpt = InCommitTimestampUtils.tryExtractInCommitTimestamp(fileReadResult.getData());
+      rewoundFileReadDataIter =
+          singletonCloseableIterator(fileReadResult).combine(fileReadDataIter);
+      inCommitTimestampOpt =
+          InCommitTimestampUtils.tryExtractInCommitTimestamp(fileReadResult.getData());
     } else {
       rewoundFileReadDataIter = fileReadDataIter;
     }
@@ -439,7 +444,8 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
             fileReadResult.getData(),
             isFromCheckpoint,
             version,
-            finalResolvedCommitTimestamp, fileReadResult.getFilePath());
+            finalResolvedCommitTimestamp,
+            fileReadResult.getFilePath());
       }
 
       @Override

@@ -27,9 +27,13 @@ public class ActionWrapper {
   /* Timestamp of the commit file if isFromCheckpoint=false */
   private final Optional<Long> timestamp;
 
-  //TODO: remove isFromCheckpointFile?; but how to deal with V2 manifest file?
+  // TODO: remove isFromCheckpointFile?; but how to deal with V2 manifest file?
   ActionWrapper(
-      ColumnarBatch data, boolean isFromCheckpoint, long version, Optional<Long> timestamp, String filePath) {
+      ColumnarBatch data,
+      boolean isFromCheckpoint,
+      long version,
+      Optional<Long> timestamp,
+      String filePath) {
     this.columnarBatch = data;
     this.isFromCheckpoint = isFromCheckpoint;
     this.version = version;
@@ -53,5 +57,7 @@ public class ActionWrapper {
     return timestamp;
   }
 
-  public String getFilePath() {return filePath;}
+  public String getFilePath() {
+    return filePath;
+  }
 }
