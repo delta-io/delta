@@ -45,6 +45,7 @@ trait MergeIntoSuiteBaseMixin
     extends QueryTest
     with SharedSparkSession
     with DeltaSQLTestUtils
+    with DeltaDMLByPathTestUtils
     with ScanReportHelper
     with MergeIntoTestUtils
     with MergeIntoSchemaEvolutionMixin
