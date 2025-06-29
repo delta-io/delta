@@ -167,6 +167,15 @@ public interface TransactionBuilder {
   TransactionBuilder withDomainMetadataSupported();
 
   /**
+   * Set the row ID high watermark for the table. This is used to track the highest row ID that has
+   * used for row tracking. This method should only be called when the 'rowTracking' feature is
+   * supported.
+   *
+   * @return updated {@link TransactionBuilder} instance
+   */
+  TransactionBuilder withRowIdHighWatermark(long rowIdHighWatermark);
+
+  /**
    * Build the transaction. Also validates the given info to ensure that a valid transaction can be
    * created.
    *

@@ -73,6 +73,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   private Optional<Map<String, String>> tableProperties = Optional.empty();
   private Optional<Set<String>> unsetTablePropertiesKeys = Optional.empty();
   private boolean needDomainMetadataSupport = false;
+  private Optional<Long> providedRowIdHighWatermark = Optional.empty();
 
   // The original clustering columns provided by the user when building the transaction.
   // This represents logical column references before schema resolution is applied.
@@ -198,6 +199,13 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   }
 
   @Override
+  public TransactionBuilder withRowIdHighWatermark(long rowIdHighWatermark) {
+    checkArgument(rowIdHighWatermark >= 0, "rowIdHighWatermark must be >= 0");
+    this.providedRowIdHighWatermark = Optional.of(rowIdHighWatermark);
+    return this;
+  }
+
+  @Override
   public Transaction build(Engine engine) {
     if (operation == Operation.REPLACE_TABLE) {
       throw new UnsupportedOperationException("REPLACE TABLE is not yet supported");
@@ -274,7 +282,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
           false /* shouldUpdateProtocol=false */,
           maxRetries,
           logCompactionInterval,
-          table.getClock());
+          table.getClock(),
+          providedRowIdHighWatermark);
     }
 
     // Otherwise, if this is a new table definition or there is a metadata or protocol update, we
@@ -367,7 +376,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         newProtocol.isPresent() || isCreateOrReplace /* shouldUpdateProtocol */,
         maxRetries,
         logCompactionInterval,
-        table.getClock());
+        table.getClock(),
+        providedRowIdHighWatermark);
   }
 
   /**
@@ -493,6 +503,12 @@ public class TransactionBuilderImpl implements TransactionBuilder {
             isCreateOrReplace, newMetadata.orElse(baseMetadata), newProtocol.orElse(baseProtocol));
     if (icebergCompatV3Metadata.isPresent()) {
       newMetadata = icebergCompatV3Metadata;
+    }
+
+    if (!TableFeatures.isRowTrackingSupported(newProtocol.orElse(baseProtocol))
+        && providedRowIdHighWatermark.isPresent()) {
+      throw DeltaErrors.rowTrackingRequiredForRowIdHighWatermark(
+          table.getPath(engine), providedRowIdHighWatermark.get());
     }
 
     /* ----- 4: Update the METADATA with column mapping info if applicable ----- */
