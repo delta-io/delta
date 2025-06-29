@@ -1,8 +1,13 @@
-package io.delta.kernel.internal.transaction.builder;
+package io.delta.kernel.internal.transaction.old;
+
+import static io.delta.kernel.internal.util.ColumnMapping.isColumnMappingModeEnabled;
+import static java.util.Collections.emptyList;
 
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.transaction.builder.BaseTransactionBuilderImpl;
+import io.delta.kernel.internal.util.SchemaUtils;
 import io.delta.kernel.transaction.CreateTableTransactionBuilder;
 import io.delta.kernel.types.StructType;
 import java.util.List;
@@ -20,16 +25,6 @@ public abstract class CreateLikeTransactionBuilder
     this.schema = schema;
   }
 
-  /////////////////////////////////////////
-  // CreateTableTransactionBuilder methods //
-  /////////////////////////////////////////
-
-//  @Override
-//  public CreateTableTransactionBuilder withSchema(StructType schema) {
-//    this.schemaOpt = Optional.of(schema);
-//    return this;
-//  }
-
   @Override
   public CreateTableTransactionBuilder withPartitionColumns(List<Column> partitionColumns) {
     this.partitionColumnsOpt = Optional.of(partitionColumns);
@@ -44,5 +39,11 @@ public abstract class CreateLikeTransactionBuilder
     return null;
   }
 
+  protected void validateCreateLikeInputs() {
+    validateNotPartitionColsAndClusterCols();
+    SchemaUtils.validateSchema(schema, isColumnMappingModeEnabled(mappingMode));
+    SchemaUtils.validatePartitionColumns(schema, partitionColumnsOpt.orElse(emptyList()));
+  }
 
+  protected void validateNotPartitionColsAndClusterCols() {}
 }
