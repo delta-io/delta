@@ -283,7 +283,8 @@ public class ScanImpl implements Scan {
                 () -> predicateEvaluator.eval(next.getData(), next.getSelectionVector()),
                 "Evaluating the partition expression %s",
                 predicateOnScanFileBatch);
-        return new FilteredColumnarBatch(next.getData(), Optional.of(newSelectionVector), next.getFilePath());
+        return new FilteredColumnarBatch(
+            next.getData(), Optional.of(newSelectionVector), next.getFilePath());
       }
 
       @Override
@@ -347,7 +348,9 @@ public class ScanImpl implements Scan {
                   filterToEval);
 
           return new FilteredColumnarBatch(
-              filteredScanFileBatch.getData(), Optional.of(newSelectionVector),filteredScanFileBatch.getFilePath());
+              filteredScanFileBatch.getData(),
+              Optional.of(newSelectionVector),
+              filteredScanFileBatch.getFilePath());
         });
   }
 

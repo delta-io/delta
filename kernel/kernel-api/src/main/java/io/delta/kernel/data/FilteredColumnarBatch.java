@@ -41,7 +41,8 @@ public class FilteredColumnarBatch {
   // Optional cached count of true rows
   private Optional<Integer> numOfSelectedRows;
 
-  public FilteredColumnarBatch(ColumnarBatch data, Optional<ColumnVector> selectionVector, String filePath) {
+  public FilteredColumnarBatch(
+      ColumnarBatch data, Optional<ColumnVector> selectionVector, String filePath) {
     this.data = data;
     this.selectionVector = selectionVector;
     this.numOfSelectedRows = Optional.empty();
@@ -49,7 +50,10 @@ public class FilteredColumnarBatch {
   }
 
   public FilteredColumnarBatch(
-      ColumnarBatch data, Optional<ColumnVector> selectionVector, String filePath, int numOfTrueRows) {
+      ColumnarBatch data,
+      Optional<ColumnVector> selectionVector,
+      String filePath,
+      int numOfTrueRows) {
     this.data = data;
     this.selectionVector = selectionVector;
     this.numOfSelectedRows = Optional.of(numOfTrueRows);
