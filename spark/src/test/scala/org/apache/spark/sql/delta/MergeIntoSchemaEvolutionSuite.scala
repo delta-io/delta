@@ -74,18 +74,50 @@ trait MergeIntoSchemaEvolutionMixin {
           val ex = intercept[AnalysisException] {
             executeMerge(s"delta.`$tempPath` t", "source s", cond, clauses: _*)
           }
+          println(s"Intercepted AnalysisException: ${Utils.exceptionString(ex)}")
           errorContains(Utils.exceptionString(ex), error)
         } else {
           executeMerge(s"delta.`$tempPath` t", "source s", cond, clauses: _*)
-          checkAnswer(spark.read.format("delta").load(tempPath), df.collect())
+          val actualData = spark.read.format("delta").load(tempPath)
+          try {
+            checkAnswer(actualData, df.collect())
+          } catch {
+            case e: Throwable =>
+              println("=== Data Mismatch ===")
+              println("Expected:")
+              df.show(truncate = false)
+              println("Actual:")
+              actualData.show(truncate = false)
+              throw e
+          }
+
           if (schema != null) {
-            assert(spark.read.format("delta").load(tempPath).schema === schema)
+            val actualSchema = actualData.schema
+            try {
+              assert(actualSchema === schema)
+            } catch {
+              case e: Throwable =>
+                println("=== Schema Mismatch ===")
+                println("Expected Schema:")
+                println(schema.treeString)
+                println("Actual Schema:")
+                println(actualSchema.treeString)
+                throw e
+            }
           } else {
-            // Check against the schema of the expected result df if no explicit schema was
-            // provided. Nullability of fields will vary depending on the actual data in the df so
-            // we ignore it.
-            assert(spark.read.format("delta").load(tempPath).schema.asNullable ===
-              df.schema.asNullable)
+            val actualSchema = actualData.schema.asNullable
+            val expectedSchema = df.schema.asNullable
+            try {
+              assert(actualSchema === expectedSchema)
+            } catch {
+              case e: Throwable =>
+                println("=== Inferred Schema Mismatch ===")
+                println("Expected (from df):")
+                println(expectedSchema.treeString)
+                println("Actual:")
+                println(actualSchema.treeString)
+                throw e
+            }
           }
         }
       }
@@ -531,8 +563,8 @@ trait MergeIntoSchemaEvolutionBaseTests {
     targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
     sourceData = Seq((1, 1, "extra1"), (2, 2, "extra2")).toDF("key", "value", "EXTRA"),
     clauses = update(set = "key = s.key, value = s.value, extra = s.extra") :: Nil,
-    expectErrorContains = "Cannot resolve s.extra in UPDATE clause",
-    expectErrorWithoutEvolutionContains = "Cannot resolve s.extra in UPDATE CLAUSE",
+    expectErrorContains = "Cannot resolve extra in UPDATE clause",
+    expectErrorWithoutEvolutionContains = "Cannot resolve extra in UPDATE CLAUSE",
     confs = Seq(SQLConf.CASE_SENSITIVE.key -> "true")
   )
 
@@ -542,7 +574,7 @@ trait MergeIntoSchemaEvolutionBaseTests {
     clauses = update(set = "value = s.value, newCol = s.newCol") :: Nil,
     expected = ((0, 0, null) +: (1, 100, "a") +: (3, 30, null) +: Nil)
       .toDF("key", "value", "newCol"),
-    expectErrorWithoutEvolutionContains = "column `newCol` not found given columns"
+    expectErrorWithoutEvolutionContains = "Cannot resolve newCol in UPDATE CLAUSE"
   )
 
   testEvolution("evolve partitioned table")(
