@@ -17,13 +17,55 @@
 package io.delta.unity
 
 import scala.collection.JavaConverters._
+import scala.collection.mutable.ArrayBuffer
 
 import io.delta.kernel.internal.files.ParsedLogData.ParsedLogType
+import io.delta.kernel.internal.table.ResolvedTableInternal
+import io.delta.kernel.internal.tablefeatures.TableFeatures.{CATALOG_MANAGED_R_W_FEATURE_PREVIEW, TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
+import io.delta.kernel.internal.util.FileNames
+import io.delta.storage.commit.Commit
 
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.{FileSystem, Path}
 import org.scalatest.funsuite.AnyFunSuite
 
 /** Unit tests for [[UCCatalogManagedClient]]. */
 class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestUtils {
+
+  private def testCatalogManagedTable(versionToLoad: Long): Unit = {
+    // Step 1: Create the in-memory table data (ratified commits v1, v2)
+    val tablePath = getTestResourceFilePath("catalog-owned-preview")
+    val ucClient = new InMemoryUCClient("ucMetastoreId")
+    val fs = FileSystem.get(new Configuration())
+    val catalogCommits = Seq(
+      // scalastyle:off line.size.limit
+      getTestResourceFilePath("catalog-owned-preview/_delta_log/_staged_commits/00000000000000000001.4cb9708e-b478-44de-b203-53f9ba9b2876.json"),
+      getTestResourceFilePath("catalog-owned-preview/_delta_log/_staged_commits/00000000000000000002.5b9bba4a-0085-430d-a65e-b0d38c1afbe9.json"))
+      // scalastyle:on line.size.limit
+      .map { path => fs.getFileStatus(new Path(path)) }
+      .map { fileStatus =>
+        new Commit(
+          FileNames.deltaVersion(fileStatus.getPath.toString),
+          fileStatus,
+          fileStatus.getModificationTime)
+      }
+    val tableData = new InMemoryUCClient.TableData(2, ArrayBuffer(catalogCommits: _*))
+    ucClient.createTableIfNotExistsOrThrow("ucTableId", tableData)
+
+    // Step 2: Load the table using UCCatalogManagedClient at the desired versionToLoad
+    val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
+    val resolvedTable = ucCatalogManagedClient
+      .loadTable(defaultEngine, "ucTableId", tablePath, versionToLoad)
+      .asInstanceOf[ResolvedTableInternal]
+
+    // Step 3: Validate
+    val protocol = resolvedTable.getProtocol
+    assert(resolvedTable.getVersion == versionToLoad)
+    assert(protocol.getMinReaderVersion == TABLE_FEATURES_MIN_READER_VERSION)
+    assert(protocol.getMinWriterVersion == TABLE_FEATURES_MIN_WRITER_VERSION)
+    assert(protocol.getReaderFeatures.contains(CATALOG_MANAGED_R_W_FEATURE_PREVIEW.featureName()))
+    assert(protocol.getWriterFeatures.contains(CATALOG_MANAGED_R_W_FEATURE_PREVIEW.featureName()))
+  }
 
   test("constructor throws on invalid input") {
     assertThrows[NullPointerException] {
@@ -47,6 +89,26 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
     assertThrows[IllegalArgumentException] {
       ucCatalogManagedClient.loadTable(defaultEngine, "ucTableId", "tablePath", -1L) // version < 0
     }
+  }
+
+  test("loadTable throws if version to load is greater than max ratified version") {
+    val exMsg = intercept[IllegalArgumentException] {
+      testCatalogManagedTable(versionToLoad = 9L)
+    }.getMessage
+
+    assert(exMsg.contains("Cannot load table version 9 as the latest version ratified by UC is 2"))
+  }
+
+  test("loadTable correctly loads a UC table -- versionToLoad is a ratified commit (the max)") {
+    testCatalogManagedTable(versionToLoad = 2L)
+  }
+
+  test("loadTable correctly loads a UC table -- versionToLoad is a ratified commit (not the max)") {
+    testCatalogManagedTable(versionToLoad = 1L)
+  }
+
+  test("loadTable correctly loads a UC table -- versionToLoad is a published commit") {
+    testCatalogManagedTable(versionToLoad = 0L)
   }
 
   test("converts UC Commit into Kernel ParsedLogData.RATIFIED_STAGED_COMMIT") {
