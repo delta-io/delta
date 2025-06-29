@@ -3,29 +3,31 @@ package io.delta.kernel.internal.transaction.builder;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.transaction.TransactionFactory;
+import io.delta.kernel.internal.transaction.builder.context.CreateLikeBuilderContext;
 import io.delta.kernel.transaction.CreateTableTransactionBuilder;
 import io.delta.kernel.transaction.Transaction;
 import io.delta.kernel.types.StructType;
 import java.util.List;
-import java.util.Optional;
 
 public class CreateTableTransactionBuilderImpl
-    extends CreateLikeTransactionBuilder
+    extends BaseTransactionBuilderImpl<CreateTableTransactionBuilder>
     implements CreateTableTransactionBuilder {
 
   private final String path;
-  private Optional<StructType> schemaOpt = Optional.empty();
-  private Optional<List<Column>> partitionColumnsOpt = Optional.empty();
+  private final CreateLikeBuilderContext createHelper;
   private boolean domainMetadataSupported = false;
 
   public CreateTableTransactionBuilderImpl(String path, StructType schema) {
-    super(schema);
+    super();
+    createHelper = new CreateLikeBuilderContext(schema);
     this.path = path;
   }
 
-  ////////////////////////////////////////
-  // BaseTransactionBuilderImpl methods //
-  ////////////////////////////////////////
+  @Override
+  public CreateTableTransactionBuilderImpl withPartitionColumns(List<Column> partitionColumns) {
+    createHelper.withPartitionColumns(partitionColumns);
+    return this;
+  }
 
   @Override
   protected CreateTableTransactionBuilderImpl self() {
@@ -33,22 +35,13 @@ public class CreateTableTransactionBuilderImpl
 
   }
 
-  ////////////////////////////////////////
-  // BaseTransactionBuilderImpl methods //
-  ////////////////////////////////////////
-
   @Override
   public Transaction build(Engine engine) {
-    // TODO: validate transaction inputs
-    validatePathBasedTableDoesNotExist();
+    createHelper.validateCreateLikeInputs();
+
     return TransactionFactory.createTransaction(
-        path,
-        -1,
-        -1,
-        getInitialProtocol(),
-        getInitialMetadata()
-    );
+        path, -1, -1, createHelper.getInitialProtocol(), createHelper.getInitialMetadata());
   }
-  
-  private void validatePathBasedTableDoesNotExist() {}
+
+
 }

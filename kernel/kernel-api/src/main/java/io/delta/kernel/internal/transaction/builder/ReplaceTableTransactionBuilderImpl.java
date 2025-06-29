@@ -1,22 +1,25 @@
 package io.delta.kernel.internal.transaction.builder;
 
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.table.ResolvedTableInternal;
 import io.delta.kernel.internal.transaction.TransactionFactory;
+import io.delta.kernel.internal.transaction.builder.context.CreateLikeBuilderContext;
+import io.delta.kernel.internal.transaction.builder.context.ExistingTableBuilderContext;
 import io.delta.kernel.transaction.ReplaceTableTransactionBuilder;
 import io.delta.kernel.transaction.Transaction;
 import io.delta.kernel.types.StructType;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-public class ReplaceTableTransactionBuilderImpl extends CreateLikeTransactionBuilder
+public class ReplaceTableTransactionBuilderImpl
+    extends BaseTransactionBuilderImpl<ReplaceTableTransactionBuilder>
     implements ReplaceTableTransactionBuilder {
-
-  private final ResolvedTableInternal baseTable;
 
   private static final Set<String> TABLE_PROPERTY_KEYS_TO_PRESERVE =
       new HashSet<String>() {
@@ -25,9 +28,19 @@ public class ReplaceTableTransactionBuilderImpl extends CreateLikeTransactionBui
         }
       };
 
+  private final CreateLikeBuilderContext createContext;
+  private final ExistingTableBuilderContext existingContext;
+
   public ReplaceTableTransactionBuilderImpl(ResolvedTableInternal baseTable, StructType newSchema) {
-    super(newSchema);
-    this.baseTable = baseTable;
+    super();
+    this.createContext = new CreateLikeBuilderContext(newSchema);
+    this.existingContext = new ExistingTableBuilderContext(baseTable);
+  }
+
+  @Override
+  public ReplaceTableTransactionBuilderImpl withPartitionColumns(List<Column> partitionColumns) {
+    createContext.withPartitionColumns(partitionColumns);
+    return this;
   }
 
   @Override
@@ -37,24 +50,23 @@ public class ReplaceTableTransactionBuilderImpl extends CreateLikeTransactionBui
 
   @Override
   public Transaction build(Engine engine) {
+    existingContext.validateKernelCanWriteToTable();
+    createContext.validateCreateLikeInputs();
+
     return TransactionFactory.createTransaction(
-        baseTable.getPath(),
-        baseTable.getVersion(),
-        baseTable.getTimestamp(),
-        baseTable.getProtocol(),
-        getStartMetadata()
-    );
+        existingContext.getBaseTable().getPath(),
+        existingContext.getBaseTable().getVersion(),
+        existingContext.getBaseTable().getTimestamp(),
+        existingContext.getBaseTable().getProtocol(),
+        getStartMetadata());
   }
 
   private Metadata getStartMetadata() {
     final Map<String, String> propertiesToPreserve =
-        baseTable.getMetadata().getConfiguration().entrySet().stream()
-            .filter(
-                e ->
-                    TABLE_PROPERTY_KEYS_TO_PRESERVE.contains(
-                        e.getKey()))
+        existingContext.getBaseTable().getMetadata().getConfiguration().entrySet().stream()
+            .filter(e -> TABLE_PROPERTY_KEYS_TO_PRESERVE.contains(e.getKey()))
             .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
 
-    return getInitialMetadata().withMergedConfiguration(propertiesToPreserve);
+    return createContext.getInitialMetadata().withMergedConfiguration(propertiesToPreserve);
   }
 }
