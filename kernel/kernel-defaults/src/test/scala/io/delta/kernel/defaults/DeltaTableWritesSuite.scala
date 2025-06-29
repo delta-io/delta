@@ -783,7 +783,8 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
             val partValues = getPartitionValues(batch, rowId)
             val filteredBatch = new FilteredColumnarBatch(
               batch,
-              Optional.of(selectSingleElement(batch.getSize, rowId)), "fake/file/path")
+              Optional.of(selectSingleElement(batch.getSize, rowId)),
+              "fake/file/path")
             dataWithPartInfo = dataWithPartInfo :+ (partValues, Seq(filteredBatch))
           }
         }
