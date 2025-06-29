@@ -50,6 +50,8 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
       snapshotReport.getSnapshotMetrics().getTimeToBuildLogSegmentForVersionNs()
     val durationToGetCrcInfo =
       snapshotReport.getSnapshotMetrics().getDurationToGetCrcInfoNs()
+    val loadLogSegmentCloudListCallCount =
+      snapshotReport.getSnapshotMetrics().getLoadLogSegmentCloudListCallCount()
     val exception: Optional[String] = snapshotReport.getException().map(_.toString)
     val expectedJson =
       s"""
@@ -65,7 +67,8 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |"timestampToVersionResolutionDurationNs":${timestampToVersionResolutionDuration},
          |"loadInitialDeltaActionsDurationNs":${loadProtocolAndMetadataDuration},
          |"timeToBuildLogSegmentForVersionNs":${buildLogSegmentDuration},
-         |"durationToGetCrcInfoNs":${durationToGetCrcInfo}
+         |"durationToGetCrcInfoNs":${durationToGetCrcInfo},
+         |"loadLogSegmentCloudListCallCount":${loadLogSegmentCloudListCallCount}
          |}
          |}
          |""".stripMargin.replaceAll("\n", "")
@@ -79,6 +82,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
     snapshotContext1.getSnapshotMetrics.loadInitialDeltaActionsTimer.record(1000)
     snapshotContext1.getSnapshotMetrics.timeToBuildLogSegmentForVersionTimer.record(500)
     snapshotContext1.getSnapshotMetrics.durationToGetCrcInfoTimer.record(250)
+    snapshotContext1.getSnapshotMetrics.loadLogSegmentCloudListCallCounter.increment(2)
     snapshotContext1.setVersion(25)
     snapshotContext1.setCheckpointVersion(Optional.of(20))
     val exception = new RuntimeException("something something failed")
@@ -102,7 +106,8 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
         |"timestampToVersionResolutionDurationNs":10,
         |"loadInitialDeltaActionsDurationNs":1000,
         |"timeToBuildLogSegmentForVersionNs":500,
-        |"durationToGetCrcInfoNs":250
+        |"durationToGetCrcInfoNs":250,
+        |"loadLogSegmentCloudListCallCount":2
         |}
         |}
         |""".stripMargin.replaceAll("\n", "")
