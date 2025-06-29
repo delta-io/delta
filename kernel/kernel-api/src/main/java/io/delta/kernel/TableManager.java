@@ -18,6 +18,9 @@ package io.delta.kernel;
 
 import io.delta.kernel.annotation.Experimental;
 import io.delta.kernel.internal.table.ResolvedTableBuilderImpl;
+import io.delta.kernel.internal.transaction.builder.CreateTableTransactionBuilderImpl;
+import io.delta.kernel.transaction.CreateTableTransactionBuilder;
+import io.delta.kernel.types.StructType;
 
 /** The entry point to load and create {@link ResolvedTable}s. */
 @Experimental
@@ -40,6 +43,10 @@ public interface TableManager {
    */
   static ResolvedTableBuilder loadTable(String path) {
     return new ResolvedTableBuilderImpl(path);
+  }
+
+  static CreateTableTransactionBuilder createTable(String path, StructType schema) {
+    return new CreateTableTransactionBuilderImpl(path, schema);
   }
 
   // TODO: static CreateTableTransactionBuilder buildCreateTableTransaction(...)
