@@ -37,10 +37,27 @@ import java.util.Optional;
 public class FilteredColumnarBatch {
   private final ColumnarBatch data;
   private final Optional<ColumnVector> selectionVector;
+  private final String filePath;
+  // Optional cached count of true rows
+  private Optional<Integer> numOfSelectedRows;
 
-  public FilteredColumnarBatch(ColumnarBatch data, Optional<ColumnVector> selectionVector) {
+  public FilteredColumnarBatch(
+      ColumnarBatch data, Optional<ColumnVector> selectionVector, String filePath) {
     this.data = data;
     this.selectionVector = selectionVector;
+    this.numOfSelectedRows = Optional.empty();
+    this.filePath = filePath;
+  }
+
+  public FilteredColumnarBatch(
+      ColumnarBatch data,
+      Optional<ColumnVector> selectionVector,
+      String filePath,
+      int numOfTrueRows) {
+    this.data = data;
+    this.selectionVector = selectionVector;
+    this.numOfSelectedRows = Optional.of(numOfTrueRows);
+    this.filePath = filePath;
   }
 
   /**
@@ -52,6 +69,10 @@ public class FilteredColumnarBatch {
    */
   public ColumnarBatch getData() {
     return data;
+  }
+
+  public String getFilePath() {
+    return filePath;
   }
 
   /**
@@ -107,5 +128,25 @@ public class FilteredColumnarBatch {
       @Override
       public void close() {}
     };
+  }
+
+  public Integer getNumOfSelectedRows() {
+    if (numOfSelectedRows.isPresent()) {
+      return numOfSelectedRows.get();
+    }
+    if (!selectionVector.isPresent()) {
+      // TODO: what to return if selection vector is empty?
+      return data.getSize(); // all rows are selected
+    }
+    int trueRowCount = 0;
+    for (int rowId = 0; rowId < data.getSize(); rowId++) {
+      if (selectionVector.get().isNullAt(rowId)) {
+        boolean isSelected =
+            !selectionVector.get().isNullAt(rowId) && selectionVector.get().getBoolean(rowId);
+        if (isSelected) trueRowCount++;
+      }
+    }
+    numOfSelectedRows = Optional.of(trueRowCount);
+    return trueRowCount;
   }
 }
