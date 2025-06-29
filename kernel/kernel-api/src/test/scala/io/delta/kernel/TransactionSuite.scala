@@ -236,7 +236,7 @@ object TransactionSuite extends VectorTestUtils with MockEngineUtils {
   def testData(includePartitionCols: Boolean): CloseableIterator[FilteredColumnarBatch] = {
     toCloseableIterator(
       Seq.range(0, 5).map(_ => testBatch(includePartitionCols)).asJava.iterator()).map(batch =>
-      new FilteredColumnarBatch(batch, Optional.empty()))
+      new FilteredColumnarBatch(batch, Optional.empty(), "fake/file/path"))
   }
 
   def testBatch(includePartitionCols: Boolean): ColumnarBatch = {
