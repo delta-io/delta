@@ -134,7 +134,10 @@ public interface Scan {
    * @throws IOException when error occurs while reading the data.
    */
   static CloseableIterator<FilteredColumnarBatch> transformPhysicalData(
-      Engine engine, Row scanState, Row scanFile, CloseableIterator<FileReadResult> physicalDataIter)
+      Engine engine,
+      Row scanState,
+      Row scanFile,
+      CloseableIterator<FileReadResult> physicalDataIter)
       throws IOException {
     return new CloseableIterator<FilteredColumnarBatch>() {
       boolean inited = false;
@@ -226,7 +229,7 @@ public interface Scan {
                 "Column mapping mode is not yet supported: " + columnMappingMode);
         }
 
-        return new FilteredColumnarBatch(nextDataBatch, selectionVector,filePath);
+        return new FilteredColumnarBatch(nextDataBatch, selectionVector, filePath);
       }
     };
   }
