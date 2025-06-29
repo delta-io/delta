@@ -21,7 +21,7 @@ import scala.collection.JavaConverters._
 
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.actions.{Metadata, Protocol}
-import io.delta.kernel.internal.icebergcompat.IcebergCompatV2MetadataValidatorAndUpdater.validateAndUpdateIcebergCompatV2Metadata
+import io.delta.kernel.internal.icebergcompat.IcebergCompatMetadataValidatorAndUpdater.validateAndUpdateIcebergCompatMetadata
 import io.delta.kernel.internal.tablefeatures.TableFeature
 import io.delta.kernel.internal.tablefeatures.TableFeatures.{COLUMN_MAPPING_RW_FEATURE, ICEBERG_COMPAT_V2_W_FEATURE}
 import io.delta.kernel.types._
@@ -71,7 +71,12 @@ class IcebergCompatV2MetadataValidatorAndUpdaterSuite
       isNewTable: Boolean,
       metadata: Metadata,
       protocol: Protocol): Optional[Metadata] = {
-    validateAndUpdateIcebergCompatV2Metadata(isNewTable, metadata, protocol)
+    IcebergCompatMetadataValidatorAndUpdater.validateAndUpdateIcebergCompatMetadata(
+      isNewTable,
+      metadata,
+      protocol,
+      IcebergCompatV2MetadataValidatorAndUpdater
+        .getIcebergCompatV2MetadataValidatorAndUpdaterInstance)
   }
 
   Seq(true, false).foreach { isNewTable =>

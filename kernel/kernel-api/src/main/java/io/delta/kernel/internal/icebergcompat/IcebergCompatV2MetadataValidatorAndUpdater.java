@@ -20,33 +20,15 @@ import static java.util.Collections.singletonList;
 import static java.util.stream.Collectors.toList;
 
 import io.delta.kernel.internal.TableConfig;
-import io.delta.kernel.internal.actions.Metadata;
-import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.tablefeatures.TableFeature;
 import io.delta.kernel.types.*;
 import io.delta.kernel.utils.DataFileStatus;
 import java.util.List;
-import java.util.Optional;
 import java.util.stream.Stream;
 
 /** Utility methods for validation and compatibility checks for Iceberg V2. */
 public class IcebergCompatV2MetadataValidatorAndUpdater
     extends IcebergCompatMetadataValidatorAndUpdater {
-  /**
-   * Validate and update the given Iceberg V2 metadata.
-   *
-   * @param newMetadata Metadata after the current updates
-   * @param newProtocol Protocol after the current updates
-   * @return The updated metadata if the metadata is valid and updated, otherwise empty.
-   * @throws UnsupportedOperationException if the metadata is not compatible with Iceberg V2
-   *     requirements
-   */
-  public static Optional<Metadata> validateAndUpdateIcebergCompatV2Metadata(
-      boolean isCreatingNewTable, Metadata newMetadata, Protocol newProtocol) {
-    return INSTANCE.validateAndUpdateMetadata(
-        new IcebergCompatInputContext(
-            INSTANCE.compatFeatureName(), isCreatingNewTable, newMetadata, newProtocol));
-  }
 
   /**
    * Validate the given {@link DataFileStatus} that is being added as a {@code add} action to Delta
@@ -64,6 +46,11 @@ public class IcebergCompatV2MetadataValidatorAndUpdater
 
   private static final IcebergCompatV2MetadataValidatorAndUpdater INSTANCE =
       new IcebergCompatV2MetadataValidatorAndUpdater();
+
+  public static IcebergCompatMetadataValidatorAndUpdater
+      getIcebergCompatV2MetadataValidatorAndUpdaterInstance() {
+    return INSTANCE;
+  }
 
   @Override
   String compatFeatureName() {

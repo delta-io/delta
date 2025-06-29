@@ -22,7 +22,7 @@ import scala.collection.JavaConverters._
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.TableConfig
 import io.delta.kernel.internal.actions.{Metadata, Protocol}
-import io.delta.kernel.internal.icebergcompat.IcebergCompatV3MetadataValidatorAndUpdater.validateAndUpdateIcebergCompatV3Metadata
+import io.delta.kernel.internal.icebergcompat.IcebergCompatMetadataValidatorAndUpdater.validateAndUpdateIcebergCompatMetadata
 import io.delta.kernel.internal.tablefeatures.TableFeature
 import io.delta.kernel.internal.tablefeatures.TableFeatures.{COLUMN_MAPPING_RW_FEATURE, ICEBERG_COMPAT_V3_W_FEATURE, ROW_TRACKING_W_FEATURE, TYPE_WIDENING_RW_FEATURE}
 import io.delta.kernel.types._
@@ -81,7 +81,12 @@ class IcebergCompatV3MetadataValidatorAndUpdaterSuite
       isNewTable: Boolean,
       metadata: Metadata,
       protocol: Protocol): Optional[Metadata] = {
-    validateAndUpdateIcebergCompatV3Metadata(isNewTable, metadata, protocol)
+    IcebergCompatMetadataValidatorAndUpdater.validateAndUpdateIcebergCompatMetadata(
+      isNewTable,
+      metadata,
+      protocol,
+      IcebergCompatV3MetadataValidatorAndUpdater
+        .getIcebergCompatV3MetadataValidatorAndUpdaterInstance)
   }
 
   Seq(true, false).foreach { isNewTable =>
@@ -91,7 +96,7 @@ class IcebergCompatV3MetadataValidatorAndUpdaterSuite
       val protocol =
         new Protocol(3, 7, Set.empty.asJava, Set("icebergCompatV3", "rowTracking").asJava)
       val e = intercept[KernelException] {
-        validateAndUpdateIcebergCompatV3Metadata(isNewTable, metadata, protocol)
+        validateAndUpdateIcebergCompatMetadata(isNewTable, metadata, protocol)
       }
       assert(e.getMessage.contains(
         "icebergCompatV3: requires the feature 'columnMapping' to be enabled."))
@@ -127,13 +132,13 @@ class IcebergCompatV3MetadataValidatorAndUpdaterSuite
 
       if (isNewTable) {
         val updatedMetadata =
-          validateAndUpdateIcebergCompatV3Metadata(isNewTable, metadata, protocol)
+          validateAndUpdateIcebergCompatMetadata(isNewTable, metadata, protocol)
         assert(updatedMetadata.isPresent)
         assert(updatedMetadata.get().getConfiguration.get("delta.columnMapping.mode") == "name")
         assert(TableConfig.ROW_TRACKING_ENABLED.fromMetadata(updatedMetadata.get()))
       } else {
         val e = intercept[KernelException] {
-          validateAndUpdateIcebergCompatV3Metadata(isNewTable, metadata, protocol)
+          validateAndUpdateIcebergCompatMetadata(isNewTable, metadata, protocol)
         }
         assert(e.getMessage.contains(
           "The value 'none' for the property 'delta.columnMapping.mode' is" +
