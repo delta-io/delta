@@ -65,6 +65,7 @@ trait MergeIntoSchemaEvolutionMixin {
       confs: Seq[(String, String)] = Seq(),
       partitionCols: Seq[String] = Seq.empty): Unit = {
 
+    // scalastyle:off println
     def executeMergeAndAssert(df: DataFrame, schema: StructType, error: String): Unit = {
       append(targetData, partitionCols)
       withTempView("source") {
@@ -122,7 +123,7 @@ trait MergeIntoSchemaEvolutionMixin {
         }
       }
     }
-
+    // scalastyle:on println
     test(s"schema evolution - $name - with evolution disabled") {
       withSQLConf(confs :+ (DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "false"): _*) {
         executeMergeAndAssert(expectedWithoutEvolution, expectedSchemaWithoutEvolution,
