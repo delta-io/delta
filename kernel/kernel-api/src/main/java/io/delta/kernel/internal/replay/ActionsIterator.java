@@ -76,6 +76,8 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
 
   private final boolean schemaContainsAddOrRemoveFiles;
 
+  private final String startingLogFileName;
+
   /**
    * The current (ColumnarBatch, isFromCheckpoint) tuple. Whenever this iterator is exhausted, we
    * will try and fetch the next one from the `filesList`.
@@ -91,7 +93,13 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
       List<FileStatus> files,
       StructType deltaReadSchema,
       Optional<Predicate> checkpointPredicate) {
-    this(engine, files, deltaReadSchema, deltaReadSchema, checkpointPredicate);
+    this(
+        engine,
+        files,
+        deltaReadSchema,
+        deltaReadSchema,
+        checkpointPredicate,
+        PaginationContext.EMPTY);
   }
 
   public ActionsIterator(
@@ -99,16 +107,34 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
       List<FileStatus> files,
       StructType deltaReadSchema,
       StructType checkpointReadSchema,
-      Optional<Predicate> checkpointPredicate) {
+      Optional<Predicate> checkpointPredicate,
+      PaginationContext paginationContext) {
     this.engine = engine;
     this.checkpointPredicate = checkpointPredicate;
     this.filesList = new LinkedList<>();
     this.filesList.addAll(
-        files.stream().map(DeltaLogFile::forFileStatus).collect(Collectors.toList()));
+        files.stream()
+            .map(DeltaLogFile::forFileStatus)
+            .filter(
+                file -> paginationContext.equals(PaginationContext.EMPTY) || paginatedFilter(file))
+            .collect(Collectors.toList()));
     this.deltaReadSchema = deltaReadSchema;
     this.checkpointReadSchema = checkpointReadSchema;
     this.actionsIter = Optional.empty();
     this.schemaContainsAddOrRemoveFiles = LogReplay.containsAddOrRemoveFileActions(deltaReadSchema);
+    this.startingLogFileName = paginationContext.lastReadLogFileName;
+  }
+
+  private boolean paginatedFilter(DeltaLogFile nextLogFile) {
+    FileStatus nextFile = nextLogFile.getFile();
+    Path nextFilePath = new Path(nextFile.getPath());
+    String fileName = nextFilePath.getName();
+    // no need to handle sidecar files here (sidecar files aren't in the log segment)
+    if (nextLogFile.getLogType() == DeltaLogFile.LogType.V2_CHECKPOINT_MANIFEST)
+      return true; // never skip v2 checkpoint file
+    if (startingLogFileName == null) return true;
+    return fileName.compareTo(startingLogFileName) <= 0
+        || !startingLogFileName.endsWith(".parquet"); // skip these files
   }
 
   @Override
@@ -340,7 +366,8 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
             CloseableIterator<ColumnarBatch> dataIter =
                 getActionsIterFromSinglePartOrV2Checkpoint(nextFile, fileName);
             long version = checkpointVersion(nextFilePath);
-            return combine(dataIter, true /* isFromCheckpoint */, version, Optional.empty());
+            return combine(
+                dataIter, true /* isFromCheckpoint */, version, Optional.empty(), fileName);
           }
         case MULTIPART_CHECKPOINT:
         case SIDECAR:
@@ -363,7 +390,12 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
                     checkpointPredicate);
 
             long version = checkpointVersion(nextFilePath);
-            return combine(dataIter, true /* isFromCheckpoint */, version, Optional.empty());
+            return combine(
+                dataIter,
+                true /* isFromCheckpoint */,
+                version,
+                Optional.empty(),
+                fileName); // TODO: this is wrong, wait for parquet reader to merge
           }
         default:
           throw new IOException("Unrecognized log type: " + nextLogFile.getLogType());
@@ -395,7 +427,8 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
         dataIter,
         false /* isFromCheckpoint */,
         fileVersion,
-        Optional.of(nextFile.getModificationTime()) /* timestamp */);
+        Optional.of(nextFile.getModificationTime()) /* timestamp */,
+        new Path(nextFile.getPath()).getName());
   }
 
   /**
@@ -409,7 +442,8 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
       CloseableIterator<ColumnarBatch> fileReadDataIter,
       boolean isFromCheckpoint,
       long version,
-      Optional<Long> timestamp) {
+      Optional<Long> timestamp,
+      String fileName) {
     // For delta files, we want to use the inCommitTimestamp from commitInfo
     // as the commit timestamp for the file.
     // Since CommitInfo should be the first action in the delta when inCommitTimestamp is
@@ -440,7 +474,8 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
             rewoundFileReadDataIter.next(),
             isFromCheckpoint,
             version,
-            finalResolvedCommitTimestamp);
+            finalResolvedCommitTimestamp,
+            fileName);
       }
 
       @Override
