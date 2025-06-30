@@ -38,7 +38,7 @@ public class FilteredColumnarBatch {
   private final ColumnarBatch data;
   private final Optional<ColumnVector> selectionVector;
   private final Optional<String> filePath;
-  // Optional cached count of true rows in the selection vector
+  // Optional pre-computed count of true rows in the selection vector
   private Optional<Integer> numSelectedRows;
 
   public FilteredColumnarBatch(ColumnarBatch data, Optional<ColumnVector> selectionVector) {
@@ -126,27 +126,21 @@ public class FilteredColumnarBatch {
     };
   }
 
-  /** @return get the total number of selected rows */
-  public int getCachedNumSelectedRows() {
-    if (numSelectedRows.isPresent()) {
-      return numSelectedRows.get();
-    }
+  /**
+   * Returns the pre-computed number of selected rows if available.
+   *
+   * <p>If a selection vector is not present, it implies all rows are selected, and the method
+   * returns the total number of rows in the data.
+   *
+   * <p>If a selection vector is present but this value is empty, the caller is responsible for
+   * computing the number of selected rows from the selection vector manually.
+   *
+   * @return an {@link Optional} containing the pre-computed number of selected rows.
+   */
+  public Optional<Integer> getPreComputedNumSelectedRows() {
     if (!selectionVector.isPresent()) {
-      return data.getSize(); // all rows are selected
+      return Optional.of(data.getSize());
     }
-
-    throw new IllegalStateException("Number of selected Rows is not available!");
-    /** Alternative: calculate numSelectedRows based on selection vector */
-    /*
-    int trueRowCount = 0;
-    for (int rowId = 0; rowId < data.getSize(); rowId++) {
-      if (selectionVector.get().isNullAt(rowId)) {
-        boolean isSelected =
-            !selectionVector.get().isNullAt(rowId) && selectionVector.get().getBoolean(rowId);
-        if (isSelected) trueRowCount++;
-      }
-    }
-    numSelectedRows = Optional.of(trueRowCount);
-    return trueRowCount; */
+    return numSelectedRows;
   }
 }
