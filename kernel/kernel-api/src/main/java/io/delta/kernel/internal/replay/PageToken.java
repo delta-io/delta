@@ -12,50 +12,6 @@ import java.util.Optional;
 
 /** Page Token Class for Pagination Support */
 public class PageToken {
-  /** Variables to know where last page ends (current page starts) */
-  private final String startingFileName; // starting Log File Name (also last read log file name)
-
-  private final long rowIndex; // the index of last row in the last consumed batch
-  private final Optional<Long> sidecarIndex; // optional index of sidecar checkpoint file consumed
-
-  /** Variables for validating query params */
-  private final String kernelVersion;
-
-  private final String tablePath;
-  private final long tableVersion;
-  private final long predicateHash;
-  private final long logSegmentHash;
-
-  /** Schema for PageToken Row representation */
-  public static final StructType PAGE_TOKEN_SCHEMA =
-      new StructType()
-          .add("logFileName", StringType.STRING)
-          .add("rowIndexInFile", LongType.LONG)
-          .add("sidecarIndex", LongType.LONG)
-          .add("kernelVersion", StringType.STRING)
-          .add("tablePath", StringType.STRING)
-          .add("tableVersion", LongType.LONG)
-          .add("predicateHash", LongType.LONG)
-          .add("logSegmentHash", LongType.LONG);
-
-  public PageToken(
-      String startingFileName,
-      long rowIndex,
-      Optional<Long> sidecarIndex,
-      String kernelVersion,
-      String tablePath,
-      long tableVersion,
-      long predicateHash,
-      long logSegmentHash) {
-    this.startingFileName = requireNonNull(startingFileName, "startingFileName must not be null");
-    this.rowIndex = rowIndex;
-    this.sidecarIndex = sidecarIndex;
-    this.kernelVersion = requireNonNull(kernelVersion, "kernelVersion must not be null");
-    this.tablePath = requireNonNull(tablePath, "tablePath must not be null");
-    this.tableVersion = tableVersion;
-    this.predicateHash = predicateHash;
-    this.logSegmentHash = logSegmentHash;
-  }
 
   public static PageToken fromRow(Row row) {
     requireNonNull(row);
@@ -87,6 +43,49 @@ public class PageToken {
         row.getLong(5), // tableVersion
         row.getLong(6), // predicateHash
         row.getLong(7)); // logSegmentHash
+  }
+
+  /** Schema for PageToken Row representation */
+  public static final StructType PAGE_TOKEN_SCHEMA =
+      new StructType()
+          .add("logFileName", StringType.STRING)
+          .add("rowIndexInFile", LongType.LONG)
+          .add("sidecarIndex", LongType.LONG)
+          .add("kernelVersion", StringType.STRING)
+          .add("tablePath", StringType.STRING)
+          .add("tableVersion", LongType.LONG)
+          .add("predicateHash", LongType.LONG)
+          .add("logSegmentHash", LongType.LONG);
+
+  // ===== Variables to know where last page ends =====
+  private final String startingFileName; // starting Log File Name (also last read log file name)
+  private final long rowIndex; // the index of last row in the last consumed batch
+  private final Optional<Long> sidecarIndex; // optional index of sidecar checkpoint file consumed
+
+  // ===== Variables for validating query params =====
+  private final String kernelVersion;
+  private final String tablePath;
+  private final long tableVersion;
+  private final long predicateHash;
+  private final long logSegmentHash;
+  
+  public PageToken(
+      String startingFileName,
+      long rowIndex,
+      Optional<Long> sidecarIndex,
+      String kernelVersion,
+      String tablePath,
+      long tableVersion,
+      long predicateHash,
+      long logSegmentHash) {
+    this.startingFileName = requireNonNull(startingFileName, "startingFileName must not be null");
+    this.rowIndex = rowIndex;
+    this.sidecarIndex = sidecarIndex;
+    this.kernelVersion = requireNonNull(kernelVersion, "kernelVersion must not be null");
+    this.tablePath = requireNonNull(tablePath, "tablePath must not be null");
+    this.tableVersion = tableVersion;
+    this.predicateHash = predicateHash;
+    this.logSegmentHash = logSegmentHash;
   }
 
   public Row toRow() {
