@@ -15,13 +15,13 @@
  */
 package io.delta.kernel.data;
 
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.internal.data.ColumnarBatchRow;
 import io.delta.kernel.utils.CloseableIterator;
 import java.util.NoSuchElementException;
 import java.util.Optional;
-
-import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 /**
  * Represents a filtered version of {@link ColumnarBatch}. Contains original {@link ColumnarBatch}
@@ -59,7 +59,9 @@ public class FilteredColumnarBatch {
     this.data = data;
     this.selectionVector = selectionVector;
     this.filePath = Optional.of(filePath);
-    checkArgument(selectionVector.isPresent() || numSelectedRows == data.getSize(), "Invalid precomputedNumSelectedRows: must be null or equal to batch size when selectionVector is empty.")
+    checkArgument(
+        selectionVector.isPresent() || numSelectedRows == data.getSize(),
+        "Invalid precomputedNumSelectedRows: must be null or equal to batch size when selectionVector is empty.");
     this.preComputedNumSelectedRows = Optional.of(numSelectedRows);
   }
 
