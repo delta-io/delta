@@ -21,6 +21,8 @@ import io.delta.kernel.utils.CloseableIterator;
 import java.util.NoSuchElementException;
 import java.util.Optional;
 
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+
 /**
  * Represents a filtered version of {@link ColumnarBatch}. Contains original {@link ColumnarBatch}
  * with an optional selection vector to select only a subset of rows for the original columnar
@@ -53,12 +55,11 @@ public class FilteredColumnarBatch {
       ColumnarBatch data,
       Optional<ColumnVector> selectionVector,
       String filePath,
-      Integer numSelectedRows) {
+      int numSelectedRows) {
     this.data = data;
     this.selectionVector = selectionVector;
     this.filePath = Optional.of(filePath);
-    assert selectionVector.isPresent() || numSelectedRows == data.getSize()
-        : "Invalid precomputedNumSelectedRows: must be null or equal to batch size when selectionVector is empty.";
+    checkArgument(selectionVector.isPresent() || numSelectedRows == data.getSize(), "Invalid precomputedNumSelectedRows: must be null or equal to batch size when selectionVector is empty.")
     this.preComputedNumSelectedRows = Optional.of(numSelectedRows);
   }
 
