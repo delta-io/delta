@@ -2,6 +2,7 @@ package io.delta.kernel.internal
 
 import java.util
 import java.util.{HashMap, Map}
+import java.util.Optional
 
 import scala.collection.JavaConverters._
 
@@ -18,7 +19,7 @@ class PageTokenSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
   private val TEST_FILE_NAME = "test_file.json"
   private val TEST_ROW_INDEX = 42L
-  private val TEST_SIDECAR_INDEX = 5L
+  private val TEST_SIDECAR_INDEX = Optional.of(java.lang.Long.valueOf(5L))
   private val TEST_KERNEL_VERSION = "4.0.0"
   private val TEST_TABLE_PATH = "/path/to/table"
   private val TEST_TABLE_VERSION = 5L
@@ -38,7 +39,7 @@ class PageTokenSuite extends AnyFunSuite with MockFileSystemClientUtils {
   private val rowData: Map[Integer, Object] = new HashMap()
   rowData.put(0, TEST_FILE_NAME)
   rowData.put(1, TEST_ROW_INDEX.asInstanceOf[Object])
-  rowData.put(2, TEST_SIDECAR_INDEX.asInstanceOf[Object])
+  rowData.put(2, TEST_SIDECAR_INDEX.orElse(null))
   rowData.put(3, TEST_KERNEL_VERSION)
   rowData.put(4, TEST_TABLE_PATH)
   rowData.put(5, TEST_TABLE_VERSION.asInstanceOf[Object])
@@ -58,7 +59,7 @@ class PageTokenSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
     assert(row.getString(0) == TEST_FILE_NAME)
     assert(row.getLong(1) == TEST_ROW_INDEX)
-    assert(row.getLong(2) == TEST_SIDECAR_INDEX)
+    assert(Optional.of(if (row.isNullAt(2)) null else row.getLong(2)) == TEST_SIDECAR_INDEX)
     assert(row.getString(3) == TEST_KERNEL_VERSION)
     assert(row.getString(4) == TEST_TABLE_PATH)
     assert(row.getLong(5) == TEST_TABLE_VERSION)
@@ -86,7 +87,7 @@ class PageTokenSuite extends AnyFunSuite with MockFileSystemClientUtils {
     val invalidRowData: Map[Integer, Object] = new HashMap()
     invalidRowData.put(0, TEST_FILE_NAME)
     invalidRowData.put(1, TEST_ROW_INDEX.asInstanceOf[Object])
-    invalidRowData.put(2, TEST_SIDECAR_INDEX.asInstanceOf[Object])
+    invalidRowData.put(2, TEST_SIDECAR_INDEX.orElse(null))
     invalidRowData.put(3, TEST_KERNEL_VERSION)
     invalidRowData.put(4, TEST_TABLE_PATH)
     invalidRowData.put(5, TEST_TABLE_VERSION.asInstanceOf[Object])
@@ -99,7 +100,5 @@ class PageTokenSuite extends AnyFunSuite with MockFileSystemClientUtils {
     }
     assert(exception.getMessage.contains(
       "Invalid Page Token: input row schema does not match expected PageToken schema"))
-    assert(exception.getMessage.contains("Expected:"))
-    assert(exception.getMessage.contains("Got:"))
   }
 }

@@ -1,11 +1,14 @@
 package io.delta.kernel.internal.replay;
 
+import static java.util.Objects.requireNonNull;
+
 import io.delta.kernel.data.Row;
 import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.types.*;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 /** Page Token Class for Pagination Support */
 public class PageToken {
@@ -13,7 +16,7 @@ public class PageToken {
   private final String startingFileName; // starting Log File Name (also last read log file name)
 
   private final long rowIndex; // the index of last row in the last consumed batch
-  private final long sidecarIndex; // the index of sidecar checkpoint file consumed
+  private final Optional<Long> sidecarIndex; // optional index of sidecar checkpoint file consumed
 
   /** Variables for validating query params */
   private final String kernelVersion;
@@ -38,36 +41,35 @@ public class PageToken {
   public PageToken(
       String startingFileName,
       long rowIndex,
-      long sidecarIndex,
+      Optional<Long> sidecarIndex,
       String kernelVersion,
       String tablePath,
       long tableVersion,
       long predicateHash,
       long logSegmentHash) {
-    this.startingFileName =
-        Objects.requireNonNull(startingFileName, "startingFileName must not be null");
+    this.startingFileName = requireNonNull(startingFileName, "startingFileName must not be null");
     this.rowIndex = rowIndex;
     this.sidecarIndex = sidecarIndex;
-    this.kernelVersion = Objects.requireNonNull(kernelVersion, "kernelVersion must not be null");
-    this.tablePath = Objects.requireNonNull(tablePath, "tablePath must not be null");
+    this.kernelVersion = requireNonNull(kernelVersion, "kernelVersion must not be null");
+    this.tablePath = requireNonNull(tablePath, "tablePath must not be null");
     this.tableVersion = tableVersion;
     this.predicateHash = predicateHash;
     this.logSegmentHash = logSegmentHash;
   }
 
   public static PageToken fromRow(Row row) {
-    StructType inputSchema = row.getSchema();
-    if (!PAGE_TOKEN_SCHEMA.equals(inputSchema)) {
+    requireNonNull(row);
+    if (!PAGE_TOKEN_SCHEMA.equals(row.getSchema())) {
       throw new IllegalArgumentException(
           "Invalid Page Token: input row schema does not match expected PageToken schema. "
               + "Expected: "
               + PAGE_TOKEN_SCHEMA
               + ", Got: "
-              + inputSchema);
+              + row.getSchema());
     }
 
     for (int i = 0; i < PAGE_TOKEN_SCHEMA.length(); i++) {
-      if (row.isNullAt(i)) {
+      if (row.isNullAt(i) && !Objects.equals(PAGE_TOKEN_SCHEMA.at(i).getName(), "sidecarIndex")) {
         throw new IllegalArgumentException(
             "Invalid Page Token: required field '"
                 + PAGE_TOKEN_SCHEMA.at(i).getName()
@@ -79,7 +81,7 @@ public class PageToken {
     return new PageToken(
         row.getString(0), // logFileName
         row.getLong(1), // rowIndexInFile
-        row.getLong(2), // sidecarIndex
+        Optional.ofNullable(row.isNullAt(2) ? null : row.getLong(2)), // sidecarIndex
         row.getString(3), // kernelVersion
         row.getString(4), // tablePath
         row.getLong(5), // tableVersion
@@ -91,7 +93,7 @@ public class PageToken {
     Map<Integer, Object> pageTokenMap = new HashMap<>();
     pageTokenMap.put(0, startingFileName);
     pageTokenMap.put(1, rowIndex);
-    pageTokenMap.put(2, sidecarIndex);
+    pageTokenMap.put(2, sidecarIndex.orElse(null));
     pageTokenMap.put(3, kernelVersion);
     pageTokenMap.put(4, tablePath);
     pageTokenMap.put(5, tableVersion);
@@ -109,7 +111,7 @@ public class PageToken {
     return rowIndex;
   }
 
-  public long getSidecarIndex() {
+  public Optional<Long> getSidecarIndex() {
     return sidecarIndex;
   }
 
@@ -125,10 +127,10 @@ public class PageToken {
     PageToken other = (PageToken) obj;
 
     return rowIndex == other.rowIndex
-        && sidecarIndex == other.sidecarIndex
         && tableVersion == other.tableVersion
         && predicateHash == other.predicateHash
         && logSegmentHash == other.logSegmentHash
+        && Objects.equals(sidecarIndex, other.sidecarIndex)
         && Objects.equals(startingFileName, other.startingFileName)
         && Objects.equals(kernelVersion, other.kernelVersion)
         && Objects.equals(tablePath, other.tablePath);
