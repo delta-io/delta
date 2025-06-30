@@ -279,10 +279,7 @@ public class ActiveAddFilesIterator implements CloseableIterator<FilteredColumna
     next =
         Optional.of(
             new FilteredColumnarBatch(
-                scanAddFiles,
-                selectionColumnVector,
-                Optional.of(_next.getFilePath()),
-                Optional.of(numSelectedRows)));
+                scanAddFiles, selectionColumnVector, _next.getFilePath(), numSelectedRows));
   }
 
   public static String getAddFilePath(ColumnVector addFileVector, int rowId) {

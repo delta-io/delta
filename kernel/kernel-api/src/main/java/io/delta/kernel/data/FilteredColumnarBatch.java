@@ -38,22 +38,25 @@ public class FilteredColumnarBatch {
   private final ColumnarBatch data;
   private final Optional<ColumnVector> selectionVector;
   private final Optional<String> filePath;
-  // Optional pre-computed count of true rows in the selection vector
-  private Optional<Integer> numSelectedRows;
+  private Optional<Integer> preComputedNumSelectedRows;
 
   public FilteredColumnarBatch(ColumnarBatch data, Optional<ColumnVector> selectionVector) {
-    this(data, selectionVector, Optional.empty(), Optional.empty());
+    this(data, selectionVector, null, null);
   }
 
   public FilteredColumnarBatch(
       ColumnarBatch data,
       Optional<ColumnVector> selectionVector,
-      Optional<String> filePath,
-      Optional<Integer> numSelectedRows) {
+      String filePath,
+      Integer numSelectedRows) {
     this.data = data;
     this.selectionVector = selectionVector;
-    this.numSelectedRows = numSelectedRows;
-    this.filePath = filePath;
+    this.filePath = Optional.ofNullable(filePath);
+    assert selectionVector.isPresent()
+            || numSelectedRows == null
+            || numSelectedRows == data.getSize()
+        : "Invalid precomputedNumSelectedRows: must be null or equal to data size when selectionVector is empty.";
+    this.preComputedNumSelectedRows = Optional.ofNullable(numSelectedRows);
   }
 
   /**
@@ -127,20 +130,21 @@ public class FilteredColumnarBatch {
   }
 
   /**
-   * Returns the pre-computed number of selected rows if available.
-   *
-   * <p>If a selection vector is not present, it implies all rows are selected, and the method
-   * returns the total number of rows in the data.
-   *
-   * <p>If a selection vector is present but this value is empty, the caller is responsible for
-   * computing the number of selected rows from the selection vector manually.
-   *
-   * @return an {@link Optional} containing the pre-computed number of selected rows.
+   * @return an {@link Optional} containing the pre-computed number of selected rows, if available.
+   *     <p>If present, this value was computed ahead of time and can be used without incurring any
+   *     additional cost. This occurs in two cases:
+   *     <ul>
+   *       <li>When the selection vector is absent, which implies that all rows are selected — in
+   *           this case, the number of selected rows is equal to the batch size.
+   *       <li>When the number of selected rows was explicitly pre-computed and passed in.
+   *     </ul>
+   *     <p>If empty, the caller must compute the number of selected rows manually from the
+   *     selection vector.
    */
   public Optional<Integer> getPreComputedNumSelectedRows() {
     if (!selectionVector.isPresent()) {
       return Optional.of(data.getSize());
     }
-    return numSelectedRows;
+    return preComputedNumSelectedRows;
   }
 }
