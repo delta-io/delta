@@ -285,17 +285,17 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
       createEmptyTable(engine, tablePath, testSchema)
 
       val rowTrackingMetadataDomain = new RowTrackingMetadataDomain(30)
-      val txn = createTxnWithDomainMetadatas(
-        engine,
-        tablePath,
-        List(rowTrackingMetadataDomain.toDomainMetadata))
+
       val e = intercept[RuntimeException] {
-        commitAppendData(engine, txn, Seq.empty).getVersion
+        createTxnWithDomainMetadatas(
+          engine,
+          tablePath,
+          List(rowTrackingMetadataDomain.toDomainMetadata))
       }
 
       assert(
         e.getMessage.contains(
-          "Cannot assign a rowId high water mark ('30') to a table"))
+          "Cannot assign a rowId high water mark"))
     }
   }
 

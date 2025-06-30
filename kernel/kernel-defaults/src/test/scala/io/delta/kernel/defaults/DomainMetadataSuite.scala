@@ -609,7 +609,8 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
             .build(engine)
           txn.addDomainMetadata(domain, "misc config")
         }
-        assert(e.getMessage.contains("Setting a system-controlled domain is not allowed"))
+        assert(
+          e.getMessage.contains("Setting a non-supported system-controlled domain is not allowed"))
       }
     }
 
