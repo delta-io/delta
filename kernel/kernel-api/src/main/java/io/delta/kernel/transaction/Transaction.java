@@ -2,17 +2,14 @@ package io.delta.kernel.transaction;
 
 import io.delta.kernel.commit.CommitPayload;
 import io.delta.kernel.data.Row;
-import io.delta.kernel.expressions.Column;
-import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
-import java.util.List;
 
 public interface Transaction {
-  StructType getSchema();
-
-  List<Column> getPartitionColumns();
-
-  long getReadTableVersion();
+//  StructType getSchema();
+//
+//  List<Column> getPartitionColumns();
+//
+//  long getReadTableVersion();
 
   Row getTransactionState();
 
