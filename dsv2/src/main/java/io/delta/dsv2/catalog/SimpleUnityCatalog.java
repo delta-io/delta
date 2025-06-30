@@ -88,7 +88,7 @@ public class SimpleUnityCatalog implements TableCatalog {
       // Load the table using UCCatalogManagedClient
       ResolvedTable table =
           ucCatalogManagedClient.loadTable(
-              engine, tableInfo.getTableId(), tableInfo.getStorageLocation(), Optional.empty());
+              engine, tableInfo.getTableId(), tableInfo.getStorageLocation(), Optional.of(Long.valueOf(version)));
 
       return new DeltaCcv2Table(table, ident, engine, accessKey, secretKey, sessionToken);
     } catch (ApiException e) {
