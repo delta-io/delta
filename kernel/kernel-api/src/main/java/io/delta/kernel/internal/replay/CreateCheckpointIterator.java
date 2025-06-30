@@ -248,9 +248,7 @@ public class CreateCheckpointIterator implements CloseableIterator<FilteredColum
 
     Optional<ColumnVector> selectionVector =
         Optional.of(createSelectionVector(selectionVectorBuffer, actionsBatch.getSize()));
-    toReturnNext =
-        Optional.of(
-            new FilteredColumnarBatch(actionsBatch, selectionVector, actionWrapper.getFilePath()));
+    toReturnNext = Optional.of(new FilteredColumnarBatch(actionsBatch, selectionVector));
     return true;
   }
 
