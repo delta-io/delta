@@ -150,13 +150,13 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
       assert(metrics.getLoadProtocolMetadataTotalDurationNs == 0)
     }
 
-    // ===== Metric: getTimeToBuildLogSegmentForVersionNs =====
+    // ===== Metric: getLoadLogSegmentTotalDurationNs =====
     if (expectations.expectNonZeroBuildLogSegmentDuration) {
-      assert(metrics.getTimeToBuildLogSegmentForVersionNs > 0)
-      assert(metrics.getTimeToBuildLogSegmentForVersionNs < duration)
-      assert(metrics.getTimeToBuildLogSegmentForVersionNs <= metrics.getLoadSnapshotTotalDurationNs)
+      assert(metrics.getLoadLogSegmentTotalDurationNs > 0)
+      assert(metrics.getLoadLogSegmentTotalDurationNs < duration)
+      assert(metrics.getLoadLogSegmentTotalDurationNs <= metrics.getLoadSnapshotTotalDurationNs)
     } else {
-      assert(metrics.getTimeToBuildLogSegmentForVersionNs == 0)
+      assert(metrics.getLoadLogSegmentTotalDurationNs == 0)
     }
 
     // ===== Metric: getLoadCrcTotalDurationNs =====

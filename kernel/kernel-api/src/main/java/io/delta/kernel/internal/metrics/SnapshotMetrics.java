@@ -34,29 +34,29 @@ public class SnapshotMetrics {
 
   public final Timer loadProtocolMetadataTotalDurationTimer = new Timer();
 
-  public final Timer timeToBuildLogSegmentForVersionTimer = new Timer();
+  public final Timer loadLogSegmentTotalDurationTimer = new Timer();
 
   public final Timer loadCrcTotalDurationTimer = new Timer();
 
   public SnapshotMetricsResult captureSnapshotMetricsResult() {
     return new SnapshotMetricsResult() {
-      final long loadSnapshotTotalDurationResult = loadSnapshotTotalTimer.totalDurationNs();
       final Optional<Long> computeTimestampToVersionTotalDurationResult =
           computeTimestampToVersionTotalDurationTimer.totalDurationIfRecorded();
+      final long loadSnapshotTotalDurationResult = loadSnapshotTotalTimer.totalDurationNs();
       final long loadProtocolMetadataTotalDurationResult =
           loadProtocolMetadataTotalDurationTimer.totalDurationNs();
-      final long timeToBuildLogSegmentForVersionDurationResult =
-          timeToBuildLogSegmentForVersionTimer.totalDurationNs();
+      final long loadLogSegmentTotalDurationResult =
+          loadLogSegmentTotalDurationTimer.totalDurationNs();
       final long loadCrcTotalDurationResult = loadCrcTotalDurationTimer.totalDurationNs();
-
-      @Override
-      public long getLoadSnapshotTotalDurationNs() {
-        return loadSnapshotTotalDurationResult;
-      }
 
       @Override
       public Optional<Long> getComputeTimestampToVersionTotalDurationNs() {
         return computeTimestampToVersionTotalDurationResult;
+      }
+
+      @Override
+      public long getLoadSnapshotTotalDurationNs() {
+        return loadSnapshotTotalDurationResult;
       }
 
       @Override
@@ -65,8 +65,8 @@ public class SnapshotMetrics {
       }
 
       @Override
-      public long getTimeToBuildLogSegmentForVersionNs() {
-        return timeToBuildLogSegmentForVersionDurationResult;
+      public long getLoadLogSegmentTotalDurationNs() {
+        return loadLogSegmentTotalDurationResult;
       }
 
       @Override
@@ -80,15 +80,15 @@ public class SnapshotMetrics {
   public String toString() {
     return String.format(
         "SnapshotMetrics("
-            + "loadSnapshotTotalTimer=%s,"
             + "computeTimestampToVersionTotalDurationTimer=%s, "
+            + "loadSnapshotTotalTimer=%s,"
             + "loadProtocolMetadataTotalDurationTimer=%s, "
             + "timeToBuildLogSegmentForVersionTimer=%s, "
             + "loadCrcTotalDurationNsTimer=%s)",
-        loadSnapshotTotalTimer,
         computeTimestampToVersionTotalDurationTimer,
+        loadSnapshotTotalTimer,
         loadProtocolMetadataTotalDurationTimer,
-        timeToBuildLogSegmentForVersionTimer,
+        loadLogSegmentTotalDurationTimer,
         loadCrcTotalDurationTimer);
   }
 }

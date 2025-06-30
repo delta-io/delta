@@ -82,7 +82,7 @@ public class SnapshotManager {
     final LogSegment logSegment =
         snapshotContext
             .getSnapshotMetrics()
-            .timeToBuildLogSegmentForVersionTimer
+            .loadLogSegmentTotalDurationTimer
             .time(() -> getLogSegmentForVersion(engine, Optional.empty() /* versionToLoad */));
     snapshotContext.setVersion(logSegment.getVersion());
     snapshotContext.setCheckpointVersion(logSegment.getCheckpointVersionOpt());
@@ -105,7 +105,7 @@ public class SnapshotManager {
     final LogSegment logSegment =
         snapshotContext
             .getSnapshotMetrics()
-            .timeToBuildLogSegmentForVersionTimer
+            .loadLogSegmentTotalDurationTimer
             .time(
                 () -> getLogSegmentForVersion(engine, Optional.of(version) /* versionToLoadOpt */));
 
