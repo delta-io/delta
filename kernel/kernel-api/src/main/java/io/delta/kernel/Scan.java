@@ -19,7 +19,6 @@ package io.delta.kernel;
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.data.*;
 import io.delta.kernel.engine.Engine;
-import io.delta.kernel.engine.FileReadResult;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.InternalScanFileUtils;
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
@@ -134,10 +133,7 @@ public interface Scan {
    * @throws IOException when error occurs while reading the data.
    */
   static CloseableIterator<FilteredColumnarBatch> transformPhysicalData(
-      Engine engine,
-      Row scanState,
-      Row scanFile,
-      CloseableIterator<FileReadResult> physicalDataIter)
+      Engine engine, Row scanState, Row scanFile, CloseableIterator<ColumnarBatch> physicalDataIter)
       throws IOException {
     return new CloseableIterator<FilteredColumnarBatch>() {
       boolean inited = false;
@@ -175,9 +171,7 @@ public interface Scan {
       @Override
       public FilteredColumnarBatch next() {
         initIfRequired();
-        FileReadResult fileReadResult = physicalDataIter.next();
-        ColumnarBatch nextDataBatch = fileReadResult.getData();
-        String filePath = fileReadResult.getFilePath();
+        ColumnarBatch nextDataBatch = physicalDataIter.next();
 
         DeletionVectorDescriptor dv =
             InternalScanFileUtils.getDeletionVectorDescriptorFromRow(scanFile);
@@ -229,7 +223,7 @@ public interface Scan {
                 "Column mapping mode is not yet supported: " + columnMappingMode);
         }
 
-        return new FilteredColumnarBatch(nextDataBatch, selectionVector, filePath);
+        return new FilteredColumnarBatch(nextDataBatch, selectionVector);
       }
     };
   }

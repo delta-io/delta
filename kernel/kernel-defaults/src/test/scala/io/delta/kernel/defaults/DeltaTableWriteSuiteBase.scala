@@ -280,7 +280,7 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       }
       batches = batches :+ new DefaultColumnarBatch(batchSize, schema, vectors.toArray)
     }
-    batches.map(batch => new FilteredColumnarBatch(batch, Optional.empty(), "fake/file/path"))
+    batches.map(batch => new FilteredColumnarBatch(batch, Optional.empty()))
   }
 
   def createWriteTxnBuilder(table: Table): TransactionBuilder = {
