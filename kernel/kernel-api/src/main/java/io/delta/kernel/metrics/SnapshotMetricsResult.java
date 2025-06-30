@@ -22,7 +22,7 @@ import java.util.Optional;
 @JsonPropertyOrder({
   "loadSnapshotTotalDurationNs",
   "timestampToVersionResolutionDurationNs",
-  "loadInitialDeltaActionsDurationNs",
+  "loadProtocolMetadataTotalDurationNs",
   "timeToBuildLogSegmentForVersionNs",
   "durationToGetCrcInfoNs"
 })
@@ -45,7 +45,7 @@ public interface SnapshotMetricsResult {
    * @return the duration (ns) to load the initial delta actions for the snapshot (such as the table
    *     protocol and metadata). 0 if snapshot construction fails before log replay.
    */
-  long getLoadInitialDeltaActionsDurationNs();
+  long getLoadProtocolMetadataTotalDurationNs();
 
   /**
    * @return the duration (ns) to build the log segment for the specified version during snapshot

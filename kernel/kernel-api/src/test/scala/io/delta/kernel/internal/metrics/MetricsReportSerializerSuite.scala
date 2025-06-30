@@ -45,7 +45,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
     val timestampToVersionResolutionDuration = optionToString(
       snapshotReport.getSnapshotMetrics().getTimestampToVersionResolutionDurationNs())
     val loadProtocolAndMetadataDuration =
-      snapshotReport.getSnapshotMetrics().getLoadInitialDeltaActionsDurationNs()
+      snapshotReport.getSnapshotMetrics().getLoadProtocolMetadataTotalDurationNs()
     val buildLogSegmentDuration =
       snapshotReport.getSnapshotMetrics().getTimeToBuildLogSegmentForVersionNs()
     val durationToGetCrcInfo =
@@ -63,7 +63,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |"snapshotMetrics":{
          |"loadSnapshotTotalDurationNs":${loadSnapshotTotalDuration},
          |"timestampToVersionResolutionDurationNs":${timestampToVersionResolutionDuration},
-         |"loadInitialDeltaActionsDurationNs":${loadProtocolAndMetadataDuration},
+         |"loadProtocolMetadataTotalDurationNs":${loadProtocolAndMetadataDuration},
          |"timeToBuildLogSegmentForVersionNs":${buildLogSegmentDuration},
          |"durationToGetCrcInfoNs":${durationToGetCrcInfo}
          |}
@@ -76,7 +76,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
     val snapshotContext1 = SnapshotQueryContext.forTimestampSnapshot("/table/path", 0)
     snapshotContext1.getSnapshotMetrics.loadSnapshotTotalTimer.record(2000)
     snapshotContext1.getSnapshotMetrics.timestampToVersionResolutionTimer.record(10)
-    snapshotContext1.getSnapshotMetrics.loadInitialDeltaActionsTimer.record(1000)
+    snapshotContext1.getSnapshotMetrics.loadProtocolMetadataTotalDurationTimer.record(1000)
     snapshotContext1.getSnapshotMetrics.timeToBuildLogSegmentForVersionTimer.record(500)
     snapshotContext1.getSnapshotMetrics.durationToGetCrcInfoTimer.record(250)
     snapshotContext1.setVersion(25)
@@ -100,7 +100,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
         |"snapshotMetrics":{
         |"loadSnapshotTotalDurationNs":2000,
         |"timestampToVersionResolutionDurationNs":10,
-        |"loadInitialDeltaActionsDurationNs":1000,
+        |"loadProtocolMetadataTotalDurationNs":1000,
         |"timeToBuildLogSegmentForVersionNs":500,
         |"durationToGetCrcInfoNs":250
         |}

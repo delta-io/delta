@@ -32,7 +32,7 @@ public class SnapshotMetrics {
 
   public final Timer timestampToVersionResolutionTimer = new Timer();
 
-  public final Timer loadInitialDeltaActionsTimer = new Timer();
+  public final Timer loadProtocolMetadataTotalDurationTimer = new Timer();
 
   public final Timer timeToBuildLogSegmentForVersionTimer = new Timer();
 
@@ -43,8 +43,8 @@ public class SnapshotMetrics {
       final long loadSnapshotTotalDurationResult = loadSnapshotTotalTimer.totalDurationNs();
       final Optional<Long> timestampToVersionResolutionDurationResult =
           timestampToVersionResolutionTimer.totalDurationIfRecorded();
-      final long loadInitialDeltaActionsDurationResult =
-          loadInitialDeltaActionsTimer.totalDurationNs();
+      final long loadProtocolMetadataTotalDurationResult =
+          loadProtocolMetadataTotalDurationTimer.totalDurationNs();
       final long timeToBuildLogSegmentForVersionDurationResult =
           timeToBuildLogSegmentForVersionTimer.totalDurationNs();
       final long durationToGetCrcInfoDurationResult = durationToGetCrcInfoTimer.totalDurationNs();
@@ -60,8 +60,8 @@ public class SnapshotMetrics {
       }
 
       @Override
-      public long getLoadInitialDeltaActionsDurationNs() {
-        return loadInitialDeltaActionsDurationResult;
+      public long getLoadProtocolMetadataTotalDurationNs() {
+        return loadProtocolMetadataTotalDurationResult;
       }
 
       @Override
@@ -82,12 +82,12 @@ public class SnapshotMetrics {
         "SnapshotMetrics("
             + "loadSnapshotTotalTimer=%s,"
             + "timestampToVersionResolutionTimer=%s, "
-            + "loadInitialDeltaActionsTimer=%s, "
+            + "loadProtocolMetadataTotalDurationTimer=%s, "
             + "timeToBuildLogSegmentForVersionTimer=%s, "
             + "durationToGetCrcInfoTimer=%s)",
         loadSnapshotTotalTimer,
         timestampToVersionResolutionTimer,
-        loadInitialDeltaActionsTimer,
+        loadProtocolMetadataTotalDurationTimer,
         timeToBuildLogSegmentForVersionTimer,
         durationToGetCrcInfoTimer);
   }
