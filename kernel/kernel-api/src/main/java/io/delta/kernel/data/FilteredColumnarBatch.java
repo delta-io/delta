@@ -40,8 +40,13 @@ public class FilteredColumnarBatch {
   private final Optional<String> filePath;
   private final Optional<Integer> preComputedNumSelectedRows;
 
+  // TODO: use static factory for constructors
   public FilteredColumnarBatch(ColumnarBatch data, Optional<ColumnVector> selectionVector) {
-    this(data, selectionVector, null, null);
+    this.data = data;
+    this.selectionVector = selectionVector;
+    this.filePath = Optional.empty();
+    this.preComputedNumSelectedRows =
+        !selectionVector.isPresent() ? Optional.of(data.getSize()) : Optional.empty();
   }
 
   public FilteredColumnarBatch(
@@ -51,12 +56,10 @@ public class FilteredColumnarBatch {
       Integer numSelectedRows) {
     this.data = data;
     this.selectionVector = selectionVector;
-    this.filePath = Optional.ofNullable(filePath);
-    assert selectionVector.isPresent()
-            || numSelectedRows == null
-            || numSelectedRows == data.getSize()
+    this.filePath = Optional.of(filePath);
+    assert selectionVector.isPresent() || numSelectedRows == data.getSize()
         : "Invalid precomputedNumSelectedRows: must be null or equal to batch size when selectionVector is empty.";
-    this.preComputedNumSelectedRows = Optional.ofNullable(numSelectedRows);
+    this.preComputedNumSelectedRows = Optional.of(numSelectedRows);
   }
 
   /**
@@ -142,9 +145,6 @@ public class FilteredColumnarBatch {
    *     selection vector.
    */
   public Optional<Integer> getPreComputedNumSelectedRows() {
-    if (!selectionVector.isPresent()) {
-      return Optional.of(data.getSize());
-    }
     return preComputedNumSelectedRows;
   }
 }
