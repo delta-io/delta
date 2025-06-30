@@ -23,6 +23,7 @@ jobs:
             **
             .github/workflows/**
             !kernel/**
+            !unity/**
             !connectors/**
       - name: install java
         uses: actions/setup-java@v3
