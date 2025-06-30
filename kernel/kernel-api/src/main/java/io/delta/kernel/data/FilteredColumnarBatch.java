@@ -37,27 +37,22 @@ import java.util.Optional;
 public class FilteredColumnarBatch {
   private final ColumnarBatch data;
   private final Optional<ColumnVector> selectionVector;
-  private final String filePath;
-  // Optional cached count of true rows
-  // TODO: can we use Lazy<Integer>? But Lazy class is for internal use
-  private Optional<Integer> numOfSelectedRows;
+  private final Optional<String> filePath;
+  // Optional cached count of true rows in the selection vector
+  private Optional<Integer> numSelectedRows;
 
-  public FilteredColumnarBatch(
-      ColumnarBatch data, Optional<ColumnVector> selectionVector, String filePath) {
-    this.data = data;
-    this.selectionVector = selectionVector;
-    this.numOfSelectedRows = Optional.empty();
-    this.filePath = filePath;
+  public FilteredColumnarBatch(ColumnarBatch data, Optional<ColumnVector> selectionVector) {
+    this(data, selectionVector, Optional.empty(), Optional.empty());
   }
 
   public FilteredColumnarBatch(
       ColumnarBatch data,
       Optional<ColumnVector> selectionVector,
-      String filePath,
-      int numOfTrueRows) {
+      Optional<String> filePath,
+      Optional<Integer> numSelectedRows) {
     this.data = data;
     this.selectionVector = selectionVector;
-    this.numOfSelectedRows = Optional.of(numOfTrueRows);
+    this.numSelectedRows = numSelectedRows;
     this.filePath = filePath;
   }
 
@@ -72,7 +67,7 @@ public class FilteredColumnarBatch {
     return data;
   }
 
-  public String getFilePath() {
+  public Optional<String> getFilePath() {
     return filePath;
   }
 
@@ -131,14 +126,18 @@ public class FilteredColumnarBatch {
     };
   }
 
-  public Integer getNumOfSelectedRows() {
-    if (numOfSelectedRows.isPresent()) {
-      return numOfSelectedRows.get();
+  /** @return get the total number of selected rows */
+  public int getCachedNumSelectedRows() {
+    if (numSelectedRows.isPresent()) {
+      return numSelectedRows.get();
     }
     if (!selectionVector.isPresent()) {
-      // TODO: what to return if selection vector is empty?
       return data.getSize(); // all rows are selected
     }
+
+    throw new IllegalStateException("Number of selected Rows is not available!");
+    /** Alternative: calculate numSelectedRows based on selection vector */
+    /*
     int trueRowCount = 0;
     for (int rowId = 0; rowId < data.getSize(); rowId++) {
       if (selectionVector.get().isNullAt(rowId)) {
@@ -147,7 +146,7 @@ public class FilteredColumnarBatch {
         if (isSelected) trueRowCount++;
       }
     }
-    numOfSelectedRows = Optional.of(trueRowCount);
-    return trueRowCount;
+    numSelectedRows = Optional.of(trueRowCount);
+    return trueRowCount; */
   }
 }

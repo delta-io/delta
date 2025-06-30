@@ -188,7 +188,7 @@ public class ActiveAddFilesIterator implements CloseableIterator<FilteredColumna
     selectionVectorBuffer =
         prepareSelectionVectorBuffer(selectionVectorBuffer, addsVector.getSize());
     boolean atLeastOneUnselected = false;
-
+    int numSelectedRows = 0;
     for (int rowId = 0; rowId < addsVector.getSize(); rowId++) {
       if (addsVector.isNullAt(rowId)) {
         atLeastOneUnselected = true;
@@ -222,6 +222,7 @@ public class ActiveAddFilesIterator implements CloseableIterator<FilteredColumna
         if (!alreadyDeleted) {
           doSelect = true;
           selectionVectorBuffer[rowId] = true;
+          numSelectedRows++;
           metrics.activeAddFilesCounter.increment();
         }
       } else {
@@ -277,7 +278,11 @@ public class ActiveAddFilesIterator implements CloseableIterator<FilteredColumna
     }
     next =
         Optional.of(
-            new FilteredColumnarBatch(scanAddFiles, selectionColumnVector, _next.getFilePath()));
+            new FilteredColumnarBatch(
+                scanAddFiles,
+                selectionColumnVector,
+                Optional.of(_next.getFilePath()),
+                Optional.of(numSelectedRows)));
   }
 
   public static String getAddFilePath(ColumnVector addFileVector, int rowId) {
