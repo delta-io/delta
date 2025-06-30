@@ -13,6 +13,7 @@ jobs:
         with:
           PATTERNS: |
             build.sbt
+            version.sbt
             unity/**
             kernel/**
             storage/**
