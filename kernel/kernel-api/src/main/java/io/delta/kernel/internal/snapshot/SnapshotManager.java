@@ -169,8 +169,9 @@ public class SnapshotManager {
   ////////////////////
 
   /**
-   * Creates a metrics-enabled engine that wraps the provided engine to collect filesystem listing
-   * call metrics.
+   * Creates an engine that wraps the provided engine with instrumentation for collecting file
+   * system metrics. Currently focuses on tracking cloud listing calls during log segment
+   * operations.
    */
   private Engine createMetricsEngine(Engine engine, SnapshotQueryContext snapshotContext) {
     return new DelegateEngine(engine) {

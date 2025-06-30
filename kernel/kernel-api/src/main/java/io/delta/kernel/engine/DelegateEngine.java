@@ -19,6 +19,11 @@ import static java.util.Objects.requireNonNull;
 
 import java.util.List;
 
+/**
+ * Delegate implementation of the {@link Engine} interface that forwards all method calls to a
+ * wrapped Engine instance. This class is designed to be extended for selectively overriding
+ * specific Engine behaviors while delegating others to the wrapped instance.
+ */
 public class DelegateEngine implements Engine {
 
   private final Engine delegate;

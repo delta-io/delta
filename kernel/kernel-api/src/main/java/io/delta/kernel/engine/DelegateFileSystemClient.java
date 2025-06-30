@@ -22,6 +22,11 @@ import io.delta.kernel.utils.FileStatus;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 
+/**
+ * Delegate implementation of the {@link FileSystemClient} interface that forwards all method calls
+ * to a wrapped FileSystemClient instance. This class is designed to be extended for selectively
+ * overriding specific FileSystemClient behaviors while delegating others to the wrapped instance.
+ */
 public class DelegateFileSystemClient implements FileSystemClient {
 
   private final FileSystemClient delegate;
