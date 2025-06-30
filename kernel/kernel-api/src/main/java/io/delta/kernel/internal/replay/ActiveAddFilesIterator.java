@@ -189,6 +189,7 @@ public class ActiveAddFilesIterator implements CloseableIterator<FilteredColumna
         prepareSelectionVectorBuffer(selectionVectorBuffer, addsVector.getSize());
     boolean atLeastOneUnselected = false;
     int numSelectedRows = 0;
+
     for (int rowId = 0; rowId < addsVector.getSize(); rowId++) {
       if (addsVector.isNullAt(rowId)) {
         atLeastOneUnselected = true;

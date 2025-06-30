@@ -55,7 +55,7 @@ public class FilteredColumnarBatch {
     assert selectionVector.isPresent()
             || numSelectedRows == null
             || numSelectedRows == data.getSize()
-        : "Invalid precomputedNumSelectedRows: must be null or equal to data size when selectionVector is empty.";
+        : "Invalid precomputedNumSelectedRows: must be null or equal to batch size when selectionVector is empty.";
     this.preComputedNumSelectedRows = Optional.ofNullable(numSelectedRows);
   }
 
