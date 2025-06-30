@@ -39,6 +39,7 @@ public class FilteredColumnarBatch {
   private final Optional<ColumnVector> selectionVector;
   private final String filePath;
   // Optional cached count of true rows
+  // TODO: can we use Lazy<Integer>? But Lazy class is for internal use
   private Optional<Integer> numOfSelectedRows;
 
   public FilteredColumnarBatch(
