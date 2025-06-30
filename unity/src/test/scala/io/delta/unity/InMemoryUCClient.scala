@@ -155,10 +155,8 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
   private[unity] def createTableIfNotExistsOrThrow(
       ucTableId: String,
       tableData: TableData): Unit = {
-    tables.putIfAbsent(ucTableId, tableData) match {
-      case null => // Successfully added
-      case _ => throw new IllegalArgumentException(s"Table $ucTableId already exists")
-    }
+    Option(tables.putIfAbsent(ucTableId, tableData))
+      .foreach(_ => throw new IllegalArgumentException(s"Table $ucTableId already exists"))
   }
 
   private[unity] def getTablesCopy: Map[String, TableData] = {
