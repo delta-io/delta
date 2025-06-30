@@ -611,7 +611,7 @@ public class LogReplay {
                       FileNames.getFileVersion(new Path(checksum.getPath())) >= crcReadLowerBound)
               .flatMap(
                   checksum ->
-                      snapshotMetrics.durationToGetCrcInfoTimer.time(
+                      snapshotMetrics.loadCrcTotalDurationTimer.time(
                           () -> ChecksumReader.getCRCInfo(engine, checksum)));
 
       if (!crcInfoOpt.isPresent()) {

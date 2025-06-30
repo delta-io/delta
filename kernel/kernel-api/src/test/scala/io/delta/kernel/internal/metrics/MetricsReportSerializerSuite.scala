@@ -42,14 +42,14 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
   private def testSnapshotReport(snapshotReport: SnapshotReport): Unit = {
     val loadSnapshotTotalDuration =
       snapshotReport.getSnapshotMetrics().getLoadSnapshotTotalDurationNs()
-    val timestampToVersionResolutionDuration = optionToString(
-      snapshotReport.getSnapshotMetrics().getTimestampToVersionResolutionDurationNs())
+    val computeTimestampToVersionTotalDuration = optionToString(
+      snapshotReport.getSnapshotMetrics().getComputeTimestampToVersionTotalDurationNs())
     val loadProtocolAndMetadataDuration =
       snapshotReport.getSnapshotMetrics().getLoadProtocolMetadataTotalDurationNs()
     val buildLogSegmentDuration =
       snapshotReport.getSnapshotMetrics().getTimeToBuildLogSegmentForVersionNs()
-    val durationToGetCrcInfo =
-      snapshotReport.getSnapshotMetrics().getDurationToGetCrcInfoNs()
+    val loadCrcTotalDuration =
+      snapshotReport.getSnapshotMetrics().getLoadCrcTotalDurationNs()
     val exception: Optional[String] = snapshotReport.getException().map(_.toString)
     val expectedJson =
       s"""
@@ -62,10 +62,10 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |"providedTimestamp":${optionToString(snapshotReport.getProvidedTimestamp())},
          |"snapshotMetrics":{
          |"loadSnapshotTotalDurationNs":${loadSnapshotTotalDuration},
-         |"timestampToVersionResolutionDurationNs":${timestampToVersionResolutionDuration},
+         |"computeTimestampToVersionTotalDurationNs":${computeTimestampToVersionTotalDuration},
          |"loadProtocolMetadataTotalDurationNs":${loadProtocolAndMetadataDuration},
          |"timeToBuildLogSegmentForVersionNs":${buildLogSegmentDuration},
-         |"durationToGetCrcInfoNs":${durationToGetCrcInfo}
+         |"loadCrcTotalDurationNs":${loadCrcTotalDuration}
          |}
          |}
          |""".stripMargin.replaceAll("\n", "")
@@ -75,10 +75,10 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
   test("SnapshotReport serializer") {
     val snapshotContext1 = SnapshotQueryContext.forTimestampSnapshot("/table/path", 0)
     snapshotContext1.getSnapshotMetrics.loadSnapshotTotalTimer.record(2000)
-    snapshotContext1.getSnapshotMetrics.timestampToVersionResolutionTimer.record(10)
+    snapshotContext1.getSnapshotMetrics.computeTimestampToVersionTotalDurationTimer.record(10)
     snapshotContext1.getSnapshotMetrics.loadProtocolMetadataTotalDurationTimer.record(1000)
     snapshotContext1.getSnapshotMetrics.timeToBuildLogSegmentForVersionTimer.record(500)
-    snapshotContext1.getSnapshotMetrics.durationToGetCrcInfoTimer.record(250)
+    snapshotContext1.getSnapshotMetrics.loadCrcTotalDurationTimer.record(250)
     snapshotContext1.setVersion(25)
     snapshotContext1.setCheckpointVersion(Optional.of(20))
     val exception = new RuntimeException("something something failed")
@@ -99,10 +99,10 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
         |"providedTimestamp":0,
         |"snapshotMetrics":{
         |"loadSnapshotTotalDurationNs":2000,
-        |"timestampToVersionResolutionDurationNs":10,
+        |"computeTimestampToVersionTotalDurationNs":10,
         |"loadProtocolMetadataTotalDurationNs":1000,
         |"timeToBuildLogSegmentForVersionNs":500,
-        |"durationToGetCrcInfoNs":250
+        |"loadCrcTotalDurationNs":250
         |}
         |}
         |""".stripMargin.replaceAll("\n", "")

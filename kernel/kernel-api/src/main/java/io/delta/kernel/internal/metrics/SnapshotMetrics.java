@@ -30,24 +30,24 @@ public class SnapshotMetrics {
 
   public final Timer loadSnapshotTotalTimer = new Timer();
 
-  public final Timer timestampToVersionResolutionTimer = new Timer();
+  public final Timer computeTimestampToVersionTotalDurationTimer = new Timer();
 
   public final Timer loadProtocolMetadataTotalDurationTimer = new Timer();
 
   public final Timer timeToBuildLogSegmentForVersionTimer = new Timer();
 
-  public final Timer durationToGetCrcInfoTimer = new Timer();
+  public final Timer loadCrcTotalDurationTimer = new Timer();
 
   public SnapshotMetricsResult captureSnapshotMetricsResult() {
     return new SnapshotMetricsResult() {
       final long loadSnapshotTotalDurationResult = loadSnapshotTotalTimer.totalDurationNs();
-      final Optional<Long> timestampToVersionResolutionDurationResult =
-          timestampToVersionResolutionTimer.totalDurationIfRecorded();
+      final Optional<Long> computeTimestampToVersionTotalDurationResult =
+          computeTimestampToVersionTotalDurationTimer.totalDurationIfRecorded();
       final long loadProtocolMetadataTotalDurationResult =
           loadProtocolMetadataTotalDurationTimer.totalDurationNs();
       final long timeToBuildLogSegmentForVersionDurationResult =
           timeToBuildLogSegmentForVersionTimer.totalDurationNs();
-      final long durationToGetCrcInfoDurationResult = durationToGetCrcInfoTimer.totalDurationNs();
+      final long loadCrcTotalDurationResult = loadCrcTotalDurationTimer.totalDurationNs();
 
       @Override
       public long getLoadSnapshotTotalDurationNs() {
@@ -55,8 +55,8 @@ public class SnapshotMetrics {
       }
 
       @Override
-      public Optional<Long> getTimestampToVersionResolutionDurationNs() {
-        return timestampToVersionResolutionDurationResult;
+      public Optional<Long> getComputeTimestampToVersionTotalDurationNs() {
+        return computeTimestampToVersionTotalDurationResult;
       }
 
       @Override
@@ -70,8 +70,8 @@ public class SnapshotMetrics {
       }
 
       @Override
-      public long getDurationToGetCrcInfoNs() {
-        return durationToGetCrcInfoDurationResult;
+      public long getLoadCrcTotalDurationNs() {
+        return loadCrcTotalDurationResult;
       }
     };
   }
@@ -81,14 +81,14 @@ public class SnapshotMetrics {
     return String.format(
         "SnapshotMetrics("
             + "loadSnapshotTotalTimer=%s,"
-            + "timestampToVersionResolutionTimer=%s, "
+            + "computeTimestampToVersionTotalDurationTimer=%s, "
             + "loadProtocolMetadataTotalDurationTimer=%s, "
             + "timeToBuildLogSegmentForVersionTimer=%s, "
-            + "durationToGetCrcInfoTimer=%s)",
+            + "loadCrcTotalDurationNsTimer=%s)",
         loadSnapshotTotalTimer,
-        timestampToVersionResolutionTimer,
+        computeTimestampToVersionTotalDurationTimer,
         loadProtocolMetadataTotalDurationTimer,
         timeToBuildLogSegmentForVersionTimer,
-        durationToGetCrcInfoTimer);
+        loadCrcTotalDurationTimer);
   }
 }

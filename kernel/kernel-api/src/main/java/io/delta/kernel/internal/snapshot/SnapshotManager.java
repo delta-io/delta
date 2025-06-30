@@ -134,7 +134,7 @@ public class SnapshotManager {
     long versionToRead =
         snapshotContext
             .getSnapshotMetrics()
-            .timestampToVersionResolutionTimer
+            .computeTimestampToVersionTotalDurationTimer
             .time(
                 () ->
                     DeltaHistoryManager.getActiveCommitAtTimestamp(
@@ -149,7 +149,10 @@ public class SnapshotManager {
     logger.info(
         "{}: Took {} ms to fetch version at timestamp {}",
         tablePath,
-        snapshotContext.getSnapshotMetrics().timestampToVersionResolutionTimer.totalDurationMs(),
+        snapshotContext
+            .getSnapshotMetrics()
+            .computeTimestampToVersionTotalDurationTimer
+            .totalDurationMs(),
         millisSinceEpochUTC);
 
     return getSnapshotAt(engine, versionToRead, snapshotContext);

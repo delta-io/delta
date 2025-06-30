@@ -21,10 +21,10 @@ import java.util.Optional;
 /** Stores the metrics results for a {@link SnapshotReport} */
 @JsonPropertyOrder({
   "loadSnapshotTotalDurationNs",
-  "timestampToVersionResolutionDurationNs",
+  "computeTimestampToVersionTotalDurationNs",
   "loadProtocolMetadataTotalDurationNs",
   "timeToBuildLogSegmentForVersionNs",
-  "durationToGetCrcInfoNs"
+  "loadCrcTotalDurationNs"
 })
 public interface SnapshotMetricsResult {
 
@@ -39,7 +39,7 @@ public interface SnapshotMetricsResult {
    * @return the duration (ns) to resolve the provided timestamp to a table version for timestamp
    *     time-travel queries. Empty for time-travel by version or non-time-travel queries.
    */
-  Optional<Long> getTimestampToVersionResolutionDurationNs();
+  Optional<Long> getComputeTimestampToVersionTotalDurationNs();
 
   /**
    * @return the duration (ns) to load the initial delta actions for the snapshot (such as the table
@@ -57,5 +57,5 @@ public interface SnapshotMetricsResult {
    * @return the duration (ns) to get CRC information during snapshot construction. 0 if snapshot
    *     construction fails before this step or if CRC is not read in loading snapshot.
    */
-  long getDurationToGetCrcInfoNs();
+  long getLoadCrcTotalDurationNs();
 }
