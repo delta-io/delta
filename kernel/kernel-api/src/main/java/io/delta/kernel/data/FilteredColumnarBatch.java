@@ -38,7 +38,7 @@ public class FilteredColumnarBatch {
   private final ColumnarBatch data;
   private final Optional<ColumnVector> selectionVector;
   private final Optional<String> filePath;
-  private Optional<Integer> preComputedNumSelectedRows;
+  private final Optional<Integer> preComputedNumSelectedRows;
 
   public FilteredColumnarBatch(ColumnarBatch data, Optional<ColumnVector> selectionVector) {
     this(data, selectionVector, null, null);
