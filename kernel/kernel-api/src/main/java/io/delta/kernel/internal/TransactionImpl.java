@@ -45,6 +45,7 @@ import io.delta.kernel.internal.metrics.TransactionReportImpl;
 import io.delta.kernel.internal.replay.ConflictChecker;
 import io.delta.kernel.internal.replay.ConflictChecker.TransactionRebaseState;
 import io.delta.kernel.internal.rowtracking.RowTracking;
+import io.delta.kernel.internal.rowtracking.RowTrackingMetadataDomain;
 import io.delta.kernel.internal.stats.FileSizeHistogram;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.*;
@@ -93,6 +94,7 @@ public class TransactionImpl implements Transaction {
   private int maxRetries;
   private int logCompactionInterval;
   private Optional<CRCInfo> currentCrcInfo;
+  private Optional<Long> providedRowIdHighWatermark = Optional.empty();
 
   private boolean closed; // To avoid trying to commit the same transaction again.
 
@@ -167,9 +169,16 @@ public class TransactionImpl implements Transaction {
         TableFeatures.isDomainMetadataSupported(protocol),
         "Unable to add domain metadata when the domain metadata table feature is disabled");
     checkArgument(
-        DomainMetadata.isUserControlledDomain(domain),
-        "Setting a system-controlled domain is not allowed: " + domain);
-    domainMetadataState.addDomain(domain, config);
+        DomainMetadata.isUserControlledDomain(domain)
+            || DomainMetadata.isSystemDomainSupportedSetFromTxn(domain),
+        "Setting a non-supported system-controlled domain is not allowed: " + domain);
+
+    // Specific handling for system domain metadata
+    if (DomainMetadata.isSystemDomainSupportedSetFromTxn(domain)) {
+      handleSystemDomainMetadata(domain, config);
+    } else {
+      domainMetadataState.addDomain(domain, config);
+    }
   }
 
   @VisibleForTesting
@@ -252,7 +261,8 @@ public class TransactionImpl implements Transaction {
                 protocol,
                 Optional.empty() /* winningTxnRowIdHighWatermark */,
                 dataActions,
-                resolvedDomainMetadatas);
+                resolvedDomainMetadatas,
+                providedRowIdHighWatermark);
         domainMetadataState.setComputedDomainMetadatas(updatedDomainMetadata);
         dataActions =
             RowTracking.assignBaseRowIdAndDefaultRowCommitVersion(
@@ -317,7 +327,8 @@ public class TransactionImpl implements Transaction {
             commitAsVersion,
             this,
             domainMetadataState.getComputedDomainMetadatasToCommit(),
-            dataActions);
+            dataActions,
+            providedRowIdHighWatermark);
     long newCommitAsVersion = rebaseState.getLatestVersion() + 1;
     checkArgument(
         commitAsVersion < newCommitAsVersion,
@@ -818,6 +829,18 @@ public class TransactionImpl implements Transaction {
               return SingleAction.createRemoveFileSingleAction(
                   add.toRemoveFileRow(true /* dataChange */, Optional.empty()));
             });
+  }
+
+  private void handleSystemDomainMetadata(String domain, String config) {
+    if (domain.equals(RowTrackingMetadataDomain.DOMAIN_NAME)) {
+      if (!TableFeatures.isRowTrackingSupported(protocol)) {
+        throw DeltaErrors.rowTrackingRequiredForRowIdHighWatermark(dataPath.toString(), config);
+      }
+      long providedHighWaterMark =
+          RowTrackingMetadataDomain.fromJsonConfiguration(config).getRowIdHighWaterMark();
+      checkArgument(providedHighWaterMark >= 0, "rowIdHighWatermark must be >= 0");
+      this.providedRowIdHighWatermark = Optional.of(providedHighWaterMark);
+    }
   }
 
   private boolean isReplaceTable() {
