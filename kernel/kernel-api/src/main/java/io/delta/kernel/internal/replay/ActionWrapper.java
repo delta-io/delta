@@ -27,7 +27,6 @@ public class ActionWrapper {
   /* Timestamp of the commit file if isFromCheckpoint=false */
   private final Optional<Long> timestamp;
 
-  // TODO: remove isFromCheckpointFile?; but how to deal with V2 manifest file?
   ActionWrapper(
       ColumnarBatch data,
       boolean isFromCheckpoint,
