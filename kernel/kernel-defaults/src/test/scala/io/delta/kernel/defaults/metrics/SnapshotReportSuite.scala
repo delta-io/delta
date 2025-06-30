@@ -170,9 +170,9 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
 
     // ===== Metric: loadLogSegmentCloudListCallCount =====
     if (expectations.expectNonZeroListingBuildLogSegment) {
-      assert(metrics.loadLogSegmentCloudListCallCount() > 0)
+      assert(metrics.getLoadLogSegmentCloudListCallCount > 0)
     } else {
-      assert(metrics.loadLogSegmentCloudListCallCount() == 0)
+      assert(metrics.getLoadLogSegmentCloudListCallCount == 0)
     }
   }
 
