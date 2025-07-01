@@ -1,5 +1,6 @@
 package io.delta.kernel.internal.replay;
 
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.data.Row;
@@ -15,23 +16,19 @@ public class PageToken {
 
   public static PageToken fromRow(Row row) {
     requireNonNull(row);
-    if (!PAGE_TOKEN_SCHEMA.equals(row.getSchema())) {
-      throw new IllegalArgumentException(
-          "Invalid Page Token: input row schema does not match expected PageToken schema. "
-              + "Expected: "
-              + PAGE_TOKEN_SCHEMA
-              + ", Got: "
-              + row.getSchema());
-    }
+    checkArgument(
+        PAGE_TOKEN_SCHEMA.equals(row.getSchema()),
+        String.format(
+            "Invalid Page Token: input row schema does not match expected PageToken schema.\nExpected: %s\nGot: %s",
+            PAGE_TOKEN_SCHEMA, row.getSchema()));
 
     for (int i = 0; i < PAGE_TOKEN_SCHEMA.length(); i++) {
-      if (row.isNullAt(i) && !Objects.equals(PAGE_TOKEN_SCHEMA.at(i).getName(), "sidecarIndex")) {
-        throw new IllegalArgumentException(
-            "Invalid Page Token: required field '"
-                + PAGE_TOKEN_SCHEMA.at(i).getName()
-                + "' is null at index "
-                + i);
-      }
+      if (PAGE_TOKEN_SCHEMA.at(i).getName().equals("sidecarIndex")) continue;
+      checkArgument(
+          !row.isNullAt(i),
+          String.format(
+              "Invalid Page Token: required field '%s' is null at index %d",
+              PAGE_TOKEN_SCHEMA.at(i).getName(), i));
     }
 
     return new PageToken(
@@ -58,16 +55,16 @@ public class PageToken {
           .add("logSegmentHash", LongType.LONG);
 
   // ===== Variables to mark where the last page ended (and the current page starts) =====
-  /**
-   * The last log file read in the previous page.
-   */
+  /** The last log file read in the previous page. */
   private final String lastReadLogFileName;
+
   /**
    * The index of the last row that was returned from the starting log file during the previous
    * page. This row index is relative to the file. The current page should begin from the row
    * immediately after this row index.
    */
   private final long lastReturnedRowIndex;
+
   /**
    * Optional index of the last sidecar checkpoint file read in the previous page. If present, it
    * must be the last sidecar file read and must correspond to `startingLogFileName`.
