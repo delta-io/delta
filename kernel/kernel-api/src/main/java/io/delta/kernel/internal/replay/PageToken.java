@@ -59,10 +59,9 @@ public class PageToken {
 
   // ===== Variables to mark where the last page ended (and the current page starts) =====
   /**
-   * The name of the log file where the current page starts. This is the same as the last log file
-   * read in the previous page.
+   * The last log file read in the previous page.
    */
-  private final String startingLogFileName;
+  private final String lastReadLogFileName;
   /**
    * The index of the last row that was returned from the starting log file during the previous
    * page. This row index is relative to the file. The current page should begin from the row
@@ -73,7 +72,7 @@ public class PageToken {
    * Optional index of the last sidecar checkpoint file read in the previous page. If present, it
    * must be the last sidecar file read and must correspond to `startingLogFileName`.
    */
-  private final Optional<Long> startingSidecarFileIdx;
+  private final Optional<Long> lastReadSidecarFileIdx;
 
   // ===== Variables for validating query params and detecting changes in log segment =====
   private final String kernelVersion;
@@ -83,18 +82,18 @@ public class PageToken {
   private final long logSegmentHash;
 
   public PageToken(
-      String startingFileName,
+      String lastReadLogFileName,
       long lastReturnedRowIndex,
-      Optional<Long> startingSidecarFileIdx,
+      Optional<Long> lastReadSidecarFileIdx,
       String kernelVersion,
       String tablePath,
       long tableVersion,
       long predicateHash,
       long logSegmentHash) {
-    this.startingLogFileName =
-        requireNonNull(startingFileName, "startingFileName must not be null");
+    this.lastReadLogFileName =
+        requireNonNull(lastReadLogFileName, "lastReadLogFileName must not be null");
     this.lastReturnedRowIndex = lastReturnedRowIndex;
-    this.startingSidecarFileIdx = startingSidecarFileIdx;
+    this.lastReadSidecarFileIdx = lastReadSidecarFileIdx;
     this.kernelVersion = requireNonNull(kernelVersion, "kernelVersion must not be null");
     this.tablePath = requireNonNull(tablePath, "tablePath must not be null");
     this.tableVersion = tableVersion;
@@ -104,9 +103,9 @@ public class PageToken {
 
   public Row toRow() {
     Map<Integer, Object> pageTokenMap = new HashMap<>();
-    pageTokenMap.put(0, startingLogFileName);
+    pageTokenMap.put(0, lastReadLogFileName);
     pageTokenMap.put(1, lastReturnedRowIndex);
-    pageTokenMap.put(2, startingSidecarFileIdx.orElse(null));
+    pageTokenMap.put(2, lastReadSidecarFileIdx.orElse(null));
     pageTokenMap.put(3, kernelVersion);
     pageTokenMap.put(4, tablePath);
     pageTokenMap.put(5, tableVersion);
@@ -116,16 +115,16 @@ public class PageToken {
     return new GenericRow(PAGE_TOKEN_SCHEMA, pageTokenMap);
   }
 
-  public String getStartingLogFileName() {
-    return startingLogFileName;
+  public String getLastReadLogFileName() {
+    return lastReadLogFileName;
   }
 
   public long getLastReturnedRowIndex() {
     return lastReturnedRowIndex;
   }
 
-  public Optional<Long> getStartingSidecarFileIdx() {
-    return startingSidecarFileIdx;
+  public Optional<Long> getLastReadSidecarFileIdx() {
+    return lastReadSidecarFileIdx;
   }
 
   @Override
@@ -143,8 +142,8 @@ public class PageToken {
         && tableVersion == other.tableVersion
         && predicateHash == other.predicateHash
         && logSegmentHash == other.logSegmentHash
-        && Objects.equals(startingSidecarFileIdx, other.startingSidecarFileIdx)
-        && Objects.equals(startingLogFileName, other.startingLogFileName)
+        && Objects.equals(lastReadSidecarFileIdx, other.lastReadSidecarFileIdx)
+        && Objects.equals(lastReadLogFileName, other.lastReadLogFileName)
         && Objects.equals(kernelVersion, other.kernelVersion)
         && Objects.equals(tablePath, other.tablePath);
   }
@@ -152,9 +151,9 @@ public class PageToken {
   @Override
   public int hashCode() {
     return Objects.hash(
-        startingLogFileName,
+        lastReadLogFileName,
         lastReturnedRowIndex,
-        startingSidecarFileIdx,
+        lastReadSidecarFileIdx,
         kernelVersion,
         tablePath,
         tableVersion,
