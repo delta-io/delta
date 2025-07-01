@@ -16,12 +16,18 @@
 
 package io.delta.unity
 
+import java.net.URI
+import java.util.Optional
+
+import io.delta.kernel.defaults.utils.TestUtils
 import io.delta.kernel.internal.util.FileNames
 import io.delta.storage.commit.Commit
 
 import org.apache.hadoop.fs.{FileStatus => HadoopFileStatus, Path}
 
-trait UCCatalogManagedTestUtils {
+trait UCCatalogManagedTestUtils extends TestUtils {
+  val fakeURI = new URI("s3://bucket/table")
+
   def hadoopCommitFileStatus(version: Long): HadoopFileStatus = {
     val filePath = FileNames.stagedCommitFile("fake/logPath", version)
 
@@ -36,5 +42,16 @@ trait UCCatalogManagedTestUtils {
 
   def createCommit(version: Long): Commit = {
     new Commit(version, hadoopCommitFileStatus(version), version) // version, fileStatus, timestamp
+  }
+
+  /** Creates an InMemoryUCClient with the given tableId and commits for the specified versions. */
+  def getInMemoryUCClientWithCommitsForTableId(
+      tableId: String,
+      versions: Seq[Long]): InMemoryUCClient = {
+    val client = new InMemoryUCClient("ucMetastoreId")
+    versions.foreach { v =>
+      client.commitWithDefaults(tableId, fakeURI, Optional.of(createCommit(v)))
+    }
+    client
   }
 }

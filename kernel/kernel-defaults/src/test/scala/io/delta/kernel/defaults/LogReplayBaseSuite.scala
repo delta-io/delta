@@ -27,6 +27,7 @@ import io.delta.kernel.defaults.engine.fileio.FileIO
 import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO
 import io.delta.kernel.defaults.utils.TestUtils
 import io.delta.kernel.engine.{Engine, ExpressionHandler, FileSystemClient}
+import io.delta.kernel.engine.FileReadResult
 import io.delta.kernel.expressions.Predicate
 import io.delta.kernel.internal.checkpoints.Checkpointer
 import io.delta.kernel.internal.fs.Path
@@ -258,7 +259,7 @@ class MetricsParquetHandler(fileIO: FileIO)
   override def readParquetFiles(
       fileIter: CloseableIterator[FileStatus],
       physicalSchema: StructType,
-      predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] = {
+      predicate: Optional[Predicate]): CloseableIterator[FileReadResult] = {
     val fileReadSet = fileIter.toSeq
     checkpointReadRequestSizes += fileReadSet.size
     super.readParquetFiles(

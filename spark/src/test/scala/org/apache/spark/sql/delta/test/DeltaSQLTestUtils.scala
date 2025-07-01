@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta.test
 
 import java.io.File
+import java.util.UUID
 
 import scala.util.Random
 
@@ -82,6 +83,24 @@ trait DeltaSQLTestUtils extends SQLTestUtils {
     files.foreach(_.delete())
     try f(files) finally {
       files.foreach(Utils.deleteRecursively)
+    }
+  }
+
+  /**
+   * Creates a temporary table with a unique name for testing and executes a function with it.
+   * The table is automatically cleaned up after the function completes.
+   *
+   * @param createTable Whether to create an empty table.
+   * @param f The function to execute with the generated table name.
+   */
+  protected def withTempTable(createTable: Boolean)(f: String => Unit): Unit = {
+    val tableName = s"test_table_${UUID.randomUUID().toString.filterNot(_ == '-')}"
+
+    withTable(tableName) {
+      if (createTable) {
+        spark.sql(s"CREATE TABLE $tableName (id LONG) USING delta")
+      }
+      f(tableName)
     }
   }
 
