@@ -48,22 +48,32 @@ public class PaginationContext {
 
   // TODO: add cached log replay hashsets related info
 
-  public PaginationContext(
-      String lastReadLogFileName,
-      long lastReturnedRowIndex,
+  private PaginationContext(
+      Optional<String> lastReadLogFileName,
+      Optional<Long> lastReturnedRowIndex,
       Optional<Long> lastReadSidecarFileIdx,
       long pageSize) {
-    this.lastReadLogFileName = Optional.of(lastReadLogFileName);
-    this.lastReturnedRowIndex = Optional.of(lastReturnedRowIndex);
+    this.lastReadLogFileName = lastReadLogFileName;
+    this.lastReturnedRowIndex = lastReturnedRowIndex;
     this.lastReadSidecarFileIdx = lastReadSidecarFileIdx;
     this.pageSize = pageSize;
   }
 
-  /** Constructor for the very first page, where no page token is available */
-  public PaginationContext(long pageSize) {
-    this.lastReadLogFileName = Optional.empty();
-    this.lastReturnedRowIndex = Optional.empty();
-    this.lastReadSidecarFileIdx = Optional.empty();
-    this.pageSize = pageSize;
+  /** Factory for non first page, where page token is available */
+  public static PaginationContext forPageWithPageToken(
+      String lastReadLogFileName,
+      long lastReturnedRowIndex,
+      Optional<Long> lastReadSidecarFileIdx,
+      long pageSize) {
+    return new PaginationContext(
+        Optional.of(lastReadLogFileName),
+        Optional.of(lastReturnedRowIndex),
+        lastReadSidecarFileIdx,
+        pageSize);
+  }
+
+  /** Factory for the very first page, where no page token is available */
+  public static PaginationContext forFirstPage(long pageSize) {
+    return new PaginationContext(Optional.empty(), Optional.empty(), Optional.empty(), pageSize);
   }
 }
