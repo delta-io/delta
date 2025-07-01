@@ -1632,7 +1632,10 @@ class ScanSuite extends AnyFunSuite with TestUtils
             case None => scanBuilder.build()
           }
           val scanFiles =
-            scan.asInstanceOf[ScanImpl].getScanFiles(defaultEngine, true, Optional.empty())
+            scan.asInstanceOf[ScanImpl].getScanFiles(
+              defaultEngine,
+              true,
+              Optional.empty() /* PaginationContext */ )
           var numFiles: Int = 0
           scanFiles.forEach { s =>
             numFiles += s.getRows().toSeq.length
