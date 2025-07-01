@@ -36,7 +36,8 @@ public class PageToken {
     checkArgument(
         PAGE_TOKEN_SCHEMA.equals(row.getSchema()),
         String.format(
-            "Invalid Page Token: input row schema does not match expected PageToken schema.\nExpected: %s\nGot: %s",
+            "Invalid Page Token: input row schema does not match expected PageToken schema."
+                + "\nExpected: %s\nGot: %s",
             PAGE_TOKEN_SCHEMA, row.getSchema()));
 
     // Check #2: All required fields are present
