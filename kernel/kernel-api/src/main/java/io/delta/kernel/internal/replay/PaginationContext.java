@@ -15,6 +15,8 @@
  */
 package io.delta.kernel.internal.replay;
 
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+
 import java.util.Optional;
 
 /** {@code PaginationContext} carries pagination-related information. */
@@ -26,25 +28,25 @@ public class PaginationContext {
    * The name of the last log file read in the previous page. If not present, this is the first
    * page.
    */
-  public final Optional<String> lastReadLogFileName;
+  private final Optional<String> lastReadLogFileName;
   /**
    * The index of the last row that was returned from the last read log file during the previous
    * page. This row index is relative to the file. The current page should begin from the row
    * immediately after this row index.
    */
-  public final Optional<Long> lastReturnedRowIndex;
+  private final Optional<Long> lastReturnedRowIndex;
   /**
    * The index of the last sidecar checkpoint file read in the previous page. This index is based on
    * the ordering of sidecar files in the V2 manifest checkpoint file. If present, it must represent
    * the final sidecar file that was read and must correspond to the same file as
    * `lastReadLogFileName`.
    */
-  public final Optional<Long> lastReadSidecarFileIdx;
+  private final Optional<Long> lastReadSidecarFileIdx;
 
   // ===== Non-page-token related info =====
 
   /** maximum number of ScanFiles to return in the current page */
-  public final long pageSize;
+  private final long pageSize;
 
   // TODO: add cached log replay hashsets related info
 
@@ -53,6 +55,7 @@ public class PaginationContext {
       Optional<Long> lastReturnedRowIndex,
       Optional<Long> lastReadSidecarFileIdx,
       long pageSize) {
+    checkArgument(pageSize > 0, "Page size must be greater than zero!");
     this.lastReadLogFileName = lastReadLogFileName;
     this.lastReturnedRowIndex = lastReturnedRowIndex;
     this.lastReadSidecarFileIdx = lastReadSidecarFileIdx;
@@ -75,5 +78,21 @@ public class PaginationContext {
   /** Factory for the very first page, where no page token is available */
   public static PaginationContext forFirstPage(long pageSize) {
     return new PaginationContext(Optional.empty(), Optional.empty(), Optional.empty(), pageSize);
+  }
+
+  public Optional<String> getLastReadLogFileName() {
+    return lastReadLogFileName;
+  }
+
+  public Optional<Long> getLastReturnedRowIndex() {
+    return lastReturnedRowIndex;
+  }
+
+  public Optional<Long> getLastReadSidecarFileIdx() {
+    return lastReadSidecarFileIdx;
+  }
+
+  public long getPageSize() {
+    return pageSize;
   }
 }
