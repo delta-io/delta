@@ -1,5 +1,6 @@
 package io.delta.kernel.internal.replay;
 
+/** {@code PaginationContext} carries pagination-related information. */
 public class PaginationContext {
   public final String startingLogFileName;
   public final long rowIdx;
