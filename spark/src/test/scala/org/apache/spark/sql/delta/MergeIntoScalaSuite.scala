@@ -28,17 +28,11 @@ import org.apache.spark.sql.catalyst.plans.logical.{Assignment, DeltaMergeIntoCl
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.StructType
 
-class MergeIntoScalaSuite extends MergeIntoBasicTests
-  with MergeIntoNestedDataTests
-  with MergeIntoUnlimitedMergeClausesTests
-  with MergeIntoSuiteBaseMiscTests
+trait MergeIntoScalaMixin extends MergeIntoSuiteBaseMixin
   with MergeIntoScalaTestUtils
-  with MergeIntoNotMatchedBySourceSuite
   with DeltaSQLCommandTest
   with DeltaTestUtilsForTempViews
   with DeltaExcludedTestMixin {
-
-  import testImplicits._
 
   // Maps expected error classes to actual error classes. Used to handle error classes that are
   // different when running using SQL vs. Scala.
@@ -49,6 +43,79 @@ class MergeIntoScalaSuite extends MergeIntoBasicTests
    "NON_LAST_NOT_MATCHED_BY_SOURCE_CLAUSE_OMIT_CONDITION" ->
      "DELTA_NON_LAST_NOT_MATCHED_BY_SOURCE_CLAUSE_OMIT_CONDITION"
   )
+
+  // scalastyle:off argcount
+  override def testNestedDataSupport(name: String, namePrefix: String = "nested data support")(
+      source: String,
+      target: String,
+      update: Seq[String],
+      insert: String = null,
+      targetSchema: StructType = null,
+      sourceSchema: StructType = null,
+      result: String = null,
+      errorStrs: Seq[String] = null,
+      confs: Seq[(String, String)] = Seq.empty): Unit = {
+    // scalastyle:on argcount
+
+    require(result == null ^ errorStrs == null, "either set the result or the error strings")
+
+    val testName =
+      if (result != null) s"$namePrefix - $name" else s"$namePrefix - analysis error - $name"
+
+    test(testName) {
+      withSQLConf(confs: _*) {
+        withJsonData(source, target, targetSchema, sourceSchema) { case (sourceName, targetName) =>
+          val pathOrName = parsePath(targetName)
+          val fieldNames = readDeltaTable(pathOrName).schema.fieldNames
+          val keyName = s"`${fieldNames.head}`"
+
+          def execMerge() = {
+            val t = DeltaTestUtils.getDeltaTableForIdentifierOrPath(
+                spark,
+                DeltaTestUtils.getTableIdentifierOrPath(targetName))
+            val m = t.as("t")
+              .merge(
+                spark.table(sourceName).as("s"),
+                s"s.$keyName = t.$keyName")
+            val withUpdate = if (update == Seq("*")) {
+              m.whenMatched().updateAll()
+            } else {
+              val updateColExprMap = parseUpdate(update)
+              m.whenMatched().updateExpr(updateColExprMap)
+            }
+
+            if (insert == "*") {
+              withUpdate.whenNotMatched().insertAll().execute()
+            } else {
+              val insertExprMaps = if (insert != null) {
+                parseInsert(insert, None)
+              } else {
+                fieldNames.map { f => s"t.`$f`" -> s"s.`$f`" }.toMap
+              }
+
+              withUpdate.whenNotMatched().insertExpr(insertExprMaps).execute()
+            }
+          }
+
+          if (result != null) {
+            execMerge()
+            val expectedDf = readFromJSON(strToJsonSeq(result), targetSchema)
+            checkAnswer(readDeltaTable(pathOrName), expectedDf)
+          } else {
+            val e = intercept[AnalysisException] {
+              execMerge()
+            }
+            errorStrs.foreach { s => errorContains(e.getMessage, s) }
+          }
+        }
+      }
+    }
+  }
+}
+
+trait MergeIntoScalaTests extends MergeIntoScalaMixin {
+
+  import testImplicits._
 
   test("basic scala API") {
     withTable("source") {
@@ -599,73 +666,6 @@ class MergeIntoScalaSuite extends MergeIntoBasicTests
     }
   }
 
-  // scalastyle:off argcount
-  override def testNestedDataSupport(name: String, namePrefix: String = "nested data support")(
-      source: String,
-      target: String,
-      update: Seq[String],
-      insert: String = null,
-      targetSchema: StructType = null,
-      sourceSchema: StructType = null,
-      result: String = null,
-      errorStrs: Seq[String] = null,
-      confs: Seq[(String, String)] = Seq.empty): Unit = {
-    // scalastyle:on argcount
-
-    require(result == null ^ errorStrs == null, "either set the result or the error strings")
-
-    val testName =
-      if (result != null) s"$namePrefix - $name" else s"$namePrefix - analysis error - $name"
-
-    test(testName) {
-      withSQLConf(confs: _*) {
-        withJsonData(source, target, targetSchema, sourceSchema) { case (sourceName, targetName) =>
-          val pathOrName = parsePath(targetName)
-          val fieldNames = readDeltaTable(pathOrName).schema.fieldNames
-          val keyName = s"`${fieldNames.head}`"
-
-          def execMerge() = {
-            val t = DeltaTestUtils.getDeltaTableForIdentifierOrPath(
-                spark,
-                DeltaTestUtils.getTableIdentifierOrPath(targetName))
-            val m = t.as("t")
-              .merge(
-                spark.table(sourceName).as("s"),
-                s"s.$keyName = t.$keyName")
-            val withUpdate = if (update == Seq("*")) {
-              m.whenMatched().updateAll()
-            } else {
-              val updateColExprMap = parseUpdate(update)
-              m.whenMatched().updateExpr(updateColExprMap)
-            }
-
-            if (insert == "*") {
-              withUpdate.whenNotMatched().insertAll().execute()
-            } else {
-              val insertExprMaps = if (insert != null) {
-                parseInsert(insert, None)
-              } else {
-                fieldNames.map { f => s"t.`$f`" -> s"s.`$f`" }.toMap
-              }
-
-              withUpdate.whenNotMatched().insertExpr(insertExprMaps).execute()
-            }
-          }
-
-          if (result != null) {
-            execMerge()
-            val expectedDf = readFromJSON(strToJsonSeq(result), targetSchema)
-            checkAnswer(readDeltaTable(pathOrName), expectedDf)
-          } else {
-            val e = intercept[AnalysisException] {
-              execMerge()
-            }
-            errorStrs.foreach { s => errorContains(e.getMessage, s) }
-          }
-        }
-      }
-    }
-  }
 
   /* Exclude tempViews, because DeltaTable.forName does not resolve them correctly, so no one can
    * use them anyway with the Scala API.

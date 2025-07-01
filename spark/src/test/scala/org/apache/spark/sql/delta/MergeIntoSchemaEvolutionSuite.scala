@@ -157,9 +157,8 @@ trait MergeIntoSchemaEvolutionMixin {
  * in other suites to get basic test coverage for schema evolution in combination with other
  * features, e.g. CDF, DVs.
  */
-trait MergeIntoSchemaEvolutionCoreTests {
-  self: QueryTest with MergeIntoSchemaEvolutionMixin with MergeIntoTestUtils
-    with SharedSparkSession =>
+trait MergeIntoSchemaEvolutionCoreTests extends QueryTest {
+  self: MergeIntoSchemaEvolutionMixin with MergeIntoTestUtils with SharedSparkSession =>
 
   import testImplicits._
 

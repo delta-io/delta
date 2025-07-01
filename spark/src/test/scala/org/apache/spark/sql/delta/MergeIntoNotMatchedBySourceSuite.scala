@@ -28,7 +28,7 @@ trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBaseMixin {
    * Variant of `testExtendedMerge` that runs a MERGE INTO command, checks the expected result and
    * additionally validate that the CDC produced is correct.
    */
-  protected def testExtendedMergeWithCDC(
+  private def testExtendedMergeWithCDC(
       name: String,
       namePrefix: String = "not matched by source")(
       source: Seq[(Int, Int)],

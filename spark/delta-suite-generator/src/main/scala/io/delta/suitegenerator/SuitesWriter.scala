@@ -62,7 +62,11 @@ object SuitesWriter {
     ModularSuiteGenerator.GENERATED_PACKAGE.parse[Term].get.asInstanceOf[Term.Ref]
 
   private val IMPORT_PACKAGES = List(
-    importer"org.apache.spark.sql.delta._"
+    importer"org.apache.spark.sql.delta._",
+    importer"org.apache.spark.sql.delta.cdc._",
+    importer"org.apache.spark.sql.delta.deletionvectors._",
+    importer"org.apache.spark.sql.delta.rowid._",
+    importer"org.apache.spark.sql.delta.rowtracking._"
   )
 
   private lazy val SRC_HEADERS =
