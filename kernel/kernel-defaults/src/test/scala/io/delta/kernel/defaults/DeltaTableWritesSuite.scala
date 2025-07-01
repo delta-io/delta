@@ -1037,7 +1037,10 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       // Retrieve the stats JSON from the file.
       val snapshot = Table.forPath(engine, tblPath).getLatestSnapshot(engine)
       val scan = snapshot.getScanBuilder().build()
-      val scanFiles = scan.asInstanceOf[ScanImpl].getScanFiles(engine, true, Optional.empty())
+      val scanFiles = scan.asInstanceOf[ScanImpl].getScanFiles(
+        engine,
+        true,
+        Optional.empty() /* PaginationContext */ )
         .toSeq.flatMap(_.getRows.toSeq)
       val statsJson = scanFiles.headOption.flatMap { row =>
         val addFile = row.getStruct(row.getSchema.indexOf("add"))

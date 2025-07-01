@@ -579,7 +579,10 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
   def collectStatsFromAddFiles(engine: Engine, path: String): Seq[String] = {
     val snapshot = Table.forPath(engine, path).getLatestSnapshot(engine)
     val scan = snapshot.getScanBuilder.build()
-    val scanFiles = scan.asInstanceOf[ScanImpl].getScanFiles(engine, true, Optional.empty())
+    val scanFiles = scan.asInstanceOf[ScanImpl].getScanFiles(
+      engine,
+      true,
+      Optional.empty() /* PaginationContext */ )
 
     scanFiles.asScala.toList.flatMap { scanFile =>
       scanFile.getRows.asScala.toList.flatMap { row =>

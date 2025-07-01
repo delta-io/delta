@@ -1563,7 +1563,10 @@ class ScanSuite extends AnyFunSuite with TestUtils
       spark.range(10).write.format("delta").save(tempDir.getCanonicalPath)
       def checkStatsPresent(scan: Scan): Unit = {
         val scanFileBatches =
-          scan.asInstanceOf[ScanImpl].getScanFiles(defaultEngine, true, Optional.empty())
+          scan.asInstanceOf[ScanImpl].getScanFiles(
+            defaultEngine,
+            true,
+            Optional.empty() /*Pagination Context*/ )
         scanFileBatches.forEach { batch =>
           assert(batch.getData().getSchema() == InternalScanFileUtils.SCAN_FILE_SCHEMA_WITH_STATS)
         }

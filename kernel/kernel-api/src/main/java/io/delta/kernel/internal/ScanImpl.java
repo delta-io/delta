@@ -103,7 +103,7 @@ public class ScanImpl implements Scan {
    */
   @Override
   public CloseableIterator<FilteredColumnarBatch> getScanFiles(Engine engine) {
-    return getScanFiles(engine, false, Optional.empty());
+    return getScanFiles(engine, false /*includeStats*/, Optional.empty() /*PaginationContext*/);
   }
 
   /**
