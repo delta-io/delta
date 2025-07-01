@@ -45,12 +45,9 @@ class PaginationContextSuite extends AnyFunSuite {
       lastReadSidecarFileIdx,
       pageSize)
 
-    assert(context.getLastReadLogFileName().isPresent)
-    assert(context.getLastReadLogFileName().get() === lastReadLogFileName)
-    assert(context.getLastReturnedRowIndex().isPresent)
-    assert(context.getLastReturnedRowIndex().get() === lastReturnedRowIndex)
-    assert(context.getLastReadSidecarFileIdx().isPresent)
-    assert(context.getLastReadSidecarFileIdx().get() === lastReadSidecarFileIdx.get())
+    assert(context.getLastReadLogFileName() === Optional.of(lastReadLogFileName))
+    assert(context.getLastReturnedRowIndex() === Optional.of(lastReturnedRowIndex))
+    assert(context.getLastReadSidecarFileIdx() === lastReadSidecarFileIdx)
     assert(context.getPageSize() === pageSize)
   }
 
@@ -66,10 +63,8 @@ class PaginationContextSuite extends AnyFunSuite {
       lastReadSidecarFileIdx,
       pageSize)
 
-    assert(context.getLastReadLogFileName().isPresent)
-    assert(context.getLastReadLogFileName().get() === lastReadLogFileName)
-    assert(context.getLastReturnedRowIndex().isPresent)
-    assert(context.getLastReturnedRowIndex().get() === lastReturnedRowIndex)
+    assert(context.getLastReadLogFileName() === Optional.of(lastReadLogFileName))
+    assert(context.getLastReturnedRowIndex() === Optional.of(lastReturnedRowIndex))
     assert(!context.getLastReadSidecarFileIdx().isPresent)
     assert(context.getPageSize() === pageSize)
   }

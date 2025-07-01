@@ -29,12 +29,14 @@ public class PaginationContext {
    * page.
    */
   private final Optional<String> lastReadLogFileName;
+
   /**
    * The index of the last row that was returned from the last read log file during the previous
    * page. This row index is relative to the file. The current page should begin from the row
    * immediately after this row index.
    */
   private final Optional<Long> lastReturnedRowIndex;
+
   /**
    * The index of the last sidecar checkpoint file read in the previous page. This index is based on
    * the ordering of sidecar files in the V2 manifest checkpoint file. If present, it must represent
@@ -77,7 +79,8 @@ public class PaginationContext {
 
   /** Factory for the very first page, where no page token is available */
   public static PaginationContext forFirstPage(long pageSize) {
-    return new PaginationContext(Optional.empty(), Optional.empty(), Optional.empty(), pageSize);
+    return new PaginationContext(Optional.empty() /*lastReadLogFileName*/
+        , Optional.empty() /*lastReturnedRowIndex*/, Optional.empty() /*lastReadSidecarFileIdx*/, pageSize);
   }
 
   public Optional<String> getLastReadLogFileName() {
