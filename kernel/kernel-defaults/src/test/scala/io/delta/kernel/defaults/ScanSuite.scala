@@ -1566,7 +1566,7 @@ class ScanSuite extends AnyFunSuite with TestUtils
           scan.asInstanceOf[ScanImpl].getScanFiles(
             defaultEngine,
             true,
-            Optional.empty() /*Pagination Context*/ )
+            Optional.empty() /* Pagination Context */ )
         scanFileBatches.forEach { batch =>
           assert(batch.getData().getSchema() == InternalScanFileUtils.SCAN_FILE_SCHEMA_WITH_STATS)
         }
