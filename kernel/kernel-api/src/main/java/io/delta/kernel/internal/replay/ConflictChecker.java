@@ -71,10 +71,10 @@ public class ConflictChecker {
   private final long attemptVersion;
   private final CloseableIterable<Row> attemptDataActions;
   private final List<DomainMetadata> attemptDomainMetadatas;
+  private final Optional<Long> providedRowIdHighWatermark;
 
   // Helper states during conflict resolution
   private Optional<Long> lastWinningRowIdHighWatermark = Optional.empty();
-  private final Optional<Long> providedRowIdHighWatermark;
 
   private ConflictChecker(
       SnapshotImpl snapshot,

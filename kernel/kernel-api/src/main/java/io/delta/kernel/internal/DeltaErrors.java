@@ -435,8 +435,8 @@ public final class DeltaErrors {
       String tablePath, String rowIdHighWatermark) {
     return new KernelException(
         String.format(
-            "Cannot assign a rowId high water mark ('%s') to a table `%s` that does not support "
-                + "row tracking. Please enable the rowTracking table feature.",
+            "Cannot assign a row id high water mark (`%s`) to a table `%s` that does not support "
+                + "`rowTracking` table feature. Please enable the `rowTracking` table feature.",
             rowIdHighWatermark, tablePath));
   }
 

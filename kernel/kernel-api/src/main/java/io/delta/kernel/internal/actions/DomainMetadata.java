@@ -31,6 +31,10 @@ import java.util.*;
 /** Delta log action representing an `DomainMetadata` action */
 public class DomainMetadata {
 
+  private static final Set<String> SUPPORTED_SYSTEM_DOMAINS =
+      Collections.unmodifiableSet(
+          new HashSet<>(Collections.singletonList(RowTrackingMetadataDomain.DOMAIN_NAME)));
+
   /** Whether the provided {@code domain} is a user-controlled domain */
   public static boolean isUserControlledDomain(String domain) {
     // Domain identifiers are case-sensitive, but we don't want to allow users to set domains
@@ -48,8 +52,6 @@ public class DomainMetadata {
    * context. This method defines the allowlist of such supported domains and checks against it.
    */
   public static boolean isSystemDomainSupportedSetFromTxn(String domain) {
-    Set<String> SUPPORTED_SYSTEM_DOMAINS = new HashSet<>();
-    SUPPORTED_SYSTEM_DOMAINS.add(RowTrackingMetadataDomain.DOMAIN_NAME);
     return SUPPORTED_SYSTEM_DOMAINS.contains(domain);
   }
 

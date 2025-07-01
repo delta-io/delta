@@ -160,6 +160,10 @@ public class RowTracking {
     checkArgument(
         TableFeatures.isRowTrackingSupported(txnProtocol),
         "Row ID high watermark is updated only when feature 'rowTracking' is supported.");
+    checkArgument(
+        !(providedRowIdHighWatermark.isPresent() && winningTxnRowIdHighWatermark.isPresent()),
+        "Conflict resolution is not allowed when an explicit row tracking high "
+            + "watermark is provided. Please recommit.");
 
     // Filter out existing row tracking domainMetadata action, if any
     List<DomainMetadata> nonRowTrackingDomainMetadatas =
