@@ -57,30 +57,44 @@ public class PageToken {
           .add("predicateHash", LongType.LONG)
           .add("logSegmentHash", LongType.LONG);
 
-  // ===== Variables to know where last page ends =====
-  private final String startingFileName; // starting Log File Name (also last read log file name)
-  private final long rowIndex; // the index of last row in the last consumed batch
-  private final Optional<Long> sidecarIndex; // optional index of sidecar checkpoint file consumed
+  // ===== Variables to mark where the last page ended (and the current page starts) =====
+  /**
+   * The name of the log file where the current page starts. This is the same as the last log file
+   * read in the previous page.
+   */
+  private final String startingLogFileName;
+  /**
+   * The index of the last row that was returned from the starting log file during the previous
+   * page. This row index is relative to the file. The current page should begin from the row
+   * immediately after this row index.
+   */
+  private final long lastReturnedRowIndex;
+  /**
+   * Optional index of the last sidecar checkpoint file read in the previous page. If present, it
+   * must be the last sidecar file read and must correspond to `startingLogFileName`.
+   */
+  private final Optional<Long> startingSidecarFileIdx;
 
-  // ===== Variables for validating query params =====
+  // ===== Variables for validating query params and detecting changes in log segment =====
   private final String kernelVersion;
   private final String tablePath;
   private final long tableVersion;
   private final long predicateHash;
   private final long logSegmentHash;
-  
+
   public PageToken(
       String startingFileName,
-      long rowIndex,
-      Optional<Long> sidecarIndex,
+      long lastReturnedRowIndex,
+      Optional<Long> startingSidecarFileIdx,
       String kernelVersion,
       String tablePath,
       long tableVersion,
       long predicateHash,
       long logSegmentHash) {
-    this.startingFileName = requireNonNull(startingFileName, "startingFileName must not be null");
-    this.rowIndex = rowIndex;
-    this.sidecarIndex = sidecarIndex;
+    this.startingLogFileName =
+        requireNonNull(startingFileName, "startingFileName must not be null");
+    this.lastReturnedRowIndex = lastReturnedRowIndex;
+    this.startingSidecarFileIdx = startingSidecarFileIdx;
     this.kernelVersion = requireNonNull(kernelVersion, "kernelVersion must not be null");
     this.tablePath = requireNonNull(tablePath, "tablePath must not be null");
     this.tableVersion = tableVersion;
@@ -90,9 +104,9 @@ public class PageToken {
 
   public Row toRow() {
     Map<Integer, Object> pageTokenMap = new HashMap<>();
-    pageTokenMap.put(0, startingFileName);
-    pageTokenMap.put(1, rowIndex);
-    pageTokenMap.put(2, sidecarIndex.orElse(null));
+    pageTokenMap.put(0, startingLogFileName);
+    pageTokenMap.put(1, lastReturnedRowIndex);
+    pageTokenMap.put(2, startingSidecarFileIdx.orElse(null));
     pageTokenMap.put(3, kernelVersion);
     pageTokenMap.put(4, tablePath);
     pageTokenMap.put(5, tableVersion);
@@ -102,16 +116,16 @@ public class PageToken {
     return new GenericRow(PAGE_TOKEN_SCHEMA, pageTokenMap);
   }
 
-  public String getStartingFileName() {
-    return startingFileName;
+  public String getStartingLogFileName() {
+    return startingLogFileName;
   }
 
-  public long getRowIndex() {
-    return rowIndex;
+  public long getLastReturnedRowIndex() {
+    return lastReturnedRowIndex;
   }
 
-  public Optional<Long> getSidecarIndex() {
-    return sidecarIndex;
+  public Optional<Long> getStartingSidecarFileIdx() {
+    return startingSidecarFileIdx;
   }
 
   @Override
@@ -125,12 +139,12 @@ public class PageToken {
 
     PageToken other = (PageToken) obj;
 
-    return rowIndex == other.rowIndex
+    return lastReturnedRowIndex == other.lastReturnedRowIndex
         && tableVersion == other.tableVersion
         && predicateHash == other.predicateHash
         && logSegmentHash == other.logSegmentHash
-        && Objects.equals(sidecarIndex, other.sidecarIndex)
-        && Objects.equals(startingFileName, other.startingFileName)
+        && Objects.equals(startingSidecarFileIdx, other.startingSidecarFileIdx)
+        && Objects.equals(startingLogFileName, other.startingLogFileName)
         && Objects.equals(kernelVersion, other.kernelVersion)
         && Objects.equals(tablePath, other.tablePath);
   }
@@ -138,9 +152,9 @@ public class PageToken {
   @Override
   public int hashCode() {
     return Objects.hash(
-        startingFileName,
-        rowIndex,
-        sidecarIndex,
+        startingLogFileName,
+        lastReturnedRowIndex,
+        startingSidecarFileIdx,
         kernelVersion,
         tablePath,
         tableVersion,
