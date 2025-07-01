@@ -21,7 +21,6 @@ import java.util.Optional;
 public class PaginationContext {
 
   // ===== Variables from page token (is empty when getting first page because page token is empty)
-  // =====
 
   /**
    * The name of the last log file read in the previous page. If not present, this is the first
@@ -44,7 +43,7 @@ public class PaginationContext {
 
   // ===== Non-page-token related info =====
 
-  /** Page Size, maximum number of ScanFiles to return in the current page */
+  /** maximum number of ScanFiles to return in the current page */
   public final long pageSize;
 
   // TODO: add cached log replay hashsets related info
@@ -60,7 +59,7 @@ public class PaginationContext {
     this.pageSize = pageSize;
   }
 
-  // Constructor for the very first page, where no page token is available
+  /** Constructor for the very first page, where no page token is available */
   public PaginationContext(long pageSize) {
     this.lastReadLogFileName = Optional.empty();
     this.lastReturnedRowIndex = Optional.empty();
