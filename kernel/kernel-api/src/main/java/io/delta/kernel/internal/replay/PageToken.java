@@ -16,14 +16,16 @@ public class PageToken {
 
   public static PageToken fromRow(Row row) {
     requireNonNull(row);
+    // Check #1: Correct schema
     checkArgument(
         PAGE_TOKEN_SCHEMA.equals(row.getSchema()),
         String.format(
             "Invalid Page Token: input row schema does not match expected PageToken schema.\nExpected: %s\nGot: %s",
             PAGE_TOKEN_SCHEMA, row.getSchema()));
 
+    // Check #2: All required fields are present
     for (int i = 0; i < PAGE_TOKEN_SCHEMA.length(); i++) {
-      if (PAGE_TOKEN_SCHEMA.at(i).getName().equals("sidecarIndex")) continue;
+      if (PAGE_TOKEN_SCHEMA.at(i).getName().equals("lastReadSidecarFileIdx")) continue;
       checkArgument(
           !row.isNullAt(i),
           String.format(
@@ -42,32 +44,34 @@ public class PageToken {
         row.getLong(7)); // logSegmentHash
   }
 
-  /** Schema for PageToken Row representation */
   public static final StructType PAGE_TOKEN_SCHEMA =
       new StructType()
-          .add("logFileName", StringType.STRING)
-          .add("rowIndexInFile", LongType.LONG)
-          .add("sidecarIndex", LongType.LONG)
-          .add("kernelVersion", StringType.STRING)
-          .add("tablePath", StringType.STRING)
-          .add("tableVersion", LongType.LONG)
-          .add("predicateHash", LongType.LONG)
-          .add("logSegmentHash", LongType.LONG);
+          .add("lastReadLogFileName", StringType.STRING, false /* nullable */)
+          .add("lastReturnedRowIndex", LongType.LONG, false /* nullable * )
+          .add("lastReadSidecarFileIdx", LongType.LONG, true /* nullable */)
+          .add("kernelVersion", StringType.STRING, false /* nullable */)
+          .add("tablePath", StringType.STRING, false /* nullable */)
+          .add("tableVersion", LongType.LONG, false /* nullable */)
+          .add("predicateHash", LongType.LONG, false /* nullable */)
+          .add("logSegmentHash", LongType.LONG, false /* nullable */);
 
   // ===== Variables to mark where the last page ended (and the current page starts) =====
+
   /** The last log file read in the previous page. */
   private final String lastReadLogFileName;
 
   /**
-   * The index of the last row that was returned from the starting log file during the previous
+   * The index of the last row that was returned from the last read log file during the previous
    * page. This row index is relative to the file. The current page should begin from the row
    * immediately after this row index.
    */
   private final long lastReturnedRowIndex;
 
   /**
-   * Optional index of the last sidecar checkpoint file read in the previous page. If present, it
-   * must be the last sidecar file read and must correspond to `startingLogFileName`.
+   * Optional index of the last sidecar checkpoint file read in the previous page. This index is
+   * based on the ordering of sidecar files in the V2 manifest checkpoint file. If present, it must
+   * represent the final sidecar file that was read and must correspond to the same file as
+   * `lastReadLogFileName`.
    */
   private final Optional<Long> lastReadSidecarFileIdx;
 
@@ -87,12 +91,11 @@ public class PageToken {
       long tableVersion,
       long predicateHash,
       long logSegmentHash) {
-    this.lastReadLogFileName =
-        requireNonNull(lastReadLogFileName, "lastReadLogFileName must not be null");
+    this.lastReadLogFileName = requireNonNull(lastReadLogFileName, "lastReadLogFileName is null");
     this.lastReturnedRowIndex = lastReturnedRowIndex;
     this.lastReadSidecarFileIdx = lastReadSidecarFileIdx;
-    this.kernelVersion = requireNonNull(kernelVersion, "kernelVersion must not be null");
-    this.tablePath = requireNonNull(tablePath, "tablePath must not be null");
+    this.kernelVersion = requireNonNull(kernelVersion, "kernelVersion is null");
+    this.tablePath = requireNonNull(tablePath, "tablePath is null");
     this.tableVersion = tableVersion;
     this.predicateHash = predicateHash;
     this.logSegmentHash = logSegmentHash;

@@ -39,7 +39,7 @@ class PageTokenSuite extends AnyFunSuite with MockFileSystemClientUtils {
   private val rowData: Map[Integer, Object] = new HashMap()
   rowData.put(0, TEST_FILE_NAME)
   rowData.put(1, TEST_ROW_INDEX.asInstanceOf[Object])
-  rowData.put(2, TEST_SIDECAR_INDEX.orElse(null))
+  rowData.put(2, TEST_SIDECAR_INDEX.get())
   rowData.put(3, TEST_KERNEL_VERSION)
   rowData.put(4, TEST_TABLE_PATH)
   rowData.put(5, TEST_TABLE_VERSION.asInstanceOf[Object])
@@ -48,18 +48,18 @@ class PageTokenSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
   val expectedRow = new GenericRow(PageToken.PAGE_TOKEN_SCHEMA, rowData)
 
-  test("Test PageToken.fromRow with valid data") {
+  test("PageToken.fromRow with valid data") {
     val pageToken = PageToken.fromRow(expectedRow)
     assert(pageToken.equals(expectedPageToken))
   }
 
-  test("Test PageToken.toRow with valid data") {
+  test("PageToken.toRow with valid data") {
     val row = expectedPageToken.toRow
     assert(row.getSchema.equals(PageToken.PAGE_TOKEN_SCHEMA))
 
     assert(row.getString(0) == TEST_FILE_NAME)
     assert(row.getLong(1) == TEST_ROW_INDEX)
-    assert(Optional.of(if (row.isNullAt(2)) null else row.getLong(2)) == TEST_SIDECAR_INDEX)
+    assert(Optional.of(row.getLong(2)) == TEST_SIDECAR_INDEX)
     assert(row.getString(3) == TEST_KERNEL_VERSION)
     assert(row.getString(4) == TEST_TABLE_PATH)
     assert(row.getLong(5) == TEST_TABLE_VERSION)
@@ -73,11 +73,11 @@ class PageTokenSuite extends AnyFunSuite with MockFileSystemClientUtils {
     assert(reconstructedPageToken.equals(expectedPageToken))
   }
 
-  test("PageToken.fromRow throws exception when input row has invalid schema") {
+  test("PageToken.fromRow throws exception when input row schema has invalid field name") {
     val invalidSchema = new StructType()
       .add("wrongFieldName", StringType.STRING)
-      .add("rowIndexInFile", LongType.LONG)
-      .add("sidecarIndex", LongType.LONG)
+      .add("lastReturnedRowIndex", LongType.LONG)
+      .add("lastReadSidecarFileIdx", LongType.LONG)
       .add("kernelVersion", StringType.STRING)
       .add("tablePath", StringType.STRING)
       .add("tableVersion", LongType.LONG)
@@ -87,7 +87,7 @@ class PageTokenSuite extends AnyFunSuite with MockFileSystemClientUtils {
     val invalidRowData: Map[Integer, Object] = new HashMap()
     invalidRowData.put(0, TEST_FILE_NAME)
     invalidRowData.put(1, TEST_ROW_INDEX.asInstanceOf[Object])
-    invalidRowData.put(2, TEST_SIDECAR_INDEX.orElse(null))
+    invalidRowData.put(2, TEST_SIDECAR_INDEX)
     invalidRowData.put(3, TEST_KERNEL_VERSION)
     invalidRowData.put(4, TEST_TABLE_PATH)
     invalidRowData.put(5, TEST_TABLE_VERSION.asInstanceOf[Object])
@@ -100,5 +100,53 @@ class PageTokenSuite extends AnyFunSuite with MockFileSystemClientUtils {
     }
     assert(exception.getMessage.contains(
       "Invalid Page Token: input row schema does not match expected PageToken schema"))
+  }
+
+  test("PageToken.fromRow throws exception when input row schema has wrong data type") {
+    val invalidSchema = new StructType()
+      .add("lastReadLogFileName", StringType.STRING)
+      .add("lastReturnedRowIndex", LongType.LONG)
+      .add("lastReadSidecarFileIdx", StringType.STRING) // should be long type
+      .add("kernelVersion", StringType.STRING)
+      .add("tablePath", StringType.STRING)
+      .add("tableVersion", LongType.LONG)
+      .add("predicateHash", LongType.LONG)
+      .add("logSegmentHash", LongType.LONG)
+
+    val invalidRowData: Map[Integer, Object] = new HashMap()
+    invalidRowData.put(0, TEST_FILE_NAME)
+    invalidRowData.put(1, TEST_ROW_INDEX.asInstanceOf[Object])
+    invalidRowData.put(2, TEST_SIDECAR_INDEX)
+    invalidRowData.put(3, TEST_KERNEL_VERSION)
+    invalidRowData.put(4, TEST_TABLE_PATH)
+    invalidRowData.put(5, TEST_TABLE_VERSION.asInstanceOf[Object])
+    invalidRowData.put(6, TEST_PREDICATE_HASH.asInstanceOf[Object])
+    invalidRowData.put(7, TEST_LOG_SEGMENT_HASH.asInstanceOf[Object])
+
+    val row = new GenericRow(invalidSchema, invalidRowData)
+    val exception = intercept[IllegalArgumentException] {
+      PageToken.fromRow(row)
+    }
+    assert(exception.getMessage.contains(
+      "Invalid Page Token: input row schema does not match expected PageToken schema"))
+  }
+
+  test("PageToken.fromRow accepts the case sidecar field is null") {
+    val nullSidecarData: Map[Integer, Object] = new HashMap(rowData)
+    nullSidecarData.put(2, null)
+    val nullSidecarRow = new GenericRow(PageToken.PAGE_TOKEN_SCHEMA, nullSidecarData)
+    val pageToken = PageToken.fromRow(nullSidecarRow)
+    assert(pageToken.getLastReadSidecarFileIdx == Optional.empty())
+  }
+
+  test("PageToken.fromRow throws exception when required field is null") {
+    val invalidData: Map[Integer, Object] = new HashMap(rowData)
+    invalidData.put(3, null)
+    val invalidRow = new GenericRow(PageToken.PAGE_TOKEN_SCHEMA, invalidData)
+    val exception = intercept[IllegalArgumentException] {
+      PageToken.fromRow(invalidRow)
+    }
+    assert(exception.getMessage.contains(
+      "Invalid Page Token: required field"))
   }
 }
