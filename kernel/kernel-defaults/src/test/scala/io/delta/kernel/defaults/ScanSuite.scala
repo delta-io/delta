@@ -1562,7 +1562,8 @@ class ScanSuite extends AnyFunSuite with TestUtils
     withTempDir { tempDir =>
       spark.range(10).write.format("delta").save(tempDir.getCanonicalPath)
       def checkStatsPresent(scan: Scan): Unit = {
-        val scanFileBatches = scan.asInstanceOf[ScanImpl].getScanFiles(defaultEngine, true)
+        val scanFileBatches =
+          scan.asInstanceOf[ScanImpl].getScanFiles(defaultEngine, true, Optional.empty())
         scanFileBatches.forEach { batch =>
           assert(batch.getData().getSchema() == InternalScanFileUtils.SCAN_FILE_SCHEMA_WITH_STATS)
         }
@@ -1627,7 +1628,8 @@ class ScanSuite extends AnyFunSuite with TestUtils
             case Some(pred) => scanBuilder.withFilter(pred).build()
             case None => scanBuilder.build()
           }
-          val scanFiles = scan.asInstanceOf[ScanImpl].getScanFiles(defaultEngine, true)
+          val scanFiles =
+            scan.asInstanceOf[ScanImpl].getScanFiles(defaultEngine, true, Optional.empty())
           var numFiles: Int = 0
           scanFiles.forEach { s =>
             numFiles += s.getRows().toSeq.length

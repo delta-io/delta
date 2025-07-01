@@ -34,6 +34,7 @@ import io.delta.kernel.internal.metrics.ScanMetrics;
 import io.delta.kernel.internal.metrics.ScanReportImpl;
 import io.delta.kernel.internal.metrics.Timer;
 import io.delta.kernel.internal.replay.LogReplay;
+import io.delta.kernel.internal.replay.PaginationContext;
 import io.delta.kernel.internal.skipping.DataSkippingPredicate;
 import io.delta.kernel.internal.skipping.DataSkippingUtils;
 import io.delta.kernel.internal.util.*;
@@ -102,7 +103,7 @@ public class ScanImpl implements Scan {
    */
   @Override
   public CloseableIterator<FilteredColumnarBatch> getScanFiles(Engine engine) {
-    return getScanFiles(engine, false);
+    return getScanFiles(engine, false, Optional.empty());
   }
 
   /**
@@ -118,7 +119,7 @@ public class ScanImpl implements Scan {
    * @return the surviving scan files as {@link FilteredColumnarBatch}s
    */
   public CloseableIterator<FilteredColumnarBatch> getScanFiles(
-      Engine engine, boolean includeStats) {
+      Engine engine, boolean includeStats, Optional<PaginationContext> paginationContext) {
     if (accessedScanFiles) {
       throw new IllegalStateException("Scan files are already fetched from this instance");
     }
@@ -165,7 +166,8 @@ public class ScanImpl implements Scan {
                       predicate ->
                           rewritePartitionPredicateOnCheckpointFileSchema(
                               predicate, partitionColToStructFieldMap.get())),
-              scanMetrics);
+              scanMetrics,
+              paginationContext);
 
       // Apply partition pruning
       scanFileIter = applyPartitionPruning(engine, scanFileIter);

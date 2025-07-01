@@ -62,6 +62,7 @@ public class ActiveAddFilesIterator implements CloseableIterator<FilteredColumna
   private final Set<UniqueFileActionTuple> tombstonesFromJson;
   private final Set<UniqueFileActionTuple> addFilesFromJson;
 
+  private final Optional<PaginationContext> paginationContext;
   private Optional<FilteredColumnarBatch> next;
   /**
    * This buffer is reused across batches to keep the memory allocations minimal. It is resized as
@@ -79,7 +80,11 @@ public class ActiveAddFilesIterator implements CloseableIterator<FilteredColumna
   private ScanMetrics metrics;
 
   ActiveAddFilesIterator(
-      Engine engine, CloseableIterator<ActionWrapper> iter, Path tableRoot, ScanMetrics metrics) {
+      Engine engine,
+      CloseableIterator<ActionWrapper> iter,
+      Path tableRoot,
+      ScanMetrics metrics,
+      Optional<PaginationContext> paginationContext) {
     this.engine = engine;
     this.tableRoot = tableRoot;
     this.iter = iter;
@@ -87,6 +92,7 @@ public class ActiveAddFilesIterator implements CloseableIterator<FilteredColumna
     this.addFilesFromJson = new HashSet<>();
     this.next = Optional.empty();
     this.metrics = metrics;
+    this.paginationContext = paginationContext;
   }
 
   @Override
