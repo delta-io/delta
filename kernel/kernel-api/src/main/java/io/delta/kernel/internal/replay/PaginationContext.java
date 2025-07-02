@@ -36,9 +36,9 @@ public class PaginationContext {
 
   public static PaginationContext forFirstPage(long pageSize) {
     return new PaginationContext(
-        Optional.empty() /*lastReadLogFileName*/,
-        Optional.empty() /*lastReturnedRowIndex*/,
-        Optional.empty() /*lastReadSidecarFileIdx*/,
+        Optional.empty() /* lastReadLogFileName */,
+        Optional.empty() /* lastReturnedRowIndex */,
+        Optional.empty() /* lastReadSidecarFileIdx */,
         pageSize);
   }
 
