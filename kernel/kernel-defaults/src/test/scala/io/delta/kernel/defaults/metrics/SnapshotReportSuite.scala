@@ -129,42 +129,43 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
       assert(metrics.getLoadSnapshotTotalDurationNs >= 0)
     }
 
-    // ===== Metric: getTimestampToVersionResolutionDurationNs =====
+    // ===== Metric: getComputeTimestampToVersionTotalDurationNs =====
     if (expectations.expectNonEmptyTimestampToVersionResolutionDuration) {
-      assert(metrics.getTimestampToVersionResolutionDurationNs.isPresent)
-      assert(metrics.getTimestampToVersionResolutionDurationNs.get > 0)
-      assert(metrics.getTimestampToVersionResolutionDurationNs.get < duration)
-      assert(metrics.getTimestampToVersionResolutionDurationNs.get <=
+      assert(metrics.getComputeTimestampToVersionTotalDurationNs.isPresent)
+      assert(metrics.getComputeTimestampToVersionTotalDurationNs.get > 0)
+      assert(metrics.getComputeTimestampToVersionTotalDurationNs.get < duration)
+      assert(metrics.getComputeTimestampToVersionTotalDurationNs.get <=
         metrics.getLoadSnapshotTotalDurationNs)
     } else {
-      assert(!metrics.getTimestampToVersionResolutionDurationNs.isPresent)
+      assert(!metrics.getComputeTimestampToVersionTotalDurationNs.isPresent)
     }
 
-    // ===== Metric: getLoadInitialDeltaActionsDurationNs =====
+    // ===== Metric: getLoadProtocolMetadataTotalDurationNs  =====
     if (expectations.expectNonZeroLoadProtocolAndMetadataDuration) {
-      assert(metrics.getLoadInitialDeltaActionsDurationNs > 0)
-      assert(metrics.getLoadInitialDeltaActionsDurationNs < duration)
-      assert(metrics.getLoadInitialDeltaActionsDurationNs <= metrics.getLoadSnapshotTotalDurationNs)
+      assert(metrics.getLoadProtocolMetadataTotalDurationNs > 0)
+      assert(metrics.getLoadProtocolMetadataTotalDurationNs < duration)
+      assert(
+        metrics.getLoadProtocolMetadataTotalDurationNs <= metrics.getLoadSnapshotTotalDurationNs)
     } else {
-      assert(metrics.getLoadInitialDeltaActionsDurationNs == 0)
+      assert(metrics.getLoadProtocolMetadataTotalDurationNs == 0)
     }
 
-    // ===== Metric: getTimeToBuildLogSegmentForVersionNs =====
+    // ===== Metric: getLoadLogSegmentTotalDurationNs =====
     if (expectations.expectNonZeroBuildLogSegmentDuration) {
-      assert(metrics.getTimeToBuildLogSegmentForVersionNs > 0)
-      assert(metrics.getTimeToBuildLogSegmentForVersionNs < duration)
-      assert(metrics.getTimeToBuildLogSegmentForVersionNs <= metrics.getLoadSnapshotTotalDurationNs)
+      assert(metrics.getLoadLogSegmentTotalDurationNs > 0)
+      assert(metrics.getLoadLogSegmentTotalDurationNs < duration)
+      assert(metrics.getLoadLogSegmentTotalDurationNs <= metrics.getLoadSnapshotTotalDurationNs)
     } else {
-      assert(metrics.getTimeToBuildLogSegmentForVersionNs == 0)
+      assert(metrics.getLoadLogSegmentTotalDurationNs == 0)
     }
 
-    // ===== Metric: getDurationToGetCrcInfoNs =====
+    // ===== Metric: getLoadCrcTotalDurationNs =====
     if (expectations.expectNonZeroDurationToGetCrcInfo) {
-      assert(metrics.getDurationToGetCrcInfoNs > 0)
-      assert(metrics.getDurationToGetCrcInfoNs < duration)
-      assert(metrics.getDurationToGetCrcInfoNs <= metrics.getLoadSnapshotTotalDurationNs)
+      assert(metrics.getLoadCrcTotalDurationNs > 0)
+      assert(metrics.getLoadCrcTotalDurationNs < duration)
+      assert(metrics.getLoadCrcTotalDurationNs <= metrics.getLoadSnapshotTotalDurationNs)
     } else {
-      assert(metrics.getDurationToGetCrcInfoNs == 0)
+      assert(metrics.getLoadCrcTotalDurationNs == 0)
     }
   }
 

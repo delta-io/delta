@@ -20,13 +20,19 @@ import java.util.Optional;
 
 /** Stores the metrics results for a {@link SnapshotReport} */
 @JsonPropertyOrder({
+  "computeTimestampToVersionTotalDurationNs",
   "loadSnapshotTotalDurationNs",
-  "timestampToVersionResolutionDurationNs",
-  "loadInitialDeltaActionsDurationNs",
-  "timeToBuildLogSegmentForVersionNs",
-  "durationToGetCrcInfoNs"
+  "loadProtocolMetadataTotalDurationNs",
+  "loadLogSegmentTotalDurationNs",
+  "loadCrcTotalDurationNs"
 })
 public interface SnapshotMetricsResult {
+
+  /**
+   * @return the duration (ns) to resolve the provided timestamp to a table version for timestamp
+   *     time-travel queries. Empty for time-travel by version or non-time-travel queries.
+   */
+  Optional<Long> getComputeTimestampToVersionTotalDurationNs();
 
   /**
    * @return the total duration (ns) to load the snapshot, including all steps such as resolving
@@ -36,26 +42,20 @@ public interface SnapshotMetricsResult {
   long getLoadSnapshotTotalDurationNs();
 
   /**
-   * @return the duration (ns) to resolve the provided timestamp to a table version for timestamp
-   *     time-travel queries. Empty for time-travel by version or non-time-travel queries.
-   */
-  Optional<Long> getTimestampToVersionResolutionDurationNs();
-
-  /**
    * @return the duration (ns) to load the initial delta actions for the snapshot (such as the table
    *     protocol and metadata). 0 if snapshot construction fails before log replay.
    */
-  long getLoadInitialDeltaActionsDurationNs();
+  long getLoadProtocolMetadataTotalDurationNs();
 
   /**
    * @return the duration (ns) to build the log segment for the specified version during snapshot
    *     construction. 0 if snapshot construction fails before this step.
    */
-  long getTimeToBuildLogSegmentForVersionNs();
+  long getLoadLogSegmentTotalDurationNs();
 
   /**
    * @return the duration (ns) to get CRC information during snapshot construction. 0 if snapshot
    *     construction fails before this step or if CRC is not read in loading snapshot.
    */
-  long getDurationToGetCrcInfoNs();
+  long getLoadCrcTotalDurationNs();
 }
