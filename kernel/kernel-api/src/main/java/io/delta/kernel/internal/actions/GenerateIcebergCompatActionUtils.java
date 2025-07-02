@@ -97,7 +97,8 @@ public final class GenerateIcebergCompatActionUtils {
             dataChange,
             tags,
             Optional.empty() /* baseRowId */,
-            Optional.empty() /* defaultRowCommitVersion */);
+            Optional.empty() /* defaultRowCommitVersion */,
+            Optional.empty() /* deletionVectorDescriptor */);
     return SingleAction.createAddFileSingleAction(addFile.toRow());
   }
 
@@ -119,6 +120,7 @@ public final class GenerateIcebergCompatActionUtils {
    * @param partitionValues the partition values for the add
    * @param dataChange whether or not the add constitutes a dataChange (i.e. append vs. compaction)
    * @param tags key-value metadata to be attached to the add action
+   * @param deletionVectorDescriptor optional deletion vector descriptor for the add action
    * @return add action row that can be included in the transaction
    * @throws UnsupportedOperationException if icebergWriterCompatV3 is not enabled
    * @throws UnsupportedOperationException if maxRetries != 0 in the transaction
@@ -132,12 +134,16 @@ public final class GenerateIcebergCompatActionUtils {
       boolean dataChange,
       Map<String, String> tags,
       Optional<Long> baseRowId,
-      Optional<Long> defaultRowCommitVersion) {
+      Optional<Long> defaultRowCommitVersion,
+      Optional<DeletionVectorDescriptor> deletionVectorDescriptor) {
     Map<String, String> configuration = TransactionStateRow.getConfiguration(transactionState);
 
     /* ----- Validate that this is a valid usage of this API ----- */
     validateIcebergWriterCompatV3Enabled(configuration);
     validateMaxRetriesSetToZero(transactionState);
+
+    /* ----- Validate that deletion vector is passed in only when the table supports it ----- */
+    deletionVectorDescriptor.ifPresent(dv -> validateIcebergDeletionVectorsEnabled(configuration));
 
     /* ----- Validate this is valid write given the table's protocol & configurations ----- */
     checkState(
@@ -161,7 +167,8 @@ public final class GenerateIcebergCompatActionUtils {
             dataChange,
             tags,
             baseRowId,
-            defaultRowCommitVersion);
+            defaultRowCommitVersion,
+            deletionVectorDescriptor);
     return SingleAction.createAddFileSingleAction(addFile.toRow());
   }
 
@@ -210,7 +217,8 @@ public final class GenerateIcebergCompatActionUtils {
             partitionValues,
             dataChange,
             Optional.empty() /* baseRowId */,
-            Optional.empty() /* defaultRowCommitVersion */);
+            Optional.empty() /* defaultRowCommitVersion */,
+            Optional.empty() /* deletionVectorDescriptor */);
     return SingleAction.createRemoveFileSingleAction(removeFileRow);
   }
 
@@ -224,6 +232,7 @@ public final class GenerateIcebergCompatActionUtils {
    * @param partitionValues the partition values for the remove
    * @param dataChange whether or not the remove constitutes a dataChange (i.e. delete vs.
    *     compaction)
+   * @param deletionVectorDescriptor optional deletion vector descriptor for the add action
    * @return remove action row that can be committed to the transaction
    * @throws UnsupportedOperationException if icebergWriterCompatV3 is not enabled
    * @throws UnsupportedOperationException if maxRetries != 0 in the transaction
@@ -236,12 +245,16 @@ public final class GenerateIcebergCompatActionUtils {
       Map<String, Literal> partitionValues,
       boolean dataChange,
       Optional<Long> baseRowId,
-      Optional<Long> defaultRowCommitVersion) {
+      Optional<Long> defaultRowCommitVersion,
+      Optional<DeletionVectorDescriptor> deletionVectorDescriptor) {
     Map<String, String> config = TransactionStateRow.getConfiguration(transactionState);
 
     /* ----- Validate that this is a valid usage of this API ----- */
     validateIcebergWriterCompatV3Enabled(config);
     validateMaxRetriesSetToZero(transactionState);
+
+    /* ----- Validate that deletion vector is passed in only when the table supports it ----- */
+    deletionVectorDescriptor.ifPresent(dv -> validateIcebergDeletionVectorsEnabled(config));
 
     /* ----- Validate this is valid write given the table's protocol & configurations ----- */
     // We only allow removes with dataChange=false when appendOnly=true
@@ -268,7 +281,8 @@ public final class GenerateIcebergCompatActionUtils {
             partitionValues,
             dataChange,
             Optional.empty() /* baseRowId */,
-            Optional.empty() /* defaultRowCommitVersion */);
+            Optional.empty() /* defaultRowCommitVersion */,
+            deletionVectorDescriptor);
     return SingleAction.createRemoveFileSingleAction(removeFileRow);
   }
 
@@ -304,6 +318,20 @@ public final class GenerateIcebergCompatActionUtils {
               "APIs within GenerateIcebergCompatActionUtils are only supported on tables with"
                   + " '%s' set to true",
               TableConfig.ICEBERG_WRITER_COMPAT_V3_ENABLED.getKey()));
+    }
+  }
+
+  /**
+   * Validates that table feature `deletion vectors` is enabled. Checked when a deletion vector
+   * descriptor is passed to generateIcebergCompatWriterV3AddAction.
+   */
+  private static void validateIcebergDeletionVectorsEnabled(Map<String, String> config) {
+    if (!TableConfig.DELETION_VECTORS_CREATION_ENABLED.fromMetadata(config)) {
+      throw new UnsupportedOperationException(
+          String.format(
+              "APIs within GenerateIcebergCompatActionUtils are only supported on tables with"
+                  + " '%s' set to true",
+              TableConfig.DELETION_VECTORS_CREATION_ENABLED.getKey()));
     }
   }
 
@@ -359,7 +387,8 @@ public final class GenerateIcebergCompatActionUtils {
       Map<String, Literal> partitionValues,
       boolean dataChange,
       Optional<Long> baseRowId,
-      Optional<Long> defaultRowCommitVersion) {
+      Optional<Long> defaultRowCommitVersion,
+      Optional<DeletionVectorDescriptor> deletionVectorDescriptor) {
     return createRemoveFileRowWithExtendedFileMetadata(
         relativizePath(new Path(dataFileStatus.getPath()), tableRoot).toUri().toString(),
         dataFileStatus.getModificationTime(),
@@ -369,7 +398,8 @@ public final class GenerateIcebergCompatActionUtils {
         dataFileStatus.getStatistics(),
         physicalSchema,
         baseRowId,
-        defaultRowCommitVersion);
+        defaultRowCommitVersion,
+        deletionVectorDescriptor);
   }
 
   @VisibleForTesting
@@ -382,7 +412,8 @@ public final class GenerateIcebergCompatActionUtils {
       Optional<DataFileStatistics> stats,
       StructType physicalSchema,
       Optional<Long> baseRowId,
-      Optional<Long> defaultRowCommitVersion) {
+      Optional<Long> defaultRowCommitVersion,
+      Optional<DeletionVectorDescriptor> deletionVector) {
     Map<Integer, Object> fieldMap = new HashMap<>();
     fieldMap.put(RemoveFile.FULL_SCHEMA.indexOf("path"), requireNonNull(path));
     fieldMap.put(RemoveFile.FULL_SCHEMA.indexOf("deletionTimestamp"), deletionTimestamp);
@@ -399,6 +430,11 @@ public final class GenerateIcebergCompatActionUtils {
     defaultRowCommitVersion.ifPresent(
         version ->
             fieldMap.put(RemoveFile.FULL_SCHEMA.indexOf("defaultRowCommitVersion"), version));
+    deletionVector.ifPresent(
+        dv -> {
+          Row dvRow = dv.toRow();
+          fieldMap.put(RemoveFile.FULL_SCHEMA.indexOf("deletionVector"), dvRow);
+        });
     return new GenericRow(RemoveFile.FULL_SCHEMA, fieldMap);
   }
 }

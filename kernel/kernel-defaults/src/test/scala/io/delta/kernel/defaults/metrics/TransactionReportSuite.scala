@@ -224,7 +224,8 @@ class TransactionReportSuite extends DeltaTableWriteSuiteBase with MetricsReport
           Collections.emptyMap(), // partitionValues
           true, // dataChange,
           Optional.empty(), // baseRowId
-          Optional.empty() // defaultRowCommitVersion
+          Optional.empty(), // defaultRowCommitVersion
+          Optional.empty() // deletionVectorDescriptor
         ))
     })
   }
