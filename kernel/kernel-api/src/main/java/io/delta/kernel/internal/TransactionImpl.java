@@ -255,6 +255,11 @@ public class TransactionImpl implements Transaction {
       // AddFile actions that do not yet have them. If the row ID high watermark changes, emit a
       // DomainMetadata action to update it.
       if (TableFeatures.isRowTrackingSupported(protocol)) {
+        if (providedRowIdHighWatermark.isPresent()) {
+          // Conflict resolution is disabled when providedRowIdHighWatermark is set,
+          // because it must be updated according to the latest table state.
+          maxRetries = 0;
+        }
         List<DomainMetadata> updatedDomainMetadata =
             RowTracking.updateRowIdHighWatermarkIfNeeded(
                 readSnapshot,
