@@ -78,36 +78,6 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
     table.checksum(engine, snapshot.getVersion)
   }
 
-  private def createTxnWithDomainMetadatas(
-      engine: Engine,
-      tablePath: String,
-      domainMetadatas: Seq[DomainMetadata],
-      useInternalApi: Boolean = false): Transaction = {
-
-    val txnBuilder = createWriteTxnBuilder(TableImpl.forPath(engine, tablePath))
-    if (domainMetadatas.nonEmpty && !useInternalApi) {
-      txnBuilder.withDomainMetadataSupported()
-    }
-    val txn = txnBuilder.build(engine).asInstanceOf[TransactionImpl]
-
-    domainMetadatas.foreach { dm =>
-      if (dm.isRemoved) {
-        if (useInternalApi) {
-          txn.removeDomainMetadataInternal(dm.getDomain)
-        } else {
-          txn.removeDomainMetadata(dm.getDomain)
-        }
-      } else {
-        if (useInternalApi) {
-          txn.addDomainMetadataInternal(dm.getDomain, dm.getConfiguration)
-        } else {
-          txn.addDomainMetadata(dm.getDomain, dm.getConfiguration)
-        }
-      }
-    }
-    txn
-  }
-
   private def commitDomainMetadataAndVerify(
       engine: Engine,
       tablePath: String,
@@ -639,7 +609,8 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
             .build(engine)
           txn.addDomainMetadata(domain, "misc config")
         }
-        assert(e.getMessage.contains("Setting a system-controlled domain is not allowed"))
+        assert(
+          e.getMessage.contains("Setting a non-supported system-controlled domain is not allowed"))
       }
     }
 

@@ -454,7 +454,9 @@ class CommitIcebergActionSuite extends DeltaTableWriteSuiteBase {
             generateDataFileStatus(tablePath, "file1.parquet"),
             Collections.emptyMap(),
             true, /* dataChange */
-            tags.asJava))
+            tags.asJava,
+            Optional.empty(), /* baseRowId */
+            Optional.empty() /* defaultRowCommitVersion */ ))
         commitTransaction(
           txn,
           engine,

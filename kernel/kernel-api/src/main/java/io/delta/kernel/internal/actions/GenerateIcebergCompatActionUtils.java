@@ -68,7 +68,9 @@ public final class GenerateIcebergCompatActionUtils {
       DataFileStatus fileStatus,
       Map<String, Literal> partitionValues,
       boolean dataChange,
-      Map<String, String> tags) {
+      Map<String, String> tags,
+      Optional<Long> baseRowId,
+      Optional<Long> defaultRowCommitVersion) {
     Map<String, String> configuration = TransactionStateRow.getConfiguration(transactionState);
 
     /* ----- Validate that this is a valid usage of this API ----- */
@@ -95,7 +97,9 @@ public final class GenerateIcebergCompatActionUtils {
             fileStatus,
             partitionValues,
             dataChange,
-            tags);
+            tags,
+            baseRowId,
+            defaultRowCommitVersion);
     return SingleAction.createAddFileSingleAction(addFile.toRow());
   }
 
@@ -105,7 +109,13 @@ public final class GenerateIcebergCompatActionUtils {
       Map<String, Literal> partitionValues,
       boolean dataChange) {
     return generateIcebergCompatWriterV1AddAction(
-        transactionState, fileStatus, partitionValues, dataChange, Collections.emptyMap());
+        transactionState,
+        fileStatus,
+        partitionValues,
+        dataChange,
+        Collections.emptyMap(),
+        Optional.empty(),
+        Optional.empty());
   }
 
   /**
@@ -179,7 +189,9 @@ public final class GenerateIcebergCompatActionUtils {
       Row transactionState,
       DataFileStatus fileStatus,
       Map<String, Literal> partitionValues,
-      boolean dataChange) {
+      boolean dataChange,
+      Optional<Long> baseRowId,
+      Optional<Long> defaultRowCommitVersion) {
     Map<String, String> config = TransactionStateRow.getConfiguration(transactionState);
 
     /* ----- Validate that this is a valid usage of this API ----- */
@@ -256,8 +268,24 @@ public final class GenerateIcebergCompatActionUtils {
             tableRoot,
             fileStatus,
             partitionValues,
-            dataChange);
+            dataChange,
+            baseRowId,
+            defaultRowCommitVersion);
     return SingleAction.createRemoveFileSingleAction(removeFileRow);
+  }
+
+  public static Row generateIcebergCompatWriterV1RemoveAction(
+      Row transactionState,
+      DataFileStatus fileStatus,
+      Map<String, Literal> partitionValues,
+      boolean dataChange) {
+    return generateIcebergCompatWriterV1RemoveAction(
+        transactionState,
+        fileStatus,
+        partitionValues,
+        dataChange,
+        Optional.empty(),
+        Optional.empty());
   }
 
   /////////////////////
@@ -346,6 +374,25 @@ public final class GenerateIcebergCompatActionUtils {
       DataFileStatus dataFileStatus,
       Map<String, Literal> partitionValues,
       boolean dataChange) {
+    return convertRemoveDataFileStatus(
+        physicalSchema,
+        tableRoot,
+        dataFileStatus,
+        partitionValues,
+        dataChange,
+        Optional.empty(),
+        Optional.empty());
+  }
+
+  @VisibleForTesting
+  public static Row convertRemoveDataFileStatus(
+      StructType physicalSchema,
+      URI tableRoot,
+      DataFileStatus dataFileStatus,
+      Map<String, Literal> partitionValues,
+      boolean dataChange,
+      Optional<Long> baseRowId,
+      Optional<Long> defaultRowCommitVersion) {
     return createRemoveFileRowWithExtendedFileMetadata(
         relativizePath(new Path(dataFileStatus.getPath()), tableRoot).toUri().toString(),
         dataFileStatus.getModificationTime(),
@@ -353,7 +400,9 @@ public final class GenerateIcebergCompatActionUtils {
         serializePartitionMap(partitionValues),
         dataFileStatus.getSize(),
         dataFileStatus.getStatistics(),
-        physicalSchema);
+        physicalSchema,
+        baseRowId,
+        defaultRowCommitVersion);
   }
 
   @VisibleForTesting
@@ -364,7 +413,9 @@ public final class GenerateIcebergCompatActionUtils {
       MapValue partitionValues,
       long size,
       Optional<DataFileStatistics> stats,
-      StructType physicalSchema) {
+      StructType physicalSchema,
+      Optional<Long> baseRowId,
+      Optional<Long> defaultRowCommitVersion) {
     Map<Integer, Object> fieldMap = new HashMap<>();
     fieldMap.put(RemoveFile.FULL_SCHEMA.indexOf("path"), requireNonNull(path));
     fieldMap.put(RemoveFile.FULL_SCHEMA.indexOf("deletionTimestamp"), deletionTimestamp);
@@ -377,6 +428,10 @@ public final class GenerateIcebergCompatActionUtils {
         stat ->
             fieldMap.put(
                 RemoveFile.FULL_SCHEMA.indexOf("stats"), stat.serializeAsJson(physicalSchema)));
+    baseRowId.ifPresent(id -> fieldMap.put(RemoveFile.FULL_SCHEMA.indexOf("baseRowId"), id));
+    defaultRowCommitVersion.ifPresent(
+        version ->
+            fieldMap.put(RemoveFile.FULL_SCHEMA.indexOf("defaultRowCommitVersion"), version));
     return new GenericRow(RemoveFile.FULL_SCHEMA, fieldMap);
   }
 }
