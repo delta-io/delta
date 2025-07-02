@@ -122,29 +122,53 @@ class AddFileSuite extends AnyFunSuite with Matchers {
   }
 
   test("toString() prints all fields of AddFile") {
-    val addFileRow = generateTestAddFileRow(
-      path = "test/path",
-      partitionValues = Map("col1" -> "val1"),
-      size = 100L,
-      modificationTime = 1234L,
-      dataChange = false,
-      tags = Option(Map("tag1" -> "value1")),
-      baseRowId = Option(12345L),
-      defaultRowCommitVersion = Option(67890L),
-      stats = Option("{\"numRecords\":10000}"))
-    val addFile = new AddFile(addFileRow)
-    val expectedString = "AddFile{" +
-      "path='test/path', " +
-      "partitionValues={col1=val1}, " +
-      "size=100, " +
-      "modificationTime=1234, " +
-      "dataChange=false, " +
-      "deletionVector=Optional.empty, " +
-      "tags=Optional[{tag1=value1}], " +
-      "baseRowId=Optional[12345], " +
-      "defaultRowCommitVersion=Optional[67890], " +
-      "stats={\"numRecords\":10000}}"
-    assert(addFile.toString == expectedString)
+    Seq(true, false).foreach { dvPresent =>
+      val deletionVector = if (dvPresent) {
+        Some(new DeletionVectorDescriptor(
+          "storage",
+          "s",
+          Optional.of(1),
+          25,
+          35))
+      } else {
+        None
+      }
+
+      val addFileRow = generateTestAddFileRow(
+        path = "test/path",
+        partitionValues = Map("col1" -> "val1"),
+        size = 100L,
+        modificationTime = 1234L,
+        dataChange = false,
+        tags = Option(Map("tag1" -> "value1")),
+        baseRowId = Option(12345L),
+        defaultRowCommitVersion = Option(67890L),
+        stats = Option("{\"numRecords\":10000}"),
+        deletionVector = deletionVector)
+
+      val addFile = new AddFile(addFileRow)
+
+      val deletionVectorString = if (dvPresent) {
+        "Optional[DeletionVectorDescriptor(storageType=storage," +
+          " pathOrInlineDv=s, offset=Optional[1], sizeInBytes=25, cardinality=35)]"
+      } else {
+        "Optional.empty"
+      }
+
+      val expectedString = "AddFile{" +
+        "path='test/path', " +
+        "partitionValues={col1=val1}, " +
+        "size=100, " +
+        "modificationTime=1234, " +
+        "dataChange=false, " +
+        s"deletionVector=$deletionVectorString, " +
+        "tags=Optional[{tag1=value1}], " +
+        "baseRowId=Optional[12345], " +
+        "defaultRowCommitVersion=Optional[67890], " +
+        "stats={\"numRecords\":10000}}"
+
+      assert(addFile.toString == expectedString)
+    }
   }
 
   test("equals() compares AddFile instances correctly") {
@@ -179,10 +203,26 @@ class AddFileSuite extends AnyFunSuite with Matchers {
       baseRowId = Option(12345L),
       stats = Option("{\"numRecords\":100}"))
 
+    // Create a AddFile with deletion vector value
+    val addFileRowDeletionVector = generateTestAddFileRow(
+      path = "test/path",
+      size = 100L,
+      partitionValues = Map("x" -> "0"),
+      baseRowId = Option(12345L),
+      deletionVector = Some(
+        new DeletionVectorDescriptor(
+          "storage",
+          "s",
+          Optional.of(1),
+          25,
+          35)),
+      stats = Option("{\"numRecords\":100}"))
+
     val addFile1 = new AddFile(addFileRow1)
     val addFile2 = new AddFile(addFileRow2)
     val addFileDiffPath = new AddFile(addFileRowDiffPath)
     val addFileDiffPartition = new AddFile(addFileRowDiffPartition)
+    val addFileDeletionVector = new AddFile(addFileRowDeletionVector)
 
     // Test equality
     assert(addFile1 === addFile2)
@@ -191,6 +231,7 @@ class AddFileSuite extends AnyFunSuite with Matchers {
     assert(addFile2 != addFileDiffPath)
     assert(addFile2 != addFileDiffPartition)
     assert(addFileDiffPath != addFileDiffPartition)
+    assert(addFileDeletionVector != addFileDiffPartition)
 
     // Test null and different type
     assert(!addFile1.equals(null))
@@ -286,41 +327,40 @@ class AddFileSuite extends AnyFunSuite with Matchers {
     assert(result.getStatsJson === Optional.of("{\"numRecords\":100}"))
   }
 
-  test("toRemoveFileRow: DV is not yet support") {
-    // Enabled when DVs are supported
-    val ex = intercept[IllegalArgumentException] {
-      val addFile = new AddFile(generateTestAddFileRow(
-        path = "/path/to/file",
-        partitionValues = Map("a" -> "1"),
-        size = 100L,
-        modificationTime = 200L,
-        dataChange = true,
-        deletionVector = Some(
-          new DeletionVectorDescriptor(
-            "storage",
-            "s",
-            Optional.of(1),
-            25,
-            35)),
-        tags = Some(Map("tag1" -> "value1")),
-        baseRowId = Some(67890L),
-        defaultRowCommitVersion = Some(2823L),
-        stats = Some("{\"numRecords\":100}")))
+  test("toRemoveFileRow: DV is converted properly") {
+    val addFile = new AddFile(generateTestAddFileRow(
+      path = "/path/to/file",
+      partitionValues = Map("a" -> "1"),
+      size = 100L,
+      modificationTime = 200L,
+      dataChange = true,
+      deletionVector = Some(
+        new DeletionVectorDescriptor(
+          "storage",
+          "s",
+          Optional.of(1),
+          25,
+          35)),
+      tags = Some(Map("tag1" -> "value1")),
+      baseRowId = Some(67890L),
+      defaultRowCommitVersion = Some(2823L),
+      stats = Some("{\"numRecords\":100}")))
 
-      val result = new RemoveFile(addFile.toRemoveFileRow(false, Optional.of(200L)))
+    val result = new RemoveFile(addFile.toRemoveFileRow(true, Optional.of(200L)))
 
-      assert(result.getPath === "/path/to/file")
-      assert(result.getPartitionValues === Map("a" -> "1").asJava)
-      assert(result.getSize === 100L)
-      assert(result.getDeletionTimestamp === 200L)
-      assert(result.getDataChange === true)
-      assert(result.getDeletionVector === Optional.of(
-        new DeletionVectorDescriptor("storage", "s", Optional.of(1), 25, 35)))
-      assert(VectorUtils.toJavaMap[String, String](result.getTags.get()).asScala ===
-        Map[String, String]("tag1" -> "value1"))
-      assert(result.getBaseRowId === Optional.of(67890L))
-      assert(result.getDefaultRowCommitVersion === Optional.of(2823L))
-      assert(result.getStatsJson === Optional.of("{\"numRecords\":100}"))
-    }
+    assert(result.getPath === "/path/to/file")
+    assert(VectorUtils.toJavaMap[String, String](result.getPartitionValues.get()).asScala ===
+      Map[String, String]("a" -> "1"))
+    assert(result.getSize.get() === 100L)
+    assert(result.getDeletionTimestamp.get() === 200L)
+    assert(result.getDataChange === true)
+    assert(result.getDeletionVector === Optional.of(
+      new DeletionVectorDescriptor("storage", "s", Optional.of(1), 25, 35)))
+    assert(VectorUtils.toJavaMap[String, String](result.getTags.get()).asScala ===
+      Map[String, String]("tag1" -> "value1"))
+    assert(result.getBaseRowId === Optional.of(67890L))
+    assert(result.getDefaultRowCommitVersion === Optional.of(2823L))
+    assert(result.getStatsJson === Optional.of("{\"numRecords\":100}"))
+
   }
 }
