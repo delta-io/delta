@@ -40,10 +40,10 @@ class PaginationContextSuite extends AnyFunSuite {
     val pageSize = 50L
 
     val context = PaginationContext.forPageWithPageToken(
+      pageSize,
       lastReadLogFileName,
       lastReturnedRowIndex,
-      lastReadSidecarFileIdx,
-      pageSize)
+      lastReadSidecarFileIdx)
 
     assert(context.getLastReadLogFileName() === Optional.of(lastReadLogFileName))
     assert(context.getLastReturnedRowIndex() === Optional.of(lastReturnedRowIndex))
@@ -58,15 +58,30 @@ class PaginationContextSuite extends AnyFunSuite {
     val pageSize = 50L
 
     val context = PaginationContext.forPageWithPageToken(
+      pageSize,
       lastReadLogFileName,
       lastReturnedRowIndex,
-      lastReadSidecarFileIdx,
-      pageSize)
+      lastReadSidecarFileIdx)
 
     assert(context.getLastReadLogFileName() === Optional.of(lastReadLogFileName))
     assert(context.getLastReturnedRowIndex() === Optional.of(lastReturnedRowIndex))
     assert(!context.getLastReadSidecarFileIdx().isPresent)
     assert(context.getPageSize() === pageSize)
+  }
+
+  test("forPageWithPageToken should throw exception when lastReadLogFileName is null") {
+    val lastReturnedRowIndex = 42L
+    val lastReadSidecarFileIdx = Optional.empty[java.lang.Long]()
+    val pageSize = 50L
+
+    val e = intercept[NullPointerException] {
+      PaginationContext.forPageWithPageToken(
+        pageSize,
+        null,
+        lastReturnedRowIndex,
+        lastReadSidecarFileIdx)
+    }
+    assert(e.getMessage === "lastReadLogFileName is null")
   }
 
   test("should throw exception for zero page size") {
@@ -92,10 +107,10 @@ class PaginationContextSuite extends AnyFunSuite {
 
     val e = intercept[IllegalArgumentException] {
       PaginationContext.forPageWithPageToken(
+        negativePageSize,
         lastReadLogFileName,
         lastReturnedRowIndex,
-        lastReadSidecarFileIdx,
-        negativePageSize)
+        lastReadSidecarFileIdx)
     }
     assert(e.getMessage === "Page size must be greater than zero!")
   }

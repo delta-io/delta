@@ -17,30 +17,36 @@ package io.delta.kernel.internal.replay;
 
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
+import java.util.Objects;
 import java.util.Optional;
 
 /** {@code PaginationContext} carries pagination-related information. */
 public class PaginationContext {
 
   public static PaginationContext forPageWithPageToken(
+      long pageSize,
       String lastReadLogFileName,
       long lastReturnedRowIndex,
-      Optional<Long> lastReadSidecarFileIdx,
-      long pageSize) {
+      Optional<Long> lastReadSidecarFileIdx) {
+    Objects.requireNonNull(lastReadLogFileName, "lastReadLogFileName is null");
+    Objects.requireNonNull(lastReadSidecarFileIdx, "lastReadSidecarFileIdx is null");
     return new PaginationContext(
+        pageSize,
         Optional.of(lastReadLogFileName),
         Optional.of(lastReturnedRowIndex),
-        lastReadSidecarFileIdx,
-        pageSize);
+        lastReadSidecarFileIdx);
   }
 
   public static PaginationContext forFirstPage(long pageSize) {
     return new PaginationContext(
+        pageSize,
         Optional.empty() /* lastReadLogFileName */,
         Optional.empty() /* lastReturnedRowIndex */,
-        Optional.empty() /* lastReadSidecarFileIdx */,
-        pageSize);
+        Optional.empty() /* lastReadSidecarFileIdx */);
   }
+
+  /** maximum number of ScanFiles to return in the current page */
+  private final long pageSize;
 
   // ===== Variables from page token (is empty when getting first page because page token is empty)
 
@@ -65,23 +71,22 @@ public class PaginationContext {
    */
   private final Optional<Long> lastReadSidecarFileIdx;
 
-  // ===== Non-page-token related info =====
-
-  /** maximum number of ScanFiles to return in the current page */
-  private final long pageSize;
-
   // TODO: add cached log replay hashsets related info
 
   private PaginationContext(
+      long pageSize,
       Optional<String> lastReadLogFileName,
       Optional<Long> lastReturnedRowIndex,
-      Optional<Long> lastReadSidecarFileIdx,
-      long pageSize) {
+      Optional<Long> lastReadSidecarFileIdx) {
     checkArgument(pageSize > 0, "Page size must be greater than zero!");
+    this.pageSize = pageSize;
     this.lastReadLogFileName = lastReadLogFileName;
     this.lastReturnedRowIndex = lastReturnedRowIndex;
     this.lastReadSidecarFileIdx = lastReadSidecarFileIdx;
-    this.pageSize = pageSize;
+  }
+
+  public long getPageSize() {
+    return pageSize;
   }
 
   public Optional<String> getLastReadLogFileName() {
@@ -94,9 +99,5 @@ public class PaginationContext {
 
   public Optional<Long> getLastReadSidecarFileIdx() {
     return lastReadSidecarFileIdx;
-  }
-
-  public long getPageSize() {
-    return pageSize;
   }
 }
