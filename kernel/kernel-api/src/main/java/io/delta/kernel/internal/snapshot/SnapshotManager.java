@@ -20,7 +20,7 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.lang.String.format;
 
 import io.delta.kernel.*;
-import io.delta.kernel.engine.Engine;
+import io.delta.kernel.engine.*;
 import io.delta.kernel.exceptions.InvalidTableException;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.*;
@@ -37,7 +37,9 @@ import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.FileNames.DeltaLogFileType;
 import io.delta.kernel.internal.util.Tuple2;
+import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
+import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
@@ -79,11 +81,14 @@ public class SnapshotManager {
    */
   public SnapshotImpl buildLatestSnapshot(Engine engine, SnapshotQueryContext snapshotContext)
       throws TableNotFoundException {
+    Engine metricEngine = createMetricsEngine(engine, snapshotContext);
+
     final LogSegment logSegment =
         snapshotContext
             .getSnapshotMetrics()
             .timeToBuildLogSegmentForVersionTimer
-            .time(() -> getLogSegmentForVersion(engine, Optional.empty() /* versionToLoad */));
+            .time(
+                () -> getLogSegmentForVersion(metricEngine, Optional.empty() /* versionToLoad */));
     snapshotContext.setVersion(logSegment.getVersion());
     snapshotContext.setCheckpointVersion(logSegment.getCheckpointVersionOpt());
 
@@ -102,12 +107,16 @@ public class SnapshotManager {
   public SnapshotImpl getSnapshotAt(
       Engine engine, long version, SnapshotQueryContext snapshotContext)
       throws TableNotFoundException {
+    Engine metricEngine = createMetricsEngine(engine, snapshotContext);
+
     final LogSegment logSegment =
         snapshotContext
             .getSnapshotMetrics()
             .timeToBuildLogSegmentForVersionTimer
             .time(
-                () -> getLogSegmentForVersion(engine, Optional.of(version) /* versionToLoadOpt */));
+                () ->
+                    getLogSegmentForVersion(
+                        metricEngine, Optional.of(version) /* versionToLoadOpt */));
 
     snapshotContext.setCheckpointVersion(logSegment.getCheckpointVersionOpt());
     snapshotContext.setVersion(logSegment.getVersion());
@@ -158,6 +167,28 @@ public class SnapshotManager {
   ////////////////////
   // Helper Methods //
   ////////////////////
+
+  /**
+   * Creates an engine that wraps the provided engine with instrumentation for collecting file
+   * system metrics. Currently focuses on tracking cloud listing calls during log segment
+   * operations.
+   */
+  private Engine createMetricsEngine(Engine engine, SnapshotQueryContext snapshotContext) {
+    return new DelegateEngine(engine) {
+      @Override
+      public FileSystemClient getFileSystemClient() {
+        return new DelegateFileSystemClient(super.getFileSystemClient()) {
+          @Override
+          public CloseableIterator<FileStatus> listFrom(String filePath) throws IOException {
+            // TODO: Also keep track of duration. Note that listing could be spread to
+            // iterating over the iterators.
+            snapshotContext.getSnapshotMetrics().loadLogSegmentCloudListCallCounter.increment();
+            return super.listFrom(filePath);
+          }
+        };
+      }
+    };
+  }
 
   /**
    * Verify that a list of delta versions is contiguous.

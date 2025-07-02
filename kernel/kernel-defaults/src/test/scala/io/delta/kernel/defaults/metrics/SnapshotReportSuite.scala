@@ -39,7 +39,8 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
       expectNonEmptyTimestampToVersionResolutionDuration: Boolean = false,
       expectNonZeroLoadProtocolAndMetadataDuration: Boolean = true,
       expectNonZeroBuildLogSegmentDuration: Boolean = true,
-      expectNonZeroDurationToGetCrcInfo: Boolean = true)
+      expectNonZeroDurationToGetCrcInfo: Boolean = true,
+      expectNonZeroListingBuildLogSegment: Boolean = true)
 
   /**
    * Given a function [[f]] that generates a snapshot from a [[Table]], runs [[f]] and looks for
@@ -165,6 +166,13 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
       assert(metrics.getDurationToGetCrcInfoNs <= metrics.getLoadSnapshotTotalDurationNs)
     } else {
       assert(metrics.getDurationToGetCrcInfoNs == 0)
+    }
+
+    // ===== Metric: loadLogSegmentCloudListCallCount =====
+    if (expectations.expectNonZeroListingBuildLogSegment) {
+      assert(metrics.getLoadLogSegmentCloudListCallCount > 0)
+    } else {
+      assert(metrics.getLoadLogSegmentCloudListCallCount == 0)
     }
   }
 
@@ -306,7 +314,8 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
           expectNonEmptyTimestampToVersionResolutionDuration = true,
           expectNonZeroLoadProtocolAndMetadataDuration = false,
           expectNonZeroBuildLogSegmentDuration = false,
-          expectNonZeroDurationToGetCrcInfo = false))
+          expectNonZeroDurationToGetCrcInfo = false,
+          expectNonZeroListingBuildLogSegment = false))
 
       // Test getSnapshotAsOfTimestamp with timestamp=currentTime (does not exist)
       // This fails during timestamp -> version resolution
@@ -323,7 +332,8 @@ class SnapshotReportSuite extends AnyFunSuite with MetricsReportTestUtils {
           expectNonEmptyTimestampToVersionResolutionDuration = true,
           expectNonZeroLoadProtocolAndMetadataDuration = false,
           expectNonZeroBuildLogSegmentDuration = false,
-          expectNonZeroDurationToGetCrcInfo = false))
+          expectNonZeroDurationToGetCrcInfo = false,
+          expectNonZeroListingBuildLogSegment = false))
     }
   }
 

@@ -1,0 +1,59 @@
+/*
+ * Copyright (2025) The Delta Lake Project Authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package io.delta.kernel.engine;
+
+import static java.util.Objects.requireNonNull;
+
+import java.util.List;
+
+/**
+ * Delegate implementation of the {@link Engine} interface that forwards all method calls to a
+ * wrapped Engine instance. This class is designed to be extended for selectively overriding
+ * specific Engine behaviors while delegating others to the wrapped instance.
+ */
+public class DelegateEngine implements Engine {
+
+  private final Engine delegate;
+
+  public DelegateEngine(Engine delegate) {
+    this.delegate = requireNonNull(delegate);
+  }
+
+  @Override
+  public ExpressionHandler getExpressionHandler() {
+    return delegate.getExpressionHandler();
+  }
+
+  @Override
+  public JsonHandler getJsonHandler() {
+    return delegate.getJsonHandler();
+  }
+
+  @Override
+  public FileSystemClient getFileSystemClient() {
+    return delegate.getFileSystemClient();
+  }
+
+  @Override
+  public ParquetHandler getParquetHandler() {
+    return delegate.getParquetHandler();
+  }
+
+  @Override
+  public List<MetricsReporter> getMetricsReporters() {
+    return delegate.getMetricsReporters();
+  }
+}
