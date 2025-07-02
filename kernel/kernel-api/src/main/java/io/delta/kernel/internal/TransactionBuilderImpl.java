@@ -41,6 +41,7 @@ import io.delta.kernel.internal.icebergcompat.IcebergCompatV2MetadataValidatorAn
 import io.delta.kernel.internal.icebergcompat.IcebergCompatV3MetadataValidatorAndUpdater;
 import io.delta.kernel.internal.icebergcompat.IcebergUniversalFormatMetadataValidatorAndUpdater;
 import io.delta.kernel.internal.icebergcompat.IcebergWriterCompatV1MetadataValidatorAndUpdater;
+import io.delta.kernel.internal.icebergcompat.IcebergWriterCompatV3MetadataValidatorAndUpdater;
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.metrics.SnapshotMetrics;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
@@ -479,6 +480,16 @@ public class TransactionBuilderImpl implements TransactionBuilder {
                 newProtocol.orElse(baseProtocol));
     if (icebergWriterCompatV1.isPresent()) {
       newMetadata = icebergWriterCompatV1;
+    }
+
+    Optional<Metadata> icebergWriterCompatV3 =
+        IcebergWriterCompatV3MetadataValidatorAndUpdater
+            .validateAndUpdateIcebergWriterCompatV3Metadata(
+                isCreateOrReplace,
+                newMetadata.orElse(baseMetadata),
+                newProtocol.orElse(baseProtocol));
+    if (icebergWriterCompatV3.isPresent()) {
+      newMetadata = icebergWriterCompatV3;
     }
 
     // TODO: refactor this method to use a single validator and updater.

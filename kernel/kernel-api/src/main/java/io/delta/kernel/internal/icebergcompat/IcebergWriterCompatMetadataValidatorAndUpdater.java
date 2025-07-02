@@ -27,6 +27,7 @@ import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.SchemaIterable;
 import io.delta.kernel.types.*;
 import java.util.*;
+import java.util.stream.Stream;
 
 /**
  * Contains interfaces and common utility classes performing the validations and updates necessary
@@ -54,6 +55,49 @@ abstract class IcebergWriterCompatMetadataValidatorAndUpdater
           (inputContext) ->
               ColumnMapping.updateColumnMappingMetadataIfNeeded(
                   inputContext.newMetadata, inputContext.isCreatingNewTable));
+
+  /**
+   * Creates an IcebergCompatRequiredTablePropertyEnforcer for enabling a specific Iceberg
+   * compatibility version. The enforcer ensures the property is set to "true" and delegates
+   * validation to the appropriate metadata validator.
+   *
+   * @param tableConfigProperty the table configuration property to enforce
+   * @param postProcessor the version-specific validation and metadata update processor
+   * @return configured enforcer for the specified Iceberg compatibility version
+   */
+  protected static IcebergCompatRequiredTablePropertyEnforcer<Boolean> createIcebergCompatEnforcer(
+      TableConfig<Boolean> tableConfigProperty, PostMetadataProcessor postProcessor) {
+    return new IcebergCompatRequiredTablePropertyEnforcer<>(
+        tableConfigProperty, (value) -> value, "true", postProcessor);
+  }
+
+  /**
+   * Common set of allowed table features shared across all Iceberg writer compatibility versions.
+   * This includes the incompatible legacy features (invariants, changeDataFeed, checkConstraints,
+   * identityColumns, generatedColumns) because they may be present in the table protocol even when
+   * they are not in use. In later checks we validate that these incompatible features are inactive
+   * in the table. See the protocol spec for more details.
+   */
+  protected static final Set<TableFeature> COMMON_ALLOWED_FEATURES =
+      Stream.of(
+              // Incompatible, but not active, legacy table features
+              INVARIANTS_W_FEATURE,
+              CHANGE_DATA_FEED_W_FEATURE,
+              CONSTRAINTS_W_FEATURE,
+              IDENTITY_COLUMNS_W_FEATURE,
+              GENERATED_COLUMNS_W_FEATURE,
+              // Compatible table features
+              APPEND_ONLY_W_FEATURE,
+              COLUMN_MAPPING_RW_FEATURE,
+              DOMAIN_METADATA_W_FEATURE,
+              VACUUM_PROTOCOL_CHECK_RW_FEATURE,
+              CHECKPOINT_V2_RW_FEATURE,
+              IN_COMMIT_TIMESTAMP_W_FEATURE,
+              CLUSTERING_W_FEATURE,
+              TIMESTAMP_NTZ_RW_FEATURE,
+              TYPE_WIDENING_RW_FEATURE,
+              TYPE_WIDENING_RW_PREVIEW_FEATURE)
+          .collect(toSet());
 
   protected static IcebergCompatCheck createUnsupportedFeaturesCheck(
       IcebergWriterCompatMetadataValidatorAndUpdater instance) {
@@ -208,6 +252,16 @@ abstract class IcebergWriterCompatMetadataValidatorAndUpdater
               inputContext.compatFeatureName, Collections.singleton(GENERATED_COLUMNS_W_FEATURE));
         }
       };
+
+  protected static final List<IcebergCompatCheck> COMMON_CHECKS =
+      Arrays.asList(
+          UNSUPPORTED_TYPES_CHECK,
+          PHYSICAL_NAMES_MATCH_FIELD_IDS_CHECK,
+          INVARIANTS_INACTIVE_CHECK,
+          CHANGE_DATA_FEED_INACTIVE_CHECK,
+          CHECK_CONSTRAINTS_INACTIVE_CHECK,
+          IDENTITY_COLUMNS_INACTIVE_CHECK,
+          GENERATED_COLUMNS_INACTIVE_CHECK);
 
   @Override
   abstract String compatFeatureName();
