@@ -93,6 +93,21 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite {
   }
 
   test(
+    "checksum not found at read version but before and after version => use previous version") {
+    withTableWithCrc { (table, tablePath, engine) =>
+      deleteChecksumFileForTable(tablePath, Seq(8))
+      loadSnapshotFieldsCheckMetrics(
+        table,
+        engine,
+        expJsonVersionsRead = Seq(8),
+        expParquetVersionsRead = Nil,
+        expParquetReadSetSizes = Nil,
+        expChecksumReadSet = Seq(7),
+        readVersion = 8)
+    }
+  }
+
+  test(
     "checksum missing read version & the previous version, " +
       "checkpoint exists the read version and the previous version => use checkpoint") {
     withTableWithCrc { (table, tablePath, engine) =>
