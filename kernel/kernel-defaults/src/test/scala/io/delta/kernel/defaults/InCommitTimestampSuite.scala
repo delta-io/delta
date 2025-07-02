@@ -81,6 +81,10 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
       assert(
         getInCommitTimestamp(engine, table, version = 0).get === ver0Snapshot.getTimestamp(engine))
       assertHasWriterFeature(ver0Snapshot, "inCommitTimestamp")
+      // Time travel should work
+      val searchedSnapshot =
+        table.getSnapshotAsOfTimestamp(engine, beforeCommitAttemptStartTime + 1)
+      assert(searchedSnapshot.getVersion == 0)
     }
   }
 
@@ -113,6 +117,16 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
       assert(ver1Snapshot.getTimestamp(engine) > ver0Snapshot.getTimestamp(engine))
       assert(
         getInCommitTimestamp(engine, table, version = 1).get === ver1Snapshot.getTimestamp(engine))
+
+      // Time travel should work
+      // Search timestamp = ICT enablement time - 1
+      val searchedSnapshot1 =
+        table.getSnapshotAsOfTimestamp(engine, ver1Snapshot.getTimestamp(engine) - 1)
+      assert(searchedSnapshot1.getVersion == 0)
+      // Search timestamp = ICT enablement time
+      val searchedSnapshot2 =
+        table.getSnapshotAsOfTimestamp(engine, ver1Snapshot.getTimestamp(engine))
+      assert(searchedSnapshot2.getVersion == 1)
     }
   }
 
