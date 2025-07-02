@@ -295,7 +295,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
 
       assert(
         e.getMessage.contains(
-          "Cannot assign a rowId high water mark"))
+          "Cannot assign a row id high water mark"))
     }
   }
 
