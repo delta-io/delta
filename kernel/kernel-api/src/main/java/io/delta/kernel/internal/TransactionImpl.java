@@ -332,8 +332,7 @@ public class TransactionImpl implements Transaction {
             commitAsVersion,
             this,
             domainMetadataState.getComputedDomainMetadatasToCommit(),
-            dataActions,
-            providedRowIdHighWatermark);
+            dataActions);
     long newCommitAsVersion = rebaseState.getLatestVersion() + 1;
     checkArgument(
         commitAsVersion < newCommitAsVersion,
