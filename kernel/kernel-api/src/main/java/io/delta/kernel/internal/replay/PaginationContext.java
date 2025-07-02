@@ -22,6 +22,26 @@ import java.util.Optional;
 /** {@code PaginationContext} carries pagination-related information. */
 public class PaginationContext {
 
+  public static PaginationContext forPageWithPageToken(
+      String lastReadLogFileName,
+      long lastReturnedRowIndex,
+      Optional<Long> lastReadSidecarFileIdx,
+      long pageSize) {
+    return new PaginationContext(
+        Optional.of(lastReadLogFileName),
+        Optional.of(lastReturnedRowIndex),
+        lastReadSidecarFileIdx,
+        pageSize);
+  }
+
+  public static PaginationContext forFirstPage(long pageSize) {
+    return new PaginationContext(
+        Optional.empty() /*lastReadLogFileName*/,
+        Optional.empty() /*lastReturnedRowIndex*/,
+        Optional.empty() /*lastReadSidecarFileIdx*/,
+        pageSize);
+  }
+
   // ===== Variables from page token (is empty when getting first page because page token is empty)
 
   /**
@@ -62,25 +82,6 @@ public class PaginationContext {
     this.lastReturnedRowIndex = lastReturnedRowIndex;
     this.lastReadSidecarFileIdx = lastReadSidecarFileIdx;
     this.pageSize = pageSize;
-  }
-
-  /** Factory for non first page, where page token is available */
-  public static PaginationContext forPageWithPageToken(
-      String lastReadLogFileName,
-      long lastReturnedRowIndex,
-      Optional<Long> lastReadSidecarFileIdx,
-      long pageSize) {
-    return new PaginationContext(
-        Optional.of(lastReadLogFileName),
-        Optional.of(lastReturnedRowIndex),
-        lastReadSidecarFileIdx,
-        pageSize);
-  }
-
-  /** Factory for the very first page, where no page token is available */
-  public static PaginationContext forFirstPage(long pageSize) {
-    return new PaginationContext(Optional.empty() /*lastReadLogFileName*/
-        , Optional.empty() /*lastReturnedRowIndex*/, Optional.empty() /*lastReadSidecarFileIdx*/, pageSize);
   }
 
   public Optional<String> getLastReadLogFileName() {
