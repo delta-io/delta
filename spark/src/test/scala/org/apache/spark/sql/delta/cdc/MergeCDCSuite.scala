@@ -51,6 +51,7 @@ trait CDCEnabled extends SharedSparkSession {
 trait MergeCDCTests extends QueryTest
   with CDCEnabled
   with MergeIntoSQLTestUtils
+  with DeltaDMLByPathTestUtils
   with DeltaColumnMappingTestUtils
   with DeltaSQLCommandTest {
   import testImplicits._
