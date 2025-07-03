@@ -35,6 +35,7 @@ import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
 trait MergeIntoSQLMixin extends MergeIntoSuiteBaseMixin
   with MergeIntoSQLTestUtils
   with DeltaSQLCommandTest
+  with DeltaDMLByPathTestUtils
   with DeltaTestUtilsForTempViews {
 
   override def excluded: Seq[String] = super.excluded ++ Seq(
