@@ -22,21 +22,37 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.internal.data.GenericRow;
+import io.delta.kernel.internal.rowtracking.RowTrackingMetadataDomain;
 import io.delta.kernel.types.BooleanType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
-import java.util.HashMap;
-import java.util.Locale;
-import java.util.Map;
+import java.util.*;
 
 /** Delta log action representing an `DomainMetadata` action */
 public class DomainMetadata {
+
+  private static final Set<String> SUPPORTED_SYSTEM_DOMAINS =
+      Collections.unmodifiableSet(
+          new HashSet<>(Collections.singletonList(RowTrackingMetadataDomain.DOMAIN_NAME)));
 
   /** Whether the provided {@code domain} is a user-controlled domain */
   public static boolean isUserControlledDomain(String domain) {
     // Domain identifiers are case-sensitive, but we don't want to allow users to set domains
     // with prefixes like `DELTA.` either, so perform case-insensitive check for this purpose
     return !domain.toLowerCase(Locale.ROOT).startsWith("delta.");
+  }
+
+  /**
+   * Checks whether the provided {@code domain} is a system domain that is supported for set in a
+   * Delta transaction via addDomainMetadata.
+   *
+   * <p>By default, system domains are not allowed to be set through transaction-level domain
+   * metadata due to their reserved nature. However, there are specific system domains—such as
+   * {@link RowTrackingMetadataDomain#DOMAIN_NAME}—that are explicitly allowed to be set in this
+   * context. This method defines the allowlist of such supported domains and checks against it.
+   */
+  public static boolean isSystemDomainSupportedSetFromTxn(String domain) {
+    return SUPPORTED_SYSTEM_DOMAINS.contains(domain);
   }
 
   /** Full schema of the {@link DomainMetadata} action in the Delta Log. */

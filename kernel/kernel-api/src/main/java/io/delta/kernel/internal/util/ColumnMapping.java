@@ -328,9 +328,11 @@ public class ColumnMapping {
       Metadata metadata, boolean isNewTable) {
     StructType oldSchema = metadata.getSchema();
 
-    // When icebergWriterCompatV1 is enabled we require physicalName='col-[columnId]'
+    // When icebergWriterCompatV1 or icebergWriterCompatV3 is enabled we require
+    // physicalName='col-[columnId]'
     boolean useColumnIdForPhysicalName =
-        TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.fromMetadata(metadata);
+        TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.fromMetadata(metadata)
+            || TableConfig.ICEBERG_WRITER_COMPAT_V3_ENABLED.fromMetadata(metadata);
 
     // This is the maxColumnId to use when assigning any new field-ids; we update this as we
     // traverse the schema and after traversal this is the value that should be stored in the

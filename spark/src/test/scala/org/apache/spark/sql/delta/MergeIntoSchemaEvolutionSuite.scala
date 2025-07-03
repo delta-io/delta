@@ -72,19 +72,19 @@ trait MergeIntoSchemaEvolutionMixin {
 
         if (error != null) {
           val ex = intercept[AnalysisException] {
-            executeMerge(s"delta.`$tempPath` t", "source s", cond, clauses: _*)
+            executeMerge(s"$tableSQLIdentifier t", "source s", cond, clauses: _*)
           }
           errorContains(Utils.exceptionString(ex), error)
         } else {
-          executeMerge(s"delta.`$tempPath` t", "source s", cond, clauses: _*)
-          checkAnswer(spark.read.format("delta").load(tempPath), df.collect())
+          executeMerge(s"$tableSQLIdentifier t", "source s", cond, clauses: _*)
+          checkAnswer(readDeltaTableByIdentifier(tableSQLIdentifier), df.collect())
           if (schema != null) {
-            assert(spark.read.format("delta").load(tempPath).schema === schema)
+            assert(readDeltaTableByIdentifier(tableSQLIdentifier).schema === schema)
           } else {
             // Check against the schema of the expected result df if no explicit schema was
             // provided. Nullability of fields will vary depending on the actual data in the df so
             // we ignore it.
-            assert(spark.read.format("delta").load(tempPath).schema.asNullable ===
+            assert(readDeltaTableByIdentifier(tableSQLIdentifier).schema.asNullable ===
               df.schema.asNullable)
           }
         }

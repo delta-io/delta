@@ -630,6 +630,14 @@ trait DeltaDMLTestUtils
   }
 
   /**
+   * Reads a delta table by its identifier. The identifier can either be the table name or table
+   * path that is in the form of delta.`tablePath`.
+   */
+  protected def readDeltaTableByIdentifier(tableIdentifier: String): DataFrame = {
+    spark.read.format("delta").table(tableIdentifier)
+  }
+
+  /**
    * Finds the latest operation of the given type that ran on the test table and returns the
    * dataframe with the changes of the corresponding table version.
    *

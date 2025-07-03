@@ -39,6 +39,7 @@ trait CDCEnabled extends SharedSparkSession {
 
 trait MergeCDCMixin extends SharedSparkSession
   with MergeIntoSQLTestUtils
+  with DeltaDMLByPathTestUtils
   with DeltaColumnMappingTestUtils
   with DeltaSQLCommandTest {
 

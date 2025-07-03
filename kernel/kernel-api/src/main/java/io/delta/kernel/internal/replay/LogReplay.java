@@ -258,7 +258,7 @@ public class LogReplay {
     return new Lazy<>(
         () -> {
           final Tuple2<Protocol, Metadata> result =
-              snapshotMetrics.loadInitialDeltaActionsTimer.time(
+              snapshotMetrics.loadProtocolMetadataTotalDurationTimer.time(
                   () -> {
                     final long targetVersion = getVersion();
 
@@ -285,7 +285,7 @@ public class LogReplay {
           logger.info(
               "[{}] Took {}ms to load Protocol and Metadata at version {}",
               dataPath.toString(),
-              snapshotMetrics.loadInitialDeltaActionsTimer.totalDurationMs(),
+              snapshotMetrics.loadProtocolMetadataTotalDurationTimer.totalDurationMs(),
               getVersion());
 
           return result;
@@ -611,7 +611,7 @@ public class LogReplay {
                       FileNames.getFileVersion(new Path(checksum.getPath())) >= crcReadLowerBound)
               .flatMap(
                   checksum ->
-                      snapshotMetrics.durationToGetCrcInfoTimer.time(
+                      snapshotMetrics.loadCrcTotalDurationTimer.time(
                           () -> ChecksumReader.getCRCInfo(engine, checksum)));
 
       if (!crcInfoOpt.isPresent()) {

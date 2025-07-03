@@ -431,6 +431,15 @@ public final class DeltaErrors {
             + " but 'domainMetadata' is unsupported");
   }
 
+  public static KernelException rowTrackingRequiredForRowIdHighWatermark(
+      String tablePath, String rowIdHighWatermark) {
+    return new KernelException(
+        String.format(
+            "Cannot assign a row id high water mark (`%s`) to a table `%s` that does not support "
+                + "`rowTracking` table feature. Please enable the `rowTracking` table feature.",
+            rowIdHighWatermark, tablePath));
+  }
+
   public static KernelException cannotToggleRowTrackingOnExistingTable() {
     return new KernelException("Row tracking support cannot be changed once the table is created.");
   }
