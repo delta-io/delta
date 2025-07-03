@@ -17,11 +17,30 @@ package io.delta.kernel.internal
 
 import java.util.Optional
 
-import io.delta.kernel.internal.replay.PaginationContext
+import io.delta.kernel.internal.replay.{PageToken, PaginationContext}
 
 import org.scalatest.funsuite.AnyFunSuite
 
 class PaginationContextSuite extends AnyFunSuite {
+
+  private val TEST_FILE_NAME = "test_file.json"
+  private val TEST_ROW_INDEX = 42L
+  private val TEST_SIDECAR_INDEX = Optional.of(java.lang.Long.valueOf(5L))
+  private val TEST_KERNEL_VERSION = "4.0.0"
+  private val TEST_TABLE_PATH = "/path/to/table"
+  private val TEST_TABLE_VERSION = 5L
+  private val TEST_PREDICATE_HASH = 123L
+  private val TEST_LOG_SEGMENT_HASH = 456L
+
+  private val testPageToken = new PageToken(
+    TEST_FILE_NAME,
+    TEST_ROW_INDEX,
+    TEST_SIDECAR_INDEX,
+    TEST_KERNEL_VERSION,
+    TEST_TABLE_PATH,
+    TEST_TABLE_VERSION,
+    TEST_PREDICATE_HASH,
+    TEST_LOG_SEGMENT_HASH)
 
   test("forFirstPage should create context with empty optionals and specified page size") {
     val pageSize = 100L
@@ -34,54 +53,24 @@ class PaginationContextSuite extends AnyFunSuite {
   }
 
   test("forPageWithPageToken should create context with provided values") {
-    val lastReadLogFileName = "00000000000000000000.json"
-    val lastReturnedRowIndex = 42L
-    val lastReadSidecarFileIdx = Optional.of(java.lang.Long.valueOf(5L))
     val pageSize = 50L
+    val context = PaginationContext.forPageWithPageToken(pageSize, testPageToken)
 
-    val context = PaginationContext.forPageWithPageToken(
-      pageSize,
-      lastReadLogFileName,
-      lastReturnedRowIndex,
-      lastReadSidecarFileIdx)
-
-    assert(context.getLastReadLogFileName() === Optional.of(lastReadLogFileName))
-    assert(context.getLastReturnedRowIndex() === Optional.of(lastReturnedRowIndex))
-    assert(context.getLastReadSidecarFileIdx() === lastReadSidecarFileIdx)
+    assert(context.getLastReadLogFileName() === Optional.of(TEST_FILE_NAME))
+    assert(context.getLastReturnedRowIndex() === Optional.of(TEST_ROW_INDEX))
+    assert(context.getLastReadSidecarFileIdx() === TEST_SIDECAR_INDEX)
     assert(context.getPageSize() === pageSize)
   }
 
-  test("forPageWithPageToken should handle empty sidecar file index") {
-    val lastReadLogFileName = "00000000000000000000.json"
-    val lastReturnedRowIndex = 42L
-    val lastReadSidecarFileIdx = Optional.empty[java.lang.Long]()
-    val pageSize = 50L
-
-    val context = PaginationContext.forPageWithPageToken(
-      pageSize,
-      lastReadLogFileName,
-      lastReturnedRowIndex,
-      lastReadSidecarFileIdx)
-
-    assert(context.getLastReadLogFileName() === Optional.of(lastReadLogFileName))
-    assert(context.getLastReturnedRowIndex() === Optional.of(lastReturnedRowIndex))
-    assert(!context.getLastReadSidecarFileIdx().isPresent)
-    assert(context.getPageSize() === pageSize)
-  }
-
-  test("forPageWithPageToken should throw exception when lastReadLogFileName is null") {
+  test("forPageWithPageToken should throw exception when page token is null") {
     val lastReturnedRowIndex = 42L
     val lastReadSidecarFileIdx = Optional.empty[java.lang.Long]()
     val pageSize = 50L
 
     val e = intercept[NullPointerException] {
-      PaginationContext.forPageWithPageToken(
-        pageSize,
-        null,
-        lastReturnedRowIndex,
-        lastReadSidecarFileIdx)
+      PaginationContext.forPageWithPageToken(pageSize, null)
     }
-    assert(e.getMessage === "lastReadLogFileName is null")
+    assert(e.getMessage === "page token is null")
   }
 
   test("should throw exception for zero page size") {
@@ -100,17 +89,10 @@ class PaginationContextSuite extends AnyFunSuite {
   }
 
   test("should throw exception for negative page size with page token") {
-    val lastReadLogFileName = "00000000000000000000.json"
-    val lastReturnedRowIndex = 42L
-    val lastReadSidecarFileIdx = Optional.empty[java.lang.Long]()
     val negativePageSize = -5L
 
     val e = intercept[IllegalArgumentException] {
-      PaginationContext.forPageWithPageToken(
-        negativePageSize,
-        lastReadLogFileName,
-        lastReturnedRowIndex,
-        lastReadSidecarFileIdx)
+      PaginationContext.forPageWithPageToken(negativePageSize, testPageToken)
     }
     assert(e.getMessage === "Page size must be greater than zero!")
   }

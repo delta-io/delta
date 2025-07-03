@@ -23,41 +23,27 @@ import java.util.Optional;
 /** {@code PaginationContext} carries pagination-related information. */
 public class PaginationContext {
 
-  public static PaginationContext forPageWithPageToken(
-      long pageSize,
-      String lastReadLogFileName,
-      long lastReturnedRowIndex,
-      Optional<Long> lastReadSidecarFileIdx) {
-    Objects.requireNonNull(lastReadLogFileName, "lastReadLogFileName is null");
-    Objects.requireNonNull(lastReadSidecarFileIdx, "lastReadSidecarFileIdx is null");
-    return new PaginationContext(
-        pageSize,
-        Optional.of(lastReadLogFileName),
-        Optional.of(lastReturnedRowIndex),
-        lastReadSidecarFileIdx);
+  public static PaginationContext forPageWithPageToken(long pageSize, PageToken pageToken) {
+    Objects.requireNonNull(pageToken, "page token is null");
+    return new PaginationContext(pageSize, Optional.of(pageToken));
   }
 
   public static PaginationContext forFirstPage(long pageSize) {
-    return new PaginationContext(
-        pageSize,
-        Optional.empty() /* lastReadLogFileName */,
-        Optional.empty() /* lastReturnedRowIndex */,
-        Optional.empty() /* lastReadSidecarFileIdx */);
+    return new PaginationContext(pageSize, Optional.empty() /* page token */);
   }
 
   /** maximum number of ScanFiles to return in the current page */
   private final long pageSize;
 
-  /**Optional Page Token*/
-  private final PageToken pageToken;
+  /** Optional Page Token */
+  private final Optional<PageToken> pageToken;
 
   // TODO: add cached log replay hashsets related info
 
-  private PaginationContext(
-      long pageSize,
-      Optional<PageToken> pageToken) {
+  private PaginationContext(long pageSize, Optional<PageToken> pageToken) {
     checkArgument(pageSize > 0, "Page size must be greater than zero!");
     this.pageSize = pageSize;
+    this.pageToken = pageToken;
   }
 
   public long getPageSize() {
@@ -65,14 +51,17 @@ public class PaginationContext {
   }
 
   public Optional<String> getLastReadLogFileName() {
-    return lastReadLogFileName;
+    if (!pageToken.isPresent()) return Optional.empty();
+    return Optional.of(pageToken.get().getLastReadLogFileName());
   }
 
   public Optional<Long> getLastReturnedRowIndex() {
-    return lastReturnedRowIndex;
+    if (!pageToken.isPresent()) return Optional.empty();
+    return Optional.of(pageToken.get().getLastReturnedRowIndex());
   }
 
   public Optional<Long> getLastReadSidecarFileIdx() {
-    return lastReadSidecarFileIdx;
+    if (!pageToken.isPresent()) return Optional.empty();
+    return pageToken.get().getLastReadSidecarFileIdx();
   }
 }
