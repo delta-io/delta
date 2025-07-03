@@ -1,10 +1,8 @@
 import java.util.Optional
 
-
 import io.delta.kernel.TransactionSuite.columnarBatch
-
-import io.delta.kernel.data.FilteredColumnarBatch
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
+import io.delta.kernel.data.FilteredColumnarBatch
 import io.delta.kernel.test.VectorTestUtils
 import io.delta.kernel.types.{LongType, StructField, StructType}
 

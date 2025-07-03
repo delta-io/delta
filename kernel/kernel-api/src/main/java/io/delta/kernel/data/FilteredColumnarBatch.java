@@ -61,7 +61,8 @@ public class FilteredColumnarBatch {
     checkArgument(
         selectionVector.isPresent() || preComputedNumSelectedRows == data.getSize(),
         "Invalid precomputedNumSelectedRows: must be equal to batch size when selectionVector is empty.");
-    checkArgument(preComputedNumSelectedRows >= 0 && preComputedNumSelectedRows <= data.getSize(),
+    checkArgument(
+        preComputedNumSelectedRows >= 0 && preComputedNumSelectedRows <= data.getSize(),
         "Invalid precomputedNumSelectedRows: "
             + "must be no less than 0 and no larger than batch size.");
     this.filePath = Optional.of(filePath);
