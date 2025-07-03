@@ -42,7 +42,7 @@ class TimestampStatsAndDataSkippingSuite extends DeltaTableWriteSuiteBase
     with ParquetSuiteBase {
 
   test("verify on-disk TIMESTAMP stats format is equal when writing through spark and kernel") {
-    withTempDirAndEngine { (kernelPath, engine) =>
+    withTempDirAndEngine { (dir, engine) =>
       // Test with TIMESTAMP and TIMESTAMP_NTZ to verify serialization format
       val schema = new StructType()
         .add("timestampCol", TimestampType.TIMESTAMP)
@@ -58,6 +58,10 @@ class TimestampStatsAndDataSkippingSuite extends DeltaTableWriteSuiteBase
         ("2019-09-09 01:02:03.999000", "2019-09-09 01:02:03.999999"),
         ("2019-09-09 01:02:04.123456", "2019-09-09 01:02:04.123999"))
 
+      // Create "kernel" and "spark-copy" directories
+      val kernelPath = new File(dir, "kernel").getAbsolutePath
+      val sparkTablePath = new File(dir, "spark-copy").getAbsolutePath
+
       // Write through Kernel
       timestampRanges.zipWithIndex.foreach { case ((minTs, maxTs), fileIndex) =>
         val batch = createTimestampBatch(schema, minTs, maxTs, rowsPerFile = 10)
@@ -70,7 +74,6 @@ class TimestampStatsAndDataSkippingSuite extends DeltaTableWriteSuiteBase
           data = Seq(Map.empty[String, Literal] -> Seq(batch.toFiltered(Option.empty))))
       }
 
-      val sparkTablePath = new File(kernelPath, "spark-copy").getAbsolutePath
       val kernelDf = spark.read.format("delta").load(kernelPath)
       val kernelFiles = kernelDf.inputFiles
 
