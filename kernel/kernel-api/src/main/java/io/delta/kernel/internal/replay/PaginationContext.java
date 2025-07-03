@@ -48,41 +48,16 @@ public class PaginationContext {
   /** maximum number of ScanFiles to return in the current page */
   private final long pageSize;
 
-  // ===== Variables from page token (is empty when getting first page because page token is empty)
-
-  /**
-   * The name of the last log file read in the previous page. If not present, this is the first
-   * page.
-   */
-  private final Optional<String> lastReadLogFileName;
-
-  /**
-   * The index of the last row that was returned from the last read log file during the previous
-   * page. This row index is relative to the file. The current page should begin from the row
-   * immediately after this row index.
-   */
-  private final Optional<Long> lastReturnedRowIndex;
-
-  /**
-   * The index of the last sidecar checkpoint file read in the previous page. This index is based on
-   * the ordering of sidecar files in the V2 manifest checkpoint file. If present, it must represent
-   * the final sidecar file that was read and must correspond to the same file as
-   * `lastReadLogFileName`.
-   */
-  private final Optional<Long> lastReadSidecarFileIdx;
+  /**Optional Page Token*/
+  private final PageToken pageToken;
 
   // TODO: add cached log replay hashsets related info
 
   private PaginationContext(
       long pageSize,
-      Optional<String> lastReadLogFileName,
-      Optional<Long> lastReturnedRowIndex,
-      Optional<Long> lastReadSidecarFileIdx) {
+      Optional<PageToken> pageToken) {
     checkArgument(pageSize > 0, "Page size must be greater than zero!");
     this.pageSize = pageSize;
-    this.lastReadLogFileName = lastReadLogFileName;
-    this.lastReturnedRowIndex = lastReturnedRowIndex;
-    this.lastReadSidecarFileIdx = lastReadSidecarFileIdx;
   }
 
   public long getPageSize() {
