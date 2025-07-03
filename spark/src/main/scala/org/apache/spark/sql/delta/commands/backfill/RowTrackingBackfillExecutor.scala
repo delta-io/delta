@@ -26,7 +26,6 @@ class RowTrackingBackfillExecutor(
     override val spark: SparkSession,
     override val origTxn: OptimisticTransaction,
     override val tracker: FileMetadataMaterializationTracker,
-    override val maxBatchesInParallel: Int,
     override val backfillStats: BackfillCommandStats) extends BackfillExecutor {
   override val backFillBatchOpType = "delta.rowTracking.backfill.batch"
 }

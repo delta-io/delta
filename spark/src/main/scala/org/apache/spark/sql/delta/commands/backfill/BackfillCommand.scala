@@ -41,7 +41,6 @@ trait BackfillCommand extends LeafRunnableCommand with DeltaCommand {
     spark: SparkSession,
     txn: OptimisticTransaction,
     fileMaterializationTracker: FileMetadataMaterializationTracker,
-    maxNumBatchesInParallel: Int,
     backfillStats: BackfillCommandStats): BackfillExecutor
 
   def filesToBackfill(txn: OptimisticTransaction): Dataset[AddFile]
@@ -51,8 +50,6 @@ trait BackfillCommand extends LeafRunnableCommand with DeltaCommand {
   def constructBatch(files: Seq[AddFile]): BackfillBatch
 
   override def run(spark: SparkSession): Seq[Row] = {
-    val maxNumBatchesInParallel =
-      spark.conf.get(DeltaSQLConf.DELTA_BACKFILL_MAX_NUM_BATCHES_IN_PARALLEL)
     recordDeltaOperation(deltaLog, opType) {
       val txn = deltaLog.startTransaction(catalogTable)
       // This txn object is not used for commit. We need to do manual state transitions to make the
@@ -69,12 +66,11 @@ trait BackfillCommand extends LeafRunnableCommand with DeltaCommand {
           val startTimeNs = System.nanoTime()
           val backfillStats = BackfillCommandStats(
             transactionId = txn.txnId,
-            nameOfTriggeringOperation,
-            maxNumBatchesInParallel = maxNumBatchesInParallel
+            nameOfTriggeringOperation
           )
           try {
             val backfillExecutor = getBackfillExecutor(
-              spark, txn, fileMaterializationTracker, maxNumBatchesInParallel, backfillStats)
+              spark, txn, fileMaterializationTracker, backfillStats)
 
             val batches = new BackfillBatchIterator(
               filesToBackfill(txn),

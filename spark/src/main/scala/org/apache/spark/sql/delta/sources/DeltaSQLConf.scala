@@ -1061,22 +1061,6 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
-  val DELTA_ROW_TRACKING_BACKFILL_MAX_NUM_BATCHES_IN_PARALLEL =
-    buildConf("rowTracking.backfill.maxNumBatchesInParallel")
-      .internal()
-      .doc("The maximum number of backfill batches (commits) that can run at the same time " +
-        "from a single RowTrackingBackfillCommand.")
-      .intConf
-      .checkValue(_ > 0, "'backfill.maxNumBatchesInParallel' must be positive.")
-      .createWithDefault(1)
-
-  val DELTA_BACKFILL_MAX_NUM_BATCHES_IN_PARALLEL =
-    buildConf("backfill.maxNumBatchesInParallel")
-      .internal()
-      .doc("The maximum number of backfill batches (commits) that can run at the same time " +
-        "from a single BackfillCommand.")
-      .fallbackConf(DELTA_ROW_TRACKING_BACKFILL_MAX_NUM_BATCHES_IN_PARALLEL)
-
   val DELTA_ROW_TRACKING_BACKFILL_MAX_NUM_FILES_PER_COMMIT =
     buildConf("rowTracking.backfill.maxNumFiles")
       .internal()
