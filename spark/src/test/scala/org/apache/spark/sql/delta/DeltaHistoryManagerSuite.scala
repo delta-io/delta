@@ -573,6 +573,10 @@ abstract class DeltaHistoryManagerBase extends DeltaTimeTravelTests
   }
 
   test("vacuumed version") {
+    if (catalogOwnedDefaultCreationEnabledInTests) {
+      cancel("VACUUM is not supported on catalog owned managed tables.")
+    }
+
     quietly {
       val tblName = "delta_table"
       withTable(tblName) {
