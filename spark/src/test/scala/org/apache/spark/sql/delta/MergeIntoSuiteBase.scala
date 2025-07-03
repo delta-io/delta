@@ -49,7 +49,6 @@ trait MergeIntoSuiteBaseMixin
     with ScanReportHelper
     with MergeIntoTestUtils
     with MergeIntoSchemaEvolutionMixin
-    with MergeIntoSchemaEvolutionAllTests
     with DeltaExcludedBySparkVersionTestMixinShims {
   import testImplicits._
 
@@ -2496,7 +2495,7 @@ trait MergeIntoSuiteBaseMiscTests extends MergeIntoSuiteBaseMixin {
     expectedMessageParameters = Map("relationName" -> "`s`"))
 
 
-  protected def testMergeErrorOnMultipleMatches(
+  private def testMergeErrorOnMultipleMatches(
       name: String,
       confs: Seq[(String, String)] = Seq.empty)(
       source: Seq[(Int, Int)],

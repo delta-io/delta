@@ -50,7 +50,9 @@ case class DimensionWithMultipleValues(
 case class DimensionMixin(
     override val name: String,
     suffix: String = "Mixin"
-) extends Dimension(name, Seq(suffix))
+) extends Dimension(name, Seq(suffix)) {
+  lazy val traitName: String = name + suffix
+}
 
 /**
  * Main configuration class for the suite generator. It allows defining a set of base suites and the
@@ -66,13 +68,81 @@ case class TestConfig(
 )
 
 object SuiteGeneratorConfig {
+  private object Dims {
+    val MERGE_SQL = DimensionMixin("MergeIntoSQL")
+    val MERGE_SCALA = DimensionMixin("MergeIntoScala")
+    val MERGE_CDC = DimensionMixin("MergeCDC")
+    val MERGE_DVS = DimensionMixin("MergeIntoDVs")
+    val MERGE_CDC_DVS = DimensionMixin("MergeCDCWithDVs")
+    val MERGE_DVS_OVERRIDES = DimensionMixin("MergeIntoDVs", suffix = "Overrides")
+    val MERGE_DVS_PREDPUSH = DimensionMixin("MergeIntoDVsWithPredicatePushdown")
+    val CDC = DimensionMixin("CDC", suffix = "Enabled")
+    val COLUMN_MAPPING = DimensionWithMultipleValues(
+      "DeltaColumnMapping", Seq("EnableIdMode", "EnableNameMode"))
+    val MERGE_SQL_COLMAP = DimensionMixin("MergeIntoSQLColumnMapping", suffix = "Overrides")
+  }
+
+  private object Tests {
+    val MERGE_BASE = Seq(
+      "MergeIntoBasicTests",
+      "MergeIntoTempViewsTests",
+      "MergeIntoNestedDataTests",
+      "MergeIntoUnlimitedMergeClausesTests",
+      "MergeIntoSuiteBaseMiscTests",
+      "MergeIntoNotMatchedBySourceSuite",
+      "MergeIntoSchemaEvolutionAllTests"
+    )
+    val MERGE_SQL = Seq(
+      "MergeIntoSQLTests",
+      "MergeIntoSQLNondeterministicOrderTests"
+    )
+  }
+
   /**
    * All fileName, [[TestConfig]] list groupings. The generated suites of each group will be written
    * to a file named after the group name.
    */
+  // scalastyle:off line.size.limit
   lazy val GROUPS_WITH_TEST_CONFIGS: Seq[(String, Seq[TestConfig])] = Seq(
-    "GeneratedSuites" -> Seq()
+    "GeneratedSuites" -> Seq(
+      TestConfig(
+        // Exclude tempViews, because DeltaTable.forName does not resolve them correctly, so no one
+        // can use them anyway with the Scala API.
+        "MergeIntoScalaTests" +: Tests.MERGE_BASE.filterNot(_ == "MergeIntoTempViewsTests"),
+        Seq(
+          Seq(Dims.MERGE_SCALA)
+        )
+      ),
+      TestConfig(
+        Tests.MERGE_SQL ++: Tests.MERGE_BASE,
+        Seq(
+          Seq(Dims.MERGE_SQL),
+          Seq(Dims.MERGE_SQL, Dims.COLUMN_MAPPING, Dims.MERGE_SQL_COLMAP)
+        )
+      ),
+      TestConfig(
+        "MergeIntoDVsTests" +: Tests.MERGE_SQL ++: Tests.MERGE_BASE,
+        Seq(
+          Seq(Dims.MERGE_SQL, Dims.MERGE_DVS, Dims.MERGE_DVS_OVERRIDES),
+          Seq(Dims.MERGE_SQL, Dims.MERGE_DVS_PREDPUSH)
+        )
+      ),
+      TestConfig(
+        "MergeCDCTests" +: "MergeIntoDVsTests" +: Tests.MERGE_SQL ++: Tests.MERGE_BASE,
+        Seq(
+          Seq(Dims.MERGE_SQL, Dims.CDC, Dims.MERGE_CDC, Dims.MERGE_DVS, Dims.MERGE_CDC_DVS),
+          Seq(Dims.MERGE_SQL, Dims.CDC, Dims.MERGE_CDC, Dims.MERGE_DVS_PREDPUSH, Dims.MERGE_CDC_DVS)
+        )
+      ),
+      TestConfig(
+        "MergeCDCTests" +: Tests.MERGE_SQL ++: Tests.MERGE_BASE,
+        Seq(
+          Seq(Dims.MERGE_SQL, Dims.CDC, Dims.MERGE_CDC)
+        )
+      )
+    )
   )
+  // scalastyle:on line.size.limit
 
   /**
    * Used to add custom traits to some combinations of base suites and dimensions.

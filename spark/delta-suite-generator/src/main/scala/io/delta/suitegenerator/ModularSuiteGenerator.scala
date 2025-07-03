@@ -103,14 +103,18 @@ object ModularSuiteGenerator {
 
   private lazy val BASE32 = new Base32()
 
-  private def generateCode(baseSuite: String, mixins: Seq[String]): TestSuite = {
+  private def generateCode(
+    baseSuite: String,
+    mixins: Seq[String]): TestSuite = {
     val allMixins = SuiteGeneratorConfig.applyCustomRulesAndGetAllMixins(baseSuite, mixins).toList
     val suiteParents = (baseSuite :: allMixins).map(_.parse[Init].get)
 
     // Generate suite name by combining the names of base suite, base mixins, and dimensions
     // Remove "Suite" / "Mixin" substrings for better readability
     val baseSuitePrefix = baseSuite.stripSuffix("Suite")
-    val mixinSuffix = mixins.map(_.replace("Mixin", "")).mkString("")
+    val mixinSuffix = mixins
+      .map(_.replace("Mixin", ""))
+      .mkString("")
     var suiteName = baseSuitePrefix + mixinSuffix
 
     // Truncate the name and replace with a consistent hash if line becomes longer than the limit
