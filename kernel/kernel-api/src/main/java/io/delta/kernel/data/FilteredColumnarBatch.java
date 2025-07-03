@@ -55,14 +55,17 @@ public class FilteredColumnarBatch {
       ColumnarBatch data,
       Optional<ColumnVector> selectionVector,
       String filePath,
-      int numSelectedRows) {
+      int preComputedNumSelectedRows) {
     this.data = data;
     this.selectionVector = selectionVector;
-    this.filePath = Optional.of(filePath);
     checkArgument(
-        selectionVector.isPresent() || numSelectedRows == data.getSize(),
-        "Invalid precomputedNumSelectedRows: must be null or equal to batch size when selectionVector is empty.");
-    this.preComputedNumSelectedRows = Optional.of(numSelectedRows);
+        selectionVector.isPresent() || preComputedNumSelectedRows == data.getSize(),
+        "Invalid precomputedNumSelectedRows: must be equal to batch size when selectionVector is empty.");
+    checkArgument(preComputedNumSelectedRows >= 0 && preComputedNumSelectedRows <= data.getSize(),
+        "Invalid precomputedNumSelectedRows: "
+            + "must be no less than 0 and no larger than batch size.");
+    this.filePath = Optional.of(filePath);
+    this.preComputedNumSelectedRows = Optional.of(preComputedNumSelectedRows);
   }
 
   /**
