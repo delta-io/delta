@@ -24,6 +24,7 @@ import scala.util.{Failure, Success, Try}
 import com.databricks.spark.util.DatabricksLogging
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.catalog.PathInfo
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -334,7 +335,7 @@ object DeltaDataSource extends DatabricksLogging {
   def parsePathIdentifier(
       spark: SparkSession,
       userPath: String,
-      options: Map[String, String]): (Path, Seq[(String, String)], Option[DeltaTimeTravelSpec]) = {
+      options: Map[String, String]): PathInfo = {
     // Handle time travel
     val (path, timeTravelByPath) =
       DeltaTableUtils.extractIfPathContainsTimeTravel(spark, userPath, options)
@@ -364,7 +365,7 @@ object DeltaDataSource extends DatabricksLogging {
       Nil
     }
 
-    (rootPath, partitionFilters, timeTravelByPath)
+    new PathInfo(rootPath, partitionFilters, timeTravelByPath)
   }
 
   /**
