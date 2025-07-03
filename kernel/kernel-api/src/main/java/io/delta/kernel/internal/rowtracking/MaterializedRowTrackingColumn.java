@@ -32,20 +32,25 @@ public final class MaterializedRowTrackingColumn {
   /** Static instance for the materialized row ID column. */
   public static final MaterializedRowTrackingColumn ROW_ID =
       new MaterializedRowTrackingColumn(
-          TableConfig.MATERIALIZED_ROW_ID_COLUMN_NAME, "_row-id-col-");
+          TableConfig.MATERIALIZED_ROW_ID_COLUMN_NAME, "_row-id-col-", 2147483540L);
 
   /** Static instance for the materialized row commit version column. */
   public static final MaterializedRowTrackingColumn ROW_COMMIT_VERSION =
       new MaterializedRowTrackingColumn(
-          TableConfig.MATERIALIZED_ROW_COMMIT_VERSION_COLUMN_NAME, "_row-commit-version-col-");
+          TableConfig.MATERIALIZED_ROW_COMMIT_VERSION_COLUMN_NAME,
+          "_row-commit-version-col-",
+          2147483539L);
 
   private final TableConfig<String> tableConfig;
   private final String materializedColumnNamePrefix;
+  private final long icebergColumnFieldId;
 
   /** Private constructor to enforce the use of static instances. */
-  private MaterializedRowTrackingColumn(TableConfig<String> tableConfig, String prefix) {
+  private MaterializedRowTrackingColumn(
+      TableConfig<String> tableConfig, String prefix, long icebergColumnFieldId) {
     this.tableConfig = tableConfig;
     this.materializedColumnNamePrefix = prefix;
+    this.icebergColumnFieldId = icebergColumnFieldId;
   }
 
   /** Returns the configuration property name associated with this materialized column. */
@@ -125,6 +130,9 @@ public final class MaterializedRowTrackingColumn {
       return Optional.empty();
     }
 
+    Boolean reuseIcebergRowTrackingColumn =
+        TableConfig.ICEBERG_COMPAT_V3_ENABLED.fromMetadata(metadata);
+
     Map<String, String> configsToAdd = new HashMap<>();
 
     Stream.of(ROW_ID, ROW_COMMIT_VERSION)
@@ -137,7 +145,7 @@ public final class MaterializedRowTrackingColumn {
             column -> {
               configsToAdd.put(
                   column.getMaterializedColumnNameProperty(),
-                  column.generateMaterializedColumnName());
+                  column.generateMaterializedColumnName(metadata, reuseIcebergRowTrackingColumn));
             });
 
     return configsToAdd.isEmpty()
@@ -146,7 +154,11 @@ public final class MaterializedRowTrackingColumn {
   }
 
   /** Generates a random name by concatenating the prefix with a random UUID. */
-  private String generateMaterializedColumnName() {
+  private String generateMaterializedColumnName(
+      Metadata metadata, Boolean reuseIcebergRowTrackingColumn) {
+    if (reuseIcebergRowTrackingColumn) {
+      return ColumnMapping.getPhysicalNameByFieldId(metadata.getSchema(), icebergColumnFieldId);
+    }
     return materializedColumnNamePrefix + UUID.randomUUID().toString();
   }
 }
