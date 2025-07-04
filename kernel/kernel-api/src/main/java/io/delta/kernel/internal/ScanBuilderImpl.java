@@ -90,6 +90,8 @@ public class ScanBuilderImpl implements ScanBuilder {
 
   @Override
   public PaginatedScan buildPaginated(long pageSize, Optional<Row> pageToken) {
-    throw new UnsupportedOperationException("not implemented");
+    // TODO
+    Scan baseScan = this.build();
+    return new PaginatedScanImpl((ScanImpl) baseScan, pageToken, pageSize);
   }
 }
