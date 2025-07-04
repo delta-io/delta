@@ -49,10 +49,8 @@ trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBaseMixin {
             withSQLConf(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED.key -> "true") {
               executeMerge(s"$targetName t", s"$sourceName s", mergeOn, mergeClauses: _*)
             }
-            val deltaPath = if (targetName.startsWith("delta.`")) {
-              targetName.stripPrefix("delta.`").stripSuffix("`")
-            } else targetName
-            checkAnswer(readDeltaTable(deltaPath), result.map { case (k, v) => Row(k, v) })
+            checkAnswer(readDeltaTableByIdentifier(targetName),
+              result.map { case (k, v) => Row(k, v) })
           }
           if (cdcEnabled) {
             checkAnswer(getCDCForLatestOperation(deltaLog, DeltaOperations.OP_MERGE), cdc.toDF())
@@ -504,28 +502,34 @@ trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBaseMixin {
     cdc = Seq.empty)
 
   test(s"special character in path - not matched by source delete") {
-    val source = s"$tempDir/sou rce^"
-    val target = s"$tempDir/tar get="
-    spark.range(0, 10, 2).write.format("delta").save(source)
-    spark.range(10).write.format("delta").save(target)
-    executeMerge(
-      tgt = s"delta.`$target` t",
-      src = s"delta.`$source` s",
-      cond = "t.id = s.id",
-      clauses = deleteNotMatched())
-    checkAnswer(readDeltaTable(target), Seq(0, 2, 4, 6, 8).toDF("id"))
+    withTempDir { tempDir =>
+      val source = s"$tempDir/sou rce^"
+      val target = s"$tempDir/tar get="
+      spark.range(0, 10, 2).write.format("delta").save(source)
+      spark.range(10).write.format("delta").save(target)
+      executeMerge(
+        tgt = s"delta.`$target` t",
+        src = s"delta.`$source` s",
+        cond = "t.id = s.id",
+        clauses = deleteNotMatched())
+      checkAnswer(readDeltaTableByIdentifier(s"delta.`$target`"), Seq(0, 2, 4, 6, 8).toDF("id"))
+    }
   }
 
   test(s"special character in path - not matched by source update") {
-    val source = s"$tempDir/sou rce@"
-    val target = s"$tempDir/tar get#"
-    spark.range(0, 10, 2).write.format("delta").save(source)
-    spark.range(10).write.format("delta").save(target)
-    executeMerge(
-      tgt = s"delta.`$target` t",
-      src = s"delta.`$source` s",
-      cond = "t.id = s.id",
-      clauses = updateNotMatched(set = "id = t.id * 10"))
-    checkAnswer(readDeltaTable(target), Seq(0, 10, 2, 30, 4, 50, 6, 70, 8, 90).toDF("id"))
+    withTempDir { tempDir =>
+      val source = s"$tempDir/sou rce@"
+      val target = s"$tempDir/tar get#"
+      spark.range(0, 10, 2).write.format("delta").save(source)
+      spark.range(10).write.format("delta").save(target)
+      executeMerge(
+        tgt = s"delta.`$target` t",
+        src = s"delta.`$source` s",
+        cond = "t.id = s.id",
+        clauses = updateNotMatched(set = "id = t.id * 10"))
+      checkAnswer(
+        readDeltaTableByIdentifier(s"delta.`$target`"),
+        Seq(0, 10, 2, 30, 4, 50, 6, 70, 8, 90).toDF("id"))
+    }
   }
 }

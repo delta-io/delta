@@ -77,14 +77,14 @@ trait MergeIntoSchemaEvolutionMixin {
           errorContains(Utils.exceptionString(ex), error)
         } else {
           executeMerge(s"$tableSQLIdentifier t", "source s", cond, clauses: _*)
-          checkAnswer(readDeltaTableByIdentifier(tableSQLIdentifier), df.collect())
+          checkAnswer(readDeltaTableByIdentifier(), df.collect())
           if (schema != null) {
-            assert(readDeltaTableByIdentifier(tableSQLIdentifier).schema === schema)
+            assert(readDeltaTableByIdentifier().schema === schema)
           } else {
             // Check against the schema of the expected result df if no explicit schema was
             // provided. Nullability of fields will vary depending on the actual data in the df so
             // we ignore it.
-            assert(readDeltaTableByIdentifier(tableSQLIdentifier).schema.asNullable ===
+            assert(readDeltaTableByIdentifier().schema.asNullable ===
               df.schema.asNullable)
           }
         }
