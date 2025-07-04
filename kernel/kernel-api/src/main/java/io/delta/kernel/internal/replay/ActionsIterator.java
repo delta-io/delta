@@ -84,6 +84,8 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
    */
   private Optional<CloseableIterator<ActionWrapper>> actionsIter;
 
+  private final Optional<PaginationContext> paginationContext;
+
   private boolean closed;
 
   public ActionsIterator(
@@ -91,7 +93,7 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
       List<FileStatus> files,
       StructType deltaReadSchema,
       Optional<Predicate> checkpointPredicate) {
-    this(engine, files, deltaReadSchema, deltaReadSchema, checkpointPredicate);
+    this(engine, files, deltaReadSchema, deltaReadSchema, checkpointPredicate, Optional.empty());
   }
 
   public ActionsIterator(
@@ -99,7 +101,8 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
       List<FileStatus> files,
       StructType deltaReadSchema,
       StructType checkpointReadSchema,
-      Optional<Predicate> checkpointPredicate) {
+      Optional<Predicate> checkpointPredicate,
+      Optional<PaginationContext> paginationContext) {
     this.engine = engine;
     this.checkpointPredicate = checkpointPredicate;
     this.filesList = new LinkedList<>();
@@ -109,6 +112,7 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     this.checkpointReadSchema = checkpointReadSchema;
     this.actionsIter = Optional.empty();
     this.schemaContainsAddOrRemoveFiles = LogReplay.containsAddOrRemoveFileActions(deltaReadSchema);
+    this.paginationContext = paginationContext;
   }
 
   @Override
