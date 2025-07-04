@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.icebergShaded
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.sql.delta.{DeltaColumnMapping, Snapshot}
+import org.apache.spark.sql.delta.{DeltaColumnMapping, SnapshotDescriptor}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import shadedForDelta.org.apache.iceberg.{Schema => IcebergSchema}
 import shadedForDelta.org.apache.iceberg.types.{Type => IcebergType, Types => IcebergTypes}
