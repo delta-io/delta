@@ -616,7 +616,7 @@ trait CDCReaderImpl extends DeltaLogging {
     }
 
     var totalBytes = 0L
-    var totalFiles = 0L
+    var numAddFiles, numRemoveFiles, numAddCRCFiles = 0L
 
     changes.foreach {
       case (v, actions) =>
@@ -659,13 +659,13 @@ trait CDCReaderImpl extends DeltaLogging {
         actions.foreach {
           case c: AddCDCFile =>
             cdcActions.append(c)
-            totalFiles += 1L
+            numAddCRCFiles += 1L
             totalBytes += c.size
           case a: AddFile =>
-            totalFiles += 1L
+            numAddFiles += 1L
             totalBytes += a.size
           case r: RemoveFile =>
-            totalFiles += 1L
+            numRemoveFiles += 1L
             totalBytes += r.size.getOrElse(0L)
           case i: CommitInfo => commitInfo = Some(i)
           case _ => // do nothing
@@ -753,6 +753,21 @@ trait CDCReaderImpl extends DeltaLogging {
     val emptyDf =
       DataFrameUtils.ofRows(spark.sqlContext.sparkSession, emptyRdd)
 
+    recordDeltaEvent(
+      deltaLog,
+      "delta.changeDataFeed.changesToDF",
+      data = Map(
+        "startVersion" -> start,
+        "endVersion" -> end,
+        "useCoarseGrainedCDC" -> useCoarseGrainedCDC,
+        "numAddFiles" -> numAddFiles,
+        "numRemoveFiles" -> numRemoveFiles,
+        "numAddCRCFiles" -> numAddCRCFiles,
+        "totalBytes" -> totalBytes,
+        "isStreaming" -> isStreaming
+      )
+    )
+    val totalFiles = numAddFiles + numRemoveFiles + numAddCRCFiles
     CDCVersionDiffInfo(
       (emptyDf +: dfs).reduce((df1, df2) => df1.union(
         df2
