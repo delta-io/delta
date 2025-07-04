@@ -197,9 +197,7 @@ object DeltaTestImplicits {
 
     def apply(spark: SparkSession, tableDir: File, clock: Clock): DeltaTableV2 = {
       val tablePath = new Path(tableDir.getAbsolutePath)
-      new DeltaTableV2(spark, tablePath, catalogTable = None, None, None, Map.empty) {
-        override lazy val deltaLog: DeltaLog = DeltaLog.forTable(spark, tablePath, clock)
-      }
+      DeltaTableV2.testOnlyApplyWithCustomDeltaLog(spark, tablePath, clock)
     }
   }
 
