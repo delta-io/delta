@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.cdc
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.File
 
+import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaOperations.Delete
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
@@ -36,6 +37,8 @@ import org.apache.spark.sql.{Row, SaveMode}
 import org.apache.spark.sql.execution.{LogicalRDD, SQLExecution}
 import org.apache.spark.sql.execution.datasources.FileFormatWriter
 import org.apache.spark.sql.functions._
+import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.internal.SQLConf.StoreAssignmentPolicy
 import org.apache.spark.sql.test.SharedSparkSession
 
 class CDCReaderSuite
@@ -447,6 +450,22 @@ class CDCReaderSuite
               createCDFDF(start = 1, end = 2, commitVersion = 2, changeType = "insert"))
         checkAnswer(dfWithDeletesFirst, expectedAnswer)
       }
+    }
+  }
+
+  test("Logs are generated for changesToDF") {
+    withTempDir { dir =>
+      val events = Log4jUsageLogger.track {
+        val log = DeltaLog.forTable(spark, dir.getAbsolutePath)
+        val data = spark.range(10)
+
+        data.write.format("delta").save(dir.getAbsolutePath)
+        sql(s"DELETE FROM delta.`${dir.getAbsolutePath}`")
+        CDCReader.changesToBatchDF(log, 0, 1, spark)
+      }
+
+      assert(events.exists(event => event.metric == "tahoeEvent" &&
+        event.tags.get("opType") == Option("delta.changeDataFeed.changesToDF")))
     }
   }
 }
