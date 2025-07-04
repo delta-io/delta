@@ -26,7 +26,6 @@ import io.delta.kernel.internal.util.VectorUtils.stringStringMapValue
 import org.scalatest.funsuite.AnyFunSuite
 
 class RemoveFileSuite extends AnyFunSuite {
-
   // For now we use GenerateIcebergCompatActionUtils::createRemoveFileRowWithExtendedFileMetadata
   // because this is the only path we support creating RemoveFile rows currently. In the future when
   // we implement broader support for RemoveFiles we should use the more generic methods to create
@@ -37,7 +36,8 @@ class RemoveFileSuite extends AnyFunSuite {
       dataChange: Boolean,
       partitionValues: Map[String, String],
       size: Long,
-      stats: Option[String]): Row = {
+      stats: Option[String],
+      deletionVectorDescriptor: Option[DeletionVectorDescriptor]): Row = {
     GenerateIcebergCompatActionUtils.createRemoveFileRowWithExtendedFileMetadata(
       path,
       deletionTimestamp,
@@ -45,18 +45,28 @@ class RemoveFileSuite extends AnyFunSuite {
       stringStringMapValue(partitionValues.asJava),
       size,
       StatsUtils.deserializeFromJson(stats.getOrElse("")),
+      deletionVectorDescriptor match {
+        case Some(dvd) => Optional.of(dvd)
+        case None => Optional.empty[DeletionVectorDescriptor]()
+      },
       null)
   }
 
   test("getters can read RemoveFile's fields from the backing row") {
+    val deletionVectorDescriptor = new DeletionVectorDescriptor(
+      "storage",
+      "s",
+      Optional.of(1),
+      25,
+      35)
     val removeFileRow = createTestRemoveFileRow(
       path = "test/path",
       deletionTimestamp = 1000L,
       dataChange = true,
       partitionValues = Map("a" -> "1"),
       size = 55555L,
-      stats = Option("{\"numRecords\":100}"))
-
+      stats = Option("{\"numRecords\":100}"),
+      deletionVectorDescriptor = Some(deletionVectorDescriptor))
     val removeFile = new RemoveFile(removeFileRow)
     assert(removeFile.getPath === "test/path")
     assert(removeFile.getDeletionTimestamp == Optional.of(1000L))
@@ -68,7 +78,8 @@ class RemoveFileSuite extends AnyFunSuite {
     assert(removeFile.getStats.isPresent &&
       removeFile.getStats.get.serializeAsJson(null) == "{\"numRecords\":100}")
     assert(!removeFile.getTags.isPresent)
-    assert(!removeFile.getDeletionVector.isPresent)
+    assert(removeFile.getDeletionVector.isPresent)
+    assert(removeFile.getDeletionVector.get == deletionVectorDescriptor)
     assert(!removeFile.getBaseRowId.isPresent)
     assert(!removeFile.getDefaultRowCommitVersion.isPresent)
   }

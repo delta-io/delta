@@ -22,6 +22,7 @@ import static java.util.stream.Collectors.toMap;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.Row;
+import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.deletionvectors.Base85Codec;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.types.IntegerType;
@@ -30,10 +31,7 @@ import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Optional;
-import java.util.UUID;
+import java.util.*;
 import java.util.stream.IntStream;
 
 /** Information about a deletion vector attached to a file action. */
@@ -235,6 +233,25 @@ public class DeletionVectorDescriptor {
         "DeletionVectorDescriptor(storageType=%s, pathOrInlineDv=%s, offset=%s, "
             + "sizeInBytes=%s, cardinality=%s)",
         storageType, pathOrInlineDv, offset, sizeInBytes, cardinality);
+  }
+
+  /** @return Row representation of this deletion vector descriptor */
+  public Row toRow() {
+    Map<Integer, Object> fieldMap = new HashMap<>();
+
+    fieldMap.put(COL_NAME_TO_ORDINAL.get("storageType"), storageType);
+    fieldMap.put(COL_NAME_TO_ORDINAL.get("pathOrInlineDv"), pathOrInlineDv);
+
+    // Only add offset if it's present
+    if (offset.isPresent()) {
+      fieldMap.put(COL_NAME_TO_ORDINAL.get("offset"), offset.get());
+    }
+    // If offset is not present, the field remains null in the map
+
+    fieldMap.put(COL_NAME_TO_ORDINAL.get("sizeInBytes"), sizeInBytes);
+    fieldMap.put(COL_NAME_TO_ORDINAL.get("cardinality"), cardinality);
+
+    return new GenericRow(READ_SCHEMA, fieldMap);
   }
 
   @Override
