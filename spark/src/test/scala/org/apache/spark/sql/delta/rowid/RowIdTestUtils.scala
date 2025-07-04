@@ -259,9 +259,6 @@ trait RowIdTestUtils extends RowTrackingTestUtils with DeltaSQLCommandTest {
     assert(backfillStats.wasSuccessful)
     assert(backfillStats.numFailedBatches === 0)
     assert(backfillStats.totalExecutionTimeMs > 0)
-    val expectedMaxNumBatchesInParallel =
-      spark.conf.get(DeltaSQLConf.DELTA_BACKFILL_MAX_NUM_BATCHES_IN_PARALLEL)
-    assert(backfillStats.maxNumBatchesInParallel === expectedMaxNumBatchesInParallel)
     assert(backfillStats.numSuccessfulBatches === expectedNumSuccessfulBatches)
     assert(backfillStats.nameOfTriggeringOperation === nameOfTriggeringOperation)
 

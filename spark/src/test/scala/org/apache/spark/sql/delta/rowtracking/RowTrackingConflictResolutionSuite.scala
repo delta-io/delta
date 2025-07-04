@@ -201,16 +201,13 @@ class RowTrackingConflictResolutionSuite extends QueryTest
 
   /** Execute backfill on the table associated with the delta log passed in. */
   private def executeBackfill(log: DeltaLog, backfillTxn: OptimisticTransaction): Unit = {
-    val maxBatchesInParallel = 1
     val backfillStats = BackfillCommandStats(
       backfillTxn.txnId,
-      nameOfTriggeringOperation = DeltaOperations.OP_SET_TBLPROPERTIES,
-      maxNumBatchesInParallel = maxBatchesInParallel)
+      nameOfTriggeringOperation = DeltaOperations.OP_SET_TBLPROPERTIES)
     val backfillExecutor = new RowTrackingBackfillExecutor(
       spark,
       backfillTxn,
       FileMetadataMaterializationTracker.noopTracker,
-      maxBatchesInParallel,
       backfillStats
     )
     val filesToBackfill =
