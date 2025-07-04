@@ -16,14 +16,31 @@
 
 package org.apache.spark.sql.delta.icebergShaded
 
-import org.apache.spark.sql.delta.{DeltaConfig, DeltaConfigs, IcebergCompat, Snapshot}
+import org.apache.spark.sql.delta.{DeltaConfig, DeltaConfigs, IcebergCompat, NoMapping, Snapshot, SnapshotDescriptor}
 import org.apache.spark.sql.delta.DeltaConfigs.{LOG_RETENTION, TOMBSTONE_RETENTION}
+import org.apache.spark.sql.delta.icebergShaded.IcebergTransactionUtils
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import shadedForDelta.org.apache.iceberg.{PartitionSpec, StructLike, TableProperties => IcebergTableProperties}
+import shadedForDelta.org.apache.iceberg.{PartitionSpec, Schema => IcebergSchema, StructLike, TableProperties => IcebergTableProperties}
+import shadedForDelta.org.apache.iceberg.types.{Type => IcebergType, Types => IcebergTypes}
 
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.types.DataType
 import org.apache.spark.unsafe.types.CalendarInterval
 
+class DeltaToIcebergConvert(val snapshot: SnapshotDescriptor, val catalogTable: CatalogTable) {
+
+  private val schemaUtils: IcebergSchemaUtils =
+    IcebergSchemaUtils(snapshot.metadata.columnMappingMode == NoMapping)
+
+
+  val schema: IcebergSchema = {
+    val icebergStruct = schemaUtils.convertStruct(snapshot.schema)
+    new IcebergSchema(icebergStruct.fields())
+  }
+
+  val partition: PartitionSpec = IcebergTransactionUtils
+    .createPartitionSpec(schema, snapshot.metadata.partitionColumns)
+}
 /**
  * Utils for converting a Delta Table to Iceberg Table
  */

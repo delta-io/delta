@@ -33,7 +33,7 @@ import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.conf.Configuration
-import shadedForDelta.org.apache.iceberg.{AppendFiles, DataFile, DeleteFiles, ExpireSnapshots, OverwriteFiles, PartitionSpec, PendingUpdate, RewriteFiles, Transaction => IcebergTransaction}
+import shadedForDelta.org.apache.iceberg.{AppendFiles, DataFile, DeleteFiles, ExpireSnapshots, OverwriteFiles, PartitionSpec, PendingUpdate, RewriteFiles, Schema => IcebergSchema, Transaction => IcebergTransaction}
 import shadedForDelta.org.apache.iceberg.mapping.MappingUtil
 import shadedForDelta.org.apache.iceberg.mapping.NameMappingParser
 import shadedForDelta.org.apache.iceberg.util.LocationUtil
@@ -225,13 +225,14 @@ class IcebergConversionTransaction(
   //////////////////////
 
   protected val tablePath = postCommitSnapshot.deltaLog.dataPath
-  protected val schemaUtil =
-    IcebergSchemaUtils(postCommitSnapshot.metadata.columnMappingMode == NoMapping)
-  protected val icebergSchema =
-    schemaUtil.convertDeltaSchemaToIcebergSchema(postCommitSnapshot.metadata.schema)
+
+  protected val convert = new DeltaToIcebergConvert(postCommitSnapshot, catalogTable)
+
+  protected def icebergSchema: IcebergSchema = convert.schema
+
   // Initial partition spec converted from Delta
-  protected val partitionSpec =
-    createPartitionSpec(icebergSchema, postCommitSnapshot.metadata.partitionColumns)
+  protected def partitionSpec: PartitionSpec = convert.partition
+
 
   // Current partition spec from iceberg table
   def currentPartitionSpec: PartitionSpec = {
