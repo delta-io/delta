@@ -81,6 +81,14 @@ public class FilteredColumnarBatch {
     return data;
   }
 
+  /**
+   * Returns the file path from which the data originates, if available.
+   *
+   * <p>Note: The file path may not be present. It is only set if explicitly provided in the
+   * constructor.
+   *
+   * @return an {@link Optional} containing the file path if available, otherwise an empty Optional
+   */
   public Optional<String> getFilePath() {
     return filePath;
   }
