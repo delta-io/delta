@@ -553,7 +553,7 @@ trait MergeIntoSchemaEvolutionBaseTests {
   testEvolution("case-insensitive update")(
     targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
     sourceData = Seq((1, 1, "extra1"), (2, 2, "extra2")).toDF("key", "value", "EXTRA"),
-    clauses = update(set = "key = s.key, value = s.value, extra = s.extra") :: Nil,
+    clauses = update(set = "key = s.key, value = s.value, extra = s.EXTRA") :: Nil,
     expected = ((0, 0, null) +: (1, 1, "extra1") +: (3, 30, null) +: Nil)
       .toDF("key", "value", "extra"),
     expectErrorWithoutEvolutionContains = "Cannot resolve extra in UPDATE clause",
@@ -563,7 +563,7 @@ trait MergeIntoSchemaEvolutionBaseTests {
   testEvolution("case-sensitive update")(
     targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
     sourceData = Seq((1, 1, "extra1"), (2, 2, "extra2")).toDF("key", "value", "EXTRA"),
-    clauses = update(set = "key = s.key, value = s.value, extra = s.extra") :: Nil,
+    clauses = update(set = "key = s.key, value = s.value, extra = s.EXTRA") :: Nil,
     expectErrorContains = "Cannot resolve extra in UPDATE clause",
     expectErrorWithoutEvolutionContains = "Cannot resolve extra in UPDATE CLAUSE",
     confs = Seq(SQLConf.CASE_SENSITIVE.key -> "true")
