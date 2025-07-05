@@ -683,6 +683,8 @@ trait BinaryVariantTableFeature {
 object VariantTypePreviewTableFeature extends ReaderWriterFeature(name = "variantType-preview")
   with FeatureAutomaticallyEnabledByMetadata
     with BinaryVariantTableFeature {
+  override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
+
   override def metadataRequiresFeatureToBeEnabled(
       protocol: Protocol, metadata: Metadata, spark: SparkSession): Boolean = {
     if (forcePreviewTableFeature) {
@@ -701,6 +703,8 @@ object VariantTypePreviewTableFeature extends ReaderWriterFeature(name = "varian
 object VariantTypeTableFeature extends ReaderWriterFeature(name = "variantType")
     with FeatureAutomaticallyEnabledByMetadata
     with BinaryVariantTableFeature {
+  override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
+
   override def metadataRequiresFeatureToBeEnabled(
       protocol: Protocol, metadata: Metadata, spark: SparkSession): Boolean = {
     if (forcePreviewTableFeature) {
@@ -1077,9 +1081,21 @@ object VacuumProtocolCheckTableFeature
 object CheckpointProtectionTableFeature
     extends WriterFeature(name = "checkpointProtection")
     with RemovableFeature {
+  /**
+   * Gets the version requiring checkpoint protection from `metadata`. If the table property is
+   * not set, return `None`.
+   */
+  def getCheckpointProtectionVersionOption(protocol: Protocol, metadata: Metadata): Option[Long] = {
+    if (!protocol.isFeatureSupported(CheckpointProtectionTableFeature)) return None
+    DeltaConfigs.REQUIRE_CHECKPOINT_PROTECTION_BEFORE_VERSION.fromMetaDataOption(metadata)
+  }
+
+  /**
+   * Gets the version requiring checkpoint protection from `snapshot`. If the table property is
+   * not set, return the default value 0.
+   */
   def getCheckpointProtectionVersion(snapshot: Snapshot): Long = {
-    if (!snapshot.protocol.isFeatureSupported(CheckpointProtectionTableFeature)) return 0
-    DeltaConfigs.REQUIRE_CHECKPOINT_PROTECTION_BEFORE_VERSION.fromMetaData(snapshot.metadata)
+    getCheckpointProtectionVersionOption(snapshot.protocol, snapshot.metadata).getOrElse(0)
   }
 
   def metadataWithCheckpointProtection(metadata: Metadata, version: Long): Metadata = {

@@ -23,6 +23,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import org.apache.spark.sql.delta.DeltaSuiteShims._
 import org.apache.spark.sql.delta.actions.{Action, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CatalogOwnedTestBaseSuite}
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -53,7 +54,8 @@ class DeltaSuite extends QueryTest
   with SharedSparkSession
   with DeltaColumnMappingTestUtils
   with DeltaSQLTestUtils
-  with DeltaSQLCommandTest {
+  with DeltaSQLCommandTest
+  with CatalogOwnedTestBaseSuite {
 
   import testImplicits._
 
@@ -1686,6 +1688,10 @@ class DeltaSuite extends QueryTest
           Seq((2, 99), (5, 99)).toDF("key", "value")
         )
 
+        if (catalogOwnedDefaultCreationEnabledInTests) {
+          cancel("VACUUM is not supported on catalog owned managed tables")
+        }
+
         // VACUUM
         withSQLConf(DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false") {
           spark.sql(s"VACUUM delta.`${directory.getCanonicalPath}` RETAIN 0 HOURS")
@@ -2011,7 +2017,9 @@ class DeltaSuite extends QueryTest
     }
   }
 
-  test("An external write should be reflected during analysis of a path based query") {
+  // This test is only compatible w/ backfill batch size = 1.
+  testWithCatalogOwned(backfillBatchSize = 1)(
+      "An external write should be reflected during analysis of a path based query") {
     val tempDir = Utils.createTempDir().toString
     spark.range(10).coalesce(1).write.format("delta").mode("append").save(tempDir)
     spark.range(10, 20).coalesce(1).write.format("delta").mode("append").save(tempDir)
@@ -2211,24 +2219,31 @@ class DeltaSuite extends QueryTest
   }
 
   test("set metadata upon write") {
-    withTempDir { inputDir =>
-      val testPath = inputDir.getCanonicalPath
-      spark.range(10)
-        .map(_.toInt)
-        .withColumn("part", $"value" % 2)
-        .write
-        .format("delta")
-        .option("delta.logRetentionDuration", "123 days")
-        .option("mergeSchema", "true")
-        .partitionBy("part")
-        .mode("append")
-        .save(testPath)
+    withSQLConf(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey -> "false") {
+      withTempDir { inputDir =>
+        val testPath = inputDir.getCanonicalPath
+        spark.range(10)
+          .map(_.toInt)
+          .withColumn("part", $"value" % 2)
+          .write
+          .format("delta")
+          .option("delta.logRetentionDuration", "123 days")
+          .option("mergeSchema", "true")
+          .partitionBy("part")
+          .mode("append")
+          .save(testPath)
 
-      val deltaLog = DeltaLog.forTable(spark, testPath)
-      // We need to drop default properties set by subclasses to make this test pass in them
-      assert(deltaLog.snapshot.metadata.configuration
-        .filterKeys(!_.startsWith("delta.columnMapping.")).toMap ===
-        Map("delta.logRetentionDuration" -> "123 days"))
+        val deltaLog = DeltaLog.forTable(spark, testPath)
+        val metadata = deltaLog.snapshot.metadata
+        // We need to drop default properties set by subclasses to make this test pass in them
+        // We need to drop `enableDeletionVectors` property b/c it is explicitly set to false.
+        assert(
+          metadata.configuration
+            .filter { case (k, _) => !k.startsWith("delta.columnMapping.") &&
+              !k.startsWith("delta.enableDeletionVectors")} ===
+          Map("delta.logRetentionDuration" -> "123 days") ++
+            extractCatalogOwnedSpecificPropertiesIfEnabled(metadata))
+      }
     }
   }
 
@@ -3221,4 +3236,19 @@ class DeltaNameColumnMappingSuite extends DeltaSuite
         insertedDF.filter(col("id") >= 6).union(otherDF))
     }
   }
+}
+
+class DeltaWithCatalogOwnedBatch1Suite
+    extends DeltaSuite {
+  override val catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
+}
+
+class DeltaWithCatalogOwnedBatch2Suite
+    extends DeltaSuite {
+  override val catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
+}
+
+class DeltaWithCatalogOwnedBatch100Suite
+    extends DeltaSuite {
+  override val catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }

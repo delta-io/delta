@@ -29,11 +29,9 @@ import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.util.CaseInsensitiveMap;
-import io.delta.kernel.internal.util.SchemaUtils;
+import io.delta.kernel.internal.util.SchemaIterable;
 import io.delta.kernel.internal.util.Tuple2;
-import io.delta.kernel.types.DataType;
-import io.delta.kernel.types.FieldMetadata;
-import io.delta.kernel.types.StructType;
+import io.delta.kernel.types.*;
 import java.util.*;
 import java.util.stream.Stream;
 
@@ -312,7 +310,7 @@ public class TableFeatures {
   /**
    * Kernel currently only support blind appends. So we don't need to do anything special for
    * writing into a table with deletion vectors enabled (i.e a table feature with DV enabled is both
-   * readable and writable.
+   * readable and writable).
    */
   private static class DeletionVectorsTableFeature extends TableFeature.ReaderWriterFeature
       implements FeatureAutoEnabledByMetadata {
@@ -725,13 +723,12 @@ public class TableFeatures {
   ///////////////////////////
 
   public static boolean hasInvariants(StructType tableSchema) {
-    return !SchemaUtils.filterRecursively(
+    return SchemaIterable.newSchemaIterableWithIgnoredRecursion(
             tableSchema,
             // invariants are not allowed in maps or arrays
-            /* recurseIntoMapOrArrayElements = */ false,
-            /* stopOnFirstMatch */ true,
-            /* filter */ field -> field.getMetadata().contains("delta.invariants"))
-        .isEmpty();
+            new Class<?>[] {MapType.class, ArrayType.class})
+        .stream()
+        .anyMatch(element -> element.getField().getMetadata().contains("delta.invariants"));
   }
 
   public static boolean hasCheckConstraints(Metadata metadata) {
@@ -740,12 +737,14 @@ public class TableFeatures {
   }
 
   public static boolean hasIdentityColumns(Metadata metadata) {
-    return !SchemaUtils.filterRecursively(
+    return SchemaIterable.newSchemaIterableWithIgnoredRecursion(
             metadata.getSchema(),
-            /* recurseIntoMapOrArrayElements = */ false, // don't expected identity columns in
-            // nested columns
-            /* stopOnFirstMatch */ true,
-            /* filter */ field -> {
+            // invariants are not allowed in maps or arrays
+            new Class<?>[] {MapType.class, ArrayType.class})
+        .stream()
+        .anyMatch(
+            element -> {
+              StructField field = element.getField();
               FieldMetadata fieldMetadata = field.getMetadata();
 
               // Check if the metadata contains the required keys
@@ -763,18 +762,18 @@ public class TableFeatures {
 
               // Return true only if all three fields are present
               return hasStart && hasStep && hasInsert;
-            })
-        .isEmpty();
+            });
   }
 
   public static boolean hasGeneratedColumns(Metadata metadata) {
-    return !SchemaUtils.filterRecursively(
+    return SchemaIterable.newSchemaIterableWithIgnoredRecursion(
             metadata.getSchema(),
-            /* recurseIntoMapOrArrayElements = */ false, // don't expected generated columns in
+            // don't expected generated columns in
             // nested columns
-            /* stopOnFirstMatch */ true,
-            /* filter */ field -> field.getMetadata().contains("delta.generationExpression"))
-        .isEmpty();
+            new Class<?>[] {MapType.class, ArrayType.class})
+        .stream()
+        .anyMatch(
+            element -> element.getField().getMetadata().contains("delta.generationExpression"));
   }
 
   /////////////////////////////////////////////////////////////////////////////////
@@ -822,11 +821,7 @@ public class TableFeatures {
    * Check if the table schema has a column of type. Caution: works only for the primitive types.
    */
   private static boolean hasTypeColumn(StructType tableSchema, DataType type) {
-    return !SchemaUtils.filterRecursively(
-            tableSchema,
-            /* recurseIntoMapOrArrayElements = */ true,
-            /* stopOnFirstMatch */ true,
-            /* filter */ field -> field.getDataType().equals(type))
-        .isEmpty();
+    return new SchemaIterable(tableSchema)
+        .stream().anyMatch(element -> element.getField().getDataType().equals(type));
   }
 }

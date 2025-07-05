@@ -28,29 +28,34 @@ import org.apache.spark.SparkConf
 import org.apache.spark.sql.{DataFrame, QueryTest}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions.lit
+import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
 
-/**
- * The MergeCDCCoreSuite suite only includes CDC tests defined in this file while MergeCDCSuite
- * runs exhaustive tests from MergeIntoSQLSuite to verify that CDC writing mode doesn't break
- * existing functionality.
- */
-class MergeCDCCoreSuite extends MergeCDCTests
-class MergeCDCSuite extends MergeIntoSQLSuite with MergeCDCTests
+
+trait CDCEnabled extends SharedSparkSession {
+  override protected def sparkConf: SparkConf = super.sparkConf
+    .set(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "true")
+}
+
+trait MergeCDCMixin extends SharedSparkSession
+  with MergeIntoSQLTestUtils
+  with DeltaDMLByPathTestUtils
+  with DeltaColumnMappingTestUtils
+  with DeltaSQLCommandTest {
+
+  override protected def sparkConf: SparkConf = super.sparkConf
+    .set(DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS.key, "false")
+}
 
 /**
  * Tests for MERGE INTO in CDC output mode.
  *
  */
 trait MergeCDCTests extends QueryTest
-  with MergeIntoSQLTestUtils
-  with DeltaColumnMappingTestUtils
-  with DeltaSQLCommandTest {
-  import testImplicits._
+  with CDCEnabled
+  with MergeCDCMixin {
 
-  override protected def sparkConf: SparkConf = super.sparkConf
-    .set(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "true")
-    .set(DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS.key, "false")
+  import testImplicits._
 
   // scalastyle:off argcount
   /**

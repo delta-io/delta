@@ -29,11 +29,8 @@ import org.apache.spark.sql.Dataset
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions.lit
 
-class DeleteCDCSuite extends DeleteSQLSuite {
+class DeleteCDCSuite extends DeleteSQLSuite with CDCEnabled {
   import testImplicits._
-
-  override protected def sparkConf: SparkConf = super.sparkConf
-    .set(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "true")
 
   protected def testCDCDelete(name: String)(
       initialData: => Dataset[_],

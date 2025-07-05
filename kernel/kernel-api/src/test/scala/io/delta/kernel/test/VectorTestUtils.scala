@@ -19,11 +19,17 @@ import java.lang.{Boolean => BooleanJ, Double => DoubleJ, Float => FloatJ}
 
 import scala.collection.JavaConverters._
 
-import io.delta.kernel.data.{ColumnVector, MapValue}
+import io.delta.kernel.data.{ColumnarBatch, ColumnVector, MapValue}
 import io.delta.kernel.internal.util.VectorUtils
 import io.delta.kernel.types._
 
 trait VectorTestUtils {
+
+  protected def emptyColumnarBatch = new ColumnarBatch {
+    override def getSchema: StructType = null
+    override def getColumnVector(ordinal: Int): ColumnVector = null
+    override def getSize: Int = 0
+  }
 
   protected def booleanVector(values: Seq[BooleanJ]): ColumnVector = {
     new ColumnVector {

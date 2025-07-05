@@ -53,10 +53,15 @@ import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.util.QueryExecutionListener
 import org.apache.spark.util.Utils
 
+object DeltaTestUtilsBase {
+  final val BOOLEAN_DOMAIN: Seq[Boolean] = Seq(true, false)
+}
+
 trait DeltaTestUtilsBase {
   import DeltaTestUtils.TableIdentifierOrPath
 
-  final val BOOLEAN_DOMAIN: Seq[Boolean] = Seq(true, false)
+  // Re-define here to avoid the need to import it before using
+  final def BOOLEAN_DOMAIN: Seq[Boolean] = DeltaTestUtilsBase.BOOLEAN_DOMAIN
 
   class PlanCapturingListener() extends QueryExecutionListener {
 
@@ -622,6 +627,14 @@ trait DeltaDMLTestUtils
         .option("mode", FailFastMode.name)
         .json(data.toDS)
     }
+  }
+
+  /**
+   * Reads a delta table by its identifier. The identifier can either be the table name or table
+   * path that is in the form of delta.`tablePath`.
+   */
+  protected def readDeltaTableByIdentifier(tableIdentifier: String): DataFrame = {
+    spark.read.format("delta").table(tableIdentifier)
   }
 
   /**

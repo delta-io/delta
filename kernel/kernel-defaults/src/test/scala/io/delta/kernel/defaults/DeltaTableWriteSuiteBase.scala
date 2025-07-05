@@ -33,8 +33,8 @@ import io.delta.kernel.engine.Engine
 import io.delta.kernel.expressions.{Column, Literal}
 import io.delta.kernel.expressions.Literal.ofInt
 import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
-import io.delta.kernel.internal.{ScanImpl, SnapshotImpl, TableConfig, TableImpl}
-import io.delta.kernel.internal.actions.{Metadata, Protocol, SingleAction}
+import io.delta.kernel.internal.{ScanImpl, SnapshotImpl, TableConfig, TableImpl, TransactionImpl}
+import io.delta.kernel.internal.actions.{DomainMetadata, Metadata, Protocol, SingleAction}
 import io.delta.kernel.internal.fs.{Path => DeltaPath}
 import io.delta.kernel.internal.util.{Clock, FileNames, VectorUtils}
 import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
@@ -356,6 +356,36 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     txnBuilder.build(engine)
   }
 
+  def createTxnWithDomainMetadatas(
+      engine: Engine,
+      tablePath: String,
+      domainMetadatas: Seq[DomainMetadata],
+      useInternalApi: Boolean = false): Transaction = {
+
+    val txnBuilder = createWriteTxnBuilder(TableImpl.forPath(engine, tablePath))
+    if (domainMetadatas.nonEmpty && !useInternalApi) {
+      txnBuilder.withDomainMetadataSupported()
+    }
+    val txn = txnBuilder.build(engine).asInstanceOf[TransactionImpl]
+
+    domainMetadatas.foreach { dm =>
+      if (dm.isRemoved) {
+        if (useInternalApi) {
+          txn.removeDomainMetadataInternal(dm.getDomain)
+        } else {
+          txn.removeDomainMetadata(dm.getDomain)
+        }
+      } else {
+        if (useInternalApi) {
+          txn.addDomainMetadataInternal(dm.getDomain, dm.getConfiguration)
+        } else {
+          txn.addDomainMetadata(dm.getDomain, dm.getConfiguration)
+        }
+      }
+    }
+    txn
+  }
+
   def getAppendActions(
       txn: Transaction,
       data: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])]): CloseableIterable[Row] = {
@@ -618,5 +648,15 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
           emptyMap(),
           emptyMap()))
       } else Optional.empty())
+  }
+
+  protected def assertCommitResultHasClusteringCols(
+      commitResult: TransactionCommitResult,
+      expectedClusteringCols: Seq[Column]): Unit = {
+    val actualClusteringCols = commitResult.getTransactionReport.getClusteringColumns.asScala
+
+    assert(
+      actualClusteringCols === expectedClusteringCols,
+      s"Expected clustering columns: $expectedClusteringCols, but got: $actualClusteringCols")
   }
 }

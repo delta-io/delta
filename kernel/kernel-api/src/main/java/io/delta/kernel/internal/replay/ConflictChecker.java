@@ -163,7 +163,8 @@ public class ConflictChecker {
               transaction.getProtocol(),
               lastWinningRowIdHighWatermark,
               attemptDataActions,
-              attemptDomainMetadatas);
+              attemptDomainMetadatas,
+              Optional.empty() /* providedRowIdHighWatermark */);
       updatedDataActions =
           RowTracking.assignBaseRowIdAndDefaultRowCommitVersion(
               snapshot,

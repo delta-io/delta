@@ -52,6 +52,7 @@ object IcebergConverterHook extends PostCommitHook with DeltaLogging {
   // Always throw when sync Iceberg conversion fails. Async conversion exception
   // is handled in the async thread.
   override def handleError(spark: SparkSession, error: Throwable, version: Long): Unit = {
+    logError(error.getMessage, error)
     throw DeltaErrors.universalFormatConversionFailedException(
       version, "iceberg", ExceptionUtils.getMessage(error))
   }

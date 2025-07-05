@@ -45,6 +45,7 @@ import io.delta.kernel.internal.metrics.TransactionReportImpl;
 import io.delta.kernel.internal.replay.ConflictChecker;
 import io.delta.kernel.internal.replay.ConflictChecker.TransactionRebaseState;
 import io.delta.kernel.internal.rowtracking.RowTracking;
+import io.delta.kernel.internal.rowtracking.RowTrackingMetadataDomain;
 import io.delta.kernel.internal.stats.FileSizeHistogram;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.*;
@@ -85,6 +86,7 @@ public class TransactionImpl implements Transaction {
   private final Optional<SetTransaction> setTxnOpt;
   private final Optional<List<Column>> clusteringColumnsOpt;
   private final boolean shouldUpdateProtocol;
+  private final boolean shouldUpdateClusteringDomainMetadata;
   private final Clock clock;
   private final DomainMetadataState domainMetadataState = new DomainMetadataState();
   private Metadata metadata;
@@ -92,6 +94,7 @@ public class TransactionImpl implements Transaction {
   private int maxRetries;
   private int logCompactionInterval;
   private Optional<CRCInfo> currentCrcInfo;
+  private Optional<Long> providedRowIdHighWatermark = Optional.empty();
 
   private boolean closed; // To avoid trying to commit the same transaction again.
 
@@ -106,6 +109,7 @@ public class TransactionImpl implements Transaction {
       Metadata metadata,
       Optional<SetTransaction> setTxnOpt,
       Optional<List<Column>> clusteringColumnsOpt,
+      boolean shouldUpdateClusteringDomainMetadata,
       boolean shouldUpdateMetadata,
       boolean shouldUpdateProtocol,
       int maxRetries,
@@ -121,6 +125,7 @@ public class TransactionImpl implements Transaction {
     this.metadata = metadata;
     this.setTxnOpt = setTxnOpt;
     this.clusteringColumnsOpt = clusteringColumnsOpt;
+    this.shouldUpdateClusteringDomainMetadata = shouldUpdateClusteringDomainMetadata;
     this.shouldUpdateMetadata = shouldUpdateMetadata;
     this.shouldUpdateProtocol = shouldUpdateProtocol;
     this.maxRetries = maxRetries;
@@ -164,9 +169,16 @@ public class TransactionImpl implements Transaction {
         TableFeatures.isDomainMetadataSupported(protocol),
         "Unable to add domain metadata when the domain metadata table feature is disabled");
     checkArgument(
-        DomainMetadata.isUserControlledDomain(domain),
-        "Setting a system-controlled domain is not allowed: " + domain);
-    domainMetadataState.addDomain(domain, config);
+        DomainMetadata.isUserControlledDomain(domain)
+            || DomainMetadata.isSystemDomainSupportedSetFromTxn(domain),
+        "Setting a non-supported system-controlled domain is not allowed: " + domain);
+
+    // Specific handling for system domain metadata
+    if (DomainMetadata.isSystemDomainSupportedSetFromTxn(domain)) {
+      handleSystemDomainMetadata(domain, config);
+    } else {
+      domainMetadataState.addDomain(domain, config);
+    }
   }
 
   @VisibleForTesting
@@ -204,21 +216,24 @@ public class TransactionImpl implements Transaction {
       long committedVersion =
           transactionMetrics.totalCommitTimer.time(
               () -> commitWithRetry(engine, dataActions, transactionMetrics));
-      recordTransactionReport(
-          engine,
-          Optional.of(committedVersion),
-          transactionMetrics,
-          Optional.empty() /* exception */);
+      TransactionReport transactionReport =
+          recordTransactionReport(
+              engine,
+              Optional.of(committedVersion),
+              clusteringColumnsOpt,
+              transactionMetrics,
+              Optional.empty() /* exception */);
       TransactionMetricsResult txnMetricsCaptured =
           transactionMetrics.captureTransactionMetricsResult();
       return new TransactionCommitResult(
           committedVersion,
           generatePostCommitHooks(committedVersion, txnMetricsCaptured),
-          txnMetricsCaptured);
+          transactionReport);
     } catch (Exception e) {
       recordTransactionReport(
           engine,
           Optional.empty() /* committedVersion */,
+          clusteringColumnsOpt,
           transactionMetrics,
           Optional.of(e) /* exception */);
       throw e;
@@ -246,7 +261,8 @@ public class TransactionImpl implements Transaction {
                 protocol,
                 Optional.empty() /* winningTxnRowIdHighWatermark */,
                 dataActions,
-                resolvedDomainMetadatas);
+                resolvedDomainMetadatas,
+                providedRowIdHighWatermark);
         domainMetadataState.setComputedDomainMetadatas(updatedDomainMetadata);
         dataActions =
             RowTracking.assignBaseRowIdAndDefaultRowCommitVersion(
@@ -535,9 +551,10 @@ public class TransactionImpl implements Transaction {
     return Collections.emptyMap();
   }
 
-  private void recordTransactionReport(
+  private TransactionReport recordTransactionReport(
       Engine engine,
       Optional<Long> committedVersion,
+      Optional<List<Column>> clusteringColumnsOpt,
       TransactionMetrics transactionMetrics,
       Optional<Exception> exception) {
     TransactionReport transactionReport =
@@ -546,10 +563,13 @@ public class TransactionImpl implements Transaction {
             operation.toString(),
             engineInfo,
             committedVersion,
+            clusteringColumnsOpt,
             transactionMetrics,
             readSnapshot.getSnapshotReport(),
             exception);
     engine.getMetricsReporters().forEach(reporter -> reporter.report(transactionReport));
+
+    return transactionReport;
   }
 
   private Optional<CRCInfo> buildPostCommitCrcInfoIfCurrentCrcAvailable(
@@ -772,7 +792,8 @@ public class TransactionImpl implements Transaction {
      */
     private void generateClusteringDomainMetadataIfNeeded() {
       if (TableFeatures.isClusteringTableFeatureSupported(protocol)
-          && clusteringColumnsOpt.isPresent()) {
+          && clusteringColumnsOpt.isPresent()
+          && shouldUpdateClusteringDomainMetadata) {
         DomainMetadata clusteringDomainMetadata =
             ClusteringUtils.getClusteringDomainMetadata(clusteringColumnsOpt.get());
         addDomain(
@@ -807,6 +828,21 @@ public class TransactionImpl implements Transaction {
               return SingleAction.createRemoveFileSingleAction(
                   add.toRemoveFileRow(true /* dataChange */, Optional.empty()));
             });
+  }
+
+  private void handleSystemDomainMetadata(String domain, String config) {
+    if (domain.equals(RowTrackingMetadataDomain.DOMAIN_NAME)) {
+      if (!TableFeatures.isRowTrackingSupported(protocol)) {
+        throw DeltaErrors.rowTrackingRequiredForRowIdHighWatermark(dataPath.toString(), config);
+      }
+      long providedHighWaterMark =
+          RowTrackingMetadataDomain.fromJsonConfiguration(config).getRowIdHighWaterMark();
+      checkArgument(providedHighWaterMark >= 0, "rowIdHighWatermark must be >= 0");
+      this.providedRowIdHighWatermark = Optional.of(providedHighWaterMark);
+      // Conflict resolution is disabled when providedRowIdHighWatermark is set,
+      // because it must be updated according to the latest table state.
+      maxRetries = 0;
+    }
   }
 
   private boolean isReplaceTable() {

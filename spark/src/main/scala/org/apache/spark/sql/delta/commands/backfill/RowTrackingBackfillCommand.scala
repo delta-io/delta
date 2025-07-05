@@ -47,10 +47,8 @@ case class RowTrackingBackfillCommand(
       spark: SparkSession,
       txn: OptimisticTransaction,
       fileMaterializationTracker: FileMetadataMaterializationTracker,
-      maxNumBatchesInParallel: Int,
       backfillStats: BackfillCommandStats): BackfillExecutor = {
-    new RowTrackingBackfillExecutor(
-      spark, txn, fileMaterializationTracker, maxNumBatchesInParallel, backfillStats)
+    new RowTrackingBackfillExecutor(spark, txn, fileMaterializationTracker, backfillStats)
   }
 
   override def filesToBackfill(txn: OptimisticTransaction): Dataset[AddFile] =

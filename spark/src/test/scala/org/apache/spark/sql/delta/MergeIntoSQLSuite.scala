@@ -32,18 +32,104 @@ import org.apache.spark.sql.functions.udf
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
 
-class MergeIntoSQLSuite extends MergeIntoSuiteBase
+trait MergeIntoSQLMixin extends MergeIntoSuiteBaseMixin
   with MergeIntoSQLTestUtils
-  with MergeIntoNotMatchedBySourceSuite
   with DeltaSQLCommandTest
   with DeltaTestUtilsForTempViews {
-
-  import testImplicits._
 
   override def excluded: Seq[String] = super.excluded ++ Seq(
     // Schema evolution SQL syntax is not yet supported
     "schema evolution enabled for the current command"
   )
+}
+
+trait MergeIntoSQLNondeterministicOrderTests extends MergeIntoSQLMixin {
+  private def testNondeterministicOrder(insertOnly: Boolean): Unit = {
+    withTable("target") {
+      // For the spark sql random() function the seed is fixed for both invocations
+      val trueRandom = () => Math.random()
+      val trueRandomUdf = udf(trueRandom)
+      spark.udf.register("trueRandom", trueRandomUdf.asNondeterministic())
+
+      sql("CREATE TABLE target(`trgKey` INT, `trgValue` INT) using delta")
+      sql("INSERT INTO target VALUES (1,2), (3,4)")
+      // This generates different data sets on every execution
+      val sourceSql =
+        s"""
+           |(SELECT r.id AS srcKey, r.id AS srcValue
+           | FROM range(1, 100000) as r
+           |  JOIN (SELECT trueRandom() * 100000 AS bound) ON r.id < bound
+           |) AS source
+           |""".stripMargin
+
+      if (insertOnly) {
+        sql(s"""
+           |MERGE INTO target
+           |USING ${sourceSql}
+           |ON srcKey = trgKey
+           |WHEN NOT MATCHED THEN
+           |  INSERT (trgValue, trgKey) VALUES (srcValue, srcKey)
+           |""".stripMargin)
+      } else {
+        sql(s"""
+           |MERGE INTO target
+           |USING ${sourceSql}
+           |ON srcKey = trgKey
+           |WHEN MATCHED THEN
+           |  UPDATE SET trgValue = srcValue
+           |WHEN NOT MATCHED THEN
+           |  INSERT (trgValue, trgKey) VALUES (srcValue, srcKey)
+           |""".stripMargin)
+      }
+    }
+  }
+
+  test(s"detect nondeterministic source - flag on") {
+    withSQLConf(
+      // materializing source would fix determinism
+      DeltaSQLConf.MERGE_MATERIALIZE_SOURCE.key -> DeltaSQLConf.MergeMaterializeSource.NONE,
+      DeltaSQLConf.MERGE_FAIL_IF_SOURCE_CHANGED.key -> "true"
+    ) {
+      val e = intercept[UnsupportedOperationException](
+        testNondeterministicOrder(insertOnly = false)
+      )
+      assert(e.getMessage.contains("source dataset is not deterministic"))
+    }
+  }
+
+  test(s"detect nondeterministic source - flag on - insertOnly") {
+    withSQLConf(
+        // materializing source would fix determinism
+        DeltaSQLConf.MERGE_MATERIALIZE_SOURCE.key -> DeltaSQLConf.MergeMaterializeSource.NONE,
+        DeltaSQLConf.MERGE_FAIL_IF_SOURCE_CHANGED.key -> "true") {
+      testNondeterministicOrder(insertOnly = true)
+    }
+  }
+
+  test("detect nondeterministic source - flag off") {
+    withSQLConf(
+      // materializing source would fix determinism
+      DeltaSQLConf.MERGE_MATERIALIZE_SOURCE.key -> DeltaSQLConf.MergeMaterializeSource.NONE,
+      DeltaSQLConf.MERGE_FAIL_IF_SOURCE_CHANGED.key -> "false"
+    ) {
+      testNondeterministicOrder(insertOnly = false)
+    }
+  }
+
+  test("detect nondeterministic source - flag on, materialized") {
+    withSQLConf(
+      // materializing source fixes determinism, so the source is no longer nondeterministic
+      DeltaSQLConf.MERGE_MATERIALIZE_SOURCE.key -> DeltaSQLConf.MergeMaterializeSource.ALL,
+      DeltaSQLConf.MERGE_FAIL_IF_SOURCE_CHANGED.key -> "true"
+    ) {
+      testNondeterministicOrder(insertOnly = false)
+    }
+  }
+}
+
+trait MergeIntoSQLTests extends MergeIntoSQLMixin {
+
+  import testImplicits._
 
   test("CTE as a source in MERGE") {
     withTable("source") {
@@ -182,88 +268,6 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase
         """.stripMargin))
       assert(e.getMessage.contains(
         "only the last NOT MATCHED [BY TARGET] clause can omit the condition"))
-    }
-  }
-
-  def testNondeterministicOrder(insertOnly: Boolean): Unit = {
-    withTable("target") {
-      // For the spark sql random() function the seed is fixed for both invocations
-      val trueRandom = () => Math.random()
-      val trueRandomUdf = udf(trueRandom)
-      spark.udf.register("trueRandom", trueRandomUdf.asNondeterministic())
-
-      sql("CREATE TABLE target(`trgKey` INT, `trgValue` INT) using delta")
-      sql("INSERT INTO target VALUES (1,2), (3,4)")
-      // This generates different data sets on every execution
-      val sourceSql =
-        s"""
-           |(SELECT r.id AS srcKey, r.id AS srcValue
-           | FROM range(1, 100000) as r
-           |  JOIN (SELECT trueRandom() * 100000 AS bound) ON r.id < bound
-           |) AS source
-           |""".stripMargin
-
-      if (insertOnly) {
-        sql(s"""
-           |MERGE INTO target
-           |USING ${sourceSql}
-           |ON srcKey = trgKey
-           |WHEN NOT MATCHED THEN
-           |  INSERT (trgValue, trgKey) VALUES (srcValue, srcKey)
-           |""".stripMargin)
-      } else {
-        sql(s"""
-           |MERGE INTO target
-           |USING ${sourceSql}
-           |ON srcKey = trgKey
-           |WHEN MATCHED THEN
-           |  UPDATE SET trgValue = srcValue
-           |WHEN NOT MATCHED THEN
-           |  INSERT (trgValue, trgKey) VALUES (srcValue, srcKey)
-           |""".stripMargin)
-      }
-    }
-  }
-
-  test(s"detect nondeterministic source - flag on") {
-    withSQLConf(
-      // materializing source would fix determinism
-      DeltaSQLConf.MERGE_MATERIALIZE_SOURCE.key -> DeltaSQLConf.MergeMaterializeSource.NONE,
-      DeltaSQLConf.MERGE_FAIL_IF_SOURCE_CHANGED.key -> "true"
-    ) {
-      val e = intercept[UnsupportedOperationException](
-        testNondeterministicOrder(insertOnly = false)
-      )
-      assert(e.getMessage.contains("source dataset is not deterministic"))
-    }
-  }
-
-  test(s"detect nondeterministic source - flag on - insertOnly") {
-    withSQLConf(
-        // materializing source would fix determinism
-        DeltaSQLConf.MERGE_MATERIALIZE_SOURCE.key -> DeltaSQLConf.MergeMaterializeSource.NONE,
-        DeltaSQLConf.MERGE_FAIL_IF_SOURCE_CHANGED.key -> "true") {
-      testNondeterministicOrder(insertOnly = true)
-    }
-  }
-
-  test("detect nondeterministic source - flag off") {
-    withSQLConf(
-      // materializing source would fix determinism
-      DeltaSQLConf.MERGE_MATERIALIZE_SOURCE.key -> DeltaSQLConf.MergeMaterializeSource.NONE,
-      DeltaSQLConf.MERGE_FAIL_IF_SOURCE_CHANGED.key -> "false"
-    ) {
-      testNondeterministicOrder(insertOnly = false)
-    }
-  }
-
-  test("detect nondeterministic source - flag on, materialized") {
-    withSQLConf(
-      // materializing source fixes determinism, so the source is no longer nondeterministic
-      DeltaSQLConf.MERGE_MATERIALIZE_SOURCE.key -> DeltaSQLConf.MergeMaterializeSource.ALL,
-      DeltaSQLConf.MERGE_FAIL_IF_SOURCE_CHANGED.key -> "true"
-    ) {
-      testNondeterministicOrder(insertOnly = false)
     }
   }
 
@@ -556,16 +560,8 @@ class MergeIntoSQLSuite extends MergeIntoSuiteBase
   }
 }
 
-trait MergeIntoSQLColumnMappingSuiteBase extends DeltaColumnMappingSelectedTestMixin {
+trait MergeIntoSQLColumnMappingOverrides extends DeltaColumnMappingSelectedTestMixin {
   override protected def runOnlyTests: Seq[String] =
     Seq("schema evolution - new nested column with update non-* and insert * - " +
       "array of struct - longer target")
 }
-
-class MergeIntoSQLIdColumnMappingSuite extends MergeIntoSQLSuite
-  with DeltaColumnMappingEnableIdMode
-  with MergeIntoSQLColumnMappingSuiteBase
-
-class MergeIntoSQLNameColumnMappingSuite extends MergeIntoSQLSuite
-  with DeltaColumnMappingEnableNameMode
-  with MergeIntoSQLColumnMappingSuiteBase

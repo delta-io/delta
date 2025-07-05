@@ -73,52 +73,21 @@ trait MergeIntoSchemaEvolutionMixin {
 
         if (error != null) {
           val ex = intercept[AnalysisException] {
-            executeMerge(s"delta.`$tempPath` t", "source s", cond, clauses: _*)
+            executeMerge(s"$tableSQLIdentifier t", "source s", cond, clauses: _*)
           }
           println(s"Intercepted AnalysisException: ${Utils.exceptionString(ex)}")
           errorContains(Utils.exceptionString(ex), error)
         } else {
-          executeMerge(s"delta.`$tempPath` t", "source s", cond, clauses: _*)
-          val actualData = spark.read.format("delta").load(tempPath)
-          try {
-            checkAnswer(actualData, df.collect())
-          } catch {
-            case e: Throwable =>
-              println("=== Data Mismatch ===")
-              println("Expected:")
-              df.show(truncate = false)
-              println("Actual:")
-              actualData.show(truncate = false)
-              throw e
-          }
-
+          executeMerge(s"$tableSQLIdentifier t", "source s", cond, clauses: _*)
+          checkAnswer(readDeltaTableByIdentifier(tableSQLIdentifier), df.collect())
           if (schema != null) {
-            val actualSchema = actualData.schema
-            try {
-              assert(actualSchema === schema)
-            } catch {
-              case e: Throwable =>
-                println("=== Schema Mismatch ===")
-                println("Expected Schema:")
-                println(schema.treeString)
-                println("Actual Schema:")
-                println(actualSchema.treeString)
-                throw e
-            }
+            assert(readDeltaTableByIdentifier(tableSQLIdentifier).schema === schema)
           } else {
-            val actualSchema = actualData.schema.asNullable
-            val expectedSchema = df.schema.asNullable
-            try {
-              assert(actualSchema === expectedSchema)
-            } catch {
-              case e: Throwable =>
-                println("=== Inferred Schema Mismatch ===")
-                println("Expected (from df):")
-                println(expectedSchema.treeString)
-                println("Actual:")
-                println(actualSchema.treeString)
-                throw e
-            }
+            // Check against the schema of the expected result df if no explicit schema was
+            // provided. Nullability of fields will vary depending on the actual data in the df so
+            // we ignore it.
+            assert(readDeltaTableByIdentifier(tableSQLIdentifier).schema.asNullable ===
+              df.schema.asNullable)
           }
         }
       }
@@ -190,9 +159,8 @@ trait MergeIntoSchemaEvolutionMixin {
  * in other suites to get basic test coverage for schema evolution in combination with other
  * features, e.g. CDF, DVs.
  */
-trait MergeIntoSchemaEvolutionCoreTests {
-  self: QueryTest with MergeIntoSchemaEvolutionMixin with MergeIntoTestUtils
-    with SharedSparkSession =>
+trait MergeIntoSchemaEvolutionCoreTests extends QueryTest {
+  self: MergeIntoSchemaEvolutionMixin with MergeIntoTestUtils with SharedSparkSession =>
 
   import testImplicits._
 
@@ -3261,4 +3229,121 @@ trait MergeIntoNestedStructEvolutionTests {
     confs = Seq(
       SQLConf.STORE_ASSIGNMENT_POLICY.key -> StoreAssignmentPolicy.STRICT.toString,
       DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key -> "false"))
+
+  testNestedStructsEvolution("struct with extra source column not used in update, without fix")(
+    target = """{ "key": 1, "value": { "a": 10 } }""",
+    source =
+      """{ "key": 1, "value": { "a": 11, "b": 21 } }
+       { "key": 2, "value": { "a": 12, "b": 22 } }""".stripMargin,
+    targetSchema = new StructType()
+      .add("key", IntegerType)
+      .add("value", new StructType()
+        .add("a", IntegerType)),
+    sourceSchema = new StructType()
+      .add("key", IntegerType)
+      .add("value", new StructType()
+        .add("a", IntegerType)
+        .add("b", IntegerType)),
+    cond = "t.key = s.key",
+    clauses = update(set = "key = 0") :: insert("*") :: Nil,
+    expectErrorContains = "data type mismatch",
+    expectErrorWithoutEvolutionContains = "cannot cast",
+    confs = Seq(
+      DeltaSQLConf.DELTA_MERGE_SCHEMA_EVOLUTION_FIX_NESTED_STRUCT_ALIGNMENT.key -> "false")
+  )
+
+  testNestedStructsEvolution("struct with extra source column not used in update")(
+    target = """{ "key": 1, "value": { "a": 10 } }""",
+    source =
+    """{ "key": 1, "value": { "a": 11, "b": 21 } }
+       { "key": 2, "value": { "a": 12, "b": 22 } }""".stripMargin,
+    targetSchema = new StructType()
+      .add("key", IntegerType)
+      .add("value", new StructType()
+        .add("a", IntegerType)),
+    sourceSchema = new StructType()
+      .add("key", IntegerType)
+      .add("value", new StructType()
+        .add("a", IntegerType)
+        .add("b", IntegerType)),
+    cond = "t.key = s.key",
+    clauses = update(set = "key = 0") :: insert("*") :: Nil,
+    result =
+    """{ "key": 0, "value": { "a": 10, "b": null } }
+       { "key": 2, "value": { "a": 12, "b": 22 } }""".stripMargin,
+    resultSchema = new StructType()
+      .add("key", IntegerType)
+      .add("value", new StructType()
+        .add("a", IntegerType)
+        .add("b", IntegerType)),
+    expectErrorWithoutEvolutionContains = "cannot cast",
+    confs = Seq(
+      DeltaSQLConf.DELTA_MERGE_SCHEMA_EVOLUTION_FIX_NESTED_STRUCT_ALIGNMENT.key -> "true")
+  )
+
+  testNestedStructsEvolution("array struct with extra source column not used in update")(
+    target = """{ "key": 1, "value": [ { "a": 10 } ] }""",
+    source =
+      """{ "key": 1, "value": [ { "a": 11, "b": 21 } ] }
+       { "key": 2, "value": [ { "a": 12, "b": 22 } ] }""".stripMargin,
+    targetSchema = new StructType()
+      .add("key", IntegerType)
+      .add("value", ArrayType(
+        new StructType()
+          .add("a", IntegerType))),
+    sourceSchema = new StructType()
+      .add("key", IntegerType)
+      .add("value", ArrayType(
+        new StructType()
+          .add("a", IntegerType)
+          .add("b", IntegerType))),
+    cond = "t.key = s.key",
+    clauses = update(set = "key = 0") :: insert("*") :: Nil,
+    result =
+      """{ "key": 0, "value": [ { "a": 10, "b": null } ] }
+       { "key": 2, "value": [ { "a": 12, "b": 22 } ] }""".stripMargin,
+    resultSchema = new StructType()
+      .add("key", IntegerType)
+      .add("value", ArrayType(
+        new StructType()
+          .add("a", IntegerType)
+          .add("b", IntegerType))),
+    expectErrorWithoutEvolutionContains = "cannot cast",
+    confs = Seq(
+      DeltaSQLConf.DELTA_MERGE_SCHEMA_EVOLUTION_FIX_NESTED_STRUCT_ALIGNMENT.key -> "true")
+  )
+
+  testNestedStructsEvolution("nested struct with extra source column not used in update")(
+    target = """{ "key": 1, "value": { "a": { "aa": 1 } } }""",
+    source =
+      """{ "key": 1, "value": { "a": { "aa": 11, "bb": 31 }, "b": 21 } }
+       { "key": 2, "value": { "a": { "aa": 12, "bb": 32 }, "b": 22 } }""".stripMargin,
+    targetSchema = new StructType()
+      .add("key", IntegerType)
+      .add("value", new StructType()
+        .add("a", new StructType()
+        .add("aa", IntegerType))),
+    sourceSchema = new StructType()
+      .add("key", IntegerType)
+      .add("value", new StructType()
+        .add("a", new StructType()
+        .add("aa", IntegerType)
+        .add("bb", IntegerType))
+        .add("b", IntegerType)),
+    cond = "t.key = s.key",
+    clauses = update(set = "key = 0") :: insert("*") :: Nil,
+    result =
+      """{ "key": 0, "value": { "a": { "aa": 1, "bb": null }, "b": null } }
+       { "key": 2, "value": { "a": { "aa": 12, "bb": 32 }, "b": 22 } }""".stripMargin,
+    resultSchema = new StructType()
+      .add("key", IntegerType)
+      .add("value", new StructType()
+        .add("a", new StructType()
+        .add("aa", IntegerType)
+        .add("bb", IntegerType))
+        .add("b", IntegerType)),
+    expectErrorWithoutEvolutionContains = "cannot cast",
+    confs = Seq(
+      DeltaSQLConf.DELTA_MERGE_SCHEMA_EVOLUTION_FIX_NESTED_STRUCT_ALIGNMENT.key -> "true")
+  )
 }

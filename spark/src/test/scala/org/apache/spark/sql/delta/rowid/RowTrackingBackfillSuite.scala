@@ -473,26 +473,6 @@ class RowTrackingBackfillSuite
     }
   }
 
-  test("Backfill works with more than 1 batch in parallel") {
-    val expectedNumBackfillCommits = 4
-    val maxNumFilesPerCommit = Math.ceil(
-      numFilesInTable.toDouble / expectedNumBackfillCommits.toDouble).toInt
-    val maxNumBatchesInParallel = expectedNumBackfillCommits
-    withRowIdDisabledTestTable() {
-      withSQLConf(
-        DeltaSQLConf.DELTA_BACKFILL_MAX_NUM_FILES_PER_COMMIT.key ->
-          maxNumFilesPerCommit.toString,
-        DeltaSQLConf.DELTA_BACKFILL_MAX_NUM_BATCHES_IN_PARALLEL.key ->
-          maxNumBatchesInParallel.toString
-      ) {
-        validateSuccessfulBackfillMetrics(expectedNumBackfillCommits) {
-          val log = DeltaLog.forTable(spark, TableIdentifier(testTableName))
-          triggerBackfillOnTestTableUsingAlterTable(testTableName, initialNumRows, log)
-        }
-      }
-    }
-  }
-
   test("BackfillCommandStats metrics are correct in case of failure") {
     withRowIdDisabledTestTable() {
       val (log, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(testTableName))
@@ -502,7 +482,6 @@ class RowTrackingBackfillSuite
       val filesInSuccessfulBackfill = allFiles.take(numFilesInSuccessfulBackfillBatch)
       val numFilesInFailingBackfillBatch = 2
       val filesInFailingBackfill = allFiles.takeRight(numFilesInFailingBackfillBatch)
-      val maxNumBatchesInParallel = 1
       // ordered list in order to force the successful batch to execute before the failing batch.
       val batchIterator = List(
         RowTrackingBackfillBatch(filesInSuccessfulBackfill),
@@ -512,18 +491,16 @@ class RowTrackingBackfillSuite
       val txn = log.startTransaction()
       val backfillStats = BackfillCommandStats(
         transactionId = txn.txnId,
-        nameOfTriggeringOperation = DeltaOperations.OP_SET_TBLPROPERTIES,
-        maxNumBatchesInParallel = maxNumBatchesInParallel)
+        nameOfTriggeringOperation = DeltaOperations.OP_SET_TBLPROPERTIES)
       val backfillExecutor = new RowTrackingBackfillExecutor(
         spark,
         txn,
         FileMetadataMaterializationTracker.noopTracker,
-        maxNumBatchesInParallel,
         backfillStats
       )
 
       val backfillUsageRecords = Log4jUsageLogger.track {
-        intercept[ExecutionException] {
+        intercept[IllegalStateException] {
           backfillExecutor.run(batchIterator)
         }
       }.filter(_.metric == "tahoeEvent")
@@ -538,7 +515,6 @@ class RowTrackingBackfillSuite
       // RowTrackingBackfillCommand, not BackfillExecutor so it is still 0 and false respectively.
       assert(backfillStats.numFailedBatches === 1)
       assert(backfillStats.numSuccessfulBatches === 1)
-      assert(backfillStats.maxNumBatchesInParallel === maxNumBatchesInParallel)
       assert(backfillStats.transactionId === txn.txnId)
       assert(backfillStats.nameOfTriggeringOperation === DeltaOperations.OP_SET_TBLPROPERTIES)
 

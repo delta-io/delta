@@ -16,22 +16,17 @@
 
 package org.apache.spark.sql.delta.commands.backfill
 
-import java.util.concurrent.{Semaphore, ThreadPoolExecutor}
 import java.util.concurrent.atomic.AtomicInteger
-
-import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.metering.DeltaLogging
 
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.util.ThreadUtils
 
 trait BackfillExecutor extends DeltaLogging {
   def spark: SparkSession
   def origTxn: OptimisticTransaction
   def tracker: FileMetadataMaterializationTracker
-  def maxBatchesInParallel: Int
   def backfillStats: BackfillCommandStats
 
   def backFillBatchOpType: String
@@ -42,77 +37,37 @@ trait BackfillExecutor extends DeltaLogging {
       logInfo(log"Backfill command did not need to update any files")
       return
     }
-    executeBackfillBatches(
-      batches,
-      activeThreadSemaphore = new Semaphore(maxBatchesInParallel))
+    executeBackfillBatches(batches)
   }
 
   /**
-   * Execute all [[BackfillBatch]] objects inside the [[Iterator]] by launching a set
-   * of background threads. Each thread handles and commits a single
-   * [[BackfillBatch]] object.
+   * Execute all [[BackfillBatch]] objects inside the [[Iterator]].
    *
-   * @param batches               The iterator of [[BackfillBatch]] to be executed.
-   * @param activeThreadSemaphore The semaphore to control the number of concurrent
-   *                              active threads.
+   * @param batches The iterator of [[BackfillBatch]] to be executed.
    */
   private def executeBackfillBatches(
-      batches: Iterator[BackfillBatch],
-      activeThreadSemaphore: Semaphore): Unit = {
-    // Get the thread pool to handle each batch.
-    val globalThreadPool = BackfillExecutor.getOrCreateThreadPool()
-    // The futures to wait for concurrent active batches to complete.
-    val futures = new ArrayBuffer[java.util.concurrent.Future[Unit]]
+      batches: Iterator[BackfillBatch]): Unit = {
+    val observer = BackfillExecutionObserver.getObserver
     val numSuccessfulBatch = new AtomicInteger(0)
     val numFailedBatch = new AtomicInteger(0)
     try {
       batches.zipWithIndex.foreach { case (batch, batchId) =>
-        activeThreadSemaphore.acquire()
-        futures += globalThreadPool.submit(() => try {
-          // Make sure each commit has the same active spark session
-          SparkSession.setActiveSession(spark)
-          recordDeltaOperation(origTxn.deltaLog, backFillBatchOpType) {
-            batch.execute(origTxn, batchId, numSuccessfulBatch, numFailedBatch)
+        try {
+          observer.executeBatch {
+            recordDeltaOperation(origTxn.deltaLog, backFillBatchOpType) {
+              batch.execute(origTxn, batchId, numSuccessfulBatch, numFailedBatch)
+            }
           }
         } finally {
-          activeThreadSemaphore.release()
           // release all the permits for the files materialized by the batch
           if (tracker != null) {
             tracker.releasePermits(batch.filesInBatch.length)
           }
-        })
+        }
       }
-      futures.foreach(_.get())
-    } catch {
-      case t: Throwable =>
-        // In case of exception we want to cancel futures that haven't started running yet. We don't
-        // want to interrupt futures that are already running because it may lead to incorrect
-        // metrics. We don't record the metric BackfillBatchStats atomically with the
-        // txn.commit call, so if we cancel the future, we may not correctly record the success.
-        val mayInterruptIfRunning = false
-        futures.foreach(_.cancel(mayInterruptIfRunning))
-        throw t
     } finally {
       backfillStats.numSuccessfulBatches = numSuccessfulBatch.get()
       backfillStats.numFailedBatches = numFailedBatch.get()
     }
-  }
-}
-
-private[delta] object BackfillExecutor extends DeltaLogging {
-
-  /** Global thread pool for all Backfill queries */
-  private var threadPool: ThreadPoolExecutor = _
-
-  /**
-   * Get existing global thread pool or create a new one if it doesn't exist.
-   */
-  private[backfill] def getOrCreateThreadPool(): ThreadPoolExecutor = synchronized {
-    if (threadPool == null) {
-      threadPool = ThreadUtils.newDaemonCachedThreadPool(
-        "deltaBackfill",
-        maxThreadNumber = 64)
-    }
-    threadPool
   }
 }

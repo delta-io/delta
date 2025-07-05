@@ -42,14 +42,11 @@ trait IcebergCompatV2MetadataValidatorAndUpdaterSuiteBase
 
   override def isDeletionVectorsSupported: Boolean = false
 
-  override def requiredTableFeatures: Set[TableFeature] = Set(
-    ICEBERG_COMPAT_V2_W_FEATURE,
-    COLUMN_MAPPING_RW_FEATURE)
-
   override def withIcebergCompatAndCMEnabled(
       schema: StructType,
+      columnMappingMode: String = "name",
       partCols: Seq[String] = Seq.empty): Metadata = {
-    testMetadata(schema, partCols).withIcebergCompatV2AndCMEnabled()
+    testMetadata(schema, partCols).withIcebergCompatV2AndCMEnabled(columnMappingMode)
   }
 }
 
@@ -60,9 +57,10 @@ class IcebergCompatV2MetadataValidatorAndUpdaterSuite
 
   override def getCompatEnabledMetadata(
       schema: StructType,
+      columnMappingMode: String = "name",
       partCols: Seq[String] = Seq.empty): Metadata = {
     testMetadata(schema, partCols)
-      .withIcebergCompatV2AndCMEnabled()
+      .withIcebergCompatV2AndCMEnabled(columnMappingMode)
   }
 
   override def getCompatEnabledProtocol(tableFeatures: TableFeature*): Protocol = {
@@ -88,6 +86,23 @@ class IcebergCompatV2MetadataValidatorAndUpdaterSuite
       }
       assert(e.getMessage.contains(
         s"icebergCompat$icebergCompatVersion: requires the feature 'columnMapping' to be enabled."))
+    }
+  }
+
+  Seq("id", "name").foreach { existingCMMode =>
+    Seq(true, false).foreach { isNewTable =>
+      test(s"existing column mapping mode `$existingCMMode` is preserved " +
+        s"when icebergCompat is enabled, isNewTable = $isNewTable") {
+        val metadata = getCompatEnabledMetadata(cmTestSchema(), columnMappingMode = existingCMMode)
+        val protocol = getCompatEnabledProtocol()
+
+        assert(metadata.getConfiguration.get("delta.columnMapping.mode") === existingCMMode)
+
+        val updatedMetadata =
+          validateAndUpdateIcebergCompatMetadata(isNewTable, metadata, protocol)
+        // No metadata update is needed since already compatible column mapping mode
+        assert(!updatedMetadata.isPresent)
+      }
     }
   }
 

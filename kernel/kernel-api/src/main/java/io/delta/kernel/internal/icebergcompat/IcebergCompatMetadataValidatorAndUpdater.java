@@ -18,7 +18,6 @@ package io.delta.kernel.internal.icebergcompat;
 import static io.delta.kernel.internal.tablefeatures.TableFeatures.*;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Collections.singletonMap;
-import static java.util.stream.Collectors.toList;
 
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.internal.DeltaErrors;
@@ -29,13 +28,11 @@ import io.delta.kernel.internal.tablefeatures.TableFeature;
 import io.delta.kernel.internal.types.TypeWideningChecker;
 import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.SchemaIterable;
-import io.delta.kernel.internal.util.SchemaUtils;
-import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.*;
+import io.delta.kernel.utils.DataFileStatus;
 import java.util.*;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 /**
  * Contains interfaces and common utility classes for defining the iceberg conversion compatibility
@@ -58,6 +55,19 @@ import java.util.stream.Stream;
  * </ul>
  */
 public abstract class IcebergCompatMetadataValidatorAndUpdater {
+
+  /**
+   * Returns whether Iceberg compatibility is enabled for the given table metadata. This checks if
+   * either `icebergCompatV2` or `icebergCompatV3` table property is enabled.
+   *
+   * @param metadata The table metadata to check.
+   * @return true if either Iceberg compatibility V2 or V3 is enabled; false otherwise.
+   */
+  public static Boolean isIcebergCompatEnabled(Metadata metadata) {
+    return TableConfig.ICEBERG_COMPAT_V2_ENABLED.fromMetadata(metadata)
+        || TableConfig.ICEBERG_COMPAT_V3_ENABLED.fromMetadata(metadata);
+  }
+
   /////////////////////////////////////////////////////////////////////////////////
   /// Interfaces for defining checks for the compat validation and updating     ///
   /////////////////////////////////////////////////////////////////////////////////
@@ -174,6 +184,10 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
                   || ColumnMapping.ColumnMappingMode.ID == value,
           ColumnMapping.ColumnMappingMode.NAME.value);
 
+  protected static final IcebergCompatRequiredTablePropertyEnforcer ROW_TRACKING_ENABLED =
+      new IcebergCompatRequiredTablePropertyEnforcer<>(
+          TableConfig.ROW_TRACKING_ENABLED, (value) -> value, "true");
+
   /**
    * Defines checks for compatibility with the targeted iceberg features (icebergCompatV1 or
    * icebergCompatV2 etc.)
@@ -208,23 +222,24 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
   protected static IcebergCompatCheck hasOnlySupportedTypes(
       Set<Class<? extends DataType>> supportedTypes) {
     return (inputContext) -> {
-      List<Tuple2<List<String>, StructField>> matches =
-          SchemaUtils.filterRecursively(
-              inputContext.newMetadata.getSchema(),
-              /* recurseIntoMapAndArrayTypes= */ true,
-              /* stopOnFirstMatch = */ false,
-              field -> {
-                DataType dataType = field.getDataType();
-                for (Class<? extends DataType> clazz : supportedTypes) {
-                  if (clazz.isInstance(dataType)) return false;
-                }
-                return true;
-              });
+      Set<DataType> matches =
+          new SchemaIterable(inputContext.newMetadata.getSchema())
+              .stream()
+                  .map(element -> element.getField().getDataType())
+                  .filter(
+                      dataType -> {
+                        for (Class<? extends DataType> clazz : supportedTypes) {
+                          if (clazz.isInstance(dataType)) return false;
+                        }
+                        return true;
+                      })
+                  .collect(Collectors.toSet());
 
       if (!matches.isEmpty()) {
+        List<DataType> unsupportedTypes = new ArrayList<>(matches);
+        unsupportedTypes.sort(Comparator.comparing(DataType::toString));
         throw DeltaErrors.icebergCompatUnsupportedTypeColumns(
-            inputContext.compatFeatureName,
-            matches.stream().map(tuple -> tuple._2.getDataType()).collect(toList()));
+            inputContext.compatFeatureName, unsupportedTypes);
       }
     };
   }
@@ -253,9 +268,8 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
       hasOnlySupportedTypes(V2_SUPPORTED_TYPES);
 
   protected static final IcebergCompatCheck V3_CHECK_HAS_SUPPORTED_TYPES =
-      hasOnlySupportedTypes(
-          Stream.concat(V2_SUPPORTED_TYPES.stream(), Stream.of(VariantType.class))
-              .collect(Collectors.toSet()));
+      // todo: add VariantType once it is supported
+      hasOnlySupportedTypes(V2_SUPPORTED_TYPES);
 
   // These are the common supported partition types for both Iceberg compat V2 and V3
   protected static final IcebergCompatCheck CHECK_HAS_ALLOWED_PARTITION_TYPES =
@@ -377,7 +391,7 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
       }
     }
 
-    // check for IcebergV2 compatibility checks
+    // check for Iceberg compatibility checks
     for (IcebergCompatCheck icebergCompatCheck : icebergCompatChecks()) {
       icebergCompatCheck.check(inputContext);
     }
@@ -394,4 +408,50 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
   abstract List<TableFeature> requiredDependencyTableFeatures();
 
   abstract List<IcebergCompatCheck> icebergCompatChecks();
+
+  /////////////////////////////
+  /// Helper function       ///
+  /////////////////////////////
+
+  /**
+   * Validate the given {@link DataFileStatus} that is being added as a {@code add} action to Delta
+   * Log. Currently, it checks that the statistics are not empty.
+   *
+   * @param dataFileStatus The {@link DataFileStatus} to validate.
+   * @param compatFeatureName The name of the compatibility feature being validated (e.g.
+   *     "icebergCompatV2").
+   */
+  protected static void validateDataFileStatus(
+      DataFileStatus dataFileStatus, String compatFeatureName) {
+    if (!dataFileStatus.getStatistics().isPresent()) {
+      // presence of stats means always has a non-null `numRecords`
+      throw DeltaErrors.icebergCompatMissingNumRecordsStats(compatFeatureName, dataFileStatus);
+    }
+  }
+
+  /**
+   * Block the Iceberg Compat config related changes that we do not support and for which we throw
+   * an {@link KernelException},
+   *
+   * <ul>
+   *   <li>Disabling on an existing table (true to false)
+   *   <li>Enabling on an existing table (false to true)
+   * </ul>
+   */
+  protected static void blockConfigChangeOnExistingTable(
+      TableConfig<Boolean> tableConfig,
+      Map<String, String> oldConfig,
+      Map<String, String> newConfig,
+      boolean isNewTable) {
+    if (!isNewTable) {
+      boolean wasEnabled = tableConfig.fromMetadata(oldConfig);
+      boolean isEnabled = tableConfig.fromMetadata(newConfig);
+      if (!wasEnabled && isEnabled) {
+        throw DeltaErrors.enablingIcebergCompatFeatureOnExistingTable(tableConfig.getKey());
+      }
+      if (wasEnabled && !isEnabled) {
+        throw DeltaErrors.disablingIcebergCompatFeatureOnExistingTable(tableConfig.getKey());
+      }
+    }
+  }
 }

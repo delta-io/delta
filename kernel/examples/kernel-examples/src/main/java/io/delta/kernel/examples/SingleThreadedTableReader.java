@@ -115,7 +115,7 @@ public class SingleThreadedTableReader
                             engine.getParquetHandler().readParquetFiles(
                                 singletonCloseableIterator(fileStatus),
                                 physicalReadSchema,
-                                Optional.empty());
+                                Optional.empty()).map(res -> res.getData());
                         try (
                             CloseableIterator<FilteredColumnarBatch> transformedData =
                                 Scan.transformPhysicalData(

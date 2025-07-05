@@ -19,7 +19,6 @@ import static io.delta.kernel.internal.tablefeatures.TableFeatures.*;
 import static java.util.Collections.singletonList;
 import static java.util.stream.Collectors.toList;
 
-import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
@@ -56,11 +55,7 @@ public class IcebergCompatV2MetadataValidatorAndUpdater
    * @param dataFileStatus The {@link DataFileStatus} to validate.
    */
   public static void validateDataFileStatus(DataFileStatus dataFileStatus) {
-    if (!dataFileStatus.getStatistics().isPresent()) {
-      // presence of stats means always has a non-null `numRecords`
-      throw DeltaErrors.icebergCompatMissingNumRecordsStats(
-          INSTANCE.compatFeatureName(), dataFileStatus);
-    }
+    validateDataFileStatus(dataFileStatus, INSTANCE.compatFeatureName());
   }
 
   /// //////////////////////////////////////////////////////////////////////////////

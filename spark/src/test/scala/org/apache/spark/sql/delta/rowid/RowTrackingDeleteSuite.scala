@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.rowid
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
+import org.apache.spark.sql.delta.deletionvectors.PersistentDVEnabled
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.SparkConf
@@ -243,12 +244,7 @@ trait RowTrackingDeleteSuiteBase extends RowTrackingDeleteTestDimension {
 
 trait RowTrackingDeleteDvBase
   extends RowTrackingDeleteTestDimension
-  with DeletionVectorsTestUtils {
-
-  override def beforeAll(): Unit = {
-    super.beforeAll()
-    enableDeletionVectorsInNewTables(spark.conf)
-  }
+  with PersistentDVEnabled {
 
   override protected def deletionVectorEnabled = true
 

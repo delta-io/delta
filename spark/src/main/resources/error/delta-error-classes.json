@@ -433,6 +433,15 @@
     ],
     "sqlState" : "0AKDC"
   },
+  "DELTA_CLONE_WITH_ROW_TRACKING_WITHOUT_STATS" : {
+    "message" : [
+      "Cannot shallow clone a table without statistics and with row tracking enabled.",
+      "If you want to enable row tracking you need to first collect statistics on the source table by running:",
+      "ANALYZE TABLE table_name COMPUTE DELTA STATISTICS",
+      ""
+    ],
+    "sqlState" : "22000"
+  },
   "DELTA_CLUSTERING_COLUMNS_DATATYPE_NOT_SUPPORTED" : {
     "message" : [
       "CLUSTER BY is not supported because the following column(s): <columnsWithDataTypes> don't support data skipping."
@@ -1688,6 +1697,12 @@
       "Resolved attribute(s) <missingAttributes> missing from <input> in operator <merge>"
     ],
     "sqlState" : "42601"
+  },
+  "DELTA_MERGE_SOURCE_CACHED_DURING_EXECUTION" : {
+    "message" : [
+      "The MERGE operation failed because (part of) the source plan was cached while the MERGE operation was running."
+    ],
+    "sqlState" : "25000"
   },
   "DELTA_MERGE_UNEXPECTED_ASSIGNMENT_KEY" : {
     "message" : [

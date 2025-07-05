@@ -27,6 +27,7 @@ import static io.delta.kernel.internal.util.Utils.toCloseableIterator;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.engine.FileReadResult;
 import io.delta.kernel.expressions.*;
 import io.delta.kernel.internal.checkpoints.SidecarFile;
 import io.delta.kernel.internal.fs.Path;
@@ -228,7 +229,8 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
                       .readParquetFiles(
                           singletonCloseableIterator(file),
                           finalReadSchema,
-                          checkpointPredicateIncludingSidecars),
+                          checkpointPredicateIncludingSidecars)
+                      .map(FileReadResult::getData),
               "Reading parquet log file `%s` with readSchema=%s and predicate=%s",
               file,
               finalReadSchema,
@@ -335,8 +337,9 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
             // If the checkpoint file is a UUID or classic checkpoint, read the top-level
             // checkpoint file and any potential sidecars. Otherwise, look for any other
             // parts of the current multipart checkpoint.
-            CloseableIterator<ColumnarBatch> dataIter =
-                getActionsIterFromSinglePartOrV2Checkpoint(nextFile, fileName);
+            CloseableIterator<FileReadResult> dataIter =
+                getActionsIterFromSinglePartOrV2Checkpoint(nextFile, fileName)
+                    .map(batch -> new FileReadResult(batch, nextFile.getPath()));
             long version = checkpointVersion(nextFilePath);
             return combine(dataIter, true /* isFromCheckpoint */, version, Optional.empty());
           }
@@ -348,7 +351,7 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
             // optimizations like reading multiple files in parallel.
             CloseableIterator<FileStatus> checkpointFiles =
                 retrieveRemainingCheckpointFiles(nextLogFile);
-            CloseableIterator<ColumnarBatch> dataIter =
+            CloseableIterator<FileReadResult> dataIter =
                 wrapEngineExceptionThrowsIO(
                     () ->
                         engine
@@ -378,17 +381,17 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     // version with actions read from the JSON file for further optimizations later
     // on (faster metadata & protocol loading in subsequent runs by remembering
     // the version of the last version where the metadata and protocol are found).
-    final CloseableIterator<ColumnarBatch> dataIter =
+    final CloseableIterator<FileReadResult> dataIter =
         wrapEngineExceptionThrowsIO(
             () ->
                 engine
                     .getJsonHandler()
                     .readJsonFiles(
-                        singletonCloseableIterator(nextFile), deltaReadSchema, Optional.empty()),
+                        singletonCloseableIterator(nextFile), deltaReadSchema, Optional.empty())
+                    .map(batch -> new FileReadResult(batch, nextFile.getPath())),
             "Reading JSON log file `%s` with readSchema=%s",
             nextFile,
             deltaReadSchema);
-
     return combine(
         dataIter,
         false /* isFromCheckpoint */,
@@ -404,7 +407,7 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
    * of the file.
    */
   private CloseableIterator<ActionWrapper> combine(
-      CloseableIterator<ColumnarBatch> fileReadDataIter,
+      CloseableIterator<FileReadResult> fileReadDataIter,
       boolean isFromCheckpoint,
       long version,
       Optional<Long> timestamp) {
@@ -414,12 +417,14 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     // enabled, we will read the first batch and try to extract the timestamp from it.
     // We also ensure that rewoundFileReadDataIter is identical to the original
     // fileReadDataIter before any data was consumed.
-    final CloseableIterator<ColumnarBatch> rewoundFileReadDataIter;
+    final CloseableIterator<FileReadResult> rewoundFileReadDataIter;
     Optional<Long> inCommitTimestampOpt = Optional.empty();
     if (!isFromCheckpoint && fileReadDataIter.hasNext()) {
-      ColumnarBatch firstBatch = fileReadDataIter.next();
-      rewoundFileReadDataIter = singletonCloseableIterator(firstBatch).combine(fileReadDataIter);
-      inCommitTimestampOpt = InCommitTimestampUtils.tryExtractInCommitTimestamp(firstBatch);
+      FileReadResult fileReadResult = fileReadDataIter.next();
+      rewoundFileReadDataIter =
+          singletonCloseableIterator(fileReadResult).combine(fileReadDataIter);
+      inCommitTimestampOpt =
+          InCommitTimestampUtils.tryExtractInCommitTimestamp(fileReadResult.getData());
     } else {
       rewoundFileReadDataIter = fileReadDataIter;
     }
@@ -434,11 +439,13 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
 
       @Override
       public ActionWrapper next() {
+        FileReadResult fileReadResult = rewoundFileReadDataIter.next();
         return new ActionWrapper(
-            rewoundFileReadDataIter.next(),
+            fileReadResult.getData(),
             isFromCheckpoint,
             version,
-            finalResolvedCommitTimestamp);
+            finalResolvedCommitTimestamp,
+            fileReadResult.getFilePath());
       }
 
       @Override
