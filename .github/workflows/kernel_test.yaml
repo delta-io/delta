@@ -8,6 +8,19 @@ jobs:
       SCALA_VERSION: 2.12.18
     steps:
       - uses: actions/checkout@v3
+      - uses: technote-space/get-diff-action@v4
+        id: git-diff
+        with:
+          PATTERNS: |
+            **
+            .github/workflows/**
+            !connectors/**
+            !spark/**
+            !hudi/**
+            !iceberg/**
+            !icebergShaded/**
+            !*.md
+            !**/*.md
       - name: install java
         uses: actions/setup-java@v3
         with:
@@ -16,6 +29,8 @@ jobs:
       - name: Run tests
         run: |
           python run-tests.py --group kernel --coverage
+        if: steps.git-diff.outputs.diff
       - name: Run integration tests
         run: |
           cd kernel/examples && python run-kernel-examples.py --use-local
+        if: steps.git-diff.outputs.diff
