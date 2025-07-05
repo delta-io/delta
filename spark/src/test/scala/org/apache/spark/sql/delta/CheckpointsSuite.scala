@@ -749,8 +749,7 @@ class CheckpointsSuite
       val lc2 = writeCheckpoint(
         adds = 8,
         sidecarActionThreshold = 10,
-        nonFileActionThreshold = 4
-      )
+        nonFileActionThreshold = 4)
       assert(lc2.v2Checkpoint.nonEmpty)
       // 4 non file actions - protocol/metadata/checkpointMetadata/setTxn, 1 sidecar
       assert(
