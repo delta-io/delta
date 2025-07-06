@@ -724,7 +724,7 @@ class CheckpointsSuite
             createTestAddFile(
               encodedPath = java.util.UUID.randomUUID.toString,
               partitionValues = Map(),
-              size = 128L,
+              size = 128L
             ))
           deltaLog.startTransaction().commit(addFiles, DeltaOperations.ManualUpdate)
           deltaLog.checkpoint()
