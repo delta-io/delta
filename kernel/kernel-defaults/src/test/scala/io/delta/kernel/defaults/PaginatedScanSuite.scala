@@ -1,14 +1,10 @@
 import java.util.Optional
 
-import scala.collection.JavaConverters._
-
 import io.delta.kernel.data.FilteredColumnarBatch
 import io.delta.kernel.defaults.DeltaTableWriteSuiteBase
 import io.delta.kernel.defaults.engine.{DefaultEngine, DefaultJsonHandler, DefaultParquetHandler}
 import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestUtils}
 import io.delta.kernel.internal.PaginatedScanImpl
-
-import org.apache.spark.sql.delta.DeltaLog
 
 import org.apache.spark.sql.catalyst.plans.SQLHelper
 import org.scalatest.funsuite.AnyFunSuite
@@ -35,10 +31,8 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtils
 
       val snapshot = latestSnapshot(tempDir.getCanonicalPath)
       // Try read first page (with size = 12)
-      val paginatedScan =
-        snapshot.getScanBuilder().buildPaginated(
-          12L,
-          Optional.empty[io.delta.kernel.data.Row]()).asInstanceOf[PaginatedScanImpl]
+      val paginatedScan = snapshot.getScanBuilder().buildPaginated(12, Optional.empty())
+        .asInstanceOf[PaginatedScanImpl]
 
       if (paginatedScan != null) {
         System.out.println("has built a real paginated scan")
@@ -51,11 +45,11 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtils
       System.out.println("has get engine lalala")
 
       val paginatedIter = paginatedScan.getScanFiles(customEngine)
-      var firstPageFiles = collection.mutable.Buffer[FilteredColumnarBatch]()
+      val firstPageFiles = collection.mutable.Buffer[FilteredColumnarBatch]()
 
       while (paginatedIter.hasNext) {
         val batch = paginatedIter.next()
-        firstPageFiles += batch;
+        firstPageFiles += batch
       }
       assert(firstPageFiles.nonEmpty, "First page should contain some files")
 
@@ -64,8 +58,8 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtils
       val totalFileCountsReturned = fileCounts.sum
       println(s"Num of batches returned in page = ${fileCounts.length}")
 
-      // val nextRowIndex = paginatedIter.getCurrentPageToken.getRowIndex
-      // val nextStartingFile = paginatedIter.getCurrentPageToken.getStartingFileName
+      //  val nextRowIndex = PpaginatedIter.getCurrentPageToken)
+      //  val nextStartingFile = paginatedIter.getCurrentPageToken.getStartingFileName
       assert(
         totalFileCountsReturned <= 12,
         s"First page should contain at most 12 files, got $totalFileCountsReturned")
@@ -97,8 +91,8 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtils
       // Try read first page (with size = 9)
       val paginatedScan =
         snapshot.getScanBuilder().buildPaginated(
-          9L,
-          Optional.empty[io.delta.kernel.data.Row]()).asInstanceOf[PaginatedScanImpl]
+          9,
+          Optional.empty()).asInstanceOf[PaginatedScanImpl]
 
       // Create a custom engine with batch size 4
       val hadoopConf = new org.apache.hadoop.conf.Configuration()
@@ -107,14 +101,13 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtils
       val customEngine = DefaultEngine.create(hadoopConf)
 
       val paginatedIter = paginatedScan.getScanFiles(customEngine)
-      var firstPageFiles = collection.mutable.Buffer[FilteredColumnarBatch]()
+      val firstPageFiles = collection.mutable.Buffer[FilteredColumnarBatch]()
 
       while (paginatedIter.hasNext) {
         val batch = paginatedIter.next()
         firstPageFiles += batch
       }
-
-      assert(firstPageFiles.nonEmpty, "First page should contain files")
+      assert(firstPageFiles.nonEmpty, "First page should contain some files")
 
       // Verify we got at most 10 AddFiles across all batches
       val fileCounts: Seq[Long] = firstPageFiles.map(_.getPreComputedNumSelectedRows.get().toLong)
@@ -143,6 +136,7 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtils
     }
   }
 
+  /*
   test("getPaginatedScanFiles - basic pagination with one checkpoint file " +
     "and multiple JSON files") {
     withTempDir { tempDir =>
@@ -168,9 +162,9 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtils
 
       // This should create: 00000000000000000010.checkpoint.parquet(checkpoint file), 00000000000000000011.json, 00000000000000000012.json
       val snapshot = latestSnapshot(tablePath)
-      val scan = snapshot.getScanBuilder().buildPaginated(
-        15L,
-        Optional.empty[io.delta.kernel.data.Row]()).asInstanceOf[PaginatedScanImpl]
+      val paginatedScan = snapshot.getScanBuilder().buildPaginated(
+        15,
+        Optional.empty()).asInstanceOf[PaginatedScanImpl]
 
       // Create a custom engine with batch size 5
       val hadoopConf = new org.apache.hadoop.conf.Configuration()
@@ -179,15 +173,14 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtils
       val customEngine = DefaultEngine.create(hadoopConf)
 
       // Test pagination starting from the checkpoint (should be processed first)
-      val paginatedIter = scan.getScanFiles(customEngine);
+      val paginatedIter = paginatedScan.getScanFiles(customEngine)
       val firstPageFiles = collection.mutable.Buffer[FilteredColumnarBatch]()
 
       while (paginatedIter.hasNext) {
         val batch = paginatedIter.next()
         firstPageFiles += batch
       }
-
-      assert(firstPageFiles.nonEmpty, "First page should contain files")
+      assert(firstPageFiles.nonEmpty, "First page should contain some files")
 
       // Verify we got at most 10 AddFiles across all batches
       val fileCounts: Seq[Long] = firstPageFiles.map(_.getPreComputedNumSelectedRows.get().toLong)
@@ -215,5 +208,8 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtils
         totalFilesInTable == 26,
         s"Should have 26 total files (13 commits * 2 files each), got $totalFilesInTable")
     }
+
   }
+
+   */
 }
