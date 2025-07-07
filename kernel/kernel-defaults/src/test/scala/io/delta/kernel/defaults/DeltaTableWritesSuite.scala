@@ -1084,7 +1084,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
   }
 
   test("insert into table - validate serialized json stats equal Spark written stats") {
-    withTempDirAndEngine { (kernelPath, engine) =>
+    withTempDirAndEngine { (dir, engine) =>
       // Test with all Skipping eligible types.
       // TODO(Issue: 4284): Validate TIMESTAMP and TIMESTAMP_NTZ serialization
       // format.
@@ -1103,6 +1103,10 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
             .add("nestedDecimal", DecimalType.USER_DEFAULT)
             .add("nestedDoubleCol", DOUBLE))
 
+      // Create "kernel" and "spark-copy" directories
+      val kernelPath = new File(dir, "kernel").getAbsolutePath
+      val sparkPath = new File(dir, "spark-copy").getAbsolutePath
+
       // Write a batch of data using the Kernel
       val batch =
         generateData(schema, Seq.empty, Map.empty, batchSize = 10, numBatches = 1)
@@ -1114,7 +1118,6 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         partCols = Seq.empty,
         data = Seq(Map.empty[String, Literal] -> batch))
 
-      val sparkPath = new File(kernelPath, "spark-copy").getAbsolutePath
       spark.read.format("delta").load(kernelPath)
         .write.format("delta").mode("overwrite").save(sparkPath)
 
