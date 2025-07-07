@@ -716,22 +716,13 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
 
 
 lazy val sparkDsv2 = (project in file("spark-dsv2"))
-  .enablePlugins(ScalafmtPlugin)
   .dependsOn(kernelApi)
   .dependsOn(kernelDefaults)
   .dependsOn(sparkDsv1 % "test->test")
   .settings(
     name := "delta-spark-dsv2",
     commonSettings,
-    javaOnlyReleaseSettings,
-    javafmtCheckSettings,
-    javaCheckstyleSettings("dev/kernel-checkstyle.xml"),
-    assembly / assemblyMergeStrategy := {
-      case PathList("META-INF", "versions", _, "module-info.class") => MergeStrategy.discard
-      case x =>
-        val oldStrategy = (assembly / assemblyMergeStrategy).value
-        oldStrategy(x)
-    }
+    javaOnlyReleaseSettings
   ).configureUnidoc()
 
 lazy val spark = (project in file("spark-jar"))
@@ -743,25 +734,20 @@ lazy val spark = (project in file("spark-jar"))
     commonSettings,
     releaseSettings,
     publishMavenStyle := true,
-    // Add this line to include Python files
+
+    // Add Python files
     Compile / packageBin / mappings := (Compile / packageBin / mappings).value ++
       listPythonFiles(baseDirectory.value.getParentFile / "python"),
-    // Assembly settings for creating the fat JAR
+
+    // Assembly settings
     assembly / assemblyJarName := s"delta-spark_${scalaBinaryVersion.value}-${version.value}.jar",
-    // Make packageBin use the assembly JAR
     Compile / packageBin := assembly.value,
-    assembly / assemblyMergeStrategy := {
-      case PathList("META-INF", "versions", _, "module-info.class") => MergeStrategy.discard
-      // existing rules...
-      case x =>
-        val oldStrategy = (assembly / assemblyMergeStrategy).value
-        oldStrategy(x)
-    },
-    // Ensure artifact IDs are maintained
+
+    // Artifact naming
     artifactName := { (sv: ScalaVersion, module: ModuleID, artifact: Artifact) =>
       "delta-spark_" + sv.binary + "-" + module.revision + "." + artifact.extension
     }
-  )
+  ).configureUnidoc()
 
 lazy val unity = (project in file("unity"))
   .enablePlugins(ScalafmtPlugin)
