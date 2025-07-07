@@ -98,7 +98,7 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
   @Override
   public boolean hasNext() {
     if (closed) {
-      return false;
+      throw new IllegalStateException("Can't call `hasNext` on a closed iterator.");
     }
     if (!currentBatch.isPresent()) {
       prepareNext();
@@ -109,7 +109,6 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
   private void prepareNext() {
     if (currentBatch.isPresent()) return;
     if (numScanFilesReturned >= pageSize) return;
-
     if (!filteredScanFilesIter.hasNext()) return; // base iterator is empty
 
     FilteredColumnarBatch batch = filteredScanFilesIter.next();
