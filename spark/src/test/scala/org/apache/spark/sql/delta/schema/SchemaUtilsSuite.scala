@@ -2824,6 +2824,60 @@ class SchemaUtilsSuite extends QueryTest
     }
   }
 
+  test("schema merging override field metadata") {
+    val base1 = new StructType()
+      .add("a", IntegerType)
+    val update1 = new StructType()
+      .add("a", IntegerType, nullable = true, new MetadataBuilder().putString("x", "1").build())
+    val mergedSchema1 =
+      mergeDataTypes(
+        current = base1,
+        update = update1,
+        allowImplicitConversions = false,
+        keepExistingType = false,
+        typeWideningMode = TypeWideningMode.NoTypeWidening,
+        caseSensitive = false,
+        allowOverride = false,
+        overrideMetadata = true
+      )
+    assert(mergedSchema1 ===
+      new StructType()
+        .add("a", IntegerType, nullable = true,
+          new MetadataBuilder().putString("x", "1").build()))
+
+    // override nested metadata
+    val base2 = ArrayType(new StructType()
+      .add("a", new StructType()
+        .add("b", IntegerType)
+        .add("c", IntegerType)))
+    val update2 = ArrayType(new StructType()
+      .add("a", new StructType()
+        .add("b", IntegerType)
+        .add("c", IntegerType, nullable = true,
+          new MetadataBuilder().putString("c_metadata", "2").build()),
+        nullable = true,
+        new MetadataBuilder().putString("a_metadata", "3").build()))
+    val mergedSchema2 =
+      mergeDataTypes(
+        current = base2,
+        update = update2,
+        allowImplicitConversions = false,
+        keepExistingType = false,
+        typeWideningMode = TypeWideningMode.NoTypeWidening,
+        caseSensitive = false,
+        allowOverride = false,
+        overrideMetadata = true
+      )
+    assert(mergedSchema2 ===
+      ArrayType(new StructType()
+        .add("a", new StructType()
+          .add("b", IntegerType)
+          .add("c", IntegerType, nullable = true,
+            new MetadataBuilder().putString("c_metadata", "2").build()),
+          nullable = true,
+          new MetadataBuilder().putString("a_metadata", "3").build())))
+  }
+
   ////////////////////////////
   // transformColumns
   ////////////////////////////

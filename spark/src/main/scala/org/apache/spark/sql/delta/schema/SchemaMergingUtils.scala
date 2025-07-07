@@ -184,6 +184,8 @@ object SchemaMergingUtils {
    * @param caseSensitive Whether we should keep field mapping case-sensitively.
    *                      This should default to false for Delta, which is case insensitive.
    * @param allowOverride Whether to let incoming type override the existing type if unmatched.
+   * @param overrideMetadata Whether to let metadata of new fields override the existing
+   *                         metadata of matching fields
    */
   def mergeDataTypes(
       current: DataType,
@@ -192,7 +194,8 @@ object SchemaMergingUtils {
       keepExistingType: Boolean,
       typeWideningMode: TypeWideningMode,
       caseSensitive: Boolean,
-      allowOverride: Boolean): DataType = {
+      allowOverride: Boolean,
+      overrideMetadata: Boolean = false): DataType = {
     def merge(current: DataType, update: DataType): DataType = {
       (current, update) match {
         case (StructType(currentFields), StructType(updateFields)) =>
@@ -202,11 +205,14 @@ object SchemaMergingUtils {
             updateFieldMap.get(currentField.name) match {
               case Some(updateField) =>
                 try {
+                  val updatedCurrentFieldMetadata =
+                    if (overrideMetadata) updateField.metadata
+                    else currentField.metadata
                   StructField(
                     currentField.name,
                     merge(currentField.dataType, updateField.dataType),
                     currentField.nullable,
-                    currentField.metadata)
+                    updatedCurrentFieldMetadata)
                 } catch {
                   case NonFatal(e) =>
                     throw new DeltaAnalysisException(
