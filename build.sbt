@@ -445,7 +445,6 @@ lazy val sparkDsv2 = (project in file("spark-dsv2"))
     javaCheckstyleSettings("dev/kernel-checkstyle.xml"),
     assembly / assemblyMergeStrategy := {
       case PathList("META-INF", "versions", _, "module-info.class") => MergeStrategy.discard
-      // existing rules...
       case x =>
         val oldStrategy = (assembly / assemblyMergeStrategy).value
         oldStrategy(x)
@@ -546,6 +545,7 @@ lazy val spark = (project in file("spark-jar")).dependsOn(sparkDsv1, sparkDsv2)
   .aggregate(sparkDsv1, sparkDsv2)
   .settings(
     name := "delta-spark",
+    commonSettings,
     crossPaths := true,
     publishMavenStyle := true,
     // Assembly settings for creating the fat JAR
