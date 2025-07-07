@@ -163,7 +163,8 @@ object SchemaMergingUtils {
       keepExistingType,
       typeWideningMode,
       caseSensitive,
-      allowOverride = false
+      allowOverride = false,
+      overrideMetadata = false
     ).asInstanceOf[StructType]
   }
 
@@ -195,7 +196,7 @@ object SchemaMergingUtils {
       typeWideningMode: TypeWideningMode,
       caseSensitive: Boolean,
       allowOverride: Boolean,
-      overrideMetadata: Boolean = false): DataType = {
+      overrideMetadata: Boolean): DataType = {
     def merge(current: DataType, update: DataType): DataType = {
       (current, update) match {
         case (StructType(currentFields), StructType(updateFields)) =>

@@ -2486,7 +2486,8 @@ class SchemaUtilsSuite extends QueryTest
         keepExistingType = false,
         typeWideningMode = TypeWideningMode.NoTypeWidening,
         caseSensitive = false,
-        allowOverride = false)
+        allowOverride = false,
+        overrideMetadata = false)
     assert(mergedType1 === ArrayType(new StructType().add("a", IntegerType).add("b", IntegerType)))
 
     // Map root type
@@ -2506,7 +2507,8 @@ class SchemaUtilsSuite extends QueryTest
         keepExistingType = false,
         typeWideningMode = TypeWideningMode.NoTypeWidening,
         caseSensitive = false,
-        allowOverride = false)
+        allowOverride = false,
+        overrideMetadata = false)
     assert(mergedType2 ===
       MapType(
         new StructType().add("a", IntegerType).add("b", IntegerType),
@@ -2526,7 +2528,8 @@ class SchemaUtilsSuite extends QueryTest
         keepExistingType = false,
         typeWideningMode = TypeWideningMode.NoTypeWidening,
         caseSensitive = false,
-        allowOverride = true)
+        allowOverride = true,
+        overrideMetadata = false)
     assert(mergedSchema1 === ArrayType(LongType))
 
     // override nested type
@@ -2540,7 +2543,8 @@ class SchemaUtilsSuite extends QueryTest
         keepExistingType = false,
         typeWideningMode = TypeWideningMode.NoTypeWidening,
         caseSensitive = false,
-        allowOverride = true)
+        allowOverride = true,
+        overrideMetadata = false)
     assert(mergedSchema2 ===
       ArrayType(new StructType().add("a", MapType(StringType, StringType)).add("b", StringType)))
   }
