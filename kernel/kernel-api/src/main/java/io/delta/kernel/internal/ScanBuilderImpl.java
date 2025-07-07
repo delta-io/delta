@@ -89,8 +89,8 @@ public class ScanBuilderImpl implements ScanBuilder {
   }
 
   @Override
-  public PaginatedScan buildPaginated(long pageSize, Optional<Row> pageToken) {
+  public PaginatedScan buildPaginated(long pageSize, Optional<Row> pageTokenRowOpt) {
     Scan baseScan = this.build();
-    return new PaginatedScanImpl((ScanImpl) baseScan, pageToken, pageSize);
+    return new PaginatedScanImpl((ScanImpl) baseScan, pageTokenRowOpt, pageSize);
   }
 }

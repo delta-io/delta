@@ -34,9 +34,9 @@ public class PaginatedScanImpl implements PaginatedScan {
   private final Optional<PageToken> pageToken;
   private final ScanImpl baseScan;
 
-  public PaginatedScanImpl(ScanImpl baseScan, Optional<Row> pageTokenInRow, long pageSize) {
+  public PaginatedScanImpl(ScanImpl baseScan, Optional<Row> pageTokenRowOpt, long pageSize) {
     this.baseScan = baseScan;
-    this.pageToken = pageTokenInRow.map(PageToken::fromRow);
+    this.pageToken = pageTokenRowOpt.map(PageToken::fromRow);
     this.pageSize = pageSize;
   }
 
