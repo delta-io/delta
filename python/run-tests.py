@@ -47,6 +47,8 @@ def test(root_dir, code_dir, packages):
             run_cmd(cmd, stream_output=True)
         except:
             print("Failed tests in %s" % (test_file))
+            print("Exception details:")
+            traceback.print_exc()  # This prints the full stack trace
             raise
 
 
