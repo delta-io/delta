@@ -38,16 +38,16 @@ trait MergeIntoDVsMixin extends MergeIntoSQLMixin with DeletionVectorsTestUtils 
 
   override def excluded: Seq[String] = {
     val miscFailures = Seq(
-      "basic case - merge to view on a Delta table by path, " +
+      "basic case - merge to view on a Delta table, " +
         "partitioned: true skippingEnabled: false useSqlView: true",
-      "basic case - merge to view on a Delta table by path, " +
+      "basic case - merge to view on a Delta table, " +
         "partitioned: true skippingEnabled: false useSqlView: false",
-      "basic case - merge to view on a Delta table by path, " +
+      "basic case - merge to view on a Delta table, " +
         "partitioned: false skippingEnabled: false useSqlView: true",
-      "basic case - merge to view on a Delta table by path, " +
+      "basic case - merge to view on a Delta table, " +
         "partitioned: false skippingEnabled: false useSqlView: false",
-      "basic case - merge to Delta table by name, isPartitioned: false skippingEnabled: false",
-      "basic case - merge to Delta table by name, isPartitioned: true skippingEnabled: false",
+      "basic case - merge to Delta table, isPartitioned: false skippingEnabled: false",
+      "basic case - merge to Delta table, isPartitioned: true skippingEnabled: false",
       "not matched by source - all 3 clauses - no changes - " +
         "isPartitioned: true - cdcEnabled: true",
       "not matched by source - all 3 clauses - no changes - " +
