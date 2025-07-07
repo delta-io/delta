@@ -743,6 +743,9 @@ lazy val spark = (project in file("spark-jar"))
     commonSettings,
     releaseSettings,
     publishMavenStyle := true,
+    // Add this line to include Python files
+    Compile / packageBin / mappings := (Compile / packageBin / mappings).value ++
+      listPythonFiles(baseDirectory.value.getParentFile / "python"),
     // Assembly settings for creating the fat JAR
     assembly / assemblyJarName := s"delta-spark_${scalaBinaryVersion.value}-${version.value}.jar",
     // Make packageBin use the assembly JAR
