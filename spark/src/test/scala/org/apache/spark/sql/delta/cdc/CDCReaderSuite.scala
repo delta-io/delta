@@ -37,8 +37,6 @@ import org.apache.spark.sql.{Row, SaveMode}
 import org.apache.spark.sql.execution.{LogicalRDD, SQLExecution}
 import org.apache.spark.sql.execution.datasources.FileFormatWriter
 import org.apache.spark.sql.functions._
-import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.internal.SQLConf.StoreAssignmentPolicy
 import org.apache.spark.sql.test.SharedSparkSession
 
 class CDCReaderSuite
