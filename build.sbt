@@ -547,6 +547,7 @@ lazy val spark = (project in file("spark-jar")).dependsOn(sparkDsv1, sparkDsv2)
   .settings(
     name := "delta-spark",
     crossPaths := true,
+    publishMavenStyle := true,
     // Assembly settings for creating the fat JAR
     assembly / assemblyJarName := s"delta-spark_${scalaBinaryVersion.value}-${version.value}.jar",
     // Make packageBin use the assembly JAR
