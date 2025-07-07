@@ -43,7 +43,7 @@ import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.connector.catalog.CatalogPlugin
 import org.apache.spark.util.Utils
 
-object CatalogOwnedTableUtils {
+object CatalogOwnedTableUtils extends DeltaLogging {
   /** The default catalog name only used for testing. */
   val DEFAULT_CATALOG_NAME_FOR_TESTING: String = "spark_catalog"
 
@@ -62,11 +62,11 @@ object CatalogOwnedTableUtils {
           "Couldn't locate commit coordinator for: " + catalogTable.identifier)
       }
       TableCommitCoordinatorClient(
-        cc,
-        snapshot.deltaLog.logPath,
-        snapshot.metadata.configuration,
-        snapshot.deltaLog.newDeltaHadoopConf(),
-        snapshot.deltaLog.store
+        commitCoordinatorClient = cc,
+        logPath = snapshot.deltaLog.logPath,
+        tableConf = snapshot.metadata.configuration,
+        hadoopConf = snapshot.deltaLog.newDeltaHadoopConf(),
+        logStore = snapshot.deltaLog.store
       )
     }
     .orElse {
@@ -82,16 +82,26 @@ object CatalogOwnedTableUtils {
           .map { cc =>
             return Some(TableCommitCoordinatorClient(
               cc,
-              snapshot.deltaLog.logPath,
-              snapshot.metadata.configuration,
-              snapshot.deltaLog.newDeltaHadoopConf(),
-              snapshot.deltaLog.store))
+              logPath = snapshot.deltaLog.logPath,
+              tableConf = snapshot.metadata.configuration,
+              hadoopConf = snapshot.deltaLog.newDeltaHadoopConf(),
+              logStore = snapshot.deltaLog.store)
+            )
           }
       }
       // This table is catalog owned table but catalogTableOpt is not defined. This means
       // that the caller is accessing this table by path-based or the calling code path is missing
       // the CatalogTable.
       // TODO: Better error message with proper error code.
+      recordCommitCoordinatorPopulationUsageLog(
+        deltaLog = snapshot.deltaLog,
+        opType = CatalogOwnedUsageLogs.COMMIT_COORDINATOR_POPULATION_INVALID_PATH_BASED_ACCESS,
+        snapshot = snapshot,
+        catalogTableOpt,
+        commitCoordinatorOpt = None,
+        includeStackTrace = true,
+        includeAdditionalDiagnostics = true
+      )
       throw new IllegalStateException(
         "Path based access is not supported for Catalog-Owned table: " + snapshot.path)
     }
@@ -268,6 +278,70 @@ object CatalogOwnedTableUtils {
     spark.conf
       .getOption(TableFeatureProtocolUtils.defaultPropertyKey(CatalogOwnedTableFeature))
       .contains("supported")
+  }
+
+  /**
+   * Records usage logs for commit coordinator population with common fields.
+   *
+   * @param deltaLog The delta log instance
+   * @param opType The operation type for the usage log
+   * @param snapshot The table snapshot
+   * @param catalogTableOpt Optional catalog table information
+   * @param commitCoordinatorOpt Optional commit coordinator instance
+   * @param includeStackTrace Whether to include stack trace in the log
+   * @param includeAdditionalDiagnostics Whether to include additional diagnostic information
+   */
+  private def recordCommitCoordinatorPopulationUsageLog(
+      deltaLog: DeltaLog,
+      opType: String,
+      snapshot: Snapshot,
+      catalogTableOpt: Option[CatalogTable],
+      commitCoordinatorOpt: Option[CommitCoordinatorClient] = None,
+      includeStackTrace: Boolean = false,
+      includeAdditionalDiagnostics: Boolean = false): Unit = {
+    // Base data that's common to *all* usage logs for tccc population.
+    val baseData = Map(
+      "version" -> snapshot.version.toString,
+      "path" -> snapshot.path.toString,
+      "ucTableId" -> snapshot.getProperties
+        .getOrElse(UCCommitCoordinatorClient.UC_TABLE_ID_KEY, "UC_TABLE_ID_MISSING")
+    )
+
+    val catalogData = catalogTableOpt.map { catalogTable =>
+      Map(
+        "catalogTable.identifier" -> catalogTable.identifier.toString,
+        "catalogTable.tableType" -> catalogTable.tableType.toString
+      )
+    }.getOrElse(Map.empty[String, String])
+
+    val coordinatorData = commitCoordinatorOpt.map { cc =>
+      Map("commitCoordinator.getClass" -> cc.getClass.getName)
+    }.getOrElse(Map.empty[String, String])
+
+    val stackTraceData = if (includeStackTrace) {
+      Map("stackTrace" -> Thread.currentThread().getStackTrace.tail.mkString("\n\t"))
+    } else {
+      Map.empty[String, String]
+    }
+
+    val diagnosticData = if (includeAdditionalDiagnostics) {
+      Map(
+        "latestCheckpointVersion" -> snapshot.checkpointProvider.version,
+        "checksumOpt" -> snapshot.checksumOpt,
+        "properties" -> snapshot.getProperties,
+        "logStore" -> snapshot.deltaLog.store.getClass.getName
+      )
+    } else {
+      Map.empty[String, Any]
+    }
+
+    val allData = baseData ++ catalogData ++ coordinatorData ++ stackTraceData ++ diagnosticData
+
+    recordDeltaEvent(
+      deltaLog = deltaLog,
+      opType = opType,
+      data = allData
+    )
   }
 }
 

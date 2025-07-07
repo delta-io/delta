@@ -20,14 +20,19 @@ import java.util.UUID
 
 import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.DeltaOperations._
 import org.apache.spark.sql.delta.test.{DeltaExceptionTestUtils, DeltaSQLCommandTest, DeltaSQLTestUtils}
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.JsonUtils
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 import org.apache.commons.lang3.NotImplementedException
 
 import org.apache.spark.sql.catalyst.TableIdentifier
 
 class CatalogOwnedEnablementSuite
-  extends DeltaSQLTestUtils
+  extends QueryTest
+  with CatalogOwnedTestBaseSuite
+  with DeltaSQLTestUtils
   with DeltaSQLCommandTest
   with DeltaTestUtilsBase
   with DeltaExceptionTestUtils {
@@ -101,6 +106,52 @@ class CatalogOwnedEnablementSuite
     withTable(randomTableName) {
       testCatalogOwnedAlterTableSetup(randomTableName, createCatalogOwnedTableAtInit)
       f(randomTableName)
+    }
+  }
+
+  /**
+   * Validate the usage log blob.
+   *
+   * @param usageLogBlob The usage log blob to validate.
+   * @param expectedPresentFields The fields that should be present in the usage log blob.
+   * @param expectedAbsentFields The fields that should not be present in the usage log blob.
+   * @param expectedValues The expected values for the fields.
+   */
+  private def validateUsageLogBlob(
+      usageLogBlob: Map[String, Any],
+      expectedPresentFields: Seq[String] = Seq.empty,
+      expectedAbsentFields: Seq[String] = Seq.empty,
+      expectedValues: Map[String, Any] = Map.empty): Unit = {
+    expectedPresentFields.foreach { field =>
+      assert(usageLogBlob.contains(field), s"Field '$field' should be present in usage log blob")
+    }
+    expectedAbsentFields.foreach { field =>
+      assert(!usageLogBlob.contains(field),
+        s"Field '$field' should not be present in usage log blob")
+    }
+    assert(expectedValues.size === expectedPresentFields.size,
+      "The size of `expectedValues` should match the size of `expectedPresentFields`.")
+    expectedValues.foreach { case (field, expectedValue) =>
+      if (field == "stackTrace") {
+        // Only validate the start of the stack trace.
+        assert(
+          usageLogBlob(field).asInstanceOf[String].startsWith(expectedValue.asInstanceOf[String]),
+          s"Field '$field' should start with '$expectedValue' but was '${usageLogBlob(field)}'"
+        )
+      } else if (field == "checksumOpt" || field == "properties") {
+        // Validate a portion of the entire `checksumOpt` or `properties` map.
+        val properties = expectedValue.asInstanceOf[Map[String, Any]]
+        properties.foreach { case (key, value) =>
+          assert(
+            usageLogBlob(field).asInstanceOf[Map[String, Any]].get(key).contains(value),
+            s"Field '$field' should contain '$key' with value '$value' " +
+              s"but was '${usageLogBlob(field)}'"
+          )
+        }
+      } else {
+        assert(usageLogBlob(field) === expectedValue,
+          s"Field '$field' should have value '$expectedValue' but was '${usageLogBlob(field)}'")
+      }
     }
   }
 
@@ -212,6 +263,82 @@ class CatalogOwnedEnablementSuite
           // catalogTable is not available for FS_TO_CO_UPGRADE_COMMIT
           commitCoordinatorName = "CATALOG_MISSING",
           commitCoordinatorConf = Map.empty))
+    }
+  }
+
+  test("Testing usage log for commit coordinator population for invalid path-based access") {
+    // Clear all potential CC builders so that we are not entering the UT-only path when
+    // populating the commit coordinator.
+    clearBuilders()
+    withTempDir { tempDir =>
+      val log = DeltaLog.forTable(spark, tempDir.getCanonicalPath)
+      // Create a path-based table so that we can simulate the scenario
+      // where catalog table is not available.
+      sql(s"CREATE TABLE delta.`$tempDir` (id INT) USING delta TBLPROPERTIES " +
+        s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')")
+      val usageLog = Log4jUsageLogger.track {
+        val error = intercept[IllegalStateException] {
+          // Hence, we simply ignore the exception and focus on the usage log validation.
+          sql(s"INSERT INTO TABLE delta.`$tempDir` VALUES (1), (2), (3)")
+        }
+        assert(error.getMessage.contains(
+          "Path based access is not supported for Catalog-Owned table"))
+      }.filter { log =>
+        log.metric == "tahoeEvent" &&
+          log.tags.getOrElse("opType", null) ==
+            CatalogOwnedUsageLogs.COMMIT_COORDINATOR_POPULATION_INVALID_PATH_BASED_ACCESS
+      }
+
+      assert(usageLog.nonEmpty, "Should have usage log for INVALID_PATH_BASED_ACCESS scenario")
+      val usageLogBlob = JsonUtils.fromJson[Map[String, Any]](usageLog.head.blob)
+
+      val logStore =
+        "org.apache.spark.sql.delta.storage.LocalLogStore"
+
+      validateUsageLogBlob(
+        usageLogBlob,
+        expectedPresentFields = Seq(
+          "path",
+          "version",
+          "stackTrace",
+          "latestCheckpointVersion",
+          "checksumOpt",
+          "properties",
+          "logStore"
+        ),
+        expectedAbsentFields = Seq(
+          "catalogTable.identifier",
+          "catalogTable.tableType",
+          "commitCoordinator.getClass"
+        ),
+        expectedValues = Map(
+          "path" -> log.logPath.toString,
+          "version" -> "0",
+          "stackTrace" ->
+            ("org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTableUtils$" +
+             ".recordCommitCoordinatorPopulationUsageLog"),
+          "latestCheckpointVersion" -> -1,
+          // Only check for certain fields of `checksumOpt` since the entire map
+          // is too large to validate.
+          "checksumOpt" -> Map(
+            "tableSizeBytes" -> 0,
+            "numFiles" -> 0,
+            "domainMetadata" -> List.empty,
+            "numMetadata" -> 1,
+            "allFiles" -> List.empty
+          ),
+          "properties" -> Map(
+            "delta.feature.appendOnly" -> "supported",
+            "delta.enableDeletionVectors" -> "true",
+            // To avoid potential naming change in the future.
+            s"delta.feature.${CatalogOwnedTableFeature.name}" -> "supported",
+            "delta.checkpointPolicy" -> "v2",
+            "delta.feature.vacuumProtocolCheck" -> "supported",
+            "delta.feature.domainMetadata" -> "supported"
+          ),
+          "logStore" -> logStore
+        )
+      )
     }
   }
 }
