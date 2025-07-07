@@ -209,8 +209,6 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtils
         totalFilesInTable == 26,
         s"Should have 26 total files (13 commits * 2 files each), got $totalFilesInTable")
     }
+  } */
 
-  }
-
-   */
 }
