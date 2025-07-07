@@ -113,7 +113,7 @@ public class ScanImpl implements Scan {
    */
   public CloseableIterator<FilteredColumnarBatch> getScanFiles(
       Engine engine, boolean includeStats) {
-    return getScanFiles(engine, includeStats, Optional.empty() /* paginationContext */);
+    return getScanFiles(engine, includeStats, Optional.empty() /* paginationContextOpt */);
   }
 
   /**
@@ -126,11 +126,11 @@ public class ScanImpl implements Scan {
    *
    * @param engine the {@link Engine} instance to use
    * @param includeStats whether to read and include the JSON statistics
-   * @param paginationContext pagination context if present
+   * @param paginationContextOpt pagination context if present
    * @return the surviving scan files as {@link FilteredColumnarBatch}s
    */
-  public CloseableIterator<FilteredColumnarBatch> getScanFiles(
-      Engine engine, boolean includeStats, Optional<PaginationContext> paginationContext) {
+  protected CloseableIterator<FilteredColumnarBatch> getScanFiles(
+      Engine engine, boolean includeStats, Optional<PaginationContext> paginationContextOpt) {
     if (accessedScanFiles) {
       throw new IllegalStateException("Scan files are already fetched from this instance");
     }
@@ -178,7 +178,7 @@ public class ScanImpl implements Scan {
                           rewritePartitionPredicateOnCheckpointFileSchema(
                               predicate, partitionColToStructFieldMap.get())),
               scanMetrics,
-              paginationContext);
+              paginationContextOpt);
 
       // Apply partition pruning
       scanFileIter = applyPartitionPruning(engine, scanFileIter);

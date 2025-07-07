@@ -52,7 +52,7 @@ public class PaginatedScanImpl implements PaginatedScan {
 
   @Override
   public PaginatedScanFilesIterator getScanFiles(Engine engine) {
-    return this.getScanFiles(engine, false);
+    return this.getScanFiles(engine, false /* include stats */);
   }
 
   public PaginatedScanFilesIterator getScanFiles(Engine engine, boolean includeStates) {
