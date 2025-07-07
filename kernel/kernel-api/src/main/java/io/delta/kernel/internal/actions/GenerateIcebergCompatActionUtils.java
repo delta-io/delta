@@ -208,7 +208,9 @@ public final class GenerateIcebergCompatActionUtils {
             tableRoot,
             fileStatus,
             partitionValues,
-            dataChange);
+            dataChange,
+            Optional.empty() /* baseRowId */,
+            Optional.empty() /* defaultRowCommitVersion */);
     return SingleAction.createRemoveFileSingleAction(removeFileRow);
   }
 
@@ -264,7 +266,9 @@ public final class GenerateIcebergCompatActionUtils {
             tableRoot,
             fileStatus,
             partitionValues,
-            dataChange);
+            dataChange,
+            Optional.empty() /* baseRowId */,
+            Optional.empty() /* defaultRowCommitVersion */);
     return SingleAction.createRemoveFileSingleAction(removeFileRow);
   }
 
@@ -346,25 +350,6 @@ public final class GenerateIcebergCompatActionUtils {
   // disabled. Since these APIs are not valid without these assumptions, holding off on putting them
   // within RemoveFile.java until we add full support for deletes (which will likely involve
   // generating RemoveFiles directly from AddFiles anyway)
-
-  @VisibleForTesting
-  public static Row convertRemoveDataFileStatus(
-      StructType physicalSchema,
-      URI tableRoot,
-      DataFileStatus dataFileStatus,
-      Map<String, Literal> partitionValues,
-      boolean dataChange) {
-    return createRemoveFileRowWithExtendedFileMetadata(
-        relativizePath(new Path(dataFileStatus.getPath()), tableRoot).toUri().toString(),
-        dataFileStatus.getModificationTime(),
-        dataChange,
-        serializePartitionMap(partitionValues),
-        dataFileStatus.getSize(),
-        dataFileStatus.getStatistics(),
-        physicalSchema,
-        Optional.empty() /* baseRowId */,
-        Optional.empty() /* defaultRowCommitVersion */);
-  }
 
   @VisibleForTesting
   public static Row convertRemoveDataFileStatus(
