@@ -449,7 +449,7 @@ lazy val sparkDsv2 = (project in file("spark-dsv2"))
         val oldStrategy = (assembly / assemblyMergeStrategy).value
         oldStrategy(x)
     }
-  )
+  ).configureUnidoc()
 
 lazy val sparkDsv1 = (project in file("spark"))
   .dependsOn(storage)
