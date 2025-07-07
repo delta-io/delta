@@ -16,6 +16,8 @@
 
 package io.delta.kernel.internal;
 
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+
 import io.delta.kernel.PaginatedScan;
 import io.delta.kernel.Scan;
 import io.delta.kernel.ScanBuilder;
@@ -91,6 +93,9 @@ public class ScanBuilderImpl implements ScanBuilder {
   @Override
   public PaginatedScan buildPaginated(long pageSize, Optional<Row> pageTokenRowOpt) {
     Scan baseScan = this.build();
+    checkArgument(
+        baseScan instanceof ScanImpl,
+        "Expected build() to return ScanImpl but got " + baseScan.getClass());
     return new PaginatedScanImpl((ScanImpl) baseScan, pageTokenRowOpt, pageSize);
   }
 }

@@ -31,12 +31,12 @@ import java.util.Optional;
 /** Implementation of {@link PaginatedScan} */
 public class PaginatedScanImpl implements PaginatedScan {
   private final long pageSize;
-  private final Optional<PageToken> pageToken;
+  private final Optional<PageToken> pageTokenOpt;
   private final ScanImpl baseScan;
 
   public PaginatedScanImpl(ScanImpl baseScan, Optional<Row> pageTokenRowOpt, long pageSize) {
     this.baseScan = baseScan;
-    this.pageToken = pageTokenRowOpt.map(PageToken::fromRow);
+    this.pageTokenOpt = pageTokenRowOpt.map(PageToken::fromRow);
     this.pageSize = pageSize;
   }
 
@@ -57,7 +57,7 @@ public class PaginatedScanImpl implements PaginatedScan {
 
   public PaginatedScanFilesIterator getScanFiles(Engine engine, boolean includeStates) {
     PaginationContext paginationContext =
-        pageToken
+        pageTokenOpt
             .map(token -> PaginationContext.forPageWithPageToken(pageSize, token))
             .orElseGet(() -> PaginationContext.forFirstPage(pageSize));
     CloseableIterator<FilteredColumnarBatch> filteredScanFilesIter =
