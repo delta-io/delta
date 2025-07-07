@@ -50,7 +50,15 @@ jobs:
         # it is typically only released when publishing for Scala 2.12.
         run: |
           build/sbt clean
+          # First publish storage
           build/sbt storage/publishM2
+          
+          # Then publish kernel
+          build/sbt "project kernelApi" publishM2
+          build/sbt "project kernelDefaults" publishM2
+          
+          # Then publish sparkDsv2 explicitly (since it depends on kernel modules)
+          build/sbt "project sparkDsv2" publishM2
           build/sbt "++ $SCALA_VERSION publishM2"
           cd examples/scala && build/sbt "++ $SCALA_VERSION compile"
         if: steps.git-diff.outputs.diff
