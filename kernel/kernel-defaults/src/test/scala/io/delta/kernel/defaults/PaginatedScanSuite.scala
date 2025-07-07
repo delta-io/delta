@@ -17,6 +17,7 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtils
 
   // TODO: test page size < JSON file size
   // TODO: test page size = JSON file size (page size = 10)
+  // TODO: test call hasNext() twice
   test("getPaginatedScanFiles - basic pagination with single JSON file") {
     withTempDir { tempDir =>
       /**
