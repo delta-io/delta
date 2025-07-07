@@ -1596,6 +1596,14 @@ trait DeltaSQLConfBase {
       .stringConf
       .createOptional
 
+  val DELTA_DATASKIPPING_ISNULL_PUSHDOWN_EXPRS_ENABLED =
+    buildConf("skipping.enhancedIsNullPushdownExprs.enabled")
+      .doc("If true, support pushing down IsNull on additional null-intolerant expressions for " +
+        "data skipping.")
+      .internal()
+      .booleanConf
+      .createWithDefault(true)
+
   /**
    * The below confs have a special prefix `spark.databricks.io` because this is the conf value
    * already used by Databricks' data skipping implementation. There's no benefit to making OSS

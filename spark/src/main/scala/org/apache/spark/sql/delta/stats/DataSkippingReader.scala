@@ -300,6 +300,38 @@ trait DataSkippingReaderBase
     def apply(dataFilter: Expression): Option[DataSkippingPredicate] =
       constructDataFilters(dataFilter)
 
+    /**
+     * Helper function to construct a [[DataSkippingPredicate]] for an IsNull predicate on
+     * null-intolerant expressions that are guaranteed to return non-null results for non-null
+     * inputs. This method is only valid *if and only if* the passed-in expression returns null
+     * for any null children. That is, if all children are non-null, the expression *must* return
+     * a non-null result.
+     * @param expr Expression to push down IsNull into.
+     * @return A [[DataSkippingPredicate]] that's the result of pushing IsNull down into expr's
+     *         children.
+     */
+    protected def constructIsNullFilterForNullIntolerant(
+        expr: Expression): Option[DataSkippingPredicate] = {
+      val filters = expr.children.map {
+        // Resolve literal children directly. constructDataFilters does not support skipping on
+        // literal-only children.
+        case l: Literal =>
+          if (l.value == null) {
+            Some(DataSkippingPredicate(trueLiteral))
+          } else {
+            Some(DataSkippingPredicate(falseLiteral))
+          }
+        case c => constructDataFilters(IsNull(c))
+      }
+      filters.reduceOption { (a, b) =>
+        (a, b) match {
+          case (Some(a), Some(b)) =>
+            Some(DataSkippingPredicate(a.expr || b.expr, a.referencedStats ++ b.referencedStats))
+          case _ => None
+        }
+      }.flatten
+    }
+
     // Helper method for expression types that represent an IN-list of literal values.
     //
     //
@@ -416,7 +448,8 @@ trait DataSkippingReaderBase
      * both NULL -- which indicates that all values in the file are NULL. Fortunately, most of the
      * operators we support data skipping for are NULL intolerant, and thus trivially satisfy this
      * requirement because they never return TRUE for NULL inputs. The only NULL tolerant operator
-     * we support -- IS [NOT] NULL -- is specifically NULL aware.
+     * we support -- IS [NOT] NULL -- is specifically NULL aware. AND and OR are also considered
+     * null tolerant, and have special-cased handling of null pushdowns.
      *
      * NOTE: The skipping predicate does *NOT* need to worry about missing stats columns (which also
      * manifest as NULL). That case is handled separately by `verifyStatsForFilter` (which disables
@@ -517,6 +550,46 @@ trait DataSkippingReaderBase
         statsProvider.getPredicateWithStatTypeIfExists(a, dt, NULL_COUNT) { nullCount =>
           nullCount > Literal(0L)
         }
+      // For these null-intolerant expressions, any null input resolves into a null output. In
+      // addition, these expressions are special in that a null output is only possible if one of
+      // the inputs was a NULL. Push down the IsNull operator to all children and return a
+      // DataSkippingPredicate that's the Or of all child expressions.
+      case IsNull(e @ (_: GreaterThan | _: GreaterThanOrEqual | _: LessThan | _: LessThanOrEqual |
+          _: EqualTo | _: Not | _: StartsWith)) if spark.conf.get(
+            DeltaSQLConf.DELTA_DATASKIPPING_ISNULL_PUSHDOWN_EXPRS_ENABLED) =>
+        constructIsNullFilterForNullIntolerant(e)
+      // And and Or necessitate custom pushdown logic for IsNull, as both expressions are not
+      // considered null intolerant.
+      case IsNull(And(left, right)) if spark.conf.get(
+          DeltaSQLConf.DELTA_DATASKIPPING_ISNULL_PUSHDOWN_EXPRS_ENABLED) =>
+        // The result of an AND is only Null if either operand is a Null, _and_ neither operand is
+        // false.
+        constructDataFilters(
+          And(
+            Or(IsNull(left), IsNull(right)),
+            Not(
+              Or(
+                EqualNullSafe(left, FalseLiteral),
+                EqualNullSafe(right, FalseLiteral)
+              )
+            )
+          )
+        )
+      case IsNull(Or(left, right)) if spark.conf.get(
+          DeltaSQLConf.DELTA_DATASKIPPING_ISNULL_PUSHDOWN_EXPRS_ENABLED) =>
+        // The result of an OR is only Null if either operand is a Null, _and_ neither operand is
+        // true.
+        constructDataFilters(
+          And(
+            Or(IsNull(left), IsNull(right)),
+            Not(
+              Or(
+                EqualNullSafe(left, TrueLiteral),
+                EqualNullSafe(right, TrueLiteral)
+              )
+            )
+          )
+        )
       case Not(IsNull(e)) =>
         constructDataFilters(IsNotNull(e))
 
