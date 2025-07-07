@@ -741,6 +741,13 @@ lazy val spark = (project in file("spark-jar"))
 
     // Assembly settings
     assembly / assemblyJarName := s"delta-spark_${scalaBinaryVersion.value}-${version.value}.jar",
+    assembly / assemblyMergeStrategy := {
+      case PathList("META-INF", "versions", _, "module-info.class") => MergeStrategy.discard
+      // existing rules...
+      case x =>
+        val oldStrategy = (assembly / assemblyMergeStrategy).value
+        oldStrategy(x)
+    },
     Compile / packageBin := assembly.value,
 
     // Artifact naming
