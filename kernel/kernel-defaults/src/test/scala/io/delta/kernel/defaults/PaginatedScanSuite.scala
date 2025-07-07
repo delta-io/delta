@@ -32,7 +32,7 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtils
 
       val snapshot = latestSnapshot(tempDir.getCanonicalPath)
       // Try read first page (with size = 12)
-      val paginatedScan = snapshot.getScanBuilder().buildPaginated(12, Optional.empty())
+      val paginatedScan = snapshot.getScanBuilder().buildPaginated(8, Optional.empty())
         .asInstanceOf[PaginatedScanImpl]
 
       if (paginatedScan != null) {
