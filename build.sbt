@@ -743,7 +743,7 @@ lazy val spark = (project in file("spark-jar"))
   .settings(
     name := "delta-spark",
     commonSettings,
-    crossPaths := true,
+    releaseSettings,
     publishMavenStyle := true,
     // Assembly settings for creating the fat JAR
     assembly / assemblyJarName := s"delta-spark_${scalaBinaryVersion.value}-${version.value}.jar",
