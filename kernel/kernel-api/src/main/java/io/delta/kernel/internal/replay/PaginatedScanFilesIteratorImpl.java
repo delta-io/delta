@@ -20,6 +20,7 @@ import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
+import java.util.NoSuchElementException;
 import java.util.Optional;
 
 /** Implementation of {@link PaginatedScanFilesIterator} */
@@ -28,6 +29,11 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
   private final CloseableIterator<FilteredColumnarBatch> filteredScanFilesIter;
   private final long pageSize;
 
+  private long numScanFilesReturned;
+  private String lastLogFileName = null;
+  private long rowIdxInLastFile = -1;
+  private Optional<FilteredColumnarBatch> nextBatch;
+  private boolean closed = false;
   /**
    * Constructs a paginated iterator over scan files on top of a given filtered scan files iterator
    * and pagination context.
@@ -46,22 +52,62 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
   }
 
   @Override
-  public Optional<Row> getCurrentPageToken() {
+  public Row getCurrentPageToken() {
     throw new UnsupportedOperationException("Not implemented");
   }
 
   @Override
   public boolean hasNext() {
-    throw new UnsupportedOperationException("Not implemented");
+    if (closed) {
+      return false;
+    }
+    if (!nextBatch.isPresent()) {
+      prepareNext();
+    }
+    return nextBatch.isPresent();
+  }
+
+  private void prepareNext() {
+    if(nextBatch.isPresent()) return;
+    if (numScanFilesReturned >= pageSize) return;
+
+    if (!filteredScanFilesIter.hasNext()) return; // base iterator is empty
+
+    FilteredColumnarBatch batch = filteredScanFilesIter.next();
+    String fileName = batch.getFilePath().get();
+    if (!fileName.equals(lastLogFileName)) {
+      lastLogFileName = fileName;
+      System.out.println("filePath " + fileName);
+      rowIdxInLastFile = 0; // row idx starts from 1
+    }
+    long numActiveAddFiles = batch.getPreComputedNumSelectedRows().get();
+    long rowNum = batch.getData().getSize();
+
+    nextBatch = Optional.of(batch);
+    numScanFilesReturned += numActiveAddFiles;
+    rowIdxInLastFile += rowNum;
+
+    System.out.println("numAddFilesReturned: " + numScanFilesReturned);
+    System.out.println("numActiveAddFiles: " + numActiveAddFiles);
+    System.out.println("numTotalAddFiles: " + batch.getData().getColumnVector(0).getSize());
+    System.out.println("numOfRows: " + rowNum);
   }
 
   @Override
   public FilteredColumnarBatch next() {
-    throw new UnsupportedOperationException("Not implemented");
+    if (closed) {
+      throw new IllegalStateException("Can't call `next` on a closed iterator.");
+    }
+    if (!hasNext()) {
+      throw new NoSuchElementException();
+    }
+    final FilteredColumnarBatch ret = nextBatch.get();
+    nextBatch = Optional.empty();
+    return ret;
   }
 
   @Override
   public void close() throws IOException {
-    throw new UnsupportedOperationException("Not implemented");
+    closed = true;
   }
 }
