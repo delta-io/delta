@@ -60,8 +60,8 @@ public class PaginatedScanImpl implements PaginatedScan {
         pageToken
             .map(token -> PaginationContext.forPageWithPageToken(pageSize, token))
             .orElseGet(() -> PaginationContext.forFirstPage(pageSize));
-    CloseableIterator<FilteredColumnarBatch> scanFileIter =
+    CloseableIterator<FilteredColumnarBatch> filteredScanFilesIter =
         baseScan.getScanFiles(engine, includeStates, Optional.of(paginationContext));
-    return new PaginatedScanFilesIteratorImpl(scanFileIter, paginationContext);
+    return new PaginatedScanFilesIteratorImpl(filteredScanFilesIter, paginationContext);
   }
 }
