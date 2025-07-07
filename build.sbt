@@ -557,6 +557,10 @@ lazy val spark = (project in file("spark-jar")).dependsOn(sparkDsv1, sparkDsv2)
       case x =>
         val oldStrategy = (assembly / assemblyMergeStrategy).value
         oldStrategy(x)
+    },
+    // Ensure artifact IDs are maintained
+    artifactName := { (sv: ScalaVersion, module: ModuleID, artifact: Artifact) =>
+      "delta-spark_" + sv.binary + "-" + module.revision + "." + artifact.extension
     }
   )
 
