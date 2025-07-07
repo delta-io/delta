@@ -734,7 +734,11 @@ lazy val sparkDsv2 = (project in file("spark-dsv2"))
     }
   ).configureUnidoc()
 
-lazy val spark = (project in file("spark-jar")).dependsOn(sparkDsv1, sparkDsv2)
+lazy val spark = (project in file("spark-jar"))
+  .dependsOn(sparkDsv1)
+  .dependsOn(sparkDsv2)
+  .dependsOn(kernelApi)
+  .dependsOn(kernelDefaults)
   .aggregate(sparkDsv1, sparkDsv2)
   .settings(
     name := "delta-spark",
@@ -1667,7 +1671,7 @@ val createTargetClassesDir = taskKey[Unit]("create target classes dir")
 
 // Don't use these groups for any other projects
 lazy val sparkGroup = project
-  .aggregate(spark, contribs, storage, storageS3DynamoDB, sharing, hudi, kernelApi, kernelDefaults)
+  .aggregate(spark, contribs, storage, storageS3DynamoDB, sharing, hudi)
   .settings(
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,
