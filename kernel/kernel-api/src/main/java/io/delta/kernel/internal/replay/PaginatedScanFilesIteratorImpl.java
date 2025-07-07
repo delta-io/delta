@@ -23,6 +23,8 @@ import java.io.IOException;
 import java.util.NoSuchElementException;
 import java.util.Optional;
 
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+
 /** Implementation of {@link PaginatedScanFilesIterator} */
 public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterator {
 
@@ -30,8 +32,8 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
   private final long pageSize;
 
   private long numScanFilesReturned;
-  private String lastLogFileName = null;
-  private long rowIdxInLastFile = -1;
+  private String currentLogFileName = null;
+  private long currentRowIdxInFile = -1;
   private Optional<FilteredColumnarBatch> nextBatch;
   private boolean closed = false;
   /**
@@ -53,7 +55,9 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
 
   @Override
   public Row getCurrentPageToken() {
-    throw new UnsupportedOperationException("Not implemented");
+    //TODO: change value for data validation here
+    return new PageToken(currentLogFileName, currentRowIdxInFile, Optional.empty(),
+        null,null,-1,-1,-1).toRow();
   }
 
   @Override
@@ -74,23 +78,26 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
     if (!filteredScanFilesIter.hasNext()) return; // base iterator is empty
 
     FilteredColumnarBatch batch = filteredScanFilesIter.next();
-    String fileName = batch.getFilePath().get();
-    if (!fileName.equals(lastLogFileName)) {
-      lastLogFileName = fileName;
-      System.out.println("filePath " + fileName);
-      rowIdxInLastFile = 0; // row idx starts from 1
+    checkArgument(batch.getFilePath().isPresent(), "file path doesn't exist!");
+    String filePath = batch.getFilePath().get();
+    if (!filePath.equals(currentLogFileName)) {
+      currentLogFileName = filePath;
+      System.out.println("filePath " + filePath);
+      currentRowIdxInFile = 0; // row idx starts from 1
     }
-    long numActiveAddFiles = batch.getPreComputedNumSelectedRows().get();
-    long rowNum = batch.getData().getSize();
+    checkArgument(batch.getPreComputedNumSelectedRows().isPresent(), "pre-computed number of selected rows doesn't exist!");
+    long numSelectedAddFilesInBatch = batch.getPreComputedNumSelectedRows().get();
+    long numRowsInBatch = batch.getData().getSize();
 
     nextBatch = Optional.of(batch);
-    numScanFilesReturned += numActiveAddFiles;
-    rowIdxInLastFile += rowNum;
+    numScanFilesReturned += numSelectedAddFilesInBatch;
+    currentRowIdxInFile += numRowsInBatch;
 
-    System.out.println("numAddFilesReturned: " + numScanFilesReturned);
-    System.out.println("numActiveAddFiles: " + numActiveAddFiles);
-    System.out.println("numTotalAddFiles: " + batch.getData().getColumnVector(0).getSize());
-    System.out.println("numOfRows: " + rowNum);
+    //TODO: change to logger
+    System.out.println("total numScanFilesReturned: " + numScanFilesReturned);
+    System.out.println("numSelectedAddFilesInBatch: " + numSelectedAddFilesInBatch);
+    System.out.println("numTotalAddFilesInBatch: " + batch.getData().getColumnVector(0).getSize());
+    System.out.println("numRowsInBatch: " + numRowsInBatch);
   }
 
   @Override
