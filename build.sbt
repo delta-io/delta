@@ -431,26 +431,6 @@ lazy val deltaSuiteGenerator = (project in file("spark/delta-suite-generator"))
     Compile / mainClass := Some("io.delta.suitegenerator.ModularSuiteGenerator"),
     Test / baseDirectory := (ThisBuild / baseDirectory).value,
   )
-
-lazy val sparkDsv2 = (project in file("spark-dsv2"))
-  .enablePlugins(ScalafmtPlugin)
-  .dependsOn(kernelApi)
-  .dependsOn(kernelDefaults)
-  .dependsOn(sparkDsv1 % "test->test")
-  .settings(
-    name := "delta-spark-dsv2",
-    commonSettings,
-    javaOnlyReleaseSettings,
-    javafmtCheckSettings,
-    javaCheckstyleSettings("dev/kernel-checkstyle.xml"),
-    assembly / assemblyMergeStrategy := {
-      case PathList("META-INF", "versions", _, "module-info.class") => MergeStrategy.discard
-      case x =>
-        val oldStrategy = (assembly / assemblyMergeStrategy).value
-        oldStrategy(x)
-    }
-  ).configureUnidoc()
-
 lazy val sparkDsv1 = (project in file("spark"))
   .dependsOn(storage)
   .enablePlugins(Antlr4Plugin)
@@ -483,7 +463,7 @@ lazy val sparkDsv1 = (project in file("spark"))
       "org.mockito" % "mockito-inline" % "4.11.0" % "test",
     ),
     Compile / packageBin / mappings := (Compile / packageBin / mappings).value ++
-        listPythonFiles(baseDirectory.value.getParentFile / "python"),
+      listPythonFiles(baseDirectory.value.getParentFile / "python"),
     Antlr4 / antlr4PackageName := Some("io.delta.sql.parser"),
     Antlr4 / antlr4GenListener := true,
     Antlr4 / antlr4GenVisitor := true,
@@ -539,30 +519,6 @@ lazy val sparkDsv1 = (project in file("spark"))
     // ==> thus we exclude such sources
     // (mostly) relevant github issue: https://github.com/sbt/sbt-unidoc/issues/77
     classPathToSkip = "spark-connect"
-  )
-
-lazy val spark = (project in file("spark-jar")).dependsOn(sparkDsv1, sparkDsv2)
-  .aggregate(sparkDsv1, sparkDsv2)
-  .settings(
-    name := "delta-spark",
-    commonSettings,
-    crossPaths := true,
-    publishMavenStyle := true,
-    // Assembly settings for creating the fat JAR
-    assembly / assemblyJarName := s"delta-spark_${scalaBinaryVersion.value}-${version.value}.jar",
-    // Make packageBin use the assembly JAR
-    Compile / packageBin := assembly.value,
-    assembly / assemblyMergeStrategy := {
-      case PathList("META-INF", "versions", _, "module-info.class") => MergeStrategy.discard
-      // existing rules...
-      case x =>
-        val oldStrategy = (assembly / assemblyMergeStrategy).value
-        oldStrategy(x)
-    },
-    // Ensure artifact IDs are maintained
-    artifactName := { (sv: ScalaVersion, module: ModuleID, artifact: Artifact) =>
-      "delta-spark_" + sv.binary + "-" + module.revision + "." + artifact.extension
-    }
   )
 
 lazy val contribs = (project in file("contribs"))
@@ -757,6 +713,50 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
       // Unidoc settings
     unidocSourceFilePatterns += SourceFilePattern("io/delta/kernel/"),
   ).configureUnidoc(docTitle = "Delta Kernel Defaults")
+
+
+lazy val sparkDsv2 = (project in file("spark-dsv2"))
+  .enablePlugins(ScalafmtPlugin)
+  .dependsOn(kernelApi)
+  .dependsOn(kernelDefaults)
+  .dependsOn(sparkDsv1 % "test->test")
+  .settings(
+    name := "delta-spark-dsv2",
+    commonSettings,
+    javaOnlyReleaseSettings,
+    javafmtCheckSettings,
+    javaCheckstyleSettings("dev/kernel-checkstyle.xml"),
+    assembly / assemblyMergeStrategy := {
+      case PathList("META-INF", "versions", _, "module-info.class") => MergeStrategy.discard
+      case x =>
+        val oldStrategy = (assembly / assemblyMergeStrategy).value
+        oldStrategy(x)
+    }
+  ).configureUnidoc()
+
+lazy val spark = (project in file("spark-jar")).dependsOn(sparkDsv1, sparkDsv2)
+  .aggregate(sparkDsv1, sparkDsv2)
+  .settings(
+    name := "delta-spark",
+    commonSettings,
+    crossPaths := true,
+    publishMavenStyle := true,
+    // Assembly settings for creating the fat JAR
+    assembly / assemblyJarName := s"delta-spark_${scalaBinaryVersion.value}-${version.value}.jar",
+    // Make packageBin use the assembly JAR
+    Compile / packageBin := assembly.value,
+    assembly / assemblyMergeStrategy := {
+      case PathList("META-INF", "versions", _, "module-info.class") => MergeStrategy.discard
+      // existing rules...
+      case x =>
+        val oldStrategy = (assembly / assemblyMergeStrategy).value
+        oldStrategy(x)
+    },
+    // Ensure artifact IDs are maintained
+    artifactName := { (sv: ScalaVersion, module: ModuleID, artifact: Artifact) =>
+      "delta-spark_" + sv.binary + "-" + module.revision + "." + artifact.extension
+    }
+  )
 
 lazy val unity = (project in file("unity"))
   .enablePlugins(ScalafmtPlugin)
