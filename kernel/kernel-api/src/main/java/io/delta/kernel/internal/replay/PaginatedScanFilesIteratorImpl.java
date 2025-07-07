@@ -24,31 +24,43 @@ import java.io.IOException;
 /** Implementation of {@link PaginatedScanFilesIterator} */
 public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterator {
 
-  private final CloseableIterator<FilteredColumnarBatch> originalIterator;
-  private final long pageSize; // max num of files to return in this page
+  private final CloseableIterator<FilteredColumnarBatch> filteredScanFilesIter;
+  private final long pageSize;
 
+  /**
+   * Constructs a paginated iterator over scan files on top of a given filtered scan files iterator
+   * and pagination context.
+   *
+   * @param filteredScanFilesIter The underlying scan files iterator with data skipping and
+   *     partition pruning applied. This iterator serves as the source of filtered scan results for
+   *     pagination.
+   * @param paginationContext The pagination context that carries pagination-related information,
+   *     such as the maximum number of files to return in a page.
+   */
   public PaginatedScanFilesIteratorImpl(
-      CloseableIterator<FilteredColumnarBatch> originalIterator,
+      CloseableIterator<FilteredColumnarBatch> filteredScanFilesIter,
       PaginationContext paginationContext) {
-    this.originalIterator = originalIterator;
+    this.filteredScanFilesIter = filteredScanFilesIter;
     this.pageSize = paginationContext.getPageSize();
   }
 
   @Override
   public Row getCurrentPageToken() {
-    return null;
+    throw new UnsupportedOperationException("Not implemented");
   }
 
   @Override
   public boolean hasNext() {
-    return false;
+    throw new UnsupportedOperationException("Not implemented");
   }
 
   @Override
   public FilteredColumnarBatch next() {
-    return null;
+    throw new UnsupportedOperationException("Not implemented");
   }
 
   @Override
-  public void close() throws IOException {}
+  public void close() throws IOException {
+    throw new UnsupportedOperationException("Not implemented");
+  }
 }
