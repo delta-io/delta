@@ -109,6 +109,16 @@ public class ScanImpl implements Scan {
   /**
    * Get an iterator of data files in this version of scan that survived the predicate pruning.
    *
+   * @return data in {@link ColumnarBatch} batch format. Each row correspond to one survived file.
+   */
+  public CloseableIterator<FilteredColumnarBatch> getScanFiles(
+      Engine engine, boolean includeStats) {
+    return getScanFiles(engine, includeStats, Optional.empty());
+  }
+
+  /**
+   * Get an iterator of data files in this version of scan that survived the predicate pruning.
+   *
    * <p>When {@code includeStats=true} the JSON file statistics are always read from the log and
    * included in the returned columnar batches which have schema {@link
    * InternalScanFileUtils#SCAN_FILE_SCHEMA_WITH_STATS}. When {@code includeStats=false} the JSON
@@ -116,14 +126,9 @@ public class ScanImpl implements Scan {
    *
    * @param engine the {@link Engine} instance to use
    * @param includeStats whether to read and include the JSON statistics
+   * @param paginationContext pagination context if present
    * @return the surviving scan files as {@link FilteredColumnarBatch}s
    */
-  public CloseableIterator<FilteredColumnarBatch> getScanFiles(
-      Engine engine, boolean includeStats) {
-    return getScanFiles(engine, includeStats, Optional.empty());
-  }
-
-  // TODO: java doc
   public CloseableIterator<FilteredColumnarBatch> getScanFiles(
       Engine engine, boolean includeStats, Optional<PaginationContext> paginationContext) {
     if (accessedScanFiles) {
