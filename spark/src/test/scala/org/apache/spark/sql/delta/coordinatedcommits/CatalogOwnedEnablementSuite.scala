@@ -293,7 +293,7 @@ class CatalogOwnedEnablementSuite
       val usageLogBlob = JsonUtils.fromJson[Map[String, Any]](usageLog.head.blob)
 
       val logStore =
-        "org.apache.spark.sql.delta.storage.LocalLogStore"
+        "org.apache.spark.sql.delta.storage.DelegatingLogStore"
 
       validateUsageLogBlob(
         usageLogBlob,
