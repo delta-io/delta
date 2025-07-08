@@ -23,7 +23,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames}
+import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames, JsonUtils}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
@@ -44,14 +44,8 @@ class DeltaLogMinorCompactionSuite extends QueryTest
       startVersion: Long,
       endVersion: Long): Unit = {
     val deltaLog = DeltaLog.forTable(spark, tablePath)
-    CatalogOwnedTableUtils.populateTableCommitCoordinatorFromCatalog(
-      spark,
-      catalogTableOpt = None,
-      snapshot = deltaLog.unsafeVolatileSnapshot).foreach { tcc =>
-      tcc.backfillToVersion(endVersion)
-    }
     val logReplay = new InMemoryLogReplay(
-      minFileRetentionTimestamp = 0,
+      minFileRetentionTimestamp = None,
       minSetTransactionRetentionTimestamp = None)
     val hadoopConf = deltaLog.newDeltaHadoopConf()
 
@@ -187,7 +181,8 @@ class DeltaLogMinorCompactionSuite extends QueryTest
   def testSnapshotCreation(
       compactionWindows: Seq[(Long, Long)],
       checkpoints: Set[Int] = Set.empty,
-      postSetupFunc: Option[(DeltaLog => Unit)] = None,
+      postDataGenerationFunc: Option[DeltaLog => Unit] = None,
+      postSetupFunc: Option[DeltaLog => Unit] = None,
       expectedCompactedDeltas: Seq[CompactedDelta],
       expectedDeltas: Seq[Long],
       expectedCheckpoint: Long = -1L,
@@ -206,7 +201,19 @@ class DeltaLogMinorCompactionSuite extends QueryTest
       withTempDir { tmpDir =>
         val tableDir = tmpDir.getAbsolutePath
         generateData(tableDir, checkpoints)
-        val deltaLog = DeltaLog.forTable(spark, tableDir)
+
+        val (deltaLog, snapshot) = DeltaLog.forTableWithSnapshot(spark, tableDir)
+        // Ensure all commits are backfilled after data generation.
+        CatalogOwnedTableUtils.populateTableCommitCoordinatorFromCatalog(
+            spark,
+            catalogTableOpt = None,
+            snapshot = snapshot).foreach { tcc =>
+          tcc.backfillToVersion(snapshot.version)
+        }
+
+        // Data generation complete - run post data generation function
+        postDataGenerationFunc.foreach(_.apply(deltaLog))
+
         compactionWindows.foreach { case (startV, endV) =>
           minorCompactDeltaLog(tableDir, startV, endV)
         }
@@ -421,7 +428,6 @@ class DeltaLogMinorCompactionSuite extends QueryTest
     )
   }
 
-
   test("compacted deltas should not be used when there are holes in deltas") {
     testSnapshotCreation(
       compactionWindows = Seq((0, 2), (3, 5), (3, 6)),
@@ -441,6 +447,52 @@ class DeltaLogMinorCompactionSuite extends QueryTest
       // commit version 8 where we change `delta.dataSkippingNumIndexedCols` to 0.
       additionalConfs =
         Seq(DeltaConfigs.CHECKPOINT_WRITE_STATS_AS_STRUCT.defaultTablePropertyKey -> "false")
+    )
+  }
+
+  test("compacted deltas should include RemoveFiles that do not have deletionTimestamp") {
+    testSnapshotCreation(
+      compactionWindows = Seq((1, 3), (4, 6), (7, 10)),
+      checkpoints = Set.empty,
+      postDataGenerationFunc = Some(
+        (deltaLog: DeltaLog) => {
+          val hadoopConf = deltaLog.newDeltaHadoopConf()
+          // Remove deletionTimestamp from RemoveFile in versions 1 to 10.
+          (1 to 10).foreach { versionToRead =>
+            val file = FileNames.unsafeDeltaFile(deltaLog.logPath, versionToRead)
+            val actions = deltaLog.store.readAsIterator(file, hadoopConf).map(Action.fromJson)
+            val actionsWithoutDeletionTimestamp = actions
+              .map {
+                case r: RemoveFile if r.deletionTimestamp.isDefined =>
+                  r.copy(deletionTimestamp = None)
+                case ci: CommitInfo =>
+                  // The operationParameters were serialized with JsonMapSerializer but there
+                  // were no corresponding JsonMapDeserializer when reading them back,
+                  // so need to do this step to ensure they can be serialized again.
+                  val parameters = Option(ci.operationParameters)
+                    .map(_.mapValues(JsonUtils.toJson(_)).toMap)
+                    .orNull
+                  ci.copy(operationParameters = parameters)
+                case other => other
+              }
+              .map(_.json)
+              .toSeq
+            // The iterator is already consumed above so that we don't run into the issue of
+            // overwriting the file while reading it.
+            deltaLog.store.write(
+              path = file,
+              actions = actionsWithoutDeletionTimestamp.toIterator,
+              overwrite = true,
+              hadoopConf = hadoopConf)
+          }
+        }
+      ),
+      expectedCompactedDeltas = Seq(
+        CompactedDelta((1, 3), numAdds = 1, numRemoves = 1, numMetadata = 0),
+        CompactedDelta((4, 6), numAdds = 11, numRemoves = 5, numMetadata = 0),
+        CompactedDelta((7, 10), numAdds = 8, numRemoves = 6, numMetadata = 1)
+      ),
+      expectedDeltas = Seq(0)
     )
   }
 }
