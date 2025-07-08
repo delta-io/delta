@@ -772,6 +772,7 @@ lazy val spark = (project in file("spark-jar"))
     commonSettings,
     releaseSettings,
     publishMavenStyle := true,
+    crossSparkSettings(),
     // Add this line to include Python files
     Compile / packageBin / mappings := (Compile / packageBin / mappings).value ++
       listPythonFiles(baseDirectory.value.getParentFile / "python"),
