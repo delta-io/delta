@@ -17,7 +17,6 @@
 package io.delta.kernel.internal;
 
 import io.delta.kernel.PaginatedScan;
-import io.delta.kernel.Scan;
 import io.delta.kernel.ScanBuilder;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.expressions.Predicate;
@@ -76,7 +75,7 @@ public class ScanBuilderImpl implements ScanBuilder {
   }
 
   @Override
-  public Scan build() {
+  public ScanImpl build() {
     return new ScanImpl(
         snapshotSchema,
         readSchema,
@@ -89,7 +88,8 @@ public class ScanBuilderImpl implements ScanBuilder {
   }
 
   @Override
-  public PaginatedScan buildPaginated(long pageSize, Optional<Row> pageToken) {
-    throw new UnsupportedOperationException("not implemented");
+  public PaginatedScan buildPaginated(long pageSize, Optional<Row> pageTokenRowOpt) {
+    ScanImpl baseScan = this.build();
+    return new PaginatedScanImpl(baseScan, pageTokenRowOpt, pageSize);
   }
 }
