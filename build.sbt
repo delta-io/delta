@@ -773,6 +773,7 @@ lazy val spark = (project in file("spark-jar"))
     releaseSettings,
     publishMavenStyle := true,
     crossSparkSettings(),
+    sparkMimaSettings,
     // Add this line to include Python files
     Compile / packageBin / mappings := (Compile / packageBin / mappings).value ++
       listPythonFiles(baseDirectory.value.getParentFile / "python"),
@@ -792,6 +793,12 @@ lazy val spark = (project in file("spark-jar"))
       "delta-spark_" + sv.binary + "-" + module.revision + "." + artifact.extension
     },
     // Required for testing table features see https://github.com/delta-io/delta/issues/1602
+
+    createTargetClassesDir := {
+            val dir = baseDirectory.value.getParentFile / "target" / "scala-2.12" / "classes"
+            Files.createDirectories(dir.toPath)
+          },
+    Compile / compile := ((Compile / compile) dependsOn createTargetClassesDir).value,
     Test / envVars += ("DELTA_TESTING", "1"),
   )
 
