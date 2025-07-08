@@ -50,7 +50,7 @@ val all_scala_versions = Seq(scala212, scala213)
 // sbt 'set default_scala_version := 2.13.13' [commands]
 // FIXME Why not use scalaVersion?
 val default_scala_version = settingKey[String]("Default Scala version")
-Global / default_scala_version := scala213
+Global / default_scala_version := scala212
 
 val LATEST_RELEASED_SPARK_VERSION = "3.5.3"
 val SPARK_MASTER_VERSION = "4.0.1-SNAPSHOT"
@@ -744,6 +744,13 @@ lazy val spark = (project in file("spark-jar"))
 
     // Required for testing table features see https://github.com/delta-io/delta/issues/1602
     Test / envVars += ("DELTA_TESTING", "1"),
+
+    // Hack to avoid errors related to missing repo-root/target/scala-2.12/classes/
+    createTargetClassesDir := {
+      val dir = baseDirectory.value.getParentFile / "target" / "scala-2.12" / "classes"
+      Files.createDirectories(dir.toPath)
+    },
+    Compile / compile := ((Compile / compile) dependsOn createTargetClassesDir).value,
     TestParallelization.settings,
   )
   .configureUnidoc(
