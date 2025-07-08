@@ -302,9 +302,7 @@ object CatalogOwnedTableUtils extends DeltaLogging {
     // Base data that's common to *all* usage logs for tccc population.
     val baseData = Map(
       "version" -> snapshot.version.toString,
-      "path" -> snapshot.path.toString,
-      "ucTableId" -> snapshot.getProperties
-        .getOrElse(UCCommitCoordinatorClient.UC_TABLE_ID_KEY, "UC_TABLE_ID_MISSING")
+      "path" -> snapshot.path.toString
     )
 
     val catalogData = catalogTableOpt.map { catalogTable =>

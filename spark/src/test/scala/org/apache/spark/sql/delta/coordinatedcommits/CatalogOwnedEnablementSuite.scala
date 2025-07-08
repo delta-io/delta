@@ -24,7 +24,6 @@ import org.apache.spark.sql.delta.DeltaOperations._
 import org.apache.spark.sql.delta.test.{DeltaExceptionTestUtils, DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.JsonUtils
-import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 import org.apache.commons.lang3.NotImplementedException
 
 import org.apache.spark.sql.catalyst.TableIdentifier
