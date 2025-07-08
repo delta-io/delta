@@ -67,8 +67,8 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
    * @param extraProps Additional table properties.
    * @param initialData Data to append after initial table creation (before replace).
    * @param replaceData Data to append as part of the replace transaction.
-   * @param enableRowTrackingBeforeReplace Whether to enable row tracking before the replace.
-   * @param enableRowTrackingAfterReplace Whether to enable row tracking after the replace.
+   * @param enableBefore Whether to enable row tracking before the replace.
+   * @param enableAfter Whether to enable row tracking after the replace.
    */
   private def createAndReplaceTable(
       engine: Engine,
@@ -77,10 +77,10 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
       extraProps: Map[String, String] = Map.empty,
       initialData: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])] = Seq.empty,
       replaceData: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])] = Seq.empty,
-      enableRowTrackingBeforeReplace: Boolean = false,
-      enableRowTrackingAfterReplace: Boolean = true): Unit = {
-    val initialTableProps = Map(
-      TableConfig.ROW_TRACKING_ENABLED.getKey -> enableRowTrackingBeforeReplace.toString) ++ extraProps
+      enableBefore: Boolean = false,
+      enableAfter: Boolean = true): Unit = {
+    val initialTableProps =
+      Map(TableConfig.ROW_TRACKING_ENABLED.getKey -> enableBefore.toString) ++ extraProps
 
     // Create an empty table with row tracking enabled or disabled
     createEmptyTable(engine, tablePath, schema = schema, tableProperties = initialTableProps)
@@ -91,8 +91,8 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
     }
 
     // Create a REPLACE transaction
-    val replaceTableProps = Map(
-      TableConfig.ROW_TRACKING_ENABLED.getKey -> enableRowTrackingAfterReplace.toString) ++ extraProps
+    val replaceTableProps =
+      Map(TableConfig.ROW_TRACKING_ENABLED.getKey -> enableAfter.toString) ++ extraProps
     val txnBuilder = Table.forPath(engine, tablePath).asInstanceOf[TableImpl]
       .createReplaceTableTransactionBuilder(engine, testEngineInfo)
       .withSchema(engine, schema)
@@ -815,13 +815,13 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
   }
 
   /* -------- Test row tracking with replace table -------- */
-  Seq(true, false).foreach { enabledBefore =>
-    Seq(true, false).foreach { enabledAfter =>
+  Seq(true, false).foreach { enableBefore =>
+    Seq(true, false).foreach { enableAfter =>
       Seq(Seq(), Seq(Map.empty[String, Literal] -> (dataBatches1))).foreach { initialData =>
         Seq(Seq(), Seq(Map.empty[String, Literal] -> (dataBatches2))).foreach { replaceData =>
           val testName = s"""Replace table with row tracking:
-                            |enabledBefore=$enabledBefore,
-                            |enabledAfter=$enabledAfter,
+                            |enableBefore=$enableBefore,
+                            |enableAfter=$enableAfter,
                             |initialData=${initialData.nonEmpty},
                             |replaceData=${replaceData.nonEmpty}"""
             .stripMargin
@@ -834,15 +834,15 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
                 tablePath,
                 initialData = initialData,
                 replaceData = replaceData,
-                enableRowTrackingBeforeReplace = enabledBefore,
-                enableRowTrackingAfterReplace = enabledAfter)
+                enableBefore = enableBefore,
+                enableAfter = enableAfter)
 
               // Add assertions here as needed to verify the expected behavior
               val snapshot =
                 TableImpl.forPath(
                   engine,
                   tablePath).getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-              assertMetadataProp(snapshot, TableConfig.ROW_TRACKING_ENABLED, enabledAfter)
+              assertMetadataProp(snapshot, TableConfig.ROW_TRACKING_ENABLED, enableAfter)
             }
           }
         }
