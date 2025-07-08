@@ -31,6 +31,7 @@ import org.apache.spark.sql.types.StructType
 trait MergeIntoScalaMixin extends MergeIntoSuiteBaseMixin
   with MergeIntoScalaTestUtils
   with DeltaSQLCommandTest
+  with DeltaDMLByPathTestUtils
   with DeltaTestUtilsForTempViews
   with DeltaExcludedTestMixin {
 
