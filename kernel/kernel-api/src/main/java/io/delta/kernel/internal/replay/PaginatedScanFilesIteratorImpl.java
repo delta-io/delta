@@ -21,6 +21,7 @@ import io.delta.kernel.Meta;
 import io.delta.kernel.PaginatedScanFilesIterator;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
+import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
 import java.util.NoSuchElementException;
@@ -37,17 +38,17 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
   /**
    * Filtered ScanFiles iterator retrieved from baseScan but without batches from skipped log files
    */
-  private final CloseableIterator<FilteredColumnarBatch> filteredScanFilesIter;
+  private final CloseableIterator<FilteredColumnarBatch> baseFilteredScanFilesIter;
 
   /** Maximum number of ScanFiles to include in current page */
   private final long pageSize;
 
-  /** Total number of scan files returned in current page */
+  /** Total number of ScanFiles returned in current page */
   private long numScanFilesReturned;
 
   /**
    * The name of the last log file that was read. This value corresponds to the one saved in the
-   * page token;
+   * page token if present.
    */
   private String lastReadLogFileName = null;
 
@@ -57,38 +58,39 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
    * <p>For example, if the last page contains 3 batches from the same log file, and each batch has
    * 10 rows, this value will be 29 (since row indices start at 0).
    *
-   * <p>This value corresponds to the one saved in the page token;
+   * <p>This value corresponds to the one saved in the page token if present;
    */
   private long lastReturnedRowIndex = -1;
 
   private Optional<FilteredColumnarBatch> currentBatch = Optional.empty();
   private boolean closed = false;
+
   /**
    * Constructs a paginated iterator over scan files on top of a given filtered scan files iterator
    * and pagination context.
    *
-   * @param filteredScanFilesIter The underlying scan files iterator with data skipping and
+   * @param baseFilteredScanFilesIter The underlying scan files iterator with data skipping and
    *     partition pruning applied. This iterator serves as the source of filtered scan results for
    *     pagination.
    * @param paginationContext The pagination context that carries pagination-related information,
    *     such as the maximum number of files to return in a page.
    */
   public PaginatedScanFilesIteratorImpl(
-      CloseableIterator<FilteredColumnarBatch> filteredScanFilesIter,
+      CloseableIterator<FilteredColumnarBatch> baseFilteredScanFilesIter,
       PaginationContext paginationContext) {
-    this.filteredScanFilesIter = filteredScanFilesIter;
+    this.baseFilteredScanFilesIter = baseFilteredScanFilesIter;
     this.pageSize = paginationContext.getPageSize();
   }
 
   @Override
   public Row getCurrentPageToken() {
-    // TODO: change value for data validation here
+    // TODO: change values for data validation here
     return new PageToken(
             lastReadLogFileName,
             lastReturnedRowIndex,
             Optional.empty() /* sidecar file index */,
             Meta.KERNEL_VERSION,
-            null /* table path */,
+            "fake/table/path" /* table path */,
             -1 /* table version */,
             -1 /* predicate hash */,
             -1 /* log segment hash */)
@@ -109,14 +111,14 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
   private void prepareNext() {
     if (currentBatch.isPresent()) return;
     if (numScanFilesReturned >= pageSize) return;
-    if (!filteredScanFilesIter.hasNext()) return; // base iterator is empty
+    if (!baseFilteredScanFilesIter.hasNext()) return; // base iterator is empty
 
-    FilteredColumnarBatch batch = filteredScanFilesIter.next();
+    FilteredColumnarBatch batch = baseFilteredScanFilesIter.next();
     checkArgument(batch.getFilePath().isPresent(), "file path doesn't exist!");
     String filePath = batch.getFilePath().get();
     if (!filePath.equals(lastReadLogFileName)) {
       lastReadLogFileName = filePath;
-      logger.info("filePath " + filePath);
+      logger.info("filePath {}", filePath);
       lastReturnedRowIndex = -1;
     }
     checkArgument(
@@ -129,10 +131,9 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
     numScanFilesReturned += numSelectedAddFilesInBatch;
     lastReturnedRowIndex += numRowsInBatch;
 
-    logger.info("total numScanFilesReturned: " + numScanFilesReturned);
-    logger.info("numSelectedAddFilesInBatch: " + numSelectedAddFilesInBatch);
-    logger.info("numTotalAddFilesInBatch: " + batch.getData().getColumnVector(0).getSize());
-    logger.info("numRowsInBatch: " + numRowsInBatch);
+    logger.info("total numScanFilesReturned: {}", numScanFilesReturned);
+    logger.info("numSelectedAddFilesInBatch: {}", numSelectedAddFilesInBatch);
+    logger.info("numRowsInBatch: {}", numRowsInBatch);
   }
 
   @Override
@@ -151,5 +152,6 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
   @Override
   public void close() throws IOException {
     closed = true;
+    Utils.closeCloseables(baseFilteredScanFilesIter);
   }
 }
