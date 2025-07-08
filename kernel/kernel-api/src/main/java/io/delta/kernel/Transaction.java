@@ -270,7 +270,8 @@ public interface Transaction {
                   // TODO: populate tags in generateAppendActions
                   Collections.emptyMap() /* tags */,
                   Optional.empty() /* baseRowId */,
-                  Optional.empty() /* defaultRowCommitVersion */);
+                  Optional.empty() /* defaultRowCommitVersion */,
+                  Optional.empty() /* deletionVectorDescriptor */);
           return SingleAction.createAddFileSingleAction(addFileRow.toRow());
         });
   }
