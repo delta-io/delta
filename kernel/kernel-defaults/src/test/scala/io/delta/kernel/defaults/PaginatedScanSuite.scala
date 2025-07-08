@@ -227,7 +227,7 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtils
     val testCases = Seq(
       ("Page size 1", 1 /* page size */, 5 /* expectedFileCount */, 1 /* expectedBatchCount */, checkpoint10 , 4 /* row index in page token*/),
       ("Page size 10", 10, 10, 2, checkpoint10, 9),
-      ("Page size 12", 12, 15, 3, checkpoint10, 14), // page size ges over limie
+      ("Page size 12", 12, 15, 3, checkpoint10, 14), // batch size goes over limit
       ("Page size 100",100, 22, 5, checkpoint10, 23) // page limit isn't reached
     )
 
