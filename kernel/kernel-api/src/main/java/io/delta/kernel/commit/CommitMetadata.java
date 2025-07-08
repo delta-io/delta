@@ -28,7 +28,7 @@ import io.delta.kernel.utils.CloseableIterator;
 import java.util.Optional;
 
 /**
- * Contains all information required to commit changes to a Delta table.
+ * Contains all information required to commit changes to a Delta table. // TODO: out of date
  *
  * <p>The {@code CommitPayload} encapsulates the complete state needed for a Delta commit operation,
  * including all Delta actions, metadata changes, and contextual information. This payload is passed
@@ -39,18 +39,17 @@ import java.util.Optional;
  * implementations must materialize actions if multiple passes are needed.
  */
 @Experimental
-public class CommitPayload {
+public class CommitMetadata {
 
   private final long version;
   private final String logPath;
-  private final CloseableIterator<Row> finalizedActions;
   private final CommitInfo commitInfo;
   private final Optional<Protocol> readProtocolOpt;
   private final Optional<Metadata> readMetadataOpt;
   private final Optional<Protocol> newProtocolOpt;
   private final Optional<Metadata> newMetadataOpt;
 
-  public CommitPayload(
+  public CommitMetadata(
       long version,
       String logPath,
       CloseableIterator<Row> finalizedActions,
@@ -62,7 +61,6 @@ public class CommitPayload {
     checkArgument(version >= 0, "version must be non-negative: %d", version);
     this.version = version;
     this.logPath = requireNonNull(logPath, "logPath is null");
-    this.finalizedActions = requireNonNull(finalizedActions, "finalizedActions is null");
     this.commitInfo = requireNonNull(commitInfo, "commitInfo is null");
     this.readProtocolOpt = requireNonNull(readProtocolOpt, "readProtocolOpt is null");
     this.readMetadataOpt = requireNonNull(readMetadataOpt, "readMetadataOpt is null");
@@ -78,11 +76,6 @@ public class CommitPayload {
   /** The path to the Delta log directory. */
   public String getLogPath() {
     return logPath;
-  }
-
-  /** All Delta actions (data and metadata) that are part of this commit. */
-  public CloseableIterator<Row> getFinalizedActions() {
-    return finalizedActions;
   }
 
   /** The {@link CommitInfo} that is being written as part of this commit. */

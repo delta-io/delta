@@ -17,15 +17,17 @@
 package io.delta.kernel.commit;
 
 import io.delta.kernel.annotation.Experimental;
+import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.utils.CloseableIterator;
 
 /**
  * Interface for committing changes to Delta tables, supporting both filesystem-managed and
  * catalog-managed tables.
  *
  * <p>Filesystem-managed tables: Implementations must write the {@link
- * CommitPayload#finalizedActions} into a new Delta JSON file at version {@link
- * CommitPayload#version} using atomic file operations (PUT-if-absent semantics).
+ * CommitMetadata#finalizedActions} into a new Delta JSON file at version {@link
+ * CommitMetadata#version} using atomic file operations (PUT-if-absent semantics).
  *
  * <p>Catalog-managed tables: Implementations must follow the commit rules and requirements as
  * dictated by the managing catalog to ensure commit atomicity and consistency. This may involve:
@@ -41,12 +43,14 @@ import io.delta.kernel.engine.Engine;
 public interface Committer {
 
   /**
-   * Commits the given {@link CommitPayload} to the table.
+   * Commits the given {@link CommitMetadata} to the table.
    *
    * @return CommitResponse containing the resultant commit
    * @throws CommitFailedException if the commit operation fails.
    */
-  CommitResponse commit(Engine engine, CommitPayload payload) throws CommitFailedException;
+  CommitResponse commit(
+      Engine engine, CloseableIterator<Row> finalizedActions, CommitMetadata payload)
+      throws CommitFailedException;
 
   // TODO: API to get the required table properties
 }

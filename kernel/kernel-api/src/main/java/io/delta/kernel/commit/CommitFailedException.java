@@ -19,7 +19,7 @@ package io.delta.kernel.commit;
 import io.delta.kernel.engine.Engine;
 
 /**
- * Exception raised by {@link Committer#commit(Engine, CommitPayload)}.
+ * Exception raised by {@link Committer#commit(Engine, CommitMetadata)}.
  *
  * <pre>
  *  | retryable | conflict  | meaning                                                         |
