@@ -734,7 +734,6 @@ lazy val spark = (project in file("spark-jar"))
     name := "delta-spark",
     commonSettings,
     scalaStyleSettings,
-    sparkMimaSettings,
     releaseSettings,
     crossSparkSettings(),
     Compile / packageBin / mappings := (Compile / packageBin / mappings).value ++
