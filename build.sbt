@@ -771,7 +771,6 @@ lazy val spark = (project in file("spark-jar"))
     name := "delta-spark",
     commonSettings,
     releaseSettings,
-    publishMavenStyle := true,
     crossSparkSettings(),
     sparkMimaSettings,
     // Add this line to include Python files
@@ -793,13 +792,20 @@ lazy val spark = (project in file("spark-jar"))
       "delta-spark_" + sv.binary + "-" + module.revision + "." + artifact.extension
     },
     // Required for testing table features see https://github.com/delta-io/delta/issues/1602
-
     createTargetClassesDir := {
             val dir = baseDirectory.value.getParentFile / "target" / "scala-2.12" / "classes"
             Files.createDirectories(dir.toPath)
           },
     Compile / compile := ((Compile / compile) dependsOn createTargetClassesDir).value,
     Test / envVars += ("DELTA_TESTING", "1"),
+  ).configureUnidoc(
+    generatedJavaDoc = getSparkVersion() == LATEST_RELEASED_SPARK_VERSION,
+    generateScalaDoc = getSparkVersion() == LATEST_RELEASED_SPARK_VERSION,
+    // spark-connect has classes with the same name as spark-core, this causes compilation issues
+    // with unidoc since it concatenates the classpaths from all modules
+    // ==> thus we exclude such sources
+    // (mostly) relevant github issue: https://github.com/sbt/sbt-unidoc/issues/77
+    classPathToSkip = "spark-connect"
   )
 
 
