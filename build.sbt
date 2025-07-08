@@ -789,7 +789,9 @@ lazy val spark = (project in file("spark-jar"))
     // Ensure artifact IDs are maintained
     artifactName := { (sv: ScalaVersion, module: ModuleID, artifact: Artifact) =>
       "delta-spark_" + sv.binary + "-" + module.revision + "." + artifact.extension
-    }
+    },
+    // Required for testing table features see https://github.com/delta-io/delta/issues/1602
+    Test / envVars += ("DELTA_TESTING", "1"),
   )
 
 
