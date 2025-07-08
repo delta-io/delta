@@ -36,7 +36,13 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
       LoggerFactory.getLogger(PaginatedScanFilesIteratorImpl.class);
 
   /**
-   * Filtered ScanFiles iterator retrieved from baseScan but without batches from skipped log files
+   * Filtered ScanFiles iterator from the base scan, excluding batches from fully consumed log
+   * files. For example, if previous pages have fully consumed sidecar files A and B, and partially
+   * consumed sidecar C, this iterator will exclude all batches from A and B, but include all
+   * batches from C.
+   *
+   * <p>Note: When no cached hash sets are available, this iterator will include all batches from
+   * JSON log files.
    */
   private final CloseableIterator<FilteredColumnarBatch> baseFilteredScanFilesIter;
 
@@ -50,7 +56,7 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
    * The name of the last log file that was read. This value corresponds to the one saved in the
    * page token if present.
    */
-  private String lastReadLogFileName = null;
+  private String lastReadLogFilePath = null;
 
   /**
    * The index of the last row returned from the last log file that was read.
@@ -58,7 +64,7 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
    * <p>For example, if the last page contains 3 batches from the same log file, and each batch has
    * 10 rows, this value will be 29 (since row indices start at 0).
    *
-   * <p>This value corresponds to the one saved in the page token if present;
+   * <p>This value corresponds to the one saved in the page token if present.
    */
   private long lastReturnedRowIndex = -1;
 
@@ -86,7 +92,7 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
   public Row getCurrentPageToken() {
     // TODO: change values for data validation here
     return new PageToken(
-            lastReadLogFileName,
+            lastReadLogFilePath,
             lastReturnedRowIndex,
             Optional.empty() /* sidecar file index */,
             Meta.KERNEL_VERSION,
@@ -113,18 +119,18 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
     if (numScanFilesReturned >= pageSize) return;
     if (!baseFilteredScanFilesIter.hasNext()) return;
 
-    FilteredColumnarBatch batch = baseFilteredScanFilesIter.next();
+    final FilteredColumnarBatch batch = baseFilteredScanFilesIter.next();
     checkArgument(batch.getFilePath().isPresent(), "file path doesn't exist!");
-    if (!batch.getFilePath().get().equals(lastReadLogFileName)) {
-      lastReadLogFileName = batch.getFilePath().get();
-      lastReturnedRowIndex = -1;
-      logger.info("filePath {}", lastReadLogFileName);
-    }
     checkArgument(
         batch.getPreComputedNumSelectedRows().isPresent(),
         "pre-computed number of selected rows doesn't exist!");
-    long numSelectedAddFilesInBatch = batch.getPreComputedNumSelectedRows().get();
-    long numRowsInBatch = batch.getData().getSize();
+    if (!batch.getFilePath().get().equals(lastReadLogFilePath)) {
+      lastReadLogFilePath = batch.getFilePath().get();
+      lastReturnedRowIndex = -1;
+      logger.info("filePath {}", lastReadLogFilePath);
+    }
+    final long numSelectedAddFilesInBatch = batch.getPreComputedNumSelectedRows().get();
+    final long numRowsInBatch = batch.getData().getSize();
 
     currentBatch = Optional.of(batch);
     numScanFilesReturned += numSelectedAddFilesInBatch;

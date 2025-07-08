@@ -32,7 +32,7 @@ import org.scalatest.funsuite.AnyFunSuite
 
 class PageTokenSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
-  private val TEST_FILE_NAME = "test_file.json"
+  private val TEST_FILE_NAME = "/path/to/table/test_file.json"
   private val TEST_ROW_INDEX = 42L
   private val TEST_SIDECAR_INDEX = Optional.of(java.lang.Long.valueOf(5L))
   private val TEST_KERNEL_VERSION = "4.0.0"
@@ -119,7 +119,7 @@ class PageTokenSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
   test("PageToken.fromRow throws exception when input row schema has wrong data type") {
     val invalidSchema = new StructType()
-      .add("lastReadLogFileName", StringType.STRING)
+      .add("lastReadLogFilePath", StringType.STRING)
       .add("lastReturnedRowIndex", LongType.LONG)
       .add("lastReadSidecarFileIdx", StringType.STRING) // should be long type
       .add("kernelVersion", StringType.STRING)

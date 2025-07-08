@@ -68,7 +68,7 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtils
 
       /** Verify we get correct page token for next page */
       val lastReadLogFileName = PageToken.fromRow(paginatedIter.getCurrentPageToken)
-        .getLastReadLogFileName
+        .getLastReadLogFilePath
       val lastReturnedRowIndex = PageToken.fromRow(paginatedIter.getCurrentPageToken)
         .getLastReturnedRowIndex
 
@@ -153,7 +153,7 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtils
 
       /** Verify we get correct page token for next page */
       val lastReadLogFileName = PageToken.fromRow(paginatedIter.getCurrentPageToken)
-        .getLastReadLogFileName
+        .getLastReadLogFilePath
       val lastReturnedRowIndex = PageToken.fromRow(paginatedIter.getCurrentPageToken)
         .getLastReturnedRowIndex
 
@@ -248,7 +248,7 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtils
 
       /** Verify we get correct page token for next page */
       val lastReadLogFileName = PageToken.fromRow(paginatedIter.getCurrentPageToken)
-        .getLastReadLogFileName
+        .getLastReadLogFilePath
       val lastReturnedRowIndex = PageToken.fromRow(paginatedIter.getCurrentPageToken)
         .getLastReturnedRowIndex
 

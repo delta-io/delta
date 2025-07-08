@@ -60,7 +60,7 @@ class PaginationContextSuite extends AnyFunSuite {
     val pageSize = 100L
     val context = PaginationContext.forFirstPage(TEST_TABLE_PATH, TEST_TABLE_VERSION, pageSize)
 
-    assert(!context.getLastReadLogFileName().isPresent)
+    assert(!context.getLastReadLogFilePath().isPresent)
     assert(!context.getLastReturnedRowIndex().isPresent)
     assert(!context.getLastReadSidecarFileIdx().isPresent)
     assert(context.getPageSize() === pageSize)
@@ -74,7 +74,7 @@ class PaginationContextSuite extends AnyFunSuite {
       pageSize,
       validPageToken)
 
-    assert(context.getLastReadLogFileName() === Optional.of(TEST_FILE_NAME))
+    assert(context.getLastReadLogFilePath() === Optional.of(TEST_FILE_NAME))
     assert(context.getLastReturnedRowIndex() === Optional.of(TEST_ROW_INDEX))
     assert(context.getLastReadSidecarFileIdx() === TEST_SIDECAR_INDEX)
     assert(context.getPageSize() === pageSize)
