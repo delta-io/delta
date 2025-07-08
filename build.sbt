@@ -744,6 +744,7 @@ lazy val spark = (project in file("spark-jar"))
     artifactName := { (sv: ScalaVersion, module: ModuleID, artifact: Artifact) =>
       "delta-spark_" + sv.binary + "-" + module.revision + "." + artifact.extension
     },
+    Compile / packageBin := assembly.value,
 
     javaOptions += "-Xmx1024m",
 
