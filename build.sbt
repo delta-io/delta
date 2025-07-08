@@ -729,32 +729,91 @@ lazy val spark = (project in file("spark-jar"))
   .dependsOn(sparkDsv1)
   .dependsOn(sparkDsv2)
   .aggregate(sparkDsv1, sparkDsv2, kernelApi, kernelDefaults)
-  .settings(
+  .settings (
     name := "delta-spark",
     commonSettings,
+    scalaStyleSettings,
+    sparkMimaSettings,
     releaseSettings,
-    publishMavenStyle := true,
+    crossSparkSettings(),
+    libraryDependencies ++= Seq(
+      // Adding test classifier seems to break transitive resolution of the core dependencies
+      "org.apache.spark" %% "spark-hive" % sparkVersion.value % "provided",
+      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
+      "org.apache.spark" %% "spark-core" % sparkVersion.value % "provided",
+      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
+      // For DynamoDBCommitStore
+      "com.amazonaws" % "aws-java-sdk" % "1.12.262" % "provided",
 
-    // Add Python files
+      // Test deps
+      "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
+      "org.scalatestplus" %% "scalacheck-1-15" % "3.2.9.0" % "test",
+      "junit" % "junit" % "4.13.2" % "test",
+      "com.novocode" % "junit-interface" % "0.11" % "test",
+      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
+      "org.apache.spark" %% "spark-hive" % sparkVersion.value % "test" classifier "tests",
+      "org.mockito" % "mockito-inline" % "4.11.0" % "test",
+    ),
     Compile / packageBin / mappings := (Compile / packageBin / mappings).value ++
       listPythonFiles(baseDirectory.value.getParentFile / "python"),
+    Antlr4 / antlr4PackageName := Some("io.delta.sql.parser"),
+    Antlr4 / antlr4GenListener := true,
+    Antlr4 / antlr4GenVisitor := true,
 
-    // Assembly settings
-    assembly / assemblyJarName := s"delta-spark_${scalaBinaryVersion.value}-${version.value}.jar",
-    assembly / assemblyMergeStrategy := {
-      case PathList("META-INF", "versions", _, "module-info.class") => MergeStrategy.discard
-      // existing rules...
-      case x =>
-        val oldStrategy = (assembly / assemblyMergeStrategy).value
-        oldStrategy(x)
+    Test / testOptions += Tests.Argument("-oDF"),
+    Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a"),
+
+    // Don't execute in parallel since we can't have multiple Sparks in the same JVM
+    Test / parallelExecution := false,
+
+    javaOptions += "-Xmx1024m",
+
+    // Configurations to speed up tests and reduce memory footprint
+    Test / javaOptions ++= Seq(
+      "-Dspark.ui.enabled=false",
+      "-Dspark.ui.showConsoleProgress=false",
+      "-Dspark.databricks.delta.snapshotPartitions=2",
+      "-Dspark.sql.shuffle.partitions=5",
+      "-Ddelta.log.cacheSize=3",
+      "-Dspark.databricks.delta.delta.log.cacheSize=3",
+      "-Dspark.sql.sources.parallelPartitionDiscovery.parallelism=5",
+      "-Xmx1024m"
+    ),
+
+    // Required for testing table features see https://github.com/delta-io/delta/issues/1602
+    Test / envVars += ("DELTA_TESTING", "1"),
+
+    // Hack to avoid errors related to missing repo-root/target/scala-2.12/classes/
+    createTargetClassesDir := {
+      val dir = baseDirectory.value.getParentFile / "target" / "scala-2.12" / "classes"
+      Files.createDirectories(dir.toPath)
     },
-    Compile / packageBin := assembly.value,
-
-    // Artifact naming
-    artifactName := { (sv: ScalaVersion, module: ModuleID, artifact: Artifact) =>
-      "delta-spark_" + sv.binary + "-" + module.revision + "." + artifact.extension
-    }
-  ).configureUnidoc()
+    Compile / compile := ((Compile / compile) dependsOn createTargetClassesDir).value,
+    // Generate the package object to provide the version information in runtime.
+    Compile / sourceGenerators += Def.task {
+      val file = (Compile / sourceManaged).value / "io" / "delta" / "package.scala"
+      IO.write(file,
+        s"""package io
+           |
+           |package object delta {
+           |  val VERSION = "${version.value}"
+           |}
+           |""".stripMargin)
+      Seq(file)
+    },
+    TestParallelization.settings,
+  )
+  .configureUnidoc(
+    generatedJavaDoc = getSparkVersion() == LATEST_RELEASED_SPARK_VERSION,
+    generateScalaDoc = getSparkVersion() == LATEST_RELEASED_SPARK_VERSION,
+    // spark-connect has classes with the same name as spark-core, this causes compilation issues
+    // with unidoc since it concatenates the classpaths from all modules
+    // ==> thus we exclude such sources
+    // (mostly) relevant github issue: https://github.com/sbt/sbt-unidoc/issues/77
+    classPathToSkip = "spark-connect"
+  )
 
 lazy val unity = (project in file("unity"))
   .enablePlugins(ScalafmtPlugin)
