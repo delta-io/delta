@@ -111,15 +111,14 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
   private void prepareNext() {
     if (currentBatch.isPresent()) return;
     if (numScanFilesReturned >= pageSize) return;
-    if (!baseFilteredScanFilesIter.hasNext()) return; // base iterator is empty
+    if (!baseFilteredScanFilesIter.hasNext()) return;
 
     FilteredColumnarBatch batch = baseFilteredScanFilesIter.next();
     checkArgument(batch.getFilePath().isPresent(), "file path doesn't exist!");
-    String filePath = batch.getFilePath().get();
-    if (!filePath.equals(lastReadLogFileName)) {
-      lastReadLogFileName = filePath;
-      logger.info("filePath {}", filePath);
+    if (!batch.getFilePath().get().equals(lastReadLogFileName)) {
+      lastReadLogFileName = batch.getFilePath().get();
       lastReturnedRowIndex = -1;
+      logger.info("filePath {}", lastReadLogFileName);
     }
     checkArgument(
         batch.getPreComputedNumSelectedRows().isPresent(),
