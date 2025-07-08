@@ -80,8 +80,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
       enableRowTrackingBeforeReplace: Boolean = false,
       enableRowTrackingAfterReplace: Boolean = true): Unit = {
     val initialTableProps = Map(
-        TableConfig.ROW_TRACKING_ENABLED.getKey -> enableRowTrackingBeforeReplace.toString
-    ) ++ extraProps
+      TableConfig.ROW_TRACKING_ENABLED.getKey -> enableRowTrackingBeforeReplace.toString) ++ extraProps
 
     // Create an empty table with row tracking enabled or disabled
     createEmptyTable(engine, tablePath, schema = schema, tableProperties = initialTableProps)
@@ -93,8 +92,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
 
     // Create a REPLACE transaction
     val replaceTableProps = Map(
-      TableConfig.ROW_TRACKING_ENABLED.getKey -> enableRowTrackingAfterReplace.toString
-    ) ++ extraProps
+      TableConfig.ROW_TRACKING_ENABLED.getKey -> enableRowTrackingAfterReplace.toString) ++ extraProps
     val txnBuilder = Table.forPath(engine, tablePath).asInstanceOf[TableImpl]
       .createReplaceTableTransactionBuilder(engine, testEngineInfo)
       .withSchema(engine, schema)
