@@ -188,6 +188,11 @@ trait AbstractTestUtils extends Assertions with SQLHelper {
       .getLatestSnapshot(engine)
   }
 
+  def snapshotOfVersion(path: String, versionId: Long, engine: Engine = defaultEngine): Snapshot = {
+    Table.forPath(engine, path)
+      .getSnapshotAsOfVersion(engine, versionId)
+  }
+
   def tableSchema(path: String): StructType = {
     Table.forPath(defaultEngine, path)
       .getLatestSnapshot(defaultEngine)

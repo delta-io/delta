@@ -1,5 +1,6 @@
 import java.util.Optional
 
+import io.delta.kernel.Snapshot
 import io.delta.golden.GoldenTableUtils
 import io.delta.kernel.data.FilteredColumnarBatch
 import io.delta.kernel.defaults.DeltaTableWriteSuiteBase
@@ -39,6 +40,7 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtils
       snapshot: io.delta.kernel.Snapshot,
       pageSize: Long,
       pageToken: Optional[io.delta.kernel.data.Row] = Optional.empty()): PaginatedScanImpl = {
+    //TODO: getResolvedTableAdapterAtLatest
     snapshot.getScanBuilder
       .buildPaginated(pageSize, pageToken)
       .asInstanceOf[PaginatedScanImpl]
@@ -96,14 +98,13 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtils
   // Helper function to run a complete pagination test
   private def runPaginationTest(
       testName: String,
-      tablePath: String,
+      snapshot: Snapshot,
       pageSize: Long,
       expectedFileCount: Long,
       expectedBatchCount: Int,
       expectedLogFileName: String,
       expectedRowIndex: Long): Unit = {
-    
-    val snapshot = latestSnapshot(tablePath)
+
     val paginatedScan = createPaginatedScan(snapshot, pageSize)
     val customEngine = createCustomEngine()
     
@@ -139,14 +140,14 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtils
       ("Page size 4", 4, 7, 2, logFileName, 9), // batch size go over page limit
       ("Page size 7", 7, 7, 2, logFileName, 9), // batch size is equal to page limit
       ("Page size 8", 8, 10, 3, logFileName, 12),
-      ("Page size >10", 20, 10, 3, logFileName, 12) // page limit isn't reached
+      ("Page size 20", 20, 10, 3, logFileName, 12) // page limit isn't reached
     )
 
     testCases.foreach { case (testName, pageSize, expectedFileCount, expectedBatchCount,
     expectedLogFileName, expectedRowIndex) =>
       runPaginationTest(
         testName = testName,
-        tablePath = tablePath,
+        latestSnapshot(tablePath),
         pageSize = pageSize,
         expectedFileCount = expectedFileCount,
         expectedBatchCount = expectedBatchCount,
@@ -190,18 +191,18 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtils
     val JSONFile2 = "00000000000000000002.json"
     val testCases = Seq(
       ("Page size 1", 1 /* page size */, 4 /* expectedFileCount */, 1 /* expectedBatchCount */, JSONFile2 , 4),
-      ("Page size 2", 4, 4, 1, JSONFile2, 4),
-      ("Page size 5", 5, 5, 2, JSONFile2, 5), // batch size go over page limit
-      ("Page size 7", 7, 9, 3, JSONFile1, 4), // batch size is equal to page limit
+      ("Page size 4", 4, 4, 1, JSONFile2, 4),
+      ("Page size 5", 5, 5, 2, JSONFile2, 5), // batch size is equal to page limit
+      ("Page size 7", 7, 9, 3, JSONFile1, 4), // batch size is goes over page limit
       ("Page size 8", 8, 9, 3, JSONFile1, 4),
-      ("Page size > 15",18, 15, 6, JSONFile0, 7) // page limit isn't reached
+      ("Page size 18",18, 15, 6, JSONFile0, 7)
     )
 
     testCases.foreach { case (testName, pageSize, expectedFileCount, expectedBatchCount,
     expectedLogFileName, expectedRowIndex) =>
       runPaginationTest(
         testName = testName,
-        tablePath = tablePath,
+        snapshot = latestSnapshot(tablePath),
         pageSize = pageSize,
         expectedFileCount = expectedFileCount,
         expectedBatchCount = expectedBatchCount,
@@ -221,7 +222,27 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtils
      * Batch 4: 5 rows, 3 selected AddFiles
      * Batch 5: 4 rows, 4 selected AddFiles
      */
+    val checkpoint10 = "00000000000000000010.checkpoint.parquet"
 
+    val testCases = Seq(
+      ("Page size 1", 1 /* page size */, 5 /* expectedFileCount */, 1 /* expectedBatchCount */, checkpoint10 , 4 /* row index in page token*/),
+      ("Page size 10", 10, 10, 2, checkpoint10, 9),
+      ("Page size 12", 12, 15, 3, checkpoint10, 14), // page size ges over limie
+      ("Page size 100",100, 22, 5, checkpoint10, 23) // page limit isn't reached
+    )
+
+    testCases.foreach { case (testName, pageSize, expectedFileCount, expectedBatchCount,
+    expectedLogFileName, expectedRowIndex) =>
+      runPaginationTest(
+        testName = testName,
+        snapshot = snapshotOfVersion(tablePath, 10),
+        pageSize = pageSize,
+        expectedFileCount = expectedFileCount,
+        expectedBatchCount = expectedBatchCount,
+        expectedLogFileName = expectedLogFileName,
+        expectedRowIndex = expectedRowIndex
+      )
+    }
   }
 
   test("Read First Page: basic pagination with one checkpoint file " +
@@ -273,8 +294,8 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtils
     val testCases = Seq(
       ("Page size 1", 1 /* page size */, 2 /* expectedFileCount */, 1 /* expectedBatchCount */, JSONFile12 , 2 /* row index in page token*/),
       ("Page size 2", 2, 2, 1, JSONFile12, 2),
-      ("Page size 5", 3, 4, 2, JSONFile11, 2), // batch size go over page limit
-      ("Page size 7", 4, 4, 2, JSONFile11, 2), // batch size is equal to page limit
+      ("Page size 3", 3, 4, 2, JSONFile11, 2),
+      ("Page size 4", 4, 4, 2, JSONFile11, 2),
       ("Page size 8", 8, 9, 3, checkpoint10, 4),
       ("Page size 18",18, 19, 5, checkpoint10, 14) // page limit isn't reached
     )
@@ -283,7 +304,7 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtils
     expectedLogFileName, expectedRowIndex) =>
       runPaginationTest(
         testName = testName,
-        tablePath = tablePath,
+        snapshot = latestSnapshot(tablePath),
         pageSize = pageSize,
         expectedFileCount = expectedFileCount,
         expectedBatchCount = expectedBatchCount,
