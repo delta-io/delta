@@ -69,6 +69,8 @@ case class TestConfig(
 
 object SuiteGeneratorConfig {
   private object Dims {
+    val PATH_BASED = DimensionMixin("DeltaDMLTestUtils", suffix = "PathBased")
+    val NAME_BASED = DimensionMixin("DeltaDMLTestUtils", suffix = "NameBased")
     val MERGE_SQL = DimensionMixin("MergeIntoSQL")
     val MERGE_SCALA = DimensionMixin("MergeIntoScala")
     val MERGE_CDC = DimensionMixin("MergeCDC")
@@ -116,15 +118,16 @@ object SuiteGeneratorConfig {
       TestConfig(
         Tests.MERGE_SQL ++: Tests.MERGE_BASE,
         Seq(
-          Seq(Dims.MERGE_SQL),
-          Seq(Dims.MERGE_SQL, Dims.COLUMN_MAPPING, Dims.MERGE_SQL_COLMAP)
+          Seq(Dims.MERGE_SQL, Dims.PATH_BASED),
+          Seq(Dims.MERGE_SQL, Dims.NAME_BASED),
+          Seq(Dims.MERGE_SQL, Dims.PATH_BASED, Dims.COLUMN_MAPPING, Dims.MERGE_SQL_COLMAP)
         )
       ),
       TestConfig(
         "MergeIntoDVsTests" +: Tests.MERGE_SQL ++: Tests.MERGE_BASE,
         Seq(
-          Seq(Dims.MERGE_SQL, Dims.MERGE_DVS, Dims.MERGE_DVS_OVERRIDES),
-          Seq(Dims.MERGE_SQL, Dims.MERGE_DVS_PREDPUSH)
+          Seq(Dims.MERGE_SQL, Dims.PATH_BASED, Dims.MERGE_DVS, Dims.MERGE_DVS_OVERRIDES),
+          Seq(Dims.MERGE_SQL, Dims.PATH_BASED, Dims.MERGE_DVS_PREDPUSH)
         )
       ),
       TestConfig(

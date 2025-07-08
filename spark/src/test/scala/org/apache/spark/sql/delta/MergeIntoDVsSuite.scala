@@ -101,21 +101,20 @@ trait MergeIntoDVsTests extends MergeIntoDVsMixin with MergeIntoDVsOverrides {
   test(s"Merge with DVs metrics - Incremental Updates") {
     withTempDir { dir =>
       val sourcePath = s"$dir/source"
-      val targetPath = s"$dir/target"
 
       spark.range(0, 10, 2).write.format("delta").save(sourcePath)
-      spark.range(10).write.format("delta").save(targetPath)
+      append(spark.range(10).toDF())
 
       executeMerge(
-        tgt = s"delta.`$targetPath` t",
+        tgt = s"$tableSQLIdentifier t",
         src = s"delta.`$sourcePath` s",
         cond = "t.id = s.id",
         clauses = updateNotMatched(set = "id = t.id * 10"))
 
-      checkAnswer(readDeltaTable(targetPath), Seq(0, 10, 2, 30, 4, 50, 6, 70, 8, 90).toDF("id"))
+      checkAnswer(readDeltaTableByIdentifier(), Seq(0, 10, 2, 30, 4, 50, 6, 70, 8, 90).toDF("id"))
 
       assertOperationalDVMetrics(
-        targetPath,
+        deltaLog.dataPath.toString,
         numDeletedRows = 0,
         numUpdatedRows = 5,
         numCopiedRows = 0,
@@ -125,15 +124,15 @@ trait MergeIntoDVsTests extends MergeIntoDVsMixin with MergeIntoDVsOverrides {
         numDeletionVectorsUpdated = 0)
 
       executeMerge(
-        tgt = s"delta.`$targetPath` t",
+        tgt = s"$tableSQLIdentifier t",
         src = s"delta.`$sourcePath` s",
         cond = "t.id = s.id",
         clauses = delete(condition = "t.id = 2"))
 
-      checkAnswer(readDeltaTable(targetPath), Seq(0, 10, 30, 4, 50, 6, 70, 8, 90).toDF("id"))
+      checkAnswer(readDeltaTableByIdentifier(), Seq(0, 10, 30, 4, 50, 6, 70, 8, 90).toDF("id"))
 
       assertOperationalDVMetrics(
-        targetPath,
+        deltaLog.dataPath.toString,
         numDeletedRows = 1,
         numUpdatedRows = 0,
         numCopiedRows = 0,
@@ -144,15 +143,15 @@ trait MergeIntoDVsTests extends MergeIntoDVsMixin with MergeIntoDVsOverrides {
 
       // Delete all rows from a file.
       executeMerge(
-        tgt = s"delta.`$targetPath` t",
+        tgt = s"$tableSQLIdentifier t",
         src = s"delta.`$sourcePath` s",
         cond = "t.id = s.id",
         clauses = delete(condition = "t.id < 5"))
 
-      checkAnswer(readDeltaTable(targetPath), Seq(10, 30, 50, 6, 70, 8, 90).toDF("id"))
+      checkAnswer(readDeltaTableByIdentifier(), Seq(10, 30, 50, 6, 70, 8, 90).toDF("id"))
 
       assertOperationalDVMetrics(
-        targetPath,
+        deltaLog.dataPath.toString,
         numDeletedRows = 2,
         numUpdatedRows = 0,
         numCopiedRows = 0,
@@ -166,21 +165,20 @@ trait MergeIntoDVsTests extends MergeIntoDVsMixin with MergeIntoDVsOverrides {
   test(s"Merge with DVs metrics - delete entire file") {
     withTempDir { dir =>
       val sourcePath = s"$dir/source"
-      val targetPath = s"$dir/target"
 
       spark.range(0, 7).write.format("delta").save(sourcePath)
-      spark.range(10).write.format("delta").save(targetPath)
+      append(spark.range(10).toDF())
 
       executeMerge(
-        tgt = s"delta.`$targetPath` t",
+        tgt = s"$tableSQLIdentifier t",
         src = s"delta.`$sourcePath` s",
         cond = "t.id = s.id",
         clauses = update(set = "id = t.id * 10"))
 
-      checkAnswer(readDeltaTable(targetPath), Seq(0, 10, 20, 30, 40, 50, 60, 7, 8, 9).toDF("id"))
+      checkAnswer(readDeltaTableByIdentifier(), Seq(0, 10, 20, 30, 40, 50, 60, 7, 8, 9).toDF("id"))
 
       assertOperationalDVMetrics(
-        targetPath,
+        deltaLog.dataPath.toString,
         numDeletedRows = 0,
         numUpdatedRows = 7,
         numCopiedRows = 0, // No rows were copied.

@@ -2173,7 +2173,7 @@ trait MergeIntoSuiteBaseMiscTests extends MergeIntoSuiteBaseMixin {
     }
   }
 
-  test("Merge should use the same SparkSession consistently") {
+  test("Merge should use the same SparkSession consistently", NameBasedAccessIncompatible) {
     withTempDir { dir =>
       withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "false") {
         val r = dir.getCanonicalPath
@@ -2270,7 +2270,7 @@ trait MergeIntoSuiteBaseMiscTests extends MergeIntoSuiteBaseMixin {
     }
   }
 
-  test("Negative case - MERGE to the child directory") {
+  test("Negative case - MERGE to the child directory", NameBasedAccessIncompatible) {
     withTempDir { tempDir =>
       val tempPath = tempDir.getCanonicalPath
       val df = Seq((1, 1), (0, 3), (1, 5)).toDF("key2", "value")
@@ -2289,7 +2289,7 @@ trait MergeIntoSuiteBaseMiscTests extends MergeIntoSuiteBaseMixin {
     }
   }
 
-  test(s"special character in path - matched delete") {
+  test(s"special character in path - matched delete", NameBasedAccessIncompatible) {
     withTempDir { tempDir =>
       val source = s"$tempDir/sou rce~"
       val target = s"$tempDir/tar get>"
@@ -2304,7 +2304,7 @@ trait MergeIntoSuiteBaseMiscTests extends MergeIntoSuiteBaseMixin {
   }
   }
 
-  test(s"special character in path - matched update") {
+  test(s"special character in path - matched update", NameBasedAccessIncompatible) {
     withTempDir { tempDir =>
       val source = s"$tempDir/sou rce("
       val target = s"$tempDir/tar get*"

@@ -38,7 +38,8 @@ import com.fasterxml.jackson.module.scala.DefaultScalaModule
 import io.delta.tables.{DeltaTable => IODeltaTable}
 import org.apache.hadoop.fs.FileStatus
 import org.apache.hadoop.fs.Path
-import org.scalatest.BeforeAndAfterEach
+import org.scalactic.source.Position
+import org.scalatest.{BeforeAndAfterEach, Tag}
 
 import org.apache.spark.{SparkContext, SparkFunSuite, SparkThrowable}
 import org.apache.spark.scheduler.{JobFailed, SparkListener, SparkListenerJobEnd, SparkListenerJobStart}
@@ -669,7 +670,7 @@ trait DeltaDMLTestUtils
   }
 }
 
-trait DeltaDMLByPathTestUtils extends DeltaDMLTestUtils {
+trait DeltaDMLTestUtilsPathBased extends DeltaDMLTestUtils {
   self: SharedSparkSession =>
 
   protected var tempDir: File = _
@@ -697,4 +698,43 @@ trait DeltaDMLByPathTestUtils extends DeltaDMLTestUtils {
   protected def readDeltaTable(path: String): DataFrame = {
     spark.read.format("delta").load(path)
   }
+}
+
+/**
+ * Represents a test that is incompatible with name-based table access
+ */
+case object NameBasedAccessIncompatible extends Tag("NameBasedAccessIncompatible")
+
+trait DeltaDMLTestUtilsNameBased extends DeltaDMLTestUtils {
+  self: SharedSparkSession =>
+
+  override protected def test(testName: String, testTags: Tag*)(testFun: => Any)(
+      implicit pos: Position): Unit = {
+    if (testTags.contains(NameBasedAccessIncompatible)) {
+      super.ignore(testName, testTags: _*)(testFun)
+    } else {
+      super.test(testName, testTags: _*)(testFun)
+    }
+  }
+
+  override protected def afterEach(): Unit = {
+    try {
+      spark.sql(s"DROP TABLE IF EXISTS $tableSQLIdentifier")
+      deltaLog = null
+    } finally {
+      super.afterEach()
+    }
+  }
+
+  override protected def append(df: DataFrame, partitionBy: Seq[String] = Nil): Unit = {
+    super.append(df, partitionBy)
+    if (deltaLog == null) {
+      deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableSQLIdentifier))
+    }
+  }
+
+  // Keep this all lowercase. Otherwise, for tests with spark.sql.caseSensitive set to
+  // true, the table name used for dropping the table will not match the created table
+  // name, causing the table not being dropped.
+  override protected def tableSQLIdentifier: String = "test_delta_table"
 }

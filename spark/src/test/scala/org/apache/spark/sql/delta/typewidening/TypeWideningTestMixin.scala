@@ -37,7 +37,7 @@ import org.apache.spark.sql.types._
  */
 trait TypeWideningTestMixin
   extends DeltaSQLCommandTest
-  with DeltaDMLByPathTestUtils { self: QueryTest =>
+  with DeltaDMLTestUtilsPathBased { self: QueryTest =>
 
   import testImplicits._
 

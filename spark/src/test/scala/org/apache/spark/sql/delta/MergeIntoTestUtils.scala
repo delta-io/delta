@@ -64,13 +64,29 @@ trait MergeIntoSQLTestUtils extends DeltaSQLTestUtils with MergeIntoTestUtils {
       condition: String,
       update: String,
       insert: String): String = {
+    basicMergeStmt(
+      target = target,
+      source = source,
+      condition = condition,
+      withSchemaEvolution = false,
+      super.update(set = update),
+      super.insert(values = insert))
+  }
+
+  protected def basicMergeStmt(
+      target: String,
+      source: String,
+      condition: String,
+      withSchemaEvolution: Boolean,
+      clauses: MergeClause*): String = {
+    val clausesStr = clauses.map(_.sql).mkString("\n")
+    val schemaEvolutionStr = if (withSchemaEvolution) "WITH SCHEMA EVOLUTION" else ""
     s"""
-       |MERGE INTO $target
-       |USING $source
-       |ON $condition
-       |WHEN MATCHED THEN UPDATE SET $update
-       |WHEN NOT MATCHED THEN INSERT $insert
-      """.stripMargin
+     |MERGE $schemaEvolutionStr INTO $target
+     |USING $source
+     |ON $condition
+     |$clausesStr
+     """.stripMargin
   }
 
   override protected def executeMerge(
@@ -86,8 +102,7 @@ trait MergeIntoSQLTestUtils extends DeltaSQLTestUtils with MergeIntoTestUtils {
       src: String,
       cond: String,
       clauses: MergeClause*): Unit = {
-    val clausesStr = clauses.map(_.sql).mkString("\n")
-    sql(s"MERGE INTO $tgt USING $src ON $cond\n" + clausesStr)
+    sql(basicMergeStmt(tgt, src, cond, withSchemaEvolution = false, clauses: _*))
   }
 
   override protected def executeMergeWithSchemaEvolution(

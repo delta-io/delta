@@ -35,7 +35,6 @@ import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
 trait MergeIntoSQLMixin extends MergeIntoSuiteBaseMixin
   with MergeIntoSQLTestUtils
   with DeltaSQLCommandTest
-  with DeltaDMLByPathTestUtils
   with DeltaTestUtilsForTempViews {
 
   override def excluded: Seq[String] = super.excluded ++ Seq(
@@ -139,14 +138,14 @@ trait MergeIntoSQLTests extends MergeIntoSQLMixin {
 
       val cte = "WITH cte1 AS (SELECT key1 + 2 AS key3, value FROM source) "
       val merge = basicMergeStmt(
-        target = s"delta.`$tempPath` as target",
+        target = s"$tableSQLIdentifier as target",
         source = "cte1 src",
         condition = "src.key3 = target.key2",
         update = "key2 = 20 + src.key3, value = 20 + src.value",
         insert = "(key2, value) VALUES (src.key3 - 10, src.value + 10)")
 
       QueryTest.checkAnswer(sql(cte + merge), Seq(Row(2, 1, 0, 1)))
-      checkAnswer(readDeltaTable(tempPath),
+      checkAnswer(readDeltaTableByIdentifier(),
         Row(1, 4) :: // No change
         Row(22, 23) :: // Update
         Row(-7, 11) :: // Insert
@@ -159,7 +158,7 @@ trait MergeIntoSQLTests extends MergeIntoSQLMixin {
       append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
 
       executeMerge(
-        target = s"delta.`$tempPath` as trg",
+        target = s"$tableSQLIdentifier as trg",
         source =
           """
             |( SELECT * FROM VALUES (1, 6, "a") as t1(key1, value, others)
@@ -171,7 +170,7 @@ trait MergeIntoSQLTests extends MergeIntoSQLMixin {
         update = "trg.key2 = 20 + key1, value = 20 + src.value",
         insert = "(trg.key2, value) VALUES (key1 - 10, src.value + 10)")
 
-      checkAnswer(readDeltaTable(tempPath),
+      checkAnswer(readDeltaTableByIdentifier(),
         Row(2, 2) :: // No change
           Row(21, 26) :: // Update
           Row(-10, 13) :: // Insert
@@ -193,7 +192,7 @@ trait MergeIntoSQLTests extends MergeIntoSQLMixin {
       // duplicate column names in update clause
       var e = intercept[AnalysisException] {
         executeMerge(
-          target = s"delta.`$tempPath` as target",
+          target = s"$tableSQLIdentifier as target",
           source = "source src",
           condition = "src.key1 = target.key2",
           update = "key2 = 1, key2 = 2",
@@ -205,7 +204,7 @@ trait MergeIntoSQLTests extends MergeIntoSQLMixin {
       // duplicate column names in insert clause
       e = intercept[AnalysisException] {
         executeMerge(
-          target = s"delta.`$tempPath` as target",
+          target = s"$tableSQLIdentifier as target",
           source = "source src",
           condition = "src.key1 = target.key2",
           update = "key2 = 1, value = 2",
@@ -227,7 +226,7 @@ trait MergeIntoSQLTests extends MergeIntoSQLMixin {
         // filter pushdown can cause empty join conditions and cross-join being used
         withCrossJoinEnabled {
           val merge = basicMergeStmt(
-            target = s"delta.`$tempPath`",
+            target = tableSQLIdentifier,
             source = "source src",
             condition = "key2 < 0", // no row match
             update = "key2 = 20, value = 20",
@@ -241,7 +240,7 @@ trait MergeIntoSQLTests extends MergeIntoSQLMixin {
           assert(readSchema.flatten.isEmpty, "column pruning does not work")
         }
 
-        checkAnswer(readDeltaTable(tempPath),
+        checkAnswer(readDeltaTableByIdentifier(),
           Row(2, 2) :: // No change
           Row(1, 4) :: // No change
           Row(10, 10) :: // Insert
@@ -259,7 +258,7 @@ trait MergeIntoSQLTests extends MergeIntoSQLMixin {
       // only the last NOT MATCHED clause can omit the condition
       val e = intercept[ParseException](
         sql(s"""
-          |MERGE INTO delta.`$tempPath`
+          |MERGE INTO $tableSQLIdentifier
           |USING source
           |ON srcKey = trgKey
           |WHEN NOT MATCHED THEN
@@ -460,14 +459,14 @@ trait MergeIntoSQLTests extends MergeIntoSQLMixin {
 
       // View on path-based table
       append(Seq((0, 0), (1, 1)).toDF("key", "value"))
-      readDeltaTable(tempPath).createOrReplaceTempView("v")
+      readDeltaTableByIdentifier().createOrReplaceTempView("v")
       testMergeWithView("with path-based table")
 
       // View on catalog table
       withTable("tab") {
         Seq((0, 0), (1, 1)).toDF("key", "value").write.format("delta").saveAsTable("tab")
         spark.table("tab").as("name").createOrReplaceTempView("v")
-        testMergeWithView(s"delta.`$tempPath`")
+        testMergeWithView(tableSQLIdentifier)
       }
     }
   }

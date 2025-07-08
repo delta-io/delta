@@ -39,7 +39,7 @@ import org.apache.spark.sql.types.StructType
  */
 trait DeltaInsertIntoTest
   extends QueryTest
-  with DeltaDMLByPathTestUtils
+  with DeltaDMLTestUtilsPathBased
   with DeltaSQLCommandTest {
 
   val catalogName = "spark_catalog"
