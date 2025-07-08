@@ -740,6 +740,11 @@ lazy val spark = (project in file("spark-jar"))
     Compile / packageBin / mappings := (Compile / packageBin / mappings).value ++
       listPythonFiles(baseDirectory.value.getParentFile / "python"),
 
+    // Artifact naming
+    artifactName := { (sv: ScalaVersion, module: ModuleID, artifact: Artifact) =>
+      "delta-spark_" + sv.binary + "-" + module.revision + "." + artifact.extension
+    },
+
     javaOptions += "-Xmx1024m",
 
     // Required for testing table features see https://github.com/delta-io/delta/issues/1602
