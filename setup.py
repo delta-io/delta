@@ -59,7 +59,12 @@ setup(
     ],
     keywords='delta.io',
     package_dir={'': 'python'},
-    packages=['delta', 'delta.connect', 'delta.connect.proto'],
+    packages=[
+        'delta',
+        'delta.connect',
+        'delta.connect.proto',
+        'delta.exceptions'
+    ],
     package_data={
         'delta': ['py.typed'],
     },
