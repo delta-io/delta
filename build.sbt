@@ -737,51 +737,10 @@ lazy val spark = (project in file("spark-jar"))
     sparkMimaSettings,
     releaseSettings,
     crossSparkSettings(),
-    libraryDependencies ++= Seq(
-      // Adding test classifier seems to break transitive resolution of the core dependencies
-      "org.apache.spark" %% "spark-hive" % sparkVersion.value % "provided",
-      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
-      "org.apache.spark" %% "spark-core" % sparkVersion.value % "provided",
-      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
-      // For DynamoDBCommitStore
-      "com.amazonaws" % "aws-java-sdk" % "1.12.262" % "provided",
-
-      // Test deps
-      "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
-      "org.scalatestplus" %% "scalacheck-1-15" % "3.2.9.0" % "test",
-      "junit" % "junit" % "4.13.2" % "test",
-      "com.novocode" % "junit-interface" % "0.11" % "test",
-      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test" classifier "tests",
-      "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
-      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
-      "org.apache.spark" %% "spark-hive" % sparkVersion.value % "test" classifier "tests",
-      "org.mockito" % "mockito-inline" % "4.11.0" % "test",
-    ),
     Compile / packageBin / mappings := (Compile / packageBin / mappings).value ++
       listPythonFiles(baseDirectory.value.getParentFile / "python"),
-    Antlr4 / antlr4PackageName := Some("io.delta.sql.parser"),
-    Antlr4 / antlr4GenListener := true,
-    Antlr4 / antlr4GenVisitor := true,
-
-    Test / testOptions += Tests.Argument("-oDF"),
-    Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a"),
-
-    // Don't execute in parallel since we can't have multiple Sparks in the same JVM
-    Test / parallelExecution := false,
 
     javaOptions += "-Xmx1024m",
-
-    // Configurations to speed up tests and reduce memory footprint
-    Test / javaOptions ++= Seq(
-      "-Dspark.ui.enabled=false",
-      "-Dspark.ui.showConsoleProgress=false",
-      "-Dspark.databricks.delta.snapshotPartitions=2",
-      "-Dspark.sql.shuffle.partitions=5",
-      "-Ddelta.log.cacheSize=3",
-      "-Dspark.databricks.delta.delta.log.cacheSize=3",
-      "-Dspark.sql.sources.parallelPartitionDiscovery.parallelism=5",
-      "-Xmx1024m"
-    ),
 
     // Required for testing table features see https://github.com/delta-io/delta/issues/1602
     Test / envVars += ("DELTA_TESTING", "1"),
