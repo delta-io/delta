@@ -744,25 +744,6 @@ lazy val spark = (project in file("spark-jar"))
 
     // Required for testing table features see https://github.com/delta-io/delta/issues/1602
     Test / envVars += ("DELTA_TESTING", "1"),
-
-    // Hack to avoid errors related to missing repo-root/target/scala-2.12/classes/
-    createTargetClassesDir := {
-      val dir = baseDirectory.value.getParentFile / "target" / "scala-2.12" / "classes"
-      Files.createDirectories(dir.toPath)
-    },
-    Compile / compile := ((Compile / compile) dependsOn createTargetClassesDir).value,
-    // Generate the package object to provide the version information in runtime.
-    Compile / sourceGenerators += Def.task {
-      val file = (Compile / sourceManaged).value / "io" / "delta" / "package.scala"
-      IO.write(file,
-        s"""package io
-           |
-           |package object delta {
-           |  val VERSION = "${version.value}"
-           |}
-           |""".stripMargin)
-      Seq(file)
-    },
     TestParallelization.settings,
   )
   .configureUnidoc(
