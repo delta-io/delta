@@ -36,7 +36,7 @@ import org.apache.spark.sql.types._
 abstract class UpdateSuiteBase
   extends QueryTest
   with SharedSparkSession
-  with DeltaDMLByPathTestUtils
+  with DeltaDMLTestUtilsPathBased
   with DeltaSQLTestUtils
   with DeltaTestUtilsForTempViews
   with DeltaExcludedBySparkVersionTestMixinShims {

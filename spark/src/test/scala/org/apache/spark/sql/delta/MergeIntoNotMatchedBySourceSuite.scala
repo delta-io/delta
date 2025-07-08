@@ -501,7 +501,7 @@ trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBaseMixin {
     ),
     cdc = Seq.empty)
 
-  test(s"special character in path - not matched by source delete") {
+  test("special character in path - not matched by source delete", NameBasedAccessIncompatible) {
     withTempDir { tempDir =>
       val source = s"$tempDir/sou rce^"
       val target = s"$tempDir/tar get="
@@ -516,7 +516,7 @@ trait MergeIntoNotMatchedBySourceSuite extends MergeIntoSuiteBaseMixin {
     }
   }
 
-  test(s"special character in path - not matched by source update") {
+  test("special character in path - not matched by source update", NameBasedAccessIncompatible) {
     withTempDir { tempDir =>
       val source = s"$tempDir/sou rce@"
       val target = s"$tempDir/tar get#"
