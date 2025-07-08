@@ -16,15 +16,24 @@
 
 package org.apache.spark.sql.delta.icebergShaded
 
+import java.sql.Timestamp
+import java.time.{LocalDateTime, OffsetDateTime}
+import java.time.format._
+
+import scala.util.control.NonFatal
+
 import org.apache.spark.sql.delta.{DeltaConfig, DeltaConfigs, IcebergCompat, NoMapping, Snapshot, SnapshotDescriptor}
 import org.apache.spark.sql.delta.DeltaConfigs.{LOG_RETENTION, TOMBSTONE_RETENTION}
 import org.apache.spark.sql.delta.icebergShaded.IcebergTransactionUtils
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import shadedForDelta.org.apache.iceberg.{PartitionSpec, Schema => IcebergSchema, StructLike, TableProperties => IcebergTableProperties}
+import shadedForDelta.org.apache.iceberg.expressions.Literal
 import shadedForDelta.org.apache.iceberg.types.{Type => IcebergType, Types => IcebergTypes}
+import shadedForDelta.org.apache.iceberg.util.DateTimeUtil
 
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
-import org.apache.spark.sql.types.DataType
+import org.apache.spark.sql.catalyst.util.ResolveDefaultColumns.CURRENT_DEFAULT_COLUMN_METADATA_KEY
+import org.apache.spark.sql.types._
 import org.apache.spark.unsafe.types.CalendarInterval
 
 class DeltaToIcebergConvert(val snapshot: SnapshotDescriptor, val catalogTable: CatalogTable) {
@@ -33,10 +42,13 @@ class DeltaToIcebergConvert(val snapshot: SnapshotDescriptor, val catalogTable: 
     IcebergSchemaUtils(snapshot.metadata.columnMappingMode == NoMapping)
 
 
-  val schema: IcebergSchema = {
-    val icebergStruct = schemaUtils.convertStruct(snapshot.schema)
-    new IcebergSchema(icebergStruct.fields())
-  }
+  val schema: IcebergSchema = IcebergCompat
+    .getEnabledVersion(snapshot.metadata)
+    .orElse(Some(0))
+    .map { compatVersion =>
+      val icebergStruct = schemaUtils.convertStruct(snapshot.schema)(compatVersion)
+      new IcebergSchema(icebergStruct.fields())
+    }.getOrElse(throw new IllegalArgumentException("No IcebergCompat available"))
 
   val partition: PartitionSpec = IcebergTransactionUtils
     .createPartitionSpec(schema, snapshot.metadata.partitionColumns)
@@ -47,6 +59,108 @@ class DeltaToIcebergConvert(val snapshot: SnapshotDescriptor, val catalogTable: 
 object DeltaToIcebergConvert
   extends DeltaLogging
   {
+  /**
+   * Utils used when converting Delta schema to Iceberg
+   */
+  object Schema {
+    /**
+     * Extract Delta Column Default values in Iceberg Literal format
+     * @param field column
+     * @return Right(Some(Literal)) if the column contains a literal default
+     *         Right(None) if the column does not have a default
+     *         Left(errorMessage) if the column contains a non-literal default
+     */
+    def extractLiteralDefault(field: StructField): Either[String, Option[Literal[_]]] = {
+      if (field.metadata.contains(CURRENT_DEFAULT_COLUMN_METADATA_KEY)) {
+        val defaultValueStr = field.metadata.getString(CURRENT_DEFAULT_COLUMN_METADATA_KEY)
+        try {
+            Right(Some(stringToLiteral(defaultValueStr, field.dataType)))
+        } catch {
+          case NonFatal(e) =>
+            Left("Unsupported default value:" +
+              s"${field.dataType.typeName}:$defaultValueStr:${e.getMessage}")
+          case unknown: Throwable => throw unknown
+        }
+      } else {
+        Right(None)
+      }
+    }
+    /**
+     * Convert Delta default value string to an Iceberg Literal based on data type.
+     * @param str default value in Delta column metadata
+     * @param dataType Delta column data type
+     * @return converted Literal
+     */
+    def stringToLiteral(str: String, dataType: DataType): Literal[_] = {
+      def parseString(input: String) = {
+        if (input.length > 1 && ((input.head == '\'' && input.last == '\'')
+          || (input.head == '"' && input.last == '"'))) {
+          Literal.of(input.substring(1, input.length - 1))
+        } else {
+          throw new UnsupportedOperationException(s"String missing quotation marks: $input")
+        }
+      }
+      // Parse either hex encoded literal x'....' or string literal(utf8) into binary
+      def parseBinary(input: String) = {
+        if (input.startsWith("x") || input.startsWith("X")) {
+          // Hex encoded literal
+          Literal.of(BigInt(parseString(input.substring(1))
+              .value().toString, 16).toByteArray.dropWhile(_ == 0))
+        } else {
+          Literal.of(parseString(input).value().toString
+            .getBytes(java.nio.charset.StandardCharsets.UTF_8))
+        }
+      }
+      // Parse timestamp string without time zone info
+      def parseLocalTimestamp(input: String) = {
+        val formats = Seq(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"),
+          DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+        val stripped = parseString(input).value()
+        val parsed = formats.flatMap { format =>
+          try {
+            Some(Literal.of(Timestamp.valueOf(LocalDateTime.parse(stripped, format)).getTime))
+          } catch {
+            case NonFatal(_) => None
+          }
+        }
+        if (parsed.nonEmpty) {
+          parsed.head
+        } else {
+          throw new IllegalArgumentException(input)
+        }
+      }
+      // Parse string with time zone info. If the input has no time zone, assume its UTC.
+      def parseTimestamp(input: String) = {
+        val stripped = parseString(input).value()
+        try {
+          Literal.of(OffsetDateTime.parse(stripped, DateTimeFormatter.ISO_DATE_TIME)
+            .toInstant.toEpochMilli)
+        } catch {
+          case NonFatal(_) => parseLocalTimestamp(input)
+        }
+      }
+
+      dataType match {
+        case StringType => parseString(str)
+        case LongType => Literal.of(java.lang.Long.valueOf(str.replaceAll("[lL]$", "")))
+        case IntegerType | ShortType | ByteType => Literal.of(Integer.valueOf(str))
+        case FloatType => Literal.of(java.lang.Float.valueOf(str))
+        case DoubleType => Literal.of(java.lang.Double.valueOf(str))
+        // The number should be correctly formatted without need to rounding
+        case d: DecimalType => Literal.of(
+          new java.math.BigDecimal(str, new java.math.MathContext(d.precision)).setScale(d.scale)
+        )
+        case BooleanType => Literal.of(java.lang.Boolean.valueOf(str))
+        case BinaryType => parseBinary(str)
+        case DateType => parseString(str).to(IcebergTypes.DateType.get())
+        case TimestampType => parseTimestamp(str)
+        case TimestampNTZType => parseLocalTimestamp(str)
+        case _ =>
+          throw new UnsupportedOperationException(
+            s"Could not convert default value: $dataType: $str")
+      }
+    }
+  }
 
   object TableProperties {
     /**
