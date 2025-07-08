@@ -21,6 +21,7 @@ import java.util.Optional
 import scala.collection.JavaConverters._
 import scala.collection.immutable.Seq
 
+import io.delta.kernel.Table
 import io.delta.kernel.data.{FilteredColumnarBatch, Row}
 import io.delta.kernel.defaults.internal.parquet.ParquetSuiteBase
 import io.delta.kernel.engine.Engine
@@ -53,6 +54,54 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
       extraProps: Map[String, String] = Map.empty): Unit = {
     val tableProps = Map(TableConfig.ROW_TRACKING_ENABLED.getKey -> "true") ++ extraProps
     createEmptyTable(engine, tablePath, schema = schema, tableProperties = tableProps)
+  }
+
+  /**
+   * Creates a table at the given path, optionally with initial data and row tracking enabled or
+   * disabled. Then replaces the table with new (or no) data and optionally enables/disables row
+   * tracking after the replace.
+   *
+   * @param engine The Delta Kernel engine to use.
+   * @param tablePath The path to the Delta table.
+   * @param schema The schema to use for the table.
+   * @param extraProps Additional table properties.
+   * @param initialData Data to append after initial table creation (before replace).
+   * @param replaceData Data to append as part of the replace transaction.
+   * @param enableRowTrackingBeforeReplace Whether to enable row tracking before the replace.
+   * @param enableRowTrackingAfterReplace Whether to enable row tracking after the replace.
+   */
+  private def createAndReplaceTable(
+      engine: Engine,
+      tablePath: String,
+      schema: StructType = testSchema,
+      extraProps: Map[String, String] = Map.empty,
+      initialData: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])] = Seq.empty,
+      replaceData: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])] = Seq.empty,
+      enableRowTrackingBeforeReplace: Boolean = false,
+      enableRowTrackingAfterReplace: Boolean = true): Unit = {
+    val initialTableProps = Map(
+        TableConfig.ROW_TRACKING_ENABLED.getKey -> enableRowTrackingBeforeReplace.toString
+    ) ++ extraProps
+
+    // Create an empty table with row tracking enabled or disabled
+    createEmptyTable(engine, tablePath, schema = schema, tableProperties = initialTableProps)
+
+    // Optionally fill the table with initial data if provided
+    if (initialData.nonEmpty) {
+      appendData(engine, tablePath, data = initialData)
+    }
+
+    // Create a REPLACE transaction
+    val replaceTableProps = Map(
+      TableConfig.ROW_TRACKING_ENABLED.getKey -> enableRowTrackingAfterReplace.toString
+    ) ++ extraProps
+    val txnBuilder = Table.forPath(engine, tablePath).asInstanceOf[TableImpl]
+      .createReplaceTableTransactionBuilder(engine, testEngineInfo)
+      .withSchema(engine, schema)
+      .withTableProperties(engine, replaceTableProps.asJava)
+    val txn = txnBuilder.build(engine)
+
+    commitTransaction(txn, engine, getAppendActions(txn, replaceData))
   }
 
   private def verifyBaseRowIDs(
@@ -416,6 +465,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
       verifyDefaultRowCommitVersion(engine, tablePath, expectedDefaultRowCommitVersion)
       verifyHighWatermark(engine, tablePath, expectedHighWatermark)
     }
+
     verifyRowTrackingStates()
 
     // Create txn1 but don't commit it yet
@@ -763,6 +813,42 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
         e.getMessage.contains(
           s"Row tracking is enabled but the materialized column name " +
             s"`${ROW_ID.getMaterializedColumnNameProperty}` is missing."))
+    }
+  }
+
+  /* -------- Test row tracking with replace table -------- */
+  Seq(true, false).foreach { enabledBefore =>
+    Seq(true, false).foreach { enabledAfter =>
+      Seq(Seq(), Seq(Map.empty[String, Literal] -> (dataBatches1))).foreach { initialData =>
+        Seq(Seq(), Seq(Map.empty[String, Literal] -> (dataBatches2))).foreach { replaceData =>
+          val testName = s"""Replace table with row tracking:
+                            |enabledBefore=$enabledBefore,
+                            |enabledAfter=$enabledAfter,
+                            |initialData=${initialData.nonEmpty},
+                            |replaceData=${replaceData.nonEmpty}"""
+            .stripMargin
+            .replace("\n", " ")
+
+          test(testName) {
+            withTempDirAndEngine { (tablePath, engine) =>
+              createAndReplaceTable(
+                engine,
+                tablePath,
+                initialData = initialData,
+                replaceData = replaceData,
+                enableRowTrackingBeforeReplace = enabledBefore,
+                enableRowTrackingAfterReplace = enabledAfter)
+
+              // Add assertions here as needed to verify the expected behavior
+              val snapshot =
+                TableImpl.forPath(
+                  engine,
+                  tablePath).getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+              assertMetadataProp(snapshot, TableConfig.ROW_TRACKING_ENABLED, enabledAfter)
+            }
+          }
+        }
+      }
     }
   }
 }
