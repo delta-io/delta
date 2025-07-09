@@ -17,36 +17,40 @@
 package io.delta.kernel.commit;
 
 import io.delta.kernel.annotation.Experimental;
+import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.utils.CloseableIterator;
 
 /**
  * Interface for committing changes to Delta tables, supporting both filesystem-managed and
  * catalog-managed tables.
- *
- * <p>Filesystem-managed tables: Implementations must write the {@link
- * CommitPayload#finalizedActions} into a new Delta JSON file at version {@link
- * CommitPayload#version} using atomic file operations (PUT-if-absent semantics).
- *
- * <p>Catalog-managed tables: Implementations must follow the commit rules and requirements as
- * dictated by the managing catalog to ensure commit atomicity and consistency. This may involve:
- *
- * <ol>
- *   <li>Writing the finalized actions into a staged commit file
- *   <li>Calling catalog commit APIs with the staged commit location (or inline content) and
- *       additional metadata (such as the commit Protocol and Metadata)
- *   <li>Publishing ratified catalog commits into the Delta log
- * </ol>
  */
 @Experimental
 public interface Committer {
 
   /**
-   * Commits the given {@link CommitPayload} to the table.
+   * Commits the given {@code finalizedActions} and {@code commitMetadata} to the table.
+   *
+   * <p>Filesystem-managed tables: Implementations must write the {@code finalizedActions} into a
+   * new Delta JSON file at version {@link CommitMetadata#getVersion()} using atomic file operations
+   * (PUT-if-absent semantics).
+   *
+   * <p>Catalog-managed tables: Implementations must follow the commit rules and requirements as
+   * dictated by the managing catalog to ensure commit atomicity and consistency. This may involve:
+   *
+   * <ol>
+   *   <li>Writing the finalized actions into a staged commit file
+   *   <li>Calling catalog commit APIs with the staged commit location (or inline content) and
+   *       additional metadata (such as the commit Protocol and Metadata)
+   *   <li>Publishing ratified catalog commits into the Delta log
+   * </ol>
    *
    * @return CommitResponse containing the resultant commit
    * @throws CommitFailedException if the commit operation fails.
    */
-  CommitResponse commit(Engine engine, CommitPayload payload) throws CommitFailedException;
+  CommitResponse commit(
+      Engine engine, CloseableIterator<Row> finalizedActions, CommitMetadata commitMetadata)
+      throws CommitFailedException;
 
   // TODO: API to get the required table properties
 }

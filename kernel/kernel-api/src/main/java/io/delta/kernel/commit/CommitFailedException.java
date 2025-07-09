@@ -16,10 +16,10 @@
 
 package io.delta.kernel.commit;
 
-import io.delta.kernel.engine.Engine;
+import io.delta.kernel.annotation.Experimental;
 
 /**
- * Exception raised by {@link Committer#commit(Engine, CommitPayload)}.
+ * Exception raised by {@link Committer#commit}.
  *
  * <pre>
  *  | retryable | conflict  | meaning                                                         |
@@ -29,10 +29,13 @@ import io.delta.kernel.engine.Engine;
  *  |   yes     |   yes     | physical conflict (allowed to rebase and retry)                 |
  * </pre>
  */
+@Experimental
 public class CommitFailedException extends Exception {
 
   private final boolean retryable;
   private final boolean conflict;
+
+  // TODO: [delta-io/delta#4908] Include the winning, conflicting catalog ratified commits here
 
   public CommitFailedException(boolean retryable, boolean conflict, String message) {
     super(message);

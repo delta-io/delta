@@ -66,6 +66,6 @@ public interface ResolvedTable {
   /** @return a scan builder for constructing scans to read data from this table */
   ScanBuilder getScanBuilder();
 
-  /** @return a committer for writing data to this table */
+  /** @return a committer for committing data to this table */
   Committer getCommitter();
 }
