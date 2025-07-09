@@ -152,7 +152,9 @@ public class PageToken {
     return tableVersion;
   }
 
-  public String getKernelVersion() {return kernelVersion;}
+  public String getKernelVersion() {
+    return kernelVersion;
+  }
 
   @Override
   public boolean equals(Object obj) {

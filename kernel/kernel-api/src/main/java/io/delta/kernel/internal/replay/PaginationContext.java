@@ -15,10 +15,9 @@
  */
 package io.delta.kernel.internal.replay;
 
-import io.delta.kernel.Meta;
-
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
+import io.delta.kernel.Meta;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -26,20 +25,32 @@ import java.util.Optional;
 public class PaginationContext {
 
   public static PaginationContext forPageWithPageToken(
-      long pageSize, PageToken pageToken, String tablePath, long tableVersion) {
+      String tablePath, long tableVersion, long pageSize, PageToken pageToken) {
     Objects.requireNonNull(pageToken, "page token is null");
-    Objects.requireNonNull(tablePath, "table Path is null");
-    checkArgument(tablePath.equals(pageToken.getTablePath()), "table path changes!");
-    checkArgument(tableVersion == pageToken.getTableVersion(), "table version changes!");
-    checkArgument(Meta.KERNEL_VERSION.equals(pageToken.getKernelVersion()), "kernel version changes!");
-    return new PaginationContext(pageSize, Optional.of(pageToken), tablePath, tableVersion);
+    Objects.requireNonNull(tablePath, "table path is null");
+    checkArgument(
+        tablePath.equals(pageToken.getTablePath()),
+        "Invalid page token: table path does not match the requested table path.");
+    checkArgument(
+        tableVersion == pageToken.getTableVersion(),
+        "Invalid page token: table version does not match the requested table version.");
+    checkArgument(
+        Meta.KERNEL_VERSION.equals(pageToken.getKernelVersion()),
+        "Invalid page token: kernel version does not match the requested kernel version.");
+    return new PaginationContext(tablePath, tableVersion, pageSize, Optional.of(pageToken));
   }
 
-  public static PaginationContext forFirstPage(long pageSize, String tablePath, long tableVersion) {
-    Objects.requireNonNull(tablePath, "table Path is null");
+  public static PaginationContext forFirstPage(String tablePath, long tableVersion, long pageSize) {
+    Objects.requireNonNull(tablePath, "table path is null");
     return new PaginationContext(
-        pageSize, Optional.empty() /* page token */, tablePath, tableVersion);
+        tablePath, tableVersion, pageSize, Optional.empty() /* page token */);
   }
+
+  private final String tablePath;
+
+  private final long tableVersion;
+
+  // TODO: add hash value of log segment and predicate
 
   /** maximum number of ScanFiles to return in the current page */
   private final long pageSize;
@@ -47,19 +58,23 @@ public class PaginationContext {
   /** Optional Page Token */
   private final Optional<PageToken> pageToken;
 
-  private final String tablePath;
-
-  private final long tableVersion;
-
   // TODO: add cached log replay hashsets related info
 
   private PaginationContext(
-      long pageSize, Optional<PageToken> pageToken, String tablePath, long tableVersion) {
+      String tablePath, long tableVersion, long pageSize, Optional<PageToken> pageToken) {
     checkArgument(pageSize > 0, "Page size must be greater than zero!");
-    this.pageSize = pageSize;
-    this.pageToken = pageToken;
     this.tablePath = tablePath;
     this.tableVersion = tableVersion;
+    this.pageSize = pageSize;
+    this.pageToken = pageToken;
+  }
+
+  public String getTablePath() {
+    return tablePath;
+  }
+
+  public long getTableVersion() {
+    return tableVersion;
   }
 
   public long getPageSize() {
@@ -79,13 +94,5 @@ public class PaginationContext {
   public Optional<Long> getLastReadSidecarFileIdx() {
     if (!pageToken.isPresent()) return Optional.empty();
     return pageToken.get().getLastReadSidecarFileIdx();
-  }
-
-  public String getTablePath() {
-    return tablePath;
-  }
-
-  public long getTableVersion() {
-    return tableVersion;
   }
 }

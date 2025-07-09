@@ -30,12 +30,17 @@ import java.util.Optional;
 
 /** Implementation of {@link PaginatedScan} */
 public class PaginatedScanImpl implements PaginatedScan {
-  private final long pageSize;
-  private final Optional<PageToken> pageTokenOpt;
   private final ScanImpl baseScan;
   PaginationContext paginationContext;
+  private final long pageSize;
+  private final Optional<PageToken> pageTokenOpt;
 
-  public PaginatedScanImpl(ScanImpl baseScan, long tableVersion, long pageSize, Optional<Row> pageTokenRowOpt) {
+  public PaginatedScanImpl(
+      ScanImpl baseScan,
+      String tablePath,
+      long tableVersion,
+      long pageSize,
+      Optional<Row> pageTokenRowOpt) {
     this.baseScan = baseScan;
     this.pageTokenOpt = pageTokenRowOpt.map(PageToken::fromRow);
     this.pageSize = pageSize;
@@ -44,11 +49,8 @@ public class PaginatedScanImpl implements PaginatedScan {
             .map(
                 token ->
                     PaginationContext.forPageWithPageToken(
-                        pageSize, token, baseScan.getDataPath(), tableVersion))
-            .orElseGet(
-                () ->
-                    PaginationContext.forFirstPage(
-                        pageSize, baseScan.getDataPath(), tableVersion));
+                        tablePath, tableVersion, pageSize, token))
+            .orElseGet(() -> PaginationContext.forFirstPage(tablePath, tableVersion, pageSize));
   }
 
   @Override

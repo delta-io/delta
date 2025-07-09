@@ -19,7 +19,6 @@ import static io.delta.kernel.internal.DeltaErrors.wrapEngineException;
 import static io.delta.kernel.internal.skipping.StatsSchemaHelper.getStatsSchema;
 import static io.delta.kernel.internal.util.PartitionUtils.rewritePartitionPredicateOnCheckpointFileSchema;
 import static io.delta.kernel.internal.util.PartitionUtils.rewritePartitionPredicateOnScanFileSchema;
-import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.function.Function.identity;
 import static java.util.stream.Collectors.toMap;
 
@@ -234,15 +233,6 @@ public class ScanImpl implements Scan {
   @Override
   public Optional<Predicate> getRemainingFilter() {
     return getDataFilters();
-  }
-
-  protected String getDataPath() {
-    return dataPath.toString();
-  }
-
-  protected long getTableVersion() {
-    checkArgument(snapshotReport.getVersion().isPresent(), "table version isn't available!");
-    return snapshotReport.getVersion().get();
   }
 
   private Optional<Tuple2<Predicate, Predicate>> splitFilters(Optional<Predicate> filter) {
