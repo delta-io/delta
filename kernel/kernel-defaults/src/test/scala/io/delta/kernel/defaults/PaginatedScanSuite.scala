@@ -185,7 +185,7 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
 
   singleJsonTestCases.foreach { testCase =>
     test(s"Single JSON file - page size ${testCase.pageSize}") {
-      withGoldenTable("kernel-pagination-all-jsons") { tablePath =>
+      withKernelStaticTable("kernel-pagination-all-jsons") { tablePath =>
         /**
          *  Log Segment List:
          *  00000000000000000000.json contains 2 batches, 5 active AddFiles in total
@@ -246,7 +246,7 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
 
   multipleJsonTestCases.foreach { testCase =>
     test(s"Multiple JSON files - page size ${testCase.pageSize}") {
-      withGoldenTable("kernel-pagination-all-jsons") { tablePath =>
+      withKernelStaticTable("kernel-pagination-all-jsons") { tablePath =>
         /**
          * Log Segment List:
          * 00000000000000000000.json : 8 rows (5 AddFile row + 3 non-AddFile rows)
@@ -313,7 +313,7 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
 
   singleCheckpointTestCases.foreach { testCase =>
     test(s"Single checkpoint file - page size ${testCase.pageSize}") {
-      withGoldenTable("kernel-pagination-single-checkpoint") { tablePath =>
+      withKernelStaticTable("kernel-pagination-single-checkpoint") { tablePath =>
         /**
          * 00000000000000000010.checkpoint.parquet contains 5 batches, 22 active AddFiles, 24 rows
          * Batch 1: 5 rows, 5 selected AddFiles
@@ -376,7 +376,7 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
 
   checkpointWithJsonTestCases.foreach { testCase =>
     test(s"Checkpoint with JSON files - page size ${testCase.pageSize}") {
-      withGoldenTable("kernel-pagination-single-checkpoint") { tablePath =>
+      withKernelStaticTable("kernel-pagination-single-checkpoint") { tablePath =>
         /**
          * for (i <- 0 until 10) {
          * val mode = if (i == 0) "overwrite" else "append"
