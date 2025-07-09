@@ -329,10 +329,8 @@ class CatalogOwnedEnablementSuite
           ),
           "properties" -> Map(
             "delta.feature.appendOnly" -> "supported",
-            "delta.enableDeletionVectors" -> "true",
             // To avoid potential naming change in the future.
             s"delta.feature.${CatalogOwnedTableFeature.name}" -> "supported",
-            "delta.checkpointPolicy" -> "v2",
             "delta.feature.vacuumProtocolCheck" -> "supported",
             "delta.feature.domainMetadata" -> "supported"
           ),
