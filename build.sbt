@@ -733,7 +733,7 @@ lazy val sparkDsv2 = (project in file("spark-dsv2"))
 lazy val spark = (project in file("spark-jar"))
   .dependsOn(sparkDsv1)
   .dependsOn(sparkDsv2)
-  .aggregate(sparkDsv1, sparkDsv2, kernelApi, kernelDefaults)
+  .aggregate(sparkDsv1, sparkDsv2)
   .settings (
     name := "delta-spark",
     commonSettings,
