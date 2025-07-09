@@ -43,8 +43,8 @@ public class PaginatedScanImpl implements PaginatedScan {
       long pageSize,
       Optional<Row> pageTokenRowOpt) {
     this.baseScan = baseScan;
-    this.pageTokenOpt = pageTokenRowOpt.map(PageToken::fromRow);
     this.pageSize = pageSize;
+    this.pageTokenOpt = pageTokenRowOpt.map(PageToken::fromRow);
     this.paginationContext =
         pageTokenOpt
             .map(
