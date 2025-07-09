@@ -48,29 +48,9 @@ jobs:
           sudo apt-get install -y make build-essential libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev wget curl llvm libncurses5-dev libncursesw5-dev xz-utils tk-dev libffi-dev liblzma-dev python3-openssl git
           sudo apt install libedit-dev
         if: steps.git-diff.outputs.diff
-      - name: Setup Java 11 for Iceberg JAR generation
-        uses: actions/setup-java@v3
-        with:
-          distribution: "zulu"
-          java-version: "11"
-        if: steps.git-diff.outputs.diff
-      - name: Generate Iceberg JARs with Java 11
-        run: |
-          echo "Generating Iceberg JARs with Java 11..."
-          java -version
-          build/sbt -DsparkVersion=master "++ ${{ matrix.scala }}" icebergShaded/compile
-        if: steps.git-diff.outputs.diff
-      - name: Switch back to Java 17 for main build
-        uses: actions/setup-java@v3
-        with:
-          distribution: "zulu"
-          java-version: "17"
-        if: steps.git-diff.outputs.diff
       - name: Run Spark Master tests
         # when changing TEST_PARALLELISM_COUNT make sure to also change it in spark_test.yaml
         run: |
-          echo "Running tests with Java 17..."
-          java -version
           TEST_PARALLELISM_COUNT=4 SHARD_ID=${{matrix.shard}} build/sbt -DsparkVersion=master "++ ${{ matrix.scala }}" clean spark/test
           TEST_PARALLELISM_COUNT=4 build/sbt -DsparkVersion=master "++ ${{ matrix.scala }}" clean connectServer/test
           TEST_PARALLELISM_COUNT=4 build/sbt -DsparkVersion=master "++ ${{ matrix.scala }}" clean connectServer/assembly connectClient/test
