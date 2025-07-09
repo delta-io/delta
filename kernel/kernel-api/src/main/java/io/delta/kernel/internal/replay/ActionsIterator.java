@@ -112,13 +112,25 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     this.engine = engine;
     this.checkpointPredicate = checkpointPredicate;
     this.filesList = new LinkedList<>();
-    this.filesList.addAll(
-        files.stream().map(DeltaLogFile::forFileStatus).collect(Collectors.toList()));
+    this.filesList.addAll(files.stream()
+        .map(DeltaLogFile::forFileStatus)
+        .filter(this::paginatedFilter)
+        .collect(Collectors.toList()));
     this.deltaReadSchema = deltaReadSchema;
     this.checkpointReadSchema = checkpointReadSchema;
     this.actionsIter = Optional.empty();
     this.schemaContainsAddOrRemoveFiles = LogReplay.containsAddOrRemoveFileActions(deltaReadSchema);
     this.paginationContextOpt = paginationContextOpt;
+  }
+
+  private boolean paginatedFilter(DeltaLogFile nextLogFile) {
+    if(!paginationContextOpt.isPresent()) return true;
+    Optional<String> lastReadLogFilePathOpt = paginationContextOpt.get().getLastReadLogFilePath();
+    if(!lastReadLogFilePathOpt.isPresent()) return true; // first page
+    if (nextLogFile.getLogType() == DeltaLogFile.LogType.V2_CHECKPOINT_MANIFEST)
+      return true; // never skip v2 manifest checkpoint file
+    String nextFilePath = nextLogFile.getFile().getPath();
+    return nextFilePath.endsWith(".json") || nextFilePath.compareTo(lastReadLogFilePathOpt.get()) <= 0;
   }
 
   @Override
