@@ -445,6 +445,31 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
     }
   }
 
+  test("checksum not found at the read version, but found at a previous version; " +
+    "checksum exists after version queried") {
+    withTempDirAndMetricsEngine { (path, engine) =>
+      // copy the golden table with crc files to the temp dir delete the checksum files
+      // for version 5
+      copyTable(getTestResourceFilePath("stream_table_optimize"), path)
+      val crcFile = new File(path, f"_delta_log/${5L}%020d.crc")
+      assert(Files.deleteIfExists(crcFile.toPath))
+      // Now table has CRC present for versions 0, 1, 2, 3, 4, 6 (missing for version 5)
+
+      loadPandMCheckMetrics(
+        Table.forPath(engine, path)
+          .getSnapshotAsOfVersion(engine, 5 /* versionId */).getSchema(engine),
+        engine,
+        // We find the checksum from crc at version 4, but still read commit file 5
+        // to find the P&M which could have been updated in version 5
+        expJsonVersionsRead = Seq(5),
+        expParquetVersionsRead = Nil,
+        expParquetReadSetSizes = Nil,
+        // First attempted to read checksum for version 5, then we do a listing of
+        // last 100 crc files and read the latest one which is version 4 (as version 5 is deleted)
+        expChecksumReadSet = Seq(5, 4))
+    }
+  }
+
   test("checksum not found at the read version, but uses snapshot hint lower bound") {
     withTempDirAndMetricsEngine { (path, engine) =>
       // copy the golden table with crc files to the temp dir delete the checksum files
