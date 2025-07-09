@@ -446,15 +446,14 @@ class LogReplayEngineMetricsSuite extends AnyFunSuite with TestUtils {
   }
 
   test("checksum not found at the read version, but found at a previous version; " +
-    "crc exists after version queried") {
+    "checksum exists after version queried") {
     withTempDirAndMetricsEngine { (path, engine) =>
       // copy the golden table with crc files to the temp dir delete the checksum files
       // for version 5
       copyTable(getTestResourceFilePath("stream_table_optimize"), path)
-      Seq(5L).foreach { version =>
-        val crcFile = new File(path, f"_delta_log/$version%020d.crc")
-        assert(Files.deleteIfExists(crcFile.toPath))
-      }
+      val crcFile = new File(path, f"_delta_log/${5L}%020d.crc")
+      assert(Files.deleteIfExists(crcFile.toPath))
+      // Now table has CRC present for versions 0, 1, 2, 3, 4, 6 (missing for version 5)
 
       loadPandMCheckMetrics(
         Table.forPath(engine, path)
