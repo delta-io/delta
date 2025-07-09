@@ -31,9 +31,10 @@ import java.util.Optional;
 /** Implementation of {@link PaginatedScan} */
 public class PaginatedScanImpl implements PaginatedScan {
   private final ScanImpl baseScan;
-  PaginationContext paginationContext;
   private final long pageSize;
   private final Optional<PageToken> pageTokenOpt;
+
+  private final PaginationContext paginationContext;
 
   public PaginatedScanImpl(
       ScanImpl baseScan,
