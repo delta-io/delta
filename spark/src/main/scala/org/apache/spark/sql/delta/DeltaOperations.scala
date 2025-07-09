@@ -115,12 +115,13 @@ object DeltaOperations {
   }
 
   /** Recorded during batch inserts. Predicates can be provided for overwrites. */
+  val OP_WRITE = "WRITE"
   case class Write(
       mode: SaveMode,
       partitionBy: Option[Seq[String]] = None,
       predicate: Option[String] = None,
       override val userMetadata: Option[String] = None
-  ) extends Operation("WRITE") {
+  ) extends Operation(OP_WRITE) {
     override val parameters: Map[String, Any] = Map("mode" -> mode.name()
     ) ++
       partitionBy.map("partitionBy" -> JsonUtils.toJson(_)) ++
@@ -218,8 +219,9 @@ object DeltaOperations {
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
   }
   /** Recorded while deleting certain partitions. */
+  val OP_DELETE = "DELETE"
   case class Delete(predicate: Seq[Expression])
-      extends OperationWithPredicates("DELETE", predicate) {
+      extends OperationWithPredicates(OP_DELETE, predicate) {
     override val operationMetrics: Set[String] = DeltaOperationMetrics.DELETE
 
     override def transformMetrics(metrics: Map[String, SQLMetric]): Map[String, String] = {
@@ -370,8 +372,9 @@ object DeltaOperations {
   }
 
   /** Recorded when an update operation is committed to the table. */
+  val OP_UPDATE = "UPDATE"
   case class Update(predicate: Option[Expression])
-      extends OperationWithPredicates("UPDATE", predicate.toSeq) {
+      extends OperationWithPredicates(OP_UPDATE, predicate.toSeq) {
     override val operationMetrics: Set[String] = DeltaOperationMetrics.UPDATE
 
     override def changesData: Boolean = true

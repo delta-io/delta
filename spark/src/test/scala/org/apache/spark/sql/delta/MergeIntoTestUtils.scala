@@ -59,12 +59,14 @@ trait MergeIntoSQLTestUtils extends DeltaSQLTestUtils with MergeIntoTestUtils {
   self: SharedSparkSession =>
 
   protected def basicMergeStmt(
+      cte: Option[String] = None,
       target: String,
       source: String,
       condition: String,
       update: String,
       insert: String): String = {
     basicMergeStmt(
+      cte = cte,
       target = target,
       source = source,
       condition = condition,
@@ -74,6 +76,7 @@ trait MergeIntoSQLTestUtils extends DeltaSQLTestUtils with MergeIntoTestUtils {
   }
 
   protected def basicMergeStmt(
+      cte: Option[String],
       target: String,
       source: String,
       condition: String,
@@ -82,6 +85,7 @@ trait MergeIntoSQLTestUtils extends DeltaSQLTestUtils with MergeIntoTestUtils {
     val clausesStr = clauses.map(_.sql).mkString("\n")
     val schemaEvolutionStr = if (withSchemaEvolution) "WITH SCHEMA EVOLUTION" else ""
     s"""
+     |${cte.getOrElse("")}
      |MERGE $schemaEvolutionStr INTO $target
      |USING $source
      |ON $condition
@@ -95,14 +99,14 @@ trait MergeIntoSQLTestUtils extends DeltaSQLTestUtils with MergeIntoTestUtils {
       condition: String,
       update: String,
       insert: String): Unit =
-    sql(basicMergeStmt(target, source, condition, update, insert))
+    spark.sql(basicMergeStmt(cte = None, target, source, condition, update, insert))
 
   override protected def executeMerge(
       tgt: String,
       src: String,
       cond: String,
       clauses: MergeClause*): Unit = {
-    sql(basicMergeStmt(tgt, src, cond, withSchemaEvolution = false, clauses: _*))
+    spark.sql(basicMergeStmt(cte = None, tgt, src, cond, withSchemaEvolution = false, clauses: _*))
   }
 
   override protected def executeMergeWithSchemaEvolution(
