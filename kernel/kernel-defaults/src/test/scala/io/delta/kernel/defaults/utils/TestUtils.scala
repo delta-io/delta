@@ -24,6 +24,7 @@ import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 
 import io.delta.golden.GoldenTableUtils
+import io.delta.golden.GoldenTableUtils.classLoader
 import io.delta.kernel.{Scan, Snapshot, Table, TransactionCommitResult}
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector, FilteredColumnarBatch, MapValue, Row}
 import io.delta.kernel.defaults.engine.DefaultEngine
@@ -180,6 +181,16 @@ trait AbstractTestUtils extends Assertions with SQLHelper {
 
   def withGoldenTable(tableName: String)(testFunc: String => Unit): Unit = {
     val tablePath = GoldenTableUtils.goldenTablePath(tableName)
+    testFunc(tablePath)
+  }
+
+  def withKernelStaticTable(tableName: String)(testFunc: String => Unit): Unit = {
+    val classLoader = Thread.currentThread().getContextClassLoader
+    val resourceURL = classLoader.getResource(tableName)
+    if (resourceURL == null) {
+      throw new IllegalArgumentException(s"Cannot find kernel static table: $tableName")
+    }
+    val tablePath = resourceURL.getPath
     testFunc(tablePath)
   }
 

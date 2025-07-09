@@ -1,268 +1,429 @@
+/*
+ * Copyright (2025) The Delta Lake Project Authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 import java.util.Optional
 
+import io.delta.kernel.PaginatedScan
+import io.delta.kernel.PaginatedScanFilesIterator
 import io.delta.kernel.data.FilteredColumnarBatch
+import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.DeltaTableWriteSuiteBase
 import io.delta.kernel.defaults.engine.{DefaultEngine, DefaultJsonHandler, DefaultParquetHandler}
+import io.delta.kernel.defaults.test.AbstractTableManagerAdapter
 import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestUtils}
-import io.delta.kernel.internal.PaginatedScanImpl
+import io.delta.kernel.defaults.utils.TestUtilsWithTableManagerAPIs
 import io.delta.kernel.internal.replay.{PageToken, PaginatedScanFilesIteratorImpl}
-
-import org.apache.spark.sql.delta.DeltaLog
 
 import org.apache.spark.sql.catalyst.plans.SQLHelper
 import org.scalatest.funsuite.AnyFunSuite
-import org.slf4j.{Logger, LoggerFactory};
+import org.slf4j.{Logger, LoggerFactory}
 
-class PaginatedScanSuite extends AnyFunSuite with TestUtils
+class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
     with ExpressionTestUtils with SQLHelper with DeltaTableWriteSuiteBase {
 
   private val logger = LoggerFactory.getLogger(classOf[PaginatedScanSuite])
+  val tableManager: AbstractTableManagerAdapter = getTableManagerAdapter
+
+  /** Test case to check if the result of a single page request is expected */
+  case class SinglePageRequestTestCase(
+      pageSize: Int,
+      expFileCnt: Int,
+      expBatchCnt: Int,
+      expLogFile: String,
+      expRowIdx: Int)
+
+  /** Custom engine with customized batch size */
+  private val customEngine: DefaultEngine = {
+    val BATCH_SIZE = 5
+    val hadoopConf = new org.apache.hadoop.conf.Configuration()
+    hadoopConf.set("delta.kernel.default.json.reader.batch-size", BATCH_SIZE.toString)
+    hadoopConf.set("delta.kernel.default.parquet.reader.batch-size", BATCH_SIZE.toString)
+    DefaultEngine.create(hadoopConf)
+  }
+
+  private def createPaginatedScan(
+      tablePath: String,
+      tableVersionOpt: Optional[Long],
+      pageSize: Long,
+      pageTokenOpt: Optional[Row] = Optional.empty()): PaginatedScan = {
+
+    val resolvedTableAdapter = {
+      if (tableVersionOpt.isPresent) {
+        tableManager.getResolvedTableAdapterAtVersion(
+          customEngine,
+          tablePath,
+          tableVersionOpt.get())
+      } else {
+        tableManager.getResolvedTableAdapterAtLatest(customEngine, tablePath)
+      }
+    }
+    resolvedTableAdapter.getScanBuilder().buildPaginated(pageSize, pageTokenOpt)
+  }
+
+  private def collectPaginatedBatches(
+      paginatedIter: PaginatedScanFilesIterator): Seq[FilteredColumnarBatch] = {
+    val buffer = collection.mutable.Buffer[FilteredColumnarBatch]()
+    while (paginatedIter.hasNext) {
+      val batch = paginatedIter.next()
+      buffer += batch
+    }
+    buffer
+  }
+
+  private def validatePageResults(
+      batches: Seq[FilteredColumnarBatch],
+      expectedFileCount: Int,
+      expectedBatchCount: Int,
+      testName: String): Unit = {
+    assert(batches.nonEmpty)
+    val fileCounts: Seq[Long] = batches.map(_.getPreComputedNumSelectedRows.get().toLong)
+    val totalFileCountsReturned = fileCounts.sum
+
+    assert(fileCounts.length == expectedBatchCount)
+    assert(totalFileCountsReturned == expectedFileCount)
+
+    logger.info(s"$testName: Total num batches returned in page one = ${fileCounts.length}")
+    logger.info(s"$testName: Total num Parquet Files fetched in page one = " +
+      s"$totalFileCountsReturned")
+  }
+
+  private def validatePageToken(
+      paginatedIter: PaginatedScanFilesIterator,
+      expectedLogFilePath: String,
+      expectedRowIndex: Long,
+      testName: String): Unit = {
+    val lastReadLogFilePath = PageToken.fromRow(paginatedIter.getCurrentPageToken)
+      .getLastReadLogFilePath
+    val lastReturnedRowIndex = PageToken.fromRow(paginatedIter.getCurrentPageToken)
+      .getLastReturnedRowIndex
+
+    assert(lastReadLogFilePath.endsWith(expectedLogFilePath))
+    assert(lastReturnedRowIndex == expectedRowIndex)
+
+    logger.info(s"$testName: New PageToken: lastReadLogFileName = $lastReadLogFilePath")
+    logger.info(s"$testName: New PageToken: lastReadRowIndex = $lastReturnedRowIndex")
+  }
+
+  private def runSinglePaginationTestCase(
+      testName: String,
+      tablePath: String,
+      tableVersionOpt: Optional[Long],
+      pageSize: Long,
+      expectedFileCount: Int,
+      expectedBatchCount: Int,
+      expectedLogFileName: String,
+      expectedRowIndex: Int): Unit = {
+    val paginatedScan = createPaginatedScan(
+      tablePath = tablePath,
+      tableVersionOpt = tableVersionOpt,
+      pageSize = pageSize)
+
+    val paginatedIter = paginatedScan.getScanFiles(customEngine)
+    val returnedBatchesInPage = collectPaginatedBatches(paginatedIter)
+
+    validatePageResults(returnedBatchesInPage, expectedFileCount, expectedBatchCount, testName)
+    validatePageToken(paginatedIter, expectedLogFileName, expectedRowIndex, testName)
+
+    paginatedIter.close()
+  }
+
   // TODO: test call hasNext() twice
 
-  test("Read First Page: basic pagination with single JSON file") {
-    withTempDir { tempDir =>
-      /**
-       *   Creates a Delta table with 10 Parquet data files; each file contains 10 rows
-       * * 00000000000000000000.json contains 10 AddFile actions — one per file
-       */
-      spark.range(0, 100, 1, 10).write.format("delta").save(tempDir.getCanonicalPath)
+  // Single JSON file test cases
+  val singleJsonTestCases = Seq(
+    SinglePageRequestTestCase(
+      pageSize = 1,
+      expFileCnt = 2,
+      expBatchCnt = 1,
+      expLogFile = "00000000000000000000.json",
+      expRowIdx = 4),
+    SinglePageRequestTestCase(
+      pageSize = 2,
+      expFileCnt = 2,
+      expBatchCnt = 1,
+      expLogFile = "00000000000000000000.json",
+      expRowIdx = 4),
+    SinglePageRequestTestCase(
+      pageSize = 4,
+      expFileCnt = 5,
+      expBatchCnt = 2,
+      expLogFile = "00000000000000000000.json",
+      expRowIdx = 7),
+    SinglePageRequestTestCase(
+      pageSize = 7,
+      expFileCnt = 5,
+      expBatchCnt = 2,
+      expLogFile = "00000000000000000000.json",
+      expRowIdx = 7),
+    SinglePageRequestTestCase(
+      pageSize = 20,
+      expFileCnt = 5,
+      expBatchCnt = 2,
+      expLogFile = "00000000000000000000.json",
+      expRowIdx = 7))
 
-      val snapshot = latestSnapshot(tempDir.getCanonicalPath)
-      val pageSize = 8 // TODO: change different page sizes
-      val paginatedScan = snapshot.getScanBuilder
-        .buildPaginated(pageSize, Optional.empty() /* page token opt */ )
-        .asInstanceOf[PaginatedScanImpl]
-
-      /**
-       * Creates a custom engine with batch size 5;
-       * 00000000000000000000.json contains 3 batches, 10 active AddFiles in total
-       * Batch 1: 5 rows, 2 selected AddFiles
-       * Batch 2: 5 rows, 5 selected AddFiles
-       * Batch 3: 3 rows, 3 selected AddFiles
-       */
-      val hadoopConf = new org.apache.hadoop.conf.Configuration()
-      hadoopConf.set("delta.kernel.default.json.reader.batch-size", "5")
-      val customEngine = DefaultEngine.create(hadoopConf)
-
-      val paginatedIter = paginatedScan.getScanFiles(customEngine)
-      val firstPageFiles = collection.mutable.Buffer[FilteredColumnarBatch]()
-      while (paginatedIter.hasNext) {
-        val batch = paginatedIter.next()
-        firstPageFiles += batch
+  singleJsonTestCases.foreach { testCase =>
+    test(s"Single JSON file - page size ${testCase.pageSize}") {
+      withKernelStaticTable("kernel-pagination-all-jsons") { tablePath =>
+        /**
+         *  Log Segment List:
+         *  00000000000000000000.json contains 2 batches, 5 active AddFiles in total
+         *  Batch 1: 5 rows, 2 selected AddFiles
+         *  Batch 2: 3 rows, 3 selected AddFiles
+         */
+        runSinglePaginationTestCase(
+          testName = s"Single JSON file - page size ${testCase.pageSize}",
+          tablePath = tablePath,
+          tableVersionOpt = Optional.of(0L),
+          pageSize = testCase.pageSize,
+          expectedFileCount = testCase.expFileCnt,
+          expectedBatchCount = testCase.expBatchCnt,
+          expectedLogFileName = testCase.expLogFile,
+          expectedRowIndex = testCase.expRowIdx)
       }
-      assert(firstPageFiles.nonEmpty, "First page should contain some files")
-
-      /** Verify we get 3 batches and 10 ScanFiles in total in the first page */
-      val fileCounts: Seq[Long] = firstPageFiles.map(_.getPreComputedNumSelectedRows.get().toLong)
-      val totalFileCountsReturned = fileCounts.sum
-      assert(
-        totalFileCountsReturned == 10,
-        s"First page should contain 10 files, got $totalFileCountsReturned")
-
-      assert(
-        fileCounts.length == 3,
-        s"First page should contain 3 batches, got ${fileCounts.length}")
-
-      logger.info(s"Total num batches returned in page one = ${fileCounts.length}")
-      logger.info(s"Total num Parquet Files fetched in page one = $totalFileCountsReturned")
-
-      /** Verify we get correct page token for next page */
-      val lastReadLogFileName = PageToken.fromRow(paginatedIter.getCurrentPageToken)
-        .getLastReadLogFilePath
-      val lastReturnedRowIndex = PageToken.fromRow(paginatedIter.getCurrentPageToken)
-        .getLastReturnedRowIndex
-
-      assert(
-        lastReadLogFileName.endsWith("00000000000000000000.json"),
-        s"New Page Token: LastReadLogFilename should be 00000000000000000000.json, " +
-          s"got $lastReadLogFileName")
-
-      assert(
-        lastReturnedRowIndex == 12,
-        s"New Page Token:lastReadRowIndex should be 12, got $lastReturnedRowIndex")
-
-      logger.info(s"New PageToken: lastReadLogFileName  = $lastReadLogFileName")
-      logger.info(s"New PageToken: lastReadRowIndex = $lastReturnedRowIndex")
-
-      paginatedIter.close()
     }
   }
 
-  test("Read First Page: basic pagination with multiple JSON files") {
-    withTempDir { tempDir =>
-      /**
-       * Create multiple commits to generate multiple JSON files
-       * First commit: files 0-4 (5 files)
-       * Second commit: files 5-9 (5 more files)
-       * Third commit: files 10-14 (5 more files)
-       * This should create 3 JSON files:
-       * 00000000000000000000.json, 00000000000000000001.json, 00000000000000000002.json
-       */
-      val tablePath = tempDir.getCanonicalPath
-      spark.range(0, 50, 1, 5).write.format("delta").save(tablePath)
-      spark.range(50, 100, 1, 5).write.format("delta").mode("append").save(tablePath)
-      spark.range(100, 150, 1, 5).write.format("delta").mode("append").save(tablePath)
+  // Multiple JSON files test cases
+  val multipleJsonTestCases = Seq(
+    SinglePageRequestTestCase(
+      pageSize = 1,
+      expFileCnt = 4,
+      expBatchCnt = 1,
+      expLogFile = "00000000000000000002.json",
+      expRowIdx = 4),
+    SinglePageRequestTestCase(
+      pageSize = 4,
+      expFileCnt = 4,
+      expBatchCnt = 1,
+      expLogFile = "00000000000000000002.json",
+      expRowIdx = 4),
+    SinglePageRequestTestCase(
+      pageSize = 5,
+      expFileCnt = 5,
+      expBatchCnt = 2,
+      expLogFile = "00000000000000000002.json",
+      expRowIdx = 5),
+    SinglePageRequestTestCase(
+      pageSize = 7,
+      expFileCnt = 9,
+      expBatchCnt = 3,
+      expLogFile = "00000000000000000001.json",
+      expRowIdx = 4),
+    SinglePageRequestTestCase(
+      pageSize = 8,
+      expFileCnt = 9,
+      expBatchCnt = 3,
+      expLogFile = "00000000000000000001.json",
+      expRowIdx = 4),
+    SinglePageRequestTestCase(
+      pageSize = 18,
+      expFileCnt = 15,
+      expBatchCnt = 6,
+      expLogFile = "00000000000000000000.json",
+      expRowIdx = 7))
 
-      val snapshot = latestSnapshot(tempDir.getCanonicalPath)
-      val pageSize = 9 // TODO: change different page sizes
-      val paginatedScan =
-        snapshot.getScanBuilder.buildPaginated(pageSize, Optional.empty() /* page token opt */ )
-          .asInstanceOf[PaginatedScanImpl]
+  multipleJsonTestCases.foreach { testCase =>
+    test(s"Multiple JSON files - page size ${testCase.pageSize}") {
+      withKernelStaticTable("kernel-pagination-all-jsons") { tablePath =>
+        /**
+         * Log Segment List:
+         * 00000000000000000000.json : 8 rows (5 AddFile row + 3 non-AddFile rows)
+         * 00000000000000000001.json : 6 rows (5 AddFile row + 1 non-AddFile row)
+         * 00000000000000000002.json : 6 rows (5 AddFile row + 1 non-AddFile row)
+         *
+         * 00000000000000000002.json contains 2 batches, 5 active AddFiles in total
+         * Batch 1: 5 rows, 4 selected AddFiles
+         * Batch 2: 1 rows, 1 selected AddFiles
+         *
+         * 00000000000000000001.json contains 2 batches, 5 active AddFiles in total
+         * Batch 1: 5 rows, 4 selected AddFiles
+         * Batch 2: 1 rows, 1 selected AddFiles
+         *
+         * 00000000000000000000.json contains 2 batches, 5 active AddFiles in total
+         * Batch 1: 5 rows, 2 selected AddFiles
+         * Batch 2: 3 rows, 3 selected AddFiles
+         */
 
-      /**
-       * Creates a custom engine with batch size 4;
-       * 00000000000000000002.json contains 2 batches, 5 active AddFiles in total
-       * Batch 1: 4 rows, 3 selected AddFiles
-       * Batch 2: 2 rows, 2 selected AddFiles
-       *
-       * 00000000000000000001.json contains 2 batches, 5 active AddFiles in total
-       * * Batch 1: 4 rows, 3 selected AddFiles
-       * * Batch 2: 2 rows, 2 selected AddFiles
-       *
-       * 00000000000000000000.json contains 2 batches, 5 active AddFiles in total
-       * * Batch 1: 4 rows, 3 selected AddFiles
-       * * Batch 2: 2 rows, 2 selected AddFiles
-       */
-      val hadoopConf = new org.apache.hadoop.conf.Configuration()
-      hadoopConf.set("delta.kernel.default.json.reader.batch-size", "4")
-      hadoopConf.set("delta.kernel.default.parquet.reader.batch-size", "4")
-      val customEngine = DefaultEngine.create(hadoopConf)
-
-      val paginatedIter = paginatedScan.getScanFiles(customEngine)
-      val firstPageFiles = collection.mutable.Buffer[FilteredColumnarBatch]()
-
-      while (paginatedIter.hasNext) {
-        val batch = paginatedIter.next()
-        firstPageFiles += batch
+        /**
+         * spark.range( 0, 50, 1, 5).write.format("delta").save(tablePath)
+         * spark.range(50, 100, 1, 5).write.format("delta").mode("append").save(tablePath)
+         * spark.range(100, 150, 1, 5).write.format("delta").mode("append").save(tablePath)
+         */
+        runSinglePaginationTestCase(
+          testName = s"Multiple JSON files - page size ${testCase.pageSize}",
+          tablePath = tablePath,
+          tableVersionOpt = Optional.empty(),
+          pageSize = testCase.pageSize,
+          expectedFileCount = testCase.expFileCnt,
+          expectedBatchCount = testCase.expBatchCnt,
+          expectedLogFileName = testCase.expLogFile,
+          expectedRowIndex = testCase.expRowIdx)
       }
-      assert(firstPageFiles.nonEmpty, "First page should contain some files")
-
-      /** Verify we get 4 batches and 10 ScanFiles in total in the first page */
-      val fileCounts: Seq[Long] = firstPageFiles.map(_.getPreComputedNumSelectedRows.get().toLong)
-      val totalFileCountsReturned = fileCounts.sum
-      assert(
-        totalFileCountsReturned == 10,
-        s"First page should contain 10 files, got $totalFileCountsReturned")
-
-      assert(
-        fileCounts.length == 4,
-        s"First page should contain 3 batches, got ${fileCounts.length}")
-
-      logger.info(s"Total num batches returned in page one = ${fileCounts.length}")
-      logger.info(s"Total num Parquet Files fetched in page one = $totalFileCountsReturned")
-
-      /** Verify we get correct page token for next page */
-      val lastReadLogFileName = PageToken.fromRow(paginatedIter.getCurrentPageToken)
-        .getLastReadLogFilePath
-      val lastReturnedRowIndex = PageToken.fromRow(paginatedIter.getCurrentPageToken)
-        .getLastReturnedRowIndex
-
-      assert(
-        lastReadLogFileName.endsWith("00000000000000000001.json"),
-        s"New Page Token: LastReadLogFilename should be 00000000000000000001.json," +
-          s"got $lastReadLogFileName")
-
-      assert(
-        lastReturnedRowIndex == 5,
-        s"New Page Token:lastReadRowIndex should be 5, got $lastReturnedRowIndex")
-
-      logger.info(s"New PageToken: lastReadLogFileName  = $lastReadLogFileName")
-      logger.info(s"New PageToken: lastReadRowIndex = $lastReturnedRowIndex")
-
-      paginatedIter.close()
     }
   }
 
-  test("Read First Page: basic pagination with one checkpoint file " +
-    "and multiple JSON files") {
-    withTempDir { tempDir =>
-      /**
-       * This should create:
-       * 00000000000000000010.checkpoint.parquet, 00000000000000000011.json, 00000000000000000012.json
-       */
-      val tablePath = tempDir.getCanonicalPath
+  // Single checkpoint file test cases
+  val singleCheckpointTestCases = Seq(
+    SinglePageRequestTestCase(
+      pageSize = 1,
+      expFileCnt = 5,
+      expBatchCnt = 1,
+      expLogFile = "00000000000000000010.checkpoint.parquet",
+      expRowIdx = 4),
+    SinglePageRequestTestCase(
+      pageSize = 10,
+      expFileCnt = 10,
+      expBatchCnt = 2,
+      expLogFile = "00000000000000000010.checkpoint.parquet",
+      expRowIdx = 9),
+    SinglePageRequestTestCase(
+      pageSize = 12,
+      expFileCnt = 15,
+      expBatchCnt = 3,
+      expLogFile = "00000000000000000010.checkpoint.parquet",
+      expRowIdx = 14),
+    SinglePageRequestTestCase(
+      pageSize = 100,
+      expFileCnt = 22,
+      expBatchCnt = 5,
+      expLogFile = "00000000000000000010.checkpoint.parquet",
+      expRowIdx = 23))
 
-      for (i <- 0 until 10) {
-        val mode = if (i == 0) "overwrite" else "append"
-        spark.range(i * 10, (i + 1) * 10, 1, 2)
-          .write.format("delta").mode(mode).save(tablePath)
+  singleCheckpointTestCases.foreach { testCase =>
+    test(s"Single checkpoint file - page size ${testCase.pageSize}") {
+      withKernelStaticTable("kernel-pagination-single-checkpoint") { tablePath =>
+        /**
+         * 00000000000000000010.checkpoint.parquet contains 5 batches, 22 active AddFiles, 24 rows
+         * Batch 1: 5 rows, 5 selected AddFiles
+         * Batch 2: 5 rows, 5 selected AddFiles
+         * Batch 3: 5 rows, 5 selected AddFiles
+         * Batch 4: 5 rows, 3 selected AddFiles
+         * Batch 5: 4 rows, 4 selected AddFiles
+         */
+        runSinglePaginationTestCase(
+          testName = s"Single checkpoint file - page size ${testCase.pageSize}",
+          tablePath = tablePath,
+          tableVersionOpt = Optional.of(10L),
+          pageSize = testCase.pageSize,
+          expectedFileCount = testCase.expFileCnt,
+          expectedBatchCount = testCase.expBatchCnt,
+          expectedLogFileName = testCase.expLogFile,
+          expectedRowIndex = testCase.expRowIdx)
       }
-
-      val deltaLog = DeltaLog.forTable(spark, tablePath)
-      deltaLog.checkpoint()
-
-      for (i <- 10 until 13) {
-        spark.range(i * 10, (i + 1) * 10, 1, 2)
-          .write.format("delta").mode("append").save(tablePath)
-      }
-
-      val snapshot = latestSnapshot(tablePath)
-      val pageSize = 18 // TODO: test different page sizes
-      val paginatedScan = snapshot.getScanBuilder().buildPaginated(
-        pageSize,
-        Optional.empty()).asInstanceOf[PaginatedScanImpl]
-
-      /**
-       * Creates a custom engine with batch size 5;
-       *
-       * 00000000000000000012.json contains 1 batch, 2 active AddFiles in total
-       * Batch 1: 3 rows, 2 selected AddFiles
-       *
-       * 00000000000000000011.json contains 1 batch, 2 active AddFiles in total
-       * Batch 1: 3 rows, 2 selected AddFiles
-       *
-       * 00000000000000000010.checkpoint.parquet contains 5 batches, 22 active AddFiles, 24 rows in total
-       * Batch 1: 5 rows, 5 selected AddFiles
-       * Batch 2: 5 rows, 5 selected AddFiles
-       * Batch 3: 5 rows, 5 selected AddFiles
-       * Batch 4: 5 rows, 3 selected AddFiles
-       * Batch 5: 4 rows, 4 selected AddFiles
-       */
-      val hadoopConf = new org.apache.hadoop.conf.Configuration()
-      hadoopConf.set("delta.kernel.default.json.reader.batch-size", "5")
-      hadoopConf.set("delta.kernel.default.parquet.reader.batch-size", "5")
-      val customEngine = DefaultEngine.create(hadoopConf)
-
-      val paginatedIter = paginatedScan.getScanFiles(customEngine)
-      val firstPageFiles = collection.mutable.Buffer[FilteredColumnarBatch]()
-
-      while (paginatedIter.hasNext) {
-        val batch = paginatedIter.next()
-        firstPageFiles += batch
-      }
-      assert(firstPageFiles.nonEmpty, "First page should contain some files")
-
-      /** Verify we get 5 batches and 19 ScanFiles in total in the first page */
-      val fileCounts: Seq[Long] = firstPageFiles.map(_.getPreComputedNumSelectedRows.get().toLong)
-      val totalFileCountsReturned = fileCounts.sum
-      assert(
-        totalFileCountsReturned == 19,
-        s"First page should contain 19 files, got $totalFileCountsReturned")
-
-      assert(
-        fileCounts.length == 5,
-        s"First page should contain 5 batches, got ${fileCounts.length}")
-
-      logger.info(s"Total num batches returned in page one = ${fileCounts.length}")
-      logger.info(s"Total num Parquet Files fetched in page one = $totalFileCountsReturned")
-
-      /** Verify we get correct page token for next page */
-      val lastReadLogFileName = PageToken.fromRow(paginatedIter.getCurrentPageToken)
-        .getLastReadLogFilePath
-      val lastReturnedRowIndex = PageToken.fromRow(paginatedIter.getCurrentPageToken)
-        .getLastReturnedRowIndex
-
-      assert(
-        lastReadLogFileName.endsWith("00000000000000000010.checkpoint.parquet"),
-        s"New Page Token: LastReadLogFilename should be 00000000000000000010.checkpoint.parquet," +
-          s"got $lastReadLogFileName")
-
-      assert(
-        lastReturnedRowIndex == 14,
-        s"New Page Token:lastReadRowIndex should be 14, got $lastReturnedRowIndex")
-
-      logger.info(s"New PageToken: lastReadLogFileName  = $lastReadLogFileName")
-      logger.info(s"New PageToken: lastReadRowIndex = $lastReturnedRowIndex")
     }
+  }
+
+  // Checkpoint file with multiple JSON files test cases
+  val checkpointWithJsonTestCases = Seq(
+    SinglePageRequestTestCase(
+      pageSize = 1,
+      expFileCnt = 2,
+      expBatchCnt = 1,
+      expLogFile = "00000000000000000012.json",
+      expRowIdx = 2),
+    SinglePageRequestTestCase(
+      pageSize = 2,
+      expFileCnt = 2,
+      expBatchCnt = 1,
+      expLogFile = "00000000000000000012.json",
+      expRowIdx = 2),
+    SinglePageRequestTestCase(
+      pageSize = 3,
+      expFileCnt = 4,
+      expBatchCnt = 2,
+      expLogFile = "00000000000000000011.json",
+      expRowIdx = 2),
+    SinglePageRequestTestCase(
+      pageSize = 4,
+      expFileCnt = 4,
+      expBatchCnt = 2,
+      expLogFile = "00000000000000000011.json",
+      expRowIdx = 2),
+    SinglePageRequestTestCase(
+      pageSize = 8,
+      expFileCnt = 9,
+      expBatchCnt = 3,
+      expLogFile = "00000000000000000010.checkpoint.parquet",
+      expRowIdx = 4),
+    SinglePageRequestTestCase(
+      pageSize = 18,
+      expFileCnt = 19,
+      expBatchCnt = 5,
+      expLogFile = "00000000000000000010.checkpoint.parquet",
+      expRowIdx = 14))
+
+  checkpointWithJsonTestCases.foreach { testCase =>
+    test(s"Checkpoint with JSON files - page size ${testCase.pageSize}") {
+      withKernelStaticTable("kernel-pagination-single-checkpoint") { tablePath =>
+        /**
+         * for (i <- 0 until 10) {
+         * val mode = if (i == 0) "overwrite" else "append"
+         * spark.range(i * 10, (i + 1) * 10, 1, 2)
+         * .write.format("delta").mode(mode).save(tablePath)
+         * }
+         *
+         * // Force checkpoint creation
+         * val deltaLog = DeltaLog.forTable(spark, tablePath)
+         * deltaLog.checkpoint()
+         *
+         * // Add more commits after checkpoint
+         * for (i <- 10 until 13) {
+         * spark.range(i * 10, (i + 1) * 10, 1, 2)
+         * .write.format("delta").mode("append").save(tablePath)
+         * }
+         */
+
+        /**
+         * Log segment list:
+         * 00000000000000000010.checkpoint.parquet
+         * 00000000000000000011.json
+         * 00000000000000000012.json
+         *
+         * 00000000000000000012.json contains 1 batch, 2 active AddFiles in total
+         * Batch 1: 3 rows, 2 selected AddFiles
+         *
+         * 00000000000000000011.json contains 1 batch, 2 active AddFiles in total
+         * Batch 1: 3 rows, 2 selected AddFiles
+         *
+         * 00000000000000000010.checkpoint.parquet contains 5 batches, 22 active AddFiles, 24 rows
+         * Batch 1: 5 rows, 5 selected AddFiles
+         * Batch 2: 5 rows, 5 selected AddFiles
+         * Batch 3: 5 rows, 5 selected AddFiles
+         * Batch 4: 5 rows, 3 selected AddFiles
+         * Batch 5: 4 rows, 4 selected AddFiles
+         */
+        runSinglePaginationTestCase(
+          testName = s"Checkpoint with JSON files - page size ${testCase.pageSize}",
+          tablePath = tablePath,
+          tableVersionOpt = Optional.empty(),
+          pageSize = testCase.pageSize,
+          expectedFileCount = testCase.expFileCnt,
+          expectedBatchCount = testCase.expBatchCnt,
+          expectedLogFileName = testCase.expLogFile,
+          expectedRowIndex = testCase.expRowIdx)
+      }
+    }
+  }
+
+  test("Pagination with multi-checkpoint files") {
+    // TODO
+  }
+
+  test("Pagination with sidecar files") {
+    // TODO
   }
 }
