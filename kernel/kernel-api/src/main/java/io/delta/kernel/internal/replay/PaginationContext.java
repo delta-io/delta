@@ -15,6 +15,8 @@
  */
 package io.delta.kernel.internal.replay;
 
+import io.delta.kernel.Meta;
+
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import java.util.Objects;
@@ -29,6 +31,7 @@ public class PaginationContext {
     Objects.requireNonNull(tablePath, "table Path is null");
     checkArgument(tablePath.equals(pageToken.getTablePath()), "table path changes!");
     checkArgument(tableVersion == pageToken.getTableVersion(), "table version changes!");
+    checkArgument(Meta.KERNEL_VERSION.equals(pageToken.getKernelVersion()), "kernel version changes!");
     return new PaginationContext(pageSize, Optional.of(pageToken), tablePath, tableVersion);
   }
 
