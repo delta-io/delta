@@ -23,13 +23,19 @@ import java.util.Optional;
 /** {@code PaginationContext} carries pagination-related information. */
 public class PaginationContext {
 
-  public static PaginationContext forPageWithPageToken(long pageSize, PageToken pageToken) {
+  public static PaginationContext forPageWithPageToken(
+      long pageSize, PageToken pageToken, String tablePath, long tableVersion) {
     Objects.requireNonNull(pageToken, "page token is null");
-    return new PaginationContext(pageSize, Optional.of(pageToken));
+    Objects.requireNonNull(tablePath, "table Path is null");
+    checkArgument(tablePath.equals(pageToken.getTablePath()), "table path changes!");
+    checkArgument(tableVersion == pageToken.getTableVersion(), "table version changes!");
+    return new PaginationContext(pageSize, Optional.of(pageToken), tablePath, tableVersion);
   }
 
-  public static PaginationContext forFirstPage(long pageSize) {
-    return new PaginationContext(pageSize, Optional.empty() /* page token */);
+  public static PaginationContext forFirstPage(long pageSize, String tablePath, long tableVersion) {
+    Objects.requireNonNull(tablePath, "table Path is null");
+    return new PaginationContext(
+        pageSize, Optional.empty() /* page token */, tablePath, tableVersion);
   }
 
   /** maximum number of ScanFiles to return in the current page */
@@ -38,12 +44,19 @@ public class PaginationContext {
   /** Optional Page Token */
   private final Optional<PageToken> pageToken;
 
+  private final String tablePath;
+
+  private final long tableVersion;
+
   // TODO: add cached log replay hashsets related info
 
-  private PaginationContext(long pageSize, Optional<PageToken> pageToken) {
+  private PaginationContext(
+      long pageSize, Optional<PageToken> pageToken, String tablePath, long tableVersion) {
     checkArgument(pageSize > 0, "Page size must be greater than zero!");
     this.pageSize = pageSize;
     this.pageToken = pageToken;
+    this.tablePath = tablePath;
+    this.tableVersion = tableVersion;
   }
 
   public long getPageSize() {
@@ -63,5 +76,13 @@ public class PaginationContext {
   public Optional<Long> getLastReadSidecarFileIdx() {
     if (!pageToken.isPresent()) return Optional.empty();
     return pageToken.get().getLastReadSidecarFileIdx();
+  }
+
+  public String getTablePath() {
+    return tablePath;
+  }
+
+  public long getTableVersion() {
+    return tableVersion;
   }
 }

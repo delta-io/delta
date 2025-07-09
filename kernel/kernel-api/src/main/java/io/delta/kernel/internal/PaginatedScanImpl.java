@@ -33,11 +33,22 @@ public class PaginatedScanImpl implements PaginatedScan {
   private final long pageSize;
   private final Optional<PageToken> pageTokenOpt;
   private final ScanImpl baseScan;
+  PaginationContext paginationContext;
 
   public PaginatedScanImpl(ScanImpl baseScan, Optional<Row> pageTokenRowOpt, long pageSize) {
     this.baseScan = baseScan;
     this.pageTokenOpt = pageTokenRowOpt.map(PageToken::fromRow);
     this.pageSize = pageSize;
+    this.paginationContext =
+        pageTokenOpt
+            .map(
+                token ->
+                    PaginationContext.forPageWithPageToken(
+                        pageSize, token, baseScan.getDataPath(), baseScan.getTableVersion()))
+            .orElseGet(
+                () ->
+                    PaginationContext.forFirstPage(
+                        pageSize, baseScan.getDataPath(), baseScan.getTableVersion()));
   }
 
   @Override
@@ -56,10 +67,6 @@ public class PaginatedScanImpl implements PaginatedScan {
   }
 
   public PaginatedScanFilesIterator getScanFiles(Engine engine, boolean includeStates) {
-    PaginationContext paginationContext =
-        pageTokenOpt
-            .map(token -> PaginationContext.forPageWithPageToken(pageSize, token))
-            .orElseGet(() -> PaginationContext.forFirstPage(pageSize));
     CloseableIterator<FilteredColumnarBatch> filteredScanFilesIter =
         baseScan.getScanFiles(engine, includeStates, Optional.of(paginationContext));
     return new PaginatedScanFilesIteratorImpl(filteredScanFilesIter, paginationContext);
