@@ -39,12 +39,11 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
 
   /** Test case to check if the result of a single page request is expected */
   case class SinglePageRequestTestCase(
-      testName: String,
       pageSize: Int,
-      expectedFileCount: Int,
-      expectedBatchCount: Int,
-      expectedLogFileName: String,
-      expectedRowIndex: Int)
+      expFileCnt: Int,
+      expBatchCnt: Int,
+      expLogFile: String,
+      expRowIdx: Int)
 
   /** Custom engine with customized batch size */
   private val customEngine: DefaultEngine = {
@@ -141,205 +140,282 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
     paginatedIter.close()
   }
 
-  private def runPaginationTestCasesForFirstPage(
-      tablePath: String,
-      tableVersionOpt: Optional[Long] = Optional.empty(),
-      testCases: Seq[SinglePageRequestTestCase]): Unit = {
-    testCases.foreach { testCase =>
-      runSinglePaginationTestCase(
-        testName = testCase.testName,
-        tablePath = tablePath,
-        tableVersionOpt = tableVersionOpt,
-        pageSize = testCase.pageSize,
-        expectedFileCount = testCase.expectedFileCount,
-        expectedBatchCount = testCase.expectedBatchCount,
-        expectedLogFileName = testCase.expectedLogFileName,
-        expectedRowIndex = testCase.expectedRowIndex)
-    }
-  }
-
   // TODO: test call hasNext() twice
 
-  test("Pagination with single JSON file") {
-    withGoldenTable("kernel-pagination-all-jsons") { tablePath =>
-      /**
-       *  Log Segment List:
-       *  00000000000000000000.json contains 2 batches, 5 active AddFiles in total
-       *  Batch 1: 5 rows, 2 selected AddFiles
-       *  Batch 2: 3 rows, 3 selected AddFiles
-       */
+  // Single JSON file test cases
+  val singleJsonTestCases = Seq(
+    SinglePageRequestTestCase(
+      pageSize = 1,
+      expFileCnt = 2,
+      expBatchCnt = 1,
+      expLogFile = "00000000000000000000.json",
+      expRowIdx = 4),
+    SinglePageRequestTestCase(
+      pageSize = 2,
+      expFileCnt = 2,
+      expBatchCnt = 1,
+      expLogFile = "00000000000000000000.json",
+      expRowIdx = 4),
+    SinglePageRequestTestCase(
+      pageSize = 4,
+      expFileCnt = 5,
+      expBatchCnt = 2,
+      expLogFile = "00000000000000000000.json",
+      expRowIdx = 7),
+    SinglePageRequestTestCase(
+      pageSize = 7,
+      expFileCnt = 5,
+      expBatchCnt = 2,
+      expLogFile = "00000000000000000000.json",
+      expRowIdx = 7),
+    SinglePageRequestTestCase(
+      pageSize = 20,
+      expFileCnt = 5,
+      expBatchCnt = 2,
+      expLogFile = "00000000000000000000.json",
+      expRowIdx = 7))
 
-      val JSONFile0 = "00000000000000000000.json"
-      // Change page sizes to test various edge cases,
-      // for example, batch size goes over page size limit
-      val testCases = Seq(
-        SinglePageRequestTestCase(
-          "Page size 1",
-          pageSize = 1,
-          expectedFileCount = 2,
-          expectedBatchCount = 1,
-          expectedLogFileName = JSONFile0,
-          expectedRowIndex = 4),
-        SinglePageRequestTestCase("Page size 2", 2, 2, 1, JSONFile0, 4),
-        SinglePageRequestTestCase("Page size 4", 4, 5, 2, JSONFile0, 7),
-        SinglePageRequestTestCase("Page size 7", 7, 5, 2, JSONFile0, 7),
-        SinglePageRequestTestCase("Page size 20", 20, 5, 2, JSONFile0, 7))
-
-      runPaginationTestCasesForFirstPage(
-        tablePath = tablePath,
-        tableVersionOpt = Optional.of(0L),
-        testCases = testCases)
-
-      // TODO: test if page two returns correct page token
-      // TODO: run page requests loop and compare to normal Scan
-      //  also check no duplicate batch returned and numFileSkipped
+  singleJsonTestCases.foreach { testCase =>
+    test(s"Single JSON file - page size ${testCase.pageSize}") {
+      withKernelStaticTable("kernel-pagination-all-jsons") { tablePath =>
+        /**
+         *  Log Segment List:
+         *  00000000000000000000.json contains 2 batches, 5 active AddFiles in total
+         *  Batch 1: 5 rows, 2 selected AddFiles
+         *  Batch 2: 3 rows, 3 selected AddFiles
+         */
+        runSinglePaginationTestCase(
+          testName = s"Single JSON file - page size ${testCase.pageSize}",
+          tablePath = tablePath,
+          tableVersionOpt = Optional.of(0L),
+          pageSize = testCase.pageSize,
+          expectedFileCount = testCase.expFileCnt,
+          expectedBatchCount = testCase.expBatchCnt,
+          expectedLogFileName = testCase.expLogFile,
+          expectedRowIndex = testCase.expRowIdx)
+      }
     }
   }
 
-  test("Pagination with multiple JSON files") {
-    withGoldenTable("kernel-pagination-all-jsons") { tablePath =>
-      /**
-       * Log Segment List:
-       * 00000000000000000000.json : 8 rows (5 AddFile row + 3 non-AddFile rows)
-       * 00000000000000000001.json : 6 rows (5 AddFile row + 1 non-AddFile row)
-       * 00000000000000000002.json : 6 rows (5 AddFile row + 1 non-AddFile row)
-       *
-       * 00000000000000000002.json contains 2 batches, 5 active AddFiles in total
-       * Batch 1: 5 rows, 4 selected AddFiles
-       * Batch 2: 1 rows, 1 selected AddFiles
-       *
-       * 00000000000000000001.json contains 2 batches, 5 active AddFiles in total
-       * Batch 1: 5 rows, 4 selected AddFiles
-       * Batch 2: 1 rows, 1 selected AddFiles
-       *
-       * 00000000000000000000.json contains 2 batches, 5 active AddFiles in total
-       * Batch 1: 5 rows, 2 selected AddFiles
-       * Batch 2: 3 rows, 3 selected AddFiles
-       */
+  // Multiple JSON files test cases
+  val multipleJsonTestCases = Seq(
+    SinglePageRequestTestCase(
+      pageSize = 1,
+      expFileCnt = 4,
+      expBatchCnt = 1,
+      expLogFile = "00000000000000000002.json",
+      expRowIdx = 4),
+    SinglePageRequestTestCase(
+      pageSize = 4,
+      expFileCnt = 4,
+      expBatchCnt = 1,
+      expLogFile = "00000000000000000002.json",
+      expRowIdx = 4),
+    SinglePageRequestTestCase(
+      pageSize = 5,
+      expFileCnt = 5,
+      expBatchCnt = 2,
+      expLogFile = "00000000000000000002.json",
+      expRowIdx = 5),
+    SinglePageRequestTestCase(
+      pageSize = 7,
+      expFileCnt = 9,
+      expBatchCnt = 3,
+      expLogFile = "00000000000000000001.json",
+      expRowIdx = 4),
+    SinglePageRequestTestCase(
+      pageSize = 8,
+      expFileCnt = 9,
+      expBatchCnt = 3,
+      expLogFile = "00000000000000000001.json",
+      expRowIdx = 4),
+    SinglePageRequestTestCase(
+      pageSize = 18,
+      expFileCnt = 15,
+      expBatchCnt = 6,
+      expLogFile = "00000000000000000000.json",
+      expRowIdx = 7))
 
-      /**
-       * spark.range( 0, 50, 1, 5).write.format("delta").save(tablePath)
-       * spark.range(50, 100, 1, 5).write.format("delta").mode("append").save(tablePath)
-       * spark.range(100, 150, 1, 5).write.format("delta").mode("append").save(tablePath)
-       */
+  multipleJsonTestCases.foreach { testCase =>
+    test(s"Multiple JSON files - page size ${testCase.pageSize}") {
+      withKernelStaticTable("kernel-pagination-all-jsons") { tablePath =>
+        /**
+         * Log Segment List:
+         * 00000000000000000000.json : 8 rows (5 AddFile row + 3 non-AddFile rows)
+         * 00000000000000000001.json : 6 rows (5 AddFile row + 1 non-AddFile row)
+         * 00000000000000000002.json : 6 rows (5 AddFile row + 1 non-AddFile row)
+         *
+         * 00000000000000000002.json contains 2 batches, 5 active AddFiles in total
+         * Batch 1: 5 rows, 4 selected AddFiles
+         * Batch 2: 1 rows, 1 selected AddFiles
+         *
+         * 00000000000000000001.json contains 2 batches, 5 active AddFiles in total
+         * Batch 1: 5 rows, 4 selected AddFiles
+         * Batch 2: 1 rows, 1 selected AddFiles
+         *
+         * 00000000000000000000.json contains 2 batches, 5 active AddFiles in total
+         * Batch 1: 5 rows, 2 selected AddFiles
+         * Batch 2: 3 rows, 3 selected AddFiles
+         */
 
-      val JSONFile0 = "00000000000000000000.json"
-      val JSONFile1 = "00000000000000000001.json"
-      val JSONFile2 = "00000000000000000002.json"
-      val testCases = Seq(
-        SinglePageRequestTestCase(
-          "Page size 1",
-          pageSize = 1,
-          expectedFileCount = 4,
-          expectedBatchCount = 1,
-          expectedLogFileName = JSONFile2,
-          expectedRowIndex = 4),
-        SinglePageRequestTestCase("Page size 4", 4, 4, 1, JSONFile2, 4),
-        SinglePageRequestTestCase("Page size 5", 5, 5, 2, JSONFile2, 5),
-        SinglePageRequestTestCase("Page size 7", 7, 9, 3, JSONFile1, 4),
-        SinglePageRequestTestCase("Page size 8", 8, 9, 3, JSONFile1, 4),
-        SinglePageRequestTestCase("Page size 18", 18, 15, 6, JSONFile0, 7))
-
-      runPaginationTestCasesForFirstPage(tablePath = tablePath, testCases = testCases)
-
-      // TODO: test all page requests
+        /**
+         * spark.range( 0, 50, 1, 5).write.format("delta").save(tablePath)
+         * spark.range(50, 100, 1, 5).write.format("delta").mode("append").save(tablePath)
+         * spark.range(100, 150, 1, 5).write.format("delta").mode("append").save(tablePath)
+         */
+        runSinglePaginationTestCase(
+          testName = s"Multiple JSON files - page size ${testCase.pageSize}",
+          tablePath = tablePath,
+          tableVersionOpt = Optional.empty(),
+          pageSize = testCase.pageSize,
+          expectedFileCount = testCase.expFileCnt,
+          expectedBatchCount = testCase.expBatchCnt,
+          expectedLogFileName = testCase.expLogFile,
+          expectedRowIndex = testCase.expRowIdx)
+      }
     }
   }
 
-  test("Pagination with one checkpoint file") {
-    withGoldenTable("kernel-pagination-single-checkpoint") { tablePath =>
-      /**
-       * 00000000000000000010.checkpoint.parquet contains 5 batches, 22 active AddFiles, 24 rows
-       * Batch 1: 5 rows, 5 selected AddFiles
-       * Batch 2: 5 rows, 5 selected AddFiles
-       * Batch 3: 5 rows, 5 selected AddFiles
-       * Batch 4: 5 rows, 3 selected AddFiles
-       * Batch 5: 4 rows, 4 selected AddFiles
-       */
-      val checkpoint10 = "00000000000000000010.checkpoint.parquet"
+  // Single checkpoint file test cases
+  val singleCheckpointTestCases = Seq(
+    SinglePageRequestTestCase(
+      pageSize = 1,
+      expFileCnt = 5,
+      expBatchCnt = 1,
+      expLogFile = "00000000000000000010.checkpoint.parquet",
+      expRowIdx = 4),
+    SinglePageRequestTestCase(
+      pageSize = 10,
+      expFileCnt = 10,
+      expBatchCnt = 2,
+      expLogFile = "00000000000000000010.checkpoint.parquet",
+      expRowIdx = 9),
+    SinglePageRequestTestCase(
+      pageSize = 12,
+      expFileCnt = 15,
+      expBatchCnt = 3,
+      expLogFile = "00000000000000000010.checkpoint.parquet",
+      expRowIdx = 14),
+    SinglePageRequestTestCase(
+      pageSize = 100,
+      expFileCnt = 22,
+      expBatchCnt = 5,
+      expLogFile = "00000000000000000010.checkpoint.parquet",
+      expRowIdx = 23))
 
-      val testCases = Seq(
-        SinglePageRequestTestCase(
-          "Page size 1",
-          pageSize = 1,
-          expectedFileCount = 5,
-          expectedBatchCount = 1,
-          expectedLogFileName = checkpoint10,
-          expectedRowIndex = 4),
-        SinglePageRequestTestCase("Page size 10", 10, 10, 2, checkpoint10, 9),
-        SinglePageRequestTestCase("Page size 12", 12, 15, 3, checkpoint10, 14),
-        SinglePageRequestTestCase("Large Page size", 100, 22, 5, checkpoint10, 23))
-
-      runPaginationTestCasesForFirstPage(
-        tablePath = tablePath,
-        tableVersionOpt = Optional.of(10L),
-        testCases = testCases)
-
-      // TODO: test all page requests
+  singleCheckpointTestCases.foreach { testCase =>
+    test(s"Single checkpoint file - page size ${testCase.pageSize}") {
+      withKernelStaticTable("kernel-pagination-single-checkpoint") { tablePath =>
+        /**
+         * 00000000000000000010.checkpoint.parquet contains 5 batches, 22 active AddFiles, 24 rows
+         * Batch 1: 5 rows, 5 selected AddFiles
+         * Batch 2: 5 rows, 5 selected AddFiles
+         * Batch 3: 5 rows, 5 selected AddFiles
+         * Batch 4: 5 rows, 3 selected AddFiles
+         * Batch 5: 4 rows, 4 selected AddFiles
+         */
+        runSinglePaginationTestCase(
+          testName = s"Single checkpoint file - page size ${testCase.pageSize}",
+          tablePath = tablePath,
+          tableVersionOpt = Optional.of(10L),
+          pageSize = testCase.pageSize,
+          expectedFileCount = testCase.expFileCnt,
+          expectedBatchCount = testCase.expBatchCnt,
+          expectedLogFileName = testCase.expLogFile,
+          expectedRowIndex = testCase.expRowIdx)
+      }
     }
   }
 
-  test("Pagination with one checkpoint file and multiple JSON files") {
-    withGoldenTable("kernel-pagination-single-checkpoint") { tablePath =>
-      /**
-       * for (i <- 0 until 10) {
-       * val mode = if (i == 0) "overwrite" else "append"
-       * spark.range(i * 10, (i + 1) * 10, 1, 2)
-       * .write.format("delta").mode(mode).save(tablePath)
-       * }
-       *
-       * // Force checkpoint creation
-       * val deltaLog = DeltaLog.forTable(spark, tablePath)
-       * deltaLog.checkpoint()
-       *
-       * // Add more commits after checkpoint
-       * for (i <- 10 until 13) {
-       * spark.range(i * 10, (i + 1) * 10, 1, 2)
-       * .write.format("delta").mode("append").save(tablePath)
-       * }
-       */
+  // Checkpoint file with multiple JSON files test cases
+  val checkpointWithJsonTestCases = Seq(
+    SinglePageRequestTestCase(
+      pageSize = 1,
+      expFileCnt = 2,
+      expBatchCnt = 1,
+      expLogFile = "00000000000000000012.json",
+      expRowIdx = 2),
+    SinglePageRequestTestCase(
+      pageSize = 2,
+      expFileCnt = 2,
+      expBatchCnt = 1,
+      expLogFile = "00000000000000000012.json",
+      expRowIdx = 2),
+    SinglePageRequestTestCase(
+      pageSize = 3,
+      expFileCnt = 4,
+      expBatchCnt = 2,
+      expLogFile = "00000000000000000011.json",
+      expRowIdx = 2),
+    SinglePageRequestTestCase(
+      pageSize = 4,
+      expFileCnt = 4,
+      expBatchCnt = 2,
+      expLogFile = "00000000000000000011.json",
+      expRowIdx = 2),
+    SinglePageRequestTestCase(
+      pageSize = 8,
+      expFileCnt = 9,
+      expBatchCnt = 3,
+      expLogFile = "00000000000000000010.checkpoint.parquet",
+      expRowIdx = 4),
+    SinglePageRequestTestCase(
+      pageSize = 18,
+      expFileCnt = 19,
+      expBatchCnt = 5,
+      expLogFile = "00000000000000000010.checkpoint.parquet",
+      expRowIdx = 14))
 
-      /**
-       * Log segment list:
-       * 00000000000000000010.checkpoint.parquet
-       * 00000000000000000011.json
-       * 00000000000000000012.json
-       *
-       * 00000000000000000012.json contains 1 batch, 2 active AddFiles in total
-       * Batch 1: 3 rows, 2 selected AddFiles
-       *
-       * 00000000000000000011.json contains 1 batch, 2 active AddFiles in total
-       * Batch 1: 3 rows, 2 selected AddFiles
-       *
-       * 00000000000000000010.checkpoint.parquet contains 5 batches, 22 active AddFiles, 24 rows
-       * Batch 1: 5 rows, 5 selected AddFiles
-       * Batch 2: 5 rows, 5 selected AddFiles
-       * Batch 3: 5 rows, 5 selected AddFiles
-       * Batch 4: 5 rows, 3 selected AddFiles
-       * Batch 5: 4 rows, 4 selected AddFiles
-       */
+  checkpointWithJsonTestCases.foreach { testCase =>
+    test(s"Checkpoint with JSON files - page size ${testCase.pageSize}") {
+      withKernelStaticTable("kernel-pagination-single-checkpoint") { tablePath =>
+        /**
+         * for (i <- 0 until 10) {
+         * val mode = if (i == 0) "overwrite" else "append"
+         * spark.range(i * 10, (i + 1) * 10, 1, 2)
+         * .write.format("delta").mode(mode).save(tablePath)
+         * }
+         *
+         * // Force checkpoint creation
+         * val deltaLog = DeltaLog.forTable(spark, tablePath)
+         * deltaLog.checkpoint()
+         *
+         * // Add more commits after checkpoint
+         * for (i <- 10 until 13) {
+         * spark.range(i * 10, (i + 1) * 10, 1, 2)
+         * .write.format("delta").mode("append").save(tablePath)
+         * }
+         */
 
-      val checkpoint10 = "00000000000000000010.checkpoint.parquet"
-      val JSONFile11 = "00000000000000000011.json"
-      val JSONFile12 = "00000000000000000012.json"
-
-      val testCases = Seq(
-        SinglePageRequestTestCase(
-          "Page size 1",
-          pageSize = 1,
-          expectedFileCount = 2,
-          expectedBatchCount = 1,
-          expectedLogFileName = JSONFile12,
-          expectedRowIndex = 2),
-        SinglePageRequestTestCase("Page size 2", 2, 2, 1, JSONFile12, 2),
-        SinglePageRequestTestCase("Page size 3", 3, 4, 2, JSONFile11, 2),
-        SinglePageRequestTestCase("Page size 4", 4, 4, 2, JSONFile11, 2),
-        SinglePageRequestTestCase("Page size 8", 8, 9, 3, checkpoint10, 4),
-        SinglePageRequestTestCase("Page size 18", 18, 19, 5, checkpoint10, 14))
-
-      runPaginationTestCasesForFirstPage(tablePath = tablePath, testCases = testCases)
-
-      // TODO: test all page requests
+        /**
+         * Log segment list:
+         * 00000000000000000010.checkpoint.parquet
+         * 00000000000000000011.json
+         * 00000000000000000012.json
+         *
+         * 00000000000000000012.json contains 1 batch, 2 active AddFiles in total
+         * Batch 1: 3 rows, 2 selected AddFiles
+         *
+         * 00000000000000000011.json contains 1 batch, 2 active AddFiles in total
+         * Batch 1: 3 rows, 2 selected AddFiles
+         *
+         * 00000000000000000010.checkpoint.parquet contains 5 batches, 22 active AddFiles, 24 rows
+         * Batch 1: 5 rows, 5 selected AddFiles
+         * Batch 2: 5 rows, 5 selected AddFiles
+         * Batch 3: 5 rows, 5 selected AddFiles
+         * Batch 4: 5 rows, 3 selected AddFiles
+         * Batch 5: 4 rows, 4 selected AddFiles
+         */
+        runSinglePaginationTestCase(
+          testName = s"Checkpoint with JSON files - page size ${testCase.pageSize}",
+          tablePath = tablePath,
+          tableVersionOpt = Optional.empty(),
+          pageSize = testCase.pageSize,
+          expectedFileCount = testCase.expFileCnt,
+          expectedBatchCount = testCase.expBatchCnt,
+          expectedLogFileName = testCase.expLogFile,
+          expectedRowIndex = testCase.expRowIdx)
+      }
     }
   }
 
