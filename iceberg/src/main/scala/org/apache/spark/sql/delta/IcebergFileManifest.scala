@@ -25,7 +25,7 @@ import org.apache.spark.sql.delta.commands.convert.IcebergTable.ERR_MULTIPLE_PAR
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.Path
-import org.apache.iceberg.{BaseTable, DataFile, DataFiles, FileContent, FileFormat, ManifestContent, ManifestFile, ManifestFiles, PartitionData, PartitionSpec, RowLevelOperationMode, Schema, StructLike, Table, TableProperties}
+import org.apache.iceberg.{BaseTable, DataFile, DataFiles, DeleteFile, FileContent, FileFormat, ManifestContent, ManifestFile, ManifestFiles, PartitionData, PartitionSpec, RowLevelOperationMode, Schema, StructLike, Table, TableProperties}
 import org.apache.iceberg.transforms.IcebergPartitionUtil
 import org.apache.iceberg.types.Type.TypeID
 
@@ -33,6 +33,12 @@ import org.apache.spark.SparkThrowable
 import org.apache.spark.internal.{LoggingShims, MDC}
 import org.apache.spark.sql.{Dataset, SparkSession}
 import org.apache.spark.sql.types.StructType
+
+case class IcebergActions(
+    dataFilesToAdds: Iterator[DataFile],
+    dataFilesToRemoves: Iterator[DataFile],
+    deleteFilesToAdds: Iterator[DeleteFile],
+    deleteFilesToRemoves: Iterator[DeleteFile])
 
 class IcebergFileManifest(
     spark: SparkSession,
@@ -139,16 +145,9 @@ class IcebergFileManifest(
     val specIdsToIfSpecHasNonBucketPartitionMap = specIdsToIfSpecHasNonBucketPartition
     val tableSpecsSize = table.specs().size()
 
-    val manifestFiles = localTable
-      .currentSnapshot()
-      .dataManifests(localTable.io())
-      .asScala
-      .map(new ManifestFileWrapper(_))
-      .toSeq
+    val (dataFiles, _) = loadIcebergFiles()
 
-    spark
-      .createDataset(manifestFiles)
-      .flatMap(ManifestFiles.read(_, localTable.io()).asScala.map(new DataFileWrapper(_)))
+    dataFiles
       .map { dataFile: DataFileWrapper =>
         if (shouldCheckPartitionEvolution) {
           IcebergFileManifest.validateLimitedPartitionEvolution(
@@ -180,6 +179,38 @@ class IcebergFileManifest(
         )
       }
       .cache()
+  }
+
+  private def loadIcebergFiles(): (Dataset[DataFileWrapper], Dataset[DeleteFileWrapper]) = {
+    val localTable = table
+    val (manifestFiles, deleteManifestFiles) =
+        (
+          localTable
+            .currentSnapshot()
+            .dataManifests(localTable.io())
+            .asScala
+            .map(new ManifestFileWrapper(_))
+            .toSeq,
+          localTable
+            .currentSnapshot()
+            .deleteManifests(localTable.io())
+            .asScala
+            .map(new ManifestFileWrapper(_))
+            .toSeq
+        )
+    val (dataFiles: Dataset[DataFileWrapper], deleteFiles: Dataset[DeleteFileWrapper]) =
+        (
+          spark
+            .createDataset(manifestFiles)
+            .flatMap(ManifestFiles.read(_, localTable.io()).asScala.map(new DataFileWrapper(_))),
+          spark
+            .createDataset(deleteManifestFiles)
+            .flatMap(
+              ManifestFiles.readDeleteManifest(_, localTable.io(), localTable.specs())
+              .asScala.map(new DeleteFileWrapper(_))
+            )
+        )
+    (dataFiles, deleteFiles)
   }
 
 
