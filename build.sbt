@@ -685,27 +685,6 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
     javaOnlyReleaseSettings,
     javafmtCheckSettings,
     scalafmtCheckSettings,
-    // Skip kernel tests when running with Scala 2.13.13 due to compatibility issues
-    Test / sources := Def.taskDyn {
-      val scalaVer = scalaVersion.value
-      if (scalaVer.startsWith("2.13")) {
-        Def.task {
-          val log = streams.value.log
-          log.warn(s"Skipping kernelDefaults test compilation due to Scala 2.13 compatibility issues (current version: $scalaVer)")
-          Seq.empty[File]
-        }
-      } else {
-        Def.task((Test / sources).value)
-      }
-    }.value,
-    Test / test := Def.taskDyn {
-      val scalaVer = scalaVersion.value
-      if (scalaVer.startsWith("2.13")) {
-        Def.task(()) // Tests are already skipped via sources
-      } else {
-        Def.task((Test / test).value)
-      }
-    }.value,
     Test / javaOptions ++= Seq("-ea"),
     // This allows generating tables with unsupported test table features in delta-spark
     Test / envVars += ("DELTA_TESTING", "1"),
@@ -1722,23 +1701,6 @@ lazy val sparkGroup = project
     crossScalaVersions := Nil,
     publishArtifact := false,
     publish / skip := false,
-    // Skip kernel tests when running sparkGroup/test due to Scala 2.13.13 compatibility issues
-    Test / test := {
-      val log = streams.value.log
-      log.info("Running sparkGroup tests (skipping kernel tests due to Scala 2.13.13 compatibility)")
-      
-      // Run tests for all projects except kernel projects
-      (contribs / Test / test).value
-      (storage / Test / test).value
-      (storageS3DynamoDB / Test / test).value
-      (sharing / Test / test).value
-      (hudi / Test / test).value
-      
-      // For spark project, we need to run tests but skip kernel dependencies
-      // This is tricky because spark depends on sparkDsv2 which depends on kernel projects
-      // We'll run spark tests but kernel tests will be skipped due to the settings we'll add
-      (spark / Test / test).value
-    }
   )
 
 lazy val icebergGroup = project
