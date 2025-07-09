@@ -28,6 +28,8 @@ public interface CommitContext {
    * The finalized actions that the engine must forward to the {@link Committer} to commit to the
    * table.
    *
+   * <p>This iterator can only be accessed and consumed once.
+   *
    * <p>If the engine wishes to support commit retries, the engine must materialize this actions
    * iterator so that it can be replayed and updated in accordance with the latest table state.
    */
