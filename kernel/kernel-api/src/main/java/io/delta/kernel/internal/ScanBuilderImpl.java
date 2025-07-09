@@ -90,6 +90,6 @@ public class ScanBuilderImpl implements ScanBuilder {
   @Override
   public PaginatedScan buildPaginated(long pageSize, Optional<Row> pageTokenRowOpt) {
     ScanImpl baseScan = this.build();
-    return new PaginatedScanImpl(baseScan, pageTokenRowOpt, pageSize);
+    return new PaginatedScanImpl(baseScan, pageSize, snapshotReport.getVersion().get(), pageTokenRowOpt);
   }
 }

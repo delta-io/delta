@@ -241,7 +241,7 @@ public class ScanImpl implements Scan {
   }
 
   protected long getTableVersion() {
-    checkArgument(snapshotReport.getVersion().isPresent(), "table  version isn't available!");
+    checkArgument(snapshotReport.getVersion().isPresent(), "table version isn't available!");
     return snapshotReport.getVersion().get();
   }
 

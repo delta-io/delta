@@ -35,7 +35,7 @@ public class PaginatedScanImpl implements PaginatedScan {
   private final ScanImpl baseScan;
   PaginationContext paginationContext;
 
-  public PaginatedScanImpl(ScanImpl baseScan, Optional<Row> pageTokenRowOpt, long pageSize) {
+  public PaginatedScanImpl(ScanImpl baseScan, long tableVersion, long pageSize, Optional<Row> pageTokenRowOpt) {
     this.baseScan = baseScan;
     this.pageTokenOpt = pageTokenRowOpt.map(PageToken::fromRow);
     this.pageSize = pageSize;
@@ -44,11 +44,11 @@ public class PaginatedScanImpl implements PaginatedScan {
             .map(
                 token ->
                     PaginationContext.forPageWithPageToken(
-                        pageSize, token, baseScan.getDataPath(), baseScan.getTableVersion()))
+                        pageSize, token, baseScan.getDataPath(), tableVersion))
             .orElseGet(
                 () ->
                     PaginationContext.forFirstPage(
-                        pageSize, baseScan.getDataPath(), baseScan.getTableVersion()));
+                        pageSize, baseScan.getDataPath(), tableVersion));
   }
 
   @Override
