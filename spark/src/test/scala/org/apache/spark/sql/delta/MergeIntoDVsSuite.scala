@@ -66,14 +66,14 @@ trait MergeIntoDVsMixin extends MergeIntoSQLMixin with DeletionVectorsTestUtils 
     "delta.dml.merge")
 }
 
-trait MergeIntoDVsOverrides extends MergeIntoDVsMixin {
+trait MergeIntoDVsPredicatePushdownDisabled extends MergeIntoDVsMixin {
   override def beforeAll(): Unit = {
     super.beforeAll()
     spark.conf.set(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key, "false")
   }
 }
 
-trait MergeIntoDVsTests extends MergeIntoDVsMixin with MergeIntoDVsOverrides {
+trait MergeIntoDVsTests extends MergeIntoDVsMixin {
   import testImplicits._
 
   private def assertOperationalDVMetrics(
@@ -255,7 +255,7 @@ trait MergeCDCWithDVsMixin extends QueryTest with MergeCDCMixin with DeletionVec
   }
 }
 
-trait MergeIntoDVsWithPredicatePushdownMixin extends MergeIntoDVsMixin {
+trait MergeIntoDVsPredicatePushdownEnabled extends MergeIntoDVsMixin {
   override def beforeAll(): Unit = {
     super.beforeAll()
     spark.conf.set(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key, "true")

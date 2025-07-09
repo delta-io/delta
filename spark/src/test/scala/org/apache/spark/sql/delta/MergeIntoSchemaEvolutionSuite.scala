@@ -29,21 +29,10 @@ import org.apache.spark.sql.types.{ArrayType, DateType, IntegerType, LongType, M
 import org.apache.spark.util.Utils
 
 /**
- * Trait collecting all other schema evolution test traits for convenience.
- */
-trait MergeIntoSchemaEvolutionAllTests extends MergeIntoSchemaEvolutionCoreTests
-  with MergeIntoSchemaEvolutionBaseTests
-  with MergeIntoSchemaEvolutionNotMatchedBySourceTests
-  with MergeIntoNestedStructEvolutionTests {
-    self: QueryTest with MergeIntoSchemaEvolutionMixin with MergeIntoTestUtils
-      with SharedSparkSession =>
-  }
-
-/**
  * Trait collecting schema evolution test runner methods and other helpers.
  */
-trait MergeIntoSchemaEvolutionMixin {
-  self: QueryTest with SharedSparkSession with MergeIntoTestUtils =>
+trait MergeIntoSchemaEvolutionMixin extends QueryTest {
+  self: SharedSparkSession with MergeIntoTestUtils =>
 
   /**
    * Test runner used by most non-nested schema evolution tests. Runs the MERGE operation once with
@@ -157,8 +146,8 @@ trait MergeIntoSchemaEvolutionMixin {
  * in other suites to get basic test coverage for schema evolution in combination with other
  * features, e.g. CDF, DVs.
  */
-trait MergeIntoSchemaEvolutionCoreTests extends QueryTest {
-  self: MergeIntoSchemaEvolutionMixin with MergeIntoTestUtils with SharedSparkSession =>
+trait MergeIntoSchemaEvolutionCoreTests extends MergeIntoSchemaEvolutionMixin {
+  self: MergeIntoTestUtils with SharedSparkSession =>
 
   import testImplicits._
 
@@ -225,8 +214,8 @@ trait MergeIntoSchemaEvolutionCoreTests extends QueryTest {
 /**
  * Trait collecting all base and misc tests for schema evolution.
  */
-trait MergeIntoSchemaEvolutionBaseTests {
-  self: QueryTest with MergeIntoSchemaEvolutionMixin with MergeIntoTestUtils
+trait MergeIntoSchemaEvolutionBaseTests extends MergeIntoSchemaEvolutionMixin {
+  self: MergeIntoTestUtils
     with SharedSparkSession =>
 
   import testImplicits._
@@ -1220,8 +1209,8 @@ trait MergeIntoSchemaEvolutionBaseTests {
 /**
  * Trait collecting tests for schema evolution with a NOT MATCHED BY SOURCE clause.
  */
-trait MergeIntoSchemaEvolutionNotMatchedBySourceTests {
-  self: MergeIntoSchemaEvolutionMixin with MergeIntoTestUtils with SharedSparkSession =>
+trait MergeIntoSchemaEvolutionNotMatchedBySourceTests extends MergeIntoSchemaEvolutionMixin {
+  self: MergeIntoTestUtils with SharedSparkSession =>
 
   import testImplicits._
 
@@ -1286,8 +1275,8 @@ trait MergeIntoSchemaEvolutionNotMatchedBySourceTests {
 /**
  * Trait collecting all tests for nested struct evolution.
  */
-trait MergeIntoNestedStructEvolutionTests {
-  self: MergeIntoSchemaEvolutionMixin with MergeIntoTestUtils with SharedSparkSession =>
+trait MergeIntoNestedStructEvolutionTests extends MergeIntoSchemaEvolutionMixin {
+  self: MergeIntoTestUtils with SharedSparkSession =>
 
   import testImplicits._
 

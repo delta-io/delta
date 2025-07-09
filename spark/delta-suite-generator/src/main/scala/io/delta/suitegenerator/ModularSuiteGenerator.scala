@@ -47,31 +47,24 @@ object ModularSuiteGenerator {
 
   def generateSuites(suitesWriter: SuitesWriter): Unit = {
     for ((group, testConfigs) <- SuiteGeneratorConfig.GROUPS_WITH_TEST_CONFIGS) {
-      val suites = List.newBuilder[TestSuite]
-      for {
+      val suites = for {
         testConfig <- testConfigs
         baseSuite <- testConfig.baseSuites
         dimensions <- testConfig.dimensionCombinations
-      } {
-        val valueCombinations = dimensions.foldLeft(Seq(Seq.empty[String])) {
+      } yield dimensions
+        // Generate all combinations of dimension traits
+        .foldLeft(List(List.empty[String])) {
           (acc, dimension) =>
-            for {
+            (if (dimension.isOptional) acc else List.empty) :::
+            (for {
               accValue <- acc
-              value <- dimension.values
-            } yield accValue :+ value
+              traitName <- dimension.traitNames
+            } yield accValue :+ traitName)
         }
-        for (values <- valueCombinations) {
-          val mixins = dimensions
-            .zip(values)
-            .map {
-              case (dimension, value) => s"${dimension.name}$value"
-            }
+        .filterNot(dimensionTraits => SuiteGeneratorConfig.isExcluded(baseSuite, dimensionTraits))
+        .map(dimensionTraits => generateCode(baseSuite, dimensionTraits))
 
-          suites += generateCode(baseSuite, mixins)
-        }
-      }
-
-      suitesWriter.writeGeneratedSuitesOfGroup(suites.result(), group)
+      suitesWriter.writeGeneratedSuitesOfGroup(suites.flatten, group)
     }
     suitesWriter.conclude()
   }
@@ -105,8 +98,8 @@ object ModularSuiteGenerator {
 
   private def generateCode(
     baseSuite: String,
-    mixins: Seq[String]): TestSuite = {
-    val allMixins = SuiteGeneratorConfig.applyCustomRulesAndGetAllMixins(baseSuite, mixins).toList
+    mixins: List[String]): TestSuite = {
+    val allMixins = SuiteGeneratorConfig.applyCustomRulesAndGetAllMixins(baseSuite, mixins)
     val suiteParents = (baseSuite :: allMixins).map(_.parse[Init].get)
 
     // Generate suite name by combining the names of base suite, base mixins, and dimensions
