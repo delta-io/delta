@@ -598,18 +598,7 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
     javafmtCheckSettings,
     scalafmtCheckSettings,
     // Skip kernel tests when running with Scala 2.13 due to compatibility issues
-    Test / sources := Def.taskDyn {
-      val scalaVer = scalaVersion.value
-      if (scalaVer.startsWith("2.13")) {
-        Def.task {
-          val log = streams.value.log
-          log.warn(s"Skipping kernelApi test compilation due to Scala 2.13 compatibility issues (current version: $scalaVer)")
-          Seq.empty[File]
-        }
-      } else {
-        Def.task((Test / sources).value)
-      }
-    }.value,
+    Test / skip := scalaVersion.value.startsWith("2.13"),
     Test / javaOptions ++= Seq("-ea"),
     libraryDependencies ++= Seq(
       "org.roaringbitmap" % "RoaringBitmap" % "0.9.25",
@@ -699,18 +688,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
     javafmtCheckSettings,
     scalafmtCheckSettings,
     // Skip kernel tests when running with Scala 2.13 due to compatibility issues
-    Test / sources := Def.taskDyn {
-      val scalaVer = scalaVersion.value
-      if (scalaVer.startsWith("2.13")) {
-        Def.task {
-          val log = streams.value.log
-          log.warn(s"Skipping kernelDefaults test compilation due to Scala 2.13 compatibility issues (current version: $scalaVer)")
-          Seq.empty[File]
-        }
-      } else {
-        Def.task((Test / sources).value)
-      }
-    }.value,
+    Test / skip := scalaVersion.value.startsWith("2.13"),
     Test / javaOptions ++= Seq("-ea"),
     // This allows generating tables with unsupported test table features in delta-spark
     Test / envVars += ("DELTA_TESTING", "1"),
