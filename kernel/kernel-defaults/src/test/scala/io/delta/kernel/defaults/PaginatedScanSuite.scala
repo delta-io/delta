@@ -142,42 +142,50 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
 
   // TODO: test call hasNext() twice
 
+  // File name constants for better readability
+  private val JSON_FILE_0 = "00000000000000000000.json"
+  private val JSON_FILE_1 = "00000000000000000001.json"
+  private val JSON_FILE_2 = "00000000000000000002.json"
+  private val JSON_FILE_11 = "00000000000000000011.json"
+  private val JSON_FILE_12 = "00000000000000000012.json"
+  private val CHECKPOINT_FILE_10 = "00000000000000000010.checkpoint.parquet"
+
   // Single JSON file test cases
   val singleJsonTestCases = Seq(
     SinglePageRequestTestCase(
       pageSize = 1,
       expFileCnt = 2,
       expBatchCnt = 1,
-      expLogFile = "00000000000000000000.json",
+      expLogFile = JSON_FILE_0,
       expRowIdx = 4),
     SinglePageRequestTestCase(
       pageSize = 2,
       expFileCnt = 2,
       expBatchCnt = 1,
-      expLogFile = "00000000000000000000.json",
+      expLogFile = JSON_FILE_0,
       expRowIdx = 4),
     SinglePageRequestTestCase(
       pageSize = 4,
       expFileCnt = 5,
       expBatchCnt = 2,
-      expLogFile = "00000000000000000000.json",
+      expLogFile = JSON_FILE_0,
       expRowIdx = 7),
     SinglePageRequestTestCase(
       pageSize = 7,
       expFileCnt = 5,
       expBatchCnt = 2,
-      expLogFile = "00000000000000000000.json",
+      expLogFile = JSON_FILE_0,
       expRowIdx = 7),
     SinglePageRequestTestCase(
       pageSize = 20,
       expFileCnt = 5,
       expBatchCnt = 2,
-      expLogFile = "00000000000000000000.json",
+      expLogFile = JSON_FILE_0,
       expRowIdx = 7))
 
   singleJsonTestCases.foreach { testCase =>
     test(s"Single JSON file - page size ${testCase.pageSize}") {
-      withKernelStaticTable("kernel-pagination-all-jsons") { tablePath =>
+      withGoldenTable("kernel-pagination-all-jsons") { tablePath =>
         /**
          *  Log Segment List:
          *  00000000000000000000.json contains 2 batches, 5 active AddFiles in total
@@ -203,42 +211,42 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
       pageSize = 1,
       expFileCnt = 4,
       expBatchCnt = 1,
-      expLogFile = "00000000000000000002.json",
+      expLogFile = JSON_FILE_2,
       expRowIdx = 4),
     SinglePageRequestTestCase(
       pageSize = 4,
       expFileCnt = 4,
       expBatchCnt = 1,
-      expLogFile = "00000000000000000002.json",
+      expLogFile = JSON_FILE_2,
       expRowIdx = 4),
     SinglePageRequestTestCase(
       pageSize = 5,
       expFileCnt = 5,
       expBatchCnt = 2,
-      expLogFile = "00000000000000000002.json",
+      expLogFile = JSON_FILE_2,
       expRowIdx = 5),
     SinglePageRequestTestCase(
       pageSize = 7,
       expFileCnt = 9,
       expBatchCnt = 3,
-      expLogFile = "00000000000000000001.json",
+      expLogFile = JSON_FILE_1,
       expRowIdx = 4),
     SinglePageRequestTestCase(
       pageSize = 8,
       expFileCnt = 9,
       expBatchCnt = 3,
-      expLogFile = "00000000000000000001.json",
+      expLogFile = JSON_FILE_1,
       expRowIdx = 4),
     SinglePageRequestTestCase(
       pageSize = 18,
       expFileCnt = 15,
       expBatchCnt = 6,
-      expLogFile = "00000000000000000000.json",
+      expLogFile = JSON_FILE_0,
       expRowIdx = 7))
 
   multipleJsonTestCases.foreach { testCase =>
     test(s"Multiple JSON files - page size ${testCase.pageSize}") {
-      withKernelStaticTable("kernel-pagination-all-jsons") { tablePath =>
+      withGoldenTable("kernel-pagination-all-jsons") { tablePath =>
         /**
          * Log Segment List:
          * 00000000000000000000.json : 8 rows (5 AddFile row + 3 non-AddFile rows)
@@ -282,30 +290,30 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
       pageSize = 1,
       expFileCnt = 5,
       expBatchCnt = 1,
-      expLogFile = "00000000000000000010.checkpoint.parquet",
+      expLogFile = CHECKPOINT_FILE_10,
       expRowIdx = 4),
     SinglePageRequestTestCase(
       pageSize = 10,
       expFileCnt = 10,
       expBatchCnt = 2,
-      expLogFile = "00000000000000000010.checkpoint.parquet",
+      expLogFile = CHECKPOINT_FILE_10,
       expRowIdx = 9),
     SinglePageRequestTestCase(
       pageSize = 12,
       expFileCnt = 15,
       expBatchCnt = 3,
-      expLogFile = "00000000000000000010.checkpoint.parquet",
+      expLogFile = CHECKPOINT_FILE_10,
       expRowIdx = 14),
     SinglePageRequestTestCase(
       pageSize = 100,
       expFileCnt = 22,
       expBatchCnt = 5,
-      expLogFile = "00000000000000000010.checkpoint.parquet",
+      expLogFile = CHECKPOINT_FILE_10,
       expRowIdx = 23))
 
   singleCheckpointTestCases.foreach { testCase =>
     test(s"Single checkpoint file - page size ${testCase.pageSize}") {
-      withKernelStaticTable("kernel-pagination-single-checkpoint") { tablePath =>
+      withGoldenTable("kernel-pagination-single-checkpoint") { tablePath =>
         /**
          * 00000000000000000010.checkpoint.parquet contains 5 batches, 22 active AddFiles, 24 rows
          * Batch 1: 5 rows, 5 selected AddFiles
@@ -333,42 +341,42 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
       pageSize = 1,
       expFileCnt = 2,
       expBatchCnt = 1,
-      expLogFile = "00000000000000000012.json",
+      expLogFile = JSON_FILE_12,
       expRowIdx = 2),
     SinglePageRequestTestCase(
       pageSize = 2,
       expFileCnt = 2,
       expBatchCnt = 1,
-      expLogFile = "00000000000000000012.json",
+      expLogFile = JSON_FILE_12,
       expRowIdx = 2),
     SinglePageRequestTestCase(
       pageSize = 3,
       expFileCnt = 4,
       expBatchCnt = 2,
-      expLogFile = "00000000000000000011.json",
+      expLogFile = JSON_FILE_11,
       expRowIdx = 2),
     SinglePageRequestTestCase(
       pageSize = 4,
       expFileCnt = 4,
       expBatchCnt = 2,
-      expLogFile = "00000000000000000011.json",
+      expLogFile = JSON_FILE_11,
       expRowIdx = 2),
     SinglePageRequestTestCase(
       pageSize = 8,
       expFileCnt = 9,
       expBatchCnt = 3,
-      expLogFile = "00000000000000000010.checkpoint.parquet",
+      expLogFile = CHECKPOINT_FILE_10,
       expRowIdx = 4),
     SinglePageRequestTestCase(
       pageSize = 18,
       expFileCnt = 19,
       expBatchCnt = 5,
-      expLogFile = "00000000000000000010.checkpoint.parquet",
+      expLogFile = CHECKPOINT_FILE_10,
       expRowIdx = 14))
 
   checkpointWithJsonTestCases.foreach { testCase =>
     test(s"Checkpoint with JSON files - page size ${testCase.pageSize}") {
-      withKernelStaticTable("kernel-pagination-single-checkpoint") { tablePath =>
+      withGoldenTable("kernel-pagination-single-checkpoint") { tablePath =>
         /**
          * for (i <- 0 until 10) {
          * val mode = if (i == 0) "overwrite" else "append"
