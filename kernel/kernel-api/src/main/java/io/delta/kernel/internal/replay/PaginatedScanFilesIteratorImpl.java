@@ -120,6 +120,7 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
     if (!baseFilteredScanFilesIter.hasNext()) return;
 
     final FilteredColumnarBatch batch = baseFilteredScanFilesIter.next();
+    // TODO: add comment we expect these two to be present, they are set in xxx
     checkArgument(batch.getFilePath().isPresent(), "file path doesn't exist!");
     checkArgument(
         batch.getPreComputedNumSelectedRows().isPresent(),
@@ -156,7 +157,9 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
 
   @Override
   public void close() throws IOException {
-    closed = true;
-    Utils.closeCloseables(baseFilteredScanFilesIter);
+    if (!closed) {
+      closed = true;
+      Utils.closeCloseables(baseFilteredScanFilesIter);
+    }
   }
 }
