@@ -29,7 +29,7 @@ import java.util.Map;
 @Experimental
 public interface TransactionV2 {
 
-  // TODO: Add other APIs as needed, e.g. gettting the schema, partitionCols, etc.
+  // TODO: Add other APIs as needed, e.g. getting the schema, partitionCols, etc.
 
   /**
    * Get the internal state of the transaction as an opaque {@link Row}.
