@@ -728,12 +728,14 @@ lazy val sparkDsv2 = (project in file("spark-dsv2"))
     name := "delta-spark-dsv2",
     commonSettings,
     javaOnlyReleaseSettings
-  ).configureUnidoc()
+  ).configureUnidoc(
+    generatedJavaDoc = getSparkVersion() == LATEST_RELEASED_SPARK_VERSION,
+    generateScalaDoc = getSparkVersion() == LATEST_RELEASED_SPARK_VERSION)
 
 lazy val spark = (project in file("spark-jar"))
   .dependsOn(sparkDsv1)
   .dependsOn(sparkDsv2)
-  .aggregate(sparkDsv1, sparkDsv2)
+  .aggregate(sparkDsv1, sparkDsv2, kernelApi, kernelDefaults)
   .settings (
     name := "delta-spark",
     commonSettings,
