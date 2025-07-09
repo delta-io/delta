@@ -20,6 +20,7 @@ package org.apache.spark.sql.delta.cdc
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
+import org.apache.spark.sql.delta.deletionvectors.MergePersistentDVDisabled
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -41,11 +42,8 @@ trait MergeCDCMixin extends SharedSparkSession
   with MergeIntoSQLTestUtils
   with DeltaDMLTestUtilsPathBased
   with DeltaColumnMappingTestUtils
-  with DeltaSQLCommandTest {
-
-  override protected def sparkConf: SparkConf = super.sparkConf
-    .set(DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS.key, "false")
-}
+  with DeltaSQLCommandTest
+  with MergePersistentDVDisabled
 
 /**
  * Tests for MERGE INTO in CDC output mode.

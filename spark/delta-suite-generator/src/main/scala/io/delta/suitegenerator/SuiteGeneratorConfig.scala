@@ -16,6 +16,8 @@
 
 package io.delta.suitegenerator
 
+import scala.collection.mutable.ListBuffer
+
 /**
  * Represents a configuration trait that changes how the tests are executed. This can include Spark
  * configs, overrides, test excludes, and more.
@@ -23,15 +25,25 @@ package io.delta.suitegenerator
  * @param values the possible values for this dimension, which when prepended with the name should
  * equal to the desired trait name that needs to be mixed in to generated suites.
  */
-abstract class Dimension(val name: String, val values: Seq[String]) {
+abstract class Dimension(val name: String, val values: List[String]) {
   /**
-   * Creates a sequence of all dimension combinations where each combination contains this dimension
-   * and at most one of the provided dimensions.
+   * All trait names for this dimension
    */
-  def selfAndCombineWithOneOf(dimensions: Dimension*): Seq[Seq[Dimension]] = {
-    Seq(this) +: dimensions.map { dimension =>
-      Seq(this, dimension)
-    }
+  lazy val traitNames: List[String] = values.map(value => name + value)
+
+  val isOptional: Boolean = false
+
+  /**
+   * same [[Dimension]] with an additional state of not being added to the suite.
+   */
+  def asOptional: Dimension = new OptionalDimension(name, values)
+
+  private class OptionalDimension(
+    override val name: String,
+    override val values: List[String]
+  ) extends Dimension(name, values) {
+    override val isOptional: Boolean = true
+    override def asOptional: Dimension = this
   }
 }
 
@@ -41,7 +53,7 @@ abstract class Dimension(val name: String, val values: Seq[String]) {
  */
 case class DimensionWithMultipleValues(
     override val name: String,
-    override val values: Seq[String]
+    override val values: List[String]
 ) extends Dimension(name, values)
 
 /**
@@ -50,7 +62,7 @@ case class DimensionWithMultipleValues(
 case class DimensionMixin(
     override val name: String,
     suffix: String = "Mixin"
-) extends Dimension(name, Seq(suffix)) {
+) extends Dimension(name, List(suffix)) {
   lazy val traitName: String = name + suffix
 }
 
@@ -58,13 +70,13 @@ case class DimensionMixin(
  * Main configuration class for the suite generator. It allows defining a set of base suites and the
  * dimension combinations that should be used to generate the test configurations. Suites are
  * generated for each base suite and for each value combination of the dimension combinations.
- * @param baseSuites a sequence of base class or trait names that contains the actual test cases.
+ * @param baseSuites a list of base class or trait names that contains the actual test cases.
  * Ideally, these should not contain any configuration logic, and instead rely on [[Dimension]]s to
  * make the necessary setup.
  */
 case class TestConfig(
-    baseSuites: Seq[String],
-    dimensionCombinations: Seq[Seq[Dimension]] = Seq.empty
+    baseSuites: List[String],
+    dimensionCombinations: List[List[Dimension]] = List.empty
 )
 
 object SuiteGeneratorConfig {
@@ -73,85 +85,117 @@ object SuiteGeneratorConfig {
     val NAME_BASED = DimensionMixin("DeltaDMLTestUtils", suffix = "NameBased")
     val MERGE_SQL = DimensionMixin("MergeIntoSQL")
     val MERGE_SCALA = DimensionMixin("MergeIntoScala")
-    val MERGE_CDC = DimensionMixin("MergeCDC")
     val MERGE_DVS = DimensionMixin("MergeIntoDVs")
-    val MERGE_CDC_DVS = DimensionMixin("MergeCDCWithDVs")
-    val MERGE_DVS_OVERRIDES = DimensionMixin("MergeIntoDVs", suffix = "Overrides")
-    val MERGE_DVS_PREDPUSH = DimensionMixin("MergeIntoDVsWithPredicatePushdown")
+    val MERGE_DVS_PREDPUSH = DimensionWithMultipleValues(
+      "MergeIntoDVsPredicatePushdown", List("Disabled", "Enabled"))
     val CDC = DimensionMixin("CDC", suffix = "Enabled")
+    val MERGE_PERSISTENT_DV_OFF = DimensionMixin("MergePersistentDV", suffix = "Disabled")
     val COLUMN_MAPPING = DimensionWithMultipleValues(
-      "DeltaColumnMapping", Seq("EnableIdMode", "EnableNameMode"))
-    val MERGE_SQL_COLMAP = DimensionMixin("MergeIntoSQLColumnMapping", suffix = "Overrides")
+      "DeltaColumnMapping", List("EnableIdMode", "EnableNameMode"))
   }
 
   private object Tests {
-    val MERGE_BASE = Seq(
+    val MERGE_BASE = List(
       "MergeIntoBasicTests",
       "MergeIntoTempViewsTests",
       "MergeIntoNestedDataTests",
       "MergeIntoUnlimitedMergeClausesTests",
       "MergeIntoSuiteBaseMiscTests",
       "MergeIntoNotMatchedBySourceSuite",
-      "MergeIntoSchemaEvolutionAllTests"
+      "MergeIntoSchemaEvolutionCoreTests",
+      "MergeIntoSchemaEvolutionBaseTests",
+      "MergeIntoSchemaEvolutionNotMatchedBySourceTests",
+      "MergeIntoNestedStructEvolutionTests"
     )
-    val MERGE_SQL = Seq(
+    val MERGE_SQL = List(
       "MergeIntoSQLTests",
       "MergeIntoSQLNondeterministicOrderTests"
     )
   }
 
+
+  implicit class DimensionListExt(val commonDims: List[Dimension]) extends AnyVal {
+    /**
+     * @return a new list of dimension combinations where each combination has the
+     * [[commonDims]] prepended to it.
+     */
+    def prependToAll(dimensionCombinations: List[Dimension]*): List[List[Dimension]] = {
+      dimensionCombinations.toList.map(commonDims ::: _)
+    }
+  }
+
   /**
    * All fileName, [[TestConfig]] list groupings. The generated suites of each group will be written
-   * to a file named after the group name.
+   * to a file named after the group name. Keep in mind that [[isExcluded]] can be used to filter
+   * out some of the test configurations, so defining a configuration here does not guarantee
+   * generation of a suite for it.
    */
-  // scalastyle:off line.size.limit
-  lazy val GROUPS_WITH_TEST_CONFIGS: Seq[(String, Seq[TestConfig])] = Seq(
-    "GeneratedSuites" -> Seq(
+  lazy val GROUPS_WITH_TEST_CONFIGS: List[(String, List[TestConfig])] = List(
+    "GeneratedSuites" -> List(
       TestConfig(
-        // Exclude tempViews, because DeltaTable.forName does not resolve them correctly, so no one
-        // can use them anyway with the Scala API.
-        "MergeIntoScalaTests" +: Tests.MERGE_BASE.filterNot(_ == "MergeIntoTempViewsTests"),
-        Seq(
-          Seq(Dims.MERGE_SCALA)
+        "MergeIntoScalaTests" :: Tests.MERGE_BASE,
+        List(
+          List(Dims.MERGE_SCALA)
         )
       ),
       TestConfig(
-        Tests.MERGE_SQL ++: Tests.MERGE_BASE,
-        Seq(
-          Seq(Dims.MERGE_SQL, Dims.PATH_BASED),
-          Seq(Dims.MERGE_SQL, Dims.NAME_BASED),
-          Seq(Dims.MERGE_SQL, Dims.PATH_BASED, Dims.COLUMN_MAPPING, Dims.MERGE_SQL_COLMAP)
+        "MergeCDCTests" :: "MergeIntoDVsTests" :: Tests.MERGE_SQL ::: Tests.MERGE_BASE,
+        List(Dims.MERGE_SQL).prependToAll(
+          List(Dims.NAME_BASED),
+          List(Dims.PATH_BASED, Dims.COLUMN_MAPPING.asOptional),
+          List(Dims.PATH_BASED, Dims.MERGE_DVS_PREDPUSH),
+          List(Dims.PATH_BASED, Dims.CDC, Dims.MERGE_DVS_PREDPUSH.asOptional)
         )
       ),
       TestConfig(
-        "MergeIntoDVsTests" +: Tests.MERGE_SQL ++: Tests.MERGE_BASE,
-        Seq(
-          Seq(Dims.MERGE_SQL, Dims.PATH_BASED, Dims.MERGE_DVS, Dims.MERGE_DVS_OVERRIDES),
-          Seq(Dims.MERGE_SQL, Dims.PATH_BASED, Dims.MERGE_DVS_PREDPUSH)
-        )
-      ),
-      TestConfig(
-        "MergeCDCTests" +: "MergeIntoDVsTests" +: Tests.MERGE_SQL ++: Tests.MERGE_BASE,
-        Seq(
-          Seq(Dims.MERGE_SQL, Dims.CDC, Dims.MERGE_CDC, Dims.MERGE_DVS, Dims.MERGE_CDC_DVS),
-          Seq(Dims.MERGE_SQL, Dims.CDC, Dims.MERGE_CDC, Dims.MERGE_DVS_PREDPUSH, Dims.MERGE_CDC_DVS)
-        )
-      ),
-      TestConfig(
-        "MergeCDCTests" +: Tests.MERGE_SQL ++: Tests.MERGE_BASE,
-        Seq(
-          Seq(Dims.MERGE_SQL, Dims.CDC, Dims.MERGE_CDC)
+        List("MergeIntoMaterializeSourceTests"),
+        List(
+          List(Dims.MERGE_PERSISTENT_DV_OFF)
         )
       )
     )
   )
-  // scalastyle:on line.size.limit
+
+  /**
+   * Decides if a suite with the given base test and mixins should be generated or not. This is used
+   * to exclude certain combinations of base suites and dimensions that are known to not work
+   * together, or it can also be used to enforce presence of some dimensions for a certain base
+   * suite.
+   */
+  def isExcluded(base: String, mixins: List[String]): Boolean = {
+    base match {
+      // Exclude tempViews, because DeltaTable.forName does not resolve them correctly, so no one
+      // can use them anyway with the Scala API.
+      case "MergeIntoTempViewsTests" => mixins.contains(Dims.MERGE_SCALA.traitName)
+      // The following tests only make sense if the dimension is present
+      case "MergeCDCTests" => !mixins.contains(Dims.CDC.traitName)
+      case "MergeIntoDVsTests" => !Dims.MERGE_DVS_PREDPUSH.traitNames.exists(mixins.contains)
+      case _ => false
+    }
+  }
 
   /**
    * Used to add custom traits to some combinations of base suites and dimensions.
    * @return all traits that needs to be extended for this test combination (incl. provided mixins).
    */
-  def applyCustomRulesAndGetAllMixins(base: String, mixins: Seq[String]): Seq[String] = {
-    mixins
+  def applyCustomRulesAndGetAllMixins(base: String, mixins: List[String]): List[String] = {
+    var finalMixins = new ListBuffer[String]
+    finalMixins ++= mixins
+
+    if (mixins.contains(Dims.MERGE_SQL.traitName)) {
+      if (Dims.COLUMN_MAPPING.traitNames.exists(mixins.contains)) {
+        finalMixins += "MergeIntoSQLColumnMappingOverrides"
+      }
+
+      if (mixins.contains(Dims.CDC.traitName)) {
+        finalMixins += "MergeCDCMixin"
+        if (Dims.MERGE_DVS_PREDPUSH.traitNames.exists(mixins.contains) ||
+            mixins.contains(Dims.MERGE_DVS.traitName)) {
+          finalMixins += "MergeCDCWithDVsMixin"
+        }
+      }
+    }
+
+    finalMixins.result()
   }
 }
