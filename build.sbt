@@ -610,14 +610,6 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
         Def.task((Test / sources).value)
       }
     }.value,
-    Test / test := Def.taskDyn {
-      val scalaVer = scalaVersion.value
-      if (scalaVer.startsWith("2.13")) {
-        Def.task(()) // Tests are already skipped via sources
-      } else {
-        Def.task((Test / test).value)
-      }
-    }.value,
     Test / javaOptions ++= Seq("-ea"),
     libraryDependencies ++= Seq(
       "org.roaringbitmap" % "RoaringBitmap" % "0.9.25",
@@ -717,14 +709,6 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
         }
       } else {
         Def.task((Test / sources).value)
-      }
-    }.value,
-    Test / test := Def.taskDyn {
-      val scalaVer = scalaVersion.value
-      if (scalaVer.startsWith("2.13")) {
-        Def.task(()) // Tests are already skipped via sources
-      } else {
-        Def.task((Test / test).value)
       }
     }.value,
     Test / javaOptions ++= Seq("-ea"),
