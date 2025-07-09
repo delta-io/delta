@@ -120,7 +120,9 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
     if (!baseFilteredScanFilesIter.hasNext()) return;
 
     final FilteredColumnarBatch batch = baseFilteredScanFilesIter.next();
-    // TODO: add comment we expect these two to be present, they are set in xxx
+    // FilePath and pre-computed number of selected rows are expected to be present; both are
+    // computed and set in ActiveAddFilesIterator (when building FilteredColumnarBatch from
+    // ActionWrapper)
     checkArgument(batch.getFilePath().isPresent(), "file path doesn't exist!");
     checkArgument(
         batch.getPreComputedNumSelectedRows().isPresent(),

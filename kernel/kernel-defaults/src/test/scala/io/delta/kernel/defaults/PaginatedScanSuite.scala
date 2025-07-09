@@ -30,16 +30,12 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
       expectedLogFileName: String,
       expectedRowIndex: Int)
 
-  /** Custom engine with default customized batch size */
+  /** Custom engine with customized batch size */
   private val customEngine: DefaultEngine = {
-    val DEFAULT_BATCH_SIZE = 5
+    val BATCH_SIZE = 5
     val hadoopConf = new org.apache.hadoop.conf.Configuration()
-    hadoopConf.set(
-      "delta.kernel.default.json.reader.batch-size",
-      DEFAULT_BATCH_SIZE.toString)
-    hadoopConf.set(
-      "delta.kernel.default.parquet.reader.batch-size",
-      DEFAULT_BATCH_SIZE.toString)
+    hadoopConf.set("delta.kernel.default.json.reader.batch-size", BATCH_SIZE.toString)
+    hadoopConf.set("delta.kernel.default.parquet.reader.batch-size", BATCH_SIZE.toString)
     DefaultEngine.create(hadoopConf)
   }
 
@@ -63,18 +59,17 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
   }
 
   private def collectPaginatedBatches(
-      paginatedIter: PaginatedScanFilesIterator)
-      : collection.mutable.Buffer[FilteredColumnarBatch] = {
-    val batches = collection.mutable.Buffer[FilteredColumnarBatch]()
+      paginatedIter: PaginatedScanFilesIterator): Seq[FilteredColumnarBatch] = {
+    val buffer = collection.mutable.Buffer[FilteredColumnarBatch]()
     while (paginatedIter.hasNext) {
       val batch = paginatedIter.next()
-      batches += batch
+      buffer += batch
     }
-    batches
+    buffer
   }
 
   private def validatePageResults(
-      batches: collection.mutable.Buffer[FilteredColumnarBatch],
+      batches: Seq[FilteredColumnarBatch],
       expectedFileCount: Int,
       expectedBatchCount: Int,
       testName: String): Unit = {
