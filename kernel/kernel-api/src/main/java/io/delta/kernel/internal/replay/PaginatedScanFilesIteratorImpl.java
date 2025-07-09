@@ -16,6 +16,7 @@
 package io.delta.kernel.internal.replay;
 
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+import static io.delta.kernel.internal.util.Preconditions.checkState;
 
 import io.delta.kernel.Meta;
 import io.delta.kernel.PaginatedScanFilesIterator;
@@ -105,9 +106,7 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
 
   @Override
   public boolean hasNext() {
-    if (closed) {
-      throw new IllegalStateException("Can't call `hasNext` on a closed iterator.");
-    }
+    checkState(!closed, "Can't call `hasNext` on a closed iterator.");
     if (!currentBatch.isPresent()) {
       prepareNext();
     }
@@ -146,9 +145,7 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
 
   @Override
   public FilteredColumnarBatch next() {
-    if (closed) {
-      throw new IllegalStateException("Can't call `next` on a closed iterator.");
-    }
+    checkState(!closed, "Can't call `next` on a closed iterator.");
     if (!hasNext()) {
       throw new NoSuchElementException();
     }

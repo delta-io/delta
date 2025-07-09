@@ -157,7 +157,13 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
       // Change page sizes to test various edge cases,
       // for example, batch size goes over page size limit
       val testCases = Seq(
-        SinglePageRequestTestCase("Page size 1", 1, 2, 1, JSONFile0, 4),
+        SinglePageRequestTestCase(
+          "Page size 1",
+          pageSize = 1,
+          expectedFileCount = 2,
+          expectedBatchCount = 1,
+          expectedLogFileName = JSONFile0,
+          expectedRowIndex = 4),
         SinglePageRequestTestCase("Page size 2", 2, 2, 1, JSONFile0, 4),
         SinglePageRequestTestCase("Page size 4", 4, 5, 2, JSONFile0, 7),
         SinglePageRequestTestCase("Page size 7", 7, 5, 2, JSONFile0, 7),
@@ -205,7 +211,13 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
       val JSONFile1 = "00000000000000000001.json"
       val JSONFile2 = "00000000000000000002.json"
       val testCases = Seq(
-        SinglePageRequestTestCase("Page size 1", 1, 4, 1, JSONFile2, 4),
+        SinglePageRequestTestCase(
+          "Page size 1",
+          pageSize = 1,
+          expectedFileCount = 4,
+          expectedBatchCount = 1,
+          expectedLogFileName = JSONFile2,
+          expectedRowIndex = 4),
         SinglePageRequestTestCase("Page size 4", 4, 4, 1, JSONFile2, 4),
         SinglePageRequestTestCase("Page size 5", 5, 5, 2, JSONFile2, 5),
         SinglePageRequestTestCase("Page size 7", 7, 9, 3, JSONFile1, 4),
@@ -231,7 +243,13 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
       val checkpoint10 = "00000000000000000010.checkpoint.parquet"
 
       val testCases = Seq(
-        SinglePageRequestTestCase("Page size 1", 1, 5, 1, checkpoint10, 4),
+        SinglePageRequestTestCase(
+          "Page size 1",
+          pageSize = 1,
+          expectedFileCount = 5,
+          expectedBatchCount = 1,
+          expectedLogFileName = checkpoint10,
+          expectedRowIndex = 4),
         SinglePageRequestTestCase("Page size 10", 10, 10, 2, checkpoint10, 9),
         SinglePageRequestTestCase("Page size 12", 12, 15, 3, checkpoint10, 14),
         SinglePageRequestTestCase("Large Page size", 100, 22, 5, checkpoint10, 23))
@@ -290,7 +308,13 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
       val JSONFile12 = "00000000000000000012.json"
 
       val testCases = Seq(
-        SinglePageRequestTestCase("Page size 1", 1, 2, 1, JSONFile12, 2),
+        SinglePageRequestTestCase(
+          "Page size 1",
+          pageSize = 1,
+          expectedFileCount = 2,
+          expectedBatchCount = 1,
+          expectedLogFileName = JSONFile12,
+          expectedRowIndex = 2),
         SinglePageRequestTestCase("Page size 2", 2, 2, 1, JSONFile12, 2),
         SinglePageRequestTestCase("Page size 3", 3, 4, 2, JSONFile11, 2),
         SinglePageRequestTestCase("Page size 4", 4, 4, 2, JSONFile11, 2),
