@@ -974,17 +974,10 @@ lazy val icebergShaded = (project in file("icebergShaded"))
 
     // Compile, patch and generated Iceberg JARs
     generateIcebergJarsTask := {
-      // Skip iceberg JAR generation on Java 17+ since Apache Iceberg only supports Java 8/11
-      if (javaVersionInt >= 17) {
-        // scalastyle:off println
-        println(s"Skipping iceberg JAR generation (Java $javaVersionInt not supported by Apache Iceberg)")
-        // scalastyle:on println
-      } else {
-        import sys.process._
-        val scriptPath = baseDirectory.value / "generate_iceberg_jars.py"
-        // Download iceberg code in `iceberg_src` dir and generate the JARs in `lib` dir
-        Seq("python3", scriptPath.getPath)!
-      }
+      import sys.process._
+      val scriptPath = baseDirectory.value / "generate_iceberg_jars.py"
+      // Download iceberg code in `iceberg_src` dir and generate the JARs in `lib` dir
+      Seq("python3", scriptPath.getPath)!
     },
     Compile / unmanagedJars := (Compile / unmanagedJars).dependsOn(generateIcebergJarsTask).value,
     cleanFiles += baseDirectory.value / "iceberg_src",
