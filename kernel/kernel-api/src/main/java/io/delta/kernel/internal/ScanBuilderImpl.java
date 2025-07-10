@@ -32,6 +32,7 @@ import java.util.Optional;
 public class ScanBuilderImpl implements ScanBuilder {
 
   private final Path dataPath;
+  private final long tableVersion;
   private final Protocol protocol;
   private final Metadata metadata;
   private final StructType snapshotSchema;
@@ -43,12 +44,14 @@ public class ScanBuilderImpl implements ScanBuilder {
 
   public ScanBuilderImpl(
       Path dataPath,
+      long tableVersion,
       Protocol protocol,
       Metadata metadata,
       StructType snapshotSchema,
       LogReplay logReplay,
       SnapshotReport snapshotReport) {
     this.dataPath = dataPath;
+    this.tableVersion = tableVersion;
     this.protocol = protocol;
     this.metadata = metadata;
     this.snapshotSchema = snapshotSchema;
@@ -90,6 +93,7 @@ public class ScanBuilderImpl implements ScanBuilder {
   @Override
   public PaginatedScan buildPaginated(long pageSize, Optional<Row> pageTokenRowOpt) {
     ScanImpl baseScan = this.build();
-    return new PaginatedScanImpl(baseScan, pageTokenRowOpt, pageSize);
+    return new PaginatedScanImpl(
+        baseScan, dataPath.toString(), tableVersion, pageSize, pageTokenRowOpt);
   }
 }

@@ -144,6 +144,18 @@ public class PageToken {
     return lastReadSidecarFileIdx;
   }
 
+  public String getTablePath() {
+    return tablePath;
+  }
+
+  public long getTableVersion() {
+    return tableVersion;
+  }
+
+  public String getKernelVersion() {
+    return kernelVersion;
+  }
+
   @Override
   public boolean equals(Object obj) {
     if (this == obj) {

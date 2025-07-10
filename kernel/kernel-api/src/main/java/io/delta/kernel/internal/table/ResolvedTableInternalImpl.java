@@ -112,7 +112,13 @@ public class ResolvedTableInternalImpl implements ResolvedTableInternal {
   @Override
   public ScanBuilder getScanBuilder() {
     return new ScanBuilderImpl(
-        new Path(getPath()), getProtocol(), getMetadata(), getSchema(), logReplay, snapshotReport);
+        new Path(getPath()),
+        version,
+        getProtocol(),
+        getMetadata(),
+        getSchema(),
+        logReplay,
+        snapshotReport);
   }
 
   ///////////////////////////////////////
