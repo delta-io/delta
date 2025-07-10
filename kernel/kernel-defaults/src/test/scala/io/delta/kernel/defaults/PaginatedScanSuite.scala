@@ -206,7 +206,6 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
         tablePath = tablePath,
         tableVersionOpt = Optional.of(0L),
         testCase)
-
     }
   }
 
