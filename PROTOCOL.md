@@ -1312,7 +1312,7 @@ Writers that do not implement VACUUM do not need to change anything and can safe
 For tables with Vacuum Protocol Check enabled, readers don’t need to understand or change anything new; they just need to acknowledge the feature exists.
 
 Making this feature a ReaderWriter feature (rather than solely a Writer feature) ensures that:
-- Older vacuum implementations, which only performed the Reader protocol check and lacked the Writer protocol check, will begin to fail if the table has `vacuumProtocolCheck` enabled.This change allows future writer features to have greater flexibility and safety in managing files within the table directory, eliminating the risk of older Vacuum implementations (that lack the Writer protocol check) accidentally deleting relevant files.
+- Older vacuum implementations, which only performed the Reader protocol check and lacked the Writer protocol check, will begin to fail if the table has `vacuumProtocolCheck` enabled. This change allows future writer features to have greater flexibility and safety in managing files within the table directory, eliminating the risk of older Vacuum implementations (that lack the Writer protocol check) accidentally deleting relevant files.
 
 # Clustered Table
 
@@ -1341,7 +1341,7 @@ When the Clustered Table is supported (when the `writerFeatures` field of a tabl
   - A clustering implementation is free to add additional information such as adding a new user-controlled metadata domain to keep track of its metadata.
 - Writers must not define clustered and partitioned table at the same time.
 
-The following is an example for the `domainMetadata` action defintion of a table that leverages column mapping.
+The following is an example for the `domainMetadata` action definition of a table that leverages column mapping.
 ```json
 {
   "domainMetadata": {
@@ -1511,7 +1511,7 @@ Field Name | optional/required | Description
 `fieldPath`| optional | When updating the type of a map key/value or array element only: the path from the struct field holding the metadata to the map key/value or array element that was updated.
 
 The `fieldPath` value is "key", "value" and "element"  when updating resp. the type of a map key, map value and array element.
-The `fieldPath` value for nested maps and nested arrays are prefixed by their parents's path, separated by dots.
+The `fieldPath` value for nested maps and nested arrays are prefixed by their parents' path, separated by dots.
 
 The following is an example for the definition of a column that went through two type changes:
 ```json
@@ -1614,7 +1614,7 @@ When Type Widening is supported (when the `readerFeatures` field of a table's `p
 This section documents additional requirements that writers must follow in order to preserve some of the higher level guarantees that Delta provides.
 
 ## Creation of New Log Entries
- - Writers MUST never overwrite an existing log entry. When ever possible they should use atomic primitives of the underlying filesystem to ensure concurrent writers do not overwrite each others entries.
+ - Writers MUST never overwrite an existing log entry. When ever possible they should use atomic primitives of the underlying filesystem to ensure concurrent writers do not overwrite each other's entries.
 
 ## Consistency Between Table Metadata and Data Files
  - Any column that exists in a data file present in the table MUST also be present in the metadata of the table.
