@@ -20,6 +20,7 @@ import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
+import java.util.Optional;
 
 /** Implementation of {@link PaginatedScanFilesIterator} */
 public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterator {
@@ -45,7 +46,7 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
   }
 
   @Override
-  public Row getCurrentPageToken() {
+  public Optional<Row> getCurrentPageToken() {
     throw new UnsupportedOperationException("Not implemented");
   }
 

@@ -19,6 +19,8 @@ import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.utils.CloseableIterator;
 
+import java.util.Optional;
+
 /**
  * An iterator over {@link FilteredColumnarBatch}, each representing a batch of Scan Files in a
  * paginated scan. This iterator also exposes the page token that can be used to resume the scan
@@ -39,5 +41,5 @@ public interface PaginatedScanFilesIterator extends CloseableIterator<FilteredCo
    * the next unconsumed {@link FilteredColumnarBatch}. This method will return Option.empty() if
    * all data in the Scan is consumed (no more non-empty pages remain).
    */
-  Row getCurrentPageToken();
+  Optional<Row> getCurrentPageToken();
 }
