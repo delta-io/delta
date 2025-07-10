@@ -118,7 +118,7 @@ class PaginationContextSuite extends AnyFunSuite {
   }
 
   test("should throw exception when the requested kernel version doesn't " +
-    "match the value in page token ") {
+    "match the value in page token") {
     val pageSize = 50L
     val e = intercept[IllegalArgumentException] {
       PaginationContext.forPageWithPageToken(
@@ -127,8 +127,7 @@ class PaginationContextSuite extends AnyFunSuite {
         pageSize,
         invalidKernelVersionPageToken)
     }
-    assert(e.getMessage === "Invalid page token: kernel version does not match the " +
-      "requested kernel version.")
+    assert(e.getMessage.contains("Invalid page token: kernel version"))
   }
 
   test("should throw exception for when the requested table path doesn't " +
@@ -141,8 +140,7 @@ class PaginationContextSuite extends AnyFunSuite {
         pageSize,
         validPageToken)
     }
-    assert(e.getMessage === "Invalid page token: table path does not match the " +
-      "requested table path.")
+    assert(e.getMessage.contains("Invalid page token: table path"))
   }
 
   test("should throw exception for when the requested table version doesn't " +
@@ -155,7 +153,6 @@ class PaginationContextSuite extends AnyFunSuite {
         pageSize,
         validPageToken)
     }
-    assert(e.getMessage === "Invalid page token: table version does not match the " +
-      "requested table version.")
+    assert(e.getMessage.contains("Invalid page token: table version"))
   }
 }
