@@ -47,6 +47,9 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
    */
   private final CloseableIterator<FilteredColumnarBatch> baseFilteredScanFilesIter;
 
+  /** Pagination Context that carries page token and page size info. */
+  private final PaginationContext paginationContext;
+
   /** Maximum number of ScanFiles to include in current page */
   private final long pageSize;
 
@@ -87,18 +90,18 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
       PaginationContext paginationContext) {
     this.baseFilteredScanFilesIter = baseFilteredScanFilesIter;
     this.pageSize = paginationContext.getPageSize();
+    this.paginationContext = paginationContext;
   }
 
   @Override
   public Row getCurrentPageToken() {
-    // TODO: change values for data validation here
     return new PageToken(
             lastReadLogFilePath,
             lastReturnedRowIndex,
             Optional.empty() /* sidecar file index */,
             Meta.KERNEL_VERSION,
-            "fake/table/path" /* table path */,
-            -1 /* table version */,
+            paginationContext.getTablePath() /* table path */,
+            paginationContext.getTableVersion() /* table version */,
             -1 /* predicate hash */,
             -1 /* log segment hash */)
         .toRow();

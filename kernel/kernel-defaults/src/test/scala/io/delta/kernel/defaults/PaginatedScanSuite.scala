@@ -102,10 +102,11 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
       s"$totalFileCountsReturned")
   }
 
-  private def validatePageToken(pageTokenRow: Row,
-                                expectedLogFileName: String,
-                                expectedRowIndex: Long,
-                                testName: String): Unit = {
+  private def validatePageToken(
+      pageTokenRow: Row,
+      expectedLogFileName: String,
+      expectedRowIndex: Long,
+      testName: String): Unit = {
     val lastReadLogFilePath = PageToken.fromRow(pageTokenRow).getLastReadLogFilePath
     val lastReturnedRowIndex = PageToken.fromRow(pageTokenRow).getLastReturnedRowIndex
 
@@ -127,13 +128,13 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
       pageSize = testCase.pageSize)
     val paginatedIter = paginatedScan.getScanFiles(customEngine)
     val returnedBatchesInPage = collectPaginatedBatches(paginatedIter)
-    val pageTokenForSecondPage = paginatedIter.getCurrentPageToken
+    val nextPageToken = paginatedIter.getCurrentPageToken
     paginatedIter.close()
 
     validatePageResults(returnedBatchesInPage, testCase.expFileCnt, testCase.expBatchCnt, testName)
-    validatePageToken(pageTokenForSecondPage, testCase.expLogFile, testCase.expRowIdx, testName)
+    validatePageToken(nextPageToken, testCase.expLogFile, testCase.expRowIdx, testName)
 
-    pageTokenForSecondPage
+    nextPageToken
   }
 
   // TODO: test call hasNext() twice
@@ -287,7 +288,7 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
       expRowIdx = 7)).foreach { testCase =>
     test(s"Multiple JSON files - page size ${testCase.pageSize}") {
       val tablePath = getTestResourceFilePath("kernel-pagination-all-jsons")
-      val pageTokenForSecondPage = runSinglePaginationTestCase(
+      val nextPageToken = runSinglePaginationTestCase(
         testName = s"Multiple JSON files - page size ${testCase.pageSize}",
         tablePath = tablePath,
         tableVersionOpt = Optional.empty(),
