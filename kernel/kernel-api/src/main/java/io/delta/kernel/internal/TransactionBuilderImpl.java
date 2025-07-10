@@ -51,6 +51,7 @@ import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.snapshot.SnapshotHint;
 import io.delta.kernel.internal.tablefeatures.TableFeature;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
+import io.delta.kernel.internal.transaction.ImmutableInternalTransactionState;
 import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
 import io.delta.kernel.internal.util.SchemaUtils;
@@ -254,28 +255,28 @@ public class TransactionBuilderImpl implements TransactionBuilder {
             || initialClusteringColumns.isPresent() // clustering columns changed
             || enablesDomainMetadataSupport; // domain metadata support added
 
-    if (!needsMetadataOrProtocolUpdate) {
-      // TODO: fix this https://github.com/delta-io/delta/issues/4713
-      // Return early if there is no metadata or protocol updates and isCreateOrReplace=false
-      new TransactionImpl(
-          false, // isCreateOrReplace
-          table.getDataPath(),
-          table.getLogPath(),
-          latestSnapshot.get(),
-          engineInfo,
-          operation,
-          latestSnapshot.get().getProtocol(), // reuse latest protocol
-          latestSnapshot.get().getMetadata(), // reuse latest metadata
-          setTxnOpt,
-          // TODO: not yet initialized, fix it as part of #4713
-          resolvedClusteringColumns, /* clustering cols=empty */
-          false /* shouldUpdateClusteringDomainMetadata=false */,
-          false /* shouldUpdateMetadata=false */,
-          false /* shouldUpdateProtocol=false */,
-          maxRetries,
-          logCompactionInterval,
-          table.getClock());
-    }
+    //    if (!needsMetadataOrProtocolUpdate) {
+    //      // TODO: fix this https://github.com/delta-io/delta/issues/4713
+    //      // Return early if there is no metadata or protocol updates and isCreateOrReplace=false
+    //      new TransactionImpl(
+    //          false, // isCreateOrReplace
+    //          table.getDataPath(),
+    //          table.getLogPath(),
+    //          latestSnapshot.get(),
+    //          engineInfo,
+    //          operation,
+    //          latestSnapshot.get().getProtocol(), // reuse latest protocol
+    //          latestSnapshot.get().getMetadata(), // reuse latest metadata
+    //          setTxnOpt,
+    //          // TODO: not yet initialized, fix it as part of #4713
+    //          resolvedClusteringColumns, /* clustering cols=empty */
+    //          false /* shouldUpdateClusteringDomainMetadata=false */,
+    //          false /* shouldUpdateMetadata=false */,
+    //          false /* shouldUpdateProtocol=false */,
+    //          maxRetries,
+    //          logCompactionInterval,
+    //          table.getClock());
+    //    }
 
     // Otherwise, if this is a new table definition or there is a metadata or protocol update, we
     // need to execute our protocol & metadata validation + update logic and possibly get an updated
@@ -352,22 +353,21 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     }
 
     return new TransactionImpl(
-        isCreateOrReplace,
-        table.getDataPath(),
-        table.getLogPath(),
-        latestSnapshot.get(),
-        engineInfo,
-        operation,
-        newProtocol.orElse(baseProtocol),
-        newMetadata.orElse(baseMetadata),
-        setTxnOpt,
-        resolvedClusteringColumns,
-        shouldUpdateClusteringDomainMetadata,
-        newMetadata.isPresent() || isCreateOrReplace /* shouldUpdateMetadata */,
-        newProtocol.isPresent() || isCreateOrReplace /* shouldUpdateProtocol */,
+        new ImmutableInternalTransactionState(
+            isCreateOrReplace,
+            engineInfo,
+            operation,
+            latestSnapshot.get(),
+            newProtocol.orElse(baseProtocol),
+            newMetadata.orElse(baseMetadata),
+            shouldUpdateClusteringDomainMetadata,
+            newMetadata.isPresent() || isCreateOrReplace /* shouldUpdateMetadata */,
+            newProtocol.isPresent() || isCreateOrReplace /* shouldUpdateProtocol */,
+            table.getClock(),
+            setTxnOpt,
+            resolvedClusteringColumns),
         maxRetries,
-        logCompactionInterval,
-        table.getClock());
+        logCompactionInterval);
   }
 
   /**

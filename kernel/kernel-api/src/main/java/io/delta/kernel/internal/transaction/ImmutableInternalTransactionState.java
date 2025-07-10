@@ -36,27 +36,30 @@ import java.util.UUID;
  * <p>These fields should never change from commit to commit, even after rebasing.
  */
 public class ImmutableInternalTransactionState {
-  // Required fields that will never change from commit to commit (e.g. after rebasing)
+  // ===== Core transaction identity =====
   public final String txnId;
   public final boolean isCreateOrReplace;
   public final String engineInfo;
   public final Operation operation;
+
+  // ===== File System paths =====
   public final Path dataPath;
   public final Path logPath;
-  public final Protocol protocol;
-  // TODO: Refactor to TransactionDataSource so that this is applicable to both Snapshot and
-  //       ResolvedTable
+
+  // ===== Table state =====
   public final SnapshotImpl readSnapshot;
+  public final Protocol protocol;
+  public final Metadata initialMetadata;
+
+  // ===== Update flags =====
   public final boolean shouldUpdateProtocol;
   public final boolean shouldUpdateMetadata;
   public final boolean shouldUpdateClusteringDomainMetadata;
+
+  // ===== Test infrastructure =====
   public final Clock clock;
 
-  // Required initial fields that may change from commit to commit (e.g. update the ICT enablement
-  // table properties). Note that those updated values will not be stored in this class.
-  public final Metadata initialMetadata;
-
-  // Optional fields
+  // ===== Optional fields =====
   public final Optional<SetTransaction> setTxnOpt;
   public final Optional<List<Column>> clusteringColumnsOpt;
 
@@ -64,31 +67,32 @@ public class ImmutableInternalTransactionState {
       boolean isCreateOrReplace,
       String engineInfo,
       Operation operation,
-      Path dataPath,
-      Path logPath,
-      Protocol protocol,
       SnapshotImpl readSnapshot,
+      Protocol protocol,
+      Metadata initialMetadata,
       boolean shouldUpdateProtocol,
       boolean shouldUpdateMetadata,
       boolean shouldUpdateClusteringDomainMetadata,
       Clock clock,
-      Metadata initialMetadata,
       Optional<SetTransaction> setTxnOpt,
       Optional<List<Column>> clusteringColumnsOpt) {
     this.txnId = UUID.randomUUID().toString();
     this.isCreateOrReplace = isCreateOrReplace;
     this.engineInfo = engineInfo;
     this.operation = operation;
-    this.dataPath = dataPath;
-    this.logPath = logPath;
-    this.protocol = protocol;
+
+    this.dataPath = readSnapshot.getDataPath();
+    this.logPath = readSnapshot.getLogPath();
+
     this.readSnapshot = readSnapshot;
+    this.protocol = protocol;
+    this.initialMetadata = initialMetadata;
+
     this.shouldUpdateProtocol = shouldUpdateProtocol;
     this.shouldUpdateMetadata = shouldUpdateMetadata;
     this.clusteringColumnsOpt = clusteringColumnsOpt;
-    this.clock = clock;
 
-    this.initialMetadata = initialMetadata;
+    this.clock = clock;
 
     this.setTxnOpt = setTxnOpt;
     this.shouldUpdateClusteringDomainMetadata = shouldUpdateClusteringDomainMetadata;
