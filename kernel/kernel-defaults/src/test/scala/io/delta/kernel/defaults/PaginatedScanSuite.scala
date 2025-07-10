@@ -128,7 +128,7 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
       pageSize = testCase.pageSize)
     val paginatedIter = paginatedScan.getScanFiles(customEngine)
     val returnedBatchesInPage = collectPaginatedBatches(paginatedIter)
-    val nextPageToken = paginatedIter.getCurrentPageToken
+    val nextPageToken = paginatedIter.getCurrentPageToken.get
     paginatedIter.close()
 
     validatePageResults(returnedBatchesInPage, testCase.expFileCnt, testCase.expBatchCnt, testName)
