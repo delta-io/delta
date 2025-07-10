@@ -20,6 +20,8 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.utils.CloseableIterator;
 import java.util.Optional;
 
+import java.util.Optional;
+
 /**
  * An iterator over {@link FilteredColumnarBatch}, each representing a batch of Scan Files in a
  * paginated scan. This iterator also exposes the page token that can be used to resume the scan
