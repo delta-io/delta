@@ -102,17 +102,14 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
       s"$totalFileCountsReturned")
   }
 
-  private def validatePageToken(
-      paginatedIter: PaginatedScanFilesIterator,
-      expectedLogFilePath: String,
-      expectedRowIndex: Long,
-      testName: String): Unit = {
-    val lastReadLogFilePath = PageToken.fromRow(paginatedIter.getCurrentPageToken)
-      .getLastReadLogFilePath
-    val lastReturnedRowIndex = PageToken.fromRow(paginatedIter.getCurrentPageToken)
-      .getLastReturnedRowIndex
+  private def validatePageToken(pageTokenRow: Row,
+                                expectedLogFileName: String,
+                                expectedRowIndex: Long,
+                                testName: String): Unit = {
+    val lastReadLogFilePath = PageToken.fromRow(pageTokenRow).getLastReadLogFilePath
+    val lastReturnedRowIndex = PageToken.fromRow(pageTokenRow).getLastReturnedRowIndex
 
-    assert(lastReadLogFilePath.endsWith(expectedLogFilePath))
+    assert(lastReadLogFilePath.endsWith(expectedLogFileName))
     assert(lastReturnedRowIndex == expectedRowIndex)
 
     logger.info(s"$testName: New PageToken: lastReadLogFileName = $lastReadLogFilePath")
@@ -123,21 +120,20 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
       testName: String,
       tablePath: String,
       tableVersionOpt: Optional[Long],
-      testCase: SinglePageRequestTestCase): Unit = {
+      testCase: SinglePageRequestTestCase): Row = {
     val paginatedScan = createPaginatedScan(
       tablePath = tablePath,
       tableVersionOpt = tableVersionOpt,
       pageSize = testCase.pageSize)
-
     val paginatedIter = paginatedScan.getScanFiles(customEngine)
     val returnedBatchesInPage = collectPaginatedBatches(paginatedIter)
-
-    validatePageResults(returnedBatchesInPage, testCase.expFileCnt, testCase.expBatchCnt, testName)
-    validatePageToken(paginatedIter, testCase.expLogFile, testCase.expRowIdx, testName)
-
+    val pageTokenForSecondPage = paginatedIter.getCurrentPageToken
     paginatedIter.close()
 
-    // TODO: add codes to read more pages here
+    validatePageResults(returnedBatchesInPage, testCase.expFileCnt, testCase.expBatchCnt, testName)
+    validatePageToken(pageTokenForSecondPage, testCase.expLogFile, testCase.expRowIdx, testName)
+
+    pageTokenForSecondPage
   }
 
   // TODO: test call hasNext() twice
@@ -205,11 +201,12 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
       expRowIdx = 7)).foreach { testCase =>
     test(s"Single JSON file - page size ${testCase.pageSize}") {
       val tablePath = getTestResourceFilePath("kernel-pagination-all-jsons")
-      runSinglePaginationTestCase(
+      val pageTokenForSecond = runSinglePaginationTestCase(
         testName = s"Single JSON file - page size ${testCase.pageSize}",
         tablePath = tablePath,
         tableVersionOpt = Optional.of(0L),
         testCase)
+
     }
   }
 
@@ -291,7 +288,7 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
       expRowIdx = 7)).foreach { testCase =>
     test(s"Multiple JSON files - page size ${testCase.pageSize}") {
       val tablePath = getTestResourceFilePath("kernel-pagination-all-jsons")
-      runSinglePaginationTestCase(
+      val pageTokenForSecondPage = runSinglePaginationTestCase(
         testName = s"Multiple JSON files - page size ${testCase.pageSize}",
         tablePath = tablePath,
         tableVersionOpt = Optional.empty(),
