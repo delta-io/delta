@@ -30,11 +30,10 @@ import java.util.Optional;
 
 /** Implementation of {@link PaginatedScan} */
 public class PaginatedScanImpl implements PaginatedScan {
+  private final PaginationContext paginationContext;
   private final ScanImpl baseScan;
   private final long pageSize;
   private final Optional<PageToken> pageTokenOpt;
-
-  private final PaginationContext paginationContext;
 
   public PaginatedScanImpl(
       ScanImpl baseScan,
@@ -45,6 +44,7 @@ public class PaginatedScanImpl implements PaginatedScan {
     this.baseScan = baseScan;
     this.pageSize = pageSize;
     this.pageTokenOpt = pageTokenRowOpt.map(PageToken::fromRow);
+    // TODO: get hash value of predicate & log segment and check values in pagination context
     this.paginationContext =
         pageTokenOpt
             .map(
