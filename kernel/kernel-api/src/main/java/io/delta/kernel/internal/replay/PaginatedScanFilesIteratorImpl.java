@@ -96,16 +96,17 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
   @Override
   public Optional<Row> getCurrentPageToken() {
     // TODO: add checks for last page (to return Optional.empty)
-    Row pageTokenRow = new PageToken(
-            lastReadLogFilePath,
-            lastReturnedRowIndex,
-            Optional.empty() /* sidecar file index */,
-            Meta.KERNEL_VERSION,
-            paginationContext.getTablePath() /* table path */,
-            paginationContext.getTableVersion() /* table version */,
-            -1 /* predicate hash */,
-            -1 /* log segment hash */)
-        .toRow();
+    Row pageTokenRow =
+        new PageToken(
+                lastReadLogFilePath,
+                lastReturnedRowIndex,
+                Optional.empty() /* sidecar file index */,
+                Meta.KERNEL_VERSION,
+                paginationContext.getTablePath() /* table path */,
+                paginationContext.getTableVersion() /* table version */,
+                -1 /* predicate hash */,
+                -1 /* log segment hash */)
+            .toRow();
     return Optional.of(pageTokenRow);
   }
 
