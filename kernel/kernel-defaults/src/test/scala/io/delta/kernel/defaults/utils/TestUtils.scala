@@ -24,7 +24,6 @@ import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 
 import io.delta.golden.GoldenTableUtils
-import io.delta.golden.GoldenTableUtils.classLoader
 import io.delta.kernel.{Scan, Snapshot, Table, TransactionCommitResult}
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector, FilteredColumnarBatch, MapValue, Row}
 import io.delta.kernel.defaults.engine.DefaultEngine
