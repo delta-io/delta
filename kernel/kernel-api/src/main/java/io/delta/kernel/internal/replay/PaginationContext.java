@@ -30,19 +30,19 @@ public class PaginationContext {
     Objects.requireNonNull(tablePath, "table path is null");
     checkArgument(
         tablePath.equals(pageToken.getTablePath()),
-        "Invalid page token: table path does not match the requested table path. "
+        "Invalid page token: token table path does not match the requested table path. "
             + "Expected: %s, Found: %s",
         tablePath,
         pageToken.getTablePath());
     checkArgument(
         tableVersion == pageToken.getTableVersion(),
-        "Invalid page token: table version does not match the requested table version. "
+        "Invalid page token: token table version does not match the requested table version. "
             + "Expected: %d, Found: %d",
         tableVersion,
         pageToken.getTableVersion());
     checkArgument(
         Meta.KERNEL_VERSION.equals(pageToken.getKernelVersion()),
-        "Invalid page token: kernel version does not match the requested kernel version. "
+        "Invalid page token: token kernel version does not match the requested kernel version. "
             + "Expected: %s, Found: %s",
         Meta.KERNEL_VERSION,
         pageToken.getKernelVersion());

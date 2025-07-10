@@ -127,7 +127,7 @@ class PaginationContextSuite extends AnyFunSuite {
         pageSize,
         invalidKernelVersionPageToken)
     }
-    assert(e.getMessage.contains("Invalid page token: kernel version"))
+    assert(e.getMessage.contains("Invalid page token: token kernel version"))
   }
 
   test("should throw exception for when the requested table path doesn't " +
@@ -140,7 +140,7 @@ class PaginationContextSuite extends AnyFunSuite {
         pageSize,
         validPageToken)
     }
-    assert(e.getMessage.contains("Invalid page token: table path"))
+    assert(e.getMessage.contains("Invalid page token: token table path"))
   }
 
   test("should throw exception for when the requested table version doesn't " +
@@ -153,6 +153,6 @@ class PaginationContextSuite extends AnyFunSuite {
         pageSize,
         validPageToken)
     }
-    assert(e.getMessage.contains("Invalid page token: table version"))
+    assert(e.getMessage.contains("Invalid page token: token table version"))
   }
 }
