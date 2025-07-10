@@ -30,7 +30,7 @@ class PaginationContextSuite extends AnyFunSuite {
   private val TEST_INVALID_KERNEL_VERSION = "300.0.0"
   private val TEST_VALID_KERNEL_VERSION = Meta.KERNEL_VERSION
   private val TEST_TABLE_PATH = "/path/to/table"
-  private val TEST_WRONG_TABLE_PATH = "wrong/path/to/table"
+  private val TEST_WRONG_TABLE_PATH = "/wrong/path/to/table"
   private val TEST_TABLE_VERSION = 5L
   private val TEST_WRONG_TABLE_VERSION = 5000L
   private val TEST_PREDICATE_HASH = 123L
