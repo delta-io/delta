@@ -35,7 +35,6 @@ import io.delta.kernel.internal.checksum.CRCInfo;
 import io.delta.kernel.internal.clustering.ClusteringUtils;
 import io.delta.kernel.internal.compaction.LogCompactionWriter;
 import io.delta.kernel.internal.data.TransactionStateRow;
-import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.hook.CheckpointHook;
 import io.delta.kernel.internal.hook.ChecksumFullHook;
 import io.delta.kernel.internal.hook.ChecksumSimpleHook;
@@ -48,8 +47,8 @@ import io.delta.kernel.internal.rowtracking.RowTracking;
 import io.delta.kernel.internal.rowtracking.RowTrackingMetadataDomain;
 import io.delta.kernel.internal.stats.FileSizeHistogram;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
+import io.delta.kernel.internal.transaction.ImmutableTransactionState;
 import io.delta.kernel.internal.util.*;
-import io.delta.kernel.internal.util.Clock;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.InCommitTimestampUtils;
 import io.delta.kernel.internal.util.VectorUtils;
@@ -73,21 +72,8 @@ public class TransactionImpl implements Transaction {
   public static final int DEFAULT_READ_VERSION = 1;
   public static final int DEFAULT_WRITE_VERSION = 2;
 
-  private final UUID txnId = UUID.randomUUID();
+  private final ImmutableTransactionState txnState;
 
-  /* If the transaction is defining a new table from scratch (i.e. create table, replace table) */
-  private final boolean isCreateOrReplace;
-  private final String engineInfo;
-  private final Operation operation;
-  private final Path dataPath;
-  private final Path logPath;
-  private final Protocol protocol;
-  private final SnapshotImpl readSnapshot;
-  private final Optional<SetTransaction> setTxnOpt;
-  private final Optional<List<Column>> clusteringColumnsOpt;
-  private final boolean shouldUpdateProtocol;
-  private final boolean shouldUpdateClusteringDomainMetadata;
-  private final Clock clock;
   private final DomainMetadataState domainMetadataState = new DomainMetadataState();
   private Metadata metadata;
   private boolean shouldUpdateMetadata;
@@ -99,44 +85,22 @@ public class TransactionImpl implements Transaction {
   private boolean closed; // To avoid trying to commit the same transaction again.
 
   public TransactionImpl(
-      boolean isCreateOrReplace,
-      Path dataPath,
-      Path logPath,
-      SnapshotImpl readSnapshot,
-      String engineInfo,
-      Operation operation,
-      Protocol protocol,
+      ImmutableTransactionState txnState,
       Metadata metadata,
-      Optional<SetTransaction> setTxnOpt,
-      Optional<List<Column>> clusteringColumnsOpt,
-      boolean shouldUpdateClusteringDomainMetadata,
       boolean shouldUpdateMetadata,
-      boolean shouldUpdateProtocol,
       int maxRetries,
-      int logCompactionInterval,
-      Clock clock) {
-    this.isCreateOrReplace = isCreateOrReplace;
-    this.dataPath = dataPath;
-    this.logPath = logPath;
-    this.readSnapshot = readSnapshot;
-    this.engineInfo = engineInfo;
-    this.operation = operation;
-    this.protocol = protocol;
+      int logCompactionInterval) {
+    this.txnState = txnState;
     this.metadata = metadata;
-    this.setTxnOpt = setTxnOpt;
-    this.clusteringColumnsOpt = clusteringColumnsOpt;
-    this.shouldUpdateClusteringDomainMetadata = shouldUpdateClusteringDomainMetadata;
     this.shouldUpdateMetadata = shouldUpdateMetadata;
-    this.shouldUpdateProtocol = shouldUpdateProtocol;
     this.maxRetries = maxRetries;
     this.logCompactionInterval = logCompactionInterval;
-    this.clock = clock;
-    this.currentCrcInfo = readSnapshot.getCurrentCrcInfo();
+    this.currentCrcInfo = txnState.readSnapshot.getCurrentCrcInfo();
   }
 
   @Override
   public Row getTransactionState(Engine engine) {
-    return TransactionStateRow.of(metadata, dataPath.toString(), maxRetries);
+    return TransactionStateRow.of(metadata, txnState.dataPath.toString(), maxRetries);
   }
 
   @Override
