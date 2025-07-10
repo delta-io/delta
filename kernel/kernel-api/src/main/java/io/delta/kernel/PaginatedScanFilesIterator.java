@@ -18,7 +18,6 @@ package io.delta.kernel;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.utils.CloseableIterator;
-
 import java.util.Optional;
 
 /**
@@ -31,10 +30,10 @@ import java.util.Optional;
  */
 public interface PaginatedScanFilesIterator extends CloseableIterator<FilteredColumnarBatch> {
   /**
-   * Returns a page token representing the starting position of next page. This token is used to
-   * resume the scan from the exact position current page ends in a subsequent request. Page token
-   * also contains metadata for validation purpose, such as detecting changes in query parameters or
-   * the underlying log files.
+   * Returns an optional page token representing the starting position of next page. This token is
+   * used to resume the scan from the exact position current page ends in a subsequent request. Page
+   * token also contains metadata for validation purpose, such as detecting changes in query
+   * parameters or the underlying log files.
    *
    * <p>The page token represents the position of current iterator at the time it's called. If the
    * iterator is only partially consumed, the returned token will always point to the beginning of
