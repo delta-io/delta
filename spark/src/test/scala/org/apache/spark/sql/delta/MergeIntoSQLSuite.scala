@@ -133,18 +133,18 @@ trait MergeIntoSQLTests extends MergeIntoSQLMixin {
 
   test("CTE as a source in MERGE") {
     withTable("source") {
-      Seq((1, 1), (0, 3)).toDF("key1", "value").write.saveAsTable("source")
+      Seq((1, 1), (0, 3)).toDF("key1", "value").write.format("delta").saveAsTable("source")
       append(Seq((2, 2), (1, 4)).toDF("key2", "value"))
 
-      val cte = "WITH cte1 AS (SELECT key1 + 2 AS key3, value FROM source) "
       val merge = basicMergeStmt(
+        cte = Some("WITH cte1 AS (SELECT key1 + 2 AS key3, value FROM source)"),
         target = s"$tableSQLIdentifier as target",
         source = "cte1 src",
         condition = "src.key3 = target.key2",
         update = "key2 = 20 + src.key3, value = 20 + src.value",
         insert = "(key2, value) VALUES (src.key3 - 10, src.value + 10)")
 
-      QueryTest.checkAnswer(sql(cte + merge), Seq(Row(2, 1, 0, 1)))
+      QueryTest.checkAnswer(sql(merge), Seq(Row(2, 1, 0, 1)))
       checkAnswer(readDeltaTableByIdentifier(),
         Row(1, 4) :: // No change
         Row(22, 23) :: // Update

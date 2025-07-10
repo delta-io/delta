@@ -465,7 +465,8 @@ trait MergeIntoBasicTests extends MergeIntoSuiteBaseMixin {
   import testImplicits._
 
   Seq(true, false).foreach { isPartitioned =>
-    test(s"basic case - merge to Delta table by path, isPartitioned: $isPartitioned") {
+    test(s"basic case - merge to Delta table by path, isPartitioned: $isPartitioned",
+        NameBasedAccessIncompatible) {
       withTable("source") {
         val partitions = if (isPartitioned) "key2" :: Nil else Nil
         append(Seq((2, 2), (1, 4)).toDF("key2", "value"), partitions)
