@@ -444,12 +444,4 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
         testCase)
     }
   }
-
-  test("Pagination with multi-checkpoint files") {
-    // TODO
-  }
-
-  test("Pagination with sidecar files") {
-    // TODO
-  }
 }
