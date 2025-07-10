@@ -25,7 +25,33 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.utils.CloseableIterator;
 import java.util.Map;
 
-/** Represents a transaction to mutate a Delta table. */
+/**
+ * Represents a transaction to mutate a Delta table.
+ *
+ * <p>This interface will eventually replace the {@link Transaction} interface, and differs from its
+ * predecessor in that {@link TransactionV2} no longer directly controls how a commit is performed.
+ * It exposes the {@link CommitContext} (actions to commit, additional commit metadata) that Engines
+ * may use to have better control over the commit process. This has a several benefits:
+ *
+ * <ul>
+ *   <li>Engines can use the {@link CommitContext} to provide the necessary inputs to the {@link
+ *       io.delta.kernel.commit.Committer#commit} method, which is then responsible for the commit.
+ *       This is particularly important for catalog-managed tables, where the {@link
+ *       io.delta.kernel.commit.Committer} may perform catalog-specific operations during the
+ *       commit. Some examples of this include:
+ *       <ul>
+ *         <li>writing actions into staged commit files instead of directly into the `_delta_log`
+ *         <li>sending commits inline to the catalog
+ *         <li>publishing previously-ratified commits
+ *         <li>sending additional commit metadata to the catalog, such as the latest schema, latest
+ *             table properties, commit timestamp, and more
+ *       </ul>
+ *   <li>Engines can now directly control if the {@code finalizedActions} to commit are materialized
+ *       or kept as a one-time-only iterator. Note that these actions must be materialized in order
+ *       to support retries.
+ *   <li>Engines can now directly control retry logic, e.g. to perform exponential backoff.
+ * </ul>
+ */
 @Experimental
 public interface TransactionV2 {
 
@@ -34,7 +60,7 @@ public interface TransactionV2 {
   /**
    * Get the internal state of the transaction as an opaque {@link Row}.
    *
-   * <p>The state helps Kernel do the transformations to logical data according to the Delta
+   * <p>This state helps Kernel do the transformations to logical data according to the Delta
    * protocol and table features enabled on the table. The engine should use this at the data writer
    * task to transform logical data into physical data that goes in data files using {@link
    * Transaction#transformLogicalData(Engine, Row, CloseableIterator, Map)}.

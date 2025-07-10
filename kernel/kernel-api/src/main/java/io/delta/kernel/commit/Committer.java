@@ -45,8 +45,18 @@ public interface Committer {
    *   <li>Publishing ratified catalog commits into the Delta log
    * </ol>
    *
+   * @param engine the {@link Engine} instance used for committing changes
+   * @param finalizedActions the iterator of finalized actions to be committed, taken from {@link
+   *     CommitContext#getFinalizedActions()}. Callers must either
+   *     <ul>
+   *       <li>Pass the iterator directly from the {@link CommitContext} into this call site
+   *       <li>First materialize the iterator contents (e.g., into a {@link java.util.List}) and
+   *           then create a new iterator from the materialized data
+   *     </ul>
+   *
+   * @param commitMetadata
    * @return CommitResponse containing the resultant commit
-   * @throws CommitFailedException if the commit operation fails.
+   * @throws CommitFailedException if the commit operation fails
    */
   CommitResponse commit(
       Engine engine, CloseableIterator<Row> finalizedActions, CommitMetadata commitMetadata)

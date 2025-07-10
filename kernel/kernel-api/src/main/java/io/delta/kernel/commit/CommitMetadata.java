@@ -63,8 +63,8 @@ public class CommitMetadata {
     return version;
   }
 
-  /** The path to the Delta log directory. */
-  public String getLogPath() {
+  /** The path to the Delta log directory, located at {@code <table_root>/_delta_log}. */
+  public String getDeltaLogDirPath() {
     return logPath;
   }
 
