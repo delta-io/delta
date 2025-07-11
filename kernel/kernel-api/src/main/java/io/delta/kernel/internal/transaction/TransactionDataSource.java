@@ -19,6 +19,15 @@ package io.delta.kernel.internal.transaction;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 
+/**
+ * As we transition from {@link io.delta.kernel.Transaction} (and {@link io.delta.kernel.Snapshot})
+ * to {@link io.delta.kernel.transaction.TransactionV2} (and {@link io.delta.kernel.ResolvedTable}),
+ * different parts of internal Kernel code will have to deal with both types of table "sources"
+ * (Snapshot, ResolvedTable).
+ *
+ * <p>This is a common interface for the minimal set of methods that both sources will have to
+ * expose.
+ */
 public interface TransactionDataSource {
   long getVersion();
 
