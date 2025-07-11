@@ -500,4 +500,34 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
         tablePath = getTestResourceFilePath("kernel-pagination-single-checkpoint"))
     }
   }
+
+  // TODO: test multi part checkpoint files
+  /**
+   * 00000000000000000009.checkpoint.0000000001.0000000004.parquet,
+   * 00000000000000000009.checkpoint.0000000002.0000000004.parquet,
+   * 00000000000000000009.checkpoint.0000000003.0000000004.parquet,
+   * 00000000000000000009.checkpoint.0000000004.0000000004.parquet,
+   * 00000000000000000010.checkpoint.parquet
+   * JSON files: from 0 to 12
+   * */
+  /**
+   * val tablePath = tempDir.getCanonicalPath
+   *
+   * // Create 10 commits to trigger checkpoint creation
+   * for (i <- 0 until 10) {
+   * val mode = if (i == 0) "overwrite" else "append"
+   * // Create 4 files per commit = 40 total AddFile actions
+   * spark.range(i * 40, (i + 1) * 40, 1, 4)
+   * .write.format("delta").mode(mode).save(tablePath)
+   * }
+   *
+   * // Force multi-part checkpoint creation (3-5 parts)
+   * withSQLConf(
+   * "spark.databricks.delta.checkpoint.partSize" -> "10" // 40 AddFiles ÷ 10 per part = 4 parts
+   * ) {
+   * val deltaLog = DeltaLog.forTable(spark, tablePath)
+   * deltaLog.checkpoint()
+   * }
+  * */
+
 }
