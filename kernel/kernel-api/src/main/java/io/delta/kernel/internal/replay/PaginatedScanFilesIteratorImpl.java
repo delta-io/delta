@@ -98,7 +98,7 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
   public Optional<Row> getCurrentPageToken() {
     // TODO: replace hash value of predicate and log segment
     if(!baseFilteredScanFilesIter.hasNext()) {
-      System.out.println("no pages are left");
+    //  System.out.println("no pages are left");
       return Optional.empty();
     }
     Row pageTokenRow =
