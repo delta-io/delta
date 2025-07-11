@@ -722,7 +722,10 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
       "TRUE",
       "FALSE",     // Ideally this should not hit, but its correct to not skip
       "NULL AND a = 1", // This is optimized to FALSE by ReplaceNullWithFalse, so it's same as above
-      "NOT a <=> 1"
+      "NOT a <=> 1",
+      "(a > 1) IS NULL", // This pushes down the IS NULL to both sides of GreaterThan.
+      "(a > 1 AND a > 0) IS NULL", // Pushdown of IS NULL on AND.
+      "(a > 1 OR a < 0) IS NULL" // Pushdown of IS NULL on OR.
     ),
     misses = Seq(
       // stats tell us a is always NULL, so any predicate that requires non-NULL a should skip
@@ -733,7 +736,8 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
       "a > 1",
       "a < 1",
       "a <> 1",
-      "a <=> 1"
+      "a <=> 1",
+      "NOT ((a > 1) IS NULL)"
     )
   )
 
@@ -756,7 +760,10 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
       "TRUE",
       "FALSE",    // Ideally this should not hit, but its correct to not skip
       "NULL AND a = 1", // This is optimized to FALSE by ReplaceNullWithFalse, so it's same as above
-      "NOT a <=> 1"
+      "NOT a <=> 1",
+      "(a > 1 AND a > 0) IS NULL", // Pushdown of IS NULL on AND.
+      "(a > 1 OR a < 0) IS NULL", // Pushdown of IS NULL on OR.
+      "NOT ((a > 0) IS NULL)"
     ),
     misses = Seq(
       "a <> 1",
@@ -1345,7 +1352,8 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
         // b and c should have NULL_COUNT stats, but currently they're not SkippingEligibleColumn
         // (since they're not AtomicType), we couldn't skip for them
         "isnull(b)",
-        "c is null"
+        "c is null",
+        "ELEMENT_AT(c, 10) IS NULL" // Out-of-bounds access returns null.
       )
       val misses = Seq(
         // a has NULL_COUNT stats since it's missing from DataFrame schema
