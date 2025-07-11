@@ -6,6 +6,7 @@ import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.defaults.internal.json.JsonUtils;
+import io.delta.kernel.engine.FileReadResult;
 import io.delta.kernel.internal.InternalScanFileUtils;
 import io.delta.kernel.internal.data.ScanStateRow;
 import io.delta.kernel.internal.util.Utils;
@@ -59,7 +60,8 @@ abstract class DeltaPartitionReader<T> implements PartitionReader<T> {
             .readParquetFiles(
                 Utils.singletonCloseableIterator(addFileStatus),
                 ScanStateRow.getPhysicalDataReadSchema(engine, scanStateRow),
-                java.util.Optional.empty() /* predicate */);
+                java.util.Optional.empty() /* predicate */)
+            .map(FileReadResult::getData);
 
     this.logicalRowDataColumnarBatchIter =
         Scan.transformPhysicalData(engine, scanStateRow, scanFileRow, physicalRowDataIter);

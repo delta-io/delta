@@ -1,9 +1,13 @@
 package io.delta.dsv2.catalog;
 
+import io.delta.dsv2.table.DeltaCcv2Table;
 import io.delta.dsv2.table.DeltaTable;
 import io.delta.dsv2.utils.SchemaUtils;
 import io.delta.kernel.Operation;
+import io.delta.kernel.ResolvedTable;
+import io.delta.kernel.TableManager;
 import io.delta.kernel.defaults.engine.DefaultEngine;
+import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -40,9 +44,9 @@ public class TestCatalog implements TableCatalog {
   @Override
   public Table loadTable(Identifier ident) throws NoSuchTableException {
     try {
-      DeltaTable table = new DeltaTable(tableIdentifierToPath(ident));
-      table.schema(); // Validate table exists by accessing schema
-      return table;
+      Engine engine = DefaultEngine.create(new Configuration());
+      ResolvedTable table = TableManager.loadTable(tableIdentifierToPath(ident)).build(engine);
+      return new DeltaCcv2Table(table, ident, engine, "", "", "");
     } catch (TableNotFoundException e) {
       throw new NoSuchTableException(ident);
     }
