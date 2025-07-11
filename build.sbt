@@ -715,6 +715,33 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
     unidocSourceFilePatterns += SourceFilePattern("io/delta/kernel/"),
   ).configureUnidoc(docTitle = "Delta Kernel Defaults")
 
+
+lazy val sparkDsv2 = (project in file("spark-dsv2"))
+  .disablePlugins(ScalafmtPlugin)
+  .dependsOn(kernelApi)
+  .dependsOn(kernelDefaults)
+  .dependsOn(spark % "test->test")
+  .settings(
+    name := "delta-spark-dsv2",
+    commonSettings,
+    javaOnlyReleaseSettings,
+    javafmtCheckSettings,
+    javaCheckstyleSettings("dev/kernel-checkstyle.xml"),
+    Test / javaOptions ++= Seq("-ea"),
+    // This allows generating tables with unsupported test table features in delta-spark
+    Test / envVars += ("DELTA_TESTING", "1"),
+    libraryDependencies ++= Seq(
+      "junit" % "junit" % "4.13.2" % "test",
+      "com.novocode" % "junit-interface" % "0.11" % "test",
+      "org.slf4j" % "slf4j-log4j12" % "1.7.36" % "test",
+      "org.assertj" % "assertj-core" % "3.26.3" % "test"
+    ),
+    // Unidoc settings
+    unidocSourceFilePatterns := Seq(SourceFilePattern("io/delta/spark/dsv2/"))
+  ).configureUnidoc(
+    generatedJavaDoc = getSparkVersion() == LATEST_RELEASED_SPARK_VERSION,
+    generateScalaDoc = getSparkVersion() == LATEST_RELEASED_SPARK_VERSION)
+
 lazy val unity = (project in file("unity"))
   .enablePlugins(ScalafmtPlugin)
   .dependsOn(kernelApi % "compile->compile;test->test")
