@@ -184,16 +184,6 @@ trait AbstractTestUtils extends Assertions with SQLHelper {
     testFunc(tablePath)
   }
 
-  def withKernelStaticTable(tableName: String)(testFunc: String => Unit): Unit = {
-    val classLoader = Thread.currentThread().getContextClassLoader
-    val resourceURL = classLoader.getResource(tableName)
-    if (resourceURL == null) {
-      throw new IllegalArgumentException(s"Cannot find kernel static table: $tableName")
-    }
-    val tablePath = resourceURL.getPath
-    testFunc(tablePath)
-  }
-
   def latestSnapshot(path: String, engine: Engine = defaultEngine): Snapshot = {
     Table.forPath(engine, path)
       .getLatestSnapshot(engine)
