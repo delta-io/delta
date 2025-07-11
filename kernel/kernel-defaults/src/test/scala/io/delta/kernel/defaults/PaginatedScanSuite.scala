@@ -18,6 +18,7 @@ import java.util.Optional
 
 import io.delta.kernel.PaginatedScan
 import io.delta.kernel.PaginatedScanFilesIterator
+import io.delta.kernel.ScanBuilder
 import io.delta.kernel.data.FilteredColumnarBatch
 import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.DeltaTableWriteSuiteBase
@@ -30,6 +31,7 @@ import io.delta.kernel.internal.replay.{PageToken, PaginatedScanFilesIteratorImp
 import org.apache.spark.sql.catalyst.plans.SQLHelper
 import org.scalatest.funsuite.AnyFunSuite
 import org.slf4j.{Logger, LoggerFactory}
+import io.delta.kernel.utils.CloseableIterator
 
 class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
     with ExpressionTestUtils with SQLHelper with DeltaTableWriteSuiteBase {
@@ -56,12 +58,8 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
     DefaultEngine.create(hadoopConf)
   }
 
-  private def createPaginatedScan(
-      tablePath: String,
-      tableVersionOpt: Optional[Long],
-      pageSize: Long,
-      pageTokenOpt: Optional[Row] = Optional.empty()): PaginatedScan = {
-
+  // TODO: this can be a testUtil
+  private def getScanBuilder(tablePath: String, tableVersionOpt: Optional[Long]): ScanBuilder = {
     val resolvedTableAdapter = {
       if (tableVersionOpt.isPresent) {
         tableManager.getResolvedTableAdapterAtVersion(
@@ -72,11 +70,19 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
         tableManager.getResolvedTableAdapterAtLatest(customEngine, tablePath)
       }
     }
-    resolvedTableAdapter.getScanBuilder().buildPaginated(pageSize, pageTokenOpt)
+    resolvedTableAdapter.getScanBuilder()
+  }
+
+  private def createPaginatedScan(
+      tablePath: String,
+      tableVersionOpt: Optional[Long],
+      pageSize: Long,
+      pageTokenOpt: Optional[Row] = Optional.empty()): PaginatedScan = {
+    getScanBuilder(tablePath, tableVersionOpt).buildPaginated(pageSize, pageTokenOpt)
   }
 
   private def collectPaginatedBatches(
-      paginatedIter: PaginatedScanFilesIterator): Seq[FilteredColumnarBatch] = {
+      paginatedIter: CloseableIterator[FilteredColumnarBatch] ): Seq[FilteredColumnarBatch] = {
     val buffer = collection.mutable.Buffer[FilteredColumnarBatch]()
     while (paginatedIter.hasNext) {
       val batch = paginatedIter.next()
@@ -85,7 +91,7 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
     buffer
   }
 
-  private def validatePageResults(
+  private def validateFirstPageResults(
       batches: Seq[FilteredColumnarBatch],
       expectedFileCount: Int,
       expectedBatchCount: Int,
@@ -102,7 +108,7 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
       s"$totalFileCountsReturned")
   }
 
-  private def validatePageToken(
+  private def validateFirstPageToken(
       pageTokenRow: Row,
       expectedLogFileName: String,
       expectedRowIndex: Long,
@@ -117,27 +123,90 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
     logger.info(s"$testName: New PageToken: lastReadRowIndex = $lastReturnedRowIndex")
   }
 
-  private def runSinglePaginationTestCase(
-      testName: String,
+  // TODO: test call hasNext() twice
+  private def doSinglePageRequest(
       tablePath: String,
       tableVersionOpt: Optional[Long],
-      testCase: SinglePageRequestTestCase): Row = {
+      pageTokenOpt: Optional[Row] = Optional.empty(),
+      pageSize: Long): (Optional[Row], Seq[FilteredColumnarBatch]) = {
     val paginatedScan = createPaginatedScan(
       tablePath = tablePath,
       tableVersionOpt = tableVersionOpt,
-      pageSize = testCase.pageSize)
+      pageSize = pageSize,
+      pageTokenOpt = pageTokenOpt)
     val paginatedIter = paginatedScan.getScanFiles(customEngine)
     val returnedBatchesInPage = collectPaginatedBatches(paginatedIter)
-    val nextPageToken = paginatedIter.getCurrentPageToken.get
+    val nextPageToken = paginatedIter.getCurrentPageToken
     paginatedIter.close()
 
-    validatePageResults(returnedBatchesInPage, testCase.expFileCnt, testCase.expBatchCnt, testName)
-    validatePageToken(nextPageToken, testCase.expLogFile, testCase.expRowIdx, testName)
+    assert(returnedBatchesInPage.nonEmpty)
+    val fileCounts: Seq[Long] = returnedBatchesInPage.map(_.getPreComputedNumSelectedRows
+      .get().toLong)
+    val totalFileCountsReturned = fileCounts.sum
 
-    nextPageToken
+    System.out.println(s"number of batches = ${returnedBatchesInPage.length}")
+    System.out.println(s"number of AddFiles = ${totalFileCountsReturned}")
+
+    if(nextPageToken.isPresent) {
+      val lastReadLogFilePath = PageToken.fromRow(nextPageToken.get).getLastReadLogFilePath
+      val lastReturnedRowIndex = PageToken.fromRow(nextPageToken.get).getLastReturnedRowIndex
+
+      System.out.println(s"New PageToken: lastReadLogFileName = $lastReadLogFilePath")
+      System.out.println(s"New PageToken: lastReadRowIndex = $lastReturnedRowIndex")
+    }
+
+    (nextPageToken, returnedBatchesInPage)
   }
 
-  // TODO: test call hasNext() twice
+  private def runSingleTest(testCase: SinglePageRequestTestCase, tablePath: String,
+                            tableVersionOpt: Optional[Long] = Optional.empty()) {
+    var (pageTokenOpt, returnedBatchesInPage) = doSinglePageRequest(
+      tablePath = tablePath,
+      tableVersionOpt = tableVersionOpt,
+      pageSize = testCase.pageSize)
+
+    val testName = s"Single JSON file - page size ${testCase.pageSize}";
+    validateFirstPageResults(
+      returnedBatchesInPage,
+      testCase.expFileCnt,
+      testCase.expBatchCnt,
+      testName)
+    // TODO: test if kernel can return empty page token when scan is consumed
+    if(pageTokenOpt.isPresent) {
+      validateFirstPageToken(
+        pageTokenOpt.get,
+        testCase.expLogFile,
+        testCase.expRowIdx,
+        testName)
+    }
+
+    var allBatchesPaginationScan = returnedBatchesInPage
+    while (pageTokenOpt.isPresent) {
+      val (newPageTokenOpt, newReturnedBatchesInPage) = doSinglePageRequest(
+        tablePath = tablePath,
+        tableVersionOpt = tableVersionOpt,
+        pageTokenOpt = pageTokenOpt,
+        pageSize = testCase.pageSize)
+      pageTokenOpt = newPageTokenOpt
+      allBatchesPaginationScan ++= newReturnedBatchesInPage
+    }
+
+    val normalScan =
+      getScanBuilder(tablePath = tablePath, tableVersionOpt = tableVersionOpt).build()
+
+    val iter = normalScan.getScanFiles(customEngine)
+    val allBatchesNormalScan = collectPaginatedBatches(iter)
+    iter.close()
+
+    // check no duplicate or missing batches in paginated scan
+    assert(allBatchesNormalScan.size == allBatchesPaginationScan.size)
+    for (i <- allBatchesNormalScan.indices) {
+      val normalBatch = allBatchesNormalScan(i)
+      val paginatedBatch = allBatchesPaginationScan(i)
+      assert(normalBatch.getFilePath.equals(paginatedBatch.getFilePath))
+      assert(normalBatch.getData.getSize == paginatedBatch.getData.getSize)
+    }
+  }
 
   // ==== Log File Name Variables ======
   private val JSON_FILE_0 = "00000000000000000000.json"
@@ -201,12 +270,10 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
       expLogFile = JSON_FILE_0,
       expRowIdx = 7)).foreach { testCase =>
     test(s"Single JSON file - page size ${testCase.pageSize}") {
-      val tablePath = getTestResourceFilePath("kernel-pagination-all-jsons")
-      val pageTokenForSecond = runSinglePaginationTestCase(
-        testName = s"Single JSON file - page size ${testCase.pageSize}",
-        tablePath = tablePath,
-        tableVersionOpt = Optional.of(0L),
-        testCase)
+      runSingleTest(
+        testCase = testCase,
+        tablePath = getTestResourceFilePath("kernel-pagination-all-jsons"),
+        tableVersionOpt = Optional.of(0L))
     }
   }
 
@@ -287,12 +354,9 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
       expLogFile = JSON_FILE_0,
       expRowIdx = 7)).foreach { testCase =>
     test(s"Multiple JSON files - page size ${testCase.pageSize}") {
-      val tablePath = getTestResourceFilePath("kernel-pagination-all-jsons")
-      val nextPageToken = runSinglePaginationTestCase(
-        testName = s"Multiple JSON files - page size ${testCase.pageSize}",
-        tablePath = tablePath,
-        tableVersionOpt = Optional.empty(),
-        testCase)
+      runSingleTest(
+        testCase = testCase,
+        tablePath = getTestResourceFilePath("kernel-pagination-all-jsons"))
     }
   }
 
@@ -346,12 +410,10 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
       expLogFile = CHECKPOINT_FILE_10,
       expRowIdx = 23)).foreach { testCase =>
     test(s"Single checkpoint file - page size ${testCase.pageSize}") {
-      val tablePath = getTestResourceFilePath("kernel-pagination-single-checkpoint")
-      runSinglePaginationTestCase(
-        testName = s"Single checkpoint file - page size ${testCase.pageSize}",
-        tablePath = tablePath,
+      runSingleTest(
+        testCase = testCase,
         tableVersionOpt = Optional.of(10L),
-        testCase)
+        tablePath = getTestResourceFilePath("kernel-pagination-single-checkpoint"))
     }
   }
 
@@ -433,12 +495,39 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
       expLogFile = CHECKPOINT_FILE_10,
       expRowIdx = 14)).foreach { testCase =>
     test(s"Single checkpoint and JSON files - page size ${testCase.pageSize}") {
-      val tablePath = getTestResourceFilePath("kernel-pagination-single-checkpoint")
-      runSinglePaginationTestCase(
-        testName = s"Single checkpoint and JSON files - page size ${testCase.pageSize}",
-        tablePath = tablePath,
-        tableVersionOpt = Optional.empty(),
-        testCase)
+      runSingleTest(
+        testCase = testCase,
+        tablePath = getTestResourceFilePath("kernel-pagination-single-checkpoint"))
     }
   }
+
+  // TODO: test multi part checkpoint files
+  /**
+   * 00000000000000000009.checkpoint.0000000001.0000000004.parquet,
+   * 00000000000000000009.checkpoint.0000000002.0000000004.parquet,
+   * 00000000000000000009.checkpoint.0000000003.0000000004.parquet,
+   * 00000000000000000009.checkpoint.0000000004.0000000004.parquet,
+   * 00000000000000000010.checkpoint.parquet
+   * JSON files: from 0 to 12
+   * */
+  /**
+   * val tablePath = tempDir.getCanonicalPath
+   *
+   * // Create 10 commits to trigger checkpoint creation
+   * for (i <- 0 until 10) {
+   * val mode = if (i == 0) "overwrite" else "append"
+   * // Create 4 files per commit = 40 total AddFile actions
+   * spark.range(i * 40, (i + 1) * 40, 1, 4)
+   * .write.format("delta").mode(mode).save(tablePath)
+   * }
+   *
+   * // Force multi-part checkpoint creation (3-5 parts)
+   * withSQLConf(
+   * "spark.databricks.delta.checkpoint.partSize" -> "10" // 40 AddFiles ÷ 10 per part = 4 parts
+   * ) {
+   * val deltaLog = DeltaLog.forTable(spark, tablePath)
+   * deltaLog.checkpoint()
+   * }
+  * */
+
 }
