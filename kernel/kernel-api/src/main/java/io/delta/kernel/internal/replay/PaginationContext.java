@@ -90,9 +90,9 @@ public class PaginationContext {
     return pageSize;
   }
 
-  public Optional<String> getLastReadLogFileName() {
+  public Optional<String> getLastReadLogFilePath() {
     if (!pageToken.isPresent()) return Optional.empty();
-    return Optional.of(pageToken.get().getLastReadLogFileName());
+    return Optional.of(pageToken.get().getLastReadLogFilePath());
   }
 
   public Optional<Long> getLastReturnedRowIndex() {
