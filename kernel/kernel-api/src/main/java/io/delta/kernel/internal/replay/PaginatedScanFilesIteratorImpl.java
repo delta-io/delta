@@ -16,6 +16,7 @@
 package io.delta.kernel.internal.replay;
 
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+import static io.delta.kernel.internal.util.Preconditions.checkState;
 
 import io.delta.kernel.Meta;
 import io.delta.kernel.PaginatedScanFilesIterator;
@@ -46,6 +47,9 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
    */
   private final CloseableIterator<FilteredColumnarBatch> baseFilteredScanFilesIter;
 
+  /** Pagination Context that carries page token and page size info. */
+  private final PaginationContext paginationContext;
+
   /** Maximum number of ScanFiles to include in current page */
   private final long pageSize;
 
@@ -68,7 +72,10 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
    */
   private long lastReturnedRowIndex = -1;
 
+  /** True if all data from the current scan has been read. When true, there are no more pages to return. */
+  boolean isAllDataRead = false;
   private Optional<FilteredColumnarBatch> currentBatch = Optional.empty();
+
   private boolean closed = false;
 
   /**
@@ -86,28 +93,34 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
       PaginationContext paginationContext) {
     this.baseFilteredScanFilesIter = baseFilteredScanFilesIter;
     this.pageSize = paginationContext.getPageSize();
+    this.paginationContext = paginationContext;
   }
 
   @Override
-  public Row getCurrentPageToken() {
-    // TODO: change values for data validation here
-    return new PageToken(
-            lastReadLogFilePath,
-            lastReturnedRowIndex,
-            Optional.empty() /* sidecar file index */,
-            Meta.KERNEL_VERSION,
-            "fake/table/path" /* table path */,
-            -1 /* table version */,
-            -1 /* predicate hash */,
-            -1 /* log segment hash */)
-        .toRow();
+  public Optional<Row> getCurrentPageToken() {
+    // TODO: replace hash value of predicate and log segment
+  //  System.out.println("get page token");
+    if(!baseFilteredScanFilesIter.hasNext()) {
+      System.out.println("no page left");
+      return Optional.empty();
+    }
+    Row pageTokenRow =
+        new PageToken(
+                lastReadLogFilePath,
+                lastReturnedRowIndex,
+                Optional.empty() /* sidecar file index */,
+                Meta.KERNEL_VERSION,
+                paginationContext.getTablePath() /* table path */,
+                paginationContext.getTableVersion() /* table version */,
+                -1 /* predicate hash */,
+                -1 /* log segment hash */)
+            .toRow();
+    return Optional.of(pageTokenRow);
   }
 
   @Override
   public boolean hasNext() {
-    if (closed) {
-      throw new IllegalStateException("Can't call `hasNext` on a closed iterator.");
-    }
+    checkState(!closed, "Can't call `hasNext` on a closed iterator.");
     if (!currentBatch.isPresent()) {
       prepareNext();
     }
@@ -116,21 +129,48 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
 
   private void prepareNext() {
     if (currentBatch.isPresent()) return;
+    if (!baseFilteredScanFilesIter.hasNext()) {
+      System.out.print("all data are read");
+      isAllDataRead = true;
+      return;
+    }
     if (numScanFilesReturned >= pageSize) return;
-    if (!baseFilteredScanFilesIter.hasNext()) return;
 
     final FilteredColumnarBatch batch = baseFilteredScanFilesIter.next();
+    // FilePath and pre-computed number of selected rows are expected to be present; both are
+    // computed and set in ActiveAddFilesIterator (when building FilteredColumnarBatch from
+    // ActionWrapper)
     checkArgument(batch.getFilePath().isPresent(), "file path doesn't exist!");
     checkArgument(
         batch.getPreComputedNumSelectedRows().isPresent(),
         "pre-computed number of selected rows doesn't exist!");
-    if (!batch.getFilePath().get().equals(lastReadLogFilePath)) {
-      lastReadLogFilePath = batch.getFilePath().get();
-      lastReturnedRowIndex = -1;
-      logger.info("filePath {}", lastReadLogFilePath);
+
+    String batchFilePath = batch.getFilePath().get();
+    Optional<String> tokenFilepathOpt = paginationContext.getLastReadLogFilePath();
+    if(tokenFilepathOpt.isPresent() && batchFilePath.compareTo(tokenFilepathOpt.get()) > 0) { // skip this batch
+        prepareNext();
+        return;
     }
     final long numSelectedAddFilesInBatch = batch.getPreComputedNumSelectedRows().get();
     final long numRowsInBatch = batch.getData().getSize();
+
+    if(tokenFilepathOpt.isPresent() && batchFilePath.equals(tokenFilepathOpt.get())) {
+      lastReadLogFilePath =  batchFilePath;
+      Optional<Long> tokenRowIndex = paginationContext.getLastReturnedRowIndex();
+      checkArgument(tokenRowIndex.isPresent(), "token row index is empty!");
+      if(lastReturnedRowIndex + numRowsInBatch <= tokenRowIndex.get()) { // skip this batch
+        lastReturnedRowIndex += numRowsInBatch;
+        prepareNext();
+        return;
+      }
+    }
+
+    // all batches will be returned if come here
+    if (lastReadLogFilePath == null || batchFilePath.compareTo(lastReadLogFilePath) < 0) {
+      lastReadLogFilePath = batchFilePath;
+      lastReturnedRowIndex = -1;
+      logger.info("filePath {}", lastReadLogFilePath);
+    }
 
     currentBatch = Optional.of(batch);
     numScanFilesReturned += numSelectedAddFilesInBatch;
@@ -143,9 +183,7 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
 
   @Override
   public FilteredColumnarBatch next() {
-    if (closed) {
-      throw new IllegalStateException("Can't call `next` on a closed iterator.");
-    }
+    checkState(!closed, "Can't call `next` on a closed iterator.");
     if (!hasNext()) {
       throw new NoSuchElementException();
     }
@@ -156,7 +194,9 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
 
   @Override
   public void close() throws IOException {
-    closed = true;
-    Utils.closeCloseables(baseFilteredScanFilesIter);
+    if (!closed) {
+      closed = true;
+      Utils.closeCloseables(baseFilteredScanFilesIter);
+    }
   }
 }

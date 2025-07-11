@@ -112,6 +112,7 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     this.engine = engine;
     this.checkpointPredicate = checkpointPredicate;
     this.filesList = new LinkedList<>();
+    this.paginationContextOpt = paginationContextOpt;
     this.filesList.addAll(files.stream()
         .map(DeltaLogFile::forFileStatus)
         .filter(this::paginatedFilter)
@@ -120,7 +121,6 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     this.checkpointReadSchema = checkpointReadSchema;
     this.actionsIter = Optional.empty();
     this.schemaContainsAddOrRemoveFiles = LogReplay.containsAddOrRemoveFileActions(deltaReadSchema);
-    this.paginationContextOpt = paginationContextOpt;
   }
 
   private boolean paginatedFilter(DeltaLogFile nextLogFile) {
