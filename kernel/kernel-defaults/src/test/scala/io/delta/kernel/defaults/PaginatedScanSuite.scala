@@ -240,8 +240,6 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
           "ada")
       }
 
-      System.out.println("finish first page")
-
       var allBatchesPaginationScan = returnedBatchesInPage
       while (pageTokenOpt.isPresent) {
         val (newPageTokenOpt, newReturnedBatchesInPage) = doSinglePageRequest(
@@ -252,8 +250,6 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
         pageTokenOpt = newPageTokenOpt
         allBatchesPaginationScan ++= newReturnedBatchesInPage
       }
-
-      System.out.println("finish pagination")
 
       val normalScan =
         getScanBuilder(tablePath = tablePath, tableVersionOpt = Optional.of(0L)).build()
