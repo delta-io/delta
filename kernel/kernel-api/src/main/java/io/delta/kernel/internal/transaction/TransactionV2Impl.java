@@ -27,6 +27,7 @@ import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.transaction.TransactionV2;
 import io.delta.kernel.utils.CloseableIterator;
 
+/** An implementation of {@link TransactionV2}. */
 public class TransactionV2Impl implements TransactionV2 {
 
   private final TransactionV2State txnState;

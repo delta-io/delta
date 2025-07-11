@@ -18,6 +18,7 @@ package io.delta.kernel.internal.commit;
 
 import static io.delta.kernel.internal.actions.SingleAction.*;
 import static io.delta.kernel.internal.actions.SingleAction.createTxnSingleAction;
+import static io.delta.kernel.internal.util.Preconditions.checkState;
 import static io.delta.kernel.internal.util.Utils.toCloseableIterator;
 
 import io.delta.kernel.Meta;
@@ -40,6 +41,15 @@ public class CommitContextImpl implements CommitContext {
   // Static factory methods //
   ////////////////////////////
 
+  /**
+   * Creates a {@link CommitContext} to be used for an initial commit only (e.g. not a retry, which
+   * requires conflict detection and potential action reconciliation and rebasing).
+   *
+   * @param finalizedDataActions the finalized data actions to be committed. That is, all updates to
+   *     the data actions (e.g. row tracking updates) have been applied. Note that these are the
+   *     data actions, not the metadata actions (like CommitInfo, Protocol, Metadata,
+   *     SetTransaction, DomainMetadata, etc.).
+   */
   public static CommitContextImpl forInitialCommit(
       Engine engine, TransactionV2State txnState, CloseableIterator<Row> finalizedDataActions) {
     return new CommitContextImpl(engine, txnState, finalizedDataActions);
@@ -53,10 +63,10 @@ public class CommitContextImpl implements CommitContext {
 
   private final TransactionV2State txnState;
   private final CloseableIterator<Row> finalizedDataActions;
-
   private final long commitAttemptTimestampMs;
-  private final Metadata metadata;
   private final CommitInfo commitInfo;
+  private final Metadata metadata;
+  private boolean iteratorConsumed;
 
   private CommitContextImpl(
       Engine engine, TransactionV2State txnState, CloseableIterator<Row> finalizedDataActions) {
@@ -65,6 +75,7 @@ public class CommitContextImpl implements CommitContext {
     this.commitAttemptTimestampMs = txnState.clock.getTimeMillis();
     this.commitInfo = getCommitInfo();
     this.metadata = txnState.initialMetadata; // TODO: update with ICT enablement info on conflict
+    this.iteratorConsumed = false;
   }
 
   /////////////////
@@ -73,6 +84,8 @@ public class CommitContextImpl implements CommitContext {
 
   @Override
   public CloseableIterator<Row> getFinalizedActions() {
+    checkState(!iteratorConsumed, "Finalized actions iterator has already been consumed.");
+    iteratorConsumed = true;
     return getMetadataActions().combine(finalizedDataActions);
   }
 
@@ -112,13 +125,12 @@ public class CommitContextImpl implements CommitContext {
   }
 
   private long getCommitAsVersion() {
-    // TODO: Support retries
     return txnState.readTableOpt.map(readTable -> readTable.getVersion() + 1).orElse(0L);
   }
 
   private CommitInfo getCommitInfo() {
     return new CommitInfo(
-        Optional.empty(), /* inCommitTimestampOpt */
+        Optional.empty(), /* inCommitTimestampOpt */ // TODO: support ICT
         commitAttemptTimestampMs,
         "Kernel-" + Meta.KERNEL_VERSION + "/" + txnState.engineInfo, /* engineInfo */
         txnState.operation.getDescription(), /* description */

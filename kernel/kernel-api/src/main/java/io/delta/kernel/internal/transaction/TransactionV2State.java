@@ -21,9 +21,15 @@ import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.actions.SetTransaction;
 import io.delta.kernel.internal.util.Clock;
+import io.delta.kernel.transaction.TransactionV2;
 import java.util.Optional;
 import java.util.UUID;
 
+/**
+ * Data class to hold the immutable state of a {@link TransactionV2}.
+ *
+ * <p>These fields should never change from commit to commit, even after rebasing.
+ */
 public class TransactionV2State {
 
   // ===== Core transaction identity =====
@@ -71,7 +77,9 @@ public class TransactionV2State {
     this.engineInfo = engineInfo;
     this.operation = operation;
 
-    this.dataPath = dataPath; // TODO: Would be great to add this to TransactionDataSource
+    // TODO: Would be great to add this to TransactionDataSource, but ResolvedTable uses String
+    //       and Snapshot uses Path
+    this.dataPath = dataPath;
     this.logPath = logPath;
 
     this.readTableOpt = readTableOpt;
