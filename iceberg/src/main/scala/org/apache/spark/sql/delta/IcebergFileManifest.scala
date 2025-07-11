@@ -34,10 +34,6 @@ import org.apache.spark.internal.{LoggingShims, MDC}
 import org.apache.spark.sql.{Dataset, SparkSession}
 import org.apache.spark.sql.types.StructType
 
-case class IcebergActions(
-    dataFilesToAdds: Iterator[DataFile],
-    dataFilesToRemoves: Iterator[DataFile]
-)
 
 class IcebergFileManifest(
     spark: SparkSession,
