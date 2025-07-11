@@ -25,7 +25,7 @@ import org.apache.spark.sql.delta.commands.convert.IcebergTable.ERR_MULTIPLE_PAR
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.Path
-import org.apache.iceberg.{BaseTable, DataFile, DataFiles, FileContent, FileFormat, ManifestContent, ManifestFile, ManifestFiles, PartitionData, PartitionSpec, RowLevelOperationMode, Schema, StructLike, Table, TableProperties}
+import org.apache.iceberg.{BaseTable, DataFile, DataFiles, DeleteFile, FileContent, FileFormat, ManifestContent, ManifestFile, ManifestFiles, PartitionData, PartitionSpec, RowLevelOperationMode, Schema, StructLike, Table, TableProperties}
 import org.apache.iceberg.transforms.IcebergPartitionUtil
 import org.apache.iceberg.types.Type.TypeID
 
@@ -33,6 +33,7 @@ import org.apache.spark.SparkThrowable
 import org.apache.spark.internal.{LoggingShims, MDC}
 import org.apache.spark.sql.{Dataset, SparkSession}
 import org.apache.spark.sql.types.StructType
+
 
 class IcebergFileManifest(
     spark: SparkSession,
@@ -139,16 +140,9 @@ class IcebergFileManifest(
     val specIdsToIfSpecHasNonBucketPartitionMap = specIdsToIfSpecHasNonBucketPartition
     val tableSpecsSize = table.specs().size()
 
-    val manifestFiles = localTable
-      .currentSnapshot()
-      .dataManifests(localTable.io())
-      .asScala
-      .map(new ManifestFileWrapper(_))
-      .toSeq
+    val dataFiles = loadIcebergFiles()
 
-    spark
-      .createDataset(manifestFiles)
-      .flatMap(ManifestFiles.read(_, localTable.io()).asScala.map(new DataFileWrapper(_)))
+    dataFiles
       .map { dataFile: DataFileWrapper =>
         if (shouldCheckPartitionEvolution) {
           IcebergFileManifest.validateLimitedPartitionEvolution(
@@ -180,6 +174,24 @@ class IcebergFileManifest(
         )
       }
       .cache()
+  }
+
+  private def loadIcebergFiles(): (
+    Dataset[DataFileWrapper]
+  ) = {
+    val localTable = table
+    val manifestFiles =
+          localTable
+            .currentSnapshot()
+            .dataManifests(localTable.io())
+            .asScala
+            .map(new ManifestFileWrapper(_))
+            .toSeq
+    val dataFiles =
+          spark
+            .createDataset(manifestFiles)
+            .flatMap(ManifestFiles.read(_, localTable.io()).asScala.map(new DataFileWrapper(_)))
+    dataFiles
   }
 
 
