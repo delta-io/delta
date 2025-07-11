@@ -1631,6 +1631,12 @@
     ],
     "sqlState" : "42K04"
   },
+  "DELTA_LOG_FILE_NOT_FOUND" : {
+    "message" : [
+      "Unable to retrieve the delta log files to construct table version <version> starting from checkpoint version <checkpointVersion> at <logPath>."
+    ],
+    "sqlState" : "42K03"
+  },
   "DELTA_LOG_FILE_NOT_FOUND_FOR_STREAMING_SOURCE" : {
     "message" : [
       "If you never deleted it, it's likely your query is lagging behind. Please delete its checkpoint to restart from scratch. To avoid this happening again, you can update your retention policy of your Delta table"

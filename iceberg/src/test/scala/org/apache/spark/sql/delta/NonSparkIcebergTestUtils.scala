@@ -87,7 +87,7 @@ object NonSparkIcebergTestUtils {
     val fileAppender: FileAppender[GenericRecord] = Parquet
       .write(table.io().newOutputFile(parquetLocation))
       .schema(schema)
-      .createWriterFunc(GenericParquetWriter.buildWriter(_))
+      .createWriterFunc(GenericParquetWriter.buildWriter)
       .overwrite()
       .build();
     try {

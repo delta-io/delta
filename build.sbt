@@ -831,7 +831,7 @@ lazy val iceberg = (project in file("iceberg"))
       // Fix Iceberg's legacy java.lang.NoClassDefFoundError: scala/jdk/CollectionConverters$ error
       // due to legacy scala.
       "org.scala-lang.modules" %% "scala-collection-compat" % "2.1.1",
-      "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % "1.9.1" % "provided",
+      "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % "1.4.0" % "provided",
       "com.github.ben-manes.caffeine" % "caffeine" % "2.9.3"
     ),
     Compile / unmanagedJars += (icebergShaded / assembly).value,

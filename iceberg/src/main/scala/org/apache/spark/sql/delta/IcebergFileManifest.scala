@@ -145,7 +145,7 @@ class IcebergFileManifest(
     val specIdsToIfSpecHasNonBucketPartitionMap = specIdsToIfSpecHasNonBucketPartition
     val tableSpecsSize = table.specs().size()
 
-    val (dataFiles, _) = loadIcebergFiles()
+    val dataFiles = loadIcebergFiles()
 
     dataFiles
       .map { dataFile: DataFileWrapper =>
@@ -181,36 +181,24 @@ class IcebergFileManifest(
       .cache()
   }
 
-  private def loadIcebergFiles(): (Dataset[DataFileWrapper], Dataset[DeleteFileWrapper]) = {
+  private def loadIcebergFiles(): (
+    Dataset[DataFileWrapper]
+  ) = {
     val localTable = table
-    val (manifestFiles, deleteManifestFiles) =
-        (
+    val manifestFiles =
           localTable
             .currentSnapshot()
             .dataManifests(localTable.io())
             .asScala
             .map(new ManifestFileWrapper(_))
-            .toSeq,
-          localTable
-            .currentSnapshot()
-            .deleteManifests(localTable.io())
-            .asScala
-            .map(new ManifestFileWrapper(_))
             .toSeq
-        )
+    val dataFiles =
     val (dataFiles: Dataset[DataFileWrapper], deleteFiles: Dataset[DeleteFileWrapper]) =
         (
           spark
             .createDataset(manifestFiles)
-            .flatMap(ManifestFiles.read(_, localTable.io()).asScala.map(new DataFileWrapper(_))),
-          spark
-            .createDataset(deleteManifestFiles)
-            .flatMap(
-              ManifestFiles.readDeleteManifest(_, localTable.io(), localTable.specs())
-              .asScala.map(new DeleteFileWrapper(_))
-            )
-        )
-    (dataFiles, deleteFiles)
+            .flatMap(ManifestFiles.read(_, localTable.io()).asScala.map(new DataFileWrapper(_)))
+    dataFiles
   }
 
 

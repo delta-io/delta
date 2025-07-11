@@ -102,10 +102,12 @@ object ModularSuiteGenerator {
     val allMixins = SuiteGeneratorConfig.applyCustomRulesAndGetAllMixins(baseSuite, mixins)
     val suiteParents = (baseSuite :: allMixins).map(_.parse[Init].get)
 
-    // Generate suite name by combining the names of base suite, base mixins, and dimensions
+    // Generate suite name by combining the names of base suite, base mixins, and dimensions.
+    // Only get the class name part if the mixin is a fully qualified name.
     // Remove "Suite" / "Mixin" substrings for better readability
     val baseSuitePrefix = baseSuite.stripSuffix("Suite")
     val mixinSuffix = mixins
+      .map(_.split('.').last)
       .map(_.replace("Mixin", ""))
       .mkString("")
     var suiteName = baseSuitePrefix + mixinSuffix
