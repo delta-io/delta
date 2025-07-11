@@ -73,8 +73,8 @@ public class CommitContextImpl implements CommitContext {
     this.txnState = txnState;
     this.finalizedDataActions = finalizedDataActions;
     this.commitAttemptTimestampMs = txnState.clock.getTimeMillis();
-    this.commitInfo = getCommitInfo();
     this.metadata = txnState.initialMetadata; // TODO: update with ICT enablement info on conflict
+    this.commitInfo = getCommitInfo();
     this.iteratorConsumed = false;
   }
 
