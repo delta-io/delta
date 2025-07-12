@@ -772,4 +772,48 @@ class OptimisticTransactionLegacySuite extends FunSuite {
       }
     }
   }
+
+  test("block concurrent set-txns with the same app id but lower version") {
+    withLog(Nil) { log =>
+      val setupTxn = log.startTransaction()
+      setupTxn.commit(SetTransaction("t1", 5, Some(1234L)) :: Nil, manualUpdate, engineInfo)
+
+      val tx1 = log.startTransaction()
+      val initialVersion = tx1.txnVersion("t1")
+      assert(initialVersion === 5L)
+
+      val winningTxn = log.startTransaction()
+      winningTxn.commit(SetTransaction("t1", 3, Some(1234L)) :: Nil, manualUpdate, engineInfo) // Lower version
+
+      val tx2 = log.startTransaction()
+      val versionAfterCommit = tx2.txnVersion("t1")
+      assert(versionAfterCommit === 3L)
+
+      intercept[ConcurrentTransactionException] {
+        tx1.commit(Iterable().asJava, manualUpdate, engineInfo)
+      }
+    }
+  }
+
+  test("block concurrent set-txns with the same app id but higher version") {
+    withLog(Nil) { log =>
+      val setupTxn = log.startTransaction()
+      setupTxn.commit(SetTransaction("t1", 3, Some(1234L)) :: Nil, manualUpdate, engineInfo)
+
+      val tx1 = log.startTransaction()
+      val initialVersion = tx1.txnVersion("t1")
+      assert(initialVersion === 3L)
+
+      val winningTxn = log.startTransaction()
+      winningTxn.commit(SetTransaction("t1", 5, Some(1234L)) :: Nil, manualUpdate, engineInfo) // Higher version
+
+      val tx2 = log.startTransaction()
+      val versionAfterCommit = tx2.txnVersion("t1")
+      assert(versionAfterCommit === 5L)
+
+      intercept[ConcurrentTransactionException] {
+        tx1.commit(Iterable().asJava, manualUpdate, engineInfo)
+      }
+    }
+  }
 }
