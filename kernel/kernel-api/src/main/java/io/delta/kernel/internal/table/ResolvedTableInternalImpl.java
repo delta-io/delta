@@ -18,7 +18,9 @@ package io.delta.kernel.internal.table;
 
 import static java.util.Objects.requireNonNull;
 
+import io.delta.kernel.Operation;
 import io.delta.kernel.ScanBuilder;
+import io.delta.kernel.commit.Committer;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.ScanBuilderImpl;
 import io.delta.kernel.internal.actions.DomainMetadata;
@@ -31,9 +33,13 @@ import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.metrics.SnapshotReportImpl;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
+import io.delta.kernel.internal.transaction.builder.ReplaceTableTransactionBuilderImpl;
+import io.delta.kernel.internal.transaction.builder.UpdateTableTransactionBuilderImpl;
 import io.delta.kernel.internal.util.Clock;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.metrics.SnapshotReport;
+import io.delta.kernel.transaction.ReplaceTableTransactionBuilder;
+import io.delta.kernel.transaction.UpdateTableTransactionBuilder;
 import io.delta.kernel.types.StructType;
 import java.util.List;
 import java.util.Map;
@@ -119,6 +125,23 @@ public class ResolvedTableInternalImpl implements ResolvedTableInternal {
         getSchema(),
         logReplay,
         snapshotReport);
+  }
+
+  @Override
+  public Committer getCommitter() {
+    throw new UnsupportedOperationException("Not implemented");
+  }
+
+  @Override
+  public UpdateTableTransactionBuilder buildUpdateTableTransaction(
+      String engineInfo, Operation operation) {
+    return new UpdateTableTransactionBuilderImpl(this);
+  }
+
+  @Override
+  public ReplaceTableTransactionBuilder buildReplaceTableTransaction(
+      StructType newSchema, String engineInfo) {
+    return new ReplaceTableTransactionBuilderImpl(this, newSchema);
   }
 
   ///////////////////////////////////////

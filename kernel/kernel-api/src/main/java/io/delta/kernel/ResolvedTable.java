@@ -17,7 +17,10 @@
 package io.delta.kernel;
 
 import io.delta.kernel.annotation.Experimental;
+import io.delta.kernel.commit.Committer;
 import io.delta.kernel.expressions.Column;
+import io.delta.kernel.transaction.ReplaceTableTransactionBuilder;
+import io.delta.kernel.transaction.UpdateTableTransactionBuilder;
 import io.delta.kernel.types.StructType;
 import java.util.List;
 import java.util.Optional;
@@ -64,4 +67,11 @@ public interface ResolvedTable {
 
   /** @return a scan builder for constructing scans to read data from this table */
   ScanBuilder getScanBuilder();
+
+  /** @return a committer that owns and controls commits to this table */
+  Committer getCommitter();
+
+  UpdateTableTransactionBuilder buildUpdateTableTransaction(String engineInfo, Operation operation);
+
+  ReplaceTableTransactionBuilder buildReplaceTableTransaction(String engineInfo);
 }
