@@ -68,6 +68,7 @@ val hadoopVersion = "3.3.4"
 val scalaTestVersion = "3.2.15"
 val scalaTestVersionForConnectors = "3.0.8"
 val parquet4sVersion = "1.9.4"
+val icu4jVersion = "75.1"
 
 // Versions for Hive 3
 val hadoopVersionForHive3 = "3.1.0"
@@ -693,6 +694,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
       "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5",
       "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % "2.13.5",
       "org.apache.parquet" % "parquet-hadoop" % "1.12.3",
+      "com.ibm.icu" % "icu4j" % icu4jVersion,
 
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "junit" % "junit" % "4.13.2" % "test",
