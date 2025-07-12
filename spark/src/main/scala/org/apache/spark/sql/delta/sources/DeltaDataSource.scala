@@ -108,10 +108,7 @@ class DeltaDataSource
         .getOrElse(snapshot.schema)
     }
 
-    if (schema.nonEmpty && schema.get.nonEmpty &&
-      !DataType.equalsIgnoreCompatibleNullability(readSchema, schema.get)) {
-      throw DeltaErrors.specifySchemaAtReadTimeException
-    }
+    DeltaDataSource.verifyReadSchemaMatchesTheTableSchema(schema, readSchema)
 
     val schemaToUse = DeltaTableUtils.removeInternalDeltaMetadata(
       sqlContext.sparkSession,
@@ -134,9 +131,6 @@ class DeltaDataSource
       schema: Option[StructType],
       providerName: String,
       parameters: Map[String, String]): Source = {
-    if (schema.nonEmpty && schema.get.nonEmpty) {
-      throw DeltaErrors.specifySchemaAtReadTimeException
-    }
     val path = parameters.getOrElse("path", {
       throw DeltaErrors.pathNotSpecifiedException
     })
@@ -152,6 +146,8 @@ class DeltaDataSource
     val readSchema = schemaTrackingLogOpt
       .flatMap(_.getCurrentTrackedMetadata.map(_.dataSchema))
       .getOrElse(snapshot.schema)
+
+    DeltaDataSource.verifyReadSchemaMatchesTheTableSchema(schema, readSchema)
 
     if (readSchema.isEmpty) {
       throw DeltaErrors.schemaNotSetException
@@ -459,5 +455,14 @@ object DeltaDataSource extends DatabricksLogging {
           mergeConsecutiveSchemaChanges
         )
       }
+  }
+
+  private def verifyReadSchemaMatchesTheTableSchema(
+                                                     schema: Option[StructType],
+                                                     readSchema: StructType): Unit = {
+    if (schema.nonEmpty && schema.get.nonEmpty &&
+      !DataType.equalsIgnoreCompatibleNullability(readSchema, schema.get)) {
+      throw DeltaErrors.readSourceSchemaConflictException
+    }
   }
 }
