@@ -19,6 +19,7 @@ package io.delta.kernel.internal.table;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.ScanBuilder;
+import io.delta.kernel.commit.Committer;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.ScanBuilderImpl;
 import io.delta.kernel.internal.actions.DomainMetadata;
@@ -119,6 +120,11 @@ public class ResolvedTableInternalImpl implements ResolvedTableInternal {
         getSchema(),
         logReplay,
         snapshotReport);
+  }
+
+  @Override
+  public Committer getCommitter() {
+    throw new UnsupportedOperationException("not implemented");
   }
 
   ///////////////////////////////////////

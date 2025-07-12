@@ -244,6 +244,10 @@ public class ConflictChecker {
       return updatedDataActions;
     }
 
+    public CloseableIterator<Row> getUpdatedDataActionsIter() {
+      return updatedDataActions.iterator();
+    }
+
     public List<DomainMetadata> getUpdatedDomainMetadatas() {
       return updatedDomainMetadatas;
     }
