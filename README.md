@@ -103,7 +103,7 @@ Delta Lake ensures _serializability_ for concurrent reads and writes. Please see
 
 We use [GitHub Issues](https://github.com/delta-io/delta/issues) to track community reported issues. You can also [contact](#community) the community for getting answers.
 
-## Contributing 
+## Contributing
 
 We welcome contributions to Delta Lake. See our [CONTRIBUTING.md](https://github.com/delta-io/delta/blob/master/CONTRIBUTING.md) for more details.
 
@@ -195,9 +195,9 @@ then follow these steps:
 export JAVA_HOME=`/usr/libexec/java_home -v 1.8`
 ```
 2. Compile using the SBT CLI: `build/sbt clean compile`.
-2. Go to `File` > `Project Structure...` > `Modules` > `delta-spark`.
-3. In the right panel under `Source Folders` remove any `target` folders, e.g. `target/scala-2.12/src_managed/main [generated]`
-4. Click `Apply` and then re-run your test.
+3. Go to `File` > `Project Structure...` > `Modules` > `delta-spark`.
+4. In the right panel under `Source Folders` remove any `target` folders, e.g. `target/scala-2.12/src_managed/main [generated]`
+5. Click `Apply` and then re-run your test.
 
 ## License
 Apache License 2.0, see [LICENSE](https://github.com/delta-io/delta/blob/master/LICENSE.txt).
@@ -209,6 +209,6 @@ There are two mediums of communication within the Delta Lake community.
 * Public Slack Channel
   - [Register here](https://go.delta.io/slack)
   - [Login here](https://delta-users.slack.com/)
-* [Linkedin page](https://www.linkedin.com/company/deltalake)
+* [LinkedIn page](https://www.linkedin.com/company/deltalake)
 * [Youtube channel](https://www.youtube.com/c/deltalake)
 * Public [Mailing list](https://groups.google.com/forum/#!forum/delta-users)
