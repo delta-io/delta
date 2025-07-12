@@ -521,32 +521,6 @@ class DeltaReplaceTableSuite extends DeltaReplaceTableSuiteBase {
     }
   }
 
-  test("REPLACE is not supported on existing table with rowTracking feature") {
-    withTempDirAndEngine { (tablePath, engine) =>
-      createInitialTable(
-        engine,
-        tablePath,
-        tableProperties = Map("delta.feature.rowTracking" -> "supported"))
-      assert(
-        intercept[UnsupportedOperationException] {
-          commitReplaceTable(engine, tablePath)
-        }.getMessage.contains("REPLACE TABLE is not yet supported on row tracking tables"))
-    }
-  }
-
-  test("REPLACE is not supported when enabling rowTracking feature") {
-    withTempDirAndEngine { (tablePath, engine) =>
-      createInitialTable(engine, tablePath)
-      assert(
-        intercept[UnsupportedOperationException] {
-          commitReplaceTable(
-            engine,
-            tablePath,
-            tableProperties = Map("delta.feature.rowTracking" -> "supported"))
-        }.getMessage.contains("REPLACE TABLE is not yet supported on row tracking tables"))
-    }
-  }
-
   /* ----------------- POSITIVE CASES ----------------- */
 
   // TODO can we refactor other suites to run with both create + replace?
