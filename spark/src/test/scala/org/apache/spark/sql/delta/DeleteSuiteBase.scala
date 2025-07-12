@@ -560,4 +560,24 @@ abstract class DeleteSuiteBase extends QueryTest
       condition = Some(s"value = '$partValue'"),
       expectedResults = Nil)
   }
+
+  test("CHAR(N) type should not cause AnalysisException") {
+    withTable("delta_table") {
+      sql(
+        s"""
+            |CREATE TABLE delta_table(key CHAR(5), value CHAR(5))
+            |USING delta
+            |OPTIONS('path'='$tempPath')
+          """.stripMargin)
+      Seq(("foo", "bar"), ("foo", "baa"))
+        .toDF("key", "value")
+        .coalesce(1)
+        .write
+        .mode("append")
+        .format("delta")
+        .saveAsTable("delta_table")
+      checkDelete(Some("value = 'baa'"),
+        Row("foo  ", "bar  ") :: Nil)
+    }
+  }
 }
