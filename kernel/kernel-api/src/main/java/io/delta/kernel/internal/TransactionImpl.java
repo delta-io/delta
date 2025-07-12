@@ -363,15 +363,7 @@ public class TransactionImpl implements Transaction {
         });
   }
 
-  private Optional<Long> getUpdatedInCommitTimestampAfterConflict(
-      long winningCommitTimestamp, Optional<Long> attemptInCommitTimestamp) {
-    if (attemptInCommitTimestamp.isPresent()) {
-      long updatedInCommitTimestamp =
-          Math.max(attemptInCommitTimestamp.get(), winningCommitTimestamp + 1);
-      return Optional.of(updatedInCommitTimestamp);
-    }
-    return attemptInCommitTimestamp;
-  }
+
 
   private long doCommit(
       Engine engine,
@@ -505,6 +497,16 @@ public class TransactionImpl implements Transaction {
     }
 
     return postCommitHooks;
+  }
+
+  private Optional<Long> getUpdatedInCommitTimestampAfterConflict(
+      long winningCommitTimestamp, Optional<Long> attemptInCommitTimestamp) {
+    if (attemptInCommitTimestamp.isPresent()) {
+      long updatedInCommitTimestamp =
+          Math.max(attemptInCommitTimestamp.get(), winningCommitTimestamp + 1);
+      return Optional.of(updatedInCommitTimestamp);
+    }
+    return attemptInCommitTimestamp;
   }
 
   /**

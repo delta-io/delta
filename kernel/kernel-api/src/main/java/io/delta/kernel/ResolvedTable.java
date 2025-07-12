@@ -17,6 +17,8 @@
 package io.delta.kernel;
 
 import io.delta.kernel.annotation.Experimental;
+import io.delta.kernel.commit.Committer;
+import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.types.StructType;
 import java.util.List;
@@ -43,8 +45,10 @@ public interface ResolvedTable {
   /** @return the version number of this table snapshot */
   long getVersion();
 
-  /** @return the timestamp (in milliseconds since Unix epoch) of when this version was committed */
-  long getTimestamp();
+  /**
+   * @return the timestamp (in milliseconds since Unix epoch) of when this version was committed
+   */
+  long getTimestamp(Engine engine);
 
   /**
    * @return the partition columns of the table at this version, in the order they are defined in
@@ -64,4 +68,7 @@ public interface ResolvedTable {
 
   /** @return a scan builder for constructing scans to read data from this table */
   ScanBuilder getScanBuilder();
+
+  /** @return a committer that owns and controls commits to this table */
+  Committer getCommitter();
 }

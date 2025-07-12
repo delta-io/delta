@@ -19,18 +19,22 @@ package io.delta.kernel.internal.table;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.ScanBuilder;
+import io.delta.kernel.commit.Committer;
+import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.ScanBuilderImpl;
 import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
+import io.delta.kernel.internal.checksum.CRCInfo;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.metrics.SnapshotReportImpl;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
+import io.delta.kernel.internal.transaction.TransactionDataSource;
 import io.delta.kernel.internal.util.Clock;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.metrics.SnapshotReport;
@@ -41,7 +45,7 @@ import java.util.Optional;
 import java.util.stream.Collectors;
 
 /** An implementation of {@link ResolvedTableInternal}. */
-public class ResolvedTableInternalImpl implements ResolvedTableInternal {
+public class ResolvedTableInternalImpl implements ResolvedTableInternal, TransactionDataSource {
   private final String path;
   private final String logPath;
   private final long version;
@@ -87,7 +91,7 @@ public class ResolvedTableInternalImpl implements ResolvedTableInternal {
   }
 
   @Override
-  public long getTimestamp() {
+  public long getTimestamp(Engine engine) {
     throw new UnsupportedOperationException("Not implemented");
   }
 
@@ -119,6 +123,11 @@ public class ResolvedTableInternalImpl implements ResolvedTableInternal {
         getSchema(),
         logReplay,
         snapshotReport);
+  }
+
+  @Override
+  public Committer getCommitter() {
+    throw new UnsupportedOperationException("not implemented");
   }
 
   ///////////////////////////////////////
@@ -160,5 +169,19 @@ public class ResolvedTableInternalImpl implements ResolvedTableInternal {
   @VisibleForTesting
   public Lazy<LogSegment> getLazyLogSegment() {
     return lazyLogSegment;
+  }
+
+  ///////////////////////////////////
+  // TransactionDataSource Methods //
+  ///////////////////////////////////
+
+  @Override
+  public Optional<CRCInfo> getCurrentCrcInfo() {
+    return Optional.empty();
+  }
+
+  @Override
+  public SnapshotReport getSnapshotReport() {
+    return snapshotReport;
   }
 }
