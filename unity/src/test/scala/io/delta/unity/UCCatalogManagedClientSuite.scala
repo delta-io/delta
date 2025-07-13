@@ -19,11 +19,16 @@ package io.delta.unity
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 
+import io.delta.kernel.defaults.engine.DefaultEngine
+import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.files.ParsedLogData.ParsedLogType
 import io.delta.kernel.internal.table.ResolvedTableInternal
 import io.delta.kernel.internal.tablefeatures.TableFeatures.{CATALOG_MANAGED_R_W_FEATURE_PREVIEW, TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
 import io.delta.kernel.internal.util.FileNames
 import io.delta.storage.commit.Commit
+import io.delta.storage.commit.uccommitcoordinator.UCTokenBasedRestClient
+import io.unitycatalog.client.api.TemporaryCredentialsApi
+import io.unitycatalog.client.model.{GenerateTemporaryTableCredential, TableOperation, TemporaryCredentials}
 
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
@@ -31,6 +36,35 @@ import org.scalatest.funsuite.AnyFunSuite
 
 /** Unit tests for [[UCCatalogManagedClient]]. */
 class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestUtils {
+
+  test("aaa") {
+    val tableId = "asdf"
+    val tablePath = "asdf"
+    val baseUri = "asdf"
+    val token = "asdf"
+    val temporaryCredentials = new TemporaryCredentialsApi()
+        .generateTemporaryTableCredentials(
+          new GenerateTemporaryTableCredential()
+              .tableId(tableId).operation(TableOperation.READ_WRITE)
+        )
+    val engine = createEngineWithCredentials(temporaryCredentials)
+    val ucClient = new UCTokenBasedRestClient(baseUri, token)
+    val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
+    val resolvedTable = ucCatalogManagedClient.loadTable(engine, tableId, tablePath)
+  }
+
+  /** Creates a new Engine instance with credentials configured for the given storage location. */
+  def createEngineWithCredentials(credentials: TemporaryCredentials): Engine = {
+    val conf = new Configuration()
+    conf.set("fs.s3.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
+    conf.set("fs.s3a.access.key", credentials.getAwsTempCredentials.getAccessKeyId)
+    conf.set("fs.s3a.secret.key", credentials.getAwsTempCredentials.getSecretAccessKey)
+    conf.set("fs.s3a.session.token", credentials.getAwsTempCredentials.getSessionToken)
+    conf.set("fs.s3a.path.style.access", "true")
+    conf.set("fs.s3.impl.disable.cache", "true")
+    conf.set("fs.s3a.impl.disable.cache", "true")
+    DefaultEngine.create(conf)
+  }
 
   private def testCatalogManagedTable(versionToLoad: Long): Unit = {
     // Step 1: Create the in-memory table data (ratified commits v1, v2)
