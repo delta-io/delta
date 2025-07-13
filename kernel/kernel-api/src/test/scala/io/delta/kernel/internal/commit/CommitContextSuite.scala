@@ -10,6 +10,7 @@ import io.delta.kernel.internal.util.{Clock, Utils}
 import io.delta.kernel.test.{ActionUtils, MockEngineUtils}
 import io.delta.kernel.types.{IntegerType, StructType}
 import io.delta.kernel.utils.CloseableIterator
+
 import org.scalatest.funsuite.AnyFunSuite
 
 class CommitContextSuite extends AnyFunSuite with ActionUtils with MockEngineUtils {

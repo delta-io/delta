@@ -75,6 +75,11 @@ public class DefaultFileSystemClient implements FileSystemClient {
   }
 
   @Override
+  public FileStatus getFileStatus(String path) throws IOException {
+    return fileIO.getFileStatus(path);
+  }
+
+  @Override
   public CloseableIterator<ByteArrayInputStream> readFiles(
       CloseableIterator<FileReadRequest> readRequests) throws IOException {
     return readRequests.map(

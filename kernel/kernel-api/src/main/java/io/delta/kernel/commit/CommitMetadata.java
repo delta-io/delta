@@ -23,6 +23,7 @@ import io.delta.kernel.annotation.Experimental;
 import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import java.util.Optional;
 
 /**
@@ -49,13 +50,24 @@ public class CommitMetadata {
       Optional<Protocol> newProtocolOpt,
       Optional<Metadata> newMetadataOpt) {
     checkArgument(version >= 0, "version must be non-negative: %d", version);
+    requireNonNull(readProtocolOpt, "readProtocolOpt is null");
+    requireNonNull(readMetadataOpt, "readMetadataOpt is null");
+    requireNonNull(newProtocolOpt, "newProtocolOpt is null");
+    requireNonNull(newMetadataOpt, "newMetadataOpt is null");
+    checkArgument(
+        readProtocolOpt.isPresent() || newProtocolOpt.isPresent(),
+        "At least one of readProtocolOpt or newProtocolOpt must be present");
+    checkArgument(
+        readMetadataOpt.isPresent() || newMetadataOpt.isPresent(),
+        "At least one of readMetadataOpt or newMetadataOpt must be present");
+
     this.version = version;
     this.logPath = requireNonNull(logPath, "logPath is null");
     this.commitInfo = requireNonNull(commitInfo, "commitInfo is null");
-    this.readProtocolOpt = requireNonNull(readProtocolOpt, "readProtocolOpt is null");
-    this.readMetadataOpt = requireNonNull(readMetadataOpt, "readMetadataOpt is null");
-    this.newProtocolOpt = requireNonNull(newProtocolOpt, "newProtocolOpt is null");
-    this.newMetadataOpt = requireNonNull(newMetadataOpt, "newMetadataOpt is null");
+    this.readProtocolOpt = readProtocolOpt;
+    this.readMetadataOpt = readMetadataOpt;
+    this.newProtocolOpt = newProtocolOpt;
+    this.newMetadataOpt = newMetadataOpt;
   }
 
   /** The version of the Delta table this commit is targeting. */
@@ -103,5 +115,17 @@ public class CommitMetadata {
    */
   public Optional<Metadata> getNewMetadataOpt() {
     return newMetadataOpt;
+  }
+
+  public Protocol getActiveProtocol() {
+    return getNewProtocolOpt().orElse(getReadProtocolOpt().get());
+  }
+
+  public Metadata getActiveMetadata() {
+    return getNewMetadataOpt().orElse(getReadMetadataOpt().get());
+  }
+
+  public boolean isCatalogManagedSupported() {
+    return TableFeatures.isCatalogManagedSupported(getActiveProtocol());
   }
 }
