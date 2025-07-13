@@ -94,6 +94,6 @@ public class ScanBuilderImpl implements ScanBuilder {
   public PaginatedScan buildPaginated(long pageSize, Optional<Row> pageTokenRowOpt) {
     ScanImpl baseScan = this.build();
     return new PaginatedScanImpl(
-        baseScan, dataPath.toString(), tableVersion, pageSize, pageTokenRowOpt);
+        baseScan, dataPath.toString(), tableVersion, pageSize, predicate, pageTokenRowOpt);
   }
 }

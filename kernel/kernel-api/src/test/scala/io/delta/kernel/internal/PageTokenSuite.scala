@@ -38,7 +38,7 @@ class PageTokenSuite extends AnyFunSuite with MockFileSystemClientUtils {
   private val TEST_KERNEL_VERSION = "4.0.0"
   private val TEST_TABLE_PATH = "/path/to/table"
   private val TEST_TABLE_VERSION = 5L
-  private val TEST_PREDICATE_HASH = 123L
+  private val TEST_PREDICATE_HASH = 123
   private val TEST_LOG_SEGMENT_HASH = 456L
 
   private val expectedPageToken = new PageToken(

@@ -105,7 +105,7 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
                 Meta.KERNEL_VERSION,
                 paginationContext.getTablePath() /* table path */,
                 paginationContext.getTableVersion() /* table version */,
-                -1 /* predicate hash */,
+                paginationContext.getPredicateHash() /* predicate hash */,
                 -1 /* log segment hash */)
             .toRow();
     return Optional.of(pageTokenRow);
