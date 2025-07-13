@@ -51,8 +51,11 @@ public class PaginatedScanImpl implements PaginatedScan {
             .map(
                 token ->
                     PaginationContext.forPageWithPageToken(
-                        tablePath, tableVersion, predicate.hashCode(),pageSize, token))
-            .orElseGet(() -> PaginationContext.forFirstPage(tablePath, tableVersion, predicate.hashCode(), pageSize));
+                        tablePath, tableVersion, predicate.hashCode(), pageSize, token))
+            .orElseGet(
+                () ->
+                    PaginationContext.forFirstPage(
+                        tablePath, tableVersion, predicate.hashCode(), pageSize));
   }
 
   @Override
