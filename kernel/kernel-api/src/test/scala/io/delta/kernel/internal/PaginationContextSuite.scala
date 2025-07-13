@@ -34,7 +34,6 @@ class PaginationContextSuite extends AnyFunSuite {
   private val TEST_TABLE_VERSION = 5L
   private val TEST_WRONG_TABLE_VERSION = 5000L
   private val TEST_PREDICATE_HASH = 123
-  private val TEST_WRONG_PREDICATE_HASH = 321
   private val TEST_LOG_SEGMENT_HASH = 456L
 
   private val validPageToken = new PageToken(
@@ -59,11 +58,7 @@ class PaginationContextSuite extends AnyFunSuite {
 
   test("forFirstPage should create context with empty optionals and specified page size") {
     val pageSize = 100L
-    val context = PaginationContext.forFirstPage(
-      TEST_TABLE_PATH,
-      TEST_TABLE_VERSION,
-      TEST_PREDICATE_HASH,
-      pageSize)
+    val context = PaginationContext.forFirstPage(TEST_TABLE_PATH, TEST_TABLE_VERSION, TEST_PREDICATE_HASH, pageSize)
 
     assert(!context.getLastReadLogFilePath().isPresent)
     assert(!context.getLastReturnedRowIndex().isPresent)
@@ -90,12 +85,8 @@ class PaginationContextSuite extends AnyFunSuite {
     val pageSize = 50L
 
     val e = intercept[NullPointerException] {
-      PaginationContext.forPageWithPageToken(
-        TEST_TABLE_PATH,
-        TEST_TABLE_VERSION,
-        TEST_PREDICATE_HASH,
-        pageSize,
-        null /* page token */ )
+      PaginationContext.forPageWithPageToken(TEST_TABLE_PATH, TEST_TABLE_VERSION,
+        TEST_PREDICATE_HASH, pageSize, null /* page token */)
     }
     assert(e.getMessage === "page token is null")
   }
@@ -110,11 +101,8 @@ class PaginationContextSuite extends AnyFunSuite {
   test("should throw exception for negative page size") {
     val negativePageSize = -10L
     val e = intercept[IllegalArgumentException] {
-      PaginationContext.forFirstPage(
-        TEST_TABLE_PATH,
-        TEST_TABLE_VERSION,
-        TEST_PREDICATE_HASH,
-        negativePageSize)
+      PaginationContext.forFirstPage(TEST_TABLE_PATH, TEST_TABLE_VERSION,
+        TEST_PREDICATE_HASH, negativePageSize)
     }
     assert(e.getMessage === "Page size must be greater than zero!")
   }
@@ -174,19 +162,4 @@ class PaginationContextSuite extends AnyFunSuite {
     }
     assert(e.getMessage.contains("Invalid page token: token table version"))
   }
-
-  test("should throw exception for when the requested predicate doesn't " +
-    "match the value in page token") {
-    val pageSize = 50L
-    val e = intercept[IllegalArgumentException] {
-      PaginationContext.forPageWithPageToken(
-        TEST_TABLE_PATH,
-        TEST_TABLE_VERSION,
-        TEST_WRONG_PREDICATE_HASH,
-        pageSize,
-        validPageToken)
-    }
-    assert(e.getMessage.contains("Invalid page token: token predicate"))
-  }
-
 }

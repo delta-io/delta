@@ -103,9 +103,9 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
                 lastReturnedRowIndex,
                 Optional.empty() /* sidecar file index */,
                 Meta.KERNEL_VERSION,
-                paginationContext.getTablePath(),
-                paginationContext.getTableVersion(),
-                paginationContext.getPredicateHash(),
+                paginationContext.getTablePath() /* table path */,
+                paginationContext.getTableVersion() /* table version */,
+                paginationContext.getPredicateHash() /* predicate hash */,
                 -1 /* log segment hash */)
             .toRow();
     return Optional.of(pageTokenRow);

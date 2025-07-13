@@ -156,9 +156,7 @@ public class PageToken {
     return kernelVersion;
   }
 
-  public int getPredicateHash() {
-    return predicateHash;
-  }
+  public int getPredicateHash() {return predicateHash;}
 
   @Override
   public boolean equals(Object obj) {
