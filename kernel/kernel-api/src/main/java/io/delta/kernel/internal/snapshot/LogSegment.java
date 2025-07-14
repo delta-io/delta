@@ -384,10 +384,9 @@ public class LogSegment {
         lastCommitTimestamp);
   }
 
-  /** Hash code function to check if two log segments are same. */
   @Override
   public int hashCode() {
-    // TODO: change FileStatus::hashCode for staged commits?
+    // TODO: support staged commits #4927
     return Objects.hash(deltas, checkpoints, compactions);
   }
 
