@@ -40,6 +40,7 @@ public class PaginatedScanImpl implements PaginatedScan {
       String tablePath,
       long tableVersion,
       long pageSize,
+      Optional<Predicate> predicate,
       Optional<Row> pageTokenRowOpt) {
     this.baseScan = baseScan;
     this.pageSize = pageSize;
@@ -50,8 +51,11 @@ public class PaginatedScanImpl implements PaginatedScan {
             .map(
                 token ->
                     PaginationContext.forPageWithPageToken(
-                        tablePath, tableVersion, pageSize, token))
-            .orElseGet(() -> PaginationContext.forFirstPage(tablePath, tableVersion, pageSize));
+                        tablePath, tableVersion, predicate.hashCode(), pageSize, token))
+            .orElseGet(
+                () ->
+                    PaginationContext.forFirstPage(
+                        tablePath, tableVersion, predicate.hashCode(), pageSize));
   }
 
   @Override

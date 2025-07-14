@@ -25,7 +25,7 @@ import java.util.Optional;
 public class PaginationContext {
 
   public static PaginationContext forPageWithPageToken(
-      String tablePath, long tableVersion, long pageSize, PageToken pageToken) {
+      String tablePath, long tableVersion, int predicateHash, long pageSize, PageToken pageToken) {
     Objects.requireNonNull(pageToken, "page token is null");
     Objects.requireNonNull(tablePath, "table path is null");
     checkArgument(
@@ -46,18 +46,28 @@ public class PaginationContext {
             + "Expected: %s, Found: %s",
         Meta.KERNEL_VERSION,
         pageToken.getKernelVersion());
-    return new PaginationContext(tablePath, tableVersion, pageSize, Optional.of(pageToken));
+    checkArgument(
+        predicateHash == pageToken.getPredicateHash(),
+        "Invalid page token: token predicate hash does not match the requested predicate hash. "
+            + "Expected: %s, Found: %s",
+        predicateHash,
+        pageToken.getPredicateHash());
+    return new PaginationContext(
+        tablePath, tableVersion, predicateHash, pageSize, Optional.of(pageToken));
   }
 
-  public static PaginationContext forFirstPage(String tablePath, long tableVersion, long pageSize) {
+  public static PaginationContext forFirstPage(
+      String tablePath, long tableVersion, int predicateHash, long pageSize) {
     Objects.requireNonNull(tablePath, "table path is null");
     return new PaginationContext(
-        tablePath, tableVersion, pageSize, Optional.empty() /* page token */);
+        tablePath, tableVersion, predicateHash, pageSize, Optional.empty() /* page token */);
   }
 
   private final String tablePath;
 
   private final long tableVersion;
+
+  private final int predicateHash;
 
   // TODO: add hash value of log segment and predicate
 
@@ -70,10 +80,15 @@ public class PaginationContext {
   // TODO: add cached log replay hashsets related info
 
   private PaginationContext(
-      String tablePath, long tableVersion, long pageSize, Optional<PageToken> pageToken) {
+      String tablePath,
+      long tableVersion,
+      int predicateHash,
+      long pageSize,
+      Optional<PageToken> pageToken) {
     checkArgument(pageSize > 0, "Page size must be greater than zero!");
     this.tablePath = tablePath;
     this.tableVersion = tableVersion;
+    this.predicateHash = predicateHash;
     this.pageSize = pageSize;
     this.pageToken = pageToken;
   }
@@ -86,13 +101,16 @@ public class PaginationContext {
     return tableVersion;
   }
 
+  public int getPredicateHash() {
+    return predicateHash;
+  }
+
   public long getPageSize() {
     return pageSize;
   }
 
   public Optional<String> getLastReadLogFilePath() {
-    if (!pageToken.isPresent()) return Optional.empty();
-    return Optional.of(pageToken.get().getLastReadLogFilePath());
+    return pageToken.map(PageToken::getLastReadLogFilePath);
   }
 
   public Optional<Long> getLastReturnedRowIndex() {
