@@ -54,7 +54,9 @@ public interface Committer {
    *           then create a new iterator from the materialized data
    *     </ul>
    *
-   * @param commitMetadata
+   * @param commitMetadata the {@link CommitMetadata} associated with this commit, which contains
+   *     additional metadata required to commit the finalized actions to the table, such as the
+   *     commit version, Delta log path, and more.
    * @return CommitResponse containing the resultant commit
    * @throws CommitFailedException if the commit operation fails
    */

@@ -30,26 +30,32 @@ import java.util.Map;
  *
  * <p>This interface will eventually replace the {@link Transaction} interface, and differs from its
  * predecessor in that {@link TransactionV2} no longer directly controls how a commit is performed.
- * It exposes the {@link CommitContext} (actions to commit, additional commit metadata) that Engines
+ * It exposes the {@link CommitContext} (actions to commit, additional commit metadata) that engines
  * may use to have better control over the commit process. This has a several benefits:
  *
+ * <p><b>Enhanced Engine Control:</b>
+ *
  * <ul>
- *   <li>Engines can use the {@link CommitContext} to provide the necessary inputs to the {@link
- *       io.delta.kernel.commit.Committer#commit} method, which is then responsible for the commit.
- *       This is particularly important for catalog-managed tables, where the {@link
- *       io.delta.kernel.commit.Committer} may perform catalog-specific operations during the
- *       commit. Some examples of this include:
- *       <ul>
- *         <li>writing actions into staged commit files instead of directly into the `_delta_log`
- *         <li>sending commits inline to the catalog
- *         <li>publishing previously-ratified commits
- *         <li>sending additional commit metadata to the catalog, such as the latest schema, latest
- *             table properties, commit timestamp, and more
- *       </ul>
  *   <li>Engines can now directly control if the {@code finalizedActions} to commit are materialized
  *       or kept as a one-time-only iterator. Note that these actions must be materialized in order
  *       to support retries.
  *   <li>Engines can now directly control retry logic, e.g. to perform exponential backoff.
+ * </ul>
+ *
+ * <p><b>Catalog Integration:</b>
+ *
+ * <p>Engines can use the {@link CommitContext} to provide the necessary inputs to the {@link
+ * io.delta.kernel.commit.Committer#commit} method, which is then responsible for the commit. This
+ * is particularly important for catalog-managed tables, where the {@link
+ * io.delta.kernel.commit.Committer} may perform catalog-specific operations during the commit. Some
+ * examples of this include:
+ *
+ * <ul>
+ *   <li>writing actions into staged commit files instead of directly into the `_delta_log`
+ *   <li>sending commits inline to the catalog
+ *   <li>publishing previously-ratified commits
+ *   <li>sending additional commit metadata to the catalog, such as the latest schema, latest table
+ *       properties, commit timestamp, and more
  * </ul>
  */
 @Experimental
@@ -58,7 +64,7 @@ public interface TransactionV2 {
   // TODO: Add other APIs as needed, e.g. getting the schema, partitionCols, etc.
 
   /**
-   * Get the internal state of the transaction as an opaque {@link Row}.
+   * Returns the internal state of the transaction as an opaque {@link Row}.
    *
    * <p>This state helps Kernel do the transformations to logical data according to the Delta
    * protocol and table features enabled on the table. The engine should use this at the data writer
@@ -70,9 +76,14 @@ public interface TransactionV2 {
   Row getTransactionState();
 
   /**
-   * Get the {@link CommitContext} that can be used only for the very first commit to the table.
-   * This context contains (a) the finalized actions, including metadata and data actions, and (b)
-   * additional {@link CommitMetadata}.
+   * Returns a {@link CommitContext} that can be used only for the first commit attempt of <i>this
+   * transaction instance</i> to the table.
+   *
+   * <p>Note that this doesn't mean the first write (i.e. CREATE) of the table, but rather the first
+   * commit that this transaction instance attempts to perform.
+   *
+   * <p>This context contains (a) the finalized actions, including metadata and data actions, and
+   * (b) additional {@link CommitMetadata}.
    *
    * @param engine the {@link Engine} instance to use to help generate the {@link CommitContext}
    * @param dataActions Iterator of data actions to commit
