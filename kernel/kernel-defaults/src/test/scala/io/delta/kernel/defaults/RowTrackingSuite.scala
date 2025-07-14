@@ -815,35 +815,57 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
   }
 
   /* -------- Test row tracking with replace table -------- */
-  Seq(true, false).foreach { enableBefore =>
-    Seq(true, false).foreach { enableAfter =>
-      Seq(Seq(), Seq(Map.empty[String, Literal] -> (dataBatches1))).foreach { initialData =>
-        Seq(Seq(), Seq(Map.empty[String, Literal] -> (dataBatches2))).foreach { replaceData =>
-          val testName = s"""Replace table with row tracking:
-                            |enableBefore=$enableBefore,
-                            |enableAfter=$enableAfter,
-                            |initialData=${initialData.nonEmpty},
-                            |replaceData=${replaceData.nonEmpty}"""
-            .stripMargin
-            .replace("\n", " ")
+  val someData = Seq(Map.empty[String, Literal] -> dataBatches1)
+  val otherData = Seq(Map.empty[String, Literal] -> dataBatches2)
+  // Each tuple represents: (enableBefore, enableAfter, initialData, replaceData)
+  val replaceTableTestCases = Seq(
+    // Row tracking turned on
+    (false, true, Seq(), Seq()),
+    (false, true, Seq(), someData),
+    (false, true, someData, Seq()),
+    (false, true, someData, otherData),
+    // Row tracking turned off
+    (true, false, someData, otherData),
+    (true, false, someData, Seq()),
+    // Row tracking remains unchanged
+    (true, true, someData, Seq()),
+    (true, true, Seq(), someData),
+    (true, true, someData, otherData))
 
-          test(testName) {
-            withTempDirAndEngine { (tablePath, engine) =>
-              createAndReplaceTable(
-                engine,
-                tablePath,
-                initialData = initialData,
-                replaceData = replaceData,
-                enableBefore = enableBefore,
-                enableAfter = enableAfter)
+  for ((enableBefore, enableAfter, initialData, replaceData) <- replaceTableTestCases) {
+    val testName = s"""Replace table with row tracking:
+                      |enableBefore=$enableBefore,
+                      |enableAfter=$enableAfter,
+                      |initialData=${initialData.nonEmpty},
+                      |replaceData=${replaceData.nonEmpty}"""
+      .stripMargin
+      .replace("\n", " ")
 
-              // Add assertions here as needed to verify the expected behavior
-              val snapshot =
-                TableImpl.forPath(
-                  engine,
-                  tablePath).getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
-              assertMetadataProp(snapshot, TableConfig.ROW_TRACKING_ENABLED, enableAfter)
-            }
+    test(testName) {
+      withTempDirAndEngine { (tablePath, engine) =>
+        createAndReplaceTable(
+          engine,
+          tablePath,
+          initialData = initialData,
+          replaceData = replaceData,
+          enableBefore = enableBefore,
+          enableAfter = enableAfter)
+
+        val snapshot =
+          TableImpl.forPath(engine, tablePath).getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+
+        // Assert that row tracking is enabled/disabled as expected
+        assertMetadataProp(snapshot, TableConfig.ROW_TRACKING_ENABLED, enableAfter)
+
+        // Assert that materialized row tracking columns are present when row tracking is enabled
+        if (enableAfter) {
+          val config = snapshot.getMetadata.getConfiguration
+          Seq(ROW_ID, ROW_COMMIT_VERSION).foreach { rowTrackingColumn =>
+            assert(config.containsKey(rowTrackingColumn.getMaterializedColumnNameProperty))
+            assert(
+              config
+                .get(rowTrackingColumn.getMaterializedColumnNameProperty)
+                .startsWith(rowTrackingColumn.getMaterializedColumnNamePrefix))
           }
         }
       }
