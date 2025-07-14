@@ -235,7 +235,7 @@ public class LogReplay {
   // Helper Methods //
   ////////////////////
 
-  private LogSegment getLogSegment() {
+  public LogSegment getLogSegment() {
     return lazyLogSegment.get();
   }
 

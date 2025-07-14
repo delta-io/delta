@@ -389,6 +389,11 @@ public class LogSegment {
         lastCommitTimestamp);
   }
 
+  @Override
+  public int hashCode() {
+    return 0;
+  }
+
   private String formatList(List<FileStatus> list) {
     if (list.isEmpty()) {
       return "";
