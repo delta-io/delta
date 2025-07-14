@@ -27,11 +27,11 @@ import io.delta.kernel.defaults.test.AbstractTableManagerAdapter
 import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestUtils}
 import io.delta.kernel.defaults.utils.TestUtilsWithTableManagerAPIs
 import io.delta.kernel.internal.replay.{PageToken, PaginatedScanFilesIteratorImpl}
+import io.delta.kernel.utils.CloseableIterator
 
 import org.apache.spark.sql.catalyst.plans.SQLHelper
 import org.scalatest.funsuite.AnyFunSuite
 import org.slf4j.{Logger, LoggerFactory}
-import io.delta.kernel.utils.CloseableIterator
 
 class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
     with ExpressionTestUtils with SQLHelper with DeltaTableWriteSuiteBase {
@@ -82,7 +82,7 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
   }
 
   private def collectPaginatedBatches(
-      paginatedIter: CloseableIterator[FilteredColumnarBatch] ): Seq[FilteredColumnarBatch] = {
+      paginatedIter: CloseableIterator[FilteredColumnarBatch]): Seq[FilteredColumnarBatch] = {
     val buffer = collection.mutable.Buffer[FilteredColumnarBatch]()
     while (paginatedIter.hasNext) {
       val batch = paginatedIter.next()
@@ -147,7 +147,7 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
     System.out.println(s"number of batches = ${returnedBatchesInPage.length}")
     System.out.println(s"number of AddFiles = ${totalFileCountsReturned}")
 
-    if(nextPageToken.isPresent) {
+    if (nextPageToken.isPresent) {
       val lastReadLogFilePath = PageToken.fromRow(nextPageToken.get).getLastReadLogFilePath
       val lastReturnedRowIndex = PageToken.fromRow(nextPageToken.get).getLastReturnedRowIndex
 
@@ -158,8 +158,10 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
     (nextPageToken, returnedBatchesInPage)
   }
 
-  private def runSingleTest(testCase: SinglePageRequestTestCase, tablePath: String,
-                            tableVersionOpt: Optional[Long] = Optional.empty()) {
+  private def runSingleTest(
+      testCase: SinglePageRequestTestCase,
+      tablePath: String,
+      tableVersionOpt: Optional[Long] = Optional.empty()) {
     var (pageTokenOpt, returnedBatchesInPage) = doSinglePageRequest(
       tablePath = tablePath,
       tableVersionOpt = tableVersionOpt,
@@ -172,7 +174,7 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
       testCase.expBatchCnt,
       testName)
     // TODO: test if kernel can return empty page token when scan is consumed
-    if(pageTokenOpt.isPresent) {
+    if (pageTokenOpt.isPresent) {
       validateFirstPageToken(
         pageTokenOpt.get,
         testCase.expLogFile,
@@ -509,7 +511,7 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
    * 00000000000000000009.checkpoint.0000000004.0000000004.parquet,
    * 00000000000000000010.checkpoint.parquet
    * JSON files: from 0 to 12
-   * */
+   */
   /**
    * val tablePath = tempDir.getCanonicalPath
    *
@@ -528,6 +530,227 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
    * val deltaLog = DeltaLog.forTable(spark, tablePath)
    * deltaLog.checkpoint()
    * }
-  * */
+   */
 
+  /*
+  test("getPaginatedScanFiles - basic pagination with side car checkpoint files and " +
+    "multiple JSON files") {
+      val tablePath = "/home/ada.ma/delta/.bloop/goldenTables/bloop-bsp-clients-classes/classes-Metals-zFK6dCvKR3y5fbr7diWpFQ==/golden/v2-checkpoint-parquet"
+    // val tablePath = goldenTablePath("v2-checkpoint-parquet")
+    // Create table with deletion vectors to trigger sidecar checkpoint creation
+
+    // Add a few more commits after checkpoint to create additional JSON files
+    // Disable automatic checkpointing to prevent superseding our multi-part checkpoint
+    /*
+    withSQLConf(
+      "spark.databricks.delta.checkpointInterval" -> "1000" // Very high interval to disable auto-checkpointing
+    ) {
+      for (i <- 10 until 13) {
+        spark.range(i * 40, (i + 1) * 40, 1, 4)
+          .write.format("delta").mode("append").save(tablePath)
+      }
+    }
+   */
+
+    // Check what checkpoint files were actually created
+    val logDir = new java.io.File(s"$tablePath/_delta_log")
+    val sidecarLogDir = new java.io.File(s"$tablePath/_delta_log/_sidecars")
+    val checkpointFiles = logDir.listFiles().filter(_.getName.contains("checkpoint")).sortBy(_.getName)
+    val sidecarFiles = sidecarLogDir.listFiles().filter(_.getName.contains("checkpoint")).sortBy(_.getName)
+    val jsonFiles = logDir.listFiles().filter(_.getName.endsWith(".json")).sortBy(_.getName)
+
+    /**
+   * V2-checkpoint file
+   * 00000000000000000002.checkpoint.e8fa2696-9728-4e9c-b285-634743fdd4fb.parquet
+   * Sidecar files
+   * 00000000000000000002.checkpoint.0000000001.0000000002.055454d8-329c-4e0e-864d-7f867075af33.parquet
+   * 00000000000000000002.checkpoint.0000000002.0000000002.33321cc1-9c55-4d1f-8511-fafe6d2e1133.parquet
+   * */
+    println(s"Final checkpoint files: ${checkpointFiles.map(_.getName).mkString(", ")}")
+    println(s"Final sidecar checkpoint files: ${sidecarFiles.map(_.getName).mkString(", ")}")
+    println(s"JSON files: ${jsonFiles.map(_.getName).mkString(", ")}")
+
+    val snapshot = latestSnapshot(tablePath)
+    val scan = snapshot.getScanBuilder().build().asInstanceOf[ScanImpl]
+
+    // Create a custom engine with batch size 8
+    val hadoopConf = new org.apache.hadoop.conf.Configuration()
+    hadoopConf.set("delta.kernel.default.json.reader.batch-size", "8")
+    hadoopConf.set("delta.kernel.default.parquet.reader.batch-size", "8")
+    val customEngine = DefaultEngine.create(hadoopConf)
+
+    // Find the first JSON file after checkpoint for starting pagination
+    val checkpointVersions = checkpointFiles.map(_.getName)
+      .filter(_.matches(".*checkpoint.*"))
+      .filter(!_.endsWith(".crc")) // Filter out CRC files
+      .filter(_.matches(".*\\d+.*")) // Only include files that contain numbers
+      .map(name => name.replaceAll(".*?(\\d+).*", "$1").toLong)
+      .toSeq
+    val lastCheckpointVersion = if (checkpointVersions.nonEmpty) checkpointVersions.max else 0L
+
+    val startingJsonFile = f"${lastCheckpointVersion + 1}%020d.json"
+
+    // Test pagination starting from first JSON file after checkpoint
+    // batch skipping logic is problematic for sidecars
+    val paginatedIter = scan.getPaginatedScanFiles(customEngine, 3, 200,
+      "00000000000000000002.checkpoint.0000000001.0000000002.055454d8-329c-4e0e-864d-7f867075af33.parquet", 1)
+    val firstPageFiles = paginatedIter.asScala.toSeq
+
+    assert(firstPageFiles.nonEmpty, "First page should contain files")
+
+    // Verify we got at most 15 AddFiles across all batches
+    val fileCounts: Seq[Long] = firstPageFiles.map(_.getNumOfTrueRows.toLong)
+    val totalAddFiles = fileCounts.sum
+
+    // Get pagination state info
+    val paginatedAddFilesIter = paginatedIter.asInstanceOf[PaginatedAddFilesIterator]
+    val nextBatchesToSkip = paginatedAddFilesIter.getNewPageToken.getRowIndex()
+    val nextStartingFile = paginatedAddFilesIter.getNewPageToken.getStartingFileName()
+
+    println(s"Multi-part checkpoint test - nextBatchesToSkip = $nextBatchesToSkip")
+    println(s"Multi-part checkpoint test - nextStartingFile = $nextStartingFile")
+    println(s"Multi-part checkpoint test - totalAddFiles = $totalAddFiles")
+
+    assert(totalAddFiles <= 15, s"First page should contain at most 15 files, got $totalAddFiles")
+    assert(totalAddFiles > 0, s"Should have some files, got $totalAddFiles")
+
+    paginatedIter.close()
+
+    // Verify checkpoint behavior using a separate scan instance
+    val verificationScan = snapshot.getScanBuilder().build()
+    val allFiles = collectScanFileRows(verificationScan)
+    val totalFilesInTable = allFiles.length
+
+    // The exact number depends on how many commits we made, but should be substantial
+    assert(totalFilesInTable > 100,
+      s"Should have many files from checkpoint + JSON files, got $totalFilesInTable")
+
+    // Verify checkpoint files exist - if we couldn't create multi-part, at least verify single checkpoint works
+    assert(checkpointFiles.length >= 1,
+      s"Should have at least one checkpoint file, found ${checkpointFiles.length}")
+
+    if (checkpointFiles.length > 1) {
+      println(s"SUCCESS: Created multi-part checkpoint with ${checkpointFiles.length} parts")
+    } else {
+      println(s"WARNING: Only created single checkpoint file, multi-part checkpoint creation may need different approach")
+    }
+
+  }
+
+  test("getPaginatedScanFiles - basic pagination with multi part checkpoint files and " +
+    "multiple JSON files") {
+    withTempDir { tempDir =>
+      val tablePath = tempDir.getCanonicalPath
+
+      // Create 10 commits to trigger checkpoint creation
+      for (i <- 0 until 10) {
+        val mode = if (i == 0) "overwrite" else "append"
+        // Create 4 files per commit = 40 total AddFile actions
+        spark.range(i * 40, (i + 1) * 40, 1, 4)
+          .write.format("delta").mode(mode).save(tablePath)
+      }
+
+      // Force multi-part checkpoint creation (3-5 parts)
+      withSQLConf(
+        "spark.databricks.delta.checkpoint.partSize" -> "10" // 40 AddFiles ÷ 10 per part = 4 parts
+      ) {
+        val deltaLog = DeltaLog.forTable(spark, tablePath)
+        deltaLog.checkpoint()
+      }
+
+      // Add a few more commits after checkpoint to create additional JSON files
+      // Disable automatic checkpointing to prevent superseding our multi-part checkpoint
+      /*
+      withSQLConf(
+        "spark.databricks.delta.checkpointInterval" -> "1000" // Very high interval to disable auto-checkpointing
+      ) {
+        for (i <- 10 until 13) {
+          spark.range(i * 40, (i + 1) * 40, 1, 4)
+            .write.format("delta").mode("append").save(tablePath)
+        }
+      }
+   */
+
+      // Check what checkpoint files were actually created
+      val logDir = new java.io.File(s"$tablePath/_delta_log")
+      val checkpointFiles = logDir.listFiles().filter(_.getName.contains("checkpoint")).sortBy(_.getName)
+      val jsonFiles = logDir.listFiles().filter(_.getName.endsWith(".json")).sortBy(_.getName)
+
+      /**
+   * 00000000000000000009.checkpoint.0000000001.0000000004.parquet,
+   * 00000000000000000009.checkpoint.0000000002.0000000004.parquet,
+   * 00000000000000000009.checkpoint.0000000003.0000000004.parquet,
+   * 00000000000000000009.checkpoint.0000000004.0000000004.parquet,
+   * 00000000000000000010.checkpoint.parquet
+   * JSON files: from 0 to 12
+   * */
+      println(s"Final checkpoint files: ${checkpointFiles.map(_.getName).mkString(", ")}")
+      println(s"JSON files: ${jsonFiles.map(_.getName).mkString(", ")}")
+
+      val snapshot = latestSnapshot(tablePath)
+      val scan = snapshot.getScanBuilder().build().asInstanceOf[ScanImpl]
+
+      // Create a custom engine with batch size 8
+      val hadoopConf = new org.apache.hadoop.conf.Configuration()
+      hadoopConf.set("delta.kernel.default.json.reader.batch-size", "8")
+      hadoopConf.set("delta.kernel.default.parquet.reader.batch-size", "8")
+      val customEngine = DefaultEngine.create(hadoopConf)
+
+      // Find the first JSON file after checkpoint for starting pagination
+      val checkpointVersions = checkpointFiles.map(_.getName)
+        .filter(_.matches(".*checkpoint.*"))
+        .filter(!_.endsWith(".crc")) // Filter out CRC files
+        .filter(_.matches(".*\\d+.*")) // Only include files that contain numbers
+        .map(name => name.replaceAll(".*?(\\d+).*", "$1").toLong)
+        .toSeq
+      val lastCheckpointVersion = if (checkpointVersions.nonEmpty) checkpointVersions.max else 0L
+
+      val startingJsonFile = f"${lastCheckpointVersion + 1}%020d.json"
+
+      // Test pagination starting from first JSON file after checkpoint
+      val paginatedIter = scan.getPaginatedScanFiles(customEngine, 8, 40, "00000000000000000009.checkpoint.0000000002.0000000004.parquet", -1)
+      val firstPageFiles = paginatedIter.asScala.toSeq
+
+      assert(firstPageFiles.nonEmpty, "First page should contain files")
+
+      // Verify we got at most 15 AddFiles across all batches
+      val fileCounts: Seq[Long] = firstPageFiles.map(_.getNumOfTrueRows.toLong)
+      val totalAddFiles = fileCounts.sum
+
+      // Get pagination state info
+      val paginatedAddFilesIter = paginatedIter.asInstanceOf[PaginatedAddFilesIterator]
+      val nextBatchesToSkip = paginatedAddFilesIter.getNewPageToken.getRowIndex()
+      val nextStartingFile = paginatedAddFilesIter.getNewPageToken.getStartingFileName()
+
+      println(s"Multi-part checkpoint test - nextBatchesToSkip = $nextBatchesToSkip")
+      println(s"Multi-part checkpoint test - nextStartingFile = $nextStartingFile")
+      println(s"Multi-part checkpoint test - totalAddFiles = $totalAddFiles")
+
+      assert(totalAddFiles <= 15, s"First page should contain at most 15 files, got $totalAddFiles")
+      assert(totalAddFiles > 0, s"Should have some files, got $totalAddFiles")
+
+      paginatedIter.close()
+
+      // Verify checkpoint behavior using a separate scan instance
+      val verificationScan = snapshot.getScanBuilder().build()
+      val allFiles = collectScanFileRows(verificationScan)
+      val totalFilesInTable = allFiles.length
+
+      // The exact number depends on how many commits we made, but should be substantial
+      assert(totalFilesInTable > 100,
+        s"Should have many files from checkpoint + JSON files, got $totalFilesInTable")
+
+      // Verify checkpoint files exist - if we couldn't create multi-part, at least verify single checkpoint works
+      assert(checkpointFiles.length >= 1,
+        s"Should have at least one checkpoint file, found ${checkpointFiles.length}")
+
+      if (checkpointFiles.length > 1) {
+        println(s"SUCCESS: Created multi-part checkpoint with ${checkpointFiles.length} parts")
+      } else {
+        println(s"WARNING: Only created single checkpoint file, multi-part checkpoint creation may need different approach")
+      }
+    }
+  }
+
+   */
 }

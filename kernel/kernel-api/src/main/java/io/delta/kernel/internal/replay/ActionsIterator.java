@@ -113,10 +113,11 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     this.checkpointPredicate = checkpointPredicate;
     this.filesList = new LinkedList<>();
     this.paginationContextOpt = paginationContextOpt;
-    this.filesList.addAll(files.stream()
-        .map(DeltaLogFile::forFileStatus)
-        .filter(this::paginatedFilter)
-        .collect(Collectors.toList()));
+    this.filesList.addAll(
+        files.stream()
+            .map(DeltaLogFile::forFileStatus)
+            .filter(this::paginatedFilter)
+            .collect(Collectors.toList()));
     this.deltaReadSchema = deltaReadSchema;
     this.checkpointReadSchema = checkpointReadSchema;
     this.actionsIter = Optional.empty();
@@ -126,28 +127,35 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
   /**
    * Filters a log segment file based on the pagination context.
    *
-   * <p>If this method returns {@code true}, the current file will be kept; otherwise, it will be skipped.</p>
+   * <p>If this method returns {@code true}, the current file will be kept; otherwise, it will be
+   * skipped.
    *
    * <ul>
-   *   <li>If pagination is not enabled (i.e., {@code paginationContextOpt} is not present), return {@code true}.</li>
-   *   <li>If the pagination context is present but doesn't include a last read log file path, return {@code true} (indicates reading the first page).</li>
-   *   <li>If the file is a JSON log file, return {@code true} — we never skip JSON files as they're needed to build hash sets.</li>
-   *   <li>If the file is a V2 checkpoint manifest, return {@code true} — these should never be skipped.</li>
-   *   <li>If the file is a checkpoint file and comes after the last log file recorded in the page token, return {@code false} (skip it).</li>
+   *   <li>If pagination is not enabled (i.e., {@code paginationContextOpt} is not present), return
+   *       {@code true}.
+   *   <li>If the pagination context is present but doesn't include a last read log file path,
+   *       return {@code true} (indicates reading the first page).
+   *   <li>If the file is a JSON log file, return {@code true} — we never skip JSON files as they're
+   *       needed to build hash sets.
+   *   <li>If the file is a V2 checkpoint manifest, return {@code true} — these should never be
+   *       skipped.
+   *   <li>If the file is a checkpoint file and comes after the last log file recorded in the page
+   *       token, return {@code false} (skip it).
    * </ul>
    *
    * @param nextLogFile the log file to evaluate
    * @return {@code true} to include the file; {@code false} to skip it
    */
-  //TODO: add logging and unit tests for this method
+  // TODO: add logging and unit tests for this method
   private boolean paginatedFilter(DeltaLogFile nextLogFile) {
-    if(!paginationContextOpt.isPresent()) return true;
+    if (!paginationContextOpt.isPresent()) return true;
     Optional<String> lastReadLogFilePathOpt = paginationContextOpt.get().getLastReadLogFilePath();
-    if(!lastReadLogFilePathOpt.isPresent()) return true; // reading first page
+    if (!lastReadLogFilePathOpt.isPresent()) return true; // reading first page
     if (nextLogFile.getLogType() == DeltaLogFile.LogType.V2_CHECKPOINT_MANIFEST)
       return true; // never skip v2 manifest checkpoint file
     String nextFilePath = nextLogFile.getFile().getPath();
-    if(nextFilePath.endsWith(".json")) return true; // never skip JSON files (to build tombstone hashsets)
+    if (nextFilePath.endsWith(".json"))
+      return true; // never skip JSON files (to build tombstone hashsets)
     // If nextFilePath is less than or equal to lastReadLogFilePath, it means nextLogFile
     // comes before or is the same as the last read log file, so we should include it.
     return nextFilePath.compareTo(lastReadLogFilePathOpt.get()) <= 0;
@@ -337,9 +345,9 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
       if (sidecarFile == null) {
         continue;
       }
-      sidecarCnt ++;
-      if(paginationContextOpt.get().getLastReadSidecarFileIdx().isPresent()
-      && sidecarCnt < paginationContextOpt.get().getLastReadSidecarFileIdx().get()) {
+      sidecarCnt++;
+      if (paginationContextOpt.get().getLastReadSidecarFileIdx().isPresent()
+          && sidecarCnt < paginationContextOpt.get().getLastReadSidecarFileIdx().get()) {
         continue;
       }
       FileStatus sideCarFileStatus =
