@@ -493,7 +493,7 @@ That means specifically that for any commit…
 
  - it is **legal** for the same `path` to occur in an `add` action and a `remove` action, but with two different `dvId`s.
  - it is **legal** for the same `path` to be added and/or removed and also occur in a `cdc` action.
- - it is **illegal** for the same `path` to be occur twice with different `dvId`s within each set of `add` or `remove` actions.
+ - it is **illegal** for the same `path` to occur twice with different `dvId`s within each set of `add` or `remove` actions.
  - it is **illegal** for a `path` to occur in an `add` action that already occurs with a different `dvId` in the list of `add` actions from the snapshot of the version immediately preceeding the commit, unless the commit also contains a remove for the later combination.
  - it is **legal** to commit an existing `path` and `dvId` combination again (this allows metadata updates).
 
@@ -1148,7 +1148,7 @@ To support this feature:
 
 When supported:
 - A table could use [uuid-named](#uuid-named-checkpoint) [V2 spec Checkpoints](#v2-spec) which must have [checkpoint metadata](#checkpoint-metadata) and may have [sidecar files](#sidecar-files) OR
-- A table could use [classic](#classic-checkpoint) checkpoints which can be follow [V1](#v1-spec) or [V2](#v2-spec) spec.
+- A table could use [classic](#classic-checkpoint) checkpoints which can follow [V1](#v1-spec) or [V2](#v2-spec) spec.
 - A table must not use [multi-part checkpoints](#multi-part-checkpoint)
 
 # Row Tracking
@@ -1254,9 +1254,9 @@ When Row Tracking is supported (when the `writerFeatures` field of a table's `pr
   - Writers must set the `baseRowId` field in recommitted and checkpointed `add` actions and `remove` actions to the `baseRowId` value (if present) of the last committed `add` action with the same `path`.
   - Writers must track the high water mark, i.e. the highest fresh row id assigned.
     - The high water mark must be stored in a `domainMetadata` action with `delta.rowTracking` as the `domain`
-      and a `configuration` containing a single key-value pair with `highWaterMark` as the key and the highest assigned fresh row id as the value.
-    - Writers must include a `domainMetadata` for `delta.rowTracking` whenever they assign new fresh Row IDs that are higher than `highWaterMark` value of the current `domainMetadata` for `delta.rowTracking`.
-      The `highWaterMark` value in the `configuration` of this `domainMetadata` action must always be equal to or greater than the highest fresh Row ID committed so far.
+      and a `configuration` containing a single key-value pair with `rowIdHighWaterMark` as the key and the highest assigned fresh row id as the value.
+    - Writers must include a `domainMetadata` for `delta.rowTracking` whenever they assign new fresh Row IDs that are higher than `rowIdHighWaterMark` value of the current `domainMetadata` for `delta.rowTracking`.
+      The `rowIdHighWaterMark` value in the `configuration` of this `domainMetadata` action must always be equal to or greater than the highest fresh Row ID committed so far.
       Writers can either commit this `domainMetadata` in the same commit, or they can reserve the fresh Row IDs in an earlier commit.
     - Writers must set the `baseRowId` field to a value that is higher than the row id high water mark.
 - Writer must assign fresh Row Commit Versions to all rows that they commit.
@@ -2020,7 +2020,7 @@ Bytes | Name | Description
 `<start of b>` – `<start of b> + 3` | key | The most significant 32-bit of all the values in this bucket.
 `<start of b> + 4` – `<end of b>` | bucketData | A serialized 32-bit RoaringBitmap with all the least signficant 32-bit entries in this bucket.
 
-The 32-bit serialization format then consists of a header that describes all the (least signficant) 16-bit containers, their types (s. above), and their their key (most significant 16-bits).
+The 32-bit serialization format then consists of a header that describes all the (least signficant) 16-bit containers, their types (s. above), and their key (most significant 16-bits).
 This is followed by the data for each individual container in a container-specific format.
 
 Reference Implementations of the Roaring format:
