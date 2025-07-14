@@ -159,97 +159,108 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
     if (!baseFilteredScanFilesIter.hasNext()) return;
     if (numScanFilesReturned >= pageSize) return;
 
-    final FilteredColumnarBatch batch = baseFilteredScanFilesIter.next();
-    // FilePath and pre-computed number of selected rows are expected to be present; both are
-    // computed and set in ActiveAddFilesIterator (when building FilteredColumnarBatch from
-    // ActionWrapper)
-    checkArgument(batch.getFilePath().isPresent(), "file path doesn't exist!");
-    checkArgument(
-        batch.getPreComputedNumSelectedRows().isPresent(),
-        "pre-computed number of selected rows doesn't exist!");
-
-    final String batchFilePath =
-        batch.getFilePath().get(); // the filepath of which the batch belongs to
-
-    // Check if this batch is from a fully consumed file (all data have been included in previous
-    // pages).
     Optional<String> tokenFilePathOpt = paginationContext.getLastReadLogFilePath();
-    // Skip the batch if it's from a fully consumed file.
-    // Log files are ordered in reverse chronological order (e.g., "14.checkpoint", "13.json",
-    // etc.),
-    // so if batchFilePath > tokenFilePath, it means this file appears *earlier* in the scan order
-    // and has already been fully consumed in a previous page.
-    if (!isSidecar(batchFilePath)
+    Optional<Long> tokenSidecarIndexOpt = paginationContext.getLastReadSidecarFileIdx();
+
+    while (baseFilteredScanFilesIter.hasNext() && numScanFilesReturned < pageSize) {
+      final FilteredColumnarBatch batch = baseFilteredScanFilesIter.next();
+      // FilePath and pre-computed number of selected rows are expected to be present; both are
+      // computed and set in ActiveAddFilesIterator (when building FilteredColumnarBatch from
+      // ActionWrapper)
+      checkArgument(batch.getFilePath().isPresent(), "file path doesn't exist!");
+      checkArgument(
+          batch.getPreComputedNumSelectedRows().isPresent(),
+          "pre-computed number of selected rows doesn't exist!");
+
+      final String batchFilePath = batch.getFilePath().get(); // which file this batch comes from
+
+      // Skip batch if it;s from a fully consumed file (all data have been included in previous
+      // pages).
+      if (isFromFullyConsumedFile(batchFilePath, tokenFilePathOpt, tokenSidecarIndexOpt)) {
+        continue;
+      }
+
+      // Reset row index if this batch is from a new file not yet seen in previous pages.
+      if (!batchFilePath.equals(lastReadLogFilePath)) {
+        lastReadLogFilePath = batchFilePath;
+        // Start from -1 so adding the first batch size gives correct 0-based row index.
+        lastReturnedRowIndex = -1;
+        logger.info("Reading new file: {}", lastReadLogFilePath);
+
+        // Sidecar index starts at -1 if none was seen in the previous page.
+        if (isSidecar(batchFilePath)) {
+          lastSidecarIndex++;
+        }
+      }
+
+      final long numRowsInBatch = batch.getData().getSize(); // total number of rows in current batch
+      // calculate the row index of the last row in current batch within the file
+      lastReturnedRowIndex += numRowsInBatch;
+
+      // Check if this batch is from the same last read file as recorded in the pagination token.
+      if (isFromSameFileInToken(batchFilePath, tokenFilePathOpt, tokenSidecarIndexOpt)) {
+        // If the batch is from the last read file in last page, compare its row index to page token row
+        // index.
+        Optional<Long> tokenRowIndex = paginationContext.getLastReturnedRowIndex();
+        checkArgument(tokenRowIndex.isPresent(), "token row index is empty!");
+        // Skip this batch if its last row index is smaller than or equal to the value in token.
+        if (lastReturnedRowIndex <= tokenRowIndex.get()) {
+          continue;
+        }
+      }
+
+      // currentBatch will be included in the current page.
+      currentBatch = Optional.of(batch);
+      final long numSelectedAddFilesInBatch = batch.getPreComputedNumSelectedRows().get();
+      numScanFilesReturned +=
+          numSelectedAddFilesInBatch; // update total number of ScanFiles to return in this page
+
+      logger.info("total numScanFilesReturned: {}", numScanFilesReturned);
+      logger.info("numSelectedAddFilesInBatch: {}", numSelectedAddFilesInBatch);
+      logger.info("numRowsInBatch: {}", numRowsInBatch);
+      
+      // Found a valid batch, break out of the loop
+      break;
+    }
+  }
+
+  /**
+   * Returns true if the current batch is from a fully consumed file based on the page token.
+   *
+   * Skips conditions:
+   *  - If a sidecar file was read in the previous page, we skip all log files in the current page.
+   *  - If the batch is a log file that appears earlier (in reverse lexicographic order) than the
+   *    file recorded in the token, it has already been fully processed and should be skipped.
+   */
+  private boolean isFromFullyConsumedFile(String batchFilePath,
+                                          Optional<String> tokenFilePathOpt, Optional<Long> tokenSidecarIndexOpt) {
+
+    if (tokenSidecarIndexOpt.isPresent() && !isSidecar(batchFilePath)) {
+      return true;
+    }
+
+    return !isSidecar(batchFilePath)
         && tokenFilePathOpt.isPresent()
-        && batchFilePath.compareTo(tokenFilePathOpt.get()) > 0) {
-      prepareNext();
-      return;
-    }
-
-    //  Check if this batch comes from a new file (that has never been read).
-    if (!batchFilePath.equals(lastReadLogFilePath)) {
-      lastReadLogFilePath = batchFilePath;
-      // Reset the lastReturnedRowIndex for the new file.
-      // Row index is 0-based, and we increment it by the number of rows in each batch.
-      // So starting from -1 ensures that after adding the first batch size (e.g., 30),
-      // the index correctly ends at 29, which is the last row index in the current file.
-      lastReturnedRowIndex = -1;
-      logger.info("Reading new file: {}", lastReadLogFilePath);
-      // If the new file is a sidecar file, update the index of last read sidecar file.
-      // The sidecar index starts from 0, so we increment from an initial value of -1.
-      // This initial -1 means no sidecar file was read in the previous page (i.e., it's not present
-      // in the page token).
-      if (isSidecar(batchFilePath)) {
-        lastSidecarIndex++;
-      }
-    }
-
-    final long numRowsInBatch = batch.getData().getSize(); // total number of rows in current batch
-    lastReturnedRowIndex +=
-        numRowsInBatch; // calculate the row index of the last row in current batch within the file
-
-    // Check if this batch is from the same last read file as recorded in the pagination token.
-    boolean isSameFileAsToken = isSameFileAsToken(batchFilePath, tokenFilePathOpt);
-
-    // If the batch is from the last read file in last page, compare its row index to page token row
-    // index.
-    if (isSameFileAsToken) {
-      Optional<Long> tokenRowIndex = paginationContext.getLastReturnedRowIndex();
-      // If file path is present in page token, last returned row index must present.
-      checkArgument(tokenRowIndex.isPresent(), "token row index is empty!");
-      // Skip this batch if it has been returned in previous page.
-      if (lastReturnedRowIndex <= tokenRowIndex.get()) {
-        prepareNext();
-        return;
-      }
-    }
-
-    // currentBatch will be included in the current page.
-    currentBatch = Optional.of(batch);
-    final long numSelectedAddFilesInBatch = batch.getPreComputedNumSelectedRows().get();
-    numScanFilesReturned +=
-        numSelectedAddFilesInBatch; // update total number of ScanFiles to return in this page
-
-    logger.info("total numScanFilesReturned: {}", numScanFilesReturned);
-    logger.info("numSelectedAddFilesInBatch: {}", numSelectedAddFilesInBatch);
-    logger.info("numRowsInBatch: {}", numRowsInBatch);
+        && batchFilePath.compareTo(tokenFilePathOpt.get()) > 0;
   }
 
   /**
    * Check if this batch is from the same file (log or sidecar) that the previous page ended at, as
-   * indicated by the file path or sidecar index in the pagination token.
+   * indicated by the file path or sidecar index in the page token.
    */
-  private boolean isSameFileAsToken(String batchFilePath, Optional<String> tokenFilePathOpt) {
+  private boolean isFromSameFileInToken(String batchFilePath,
+                                        Optional<String> tokenFilePathOpt, Optional<Long> tokenSidecarIndexOpt) {
+    // Match if it's the same log file as recorded in the page token.
     boolean isSameLogFile =
         !isSidecar(batchFilePath)
             && tokenFilePathOpt.isPresent()
             && batchFilePath.equals(tokenFilePathOpt.get());
 
-    // Match if it's the same sidecar file (by index) as recorded in the pagination token.
+    // Match if it's the same sidecar file (by index) as recorded in the page token.
     boolean isSameSidecarFile =
         isSidecar(batchFilePath)
-            && paginationContext.getLastReadSidecarFileIdx().isPresent()
-            && lastSidecarIndex == paginationContext.getLastReadSidecarFileIdx().get();
+            && tokenSidecarIndexOpt.isPresent()
+            && lastSidecarIndex == tokenSidecarIndexOpt.get();
 
     return isSameLogFile || isSameSidecarFile;
   }

@@ -637,6 +637,7 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
 
   }
 
+
   test("getPaginatedScanFiles - basic pagination with multi part checkpoint files and " +
     "multiple JSON files") {
     withTempDir { tempDir =>
@@ -751,6 +752,5 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
       }
     }
   }
-
    */
 }

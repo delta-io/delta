@@ -339,7 +339,7 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     List<DeltaLogFile> outputFiles = new ArrayList<>();
     int sidecarIndex = columnarBatch.getSchema().fieldNames().indexOf(LogReplay.SIDECAR_FIELD_NAME);
     ColumnVector sidecarVector = columnarBatch.getColumnVector(sidecarIndex);
-    int sidecarCnt = 0;
+    int sidecarCnt = -1; // sidecar index start from 0
     for (int i = 0; i < columnarBatch.getSize(); i++) {
       SidecarFile sidecarFile = SidecarFile.fromColumnVector(sidecarVector, i);
       if (sidecarFile == null) {
