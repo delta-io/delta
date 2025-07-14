@@ -26,12 +26,7 @@ import io.delta.kernel.internal.lang.ListUtils;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.utils.FileStatus;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Comparator;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Optional;
+import java.util.*;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.slf4j.Logger;
@@ -389,9 +384,11 @@ public class LogSegment {
         lastCommitTimestamp);
   }
 
+  /** Hash code function to check if two log segments are same. */
   @Override
   public int hashCode() {
-    return 0;
+    // TODO: change FileStatus::hashCode for staged commits?
+    return Objects.hash(deltas, checkpoints, compactions);
   }
 
   private String formatList(List<FileStatus> list) {

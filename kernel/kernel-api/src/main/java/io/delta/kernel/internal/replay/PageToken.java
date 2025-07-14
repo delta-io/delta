@@ -58,7 +58,7 @@ public class PageToken {
         row.getString(4), // tablePath
         row.getLong(5), // tableVersion
         row.getInt(6), // predicateHash
-        row.getLong(7)); // logSegmentHash
+        row.getInt(7)); // logSegmentHash
   }
 
   public static final StructType PAGE_TOKEN_SCHEMA =
@@ -70,7 +70,7 @@ public class PageToken {
           .add("tablePath", StringType.STRING, false /* nullable */)
           .add("tableVersion", LongType.LONG, false /* nullable */)
           .add("predicateHash", IntegerType.INTEGER, false /* nullable */)
-          .add("logSegmentHash", LongType.LONG, false /* nullable */);
+          .add("logSegmentHash", IntegerType.INTEGER, false /* nullable */);
 
   // ===== Variables to mark where the last page ended (and the current page starts) =====
 
@@ -97,7 +97,7 @@ public class PageToken {
   private final String tablePath;
   private final long tableVersion;
   private final int predicateHash;
-  private final long logSegmentHash;
+  private final int logSegmentHash;
 
   public PageToken(
       String lastReadLogFilePath,
@@ -107,7 +107,7 @@ public class PageToken {
       String tablePath,
       long tableVersion,
       int predicateHash,
-      long logSegmentHash) {
+      int logSegmentHash) {
     this.lastReadLogFilePath = requireNonNull(lastReadLogFilePath, "lastReadLogFilePath is null");
     this.lastReturnedRowIndex = lastReturnedRowIndex;
     this.lastReadSidecarFileIdx = lastReadSidecarFileIdx;
@@ -158,6 +158,10 @@ public class PageToken {
 
   public int getPredicateHash() {
     return predicateHash;
+  }
+
+  public int getLogSegmentHash() {
+    return logSegmentHash;
   }
 
   @Override

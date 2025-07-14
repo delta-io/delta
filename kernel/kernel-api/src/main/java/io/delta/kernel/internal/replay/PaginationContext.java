@@ -25,7 +25,12 @@ import java.util.Optional;
 public class PaginationContext {
 
   public static PaginationContext forPageWithPageToken(
-      String tablePath, long tableVersion, int predicateHash, long pageSize, PageToken pageToken) {
+      String tablePath,
+      long tableVersion,
+      int logSegmentHash,
+      int predicateHash,
+      long pageSize,
+      PageToken pageToken) {
     Objects.requireNonNull(pageToken, "page token is null");
     Objects.requireNonNull(tablePath, "table path is null");
     checkArgument(
@@ -52,15 +57,26 @@ public class PaginationContext {
             + "Expected: %s, Found: %s",
         predicateHash,
         pageToken.getPredicateHash());
+    checkArgument(
+        logSegmentHash == pageToken.getLogSegmentHash(),
+        "Invalid page token: token log segment hash does not match the requested log segment hash. "
+            + "Expected: %s, Found: %s",
+        logSegmentHash,
+        pageToken.getLogSegmentHash());
     return new PaginationContext(
-        tablePath, tableVersion, predicateHash, pageSize, Optional.of(pageToken));
+        tablePath, tableVersion, logSegmentHash, predicateHash, pageSize, Optional.of(pageToken));
   }
 
   public static PaginationContext forFirstPage(
-      String tablePath, long tableVersion, int predicateHash, long pageSize) {
+      String tablePath, long tableVersion, int logSegmentHash, int predicateHash, long pageSize) {
     Objects.requireNonNull(tablePath, "table path is null");
     return new PaginationContext(
-        tablePath, tableVersion, predicateHash, pageSize, Optional.empty() /* page token */);
+        tablePath,
+        tableVersion,
+        logSegmentHash,
+        predicateHash,
+        pageSize,
+        Optional.empty() /* page token */);
   }
 
   private final String tablePath;
@@ -69,7 +85,7 @@ public class PaginationContext {
 
   private final int predicateHash;
 
-  // TODO: add hash value of log segment and predicate
+  private final int logSegmentHash;
 
   /** maximum number of ScanFiles to return in the current page */
   private final long pageSize;
@@ -82,12 +98,14 @@ public class PaginationContext {
   private PaginationContext(
       String tablePath,
       long tableVersion,
+      int logSegmentHash,
       int predicateHash,
       long pageSize,
       Optional<PageToken> pageToken) {
     checkArgument(pageSize > 0, "Page size must be greater than zero!");
     this.tablePath = tablePath;
     this.tableVersion = tableVersion;
+    this.logSegmentHash = logSegmentHash;
     this.predicateHash = predicateHash;
     this.pageSize = pageSize;
     this.pageToken = pageToken;
