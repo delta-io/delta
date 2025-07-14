@@ -1681,6 +1681,47 @@ class GoldenTables extends QueryTest with SharedSparkSession {
     // operationParameters
     spark.sql("OPTIMIZE delta.`%s` ZORDER BY id".format(tablePath))
   }
+
+  generateGoldenTable("row-tracking") { tablePath =>
+    // Enable row tracking feature
+    spark.sql(
+      s"""
+         |CREATE TABLE delta.`$tablePath` (
+         |  id INT,
+         |  value STRING
+         |) USING DELTA
+         |TBLPROPERTIES ('delta.enableRowTracking' = 'true')
+         |""".stripMargin)
+
+    // Insert 5 records
+    val initialData = Seq(
+      (1, "A"),
+      (2, "B"),
+      (3, "C"),
+      (4, "D"),
+      (5, "E")
+    )
+    initialData.toDF(
+      "id",
+      "value").repartition(1).write.format("delta").mode("overwrite").save(tablePath)
+
+    // Prepare source for merge
+    val sourceData = Seq(
+      (3, "C_updated"), // will update id=3
+      (6, "F")          // will insert new id=6
+    )
+    sourceData.toDF("id", "value").createOrReplaceTempView("merge_source")
+
+    // Merge: update id=3, insert id=6
+    spark.sql(
+      s"""
+         |MERGE INTO delta.`$tablePath` t
+         |USING merge_source s
+         |ON t.id = s.id
+         |WHEN MATCHED THEN UPDATE SET t.value = s.value
+         |WHEN NOT MATCHED THEN INSERT (id, value) VALUES (s.id, s.value)
+         |""".stripMargin)
+  }
 }
 
 case class TestStruct(f1: String, f2: Long)
