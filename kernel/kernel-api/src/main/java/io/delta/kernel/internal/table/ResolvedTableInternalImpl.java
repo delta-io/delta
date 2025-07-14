@@ -18,6 +18,7 @@ package io.delta.kernel.internal.table;
 
 import static java.util.Objects.requireNonNull;
 
+import io.delta.kernel.Operation;
 import io.delta.kernel.ScanBuilder;
 import io.delta.kernel.commit.Committer;
 import io.delta.kernel.expressions.Column;
@@ -32,9 +33,12 @@ import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.metrics.SnapshotReportImpl;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
+import io.delta.kernel.internal.transaction.TransactionV2Impl;
+import io.delta.kernel.internal.transaction.TransactionV2State;
 import io.delta.kernel.internal.util.Clock;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.metrics.SnapshotReport;
+import io.delta.kernel.transaction.TransactionV2;
 import io.delta.kernel.types.StructType;
 import java.util.List;
 import java.util.Map;
@@ -128,6 +132,24 @@ public class ResolvedTableInternalImpl implements ResolvedTableInternal {
   @Override
   public Committer getCommitter() {
     return committerOpt.get(); // TODO create default committer if not present in the right place
+  }
+
+  @Override
+  public TransactionV2 forceCreateTransaction() {
+    return new TransactionV2Impl(
+        new TransactionV2State(
+            false /* isCreateOrReplace */,
+            "engineInfo",
+            Operation.WRITE,
+            path,
+            logPath,
+            Optional.of(this),
+            protocol,
+            metadata,
+            false,
+            false,
+            clock,
+            Optional.empty()));
   }
 
   ///////////////////////////////////////

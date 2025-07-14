@@ -733,6 +733,7 @@ lazy val unity = (project in file("unity"))
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
 
       "io.unitycatalog" % "unitycatalog-client" % "0.2.1" % "test",
+      "org.apache.hadoop" % "hadoop-aws" % hadoopVersion % "test",
     ),
     unidocSourceFilePatterns += SourceFilePattern("src/main/java/io/delta/unity/"),
   ).configureUnidoc()

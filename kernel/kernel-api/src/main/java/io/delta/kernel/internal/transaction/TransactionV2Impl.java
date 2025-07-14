@@ -16,14 +16,11 @@
 
 package io.delta.kernel.internal.transaction;
 
-import static io.delta.kernel.internal.TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED;
-
 import io.delta.kernel.commit.CommitContext;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.commit.CommitContextImpl;
 import io.delta.kernel.internal.data.TransactionStateRow;
-import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.transaction.TransactionV2;
 import io.delta.kernel.utils.CloseableIterator;
 
@@ -44,13 +41,6 @@ public class TransactionV2Impl implements TransactionV2 {
 
   @Override
   public CommitContext getInitialCommitContext(Engine engine, CloseableIterator<Row> dataActions) {
-    if (TableFeatures.isRowTrackingSupported(txnState.protocol)) {
-      throw new UnsupportedOperationException("Row Tracking not yet supported in TransactionV2");
-    }
-    if (IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(txnState.initialMetadata)) {
-      throw new UnsupportedOperationException(
-          "In Commit Timestamps  not yet supported in TransactionV2");
-    }
 
     // TODO: update data actions with rowId stuff
 

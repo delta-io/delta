@@ -106,14 +106,15 @@ public class UCCatalogManagedClient {
         ucTableId,
         () ->
             TableManager.loadTable(tablePath)
-                .atVersion(response.getLatestTableVersion())
+                .atVersion(
+                    response.getLatestTableVersion() == -1 ? 0 : response.getLatestTableVersion())
                 .withCommitter(new UCCatalogManagedCommitter(ucClient, ucTableId, tablePath))
                 .withLogData(logData)
                 .build(engine));
   }
 
   private GetCommitsResponse getRatifiedCommitsFromUC(String ucTableId, String tablePath) {
-    logger.info("[{}] Invoking the UCClient to get ratified commits at LATEST {}", ucTableId);
+    logger.info("[{}] Invoking the UCClient to get ratified commits at LATEST", ucTableId);
 
     return timeOperation(
         "UCClient.getCommits",
