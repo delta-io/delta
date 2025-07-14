@@ -123,14 +123,34 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     this.schemaContainsAddOrRemoveFiles = LogReplay.containsAddOrRemoveFileActions(deltaReadSchema);
   }
 
+  /**
+   * Filters a log segment file based on the pagination context.
+   *
+   * <p>If this method returns {@code true}, the current file will be kept; otherwise, it will be skipped.</p>
+   *
+   * <ul>
+   *   <li>If pagination is not enabled (i.e., {@code paginationContextOpt} is not present), return {@code true}.</li>
+   *   <li>If the pagination context is present but doesn't include a last read log file path, return {@code true} (indicates reading the first page).</li>
+   *   <li>If the file is a JSON log file, return {@code true} — we never skip JSON files as they're needed to build hash sets.</li>
+   *   <li>If the file is a V2 checkpoint manifest, return {@code true} — these should never be skipped.</li>
+   *   <li>If the file is a checkpoint file and comes after the last log file recorded in the page token, return {@code false} (skip it).</li>
+   * </ul>
+   *
+   * @param nextLogFile the log file to evaluate
+   * @return {@code true} to include the file; {@code false} to skip it
+   */
+  //TODO: add logging and unit tests for this method
   private boolean paginatedFilter(DeltaLogFile nextLogFile) {
     if(!paginationContextOpt.isPresent()) return true;
     Optional<String> lastReadLogFilePathOpt = paginationContextOpt.get().getLastReadLogFilePath();
-    if(!lastReadLogFilePathOpt.isPresent()) return true; // first page
+    if(!lastReadLogFilePathOpt.isPresent()) return true; // reading first page
     if (nextLogFile.getLogType() == DeltaLogFile.LogType.V2_CHECKPOINT_MANIFEST)
       return true; // never skip v2 manifest checkpoint file
     String nextFilePath = nextLogFile.getFile().getPath();
-    return nextFilePath.endsWith(".json") || nextFilePath.compareTo(lastReadLogFilePathOpt.get()) <= 0;
+    if(nextFilePath.endsWith(".json")) return true; // never skip JSON files (to build tombstone hashsets)
+    // If nextFilePath is less than or equal to lastReadLogFilePath, it means nextLogFile
+    // comes before or is the same as the last read log file, so we should include it.
+    return nextFilePath.compareTo(lastReadLogFilePathOpt.get()) <= 0;
   }
 
   @Override
@@ -311,9 +331,15 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     List<DeltaLogFile> outputFiles = new ArrayList<>();
     int sidecarIndex = columnarBatch.getSchema().fieldNames().indexOf(LogReplay.SIDECAR_FIELD_NAME);
     ColumnVector sidecarVector = columnarBatch.getColumnVector(sidecarIndex);
+    int sidecarCnt = 0;
     for (int i = 0; i < columnarBatch.getSize(); i++) {
       SidecarFile sidecarFile = SidecarFile.fromColumnVector(sidecarVector, i);
       if (sidecarFile == null) {
+        continue;
+      }
+      sidecarCnt ++;
+      if(paginationContextOpt.get().getLastReadSidecarFileIdx().isPresent()
+      && sidecarCnt < paginationContextOpt.get().getLastReadSidecarFileIdx().get()) {
         continue;
       }
       FileStatus sideCarFileStatus =

@@ -26,6 +26,7 @@ import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
 import java.util.NoSuchElementException;
+import java.util.Objects;
 import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -72,6 +73,8 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
    */
   private long lastReturnedRowIndex = -1;
 
+  private long lastSidecarIndex = -1;
+
   private Optional<FilteredColumnarBatch> currentBatch = Optional.empty();
 
   private boolean closed = false;
@@ -96,16 +99,15 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
 
   @Override
   public Optional<Row> getCurrentPageToken() {
-    // TODO: replace hash value of predicate and log segment
     if(!baseFilteredScanFilesIter.hasNext()) {
-    //  System.out.println("no pages are left");
       return Optional.empty();
     }
+    // TODO: replace hash value of predicate and log segment
     Row pageTokenRow =
         new PageToken(
                 lastReadLogFilePath,
                 lastReturnedRowIndex,
-                Optional.empty() /* sidecar file index */,
+                (lastSidecarIndex == -1) ? Optional.empty() : Optional.of(lastSidecarIndex) /* sidecar file index */,
                 Meta.KERNEL_VERSION,
                 paginationContext.getTablePath() /* table path */,
                 paginationContext.getTableVersion() /* table version */,
@@ -138,27 +140,38 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
         batch.getPreComputedNumSelectedRows().isPresent(),
         "pre-computed number of selected rows doesn't exist!");
 
-    // ====== get batch metadata (filepath, row index) ==========
-    final String batchFilePath = batch.getFilePath().get();
-    final long numSelectedAddFilesInBatch = batch.getPreComputedNumSelectedRows().get();
-    final long numRowsInBatch = batch.getData().getSize();
+    // ====== calculate batch lastReadLogFilePath, lastReturnedRowIndex of current batch==========
+    final String batchFilePath = batch.getFilePath().get(); // the filepath of the batch that comes from
+    final long numSelectedAddFilesInBatch = batch.getPreComputedNumSelectedRows().get(); // how many active AddFiles in current batch
+    final long numRowsInBatch = batch.getData().getSize(); // total number of rows in current batch
 
-    if (lastReadLogFilePath == null || batchFilePath.compareTo(lastReadLogFilePath) < 0) {
+    // If batchFilePath is not equal to lastReadLogFilePath, this means we are reading a batch from a new file.
+    if (!batchFilePath.equals(lastReadLogFilePath)) {
       lastReadLogFilePath = batchFilePath;
       lastReturnedRowIndex = -1;
       logger.info("filePath {}", lastReadLogFilePath);
+      if(isSidecar(batchFilePath)) { // new file is a sidecar file
+        lastSidecarIndex++;
+      }
     }
     lastReturnedRowIndex += numRowsInBatch; // calculate the row index of the last row in current batch
 
     // ====== decide if current batch should be emitted ==========
     Optional<String> tokenFilePathOpt = paginationContext.getLastReadLogFilePath();
-    // If the batch is from a previously returned file, skip this batch
-    if(tokenFilePathOpt.isPresent() && batchFilePath.compareTo(tokenFilePathOpt.get()) > 0) {
+    // If page token exists (some batches have been returned before) and if the batch is from a previously returned file, skip this batch
+    if(!isSidecar(lastReadLogFilePath) && tokenFilePathOpt.isPresent() && batchFilePath.compareTo(tokenFilePathOpt.get()) > 0) {
       prepareNext();
       return;
     }
+
     // If the batch is from the last read file in last page, compare its row index to page token row index
-    if(tokenFilePathOpt.isPresent() && batchFilePath.equals(tokenFilePathOpt.get())) {
+    boolean isSameFile = !isSidecar(lastReadLogFilePath) && tokenFilePathOpt.isPresent() && batchFilePath.equals(tokenFilePathOpt.get());
+    if (isSidecar(lastReadLogFilePath) && paginationContext.getLastReadSidecarFileIdx().isPresent()
+    && Objects.equals(lastSidecarIndex, paginationContext.getLastReadSidecarFileIdx().get())) {
+      isSameFile = true;
+    }
+
+    if(isSameFile) {
       lastReadLogFilePath = batchFilePath;
       Optional<Long> tokenRowIndex = paginationContext.getLastReturnedRowIndex();
       // If file path is present in page token, last returned row index must present
@@ -171,11 +184,15 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
 
     // ====== handle batches to EMIT ===========
     currentBatch = Optional.of(batch);
-    numScanFilesReturned += numSelectedAddFilesInBatch;
+    numScanFilesReturned += numSelectedAddFilesInBatch; // update total number of ScanFiles to return in this page
 
     logger.info("total numScanFilesReturned: {}", numScanFilesReturned);
     logger.info("numSelectedAddFilesInBatch: {}", numSelectedAddFilesInBatch);
     logger.info("numRowsInBatch: {}", numRowsInBatch);
+  }
+
+  private boolean isSidecar(String filePath) {
+    return false;
   }
 
   @Override
