@@ -151,11 +151,13 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     if (!paginationContextOpt.isPresent()) return true;
     Optional<String> lastReadLogFilePathOpt = paginationContextOpt.get().getLastReadLogFilePath();
     if (!lastReadLogFilePathOpt.isPresent()) return true; // reading first page
-    if (nextLogFile.getLogType() == DeltaLogFile.LogType.V2_CHECKPOINT_MANIFEST)
+    if (nextLogFile.getLogType() == DeltaLogFile.LogType.V2_CHECKPOINT_MANIFEST) {
       return true; // never skip v2 manifest checkpoint file
+    }
     String nextFilePath = nextLogFile.getFile().getPath();
-    if (nextFilePath.endsWith(".json"))
+    if (nextFilePath.endsWith(".json")) {
       return true; // never skip JSON files (to build tombstone hashsets)
+    }
     // If nextFilePath is less than or equal to lastReadLogFilePath, it means nextLogFile
     // comes before or is the same as the last read log file, so we should include it.
     return nextFilePath.compareTo(lastReadLogFilePathOpt.get()) <= 0;
