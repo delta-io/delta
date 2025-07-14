@@ -56,52 +56,6 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
     createEmptyTable(engine, tablePath, schema = schema, tableProperties = tableProps)
   }
 
-  /**
-   * Creates a table at the given path, optionally with initial data and row tracking enabled or
-   * disabled. Then replaces the table with new (or no) data and optionally enables/disables row
-   * tracking after the replace.
-   *
-   * @param engine The Delta Kernel engine to use.
-   * @param tablePath The path to the Delta table.
-   * @param schema The schema to use for the table.
-   * @param extraProps Additional table properties.
-   * @param initialData Data to append after initial table creation (before replace).
-   * @param replaceData Data to append as part of the replace transaction.
-   * @param enableBefore Whether to enable row tracking before the replace.
-   * @param enableAfter Whether to enable row tracking after the replace.
-   */
-  private def createAndReplaceTable(
-      engine: Engine,
-      tablePath: String,
-      schema: StructType = testSchema,
-      extraProps: Map[String, String] = Map.empty,
-      initialData: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])] = Seq.empty,
-      replaceData: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])] = Seq.empty,
-      enableBefore: Boolean = false,
-      enableAfter: Boolean = true): Unit = {
-    val initialTableProps =
-      Map(TableConfig.ROW_TRACKING_ENABLED.getKey -> enableBefore.toString) ++ extraProps
-
-    // Create an empty table with row tracking enabled or disabled
-    createEmptyTable(engine, tablePath, schema = schema, tableProperties = initialTableProps)
-
-    // Optionally fill the table with initial data if provided
-    if (initialData.nonEmpty) {
-      appendData(engine, tablePath, data = initialData)
-    }
-
-    // Create a REPLACE transaction
-    val replaceTableProps =
-      Map(TableConfig.ROW_TRACKING_ENABLED.getKey -> enableAfter.toString) ++ extraProps
-    val txnBuilder = Table.forPath(engine, tablePath).asInstanceOf[TableImpl]
-      .createReplaceTableTransactionBuilder(engine, testEngineInfo)
-      .withSchema(engine, schema)
-      .withTableProperties(engine, replaceTableProps.asJava)
-    val txn = txnBuilder.build(engine)
-
-    commitTransaction(txn, engine, getAppendActions(txn, replaceData))
-  }
-
   private def verifyBaseRowIDs(
       engine: Engine,
       tablePath: String,
@@ -843,14 +797,30 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
 
     test(testName) {
       withTempDirAndEngine { (tablePath, engine) =>
-        createAndReplaceTable(
+        // Create an empty table with row tracking enabled or disabled
+        createEmptyTable(
           engine,
           tablePath,
-          initialData = initialData,
-          replaceData = replaceData,
-          enableBefore = enableBefore,
-          enableAfter = enableAfter)
+          testSchema,
+          tableProperties = Map(TableConfig.ROW_TRACKING_ENABLED.getKey -> enableBefore.toString))
 
+        // Optionally fill the table with initial data if provided
+        if (initialData.nonEmpty) {
+          appendData(engine, tablePath, data = initialData)
+        }
+
+        // Create a REPLACE transaction and commit
+        val replaceTableProps =
+          Map(TableConfig.ROW_TRACKING_ENABLED.getKey -> enableAfter.toString)
+        val txnBuilder = Table.forPath(engine, tablePath).asInstanceOf[TableImpl]
+          .createReplaceTableTransactionBuilder(engine, testEngineInfo)
+          .withSchema(engine, testSchema)
+          .withTableProperties(engine, replaceTableProps.asJava)
+        val txn = txnBuilder.build(engine)
+
+        commitTransaction(txn, engine, getAppendActions(txn, replaceData))
+
+        // Get the latest snapshot of the table after the replace operation
         val snapshot =
           TableImpl.forPath(engine, tablePath).getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
 
@@ -867,6 +837,21 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
                 .get(rowTrackingColumn.getMaterializedColumnNameProperty)
                 .startsWith(rowTrackingColumn.getMaterializedColumnNamePrefix))
           }
+        }
+
+        // Check that AddFile actions in the new table have a base row ID and default commit version
+        if (replaceData.nonEmpty) {
+          // Base row IDs do not start from 0 if we had initial data and row tracking was enabled
+          val baseRowIds = if (initialData.nonEmpty && enableBefore) {
+            initialData.head._2.map(_.getData.getSize).sum
+          } else {
+            0L
+          }
+          // There was one more previous commit if initialData was present
+          val defaultCommitVersion = if (initialData.nonEmpty) 2 else 1
+
+          verifyBaseRowIDs(engine, tablePath, Seq(baseRowIds))
+          verifyDefaultRowCommitVersion(engine, tablePath, Seq(defaultCommitVersion))
         }
       }
     }
