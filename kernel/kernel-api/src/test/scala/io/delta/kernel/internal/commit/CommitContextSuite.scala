@@ -10,6 +10,7 @@ import io.delta.kernel.internal.util.{Clock, Utils}
 import io.delta.kernel.test.{ActionUtils, MockEngineUtils}
 import io.delta.kernel.types.{IntegerType, StructType}
 import io.delta.kernel.utils.CloseableIterator
+
 import org.scalatest.funsuite.AnyFunSuite
 
 class CommitContextSuite extends AnyFunSuite with ActionUtils with MockEngineUtils {
@@ -69,14 +70,14 @@ class CommitContextSuite extends AnyFunSuite with ActionUtils with MockEngineUti
     }
   }
 
-  test("getFinalizedActions metadata actions are in the order of: CommitInfo, Metadata, Protocol") {
+  test("getFinalizedActions metadata actions are in the order of: CommitInfo, Protocol, Metadata") {
     val commitContext = CommitContextImpl
       .forInitialCommit(uninvokableEngine, createTableTxnState, emptyDataActionsIterator)
     val finalizedActions = commitContext.getFinalizedActions
 
     assert(!finalizedActions.next().isNullAt(SingleAction.COMMIT_INFO_ORDINAL))
-    assert(!finalizedActions.next().isNullAt(SingleAction.METADATA_ORDINAL))
     assert(!finalizedActions.next().isNullAt(SingleAction.PROTOCOL_ORDINAL))
+    assert(!finalizedActions.next().isNullAt(SingleAction.METADATA_ORDINAL))
   }
 
   // TODO: getFinalizedActions metadata actions are equal to the CommitMetadata actions

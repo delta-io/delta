@@ -110,12 +110,12 @@ public class CommitContextImpl implements CommitContext {
 
     metadataActions.add(createCommitInfoSingleAction(commitInfo.toRow()));
 
-    if (txnState.isMetadataUpdate) {
-      metadataActions.add(createMetadataSingleAction(metadata.toRow()));
-    }
-
     if (txnState.isProtocolUpdate) {
       metadataActions.add(createProtocolSingleAction(txnState.protocol.toRow()));
+    }
+
+    if (txnState.isMetadataUpdate) {
+      metadataActions.add(createMetadataSingleAction(metadata.toRow()));
     }
 
     txnState.setTxnOpt.ifPresent(
