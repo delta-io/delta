@@ -178,6 +178,9 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
       final String batchFilePath = batch.getFilePath().get();
       final long numRowsInBatch = batch.getData().getSize();
 
+      System.out.println("batchfilepath is "+ batchFilePath);
+      System.out.println("numRowsInBatch is "+ numRowsInBatch);
+
       // Case 1: Skip batches from fully consumed files.
       // A file is considered fully consumed if it appears earlier (in reverse lexicographic order)
       // than the last read file recorded in the page token.
@@ -259,6 +262,7 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
           "numSelectedAddFilesInBatch: {}, numRowsInBatch: {}",
           numSelectedAddFilesInBatch,
           numRowsInBatch);
+      System.out.println("num selected files is " +numSelectedAddFilesInBatch);
 
       // Found a valid batch, break out of the loop
       break;
@@ -380,7 +384,8 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
   // TODO: move isSidecar() to FileNames
   private boolean isSidecar(String filePath) {
     if (filePath.contains("/_delta_log/_sidecars/") && filePath.endsWith(".parquet")) {
-      throw new UnsupportedOperationException("Sidecar file isn't supported yet!");
+      // throw new UnsupportedOperationException("Sidecar file isn't supported yet!");
+      return true;
     }
     return false;
   }

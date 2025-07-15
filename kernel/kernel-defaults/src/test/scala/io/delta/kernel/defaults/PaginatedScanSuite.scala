@@ -605,4 +605,58 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
         tablePath = getTestResourceFilePath("kernel-pagination-multi-part-checkpoints"))
     }
   }
+
+  // test variables for v2 tables
+  val SIDECAR_1 = "00000000000000000002.checkpoint." +
+    "0000000001.0000000002.055454d8-329c-4e0e-864d-7f867075af33.parquet"
+  val SIDECAR_2 = "00000000000000000002.checkpoint." +
+    "0000000002.0000000002.33321cc1-9c55-4d1f-8511-fafe6d2e1133.parquet"
+
+  // ===== V2 checkpoint with sidecar files test cases =====
+  /**
+   * 2.checkpoint.uuid.parquet : 5 rows, 0 selected AddFiles, 1 batch
+   * sidecar 1: 3 rows, 3 selected AddFiles, 1 batch
+   * sidecar 2: 1 row, 1 selected AddFiles, 1 batch
+   * */
+  test("only v2 checkpoint files") {
+
+    val testCase = SinglePageRequestTestCase(
+      pageSize = 10000,
+      expFileCnt = 4,
+      expBatchCnt = 3,
+      expLogFile = SIDECAR_2,
+      expRowIdx = 0)
+    runSingleTest(testCase = testCase,
+      tableVersionOpt = Optional.of(2L),
+      tablePath = getTestResourceFilePath("kernel-pagination-v2-checkpoint-parquet"))
+
+    runSingleTest(testCase = testCase,
+      tableVersionOpt = Optional.of(2L),
+      tablePath = getTestResourceFilePath("kernel-pagination-v2-checkpoint-json"))
+  }
+
+  // ===== V2 checkpoint and json files with sidecar files test cases =====
+  /**
+   * 00000000000000000003.json
+   * Batch 1: 2 rows, 1 selected AddFiles
+   * 2.checkpoint.uuid.parquet : 5 rows, 0 selected AddFiles, 1 batch
+   * sidecar 1: 3 rows, 3 selected AddFiles, 1 batch
+   * sidecar 2: 1 row, 1 selected AddFiles, 1 batch
+   * */
+  test("v2 checkpoint files and json files") {
+    val testCase = SinglePageRequestTestCase(
+      pageSize = 10000,
+      expFileCnt = 5,
+      expBatchCnt = 4,
+      expLogFile = SIDECAR_2,
+      expRowIdx = 0)
+    runSingleTest(testCase = testCase,
+      tableVersionOpt = Optional.of(3L),
+      tablePath = getTestResourceFilePath("kernel-pagination-v2-checkpoint-parquet"))
+
+    runSingleTest(testCase = testCase,
+      tableVersionOpt = Optional.of(3L),
+      tablePath = getTestResourceFilePath("kernel-pagination-v2-checkpoint-json"))
+  }
+
 }
