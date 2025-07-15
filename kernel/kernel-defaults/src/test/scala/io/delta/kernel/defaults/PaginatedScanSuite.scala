@@ -33,6 +33,8 @@ import org.apache.spark.sql.catalyst.plans.SQLHelper
 import org.scalatest.funsuite.AnyFunSuite
 import org.slf4j.{Logger, LoggerFactory}
 
+import org.apache.spark.sql.delta.DeltaLog
+
 class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
     with ExpressionTestUtils with SQLHelper with DeltaTableWriteSuiteBase {
 
@@ -173,6 +175,7 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
       testCase.expFileCnt,
       testCase.expBatchCnt,
       testName)
+
     // TODO: test if kernel can return empty page token when scan is consumed
     if (pageTokenOpt.isPresent) {
       validateFirstPageToken(
@@ -504,33 +507,107 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
   }
 
   // TODO: test multi part checkpoint files
+
+  // ===== Multi-part checkpoint files test cases =====
+
   /**
-   * 00000000000000000009.checkpoint.0000000001.0000000004.parquet,
-   * 00000000000000000009.checkpoint.0000000002.0000000004.parquet,
-   * 00000000000000000009.checkpoint.0000000003.0000000004.parquet,
-   * 00000000000000000009.checkpoint.0000000004.0000000004.parquet,
-   * 00000000000000000010.checkpoint.parquet
-   * JSON files: from 0 to 12
+   * Log Segment List:
+   * 00000000000000000000.checkpoint.0000000003.0000000003.parquet (6 AddFile)
+   * Batch 1: 5 AddFile, 5 rows
+   * Batch 2: 1 AddFile, 1 row
+   * 00000000000000000000.checkpoint.0000000002.0000000003.parquet (7 AddFile)
+   * Batch 1: 5 AddFile, 5 row
+   * Batch 2: 2 AddFile, 2 row
+   * 00000000000000000000.checkpoint.0000000001.0000000003.parquet (5 AddFile)
+   * Batch 1: 3 AddFile, 5 row
+   * Batch 2: 2 AddFile, 2 row
    */
+  val MULTI_CHECKPOINT_FILE_0_1 = "00000000000000000000.checkpoint.0000000001.0000000003.parquet"
+  val MULTI_CHECKPOINT_FILE_0_2 = "00000000000000000000.checkpoint.0000000002.0000000003.parquet"
+  val MULTI_CHECKPOINT_FILE_0_3 = "00000000000000000000.checkpoint.0000000003.0000000003.parquet"
+
+  Seq(
+    SinglePageRequestTestCase(
+      pageSize = 7,
+      expFileCnt = 11,
+      expBatchCnt = 3,
+      expLogFile = MULTI_CHECKPOINT_FILE_0_2,
+      expRowIdx = 4),
+    SinglePageRequestTestCase(
+      pageSize = 100,
+      expFileCnt = 18,
+      expBatchCnt = 6,
+      expLogFile = MULTI_CHECKPOINT_FILE_0_1,
+      expRowIdx = 1)
+  ).foreach { testCase =>
+    test(s"Multi-part checkpoints - page size ${testCase.pageSize}") {
+      runSingleTest(
+        testCase = testCase,
+        tableVersionOpt = Optional.of(0L),
+        tablePath = getTestResourceFilePath("kernel-pagination-multi-part-checkpoints"))
+    }
+  }
+
+
+  // ===== Multi-part checkpoint files and multiple JSON files test cases =====
   /**
-   * val tablePath = tempDir.getCanonicalPath
-   *
-   * // Create 10 commits to trigger checkpoint creation
-   * for (i <- 0 until 10) {
-   * val mode = if (i == 0) "overwrite" else "append"
-   * // Create 4 files per commit = 40 total AddFile actions
-   * spark.range(i * 40, (i + 1) * 40, 1, 4)
-   * .write.format("delta").mode(mode).save(tablePath)
-   * }
-   *
-   * // Force multi-part checkpoint creation (3-5 parts)
-   * withSQLConf(
-   * "spark.databricks.delta.checkpoint.partSize" -> "10" // 40 AddFiles ÷ 10 per part = 4 parts
-   * ) {
-   * val deltaLog = DeltaLog.forTable(spark, tablePath)
-   * deltaLog.checkpoint()
-   * }
+   * Log Segment List:
+   * 00000000000000000002.json (1 AddFile)
+   * Batch 1: 1 AddFile, 2 rows
+   * 00000000000000000001.json (1 AddFile)
+   * Batch 1: 1 AddFile, 2 rows
+   * 00000000000000000000.checkpoint.0000000003.0000000003.parquet (6 AddFile)
+   * Batch 1: 5 AddFile, 5 rows
+   * Batch 2: 1 AddFile, 1 row
+   * 00000000000000000000.checkpoint.0000000002.0000000003.parquet (7 AddFile)
+   * Batch 1: 5 AddFile, 5 row
+   * Batch 2: 2 AddFile, 2 row
+   * 00000000000000000000.checkpoint.0000000001.0000000003.parquet (5 AddFile)
+   * Batch 1: 3 AddFile, 5 row
+   * Batch 2: 2 AddFile, 2 row
    */
+
+  Seq(
+    SinglePageRequestTestCase(
+      pageSize = 100,
+      expFileCnt = 20,
+      expBatchCnt = 8,
+      expLogFile = MULTI_CHECKPOINT_FILE_0_1,
+      expRowIdx = 1)
+  ).foreach { testCase =>
+    test(s"Multi-part checkpoints with jsons - page size ${testCase.pageSize}") {
+      runSingleTest(
+        testCase = testCase,
+        tablePath = getTestResourceFilePath("kernel-pagination-multi-part-checkpoints"))
+    }
+  }
+
+
+//  test("create small multi-part checkpoint by lowering part size") {
+//    val tablePath =
+//      "/home/ada.ma/delta/kernel/kernel-defaults/src/test/resources/kernel-pagination-multi-part-checkpoints"
+//
+//    // Create one commit with 10 files (10 AddFile actions)
+//    spark.range(0, 1800)
+//      .repartition(18) // 10 files = 10 AddFile actions
+//      .write.format("delta").mode("overwrite").save(tablePath)
+//
+//    // Force multi-part checkpoint creation with small part size
+//    withSQLConf(
+//      "spark.databricks.delta.checkpoint.partSize" -> "6" // 10 AddFiles → 3 checkpoint parts
+//    ) {
+//      val deltaLog = DeltaLog.forTable(spark, tablePath)
+//      deltaLog.checkpoint() // multi-part checkpoint at version 0
+//    }
+//
+//    // Commits 1 and 2: Add 1 file each
+//    for (i <- 1 to 2) {
+//      spark.range(i * 1000, i * 1000 + 100) // small data
+//        .coalesce(1) // 1 file
+//        .write.format("delta").mode("append").save(tablePath)
+//    }
+//
+//  }
 
   /*
   test("getPaginatedScanFiles - basic pagination with side car checkpoint files and " +

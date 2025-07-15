@@ -22,6 +22,7 @@ import io.delta.kernel.Meta;
 import io.delta.kernel.PaginatedScanFilesIterator;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
+import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
@@ -107,13 +108,13 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
       CloseableIterator<FilteredColumnarBatch> baseFilteredScanFilesIter,
       PaginationContext paginationContext) {
     this.baseFilteredScanFilesIter = baseFilteredScanFilesIter;
-    this.pageSize = paginationContext.getPageSize();
     this.paginationContext = paginationContext;
-    if (paginationContext.getLastReadSidecarFileIdx().isPresent()) {
-      lastSidecarIndex = paginationContext.getLastReadSidecarFileIdx().get();
-    }
+    this.pageSize = paginationContext.getPageSize();
     if (paginationContext.getLastReadLogFilePath().isPresent()) {
       lastReadLogFilePath = paginationContext.getLastReadLogFilePath().get();
+    }
+    if (paginationContext.getLastReadSidecarFileIdx().isPresent()) {
+      lastSidecarIndex = paginationContext.getLastReadSidecarFileIdx().get();
     }
   }
 
@@ -154,13 +155,15 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
    * stored in the pagination context.
    */
   // TODO: add logging
+  // TODO: add examples to Cases
+  // TODO: fix javadocs
   private void prepareNext() {
     if (currentBatch.isPresent()) return;
     if (!baseFilteredScanFilesIter.hasNext()) return;
     if (numScanFilesReturned >= pageSize) return;
 
-    Optional<String> tokenFilePathOpt = paginationContext.getLastReadLogFilePath();
-    Optional<Long> tokenSidecarIndexOpt = paginationContext.getLastReadSidecarFileIdx();
+    Optional<String> tokenLastReadFilePathOpt = paginationContext.getLastReadLogFilePath();
+    Optional<Long> tokenLastReadSidecarFileIdxOpt = paginationContext.getLastReadSidecarFileIdx();
 
     while (baseFilteredScanFilesIter.hasNext() && numScanFilesReturned < pageSize) {
       final FilteredColumnarBatch batch = baseFilteredScanFilesIter.next();
@@ -168,40 +171,50 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
       validateBatch(batch);
 
       final String batchFilePath = batch.getFilePath().get();
+      final long numRowsInBatch = batch.getData().getSize();
 
-      // Case 1: Skip batch if it's from a fully consumed file (all data have been included in previous
-      // pages).
-      if (isBatchFromFullyConsumedFile(batchFilePath, tokenFilePathOpt, tokenSidecarIndexOpt)) {
+      System.out.println("Batch File Path" + batchFilePath);
+      System.out.println("Batch num rows" + numRowsInBatch);
+      System.out.println("Batch Active AddFiles" + batch.getPreComputedNumSelectedRows());
+
+      // Case 1: if the batch's from a fully consumed file (all data have been included in previous
+      // pages), skip it.
+      if (isBatchFromFullyConsumedFile(batchFilePath, tokenLastReadFilePathOpt, tokenLastReadSidecarFileIdxOpt)) {
+        // Only fully consumed JSON files and V2 manifest files won't be skipped in ActionsIterator.
+        checkArgument(batchFilePath.endsWith(".json") || FileNames.isV2CheckpointFile(batchFilePath));
         continue;
       }
 
-      // Reset row index if this batch is from a new file not yet seen in previous pages.
-      if (isBatchFromNewFile(batchFilePath)) {
-        lastReadLogFilePath = batchFilePath;
-        // Start from -1 so adding the first batch size gives correct 0-based row index.
-        lastReturnedRowIndex = -1;
-        logger.info("Reading new file: {}", lastReadLogFilePath);
-
-        // Sidecar index starts at -1 if none was seen in the previous page.
-        if (isSidecar(batchFilePath)) {
-          lastSidecarIndex++;
-        }
-      }
-
-      final long numRowsInBatch = batch.getData().getSize(); // total number of rows in current batch
-      // calculate the row index of the last row in current batch within the file
-      lastReturnedRowIndex += numRowsInBatch;
-
-      // Check if this batch is from the same last read file as recorded in the pagination token.
-      if (isBatchFromLastFileInToken(batchFilePath, tokenFilePathOpt, tokenSidecarIndexOpt)) {
-        // If the batch is from the last read file in last page, compare its row index to page token row
-        // index.
+      // Case 2: if the batch is from the same last read file as recorded in the page token, decide if to skip it based on row index
+      else if (isBatchFromLastFileInToken(batchFilePath, tokenLastReadFilePathOpt, tokenLastReadSidecarFileIdxOpt)) {
+        // Compare batch's row index to page token row
         Optional<Long> tokenRowIndex = paginationContext.getLastReturnedRowIndex();
-        checkArgument(tokenRowIndex.isPresent(), "token row index is empty!");
+        checkArgument(tokenRowIndex.isPresent(), "Token row index is empty!");
+        // calculate the row index of the last row in current batch within the file
+        lastReturnedRowIndex += numRowsInBatch;
         // Skip this batch if its last row index is smaller than or equal to the value in token.
         if (lastReturnedRowIndex <= tokenRowIndex.get()) {
           continue;
         }
+      }
+
+      // Case 3: if the batch is from a new file that has never been read in previous pages, don't skip it.
+      else {
+        // Re-assign lastReadLogFilePath and lastSidecarIndex if needed.
+        if (isBatchFromNewFile(batchFilePath)) {
+          lastReadLogFilePath = batchFilePath;
+          // Reset row index if this batch is from a new file not yet seen in previous pages.
+          // Start from -1 so adding the first batch size gives correct 0-based row index.
+          lastReturnedRowIndex = -1;
+          logger.info("Reading new file: {}", lastReadLogFilePath);
+
+          // Sidecar index starts at -1 if none was seen in the previous page.
+          if (isSidecar(batchFilePath)) {
+            lastSidecarIndex++;
+          }
+        }
+        // calculate the row index of the last row in current batch within the file
+        lastReturnedRowIndex += numRowsInBatch;
       }
 
       // currentBatch will be included in the current page.
@@ -211,26 +224,24 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
           numSelectedAddFilesInBatch; // update total number of ScanFiles to return in this page
 
       logger.info("total numScanFilesReturned: {}", numScanFilesReturned);
-      logger.info("numSelectedAddFilesInBatch: {}", numSelectedAddFilesInBatch);
-      logger.info("numRowsInBatch: {}", numRowsInBatch);
-      
+      logger.info("numSelectedAddFilesInBatch: {}, numRowsInBatch: {}", numSelectedAddFilesInBatch, numRowsInBatch);
+
       // Found a valid batch, break out of the loop
       break;
     }
   }
 
   /**
-   * Validate current batch
-   *
-   * FilePath and pre-computed number of selected rows are expected to be present; both are
-   * computed and set in ActiveAddFilesIterator (when building FilteredColumnarBatch from
-   * ActionWrapper)
+   * Validate current batch.
   * */
   void validateBatch(FilteredColumnarBatch batch) {
-    checkArgument(batch.getFilePath().isPresent(), "file path doesn't exist!");
+    // FilePath and pre-computed number of selected rows are expected to be present; both are
+    // computed and set in ActiveAddFilesIterator (when building FilteredColumnarBatch from
+    // ActionWrapper)
+    checkArgument(batch.getFilePath().isPresent(), "File path doesn't exist!");
     checkArgument(
         batch.getPreComputedNumSelectedRows().isPresent(),
-        "pre-computed number of selected rows doesn't exist!");
+        "Pre-computed number of selected rows doesn't exist!");
   }
 
   /**
@@ -275,7 +286,7 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
   }
 
   /**
-   * Check if this batch is from a new file (log or sidecar) that have never been touched in previous pages.
+   * Check if this batch is from a new file (log or sidecar) that have never been read.
    * */
   private boolean isBatchFromNewFile(String batchFilePath) {
     if(!batchFilePath.equals(lastReadLogFilePath)) {
@@ -287,7 +298,10 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
   }
 
   private boolean isSidecar(String filePath) {
-    return filePath.contains("/_delta_log/_sidecars/") && filePath.endsWith(".parquet");
+    if(filePath.contains("/_delta_log/_sidecars/") && filePath.endsWith(".parquet")){
+      throw new UnsupportedOperationException("Sidecar file isn't supported yet!");
+    }
+    return false;
   }
 
   @Override
