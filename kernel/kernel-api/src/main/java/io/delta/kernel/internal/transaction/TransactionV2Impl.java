@@ -43,7 +43,8 @@ public class TransactionV2Impl implements TransactionV2 {
   }
 
   @Override
-  public CommitContext getInitialCommitContext(Engine engine, CloseableIterator<Row> dataActions) {
+  public CommitContext getCommitContextForFirstCommitAttempt(
+      Engine engine, CloseableIterator<Row> dataActions) {
     if (TableFeatures.isRowTrackingSupported(txnState.protocol)) {
       throw new UnsupportedOperationException("Row Tracking not yet supported in TransactionV2");
     }
@@ -54,6 +55,6 @@ public class TransactionV2Impl implements TransactionV2 {
 
     // TODO: update data actions with rowId stuff
 
-    return CommitContextImpl.forInitialCommit(engine, txnState, dataActions);
+    return CommitContextImpl.forFirstCommitAttempt(engine, txnState, dataActions);
   }
 }

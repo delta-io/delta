@@ -42,15 +42,16 @@ public class CommitContextImpl implements CommitContext {
   ////////////////////////////
 
   /**
-   * Creates a {@link CommitContext} to be used for an initial commit only (e.g. not a retry, which
-   * requires conflict detection and potential action reconciliation and rebasing).
+   * Creates a {@link CommitContext} to be used for the first commit attempt of a transaction only
+   * (e.g. not a retry, which requires conflict detection and potential action reconciliation and
+   * rebasing).
    *
    * @param finalizedDataActions the finalized data actions to be committed. That is, all updates to
    *     the data actions (e.g. row tracking updates) have been applied. Note that these are the
    *     data actions, not the metadata actions (like CommitInfo, Protocol, Metadata,
    *     SetTransaction, DomainMetadata, etc.).
    */
-  public static CommitContextImpl forInitialCommit(
+  public static CommitContextImpl forFirstCommitAttempt(
       Engine engine, TransactionV2State txnState, CloseableIterator<Row> finalizedDataActions) {
     return new CommitContextImpl(engine, txnState, finalizedDataActions);
   }

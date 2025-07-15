@@ -57,6 +57,20 @@ import java.util.Map;
  *   <li>sending additional commit metadata to the catalog, such as the latest schema, latest table
  *       properties, commit timestamp, and more
  * </ul>
+ *
+ * <p><b>Example Usages:</b>
+ *
+ * <p>Case 1: No action materialization, no retries
+ *
+ * <pre>{@code
+ * CloseableIterator<Row> allDataActionsIter = ... // Collect from executors
+ * CommitContext context = txn.getCommitContextForFirstCommitAttempt(engine, allDataActionsIter);
+ * resolvedTable.getCommitter.commit(
+ *   engine,
+ *   context.getFinalizedActions,
+ *   context.getCommitMetadata()
+ * );
+ * }</pre>
  */
 @Experimental
 public interface TransactionV2 {
@@ -89,7 +103,8 @@ public interface TransactionV2 {
    * @param dataActions Iterator of data actions to commit
    * @return the {@link CommitContext} instance to commit
    */
-  CommitContext getInitialCommitContext(Engine engine, CloseableIterator<Row> dataActions);
+  CommitContext getCommitContextForFirstCommitAttempt(
+      Engine engine, CloseableIterator<Row> dataActions);
 
   // TODO: detectConflictsAndRebase API
 }
