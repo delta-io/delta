@@ -19,11 +19,18 @@ import java.lang.{Boolean => BooleanJ, Double => DoubleJ, Float => FloatJ, Long 
 
 import scala.collection.JavaConverters._
 
-import io.delta.kernel.data.{ColumnarBatch, ColumnVector, MapValue}
+import io.delta.kernel.data.{ColumnarBatch, ColumnVector, MapValue, Row}
 import io.delta.kernel.internal.util.VectorUtils
 import io.delta.kernel.types._
+import io.delta.kernel.utils.CloseableIterator
 
 trait VectorTestUtils {
+
+  protected def emptyActionsIterator = new CloseableIterator[Row] {
+    override def hasNext: Boolean = false
+    override def next(): Row = throw new NoSuchElementException("No more elements")
+    override def close(): Unit = {}
+  }
 
   protected def emptyColumnarBatch = new ColumnarBatch {
     override def getSchema: StructType = null

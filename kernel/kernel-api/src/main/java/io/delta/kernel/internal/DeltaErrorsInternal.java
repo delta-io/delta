@@ -38,4 +38,12 @@ public class DeltaErrorsInternal {
                 + "'yyyy-MM-dd HH:mm:ss[.SSSSSS]' or ISO-8601 (e.g. 2020-01-01T00:00:00Z)'",
             partitionValue));
   }
+
+  public static UnsupportedOperationException defaultCommitterDoesNotSupportCatalogManagedTables() {
+    return new UnsupportedOperationException(
+        "No io.delta.kernel.commit.Committer has been provided to Kernel, so Kernel is using a "
+            + "default Committer that only supports committing to filesystem-managed Delta tables, "
+            + "not catalog-managed Delta tables. Since this table is catalog-managed, this "
+            + "commit operation is unsupported.");
+  }
 }
