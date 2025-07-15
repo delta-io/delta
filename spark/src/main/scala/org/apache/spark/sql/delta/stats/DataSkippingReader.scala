@@ -190,8 +190,10 @@ abstract class GenericSkippingEligibleExpression() {
   }
 }
 
-// This object is used to avoid referencing DataSkippingReader in DetlaConfig.
-// Otherwise, it might cause the cyclic import through SQLConf -> SparkSession -> DetlaConfig.
+/**
+ * This object is used to avoid referencing DataSkippingReader in DetlaConfig.
+ * Otherwise, it might cause the cyclic import through SQLConf -> SparkSession -> DetlaConfig.
+ */
 private[delta] object DataSkippingReaderConf {
 
   /**
