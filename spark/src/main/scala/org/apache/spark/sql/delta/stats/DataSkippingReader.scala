@@ -190,6 +190,8 @@ abstract class GenericSkippingEligibleExpression() {
   }
 }
 
+// This object is used to avoid referencing DataSkippingReader in DetlaConfig.
+// Otherwise, it might cause the cyclic import through SQLConf -> SparkSession -> DetlaConfig.
 private[delta] object DataSkippingReaderConf {
 
   /**
@@ -199,10 +201,6 @@ private[delta] object DataSkippingReaderConf {
 }
 
 private[delta] object DataSkippingReader {
-
-  /** Default number of cols for which we should collect stats */
-  val DATA_SKIPPING_NUM_INDEXED_COLS_DEFAULT_VALUE =
-    DataSkippingReaderConf.DATA_SKIPPING_NUM_INDEXED_COLS_DEFAULT_VALUE
 
   private[this] def col(e: Expression): Column = Column(e)
   def fold(e: Expression): Column = col(new Literal(e.eval(), e.dataType))
