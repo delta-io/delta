@@ -190,10 +190,19 @@ abstract class GenericSkippingEligibleExpression() {
   }
 }
 
+private[delta] object DataSkippingReaderConf {
+
+  /**
+   * Default number of cols for which we should collect stats
+   */
+  val DATA_SKIPPING_NUM_INDEXED_COLS_DEFAULT_VALUE = 32
+}
+
 private[delta] object DataSkippingReader {
 
   /** Default number of cols for which we should collect stats */
-  val DATA_SKIPPING_NUM_INDEXED_COLS_DEFAULT_VALUE = 32
+  val DATA_SKIPPING_NUM_INDEXED_COLS_DEFAULT_VALUE =
+    DataSkippingReaderConf.DATA_SKIPPING_NUM_INDEXED_COLS_DEFAULT_VALUE
 
   private[this] def col(e: Expression): Column = Column(e)
   def fold(e: Expression): Column = col(new Literal(e.eval(), e.dataType))
