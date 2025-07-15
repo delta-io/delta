@@ -89,9 +89,7 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
 
   private final Optional<PaginationContext> paginationContextOpt;;
   private long numCheckpointFilesSkipped = 0;
-
   private long numSidecarFilesSkipped = 0;
-
   private boolean closed;
 
   public ActionsIterator(
@@ -161,25 +159,28 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
    * @return {@code true} to include the file; {@code false} to skip it
    */
   private boolean paginatedFilter(DeltaLogFile nextLogFile) {
+    String nextFilePath = nextLogFile.getFile().getPath();
+    checkArgument(nextFilePath.endsWith(".json") || nextFilePath.endsWith(".parquet"));
     if (!paginationContextOpt.isPresent()) return true;
+    logger.info("Pagination: nextFilePath is {}", nextFilePath);
     Optional<String> lastReadLogFilePathOpt = paginationContextOpt.get().getLastReadLogFilePath();
     if (!lastReadLogFilePathOpt.isPresent()) {
-      logger.info("No page token present: reading the first page");
+      logger.info("Pagination: no page token present, reading the first page");
       return true; // reading first page
+    }
+    logger.info("Pagination: lastReadLogFilePath in token is {}", lastReadLogFilePathOpt.get());
+    if (nextFilePath.endsWith(".json")) {
+      return true; // never skip JSON files (to build tombstone hashsets)
     }
     if (nextLogFile.getLogType() == DeltaLogFile.LogType.V2_CHECKPOINT_MANIFEST) {
       return true; // never skip v2 manifest checkpoint file
-    }
-    String nextFilePath = nextLogFile.getFile().getPath();
-    if (nextFilePath.endsWith(".json")) {
-      return true; // never skip JSON files (to build tombstone hashsets)
     }
     // If nextFilePath is less than or equal to lastReadLogFilePath, it means nextLogFile
     // comes before or is the same as the last read log file, so we should include it.
     if (nextFilePath.compareTo(lastReadLogFilePathOpt.get()) <= 0) {
       return true;
     }
-    logger.info("Skip reading log file{}", nextFilePath);
+    logger.info("Pagination: skip reading log file {}", nextFilePath);
     numCheckpointFilesSkipped++;
     return false;
   }
@@ -361,22 +362,33 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     // Sidecars will exist in schema. Extract sidecar files, then remove sidecar files from
     // batch output.
     List<DeltaLogFile> outputFiles = new ArrayList<>();
-    int sidecarIndex = columnarBatch.getSchema().fieldNames().indexOf(LogReplay.SIDECAR_FIELD_NAME);
-    ColumnVector sidecarVector = columnarBatch.getColumnVector(sidecarIndex);
-    int sidecarCnt = -1; // sidecar index start from 0
+    int sidecarFieldIndexInSchema =
+        columnarBatch.getSchema().fieldNames().indexOf(LogReplay.SIDECAR_FIELD_NAME);
+    ColumnVector sidecarVector = columnarBatch.getColumnVector(sidecarFieldIndexInSchema);
+    int sidecarIndexInV2Manifest = -1; // sidecar file index start from 0 in v2 manifest checkpoint
     for (int i = 0; i < columnarBatch.getSize(); i++) {
       SidecarFile sidecarFile = SidecarFile.fromColumnVector(sidecarVector, i);
       if (sidecarFile == null) {
         continue;
       }
-      sidecarCnt++;
-      if (paginationContextOpt.get().getLastReadSidecarFileIdx().isPresent()
-          && sidecarCnt < paginationContextOpt.get().getLastReadSidecarFileIdx().get()) {
+      sidecarIndexInV2Manifest++;
+      if (paginationContextOpt.isPresent()) {
         logger.info(
-            "Skip reading sidecar file: index={}, path={}", sidecarCnt, sidecarFile.getPath());
-        numSidecarFilesSkipped++;
-        continue;
+            "Pagination: next sidecar file is : index={}, path={}",
+            sidecarIndexInV2Manifest,
+            sidecarFile.getPath());
+        if (paginationContextOpt.get().getLastReadSidecarFileIdx().isPresent()
+            && sidecarIndexInV2Manifest
+                < paginationContextOpt.get().getLastReadSidecarFileIdx().get()) {
+          logger.info(
+              "Pagination: skip reading sidecar file: index={}, path={}",
+              sidecarIndexInV2Manifest,
+              sidecarFile.getPath());
+          numSidecarFilesSkipped++;
+          continue;
+        }
       }
+
       FileStatus sideCarFileStatus =
           FileStatus.of(
               FileNames.sidecarFile(deltaLogPath, sidecarFile.getPath()),
@@ -391,7 +403,7 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     }
 
     // Delete SidecarFile actions from the schema.
-    return columnarBatch.withDeletedColumnAt(sidecarIndex);
+    return columnarBatch.withDeletedColumnAt(sidecarFieldIndexInSchema);
   }
 
   /**

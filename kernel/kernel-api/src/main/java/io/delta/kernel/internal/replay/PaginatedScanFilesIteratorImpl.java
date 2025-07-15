@@ -178,46 +178,67 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
       final String batchFilePath = batch.getFilePath().get();
       final long numRowsInBatch = batch.getData().getSize();
 
-      // Case 1: if the batch's from a fully consumed file (all data have been included in previous
-      // pages), skip it. For example, if last page ends at 13.json, all batches from 14.json and
-      // 15.json will be skipped
+      // Case 1: Skip batches from fully consumed files.
+      // A file is considered fully consumed if it appears earlier (in reverse lexicographic order)
+      // than the last read file recorded in the page token.
+      //
+      // Example:
+      //   - Suppose the previous page ends at file 13.json
+      //   - Then, all files after 13.json in reverse lex order (e.g., 14.json, 15.json, etc.)
+      //     have already been processed and are considered fully consumed.
+      //   - Any batches from these files should be skipped here.
       if (isBatchFromFullyConsumedFile(
           batchFilePath, tokenLastReadFilePathOpt, tokenLastReadSidecarFileIdxOpt)) {
         // Only fully consumed JSON files and V2 manifest files won't be skipped in ActionsIterator.
         checkArgument(
             batchFilePath.endsWith(".json") || FileNames.isV2CheckpointFile(batchFilePath));
+        logger.info("Pagination: skipping batch from a fully consumed file : {}", batchFilePath);
         continue;
       }
 
-      // Case 2: if the batch is from the same last read file as recorded in the page token, decide
-      // if to skip it based on row index.
-      // For example, if last page ends at 13.json, we will skip batches in 13.json based on its row
-      // index.
+      // Case 2: The batch belongs to the same file as the one recorded in the page token.
+      // In this case, we may have partially consumed this file on the previous page,
+      // so we need to decide whether to skip the current batch based on row index.
+      //
+      // Example:
+      //   - Page 1 ends after processing row index 9 in file 13.json (i.e., the first 10 rows).
+      //   - This includes two batches: batch 1 (rows 0–4), batch 2 (rows 5–9).
+      //   - When reading page 2, we may re-encounter these batches.
+      //     * Batch 1 ends at row 4 → skip (already returned).
+      //     * Batch 2 ends at row 9 → skip (already returned).
+      //     * Batch 3 starts at row 10 → keep (new data).
       else if (isBatchFromLastFileInToken(
           batchFilePath, tokenLastReadFilePathOpt, tokenLastReadSidecarFileIdxOpt)) {
         // Compare batch's row index to page token row
-        Optional<Long> tokenRowIndex = paginationContext.getLastReturnedRowIndex();
-        checkArgument(tokenRowIndex.isPresent(), "Token row index is empty!");
+        Optional<Long> tokenLastReturnedRowIndexOpt = paginationContext.getLastReturnedRowIndex();
         // calculate the row index of the last row in current batch within the file
         lastReturnedRowIndex += numRowsInBatch;
         // Skip this batch if its last row index is smaller than or equal to the value in token.
-        if (lastReturnedRowIndex <= tokenRowIndex.get()) {
+        if (tokenLastReturnedRowIndexOpt.isPresent()
+            && lastReturnedRowIndex <= tokenLastReturnedRowIndexOpt.get()) {
+          logger.info(
+              "Pagination: skipping batch from a partially consumed file : {}", batchFilePath);
           continue;
         }
       }
 
-      // Case 3: if the batch is from a new file that has never been read in previous pages, don't
-      // skip it.
-      // For example, if last page ends at 13.json, all batches in 12.json will be raed (until page
-      // size is reached).
+      // Case 3: The batch is from a completely new file - one that has not been seen in previous
+      // pages.
+      // Do not skip it — this file is still fully unread.
+      // Example:
+      //   - Suppose the last page ended at file 13.json.
+      //   - In reverse lexicographic order, the next files to process will be 12.json, 11.json,
+      // etc.
+      //   - These files are considered new (unseen) and all their batches should be processed
+      //     until the page size is reached.
       else {
-        // Re-assign lastReadLogFilePath and lastSidecarIndex if needed.
-        if (isBatchFromNewFile(batchFilePath)) {
+        // This batch is the first one we've seen from a new file during the current page read;
+        // update tracking state to reflect that we're now reading this file.
+        if (isFirstBatchFromNewFile(batchFilePath)) {
           lastReadLogFilePath = batchFilePath;
-          // Reset row index if this batch is from a new file not yet seen in previous pages.
           // Start from -1 so adding the first batch size gives correct 0-based row index.
           lastReturnedRowIndex = -1;
-          logger.info("Reading new file: {}", lastReadLogFilePath);
+          logger.info("Pagination: reading new file: {}", lastReadLogFilePath);
 
           // Sidecar index starts at -1 if none was seen in the previous page.
           if (isSidecar(batchFilePath)) {
@@ -262,18 +283,17 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
    * <p>Skip conditions:
    *
    * <ul>
-   *   <li>If a sidecar file was read in the previous page, all log files in the current page are
-   *       skipped.
-   *   <li>If the batch corresponds to a log file that appears earlier (in reverse lexicographic
-   *       order) than the file recorded in the token, it has already been fully processed and
-   *       should be skipped.
+   *   <li>If a sidecar file was read in the previous page, all json files in the current page are
+   *       exhausted (and also V2 manifest file).
+   *   <li>If the batch corresponds to a delta log file that appears earlier (in reverse
+   *       lexicographic order) than the file recorded in the token, it has already been fully
+   *       processed and should be skipped.
    * </ul>
    */
   private boolean isBatchFromFullyConsumedFile(
       String batchFilePath,
       Optional<String> tokenFilePathOpt,
       Optional<Long> tokenSidecarIndexOpt) {
-
     if (tokenSidecarIndexOpt.isPresent() && !isSidecar(batchFilePath)) {
       return true;
     }
@@ -284,41 +304,80 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
   }
 
   /**
-   * Check if this batch is from the same file (log or sidecar) that the previous page ended at, as
-   * indicated by the file path or sidecar index in the page token.
+   * Returns true if the current batch is from the same file (either log or sidecar) that the
+   * previous page ended at, based on the file path and sidecar index recorded in the page token.
+   *
+   * <p>Logic:
+   *
+   * <ul>
+   *   <li>For regular log files: compares the batch file path with the token’s last read file path.
+   *   <li>For sidecar files: additionally compares the sidecar index if present.
+   * </ul>
+   *
+   * @param batchFilePath Path of the current batch file.
+   * @param tokenLastReadFilePathOpt Last fully or partially read file recorded in the pagination
+   *     token.
+   * @param tokenLastReadSidecarFileIdxOpt Sidecar index from the token, if applicable.
+   * @return true if the batch comes from the same file (and sidecar part, if relevant) as the one
+   *     where the previous page ended.
    */
   private boolean isBatchFromLastFileInToken(
       String batchFilePath,
-      Optional<String> tokenFilePathOpt,
-      Optional<Long> tokenSidecarIndexOpt) {
-    // Match if it's the same log file as recorded in the page token.
-    boolean isSameLogFile =
-        !isSidecar(batchFilePath)
-            && tokenFilePathOpt.isPresent()
-            && batchFilePath.equals(tokenFilePathOpt.get());
+      Optional<String> tokenLastReadFilePathOpt,
+      Optional<Long> tokenLastReadSidecarFileIdxOpt) {
+    // Match if batch file path is the same as last read file path recorded in the page token if
+    // present.
+    boolean isSameFile =
+        tokenLastReadFilePathOpt.isPresent()
+            && batchFilePath.equals(tokenLastReadFilePathOpt.get());
 
-    // Match if it's the same sidecar file (by index) as recorded in the page token.
-    boolean isSameSidecarFile =
-        isSidecar(batchFilePath)
-            && tokenSidecarIndexOpt.isPresent()
-            && lastSidecarIndex == tokenSidecarIndexOpt.get();
+    if (isSameFile) {
+      // If file path matches, sidecar index should also match if present.
+      if (isSidecar(batchFilePath)) {
+        checkArgument(
+            tokenLastReadSidecarFileIdxOpt.isPresent()
+                && lastSidecarIndex == tokenLastReadSidecarFileIdxOpt.get());
+      }
+      return true;
+    }
 
-    return isSameLogFile || isSameSidecarFile;
+    return false;
   }
 
-  /** Check if this batch is from a new file (log or sidecar) that have never been read. */
-  private boolean isBatchFromNewFile(String batchFilePath) {
+  /**
+   * Returns true if the current batch is the first one from a different file than the last one
+   * seen, indicating the start of a new file during pagination.
+   *
+   * <p>Logic:
+   *
+   * <ul>
+   *   <li>If the batch's file path differs from {@code lastReadLogFilePath}, it's considered new.
+   *   <li>For non-sidecar files, we additionally assert that files appear in reverse lexicographic
+   *       order — i.e., the current file must come before the last seen file.
+   * </ul>
+   *
+   * @param batchFilePath the path of the current batch's file
+   * @return {@code true} if this is the first batch from a new file not yet seen in the current
+   *     page; {@code false} otherwise
+   * @throws IllegalArgumentException if non-sidecar files appear out of expected order
+   */
+  private boolean isFirstBatchFromNewFile(String batchFilePath) {
     if (!batchFilePath.equals(lastReadLogFilePath)) {
       // If batch isn't from a sidecar, it must come before lastReadLogFilePath.
       checkArgument(
           isSidecar(batchFilePath)
               || lastReadLogFilePath == null
-              || batchFilePath.compareTo(lastReadLogFilePath) < 0);
+              || batchFilePath.compareTo(lastReadLogFilePath) < 0,
+          "Expected file '%s' to appear before last read file '%s' in reverse lexicographic order, "
+              + "unless it's a sidecar file",
+          batchFilePath,
+          lastReadLogFilePath);
       return true;
     }
     return false;
   }
 
+  // TODO: move isSidecar() to FileNames
   private boolean isSidecar(String filePath) {
     if (filePath.contains("/_delta_log/_sidecars/") && filePath.endsWith(".parquet")) {
       throw new UnsupportedOperationException("Sidecar file isn't supported yet!");
