@@ -24,7 +24,7 @@ import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol, TableFeat
 import org.apache.spark.sql.delta.hooks.AutoCompactType
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.stats.{DataSkippingReader, StatisticsCollection}
+import org.apache.spark.sql.delta.stats.{DataSkippingReaderConf, StatisticsCollection}
 import org.apache.spark.sql.delta.util.{DeltaSqlParserUtils, JsonUtils}
 
 import org.apache.spark.sql.SparkSession
@@ -594,7 +594,7 @@ trait DeltaConfigsBase extends DeltaLogging {
    */
   val DATA_SKIPPING_NUM_INDEXED_COLS = buildConfig[Int](
     "dataSkippingNumIndexedCols",
-    DataSkippingReader.DATA_SKIPPING_NUM_INDEXED_COLS_DEFAULT_VALUE.toString,
+    DataSkippingReaderConf.DATA_SKIPPING_NUM_INDEXED_COLS_DEFAULT_VALUE.toString,
     _.toInt,
     a => a >= -1,
     "needs to be larger than or equal to -1.")
