@@ -21,13 +21,18 @@ import java.util.Collections
 import scala.collection.JavaConverters._
 
 import io.delta.kernel.TableManager
+import io.delta.kernel.commit.{CommitMetadata, CommitResponse, Committer}
+import io.delta.kernel.data.Row
+import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.actions.Protocol
+import io.delta.kernel.internal.commit.DefaultFileSystemManagedTableOnlyCommitter
 import io.delta.kernel.internal.files.ParsedLogData
 import io.delta.kernel.internal.files.ParsedLogData.ParsedLogType
 import io.delta.kernel.internal.table.ResolvedTableInternal
 import io.delta.kernel.test.{ActionUtils, MockFileSystemClientUtils, VectorTestUtils}
 import io.delta.kernel.types.{IntegerType, StructType}
+import io.delta.kernel.utils.CloseableIterator
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -60,6 +65,44 @@ class ResolvedTableBuilderSuite extends AnyFunSuite
     }.getMessage
 
     assert(exMsg === "version must be >= 0")
+  }
+
+  // ===== Committer Tests ===== //
+
+  test("withCommitter: null committer throws NullPointerException") {
+    assertThrows[NullPointerException] {
+      TableManager.loadTable(dataPath.toString).withCommitter(null)
+    }
+  }
+
+  test("when no committer is provided, the default committer is created") {
+    val committer = TableManager.loadTable(dataPath.toString)
+      .atVersion(1)
+      .withProtocolAndMetadata(protocol, metadata) // avoid trying to use engine to load log segment
+      .build(emptyMockEngine)
+      .getCommitter
+
+    assert(committer.isInstanceOf[DefaultFileSystemManagedTableOnlyCommitter])
+  }
+
+  test("custom committer is correctly propagated") {
+    class CustomCommitter extends Committer {
+      override def commit(
+          engine: Engine,
+          finalizedActions: CloseableIterator[Row],
+          commitMetadata: CommitMetadata): CommitResponse = {
+        throw new UnsupportedOperationException("Not implemented")
+      }
+    }
+
+    val committer = TableManager.loadTable(dataPath.toString)
+      .atVersion(1)
+      .withCommitter(new CustomCommitter())
+      .withProtocolAndMetadata(protocol, metadata) // avoid trying to use engine to load log segment
+      .build(emptyMockEngine)
+      .getCommitter
+
+    assert(committer.isInstanceOf[CustomCommitter])
   }
 
   // ===== Protocol and Metadata Tests ===== //

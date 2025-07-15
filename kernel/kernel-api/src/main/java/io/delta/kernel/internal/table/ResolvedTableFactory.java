@@ -21,6 +21,7 @@ import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.commit.DefaultFileSystemManagedTableOnlyCommitter;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.metrics.SnapshotMetrics;
@@ -44,13 +45,11 @@ class ResolvedTableFactory {
   private final ResolvedTableBuilderImpl.Context ctx;
   private final String resolvedPath;
   private final Path wrappedTablePath;
-  private final Path wrappedLogPath;
 
   ResolvedTableFactory(Engine engine, ResolvedTableBuilderImpl.Context ctx) {
     this.ctx = ctx;
     this.resolvedPath = resolvePath(engine);
     this.wrappedTablePath = new Path(resolvedPath);
-    this.wrappedLogPath = new Path(wrappedTablePath, "_delta_log");
   }
 
   ResolvedTableInternalImpl create(Engine engine) {
@@ -66,22 +65,16 @@ class ResolvedTableFactory {
 
   private ResolvedTableInternalImpl createImpl(Engine engine, SnapshotQueryContext snapshotCtx) {
     final Lazy<LogSegment> lazyLogSegment = getLazyLogSegment(engine, snapshotCtx);
-
-    final long version = ctx.versionOpt.orElseGet(() -> lazyLogSegment.get().getVersion());
-
     final LogReplay logReplay = getLogReplay(engine, lazyLogSegment);
-
-    final Protocol protocol = getProtocol(logReplay);
-
-    final Metadata metadata = getMetadata(logReplay);
 
     return new ResolvedTableInternalImpl(
         resolvedPath,
-        version,
-        protocol,
-        metadata,
+        ctx.versionOpt.orElseGet(() -> lazyLogSegment.get().getVersion()),
+        getProtocol(logReplay),
+        getMetadata(logReplay),
         lazyLogSegment,
         logReplay,
+        ctx.committerOpt.orElse(DefaultFileSystemManagedTableOnlyCommitter.INSTANCE),
         ctx.clock,
         snapshotCtx);
   }
