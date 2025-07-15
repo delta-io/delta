@@ -35,13 +35,12 @@ import io.delta.kernel.internal.util.*;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.*;
 import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * This class takes as input a list of delta files (.json, .checkpoint.parquet) and produces an
@@ -88,8 +87,7 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
    */
   private Optional<CloseableIterator<ActionWrapper>> actionsIter;
 
-  private final Optional<PaginationContext> paginationContextOpt;
-  ;
+  private final Optional<PaginationContext> paginationContextOpt;;
   private long numCheckpointFilesSkipped = 0;
 
   private long numSidecarFilesSkipped = 0;
@@ -130,7 +128,7 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     this.checkpointReadSchema = checkpointReadSchema;
     this.actionsIter = Optional.empty();
     this.schemaContainsAddOrRemoveFiles = LogReplay.containsAddOrRemoveFileActions(deltaReadSchema);
-    if(paginationContextOpt.isPresent()) {
+    if (paginationContextOpt.isPresent()) {
       logger.info("Number of checkpoint files skipped is {}", numCheckpointFilesSkipped);
     }
   }
@@ -154,9 +152,10 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
    *       token, return {@code false} (skip it).
    * </ul>
    *
-   * <p><b>Note:</b> The {@code nextLogFile} parameter cannot be a sidecar file because sidecar files
-   * are not included in the log segment list. Sidecar files are handled separately later,
-   * after the V2 manifest file has been read, specifically in the {@code extractSidecarFiles()} method.
+   * <p><b>Note:</b> The {@code nextLogFile} parameter cannot be a sidecar file because sidecar
+   * files are not included in the log segment list. Sidecar files are handled separately later,
+   * after the V2 manifest file has been read, specifically in the {@code extractSidecarFiles()}
+   * method.
    *
    * @param nextLogFile the log file to evaluate
    * @return {@code true} to include the file; {@code false} to skip it
@@ -180,7 +179,7 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     // comes before or is the same as the last read log file, so we should include it.
     if (nextFilePath.compareTo(lastReadLogFilePathOpt.get()) <= 0) return true;
     logger.info("Skip reading log file{}", nextFilePath);
-    numCheckpointFilesSkipped ++;
+    numCheckpointFilesSkipped++;
     return false;
   }
 
@@ -372,8 +371,9 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
       sidecarCnt++;
       if (paginationContextOpt.get().getLastReadSidecarFileIdx().isPresent()
           && sidecarCnt < paginationContextOpt.get().getLastReadSidecarFileIdx().get()) {
-        logger.info("Skip reading sidecar file: index={}, path={}", sidecarCnt, sidecarFile.getPath());
-        numSidecarFilesSkipped ++;
+        logger.info(
+            "Skip reading sidecar file: index={}, path={}", sidecarCnt, sidecarFile.getPath());
+        numSidecarFilesSkipped++;
         continue;
       }
       FileStatus sideCarFileStatus =
@@ -385,7 +385,7 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
       filesList.add(DeltaLogFile.ofSideCar(sideCarFileStatus, checkpointVersion));
     }
 
-    if(paginationContextOpt.isPresent()) {
+    if (paginationContextOpt.isPresent()) {
       logger.info("Number of sidecar files skipped is {}", numSidecarFilesSkipped);
     }
 
