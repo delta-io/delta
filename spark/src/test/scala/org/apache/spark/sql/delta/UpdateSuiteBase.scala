@@ -33,7 +33,7 @@ import org.apache.spark.sql.internal.SQLConf.StoreAssignmentPolicy
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 
-abstract class UpdateSuiteBase
+trait UpdateBaseMixin
   extends QueryTest
   with SharedSparkSession
   with DeltaDMLTestUtilsPathBased
@@ -50,8 +50,6 @@ abstract class UpdateSuiteBase
 
   implicit def jsonStringToSeq(json: String): Seq[String] = json.split("\n")
 
-  val fileFormat: String = "parquet"
-
   protected def checkUpdate(
       condition: Option[String],
       setClauses: String,
@@ -66,6 +64,148 @@ abstract class UpdateSuiteBase
         .select(s"${prefix}key", s"${prefix}value"),
       expectedResults)
   }
+
+  protected def checkUpdateJson(
+      target: Seq[String],
+      source: Seq[String] = Nil,
+      updateWhere: String,
+      set: Seq[String],
+      expected: Seq[String]): Unit = {
+    withTempDir { dir =>
+      withTempView("source") {
+        def toDF(jsonStrs: Seq[String]) = spark.read.json(jsonStrs.toDS)
+        toDF(target).write.format("delta").mode("overwrite").save(dir.toString)
+        if (source.nonEmpty) {
+          toDF(source).createOrReplaceTempView("source")
+        }
+        executeUpdate(s"delta.`$dir`", set, updateWhere)
+        checkAnswer(readDeltaTable(dir.toString), toDF(expected))
+      }
+    }
+  }
+
+  protected def testAnalysisException(
+      targetDF: DataFrame,
+      set: Seq[String],
+      where: String = null,
+      errMsgs: Seq[String] = Nil) = {
+    withTempDir { dir =>
+      targetDF.write.format("delta").save(dir.toString)
+      val e = intercept[AnalysisException] {
+        executeUpdate(target = s"delta.`$dir`", set, where)
+      }
+      errMsgs.foreach { msg =>
+        assert(e.getMessage.toLowerCase(Locale.ROOT).contains(msg.toLowerCase(Locale.ROOT)))
+      }
+    }
+  }
+}
+
+trait UpdateBaseTempViewTests extends UpdateBaseMixin {
+  import testImplicits._
+
+  test("different variations of column references - TempView") {
+    append(Seq((99, 2), (100, 4), (101, 3), (102, 5)).toDF("key", "value"))
+
+    spark.read.format("delta").load(tempPath).createOrReplaceTempView("tblName")
+
+    checkUpdate(
+      condition = Some("tblName.key = 101"),
+      setClauses = "tblName.value = -1",
+      expectedResults = Row(99, 2) :: Row(100, 4) :: Row(101, -1) :: Row(102, 5) :: Nil,
+      tableName = Some("tblName"))
+    checkUpdate(
+      condition = Some("`tblName`.`key` = 102"),
+      setClauses = "`tblName`.`value` = -1",
+      expectedResults = Row(99, 2) :: Row(100, 4) :: Row(101, -1) :: Row(102, -1) :: Nil,
+      tableName = Some("tblName"))
+  }
+
+  Seq(true, false).foreach { isPartitioned =>
+    val testName = s"test update on temp view - basic - Partition=$isPartitioned"
+    testWithTempView(testName) { isSQLTempView =>
+      val partitions = if (isPartitioned) "key" :: Nil else Nil
+      append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"), partitions)
+      createTempViewFromTable(s"delta.`$tempPath`", isSQLTempView)
+        checkUpdate(
+          condition = Some("key >= 1"),
+          setClauses = "value = key + value, key = key + 1",
+          expectedResults = Row(0, 3) :: Row(2, 5) :: Row(2, 2) :: Row(3, 4) :: Nil,
+          tableName = Some("v"))
+    }
+  }
+
+  private def testInvalidTempViews(name: String)(
+      text: String,
+      expectedErrorMsgForSQLTempView: String = null,
+      expectedErrorMsgForDataSetTempView: String = null,
+      expectedErrorClassForSQLTempView: String = null,
+      expectedErrorClassForDataSetTempView: String = null): Unit = {
+    testWithTempView(s"test update on temp view - $name") { isSQLTempView =>
+      withTable("tab") {
+        Seq((0, 3), (1, 2)).toDF("key", "value").write.format("delta").saveAsTable("tab")
+        createTempViewFromSelect(text, isSQLTempView)
+        val ex = intercept[AnalysisException] {
+          executeUpdate(
+            "v",
+            where = "key >= 1 and value < 3",
+            set = "value = key + value, key = key + 1"
+          )
+        }
+        testErrorMessageAndClass(
+          isSQLTempView,
+          ex,
+          expectedErrorMsgForSQLTempView,
+          expectedErrorMsgForDataSetTempView,
+          expectedErrorClassForSQLTempView,
+          expectedErrorClassForDataSetTempView)
+      }
+    }
+  }
+
+  testInvalidTempViews("subset cols")(
+    text = "SELECT key FROM tab",
+    expectedErrorClassForSQLTempView = "UNRESOLVED_COLUMN.WITH_SUGGESTION",
+    expectedErrorClassForDataSetTempView = "UNRESOLVED_COLUMN.WITH_SUGGESTION"
+  )
+
+  testInvalidTempViews("superset cols")(
+    text = "SELECT key, value, 1 FROM tab",
+    // The analyzer can't tell whether the table originally had the extra column or not.
+    expectedErrorMsgForSQLTempView = "Can't resolve column 1 in root",
+    expectedErrorMsgForDataSetTempView = "Can't resolve column 1 in root"
+  )
+
+  private def testComplexTempViews(name: String)(text: String, expectedResult: Seq[Row]) = {
+    testWithTempView(s"test update on temp view - $name") { isSQLTempView =>
+        withTable("tab") {
+          Seq((0, 3), (1, 2)).toDF("key", "value").write.format("delta").saveAsTable("tab")
+          createTempViewFromSelect(text, isSQLTempView)
+          executeUpdate(
+            "v",
+            where = "key >= 1 and value < 3",
+            set = "value = key + value, key = key + 1"
+          )
+          checkAnswer(spark.read.format("delta").table("v"), expectedResult)
+        }
+      }
+  }
+
+  testComplexTempViews("nontrivial projection")(
+    text = "SELECT value as key, key as value FROM tab",
+    expectedResult = Seq(Row(3, 0), Row(3, 3))
+  )
+
+  testComplexTempViews("view with too many internal aliases")(
+    text = "SELECT * FROM (SELECT * FROM tab AS t1) AS t2",
+    expectedResult = Seq(Row(0, 3), Row(2, 3))
+  )
+}
+
+trait UpdateBaseMiscTests extends UpdateBaseMixin {
+  import testImplicits._
+
+  val fileFormat: String = "parquet"
 
   test("basic case") {
     append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"))
@@ -284,7 +424,7 @@ abstract class UpdateSuiteBase
   }
 
   // Casts that are not valid implicit casts (e.g. string -> boolean) are allowed only when
-  // storeAssignmentPolicy is LEGACY or ANSI. STRICT is tested in [[UpdateSQLSuite]] only due to
+  // storeAssignmentPolicy is LEGACY or ANSI. STRICT is tested in [[UpdateSQLTests]] only due to
   // limitations when using the Scala API.
   for (storeAssignmentPolicy <- StoreAssignmentPolicy.values - StoreAssignmentPolicy.STRICT)
   test("invalid implicit cast string source type into boolean target, " +
@@ -301,7 +441,7 @@ abstract class UpdateSuiteBase
   }
 
   // Valid implicit casts that are not upcasts (e.g. string -> int) are allowed only when
-  // storeAssignmentPolicy is LEGACY or ANSI. STRICT is tested in [[UpdateSQLSuite]] only due to
+  // storeAssignmentPolicy is LEGACY or ANSI. STRICT is tested in [[UpdateSQLTests]] only due to
   // limitations when using the Scala API.
   for (storeAssignmentPolicy <- StoreAssignmentPolicy.values - StoreAssignmentPolicy.STRICT)
   test("valid implicit cast string source type into int target, " +
@@ -331,8 +471,6 @@ abstract class UpdateSuiteBase
   test("different variations of column references") {
     append(Seq((99, 2), (100, 4), (101, 3), (102, 5)).toDF("key", "value"))
 
-    spark.read.format("delta").load(tempPath).createOrReplaceTempView("tblName")
-
     checkUpdate(
       condition = Some("key = 99"),
       setClauses = "value = -1",
@@ -341,23 +479,6 @@ abstract class UpdateSuiteBase
       condition = Some("`key` = 100"),
       setClauses = "`value` = -1",
       expectedResults = Row(99, -1) :: Row(100, -1) :: Row(101, 3) :: Row(102, 5) :: Nil)
-  }
-
-  test("different variations of column references - TempView") {
-    append(Seq((99, 2), (100, 4), (101, 3), (102, 5)).toDF("key", "value"))
-
-    spark.read.format("delta").load(tempPath).createOrReplaceTempView("tblName")
-
-    checkUpdate(
-      condition = Some("tblName.key = 101"),
-      setClauses = "tblName.value = -1",
-      expectedResults = Row(99, 2) :: Row(100, 4) :: Row(101, -1) :: Row(102, 5) :: Nil,
-      tableName = Some("tblName"))
-    checkUpdate(
-      condition = Some("`tblName`.`key` = 102"),
-      setClauses = "`tblName`.`value` = -1",
-      expectedResults = Row(99, 2) :: Row(100, 4) :: Row(101, -1) :: Row(102, -1) :: Nil,
-      tableName = Some("tblName"))
   }
 
   test("target columns can have db and table qualifiers") {
@@ -746,7 +867,7 @@ abstract class UpdateSuiteBase
    * @param expectException whether an exception is expected to be thrown
    * @param customErrorRegex customized error regex.
    */
-  def testUnsupportedExpression(
+  private def testUnsupportedExpression(
       function: String,
       functionType: String,
       data: => DataFrame,
@@ -841,121 +962,6 @@ abstract class UpdateSuiteBase
     expectException = true, // more than one generated, expect exception.
     customErrorRegex =
       Some(".*ore than one row returned by a subquery used as an expression(?s).*")
-  )
-
-  protected def checkUpdateJson(
-      target: Seq[String],
-      source: Seq[String] = Nil,
-      updateWhere: String,
-      set: Seq[String],
-      expected: Seq[String]): Unit = {
-    withTempDir { dir =>
-      withTempView("source") {
-        def toDF(jsonStrs: Seq[String]) = spark.read.json(jsonStrs.toDS)
-        toDF(target).write.format("delta").mode("overwrite").save(dir.toString)
-        if (source.nonEmpty) {
-          toDF(source).createOrReplaceTempView("source")
-        }
-        executeUpdate(s"delta.`$dir`", set, updateWhere)
-        checkAnswer(readDeltaTable(dir.toString), toDF(expected))
-      }
-    }
-  }
-
-  protected def testAnalysisException(
-      targetDF: DataFrame,
-      set: Seq[String],
-      where: String = null,
-      errMsgs: Seq[String] = Nil) = {
-    withTempDir { dir =>
-      targetDF.write.format("delta").save(dir.toString)
-      val e = intercept[AnalysisException] {
-        executeUpdate(target = s"delta.`$dir`", set, where)
-      }
-      errMsgs.foreach { msg =>
-        assert(e.getMessage.toLowerCase(Locale.ROOT).contains(msg.toLowerCase(Locale.ROOT)))
-      }
-    }
-  }
-
-  Seq(true, false).foreach { isPartitioned =>
-    val testName = s"test update on temp view - basic - Partition=$isPartitioned"
-    testWithTempView(testName) { isSQLTempView =>
-      val partitions = if (isPartitioned) "key" :: Nil else Nil
-      append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"), partitions)
-      createTempViewFromTable(s"delta.`$tempPath`", isSQLTempView)
-        checkUpdate(
-          condition = Some("key >= 1"),
-          setClauses = "value = key + value, key = key + 1",
-          expectedResults = Row(0, 3) :: Row(2, 5) :: Row(2, 2) :: Row(3, 4) :: Nil,
-          tableName = Some("v"))
-    }
-  }
-
-  protected def testInvalidTempViews(name: String)(
-      text: String,
-      expectedErrorMsgForSQLTempView: String = null,
-      expectedErrorMsgForDataSetTempView: String = null,
-      expectedErrorClassForSQLTempView: String = null,
-      expectedErrorClassForDataSetTempView: String = null): Unit = {
-    testWithTempView(s"test update on temp view - $name") { isSQLTempView =>
-      withTable("tab") {
-        Seq((0, 3), (1, 2)).toDF("key", "value").write.format("delta").saveAsTable("tab")
-        createTempViewFromSelect(text, isSQLTempView)
-        val ex = intercept[AnalysisException] {
-          executeUpdate(
-            "v",
-            where = "key >= 1 and value < 3",
-            set = "value = key + value, key = key + 1"
-          )
-        }
-        testErrorMessageAndClass(
-          isSQLTempView,
-          ex,
-          expectedErrorMsgForSQLTempView,
-          expectedErrorMsgForDataSetTempView,
-          expectedErrorClassForSQLTempView,
-          expectedErrorClassForDataSetTempView)
-      }
-    }
-  }
-
-  testInvalidTempViews("subset cols")(
-    text = "SELECT key FROM tab",
-    expectedErrorClassForSQLTempView = "UNRESOLVED_COLUMN.WITH_SUGGESTION",
-    expectedErrorClassForDataSetTempView = "UNRESOLVED_COLUMN.WITH_SUGGESTION"
-  )
-
-  testInvalidTempViews("superset cols")(
-    text = "SELECT key, value, 1 FROM tab",
-    // The analyzer can't tell whether the table originally had the extra column or not.
-    expectedErrorMsgForSQLTempView = "Can't resolve column 1 in root",
-    expectedErrorMsgForDataSetTempView = "Can't resolve column 1 in root"
-  )
-
-  protected def testComplexTempViews(name: String)(text: String, expectedResult: Seq[Row]) = {
-    testWithTempView(s"test update on temp view - $name") { isSQLTempView =>
-        withTable("tab") {
-          Seq((0, 3), (1, 2)).toDF("key", "value").write.format("delta").saveAsTable("tab")
-          createTempViewFromSelect(text, isSQLTempView)
-          executeUpdate(
-            "v",
-            where = "key >= 1 and value < 3",
-            set = "value = key + value, key = key + 1"
-          )
-          checkAnswer(spark.read.format("delta").table("v"), expectedResult)
-        }
-      }
-  }
-
-  testComplexTempViews("nontrivial projection")(
-    text = "SELECT value as key, key as value FROM tab",
-    expectedResult = Seq(Row(3, 0), Row(3, 3))
-  )
-
-  testComplexTempViews("view with too many internal aliases")(
-    text = "SELECT * FROM (SELECT * FROM tab AS t1) AS t2",
-    expectedResult = Seq(Row(0, 3), Row(2, 3))
   )
 
   testSparkMasterOnly("Variant type") {

@@ -25,7 +25,8 @@ import org.apache.spark.sql.functions.{lit, struct}
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
 
-abstract class DeleteSuiteBase extends QueryTest
+trait DeleteBaseMixin
+  extends QueryTest
   with SharedSparkSession
   with DeltaDMLTestUtilsPathBased
   with DeltaTestUtilsForTempViews
@@ -42,6 +43,102 @@ abstract class DeleteSuiteBase extends QueryTest
     executeDelete(target = tableName.getOrElse(s"delta.`$tempPath`"), where = condition.orNull)
     checkAnswer(readDeltaTable(tempPath), expectedResults)
   }
+
+  protected def testInvalidTempViews(name: String)(
+      text: String,
+      expectedErrorMsgForSQLTempView: String = null,
+      expectedErrorMsgForDataSetTempView: String = null,
+      expectedErrorClassForSQLTempView: String = null,
+      expectedErrorClassForDataSetTempView: String = null): Unit = {
+    testWithTempView(s"test delete on temp view - $name") { isSQLTempView =>
+      withTable("tab") {
+        Seq((0, 3), (1, 2)).toDF("key", "value").write.format("delta").saveAsTable("tab")
+        if (isSQLTempView) {
+          sql(s"CREATE TEMP VIEW v AS $text")
+        } else {
+          sql(text).createOrReplaceTempView("v")
+        }
+        val ex = intercept[AnalysisException] {
+          executeDelete(
+            "v",
+            "key >= 1 and value < 3"
+          )
+        }
+        testErrorMessageAndClass(
+          isSQLTempView,
+          ex,
+          expectedErrorMsgForSQLTempView,
+          expectedErrorMsgForDataSetTempView,
+          expectedErrorClassForSQLTempView,
+          expectedErrorClassForDataSetTempView)
+      }
+    }
+  }
+
+  // Need to be able to override this, because it works in some configurations.
+  protected def testSuperSetColsTempView(): Unit = {
+    testInvalidTempViews("superset cols")(
+      text = "SELECT key, value, 1 FROM tab",
+      // The analyzer can't tell whether the table originally had the extra column or not.
+      expectedErrorMsgForSQLTempView = "Can't resolve column 1 in root",
+      expectedErrorMsgForDataSetTempView = "Can't resolve column 1 in root"
+    )
+  }
+
+  protected def testComplexTempViews(name: String)(
+      text: String,
+      expectResult: Seq[Row]): Unit = {
+    testWithTempView(s"test delete on temp view - $name") { isSQLTempView =>
+        withTable("tab") {
+          Seq((0, 3), (1, 2)).toDF("key", "value").write.format("delta").saveAsTable("tab")
+          createTempViewFromSelect(text, isSQLTempView)
+          executeDelete(
+            "v",
+            "key >= 1 and value < 3"
+          )
+          checkAnswer(spark.read.format("delta").table("v"), expectResult)
+        }
+    }
+  }
+}
+
+trait DeleteTempViewTests extends DeleteBaseMixin {
+  import testImplicits._
+
+  Seq(true, false).foreach { isPartitioned =>
+    val name = s"test delete on temp view - basic - Partition=$isPartitioned"
+    testWithTempView(name) { isSQLTempView =>
+      val partitions = if (isPartitioned) "key" :: Nil else Nil
+      append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"), partitions)
+      createTempViewFromTable(s"delta.`$tempPath`", isSQLTempView)
+        checkDelete(
+          condition = Some("key <= 1"),
+          expectedResults = Row(2, 2) :: Nil,
+          tableName = Some("v"))
+    }
+  }
+
+  testInvalidTempViews("subset cols")(
+    text = "SELECT key FROM tab",
+    expectedErrorClassForSQLTempView = "UNRESOLVED_COLUMN.WITH_SUGGESTION",
+    expectedErrorClassForDataSetTempView = "UNRESOLVED_COLUMN.WITH_SUGGESTION"
+  )
+
+  testSuperSetColsTempView()
+
+  testComplexTempViews("nontrivial projection")(
+    text = "SELECT value as key, key as value FROM tab",
+    expectResult = Row(3, 0) :: Nil
+  )
+
+  testComplexTempViews("view with too many internal aliases")(
+    text = "SELECT * FROM (SELECT * FROM tab AS t1) AS t2",
+    expectResult = Row(0, 3) :: Nil
+  )
+}
+
+trait DeleteBaseTests extends DeleteBaseMixin {
+  import testImplicits._
 
   Seq(true, false).foreach { isPartitioned =>
     test(s"basic case - Partition=$isPartitioned") {
@@ -373,7 +470,7 @@ abstract class DeleteSuiteBase extends QueryTest
    * @param expectException whether an exception is expected to be thrown
    * @param customErrorRegex customized error regex.
    */
-  def testUnsupportedExpression(
+  private def testUnsupportedExpression(
       function: String,
       functionType: String,
       data: => DataFrame,
@@ -445,93 +542,6 @@ abstract class DeleteSuiteBase extends QueryTest
     expectException = true, // generate more than one row. Exception expected.
     customErrorRegex =
       Some(".*More than one row returned by a subquery used as an expression(?s).*")
-  )
-
-  Seq(true, false).foreach { isPartitioned =>
-    val name = s"test delete on temp view - basic - Partition=$isPartitioned"
-    testWithTempView(name) { isSQLTempView =>
-      val partitions = if (isPartitioned) "key" :: Nil else Nil
-      append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"), partitions)
-      createTempViewFromTable(s"delta.`$tempPath`", isSQLTempView)
-        checkDelete(
-          condition = Some("key <= 1"),
-          expectedResults = Row(2, 2) :: Nil,
-          tableName = Some("v"))
-    }
-  }
-
-  protected def testInvalidTempViews(name: String)(
-      text: String,
-      expectedErrorMsgForSQLTempView: String = null,
-      expectedErrorMsgForDataSetTempView: String = null,
-      expectedErrorClassForSQLTempView: String = null,
-      expectedErrorClassForDataSetTempView: String = null): Unit = {
-    testWithTempView(s"test delete on temp view - $name") { isSQLTempView =>
-      withTable("tab") {
-        Seq((0, 3), (1, 2)).toDF("key", "value").write.format("delta").saveAsTable("tab")
-        if (isSQLTempView) {
-          sql(s"CREATE TEMP VIEW v AS $text")
-        } else {
-          sql(text).createOrReplaceTempView("v")
-        }
-        val ex = intercept[AnalysisException] {
-          executeDelete(
-            "v",
-            "key >= 1 and value < 3"
-          )
-        }
-        testErrorMessageAndClass(
-          isSQLTempView,
-          ex,
-          expectedErrorMsgForSQLTempView,
-          expectedErrorMsgForDataSetTempView,
-          expectedErrorClassForSQLTempView,
-          expectedErrorClassForDataSetTempView)
-      }
-    }
-  }
-  testInvalidTempViews("subset cols")(
-    text = "SELECT key FROM tab",
-    expectedErrorClassForSQLTempView = "UNRESOLVED_COLUMN.WITH_SUGGESTION",
-    expectedErrorClassForDataSetTempView = "UNRESOLVED_COLUMN.WITH_SUGGESTION"
-  )
-
-  // Need to be able to override this, because it works in some configurations.
-  protected def testSuperSetColsTempView(): Unit = {
-    testInvalidTempViews("superset cols")(
-      text = "SELECT key, value, 1 FROM tab",
-      // The analyzer can't tell whether the table originally had the extra column or not.
-      expectedErrorMsgForSQLTempView = "Can't resolve column 1 in root",
-      expectedErrorMsgForDataSetTempView = "Can't resolve column 1 in root"
-    )
-  }
-
-  testSuperSetColsTempView()
-
-  protected def testComplexTempViews(name: String)(
-      text: String,
-      expectResult: Seq[Row]): Unit = {
-    testWithTempView(s"test delete on temp view - $name") { isSQLTempView =>
-        withTable("tab") {
-          Seq((0, 3), (1, 2)).toDF("key", "value").write.format("delta").saveAsTable("tab")
-          createTempViewFromSelect(text, isSQLTempView)
-          executeDelete(
-            "v",
-            "key >= 1 and value < 3"
-          )
-          checkAnswer(spark.read.format("delta").table("v"), expectResult)
-        }
-    }
-  }
-
-  testComplexTempViews("nontrivial projection")(
-    text = "SELECT value as key, key as value FROM tab",
-    expectResult = Row(3, 0) :: Nil
-  )
-
-  testComplexTempViews("view with too many internal aliases")(
-    text = "SELECT * FROM (SELECT * FROM tab AS t1) AS t2",
-    expectResult = Row(0, 3) :: Nil
   )
 
   testSparkMasterOnly("Variant type") {

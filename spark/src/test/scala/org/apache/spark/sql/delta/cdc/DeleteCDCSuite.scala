@@ -24,15 +24,13 @@ import org.apache.spark.sql.delta.commands.cdc.CDCReader._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf._
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
-import org.apache.spark.SparkConf
 import org.apache.spark.sql.Dataset
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions.lit
 
-class DeleteCDCSuite extends DeleteSQLSuite with CDCEnabled {
-  import testImplicits._
-
-  protected def testCDCDelete(name: String)(
+trait DeleteCDCMixin extends DeleteSQLMixin with CDCEnabled {
+  protected def testCDCDelete(
+      name: String)(
       initialData: => Dataset[_],
       partitionColumns: Seq[String] = Seq.empty,
       deleteCondition: String,
@@ -62,6 +60,11 @@ class DeleteCDCSuite extends DeleteSQLSuite with CDCEnabled {
       }
     }
   }
+
+}
+
+trait DeleteCDCTests extends DeleteCDCMixin {
+  import testImplicits._
 
   testCDCDelete("unconditional")(
     initialData = spark.range(0, 10, step = 1, numPartitions = 3),
@@ -122,4 +125,3 @@ class DeleteCDCSuite extends DeleteSQLSuite with CDCEnabled {
         .selectExpr("3 as part", "id", "'delete' as _change_type"))
 
 }
-
