@@ -256,12 +256,18 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
   }
 
   /**
-   * Returns true if the current batch is from a fully consumed file based on the page token.
+   * Returns {@code true} if the current batch comes from a fully consumed file, as determined by
+   * the page token.
    *
-   * <p>Skips conditions: - If a sidecar file was read in the previous page, we skip all log files
-   * in the current page. - If the batch is a log file that appears earlier (in reverse
-   * lexicographic order) than the file recorded in the token, it has already been fully processed
-   * and should be skipped.
+   * <p>Skip conditions:
+   *
+   * <ul>
+   *   <li>If a sidecar file was read in the previous page, all log files in the current page are
+   *       skipped.
+   *   <li>If the batch corresponds to a log file that appears earlier (in reverse lexicographic
+   *       order) than the file recorded in the token, it has already been fully processed and
+   *       should be skipped.
+   * </ul>
    */
   private boolean isBatchFromFullyConsumedFile(
       String batchFilePath,

@@ -160,7 +160,6 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
    * @param nextLogFile the log file to evaluate
    * @return {@code true} to include the file; {@code false} to skip it
    */
-  // TODO: add unit tests for this method
   private boolean paginatedFilter(DeltaLogFile nextLogFile) {
     if (!paginationContextOpt.isPresent()) return true;
     Optional<String> lastReadLogFilePathOpt = paginationContextOpt.get().getLastReadLogFilePath();
@@ -177,7 +176,9 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     }
     // If nextFilePath is less than or equal to lastReadLogFilePath, it means nextLogFile
     // comes before or is the same as the last read log file, so we should include it.
-    if (nextFilePath.compareTo(lastReadLogFilePathOpt.get()) <= 0) return true;
+    if (nextFilePath.compareTo(lastReadLogFilePathOpt.get()) <= 0) {
+      return true;
+    }
     logger.info("Skip reading log file{}", nextFilePath);
     numCheckpointFilesSkipped++;
     return false;
