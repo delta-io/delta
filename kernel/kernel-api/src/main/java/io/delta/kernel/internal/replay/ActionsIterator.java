@@ -87,7 +87,7 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
    */
   private Optional<CloseableIterator<ActionWrapper>> actionsIter;
 
-  private final Optional<PaginationContext> paginationContextOpt;;
+  private final Optional<PaginationContext> paginationContextOpt;
   private long numCheckpointFilesSkipped = 0;
   private long numSidecarFilesSkipped = 0;
   private boolean closed;
