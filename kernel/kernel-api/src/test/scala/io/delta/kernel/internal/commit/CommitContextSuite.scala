@@ -4,7 +4,7 @@ import java.util.Optional
 
 import io.delta.kernel.Operation
 import io.delta.kernel.data.Row
-import io.delta.kernel.internal.actions.{CommitInfo, SingleAction}
+import io.delta.kernel.internal.actions.{CommitInfo, Metadata, Protocol, SingleAction}
 import io.delta.kernel.internal.transaction.{TransactionDataSource, TransactionV2State}
 import io.delta.kernel.internal.util.{Clock, Utils}
 import io.delta.kernel.test.{ActionUtils, MockEngineUtils}
@@ -20,7 +20,7 @@ class CommitContextSuite extends AnyFunSuite with ActionUtils with MockEngineUti
   private val schema = new StructType()
     .add("part1", IntegerType.INTEGER).add("col1", IntegerType.INTEGER)
   private val partCols = Seq("part1")
-  private val protocol = catalogManagedSupportedProtocol
+  private val protocol = protocolWithCatalogManagedSupport
   private val metadata = testMetadata(schema, partCols)
   private val emptyDataActionsIterator = new CloseableIterator[Row] {
     override def hasNext: Boolean = false
@@ -59,6 +59,17 @@ class CommitContextSuite extends AnyFunSuite with ActionUtils with MockEngineUti
     isProtocolUpdate = true,
     isMetadataUpdate = true)
 
+  private val writeToTableTxnState = createTestTxnState(
+    isCreateOrReplace = false,
+    Operation.WRITE,
+    readTableOpt = Optional.of(new TransactionDataSource {
+      override def getVersion: Long = 10L
+      override def getProtocol: Protocol = protocol
+      override def getMetadata: Metadata = metadata
+    }),
+    isProtocolUpdate = false,
+    isMetadataUpdate = false)
+
   test("getFinalizedActions can only be called once") {
     val commitContext = CommitContextImpl
       .forInitialCommit(uninvokableEngine, createTableTxnState, emptyDataActionsIterator)
@@ -78,6 +89,20 @@ class CommitContextSuite extends AnyFunSuite with ActionUtils with MockEngineUti
     assert(!finalizedActions.next().isNullAt(SingleAction.COMMIT_INFO_ORDINAL))
     assert(!finalizedActions.next().isNullAt(SingleAction.PROTOCOL_ORDINAL))
     assert(!finalizedActions.next().isNullAt(SingleAction.METADATA_ORDINAL))
+  }
+
+  test("commit metadata version = 0 for initial CommitContext with no read source (i.e. CREATE)") {
+    val commitContext = CommitContextImpl
+      .forInitialCommit(uninvokableEngine, createTableTxnState, emptyDataActionsIterator)
+
+    assert(commitContext.getCommitMetadata.getVersion == 0L)
+  }
+
+  test("commit version = readSource version + 1 for initial CommitContext (i.e. WRITE)") {
+    val commitContext = CommitContextImpl
+      .forInitialCommit(uninvokableEngine, writeToTableTxnState, emptyDataActionsIterator)
+
+    assert(commitContext.getCommitMetadata.getVersion == 11L)
   }
 
   // TODO: getFinalizedActions metadata actions are equal to the CommitMetadata actions

@@ -26,7 +26,7 @@ import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.types.StructType
 
 trait ActionUtils extends VectorTestUtils {
-  def catalogManagedSupportedProtocol: Protocol =
+  val protocolWithCatalogManagedSupport: Protocol =
     new Protocol(
       TableFeatures.TABLE_FEATURES_MIN_READER_VERSION,
       TableFeatures.TABLE_FEATURES_MIN_WRITER_VERSION,
