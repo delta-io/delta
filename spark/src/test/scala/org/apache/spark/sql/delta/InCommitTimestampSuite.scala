@@ -24,9 +24,9 @@ import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{Action, CommitInfo}
-import org.apache.spark.sql.delta.coordinatedcommits.{CommitCoordinatorProvider, CoordinatedCommitsBaseSuite, CoordinatedCommitsTestUtils, TrackingInMemoryCommitCoordinatorBuilder}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedCommitCoordinatorProvider, CatalogOwnedTableUtils, CatalogOwnedTestBaseSuite, CommitCoordinatorProvider, CommitCoordinatorUtilBase, TrackingInMemoryCommitCoordinatorBuilder}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames, JsonUtils}
 import org.apache.hadoop.fs.Path
@@ -42,8 +42,9 @@ class InCommitTimestampSuite
   extends QueryTest
     with SharedSparkSession
     with DeltaSQLCommandTest
+    with DeltaSQLTestUtils
     with DeltaTestUtilsBase
-    with CoordinatedCommitsTestUtils
+    with CatalogOwnedTestBaseSuite
     with StreamTest {
   import InCommitTimestampTestUtils._
 
@@ -54,45 +55,75 @@ class InCommitTimestampSuite
     spark.conf.set(DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key, "true")
   }
 
+  /**
+   * Create a delta table with 10 rows and a single commit with an AddFile.
+   * This is used to create the initial state of the delta table for testing.
+   *
+   * @param tableName The name of the delta table.
+   * @return The DeltaLog for the created table.
+   */
+  private def createInitialTable(tableName: String): DeltaLog = {
+    spark.range(10).write.format("delta").saveAsTable(tableName)
+    val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+    deltaLog.startTransaction().commit(Seq(createTestAddFile("1")), ManualUpdate)
+    deltaLog
+  }
+
+  /**
+   * Construct a delta log w/ a specific manual clock.
+   *
+   * @param tableName The name of the Delta table.
+   * @param clock The manual clock to use for the DeltaLog.
+   */
+  private def getDeltaLogWithClock(tableName: String, clock: ManualClock): DeltaLog = {
+    // Construct a delta log by name first.
+    val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+    // Get the data path.
+    val dataPath = deltaLog.dataPath
+    // Clear the cache to ensure that a fresh DeltaLog is created with the provided clock.
+    DeltaLog.clearCache()
+    // Create a new DeltaLog with the clock and the log path.
+    DeltaLog.forTable(spark, dataPath, clock)
+  }
+
   test("Enable ICT on commit 0") {
-    withTempDir { tempDir =>
-      spark.range(10).write.format("delta").save(tempDir.getAbsolutePath)
-      val deltaLog =
-        DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+    withTempTable(createTable = false) { tableName =>
+      spark.range(10).write.format("delta").saveAsTable(tableName)
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
       val ver0Snapshot = deltaLog.snapshot
       assert(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(ver0Snapshot.metadata))
       assert(ver0Snapshot.timestamp == getInCommitTimestamp(deltaLog, 0))
     }
   }
 
-  // Coordinated Commits will also automatically enable ICT.
+  // Catalog Owned will also automatically enable ICT.
   testWithDefaultCommitCoordinatorUnset(
     "Create a non-inCommitTimestamp table and then enable timestamp") {
     withSQLConf(
       DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> false.toString
     ) {
-      withTempDir { tempDir =>
-        spark.range(10).write.format("delta").save(tempDir.getAbsolutePath)
-        spark.sql(s"INSERT INTO delta.`$tempDir` VALUES 10")
-        val ver1Snapshot = DeltaLog.forTable(spark, tempDir.getAbsolutePath).snapshot
+      withTempTable(createTable = false) { tableName =>
+        spark.range(10).write.format("delta").saveAsTable(tableName)
+        spark.sql(s"INSERT INTO $tableName VALUES 10")
+        val ver1Snapshot = DeltaLog.forTable(spark, TableIdentifier(tableName)).snapshot
         // File timestamp should be the same as snapshot.getTimestamp when inCommitTimestamp is not
         // enabled
         assert(
           ver1Snapshot.logSegment.lastCommitFileModificationTimestamp == ver1Snapshot.timestamp)
 
-        spark.sql(s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` " +
+        spark.sql(s"ALTER TABLE $tableName " +
           s"SET TBLPROPERTIES ('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'true')")
 
-        val ver2Snapshot = DeltaLog.forTable(spark, tempDir.getAbsolutePath).snapshot
+        val ver2Snapshot = DeltaLog.forTable(spark, TableIdentifier(tableName)).snapshot
         // File timestamp should be different from snapshot.getTimestamp when inCommitTimestamp is
         // enabled
         assert(ver2Snapshot.timestamp == getInCommitTimestamp(ver2Snapshot.deltaLog, version = 2))
 
         assert(ver2Snapshot.timestamp > ver1Snapshot.timestamp)
 
-        spark.sql(s"INSERT INTO delta.`$tempDir` VALUES 11")
+        spark.sql(s"INSERT INTO $tableName VALUES 11")
 
-        val ver3Snapshot = DeltaLog.forTable(spark, tempDir.getAbsolutePath).snapshot
+        val ver3Snapshot = DeltaLog.forTable(spark, TableIdentifier(tableName)).snapshot
 
         assert(ver3Snapshot.timestamp > ver2Snapshot.timestamp)
       }
@@ -100,14 +131,11 @@ class InCommitTimestampSuite
   }
 
   test("InCommitTimestamps are monotonic even when the clock is skewed") {
-    withTempDir { tempDir =>
-      spark.range(10).write.format("delta").save(tempDir.getAbsolutePath)
+    withTempTable(createTable = false) { tableName =>
+      spark.range(10).write.format("delta").saveAsTable(tableName)
       val startTime = System.currentTimeMillis()
       val clock = new ManualClock(startTime)
-      // Clear the cache to ensure that a new DeltaLog is created with the new clock.
-      DeltaLog.clearCache()
-      val deltaLog =
-        DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
+      val deltaLog = getDeltaLogWithClock(tableName, clock)
       // Move backwards in time.
       deltaLog.startTransaction().commit(Seq(createTestAddFile("1")), ManualUpdate)
       val ver1Timestamp = deltaLog.snapshot.timestamp
@@ -119,14 +147,12 @@ class InCommitTimestampSuite
   }
 
   test("Conflict resolution of timestamps") {
-    withTempDir { tempDir =>
-      spark.range(10).write.format("delta").save(tempDir.getAbsolutePath)
+    withTempTable(createTable = false) { tableName =>
+      spark.range(10).write.format("delta").saveAsTable(tableName)
       val startTime = System.currentTimeMillis()
       val clock = new ManualClock(startTime)
       // Clear the cache to ensure that a new DeltaLog is created with the new clock.
-      DeltaLog.clearCache()
-      val deltaLog =
-        DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
+      val deltaLog = getDeltaLogWithClock(tableName, clock)
       val txn1 = deltaLog.startTransaction()
       clock.setTime(startTime)
       deltaLog.startTransaction().commit(Seq(createTestAddFile("1")), ManualUpdate)
@@ -144,13 +170,11 @@ class InCommitTimestampSuite
   for (useCommitLarge <- BOOLEAN_DOMAIN)
   test("txn.commit should use clock.currentTimeMillis() for ICT" +
     s" [useCommitLarge: $useCommitLarge]") {
-    withTempDir { tempDir =>
-      spark.range(2).write.format("delta").save(tempDir.getAbsolutePath)
-      // Clear the DeltaLog cache so that a new DeltaLog is created with the manual clock.
-      DeltaLog.clearCache()
+    withTempTable(createTable = false) { tableName =>
+      spark.range(2).write.format("delta").saveAsTable(tableName)
       val expectedCommit1Time = System.currentTimeMillis()
       val clock = new ManualClock(expectedCommit1Time)
-      val deltaLog = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
+      val deltaLog = getDeltaLogWithClock(tableName, clock)
       val ver0Snapshot = deltaLog.snapshot
       assert(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(ver0Snapshot.metadata))
       val usageRecords = Log4jUsageLogger.track {
@@ -182,11 +206,8 @@ class InCommitTimestampSuite
   test("Missing CommitInfo should result in a DELTA_MISSING_COMMIT_INFO exception") {
     // Make sure that we don't retrieve the time from the CRC.
     withSQLConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "false") {
-      withTempDir { tempDir =>
-        spark.range(10).write.format("delta").save(tempDir.getAbsolutePath)
-        val deltaLog =
-          DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
-        deltaLog.startTransaction().commit(Seq(createTestAddFile("1")), ManualUpdate)
+      withTempTable(createTable = false) { tableName =>
+        val deltaLog = createInitialTable(tableName)
         // Remove CommitInfo from the commit.
         val commit1Path = DeltaCommitFileProvider(deltaLog.unsafeVolatileSnapshot).deltaFile(1)
         val actions = deltaLog.store.readAsIterator(commit1Path, deltaLog.newDeltaHadoopConf())
@@ -199,7 +220,7 @@ class InCommitTimestampSuite
           deltaLog.newDeltaHadoopConf())
 
         DeltaLog.clearCache()
-        val latestSnapshot = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath)).snapshot
+        val latestSnapshot = DeltaLog.forTable(spark, TableIdentifier(tableName)).snapshot
         val e = intercept[DeltaIllegalStateException] {
           latestSnapshot.timestamp
         }
@@ -217,11 +238,8 @@ class InCommitTimestampSuite
     "DELTA_MISSING_COMMIT_TIMESTAMP exception") {
     // Make sure that we don't retrieve the time from the CRC.
     withSQLConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "false") {
-      withTempDir { tempDir =>
-        spark.range(10).write.format("delta").save(tempDir.getAbsolutePath)
-        val deltaLog =
-          DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
-        deltaLog.startTransaction().commit(Seq(createTestAddFile("1")), ManualUpdate)
+      withTempTable(createTable = false) { tableName =>
+        val deltaLog = createInitialTable(tableName)
         // Remove CommitInfo.commitTimestamp from the commit.
         val commit1Path = DeltaCommitFileProvider(deltaLog.unsafeVolatileSnapshot).deltaFile(1)
         val actions = deltaLog.store.readAsIterator(
@@ -241,7 +259,7 @@ class InCommitTimestampSuite
           deltaLog.newDeltaHadoopConf())
 
         DeltaLog.clearCache()
-        val latestSnapshot = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath)).snapshot
+        val latestSnapshot = DeltaLog.forTable(spark, TableIdentifier(tableName)).snapshot
         val e = intercept[DeltaIllegalStateException] {
           latestSnapshot.timestamp
         }
@@ -254,10 +272,9 @@ class InCommitTimestampSuite
   }
 
   test("InCommitTimestamp is equal to snapshot.timestamp") {
-    withTempDir { tempDir =>
-      spark.range(10).write.format("delta").save(tempDir.getAbsolutePath)
-      val deltaLog =
-        DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+    withTempTable(createTable = false) { tableName =>
+      spark.range(10).write.format("delta").saveAsTable(tableName)
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
       val ver0Snapshot = deltaLog.snapshot
 
       assert(ver0Snapshot.timestamp == getInCommitTimestamp(deltaLog, 0))
@@ -290,10 +307,9 @@ class InCommitTimestampSuite
   }
 
   test("Enablement tracking properties should not be added if ICT is enabled on commit 0") {
-    withTempDir { tempDir =>
-      spark.range(10).write.format("delta").save(tempDir.getAbsolutePath)
-      val deltaLog =
-        DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+    withTempTable(createTable = false) { tableName =>
+      spark.range(10).write.format("delta").saveAsTable(tableName)
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
       val ver0Snapshot = deltaLog.snapshot
 
       val observedEnablementTimestamp =
@@ -305,21 +321,21 @@ class InCommitTimestampSuite
     }
   }
 
-  // Coordinated Commits will also automatically enable ICT.
+  // Catalog Owned will also automatically enable ICT.
   testWithDefaultCommitCoordinatorUnset(
     "Enablement tracking works when ICT is enabled post commit 0") {
     withSQLConf(
       DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> false.toString
     ) {
-      withTempDir { tempDir =>
-        spark.range(10).write.format("delta").save(tempDir.getAbsolutePath)
-        spark.sql(s"INSERT INTO delta.`$tempDir` VALUES 10")
+      withTempTable(createTable = false) { tableName =>
+        spark.range(10).write.format("delta").saveAsTable(tableName)
+        spark.sql(s"INSERT INTO $tableName VALUES 10")
 
         spark.sql(
-          s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` " +
+          s"ALTER TABLE $tableName " +
             s"SET TBLPROPERTIES ('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'true')")
 
-        val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
         val ver2Snapshot = deltaLog.snapshot
         val observedEnablementTimestamp =
           DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.fromMetaData(ver2Snapshot.metadata)
@@ -333,18 +349,17 @@ class InCommitTimestampSuite
     }
   }
 
-  // Coordinated Commits will also automatically enable ICT.
+  // Catalog Owned will also automatically enable ICT.
   testWithDefaultCommitCoordinatorUnset("Conflict resolution of enablement version") {
     withSQLConf(
       DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> false.toString
     ) {
-      withTempDir { tempDir =>
-        spark.range(10).write.format("delta").save(tempDir.getAbsolutePath)
-        spark.sql(s"INSERT INTO delta.`$tempDir` VALUES 10")
+      withTempTable(createTable = false) { tableName =>
+        spark.range(10).write.format("delta").saveAsTable(tableName)
+        spark.sql(s"INSERT INTO $tableName VALUES 10")
         val startTime = System.currentTimeMillis()
         val clock = new ManualClock(startTime)
-        val deltaLog =
-          DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
+        val deltaLog = getDeltaLogWithClock(tableName, clock)
         val snapshot = deltaLog.snapshot
         val txn1 = deltaLog.startTransaction()
         clock.setTime(startTime)
@@ -369,17 +384,17 @@ class InCommitTimestampSuite
     }
   }
 
-  // Coordinated Commits will also automatically enable ICT.
+  // Catalog Owned will also automatically enable ICT.
   testWithDefaultCommitCoordinatorUnset(
     "commitLarge should correctly set the enablement tracking properties") {
-    withTempDir { tempDir =>
-      spark.range(2).write.format("delta").save(tempDir.getAbsolutePath)
-      val deltaLog = DeltaLog.forTable(spark, tempDir.getAbsolutePath)
+    withTempTable(createTable = false) { tableName =>
+      spark.range(2).write.format("delta").saveAsTable(tableName)
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
       val ver0Snapshot = deltaLog.snapshot
       assert(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(ver0Snapshot.metadata))
       // Disable ICT in version 1.
       spark.sql(
-        s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` " +
+        s"ALTER TABLE $tableName " +
           s"SET TBLPROPERTIES ('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'false')")
       assert(!DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(deltaLog.update().metadata))
 
@@ -387,7 +402,7 @@ class InCommitTimestampSuite
       // This should internally invoke commitLarge and the enablement tracking properties should be
       // updated correctly.
       val usageRecords = Log4jUsageLogger.track {
-        spark.sql(s"RESTORE TABLE delta.`${tempDir.getAbsolutePath}` TO VERSION AS OF 0")
+        spark.sql(s"RESTORE TABLE $tableName TO VERSION AS OF 0")
       }
       val ver2Snapshot = deltaLog.update()
       assert(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(ver2Snapshot.metadata))
@@ -404,13 +419,13 @@ class InCommitTimestampSuite
   }
 
   test("snapshot.timestamp should be read from the CRC") {
-    withTempDir { tempDir =>
+    withTempTable(createTable = false) { tableName =>
       var deltaLog: DeltaLog = null
       var timestamp = -1L
       val usageRecords = Log4jUsageLogger.track {
-        spark.range(1).write.format("delta").save(tempDir.getAbsolutePath)
+        spark.range(1).write.format("delta").saveAsTable(tableName)
         DeltaLog.clearCache() // Clear the post-commit snapshot from the cache.
-        deltaLog = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+        deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
         val fs = deltaLog.logPath.getFileSystem(deltaLog.newDeltaHadoopConf())
         assert(fs.exists(FileNames.checksumFile(deltaLog.logPath, 0)))
         timestamp = deltaLog.snapshot.timestamp
@@ -425,13 +440,13 @@ class InCommitTimestampSuite
      "when the table has no checkpoints") {
     // Make sure that we don't retrieve the time from the CRC.
     withSQLConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "false") {
-      withTempDir { tempDir =>
+      withTempTable(createTable = false) { tableName =>
         var deltaLog: DeltaLog = null
         var timestamp = -1L
-        spark.range(1).write.format("delta").save(tempDir.getAbsolutePath)
+        spark.range(1).write.format("delta").saveAsTable(tableName)
         DeltaLog.clearCache()
         val usageRecords = Log4jUsageLogger.track {
-          deltaLog = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+          deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
           timestamp = deltaLog.snapshot.timestamp
         }
         assert(timestamp == getInCommitTimestamp(deltaLog, 0))
@@ -445,18 +460,17 @@ class InCommitTimestampSuite
      "during cold reads of checkpoints + deltas") {
     // Make sure that we don't retrieve the time from the CRC.
     withSQLConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "false") {
-      withTempDir { tempDir =>
+      withTempTable(createTable = false) { tableName =>
         var deltaLog: DeltaLog = null
         var timestamp = -1L
-        spark.range(1).write.format("delta").save(tempDir.getAbsolutePath)
-        deltaLog = DeltaLog
-          .forTable(spark, new Path(tempDir.getCanonicalPath))
+        spark.range(1).write.format("delta").saveAsTable(tableName)
+        deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
         deltaLog.createCheckpointAtVersion(0)
         deltaLog.startTransaction().commit(Seq(createTestAddFile("c1")), ManualUpdate)
 
         val usageRecords = Log4jUsageLogger.track {
           DeltaLog.clearCache() // Clear the post-commit snapshot from the cache.
-          deltaLog = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+          deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
           timestamp = deltaLog.snapshot.timestamp
         }
         assert(deltaLog.snapshot.checkpointProvider.version == 0)
@@ -472,14 +486,14 @@ class InCommitTimestampSuite
      "during cold reads of checkpoints") {
     // Make sure that we don't retrieve the time from the CRC.
     withSQLConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "false") {
-      withTempDir { tempDir =>
+      withTempTable(createTable = false) { tableName =>
         var deltaLog: DeltaLog = null
         var timestamp = -1L
-        spark.range(1).write.format("delta").save(tempDir.getAbsolutePath)
-        DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath)).createCheckpointAtVersion(0)
+        spark.range(1).write.format("delta").saveAsTable(tableName)
+        DeltaLog.forTable(spark, TableIdentifier(tableName)).createCheckpointAtVersion(0)
         val usageRecords = Log4jUsageLogger.track {
           DeltaLog.clearCache() // Clear the post-commit snapshot from the cache.
-          deltaLog = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+          deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
           timestamp = deltaLog.snapshot.timestamp
         }
         assert(deltaLog.snapshot.checkpointProvider.version == 0)
@@ -491,17 +505,17 @@ class InCommitTimestampSuite
 
   test("snapshot.timestamp is read from file when CRC doesn't have ICT and " +
     "the latest version has a checkpoint") {
-    withTempDir { tempDir =>
+    withTempTable(createTable = false) { tableName =>
       var deltaLog: DeltaLog = null
       var timestamp = -1L
-      spark.range(1).write.format("delta").save(tempDir.getAbsolutePath)
-      deltaLog = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+      spark.range(1).write.format("delta").saveAsTable(tableName)
+      deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
       deltaLog.createCheckpointAtVersion(0)
       // Remove the ICT from the CRC.
       InCommitTimestampTestUtils.overwriteICTInCrc(deltaLog, 0, None)
       val usageRecords = Log4jUsageLogger.track {
         DeltaLog.clearCache() // Clear the post-commit snapshot from the cache.
-        deltaLog = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+        deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
         timestamp = deltaLog.snapshot.timestamp
       }
       assert(deltaLog.snapshot.checkpointProvider.version == 0)
@@ -517,11 +531,8 @@ class InCommitTimestampSuite
   test("Exceptions during ICT reads from file should be logged") {
     // Make sure that we don't retrieve the time from the CRC.
     withSQLConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "false") {
-      withTempDir { tempDir =>
-        spark.range(10).write.format("delta").save(tempDir.getAbsolutePath)
-        val deltaLog =
-          DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
-        deltaLog.startTransaction().commit(Seq(createTestAddFile("1")), ManualUpdate)
+      withTempTable(createTable = false) { tableName =>
+        val deltaLog = createInitialTable(tableName)
         // Remove CommitInfo from the commit.
         val commit1Path = DeltaCommitFileProvider(deltaLog.unsafeVolatileSnapshot).deltaFile(1)
         val actions = deltaLog.store.readAsIterator(commit1Path, deltaLog.newDeltaHadoopConf())
@@ -534,7 +545,7 @@ class InCommitTimestampSuite
           deltaLog.newDeltaHadoopConf())
 
         DeltaLog.clearCache()
-        val latestSnapshot = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath)).snapshot
+        val latestSnapshot = DeltaLog.forTable(spark, TableIdentifier(tableName)).snapshot
         val usageRecords = Log4jUsageLogger.track {
           try {
             latestSnapshot.timestamp
@@ -553,14 +564,11 @@ class InCommitTimestampSuite
   }
 
   test("DeltaHistoryManager.getActiveCommitAtTimeFromICTRange") {
-    withTempDir { tempDir =>
-      spark.range(10).write.format("delta").save(tempDir.getAbsolutePath)
+    withTempTable(createTable = false) { tableName =>
+      spark.range(10).write.format("delta").saveAsTable(tableName)
       val startTime = System.currentTimeMillis()
       val clock = new ManualClock(startTime)
-      // Ensure that a cached version of deltaLog without the ManualClock is not used.
-      DeltaLog.clearCache()
-      val deltaLog =
-        DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
+      val deltaLog = getDeltaLogWithClock(tableName, clock)
       val commitTimeDelta = 10
       val numberAdditionalCommits = 25
       assert(clock eq deltaLog.clock)
@@ -626,14 +634,11 @@ class InCommitTimestampSuite
 
   test("DeltaHistoryManager.getActiveCommitAtTimeFromICTRange --- " +
     "search for a timestamp after the last commit") {
-    withTempDir { tempDir =>
-      spark.range(10).write.format("delta").save(tempDir.getAbsolutePath)
+    withTempTable(createTable = false) { tableName =>
+      spark.range(10).write.format("delta").saveAsTable(tableName)
       val startTime = System.currentTimeMillis()
       val clock = new ManualClock(startTime)
-      // Ensure that a cached version of deltaLog without the ManualClock is not used.
-      DeltaLog.clearCache()
-      val deltaLog =
-        DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
+      val deltaLog = getDeltaLogWithClock(tableName, clock)
       val commitTimeDelta = 10
       val numberAdditionalCommits = 2
       assert(clock eq deltaLog.clock)
@@ -659,24 +664,23 @@ class InCommitTimestampSuite
     }
   }
 
-  // Coordinated Commits will also automatically enable ICT.
+  // Catalog Owned will also automatically enable ICT.
   testWithDefaultCommitCoordinatorUnset("DeltaHistoryManager.getActiveCommitAtTime: " +
     "works correctly when the history has both ICT and non-ICT commits") {
     withSQLConf(
       DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> false.toString) {
-      withTempDir { tempDir =>
-        spark.range(10).write.format("delta").save(tempDir.getAbsolutePath)
+      withTempTable(createTable = false) { tableName =>
+        spark.range(10).write.format("delta").saveAsTable(tableName)
         val numNonICTCommits = 6
         val numICTCommits = 5
-        val deltaLog =
-          DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
         for (i <- 1 to (numNonICTCommits-1)) {
           deltaLog.startTransaction().commit(Seq(createTestAddFile(i.toString)), ManualUpdate)
         }
 
         // Enable ICT.
         spark.sql(
-          s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` " +
+          s"ALTER TABLE $tableName " +
             s"SET TBLPROPERTIES ('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'true')")
 
         for (i <- 1 to (numICTCommits-1)) {
@@ -748,24 +752,23 @@ class InCommitTimestampSuite
     }
   }
 
-  // Coordinated Commits will also automatically enable ICT.
+  // Catalog Owned will also automatically enable ICT.
   testWithDefaultCommitCoordinatorUnset("DeltaHistoryManager.getHistory --- " +
       "works correctly when the history has both ICT and non-ICT commits") {
     withSQLConf(
       DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> false.toString) {
-      withTempDir { tempDir =>
-        spark.range(1).write.format("delta").save(tempDir.getAbsolutePath)
+      withTempTable(createTable = false) { tableName =>
+        spark.range(1).write.format("delta").saveAsTable(tableName)
         val numNonICTCommits = 6
         val numICTCommits = 5
-        val deltaLog =
-          DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
         for (i <- 1 to (numNonICTCommits - 1)) {
           deltaLog.startTransaction().commit(Seq(createTestAddFile(i.toString)), ManualUpdate)
         }
 
         // Enable ICT.
         spark.sql(
-          s"ALTER TABLE delta.`${tempDir.getAbsolutePath}`" +
+          s"ALTER TABLE $tableName " +
             s"SET TBLPROPERTIES ('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'true')")
 
         for (i <- 1 to (numICTCommits - 1)) {
@@ -830,14 +833,11 @@ class InCommitTimestampSuite
   }
 
   test("DeltaHistoryManager.getActiveCommitAtTimeFromICTRange -- boundary cases" ) {
-    withTempDir { tempDir =>
-      spark.range(10).write.format("delta").save(tempDir.getAbsolutePath)
+    withTempTable(createTable = false) { tableName =>
+      spark.range(10).write.format("delta").saveAsTable(tableName)
       val startTime = System.currentTimeMillis()
       val clock = new ManualClock(startTime)
-      // Ensure that a cached version of deltaLog without the ManualClock is not used.
-      DeltaLog.clearCache()
-      val deltaLog =
-        DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
+      val deltaLog = getDeltaLogWithClock(tableName, clock)
       val commit0 = DeltaHistoryManager.Commit(0, deltaLog.snapshot.timestamp)
       val commitTimeDelta = 10
       val numberAdditionalCommits = 10
@@ -1037,9 +1037,9 @@ class InCommitTimestampSuite
   }
 
   test("DeltaHistoryManager.getHistory --- all ICT commits") {
-    withTempDir { tempDir =>
-      spark.range(1).write.format("delta").save(tempDir.getAbsolutePath)
-      val deltaLog = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+    withTempTable(createTable = false) { tableName =>
+      spark.range(1).write.format("delta").saveAsTable(tableName)
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
       val numberAdditionalCommits = 4
       for (i <- 1 to numberAdditionalCommits) {
         deltaLog.startTransaction().commit(Seq(createTestAddFile(i.toString)), ManualUpdate)
@@ -1063,24 +1063,23 @@ class InCommitTimestampSuite
       DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> "true",
       DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> "false"
     ) {
-      withTempDir { tempDir =>
-        val path = tempDir.getCanonicalPath
+      withTempTable(createTable = false) { tableName =>
         for (i <- 0 to 7) {
           if (i == ictEnablementVersion) {
             spark.sql(
-              s"ALTER TABLE delta.`$path` " +
+              s"ALTER TABLE $tableName " +
                 s"SET TBLPROPERTIES ('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'true')")
           } else {
-            spark.range(i, i + 1).write.format("delta").mode("append").save(path)
+            spark.range(i, i + 1).write.format("delta").mode("append").saveAsTable(tableName)
           }
         }
-        val deltaLog = DeltaLog.forTable(spark, new Path(path))
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
         val result = spark.read
           .format("delta")
           .option("startingVersion", "1")
           .option("endingVersion", "7")
           .option("readChangeFeed", "true")
-          .load(path)
+          .table(tableName)
           .select("_commit_timestamp", "_commit_version")
           .collect()
         val fileTimestampsMap = getFileModificationTimesMap(deltaLog, 0, 7)
@@ -1104,35 +1103,35 @@ class InCommitTimestampSuite
       DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> "true",
       DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey -> "false"
     ) {
-      withTempDir { tempDir => withTempDir { checkpointDir => withTempDir { streamingSink =>
-        val path = tempDir.getCanonicalPath
-        spark.range(0).write.format("delta").mode("append").save(path)
+      withTempTable(createTable = false) { sourceTableName =>
+        withTempDir { checkpointDir =>
+          withTempTable(createTable = false) { sinkTableName =>
+        spark.range(0).write.format("delta").mode("append").saveAsTable(sourceTableName)
 
-        val sourceDeltaLog = DeltaLog.forTable(spark, new Path(path))
-        val sinkPath = streamingSink.getCanonicalPath
+        val sourceDeltaLog = DeltaLog.forTable(spark, TableIdentifier(sourceTableName))
         val streamingQuery = spark.readStream
           .format("delta")
           .option("readChangeFeed", "true")
-          .load(path)
+          .table(sourceTableName)
           .select(
             col("_commit_timestamp").alias("source_commit_timestamp"),
             col("_commit_version").alias("source_commit_version"))
           .writeStream
           .format("delta")
           .option("checkpointLocation", checkpointDir.getCanonicalPath)
-          .start(sinkPath)
+          .toTable(sinkTableName)
         for (i <- 1 to 7) {
           if (i == ictEnablementVersion) {
-            spark.sql(s"ALTER TABLE delta.`$path` " +
+            spark.sql(s"ALTER TABLE $sourceTableName " +
               s"SET TBLPROPERTIES ('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'true')")
           } else {
-            spark.range(i, i + 1).write.format("delta").mode("append").save(path)
+            spark.range(i, i + 1).write.format("delta").mode("append").saveAsTable(sourceTableName)
           }
         }
         streamingQuery.processAllAvailable()
         val fileTimestampsMap = getFileModificationTimesMap(sourceDeltaLog, 0, 7)
         val result = spark.read.format("delta")
-          .load(sinkPath)
+          .table(sinkTableName)
           .collect()
         result.foreach { row =>
           val v = row.getAs[Long]("source_commit_version")
@@ -1155,13 +1154,13 @@ class InCommitTimestampSuite
       spark.conf.getOption(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey)
     try {
       spark.conf.unset(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey)
-      withTempDir { tempDir =>
-        spark.range(1).write.format("delta").save(tempDir.getAbsolutePath)
-        val deltaLog = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+      withTempTable(createTable = false) { tableName =>
+        spark.range(1).write.format("delta").saveAsTable(tableName)
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
         // Enable ICT at version 1 instead of 0 so that we can test the retention of
         // enablement provenance properties as well.
         spark.sql(
-          s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` " +
+          s"ALTER TABLE $tableName " +
             s"SET TBLPROPERTIES ('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'true')")
         val enablementVersion =
           DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.fromMetaData(
@@ -1172,10 +1171,10 @@ class InCommitTimestampSuite
         assert(enablementVersion.contains(1))
         assert(enablementTimestamp.isDefined)
 
-        spark.range(2, 3).write.format("delta").mode("overwrite").save(tempDir.getAbsolutePath)
+        spark.range(2, 3).write.format("delta").mode("overwrite").saveAsTable(tableName)
 
         // Run the REPLACE/CLONE command.
-        runCommand(tempDir.getAbsolutePath)
+        runCommand(tableName)
 
         val metadataAfterReplace = deltaLog.update().metadata
         assert(
@@ -1206,8 +1205,8 @@ class InCommitTimestampSuite
 
   testWithDefaultCommitCoordinatorUnset(
     "ICT enablement properties remain unchanged after a REPLACE with explicit enablement") {
-    testICTEnablementPropertyRetention(expectRetention = true) { tableDir =>
-      sql(s"REPLACE TABLE delta.`$tableDir` USING delta " +
+    testICTEnablementPropertyRetention(expectRetention = true) { tableName =>
+      sql(s"REPLACE TABLE $tableName USING delta " +
         s"TBLPROPERTIES ('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'true') " +
         "AS SELECT * FROM range(3, 4)")
     }
@@ -1221,9 +1220,9 @@ class InCommitTimestampSuite
       DeltaSQLConf.IN_COMMIT_TIMESTAMP_RETAIN_ENABLEMENT_INFO_FIX_ENABLED.key -> "false"
     ) {
       testICTEnablementPropertyRetention(
-        expectRetention = false, expectICTEnabled = Some(true)) { tableDir =>
+        expectRetention = false, expectICTEnabled = Some(true)) { tableName =>
           sql(
-            s"REPLACE TABLE delta.`$tableDir` USING delta " +
+            s"REPLACE TABLE $tableName USING delta " +
               s"TBLPROPERTIES ('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'true') " +
               "AS SELECT * FROM range(3, 4)")
       }
@@ -1232,8 +1231,8 @@ class InCommitTimestampSuite
 
   testWithDefaultCommitCoordinatorUnset(
     "ICT enablement properties are dropped after a REPLACE with explicit disablement") {
-    testICTEnablementPropertyRetention(expectRetention = false) { tableDir =>
-      sql(s"REPLACE TABLE delta.`$tableDir` USING delta " +
+    testICTEnablementPropertyRetention(expectRetention = false) { tableName =>
+      sql(s"REPLACE TABLE $tableName USING delta " +
         s"TBLPROPERTIES ('${DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'false') " +
         "AS SELECT * FROM range(3, 4)")
     }
@@ -1241,31 +1240,44 @@ class InCommitTimestampSuite
 
   testWithDefaultCommitCoordinatorUnset(
     "ICT is completely dropped after a REPLACE with no explicit disablement") {
-    testICTEnablementPropertyRetention(expectRetention = false) { tableDir =>
-      sql(s"REPLACE TABLE delta.`$tableDir` USING delta AS SELECT * FROM range(3, 4)")
+    testICTEnablementPropertyRetention(expectRetention = false) { tableName =>
+      sql(s"REPLACE TABLE $tableName USING delta AS SELECT * FROM range(3, 4)")
     }
   }
 }
 
-class InCommitTimestampWithCoordinatedCommitsSuite
-  extends InCommitTimestampSuite
-    with CoordinatedCommitsBaseSuite {
+class InCommitTimestampWithCatalogOwnedBatch1Suite extends InCommitTimestampSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
+}
+
+class InCommitTimestampWithCatalogOwnedBatch2Suite extends InCommitTimestampSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
+}
+
+class InCommitTimestampWithCatalogOwnedBatch5Suite extends InCommitTimestampSuite {
   override def beforeAll(): Unit = {
     super.beforeAll()
     spark.conf.set(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey, "true")
   }
 
-  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(5)
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(5)
 
-  test("getActiveCommitAtTime works correctly within coordinated commits range") {
-    CommitCoordinatorProvider.clearNonDefaultBuilders()
-    val builder = TrackingInMemoryCommitCoordinatorBuilder(batchSize = 10)
-    CommitCoordinatorProvider.registerBuilder(builder)
-    withTempDir { tempDir =>
-      spark.range(10).write.format("delta").save(tempDir.getAbsolutePath)
-      val deltaLog = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
-      val commit0 = DeltaHistoryManager.Commit(0, deltaLog.snapshot.timestamp)
-      val tableCommitCoordinatorClient = deltaLog.snapshot.tableCommitCoordinatorClientOpt.get
+  test("getActiveCommitAtTime works correctly within catalog owned range") {
+    CatalogOwnedCommitCoordinatorProvider.clearBuilders()
+    CatalogOwnedCommitCoordinatorProvider.registerBuilder(
+      catalogName = CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
+      commitCoordinatorBuilder = TrackingInMemoryCommitCoordinatorBuilder(batchSize = 10)
+    )
+    withTempTable(createTable = false) { tableName =>
+      spark.range(10).write.format("delta").saveAsTable(tableName)
+      val (deltaLog, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(tableName))
+      val commit0 = DeltaHistoryManager.Commit(0, snapshot.timestamp)
+      val tableCommitCoordinatorClient =
+        CatalogOwnedTableUtils.populateTableCommitCoordinatorFromCatalog(
+          spark,
+          catalogTableOpt = deltaLog.initialCatalogTable,
+          snapshot
+        ).get
       val numberAdditionalCommits = 4
       // Create 4 unbackfilled commits.
       for (i <- 1 to numberAdditionalCommits) {
