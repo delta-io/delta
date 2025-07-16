@@ -131,7 +131,7 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
     if (!baseFilteredScanFilesIter.hasNext()) {
       return Optional.empty();
     }
-    // TODO: replace hash value of predicate and log segment
+    // TODO: replace hash value of log segment
     Row pageTokenRow =
         new PageToken(
                 lastReadLogFilePath,
@@ -140,7 +140,7 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
                 Meta.KERNEL_VERSION,
                 paginationContext.getTablePath(),
                 paginationContext.getTableVersion(),
-                -1 /* predicate hash */,
+                paginationContext.getPredicateHash(),
                 -1 /* log segment hash */)
             .toRow();
     return Optional.of(pageTokenRow);
