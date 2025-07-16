@@ -138,10 +138,10 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
                 lastReturnedRowIndex,
                 (lastSidecarIndex == -1)
                     ? Optional.empty()
-                    : Optional.of(lastSidecarIndex) /* sidecar file index */,
+                    : Optional.of(lastSidecarIndex),
                 Meta.KERNEL_VERSION,
-                paginationContext.getTablePath() /* table path */,
-                paginationContext.getTableVersion() /* table version */,
+                paginationContext.getTablePath(),
+                paginationContext.getTableVersion(),
                 -1 /* predicate hash */,
                 -1 /* log segment hash */)
             .toRow();
@@ -189,9 +189,10 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
       //   - Any batches from these files should be skipped here.
       if (isBatchFromFullyConsumedFile(
           batchFilePath, tokenLastReadFilePathOpt, tokenLastReadSidecarFileIdxOpt)) {
-        // Only fully consumed JSON files and V2 manifest files won't be skipped in ActionsIterator.
-        checkArgument(
-            batchFilePath.endsWith(".json") || FileNames.isV2CheckpointFile(batchFilePath));
+        // All fully consumed multi-part checkpoints should already be skipped in ActionsIterator.
+        // Fully consumed delta commit, log compaction and V2 checkpoint files won't be skipped in ActionsIterator.
+        checkArgument(!FileNames.isMultiPartCheckpointFile(batchFilePath));
+
         logger.info("Pagination: skipping batch from a fully consumed file : {}", batchFilePath);
         continue;
       }
@@ -217,24 +218,30 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
         if (tokenLastReturnedRowIndexOpt.isPresent()
             && lastReturnedRowIndex <= tokenLastReturnedRowIndexOpt.get()) {
           logger.info(
-              "Pagination: skipping batch from a partially consumed file : {}", batchFilePath);
+              "Pagination: skipping batch from a partially consumed file : {}, last row index is {}", batchFilePath, lastReturnedRowIndex);
           continue;
         }
       }
 
-      // Case 3: The batch is from a completely new file - one that has not been seen in previous
-      // pages.
-      // Do not skip it — this file is still fully unread.
+      // Case 3: This batch belongs to an "unseen file" — meaning a file whose content was
+      // not read at all in any previous page. In other words, this file is fully unconsumed:
+      // it was neither partially read nor fully read before.
+      //
+      // Batches from such files won't be skipped.
+      //
+      // Among these, only the first batch from "unseen file" triggers tracking updates —
+      // e.g., marking it as the current file we're paginating, resetting row index, etc.
+      //
       // Example:
-      //   - Suppose the last page ended at file 13.json.
-      //   - In reverse lexicographic order, the next files to process will be 12.json, 11.json,
-      // etc.
-      //   - These files are considered new (unseen) and all their batches should be processed
-      //     until the page size is reached.
+      //   - Page 1 ends midway through 18.json.
+      //   - Page 2 resumes, completes 18.json, then sees 17.json.
+      //   - 17.json was not seen in Page 1, so it's an "unseen file".
+      //   - All its batches are emitted.
+      //   - Only the first batch triggers state reset via `isFirstBatchFromNewFile`.
       else {
-        // This batch is the first one we've seen from a new file during the current page read;
+        // This batch is the first one we've seen from an "unseen file" during the current page read;
         // update tracking state to reflect that we're now reading this file.
-        if (isFirstBatchFromNewFile(batchFilePath)) {
+        if (isFirstBatchFromUnseenFile(batchFilePath)) {
           lastReadLogFilePath = batchFilePath;
           // Start from -1 so adding the first batch size gives correct 0-based row index.
           lastReturnedRowIndex = -1;
@@ -263,7 +270,6 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
     }
   }
 
-  /** Validate current batch. */
   void validateBatch(FilteredColumnarBatch batch) {
     // FilePath and pre-computed number of selected rows are expected to be present; both are
     // computed and set in ActiveAddFilesIterator (when building FilteredColumnarBatch from
@@ -275,29 +281,23 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
   }
 
   /**
-   * Returns {@code true} if the current batch comes from a fully consumed file, as determined by
-   * the page token.
-   *
-   * <p>Logic:
-   *
-   * <ul>
-   *   <li>If a sidecar file was read in the previous page, all non-sidecar files (i.e., JSON and V2 manifest)
-   *  *       are considered consumed.
-   *   <li>Delta log files are ordered in reverse lexicographic order (i.e., higher file names appear earlier).
-   *  *       If the current batch’s log file name is greater than the last one recorded in the token,
-   *  *       it means this file appeared earlier in the segment and has already been processed.
-   * </ul>
+   * Returns {@code true} if the current batch comes from a fully consumed file in previous pages,
+   * as determined by the page token.
    */
   private boolean isBatchFromFullyConsumedFile(
       String batchFilePath,
       Optional<String> tokenLastReadLogFilePathOpt,
       Optional<Long> tokenLastReadSidecarFileIdxOpt) {
+
     if (tokenLastReadSidecarFileIdxOpt.isPresent()) {
-      // All non-sidecar files are considered fully consumed if a sidecar file was read in last page.
+      // If a sidecar file was read in the previous page, all non-sidecar files (i.e., delta commit, log compaction
+      // and V2 checkpoint) are considered fully consumed.
       return !isSidecar(batchFilePath);
     }
     else if (tokenLastReadLogFilePathOpt.isPresent()) {
-      // In reverse lexicographic order, files with "larger" names are consumed earlier, so we skip those.
+      //  Delta log files are ordered in reverse lexicographic order (i.e., higher file names appear earlier).
+      //  If the current batch’s log file name is greater than the last one recorded in the token,
+      //  it means this file appeared earlier in the segment and has already been processed.
       return !isSidecar(batchFilePath) && batchFilePath.compareTo(tokenLastReadLogFilePathOpt.get()) > 0;
     }
     return false;
@@ -306,19 +306,6 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
   /**
    * Returns true if the current batch is from the same file (either log or sidecar) that the
    * previous page ended at, based on the file path and sidecar index recorded in the page token.
-   *
-   * <p>Logic:
-   *
-   * <ul>
-   *   <li>For regular log files: returns true if the file path matches the token’s last read path.
-   *   <li>For sidecar files: additionally checks the sidecar index presents and matches.
-   * </ul>
-   *
-   * @param batchFilePath Path of the current batch file.
-   * @param tokenLastReadFilePathOpt Last fully or partially read file recorded in the pagination
-   *     token.
-   * @param tokenLastReadSidecarFileIdxOpt Sidecar index from the token, if applicable.
-   * @return true if the batch comes from the same file as the one where the previous page ended.
    */
   private boolean isBatchFromLastFileInToken(
       String batchFilePath,
@@ -330,7 +317,7 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
         tokenLastReadFilePathOpt.isPresent()
             && batchFilePath.equals(tokenLastReadFilePathOpt.get());
     if (isSameFilePath) {
-      // If file path matches, sidecar index must also present and match.
+      // For sidecar files, if file path matches, sidecar index must also present and match.
       if (isSidecar(batchFilePath)) {
         checkArgument(
             tokenLastReadSidecarFileIdxOpt.isPresent()
@@ -344,23 +331,14 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
 
   /**
    * Returns {@code true} if the current batch is the first one from a different file than the
-   * last seen, indicating the start of a new file during pagination.
-   *
-   * <p>Logic:
-   *
-   * <ul>
-   *   <li>If the batch's file path differs from {@code lastReadLogFilePath}, it's considered a new file.
-   *   <li>For non-sidecar files, files must appear in reverse lexicographic order —
-   *       i.e., the current file must come *before* the last seen file.
-   * </ul>
-   *
-   * @param batchFilePath The path of the current batch's file.
-   * @return {@code true} if this is the first batch from a new file not yet seen in the current page; {@code false} otherwise.
-   * @throws IllegalArgumentException if a non-sidecar file appears out of expected order.
+   * last seen, indicating the start of a new unseen file during pagination.
    */
-  private boolean isFirstBatchFromNewFile(String batchFilePath) {
+  private boolean isFirstBatchFromUnseenFile(String batchFilePath) {
     if (!batchFilePath.equals(lastReadLogFilePath)) {
       // If batch isn't from a sidecar, it must appear after than lastReadLogFilePath in reverse lexicographic order.
+      // If the batch's file path differs from {@code lastReadLogFilePath}, it's considered a new file.
+      // For non-sidecar files, files must appear in reverse lexicographic order —
+      // i.e., the current file must come *before* the last seen file.
       checkArgument(
           isSidecar(batchFilePath)
               || lastReadLogFilePath == null

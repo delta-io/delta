@@ -183,7 +183,7 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
         return true;
       case MULTIPART_CHECKPOINT:
         if (isFullyConsumedFile(nextFilePath, lastReadLogFilePathOpt.get())) {
-          logger.info("Pagination: skip reading log file {}", nextFilePath);
+          logger.info("Pagination: skip reading multi-part checkpoint file {}", nextFilePath);
           numCheckpointFilesSkipped++;
           return false;
         } else {
@@ -202,6 +202,8 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
    * lastReadLogFilePath.
    */
   private boolean isFullyConsumedFile(String filePath, String lastReadLogFilePath) {
+    // Files are sorted in reverse lexicographic order.so if `filePath` is *greater* than `lastReadLogFilePath`,
+    // it actually comes before lastReadLogFilePath in the log stream, meaning we have already paginated past it.
     return filePath.compareTo(lastReadLogFilePath) > 0;
   }
 
@@ -376,7 +378,6 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
       FileStatus checkpointFileStatus, long checkpointVersion, ColumnarBatch columnarBatch) {
     checkArgument(columnarBatch.getSchema().fieldNames().contains(LogReplay.SIDECAR_FIELD_NAME));
 
-    logger.info("Extracting sidecar files from V2 manifest file");
     Path deltaLogPath = new Path(checkpointFileStatus.getPath()).getParent();
 
     // Sidecars will exist in schema. Extract sidecar files, then remove sidecar files from
@@ -393,10 +394,6 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
       }
       sidecarIndexInV2Manifest++;
       if (paginationContextOpt.isPresent()) {
-        logger.info(
-            "Pagination: next sidecar file is : index={}, path={}",
-            sidecarIndexInV2Manifest,
-            sidecarFile.getPath());
         if (paginationContextOpt.get().getLastReadSidecarFileIdx().isPresent()
             && sidecarIndexInV2Manifest
                 < paginationContextOpt.get().getLastReadSidecarFileIdx().get()) {
