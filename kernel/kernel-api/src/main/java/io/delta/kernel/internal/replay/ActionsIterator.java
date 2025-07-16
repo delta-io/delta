@@ -202,8 +202,10 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
    * lastReadLogFilePath.
    */
   private boolean isFullyConsumedFile(String filePath, String lastReadLogFilePath) {
-    // Files are sorted in reverse lexicographic order.so if `filePath` is *greater* than `lastReadLogFilePath`,
-    // it actually comes before lastReadLogFilePath in the log stream, meaning we have already paginated past it.
+    // Files are sorted in reverse lexicographic order.so if `filePath` is *greater* than
+    // `lastReadLogFilePath`,
+    // it actually comes before lastReadLogFilePath in the log stream, meaning we have already
+    // paginated past it.
     return filePath.compareTo(lastReadLogFilePath) > 0;
   }
 
