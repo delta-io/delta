@@ -126,11 +126,6 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     this.checkpointReadSchema = checkpointReadSchema;
     this.actionsIter = Optional.empty();
     this.schemaContainsAddOrRemoveFiles = LogReplay.containsAddOrRemoveFileActions(deltaReadSchema);
-    // TODO: don't include log here
-//    if (paginationContextOpt.isPresent()) {
-//      logger.info(
-//          "Pagination: Number of checkpoint files skipped is {}", numCheckpointFilesSkipped);
-//    }
   }
 
   /**
