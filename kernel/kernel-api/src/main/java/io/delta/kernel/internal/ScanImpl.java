@@ -218,6 +218,36 @@ public class ScanImpl implements Scan {
   }
 
   @Override
+  public CloseableIterator<FilteredColumnarBatch> getScanFilesFromJSON(Engine engine) {
+    return getScanFilesFromJSON(engine, false);
+  }
+
+  public CloseableIterator<FilteredColumnarBatch> getScanFilesFromJSON(Engine engine, boolean shouldReadStats) {
+    Optional<Predicate> predicate = getPartitionsFilters()
+        .map(p ->
+                rewritePartitionPredicateOnCheckpointFileSchema(
+                    p, partitionColToStructFieldMap.get()));
+
+    return logReplay.getScanFilesForJSON(engine, shouldReadStats, predicate, scanMetrics);
+  }
+
+  @Override
+  public ColumnarBatch getLogReplayStates() {
+    return null;
+  }
+
+  @Override
+  public List<Row> getLogSegmentCheckpointFiles() {
+    return null;
+  }
+
+  @Override
+  public CloseableIterator<FilteredColumnarBatch> getScanFileFromCheckpointList(List<Row> checkpoints) {
+    return null;
+  }
+
+
+  @Override
   public Optional<Predicate> getRemainingFilter() {
     return getDataFilters();
   }

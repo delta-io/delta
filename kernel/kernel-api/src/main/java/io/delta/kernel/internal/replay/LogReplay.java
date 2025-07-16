@@ -229,6 +229,25 @@ public class LogReplay {
     return new ActiveAddFilesIterator(engine, addRemoveIter, dataPath, scanMetrics);
   }
 
+  // TODO: getScanFilesForFileList -> file list can be of JSON or CP file list or combined file list
+  public CloseableIterator<FilteredColumnarBatch> getScanFilesForJSON(
+      Engine engine, boolean shouldReadStats, Optional<Predicate> checkpointPredicate,
+      ScanMetrics scanMetrics) {
+    final CloseableIterator<ActionWrapper> addRemoveIter =
+        new ActionsIterator(
+            engine,
+            getLogReplayJSONFiles(getLogSegment()),
+            getAddRemoveReadSchema(shouldReadStats),
+            getAddReadSchema(shouldReadStats),
+            checkpointPredicate);
+    return new ActiveAddFilesIterator(engine, addRemoveIter, dataPath, scanMetrics);
+  }
+
+  private List<FileStatus> getLogReplayJSONFiles(LogSegment logSegment) {
+    //TODO: get a file list of all JSONs in logSegment
+    return logSegment.getDeltas();
+  }
+
   ////////////////////
   // Helper Methods //
   ////////////////////

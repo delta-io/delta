@@ -23,6 +23,8 @@ public class DeltaScan implements org.apache.spark.sql.connector.read.Scan, Batc
   private final String sessionToken;
   private InputPartition[] cachedPartitions;
 
+  private boolean isDistributedLogReplayEnabled = true;
+
   public DeltaScan(
       Scan kernelScan,
       Engine tableEngine,
@@ -49,7 +51,32 @@ public class DeltaScan implements org.apache.spark.sql.connector.read.Scan, Batc
 
     List<DeltaInputPartition> scanFileAsInputPartitions = new ArrayList<>();
 
-    Iterator<FilteredColumnarBatch> columnarBatchIterator = kernelScan.getScanFiles(tableEngine);
+    Iterator<FilteredColumnarBatch> columnarBatchIterator
+    if(!isDistributedLogReplayEnabled) {
+      columnarBatchIterator = kernelScan.getScanFiles(tableEngine);
+    }
+    else {
+      // TODO: distributed log reply logic
+      Iterator<FilteredColumnarBatch> columnarBatchIteratorForJSON = kernelScan.getScanFileFromJSON();
+      ColumnarBatch hashsets = kernelScan.getLogReplayStates();
+      List<Row> checkpointFiles = kernelScan.getLogSegmentCheckpointFiles();
+
+      /*
+      Method PlanDataRemotely()
+      JavaRDD<DataFile> dataFileRDD =
+        sparkContext
+            .parallelize(toBeans(dataManifests), dataManifests.size())
+            .flatMap(new ReadDataManifest(tableBroadcast(), context(), withColumnStats));
+
+       List<List<DataFile>> dataFileGroups = collectPartitions(dataFileRDD);
+      * */
+      // send hashsets and one checkpoint file to each executor
+      // collectParitions
+
+      //In call(): one checkpointfile ----do log replay using given hashset ----> return a list of ScanFiles
+
+    }
+
     while (columnarBatchIterator.hasNext()) {
       FilteredColumnarBatch columnarBatch = columnarBatchIterator.next();
       Iterator<Row> rowIterator = columnarBatch.getRows();
