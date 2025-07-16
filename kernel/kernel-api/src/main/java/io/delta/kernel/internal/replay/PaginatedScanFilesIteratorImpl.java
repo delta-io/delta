@@ -278,27 +278,29 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
    * Returns {@code true} if the current batch comes from a fully consumed file, as determined by
    * the page token.
    *
-   * <p>Skip conditions:
+   * <p>Logic:
    *
    * <ul>
-   *   <li>If a sidecar file was read in the previous page, all json files in the current page are
-   *       exhausted (and also V2 manifest file).
-   *   <li>If the batch corresponds to a delta log file that appears earlier (in reverse
-   *       lexicographic order) than the file recorded in the token, it has already been fully
-   *       processed and should be skipped.
+   *   <li>If a sidecar file was read in the previous page, all non-sidecar files (i.e., JSON and V2 manifest)
+   *  *       are considered consumed.
+   *   <li>Delta log files are ordered in reverse lexicographic order (i.e., higher file names appear earlier).
+   *  *       If the current batch’s log file name is greater than the last one recorded in the token,
+   *  *       it means this file appeared earlier in the segment and has already been processed.
    * </ul>
    */
   private boolean isBatchFromFullyConsumedFile(
       String batchFilePath,
-      Optional<String> tokenFilePathOpt,
-      Optional<Long> tokenSidecarIndexOpt) {
-    if (tokenSidecarIndexOpt.isPresent() && !isSidecar(batchFilePath)) {
-      return true;
+      Optional<String> tokenLastReadLogFilePathOpt,
+      Optional<Long> tokenLastReadSidecarFileIdxOpt) {
+    if (tokenLastReadSidecarFileIdxOpt.isPresent()) {
+      // All non-sidecar files are considered fully consumed if a sidecar file was read in last page.
+      return !isSidecar(batchFilePath);
     }
-
-    return !isSidecar(batchFilePath)
-        && tokenFilePathOpt.isPresent()
-        && batchFilePath.compareTo(tokenFilePathOpt.get()) > 0;
+    else if (tokenLastReadLogFilePathOpt.isPresent()) {
+      // In reverse lexicographic order, files with "larger" names are consumed earlier, so we skip those.
+      return !isSidecar(batchFilePath) && batchFilePath.compareTo(tokenLastReadLogFilePathOpt.get()) > 0;
+    }
+    return false;
   }
 
   /**
@@ -308,65 +310,62 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
    * <p>Logic:
    *
    * <ul>
-   *   <li>For regular log files: compares the batch file path with the token’s last read file path.
-   *   <li>For sidecar files: additionally compares the sidecar index if present.
+   *   <li>For regular log files: returns true if the file path matches the token’s last read path.
+   *   <li>For sidecar files: additionally checks the sidecar index presents and matches.
    * </ul>
    *
    * @param batchFilePath Path of the current batch file.
    * @param tokenLastReadFilePathOpt Last fully or partially read file recorded in the pagination
    *     token.
    * @param tokenLastReadSidecarFileIdxOpt Sidecar index from the token, if applicable.
-   * @return true if the batch comes from the same file (and sidecar part, if relevant) as the one
-   *     where the previous page ended.
+   * @return true if the batch comes from the same file as the one where the previous page ended.
    */
   private boolean isBatchFromLastFileInToken(
       String batchFilePath,
       Optional<String> tokenLastReadFilePathOpt,
       Optional<Long> tokenLastReadSidecarFileIdxOpt) {
-    // Check if batch file path is the same as last read file path recorded in the page token if
-    // present.
-    boolean isSameFile =
+    // Check if batch file path matches last read file path recorded in the page token (if
+    // present).
+    boolean isSameFilePath =
         tokenLastReadFilePathOpt.isPresent()
             && batchFilePath.equals(tokenLastReadFilePathOpt.get());
-
-    if (isSameFile) {
-      // If file path matches, sidecar index should also match if present.
+    if (isSameFilePath) {
+      // If file path matches, sidecar index must also present and match.
       if (isSidecar(batchFilePath)) {
         checkArgument(
             tokenLastReadSidecarFileIdxOpt.isPresent()
-                && lastSidecarIndex == tokenLastReadSidecarFileIdxOpt.get());
+                && lastSidecarIndex == tokenLastReadSidecarFileIdxOpt.get(),
+            "Sidecar index mismatch for file: %s", batchFilePath);
       }
       return true;
     }
-
     return false;
   }
 
   /**
-   * Returns true if the current batch is the first one from a different file than the last one
-   * seen, indicating the start of a new file during pagination.
+   * Returns {@code true} if the current batch is the first one from a different file than the
+   * last seen, indicating the start of a new file during pagination.
    *
    * <p>Logic:
    *
    * <ul>
-   *   <li>If the batch's file path differs from {@code lastReadLogFilePath}, it's considered new.
-   *   <li>For non-sidecar files, we additionally assert that files appear in reverse lexicographic
-   *       order — i.e., the current file must come before the last seen file.
+   *   <li>If the batch's file path differs from {@code lastReadLogFilePath}, it's considered a new file.
+   *   <li>For non-sidecar files, files must appear in reverse lexicographic order —
+   *       i.e., the current file must come *before* the last seen file.
    * </ul>
    *
-   * @param batchFilePath the path of the current batch's file
-   * @return {@code true} if this is the first batch from a new file not yet seen in the current
-   *     page; {@code false} otherwise
-   * @throws IllegalArgumentException if non-sidecar files appear out of expected order
+   * @param batchFilePath The path of the current batch's file.
+   * @return {@code true} if this is the first batch from a new file not yet seen in the current page; {@code false} otherwise.
+   * @throws IllegalArgumentException if a non-sidecar file appears out of expected order.
    */
   private boolean isFirstBatchFromNewFile(String batchFilePath) {
     if (!batchFilePath.equals(lastReadLogFilePath)) {
-      // If batch isn't from a sidecar, it must come before lastReadLogFilePath.
+      // If batch isn't from a sidecar, it must appear after than lastReadLogFilePath in reverse lexicographic order.
       checkArgument(
           isSidecar(batchFilePath)
               || lastReadLogFilePath == null
               || batchFilePath.compareTo(lastReadLogFilePath) < 0,
-          "Expected file '%s' to appear before last read file '%s' in reverse lexicographic order, "
+          "Expected file '%s' to appear after last read file '%s' in reverse lexicographic order, "
               + "unless it's a sidecar file",
           batchFilePath,
           lastReadLogFilePath);

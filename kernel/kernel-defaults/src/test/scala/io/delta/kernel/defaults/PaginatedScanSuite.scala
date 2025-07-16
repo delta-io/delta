@@ -506,7 +506,6 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
   }
 
   // ===== Multi-part checkpoint files test cases =====
-
   /**
    * Log Segment List:
    * 00000000000000000000.checkpoint.0000000003.0000000003.parquet (6 AddFile)
@@ -605,7 +604,7 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
     }
   }
 
-  // ===== V2 checkpoint with sidecar files test cases =====
+  // ===== V2 json checkpoint with sidecar files test cases =====
   /**
    * 2.checkpoint.uuid.parquet : 5 rows, 0 selected AddFiles, 1 batch
    * sidecar 1: 3 rows, 3 selected AddFiles, 1 batch
@@ -651,7 +650,7 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
     }
   }
 
-  // ===== V2 checkpoint and json files with sidecar files test cases =====
+  // ===== V2 parquet checkpoint with sidecar files with jsons test cases =====
   /**
    * 00000000000000000003.json
    * Batch 1: 2 rows, 1 selected AddFiles
@@ -699,12 +698,12 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
     }
   }
 
+  // ===== V2 json checkpoint with sidecar files test cases =====
   /**
    * 2.checkpoint.uuid.parquet : 5 rows, 0 selected AddFiles, 1 batch
    * sidecar 1: 1 rows, 1 selected AddFiles, 1 batch
    * sidecar 2: 3 row, 3 selected AddFiles, 1 batch
    */
-
   val JSON_MANIFEST = "00000000000000000002.checkpoint.6374b053-df23-479b-b2cf-c9c550132b49.json"
   val JSON_SIDECAR_1 = "00000000000000000002.checkpoint.0000000001.0000000002." +
     "bd1885fd-6ec0-4370-b0f5-43b5162fd4de.parquet"
@@ -743,6 +742,7 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
     }
   }
 
+  // ===== V2 json checkpoint with sidecar files with jsons test cases =====
   /**
    * 00000000000000000003.json
    * Batch 1: 2 rows, 1 selected AddFiles
@@ -775,7 +775,8 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
       expBatchCnt = 4,
       expLogFile = JSON_SIDECAR_2,
       expRowIdx = 2)).foreach { testCase =>
-    test(s"JSON manifest Sidecar checkpoints with json delta commit files - page size ${testCase.pageSize}") {
+    test(s"JSON manifest Sidecar checkpoints with json delta commit files - " +
+      s"page size ${testCase.pageSize}") {
       runSingleTest(
         testCase = testCase,
         tableVersionOpt = Optional.of(3L),
