@@ -429,6 +429,47 @@ class DeltaHistoryManager(
     } else if (smallestDeltaVersion < Long.MaxValue) {
       throw DeltaErrors.noRecreatableHistoryFound(deltaLog.logPath)
     } else {
+      // For Catalog Owned tables, there are two cases in which a DELTA_NO_COMMITS_FOUND
+      // exception could be thrown:
+      //
+      // 1. If there is no checkpoint or commit 0, and there are only unbackfilled commits
+      //    in the table.
+      //
+      //    In this case, the DELTA_NO_COMMITS_FOUND exception would be incorrect because there
+      //    are commits in the table, we just did not list them when trying to find the earliest
+      //    recreatable commit. Ideally we should throw the above NO_RECREATABLE_HISTORY_FOUND
+      //    exception but that requires an additional lookup of any unbackfilled commits at
+      //    the commit coordinator.
+      //
+      //    It is not worth doing the extra lookup just to throw the correct exception because:
+      //    1) We are already throwing a DELTA_NO_COMMITS_FOUND exception indicating
+      //       a potential problem.
+      //    2) The table must be corrupted already to end up in this scenario.
+      //
+      //    An example delta log structure for this case is shown below:
+      //    ```
+      //      _delta_log/
+      //        [x] 00000000000000000000.json -- Commit 0 has been backfilled but deleted.
+      //        _staged_commits/
+      //          [√] 00000000000000000001.<uuid>.json -- Commit 1 and 2 have *not* been backfilled.
+      //          [√] 00000000000000000002.<uuid>.json
+      //    ```
+      //    For the above table, we will throw DELTA_NO_COMMITS_FOUND exception when commit
+      //    `0.json` has been manually deleted and users are running commands like `versionAsOf 0`
+      //    on the table at the same time.
+      //
+      // 2. It indicates a real NO_RECREATABLE_HISTORY_FOUND exception, if all commits have been
+      //    backfilled, and we still can't find the recreatable commit.
+      //
+      //    An example delta log structure for this case is shown below:
+      //    ```
+      //      _delta_log/
+      //        [x] 00000000000000000000.json -- Commit 0/1/2 have been backfilled but deleted.
+      //        [x] 00000000000000000001.json
+      //        [x] 00000000000000000002.json
+      //        _staged_commits/
+      //          <empty>
+      //    ```
       throw DeltaErrors.noHistoryFound(deltaLog.logPath)
     }
   }
