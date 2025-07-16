@@ -17,8 +17,7 @@
 package io.delta.kernel.internal.replay;
 
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
-import static io.delta.kernel.internal.replay.DeltaLogFile.LogType.MULTIPART_CHECKPOINT;
-import static io.delta.kernel.internal.replay.DeltaLogFile.LogType.SIDECAR;
+import static io.delta.kernel.internal.replay.DeltaLogFile.LogType.*;
 import static io.delta.kernel.internal.util.FileNames.*;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
@@ -29,6 +28,7 @@ import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.engine.FileReadResult;
 import io.delta.kernel.expressions.*;
+import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.checkpoints.SidecarFile;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.*;
@@ -126,8 +126,10 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     this.checkpointReadSchema = checkpointReadSchema;
     this.actionsIter = Optional.empty();
     this.schemaContainsAddOrRemoveFiles = LogReplay.containsAddOrRemoveFileActions(deltaReadSchema);
+    // TODO: don't include log here
     if (paginationContextOpt.isPresent()) {
-      logger.info("Number of checkpoint files skipped is {}", numCheckpointFilesSkipped);
+      logger.info(
+          "Pagination: Number of checkpoint files skipped is {}", numCheckpointFilesSkipped);
     }
   }
 
@@ -158,31 +160,49 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
    * @param nextLogFile the log file to evaluate
    * @return {@code true} to include the file; {@code false} to skip it
    */
-  private boolean paginatedFilter(DeltaLogFile nextLogFile) {
-    String nextFilePath = nextLogFile.getFile().getPath();
-    checkArgument(nextFilePath.endsWith(".json") || nextFilePath.endsWith(".parquet"));
+  @VisibleForTesting
+  // TODO: verify numCheckpointFilesSkipped is correct in E2E test
+  // TODO: add unit test for this method
+  public boolean paginatedFilter(DeltaLogFile nextLogFile) {
+    // Pagination isn't enabled.
     if (!paginationContextOpt.isPresent()) return true;
-    logger.info("Pagination: nextFilePath is {}", nextFilePath);
+    String nextFilePath = nextLogFile.getFile().getPath();
     Optional<String> lastReadLogFilePathOpt = paginationContextOpt.get().getLastReadLogFilePath();
+    // Reading the first page
     if (!lastReadLogFilePathOpt.isPresent()) {
       logger.info("Pagination: no page token present, reading the first page");
-      return true; // reading first page
-    }
-    logger.info("Pagination: lastReadLogFilePath in token is {}", lastReadLogFilePathOpt.get());
-    if (nextFilePath.endsWith(".json")) {
-      return true; // never skip JSON files (to build tombstone hashsets)
-    }
-    if (nextLogFile.getLogType() == DeltaLogFile.LogType.V2_CHECKPOINT_MANIFEST) {
-      return true; // never skip v2 manifest checkpoint file
-    }
-    // If nextFilePath is less than or equal to lastReadLogFilePath, it means nextLogFile
-    // comes before or is the same as the last read log file, so we should include it.
-    if (nextFilePath.compareTo(lastReadLogFilePathOpt.get()) <= 0) {
       return true;
     }
-    logger.info("Pagination: skip reading log file {}", nextFilePath);
-    numCheckpointFilesSkipped++;
-    return false;
+    logger.info("Pagination: lastReadLogFilePath in token is {}", lastReadLogFilePathOpt.get());
+    logger.info("Pagination: nextFilePath is {}", nextFilePath);
+    switch (nextLogFile.getLogType()) {
+      case COMMIT:
+      case LOG_COMPACTION:
+      case CHECKPOINT_CLASSIC:
+      case V2_CHECKPOINT_MANIFEST:
+        return true;
+      case MULTIPART_CHECKPOINT:
+        if (isFullyConsumedFile(nextFilePath, lastReadLogFilePathOpt.get())) {
+          logger.info("Pagination: skip reading log file {}", nextFilePath);
+          numCheckpointFilesSkipped++;
+          return false;
+        } else {
+          return true;
+        }
+      case SIDECAR:
+        throw new IllegalArgumentException(
+            "Sidecar file shouldn't exist in log segment! Path: " + nextFilePath);
+      default:
+        throw new IllegalArgumentException("Unknown log file type!");
+    }
+  }
+
+  /**
+   * Returns true if the given file was already fully consumed in a previous page that ends at
+   * lastReadLogFilePath.
+   */
+  private boolean isFullyConsumedFile(String filePath, String lastReadLogFilePath) {
+    return filePath.compareTo(lastReadLogFilePath) > 0;
   }
 
   @Override
@@ -399,7 +419,7 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     }
 
     if (paginationContextOpt.isPresent()) {
-      logger.info("Number of sidecar files skipped is {}", numSidecarFilesSkipped);
+      logger.info("Pagination: number of sidecar files skipped is {}", numSidecarFilesSkipped);
     }
 
     // Delete SidecarFile actions from the schema.

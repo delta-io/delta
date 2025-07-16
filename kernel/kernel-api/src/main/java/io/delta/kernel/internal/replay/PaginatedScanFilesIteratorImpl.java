@@ -184,7 +184,7 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
       //
       // Example:
       //   - Suppose the previous page ends at file 13.json
-      //   - Then, all files after 13.json in reverse lex order (e.g., 14.json, 15.json, etc.)
+      //   - Then, all files after 13.json (e.g., 14.json, 15.json, etc.)
       //     have already been processed and are considered fully consumed.
       //   - Any batches from these files should be skipped here.
       if (isBatchFromFullyConsumedFile(
@@ -196,7 +196,7 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
         continue;
       }
 
-      // Case 2: The batch belongs to the same file as the one recorded in the page token.
+      // Case 2: The batch belongs to the same last read log file recorded in the page token.
       // In this case, we may have partially consumed this file on the previous page,
       // so we need to decide whether to skip the current batch based on row index.
       //
@@ -209,11 +209,11 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
       //     * Batch 3 starts at row 10 → keep (new data).
       else if (isBatchFromLastFileInToken(
           batchFilePath, tokenLastReadFilePathOpt, tokenLastReadSidecarFileIdxOpt)) {
-        // Compare batch's row index to page token row
         Optional<Long> tokenLastReturnedRowIndexOpt = paginationContext.getLastReturnedRowIndex();
-        // calculate the row index of the last row in current batch within the file
+        // Calculate the row index of the last row in current batch within the file.
         lastReturnedRowIndex += numRowsInBatch;
-        // Skip this batch if its last row index is smaller than or equal to the value in token.
+        // Skip this batch if its last row index is smaller than or equal to last returned row index
+        // in token.
         if (tokenLastReturnedRowIndexOpt.isPresent()
             && lastReturnedRowIndex <= tokenLastReturnedRowIndexOpt.get()) {
           logger.info(
@@ -239,13 +239,11 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
           // Start from -1 so adding the first batch size gives correct 0-based row index.
           lastReturnedRowIndex = -1;
           logger.info("Pagination: reading new file: {}", lastReadLogFilePath);
-
-          // Sidecar index starts at -1 if none was seen in the previous page.
           if (isSidecar(batchFilePath)) {
             lastSidecarIndex++;
           }
         }
-        // calculate the row index of the last row in current batch within the file
+        // Calculate the row index of the last row in current batch within the file.
         lastReturnedRowIndex += numRowsInBatch;
       }
 
@@ -325,7 +323,7 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
       String batchFilePath,
       Optional<String> tokenLastReadFilePathOpt,
       Optional<Long> tokenLastReadSidecarFileIdxOpt) {
-    // Match if batch file path is the same as last read file path recorded in the page token if
+    // Check if batch file path is the same as last read file path recorded in the page token if
     // present.
     boolean isSameFile =
         tokenLastReadFilePathOpt.isPresent()
@@ -379,11 +377,7 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
 
   // TODO: move isSidecar() to FileNames
   private boolean isSidecar(String filePath) {
-    if (filePath.contains("/_delta_log/_sidecars/") && filePath.endsWith(".parquet")) {
-      // throw new UnsupportedOperationException("Sidecar file isn't supported yet!");
-      return true;
-    }
-    return false;
+    return filePath.contains("/_delta_log/_sidecars/") && filePath.endsWith(".parquet");
   }
 
   @Override
