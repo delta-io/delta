@@ -32,6 +32,7 @@ import org.apache.spark.sql.delta.cdc._
 import org.apache.spark.sql.delta.deletionvectors._
 import org.apache.spark.sql.delta.rowid._
 import org.apache.spark.sql.delta.rowtracking._
+import org.apache.spark.sql.delta.stats._
 
 class MergeIntoScalaTestsMergeIntoScalaSuite extends MergeIntoScalaTests with MergeIntoScalaMixin
 class MergeIntoBasicTestsMergeIntoScalaSuite extends MergeIntoBasicTests with MergeIntoScalaMixin
@@ -80,7 +81,8 @@ class MergeCDCTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedCDCEnabledMergeIntoDVsP
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
   with CDCEnabled
-  with MergeIntoDVsPredicatePushdownDisabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownDisabled
   with MergeCDCMixin
   with MergeCDCWithDVsMixin
 
@@ -89,7 +91,8 @@ class MergeCDCTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedCDCEnabledMergeIntoDVsP
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
   with CDCEnabled
-  with MergeIntoDVsPredicatePushdownEnabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownEnabled
   with MergeCDCMixin
   with MergeCDCWithDVsMixin
 
@@ -97,20 +100,23 @@ class MergeIntoDVsTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedMergeIntoDVsPredica
   extends MergeIntoDVsTests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
-  with MergeIntoDVsPredicatePushdownDisabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownDisabled
 
 class MergeIntoDVsTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedMergeIntoDVsPredicatePushdoRB4HXZASuite
   extends MergeIntoDVsTests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
-  with MergeIntoDVsPredicatePushdownEnabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownEnabled
 
 class MergeIntoDVsTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedCDCEnabledMergeIntoDVsPredi43BU6UQSuite
   extends MergeIntoDVsTests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
   with CDCEnabled
-  with MergeIntoDVsPredicatePushdownDisabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownDisabled
   with MergeCDCMixin
   with MergeCDCWithDVsMixin
 
@@ -119,7 +125,8 @@ class MergeIntoDVsTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedCDCEnabledMergeInto
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
   with CDCEnabled
-  with MergeIntoDVsPredicatePushdownEnabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownEnabled
   with MergeCDCMixin
   with MergeCDCWithDVsMixin
 
@@ -151,13 +158,15 @@ class MergeIntoSQLTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedMergeIntoDVsPredica
   extends MergeIntoSQLTests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
-  with MergeIntoDVsPredicatePushdownDisabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownDisabled
 
 class MergeIntoSQLTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedMergeIntoDVsPredicatePushdo6QQ3QXISuite
   extends MergeIntoSQLTests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
-  with MergeIntoDVsPredicatePushdownEnabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownEnabled
 
 class MergeIntoSQLTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedCDCEnabledSuite
   extends MergeIntoSQLTests
@@ -171,7 +180,8 @@ class MergeIntoSQLTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedCDCEnabledMergeInto
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
   with CDCEnabled
-  with MergeIntoDVsPredicatePushdownDisabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownDisabled
   with MergeCDCMixin
   with MergeCDCWithDVsMixin
 
@@ -180,7 +190,8 @@ class MergeIntoSQLTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedCDCEnabledMergeInto
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
   with CDCEnabled
-  with MergeIntoDVsPredicatePushdownEnabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownEnabled
   with MergeCDCMixin
   with MergeCDCWithDVsMixin
 
@@ -212,13 +223,15 @@ class MergeIntoSQLNondeterministicOrderTestsMergeIntoSQLDeltaDMLTestUtilsPathBas
   extends MergeIntoSQLNondeterministicOrderTests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
-  with MergeIntoDVsPredicatePushdownDisabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownDisabled
 
 class MergeIntoSQLNondeterministicOrderTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedMergeIJ47M5VASuite
   extends MergeIntoSQLNondeterministicOrderTests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
-  with MergeIntoDVsPredicatePushdownEnabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownEnabled
 
 class MergeIntoSQLNondeterministicOrderTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedCDCEnabledSuite
   extends MergeIntoSQLNondeterministicOrderTests
@@ -232,7 +245,8 @@ class MergeIntoSQLNondeterministicOrderTestsMergeIntoSQLDeltaDMLTestUtilsPathBas
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
   with CDCEnabled
-  with MergeIntoDVsPredicatePushdownDisabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownDisabled
   with MergeCDCMixin
   with MergeCDCWithDVsMixin
 
@@ -241,7 +255,8 @@ class MergeIntoSQLNondeterministicOrderTestsMergeIntoSQLDeltaDMLTestUtilsPathBas
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
   with CDCEnabled
-  with MergeIntoDVsPredicatePushdownEnabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownEnabled
   with MergeCDCMixin
   with MergeCDCWithDVsMixin
 
@@ -273,13 +288,15 @@ class MergeIntoBasicTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedMergeIntoDVsPredi
   extends MergeIntoBasicTests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
-  with MergeIntoDVsPredicatePushdownDisabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownDisabled
 
 class MergeIntoBasicTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedMergeIntoDVsPredicatePush42ROX6YSuite
   extends MergeIntoBasicTests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
-  with MergeIntoDVsPredicatePushdownEnabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownEnabled
 
 class MergeIntoBasicTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedCDCEnabledSuite
   extends MergeIntoBasicTests
@@ -293,7 +310,8 @@ class MergeIntoBasicTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedCDCEnabledMergeIn
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
   with CDCEnabled
-  with MergeIntoDVsPredicatePushdownDisabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownDisabled
   with MergeCDCMixin
   with MergeCDCWithDVsMixin
 
@@ -302,7 +320,8 @@ class MergeIntoBasicTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedCDCEnabledMergeIn
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
   with CDCEnabled
-  with MergeIntoDVsPredicatePushdownEnabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownEnabled
   with MergeCDCMixin
   with MergeCDCWithDVsMixin
 
@@ -334,13 +353,15 @@ class MergeIntoTempViewsTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedMergeIntoDVsP
   extends MergeIntoTempViewsTests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
-  with MergeIntoDVsPredicatePushdownDisabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownDisabled
 
 class MergeIntoTempViewsTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedMergeIntoDVsPredicate7PDPSUASuite
   extends MergeIntoTempViewsTests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
-  with MergeIntoDVsPredicatePushdownEnabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownEnabled
 
 class MergeIntoTempViewsTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedCDCEnabledSuite
   extends MergeIntoTempViewsTests
@@ -354,7 +375,8 @@ class MergeIntoTempViewsTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedCDCEnabledMer
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
   with CDCEnabled
-  with MergeIntoDVsPredicatePushdownDisabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownDisabled
   with MergeCDCMixin
   with MergeCDCWithDVsMixin
 
@@ -363,7 +385,8 @@ class MergeIntoTempViewsTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedCDCEnabledMer
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
   with CDCEnabled
-  with MergeIntoDVsPredicatePushdownEnabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownEnabled
   with MergeCDCMixin
   with MergeCDCWithDVsMixin
 
@@ -395,13 +418,15 @@ class MergeIntoNestedDataTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedMergeIntoDVs
   extends MergeIntoNestedDataTests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
-  with MergeIntoDVsPredicatePushdownDisabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownDisabled
 
 class MergeIntoNestedDataTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedMergeIntoDVsPredicatSCV32GISuite
   extends MergeIntoNestedDataTests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
-  with MergeIntoDVsPredicatePushdownEnabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownEnabled
 
 class MergeIntoNestedDataTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedCDCEnabledSuite
   extends MergeIntoNestedDataTests
@@ -415,7 +440,8 @@ class MergeIntoNestedDataTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedCDCEnabledMe
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
   with CDCEnabled
-  with MergeIntoDVsPredicatePushdownDisabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownDisabled
   with MergeCDCMixin
   with MergeCDCWithDVsMixin
 
@@ -424,7 +450,8 @@ class MergeIntoNestedDataTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedCDCEnabledMe
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
   with CDCEnabled
-  with MergeIntoDVsPredicatePushdownEnabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownEnabled
   with MergeCDCMixin
   with MergeCDCWithDVsMixin
 
@@ -456,13 +483,15 @@ class MergeIntoUnlimitedMergeClausesTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedM
   extends MergeIntoUnlimitedMergeClausesTests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
-  with MergeIntoDVsPredicatePushdownDisabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownDisabled
 
 class MergeIntoUnlimitedMergeClausesTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedMergeIntoMSS7WZASuite
   extends MergeIntoUnlimitedMergeClausesTests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
-  with MergeIntoDVsPredicatePushdownEnabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownEnabled
 
 class MergeIntoUnlimitedMergeClausesTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedCDCEnabledSuite
   extends MergeIntoUnlimitedMergeClausesTests
@@ -476,7 +505,8 @@ class MergeIntoUnlimitedMergeClausesTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedC
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
   with CDCEnabled
-  with MergeIntoDVsPredicatePushdownDisabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownDisabled
   with MergeCDCMixin
   with MergeCDCWithDVsMixin
 
@@ -485,7 +515,8 @@ class MergeIntoUnlimitedMergeClausesTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedC
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
   with CDCEnabled
-  with MergeIntoDVsPredicatePushdownEnabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownEnabled
   with MergeCDCMixin
   with MergeCDCWithDVsMixin
 
@@ -517,13 +548,15 @@ class MergeIntoSuiteBaseMiscTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedMergeInto
   extends MergeIntoSuiteBaseMiscTests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
-  with MergeIntoDVsPredicatePushdownDisabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownDisabled
 
 class MergeIntoSuiteBaseMiscTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedMergeIntoDVsPrediQSME6CQSuite
   extends MergeIntoSuiteBaseMiscTests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
-  with MergeIntoDVsPredicatePushdownEnabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownEnabled
 
 class MergeIntoSuiteBaseMiscTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedCDCEnabledSuite
   extends MergeIntoSuiteBaseMiscTests
@@ -537,7 +570,8 @@ class MergeIntoSuiteBaseMiscTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedCDCEnable
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
   with CDCEnabled
-  with MergeIntoDVsPredicatePushdownDisabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownDisabled
   with MergeCDCMixin
   with MergeCDCWithDVsMixin
 
@@ -546,7 +580,8 @@ class MergeIntoSuiteBaseMiscTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedCDCEnable
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
   with CDCEnabled
-  with MergeIntoDVsPredicatePushdownEnabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownEnabled
   with MergeCDCMixin
   with MergeCDCWithDVsMixin
 
@@ -578,13 +613,15 @@ class MergeIntoNotMatchedBySourceMergeIntoSQLDeltaDMLTestUtilsPathBasedMergeInto
   extends MergeIntoNotMatchedBySourceSuite
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
-  with MergeIntoDVsPredicatePushdownDisabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownDisabled
 
 class MergeIntoNotMatchedBySourceMergeIntoSQLDeltaDMLTestUtilsPathBasedMergeIntoDVsPrediBFIV3FYSuite
   extends MergeIntoNotMatchedBySourceSuite
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
-  with MergeIntoDVsPredicatePushdownEnabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownEnabled
 
 class MergeIntoNotMatchedBySourceMergeIntoSQLDeltaDMLTestUtilsPathBasedCDCEnabledSuite
   extends MergeIntoNotMatchedBySourceSuite
@@ -598,7 +635,8 @@ class MergeIntoNotMatchedBySourceMergeIntoSQLDeltaDMLTestUtilsPathBasedCDCEnable
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
   with CDCEnabled
-  with MergeIntoDVsPredicatePushdownDisabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownDisabled
   with MergeCDCMixin
   with MergeCDCWithDVsMixin
 
@@ -607,7 +645,8 @@ class MergeIntoNotMatchedBySourceMergeIntoSQLDeltaDMLTestUtilsPathBasedCDCEnable
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
   with CDCEnabled
-  with MergeIntoDVsPredicatePushdownEnabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownEnabled
   with MergeCDCMixin
   with MergeCDCWithDVsMixin
 
@@ -639,13 +678,15 @@ class MergeIntoSchemaEvolutionCoreTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedMer
   extends MergeIntoSchemaEvolutionCoreTests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
-  with MergeIntoDVsPredicatePushdownDisabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownDisabled
 
 class MergeIntoSchemaEvolutionCoreTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedMergeIntoDV7R6YIOQSuite
   extends MergeIntoSchemaEvolutionCoreTests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
-  with MergeIntoDVsPredicatePushdownEnabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownEnabled
 
 class MergeIntoSchemaEvolutionCoreTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedCDCEnabledSuite
   extends MergeIntoSchemaEvolutionCoreTests
@@ -659,7 +700,8 @@ class MergeIntoSchemaEvolutionCoreTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedCDC
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
   with CDCEnabled
-  with MergeIntoDVsPredicatePushdownDisabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownDisabled
   with MergeCDCMixin
   with MergeCDCWithDVsMixin
 
@@ -668,7 +710,8 @@ class MergeIntoSchemaEvolutionCoreTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedCDC
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
   with CDCEnabled
-  with MergeIntoDVsPredicatePushdownEnabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownEnabled
   with MergeCDCMixin
   with MergeCDCWithDVsMixin
 
@@ -700,13 +743,15 @@ class MergeIntoSchemaEvolutionBaseTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedMer
   extends MergeIntoSchemaEvolutionBaseTests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
-  with MergeIntoDVsPredicatePushdownDisabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownDisabled
 
 class MergeIntoSchemaEvolutionBaseTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedMergeIntoDVHD3NM5QSuite
   extends MergeIntoSchemaEvolutionBaseTests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
-  with MergeIntoDVsPredicatePushdownEnabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownEnabled
 
 class MergeIntoSchemaEvolutionBaseTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedCDCEnabledSuite
   extends MergeIntoSchemaEvolutionBaseTests
@@ -720,7 +765,8 @@ class MergeIntoSchemaEvolutionBaseTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedCDC
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
   with CDCEnabled
-  with MergeIntoDVsPredicatePushdownDisabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownDisabled
   with MergeCDCMixin
   with MergeCDCWithDVsMixin
 
@@ -729,7 +775,8 @@ class MergeIntoSchemaEvolutionBaseTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedCDC
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
   with CDCEnabled
-  with MergeIntoDVsPredicatePushdownEnabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownEnabled
   with MergeCDCMixin
   with MergeCDCWithDVsMixin
 
@@ -761,13 +808,15 @@ class MergeIntoSchemaEvolutionNotMatchedBySourceTestsMergeIntoSQLDeltaDMLTestUti
   extends MergeIntoSchemaEvolutionNotMatchedBySourceTests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
-  with MergeIntoDVsPredicatePushdownDisabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownDisabled
 
 class MergeIntoSchemaEvolutionNotMatchedBySourceTestsMergeIntoSQLDeltaDMLTestUtilsPathBaVUT4IHYSuite
   extends MergeIntoSchemaEvolutionNotMatchedBySourceTests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
-  with MergeIntoDVsPredicatePushdownEnabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownEnabled
 
 class MergeIntoSchemaEvolutionNotMatchedBySourceTestsMergeIntoSQLDeltaDMLTestUtilsPathBa4K4TGKQSuite
   extends MergeIntoSchemaEvolutionNotMatchedBySourceTests
@@ -781,7 +830,8 @@ class MergeIntoSchemaEvolutionNotMatchedBySourceTestsMergeIntoSQLDeltaDMLTestUti
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
   with CDCEnabled
-  with MergeIntoDVsPredicatePushdownDisabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownDisabled
   with MergeCDCMixin
   with MergeCDCWithDVsMixin
 
@@ -790,7 +840,8 @@ class MergeIntoSchemaEvolutionNotMatchedBySourceTestsMergeIntoSQLDeltaDMLTestUti
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
   with CDCEnabled
-  with MergeIntoDVsPredicatePushdownEnabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownEnabled
   with MergeCDCMixin
   with MergeCDCWithDVsMixin
 
@@ -822,13 +873,15 @@ class MergeIntoNestedStructEvolutionTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedM
   extends MergeIntoNestedStructEvolutionTests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
-  with MergeIntoDVsPredicatePushdownDisabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownDisabled
 
 class MergeIntoNestedStructEvolutionTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedMergeIntoWB7LKQISuite
   extends MergeIntoNestedStructEvolutionTests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
-  with MergeIntoDVsPredicatePushdownEnabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownEnabled
 
 class MergeIntoNestedStructEvolutionTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedCDCEnabledSuite
   extends MergeIntoNestedStructEvolutionTests
@@ -842,7 +895,8 @@ class MergeIntoNestedStructEvolutionTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedC
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
   with CDCEnabled
-  with MergeIntoDVsPredicatePushdownDisabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownDisabled
   with MergeCDCMixin
   with MergeCDCWithDVsMixin
 
@@ -851,10 +905,54 @@ class MergeIntoNestedStructEvolutionTestsMergeIntoSQLDeltaDMLTestUtilsPathBasedC
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
   with CDCEnabled
-  with MergeIntoDVsPredicatePushdownEnabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownEnabled
   with MergeCDCMixin
   with MergeCDCWithDVsMixin
 
 class MergeIntoMaterializeSourceTestsMergePersistentDVDisabledSuite
   extends MergeIntoMaterializeSourceTests
   with MergePersistentDVDisabled
+
+class RowTrackingMergeCommonTestsSuite extends RowTrackingMergeCommonTests
+class RowTrackingMergeCommonTestsCDCEnabledSuite extends RowTrackingMergeCommonTests with CDCEnabled
+
+class RowTrackingMergeCommonTestsRowTrackingMergeDVSuite
+  extends RowTrackingMergeCommonTests
+  with RowTrackingMergeDVMixin
+
+class RowTrackingMergeCommonTestsCDCEnabledRowTrackingMergeDVSuite
+  extends RowTrackingMergeCommonTests
+  with CDCEnabled
+  with RowTrackingMergeDVMixin
+
+class RowTrackingMergeCommonTestsPersistentDVDisabledMergePersistentDVDisabledSuite
+  extends RowTrackingMergeCommonTests
+  with PersistentDVDisabled
+  with MergePersistentDVDisabled
+
+class RowTrackingMergeCommonTestsCDCEnabledPersistentDVDisabledMergePersistentDVDisabledSuite
+  extends RowTrackingMergeCommonTests
+  with CDCEnabled
+  with PersistentDVDisabled
+  with MergePersistentDVDisabled
+
+class RowTrackingMergeCommonTestsDeltaColumnMappingEnableIdModeSuite
+  extends RowTrackingMergeCommonTests
+  with DeltaColumnMappingEnableIdMode
+
+class RowTrackingMergeCommonTestsDeltaColumnMappingEnableNameModeSuite
+  extends RowTrackingMergeCommonTests
+  with DeltaColumnMappingEnableNameMode
+
+class RowTrackingMergeCommonTestsDeltaColumnMappingEnableIdModeCDCEnabledRowTrackingMergeDVSuite
+  extends RowTrackingMergeCommonTests
+  with DeltaColumnMappingEnableIdMode
+  with CDCEnabled
+  with RowTrackingMergeDVMixin
+
+class RowTrackingMergeCommonTestsDeltaColumnMappingEnableNameModeCDCEnabledRowTrackingMergeDVSuite
+  extends RowTrackingMergeCommonTests
+  with DeltaColumnMappingEnableNameMode
+  with CDCEnabled
+  with RowTrackingMergeDVMixin
