@@ -277,6 +277,7 @@ public class ActiveAddFilesIterator implements CloseableIterator<FilteredColumna
                           .createSelectionVector(selectionVectorBuffer, 0, addsVector.getSize()),
                   "Create selection vector for selected scan files"));
     }
+    // TODO: skip batch if all AddFiles are unselected; issue #4941
     next =
         Optional.of(
             new FilteredColumnarBatch(
