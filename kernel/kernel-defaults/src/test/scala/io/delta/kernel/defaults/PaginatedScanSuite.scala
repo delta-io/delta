@@ -171,7 +171,7 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
         tableVersionOpt = Optional.empty(),
         pageSize = firstPageSize)
       val firstPaginatedIter = firstPaginatedScan.getScanFiles(customEngine)
-      while (firstPaginatedIter.hasNext) firstPaginatedIter.next() // exhaust iterator
+      if (firstPaginatedIter.hasNext) firstPaginatedIter.next() // call next() once
       val firstPageToken = firstPaginatedIter.getCurrentPageToken.get
       firstPaginatedIter.close()
 

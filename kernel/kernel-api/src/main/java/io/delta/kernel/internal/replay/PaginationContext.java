@@ -123,6 +123,10 @@ public class PaginationContext {
     return predicateHash;
   }
 
+  public int getLogSegmentHash() {
+    return logSegmentHash;
+  }
+
   public long getPageSize() {
     return pageSize;
   }
