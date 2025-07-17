@@ -33,7 +33,6 @@ import io.delta.kernel.internal.metrics.SnapshotReportImpl;
 import io.delta.kernel.internal.replay.CreateCheckpointIterator;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
-import io.delta.kernel.internal.transaction.TransactionDataSource;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.metrics.SnapshotReport;
 import io.delta.kernel.types.StructType;
@@ -42,7 +41,7 @@ import java.util.Map;
 import java.util.Optional;
 
 /** Implementation of {@link Snapshot}. */
-public class SnapshotImpl implements Snapshot, TransactionDataSource {
+public class SnapshotImpl implements Snapshot {
   private final Path logPath;
   private final Path dataPath;
   private final long version;

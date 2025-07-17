@@ -44,8 +44,29 @@ public class TransactionV2State {
 
   // ===== Table state =====
   public final Optional<TransactionDataSource> readTableOpt;
-  public final Protocol protocol;
-  public final Metadata initialMetadata;
+
+  /**
+   * The protocol to use for this transaction, updated with all applicable input from the
+   * transaction builder.
+   *
+   * <p>As of this writing, the updatedProtocol never changes during a transaction, e.g. from commit
+   * attempt to commit attempt.
+   *
+   * <p>Note that the readTableOpt's protocol is the read protocol, while this {@code
+   * updatedProtocol} is the actual protocol to use for the transaction.
+   */
+  public final Protocol updatedProtocol;
+
+  /**
+   * The metadata to use for the first commit attempt of this transaction, updated with all the
+   * applicable input from the transaction builder.
+   *
+   * <p>Note that the metadata might change from commit attempt to commit attempt. For example, when
+   * ICT is enabled, each commit attempt needs to be updated to write the Delta table property
+   * 'delta.inCommitTimestampEnablementVersion', which changes from commit attempt to commit
+   * attempt.
+   */
+  public final Metadata updatedMetadataForFirstCommitAttempt;
 
   // ===== Update flags =====
   public final boolean isProtocolUpdate;
@@ -57,6 +78,7 @@ public class TransactionV2State {
 
   // ===== Table feature specific fields =====
   public final Optional<SetTransaction> setTxnOpt;
+
   // TODO public final Optional<List<Column>> clusteringColumnsOpt;
 
   public TransactionV2State(
@@ -66,8 +88,8 @@ public class TransactionV2State {
       String dataPath,
       String logPath,
       Optional<TransactionDataSource> readTableOpt,
-      Protocol protocol,
-      Metadata initialMetadata,
+      Protocol updatedProtocol,
+      Metadata updatedMetadataForFirstCommitAttempt,
       boolean isProtocolUpdate,
       boolean isMetadataUpdate,
       Clock clock,
@@ -77,14 +99,12 @@ public class TransactionV2State {
     this.engineInfo = engineInfo;
     this.operation = operation;
 
-    // TODO: Would be great to add this to TransactionDataSource, but ResolvedTable uses String
-    //       and Snapshot uses Path
     this.dataPath = dataPath;
     this.logPath = logPath;
 
     this.readTableOpt = readTableOpt;
-    this.protocol = protocol;
-    this.initialMetadata = initialMetadata;
+    this.updatedProtocol = updatedProtocol;
+    this.updatedMetadataForFirstCommitAttempt = updatedMetadataForFirstCommitAttempt;
 
     this.isProtocolUpdate = isProtocolUpdate;
     this.isMetadataUpdate = isMetadataUpdate;

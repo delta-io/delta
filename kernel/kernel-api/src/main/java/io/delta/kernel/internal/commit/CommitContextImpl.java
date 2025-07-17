@@ -74,7 +74,9 @@ public class CommitContextImpl implements CommitContext {
     this.txnState = txnState;
     this.finalizedDataActions = finalizedDataActions;
     this.commitAttemptTimestampMs = txnState.clock.getTimeMillis();
-    this.metadata = txnState.initialMetadata; // TODO: update with ICT enablement info on conflict
+
+    // TODO: update with ICT enablement info on conflict
+    this.metadata = txnState.updatedMetadataForFirstCommitAttempt;
     this.commitInfo = getCommitInfo();
     this.iteratorConsumed = false;
   }
@@ -98,7 +100,7 @@ public class CommitContextImpl implements CommitContext {
         commitInfo,
         txnState.readTableOpt.map(TransactionDataSource::getProtocol),
         txnState.readTableOpt.map(TransactionDataSource::getMetadata),
-        txnState.isProtocolUpdate ? Optional.of(txnState.protocol) : Optional.empty(),
+        txnState.isProtocolUpdate ? Optional.of(txnState.updatedProtocol) : Optional.empty(),
         txnState.isMetadataUpdate ? Optional.of(metadata) : Optional.empty());
   }
 
@@ -112,7 +114,7 @@ public class CommitContextImpl implements CommitContext {
     metadataActions.add(createCommitInfoSingleAction(commitInfo.toRow()));
 
     if (txnState.isProtocolUpdate) {
-      metadataActions.add(createProtocolSingleAction(txnState.protocol.toRow()));
+      metadataActions.add(createProtocolSingleAction(txnState.updatedProtocol.toRow()));
     }
 
     if (txnState.isMetadataUpdate) {
