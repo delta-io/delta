@@ -293,14 +293,13 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
 
     if (tokenLastReadSidecarFileIdxOpt.isPresent()) {
       // If a sidecar file was read in the previous page, all non-sidecar files (i.e., delta commit,
-      // log compaction
-      // and V2 checkpoint) are considered fully consumed.
+      // log compaction and V2 checkpoint) are considered fully consumed.
       return !isSidecar(batchFilePath);
     } else if (tokenLastReadLogFilePathOpt.isPresent()) {
-      //  Delta log files are ordered in reverse lexicographic order (i.e., higher file names appear
+      // Delta log files are ordered in reverse lexicographic order (i.e., higher file names appear
       // earlier).
-      //  If the current batch’s log file name is greater than the last one recorded in the token,
-      //  it means this file appeared earlier in the segment and has already been processed.
+      // If the current batch’s log file name is greater than the last one recorded in the token,
+      // it means this file appeared earlier in the segment and has already been processed.
       return !isSidecar(batchFilePath)
           && batchFilePath.compareTo(tokenLastReadLogFilePathOpt.get()) > 0;
     }
@@ -340,9 +339,10 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
    */
   private boolean isFirstBatchFromUnseenFile(String batchFilePath) {
     if (!batchFilePath.equals(lastReadLogFilePath)) {
-      // If batch isn't from a sidecar, it must appear after than lastReadLogFilePath in reverse
+      // If batch isn't from a sidecar, it must appear after lastReadLogFilePath in reverse
       // lexicographic order.
-      // If the batch's file path differs from {@code lastReadLogFilePath}, it's considered a new
+      // If the batch's file path differs from {@code lastReadLogFilePath}, it's considered an
+      // unseen
       // file.
       // For non-sidecar files, files must appear in reverse lexicographic order —
       // i.e., the current file must come *before* the last seen file.
