@@ -784,7 +784,8 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
     // Row tracking remains unchanged
     (true, true, someData, Seq()),
     (true, true, Seq(), someData),
-    (true, true, someData, otherData))
+    (true, true, someData, otherData),
+    (true, true, Seq(), Seq()))
 
   for ((enableBefore, enableAfter, initialData, replaceData) <- replaceTableTestCases) {
     val testName = s"""Replace table with row tracking:
@@ -809,6 +810,9 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
           appendData(engine, tablePath, data = initialData)
         }
 
+        val beforeSnapshot =
+          TableImpl.forPath(engine, tablePath).getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+
         // Create a REPLACE transaction and commit
         val replaceTableProps =
           Map(TableConfig.ROW_TRACKING_ENABLED.getKey -> enableAfter.toString)
@@ -821,19 +825,41 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
         commitTransaction(txn, engine, getAppendActions(txn, replaceData))
 
         // Get the latest snapshot of the table after the replace operation
-        val snapshot =
+        val afterSnapshot =
           TableImpl.forPath(engine, tablePath).getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
 
         // Assert that row tracking is enabled/disabled as expected
-        assertMetadataProp(snapshot, TableConfig.ROW_TRACKING_ENABLED, enableAfter)
+        assertMetadataProp(afterSnapshot, TableConfig.ROW_TRACKING_ENABLED, enableAfter)
+
+        // Assert that the high watermark is preserved or incremented based on the operations
+        // This only applies if row tracking is enabled before and after the replace operation
+        // and if there is initial data present
+        if (enableBefore && enableAfter && initialData.nonEmpty) {
+          val beforeHighWaterMark: Optional[Long] =
+            RowTrackingMetadataDomain.fromSnapshot(beforeSnapshot).map(_.getRowIdHighWaterMark)
+          val afterHighWaterMark: Optional[Long] =
+            RowTrackingMetadataDomain.fromSnapshot(afterSnapshot).map(_.getRowIdHighWaterMark)
+          if (replaceData.nonEmpty) {
+            // If replace data is provided, the high watermark should be incremented
+            assert(beforeHighWaterMark.get() < afterHighWaterMark.get())
+          } else {
+            // If no replace data, the high watermark should remain the same
+            assert(beforeHighWaterMark.get() == afterHighWaterMark.get())
+          }
+        }
+
+        // Assert that metadata configurations are different before and after
+        // Since REPLACE assigns new materialized column names, the configs should never match
+        val beforeConfig = beforeSnapshot.getMetadata.getConfiguration
+        val afterConfig = afterSnapshot.getMetadata.getConfiguration
+        assert(!beforeConfig.equals(afterConfig))
 
         // Assert that materialized row tracking columns are present when row tracking is enabled
         if (enableAfter) {
-          val config = snapshot.getMetadata.getConfiguration
           Seq(ROW_ID, ROW_COMMIT_VERSION).foreach { rowTrackingColumn =>
-            assert(config.containsKey(rowTrackingColumn.getMaterializedColumnNameProperty))
+            assert(afterConfig.containsKey(rowTrackingColumn.getMaterializedColumnNameProperty))
             assert(
-              config
+              afterConfig
                 .get(rowTrackingColumn.getMaterializedColumnNameProperty)
                 .startsWith(rowTrackingColumn.getMaterializedColumnNamePrefix))
           }
