@@ -46,9 +46,9 @@ object ModularSuiteGenerator {
   }
 
   def generateSuites(suitesWriter: SuitesWriter): Unit = {
-    for ((group, testConfigs) <- SuiteGeneratorConfig.GROUPS_WITH_TEST_CONFIGS) {
+    for (testGroup <- SuiteGeneratorConfig.TEST_GROUPS) {
       val suites = for {
-        testConfig <- testConfigs
+        testConfig <- testGroup.testConfigs
         baseSuite <- testConfig.baseSuites
         dimensions <- testConfig.dimensionCombinations
       } yield dimensions
@@ -64,7 +64,7 @@ object ModularSuiteGenerator {
         .filterNot(dimensionTraits => SuiteGeneratorConfig.isExcluded(baseSuite, dimensionTraits))
         .map(dimensionTraits => generateCode(baseSuite, dimensionTraits))
 
-      suitesWriter.writeGeneratedSuitesOfGroup(suites.flatten, group)
+      suitesWriter.writeGeneratedSuitesOfGroup(suites.flatten, testGroup)
     }
     suitesWriter.conclude()
   }
@@ -97,17 +97,15 @@ object ModularSuiteGenerator {
   private lazy val BASE32 = new Base32()
 
   private def generateCode(
-    baseSuite: String,
-    mixins: List[String]): TestSuite = {
+      baseSuite: String,
+      mixins: List[String]): TestSuite = {
     val allMixins = SuiteGeneratorConfig.applyCustomRulesAndGetAllMixins(baseSuite, mixins)
     val suiteParents = (baseSuite :: allMixins).map(_.parse[Init].get)
 
     // Generate suite name by combining the names of base suite, base mixins, and dimensions.
-    // Only get the class name part if the mixin is a fully qualified name.
     // Remove "Suite" / "Mixin" substrings for better readability
     val baseSuitePrefix = baseSuite.stripSuffix("Suite")
     val mixinSuffix = mixins
-      .map(_.split('.').last)
       .map(_.replace("Mixin", ""))
       .mkString("")
     var suiteName = baseSuitePrefix + mixinSuffix

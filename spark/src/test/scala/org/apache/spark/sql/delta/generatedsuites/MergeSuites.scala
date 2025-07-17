@@ -29,10 +29,7 @@ package org.apache.spark.sql.delta.generatedsuites
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.cdc._
-import org.apache.spark.sql.delta.deletionvectors._
 import org.apache.spark.sql.delta.rowid._
-import org.apache.spark.sql.delta.rowtracking._
-import org.apache.spark.sql.delta.stats._
 
 class MergeIntoScalaTestsMergeIntoScalaSuite extends MergeIntoScalaTests with MergeIntoScalaMixin
 class MergeIntoBasicTestsMergeIntoScalaSuite extends MergeIntoBasicTests with MergeIntoScalaMixin
