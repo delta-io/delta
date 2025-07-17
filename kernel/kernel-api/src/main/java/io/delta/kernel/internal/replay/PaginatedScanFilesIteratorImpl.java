@@ -104,6 +104,8 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
 
   private boolean isBaseScanExhausted = false;
 
+  private boolean hasLeastOneBatchConsumed  = false;
+
   /**
    * Constructs a paginated iterator over scan files on top of a given filtered scan files iterator
    * and pagination context.
@@ -131,6 +133,7 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
   // Note: user is able to call getCurrentPageToken() after they close the paginated iterator
   @Override
   public Optional<Row> getCurrentPageToken() {
+    checkState(hasLeastOneBatchConsumed, "Can't call getCurrentPageToken() without consuming any batches!");
     if (isBaseScanExhausted) {
       return Optional.empty();
     }
@@ -216,12 +219,11 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
       else if (isBatchFromLastFileInToken(
           batchFilePath, tokenLastReadFilePathOpt, tokenLastReadSidecarFileIdxOpt)) {
         Optional<Long> tokenLastReturnedRowIndexOpt = paginationContext.getLastReturnedRowIndex();
-        // Calculate the row index of the last row in current batch within the file.
-        lastReturnedRowIndex += numRowsInBatch;
         // Skip this batch if its last row index is smaller than or equal to last returned row index
         // in token.
         if (tokenLastReturnedRowIndexOpt.isPresent()
-            && lastReturnedRowIndex <= tokenLastReturnedRowIndexOpt.get()) {
+            && lastReturnedRowIndex + numRowsInBatch <= tokenLastReturnedRowIndexOpt.get()) {
+          lastReturnedRowIndex += numRowsInBatch;
           logger.info(
               "Pagination: skipping batch from a partially consumed file : {}, last row index is {}",
               batchFilePath,
@@ -230,52 +232,62 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
         }
       }
 
-      // Case 3: This batch belongs to an "unseen file" — meaning a file whose content was
+      // Case 3: If this batch belongs to an "unseen file" — meaning a file whose content was
       // not read at all in any previous page. In other words, this file is fully unconsumed:
       // it was neither partially read nor fully read before.
-      //
       // Batches from such files won't be skipped.
-      //
-      // Among these, only the first batch from "unseen file" triggers tracking updates —
-      // e.g., marking it as the current file we're paginating, resetting row index, etc.
-      //
-      // Example:
-      //   - Page 1 ends midway through 18.json.
-      //   - Page 2 resumes, completes 18.json, then sees 17.json.
-      //   - 17.json was not seen in Page 1, so it's an "unseen file".
-      //   - All its batches are emitted.
-      //   - Only the first batch triggers state reset via `isFirstBatchFromNewFile`.
-      else {
-        // This batch is the first one we've seen from an "unseen file" during the current page
-        // read;
-        // update tracking state to reflect that we're now reading this file.
-        if (isFirstBatchFromUnseenFile(batchFilePath)) {
-          lastReadLogFilePath = batchFilePath;
-          // Start from -1 so adding the first batch size gives correct 0-based row index.
-          lastReturnedRowIndex = -1;
-          logger.info("Pagination: reading new file: {}", lastReadLogFilePath);
-          if (isSidecar(batchFilePath)) {
-            lastSidecarIndex++;
-          }
-        }
-        // Calculate the row index of the last row in current batch within the file.
-        lastReturnedRowIndex += numRowsInBatch;
-      }
 
       // currentBatch will be included in the current page.
       currentBatch = Optional.of(batch);
-      final long numSelectedAddFilesInBatch = batch.getPreComputedNumSelectedRows().get();
-      numScanFilesReturned += numSelectedAddFilesInBatch;
-
-      logger.info("total numScanFilesReturned: {}", numScanFilesReturned);
-      logger.info(
-          "numSelectedAddFilesInBatch: {}, numRowsInBatch: {}",
-          numSelectedAddFilesInBatch,
-          numRowsInBatch);
 
       // Found a valid batch, break out of the loop
       break;
     }
+  }
+
+  @Override
+  public FilteredColumnarBatch next() {
+    checkState(!closed, "Can't call `next` on a closed iterator.");
+    if (!hasNext()) {
+      throw new NoSuchElementException();
+    }
+    hasLeastOneBatchConsumed = true;
+    final FilteredColumnarBatch ret = currentBatch.get();
+    // Batch has been validated in prepareNext(), no need to re-validate it.
+    final long numSelectedAddFilesInBatch = ret.getPreComputedNumSelectedRows().get();
+    final String batchFilePath = ret.getFilePath().get();
+
+    // This batch is the first one we've seen from an "unseen file" during the current page
+    // read;
+    // update tracking state to reflect that we're now reading an "unseen file".
+    // Example:
+    //   - Page 1 ends midway through 18.json.
+    //   - Page 2 resumes, completes 18.json, then sees 17.json.
+    //   - 17.json was not seen in Page 1, so it's an "unseen file".
+    //   - In 17.json, all batches are emitted.
+    //   - Only the first batch triggers state reset via `isFirstBatchFromNewFile`.
+    if (isFirstBatchFromUnseenFile(batchFilePath)) {
+      lastReadLogFilePath = batchFilePath;
+      // Start from -1 so adding the first batch size gives correct 0-based row index.
+      lastReturnedRowIndex = -1;
+      logger.info("Pagination: reading new file: {}", lastReadLogFilePath);
+      if (isSidecar(batchFilePath)) {
+        lastSidecarIndex++;
+      }
+    }
+
+    // Calculate the row index of the last row in current batch within the file.
+    lastReturnedRowIndex += ret.getData().getSize();
+    numScanFilesReturned += numSelectedAddFilesInBatch;
+
+    logger.info(
+        "Pagination: emit a new batch: lastReadLogFilePath: {}, lastReturnedRowIndex: {}",
+        lastReadLogFilePath,
+        lastReturnedRowIndex);
+    logger.info("Pagination: total numScanFilesReturned: {}", numScanFilesReturned);
+
+    currentBatch = Optional.empty();
+    return ret;
   }
 
   void validateBatch(FilteredColumnarBatch batch) {
@@ -368,17 +380,6 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
   // TODO: move isSidecar() to FileNames
   private boolean isSidecar(String filePath) {
     return filePath.contains("/_delta_log/_sidecars/") && filePath.endsWith(".parquet");
-  }
-
-  @Override
-  public FilteredColumnarBatch next() {
-    checkState(!closed, "Can't call `next` on a closed iterator.");
-    if (!hasNext()) {
-      throw new NoSuchElementException();
-    }
-    final FilteredColumnarBatch ret = currentBatch.get();
-    currentBatch = Optional.empty();
-    return ret;
   }
 
   @Override
