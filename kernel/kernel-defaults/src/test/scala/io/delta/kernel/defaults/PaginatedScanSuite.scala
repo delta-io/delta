@@ -141,7 +141,8 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
     nextPageToken
   }
 
-  // ===== Log Segment Changes between page requests =====
+  // ===== Data Integrity test cases=====
+  // TODO: test predicate changes
   /**
    * Test case to verify pagination behavior when log segment changes between page requests.
    */
