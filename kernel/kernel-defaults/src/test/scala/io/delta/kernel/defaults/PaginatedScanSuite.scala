@@ -16,6 +16,8 @@
 
 import java.util.Optional
 
+import scala.jdk.CollectionConverters.asScalaBufferConverter
+
 import io.delta.kernel.PaginatedScan
 import io.delta.kernel.PaginatedScanFilesIterator
 import io.delta.kernel.ScanBuilder
@@ -75,23 +77,23 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
     getScanBuilder(tablePath, tableVersionOpt).buildPaginated(pageSize, pageTokenOpt)
   }
 
-  private def collectPaginatedBatches(
-      paginatedIter: CloseableIterator[FilteredColumnarBatch]): Seq[FilteredColumnarBatch] = {
-    val buffer = collection.mutable.Buffer[FilteredColumnarBatch]()
-    while (paginatedIter.hasNext) {
-      val batch = paginatedIter.next()
-      buffer += batch
-    }
-    buffer
-  }
+//  private def collectBatchesFromScan(
+//      paginatedIter: CloseableIterator[FilteredColumnarBatch]): Seq[FilteredColumnarBatch] = {
+//    val buffer = collection.mutable.Buffer[FilteredColumnarBatch]()
+//    while (paginatedIter.hasNext) {
+//      val batch = paginatedIter.next()
+//      buffer += batch
+//    }
+//    buffer
+//  }
 
   /** Test case to check if the result of a single page request is expected */
-  case class SinglePageRequestTestCase(
+  case class FirstPageRequestTestContext(
       pageSize: Int,
-      expFirstPageFileCnt: Int,
-      expFirstPageBatchCnt: Int,
-      expLastReadLogFileInFirstPage: String,
-      expLastReadRowIdxInFirstPage: Int)
+      expFileCnt: Int,
+      expBatchCnt: Int,
+      expLastReadLogFile: String,
+      expLastReadRowIdx: Int)
 
   private def validateFirstPageResults(
       batches: Seq[FilteredColumnarBatch],
@@ -142,9 +144,8 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
       pageSize = pageSize,
       pageTokenOpt = pageTokenOpt)
     val paginatedIter = paginatedScan.getScanFiles(customEngine)
-    val returnedBatchesInPage = collectPaginatedBatches(paginatedIter)
+    val returnedBatchesInPage = paginatedIter.toSeq
     val nextPageToken = paginatedIter.getCurrentPageToken
-    paginatedIter.close()
 
     assert(returnedBatchesInPage.nonEmpty)
 
@@ -177,7 +178,7 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
    * 4. Repeats until the returned page token is empty, indicating that all data has been consumed.
    */
   private def runCompletePaginationTest(
-      testCase: SinglePageRequestTestCase,
+      testCase: FirstPageRequestTestContext,
       tablePath: String,
       tableVersionOpt: Optional[Long] = Optional.empty()): Unit = {
 
@@ -189,15 +190,15 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
 
     validateFirstPageResults(
       returnedBatchesInPage,
-      testCase.expFirstPageFileCnt,
-      testCase.expFirstPageBatchCnt)
+      testCase.expFileCnt,
+      testCase.expBatchCnt)
 
     // When the scan is exhausted, returned page token should be empty.
     if (pageTokenOpt.isPresent) {
       validateFirstPageToken(
         pageTokenOpt.get,
-        testCase.expLastReadLogFileInFirstPage,
-        testCase.expLastReadRowIdxInFirstPage)
+        testCase.expLastReadLogFile,
+        testCase.expLastReadRowIdx)
     }
 
     // ============ Request following pages ==============
@@ -216,8 +217,7 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
       getScanBuilder(tablePath = tablePath, tableVersionOpt = tableVersionOpt).build()
 
     val iter = normalScan.getScanFiles(customEngine)
-    val allBatchesNormalScan = collectPaginatedBatches(iter)
-    iter.close()
+    val allBatchesNormalScan = iter.toSeq
 
     // check no duplicate or missing batches in paginated scan
     assert(allBatchesNormalScan.size == allBatchesPaginationScan.size)
@@ -250,46 +250,46 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
     // Kernel is asked to read the 1st page of size 1. Kernel reads the 1st
     // full batch, so returns 2 AddFiles and ends at the 5th row (index 4).
     // Note: Kernel should always return full batches, so return full batch one.
-    SinglePageRequestTestCase(
+    FirstPageRequestTestContext(
       pageSize = 1,
-      expFirstPageFileCnt = 2,
-      expFirstPageBatchCnt = 1,
-      expLastReadLogFileInFirstPage = JSON_FILE_0,
-      expLastReadRowIdxInFirstPage = 4),
+      expFileCnt = 2,
+      expBatchCnt = 1,
+      expLastReadLogFile = JSON_FILE_0,
+      expLastReadRowIdx = 4),
     // Kernel is asked to read the 1st page of size 2. Kernel reads the 1st
     // full batch, so returns 2 AddFiles and ends at the 5th row (index 4)
-    SinglePageRequestTestCase(
+    FirstPageRequestTestContext(
       pageSize = 2,
-      expFirstPageFileCnt = 2,
-      expFirstPageBatchCnt = 1,
-      expLastReadLogFileInFirstPage = JSON_FILE_0,
-      expLastReadRowIdxInFirstPage = 4),
+      expFileCnt = 2,
+      expBatchCnt = 1,
+      expLastReadLogFile = JSON_FILE_0,
+      expLastReadRowIdx = 4),
     // Kernel is asked to read the 1st page of size 4. Kernel reads batch 1 and
     // batch 2 in JSON_FILE_0, so returns 5 AddFiles and ends at the 8th row (index 7)
     // Note: Kernel should always return full batches, so return full 2 batches.
-    SinglePageRequestTestCase(
+    FirstPageRequestTestContext(
       pageSize = 4,
-      expFirstPageFileCnt = 5,
-      expFirstPageBatchCnt = 2,
-      expLastReadLogFileInFirstPage = JSON_FILE_0,
-      expLastReadRowIdxInFirstPage = 7),
+      expFileCnt = 5,
+      expBatchCnt = 2,
+      expLastReadLogFile = JSON_FILE_0,
+      expLastReadRowIdx = 7),
     // Kernel is asked to read the 1st page of size 5. Kernel reads batch 1 and
     // batch 2 in JSON_FILE_0, so returns 5 AddFiles and ends at the 8th row (index 7)
-    SinglePageRequestTestCase(
+    FirstPageRequestTestContext(
       pageSize = 5,
-      expFirstPageFileCnt = 5,
-      expFirstPageBatchCnt = 2,
-      expLastReadLogFileInFirstPage = JSON_FILE_0,
-      expLastReadRowIdxInFirstPage = 7),
+      expFileCnt = 5,
+      expBatchCnt = 2,
+      expLastReadLogFile = JSON_FILE_0,
+      expLastReadRowIdx = 7),
     // Kernel is asked to read the 1st page of size 20. Kernel reads batch 1 and
     // batch 2 in JSON_FILE_0, so returns 5 AddFiles and ends at the 8th row (index 7)
     // Note: page size won't be reached because there is only 5 data files in total.
-    SinglePageRequestTestCase(
+    FirstPageRequestTestContext(
       pageSize = 20,
-      expFirstPageFileCnt = 5,
-      expFirstPageBatchCnt = 2,
-      expLastReadLogFileInFirstPage = JSON_FILE_0,
-      expLastReadRowIdxInFirstPage = 7)).foreach { testCase =>
+      expFileCnt = 5,
+      expBatchCnt = 2,
+      expLastReadLogFile = JSON_FILE_0,
+      expLastReadRowIdx = 7)).foreach { testCase =>
     test(s"Single JSON file - page size ${testCase.pageSize}") {
       runCompletePaginationTest(
         testCase = testCase,
@@ -323,57 +323,57 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
     // Kernel is asked to read the 1st page of size 1. Kernel reads batch 1 in JSON_FILE_2,
     // so returns 4 AddFiles and ends at the 5th row (index 4) in JSON_FILE_2.
     // Note: Kernel should return full batches, so return full one batch (and go over page limit).
-    SinglePageRequestTestCase(
+    FirstPageRequestTestContext(
       pageSize = 1,
-      expFirstPageFileCnt = 4,
-      expFirstPageBatchCnt = 1,
-      expLastReadLogFileInFirstPage = JSON_FILE_2,
-      expLastReadRowIdxInFirstPage = 4),
+      expFileCnt = 4,
+      expBatchCnt = 1,
+      expLastReadLogFile = JSON_FILE_2,
+      expLastReadRowIdx = 4),
     // Kernel is asked to read the 1st page of size 4. Kernel reads batch 1 in JSON_FILE_2,
     // so returns 4 AddFiles and ends at the 5th row (index 4) in JSON_FILE_2.
-    SinglePageRequestTestCase(
+    FirstPageRequestTestContext(
       pageSize = 4,
-      expFirstPageFileCnt = 4,
-      expFirstPageBatchCnt = 1,
-      expLastReadLogFileInFirstPage = JSON_FILE_2,
-      expLastReadRowIdxInFirstPage = 4),
+      expFileCnt = 4,
+      expBatchCnt = 1,
+      expLastReadLogFile = JSON_FILE_2,
+      expLastReadRowIdx = 4),
     // Kernel is asked to read the 1st page of size 5. Kernel reads batch 1 and 2 in JSON_FILE_2,
     // so returns 5 AddFiles and ends at the 6th row (index 5) in JSON_FILE_2.
-    SinglePageRequestTestCase(
+    FirstPageRequestTestContext(
       pageSize = 5,
-      expFirstPageFileCnt = 5,
-      expFirstPageBatchCnt = 2,
-      expLastReadLogFileInFirstPage = JSON_FILE_2,
-      expLastReadRowIdxInFirstPage = 5),
+      expFileCnt = 5,
+      expBatchCnt = 2,
+      expLastReadLogFile = JSON_FILE_2,
+      expLastReadRowIdx = 5),
     // Kernel is asked to read the 1st page of size 7. Kernel reads all batches in JSON_FILE_2,
     // batch 1 in JSON_FILE_1, so returns 9 AddFiles and ends at the 5th row (index 4)
     // in JSON_FILE_1.
     // Note: Kernel should return full batches, so return 3 full batches (and go over page limit).
-    SinglePageRequestTestCase(
+    FirstPageRequestTestContext(
       pageSize = 7,
-      expFirstPageFileCnt = 9,
-      expFirstPageBatchCnt = 3,
-      expLastReadLogFileInFirstPage = JSON_FILE_1,
-      expLastReadRowIdxInFirstPage = 4),
+      expFileCnt = 9,
+      expBatchCnt = 3,
+      expLastReadLogFile = JSON_FILE_1,
+      expLastReadRowIdx = 4),
     // Kernel is asked to read the 1st page of size 9. Kernel reads all batches in JSON_FILE_2,
     // batch 1 in JSON_FILE_1, so returns 9 AddFiles and ends at the 5th row (index 4)
     // in JSON_FILE_1.
-    SinglePageRequestTestCase(
+    FirstPageRequestTestContext(
       pageSize = 9,
-      expFirstPageFileCnt = 9,
-      expFirstPageBatchCnt = 3,
-      expLastReadLogFileInFirstPage = JSON_FILE_1,
-      expLastReadRowIdxInFirstPage = 4),
+      expFileCnt = 9,
+      expBatchCnt = 3,
+      expLastReadLogFile = JSON_FILE_1,
+      expLastReadRowIdx = 4),
     // Kernel is asked to read the 1st page of size 18. Kernel reads all batches in JSON_FILE_2,
     // JSON_FILE_1 and SON_FILE_0, so returns 15 AddFiles and ends at the last row (index 7)
     // in JSON_FILE_0.
     // Note: page size won't be reached because there are 15 data files in total.
-    SinglePageRequestTestCase(
+    FirstPageRequestTestContext(
       pageSize = 18,
-      expFirstPageFileCnt = 15,
-      expFirstPageBatchCnt = 6,
-      expLastReadLogFileInFirstPage = JSON_FILE_0,
-      expLastReadRowIdxInFirstPage = 7)).foreach { testCase =>
+      expFileCnt = 15,
+      expBatchCnt = 6,
+      expLastReadLogFile = JSON_FILE_0,
+      expLastReadRowIdx = 7)).foreach { testCase =>
     test(s"Multiple JSON files - page size ${testCase.pageSize}") {
       runCompletePaginationTest(
         testCase = testCase,
@@ -398,38 +398,38 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
     // Kernel is asked to read the 1st page of size 1. Kernel reads batch 1 in 10.checkpoint,
     // so returns 5 AddFiles and ends at the 5th row (index 4) in 10.checkpoint.
     // Note: Kernel should return full batches, so return one full batch (and go over page limit).
-    SinglePageRequestTestCase(
+    FirstPageRequestTestContext(
       pageSize = 1,
-      expFirstPageFileCnt = 5,
-      expFirstPageBatchCnt = 1,
-      expLastReadLogFileInFirstPage = CHECKPOINT_FILE_10,
-      expLastReadRowIdxInFirstPage = 4),
+      expFileCnt = 5,
+      expBatchCnt = 1,
+      expLastReadLogFile = CHECKPOINT_FILE_10,
+      expLastReadRowIdx = 4),
     // Kernel is asked to read the 1st page of size 10. Kernel reads 2 batches in 10.checkpoint,
     // so returns 10 AddFiles and ends at the 10th row (index 9) in 10.checkpoint.
-    SinglePageRequestTestCase(
+    FirstPageRequestTestContext(
       pageSize = 10,
-      expFirstPageFileCnt = 10,
-      expFirstPageBatchCnt = 2,
-      expLastReadLogFileInFirstPage = CHECKPOINT_FILE_10,
-      expLastReadRowIdxInFirstPage = 9),
+      expFileCnt = 10,
+      expBatchCnt = 2,
+      expLastReadLogFile = CHECKPOINT_FILE_10,
+      expLastReadRowIdx = 9),
     // Kernel is asked to read the 1st page of size 12. Kernel reads 3 batches in 10.checkpoint,
     // so returns 15 AddFiles and ends at the 15th row (index 14) in 10.checkpoint.
     // Note: Kernel should return full batches, so return 3 full batches (and go over page limit).
-    SinglePageRequestTestCase(
+    FirstPageRequestTestContext(
       pageSize = 12,
-      expFirstPageFileCnt = 15,
-      expFirstPageBatchCnt = 3,
-      expLastReadLogFileInFirstPage = CHECKPOINT_FILE_10,
-      expLastReadRowIdxInFirstPage = 14),
+      expFileCnt = 15,
+      expBatchCnt = 3,
+      expLastReadLogFile = CHECKPOINT_FILE_10,
+      expLastReadRowIdx = 14),
     // Kernel is asked to read the 1st page of size 100. Kernel reads all 5 batches
     // in 10.checkpoint, so returns 22 AddFiles and ends at the 24th row (index 23)
     // in 10.checkpoint. Note: page size won't be reached in this test case.
-    SinglePageRequestTestCase(
+    FirstPageRequestTestContext(
       pageSize = 100,
-      expFirstPageFileCnt = 22,
-      expFirstPageBatchCnt = 5,
-      expLastReadLogFileInFirstPage = CHECKPOINT_FILE_10,
-      expLastReadRowIdxInFirstPage = 23)).foreach { testCase =>
+      expFileCnt = 22,
+      expBatchCnt = 5,
+      expLastReadLogFile = CHECKPOINT_FILE_10,
+      expLastReadRowIdx = 23)).foreach { testCase =>
     test(s"Single checkpoint file - page size ${testCase.pageSize}") {
       runCompletePaginationTest(
         testCase = testCase,
@@ -464,57 +464,57 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
     // Kernel is asked to read the 1st page of size 1. Kernel reads 1 batches in 12.json,
     // so returns 2 AddFiles and ends at the 3rd row (index 2) in 10.checkpoint.
     // Note: Kernel should return full batches, so return one full batch (and go over page limit).
-    SinglePageRequestTestCase(
+    FirstPageRequestTestContext(
       pageSize = 1,
-      expFirstPageFileCnt = 2,
-      expFirstPageBatchCnt = 1,
-      expLastReadLogFileInFirstPage = JSON_FILE_12,
-      expLastReadRowIdxInFirstPage = 2),
+      expFileCnt = 2,
+      expBatchCnt = 1,
+      expLastReadLogFile = JSON_FILE_12,
+      expLastReadRowIdx = 2),
     // Kernel is asked to read the 1st page of size 2. Kernel reads 1 batches in 12.json,
     // so returns 2 AddFiles and ends at the 3rd row (index 2) in 10.checkpoint.
-    SinglePageRequestTestCase(
+    FirstPageRequestTestContext(
       pageSize = 2,
-      expFirstPageFileCnt = 2,
-      expFirstPageBatchCnt = 1,
-      expLastReadLogFileInFirstPage = JSON_FILE_12,
-      expLastReadRowIdxInFirstPage = 2),
+      expFileCnt = 2,
+      expBatchCnt = 1,
+      expLastReadLogFile = JSON_FILE_12,
+      expLastReadRowIdx = 2),
     // Kernel is asked to read the 1st page of size 1. Kernel reads one batch in 12.json,
     // and one batch in 11.json, so returns 4 AddFiles and ends at the 3rd row (index 2) in 11.json.
     // Note: Kernel should return full batches, so return 2 full batches (and go over page limit).
-    SinglePageRequestTestCase(
+    FirstPageRequestTestContext(
       pageSize = 3,
-      expFirstPageFileCnt = 4,
-      expFirstPageBatchCnt = 2,
-      expLastReadLogFileInFirstPage = JSON_FILE_11,
-      expLastReadRowIdxInFirstPage = 2),
+      expFileCnt = 4,
+      expBatchCnt = 2,
+      expLastReadLogFile = JSON_FILE_11,
+      expLastReadRowIdx = 2),
     // Kernel is asked to read the 1st page of size 4. Kernel reads one batch in 12.json,
     // and one batch in 11.json, so returns 4 AddFiles and ends at the 3rd row (index 2) in 11.json.
-    SinglePageRequestTestCase(
+    FirstPageRequestTestContext(
       pageSize = 4,
-      expFirstPageFileCnt = 4,
-      expFirstPageBatchCnt = 2,
-      expLastReadLogFileInFirstPage = JSON_FILE_11,
-      expLastReadRowIdxInFirstPage = 2),
+      expFileCnt = 4,
+      expBatchCnt = 2,
+      expLastReadLogFile = JSON_FILE_11,
+      expLastReadRowIdx = 2),
     // Kernel is asked to read the 1st page of size 8. Kernel reads one batch in 12.json,
     // one batch in 11.json, and one batch in 10.checkpoint, so returns 9 AddFiles and
     // ends at the 5th row (index 4) in 10.checkpoint.
     // Note: Kernel should return full batches, so return 3 full batches (and go over page limit).
-    SinglePageRequestTestCase(
+    FirstPageRequestTestContext(
       pageSize = 8,
-      expFirstPageFileCnt = 9,
-      expFirstPageBatchCnt = 3,
-      expLastReadLogFileInFirstPage = CHECKPOINT_FILE_10,
-      expLastReadRowIdxInFirstPage = 4),
+      expFileCnt = 9,
+      expBatchCnt = 3,
+      expLastReadLogFile = CHECKPOINT_FILE_10,
+      expLastReadRowIdx = 4),
     // Kernel is asked to read the 1st page of size 18. Kernel reads one batch in 12.json,
     // one batch in 11.json, and 3 batches in 10.checkpoint, so returns 19 AddFiles and
     // ends at the 15th row (index 14) in 10.checkpoint.
     // Note: Kernel should return full batches, so return 5 full batches (and go over page limit).
-    SinglePageRequestTestCase(
+    FirstPageRequestTestContext(
       pageSize = 18,
-      expFirstPageFileCnt = 19,
-      expFirstPageBatchCnt = 5,
-      expLastReadLogFileInFirstPage = CHECKPOINT_FILE_10,
-      expLastReadRowIdxInFirstPage = 14)).foreach { testCase =>
+      expFileCnt = 19,
+      expBatchCnt = 5,
+      expLastReadLogFile = CHECKPOINT_FILE_10,
+      expLastReadRowIdx = 14)).foreach { testCase =>
     test(s"Single checkpoint and JSON files - page size ${testCase.pageSize}") {
       runCompletePaginationTest(
         testCase = testCase,
@@ -540,30 +540,30 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
   val MULTI_CHECKPOINT_FILE_0_3 = "00000000000000000000.checkpoint.0000000003.0000000003.parquet"
 
   Seq(
-    SinglePageRequestTestCase(
+    FirstPageRequestTestContext(
       pageSize = 1,
-      expFirstPageFileCnt = 5,
-      expFirstPageBatchCnt = 1,
-      expLastReadLogFileInFirstPage = MULTI_CHECKPOINT_FILE_0_3,
-      expLastReadRowIdxInFirstPage = 4),
-    SinglePageRequestTestCase(
+      expFileCnt = 5,
+      expBatchCnt = 1,
+      expLastReadLogFile = MULTI_CHECKPOINT_FILE_0_3,
+      expLastReadRowIdx = 4),
+    FirstPageRequestTestContext(
       pageSize = 7,
-      expFirstPageFileCnt = 11,
-      expFirstPageBatchCnt = 3,
-      expLastReadLogFileInFirstPage = MULTI_CHECKPOINT_FILE_0_2,
-      expLastReadRowIdxInFirstPage = 4),
-    SinglePageRequestTestCase(
+      expFileCnt = 11,
+      expBatchCnt = 3,
+      expLastReadLogFile = MULTI_CHECKPOINT_FILE_0_2,
+      expLastReadRowIdx = 4),
+    FirstPageRequestTestContext(
       pageSize = 13,
-      expFirstPageFileCnt = 13,
-      expFirstPageBatchCnt = 4,
-      expLastReadLogFileInFirstPage = MULTI_CHECKPOINT_FILE_0_2,
-      expLastReadRowIdxInFirstPage = 6),
-    SinglePageRequestTestCase(
+      expFileCnt = 13,
+      expBatchCnt = 4,
+      expLastReadLogFile = MULTI_CHECKPOINT_FILE_0_2,
+      expLastReadRowIdx = 6),
+    FirstPageRequestTestContext(
       pageSize = 100,
-      expFirstPageFileCnt = 18,
-      expFirstPageBatchCnt = 6,
-      expLastReadLogFileInFirstPage = MULTI_CHECKPOINT_FILE_0_1,
-      expLastReadRowIdxInFirstPage = 1)).foreach { testCase =>
+      expFileCnt = 18,
+      expBatchCnt = 6,
+      expLastReadLogFile = MULTI_CHECKPOINT_FILE_0_1,
+      expLastReadRowIdx = 1)).foreach { testCase =>
     test(s"Multi-part checkpoints - page size ${testCase.pageSize}") {
       runCompletePaginationTest(
         testCase = testCase,
@@ -590,30 +590,30 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
    * Batch 2: 2 AddFile, 2 row
    */
   Seq(
-    SinglePageRequestTestCase(
+    FirstPageRequestTestContext(
       pageSize = 1,
-      expFirstPageFileCnt = 1,
-      expFirstPageBatchCnt = 1,
-      expLastReadLogFileInFirstPage = JSON_FILE_2,
-      expLastReadRowIdxInFirstPage = 1),
-    SinglePageRequestTestCase(
+      expFileCnt = 1,
+      expBatchCnt = 1,
+      expLastReadLogFile = JSON_FILE_2,
+      expLastReadRowIdx = 1),
+    FirstPageRequestTestContext(
       pageSize = 2,
-      expFirstPageFileCnt = 2,
-      expFirstPageBatchCnt = 2,
-      expLastReadLogFileInFirstPage = JSON_FILE_1,
-      expLastReadRowIdxInFirstPage = 1),
-    SinglePageRequestTestCase(
+      expFileCnt = 2,
+      expBatchCnt = 2,
+      expLastReadLogFile = JSON_FILE_1,
+      expLastReadRowIdx = 1),
+    FirstPageRequestTestContext(
       pageSize = 6,
-      expFirstPageFileCnt = 7,
-      expFirstPageBatchCnt = 3,
-      expLastReadLogFileInFirstPage = MULTI_CHECKPOINT_FILE_0_3,
-      expLastReadRowIdxInFirstPage = 4),
-    SinglePageRequestTestCase(
+      expFileCnt = 7,
+      expBatchCnt = 3,
+      expLastReadLogFile = MULTI_CHECKPOINT_FILE_0_3,
+      expLastReadRowIdx = 4),
+    FirstPageRequestTestContext(
       pageSize = 100,
-      expFirstPageFileCnt = 20,
-      expFirstPageBatchCnt = 8,
-      expLastReadLogFileInFirstPage = MULTI_CHECKPOINT_FILE_0_1,
-      expLastReadRowIdxInFirstPage = 1)).foreach { testCase =>
+      expFileCnt = 20,
+      expBatchCnt = 8,
+      expLastReadLogFile = MULTI_CHECKPOINT_FILE_0_1,
+      expLastReadRowIdx = 1)).foreach { testCase =>
     test(s"Multi-part checkpoints with jsons - page size ${testCase.pageSize}") {
       runCompletePaginationTest(
         testCase = testCase,
@@ -637,30 +637,30 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
     "00000000000000000002.checkpoint.0000000002.0000000002.33321cc1-9c55-4d1f-8511-fafe6d2e1133.parquet"
 
   Seq(
-    SinglePageRequestTestCase(
+    FirstPageRequestTestContext(
       pageSize = 1,
-      expFirstPageFileCnt = 3,
-      expFirstPageBatchCnt = 2,
-      expLastReadLogFileInFirstPage = PARQUET_SIDECAR_1,
-      expLastReadRowIdxInFirstPage = 2),
-    SinglePageRequestTestCase(
+      expFileCnt = 3,
+      expBatchCnt = 2,
+      expLastReadLogFile = PARQUET_SIDECAR_1,
+      expLastReadRowIdx = 2),
+    FirstPageRequestTestContext(
       pageSize = 3,
-      expFirstPageFileCnt = 3,
-      expFirstPageBatchCnt = 2,
-      expLastReadLogFileInFirstPage = PARQUET_SIDECAR_1,
-      expLastReadRowIdxInFirstPage = 2),
-    SinglePageRequestTestCase(
+      expFileCnt = 3,
+      expBatchCnt = 2,
+      expLastReadLogFile = PARQUET_SIDECAR_1,
+      expLastReadRowIdx = 2),
+    FirstPageRequestTestContext(
       pageSize = 4,
-      expFirstPageFileCnt = 4,
-      expFirstPageBatchCnt = 3,
-      expLastReadLogFileInFirstPage = PARQUET_SIDECAR_2,
-      expLastReadRowIdxInFirstPage = 0),
-    SinglePageRequestTestCase(
+      expFileCnt = 4,
+      expBatchCnt = 3,
+      expLastReadLogFile = PARQUET_SIDECAR_2,
+      expLastReadRowIdx = 0),
+    FirstPageRequestTestContext(
       pageSize = 10000,
-      expFirstPageFileCnt = 4,
-      expFirstPageBatchCnt = 3,
-      expLastReadLogFileInFirstPage = PARQUET_SIDECAR_2,
-      expLastReadRowIdxInFirstPage = 0)).foreach { testCase =>
+      expFileCnt = 4,
+      expBatchCnt = 3,
+      expLastReadLogFile = PARQUET_SIDECAR_2,
+      expLastReadRowIdx = 0)).foreach { testCase =>
     test(s"V2 parquet checkpoints (and sidecars) - page size ${testCase.pageSize}") {
       runCompletePaginationTest(
         testCase = testCase,
@@ -682,36 +682,36 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
    */
   val JSON_FILE_3 = "00000000000000000003.json"
   Seq(
-    SinglePageRequestTestCase(
+    FirstPageRequestTestContext(
       pageSize = 1,
-      expFirstPageFileCnt = 1,
-      expFirstPageBatchCnt = 1,
-      expLastReadLogFileInFirstPage = JSON_FILE_3,
-      expLastReadRowIdxInFirstPage = 1),
-    SinglePageRequestTestCase(
+      expFileCnt = 1,
+      expBatchCnt = 1,
+      expLastReadLogFile = JSON_FILE_3,
+      expLastReadRowIdx = 1),
+    FirstPageRequestTestContext(
       pageSize = 2,
-      expFirstPageFileCnt = 4,
-      expFirstPageBatchCnt = 3,
-      expLastReadLogFileInFirstPage = PARQUET_SIDECAR_1,
-      expLastReadRowIdxInFirstPage = 2),
-    SinglePageRequestTestCase(
+      expFileCnt = 4,
+      expBatchCnt = 3,
+      expLastReadLogFile = PARQUET_SIDECAR_1,
+      expLastReadRowIdx = 2),
+    FirstPageRequestTestContext(
       pageSize = 3,
-      expFirstPageFileCnt = 4,
-      expFirstPageBatchCnt = 3,
-      expLastReadLogFileInFirstPage = PARQUET_SIDECAR_1,
-      expLastReadRowIdxInFirstPage = 2),
-    SinglePageRequestTestCase(
+      expFileCnt = 4,
+      expBatchCnt = 3,
+      expLastReadLogFile = PARQUET_SIDECAR_1,
+      expLastReadRowIdx = 2),
+    FirstPageRequestTestContext(
       pageSize = 4,
-      expFirstPageFileCnt = 4,
-      expFirstPageBatchCnt = 3,
-      expLastReadLogFileInFirstPage = PARQUET_SIDECAR_1,
-      expLastReadRowIdxInFirstPage = 2),
-    SinglePageRequestTestCase(
+      expFileCnt = 4,
+      expBatchCnt = 3,
+      expLastReadLogFile = PARQUET_SIDECAR_1,
+      expLastReadRowIdx = 2),
+    FirstPageRequestTestContext(
       pageSize = 10000,
-      expFirstPageFileCnt = 5,
-      expFirstPageBatchCnt = 4,
-      expLastReadLogFileInFirstPage = PARQUET_SIDECAR_2,
-      expLastReadRowIdxInFirstPage = 0)).foreach { testCase =>
+      expFileCnt = 5,
+      expBatchCnt = 4,
+      expLastReadLogFile = PARQUET_SIDECAR_2,
+      expLastReadRowIdx = 0)).foreach { testCase =>
     test(
       s"v2 parquet checkpoints (and sidecars) with json delta commit files - page size ${testCase.pageSize}") {
       runCompletePaginationTest(
@@ -737,30 +737,30 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
     "00000000000000000002.checkpoint.0000000002.0000000002.0a8d73ee-aa83-49d0-9583-c99db75b89b2.parquet"
 
   Seq(
-    SinglePageRequestTestCase(
+    FirstPageRequestTestContext(
       pageSize = 1,
-      expFirstPageFileCnt = 1,
-      expFirstPageBatchCnt = 2,
-      expLastReadLogFileInFirstPage = JSON_SIDECAR_1,
-      expLastReadRowIdxInFirstPage = 0),
-    SinglePageRequestTestCase(
+      expFileCnt = 1,
+      expBatchCnt = 2,
+      expLastReadLogFile = JSON_SIDECAR_1,
+      expLastReadRowIdx = 0),
+    FirstPageRequestTestContext(
       pageSize = 2,
-      expFirstPageFileCnt = 4,
-      expFirstPageBatchCnt = 3,
-      expLastReadLogFileInFirstPage = JSON_SIDECAR_2,
-      expLastReadRowIdxInFirstPage = 2),
-    SinglePageRequestTestCase(
+      expFileCnt = 4,
+      expBatchCnt = 3,
+      expLastReadLogFile = JSON_SIDECAR_2,
+      expLastReadRowIdx = 2),
+    FirstPageRequestTestContext(
       pageSize = 4,
-      expFirstPageFileCnt = 4,
-      expFirstPageBatchCnt = 3,
-      expLastReadLogFileInFirstPage = JSON_SIDECAR_2,
-      expLastReadRowIdxInFirstPage = 2),
-    SinglePageRequestTestCase(
+      expFileCnt = 4,
+      expBatchCnt = 3,
+      expLastReadLogFile = JSON_SIDECAR_2,
+      expLastReadRowIdx = 2),
+    FirstPageRequestTestContext(
       pageSize = 10000,
-      expFirstPageFileCnt = 4,
-      expFirstPageBatchCnt = 3,
-      expLastReadLogFileInFirstPage = JSON_SIDECAR_2,
-      expLastReadRowIdxInFirstPage = 0)).foreach { testCase =>
+      expFileCnt = 4,
+      expBatchCnt = 3,
+      expLastReadLogFile = JSON_SIDECAR_2,
+      expLastReadRowIdx = 0)).foreach { testCase =>
     test(s"v2 json checkpoint (and sidecars) - page size ${testCase.pageSize}") {
       runCompletePaginationTest(
         testCase = testCase,
@@ -781,30 +781,30 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
    *  - Batch 1: 3 row, 3 selected AddFiles
    */
   Seq(
-    SinglePageRequestTestCase(
+    FirstPageRequestTestContext(
       pageSize = 1,
-      expFirstPageFileCnt = 1,
-      expFirstPageBatchCnt = 1,
-      expLastReadLogFileInFirstPage = JSON_FILE_3,
-      expLastReadRowIdxInFirstPage = 1),
-    SinglePageRequestTestCase(
+      expFileCnt = 1,
+      expBatchCnt = 1,
+      expLastReadLogFile = JSON_FILE_3,
+      expLastReadRowIdx = 1),
+    FirstPageRequestTestContext(
       pageSize = 3,
-      expFirstPageFileCnt = 5,
-      expFirstPageBatchCnt = 4,
-      expLastReadLogFileInFirstPage = JSON_SIDECAR_2,
-      expLastReadRowIdxInFirstPage = 2),
-    SinglePageRequestTestCase(
+      expFileCnt = 5,
+      expBatchCnt = 4,
+      expLastReadLogFile = JSON_SIDECAR_2,
+      expLastReadRowIdx = 2),
+    FirstPageRequestTestContext(
       pageSize = 4,
-      expFirstPageFileCnt = 5,
-      expFirstPageBatchCnt = 4,
-      expLastReadLogFileInFirstPage = JSON_SIDECAR_2,
-      expLastReadRowIdxInFirstPage = 2),
-    SinglePageRequestTestCase(
+      expFileCnt = 5,
+      expBatchCnt = 4,
+      expLastReadLogFile = JSON_SIDECAR_2,
+      expLastReadRowIdx = 2),
+    FirstPageRequestTestContext(
       pageSize = 10000,
-      expFirstPageFileCnt = 5,
-      expFirstPageBatchCnt = 4,
-      expLastReadLogFileInFirstPage = JSON_SIDECAR_2,
-      expLastReadRowIdxInFirstPage = 2)).foreach { testCase =>
+      expFileCnt = 5,
+      expBatchCnt = 4,
+      expLastReadLogFile = JSON_SIDECAR_2,
+      expLastReadRowIdx = 2)).foreach { testCase =>
     test(s"v2 json checkpoint files (and sidecars) with json delta commit files - " +
       s"page size ${testCase.pageSize}") {
       runCompletePaginationTest(

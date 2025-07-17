@@ -102,6 +102,8 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
 
   private boolean closed = false;
 
+  private boolean isBaseScanExhausted = false;
+
   /**
    * Constructs a paginated iterator over scan files on top of a given filtered scan files iterator
    * and pagination context.
@@ -126,9 +128,10 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
     }
   }
 
+  // Note: user is able to call getCurrentPageToken() after they close the paginated iterator
   @Override
   public Optional<Row> getCurrentPageToken() {
-    if (!baseFilteredScanFilesIter.hasNext()) {
+    if (isBaseScanExhausted) {
       return Optional.empty();
     }
     // TODO: replace hash value of log segment
@@ -162,7 +165,10 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
    */
   private void prepareNext() {
     if (currentBatch.isPresent()) return;
-    if (!baseFilteredScanFilesIter.hasNext()) return;
+    if (!baseFilteredScanFilesIter.hasNext()) {
+      isBaseScanExhausted = true;
+      return;
+    }
     if (numScanFilesReturned >= pageSize) return;
 
     Optional<String> tokenLastReadFilePathOpt = paginationContext.getLastReadLogFilePath();
