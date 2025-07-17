@@ -621,7 +621,7 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
     }
   }
 
-  // ===== V2 json checkpoint with sidecar files test cases =====
+  // ===== V2 parquet checkpoint with sidecar files test cases =====
   /**
    * 2.checkpoint.uuid.parquet:
    * - Batch 1: 5 rows, 0 selected AddFiles
@@ -723,7 +723,7 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
 
   // ===== V2 json checkpoint with sidecar files test cases =====
   /**
-   * 2.checkpoint.uuid.parquet:
+   * 2.checkpoint.uuid.json:
    *  - Batch 1: 5 rows, 0 selected AddFiles
    * sidecar 1:
    *  - Batch 1: 1 rows, 1 selected AddFiles
@@ -773,7 +773,7 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
   /**
    * 00000000000000000003.json
    *  - Batch 1: 2 rows, 1 selected AddFiles
-   * 2.checkpoint.uuid.parquet:
+   * 2.checkpoint.uuid.json:
    *  - Batch 1: 5 rows, 0 selected AddFiles
    * sidecar 1:
    *  - Batch 1: 1 rows, 1 selected AddFiles
