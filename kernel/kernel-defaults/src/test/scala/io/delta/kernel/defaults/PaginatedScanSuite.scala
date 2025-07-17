@@ -115,6 +115,7 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
     logger.info(s"New PageToken: lastReadRowIndex = $lastReturnedRowIndex")
   }
 
+  // TODO: test call hasNext() twice
   /**
    * Executes a single paginated scan request.
    *
@@ -215,69 +216,6 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
       val paginatedBatch = allBatchesPaginationScan(i)
       assert(normalBatch.getFilePath.equals(paginatedBatch.getFilePath))
       assert(normalBatch.getData.getSize == paginatedBatch.getData.getSize)
-    }
-  }
-
-  // ==== Test Paginated Iterator Behaviors ======
-  // TODO: test call hasNext() twice
-  test("Call getCurrentPageToken() without calling any next() on an iterator") {
-    // Request first page
-    withTempDir { tempDir =>
-      val tablePath = tempDir.getCanonicalPath
-      // First commit: files 0-4 (5 files)
-      spark.range(0, 50, 1, 5).write.format("delta").save(tablePath)
-
-      val firstPageSize = 2L
-      val firstPaginatedScan = createPaginatedScan(
-        tablePath = tablePath,
-        tableVersionOpt = Optional.empty(),
-        pageSize = firstPageSize)
-      val firstPaginatedIter = firstPaginatedScan.getScanFiles(customEngine)
-
-      // throw exception
-      var e = intercept[IllegalStateException] {
-        firstPaginatedIter.getCurrentPageToken.get
-      }
-      assert(e.getMessage.contains("Can't call getCurrentPageToken()"))
-
-      // throw exception
-      e = intercept[IllegalStateException] {
-        firstPaginatedIter.hasNext
-        firstPaginatedIter.getCurrentPageToken.get
-      }
-      assert(e.getMessage.contains("Can't call getCurrentPageToken()"))
-
-      firstPaginatedIter.close()
-    }
-  }
-
-  test("Call getCurrentPageToken() right after hasNext()") {
-    // Request first page
-    withTempDir { tempDir =>
-      val tablePath = tempDir.getCanonicalPath
-      // First commit: files 0-4 (5 files)
-      spark.range(0, 50, 1, 5).write.format("delta").save(tablePath)
-
-      // Second commit: files 5-9 (5 more files)
-      spark.range(50, 100, 1, 5).write.format("delta").mode("append").save(tablePath)
-
-      // Third commit: files 10-14 (5 more files)
-      spark.range(100, 150, 1, 5).write.format("delta").mode("append").save(tablePath)
-
-      val firstPageSize = 2L
-      val firstPaginatedScan = createPaginatedScan(
-        tablePath = tablePath,
-        tableVersionOpt = Optional.empty(),
-        pageSize = firstPageSize)
-      val firstPaginatedIter = firstPaginatedScan.getScanFiles(customEngine)
-      if (firstPaginatedIter.hasNext) firstPaginatedIter.next()
-      val expectedPageToken = firstPaginatedIter.getCurrentPageToken.get
-
-      firstPaginatedIter.hasNext // call hsaNext() again, should not affect page token
-      val pageToken = firstPaginatedIter.getCurrentPageToken.get
-
-      assert(PageToken.fromRow(pageToken).equals(PageToken.fromRow(expectedPageToken)))
-      firstPaginatedIter.close()
     }
   }
 
@@ -573,4 +511,327 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
         tablePath = getTestResourceFilePath("kernel-pagination-single-checkpoint"))
     }
   }
+
+  // ===== Multi-part checkpoint files test cases =====
+  /**
+   * Log Segment List:
+   * 00000000000000000000.checkpoint.0000000003.0000000003.parquet (6 AddFile)
+   * Batch A: 5 AddFile, 5 rows
+   * Batch B: 1 AddFile, 1 row
+   * 00000000000000000000.checkpoint.0000000002.0000000003.parquet (7 AddFile)
+   * Batch C: 5 AddFile, 5 row
+   * Batch D: 2 AddFile, 2 row
+   * 00000000000000000000.checkpoint.0000000001.0000000003.parquet (5 AddFile)
+   * Batch E: 3 AddFile, 5 row
+   * Batch F: 2 AddFile, 2 row
+   */
+  val MULTI_CHECKPOINT_FILE_0_1 = "00000000000000000000.checkpoint.0000000001.0000000003.parquet"
+  val MULTI_CHECKPOINT_FILE_0_2 = "00000000000000000000.checkpoint.0000000002.0000000003.parquet"
+  val MULTI_CHECKPOINT_FILE_0_3 = "00000000000000000000.checkpoint.0000000003.0000000003.parquet"
+
+  // Note: Kernel should return full batches (and may go over page limit).
+  Seq(
+    FirstPageRequestTestContext(
+      pageSize = 1,
+      expScanFilesCnt = 5, /* 5 AddFiles in Batch A */
+      expBatchCnt = 1, /* return only batch A */
+      expLastReadLogFile = MULTI_CHECKPOINT_FILE_0_3, /* Batch A from checkpoint file 3 */
+      expLastReadRowIdx = 4 /* Last Row index in Batch A is 4 in checkpoint file 3 */ ),
+    FirstPageRequestTestContext(
+      pageSize = 7,
+      expScanFilesCnt = 11, /* 5 (batch A) + 1 (batch B) + 5 (batch C) */
+      expBatchCnt = 3, /* return batch A, B, C */
+      expLastReadLogFile = MULTI_CHECKPOINT_FILE_0_2, /* Batch C from checkpoint file 2 */
+      expLastReadRowIdx = 4 /* Last Row index in Batch C is 4 in checkpoint file 2 */
+    ),
+    FirstPageRequestTestContext(
+      pageSize = 13,
+      expScanFilesCnt = 13, /* 5 (batch A) + 1 (batch B) + 5 (batch C) + 2 (batch D) */
+      expBatchCnt = 4, /* return batch A, B, C, D */
+      expLastReadLogFile = MULTI_CHECKPOINT_FILE_0_2, /* Batch D from checkpoint file 2 */
+      expLastReadRowIdx = 6 /* Last Row index in Batch D is 6 in checkpoint file 3 */
+    ),
+    FirstPageRequestTestContext(
+      pageSize = 100,
+      expScanFilesCnt = 18, /* 5 (batch A) + 1 (batch B) + 5 (C) + 2 (D) + 3 (E) + 2 F) */
+      expBatchCnt = 6, /* return batch A, B, C, D, E, F */
+      expLastReadLogFile = MULTI_CHECKPOINT_FILE_0_1,
+      expLastReadRowIdx = 1)).foreach { testCase =>
+    test(s"Multi-part checkpoints - page size ${testCase.pageSize}") {
+      runCompletePaginationTest(
+        testCase = testCase,
+        tableVersionOpt = Optional.of(0L),
+        tablePath = getTestResourceFilePath("kernel-pagination-multi-part-checkpoints"))
+    }
+  }
+
+  // ===== Multi-part checkpoint files with JSON files test cases =====
+  /**
+   * Log Segment List:
+   * 00000000000000000002.json (1 AddFile)
+   * Batch A: 1 AddFile, 2 rows
+   * 00000000000000000001.json (1 AddFile)
+   * Batch B: 1 AddFile, 2 rows
+   * 00000000000000000000.checkpoint.0000000003.0000000003.parquet (6 AddFile)
+   * Batch C: 5 AddFile, 5 rows
+   * Batch D: 1 AddFile, 1 row
+   * 00000000000000000000.checkpoint.0000000002.0000000003.parquet (7 AddFile)
+   * Batch E: 5 AddFile, 5 row
+   * Batch F: 2 AddFile, 2 row
+   * 00000000000000000000.checkpoint.0000000001.0000000003.parquet (5 AddFile)
+   * Batch G: 3 AddFile, 5 row
+   * Batch H: 2 AddFile, 2 row
+   */
+  Seq(
+    FirstPageRequestTestContext(
+      pageSize = 1,
+      expScanFilesCnt = 1, /* 1 AddFile in Batch A */
+      expBatchCnt = 1, /* return only batch A */
+      expLastReadLogFile = JSON_FILE_2, /* Batch A from JSON file 2 */
+      expLastReadRowIdx = 1
+    ), /* Last Row index in Batch A is 1 in JSON file 2 */
+    FirstPageRequestTestContext(
+      pageSize = 2,
+      expScanFilesCnt = 2, /* 1 (batch A) + 1 (batch B) */
+      expBatchCnt = 2, /* return batch A, B */
+      expLastReadLogFile = JSON_FILE_1, /* Batch B from JSON file 1 */
+      expLastReadRowIdx = 1
+    ), /* Last Row index in Batch B is 1 in JSON file 1 */
+    FirstPageRequestTestContext(
+      pageSize = 6,
+      expScanFilesCnt = 7, /* 1 (batch A) + 1 (batch B) + 5 (batch C) */
+      expBatchCnt = 3, /* return batch A, B, C */
+      expLastReadLogFile = MULTI_CHECKPOINT_FILE_0_3, /* Batch C from checkpoint file 3 */
+      expLastReadRowIdx = 4
+    ), /* Last Row index in Batch C is 4 in checkpoint file 3 */
+    FirstPageRequestTestContext(
+      pageSize = 100,
+      expScanFilesCnt =
+        20, /* 1 (batch A) + 1 (batch B) + 6 (batch C+D) + 7 (batch E+F) + 5 (batch G+H) */
+      expBatchCnt = 8, /* return all batches A through H */
+      expLastReadLogFile = MULTI_CHECKPOINT_FILE_0_1, /* Batch H from checkpoint file 1 */
+      expLastReadRowIdx = 1
+    ) /* Last Row index in Batch H is 1 in checkpoint file 1 */
+  ).foreach { testCase =>
+    test(s"Multi-part checkpoints with jsons - page size ${testCase.pageSize}") {
+      runCompletePaginationTest(
+        testCase = testCase,
+        tablePath = getTestResourceFilePath("kernel-pagination-multi-part-checkpoints"))
+    }
+  }
+
+  // ===== V2 parquet checkpoint with sidecar files test cases =====
+  /**
+   * 2.checkpoint.uuid.parquet:
+   * - Batch A: 5 rows, 0 selected AddFiles
+   * sidecar 1:
+   * - Batch B: 3 rows, 3 selected AddFiles
+   * sidecar 2:
+   * - Batch C: 1 row, 1 selected AddFiles
+   */
+
+  val PARQUET_MANIFEST_SIDECAR_1 =
+    "00000000000000000002.checkpoint.0000000001.0000000002.055454d8-329c-4e0e-864d-7f867075af33.parquet"
+  val PARQUET_MANIFEST_SIDECAR_2 =
+    "00000000000000000002.checkpoint.0000000002.0000000002.33321cc1-9c55-4d1f-8511-fafe6d2e1133.parquet"
+
+  Seq(
+    FirstPageRequestTestContext(
+      pageSize = 1,
+      expScanFilesCnt = 3, /* 0 (batch A) + 3 (batch B) */
+      expBatchCnt = 2, /* return batch A, B */
+      expLastReadLogFile = PARQUET_MANIFEST_SIDECAR_1, /* Batch B from sidecar 1 */
+      expLastReadRowIdx = 2
+    ), /* Last Row index in Batch B is 2 in sidecar 1 */
+    FirstPageRequestTestContext(
+      pageSize = 3,
+      expScanFilesCnt = 3, /* 0 (batch A) + 3 (batch B) */
+      expBatchCnt = 2, /* return batch A, B */
+      expLastReadLogFile = PARQUET_MANIFEST_SIDECAR_1, /* Batch B from sidecar 1 */
+      expLastReadRowIdx = 2
+    ), /* Last Row index in Batch B is 2 in sidecar 1 */
+    FirstPageRequestTestContext(
+      pageSize = 4,
+      expScanFilesCnt = 4, /* 0 (batch A) + 3 (batch B) + 1 (batch C) */
+      expBatchCnt = 3, /* return batch A, B, C */
+      expLastReadLogFile = PARQUET_MANIFEST_SIDECAR_2, /* Batch C from sidecar 2 */
+      expLastReadRowIdx = 0
+    ), /* Last Row index in Batch C is 0 in sidecar 2 */
+    FirstPageRequestTestContext(
+      pageSize = 10000,
+      expScanFilesCnt = 4, /* 0 (batch A) + 3 (batch B) + 1 (batch C) */
+      expBatchCnt = 3, /* return batch A, B, C */
+      expLastReadLogFile = PARQUET_MANIFEST_SIDECAR_2, /* Batch C from sidecar 2 */
+      expLastReadRowIdx = 0
+    ) /* Last Row index in Batch C is 0 in sidecar 2 */
+  ).foreach { testCase =>
+    test(s"V2 parquet checkpoints (and sidecars) - page size ${testCase.pageSize}") {
+      runCompletePaginationTest(
+        testCase = testCase,
+        tableVersionOpt = Optional.of(2L),
+        tablePath = getTestResourceFilePath("kernel-pagination-v2-checkpoint-parquet"))
+    }
+  }
+
+  // ===== V2 parquet checkpoint with sidecar files with jsons test cases =====
+  /**
+   * 00000000000000000003.json
+   *  - Batch A: 2 rows, 1 selected AddFiles
+   * 2.checkpoint.uuid.parquet:
+   *  - Batch B: 5 rows, 0 selected AddFiles
+   * sidecar 1:
+   *  - Batch C: 3 rows, 3 selected AddFiles
+   * sidecar 2:
+   *  - Batch D: 1 row, 1 selected AddFiles
+   */
+  val JSON_FILE_3 = "00000000000000000003.json"
+  Seq(
+    FirstPageRequestTestContext(
+      pageSize = 1,
+      expScanFilesCnt = 1, /* 1 AddFile in Batch A */
+      expBatchCnt = 1, /* return only batch A */
+      expLastReadLogFile = JSON_FILE_3, /* Batch A from JSON file 3 */
+      expLastReadRowIdx = 1
+    ), /* Last Row index in Batch A is 1 in JSON file 3 */
+    FirstPageRequestTestContext(
+      pageSize = 2,
+      expScanFilesCnt = 4, /* 1 (batch A) + 0 (batch B) + 3 (batch C) */
+      expBatchCnt = 3, /* return batch A, B, C */
+      expLastReadLogFile = PARQUET_MANIFEST_SIDECAR_1, /* Batch C from sidecar 1 */
+      expLastReadRowIdx = 2
+    ), /* Last Row index in Batch C is 2 in sidecar 1 */
+    FirstPageRequestTestContext(
+      pageSize = 3,
+      expScanFilesCnt = 4, /* 1 (batch A) + 0 (batch B) + 3 (batch C) */
+      expBatchCnt = 3, /* return batch A, B, C */
+      expLastReadLogFile = PARQUET_MANIFEST_SIDECAR_1, /* Batch C from sidecar 1 */
+      expLastReadRowIdx = 2
+    ), /* Last Row index in Batch C is 2 in sidecar 1 */
+    FirstPageRequestTestContext(
+      pageSize = 4,
+      expScanFilesCnt = 4, /* 1 (batch A) + 0 (batch B) + 3 (batch C) */
+      expBatchCnt = 3, /* return batch A, B, C */
+      expLastReadLogFile = PARQUET_MANIFEST_SIDECAR_1, /* Batch C from sidecar 1 */
+      expLastReadRowIdx = 2
+    ), /* Last Row index in Batch C is 2 in sidecar 1 */
+    FirstPageRequestTestContext(
+      pageSize = 10000,
+      expScanFilesCnt = 5, /* 1 (batch A) + 0 (batch B) + 3 (batch C) + 1 (batch D) */
+      expBatchCnt = 4, /* return batch A, B, C, D */
+      expLastReadLogFile = PARQUET_MANIFEST_SIDECAR_2, /* Batch D from sidecar 2 */
+      expLastReadRowIdx = 0
+    ) /* Last Row index in Batch D is 0 in sidecar 2 */
+  ).foreach { testCase =>
+    test(
+      s"v2 parquet checkpoints (and sidecars) with json delta commit files - page size ${testCase.pageSize}") {
+      runCompletePaginationTest(
+        testCase = testCase,
+        tableVersionOpt = Optional.of(3L),
+        tablePath = getTestResourceFilePath("kernel-pagination-v2-checkpoint-parquet"))
+    }
+  }
+
+  // ===== V2 json checkpoint with sidecar files test cases =====
+  /**
+   * 2.checkpoint.uuid.json:
+   *  - Batch A: 5 rows, 0 selected AddFiles
+   * sidecar 1:
+   *  - Batch B: 1 rows, 1 selected AddFiles
+   * sidecar 2:
+   *  - Batch C: 3 row, 3 selected AddFiles
+   */
+  val JSON_MANIFEST = "00000000000000000002.checkpoint.6374b053-df23-479b-b2cf-c9c550132b49.json"
+  val JSON_MANIFEST_SIDECAR_1 =
+    "00000000000000000002.checkpoint.0000000001.0000000002.bd1885fd-6ec0-4370-b0f5-43b5162fd4de.parquet"
+  val JSON_MANIFEST_SIDECAR_2 =
+    "00000000000000000002.checkpoint.0000000002.0000000002.0a8d73ee-aa83-49d0-9583-c99db75b89b2.parquet"
+
+  Seq(
+    FirstPageRequestTestContext(
+      pageSize = 1,
+      expScanFilesCnt = 1, /* 0 (batch A) + 1 (batch B) */
+      expBatchCnt = 2, /* return batch A, B */
+      expLastReadLogFile = JSON_MANIFEST_SIDECAR_1, /* Batch B from sidecar 1 */
+      expLastReadRowIdx = 0
+    ), /* Last Row index in Batch B is 0 in sidecar 1 */
+    FirstPageRequestTestContext(
+      pageSize = 2,
+      expScanFilesCnt = 4, /* 0 (batch A) + 1 (batch B) + 3 (batch C) */
+      expBatchCnt = 3, /* return batch A, B, C */
+      expLastReadLogFile = JSON_MANIFEST_SIDECAR_2, /* Batch C from sidecar 2 */
+      expLastReadRowIdx = 2
+    ), /* Last Row index in Batch C is 2 in sidecar 2 */
+    FirstPageRequestTestContext(
+      pageSize = 4,
+      expScanFilesCnt = 4, /* 0 (batch A) + 1 (batch B) + 3 (batch C) */
+      expBatchCnt = 3, /* return batch A, B, C */
+      expLastReadLogFile = JSON_MANIFEST_SIDECAR_2, /* Batch C from sidecar 2 */
+      expLastReadRowIdx = 2
+    ), /* Last Row index in Batch C is 2 in sidecar 2 */
+    FirstPageRequestTestContext(
+      pageSize = 10000,
+      expScanFilesCnt = 4, /* 0 (batch A) + 1 (batch B) + 3 (batch C) */
+      expBatchCnt = 3, /* return batch A, B, C */
+      expLastReadLogFile = JSON_MANIFEST_SIDECAR_2, /* Batch C from sidecar 2 */
+      expLastReadRowIdx = 0
+    ) /* Last Row index in Batch C is 0 in sidecar 2 */
+  ).foreach { testCase =>
+    test(s"v2 json checkpoint (and sidecars) - page size ${testCase.pageSize}") {
+      runCompletePaginationTest(
+        testCase = testCase,
+        tableVersionOpt = Optional.of(2L),
+        tablePath = getTestResourceFilePath("kernel-pagination-v2-checkpoint-json"))
+    }
+  }
+
+  // ===== V2 json checkpoint with sidecar files with jsons test cases =====
+  /**
+   * 00000000000000000003.json
+   *  - Batch A: 2 rows, 1 selected AddFiles
+   * 2.checkpoint.uuid.json:
+   *  - Batch B: 5 rows, 0 selected AddFiles
+   * sidecar 1:
+   *  - Batch C: 1 rows, 1 selected AddFiles
+   * sidecar 2:
+   *  - Batch D: 3 row, 3 selected AddFiles
+   */
+  Seq(
+    FirstPageRequestTestContext(
+      pageSize = 1,
+      expScanFilesCnt = 1, /* 1 AddFile in Batch A */
+      expBatchCnt = 1, /* return only batch A */
+      expLastReadLogFile = JSON_FILE_3, /* Batch A from JSON file 3 */
+      expLastReadRowIdx = 1
+    ), /* Last Row index in Batch A is 1 in JSON file 3 */
+    FirstPageRequestTestContext(
+      pageSize = 3,
+      expScanFilesCnt = 5, /* 1 (batch A) + 0 (batch B) + 1 (batch C) + 3 (batch D) */
+      expBatchCnt = 4, /* return batch A, B, C, D */
+      expLastReadLogFile = JSON_MANIFEST_SIDECAR_2, /* Batch D from sidecar 2 */
+      expLastReadRowIdx = 2
+    ), /* Last Row index in Batch D is 2 in sidecar 2 */
+    FirstPageRequestTestContext(
+      pageSize = 4,
+      expScanFilesCnt = 5, /* 1 (batch A) + 0 (batch B) + 1 (batch C) + 3 (batch D) */
+      expBatchCnt = 4, /* return batch A, B, C, D */
+      expLastReadLogFile = JSON_MANIFEST_SIDECAR_2, /* Batch D from sidecar 2 */
+      expLastReadRowIdx = 2
+    ), /* Last Row index in Batch D is 2 in sidecar 2 */
+    FirstPageRequestTestContext(
+      pageSize = 10000,
+      expScanFilesCnt = 5, /* 1 (batch A) + 0 (batch B) + 1 (batch C) + 3 (batch D) */
+      expBatchCnt = 4, /* return batch A, B, C, D */
+      expLastReadLogFile = JSON_MANIFEST_SIDECAR_2, /* Batch D from sidecar 2 */
+      expLastReadRowIdx = 2
+    ) /* Last Row index in Batch D is 2 in sidecar 2 */
+  ).foreach { testCase =>
+    test(s"v2 json checkpoint files (and sidecars) with json delta commit files - " +
+      s"page size ${testCase.pageSize}") {
+      runCompletePaginationTest(
+        testCase = testCase,
+        tableVersionOpt = Optional.of(3L),
+        tablePath = getTestResourceFilePath("kernel-pagination-v2-checkpoint-json"))
+    }
+  }
+  // TODO: tests for log compaction files
 }
