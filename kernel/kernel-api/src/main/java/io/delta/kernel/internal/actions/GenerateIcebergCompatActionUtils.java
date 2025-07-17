@@ -57,6 +57,9 @@ public final class GenerateIcebergCompatActionUtils {
    * @param partitionValues the partition values for the add
    * @param dataChange whether or not the add constitutes a dataChange (i.e. append vs. compaction)
    * @param tags key-value metadata to be attached to the add action
+   * @param physicalSchemaOpt An optional pre-parsed physical schema. Improves performance for batch
+   *     operations by avoiding repeated JSON parsing. Recommended when generating many actions with
+   *     the same schema.
    * @return add action row that can be included in the transaction
    * @throws UnsupportedOperationException if icebergWriterCompatV1 is not enabled
    * @throws UnsupportedOperationException if maxRetries != 0 in the transaction
@@ -129,7 +132,9 @@ public final class GenerateIcebergCompatActionUtils {
    * @param dataChange whether or not the add constitutes a dataChange (i.e. append vs. compaction)
    * @param tags key-value metadata to be attached to the add action
    * @param deletionVectorDescriptor optional deletion vector descriptor for the add action
-   * @param physicalSchemaOpt An optional pre-parsed physical schema of the table.
+   * @param physicalSchemaOpt An optional pre-parsed physical schema. Improves performance for batch
+   *     operations by avoiding repeated JSON parsing. Recommended when generating many actions with
+   *     the same schema.
    * @return add action row that can be included in the transaction
    * @throws UnsupportedOperationException if icebergWriterCompatV3 is not enabled
    * @throws UnsupportedOperationException if maxRetries != 0 in the transaction
@@ -193,7 +198,9 @@ public final class GenerateIcebergCompatActionUtils {
    * @param partitionValues the partition values for the remove
    * @param dataChange whether or not the remove constitutes a dataChange (i.e. delete vs.
    *     compaction)
-   * @param physicalSchemaOpt An optional pre-parsed physical schema of the table.
+   * @param physicalSchemaOpt An optional pre-parsed physical schema. Improves performance for batch
+   *     operations by avoiding repeated JSON parsing. Recommended when generating many actions with
+   *     the same schema.
    * @return remove action row that can be committed to the transaction
    * @throws UnsupportedOperationException if icebergWriterCompatV1 is not enabled
    * @throws UnsupportedOperationException if maxRetries != 0 in the transaction
@@ -247,7 +254,9 @@ public final class GenerateIcebergCompatActionUtils {
    * @param dataChange whether or not the remove constitutes a dataChange (i.e. delete vs.
    *     compaction)
    * @param deletionVectorDescriptor optional deletion vector descriptor for the add action
-   * @param physicalSchemaOpt An optional pre-parsed physical schema of the table.
+   * @param physicalSchemaOpt An optional pre-parsed physical schema. Improves performance for batch
+   *     operations by avoiding repeated JSON parsing. Recommended when generating many actions with
+   *     the same schema.
    * @return remove action row that can be committed to the transaction
    * @throws UnsupportedOperationException if icebergWriterCompatV3 is not enabled
    * @throws UnsupportedOperationException if maxRetries != 0 in the transaction

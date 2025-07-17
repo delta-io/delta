@@ -72,7 +72,7 @@ class GenerateIcebergCompatActionUtilsSuite extends AnyFunSuite {
           dataFileStatus,
           partitionValues,
           dataChange,
-          Optional.empty())
+          Optional.empty() /* Pre-parsed physicalSchema if present */ )
       }.getMessage.contains(expectedErrorMessageContains))
     assert(
       intercept[UnsupportedOperationException] {
@@ -81,7 +81,7 @@ class GenerateIcebergCompatActionUtilsSuite extends AnyFunSuite {
           dataFileStatus,
           partitionValues,
           dataChange,
-          Optional.empty())
+          Optional.empty() /* Pre-parsed physicalSchema if present */ )
       }.getMessage.contains(expectedErrorMessageContains))
   }
 
@@ -240,7 +240,7 @@ class GenerateIcebergCompatActionUtilsSuite extends AnyFunSuite {
           testDataFileStatusWithStatistics,
           Collections.emptyMap(), // partitionValues
           dataChange,
-          Optional.empty()),
+          Optional.empty() /* Pre-parsed physicalSchema if present */ ),
         expectedPath = "file1.parquet",
         expectedSize = 1000,
         expectedModificationTime = 10,
@@ -267,7 +267,7 @@ class GenerateIcebergCompatActionUtilsSuite extends AnyFunSuite {
               fileStatus,
               Collections.emptyMap(), // partitionValues
               dataChange,
-              Optional.empty()),
+              Optional.empty() /* Pre-parsed physicalSchema if present */ ),
             expectedPath = "file1.parquet",
             expectedSize = 1000,
             expectedDeletionTimestamp = 10,
