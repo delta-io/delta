@@ -28,6 +28,7 @@ import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.{TableConfig, TableImpl}
 import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction
 import io.delta.kernel.internal.actions.{AddFile, DeletionVectorDescriptor, GenerateIcebergCompatActionUtils, RemoveFile}
+import io.delta.kernel.internal.data.TransactionStateRow
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.internal.util.VectorUtils
 import io.delta.kernel.statistics.DataFileStatistics
@@ -62,7 +63,8 @@ class CommitIcebergActionSuite extends DeltaTableWriteSuiteBase {
           fileStatus,
           Collections.emptyMap(),
           dataChange,
-          tags.asJava)
+          tags.asJava,
+          Optional.of(TransactionStateRow.getPhysicalSchema(txn.getTransactionState(engine))))
       case ("ADD", "V3") =>
         GenerateIcebergCompatActionUtils.generateIcebergCompatWriterV3AddAction(
           txn.getTransactionState(engine),
@@ -72,13 +74,15 @@ class CommitIcebergActionSuite extends DeltaTableWriteSuiteBase {
           tags.asJava,
           Optional.empty[java.lang.Long](),
           Optional.empty[java.lang.Long](),
-          deletionVector)
+          deletionVector,
+          Optional.of(TransactionStateRow.getPhysicalSchema(txn.getTransactionState(engine))))
       case ("REMOVE", "V1") =>
         GenerateIcebergCompatActionUtils.generateIcebergCompatWriterV1RemoveAction(
           txn.getTransactionState(engine),
           fileStatus,
           Collections.emptyMap(),
-          dataChange)
+          dataChange,
+          Optional.of(TransactionStateRow.getPhysicalSchema(txn.getTransactionState(engine))))
       case ("REMOVE", "V3") =>
         GenerateIcebergCompatActionUtils.generateIcebergCompatWriterV3RemoveAction(
           txn.getTransactionState(engine),
@@ -87,7 +91,8 @@ class CommitIcebergActionSuite extends DeltaTableWriteSuiteBase {
           dataChange,
           Optional.empty[java.lang.Long](),
           Optional.empty[java.lang.Long](),
-          deletionVector)
+          deletionVector,
+          Optional.of(TransactionStateRow.getPhysicalSchema(txn.getTransactionState(engine))))
       case _ => throw new IllegalArgumentException(
           s"Unsupported actionType: $actionType or version: $version")
     }

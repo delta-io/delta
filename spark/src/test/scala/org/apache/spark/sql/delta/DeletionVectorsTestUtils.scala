@@ -31,9 +31,41 @@ import org.apache.spark.sql.delta.util.PathWithFileSystem
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.SparkConf
 import org.apache.spark.sql.{DataFrame, QueryTest, RuntimeConfig, SparkSession}
 import org.apache.spark.sql.functions.{col, lit}
 import org.apache.spark.sql.test.SharedSparkSession
+
+trait MergePersistentDVDisabled extends SharedSparkSession {
+  override protected def sparkConf: SparkConf = super.sparkConf
+    .set(DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS.key, "false")
+}
+
+trait PersistentDVDisabled extends SharedSparkSession {
+  override protected def sparkConf: SparkConf = super.sparkConf
+    .set(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey, "false")
+}
+
+trait PersistentDVEnabled extends DeletionVectorsTestUtils {
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    enableDeletionVectorsInNewTables(spark.conf)
+  }
+}
+
+trait PredicatePushdownDisabled extends SharedSparkSession {
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    spark.conf.set(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key, "false")
+  }
+}
+
+trait PredicatePushdownEnabled extends SharedSparkSession {
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    spark.conf.set(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key, "true")
+  }
+}
 
 /** Collection of test utilities related with persistent Deletion Vectors. */
 trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession with DeltaSQLTestUtils {

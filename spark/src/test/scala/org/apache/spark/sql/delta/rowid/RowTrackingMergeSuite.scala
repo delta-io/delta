@@ -29,9 +29,6 @@ trait RowTrackingMergeSuiteBase extends RowIdTestUtils
   with MergeHelpers {
   import testImplicits._
 
-  protected def dvsEnabled: Boolean = true
-  protected def cdfEnabled: Boolean = false
-
   protected val SOURCE_TABLE_NAME = "source"
   protected val TARGET_TABLE_NAME = "target"
 
@@ -48,7 +45,7 @@ trait RowTrackingMergeSuiteBase extends RowIdTestUtils
       .write.format("delta").saveAsTable(tableName)
   }
 
-  override protected def beforeAll(): Unit = {
+  override def beforeAll(): Unit = {
     super.beforeAll()
     spark.conf.set(DeltaConfigs.ROW_TRACKING_ENABLED.defaultTablePropertyKey, value = "true")
 
@@ -177,6 +174,9 @@ trait RowTrackingMergeSuiteBase extends RowIdTestUtils
             s"Expected ${numFilesAfterMerge.get} but got ${targetTableFiles().collect().mkString}")
         }
 
+        val cdfEnabled = spark.conf
+          .getOption(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey)
+          .contains("true")
         if (cdfEnabled && targetTablePostSetupAction.isEmpty) {
           assert(deltaLog.update().version === 1, "Table has been modified more than once.")
 
@@ -570,64 +570,11 @@ trait RowTrackingMergeCommonTests extends RowTrackingMergeSuiteBase {
   }
 }
 
-trait RowTrackingMergeDVTests extends RowTrackingMergeSuiteBase
+trait RowTrackingMergeDVMixin extends RowTrackingMergeSuiteBase
   with DeletionVectorsTestUtils {
 
-  override protected def dvsEnabled: Boolean = true
-
-  override protected def beforeAll(): Unit = {
+  override def beforeAll(): Unit = {
     super.beforeAll()
     enableDeletionVectors(spark, delete = true, update = true, merge = true)
   }
 }
-
-trait RowTrackingMergeCDFTests extends RowTrackingMergeSuiteBase {
-
-  override def cdfEnabled: Boolean = true
-
-  override protected def beforeAll(): Unit = {
-    super.beforeAll()
-    spark.conf.set(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, value = true)
-  }
-}
-
-trait RowTrackingMergeWithoutDVTests extends RowTrackingMergeCommonTests {
-
-  override protected def dvsEnabled: Boolean = false
-
-  override protected def beforeAll(): Unit = {
-    super.beforeAll()
-    spark.conf.set(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey,
-      value = "false")
-    spark.conf.set(DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS.key, value = false)
-  }
-}
-
-class RowTrackingMergeSuite extends RowTrackingMergeCommonTests
-
-class RowTrackingMergeDVSuite extends RowTrackingMergeSuite
-  with RowTrackingMergeDVTests
-
-class RowTrackingMergeCDFSuite extends RowTrackingMergeSuite
-  with RowTrackingMergeCDFTests
-
-class RowTrackingMergeCDFDVSuite extends RowTrackingMergeSuite
-  with RowTrackingMergeDVTests with RowTrackingMergeCDFTests
-
-class RowTrackingMergeWithoutDVSuite extends RowTrackingMergeCommonTests
-  with RowTrackingMergeWithoutDVTests
-
-class RowTrackingMergeWithoutDVCDFSuite extends RowTrackingMergeCommonTests
-  with RowTrackingMergeWithoutDVTests with RowTrackingMergeCDFTests
-
-class RowTrackingMergeColumnNameMappingSuite extends RowTrackingMergeCommonTests
-  with DeltaColumnMappingEnableNameMode
-
-class RowTrackingMergeColumnIdMappingSuite extends RowTrackingMergeCommonTests
-  with DeltaColumnMappingEnableIdMode
-
-class RowTrackingMergeColumnNameMappingCDFDVSuite extends RowTrackingMergeCommonTests
-  with DeltaColumnMappingEnableNameMode with RowTrackingMergeDVTests with RowTrackingMergeCDFTests
-
-class RowTrackingMergeColumnIdMappingCDFDVSuite extends RowTrackingMergeCommonTests
-  with DeltaColumnMappingEnableIdMode with RowTrackingMergeDVTests with RowTrackingMergeCDFTests

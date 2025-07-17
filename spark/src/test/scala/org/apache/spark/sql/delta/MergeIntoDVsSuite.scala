@@ -16,17 +16,12 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.cdc.MergeCDCMixin
 import org.apache.spark.sql.delta.commands.{DeletionVectorBitmapGenerator, DMLWithDeletionVectorsHelper}
 import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkException
 import org.apache.spark.sql.QueryTest
-import org.apache.spark.sql.execution.datasources.FileFormat.FILE_PATH
-import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.functions.col
 
 trait MergeIntoDVsMixin extends MergeIntoSQLMixin with DeletionVectorsTestUtils {
@@ -64,13 +59,6 @@ trait MergeIntoDVsMixin extends MergeIntoSQLMixin with DeletionVectorsTestUtils 
     "delta.dml.merge.writeModifiedRowsOnly",
     "delta.dml.merge.writeDeletionVectors",
     "delta.dml.merge")
-}
-
-trait MergeIntoDVsPredicatePushdownDisabled extends MergeIntoDVsMixin {
-  override def beforeAll(): Unit = {
-    super.beforeAll()
-    spark.conf.set(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key, "false")
-  }
 }
 
 trait MergeIntoDVsTests extends MergeIntoDVsMixin {
@@ -252,12 +240,5 @@ trait MergeCDCWithDVsMixin extends QueryTest with MergeCDCMixin with DeletionVec
     val miscFailures = "merge CDC - all conditions failed for all rows"
 
     super.excluded :+ miscFailures
-  }
-}
-
-trait MergeIntoDVsPredicatePushdownEnabled extends MergeIntoDVsMixin {
-  override def beforeAll(): Unit = {
-    super.beforeAll()
-    spark.conf.set(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key, "true")
   }
 }

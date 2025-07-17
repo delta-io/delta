@@ -20,7 +20,6 @@ import java.io.File
 
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.deletionvectors.PersistentDVEnabled
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.hadoop.fs.Path
 import org.scalatest.concurrent.Eventually

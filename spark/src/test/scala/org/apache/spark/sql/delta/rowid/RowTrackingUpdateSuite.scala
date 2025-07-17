@@ -18,9 +18,7 @@ package org.apache.spark.sql.delta.rowid
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
-import org.apache.spark.sql.delta.cdc.{CDCEnabled, UpdateCDCSuite}
-import org.apache.spark.sql.delta.deletionvectors.PersistentDVDisabled
-import org.apache.spark.sql.delta.rowtracking.{RowTrackingDisabled, RowTrackingEnabled}
+import org.apache.spark.sql.delta.rowtracking.RowTrackingEnabled
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.SparkConf
@@ -28,9 +26,7 @@ import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions.{col, lit}
 
-trait RowTrackingUpdateSuiteBase
-  extends RowIdTestUtils {
-
+trait RowTrackingUpdateSuiteBase extends RowIdTestUtils with RowTrackingEnabled {
   protected def dvsEnabled: Boolean = false
 
   protected val numRowsTarget = 3000
@@ -41,7 +37,6 @@ trait RowTrackingUpdateSuiteBase
 
   override protected def sparkConf: SparkConf = {
     super.sparkConf
-      .set(DeltaConfigs.ROW_TRACKING_ENABLED.defaultTablePropertyKey, value = "true")
       .set(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey,
         dvsEnabled.toString)
       .set(DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS.key, dvsEnabled.toString)
@@ -219,45 +214,15 @@ trait RowTrackingUpdateCommonTests extends RowTrackingUpdateSuiteBase {
   }
 }
 
-trait RowTrackingUpdateDVTests extends RowTrackingUpdateSuiteBase
+trait RowTrackingUpdateDVMixin extends RowTrackingUpdateSuiteBase
   with DeletionVectorsTestUtils {
 
   override protected def dvsEnabled: Boolean = true
-
 }
 
-trait RowTrackingCDFTests extends RowTrackingUpdateSuiteBase with CDCEnabled
 
-class RowTrackingUpdateSuite extends RowTrackingUpdateCommonTests
-
-class RowTrackingUpdateCDFSuite extends RowTrackingUpdateCommonTests with RowTrackingCDFTests
-
-class RowTrackingUpdateDVSuite extends RowTrackingUpdateCommonTests
-  with RowTrackingUpdateDVTests
-
-class RowTrackingUpdateCDFDVSuite extends RowTrackingUpdateCommonTests
-  with RowTrackingUpdateDVTests with RowTrackingCDFTests
-
-class RowTrackingUpdateIdColumnMappingSuite extends RowTrackingUpdateCommonTests
-  with DeltaColumnMappingEnableIdMode
-
-class RowTrackingUpdateNameColumnMappingSuite extends RowTrackingUpdateCommonTests
-  with DeltaColumnMappingEnableNameMode
-
-class RowTrackingUpdateCDFDVIdColumnMappingSuite extends RowTrackingUpdateCommonTests
-  with RowTrackingCDFTests with RowTrackingUpdateDVTests with DeltaColumnMappingEnableIdMode
-
-class RowTrackingUpdateCDFDVNameColumnMappingSuite extends RowTrackingUpdateCommonTests
-  with RowTrackingCDFTests with RowTrackingUpdateDVTests with DeltaColumnMappingEnableNameMode
-
-class RowTrackingUpdateCDFIdColumnMappingSuite extends RowTrackingUpdateCommonTests
-  with RowTrackingCDFTests with DeltaColumnMappingEnableIdMode
-
-class RowTrackingUpdateCDFNameColumnMappingSuite extends RowTrackingUpdateCommonTests
-  with RowTrackingCDFTests with DeltaColumnMappingEnableNameMode
-
-// Base trait for UPDATE tests that will run post-merge only
-trait UpdateWithRowTrackingTests extends UpdateSQLSuite with RowTrackingEnabled {
+// Base trait for UPDATE tests with row tracking.
+trait UpdateWithRowTrackingOverrides extends UpdateSQLMixin {
   override def excluded: Seq[String] = super.excluded ++
     Seq(
       // TODO: UPDATE on views can't find metadata column
@@ -282,31 +247,3 @@ trait UpdateWithRowTrackingTests extends UpdateSQLSuite with RowTrackingEnabled 
       "usage metrics"
       )
 }
-
-// UPDATE + row tracking
-class UpdateWithRowTrackingSuite
-  extends UpdateSQLSuite
-  with UpdateWithRowTrackingTests
-  with PersistentDVDisabled
-
-// UPDATE + CDC + row tracking
-class UpdateWithRowTrackingCDCSuite
-  extends UpdateCDCSuite
-  with UpdateWithRowTrackingTests
-  with PersistentDVDisabled
-
-// Tests with only the table feature enabled. Should not break any tests, unless row count stats
-// are missing.
-trait UpdateWithRowTrackingTableFeatureTests extends UpdateSQLSuite with RowTrackingDisabled
-
-// UPDATE + row tracking table feature
-class UpdateWithRowTrackingTableFeatureSuite
-  extends UpdateSQLSuite
-  with UpdateWithRowTrackingTableFeatureTests
-  with PersistentDVDisabled
-
-// UPDATE + CDC + row tracking table feature
-class UpdateWithRowTrackingTableFeatureCDCSuite
-  extends UpdateCDCSuite
-  with UpdateWithRowTrackingTableFeatureTests
-  with PersistentDVDisabled
