@@ -18,7 +18,6 @@ package io.delta.kernel.internal.commit;
 
 import static io.delta.kernel.internal.actions.SingleAction.*;
 import static io.delta.kernel.internal.actions.SingleAction.createTxnSingleAction;
-import static io.delta.kernel.internal.util.Preconditions.checkState;
 import static io.delta.kernel.internal.util.Utils.toCloseableIterator;
 
 import io.delta.kernel.Meta;
@@ -33,6 +32,7 @@ import io.delta.kernel.internal.transaction.TransactionV2State;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.utils.CloseableIterator;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
 public class CommitContextImpl implements CommitContext {
@@ -67,7 +67,7 @@ public class CommitContextImpl implements CommitContext {
   private final long commitAttemptTimestampMs;
   private final CommitInfo commitInfo;
   private final Metadata metadata;
-  private boolean iteratorConsumed;
+  private AtomicBoolean iteratorConsumed;
 
   private CommitContextImpl(
       Engine engine, TransactionV2State txnState, CloseableIterator<Row> finalizedDataActions) {
@@ -78,7 +78,7 @@ public class CommitContextImpl implements CommitContext {
     // TODO: update with ICT enablement info on conflict
     this.metadata = txnState.updatedMetadataForFirstCommitAttempt;
     this.commitInfo = getCommitInfo();
-    this.iteratorConsumed = false;
+    this.iteratorConsumed = new AtomicBoolean(false);
   }
 
   /////////////////
@@ -87,8 +87,9 @@ public class CommitContextImpl implements CommitContext {
 
   @Override
   public CloseableIterator<Row> getFinalizedActions() {
-    checkState(!iteratorConsumed, "Finalized actions iterator has already been consumed.");
-    iteratorConsumed = true;
+    if (!iteratorConsumed.compareAndSet(false, true)) {
+      throw new IllegalStateException("Finalized actions iterator has already been consumed.");
+    }
     return getMetadataActions().combine(finalizedDataActions);
   }
 
