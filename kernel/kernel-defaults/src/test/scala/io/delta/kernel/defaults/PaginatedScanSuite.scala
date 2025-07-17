@@ -114,8 +114,7 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
     logger.info(s"New PageToken: lastReadLogFileName = $lastReadLogFilePath")
     logger.info(s"New PageToken: lastReadRowIndex = $lastReturnedRowIndex")
   }
-
-  // TODO: test call hasNext() twice
+  
   /**
    * Executes a single paginated scan request.
    *
@@ -216,6 +215,69 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
       val paginatedBatch = allBatchesPaginationScan(i)
       assert(normalBatch.getFilePath.equals(paginatedBatch.getFilePath))
       assert(normalBatch.getData.getSize == paginatedBatch.getData.getSize)
+    }
+  }
+
+  // ==== Test Paginated Iterator Behaviors ======
+  // TODO: test call hasNext() twice
+  test("Call getCurrentPageToken() without calling any next() on an iterator") {
+    // Request first page
+    withTempDir { tempDir =>
+      val tablePath = tempDir.getCanonicalPath
+      // First commit: files 0-4 (5 files)
+      spark.range(0, 50, 1, 5).write.format("delta").save(tablePath)
+
+      val firstPageSize = 2L
+      val firstPaginatedScan = createPaginatedScan(
+        tablePath = tablePath,
+        tableVersionOpt = Optional.empty(),
+        pageSize = firstPageSize)
+      val firstPaginatedIter = firstPaginatedScan.getScanFiles(customEngine)
+
+      // throw exception
+      var e = intercept[IllegalStateException] {
+        firstPaginatedIter.getCurrentPageToken.get
+      }
+      assert(e.getMessage.contains("Can't call getCurrentPageToken()"))
+
+      // throw exception
+      e = intercept[IllegalStateException] {
+        firstPaginatedIter.hasNext
+        firstPaginatedIter.getCurrentPageToken.get
+      }
+      assert(e.getMessage.contains("Can't call getCurrentPageToken()"))
+
+      firstPaginatedIter.close()
+    }
+  }
+
+  test("Call getCurrentPageToken() right after hasNext()") {
+    // Request first page
+    withTempDir { tempDir =>
+      val tablePath = tempDir.getCanonicalPath
+      // First commit: files 0-4 (5 files)
+      spark.range(0, 50, 1, 5).write.format("delta").save(tablePath)
+
+      // Second commit: files 5-9 (5 more files)
+      spark.range(50, 100, 1, 5).write.format("delta").mode("append").save(tablePath)
+
+      // Third commit: files 10-14 (5 more files)
+      spark.range(100, 150, 1, 5).write.format("delta").mode("append").save(tablePath)
+
+      val firstPageSize = 2L
+      val firstPaginatedScan = createPaginatedScan(
+        tablePath = tablePath,
+        tableVersionOpt = Optional.empty(),
+        pageSize = firstPageSize)
+      val firstPaginatedIter = firstPaginatedScan.getScanFiles(customEngine)
+      if (firstPaginatedIter.hasNext) firstPaginatedIter.next()
+      val expectedPageToken = firstPaginatedIter.getCurrentPageToken.get
+
+      firstPaginatedIter.hasNext // call hsaNext() again, should not affect page token
+      val pageToken = firstPaginatedIter.getCurrentPageToken.get
+
+      assert(PageToken.fromRow(pageToken).equals(PageToken.fromRow(expectedPageToken)))
+      firstPaginatedIter.close()
     }
   }
 
