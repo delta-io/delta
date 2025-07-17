@@ -201,20 +201,11 @@ public class ScanImpl implements Scan {
 
   @Override
   public Row getScanState(Engine engine) {
-    // Check for metadata columns in the read schema and convert them to physical columns
-    List<StructField> convertedFields = new ArrayList<>();
-    for (StructField field : readSchema.fields()) {
-      Optional<StructField> converted =
-          MaterializedRowTrackingColumn.convertToPhysicalColumn(field, metadata);
-      if (converted.isPresent()) {
-        convertedFields.add(converted.get());
-      } else {
-        convertedFields.add(field);
-      }
-    }
-    StructType convertedSchema = new StructType(convertedFields);
+    // Check for row tracking columns in the read schema and convert them to physical columns
+    StructType convertedSchema =
+        MaterializedRowTrackingColumn.convertToPhysicalSchema(readSchema, metadata);
 
-    // Physical equivalent of the logical read schema.
+    // Convert regular columns to physical columns if column mapping is enabled
     StructType physicalReadSchema =
         ColumnMapping.convertToPhysicalSchema(
             convertedSchema,

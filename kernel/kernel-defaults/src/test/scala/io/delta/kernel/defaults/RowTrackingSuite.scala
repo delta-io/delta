@@ -32,8 +32,8 @@ import io.delta.kernel.exceptions.{ConcurrentWriteException, InvalidTableExcepti
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl, TableConfig, TableImpl}
 import io.delta.kernel.internal.actions.{AddFile, SingleAction}
+import io.delta.kernel.internal.rowtracking.{RowTracking, RowTrackingMetadataDomain}
 import io.delta.kernel.internal.rowtracking.MaterializedRowTrackingColumn.{ROW_COMMIT_VERSION, ROW_ID}
-import io.delta.kernel.internal.rowtracking.RowTrackingMetadataDomain
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.internal.util.VectorUtils
 import io.delta.kernel.types._
@@ -448,7 +448,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
         expectedAnswer = expectedAnswer,
         readCols = Seq("id"),
         metadataCols =
-          Seq(StructField.METADATA_ROW_ID_COLUMN, StructField.METADATA_ROW_COMMIT_VERSION_COLUMN),
+          Seq(RowTracking.METADATA_ROW_ID_COLUMN, RowTracking.METADATA_ROW_COMMIT_VERSION_COLUMN),
         engine = engine,
         expectedSchema = testSchema)
     }
@@ -477,9 +477,30 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
         expectedAnswer = expectedAnswer,
         readCols = Seq(),
         metadataCols =
-          Seq(StructField.METADATA_ROW_COMMIT_VERSION_COLUMN, StructField.METADATA_ROW_ID_COLUMN),
+          Seq(RowTracking.METADATA_ROW_COMMIT_VERSION_COLUMN, RowTracking.METADATA_ROW_ID_COLUMN),
         engine = engine,
         expectedSchema = testSchema)
+    }
+  }
+
+  test("Error when reading row tracking columns from a non-row-tracking table") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // Create a new table without row tracking
+      val wrongSchema =
+        new StructType().add("id", IntegerType.INTEGER).add("_metadata.row_id", LongType.LONG)
+      createEmptyTable(engine, tablePath, wrongSchema)
+
+      // Try to read row tracking columns
+      val e = intercept[InvalidTableException] {
+        checkTable(
+          tablePath,
+          expectedAnswer = Seq(),
+          readCols = Seq("id", "_metadata.row_id"),
+          metadataCols =
+            Seq(RowTracking.METADATA_ROW_ID_COLUMN, RowTracking.METADATA_ROW_COMMIT_VERSION_COLUMN),
+          engine = engine)
+      }
+      assert(e.getMessage.contains("Row tracking is not enabled, but row tracking column"))
     }
   }
 
@@ -499,7 +520,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
       path = path,
       expectedAnswer,
       metadataCols =
-        Seq(StructField.METADATA_ROW_ID_COLUMN, StructField.METADATA_ROW_COMMIT_VERSION_COLUMN),
+        Seq(RowTracking.METADATA_ROW_ID_COLUMN, RowTracking.METADATA_ROW_COMMIT_VERSION_COLUMN),
       expectedSchema = new StructType()
         .add(new StructField("id", IntegerType.INTEGER, true))
         .add(new StructField("value", StringType.STRING, true)))
@@ -520,7 +541,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
       path = path,
       expectedAnswer,
       readCols = Seq("value"),
-      metadataCols = Seq(StructField.METADATA_ROW_ID_COLUMN))
+      metadataCols = Seq(RowTracking.METADATA_ROW_ID_COLUMN))
   }
 
   test("Only read row tracking columns from golden table") {
@@ -540,7 +561,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
       expectedAnswer,
       readCols = Seq(),
       metadataCols =
-        Seq(StructField.METADATA_ROW_COMMIT_VERSION_COLUMN, StructField.METADATA_ROW_ID_COLUMN))
+        Seq(RowTracking.METADATA_ROW_COMMIT_VERSION_COLUMN, RowTracking.METADATA_ROW_ID_COLUMN))
   }
 
   test("Metadata columns are not read by default from golden table") {

@@ -15,8 +15,7 @@
  */
 package io.delta.kernel.internal.rowtracking;
 
-import static io.delta.kernel.types.StructField.METADATA_ROW_COMMIT_VERSION_COLUMN;
-import static io.delta.kernel.types.StructField.METADATA_ROW_ID_COLUMN;
+import static io.delta.kernel.internal.rowtracking.RowTracking.*;
 
 import io.delta.kernel.exceptions.InvalidTableException;
 import io.delta.kernel.internal.DeltaErrors;
@@ -149,36 +148,58 @@ public final class MaterializedRowTrackingColumn {
   }
 
   /**
-   * Converts a logical column to its corresponding physical column if it is a row tracking metadata
-   * column (ROW_ID or ROW_COMMIT_VERSION).
+   * Converts logical row tracking columns in a schema to their physical counterparts.
+   *
+   * <p>This method does not modify the logical schema but returns a new StructType instance.
    *
    * <p>Note that we must not mark the physical columns as metadata columns because as far as the
    * parquet reader is concerned, these columns are not metadata columns.
    *
-   * @param column The logical column to convert.
+   * @param logicalSchema The logical schema to convert.
    * @param metadata The current metadata of the table.
-   * @return An Optional containing the physical column if conversion is applicable;
-   *     Optional.empty() otherwise.
+   * @return A new StructType representing the physical schema.
    */
-  public static Optional<StructField> convertToPhysicalColumn(
-      StructField column, Metadata metadata) {
-    if (column.equals(METADATA_ROW_ID_COLUMN)) {
-      return Optional.of(
-          new StructField(
-              metadata.getConfiguration().get(ROW_ID.getMaterializedColumnNameProperty()),
-              column.getDataType(),
-              column.isNullable()));
-    } else if (column.equals(METADATA_ROW_COMMIT_VERSION_COLUMN)) {
-      return Optional.of(
-          new StructField(
-              metadata
-                  .getConfiguration()
-                  .get(ROW_COMMIT_VERSION.getMaterializedColumnNameProperty()),
-              column.getDataType(),
-              column.isNullable()));
-    } else {
-      return Optional.empty();
+  public static StructType convertToPhysicalSchema(StructType logicalSchema, Metadata metadata) {
+    List<StructField> physicalFields = new ArrayList<>();
+    // Check if row tracking is enabled and error if row tracking columns are requested
+    boolean rowTrackingEnabled = TableConfig.ROW_TRACKING_ENABLED.fromMetadata(metadata);
+
+    for (StructField field : logicalSchema.fields()) {
+      if (!rowTrackingEnabled
+          && (field.getName().equals(METADATA_ROW_ID_COLUMN_NAME)
+              || field.getName().equals(METADATA_ROW_COMMIT_VERSION_COLUMN_NAME))) {
+        throw new InvalidTableException(
+            metadata.getId(),
+            String.format(
+                "Row tracking is not enabled, but row tracking column '%s' was requested.",
+                field.getName()));
+      }
+
+      if (field.getName().equals(METADATA_ROW_ID_COLUMN_NAME)) {
+        physicalFields.add(
+            new StructField(getPhysicalColumnName(ROW_ID, metadata), field.getDataType(), true));
+      } else if (field.getName().equals(METADATA_ROW_COMMIT_VERSION_COLUMN_NAME)) {
+        physicalFields.add(
+            new StructField(
+                getPhysicalColumnName(ROW_COMMIT_VERSION, metadata), field.getDataType(), true));
+      } else {
+        physicalFields.add(field);
+      }
     }
+    return new StructType(physicalFields);
+  }
+
+  private static String getPhysicalColumnName(
+      MaterializedRowTrackingColumn column, Metadata metadata) {
+    return Optional.ofNullable(
+            metadata.getConfiguration().get(column.getMaterializedColumnNameProperty()))
+        .orElseThrow(
+            () ->
+                new InvalidTableException(
+                    metadata.getId(),
+                    String.format(
+                        "Physical column name for %s does not exist in the metadata configuration.",
+                        column.getMaterializedColumnNameProperty())));
   }
 
   /** Generates a random name by concatenating the prefix with a random UUID. */
