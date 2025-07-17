@@ -51,7 +51,7 @@ public class TransactionV2Impl implements TransactionV2 {
     }
     if (IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(txnState.updatedMetadataForFirstCommitAttempt)) {
       throw new UnsupportedOperationException(
-          "In Commit Timestamps  not yet supported in TransactionV2");
+          "In Commit Timestamps not yet supported in TransactionV2");
     }
 
     // TODO: update data actions with rowId stuff

@@ -67,7 +67,7 @@ import java.util.Map;
  * CommitContext context = txn.getCommitContextForFirstCommitAttempt(engine, allDataActionsIter);
  * resolvedTable.getCommitter.commit(
  *   engine,
- *   context.getFinalizedActions,
+ *   context.getFinalizedActions(),
  *   context.getCommitMetadata()
  * );
  * }</pre>
