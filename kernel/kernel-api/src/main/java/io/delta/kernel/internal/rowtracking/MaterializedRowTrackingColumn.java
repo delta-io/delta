@@ -15,6 +15,9 @@
  */
 package io.delta.kernel.internal.rowtracking;
 
+import static io.delta.kernel.types.StructField.METADATA_ROW_COMMIT_VERSION_COLUMN;
+import static io.delta.kernel.types.StructField.METADATA_ROW_ID_COLUMN;
+
 import io.delta.kernel.exceptions.InvalidTableException;
 import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.TableConfig;
@@ -143,6 +146,39 @@ public final class MaterializedRowTrackingColumn {
     return configsToAdd.isEmpty()
         ? Optional.empty()
         : Optional.of(metadata.withMergedConfiguration(configsToAdd));
+  }
+
+  /**
+   * Converts a logical column to its corresponding physical column if it is a row tracking metadata
+   * column (ROW_ID or ROW_COMMIT_VERSION).
+   *
+   * <p>Note that we must not mark the physical columns as metadata columns because as far as the
+   * parquet reader is concerned, these columns are not metadata columns.
+   *
+   * @param column The logical column to convert.
+   * @param metadata The current metadata of the table.
+   * @return An Optional containing the physical column if conversion is applicable;
+   *     Optional.empty() otherwise.
+   */
+  public static Optional<StructField> convertToPhysicalColumn(
+      StructField column, Metadata metadata) {
+    if (column.equals(METADATA_ROW_ID_COLUMN)) {
+      return Optional.of(
+          new StructField(
+              metadata.getConfiguration().get(ROW_ID.getMaterializedColumnNameProperty()),
+              column.getDataType(),
+              column.isNullable()));
+    } else if (column.equals(METADATA_ROW_COMMIT_VERSION_COLUMN)) {
+      return Optional.of(
+          new StructField(
+              metadata
+                  .getConfiguration()
+                  .get(ROW_COMMIT_VERSION.getMaterializedColumnNameProperty()),
+              column.getDataType(),
+              column.isNullable()));
+    } else {
+      return Optional.empty();
+    }
   }
 
   /** Generates a random name by concatenating the prefix with a random UUID. */

@@ -34,7 +34,7 @@ public class StructField {
   ////////////////////////////////////////////////////////////////////////////////
 
   /** Indicates a metadata column when present in the field metadata and the value is true */
-  private static String IS_METADATA_COLUMN_KEY = "isMetadataColumn";
+  private static final String IS_METADATA_COLUMN_KEY = "isMetadataColumn";
 
   /**
    * The name of a row index metadata column. When present this column must be populated with row
@@ -42,9 +42,37 @@ public class StructField {
    */
   public static String METADATA_ROW_INDEX_COLUMN_NAME = "_metadata.row_index";
 
+  /**
+   * The name of a row ID metadata column. When present this column must be populated with the
+   * unique row ID of each column.
+   */
+  public static String METADATA_ROW_ID_COLUMN_NAME = "_metadata.row_id";
+
+  /**
+   * The name of a row commit version metadata column. When present this column must be populated
+   * with the commit version of each row.
+   */
+  public static String METADATA_ROW_COMMIT_VERSION_COLUMN_NAME = "_metadata.row_commit_version";
+
   public static StructField METADATA_ROW_INDEX_COLUMN =
       new StructField(
           METADATA_ROW_INDEX_COLUMN_NAME,
+          LongType.LONG,
+          false,
+          FieldMetadata.builder().putBoolean(IS_METADATA_COLUMN_KEY, true).build(),
+          Collections.emptyList());
+
+  public static StructField METADATA_ROW_ID_COLUMN =
+      new StructField(
+          METADATA_ROW_ID_COLUMN_NAME,
+          LongType.LONG,
+          false,
+          FieldMetadata.builder().putBoolean(IS_METADATA_COLUMN_KEY, true).build(),
+          Collections.emptyList());
+
+  public static StructField METADATA_ROW_COMMIT_VERSION_COLUMN =
+      new StructField(
+          METADATA_ROW_COMMIT_VERSION_COLUMN_NAME,
           LongType.LONG,
           false,
           FieldMetadata.builder().putBoolean(IS_METADATA_COLUMN_KEY, true).build(),

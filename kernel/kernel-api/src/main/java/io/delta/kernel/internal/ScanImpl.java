@@ -35,6 +35,7 @@ import io.delta.kernel.internal.metrics.ScanReportImpl;
 import io.delta.kernel.internal.metrics.Timer;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.replay.PaginationContext;
+import io.delta.kernel.internal.rowtracking.MaterializedRowTrackingColumn;
 import io.delta.kernel.internal.skipping.DataSkippingPredicate;
 import io.delta.kernel.internal.skipping.DataSkippingUtils;
 import io.delta.kernel.internal.util.*;
@@ -200,10 +201,23 @@ public class ScanImpl implements Scan {
 
   @Override
   public Row getScanState(Engine engine) {
+    // Check for metadata columns in the read schema and convert them to physical columns
+    List<StructField> convertedFields = new ArrayList<>();
+    for (StructField field : readSchema.fields()) {
+      Optional<StructField> converted =
+          MaterializedRowTrackingColumn.convertToPhysicalColumn(field, metadata);
+      if (converted.isPresent()) {
+        convertedFields.add(converted.get());
+      } else {
+        convertedFields.add(field);
+      }
+    }
+    StructType convertedSchema = new StructType(convertedFields);
+
     // Physical equivalent of the logical read schema.
     StructType physicalReadSchema =
         ColumnMapping.convertToPhysicalSchema(
-            readSchema,
+            convertedSchema,
             snapshotSchema,
             ColumnMapping.getColumnMappingMode(metadata.getConfiguration()));
 
@@ -213,7 +227,7 @@ public class ScanImpl implements Scan {
     List<String> partitionColumns = VectorUtils.toJavaList(metadata.getPartitionColumns());
     StructType physicalDataReadSchema =
         PartitionUtils.physicalSchemaWithoutPartitionColumns(
-            readSchema, /* logical read schema */
+            convertedSchema, /* logical read schema */
             physicalReadSchema,
             new HashSet<>(partitionColumns));
 
@@ -224,7 +238,7 @@ public class ScanImpl implements Scan {
     return ScanStateRow.of(
         metadata,
         protocol,
-        readSchema.toJson(),
+        convertedSchema.toJson(),
         physicalReadSchema.toJson(),
         physicalDataReadSchema.toJson(),
         dataPath.toUri().toString());
