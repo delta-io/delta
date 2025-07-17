@@ -130,7 +130,7 @@ trait ChecksumStatsSuiteBase extends DeltaTableWriteSuiteBase {
         txn.getTransactionState(engine),
         generateDataFileStatus(tablePath, path, fileSize = size),
         Collections.emptyMap(),
-        true /* dataChange */,
+        true, /* dataChange */
         Optional.empty())
     }.toSeq
 
@@ -162,7 +162,7 @@ trait ChecksumStatsSuiteBase extends DeltaTableWriteSuiteBase {
         txn.getTransactionState(engine),
         generateDataFileStatus(tablePath, path, fileSize = size),
         Collections.emptyMap(),
-        true /* dataChange */,
+        true, /* dataChange */
         Optional.of(TransactionStateRow.getPhysicalSchema(txn.getTransactionState(engine))))
     }.toSeq
 
