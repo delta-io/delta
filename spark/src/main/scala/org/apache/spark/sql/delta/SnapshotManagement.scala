@@ -283,9 +283,10 @@ trait SnapshotManagement { self: DeltaLog =>
       if (DeltaUtils.isTesting) {
         throw new IllegalStateException(
           s"Delta table at $dataPath unexpectedly still requires additional file-system listing " +
-            s"after an additional file-system listing was already performed to reconcile the gap " +
-            s"between concurrent file-system and commit-owner calls. Details: $eventData")
-        }
+          s"after an additional file-system listing was already performed to reconcile the gap " +
+          s"between concurrent file-system and commit-owner calls. Details: $eventData"
+        )
+      }
     }
 
     val finalLogTuplesFromFsListingOpt: Option[Array[(FileStatus, FileType.Value, Long)]] =
