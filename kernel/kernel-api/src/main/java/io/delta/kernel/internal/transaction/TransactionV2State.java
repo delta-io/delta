@@ -20,6 +20,7 @@ import io.delta.kernel.Operation;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.actions.SetTransaction;
+import io.delta.kernel.internal.table.ResolvedTableInternal;
 import io.delta.kernel.internal.util.Clock;
 import io.delta.kernel.transaction.TransactionV2;
 import java.util.Optional;
@@ -43,7 +44,8 @@ public class TransactionV2State {
   public final String logPath;
 
   // ===== Table state =====
-  public final Optional<TransactionDataSource> readTableOpt;
+  /** The base table version from which this transaction is started. */
+  public final Optional<ResolvedTableInternal> readTableOpt;
 
   /**
    * The protocol to use for this transaction, updated with all applicable input from the
@@ -87,7 +89,7 @@ public class TransactionV2State {
       Operation operation,
       String dataPath,
       String logPath,
-      Optional<TransactionDataSource> readTableOpt,
+      Optional<ResolvedTableInternal> readTableOpt,
       Protocol updatedProtocol,
       Metadata updatedMetadataForFirstCommitAttempt,
       boolean isProtocolUpdate,

@@ -90,7 +90,7 @@ public class ResolvedTableBuilderImpl implements ResolvedTableBuilder {
   }
 
   @Override
-  public ResolvedTableBuilder withProtocolAndMetadata(Protocol protocol, Metadata metadata) {
+  public ResolvedTableBuilderImpl withProtocolAndMetadata(Protocol protocol, Metadata metadata) {
     ctx.protocolAndMetadataOpt =
         Optional.of(
             new Tuple2<>(

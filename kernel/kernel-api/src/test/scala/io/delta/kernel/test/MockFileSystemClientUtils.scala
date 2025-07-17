@@ -27,6 +27,8 @@ import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 
+object MockFileSystemClientUtils extends MockFileSystemClientUtils
+
 /**
  * This is an extension to [[BaseMockFileSystemClient]] containing specific mock implementations
  * [[FileSystemClient]] which are shared across multiple test suite.

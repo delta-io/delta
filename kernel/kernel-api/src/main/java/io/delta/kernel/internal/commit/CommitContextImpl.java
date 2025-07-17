@@ -28,7 +28,7 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.Metadata;
-import io.delta.kernel.internal.transaction.TransactionDataSource;
+import io.delta.kernel.internal.table.ResolvedTableInternal;
 import io.delta.kernel.internal.transaction.TransactionV2State;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.utils.CloseableIterator;
@@ -98,8 +98,8 @@ public class CommitContextImpl implements CommitContext {
         getCommitAsVersion(),
         txnState.logPath,
         commitInfo,
-        txnState.readTableOpt.map(TransactionDataSource::getProtocol),
-        txnState.readTableOpt.map(TransactionDataSource::getMetadata),
+        txnState.readTableOpt.map(ResolvedTableInternal::getProtocol),
+        txnState.readTableOpt.map(ResolvedTableInternal::getMetadata),
         txnState.isProtocolUpdate ? Optional.of(txnState.updatedProtocol) : Optional.empty(),
         txnState.isMetadataUpdate ? Optional.of(metadata) : Optional.empty());
   }

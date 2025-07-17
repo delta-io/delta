@@ -2,18 +2,20 @@ package io.delta.kernel.internal.commit
 
 import java.util.Optional
 
-import io.delta.kernel.Operation
+import io.delta.kernel.{Operation, TableManager}
 import io.delta.kernel.data.Row
-import io.delta.kernel.internal.actions.{Metadata, Protocol, SetTransaction, SingleAction}
-import io.delta.kernel.internal.transaction.{TransactionDataSource, TransactionV2State}
+import io.delta.kernel.internal.actions.{SetTransaction, SingleAction}
+import io.delta.kernel.internal.table.{ResolvedTableBuilderImpl, ResolvedTableInternal}
+import io.delta.kernel.internal.transaction.TransactionV2State
 import io.delta.kernel.internal.util.Clock
-import io.delta.kernel.test.{ActionUtils, MockEngineUtils}
+import io.delta.kernel.test.{ActionUtils, MockEngineUtils, MockFileSystemClientUtils}
 import io.delta.kernel.types.{IntegerType, StructType}
 import io.delta.kernel.utils.CloseableIterator
 
 import org.scalatest.funsuite.AnyFunSuite
 
-class CommitContextSuite extends AnyFunSuite with ActionUtils with MockEngineUtils {
+class CommitContextSuite
+    extends AnyFunSuite with ActionUtils with MockEngineUtils {
 
   private val dataPath = "/path/to/table"
   private val logPath = s"$dataPath/_delta_log"
@@ -27,12 +29,12 @@ class CommitContextSuite extends AnyFunSuite with ActionUtils with MockEngineUti
     override def next(): Row = throw new NoSuchElementException("No more elements")
     override def close(): Unit = {}
   }
-  private val uninvokableEngine = mockEngine()
+  private val emptyMockEngine = MockFileSystemClientUtils.createMockFSListFromEngine(Nil)
 
   private def createTestTxnState(
       isCreateOrReplace: Boolean,
       operation: Operation,
-      readTableOpt: Optional[TransactionDataSource],
+      readTableOpt: Optional[ResolvedTableInternal],
       isProtocolUpdate: Boolean,
       isMetadataUpdate: Boolean): TransactionV2State = {
     new TransactionV2State(
@@ -59,20 +61,22 @@ class CommitContextSuite extends AnyFunSuite with ActionUtils with MockEngineUti
     isProtocolUpdate = true,
     isMetadataUpdate = true)
 
-  private val writeToTableTxnState = createTestTxnState(
+  private val updateTableTxnState = createTestTxnState(
     isCreateOrReplace = false,
     Operation.WRITE,
-    readTableOpt = Optional.of(new TransactionDataSource {
-      override def getVersion: Long = 10L
-      override def getProtocol: Protocol = protocol
-      override def getMetadata: Metadata = metadata
-    }),
+    readTableOpt = Optional.of(
+      TableManager
+        .loadTable(dataPath)
+        .asInstanceOf[ResolvedTableBuilderImpl]
+        .atVersion(10L)
+        .withProtocolAndMetadata(protocol, metadata)
+        .build(emptyMockEngine)),
     isProtocolUpdate = false,
     isMetadataUpdate = false)
 
   test("getFinalizedActions can only be called once") {
     val commitContext = CommitContextImpl
-      .forFirstCommitAttempt(uninvokableEngine, createTableTxnState, emptyDataActionsIterator)
+      .forFirstCommitAttempt(emptyMockEngine, createTableTxnState, emptyDataActionsIterator)
 
     commitContext.getFinalizedActions()
 
@@ -83,7 +87,7 @@ class CommitContextSuite extends AnyFunSuite with ActionUtils with MockEngineUti
 
   test("getFinalizedActions metadata actions order: CommitInfo, Protocol, Metadata, SetTxn") {
     val commitContext = CommitContextImpl
-      .forFirstCommitAttempt(uninvokableEngine, createTableTxnState, emptyDataActionsIterator)
+      .forFirstCommitAttempt(emptyMockEngine, createTableTxnState, emptyDataActionsIterator)
     val finalizedActions = commitContext.getFinalizedActions
 
     assert(!finalizedActions.next().isNullAt(SingleAction.COMMIT_INFO_ORDINAL))
@@ -92,16 +96,16 @@ class CommitContextSuite extends AnyFunSuite with ActionUtils with MockEngineUti
     assert(!finalizedActions.next().isNullAt(SingleAction.TXN_ORDINAL))
   }
 
-  test("commit metadata version = 0 for initial CommitContext with no read source (i.e. CREATE)") {
+  test("CommitMetadata version = 0 for first commit attempt for CREATE") {
     val commitContext = CommitContextImpl
-      .forFirstCommitAttempt(uninvokableEngine, createTableTxnState, emptyDataActionsIterator)
+      .forFirstCommitAttempt(emptyMockEngine, createTableTxnState, emptyDataActionsIterator)
 
     assert(commitContext.getCommitMetadata.getVersion == 0L)
   }
 
-  test("commit version = readSource version + 1 for initial CommitContext (i.e. WRITE)") {
+  test("CommitMetadata version = readTable.version + 1 for first commit attempt for UPDATE") {
     val commitContext = CommitContextImpl
-      .forFirstCommitAttempt(uninvokableEngine, writeToTableTxnState, emptyDataActionsIterator)
+      .forFirstCommitAttempt(emptyMockEngine, updateTableTxnState, emptyDataActionsIterator)
 
     assert(commitContext.getCommitMetadata.getVersion == 11L)
   }
