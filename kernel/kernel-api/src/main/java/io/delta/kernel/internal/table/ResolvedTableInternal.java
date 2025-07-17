@@ -23,7 +23,6 @@ import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.snapshot.LogSegment;
-import io.delta.kernel.internal.transaction.TransactionDataSource;
 import io.delta.kernel.internal.util.Clock;
 import java.util.Map;
 
@@ -32,7 +31,7 @@ import java.util.Map;
  * to information that are only needed by Kernel's internal operations but should not be exposed in
  * the public API.
  */
-public interface ResolvedTableInternal extends ResolvedTable, TransactionDataSource {
+public interface ResolvedTableInternal extends ResolvedTable {
   String getLogPath();
 
   Protocol getProtocol();
