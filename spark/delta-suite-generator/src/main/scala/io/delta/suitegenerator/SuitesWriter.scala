@@ -61,15 +61,6 @@ object SuitesWriter {
   private lazy val PACKAGE_NAME =
     ModularSuiteGenerator.GENERATED_PACKAGE.parse[Term].get.asInstanceOf[Term.Ref]
 
-  private val IMPORT_PACKAGES = List(
-    importer"org.apache.spark.sql.delta._",
-    importer"org.apache.spark.sql.delta.cdc._",
-    importer"org.apache.spark.sql.delta.deletionvectors._",
-    importer"org.apache.spark.sql.delta.rowid._",
-    importer"org.apache.spark.sql.delta.rowtracking._",
-    importer"org.apache.spark.sql.delta.stats._"
-  )
-
   private lazy val SRC_HEADERS =
     s"""/*
        |${LEGAL_HEADER.linesWithSeparators.map(" *" + _).mkString}
@@ -100,12 +91,12 @@ class SuitesWriter(val outputDir: Path) {
 
   protected val allFiles: ListBuffer[Path] = ListBuffer.empty[Path]
 
-  def writeGeneratedSuitesOfGroup(suites: List[TestSuite], group: String): Unit = {
+  def writeGeneratedSuitesOfGroup(suites: List[TestSuite], testGroup: TestGroup): Unit = {
     val src = SRC_HEADERS +
       source"""package $PACKAGE_NAME
-               import ..$IMPORT_PACKAGES
+               import ..${testGroup.imports}
                ..${suites.map(_.classDefinition)}"""
-    val srcFile = outputDir.resolve(group + ".scala")
+    val srcFile = outputDir.resolve(testGroup.name + ".scala")
     val formattedSrc = Scalafmt.format(src, SCALAFMT_CONFIG).get
     writeFile(srcFile, formattedSrc)
   }
