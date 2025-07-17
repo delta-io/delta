@@ -412,7 +412,7 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
     }
   }
 
-  // ===== Single checkpoint and JSON files test cases =====
+  // ===== Single checkpoint file and multiple JSON files test cases =====
   /**
    * Log segment list:
    * 00000000000000000010.checkpoint.parquet
