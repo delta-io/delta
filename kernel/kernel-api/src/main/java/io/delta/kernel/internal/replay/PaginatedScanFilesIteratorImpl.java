@@ -104,7 +104,7 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
 
   private boolean isBaseScanExhausted = false;
 
-  private boolean hasLeastOneBatchConsumed  = false;
+  private boolean hasLeastOneBatchConsumed = false;
 
   /**
    * Constructs a paginated iterator over scan files on top of a given filtered scan files iterator
@@ -130,10 +130,19 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
     }
   }
 
-  // Note: user is able to call getCurrentPageToken() after they close the paginated iterator
+  /**
+   * Returns a page token representing the position of the last consumed batch, corresponding to the
+   * most recent {@code next()} call.
+   *
+   * <p>Note: This method can be called after the paginated iterator has been closed.
+   */
   @Override
   public Optional<Row> getCurrentPageToken() {
-    checkState(hasLeastOneBatchConsumed, "Can't call getCurrentPageToken() without consuming any batches!");
+    // User must call getCurrentPageToken() after they call next() at least once.
+    checkState(
+        hasLeastOneBatchConsumed,
+        "Can't call getCurrentPageToken() without consuming any batches!");
+    // Return empty page token to signal pagination completes.
     if (isBaseScanExhausted) {
       return Optional.empty();
     }
