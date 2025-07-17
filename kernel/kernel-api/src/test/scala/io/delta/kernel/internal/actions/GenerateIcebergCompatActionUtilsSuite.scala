@@ -71,7 +71,8 @@ class GenerateIcebergCompatActionUtilsSuite extends AnyFunSuite {
           txnStateRow,
           dataFileStatus,
           partitionValues,
-          dataChange)
+          dataChange,
+          Optional.empty())
       }.getMessage.contains(expectedErrorMessageContains))
     assert(
       intercept[UnsupportedOperationException] {
@@ -79,7 +80,8 @@ class GenerateIcebergCompatActionUtilsSuite extends AnyFunSuite {
           txnStateRow,
           dataFileStatus,
           partitionValues,
-          dataChange)
+          dataChange,
+          Optional.empty())
       }.getMessage.contains(expectedErrorMessageContains))
   }
 
@@ -128,22 +130,24 @@ class GenerateIcebergCompatActionUtilsSuite extends AnyFunSuite {
           getTestTransactionStateRow(compatibleTableProperties),
           testDataFileStatusWithoutStatistics,
           Collections.emptyMap(), // partitionValues
-          true // dataChange
+          true, // dataChange
+          Optional.empty() // Pre-parsed physical schema
         )
       }.getMessage.contains("icebergCompatV2 compatibility requires 'numRecords' statistic"))
   }
 
   test("GenerateIcebergCompatActionUtils cannot create remove with dataChange=true " +
     "for append-only table") {
+    val txnStateRow = getTestTransactionStateRow(
+      compatibleTableProperties ++ Map(TableConfig.APPEND_ONLY_ENABLED.getKey -> "true"))
     assert(
       intercept[KernelException] {
         GenerateIcebergCompatActionUtils.generateIcebergCompatWriterV1RemoveAction(
-          getTestTransactionStateRow(
-            compatibleTableProperties ++ Map(TableConfig.APPEND_ONLY_ENABLED.getKey -> "true")),
+          txnStateRow,
           testDataFileStatusWithStatistics,
           Collections.emptyMap(), // partitionValues
-          true // dataChange
-        )
+          true, // dataChange
+          Optional.of(TransactionStateRow.getPhysicalSchema(txnStateRow)))
       }.getMessage.contains("Cannot modify append-only table"))
   }
 
@@ -235,7 +239,8 @@ class GenerateIcebergCompatActionUtilsSuite extends AnyFunSuite {
           txnRow,
           testDataFileStatusWithStatistics,
           Collections.emptyMap(), // partitionValues
-          dataChange),
+          dataChange,
+          Optional.empty()),
         expectedPath = "file1.parquet",
         expectedSize = 1000,
         expectedModificationTime = 10,
@@ -261,7 +266,8 @@ class GenerateIcebergCompatActionUtilsSuite extends AnyFunSuite {
               txnRow,
               fileStatus,
               Collections.emptyMap(), // partitionValues
-              dataChange),
+              dataChange,
+              Optional.empty()),
             expectedPath = "file1.parquet",
             expectedSize = 1000,
             expectedDeletionTimestamp = 10,

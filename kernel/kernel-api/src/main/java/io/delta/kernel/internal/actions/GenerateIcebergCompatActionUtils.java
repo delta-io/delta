@@ -68,7 +68,8 @@ public final class GenerateIcebergCompatActionUtils {
       DataFileStatus fileStatus,
       Map<String, Literal> partitionValues,
       boolean dataChange,
-      Map<String, String> tags) {
+      Map<String, String> tags,
+      Optional<StructType> physicalSchemaOpt) {
     Map<String, String> configuration = TransactionStateRow.getConfiguration(transactionState);
 
     /* ----- Validate that this is a valid usage of this API ----- */
@@ -90,7 +91,8 @@ public final class GenerateIcebergCompatActionUtils {
     // This takes care of relativizing the file path and serializing the file statistics
     AddFile addFile =
         AddFile.convertDataFileStatus(
-            TransactionStateRow.getPhysicalSchema(transactionState),
+            physicalSchemaOpt.orElseGet(
+                () -> TransactionStateRow.getPhysicalSchema(transactionState)),
             tableRoot,
             fileStatus,
             partitionValues,
@@ -106,9 +108,15 @@ public final class GenerateIcebergCompatActionUtils {
       Row transactionState,
       DataFileStatus fileStatus,
       Map<String, Literal> partitionValues,
-      boolean dataChange) {
+      boolean dataChange,
+      Optional<StructType> physicalSchemaOpt) {
     return generateIcebergCompatWriterV1AddAction(
-        transactionState, fileStatus, partitionValues, dataChange, Collections.emptyMap());
+        transactionState,
+        fileStatus,
+        partitionValues,
+        dataChange,
+        Collections.emptyMap(),
+        physicalSchemaOpt);
   }
 
   /**
@@ -121,6 +129,7 @@ public final class GenerateIcebergCompatActionUtils {
    * @param dataChange whether or not the add constitutes a dataChange (i.e. append vs. compaction)
    * @param tags key-value metadata to be attached to the add action
    * @param deletionVectorDescriptor optional deletion vector descriptor for the add action
+   * @param physicalSchemaOpt An optional pre-parsed physical schema of the table.
    * @return add action row that can be included in the transaction
    * @throws UnsupportedOperationException if icebergWriterCompatV3 is not enabled
    * @throws UnsupportedOperationException if maxRetries != 0 in the transaction
@@ -135,7 +144,8 @@ public final class GenerateIcebergCompatActionUtils {
       Map<String, String> tags,
       Optional<Long> baseRowId,
       Optional<Long> defaultRowCommitVersion,
-      Optional<DeletionVectorDescriptor> deletionVectorDescriptor) {
+      Optional<DeletionVectorDescriptor> deletionVectorDescriptor,
+      Optional<StructType> physicalSchemaOpt) {
     Map<String, String> configuration = TransactionStateRow.getConfiguration(transactionState);
 
     /* ----- Validate that this is a valid usage of this API ----- */
@@ -160,7 +170,8 @@ public final class GenerateIcebergCompatActionUtils {
     // This takes care of relativizing the file path and serializing the file statistics
     AddFile addFile =
         AddFile.convertDataFileStatus(
-            TransactionStateRow.getPhysicalSchema(transactionState),
+            physicalSchemaOpt.orElseGet(
+                () -> TransactionStateRow.getPhysicalSchema(transactionState)),
             tableRoot,
             fileStatus,
             partitionValues,
@@ -182,6 +193,7 @@ public final class GenerateIcebergCompatActionUtils {
    * @param partitionValues the partition values for the remove
    * @param dataChange whether or not the remove constitutes a dataChange (i.e. delete vs.
    *     compaction)
+   * @param physicalSchemaOpt An optional pre-parsed physical schema of the table.
    * @return remove action row that can be committed to the transaction
    * @throws UnsupportedOperationException if icebergWriterCompatV1 is not enabled
    * @throws UnsupportedOperationException if maxRetries != 0 in the transaction
@@ -192,7 +204,8 @@ public final class GenerateIcebergCompatActionUtils {
       Row transactionState,
       DataFileStatus fileStatus,
       Map<String, Literal> partitionValues,
-      boolean dataChange) {
+      boolean dataChange,
+      Optional<StructType> physicalSchemaOpt) {
     Map<String, String> config = TransactionStateRow.getConfiguration(transactionState);
 
     /* ----- Validate that this is a valid usage of this API ----- */
@@ -211,7 +224,8 @@ public final class GenerateIcebergCompatActionUtils {
     // This takes care of relativizing the file path and serializing the file statistics
     Row removeFileRow =
         convertRemoveDataFileStatus(
-            TransactionStateRow.getPhysicalSchema(transactionState),
+            physicalSchemaOpt.orElseGet(
+                () -> TransactionStateRow.getPhysicalSchema(transactionState)),
             tableRoot,
             fileStatus,
             partitionValues,
@@ -233,6 +247,7 @@ public final class GenerateIcebergCompatActionUtils {
    * @param dataChange whether or not the remove constitutes a dataChange (i.e. delete vs.
    *     compaction)
    * @param deletionVectorDescriptor optional deletion vector descriptor for the add action
+   * @param physicalSchemaOpt An optional pre-parsed physical schema of the table.
    * @return remove action row that can be committed to the transaction
    * @throws UnsupportedOperationException if icebergWriterCompatV3 is not enabled
    * @throws UnsupportedOperationException if maxRetries != 0 in the transaction
@@ -246,7 +261,8 @@ public final class GenerateIcebergCompatActionUtils {
       boolean dataChange,
       Optional<Long> baseRowId,
       Optional<Long> defaultRowCommitVersion,
-      Optional<DeletionVectorDescriptor> deletionVectorDescriptor) {
+      Optional<DeletionVectorDescriptor> deletionVectorDescriptor,
+      Optional<StructType> physicalSchemaOpt) {
     Map<String, String> config = TransactionStateRow.getConfiguration(transactionState);
 
     /* ----- Validate that this is a valid usage of this API ----- */
@@ -275,7 +291,8 @@ public final class GenerateIcebergCompatActionUtils {
     // This takes care of relativizing the file path and serializing the file statistics
     Row removeFileRow =
         convertRemoveDataFileStatus(
-            TransactionStateRow.getPhysicalSchema(transactionState),
+            physicalSchemaOpt.orElseGet(
+                () -> TransactionStateRow.getPhysicalSchema(transactionState)),
             tableRoot,
             fileStatus,
             partitionValues,
