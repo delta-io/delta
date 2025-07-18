@@ -118,18 +118,17 @@ public interface Scan {
    */
   Row getScanState(Engine engine);
 
-
-  //TODO: return iterator of ScanFiles in the JSON file list
+  // TODO: return iterator of ScanFiles in the JSON file list
   CloseableIterator<FilteredColumnarBatch> getScanFilesFromJSON(Engine engine);
 
-  //TODO: return info about two hashsets
+  // TODO: return info about two hashsets
   ColumnarBatch getLogReplayStates();
-  
+
   // TODO: return list of log segment files (in ScanFileRow format)
   List<Row> getLogSegmentCheckpointFiles();
 
-  //TODO: return iterator of ScanFiles in the given checkpoint list
-  CloseableIterator<FilteredColumnarBatch> getScanFileFromCheckpointList(List<Row> checkpoints);
+  // TODO: return iterator of ScanFiles in the given checkpoint list
+  CloseableIterator<FilteredColumnarBatch> getScanFileFromCheckpoint(ColumnarBatch tombstone, Row checkpoint);
 
   /**
    * Transform the physical data read from the table data file into the logical data that expected

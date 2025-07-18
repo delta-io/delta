@@ -1,6 +1,7 @@
 package io.delta.dsv2.read;
 
 import io.delta.kernel.Scan;
+import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.internal.json.JsonUtils;
@@ -8,10 +9,16 @@ import io.delta.kernel.engine.Engine;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+
+import io.delta.kernel.utils.CloseableIterator;
+import org.apache.spark.broadcast.Broadcast;
+import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.connector.read.Batch;
 import org.apache.spark.sql.connector.read.InputPartition;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
 import org.apache.spark.sql.types.StructType;
+import org.apache.spark.api.java.JavaRDD;
+import org.apache.spark.api.java.JavaSparkContext;
 
 public class DeltaScan implements org.apache.spark.sql.connector.read.Scan, Batch {
   private final Scan kernelScan;
@@ -23,7 +30,10 @@ public class DeltaScan implements org.apache.spark.sql.connector.read.Scan, Batc
   private final String sessionToken;
   private InputPartition[] cachedPartitions;
 
+  // ====== Ada Add ===========
   private boolean isDistributedLogReplayEnabled = true;
+  private final JavaSparkContext sparkContext;
+  private final SparkSession spark;
 
   public DeltaScan(
       Scan kernelScan,
@@ -31,7 +41,8 @@ public class DeltaScan implements org.apache.spark.sql.connector.read.Scan, Batc
       StructType sparkReadSchema,
       String accessKey,
       String secretKey,
-      String sessionToken) {
+      String sessionToken,
+      SparkSession spark) {
     this.kernelScan = kernelScan;
     this.tableEngine = tableEngine;
     this.sparkReadSchema = sparkReadSchema;
@@ -39,6 +50,9 @@ public class DeltaScan implements org.apache.spark.sql.connector.read.Scan, Batc
     this.accessKey = accessKey;
     this.secretKey = secretKey;
     this.sessionToken = sessionToken;
+
+    this.spark = spark;
+    this.sparkContext = JavaSparkContext.fromSparkContext(spark.sparkContext());
   }
 
   /**
@@ -51,30 +65,60 @@ public class DeltaScan implements org.apache.spark.sql.connector.read.Scan, Batc
 
     List<DeltaInputPartition> scanFileAsInputPartitions = new ArrayList<>();
 
-    Iterator<FilteredColumnarBatch> columnarBatchIterator
-    if(!isDistributedLogReplayEnabled) {
-      columnarBatchIterator = kernelScan.getScanFiles(tableEngine);
-    }
+    CloseableIterator<FilteredColumnarBatch> columnarBatchIterator = null;
+    if(!isDistributedLogReplayEnabled) columnarBatchIterator = kernelScan.getScanFiles(tableEngine);
     else {
-      // TODO: distributed log reply logic
-      Iterator<FilteredColumnarBatch> columnarBatchIteratorForJSON = kernelScan.getScanFileFromJSON();
-      ColumnarBatch hashsets = kernelScan.getLogReplayStates();
-      List<Row> checkpointFiles = kernelScan.getLogSegmentCheckpointFiles();
+      // get json iterator first
+      columnarBatchIterator = kernelScan.getScanFilesFromJSON(tableEngine);
 
-      /*
-      Method PlanDataRemotely()
-      JavaRDD<DataFile> dataFileRDD =
-        sparkContext
-            .parallelize(toBeans(dataManifests), dataManifests.size())
-            .flatMap(new ReadDataManifest(tableBroadcast(), context(), withColumnStats));
+      ColumnarBatch tombstoneHashsets = kernelScan.getLogReplayStates();
+      List<Row> checkpointFileList = kernelScan.getLogSegmentCheckpointFiles();
 
-       List<List<DataFile>> dataFileGroups = collectPartitions(dataFileRDD);
-      * */
-      // send hashsets and one checkpoint file to each executor
-      // collectParitions
+      boolean isSerial = true;
+      // serial implementation, can be used to test Kernel API
+      if(isSerial) {
+        for(Row checkpointFile : checkpointFileList) {
+          // for each executor
+          CloseableIterator<FilteredColumnarBatch> parquetScanFilesIter = kernelScan.getScanFileFromCheckpoint(tombstoneHashsets, checkpointFile);
+          columnarBatchIterator.combine(parquetScanFilesIter);
+        }
+      }
+      else {
+        // TODO: distributed implementation
+        // Broadcast shared variables
+        Broadcast<ColumnarBatch> tombstoneHashsetsBroadcast = sparkContext.broadcast(tombstoneHashsets);
+        Broadcast<Scan> kernelScanBroadcast = sparkContext.broadcast(kernelScan);
 
-      //In call(): one checkpointfile ----do log replay using given hashset ----> return a list of ScanFiles
+        // Parallelize checkpoint files across executor
+        JavaRDD<Row> checkpointRDD = sparkContext.parallelize(checkpointFileList, checkpointFileList.size());
 
+        // For each checkpoint file, read its scan files using the kernel API
+        JavaRDD<FilteredColumnarBatch> batchRDD = checkpointRDD.flatMap(checkpointFile -> {
+          ColumnarBatch tombstones = tombstoneHashsetsBroadcast.value();
+          Scan scan = kernelScanBroadcast.value();
+
+          // Get iterator of scan files from this checkpoint
+          try (CloseableIterator<FilteredColumnarBatch> iter =
+                   scan.getScanFileFromCheckpoint(tombstones, checkpointFile)) {
+            List<FilteredColumnarBatch> result = new ArrayList<>();
+            while (iter.hasNext()) {
+              result.add(iter.next());
+            }
+            return result.iterator(); // Safe: list iterator, not stream
+          }
+        });
+
+        // Collect all batches back to the driver
+        List<FilteredColumnarBatch> allBatches = batchRDD.collect();
+      }
+
+      // Ref: how iceberg send log replay tasks to spark executors
+//      JavaRDD<DataFile> dataFileRDD =
+//          sparkContext
+//              .parallelize(toBeans(dataManifests), dataManifests.size())
+//              .flatMap(new ReadDataManifest(tableBroadcast(), context(), withColumnStats));
+//
+//      List<List<DataFile>> dataFileGroups = collectPartitions(dataFileRDD);
     }
 
     while (columnarBatchIterator.hasNext()) {

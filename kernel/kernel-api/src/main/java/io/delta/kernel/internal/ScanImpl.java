@@ -222,11 +222,14 @@ public class ScanImpl implements Scan {
     return getScanFilesFromJSON(engine, false);
   }
 
-  public CloseableIterator<FilteredColumnarBatch> getScanFilesFromJSON(Engine engine, boolean shouldReadStats) {
-    Optional<Predicate> predicate = getPartitionsFilters()
-        .map(p ->
-                rewritePartitionPredicateOnCheckpointFileSchema(
-                    p, partitionColToStructFieldMap.get()));
+  public CloseableIterator<FilteredColumnarBatch> getScanFilesFromJSON(
+      Engine engine, boolean shouldReadStats) {
+    Optional<Predicate> predicate =
+        getPartitionsFilters()
+            .map(
+                p ->
+                    rewritePartitionPredicateOnCheckpointFileSchema(
+                        p, partitionColToStructFieldMap.get()));
 
     return logReplay.getScanFilesForJSON(engine, shouldReadStats, predicate, scanMetrics);
   }
@@ -242,10 +245,11 @@ public class ScanImpl implements Scan {
   }
 
   @Override
-  public CloseableIterator<FilteredColumnarBatch> getScanFileFromCheckpointList(List<Row> checkpoints) {
+  public CloseableIterator<FilteredColumnarBatch> getScanFileFromCheckpoint(
+      ColumnarBatch tombstone,
+      Row checkpoints) {
     return null;
   }
-
 
   @Override
   public Optional<Predicate> getRemainingFilter() {

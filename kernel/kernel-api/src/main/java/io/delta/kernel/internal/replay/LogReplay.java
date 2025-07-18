@@ -231,7 +231,9 @@ public class LogReplay {
 
   // TODO: getScanFilesForFileList -> file list can be of JSON or CP file list or combined file list
   public CloseableIterator<FilteredColumnarBatch> getScanFilesForJSON(
-      Engine engine, boolean shouldReadStats, Optional<Predicate> checkpointPredicate,
+      Engine engine,
+      boolean shouldReadStats,
+      Optional<Predicate> checkpointPredicate,
       ScanMetrics scanMetrics) {
     final CloseableIterator<ActionWrapper> addRemoveIter =
         new ActionsIterator(
@@ -244,7 +246,7 @@ public class LogReplay {
   }
 
   private List<FileStatus> getLogReplayJSONFiles(LogSegment logSegment) {
-    //TODO: get a file list of all JSONs in logSegment
+    // TODO: get a file list of all JSONs in logSegment
     return logSegment.getDeltas();
   }
 

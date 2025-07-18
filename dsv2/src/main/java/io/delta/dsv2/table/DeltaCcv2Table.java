@@ -19,6 +19,8 @@ import org.apache.spark.sql.connector.read.ScanBuilder;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 
+import org.apache.spark.sql.SparkSession;
+
 public class DeltaCcv2Table implements Table, SupportsRead {
 
   private final ResolvedTable resolvedTable;
@@ -28,6 +30,8 @@ public class DeltaCcv2Table implements Table, SupportsRead {
   private final String accessKey;
   private final String secretKey;
   private final String sessionToken;
+
+  private SparkSession lazySpark = null;
 
   public DeltaCcv2Table(
       ResolvedTable resolvedTable,
@@ -46,7 +50,15 @@ public class DeltaCcv2Table implements Table, SupportsRead {
 
   @Override
   public ScanBuilder newScanBuilder(CaseInsensitiveStringMap options) {
-    return new DeltaScanBuilder(resolvedTable, kernelEngine, accessKey, secretKey, sessionToken);
+    return new DeltaScanBuilder(resolvedTable, kernelEngine, accessKey, secretKey, sessionToken, sparkSession());
+  }
+
+  private SparkSession sparkSession() {
+    if (lazySpark == null) {
+      this.lazySpark = SparkSession.active();
+    }
+
+    return lazySpark;
   }
 
   @Override
