@@ -39,9 +39,6 @@ import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.catalyst.plans.SQLHelper
 import org.scalatest.funsuite.AnyFunSuite
 import org.slf4j.{Logger, LoggerFactory}
-import io.delta.kernel.expressions.Literal
-import io.delta.kernel.internal.fs.Path
-import io.delta.kernel.internal.hook.LogCompactionHook
 
 class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
     with ExpressionTestUtils with SQLHelper with DeltaTableWriteSuiteBase {
