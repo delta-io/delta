@@ -25,6 +25,7 @@ import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.replay.PageToken;
 import io.delta.kernel.internal.replay.PaginatedScanFilesIteratorImpl;
 import io.delta.kernel.internal.replay.PaginationContext;
+import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.utils.CloseableIterator;
 import java.util.Optional;
 
@@ -40,6 +41,7 @@ public class PaginatedScanImpl implements PaginatedScan {
       String tablePath,
       long tableVersion,
       long pageSize,
+      LogSegment logSegment,
       Optional<Predicate> predicate,
       Optional<Row> pageTokenRowOpt) {
     this.baseScan = baseScan;
@@ -51,11 +53,20 @@ public class PaginatedScanImpl implements PaginatedScan {
             .map(
                 token ->
                     PaginationContext.forPageWithPageToken(
-                        tablePath, tableVersion, predicate.hashCode(), pageSize, token))
+                        tablePath,
+                        tableVersion,
+                        logSegment.hashCode(),
+                        predicate.hashCode(),
+                        pageSize,
+                        token))
             .orElseGet(
                 () ->
                     PaginationContext.forFirstPage(
-                        tablePath, tableVersion, predicate.hashCode(), pageSize));
+                        tablePath,
+                        tableVersion,
+                        logSegment.hashCode(),
+                        predicate.hashCode(),
+                        pageSize));
   }
 
   @Override
