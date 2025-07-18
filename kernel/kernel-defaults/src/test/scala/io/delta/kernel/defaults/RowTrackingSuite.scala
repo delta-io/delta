@@ -839,9 +839,13 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
             RowTrackingMetadataDomain.fromSnapshot(beforeSnapshot).map(_.getRowIdHighWaterMark)
           val afterHighWaterMark: Optional[Long] =
             RowTrackingMetadataDomain.fromSnapshot(afterSnapshot).map(_.getRowIdHighWaterMark)
+          val numInitialRows = initialData.head._2.map(_.getData.getSize).sum
+
+          assert(beforeHighWaterMark.get() == numInitialRows - 1)
           if (replaceData.nonEmpty) {
             // If replace data is provided, the high watermark should be incremented
-            assert(beforeHighWaterMark.get() < afterHighWaterMark.get())
+            val numReplaceRows = replaceData.head._2.map(_.getData.getSize).sum
+            assert(afterHighWaterMark.get() == numInitialRows + numReplaceRows - 1)
           } else {
             // If no replace data, the high watermark should remain the same
             assert(beforeHighWaterMark.get() == afterHighWaterMark.get())
