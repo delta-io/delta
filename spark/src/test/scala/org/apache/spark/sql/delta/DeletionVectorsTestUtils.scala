@@ -33,6 +33,7 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{DataFrame, QueryTest, RuntimeConfig, SparkSession}
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions.{col, lit}
 import org.apache.spark.sql.test.SharedSparkSession
 
@@ -127,26 +128,52 @@ trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession with De
       dataDF: DataFrame,
       partitionBy: Seq[String] = Seq.empty,
       enableDVs: Boolean = true,
-      conf: Seq[(String, String)] = Nil)
+      conf: Seq[(String, String)] = Nil,
+      saveAsTable: Boolean = false)
       (fn: (() => io.delta.tables.DeltaTable, DeltaLog) => Unit): Unit = {
-    withTempPath { path =>
-      val tablePath = new Path(path.getAbsolutePath)
+    def createTable(
+       saveAsTable: Boolean,
+       tableNameOpt: Option[String],
+       tablePathOpt: Option[Path]): Unit = {
+      val tableName = tableNameOpt.getOrElse("")
+      val tablePath = tablePathOpt.getOrElse(new Path("."))
       withSQLConf(conf: _*) {
-        dataDF.write
+        val df = dataDF.write
           .option(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key, enableDVs.toString)
           .partitionBy(partitionBy: _*)
           .format("delta")
-          .save(tablePath.toString)
+        if (saveAsTable) {
+          df.saveAsTable(tableName)
+        } else {
+          df.save(tablePath.toString)
+        }
       }
       // DeltaTable hangs on to the DataFrame it is created with for the entire object lifetime.
       // That means subsequent `targetTable.toDF` calls will return the same snapshot.
       // The DV tests are generally written assuming `targetTable.toDF` would return a new snapshot.
-      // So create a function here instead of a n instance, so `targetTable().toDF`
+      // So create a function here instead of an instance, so `targetTable().toDF`
       // will actually provide a new snapshot.
-      val targetTable =
-        () => io.delta.tables.DeltaTable.forPath(tablePath.toString)
-      val targetLog = DeltaLog.forTable(spark, tablePath)
+      val targetTable = if (saveAsTable) {
+        () => io.delta.tables.DeltaTable.forName(tableOrViewName = tableName)
+      } else {
+        () => io.delta.tables.DeltaTable.forPath(path = tablePath.toString)
+      }
+      val targetLog = if (saveAsTable) {
+        DeltaLog.forTable(spark, tableName = TableIdentifier(tableName))
+      } else {
+        DeltaLog.forTable(spark, dataPath = tablePath)
+      }
       fn(targetTable, targetLog)
+    }
+    if (saveAsTable) {
+      withTempTable(createTable = false) { tableName =>
+        createTable(saveAsTable, tableNameOpt = Some(tableName), tablePathOpt = None)
+      }
+    } else {
+      withTempPath { path =>
+        val tablePath = new Path(path.getAbsolutePath)
+        createTable(saveAsTable, tableNameOpt = None, tablePathOpt = Some(tablePath))
+      }
     }
   }
 
