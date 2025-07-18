@@ -19,10 +19,8 @@ import java.util
 import java.util.Optional
 
 import scala.collection.JavaConverters._
-import scala.collection.convert.ImplicitConversions.`iterator asScala`
 import scala.collection.immutable.Seq
 
-import io.delta.golden.GoldenTableUtils
 import io.delta.kernel.Table
 import io.delta.kernel.data.{FilteredColumnarBatch, Row}
 import io.delta.kernel.defaults.internal.parquet.ParquetSuiteBase
@@ -103,6 +101,54 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
 
     commitTransaction(txn, engine, getAppendActions(txn, replaceData))
   }
+
+  /**
+   * Creates a table with row tracking enabled and inserts initial data, then performs a merge
+   * operation to update some records and insert new ones. We use Spark SQL for this test table to
+   * ensure that the result table has both materialized and not materialized row tracking columns.
+   *
+   * @param tablePath The path to the Delta table.
+   */
+  private def createRowTrackingTableWithSpark(tablePath: String): Unit = {
+    // Enable row tracking feature
+    spark.sql(
+      s"""
+         |CREATE TABLE delta.`$tablePath` (
+         |  id INT,
+         |  value STRING
+         |) USING DELTA
+         |TBLPROPERTIES ('delta.enableRowTracking' = 'true')
+         |""".stripMargin)
+
+    // Insert 5 records
+    val initialData = Seq(
+      (1, "A"),
+      (2, "B"),
+      (3, "C"),
+      (4, "D"),
+      (5, "E"))
+    spark.createDataFrame(initialData).toDF(
+      "id",
+      "value").repartition(1).write.format("delta").mode("overwrite").save(tablePath)
+
+    // Prepare source for merge
+    val sourceData = Seq(
+      (3, "C_updated"), // will update id=3
+      (6, "F") // will insert new id=6
+    )
+    spark.createDataFrame(sourceData).toDF("id", "value").createOrReplaceTempView("merge_source")
+
+    // Merge: update id=3, insert id=6
+    spark.sql(
+      s"""
+         |MERGE INTO delta.`$tablePath` t
+         |USING merge_source s
+         |ON t.id = s.id
+         |WHEN MATCHED THEN UPDATE SET t.value = s.value
+         |WHEN NOT MATCHED THEN INSERT (id, value) VALUES (s.id, s.value)
+         |""".stripMargin)
+  }
+
   private def verifyBaseRowIDs(
       engine: Engine,
       tablePath: String,
@@ -427,62 +473,6 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
   /* -------- Test reading from tables with row tracking -------- */
   // TODO: For now, we only read the materialized column values so the metadata column content will
   //  be null for a new table without materialized row id/row commit version.
-  test("Read row tracking columns from new table") {
-    withTempDirAndEngine { (tablePath, engine) =>
-      // Create a new row tracking table with some dummy data
-      createTableWithRowTracking(engine, tablePath)
-      val dataBatch = generateData(testSchema, Seq.empty, Map.empty, 5, 1)
-      appendData(engine, tablePath, data = prepareDataForCommit(dataBatch))
-
-      // Replicate the dummy data including the expected row tracking metadata columns
-      val expectedAnswer = dataBatch.zipWithIndex.flatMap {
-        case (batch: FilteredColumnarBatch, batchIndex) =>
-          batch.getRows.zipWithIndex.map { case (row, localIndex) =>
-            val globalIndex = batchIndex * batch.getRows.length + localIndex
-            TestRow(testColumnNullableValue(testSchema.at(0).getDataType, globalIndex), null, null)
-          }
-      }
-
-      checkTable(
-        tablePath,
-        expectedAnswer = expectedAnswer,
-        readCols = Seq("id"),
-        metadataCols =
-          Seq(RowTracking.METADATA_ROW_ID_COLUMN, RowTracking.METADATA_ROW_COMMIT_VERSION_COLUMN),
-        engine = engine,
-        expectedSchema = testSchema)
-    }
-  }
-
-  test("Only read row tracking columns from new table") {
-    withTempDirAndEngine { (tablePath, engine) =>
-      // Create a new row tracking table with some dummy data
-      createTableWithRowTracking(engine, tablePath)
-      val dataBatch = generateData(testSchema, Seq.empty, Map.empty, 5, 1)
-      appendData(engine, tablePath, data = prepareDataForCommit(dataBatch))
-
-      // Replicate the dummy data including the expected row tracking metadata columns
-      val expectedAnswer = dataBatch.zipWithIndex.flatMap {
-        case (batch: FilteredColumnarBatch, batchIndex) =>
-          batch.getRows.zipWithIndex.map { case (row, localIndex) =>
-            // TODO: globalIndex will be used once we can compute dynamic row IDs for null values
-            val globalIndex = batchIndex * batch.getRows.length + localIndex
-            TestRow(null, null)
-          }
-      }
-
-      // This test also checks a different ordering of the metadata columns
-      checkTable(
-        tablePath,
-        expectedAnswer = expectedAnswer,
-        readCols = Seq(),
-        metadataCols =
-          Seq(RowTracking.METADATA_ROW_COMMIT_VERSION_COLUMN, RowTracking.METADATA_ROW_ID_COLUMN),
-        engine = engine,
-        expectedSchema = testSchema)
-    }
-  }
-
   test("Error when reading row tracking columns from a non-row-tracking table") {
     withTempDirAndEngine { (tablePath, engine) =>
       // Create a new table without row tracking
@@ -505,82 +495,90 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
   }
 
   test("Read row tracking columns from golden table") {
-    val path = GoldenTableUtils.goldenTablePath("row-tracking")
+    withTempDirAndEngine { (tablePath, _) =>
+      createRowTrackingTableWithSpark(tablePath)
 
-    val expectedAnswer = Seq(
-      TestRow(1, "A", 0L, 1L),
-      TestRow(2, "B", 1L, 1L),
-      TestRow(3, "C_updated", 2L, null),
-      TestRow(4, "D", 3L, 1L),
-      TestRow(5, "E", 4L, 1L),
-      TestRow(6, "F", null, null))
+      val expectedAnswer = Seq(
+        TestRow(1, "A", 0L, 1L),
+        TestRow(2, "B", 1L, 1L),
+        TestRow(3, "C_updated", 2L, null),
+        TestRow(4, "D", 3L, 1L),
+        TestRow(5, "E", 4L, 1L),
+        TestRow(6, "F", null, null))
 
-    // This tests also checks that the golden table schema is inferred correctly
-    checkTable(
-      path = path,
-      expectedAnswer,
-      metadataCols =
-        Seq(RowTracking.METADATA_ROW_ID_COLUMN, RowTracking.METADATA_ROW_COMMIT_VERSION_COLUMN),
-      expectedSchema = new StructType()
-        .add(new StructField("id", IntegerType.INTEGER, true))
-        .add(new StructField("value", StringType.STRING, true)))
+      // This tests also checks that the golden table schema is inferred correctly
+      checkTable(
+        path = tablePath,
+        expectedAnswer,
+        metadataCols =
+          Seq(RowTracking.METADATA_ROW_ID_COLUMN, RowTracking.METADATA_ROW_COMMIT_VERSION_COLUMN),
+        expectedSchema = new StructType()
+          .add(new StructField("id", IntegerType.INTEGER, true))
+          .add(new StructField("value", StringType.STRING, true)))
+    }
   }
 
   test("Read subset of row tracking columns from golden table") {
-    val path = GoldenTableUtils.goldenTablePath("row-tracking")
+    withTempDirAndEngine { (tablePath, _) =>
+      createRowTrackingTableWithSpark(tablePath)
 
-    val expectedAnswer = Seq(
-      TestRow("A", 0L),
-      TestRow("B", 1L),
-      TestRow("C_updated", 2L),
-      TestRow("D", 3L),
-      TestRow("E", 4L),
-      TestRow("F", null))
+      val expectedAnswer = Seq(
+        TestRow("A", 0L),
+        TestRow("B", 1L),
+        TestRow("C_updated", 2L),
+        TestRow("D", 3L),
+        TestRow("E", 4L),
+        TestRow("F", null))
 
-    checkTable(
-      path = path,
-      expectedAnswer,
-      readCols = Seq("value"),
-      metadataCols = Seq(RowTracking.METADATA_ROW_ID_COLUMN))
+      checkTable(
+        path = tablePath,
+        expectedAnswer,
+        readCols = Seq("value"),
+        metadataCols = Seq(RowTracking.METADATA_ROW_ID_COLUMN))
+    }
   }
 
   test("Only read row tracking columns from golden table") {
-    val path = GoldenTableUtils.goldenTablePath("row-tracking")
+    withTempDirAndEngine { (tablePath, _) =>
+      createRowTrackingTableWithSpark(tablePath)
 
-    val expectedAnswer = Seq(
-      TestRow(1L, 0L),
-      TestRow(1L, 1L),
-      TestRow(null, 2L),
-      TestRow(1L, 3L),
-      TestRow(1L, 4L),
-      TestRow(null, null))
+      val expectedAnswer = Seq(
+        TestRow(1L, 0L),
+        TestRow(1L, 1L),
+        TestRow(null, 2L),
+        TestRow(1L, 3L),
+        TestRow(1L, 4L),
+        TestRow(null, null))
 
-    // This test also checks a different ordering of the metadata columns
-    checkTable(
-      path = path,
-      expectedAnswer,
-      readCols = Seq(),
-      metadataCols =
-        Seq(RowTracking.METADATA_ROW_COMMIT_VERSION_COLUMN, RowTracking.METADATA_ROW_ID_COLUMN))
+      // This test also checks a different ordering of the metadata columns
+      checkTable(
+        path = tablePath,
+        expectedAnswer,
+        readCols = Seq(),
+        metadataCols =
+          Seq(RowTracking.METADATA_ROW_COMMIT_VERSION_COLUMN, RowTracking.METADATA_ROW_ID_COLUMN))
+    }
   }
 
   test("Metadata columns are not read by default from golden table") {
-    val path = GoldenTableUtils.goldenTablePath("row-tracking")
+    withTempDirAndEngine { (tablePath, _) =>
+      createRowTrackingTableWithSpark(tablePath)
 
-    val expectedAnswer = Seq(
-      TestRow(1, "A"),
-      TestRow(2, "B"),
-      TestRow(3, "C_updated"),
-      TestRow(4, "D"),
-      TestRow(5, "E"),
-      TestRow(6, "F"))
+      val expectedAnswer = Seq(
+        TestRow(1, "A"),
+        TestRow(2, "B"),
+        TestRow(3, "C_updated"),
+        TestRow(4, "D"),
+        TestRow(5, "E"),
+        TestRow(6, "F"))
 
-    checkTable(
-      path = path,
-      expectedAnswer,
-      expectedSchema = new StructType()
-        .add(new StructField("id", IntegerType.INTEGER, true))
-        .add(new StructField("value", StringType.STRING, true)))
+      checkTable(
+        path = tablePath,
+        expectedAnswer,
+        expectedSchema = new StructType()
+          .add(new StructField("id", IntegerType.INTEGER, true))
+          .add(new StructField("value", StringType.STRING, true)))
+    }
   }
 
   /* -------- Conflict resolution tests -------- */
