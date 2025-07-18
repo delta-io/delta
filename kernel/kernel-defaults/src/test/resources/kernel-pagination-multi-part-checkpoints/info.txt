@@ -1,0 +1,21 @@
+# Below are scala codes used to create the `kernel-pagination-multi-part-checkpoints` table.
+
+// Create one commit with 10 files (10 AddFile actions)
+spark.range(0, 1800)
+     .repartition(18) // 10 files = 10 AddFile actions
+     .write.format("delta").mode("overwrite").save(tablePath)
+
+// Force multi-part checkpoint creation with small part size
+withSQLConf(
+    "spark.databricks.delta.checkpoint.partSize" -> "6" // 10 AddFiles → 3 checkpoint parts
+    ) {
+    val deltaLog = DeltaLog.forTable(spark, tablePath)
+    deltaLog.checkpoint() // multi-part checkpoint at version 0
+    }
+
+// Commits 1 and 2: Add 1 file each
+for (i <- 1 to 2) {
+    spark.range(i * 1000, i * 1000 + 100) // small data
+    .coalesce(1) // 1 file
+    .write.format("delta").mode("append").save(tablePath)
+}
