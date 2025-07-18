@@ -80,7 +80,6 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
     getScanBuilder(tablePath, tableVersionOpt).buildPaginated(pageSize, pageTokenOpt)
   }
 
-  /** Test case to check if the result of a single page request is expected */
   case class FirstPageRequestTestContext(
       pageSize: Int,
       expScanFilesCnt: Int,

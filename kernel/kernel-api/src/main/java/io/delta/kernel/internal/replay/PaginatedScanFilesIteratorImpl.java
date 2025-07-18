@@ -262,7 +262,7 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
     }
     hasLeastOneBatchConsumed = true;
     final FilteredColumnarBatch ret = currentBatch.get();
-    // Batch has been validated in prepareNext(), no need to re-validate it.
+    validateBatch(ret);
     final long numSelectedAddFilesInBatch = ret.getPreComputedNumSelectedRows().get();
     final String batchFilePath = ret.getFilePath().get();
 
