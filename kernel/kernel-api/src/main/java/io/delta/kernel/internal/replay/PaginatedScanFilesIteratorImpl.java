@@ -156,7 +156,7 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
                 paginationContext.getTablePath(),
                 paginationContext.getTableVersion(),
                 paginationContext.getPredicateHash(),
-                -1 /* log segment hash */)
+                paginationContext.getLogSegmentHash())
             .toRow();
     return Optional.of(pageTokenRow);
   }
@@ -346,18 +346,16 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
     boolean isSameFilePath =
         tokenLastReadFilePathOpt.isPresent()
             && batchFilePath.equals(tokenLastReadFilePathOpt.get());
-    if (isSameFilePath) {
-      // For sidecar files, if file path matches, sidecar index must also present and match.
-      if (isSidecar(batchFilePath)) {
-        checkArgument(
-            tokenLastReadSidecarFileIdxOpt.isPresent()
-                && lastSidecarIndex == tokenLastReadSidecarFileIdxOpt.get(),
-            "Sidecar index mismatch for file: %s",
-            batchFilePath);
-      }
-      return true;
+    if (!isSameFilePath) return false;
+    // For sidecar files, if file path matches, sidecar index must also present and match.
+    if (isSidecar(batchFilePath)) {
+      checkArgument(
+          tokenLastReadSidecarFileIdxOpt.isPresent()
+              && lastSidecarIndex == tokenLastReadSidecarFileIdxOpt.get(),
+          "Sidecar index mismatch for file: %s",
+          batchFilePath);
     }
-    return false;
+    return true;
   }
 
   /**

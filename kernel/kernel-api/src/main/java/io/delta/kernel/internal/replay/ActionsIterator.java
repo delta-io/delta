@@ -159,6 +159,7 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
   // TODO: verify numCheckpointFilesSkipped is correct in E2E test
   // TODO: add unit test for this method
   public boolean paginatedFilter(DeltaLogFile nextLogFile) {
+    Objects.requireNonNull(paginationContextOpt);
     // Pagination isn't enabled.
     if (!paginationContextOpt.isPresent()) return true;
     String nextFilePath = nextLogFile.getFile().getPath();
@@ -391,6 +392,8 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
       }
       sidecarIndexInV2Manifest++;
       if (paginationContextOpt.isPresent()) {
+        // Different from regular log files, name of sidecars are not in order, so we need to use
+        // sidecar index in V2 manifest to compare
         if (paginationContextOpt.get().getLastReadSidecarFileIdx().isPresent()
             && sidecarIndexInV2Manifest
                 < paginationContextOpt.get().getLastReadSidecarFileIdx().get()) {
