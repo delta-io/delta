@@ -234,7 +234,8 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
             && lastReturnedRowIndex + numRowsInBatch <= tokenLastReturnedRowIndexOpt.get()) {
           lastReturnedRowIndex += numRowsInBatch;
           logger.info(
-              "Pagination: skipping batch from a partially consumed file : {}, last row index is {}",
+              "Pagination: skipping batch from a partially consumed file : {}, "
+                  + "last row index is {}",
               batchFilePath,
               lastReturnedRowIndex);
           continue;
