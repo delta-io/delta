@@ -28,6 +28,9 @@ import io.delta.kernel.defaults.engine.{DefaultEngine, DefaultJsonHandler, Defau
 import io.delta.kernel.defaults.test.AbstractTableManagerAdapter
 import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestUtils}
 import io.delta.kernel.defaults.utils.TestUtilsWithTableManagerAPIs
+import io.delta.kernel.expressions.Literal
+import io.delta.kernel.internal.fs.Path
+import io.delta.kernel.internal.hook.LogCompactionHook
 import io.delta.kernel.internal.replay.{PageToken, PaginatedScanFilesIteratorImpl}
 import io.delta.kernel.utils.CloseableIterator
 
@@ -36,9 +39,6 @@ import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.catalyst.plans.SQLHelper
 import org.scalatest.funsuite.AnyFunSuite
 import org.slf4j.{Logger, LoggerFactory}
-import io.delta.kernel.expressions.Literal
-import io.delta.kernel.internal.fs.Path
-import io.delta.kernel.internal.hook.LogCompactionHook
 
 class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
     with ExpressionTestUtils with SQLHelper with DeltaTableWriteSuiteBase {
