@@ -29,7 +29,8 @@ import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.internal.SQLConf.StoreAssignmentPolicy
 
 trait UpdateSQLMixin extends UpdateBaseMixin
-  with DeltaSQLCommandTest {
+  with DeltaSQLCommandTest
+  with DeltaDMLTestUtilsPathBased {
 
   override protected def executeUpdate(
       target: String,
