@@ -57,52 +57,6 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
   }
 
   /**
-   * Creates a table at the given path, optionally with initial data and row tracking enabled or
-   * disabled. Then replaces the table with new (or no) data and optionally enables/disables row
-   * tracking after the replacement.
-   *
-   * @param engine The Delta Kernel engine to use.
-   * @param tablePath The path to the Delta table.
-   * @param schema The schema to use for the table.
-   * @param extraProps Additional table properties.
-   * @param initialData Data to append after initial table creation (before replace).
-   * @param replaceData Data to append as part of the replace transaction.
-   * @param enableBefore Whether to enable row tracking before the replace.
-   * @param enableAfter Whether to enable row tracking after the replace.
-   */
-  private def createAndReplaceTable(
-      engine: Engine,
-      tablePath: String,
-      schema: StructType = testSchema,
-      extraProps: Map[String, String] = Map.empty,
-      initialData: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])] = Seq.empty,
-      replaceData: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])] = Seq.empty,
-      enableBefore: Boolean = false,
-      enableAfter: Boolean = true): Unit = {
-    val initialTableProps =
-      Map(TableConfig.ROW_TRACKING_ENABLED.getKey -> enableBefore.toString) ++ extraProps
-
-    // Create an empty table with row tracking enabled or disabled
-    createEmptyTable(engine, tablePath, schema = schema, tableProperties = initialTableProps)
-
-    // Optionally fill the table with initial data if provided
-    if (initialData.nonEmpty) {
-      appendData(engine, tablePath, data = initialData)
-    }
-
-    // Create a REPLACE transaction
-    val replaceTableProps =
-      Map(TableConfig.ROW_TRACKING_ENABLED.getKey -> enableAfter.toString) ++ extraProps
-    val txnBuilder = Table.forPath(engine, tablePath).asInstanceOf[TableImpl]
-      .createReplaceTableTransactionBuilder(engine, testEngineInfo)
-      .withSchema(engine, schema)
-      .withTableProperties(engine, replaceTableProps.asJava)
-    val txn = txnBuilder.build(engine)
-
-    commitTransaction(txn, engine, getAppendActions(txn, replaceData))
-  }
-
-  /**
    * Creates a table with row tracking enabled and inserts initial data, then performs a merge
    * operation to update some records and insert new ones. We use Spark SQL for this test table to
    * ensure that the result table has both materialized and not materialized row tracking columns.
