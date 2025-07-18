@@ -220,7 +220,7 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
 
   // ==== Test Paginated Iterator Behaviors ======
   // TODO: test call hasNext() twice
-  test("Call getCurrentPageToken() without calling any next() on an iterator") {
+  test("Calling getCurrentPageToken() without calling next() should throw Exception") {
     // Request first page
     withTempDir { tempDir =>
       val tablePath = tempDir.getCanonicalPath
@@ -251,7 +251,7 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
     }
   }
 
-  test("Call getCurrentPageToken() right after hasNext()") {
+  test("getCurrentPageToken() is impacted only by next() calls, not hasNext() calls") {
     // Request first page
     withTempDir { tempDir =>
       val tablePath = tempDir.getCanonicalPath

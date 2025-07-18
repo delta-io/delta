@@ -365,12 +365,9 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
    * seen, indicating the start of a new unseen file during pagination.
    */
   private boolean isFirstBatchFromUnseenFile(String batchFilePath) {
+    // If the batch's file path differs from {@code lastReadLogFilePath}, it's considered an
+    // unseen file.
     if (!batchFilePath.equals(lastReadLogFilePath)) {
-      // If batch isn't from a sidecar, it must appear after lastReadLogFilePath in reverse
-      // lexicographic order.
-      // If the batch's file path differs from {@code lastReadLogFilePath}, it's considered an
-      // unseen
-      // file.
       // For non-sidecar files, files must appear in reverse lexicographic order —
       // i.e., the current file must come *before* the last seen file.
       checkArgument(
