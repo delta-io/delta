@@ -201,10 +201,14 @@ trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession with De
   def enableDeletionVectorsInNewTables(conf: RuntimeConfig): Unit =
     conf.set(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey, "true")
 
-  /** Enable persistent Deletion Vectors in a Delta table. */
+  /** Enable persistent Deletion Vectors in a Delta table with table path. */
   def enableDeletionVectorsInTable(tablePath: Path, enable: Boolean): Unit =
+    enableDeletionVectorsInTable(tableName = s"delta.`$tablePath`", enable)
+
+  /** Enable persistent Deletion Vectors in a Delta table with table name. */
+  def enableDeletionVectorsInTable(tableName: String, enable: Boolean): Unit =
     spark.sql(
-      s"""ALTER TABLE delta.`$tablePath`
+      s"""ALTER TABLE $tableName
          |SET TBLPROPERTIES ('${DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key}' = '$enable')
          |""".stripMargin)
 
