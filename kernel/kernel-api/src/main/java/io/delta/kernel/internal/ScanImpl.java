@@ -218,7 +218,7 @@ public class ScanImpl implements Scan {
     List<String> partitionColumns = VectorUtils.toJavaList(metadata.getPartitionColumns());
     StructType physicalDataReadSchema =
         PartitionUtils.physicalSchemaWithoutPartitionColumns(
-            convertedSchema, /* logical read schema */
+            readSchema, /* logical read schema */
             physicalReadSchema,
             new HashSet<>(partitionColumns));
 
@@ -229,7 +229,7 @@ public class ScanImpl implements Scan {
     return ScanStateRow.of(
         metadata,
         protocol,
-        convertedSchema.toJson(),
+        readSchema.toJson(),
         physicalReadSchema.toJson(),
         physicalDataReadSchema.toJson(),
         dataPath.toUri().toString());

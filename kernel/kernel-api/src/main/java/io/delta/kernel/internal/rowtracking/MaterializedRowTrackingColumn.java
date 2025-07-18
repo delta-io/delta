@@ -168,20 +168,19 @@ public final class MaterializedRowTrackingColumn {
       if (!rowTrackingEnabled
           && (field.getName().equals(METADATA_ROW_ID_COLUMN_NAME)
               || field.getName().equals(METADATA_ROW_COMMIT_VERSION_COLUMN_NAME))) {
-        throw new InvalidTableException(
-            metadata.getId(),
-            String.format(
-                "Row tracking is not enabled, but row tracking column '%s' was requested.",
-                field.getName()));
+        throw DeltaErrors.missingRowTrackingColumnRequested(field.getName());
       }
 
       if (field.getName().equals(METADATA_ROW_ID_COLUMN_NAME)) {
         physicalFields.add(
-            new StructField(getPhysicalColumnName(ROW_ID, metadata), field.getDataType(), true));
+            new StructField(
+                getPhysicalColumnName(ROW_ID, metadata), field.getDataType(), true /* nullable */));
       } else if (field.getName().equals(METADATA_ROW_COMMIT_VERSION_COLUMN_NAME)) {
         physicalFields.add(
             new StructField(
-                getPhysicalColumnName(ROW_COMMIT_VERSION, metadata), field.getDataType(), true));
+                getPhysicalColumnName(ROW_COMMIT_VERSION, metadata),
+                field.getDataType(),
+                true /* nullable */));
       } else {
         physicalFields.add(field);
       }
@@ -195,11 +194,8 @@ public final class MaterializedRowTrackingColumn {
             metadata.getConfiguration().get(column.getMaterializedColumnNameProperty()))
         .orElseThrow(
             () ->
-                new InvalidTableException(
-                    metadata.getId(),
-                    String.format(
-                        "Physical column name for %s does not exist in the metadata configuration.",
-                        column.getMaterializedColumnNameProperty())));
+                DeltaErrors.missingMetadataConfigField(
+                    column.getMaterializedColumnNameProperty(), metadata.getConfiguration()));
   }
 
   /** Generates a random name by concatenating the prefix with a random UUID. */

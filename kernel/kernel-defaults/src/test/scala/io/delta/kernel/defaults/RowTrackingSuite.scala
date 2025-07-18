@@ -448,7 +448,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
     }
   }
 
-  test("Read row tracking columns from golden table") {
+  test("Read row tracking columns from delta-spark table") {
     withTempDirAndEngine { (tablePath, _) =>
       createRowTrackingTableWithSpark(tablePath)
 
@@ -460,7 +460,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
         TestRow(5, "E", 4L, 1L),
         TestRow(6, "F", null, null))
 
-      // This tests also checks that the golden table schema is inferred correctly
+      // This tests also checks that the delta-spark table schema is inferred correctly
       checkTable(
         path = tablePath,
         expectedAnswer,
@@ -472,7 +472,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
     }
   }
 
-  test("Read subset of row tracking columns from golden table") {
+  test("Read subset of row tracking columns from delta-spark table") {
     withTempDirAndEngine { (tablePath, _) =>
       createRowTrackingTableWithSpark(tablePath)
 
@@ -492,7 +492,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
     }
   }
 
-  test("Only read row tracking columns from golden table") {
+  test("Only read row tracking columns from delta-spark table") {
     withTempDirAndEngine { (tablePath, _) =>
       createRowTrackingTableWithSpark(tablePath)
 
@@ -514,7 +514,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
     }
   }
 
-  test("Metadata columns are not read by default from golden table") {
+  test("Metadata columns are not read by default from delta-spark table") {
     withTempDirAndEngine { (tablePath, _) =>
       createRowTrackingTableWithSpark(tablePath)
 
