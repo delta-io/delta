@@ -41,7 +41,9 @@ class CatalogOwnedEnablementSuite
     super.beforeEach()
     CatalogOwnedCommitCoordinatorProvider.clearBuilders()
     CatalogOwnedCommitCoordinatorProvider.registerBuilder(
-      "spark_catalog", TrackingInMemoryCommitCoordinatorBuilder(batchSize = 3))
+      catalogName = CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
+      commitCoordinatorBuilder = TrackingInMemoryCommitCoordinatorBuilder(batchSize = 3)
+    )
   }
 
   private val ICT_ENABLED_KEY = DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key

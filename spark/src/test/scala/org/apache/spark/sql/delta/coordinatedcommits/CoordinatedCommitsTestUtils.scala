@@ -127,7 +127,9 @@ trait CatalogOwnedTestBaseSuite
     CatalogOwnedCommitCoordinatorProvider.clearBuilders()
     catalogOwnedCoordinatorBackfillBatchSize.foreach { batchSize =>
       CatalogOwnedCommitCoordinatorProvider.registerBuilder(
-        "spark_catalog", TrackingInMemoryCommitCoordinatorBuilder(batchSize = batchSize))
+        catalogName = CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
+        commitCoordinatorBuilder = TrackingInMemoryCommitCoordinatorBuilder(batchSize)
+      )
     }
     DeltaLog.clearCache()
   }
