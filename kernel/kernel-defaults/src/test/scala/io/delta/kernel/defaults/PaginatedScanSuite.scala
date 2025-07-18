@@ -36,6 +36,9 @@ import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.catalyst.plans.SQLHelper
 import org.scalatest.funsuite.AnyFunSuite
 import org.slf4j.{Logger, LoggerFactory}
+import io.delta.kernel.expressions.Literal
+import io.delta.kernel.internal.fs.Path
+import io.delta.kernel.internal.hook.LogCompactionHook
 
 class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
     with ExpressionTestUtils with SQLHelper with DeltaTableWriteSuiteBase {
@@ -278,6 +281,60 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
 
       assert(PageToken.fromRow(pageToken).equals(PageToken.fromRow(expectedPageToken)))
       firstPaginatedIter.close()
+    }
+  }
+
+  // ===== Data Integrity test cases=====
+  // TODO: test predicate changes
+  /**
+   * Test case to verify pagination behavior when log segment changes between page requests.
+   */
+  test("Throw exception when log segment changes between page requests") {
+    withTempDir { tempDir =>
+      val tablePath = tempDir.getCanonicalPath
+      // First commit: files 0-4 (5 files)
+      spark.range(0, 50, 1, 5).write.format("delta").save(tablePath)
+
+      // Second commit: files 5-9 (5 more files)
+      spark.range(50, 100, 1, 5).write.format("delta").mode("append").save(tablePath)
+
+      // Third commit: files 10-14 (5 more files)
+      spark.range(100, 150, 1, 5).write.format("delta").mode("append").save(tablePath)
+
+      // Fourth commit: files 15-19 (5 more files)
+      spark.range(150, 200, 1, 5).write.format("delta").mode("append").save(tablePath)
+
+      // Fifth commit: files 20-24 (5 more files)
+      spark.range(200, 250, 1, 5).write.format("delta").mode("append").save(tablePath)
+
+      // Request first page
+      val firstPageSize = 2L
+      val firstPaginatedScan = createPaginatedScan(
+        tablePath = tablePath,
+        tableVersionOpt = Optional.empty(),
+        pageSize = firstPageSize)
+      val firstPaginatedIter = firstPaginatedScan.getScanFiles(customEngine)
+      if (firstPaginatedIter.hasNext) firstPaginatedIter.next() // call next() once
+      val firstPageToken = firstPaginatedIter.getCurrentPageToken.get
+      firstPaginatedIter.close()
+
+      // Perform log compaction for versions 0-2; log segment should change
+      val dataPath = new Path(s"file:${tablePath}")
+      val logPath = new Path(s"file:${tablePath}", "_delta_log")
+      val compactionHook = new LogCompactionHook(dataPath, logPath, 0, 2, 0)
+      compactionHook.threadSafeInvoke(customEngine)
+      logger.info("Log compaction completed for versions 0-2")
+
+      // Request second page
+      val secondPageSize = 5L
+      val e = intercept[IllegalArgumentException] {
+        createPaginatedScan(
+          tablePath = tablePath,
+          tableVersionOpt = Optional.empty(),
+          pageSize = secondPageSize,
+          pageTokenOpt = Optional.of(firstPageToken))
+      }
+      assert(e.getMessage.contains("Invalid page token: token log segment"))
     }
   }
 
