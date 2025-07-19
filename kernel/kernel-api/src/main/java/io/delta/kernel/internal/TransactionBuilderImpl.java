@@ -345,11 +345,6 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         throw new UnsupportedOperationException(
             "REPLACE TABLE is not yet supported on IcebergCompatV3 tables");
       }
-      if (newProtocol.orElse(baseProtocol).supportsFeature(TableFeatures.ROW_TRACKING_W_FEATURE)) {
-        // Block this for now to be safe, we will return to this in the future
-        throw new UnsupportedOperationException(
-            "REPLACE TABLE is not yet supported on row tracking tables");
-      }
     }
 
     return new TransactionImpl(
