@@ -128,7 +128,8 @@ public interface Scan {
   List<Row> getLogSegmentCheckpointFiles();
 
   // TODO: return iterator of ScanFiles in the given checkpoint list
-  CloseableIterator<FilteredColumnarBatch> getScanFileFromCheckpoint(ColumnarBatch tombstone, Row checkpoint);
+  CloseableIterator<FilteredColumnarBatch> getScanFileFromCheckpoint(
+      ColumnarBatch tombstone, Row checkpoint);
 
   /**
    * Transform the physical data read from the table data file into the logical data that expected

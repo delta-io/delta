@@ -9,6 +9,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
+import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.catalog.SupportsRead;
 import org.apache.spark.sql.connector.catalog.Table;
@@ -18,8 +19,6 @@ import org.apache.spark.sql.connector.expressions.Transform;
 import org.apache.spark.sql.connector.read.ScanBuilder;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
-
-import org.apache.spark.sql.SparkSession;
 
 public class DeltaCcv2Table implements Table, SupportsRead {
 
@@ -50,7 +49,8 @@ public class DeltaCcv2Table implements Table, SupportsRead {
 
   @Override
   public ScanBuilder newScanBuilder(CaseInsensitiveStringMap options) {
-    return new DeltaScanBuilder(resolvedTable, kernelEngine, accessKey, secretKey, sessionToken, sparkSession());
+    return new DeltaScanBuilder(
+        resolvedTable, kernelEngine, accessKey, secretKey, sessionToken, sparkSession());
   }
 
   private SparkSession sparkSession() {

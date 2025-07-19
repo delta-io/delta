@@ -19,7 +19,6 @@ public class DeltaScanBuilder implements ScanBuilder {
 
   SparkSession spark;
 
-
   public DeltaScanBuilder(
       ResolvedTable resolvedTable,
       Engine tableEngine,

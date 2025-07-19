@@ -246,8 +246,7 @@ public class ScanImpl implements Scan {
 
   @Override
   public CloseableIterator<FilteredColumnarBatch> getScanFileFromCheckpoint(
-      ColumnarBatch tombstone,
-      Row checkpoints) {
+      ColumnarBatch tombstone, Row checkpoints) {
     return null;
   }
 
