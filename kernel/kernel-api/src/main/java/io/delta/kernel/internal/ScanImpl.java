@@ -35,6 +35,7 @@ import io.delta.kernel.internal.metrics.ScanReportImpl;
 import io.delta.kernel.internal.metrics.Timer;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.replay.PaginationContext;
+import io.delta.kernel.internal.rowtracking.MaterializedRowTrackingColumn;
 import io.delta.kernel.internal.skipping.DataSkippingPredicate;
 import io.delta.kernel.internal.skipping.DataSkippingUtils;
 import io.delta.kernel.internal.util.*;
@@ -200,10 +201,14 @@ public class ScanImpl implements Scan {
 
   @Override
   public Row getScanState(Engine engine) {
-    // Physical equivalent of the logical read schema.
+    // Check for row tracking columns in the read schema and convert them to physical columns
+    StructType convertedSchema =
+        MaterializedRowTrackingColumn.convertToPhysicalSchema(readSchema, metadata);
+
+    // Convert regular columns to physical columns if column mapping is enabled
     StructType physicalReadSchema =
         ColumnMapping.convertToPhysicalSchema(
-            readSchema,
+            convertedSchema,
             snapshotSchema,
             ColumnMapping.getColumnMappingMode(metadata.getConfiguration()));
 

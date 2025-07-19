@@ -15,6 +15,8 @@
  */
 package io.delta.kernel.internal.rowtracking;
 
+import static io.delta.kernel.internal.rowtracking.RowTracking.*;
+
 import io.delta.kernel.exceptions.InvalidTableException;
 import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.TableConfig;
@@ -143,6 +145,57 @@ public final class MaterializedRowTrackingColumn {
     return configsToAdd.isEmpty()
         ? Optional.empty()
         : Optional.of(metadata.withMergedConfiguration(configsToAdd));
+  }
+
+  /**
+   * Converts logical row tracking columns in a schema to their physical counterparts.
+   *
+   * <p>This method does not modify the logical schema but returns a new StructType instance.
+   *
+   * <p>Note that we must not mark the physical columns as metadata columns because as far as the
+   * parquet reader is concerned, these columns are not metadata columns.
+   *
+   * @param logicalSchema The logical schema to convert.
+   * @param metadata The current metadata of the table.
+   * @return A new StructType representing the physical schema.
+   */
+  public static StructType convertToPhysicalSchema(StructType logicalSchema, Metadata metadata) {
+    List<StructField> physicalFields = new ArrayList<>();
+    // Check if row tracking is enabled and error if row tracking columns are requested
+    boolean rowTrackingEnabled = TableConfig.ROW_TRACKING_ENABLED.fromMetadata(metadata);
+
+    for (StructField field : logicalSchema.fields()) {
+      if (!rowTrackingEnabled
+          && (field.getName().equals(METADATA_ROW_ID_COLUMN_NAME)
+              || field.getName().equals(METADATA_ROW_COMMIT_VERSION_COLUMN_NAME))) {
+        throw DeltaErrors.missingRowTrackingColumnRequested(field.getName());
+      }
+
+      if (field.getName().equals(METADATA_ROW_ID_COLUMN_NAME)) {
+        physicalFields.add(
+            new StructField(
+                getPhysicalColumnName(ROW_ID, metadata), field.getDataType(), true /* nullable */));
+      } else if (field.getName().equals(METADATA_ROW_COMMIT_VERSION_COLUMN_NAME)) {
+        physicalFields.add(
+            new StructField(
+                getPhysicalColumnName(ROW_COMMIT_VERSION, metadata),
+                field.getDataType(),
+                true /* nullable */));
+      } else {
+        physicalFields.add(field);
+      }
+    }
+    return new StructType(physicalFields);
+  }
+
+  private static String getPhysicalColumnName(
+      MaterializedRowTrackingColumn column, Metadata metadata) {
+    return Optional.ofNullable(
+            metadata.getConfiguration().get(column.getMaterializedColumnNameProperty()))
+        .orElseThrow(
+            () ->
+                DeltaErrors.missingMetadataConfigField(
+                    column.getMaterializedColumnNameProperty(), metadata.getConfiguration()));
   }
 
   /** Generates a random name by concatenating the prefix with a random UUID. */
