@@ -20,6 +20,7 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.ResolvedTableBuilder;
+import io.delta.kernel.commit.Committer;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
@@ -44,6 +45,7 @@ public class ResolvedTableBuilderImpl implements ResolvedTableBuilder {
   public static class Context {
     public final String unresolvedPath;
     public Optional<Long> versionOpt;
+    public Optional<Committer> committerOpt;
     public List<ParsedLogData> logDatas;
     public Optional<Tuple2<Protocol, Metadata>> protocolAndMetadataOpt;
     public Clock clock;
@@ -51,6 +53,7 @@ public class ResolvedTableBuilderImpl implements ResolvedTableBuilder {
     public Context(String unresolvedPath) {
       this.unresolvedPath = requireNonNull(unresolvedPath, "unresolvedPath is null");
       this.versionOpt = Optional.empty();
+      this.committerOpt = Optional.empty();
       this.logDatas = Collections.emptyList();
       this.protocolAndMetadataOpt = Optional.empty();
       this.clock = System::currentTimeMillis;
@@ -79,6 +82,12 @@ public class ResolvedTableBuilderImpl implements ResolvedTableBuilder {
   @Override
   public ResolvedTableBuilderImpl atVersion(long version) {
     ctx.versionOpt = Optional.of(version);
+    return this;
+  }
+
+  @Override
+  public ResolvedTableBuilder withCommitter(Committer committer) {
+    ctx.committerOpt = Optional.of(requireNonNull(committer, "committer is null"));
     return this;
   }
 

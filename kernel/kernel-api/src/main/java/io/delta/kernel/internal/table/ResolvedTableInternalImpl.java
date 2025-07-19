@@ -18,6 +18,7 @@ package io.delta.kernel.internal.table;
 
 import static java.util.Objects.requireNonNull;
 
+import io.delta.kernel.Operation;
 import io.delta.kernel.ScanBuilder;
 import io.delta.kernel.commit.Committer;
 import io.delta.kernel.expressions.Column;
@@ -32,9 +33,12 @@ import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.metrics.SnapshotReportImpl;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
+import io.delta.kernel.internal.transaction.TransactionV2Impl;
+import io.delta.kernel.internal.transaction.TransactionV2State;
 import io.delta.kernel.internal.util.Clock;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.metrics.SnapshotReport;
+import io.delta.kernel.transaction.TransactionV2;
 import io.delta.kernel.types.StructType;
 import java.util.List;
 import java.util.Map;
@@ -49,6 +53,7 @@ public class ResolvedTableInternalImpl implements ResolvedTableInternal {
   private final Protocol protocol;
   private final Metadata metadata;
   private final Lazy<LogSegment> lazyLogSegment;
+  private final Optional<Committer> committerOpt;
   private final LogReplay logReplay;
   private final Clock clock;
   private final SnapshotReport snapshotReport;
@@ -59,6 +64,7 @@ public class ResolvedTableInternalImpl implements ResolvedTableInternal {
       Protocol protocol,
       Metadata metadata,
       Lazy<LogSegment> lazyLogSegment,
+      Optional<Committer> committerOpt,
       LogReplay logReplay,
       Clock clock,
       SnapshotQueryContext snapshotCtx) {
@@ -68,6 +74,7 @@ public class ResolvedTableInternalImpl implements ResolvedTableInternal {
     this.protocol = requireNonNull(protocol, "protocol is null");
     this.metadata = requireNonNull(metadata, "metadata is null");
     this.lazyLogSegment = requireNonNull(lazyLogSegment, "lazyLogSegment is null");
+    this.committerOpt = requireNonNull(committerOpt, "committerOpt is null");
     this.logReplay = requireNonNull(logReplay, "logReplay is null");
     this.clock = requireNonNull(clock, "clock is null");
     this.snapshotReport = SnapshotReportImpl.forSuccess(snapshotCtx);
@@ -124,7 +131,25 @@ public class ResolvedTableInternalImpl implements ResolvedTableInternal {
 
   @Override
   public Committer getCommitter() {
-    throw new UnsupportedOperationException("not implemented");
+    return committerOpt.get(); // TODO create default committer if not present in the right place
+  }
+
+  @Override
+  public TransactionV2 forceCreateTransaction() {
+    return new TransactionV2Impl(
+        new TransactionV2State(
+            false /* isCreateOrReplace */,
+            "engineInfo",
+            Operation.WRITE,
+            path,
+            logPath,
+            Optional.of(this),
+            protocol,
+            metadata,
+            false,
+            false,
+            clock,
+            Optional.empty()));
   }
 
   ///////////////////////////////////////

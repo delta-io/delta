@@ -16,13 +16,26 @@
 
 package io.delta.kernel.test
 
-import java.util.{Collections, Optional}
+import java.util.{Arrays, Collections, HashSet, Optional}
+
+import scala.collection.JavaConverters._
 
 import io.delta.kernel.data.{ArrayValue, ColumnVector, MapValue}
-import io.delta.kernel.internal.actions.{Format, Metadata}
+import io.delta.kernel.internal.actions.{Format, Metadata, Protocol}
+import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.types.StructType
 
 trait ActionUtils extends VectorTestUtils {
+  def catalogManagedSupportedProtocol: Protocol =
+    new Protocol(
+      TableFeatures.TABLE_FEATURES_MIN_READER_VERSION,
+      TableFeatures.TABLE_FEATURES_MIN_WRITER_VERSION,
+      Set(
+        TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW.featureName()).asJava,
+      Set(
+        TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW.featureName(),
+        TableFeatures.IN_COMMIT_TIMESTAMP_W_FEATURE.featureName()).asJava)
+
   def testMetadata(
       schema: StructType,
       partitionCols: Seq[String] = Seq.empty,

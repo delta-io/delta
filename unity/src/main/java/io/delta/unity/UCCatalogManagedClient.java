@@ -84,8 +84,54 @@ public class UCCatalogManagedClient {
         () ->
             TableManager.loadTable(tablePath)
                 .atVersion(version)
+                .withCommitter(new UCCatalogManagedCommitter(ucClient, ucTableId, tablePath))
                 .withLogData(logData)
                 .build(engine));
+  }
+
+  public ResolvedTable loadTable(Engine engine, String ucTableId, String tablePath) {
+    Objects.requireNonNull(engine, "engine is null");
+    Objects.requireNonNull(ucTableId, "ucTableId is null");
+    Objects.requireNonNull(tablePath, "tablePath is null");
+
+    logger.info("[{}] Resolving table at LATEST", ucTableId);
+    final GetCommitsResponse response = getRatifiedCommitsFromUC(ucTableId, tablePath);
+    logger.info("[{}] Latest ratified version is {}", ucTableId, response.getLatestTableVersion());
+
+    final List<ParsedLogData> logData =
+        getSortedKernelLogDataFromRatifiedCommits(ucTableId, response.getCommits());
+
+    return timeOperation(
+        "TableManager.loadTable",
+        ucTableId,
+        () ->
+            TableManager.loadTable(tablePath)
+                .atVersion(
+                    response.getLatestTableVersion() == -1 ? 0 : response.getLatestTableVersion())
+                .withCommitter(new UCCatalogManagedCommitter(ucClient, ucTableId, tablePath))
+                .withLogData(logData)
+                .build(engine));
+  }
+
+  private GetCommitsResponse getRatifiedCommitsFromUC(String ucTableId, String tablePath) {
+    logger.info("[{}] Invoking the UCClient to get ratified commits at LATEST", ucTableId);
+
+    return timeOperation(
+        "UCClient.getCommits",
+        ucTableId,
+        () -> {
+          try {
+            return ucClient.getCommits(
+                ucTableId,
+                new Path(tablePath).toUri(),
+                Optional.empty() /* startVersion */,
+                Optional.empty() /* endVersion */);
+          } catch (IOException ex) {
+            throw new UncheckedIOException(ex);
+          } catch (UCCommitCoordinatorException ex) {
+            throw new RuntimeException(ex);
+          }
+        });
   }
 
   private GetCommitsResponse getRatifiedCommitsFromUC(
