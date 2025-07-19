@@ -23,6 +23,7 @@ import org.apache.spark.sql.{functions, Row}
 trait DeleteScalaMixin
   extends DeleteBaseMixin
   with DeltaSQLCommandTest
+  with DeltaDMLTestUtilsPathBased
   with DeltaExcludedTestMixin {
 
   override protected def executeDelete(target: String, where: String = null): Unit = {
