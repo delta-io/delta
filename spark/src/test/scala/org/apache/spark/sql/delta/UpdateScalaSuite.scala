@@ -22,7 +22,8 @@ import org.apache.spark.sql.{functions, Row}
 
 trait UpdateScalaMixin extends UpdateBaseMixin
   with DeltaSQLCommandTest
-  with DeltaExcludedTestMixin {
+  with DeltaExcludedTestMixin
+  with DeltaDMLTestUtilsPathBased {
 
   override protected def executeUpdate(
       target: String,

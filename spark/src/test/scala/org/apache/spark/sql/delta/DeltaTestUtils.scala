@@ -578,6 +578,16 @@ trait DeltaDMLTestUtils
 
   protected def tableSQLIdentifier: String
 
+  protected def dropTable(): Unit
+
+  override protected def afterEach(): Unit = {
+    try {
+      dropTable()
+    } finally {
+      super.afterEach()
+    }
+  }
+
   protected def append(df: DataFrame, partitionBy: Seq[String] = Nil): Unit = {
     val dfw = df.write.format("delta").mode("append")
     if (partitionBy.nonEmpty) {
@@ -684,19 +694,16 @@ trait DeltaDMLTestUtilsPathBased extends DeltaDMLTestUtils {
     deltaLog = DeltaLog.forTable(spark, tempPath)
   }
 
-  override protected def afterEach(): Unit = {
-    try {
-      Utils.deleteRecursively(tempDir)
-      DeltaLog.clearCache()
-    } finally {
-      super.afterEach()
-    }
-  }
-
   override protected def tableSQLIdentifier: String = s"delta.`$tempPath`"
 
   protected def readDeltaTable(path: String): DataFrame = {
     spark.read.format("delta").load(path)
+  }
+
+  override protected def dropTable(): Unit = {
+    Utils.deleteRecursively(tempDir)
+    deltaLog = null
+    DeltaLog.clearCache()
   }
 }
 
@@ -717,15 +724,6 @@ trait DeltaDMLTestUtilsNameBased extends DeltaDMLTestUtils {
     }
   }
 
-  override protected def afterEach(): Unit = {
-    try {
-      spark.sql(s"DROP TABLE IF EXISTS $tableSQLIdentifier")
-      deltaLog = null
-    } finally {
-      super.afterEach()
-    }
-  }
-
   override protected def append(df: DataFrame, partitionBy: Seq[String] = Nil): Unit = {
     super.append(df, partitionBy)
     if (deltaLog == null) {
@@ -737,4 +735,10 @@ trait DeltaDMLTestUtilsNameBased extends DeltaDMLTestUtils {
   // true, the table name used for dropping the table will not match the created table
   // name, causing the table not being dropped.
   override protected def tableSQLIdentifier: String = "test_delta_table"
+
+  override protected def dropTable(): Unit = {
+    spark.sql(s"DROP TABLE IF EXISTS $tableSQLIdentifier")
+    deltaLog = null
+    DeltaLog.clearCache()
+  }
 }
