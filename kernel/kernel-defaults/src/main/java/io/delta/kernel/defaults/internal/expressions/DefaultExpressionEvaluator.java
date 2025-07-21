@@ -31,6 +31,7 @@ import io.delta.kernel.defaults.internal.data.vector.DefaultConstantVector;
 import io.delta.kernel.engine.ExpressionHandler;
 import io.delta.kernel.expressions.*;
 import io.delta.kernel.types.*;
+import java.math.BigDecimal;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -253,6 +254,21 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
       return new ExpressionTransformResult(
           new ScalarExpression(
               "COALESCE", children.stream().map(e -> e.expression).collect(Collectors.toList())),
+          children.get(0).outputType);
+    }
+
+    @Override
+    ExpressionTransformResult visitAdd(ScalarExpression add) {
+      List<ExpressionTransformResult> children =
+          add.getChildren().stream().map(this::visit).collect(Collectors.toList());
+      if (children.size() != 2) {
+        throw unsupportedExpressionException(
+            add, "ADD requires exactly two arguments: left and right operands");
+      }
+
+      return new ExpressionTransformResult(
+          new ScalarExpression(
+              "ADD", Arrays.asList(children.get(0).expression, children.get(1).expression)),
           children.get(0).outputType);
     }
 
@@ -586,6 +602,56 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
               }
             }
             return 0; // If all are null then any idx suffices
+          });
+    }
+
+    @Override
+    ColumnVector visitAdd(ScalarExpression add) {
+      List<ColumnVector> childResults =
+          add.getChildren().stream().map(this::visit).collect(toList());
+      if (childResults.size() != 2) {
+        throw unsupportedExpressionException(
+            add, "ADD requires exactly two arguments: left and right operands");
+      }
+
+      return DefaultExpressionUtils.arithmeticVector(
+          childResults.get(0),
+          childResults.get(1),
+          new ArithmeticOperator() {
+            @Override
+            public byte apply(byte a, byte b) {
+              return (byte) (a + b);
+            }
+
+            @Override
+            public short apply(short a, short b) {
+              return (short) (a + b);
+            }
+
+            @Override
+            public int apply(int a, int b) {
+              return a + b;
+            }
+
+            @Override
+            public long apply(long a, long b) {
+              return a + b;
+            }
+
+            @Override
+            public float apply(float a, float b) {
+              return a + b;
+            }
+
+            @Override
+            public double apply(double a, double b) {
+              return a + b;
+            }
+
+            @Override
+            public BigDecimal apply(BigDecimal a, BigDecimal b) {
+              return a.add(b);
+            }
           });
     }
 

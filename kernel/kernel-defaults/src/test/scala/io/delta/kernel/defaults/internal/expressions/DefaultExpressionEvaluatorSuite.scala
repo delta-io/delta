@@ -318,6 +318,58 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       "Coalesce is only supported for boolean type expressions")
   }
 
+  test("evaluate expression: ADD (column and literal)") {
+    val col1 = longVector(Seq(1, 2, 3, 4, null))
+    val schema = new StructType().add("col1", LongType.LONG)
+    val batch = new DefaultColumnarBatch(col1.getSize, schema, Array(col1))
+
+    // ADD with literal
+    val addExpr = new ScalarExpression(
+      "ADD",
+      util.Arrays.asList(new Column("col1"), Literal.ofLong(10L)))
+    val expOutputVector = longVector(Seq(11, 12, 13, 14, null))
+    val actOutputVector = evaluator(schema, addExpr, LongType.LONG).eval(batch)
+    checkLongVectors(actOutputVector, expOutputVector)
+  }
+
+  test("evaluate expression: ADD (column and column)") {
+    val col1 = longVector(Seq(1, 2, null, 4, null))
+    val col2 = longVector(Seq(null, 20, 30, 40, null))
+    val schema = new StructType()
+      .add("col1", LongType.LONG)
+      .add("col2", LongType.LONG)
+    val batch = new DefaultColumnarBatch(col1.getSize, schema, Array(col1, col2))
+
+    // ADD with two columns
+    val addExpr = new ScalarExpression(
+      "ADD",
+      util.Arrays.asList(new Column("col1"), new Column("col2")))
+    val expOutputVector = longVector(Seq(null, 22, null, 44, null))
+    val actOutputVector = evaluator(schema, addExpr, LongType.LONG).eval(batch)
+    checkLongVectors(actOutputVector, expOutputVector)
+  }
+
+  test("evaluate expression: ADD (more than two operands)") {
+    val col1 = longVector(Seq(1, 2, null, 4, null))
+    val col2 = longVector(Seq(null, 20, 30, 40, null))
+    val col3 = longVector(Seq(5, null, 15, null, 25))
+    val schema = new StructType()
+      .add("col1", LongType.LONG)
+      .add("col2", LongType.LONG)
+      .add("col3", LongType.LONG)
+    val batch = new DefaultColumnarBatch(col1.getSize, schema, Array(col1, col2, col3))
+
+    // ADD with three columns
+    val addExpr = new ScalarExpression(
+      "ADD",
+      util.Arrays.asList(new Column("col1"), new Column("col2"), new Column("col3")))
+    val e =
+      intercept[UnsupportedOperationException] {
+        evaluator(schema, addExpr, LongType.LONG).eval(batch)
+      }
+    assert(e.getMessage.contains("ADD requires exactly two arguments: left and right operands"))
+  }
+
   test("evaluate expression: TIMEADD with TIMESTAMP columns") {
     val timestampColumn = timestampVector(Seq[Long](
       1577836800000000L, // 2020-01-01 00:00:00.000
@@ -325,10 +377,10 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       -1 // Representing null
     ))
 
-    val durationColumn = longVector(Seq[Long](
+    val durationColumn = longVector(Seq(
       1000, // 1 second in milliseconds
       100, // 0.1 second in milliseconds
-      -1): _*)
+      -1))
 
     val schema = new StructType()
       .add("timestamp", TimestampType.TIMESTAMP)
