@@ -548,12 +548,19 @@ private[delta] class ConflictChecker(
     import org.apache.spark.sql.delta.implicits._
     val filesMatchingPartitionPredicates = canonicalPredicates.iterator
       .flatMap { readPredicate =>
-        DeltaLog.filterFileList(
+        val matchingFileOpt = DeltaLog.filterFileList(
           partitionSchema = currentTransactionInfo.partitionSchemaAtReadTime,
           files = filesDf,
           partitionFilters = readPredicate.partitionPredicates,
           shouldRewritePartitionFilters = readPredicate.shouldRewriteFilter
         ).as[AddFile].head(1).headOption
+        matchingFileOpt.foreach { f =>
+          logInfo(log"Partition predicate is matching a file changed by the winning transaction: " +
+            log"predicate=${MDC(DeltaLogKeys.DATA_FILTER,
+              readPredicate.partitionPredicates.toVector)}, " +
+            log"matchingFile=${MDC(DeltaLogKeys.PATH, f.path)}")
+        }
+        matchingFileOpt
       }.take(1).toArray
 
     filesMatchingPartitionPredicates.headOption
