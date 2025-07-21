@@ -28,7 +28,7 @@ import org.apache.spark.sql.types.StructType
 trait DeleteBaseMixin
   extends QueryTest
   with SharedSparkSession
-  with DeltaDMLTestUtilsPathBased
+  with DeltaDMLTestUtils
   with DeltaTestUtilsForTempViews
   with DeltaExcludedBySparkVersionTestMixinShims {
 
@@ -40,8 +40,9 @@ trait DeleteBaseMixin
       condition: Option[String],
       expectedResults: Seq[Row],
       tableName: Option[String] = None): Unit = {
-    executeDelete(target = tableName.getOrElse(s"delta.`$tempPath`"), where = condition.orNull)
-    checkAnswer(readDeltaTable(tempPath), expectedResults)
+    val target = tableName.getOrElse(tableSQLIdentifier)
+    executeDelete(target = target, where = condition.orNull)
+    checkAnswer(readDeltaTableByIdentifier(target), expectedResults)
   }
 
   protected def testInvalidTempViews(name: String)(
@@ -102,7 +103,7 @@ trait DeleteBaseMixin
   }
 }
 
-trait DeleteTempViewTests extends DeleteBaseMixin {
+trait DeleteTempViewTests extends DeleteBaseMixin with DeltaDMLTestUtilsPathBased {
   import testImplicits._
 
   Seq(true, false).foreach { isPartitioned =>
@@ -110,7 +111,7 @@ trait DeleteTempViewTests extends DeleteBaseMixin {
     testWithTempView(name) { isSQLTempView =>
       val partitions = if (isPartitioned) "key" :: Nil else Nil
       append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"), partitions)
-      createTempViewFromTable(s"delta.`$tempPath`", isSQLTempView)
+      createTempViewFromTable(tableSQLIdentifier, isSQLTempView)
         checkDelete(
           condition = Some("key <= 1"),
           expectedResults = Row(2, 2) :: Nil,
@@ -150,7 +151,7 @@ trait DeleteBaseTests extends DeleteBaseMixin {
   }
 
   Seq(true, false).foreach { isPartitioned =>
-    test(s"basic case - delete from a Delta table by path - Partition=$isPartitioned") {
+    test(s"basic case - delete from a Delta table - Partition=$isPartitioned") {
       withTable("deltaTable") {
         val partitions = if (isPartitioned) "key" :: Nil else Nil
         val input = Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value")
@@ -163,37 +164,6 @@ trait DeleteBaseTests extends DeleteBaseMixin {
         checkDelete(Some("value = 2 or key = 1"),
           Row(0, 3) :: Nil)
         checkDelete(Some("key = 0 or value = 99"), Nil)
-      }
-    }
-  }
-
-  Seq(true, false).foreach { isPartitioned =>
-    test(s"basic case - delete from a Delta table by name - Partition=$isPartitioned") {
-      withTable("delta_table") {
-        val partitionByClause = if (isPartitioned) "PARTITIONED BY (key)" else ""
-        sql(
-          s"""
-             |CREATE TABLE delta_table(key INT, value INT)
-             |USING delta
-             |OPTIONS('path'='$tempPath')
-             |$partitionByClause
-           """.stripMargin)
-
-        val input = Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value")
-        append(input)
-
-        checkDelete(Some("value = 4 and key = 3"),
-          Row(2, 2) :: Row(1, 4) :: Row(1, 1) :: Row(0, 3) :: Nil,
-          Some("delta_table"))
-        checkDelete(Some("value = 4 and key = 1"),
-          Row(2, 2) :: Row(1, 1) :: Row(0, 3) :: Nil,
-          Some("delta_table"))
-        checkDelete(Some("value = 2 or key = 1"),
-          Row(0, 3) :: Nil,
-          Some("delta_table"))
-        checkDelete(Some("key = 0 or value = 99"),
-          Nil,
-          Some("delta_table"))
       }
     }
   }
@@ -268,10 +238,14 @@ trait DeleteBaseTests extends DeleteBaseMixin {
   }
 
   test("Negative case - non-Delta target") {
-    Seq((1, 1), (0, 3), (1, 5)).toDF("key1", "value")
-      .write.format("parquet").mode("append").save(tempPath)
+    writeTable(
+      Seq((1, 1), (0, 3), (1, 5)).toDF("key1", "value")
+        .write
+        .mode("overwrite")
+        .format("parquet"),
+      tableSQLIdentifier)
     val e = intercept[DeltaAnalysisException] {
-      executeDelete(target = s"delta.`$tempPath`")
+      executeDelete(target = tableSQLIdentifier)
     }.getMessage
     assert(e.contains("DELETE destination only supports Delta sources") ||
       e.contains("is not a Delta table") || e.contains("doesn't exist") ||
@@ -281,18 +255,24 @@ trait DeleteBaseTests extends DeleteBaseMixin {
   test("Negative case - non-deterministic condition") {
     append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"))
     val e = intercept[AnalysisException] {
-      executeDelete(target = s"delta.`$tempPath`", where = "rand() > 0.5")
+      executeDelete(target = tableSQLIdentifier, where = "rand() > 0.5")
     }.getMessage
     assert(e.contains("nondeterministic expressions are only allowed in") ||
       e.contains("The operator expects a deterministic expression"))
   }
 
-  test("Negative case - DELETE the child directory") {
-    append(Seq((2, 2), (3, 2)).toDF("key", "value"), partitionBy = "key" :: Nil)
-    val e = intercept[AnalysisException] {
-      executeDelete(target = s"delta.`$tempPath/key=2`", where = "value = 2")
-    }.getMessage
-    assert(e.contains("Expect a full scan of Delta sources, but found a partial scan"))
+  test("Negative case - DELETE the child directory",
+      NameBasedAccessIncompatible) {
+    withTempPath { tempDir =>
+      val tempPath = tempDir.getCanonicalPath
+      val df = Seq((2, 2), (3, 2)).toDF("key", "value")
+      df.write.format("delta").partitionBy("key").save(tempPath)
+
+      val e = intercept[AnalysisException] {
+        executeDelete(target = s"delta.`$tempPath/key=2`", where = "value = 2")
+      }.getMessage
+      assert(e.contains("Expect a full scan of Delta sources, but found a partial scan"))
+    }
   }
 
   test("delete cached table by name") {
@@ -307,13 +287,12 @@ trait DeleteBaseTests extends DeleteBaseMixin {
     }
   }
 
-  test("delete cached table by path") {
-    Seq((2, 2), (1, 4)).toDF("key", "value")
-      .write.mode("overwrite").format("delta").save(tempPath)
-    spark.read.format("delta").load(tempPath).cache()
-    spark.read.format("delta").load(tempPath).collect()
-    executeDelete(s"delta.`$tempPath`", where = "key = 2")
-    checkAnswer(spark.read.format("delta").load(tempPath), Row(1, 4) :: Nil)
+  test("delete cached table") {
+    append(Seq((2, 2), (1, 4)).toDF("key", "value"))
+    readDeltaTableByIdentifier().cache()
+    readDeltaTableByIdentifier().collect()
+    executeDelete(tableSQLIdentifier, where = "key = 2")
+    checkAnswer(readDeltaTableByIdentifier(), Row(1, 4) :: Nil)
   }
 
   Seq(true, false).foreach { isPartitioned =>
@@ -392,31 +371,31 @@ trait DeleteBaseTests extends DeleteBaseMixin {
 
     // basic subquery
     val e0 = intercept[AnalysisException] {
-      executeDelete(target = s"delta.`$tempPath`", "key < (SELECT max(c) FROM source)")
+      executeDelete(target = tableSQLIdentifier, "key < (SELECT max(c) FROM source)")
     }.getMessage
     assert(e0.contains("Subqueries are not supported"))
 
     // subquery with EXISTS
     val e1 = intercept[AnalysisException] {
-      executeDelete(target = s"delta.`$tempPath`", "EXISTS (SELECT max(c) FROM source)")
+      executeDelete(target = tableSQLIdentifier, "EXISTS (SELECT max(c) FROM source)")
     }.getMessage
     assert(e1.contains("Subqueries are not supported"))
 
     // subquery with NOT EXISTS
     val e2 = intercept[AnalysisException] {
-      executeDelete(target = s"delta.`$tempPath`", "NOT EXISTS (SELECT max(c) FROM source)")
+      executeDelete(target = tableSQLIdentifier, "NOT EXISTS (SELECT max(c) FROM source)")
     }.getMessage
     assert(e2.contains("Subqueries are not supported"))
 
     // subquery with IN
     val e3 = intercept[AnalysisException] {
-      executeDelete(target = s"delta.`$tempPath`", "key IN (SELECT max(c) FROM source)")
+      executeDelete(target = tableSQLIdentifier, "key IN (SELECT max(c) FROM source)")
     }.getMessage
     assert(e3.contains("Subqueries are not supported"))
 
     // subquery with NOT IN
     val e4 = intercept[AnalysisException] {
-      executeDelete(target = s"delta.`$tempPath`", "key NOT IN (SELECT max(c) FROM source)")
+      executeDelete(target = tableSQLIdentifier, "key NOT IN (SELECT max(c) FROM source)")
     }.getMessage
     assert(e4.contains("Subqueries are not supported"))
   }
@@ -550,16 +529,17 @@ trait DeleteBaseTests extends DeleteBaseMixin {
       FROM range(3)""")
     append(dstDf)
 
-    executeDelete(target = s"delta.`$tempPath`", where = "to_json(v) = '1'")
+    executeDelete(target = tableSQLIdentifier, where = "to_json(v) = '1'")
 
-    checkAnswer(readDeltaTable(tempPath).selectExpr("i", "to_json(v)"),
+    checkAnswer(readDeltaTableByIdentifier().selectExpr("i", "to_json(v)"),
       Seq(Row(0, "0"), Row(2, "2")))
   }
 
   test("delete on partitioned table with special chars") {
     val partValue = "part%one"
-    spark.range(0, 3, 1, 1).toDF("key").withColumn("value", lit(partValue))
-      .write.format("delta").partitionBy("value").save(tempPath)
+    append(
+      spark.range(0, 3, 1, 1).toDF("key").withColumn("value", lit(partValue)),
+      partitionBy = Seq("value"))
     checkDelete(
       condition = Some(s"value = '$partValue' and key = 1"),
       expectedResults = Row(0, partValue) :: Row(2, partValue) :: Nil)

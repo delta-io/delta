@@ -22,6 +22,7 @@ import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, Del
 import org.apache.spark.sql.Row
 
 trait DeleteSQLMixin extends DeleteBaseMixin
+  with DeltaDMLTestUtilsPathBased
   with DeltaSQLCommandTest {
 
   override protected def executeDelete(target: String, where: String = null): Unit = {
@@ -91,7 +92,7 @@ trait DeleteSQLNameColumnMappingMixin extends DeleteSQLMixin
   with DeltaColumnMappingSelectedTestMixin {
 
   protected override def runOnlyTests: Seq[String] = Seq(true, false).map { isPartitioned =>
-    s"basic case - delete from a Delta table by name - Partition=$isPartitioned"
+    s"basic case - delete from a Delta table - Partition=$isPartitioned"
   } ++ Seq(true, false).flatMap { isPartitioned =>
     Seq(
       s"where key columns - Partition=$isPartitioned",
