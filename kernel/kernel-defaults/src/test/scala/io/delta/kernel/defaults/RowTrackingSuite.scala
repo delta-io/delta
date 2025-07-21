@@ -435,7 +435,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
       createEmptyTable(engine, tablePath, wrongSchema)
 
       // Try to read row tracking columns
-      val e = intercept[InvalidTableException] {
+      val e = intercept[KernelException] {
         checkTable(
           tablePath,
           expectedAnswer = Seq(),
