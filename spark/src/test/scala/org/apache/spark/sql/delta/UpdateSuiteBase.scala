@@ -36,7 +36,7 @@ import org.apache.spark.sql.types._
 trait UpdateBaseMixin
   extends QueryTest
   with SharedSparkSession
-  with DeltaDMLTestUtilsPathBased
+  with DeltaDMLTestUtils
   with DeltaSQLTestUtils
   with DeltaTestUtilsForTempViews
   with DeltaExcludedBySparkVersionTestMixinShims {
@@ -56,12 +56,10 @@ trait UpdateBaseMixin
       expectedResults: Seq[Row],
       tableName: Option[String] = None,
       prefix: String = ""): Unit = {
-    executeUpdate(tableName.getOrElse(s"delta.`$tempPath`"), setClauses, where = condition.orNull)
+    val target = tableName.getOrElse(tableSQLIdentifier)
+    executeUpdate(target, setClauses, where = condition.orNull)
     checkAnswer(
-      tableName
-        .map(spark.read.format("delta").table(_))
-        .getOrElse(readDeltaTable(tempPath))
-        .select(s"${prefix}key", s"${prefix}value"),
+      readDeltaTableByIdentifier(target).select(s"${prefix}key", s"${prefix}value"),
       expectedResults)
   }
 
@@ -71,16 +69,15 @@ trait UpdateBaseMixin
       updateWhere: String,
       set: Seq[String],
       expected: Seq[String]): Unit = {
-    withTempDir { dir =>
-      withTempView("source") {
-        def toDF(jsonStrs: Seq[String]) = spark.read.json(jsonStrs.toDS)
-        toDF(target).write.format("delta").mode("overwrite").save(dir.toString)
-        if (source.nonEmpty) {
-          toDF(source).createOrReplaceTempView("source")
-        }
-        executeUpdate(s"delta.`$dir`", set, updateWhere)
-        checkAnswer(readDeltaTable(dir.toString), toDF(expected))
+    withTempView("source") {
+      def toDF(jsonStrs: Seq[String]) = spark.read.json(jsonStrs.toDS())
+      append(toDF(target))
+      if (source.nonEmpty) {
+        toDF(source).createOrReplaceTempView("source")
       }
+      executeUpdate(tableSQLIdentifier, set, updateWhere)
+      checkAnswer(readDeltaTableByIdentifier(), toDF(expected))
+      dropTable()
     }
   }
 
@@ -107,7 +104,7 @@ trait UpdateBaseTempViewTests extends UpdateBaseMixin {
   test("different variations of column references - TempView") {
     append(Seq((99, 2), (100, 4), (101, 3), (102, 5)).toDF("key", "value"))
 
-    spark.read.format("delta").load(tempPath).createOrReplaceTempView("tblName")
+    readDeltaTableByIdentifier().createOrReplaceTempView("tblName")
 
     checkUpdate(
       condition = Some("tblName.key = 101"),
@@ -126,7 +123,7 @@ trait UpdateBaseTempViewTests extends UpdateBaseMixin {
     testWithTempView(testName) { isSQLTempView =>
       val partitions = if (isPartitioned) "key" :: Nil else Nil
       append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"), partitions)
-      createTempViewFromTable(s"delta.`$tempPath`", isSQLTempView)
+      createTempViewFromTable(tableSQLIdentifier, isSQLTempView)
         checkUpdate(
           condition = Some("key >= 1"),
           setClauses = "value = key + value, key = key + 1",
@@ -214,17 +211,14 @@ trait UpdateBaseMiscTests extends UpdateBaseMixin {
   }
 
   Seq(true, false).foreach { isPartitioned =>
-    test(s"basic update - Delta table by path - Partition=$isPartitioned") {
-      withTable("deltaTable") {
-        val partitions = if (isPartitioned) "key" :: Nil else Nil
-        append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"), partitions)
+    test(s"basic update - Partition=$isPartitioned") {
+      val partitions = if (isPartitioned) "key" :: Nil else Nil
+      append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"), partitions)
 
-        checkUpdate(
-          condition = Some("key >= 1"),
-          setClauses = "value = key + value, key = key + 1",
-          expectedResults = Row(0, 3) :: Row(2, 5) :: Row(2, 2) :: Row(3, 4) :: Nil,
-          tableName = Some(s"delta.`$tempPath`"))
-      }
+      checkUpdate(
+        condition = Some("key >= 1"),
+        setClauses = "value = key + value, key = key + 1",
+        expectedResults = Row(0, 3) :: Row(2, 5) :: Row(2, 2) :: Row(3, 4) :: Nil)
     }
   }
 
@@ -233,13 +227,15 @@ trait UpdateBaseMiscTests extends UpdateBaseMixin {
       withTable("delta_table") {
         val partitionByClause = if (isPartitioned) "PARTITIONED BY (key)" else ""
         sql(s"""
-             |CREATE TABLE delta_table(key INT, value INT)
-             |USING delta
-             |OPTIONS('path'='$tempPath')
+             |CREATE TABLE delta_table(key INT, value INT) USING delta
              |$partitionByClause
            """.stripMargin)
 
-        append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"))
+        Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value")
+          .write
+          .format("delta")
+          .mode("append")
+          .saveAsTable("delta_table")
 
         checkUpdate(
           condition = Some("key >= 1"),
@@ -458,14 +454,13 @@ trait UpdateBaseMiscTests extends UpdateBaseMixin {
   }
 
   test("update cached table") {
-    Seq((2, 2), (1, 4)).toDF("key", "value")
-      .write.mode("overwrite").format("delta").save(tempPath)
+    append(Seq((2, 2), (1, 4)).toDF("key", "value"))
 
-    spark.read.format("delta").load(tempPath).cache()
-    spark.read.format("delta").load(tempPath).collect()
+    readDeltaTableByIdentifier().cache()
+    readDeltaTableByIdentifier().collect()
 
-    executeUpdate(s"delta.`$tempPath`", set = "key = 3")
-    checkAnswer(spark.read.format("delta").load(tempPath), Row(3, 2) :: Row(3, 4) :: Nil)
+    executeUpdate(tableSQLIdentifier, set = "key = 3")
+    checkAnswer(readDeltaTableByIdentifier(), Row(3, 2) :: Row(3, 4) :: Nil)
   }
 
   test("different variations of column references") {
@@ -503,9 +498,9 @@ trait UpdateBaseMiscTests extends UpdateBaseMixin {
 
   test("Negative case - non-delta target") {
     Seq((1, 1), (0, 3), (1, 5)).toDF("key1", "value")
-      .write.mode("overwrite").format("parquet").save(tempPath)
+      .write.mode("overwrite").format("parquet").save(tableSQLIdentifier)
     val e = intercept[DeltaAnalysisException] {
-      executeUpdate(target = s"delta.`$tempPath`", set = "key1 = 3")
+      executeUpdate(target = tableSQLIdentifier, set = "key1 = 3")
     }.getMessage
     assert(e.contains("UPDATE destination only supports Delta sources") ||
       e.contains("is not a Delta table") || e.contains("doesn't exist") ||
@@ -556,15 +551,21 @@ trait UpdateBaseMiscTests extends UpdateBaseMixin {
     }
   }
 
-  test("Negative case - UPDATE the child directory") {
-    append(Seq((2, 2), (3, 2)).toDF("key", "value"), partitionBy = "key" :: Nil)
-    val e = intercept[AnalysisException] {
-      executeUpdate(
-        target = s"delta.`$tempPath/key=2`",
-        set = "key = 1, value = 2",
-        where = "value = 2")
-    }.getMessage
-    assert(e.contains("Expect a full scan of Delta sources, but found a partial scan"))
+  test("Negative case - UPDATE the child directory",
+      NameBasedAccessIncompatible) {
+    withTempDir { dir =>
+      val tempPath = dir.getCanonicalPath
+      val df = Seq((2, 2), (3, 2)).toDF("key", "value")
+      df.write.format("delta").partitionBy("key").save(tempPath)
+
+      val e = intercept[AnalysisException] {
+        executeUpdate(
+          target = s"delta.`$tempPath/key=2`",
+          set = "key = 1, value = 2",
+          where = "value = 2")
+      }.getMessage
+      assert(e.contains("Expect a full scan of Delta sources, but found a partial scan"))
+    }
   }
 
   test("Negative case - do not support subquery test") {
@@ -573,7 +574,7 @@ trait UpdateBaseMiscTests extends UpdateBaseMixin {
 
     // basic subquery
     val e0 = intercept[AnalysisException] {
-      executeUpdate(target = s"delta.`$tempPath`",
+      executeUpdate(target = tableSQLIdentifier,
         set = "key = 1",
         where = "key < (SELECT max(c) FROM source)")
     }.getMessage
@@ -581,7 +582,7 @@ trait UpdateBaseMiscTests extends UpdateBaseMixin {
 
     // subquery with EXISTS
     val e1 = intercept[AnalysisException] {
-      executeUpdate(target = s"delta.`$tempPath`",
+      executeUpdate(target = tableSQLIdentifier,
         set = "key = 1",
         where = "EXISTS (SELECT max(c) FROM source)")
     }.getMessage
@@ -589,7 +590,7 @@ trait UpdateBaseMiscTests extends UpdateBaseMixin {
 
     // subquery with NOT EXISTS
     val e2 = intercept[AnalysisException] {
-      executeUpdate(target = s"delta.`$tempPath`",
+      executeUpdate(target = tableSQLIdentifier,
         set = "key = 1",
         where = "NOT EXISTS (SELECT max(c) FROM source)")
     }.getMessage
@@ -597,7 +598,7 @@ trait UpdateBaseMiscTests extends UpdateBaseMixin {
 
     // subquery with IN
     val e3 = intercept[AnalysisException] {
-      executeUpdate(target = s"delta.`$tempPath`",
+      executeUpdate(target = tableSQLIdentifier,
         set = "key = 1",
         where = "key IN (SELECT max(c) FROM source)")
     }.getMessage
@@ -605,7 +606,7 @@ trait UpdateBaseMiscTests extends UpdateBaseMixin {
 
     // subquery with NOT IN
     val e4 = intercept[AnalysisException] {
-      executeUpdate(target = s"delta.`$tempPath`",
+      executeUpdate(target = tableSQLIdentifier,
         set = "key = 1",
         where = "key NOT IN (SELECT max(c) FROM source)")
     }.getMessage
@@ -969,17 +970,16 @@ trait UpdateBaseMiscTests extends UpdateBaseMixin {
       """SELECT parse_json(cast(id as string)) v, id i
         FROM range(2)""")
     append(df)
-    executeUpdate(target = s"delta.`$tempPath`",
+    executeUpdate(target = tableSQLIdentifier,
         where = "to_json(v) = '1'", set = "i = 10, v = parse_json('123')")
-    checkAnswer(readDeltaTable(tempPath).selectExpr("i", "to_json(v)"),
+    checkAnswer(readDeltaTableByIdentifier().selectExpr("i", "to_json(v)"),
         Seq(Row(0, "0"), Row(10, "123")))
   }
 
   test("update on partitioned table with special chars") {
     val partA = "part%one"
     val partB = "part%two"
-    spark.range(0, 3, 1, 1).toDF("key").withColumn("value", lit(partA))
-      .write.format("delta").partitionBy("value").save(tempPath)
+    append(spark.range(0, 3, 1, 1).toDF("key").withColumn("value", lit(partA)), "value")
     checkUpdate(
       condition = Some(s"value = '$partA' AND key = 1"),
       setClauses = s"value = '$partB'",
