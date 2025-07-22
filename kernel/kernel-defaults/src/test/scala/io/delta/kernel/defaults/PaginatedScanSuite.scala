@@ -79,7 +79,7 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
       pageTokenOpt: Optional[Row] = Optional.empty()): PaginatedScan = {
     getScanBuilder(tablePath, tableVersionOpt).buildPaginated(pageSize, pageTokenOpt)
   }
-  
+
   case class FirstPageRequestTestContext(
       pageSize: Int,
       expScanFilesCnt: Int,
@@ -222,6 +222,7 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
 
   // ==== Test Paginated Iterator Behaviors ======
   // TODO: test call hasNext() twice
+  // TODO: test batch size case
   test("Calling getCurrentPageToken() without calling next() should throw Exception") {
     // Request first page
     withTempDir { tempDir =>
