@@ -90,7 +90,7 @@ class CloneTableScalaSuite extends CloneTableSuiteBase
     val fs = path.getFileSystem(spark.sessionState.newHadoopConf())
     // scalastyle:on deltahadoopconfiguration
     fs.setTimes(path, time, 0)
-    if (coordinatedCommitsEnabledInTests) {
+    if (catalogOwnedDefaultCreationEnabledInTests) {
       InCommitTimestampTestUtils.overwriteICTInDeltaFile(
         DeltaLog.forTable(spark, source),
         path,

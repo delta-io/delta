@@ -21,11 +21,11 @@ import java.io.File
 import org.apache.spark.sql.delta.actions.{AddFile, FileAction, Metadata, Protocol, RemoveFile, SetTransaction, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION
 import org.apache.spark.sql.delta.commands._
-import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CatalogOwnedTestBaseSuite}
 import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsTestUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
-import org.apache.spark.sql.delta.util.FileNames.unsafeDeltaFile
+import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest, DeltaSQLTestUtils}
+import org.apache.spark.sql.delta.util.FileNames.{isCheckpointFile, unsafeDeltaFile}
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row, SparkSession}
@@ -40,7 +40,8 @@ trait CloneTableSuiteBase extends QueryTest
   with CloneTableTestMixin
   with DeltaColumnMappingTestUtils
   with DeltaSQLCommandTest
-  with CoordinatedCommitsBaseSuite
+  with DeltaSQLTestUtils
+  with CatalogOwnedTestBaseSuite
   with CoordinatedCommitsTestUtils
   with DeletionVectorsTestUtils {
 
@@ -355,8 +356,8 @@ trait CloneTableSuiteBase extends QueryTest
 
   cloneTest("CLONE ignores reader/writer session defaults", TAG_HAS_SHALLOW_CLONE) {
     (source, clone) =>
-      if (coordinatedCommitsEnabledInTests) {
-        cancel("Expects base protocol version")
+      if (catalogOwnedDefaultCreationEnabledInTests) {
+        cancel("Expects base protocol version.")
       }
       withSQLConf(
           DeltaSQLConf.DELTA_PROTOCOL_DEFAULT_READER_VERSION.key -> "1",
@@ -403,7 +404,7 @@ trait CloneTableSuiteBase extends QueryTest
     val fs = path.getFileSystem(spark.sessionState.newHadoopConf())
     // scalastyle:on deltahadoopconfiguration
     fs.setTimes(path, time, 0)
-    if (coordinatedCommitsEnabledInTests) {
+    if (catalogOwnedDefaultCreationEnabledInTests) {
       InCommitTimestampTestUtils.overwriteICTInDeltaFile(
         DeltaLog.forTable(spark, source),
         path,
@@ -419,6 +420,10 @@ trait CloneTableSuiteBase extends QueryTest
 
   cloneTest("clones take protocol from the source",
     TAG_HAS_SHALLOW_CLONE, TAG_MODIFY_PROTOCOL, TAG_CHANGE_COLUMN_MAPPING_MODE) { (source, clone) =>
+    if (catalogOwnedDefaultCreationEnabledInTests) {
+      cancel("table needs to start with custom protocol versions but enabling " +
+        "catalogOwned automatically upgrades table protocol version.")
+    }
     // Change protocol versions of (read, write) = (2, 5). We cannot initialize this to (0, 0)
     // because min reader and writer versions are at least 1.
     val defaultNewTableProtocol = Protocol.forNewTable(spark, metadataOpt = None)
@@ -523,9 +528,9 @@ trait CloneTableSuiteBase extends QueryTest
     testAllClones("Cloning a table with new table properties" +
       s" that force protocol version upgrade - ${featureWithProperty.property.key}"
     ) { (source, target, isShallow) =>
-      if (coordinatedCommitsEnabledInTests) {
+      if (catalogOwnedDefaultCreationEnabledInTests) {
         cancel("table needs to start with default protocol versions but enabling " +
-          "coordinatedCommits upgrades table protocol version.")
+          "catalogOwned upgrades table protocol version.")
       }
       import DeltaTestUtils.StrictProtocolOrdering
 
@@ -562,9 +567,9 @@ trait CloneTableSuiteBase extends QueryTest
 
   testAllClones("Cloning a table without DV property should not upgrade protocol version"
   ) { (source, target, isShallow) =>
-    if (coordinatedCommitsEnabledInTests) {
+    if (catalogOwnedDefaultCreationEnabledInTests) {
       cancel("table needs to start with default protocol versions but enabling " +
-        "coordinatedCommits upgrades table protocol version.")
+        "catalogOwned upgrades table protocol version.")
     }
     import DeltaTestUtils.StrictProtocolOrdering
 
