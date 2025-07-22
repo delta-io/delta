@@ -62,16 +62,20 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
    * ensure that the result table has both materialized and not materialized row tracking columns.
    *
    * @param tablePath The path to the Delta table.
+   * @param extraProps Additional table properties to set.
    */
-  private def createRowTrackingTableWithSpark(tablePath: String): Unit = {
-    // Enable row tracking feature
+  private def createRowTrackingTableWithSpark(
+      tablePath: String,
+      extraProps: Map[String, String] = Map.empty): Unit = {
+    val tblPropsStr = (extraProps + ("delta.enableRowTracking" -> "true"))
+      .map { case (k, v) => s"'$k' = '$v'" }.mkString(", ")
     spark.sql(
       s"""
          |CREATE TABLE delta.`$tablePath` (
          |  id INT,
          |  value STRING
          |) USING DELTA
-         |TBLPROPERTIES ('delta.enableRowTracking' = 'true')
+         |TBLPROPERTIES ($tblPropsStr)
          |""".stripMargin)
 
     // Insert 5 records
@@ -448,29 +452,38 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
     }
   }
 
-  test("Read row tracking columns from delta-spark table") {
-    withTempDirAndEngine { (tablePath, _) =>
-      createRowTrackingTableWithSpark(tablePath)
+  Seq("none", "name", "id").foreach(mode => {
+    test(s"Read row tracking columns from delta-spark table with column mapping = $mode") {
+      withTempDirAndEngine { (tablePath, _) =>
+        createRowTrackingTableWithSpark(
+          tablePath,
+          extraProps = Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> mode))
 
-      val expectedAnswer = Seq(
-        TestRow(1, "A", 0L, 1L),
-        TestRow(2, "B", 1L, 1L),
-        TestRow(3, "C_updated", 2L, null),
-        TestRow(4, "D", 3L, 1L),
-        TestRow(5, "E", 4L, 1L),
-        TestRow(6, "F", null, null))
+        val expectedAnswer = Seq(
+          TestRow(1, "A", 0L, 1L),
+          TestRow(2, "B", 1L, 1L),
+          TestRow(3, "C_updated", 2L, null),
+          TestRow(4, "D", 3L, 1L),
+          TestRow(5, "E", 4L, 1L),
+          TestRow(6, "F", null, null))
 
-      // This tests also checks that the delta-spark table schema is inferred correctly
-      checkTable(
-        path = tablePath,
-        expectedAnswer,
-        metadataCols =
-          Seq(RowTracking.METADATA_ROW_ID_COLUMN, RowTracking.METADATA_ROW_COMMIT_VERSION_COLUMN),
-        expectedSchema = new StructType()
-          .add(new StructField("id", IntegerType.INTEGER, true))
-          .add(new StructField("value", StringType.STRING, true)))
+        // We only check whether the delta-spark table schema is inferred correctly if column
+        // mapping is disabled
+        val expectedSchema = if (mode == "none") {
+          new StructType()
+            .add(new StructField("id", IntegerType.INTEGER, true))
+            .add(new StructField("value", StringType.STRING, true))
+        } else { null }
+
+        checkTable(
+          path = tablePath,
+          expectedAnswer,
+          metadataCols =
+            Seq(RowTracking.METADATA_ROW_ID_COLUMN, RowTracking.METADATA_ROW_COMMIT_VERSION_COLUMN),
+          expectedSchema = expectedSchema)
+      }
     }
-  }
+  })
 
   test("Read subset of row tracking columns from delta-spark table") {
     withTempDirAndEngine { (tablePath, _) =>

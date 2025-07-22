@@ -194,8 +194,11 @@ public final class MaterializedRowTrackingColumn {
             metadata.getConfiguration().get(column.getMaterializedColumnNameProperty()))
         .orElseThrow(
             () ->
-                DeltaErrors.missingMetadataConfigField(
-                    column.getMaterializedColumnNameProperty(), metadata.getConfiguration()));
+                new InvalidTableException(
+                    metadata.getId(),
+                    String.format(
+                        "Materialized column name `%s` is missing in the metadata configuration.",
+                        column.getMaterializedColumnNameProperty())));
   }
 
   /** Generates a random name by concatenating the prefix with a random UUID. */

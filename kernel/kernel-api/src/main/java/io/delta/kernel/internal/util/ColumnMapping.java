@@ -251,6 +251,15 @@ public class ColumnMapping {
       StructType prunedSchema, StructType fullSchema, boolean includeFieldId) {
     StructType newSchema = new StructType();
     for (StructField prunedField : prunedSchema.fields()) {
+      if (fullSchema.indexOf(prunedField.getName()) == -1) {
+        // Metadata columns are not present in fullSchema by design, so we have to ignore them
+        // during column mapping.
+        // Note that we cannot use isMetadataColumn() here since logical metadata columns might
+        // have been converted to (regular) physical columns before column mapping is applied.
+        newSchema = newSchema.add(prunedField);
+        continue;
+      }
+
       StructField completeField = fullSchema.get(prunedField.getName());
       DataType physicalType =
           convertToPhysicalType(

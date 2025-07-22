@@ -36,6 +36,7 @@ import java.util.stream.Collectors;
 
 /** A collection of helper methods for working with row tracking. */
 public class RowTracking {
+  // TODO: Migrate this API to the unified metadata column API once it is available.
   /**
    * The name of the row ID metadata column. When present this column must be populated with the
    * unique ID of each row.

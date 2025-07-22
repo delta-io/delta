@@ -28,7 +28,6 @@ import io.delta.kernel.utils.DataFileStatus;
 import java.io.IOException;
 import java.sql.Timestamp;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Supplier;
@@ -450,12 +449,6 @@ public final class DeltaErrors {
         String.format(
             "Row tracking is not enabled, but row tracking column '%s' was requested.",
             columnName));
-  }
-
-  public static KernelException missingMetadataConfigField(String key, Map<String, String> config) {
-    return new KernelException(
-        String.format(
-            "Missing required field '%s' in the metadata configuration: %s", key, config));
   }
 
   public static KernelException cannotModifyAppendOnlyTable(String tablePath) {
