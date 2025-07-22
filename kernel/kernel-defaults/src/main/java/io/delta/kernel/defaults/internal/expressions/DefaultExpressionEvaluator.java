@@ -31,7 +31,6 @@ import io.delta.kernel.defaults.internal.data.vector.DefaultConstantVector;
 import io.delta.kernel.engine.ExpressionHandler;
 import io.delta.kernel.expressions.*;
 import io.delta.kernel.types.*;
-import java.math.BigDecimal;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -237,7 +236,7 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
     ExpressionTransformResult visitCoalesce(ScalarExpression coalesce) {
       List<ExpressionTransformResult> children =
           coalesce.getChildren().stream().map(this::visit).collect(Collectors.toList());
-      if (children.size() == 0) {
+      if (children.isEmpty()) {
         throw unsupportedExpressionException(coalesce, "Coalesce requires at least one expression");
       }
       // TODO support least-common-type resolution
@@ -245,11 +244,6 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
       if (numDistinctTypes > 1) {
         throw unsupportedExpressionException(
             coalesce, "Coalesce is only supported for arguments of the same type");
-      }
-      // TODO support other data types besides boolean (just needs tests)
-      if (!(children.get(0).outputType instanceof BooleanType)) {
-        throw unsupportedExpressionException(
-            coalesce, "Coalesce is only supported for boolean type expressions");
       }
       return new ExpressionTransformResult(
           new ScalarExpression(
@@ -264,6 +258,19 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
       if (children.size() != 2) {
         throw unsupportedExpressionException(
             add, "ADD requires exactly two arguments: left and right operands");
+      }
+      if (children.get(0).outputType != children.get(1).outputType) {
+        throw unsupportedExpressionException(
+            add, "ADD is only supported for arguments of the same type");
+      }
+      if (!(children.get(0).outputType instanceof ByteType
+          || children.get(0).outputType instanceof ShortType
+          || children.get(0).outputType instanceof IntegerType
+          || children.get(0).outputType instanceof LongType
+          || children.get(0).outputType instanceof FloatType
+          || children.get(0).outputType instanceof DoubleType)) {
+        throw unsupportedExpressionException(
+            add, "ADD is only supported for numeric types: byte, short, int, long, float, double");
       }
 
       return new ExpressionTransformResult(
@@ -609,11 +616,9 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
     ColumnVector visitAdd(ScalarExpression add) {
       List<ColumnVector> childResults =
           add.getChildren().stream().map(this::visit).collect(toList());
-      if (childResults.size() != 2) {
-        throw unsupportedExpressionException(
-            add, "ADD requires exactly two arguments: left and right operands");
-      }
 
+      // NOTE: The current implementation only supports operands of the same type, and it does not
+      // check for overflows (i.e., values will wrap around when overflowing).
       return DefaultExpressionUtils.arithmeticVector(
           childResults.get(0),
           childResults.get(1),
@@ -646,11 +651,6 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
             @Override
             public double apply(double a, double b) {
               return a + b;
-            }
-
-            @Override
-            public BigDecimal apply(BigDecimal a, BigDecimal b) {
-              return a.add(b);
             }
           });
     }

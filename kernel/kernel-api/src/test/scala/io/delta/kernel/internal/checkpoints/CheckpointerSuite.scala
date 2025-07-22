@@ -248,7 +248,7 @@ object CheckpointerSuite extends VectorTestUtils {
     override def getSchema: StructType = CheckpointMetaData.READ_SCHEMA
 
     // empty vector for all columns
-    override def getColumnVector(ordinal: Int): ColumnVector = longVector(Seq())
+    override def getColumnVector(ordinal: Int): ColumnVector = longVector(Seq.empty)
 
     override def getSize: Int = 0
   }

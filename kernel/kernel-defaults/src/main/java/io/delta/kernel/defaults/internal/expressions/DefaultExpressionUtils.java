@@ -399,8 +399,6 @@ class DefaultExpressionUtils {
     float apply(float a, float b);
 
     double apply(double a, double b);
-
-    BigDecimal apply(BigDecimal a, BigDecimal b);
   }
 
   /**
@@ -465,11 +463,6 @@ class DefaultExpressionUtils {
       @Override
       public double getDouble(int rowId) {
         return operator.apply(left.getDouble(rowId), right.getDouble(rowId));
-      }
-
-      @Override
-      public BigDecimal getDecimal(int rowId) {
-        return operator.apply(left.getDecimal(rowId), right.getDecimal(rowId));
       }
     };
   }
