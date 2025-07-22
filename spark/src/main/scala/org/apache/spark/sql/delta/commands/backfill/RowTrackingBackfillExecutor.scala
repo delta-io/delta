@@ -21,13 +21,21 @@ import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.metering.DeltaLogging
 
 import org.apache.spark.sql.{Dataset, SparkSession}
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 
 class RowTrackingBackfillExecutor(
     override val spark: SparkSession,
-    override val origTxn: OptimisticTransaction,
-    override val tracker: FileMetadataMaterializationTracker,
+    override val deltaLog: DeltaLog,
+    override val catalogTableOpt: Option[CatalogTable],
+    override val backfillTxnId: String,
     override val backfillStats: BackfillCommandStats) extends BackfillExecutor {
   override val backFillBatchOpType = "delta.rowTracking.backfill.batch"
+
+  override def filesToBackfill(snapshot: Snapshot): Dataset[AddFile] =
+    RowTrackingBackfillExecutor.getCandidateFilesToBackfill(snapshot)
+
+  override def constructBatch(files: Seq[AddFile]): BackfillBatch =
+    RowTrackingBackfillBatch(files)
 }
 
 private[delta] object RowTrackingBackfillExecutor extends DeltaLogging {

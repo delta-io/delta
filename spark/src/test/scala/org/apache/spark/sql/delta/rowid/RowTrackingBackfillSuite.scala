@@ -482,11 +482,6 @@ class RowTrackingBackfillSuite
       val filesInSuccessfulBackfill = allFiles.take(numFilesInSuccessfulBackfillBatch)
       val numFilesInFailingBackfillBatch = 2
       val filesInFailingBackfill = allFiles.takeRight(numFilesInFailingBackfillBatch)
-      // ordered list in order to force the successful batch to execute before the failing batch.
-      val batchIterator = List(
-        RowTrackingBackfillBatch(filesInSuccessfulBackfill),
-        FailingRowTrackingBackfillBatch(filesInFailingBackfill)
-      ).iterator
 
       val txn = log.startTransaction()
       val backfillStats = BackfillCommandStats(
@@ -494,14 +489,25 @@ class RowTrackingBackfillSuite
         nameOfTriggeringOperation = DeltaOperations.OP_SET_TBLPROPERTIES)
       val backfillExecutor = new RowTrackingBackfillExecutor(
         spark,
-        txn,
-        FileMetadataMaterializationTracker.noopTracker,
+        log,
+        catalogTableOpt = None,
+        txn.txnId,
         backfillStats
-      )
+      ) {
+        var batchIdx = 0
+        override def constructBatch(files: Seq[AddFile]): BackfillBatch = {
+          batchIdx += 1
+          if (batchIdx == 1) {
+            RowTrackingBackfillBatch(filesInSuccessfulBackfill)
+          } else {
+            FailingRowTrackingBackfillBatch(filesInFailingBackfill)
+          }
+        }
+      }
 
       val backfillUsageRecords = Log4jUsageLogger.track {
         intercept[IllegalStateException] {
-          backfillExecutor.run(batchIterator)
+          backfillExecutor.run(maxNumFilesPerCommit = 3)
         }
       }.filter(_.metric == "tahoeEvent")
 
@@ -548,11 +554,11 @@ class RowTrackingBackfillSuite
       val numSuccessfulBatch = new AtomicInteger(0)
       val numFailedBatch = new AtomicInteger(0)
 
+      val backfillTxnId = "backfill-txn-id"
       val txn = table.startTransactionWithInitialSnapshot()
-
       val backfillUsageRecords = Log4jUsageLogger.track {
         intercept[IllegalStateException] {
-          batch.execute(txn, batchId, numSuccessfulBatch, numFailedBatch)
+          batch.execute(backfillTxnId, batchId, txn, numSuccessfulBatch, numFailedBatch)
         }
       }.filter(_.metric == "tahoeEvent")
 
@@ -570,7 +576,7 @@ class RowTrackingBackfillSuite
       assert(backfillBatchStats.initialNumFiles === filesInBackfillBatch.length)
       // Failing batch can have totalExecutionTimeInMs be 0 because it ends faster.
       assert(backfillBatchStats.totalExecutionTimeInMs >= 0)
-      assert(backfillBatchStats.parentTransactionId === txn.txnId)
+      assert(backfillBatchStats.parentTransactionId === backfillTxnId)
       assert(backfillBatchStats.transactionId != null && backfillBatchStats.transactionId.nonEmpty)
     }
   }

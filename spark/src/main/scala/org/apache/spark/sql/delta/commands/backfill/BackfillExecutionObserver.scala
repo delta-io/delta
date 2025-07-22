@@ -38,8 +38,6 @@ object BackfillExecutionObserver
 }
 
 object NoOpBackfillExecutionObserver extends BackfillExecutionObserver {
-  def executeBatch[T](f: => T): T = {
-    TransactionExecutionObserver.withObserver(NoOpTransactionExecutionObserver)(f)
-  }
+  def executeBatch[T](f: => T): T = f
 }
 
