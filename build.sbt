@@ -611,7 +611,12 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
       "junit" % "junit" % "4.13.2" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
       "org.slf4j" % "slf4j-log4j12" % "1.7.36" % "test",
-      "org.assertj" % "assertj-core" % "3.26.3" % "test"
+      "org.assertj" % "assertj-core" % "3.26.3" % "test",
+      // JMH dependencies allow writing micro-benchmarks for testing performance of components.
+      // JMH has framework to define benchmarks and takes care of many common functionalities
+      // such as warm runs, cold runs, defining benchmark parameter variables etc.
+      "org.openjdk.jmh" % "jmh-core" % "1.37" % "test",
+      "org.openjdk.jmh" % "jmh-generator-annprocess" % "1.37" % "test"
     ),
     // Shade jackson libraries so that connector developers don't have to worry
     // about jackson version conflicts.
