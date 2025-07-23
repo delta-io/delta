@@ -724,9 +724,6 @@ lazy val sparkDsv2 = (project in file("spark-dsv2"))
   .settings(
     name := "delta-spark-dsv2",
     commonSettings,
-    javaOnlyReleaseSettings,
-    javafmtCheckSettings,
-    javaCheckstyleSettings("dev/kernel-checkstyle.xml"),
     Test / javaOptions ++= Seq("-ea"),
     // This allows generating tables with unsupported test table features in delta-spark
     Test / envVars += ("DELTA_TESTING", "1"),
