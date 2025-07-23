@@ -458,6 +458,12 @@ public final class DeltaErrors {
             tablePath, TableConfig.APPEND_ONLY_ENABLED.getKey()));
   }
 
+  public static KernelException missingRowTrackingEntryInFile(String filePath, String entry) {
+    return new KernelException(
+        String.format(
+            "%s is not present in scan file %s of table with row tracking.", entry, filePath));
+  }
+
   /* ------------------------ HELPER METHODS ----------------------------- */
   private static String formatTimestamp(long millisSinceEpochUTC) {
     return new Timestamp(millisSinceEpochUTC).toInstant().toString();

@@ -42,6 +42,8 @@ import io.delta.kernel.internal.skipping.DataSkippingUtils;
 import io.delta.kernel.internal.util.*;
 import io.delta.kernel.metrics.ScanReport;
 import io.delta.kernel.metrics.SnapshotReport;
+import io.delta.kernel.types.FieldMetadata;
+import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
@@ -144,8 +146,10 @@ public class ScanImpl implements Scan {
     boolean shouldReadStats = hasDataSkippingFilter || includeStats;
 
     Timer.Timed planningDuration = scanMetrics.totalPlanningTimer.start();
-    // ScanReportReporter stores the current context and can be invoked (in the future) with
-    // `reportError` or `reportSuccess` to stop the planning duration timer and push a report to
+    // ScanReportReporter stores the current context and can be invoked (in the
+    // future) with
+    // `reportError` or `reportSuccess` to stop the planning duration timer and push
+    // a report to
     // the engine
     ScanReportReporter reportReporter =
         (exceptionOpt, isFullyConsumed) -> {
@@ -168,7 +172,8 @@ public class ScanImpl implements Scan {
 
     try {
       // Get active AddFiles via log replay
-      // If there is a partition predicate, construct a predicate to prune checkpoint files
+      // If there is a partition predicate, construct a predicate to prune checkpoint
+      // files
       // while constructing the table state.
       CloseableIterator<FilteredColumnarBatch> scanFileIter =
           logReplay.getAddFilesAsColumnarBatches(
@@ -204,9 +209,12 @@ public class ScanImpl implements Scan {
   public Row getScanState(Engine engine) {
     StructType physicalSchema = createPhysicalSchema();
 
-    // Compute the physical data read schema (i.e., the columns to read from a Parquet data file).
-    // The only difference to the physical schema is that we exclude partition columns. All other
-    // logic (e.g., row tracking columns, row index for DVs) is already handled before.
+    // Compute the physical data read schema (i.e., the columns to read from a
+    // Parquet data file).
+    // The only difference to the physical schema is that we exclude partition
+    // columns. All other
+    // logic (e.g., row tracking columns, row index for DVs) is already handled
+    // before.
     List<String> partitionColumns = VectorUtils.toJavaList(metadata.getPartitionColumns());
     StructType physicalDataReadSchema =
         PartitionUtils.physicalSchemaWithoutPartitionColumns(
@@ -253,8 +261,17 @@ public class ScanImpl implements Scan {
         && physicalFields.stream()
             .map(StructField::getName)
             .noneMatch(name -> name.equals(StructField.METADATA_ROW_INDEX_COLUMN_NAME))) {
-      // If the row index column is not already present, add it to the physical read schema
-      physicalFields.add(StructField.METADATA_ROW_INDEX_COLUMN);
+      // If the row index column is not already present, add it to the physical read
+      // schema
+      physicalFields.add(
+          new StructField(
+              StructField.METADATA_ROW_INDEX_COLUMN_NAME,
+              LongType.LONG,
+              false,
+              FieldMetadata.builder()
+                  .putBoolean(StructField.IS_METADATA_COLUMN_KEY, true)
+                  .putBoolean(StructField.IS_INTERNAL_METADATA_COLUMN_KEY, true)
+                  .build()));
     }
 
     return new StructType(physicalFields);
@@ -272,7 +289,8 @@ public class ScanImpl implements Scan {
           logicalField, readSchema, metadata);
     }
 
-    // As of now, metadata columns other than row tracking columns do not require any special
+    // As of now, metadata columns other than row tracking columns do not require
+    // any special
     // handling, so we can just add them to the physical schema as is.
     return Collections.singletonList(logicalField);
   }
@@ -361,16 +379,20 @@ public class ScanImpl implements Scan {
       CloseableIterator<FilteredColumnarBatch> scanFileIter,
       DataSkippingPredicate dataSkippingFilter) {
     // Get the stats schema
-    // It's possible to instead provide the referenced columns when building the schema but
+    // It's possible to instead provide the referenced columns when building the
+    // schema but
     // pruning it after is much simpler
     StructType prunedStatsSchema =
         DataSkippingUtils.pruneStatsSchema(
             getStatsSchema(metadata.getDataSchema()), dataSkippingFilter.getReferencedCols());
 
     // Skipping happens in two steps:
-    // 1. The predicate produces false for any file whose stats prove we can safely skip it. A
-    //    value of true means the stats say we must keep the file, and null means we could not
-    //    determine whether the file is safe to skip, because its stats were missing/null.
+    // 1. The predicate produces false for any file whose stats prove we can safely
+    // skip it. A
+    // value of true means the stats say we must keep the file, and null means we
+    // could not
+    // determine whether the file is safe to skip, because its stats were
+    // missing/null.
     // 2. The coalesce(skip, true) converts null (= keep) to true
     Predicate filterToEval =
         new Predicate(
@@ -430,14 +452,17 @@ public class ScanImpl implements Scan {
       @Override
       public void close() throws IOException {
         try {
-          // If a ScanReport has already been pushed in the case of an exception don't double report
+          // If a ScanReport has already been pushed in the case of an exception don't
+          // double report
           if (!errorReported) {
             if (!scanIter.hasNext()) {
-              // The entire scan file iterator has been successfully consumed report a complete Scan
+              // The entire scan file iterator has been successfully consumed report a
+              // complete Scan
               reporter.reportCompleteScan();
             } else {
               // The scan file iterator has NOT been fully consumed before being closed
-              // We have no way of knowing the reason why, this could be due to an exception in the
+              // We have no way of knowing the reason why, this could be due to an exception
+              // in the
               // connector code, or intentional early termination such as for a LIMIT query
               reporter.reportIncompleteScan();
             }
