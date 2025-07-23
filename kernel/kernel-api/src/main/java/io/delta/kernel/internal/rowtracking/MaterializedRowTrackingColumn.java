@@ -22,6 +22,7 @@ import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.util.ColumnMapping;
+import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import java.util.*;
@@ -179,15 +180,13 @@ public final class MaterializedRowTrackingColumn {
       //  to the physical schema to compute non-materialized row IDs.
       return physicalSchema.add(
           new StructField(
-              getPhysicalColumnName(ROW_ID, metadata),
-              logicalField.getDataType(),
-              logicalField.isNullable()));
+              ROW_ID.getPhysicalColumnName(metadata), LongType.LONG, true /* nullable */));
     } else if (logicalField.getName().equals(METADATA_ROW_COMMIT_VERSION_COLUMN_NAME)) {
       return physicalSchema.add(
           new StructField(
-              getPhysicalColumnName(ROW_COMMIT_VERSION, metadata),
-              logicalField.getDataType(),
-              logicalField.isNullable()));
+              ROW_COMMIT_VERSION.getPhysicalColumnName(metadata),
+              LongType.LONG,
+              true /* nullable */));
     } else {
       throw new IllegalArgumentException(
           String.format(
@@ -196,17 +195,15 @@ public final class MaterializedRowTrackingColumn {
     }
   }
 
-  private static String getPhysicalColumnName(
-      MaterializedRowTrackingColumn column, Metadata metadata) {
-    return Optional.ofNullable(
-            metadata.getConfiguration().get(column.getMaterializedColumnNameProperty()))
+  private String getPhysicalColumnName(Metadata metadata) {
+    return Optional.ofNullable(metadata.getConfiguration().get(getMaterializedColumnNameProperty()))
         .orElseThrow(
             () ->
                 new InvalidTableException(
                     metadata.getId(),
                     String.format(
                         "Materialized column name `%s` is missing in the metadata configuration.",
-                        column.getMaterializedColumnNameProperty())));
+                        getMaterializedColumnNameProperty())));
   }
 
   /** Generates a random name by concatenating the prefix with a random UUID. */

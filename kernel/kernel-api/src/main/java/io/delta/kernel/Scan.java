@@ -176,7 +176,7 @@ public interface Scan {
 
         // Add partition columns
         // NOTE: Adding partition columns must be the first thing we do with the data batch because
-        // it is the last thing we remove from the physicalReadSchema.
+        // it is the last thing we remove from the physicalReadSchema when creating a ScanStateRow.
         nextDataBatch =
             PartitionUtils.withPartitionColumns(
                 engine.getExpressionHandler(),
@@ -196,8 +196,7 @@ public interface Scan {
           selectionVector = Optional.empty();
         } else {
           if (rowIndexOrdinal == -1) {
-            throw new InvalidTableException(
-                tablePath,
+            throw new IllegalArgumentException(
                 "Row index column is not present in the data read from the Parquet file.");
           }
           if (!dv.equals(currDV)) {
