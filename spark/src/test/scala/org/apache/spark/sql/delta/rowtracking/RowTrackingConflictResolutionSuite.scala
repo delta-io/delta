@@ -20,7 +20,7 @@ import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaOperations.{ManualUpdate, Truncate}
 import org.apache.spark.sql.delta.actions.{Action, AddFile}
 import org.apache.spark.sql.delta.actions.{Metadata, RemoveFile}
-import org.apache.spark.sql.delta.commands.backfill.{BackfillBatchIterator, BackfillCommandStats, RowTrackingBackfillBatch, RowTrackingBackfillExecutor}
+import org.apache.spark.sql.delta.commands.backfill.{BackfillCommandStats, RowTrackingBackfillExecutor}
 import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray
 import org.apache.spark.sql.delta.rowid.RowIdTestUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -206,19 +206,12 @@ class RowTrackingConflictResolutionSuite extends QueryTest
       nameOfTriggeringOperation = DeltaOperations.OP_SET_TBLPROPERTIES)
     val backfillExecutor = new RowTrackingBackfillExecutor(
       spark,
-      backfillTxn,
-      FileMetadataMaterializationTracker.noopTracker,
+      log,
+      catalogTableOpt = None,
+      backfillTxn.txnId,
       backfillStats
     )
-    val filesToBackfill =
-      RowTrackingBackfillExecutor.getCandidateFilesToBackfill(log.update())
-    val batches = new BackfillBatchIterator(
-      filesToBackfill,
-      FileMetadataMaterializationTracker.noopTracker,
-      maxNumFilesPerBin = 4,
-      constructBatch = RowTrackingBackfillBatch(_))
-
-    backfillExecutor.run(batches)
+    backfillExecutor.run(maxNumFilesPerCommit = 4)
   }
 
   /** Check if base row IDs and default row commit versions have been assigned. */

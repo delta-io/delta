@@ -150,21 +150,8 @@ trait IdentityColumnConflictSuiteBase
 
       val threadPool =
         ThreadUtils.newDaemonSingleThreadExecutor(threadName = "identity-column-thread-pool")
-      var (txnObserver, future) = runQueryWithObserver(
+      val (txnObserver, future) = runQueryWithObserver(
         name = "current", threadPool, currentTxn.sqlCommand.replace("{tblName}", tblName))
-
-      // If the current txn is enabling row tracking on an existing table, the first txn is
-      // a NOOP since there are no files in the table initially. No commit will be made.
-      // Let's "skip" this txn obj. Replace the observer after the first commit.
-      // We want to observe the metadata update in this test, which happens after backfill.
-      val metadataUpdateObserver = new PhaseLockingTransactionExecutionObserver(
-        OptimisticTransactionPhases.forName("late-txn"))
-      if (currentTxn.isInstanceOf[RowTrackingEnablementOnlyTestCase]) {
-        txnObserver.setNextObserver(metadataUpdateObserver, autoAdvance = true)
-        unblockAllPhases(txnObserver)
-        txnObserver.phases.postCommitPhase.exitBarrier.unblock()
-        txnObserver = metadataUpdateObserver
-      }
 
       unblockUntilPreCommit(txnObserver)
       busyWaitFor(txnObserver.phases.preparePhase.hasEntered, timeout)

@@ -34,20 +34,21 @@ trait BackfillBatch extends DeltaLogging {
   protected def prepareFilesAndCommit(txn: OptimisticTransaction, batchId: Int): Unit
 
   /**
-   * The main method of this trait. This method creates a child transaction object, commits the
-   * backfill batch, records metrics and updates the two atomic counters passed in.
+   * The main method of this trait. This method commits the backfill batch, records metrics and
+   * updates the two atomic counters passed in.
    *
-   * @param origTxn the original transaction from [[BackfillCommand]] that read the
-   *                table to create BackfillBatchIterator[BackfillBatch].
+   * @param backfillTxnId the transaction id associated with the parent command.
    * @param batchId an integer identifier of the batch within a parent [[BackfillCommand]].
+   * @param txn transaction used to construct the current batch.
    * @param numSuccessfulBatch an AtomicInteger which serves as a counter for the total number of
    *                           batches that were successful.
    * @param numFailedBatch an AtomicInteger which serves as a counter for the total number of
    *                       batches that failed.
    */
   def execute(
-      origTxn: OptimisticTransaction,
+      backfillTxnId: String,
       batchId: Int,
+      txn: OptimisticTransaction,
       numSuccessfulBatch: AtomicInteger,
       numFailedBatch: AtomicInteger): Unit = {
     val startTimeNs = System.nanoTime()
@@ -60,9 +61,9 @@ trait BackfillBatch extends DeltaLogging {
       }
       val totalExecutionTimeInMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTimeNs)
       val batchStats = BackfillBatchStats(
-        origTxn.txnId, txnId, batchId, filesInBatch.size, totalExecutionTimeInMs, wasSuccessful)
+        backfillTxnId, txnId, batchId, filesInBatch.size, totalExecutionTimeInMs, wasSuccessful)
       recordDeltaEvent(
-        origTxn.deltaLog,
+        txn.deltaLog,
         opType = backfillBatchStatsOpType,
         data = batchStats
       )
@@ -70,10 +71,6 @@ trait BackfillBatch extends DeltaLogging {
 
     logInfo(log"Batch ${MDC(DeltaLogKeys.BATCH_ID, batchId.toLong)} starting, committing " +
       log"${MDC(DeltaLogKeys.NUM_FILES, filesInBatch.size.toLong)} candidate files")
-    // This step is necessary to mark all files in this batch as "read" in the
-    // child transaction object `txn` and to set the read transactions ids to be the same as the
-    // parent transaction object `origTxn`, for proper conflict checking.
-    val txn = origTxn.split(filesInBatch)
     val txnId = txn.txnId
     try {
       prepareFilesAndCommit(txn, batchId)

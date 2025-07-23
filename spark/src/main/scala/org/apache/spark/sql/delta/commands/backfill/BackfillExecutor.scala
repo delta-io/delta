@@ -19,51 +19,54 @@ package org.apache.spark.sql.delta.commands.backfill
 import java.util.concurrent.atomic.AtomicInteger
 
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.metering.DeltaLogging
 
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{Dataset, SparkSession}
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 
 trait BackfillExecutor extends DeltaLogging {
   def spark: SparkSession
-  def origTxn: OptimisticTransaction
-  def tracker: FileMetadataMaterializationTracker
+  def deltaLog: DeltaLog
+  def catalogTableOpt: Option[CatalogTable]
+  def backfillTxnId: String
   def backfillStats: BackfillCommandStats
 
   def backFillBatchOpType: String
+  def filesToBackfill(snapshot: Snapshot): Dataset[AddFile]
+  def constructBatch(files: Seq[AddFile]): BackfillBatch
 
   /** Execute the command by consuming an iterator of [[BackfillBatch]]. */
-  def run(batches: Iterator[BackfillBatch]): Unit = {
-    if (batches.isEmpty) {
-      logInfo(log"Backfill command did not need to update any files")
-      return
-    }
-    executeBackfillBatches(batches)
+  def run(maxNumFilesPerCommit: Int): Unit = {
+    executeBackfillBatches(maxNumFilesPerCommit)
   }
 
   /**
    * Execute all [[BackfillBatch]] objects inside the [[Iterator]].
-   *
-   * @param batches The iterator of [[BackfillBatch]] to be executed.
    */
-  private def executeBackfillBatches(
-      batches: Iterator[BackfillBatch]): Unit = {
+  private def executeBackfillBatches(maxNumFilesPerCommit: Int): Unit = {
     val observer = BackfillExecutionObserver.getObserver
     val numSuccessfulBatch = new AtomicInteger(0)
     val numFailedBatch = new AtomicInteger(0)
+    var batchId = 0
     try {
-      batches.zipWithIndex.foreach { case (batch, batchId) =>
-        try {
-          observer.executeBatch {
-            recordDeltaOperation(origTxn.deltaLog, backFillBatchOpType) {
-              batch.execute(origTxn, batchId, numSuccessfulBatch, numFailedBatch)
-            }
-          }
-        } finally {
-          // release all the permits for the files materialized by the batch
-          if (tracker != null) {
-            tracker.releasePermits(batch.filesInBatch.length)
+      while (true) {
+        val snapshot = deltaLog.update(catalogTableOpt = catalogTableOpt)
+        val filesInBatch = filesToBackfill(snapshot).limit(maxNumFilesPerCommit).collect()
+        if (filesInBatch.isEmpty) {
+          return
+        }
+
+        val batch = constructBatch(filesInBatch)
+        observer.executeBatch {
+          val txn = deltaLog.startTransaction(catalogTableOpt, Some(snapshot))
+          txn.trackFilesRead(filesInBatch)
+          recordDeltaOperation(deltaLog, backFillBatchOpType) {
+            batch.execute(backfillTxnId, batchId, txn, numSuccessfulBatch, numFailedBatch)
           }
         }
+
+        batchId += 1
       }
     } finally {
       backfillStats.numSuccessfulBatches = numSuccessfulBatch.get()

@@ -20,6 +20,7 @@ import org.apache.spark.sql.delta.{DeltaOperations, OptimisticTransaction}
 import org.apache.spark.sql.delta.actions.AddFile
 
 case class RowTrackingBackfillBatch(filesInBatch: Seq[AddFile]) extends BackfillBatch {
+
   override val backfillBatchStatsOpType = "delta.rowTracking.backfill.batch.stats"
 
   /** Mark all files as dataChange = false and commit. */
