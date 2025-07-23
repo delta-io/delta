@@ -33,4 +33,4 @@ class Dsv2BasicSuite extends QueryTest with SharedSparkSession {
     assert(exception.isInstanceOf[UnsupportedOperationException])
     assert(exception.getMessage.contains("loadTable method is not implemented"))
   }
-} 
+}
