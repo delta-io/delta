@@ -21,6 +21,7 @@ import io.delta.kernel.data.*;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.InternalScanFileUtils;
+import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.data.ScanStateRow;
 import io.delta.kernel.internal.data.SelectionColumnVector;
@@ -185,9 +186,12 @@ public interface Scan {
                 physicalReadSchema);
 
         // Transform physical row tracking columns to logical row tracking columns
-        nextDataBatch =
-            MaterializedRowTrackingColumn.transformPhysicalData(
-                nextDataBatch, scanFile, scanState, engine);
+        if (TableConfig.ROW_TRACKING_ENABLED.fromMetadata(
+            ScanStateRow.getConfiguration(scanState))) {
+          nextDataBatch =
+              MaterializedRowTrackingColumn.transformPhysicalData(
+                  nextDataBatch, scanFile, scanState, engine);
+        }
 
         // Get the selectionVector if DV is present
         DeletionVectorDescriptor dv =
