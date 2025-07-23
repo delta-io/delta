@@ -148,44 +148,52 @@ public final class MaterializedRowTrackingColumn {
   }
 
   /**
-   * Converts logical row tracking columns in a schema to their physical counterparts.
+   * Converts a logical row tracking field to its physical counterpart.
    *
-   * <p>This method does not modify the logical schema but returns a new StructType instance.
+   * <p>This method does not modify the logical schema but returns a new StructType instance with
+   * the added physical field(s).
+   *
+   * <p>Since computing the row ID requires the row index, requesting a row tracking column can
+   * require adding two columns to the physical schema.
    *
    * <p>Note that we must not mark the physical columns as metadata columns because as far as the
    * parquet reader is concerned, these columns are not metadata columns.
    *
-   * @param logicalSchema The logical schema to convert.
+   * @param logicalField The logical field to convert.
+   * @param logicalSchema The logical schema containing the field.
+   * @param physicalSchema The current physical schema to which the field will be added.
    * @param metadata The current metadata of the table.
-   * @return A new StructType representing the physical schema.
+   * @return A new StructType representing the updated physical schema with the added field.
    */
-  public static StructType convertToPhysicalSchema(StructType logicalSchema, Metadata metadata) {
-    List<StructField> physicalFields = new ArrayList<>();
-    // Check if row tracking is enabled and error if row tracking columns are requested
-    boolean rowTrackingEnabled = TableConfig.ROW_TRACKING_ENABLED.fromMetadata(metadata);
-
-    for (StructField field : logicalSchema.fields()) {
-      if (!rowTrackingEnabled
-          && (field.getName().equals(METADATA_ROW_ID_COLUMN_NAME)
-              || field.getName().equals(METADATA_ROW_COMMIT_VERSION_COLUMN_NAME))) {
-        throw DeltaErrors.missingRowTrackingColumnRequested(field.getName());
-      }
-
-      if (field.getName().equals(METADATA_ROW_ID_COLUMN_NAME)) {
-        physicalFields.add(
-            new StructField(
-                getPhysicalColumnName(ROW_ID, metadata), field.getDataType(), true /* nullable */));
-      } else if (field.getName().equals(METADATA_ROW_COMMIT_VERSION_COLUMN_NAME)) {
-        physicalFields.add(
-            new StructField(
-                getPhysicalColumnName(ROW_COMMIT_VERSION, metadata),
-                field.getDataType(),
-                true /* nullable */));
-      } else {
-        physicalFields.add(field);
-      }
+  public static StructType convertToPhysicalColumn(
+      StructField logicalField,
+      StructType logicalSchema,
+      StructType physicalSchema,
+      Metadata metadata) {
+    if (!TableConfig.ROW_TRACKING_ENABLED.fromMetadata(metadata)) {
+      throw DeltaErrors.missingRowTrackingColumnRequested(logicalField.getName());
     }
-    return new StructType(physicalFields);
+
+    if (logicalField.getName().equals(METADATA_ROW_ID_COLUMN_NAME)) {
+      // TODO: Use logicalSchema here to determine whether we also need to add row index
+      //  to the physical schema to compute non-materialized row IDs.
+      return physicalSchema.add(
+          new StructField(
+              getPhysicalColumnName(ROW_ID, metadata),
+              logicalField.getDataType(),
+              logicalField.isNullable()));
+    } else if (logicalField.getName().equals(METADATA_ROW_COMMIT_VERSION_COLUMN_NAME)) {
+      return physicalSchema.add(
+          new StructField(
+              getPhysicalColumnName(ROW_COMMIT_VERSION, metadata),
+              logicalField.getDataType(),
+              logicalField.isNullable()));
+    } else {
+      throw new IllegalArgumentException(
+          String.format(
+              "Logical field `%s` is not a recognized materialized row tracking column.",
+              logicalField.getName()));
+    }
   }
 
   private static String getPhysicalColumnName(

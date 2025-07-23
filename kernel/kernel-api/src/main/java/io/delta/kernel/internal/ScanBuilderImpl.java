@@ -72,7 +72,8 @@ public class ScanBuilderImpl implements ScanBuilder {
 
   @Override
   public ScanBuilder withReadSchema(StructType readSchema) {
-    // TODO: validate the readSchema is a subset of the table schema
+    // TODO: Validate that readSchema is a subset of the table schema or that extra fields are
+    //  metadata columns.
     this.readSchema = readSchema;
     return this;
   }

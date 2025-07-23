@@ -68,6 +68,18 @@ public class RowTracking {
   }
 
   /**
+   * Checks if the provided field is a row tracking column, i.e., either the row ID or the row
+   * commit version column.
+   *
+   * @param field the field to check
+   * @return true if the field is a row tracking column, false otherwise
+   */
+  public static boolean isRowTrackingColumn(StructField field) {
+    return field.getName().equals(METADATA_ROW_ID_COLUMN_NAME)
+        || field.getName().equals(METADATA_ROW_COMMIT_VERSION_COLUMN_NAME);
+  }
+
+  /**
    * Assigns or reassigns baseRowIds and defaultRowCommitVersions to {@link AddFile} actions in the
    * provided {@code dataActions}. This method should be invoked only when the 'rowTracking' feature
    * is supported and is used in two scenarios:
