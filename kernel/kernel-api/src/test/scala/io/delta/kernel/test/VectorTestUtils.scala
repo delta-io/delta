@@ -45,7 +45,7 @@ trait VectorTestUtils {
     }
   }
 
-  protected def timestampVector(values: Seq[Long]): ColumnVector = {
+  protected def timestampVector(values: Seq[LongJ]): ColumnVector = {
     new ColumnVector {
       override def getDataType: DataType = TimestampType.TIMESTAMP
 
@@ -53,7 +53,7 @@ trait VectorTestUtils {
 
       override def close(): Unit = {}
 
-      override def isNullAt(rowId: Int): Boolean = values(rowId) == -1
+      override def isNullAt(rowId: Int): Boolean = values(rowId) == null || values(rowId) == -1
 
       // Values are stored as Longs representing milliseconds since epoch
       override def getLong(rowId: Int): Long = values(rowId)

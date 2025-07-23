@@ -322,6 +322,24 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     checkStringVectors(actStrOutput, expStrOutput)
   }
 
+  test("evaluate expression: coalesce (timestamp columns)") {
+    val tsCol1 = timestampVector(Seq(1000L, null, null, 4000L))
+    val tsCol2 = timestampVector(Seq(null, 2000L, null, 5000L))
+    val tsCol3 = timestampVector(Seq(10000L, null, 3000L, null))
+    val tsSchema = new StructType()
+      .add("tsCol1", TimestampType.TIMESTAMP)
+      .add("tsCol2", TimestampType.TIMESTAMP)
+      .add("tsCol3", TimestampType.TIMESTAMP)
+    val tsBatch =
+      new DefaultColumnarBatch(tsCol1.getSize, tsSchema, Array(tsCol1, tsCol2, tsCol3))
+    val tsCoalesceExpr = new ScalarExpression(
+      "COALESCE",
+      util.Arrays.asList(new Column("tsCol1"), new Column("tsCol2"), new Column("tsCol3")))
+    val expTsOutput = timestampVector(Seq(1000L, 2000L, 3000L, 4000L))
+    val actTsOutput = evaluator(tsSchema, tsCoalesceExpr, TimestampType.TIMESTAMP).eval(tsBatch)
+    checkLongVectors(actTsOutput, expTsOutput)
+  }
+
   test("evaluate expression: coalesce (unequal column types)") {
     def checkUnsupportedTypes(
         col1Type: DataType,
@@ -443,7 +461,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
   }
 
   test("evaluate expression: TIMEADD with TIMESTAMP columns") {
-    val timestampColumn = timestampVector(Seq[Long](
+    val timestampColumn = timestampVector(Seq(
       1577836800000000L, // 2020-01-01 00:00:00.000
       1577836800123456L, // 2020-01-01 00:00:00.123456
       -1 // Representing null
@@ -468,13 +486,11 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       "TIMEADD",
       util.Arrays.asList(new Column("timestamp"), new Column("duration")))
 
-    val expectedTimestamps = Seq[Long](
+    val expOutputVector = timestampVector(Seq(
       1577836801000000L, // 2020-01-01 00:00:01.000
       1577836800123456L + 100000, // 2020-01-01 00:00:00.123556
       -1 // Null should propagate
-    )
-
-    val expOutputVector = timestampVector(expectedTimestamps)
+    ))
     val actOutputVector = evaluator(schema, timeAddExpr, TimestampType.TIMESTAMP).eval(batch)
 
     checkTimestampVectors(actOutputVector, expOutputVector)
