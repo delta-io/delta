@@ -42,6 +42,8 @@ import io.delta.kernel.internal.skipping.DataSkippingUtils;
 import io.delta.kernel.internal.util.*;
 import io.delta.kernel.metrics.ScanReport;
 import io.delta.kernel.metrics.SnapshotReport;
+import io.delta.kernel.types.FieldMetadata;
+import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
@@ -249,11 +251,19 @@ public class ScanImpl implements Scan {
       }
     }
 
-    if (protocol.getReaderFeatures().contains("deletionVectors")) {
-      if (physicalSchema.indexOf(StructField.METADATA_ROW_INDEX_COLUMN_NAME) == -1) {
-        // If the row index column is not already present, add it to the physical read schema
-        physicalSchema = physicalSchema.add(StructField.METADATA_ROW_INDEX_COLUMN);
-      }
+    if (protocol.getReaderFeatures().contains("deletionVectors")
+        && physicalSchema.indexOf(StructField.METADATA_ROW_INDEX_COLUMN_NAME) == -1) {
+      // If the row index column is not already present, add it to the physical read schema
+      physicalSchema =
+          physicalSchema.add(
+              new StructField(
+                  StructField.METADATA_ROW_INDEX_COLUMN_NAME,
+                  LongType.LONG,
+                  false,
+                  FieldMetadata.builder()
+                      .putBoolean(StructField.IS_METADATA_COLUMN_KEY, true)
+                      .putBoolean(StructField.IS_INTERNAL_METADATA_COLUMN_KEY, true)
+                      .build()));
     }
 
     return physicalSchema;

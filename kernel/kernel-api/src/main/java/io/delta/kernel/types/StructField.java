@@ -37,6 +37,12 @@ public class StructField {
   public static final String IS_METADATA_COLUMN_KEY = "isMetadataColumn";
 
   /**
+   * Indicates that a metadata column was requested for internal computations and should not be
+   * exposed to the user.
+   */
+  public static final String IS_INTERNAL_METADATA_COLUMN_KEY = "isInternalMetadataColumn";
+
+  /**
    * The name of a row index metadata column. When present this column must be populated with row
    * index of each row when reading from parquet.
    */

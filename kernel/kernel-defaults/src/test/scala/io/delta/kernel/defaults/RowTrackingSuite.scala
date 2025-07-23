@@ -428,8 +428,6 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
   }
 
   /* -------- Test reading from tables with row tracking -------- */
-  // TODO: For now, we only read the materialized column values so the metadata column content will
-  //  be null for a new table without materialized row id/row commit version.
   test("Error when reading row tracking columns from a non-row-tracking table") {
     withTempDirAndEngine { (tablePath, engine) =>
       // Create a new table without row tracking
@@ -461,10 +459,10 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
         val expectedAnswer = Seq(
           TestRow(1, "A", 0L, 1L),
           TestRow(2, "B", 1L, 1L),
-          TestRow(3, "C_updated", 2L, null),
+          TestRow(3, "C_updated", 2L, 2L),
           TestRow(4, "D", 3L, 1L),
           TestRow(5, "E", 4L, 1L),
-          TestRow(6, "F", null, null))
+          TestRow(6, "F", 10L, 2L))
 
         // We only check whether the delta-spark table schema is inferred correctly if column
         // mapping is disabled
@@ -494,7 +492,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
         TestRow("C_updated", 2L),
         TestRow("D", 3L),
         TestRow("E", 4L),
-        TestRow("F", null))
+        TestRow("F", 10L))
 
       checkTable(
         path = tablePath,
@@ -511,10 +509,10 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
       val expectedAnswer = Seq(
         TestRow(1L, 0L),
         TestRow(1L, 1L),
-        TestRow(null, 2L),
+        TestRow(2L, 2L),
         TestRow(1L, 3L),
         TestRow(1L, 4L),
-        TestRow(null, null))
+        TestRow(2L, 10L))
 
       // This test also checks a different ordering of the metadata columns
       checkTable(
