@@ -63,4 +63,4 @@ class TestCatalog extends TableCatalog {
   }
 
   override def name(): String = catalogName
-} 
+}
