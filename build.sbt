@@ -56,7 +56,7 @@ val LATEST_RELEASED_SPARK_VERSION = "3.5.3"
 val SPARK_MASTER_VERSION = "4.0.1-SNAPSHOT"
 val sparkVersion = settingKey[String]("Spark version")
 spark / sparkVersion := getSparkVersion()
-sparkDsv2 / sparkVersion := getSparkVersion()
+sparkKernelDsv2 / sparkVersion := getSparkVersion()
 connectCommon / sparkVersion := getSparkVersion()
 connectClient / sparkVersion := getSparkVersion()
 connectServer / sparkVersion := getSparkVersion()
@@ -717,7 +717,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
   ).configureUnidoc(docTitle = "Delta Kernel Defaults")
 
 
-lazy val sparkDsv2 = (project in file("spark-dsv2"))
+lazy val sparkKernelDsv2 = (project in file("spark-kernel-dsv2"))
   .enablePlugins(ScalafmtPlugin)
   .dependsOn(kernelApi)
   .dependsOn(kernelDefaults)
@@ -725,22 +725,18 @@ lazy val sparkDsv2 = (project in file("spark-dsv2"))
   .settings(
     name := "delta-spark-dsv2",
     commonSettings,
+    scalaStyleSettings,
+    skipReleaseSettings,
     Test / javaOptions ++= Seq("-ea"),
-    // This allows generating tables with unsupported test table features in delta-spark
-    Test / envVars += ("DELTA_TESTING", "1"),
     libraryDependencies ++= Seq(
-      "org.apache.spark" %% "spark-hive" % sparkVersion.value % "provided",
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
       "org.apache.spark" %% "spark-core" % sparkVersion.value % "provided",
       "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
 
-      "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
+      "org.scalatest" %% "scalatest" % scalaTestVersion % "test"
     ),
-    // Unidoc settings
     unidocSourceFilePatterns := Seq(SourceFilePattern("io/delta/spark/dsv2/"))
-  ).configureUnidoc(
-    generatedJavaDoc = getSparkVersion() == LATEST_RELEASED_SPARK_VERSION,
-    generateScalaDoc = getSparkVersion() == LATEST_RELEASED_SPARK_VERSION)
+  )
 
 lazy val unity = (project in file("unity"))
   .enablePlugins(ScalafmtPlugin)
@@ -1651,7 +1647,7 @@ val createTargetClassesDir = taskKey[Unit]("create target classes dir")
 
 // Don't use these groups for any other projects
 lazy val sparkGroup = project
-  .aggregate(spark, contribs, storage, storageS3DynamoDB, sharing, hudi)
+  .aggregate(spark, sparkKernelDsv2, contribs, storage, storageS3DynamoDB, sharing, hudi)
   .settings(
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,
