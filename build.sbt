@@ -717,7 +717,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
   ).configureUnidoc(docTitle = "Delta Kernel Defaults")
 
 
-lazy val sparkKernelDsv2 = (project in file("spark-dsv2"))
+lazy val sparkKernelDsv2 = (project in file("spark-kernel-dsv2"))
   .enablePlugins(ScalafmtPlugin)
   .dependsOn(kernelApi)
   .dependsOn(kernelDefaults)
