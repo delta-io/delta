@@ -56,6 +56,7 @@ val LATEST_RELEASED_SPARK_VERSION = "3.5.3"
 val SPARK_MASTER_VERSION = "4.0.1-SNAPSHOT"
 val sparkVersion = settingKey[String]("Spark version")
 spark / sparkVersion := getSparkVersion()
+sparkKernelDsv2 / sparkVersion := getSparkVersion()
 connectCommon / sparkVersion := getSparkVersion()
 connectClient / sparkVersion := getSparkVersion()
 connectServer / sparkVersion := getSparkVersion()
@@ -714,6 +715,28 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
       // Unidoc settings
     unidocSourceFilePatterns += SourceFilePattern("io/delta/kernel/"),
   ).configureUnidoc(docTitle = "Delta Kernel Defaults")
+
+
+lazy val sparkKernelDsv2 = (project in file("spark-kernel-dsv2"))
+  .enablePlugins(ScalafmtPlugin)
+  .dependsOn(kernelApi)
+  .dependsOn(kernelDefaults)
+  .dependsOn(spark % "test->test")
+  .settings(
+    name := "delta-spark-dsv2",
+    commonSettings,
+    scalaStyleSettings,
+    skipReleaseSettings,
+    Test / javaOptions ++= Seq("-ea"),
+    libraryDependencies ++= Seq(
+      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
+      "org.apache.spark" %% "spark-core" % sparkVersion.value % "provided",
+      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
+
+      "org.scalatest" %% "scalatest" % scalaTestVersion % "test"
+    ),
+    unidocSourceFilePatterns := Seq(SourceFilePattern("io/delta/spark/dsv2/"))
+  )
 
 lazy val unity = (project in file("unity"))
   .enablePlugins(ScalafmtPlugin)
@@ -1624,7 +1647,7 @@ val createTargetClassesDir = taskKey[Unit]("create target classes dir")
 
 // Don't use these groups for any other projects
 lazy val sparkGroup = project
-  .aggregate(spark, contribs, storage, storageS3DynamoDB, sharing, hudi)
+  .aggregate(spark, sparkKernelDsv2, contribs, storage, storageS3DynamoDB, sharing, hudi)
   .settings(
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,
