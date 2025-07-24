@@ -131,16 +131,11 @@ object SuiteGeneratorConfig {
       "MergeIntoTempViewsTests",
       "MergeIntoNestedDataTests",
       "MergeIntoUnlimitedMergeClausesTests",
-      "MergeIntoAnalysisExceptionTests",
-      "MergeIntoExtendedSyntaxTests",
       "MergeIntoSuiteBaseMiscTests",
       "MergeIntoNotMatchedBySourceSuite",
-      "MergeIntoNotMatchedBySourceWithCDCSuite",
       "MergeIntoSchemaEvolutionCoreTests",
       "MergeIntoSchemaEvolutionBaseTests",
-      "MergeIntoSchemaEvolutionStoreAssignmentPolicyTests",
       "MergeIntoSchemaEvolutionNotMatchedBySourceTests",
-      "MergeIntoNestedStructInMapEvolutionTests",
       "MergeIntoNestedStructEvolutionTests"
     )
     val MERGE_SQL = List(
