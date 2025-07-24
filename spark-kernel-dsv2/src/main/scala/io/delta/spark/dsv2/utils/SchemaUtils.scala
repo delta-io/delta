@@ -116,4 +116,4 @@ object SchemaUtils {
       case x => throw new IllegalArgumentException(s"unsupported data type $x")
     }
   }
-} 
+}

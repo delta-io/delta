@@ -15,12 +15,12 @@
  */
 package io.delta.spark.dsv2.catalog
 
+import java.util
+
 import org.apache.spark.sql.connector.catalog._
 import org.apache.spark.sql.connector.expressions.Transform
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
-
-import java.util
 
 /**
  * A [[TableCatalog]] implementation that is only used for facilitating testing for spark-dsv2
