@@ -736,9 +736,7 @@ lazy val sparkKernelDsv2 = (project in file("spark-dsv2"))
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test"
     ),
     unidocSourceFilePatterns := Seq(SourceFilePattern("io/delta/spark/dsv2/"))
-  ).configureUnidoc(
-    generatedJavaDoc = getSparkVersion() == LATEST_RELEASED_SPARK_VERSION,
-    generateScalaDoc = getSparkVersion() == LATEST_RELEASED_SPARK_VERSION)
+  )
 
 lazy val unity = (project in file("unity"))
   .enablePlugins(ScalafmtPlugin)
