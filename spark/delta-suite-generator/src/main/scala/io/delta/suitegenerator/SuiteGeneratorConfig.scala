@@ -17,6 +17,7 @@
 package io.delta.suitegenerator
 
 import scala.collection.mutable.ListBuffer
+import scala.meta._
 
 /**
  * Represents a configuration trait that changes how the tests are executed. This can include Spark
@@ -39,8 +40,8 @@ abstract class Dimension(val name: String, val values: List[String]) {
   def asOptional: Dimension = new OptionalDimension(name, values)
 
   private class OptionalDimension(
-    override val name: String,
-    override val values: List[String]
+      override val name: String,
+      override val values: List[String]
   ) extends Dimension(name, values) {
     override val isOptional: Boolean = true
     override def asOptional: Dimension = this
@@ -54,7 +55,15 @@ abstract class Dimension(val name: String, val values: List[String]) {
 case class DimensionWithMultipleValues(
     override val name: String,
     override val values: List[String]
-) extends Dimension(name, values)
+) extends Dimension(name, values) {
+  /**
+   * Shortcut to create a [[DimensionMixin]] with the same name and one of the values as the suffix.
+   * @param valueSelector a functions that selects a value from this dimension's values
+   */
+  def withValueAsDimension(valueSelector: List[String] => String): DimensionMixin = {
+    DimensionMixin(name, valueSelector(values))
+  }
+}
 
 /**
  * A specialized [[Dimension]] that does not have any values, it is either present or not.
@@ -79,6 +88,17 @@ case class TestConfig(
     dimensionCombinations: List[List[Dimension]] = List.empty
 )
 
+/**
+ * Represents a generated Scala file with suite definitions.
+ * @param name the name of the generated file.
+ * @param imports a list of packages that needs to be imported in this file.
+ * @param testConfigs a list of [[TestConfig]]s that should be generated in this file.
+ */
+case class TestGroup(
+    name: String,
+    imports: List[Importer],
+    testConfigs: List[TestConfig])
+
 object SuiteGeneratorConfig {
   private object Dims {
     val PATH_BASED = DimensionMixin("DeltaDMLTestUtils", suffix = "PathBased")
@@ -86,12 +106,23 @@ object SuiteGeneratorConfig {
     val MERGE_SQL = DimensionMixin("MergeIntoSQL")
     val MERGE_SCALA = DimensionMixin("MergeIntoScala")
     val MERGE_DVS = DimensionMixin("MergeIntoDVs")
-    val MERGE_DVS_PREDPUSH = DimensionWithMultipleValues(
-      "MergeIntoDVsPredicatePushdown", List("Disabled", "Enabled"))
+    val PREDPUSH = DimensionWithMultipleValues("PredicatePushdown", List("Disabled", "Enabled"))
     val CDC = DimensionMixin("CDC", suffix = "Enabled")
+    val PERSISTENT_DV = DimensionWithMultipleValues("PersistentDV", List("Disabled", "Enabled"))
+    val PERSISTENT_DV_OFF = PERSISTENT_DV.withValueAsDimension(_.head)
+    val PERSISTENT_DV_ON = PERSISTENT_DV.withValueAsDimension(_.last)
+    val ROW_TRACKING = DimensionWithMultipleValues("RowTracking", List("Disabled", "Enabled"))
     val MERGE_PERSISTENT_DV_OFF = DimensionMixin("MergePersistentDV", suffix = "Disabled")
+    val MERGE_ROW_TRACKING_DV = DimensionMixin("RowTrackingMergeDV")
     val COLUMN_MAPPING = DimensionWithMultipleValues(
       "DeltaColumnMapping", List("EnableIdMode", "EnableNameMode"))
+    val UPDATE_SCALA = DimensionMixin("UpdateScala")
+    val UPDATE_SQL = DimensionMixin("UpdateSQL")
+    val UPDATE_DVS = DimensionMixin("UpdateSQLWithDeletionVectors")
+    val UPDATE_ROW_TRACKING_DV = DimensionMixin("RowTrackingUpdateDV")
+    val DELETE_SCALA = DimensionMixin("DeleteScala")
+    val DELETE_SQL = DimensionMixin("DeleteSQL")
+    val DELETE_WITH_DVS = DimensionMixin("DeleteSQLWithDeletionVectors")
   }
 
   private object Tests {
@@ -111,8 +142,15 @@ object SuiteGeneratorConfig {
       "MergeIntoSQLTests",
       "MergeIntoSQLNondeterministicOrderTests"
     )
+    val UPDATE_BASE = List(
+      "UpdateBaseTempViewTests",
+      "UpdateBaseMiscTests"
+    )
+    val DELETE_BASE = List(
+      "DeleteTempViewTests",
+      "DeleteBaseTests"
+    )
   }
-
 
   implicit class DimensionListExt(val commonDims: List[Dimension]) extends AnyVal {
     /**
@@ -125,32 +163,121 @@ object SuiteGeneratorConfig {
   }
 
   /**
-   * All fileName, [[TestConfig]] list groupings. The generated suites of each group will be written
+   * All [[TestGroup]] definitions. The generated suites of each group will be written
    * to a file named after the group name. Keep in mind that [[isExcluded]] can be used to filter
    * out some of the test configurations, so defining a configuration here does not guarantee
    * generation of a suite for it.
    */
-  lazy val GROUPS_WITH_TEST_CONFIGS: List[(String, List[TestConfig])] = List(
-    "GeneratedSuites" -> List(
-      TestConfig(
-        "MergeIntoScalaTests" :: Tests.MERGE_BASE,
-        List(
-          List(Dims.MERGE_SCALA)
-        )
+  lazy val TEST_GROUPS: List[TestGroup] = List(
+    TestGroup(
+      name = "MergeSuites",
+      imports = List(
+        importer"org.apache.spark.sql.delta._",
+        importer"org.apache.spark.sql.delta.cdc._",
+        importer"org.apache.spark.sql.delta.rowid._"
       ),
-      TestConfig(
-        "MergeCDCTests" :: "MergeIntoDVsTests" :: Tests.MERGE_SQL ::: Tests.MERGE_BASE,
-        List(Dims.MERGE_SQL).prependToAll(
-          List(Dims.NAME_BASED),
-          List(Dims.PATH_BASED, Dims.COLUMN_MAPPING.asOptional),
-          List(Dims.PATH_BASED, Dims.MERGE_DVS_PREDPUSH),
-          List(Dims.PATH_BASED, Dims.CDC, Dims.MERGE_DVS_PREDPUSH.asOptional)
+      testConfigs = List(
+        TestConfig(
+          "MergeIntoScalaTests" :: Tests.MERGE_BASE,
+          List(
+            List(Dims.MERGE_SCALA)
+          )
+        ),
+        TestConfig(
+          "MergeCDCTests" :: "MergeIntoDVsTests" :: Tests.MERGE_SQL ::: Tests.MERGE_BASE,
+          List(Dims.MERGE_SQL).prependToAll(
+            List(Dims.NAME_BASED),
+            List(Dims.PATH_BASED, Dims.COLUMN_MAPPING.asOptional),
+            List(Dims.PATH_BASED, Dims.MERGE_DVS, Dims.PREDPUSH),
+            List(Dims.PATH_BASED, Dims.CDC),
+            List(Dims.PATH_BASED, Dims.CDC, Dims.MERGE_DVS, Dims.PREDPUSH)
+          )
+        ),
+        TestConfig(
+          List("MergeIntoMaterializeSourceTests"),
+          List(
+            List(Dims.MERGE_PERSISTENT_DV_OFF)
+          )
+        ),
+        TestConfig(
+          List("RowTrackingMergeCommonTests"),
+          List(Dims.CDC.asOptional).prependToAll(
+            List(Dims.MERGE_ROW_TRACKING_DV.asOptional),
+            List(Dims.PERSISTENT_DV_OFF, Dims.MERGE_PERSISTENT_DV_OFF)
+          ) :::
+          List(Dims.COLUMN_MAPPING).prependToAll(
+            List(),
+            List(Dims.CDC, Dims.MERGE_ROW_TRACKING_DV)
+          )
         )
+      )
+    ),
+    TestGroup(
+      name = "UpdateSuites",
+      imports = List(
+        importer"org.apache.spark.sql.delta._",
+        importer"org.apache.spark.sql.delta.cdc._",
+        importer"org.apache.spark.sql.delta.rowid._",
+        importer"org.apache.spark.sql.delta.rowtracking._"
       ),
-      TestConfig(
-        List("MergeIntoMaterializeSourceTests"),
-        List(
-          List(Dims.MERGE_PERSISTENT_DV_OFF)
+      testConfigs = List(
+        TestConfig(
+          "UpdateScalaTests" :: Tests.UPDATE_BASE,
+          List(
+            List(Dims.UPDATE_SCALA)
+          )
+        ),
+        TestConfig(
+          "UpdateCDCWithDeletionVectorsTests" ::
+            "UpdateCDCTests" ::
+            "UpdateSQLWithDeletionVectorsTests" ::
+            "UpdateSQLTests" ::
+            Tests.UPDATE_BASE,
+          List(
+            List(Dims.UPDATE_SQL, Dims.CDC.asOptional, Dims.ROW_TRACKING.asOptional),
+            List(Dims.UPDATE_SQL, Dims.CDC, Dims.UPDATE_DVS),
+            List(Dims.UPDATE_SQL, Dims.UPDATE_DVS, Dims.PREDPUSH)
+          )
+        ),
+        TestConfig(
+          List("RowTrackingUpdateCommonTests"),
+          List(
+            List(Dims.CDC.asOptional, Dims.COLUMN_MAPPING.asOptional),
+            List(Dims.UPDATE_ROW_TRACKING_DV),
+            List(Dims.UPDATE_ROW_TRACKING_DV, Dims.CDC, Dims.COLUMN_MAPPING.asOptional)
+          )
+        )
+      )
+    ),
+    TestGroup(
+      name = "DeleteSuites",
+      imports = List(
+        importer"org.apache.spark.sql.delta._",
+        importer"org.apache.spark.sql.delta.cdc._",
+        importer"org.apache.spark.sql.delta.rowid._"
+      ),
+      testConfigs = List(
+        TestConfig(
+          "DeleteScalaTests" :: Tests.DELETE_BASE,
+          List(
+            List(Dims.DELETE_SCALA)
+          )
+        ),
+        TestConfig(
+          "DeleteCDCTests" :: "DeleteSQLTests" :: Tests.DELETE_BASE,
+          List(
+            List(Dims.DELETE_SQL, Dims.COLUMN_MAPPING.asOptional),
+            List(Dims.DELETE_SQL, Dims.DELETE_WITH_DVS, Dims.PREDPUSH),
+            List(Dims.DELETE_SQL, Dims.CDC)
+          )
+        ),
+        TestConfig(
+          List("RowTrackingDeleteSuiteBase", "RowTrackingDeleteDvBase"),
+          List(
+            List(Dims.CDC.asOptional, Dims.PERSISTENT_DV),
+            List(Dims.PERSISTENT_DV_OFF, Dims.COLUMN_MAPPING),
+            List(Dims.CDC, Dims.PERSISTENT_DV_ON, Dims.COLUMN_MAPPING)
+          )
         )
       )
     )
@@ -167,9 +294,17 @@ object SuiteGeneratorConfig {
       // Exclude tempViews, because DeltaTable.forName does not resolve them correctly, so no one
       // can use them anyway with the Scala API.
       case "MergeIntoTempViewsTests" => mixins.contains(Dims.MERGE_SCALA.traitName)
+      case "UpdateBaseTempViewTests" => mixins.contains(Dims.UPDATE_SCALA.traitName)
+      case "DeleteTempViewTests" => mixins.contains(Dims.DELETE_SCALA.traitName)
       // The following tests only make sense if the dimension is present
-      case "MergeCDCTests" => !mixins.contains(Dims.CDC.traitName)
-      case "MergeIntoDVsTests" => !Dims.MERGE_DVS_PREDPUSH.traitNames.exists(mixins.contains)
+      case "MergeCDCTests" | "UpdateCDCTests" | "DeleteCDCTests" =>
+        !mixins.contains(Dims.CDC.traitName)
+      case "MergeIntoDVsTests" => !mixins.contains(Dims.MERGE_DVS.traitName)
+      case "UpdateSQLWithDeletionVectorsTests" =>
+        !mixins.contains(Dims.UPDATE_DVS.traitName)
+      case "UpdateCDCWithDeletionVectorsTests" =>
+        !List(Dims.UPDATE_DVS, Dims.CDC).map(_.traitName).forall(mixins.contains)
+      case "RowTrackingDeleteDvBase" => !mixins.contains(Dims.PERSISTENT_DV_ON.traitName)
       case _ => false
     }
   }
@@ -189,10 +324,24 @@ object SuiteGeneratorConfig {
 
       if (mixins.contains(Dims.CDC.traitName)) {
         finalMixins += "MergeCDCMixin"
-        if (Dims.MERGE_DVS_PREDPUSH.traitNames.exists(mixins.contains) ||
-            mixins.contains(Dims.MERGE_DVS.traitName)) {
+        if (mixins.contains(Dims.MERGE_DVS.traitName)) {
           finalMixins += "MergeCDCWithDVsMixin"
         }
+      }
+    }
+
+    if (mixins.contains(Dims.UPDATE_SQL.traitName)) {
+      if (mixins.contains(Dims.ROW_TRACKING.traitNames.last)) {
+        finalMixins += "UpdateWithRowTrackingOverrides"
+      }
+    }
+
+    if (mixins.contains(Dims.DELETE_SQL.traitName)) {
+      if (mixins.contains(Dims.CDC.traitName)) {
+        finalMixins += "DeleteCDCMixin"
+      }
+      if (mixins.contains(Dims.COLUMN_MAPPING.traitNames.last)) {
+        finalMixins += "DeleteSQLNameColumnMappingMixin"
       }
     }
 

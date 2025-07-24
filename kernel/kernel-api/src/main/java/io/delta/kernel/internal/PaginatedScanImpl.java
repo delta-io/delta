@@ -25,19 +25,48 @@ import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.replay.PageToken;
 import io.delta.kernel.internal.replay.PaginatedScanFilesIteratorImpl;
 import io.delta.kernel.internal.replay.PaginationContext;
+import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.utils.CloseableIterator;
 import java.util.Optional;
 
 /** Implementation of {@link PaginatedScan} */
 public class PaginatedScanImpl implements PaginatedScan {
+  private final PaginationContext paginationContext;
+  private final ScanImpl baseScan;
   private final long pageSize;
   private final Optional<PageToken> pageTokenOpt;
-  private final ScanImpl baseScan;
 
-  public PaginatedScanImpl(ScanImpl baseScan, Optional<Row> pageTokenRowOpt, long pageSize) {
+  public PaginatedScanImpl(
+      ScanImpl baseScan,
+      String tablePath,
+      long tableVersion,
+      long pageSize,
+      LogSegment logSegment,
+      Optional<Predicate> predicate,
+      Optional<Row> pageTokenRowOpt) {
     this.baseScan = baseScan;
-    this.pageTokenOpt = pageTokenRowOpt.map(PageToken::fromRow);
     this.pageSize = pageSize;
+    this.pageTokenOpt = pageTokenRowOpt.map(PageToken::fromRow);
+    // TODO: get hash value of predicate & log segment and check values in pagination context
+    this.paginationContext =
+        pageTokenOpt
+            .map(
+                token ->
+                    PaginationContext.forPageWithPageToken(
+                        tablePath,
+                        tableVersion,
+                        logSegment.hashCode(),
+                        predicate.hashCode(),
+                        pageSize,
+                        token))
+            .orElseGet(
+                () ->
+                    PaginationContext.forFirstPage(
+                        tablePath,
+                        tableVersion,
+                        logSegment.hashCode(),
+                        predicate.hashCode(),
+                        pageSize));
   }
 
   @Override
@@ -56,10 +85,6 @@ public class PaginatedScanImpl implements PaginatedScan {
   }
 
   public PaginatedScanFilesIterator getScanFiles(Engine engine, boolean includeStates) {
-    PaginationContext paginationContext =
-        pageTokenOpt
-            .map(token -> PaginationContext.forPageWithPageToken(pageSize, token))
-            .orElseGet(() -> PaginationContext.forFirstPage(pageSize));
     CloseableIterator<FilteredColumnarBatch> filteredScanFilesIter =
         baseScan.getScanFiles(engine, includeStates, Optional.of(paginationContext));
     return new PaginatedScanFilesIteratorImpl(filteredScanFilesIter, paginationContext);

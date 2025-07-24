@@ -16,6 +16,10 @@
 
 package org.apache.spark.sql.delta.uniform
 
+import scala.collection.mutable
+
+import org.apache.spark.sql.delta._
+
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.types._
 
@@ -30,6 +34,17 @@ abstract class UniFormE2EIcebergSuiteBase extends UniFormE2ETest {
 
   var compatVersions: Seq[Int] = Seq(1, 2)
 
+  def extraTableProperties(compatVersion: Int): String = {
+    val extraProps = mutable.HashMap[String, String]()
+    val compat = IcebergCompat.getForVersion(compatVersion)
+
+    if (compat.incompatibleTableFeatures.contains(DeletionVectorsTableFeature)) {
+      extraProps.put(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key, "false")
+    }
+
+    extraProps.map(pair => s", '${pair._1}' = '${pair._2}'").mkString(" ")
+  }
+
   compatVersions.foreach { compatVersion =>
     test(s"Basic Insert - compatV$compatVersion") {
       withTable(testTableName) {
@@ -39,6 +54,7 @@ abstract class UniFormE2EIcebergSuiteBase extends UniFormE2ETest {
              |  'delta.columnMapping.mode' = 'name',
              |  'delta.enableIcebergCompatV$compatVersion' = 'true',
              |  'delta.universalFormat.enabledFormats' = 'iceberg'
+             |  ${extraTableProperties(compatVersion)}
              |)""".stripMargin)
         write(s"INSERT INTO $testTableName VALUES (123)")
         readAndVerify(testTableName, "col1", "col1", Seq(Row(123)))
@@ -55,6 +71,7 @@ abstract class UniFormE2EIcebergSuiteBase extends UniFormE2ETest {
              |  'delta.columnMapping.mode' = 'name',
              |  'delta.enableIcebergCompatV$compatVersion' = 'true',
              |  'delta.universalFormat.enabledFormats' = 'iceberg'
+             |  ${extraTableProperties(compatVersion)}
              |)""".stripMargin)
         write(s"INSERT INTO `$testTableName` VALUES (123),(456),(567),(331)")
         readAndVerify(testTableName, "col1", "col1", Seq(Row(123), Row(331), Row(456), Row(567)))
@@ -77,6 +94,7 @@ abstract class UniFormE2EIcebergSuiteBase extends UniFormE2ETest {
              |  'delta.columnMapping.mode' = 'name',
              |  'delta.enableIcebergCompatV$compatVersion' = 'true',
              |  'delta.universalFormat.enabledFormats' = 'iceberg'
+             |  ${extraTableProperties(compatVersion)}
              |)""".stripMargin)
 
         val data = Seq(

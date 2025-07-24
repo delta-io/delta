@@ -17,20 +17,75 @@ package io.delta.kernel.internal.replay;
 
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
+import io.delta.kernel.Meta;
 import java.util.Objects;
 import java.util.Optional;
 
 /** {@code PaginationContext} carries pagination-related information. */
 public class PaginationContext {
 
-  public static PaginationContext forPageWithPageToken(long pageSize, PageToken pageToken) {
+  public static PaginationContext forPageWithPageToken(
+      String tablePath,
+      long tableVersion,
+      int logSegmentHash,
+      int predicateHash,
+      long pageSize,
+      PageToken pageToken) {
     Objects.requireNonNull(pageToken, "page token is null");
-    return new PaginationContext(pageSize, Optional.of(pageToken));
+    Objects.requireNonNull(tablePath, "table path is null");
+    checkArgument(
+        tablePath.equals(pageToken.getTablePath()),
+        "Invalid page token: token table path does not match the requested table path. "
+            + "Expected: %s, Found: %s",
+        tablePath,
+        pageToken.getTablePath());
+    checkArgument(
+        tableVersion == pageToken.getTableVersion(),
+        "Invalid page token: token table version does not match the requested table version. "
+            + "Expected: %d, Found: %d",
+        tableVersion,
+        pageToken.getTableVersion());
+    checkArgument(
+        Meta.KERNEL_VERSION.equals(pageToken.getKernelVersion()),
+        "Invalid page token: token kernel version does not match the requested kernel version. "
+            + "Expected: %s, Found: %s",
+        Meta.KERNEL_VERSION,
+        pageToken.getKernelVersion());
+    checkArgument(
+        predicateHash == pageToken.getPredicateHash(),
+        "Invalid page token: token predicate hash does not match the requested predicate hash. "
+            + "Expected: %s, Found: %s",
+        predicateHash,
+        pageToken.getPredicateHash());
+    checkArgument(
+        logSegmentHash == pageToken.getLogSegmentHash(),
+        "Invalid page token: token log segment hash does not match the requested log segment hash. "
+            + "Expected: %s, Found: %s",
+        logSegmentHash,
+        pageToken.getLogSegmentHash());
+    return new PaginationContext(
+        tablePath, tableVersion, logSegmentHash, predicateHash, pageSize, Optional.of(pageToken));
   }
 
-  public static PaginationContext forFirstPage(long pageSize) {
-    return new PaginationContext(pageSize, Optional.empty() /* page token */);
+  public static PaginationContext forFirstPage(
+      String tablePath, long tableVersion, int logSegmentHash, int predicateHash, long pageSize) {
+    Objects.requireNonNull(tablePath, "table path is null");
+    return new PaginationContext(
+        tablePath,
+        tableVersion,
+        logSegmentHash,
+        predicateHash,
+        pageSize,
+        Optional.empty() /* page token */);
   }
+
+  private final String tablePath;
+
+  private final long tableVersion;
+
+  private final int predicateHash;
+
+  private final int logSegmentHash;
 
   /** maximum number of ScanFiles to return in the current page */
   private final long pageSize;
@@ -40,19 +95,44 @@ public class PaginationContext {
 
   // TODO: add cached log replay hashsets related info
 
-  private PaginationContext(long pageSize, Optional<PageToken> pageToken) {
+  private PaginationContext(
+      String tablePath,
+      long tableVersion,
+      int logSegmentHash,
+      int predicateHash,
+      long pageSize,
+      Optional<PageToken> pageToken) {
     checkArgument(pageSize > 0, "Page size must be greater than zero!");
+    this.tablePath = tablePath;
+    this.tableVersion = tableVersion;
+    this.logSegmentHash = logSegmentHash;
+    this.predicateHash = predicateHash;
     this.pageSize = pageSize;
     this.pageToken = pageToken;
+  }
+
+  public String getTablePath() {
+    return tablePath;
+  }
+
+  public long getTableVersion() {
+    return tableVersion;
+  }
+
+  public int getPredicateHash() {
+    return predicateHash;
+  }
+
+  public int getLogSegmentHash() {
+    return logSegmentHash;
   }
 
   public long getPageSize() {
     return pageSize;
   }
 
-  public Optional<String> getLastReadLogFileName() {
-    if (!pageToken.isPresent()) return Optional.empty();
-    return Optional.of(pageToken.get().getLastReadLogFileName());
+  public Optional<String> getLastReadLogFilePath() {
+    return pageToken.map(PageToken::getLastReadLogFilePath);
   }
 
   public Optional<Long> getLastReturnedRowIndex() {

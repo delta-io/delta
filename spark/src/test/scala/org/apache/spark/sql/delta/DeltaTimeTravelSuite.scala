@@ -72,7 +72,7 @@ class DeltaTimeTravelSuite extends QueryTest
 
   /** Generate commits with the given timestamp in millis. */
   private def generateCommitsCheap(deltaLog: DeltaLog, clock: ManualClock, commits: Long*): Unit = {
-    var startVersion = deltaLog.snapshot.version + 1
+    var startVersion = deltaLog.unsafeVolatileSnapshot.version + 1
     commits.foreach { ts =>
       val action =
         createTestAddFile(encodedPath = startVersion.toString, modificationTime = startVersion)
@@ -85,13 +85,23 @@ class DeltaTimeTravelSuite extends QueryTest
 
   /** Generate commits with the given timestamp in millis. */
   private def generateCommits(location: String, commits: Long*): Unit = {
-    val deltaLog = DeltaLog.forTable(spark, location)
-    var startVersion = deltaLog.snapshot.version + 1
+    var deltaLog = DeltaLog.forTable(spark, dataPath = location)
+    var startVersion = deltaLog.unsafeVolatileSnapshot.version + 1
     commits.foreach { ts =>
       val rangeStart = startVersion * 10
       val rangeEnd = rangeStart + 10
       spark.range(rangeStart, rangeEnd).write.format("delta").mode("append").save(location)
-      val filePath = DeltaCommitFileProvider(deltaLog.update()).deltaFile(startVersion)
+      // Construct a new delta log here before calling `DeltaCommitFileProvider` to get the commit
+      // file path. This is b/c [[Snapshot.logSegment.deltas]] will *not* be automatically updated
+      // after triggering backfill.
+      // We will then overwrite the commit timestamp for unbackilled commits even if we have already
+      // backfilled them. This leads to the failure in certain UT where we manually modify/overwrite
+      // the commit timestamps.
+      // To correctly update the deltas in [[LogSegment]], we construct a fresh delta log.
+      deltaLog = DeltaLog.forTable(spark, dataPath = location)
+      val filePath = DeltaCommitFileProvider
+        .apply(snapshot = deltaLog.unsafeVolatileSnapshot)
+        .deltaFile(version = startVersion)
       if (isICTEnabledForNewTablesCatalogOwned) {
         InCommitTimestampTestUtils.overwriteICTInDeltaFile(deltaLog, filePath, Some(ts))
       } else {
@@ -129,6 +139,12 @@ class DeltaTimeTravelSuite extends QueryTest
   }
 
   historyTest("getCommits should monotonize timestamps") { (deltaLog, clock) =>
+    if (catalogOwnedDefaultCreationEnabledInTests) {
+      // This is fine for CC tables since ICT should've been enabled from the beginning.
+      // Hence, we should *never* call [[DeltaHistoryManager.getCommitsWithNonIctTimestamps]].
+      cancel("This test is not compatible with CC since ICT should've been enabled from the " +
+        "beginning for CC tables.")
+    }
     val start = 1540415658000L
     // Make the commits out of order
     generateCommitsCheap(deltaLog,
@@ -191,7 +207,21 @@ class DeltaTimeTravelSuite extends QueryTest
     val e = intercept[AnalysisException] {
       history.getActiveCommitAtTime(start + 15.seconds, false).version
     }
-    assert(e.getMessage.contains("recreatable"))
+    if (catalogOwnedDefaultCreationEnabledInTests &&
+        // Since we are creating a table w/ three initial commits, the table would have
+        // unbackfilled commits if the backfill batch size is greater or equal to three.
+        // See [[generateCommitsCheap]] for details.
+        catalogOwnedCoordinatorBackfillBatchSize.exists(_ >= 3)) {
+      // We throw an "incorrect" exception for CC tables if there exist any unbackfilled commits
+      // and the backfilled commits have been manually deleted. E.g., the 0.json we are deleting
+      // in this UT.
+      //
+      // Please see the comment in [[DeltaHistoryManager.getEarliestRecreatableCommit]] for the
+      // detailed rationale.
+      assert(e.getMessage.contains("[DELTA_NO_COMMITS_FOUND]"))
+    } else {
+      assert(e.getMessage.contains("recreatable"))
+    }
   }
 
   historyTest("resolving commits should return commit before timestamp") { (deltaLog, clock) =>
@@ -594,7 +624,21 @@ class DeltaTimeTravelSuite extends QueryTest
       val e2 = intercept[AnalysisException] {
         spark.read.format("delta").option("versionAsOf", 0).load(tblLoc).collect()
       }
-      assert(e2.getMessage.contains("recreatable"))
+      if (catalogOwnedDefaultCreationEnabledInTests &&
+          // Since we are creating a table w/ three initial commits, the table would have
+          // unbackfilled commits if the backfill batch size is greater or equal to three.
+          // See [[generateCommits]] for details.
+          catalogOwnedCoordinatorBackfillBatchSize.exists(_ >= 3)) {
+        // We throw an "incorrect" exception for CC tables if there exist any unbackfilled commits
+        // and the backfilled commits have been manually deleted. E.g., the 0.json we are deleting
+        // in this UT.
+        //
+        // Please see the comment in [[DeltaHistoryManager.getEarliestRecreatableCommit]] for the
+        // detailed rationale.
+        assert(e2.getMessage.contains("[DELTA_NO_COMMITS_FOUND]"))
+      } else {
+        assert(e2.getMessage.contains("recreatable"))
+      }
     }
   }
 
@@ -852,4 +896,12 @@ class DeltaTimeTravelSuite extends QueryTest
 
 class DeltaTimeTravelWithCatalogOwnedBatch1Suite extends DeltaTimeTravelSuite {
   override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
+}
+
+class DeltaTimeTravelWithCatalogOwnedBatch2Suite extends DeltaTimeTravelSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
+}
+
+class DeltaTimeTravelWithCatalogOwnedBatch100Suite extends DeltaTimeTravelSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }

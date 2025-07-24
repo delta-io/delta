@@ -127,7 +127,9 @@ trait CatalogOwnedTestBaseSuite
     CatalogOwnedCommitCoordinatorProvider.clearBuilders()
     catalogOwnedCoordinatorBackfillBatchSize.foreach { batchSize =>
       CatalogOwnedCommitCoordinatorProvider.registerBuilder(
-        "spark_catalog", TrackingInMemoryCommitCoordinatorBuilder(batchSize = batchSize))
+        catalogName = CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
+        commitCoordinatorBuilder = TrackingInMemoryCommitCoordinatorBuilder(batchSize)
+      )
     }
     DeltaLog.clearCache()
   }
@@ -238,6 +240,23 @@ trait CatalogOwnedTestBaseSuite
         .dropTable(logPath)
     }
     DeltaLog.clearCache()
+  }
+
+  /**
+   * Constructs the specific table properties for Catalog Owned tables.
+   *
+   * @param spark The Spark session.
+   * @param metadata The metadata of the CC table.
+   * @return A map of CC specific table properties.
+   */
+  def constructCatalogOwnedSpecificTableProperties(
+      spark: SparkSession,
+      metadata: Metadata): Map[String, String] = {
+    if (catalogOwnedDefaultCreationEnabledInTests) {
+      Map(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key -> "true")
+    } else {
+      Map.empty
+    }
   }
 
   /**

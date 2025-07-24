@@ -33,10 +33,10 @@ import org.apache.spark.sql.internal.SQLConf.StoreAssignmentPolicy
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 
-abstract class UpdateSuiteBase
+trait UpdateBaseMixin
   extends QueryTest
   with SharedSparkSession
-  with DeltaDMLTestUtilsPathBased
+  with DeltaDMLTestUtils
   with DeltaSQLTestUtils
   with DeltaTestUtilsForTempViews
   with DeltaExcludedBySparkVersionTestMixinShims {
@@ -50,22 +50,159 @@ abstract class UpdateSuiteBase
 
   implicit def jsonStringToSeq(json: String): Seq[String] = json.split("\n")
 
-  val fileFormat: String = "parquet"
-
   protected def checkUpdate(
       condition: Option[String],
       setClauses: String,
       expectedResults: Seq[Row],
       tableName: Option[String] = None,
       prefix: String = ""): Unit = {
-    executeUpdate(tableName.getOrElse(s"delta.`$tempPath`"), setClauses, where = condition.orNull)
+    val target = tableName.getOrElse(tableSQLIdentifier)
+    executeUpdate(target, setClauses, where = condition.orNull)
     checkAnswer(
-      tableName
-        .map(spark.read.format("delta").table(_))
-        .getOrElse(readDeltaTable(tempPath))
-        .select(s"${prefix}key", s"${prefix}value"),
+      readDeltaTableByIdentifier(target).select(s"${prefix}key", s"${prefix}value"),
       expectedResults)
   }
+
+  protected def checkUpdateJson(
+      target: Seq[String],
+      source: Seq[String] = Nil,
+      updateWhere: String,
+      set: Seq[String],
+      expected: Seq[String]): Unit = {
+    withTempView("source") {
+      def toDF(jsonStrs: Seq[String]) = spark.read.json(jsonStrs.toDS())
+      append(toDF(target))
+      if (source.nonEmpty) {
+        toDF(source).createOrReplaceTempView("source")
+      }
+      executeUpdate(tableSQLIdentifier, set, updateWhere)
+      checkAnswer(readDeltaTableByIdentifier(), toDF(expected))
+      dropTable()
+    }
+  }
+
+  protected def testAnalysisException(
+      targetDF: DataFrame,
+      set: Seq[String],
+      where: String = null,
+      errMsgs: Seq[String] = Nil) = {
+    withTempDir { dir =>
+      targetDF.write.format("delta").save(dir.toString)
+      val e = intercept[AnalysisException] {
+        executeUpdate(target = s"delta.`$dir`", set, where)
+      }
+      errMsgs.foreach { msg =>
+        assert(e.getMessage.toLowerCase(Locale.ROOT).contains(msg.toLowerCase(Locale.ROOT)))
+      }
+    }
+  }
+}
+
+trait UpdateBaseTempViewTests extends UpdateBaseMixin {
+  import testImplicits._
+
+  test("different variations of column references - TempView") {
+    append(Seq((99, 2), (100, 4), (101, 3), (102, 5)).toDF("key", "value"))
+
+    readDeltaTableByIdentifier().createOrReplaceTempView("tblName")
+
+    checkUpdate(
+      condition = Some("tblName.key = 101"),
+      setClauses = "tblName.value = -1",
+      expectedResults = Row(99, 2) :: Row(100, 4) :: Row(101, -1) :: Row(102, 5) :: Nil,
+      tableName = Some("tblName"))
+    checkUpdate(
+      condition = Some("`tblName`.`key` = 102"),
+      setClauses = "`tblName`.`value` = -1",
+      expectedResults = Row(99, 2) :: Row(100, 4) :: Row(101, -1) :: Row(102, -1) :: Nil,
+      tableName = Some("tblName"))
+  }
+
+  Seq(true, false).foreach { isPartitioned =>
+    val testName = s"test update on temp view - basic - Partition=$isPartitioned"
+    testWithTempView(testName) { isSQLTempView =>
+      val partitions = if (isPartitioned) "key" :: Nil else Nil
+      append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"), partitions)
+      createTempViewFromTable(tableSQLIdentifier, isSQLTempView)
+        checkUpdate(
+          condition = Some("key >= 1"),
+          setClauses = "value = key + value, key = key + 1",
+          expectedResults = Row(0, 3) :: Row(2, 5) :: Row(2, 2) :: Row(3, 4) :: Nil,
+          tableName = Some("v"))
+    }
+  }
+
+  private def testInvalidTempViews(name: String)(
+      text: String,
+      expectedErrorMsgForSQLTempView: String = null,
+      expectedErrorMsgForDataSetTempView: String = null,
+      expectedErrorClassForSQLTempView: String = null,
+      expectedErrorClassForDataSetTempView: String = null): Unit = {
+    testWithTempView(s"test update on temp view - $name") { isSQLTempView =>
+      withTable("tab") {
+        Seq((0, 3), (1, 2)).toDF("key", "value").write.format("delta").saveAsTable("tab")
+        createTempViewFromSelect(text, isSQLTempView)
+        val ex = intercept[AnalysisException] {
+          executeUpdate(
+            "v",
+            where = "key >= 1 and value < 3",
+            set = "value = key + value, key = key + 1"
+          )
+        }
+        testErrorMessageAndClass(
+          isSQLTempView,
+          ex,
+          expectedErrorMsgForSQLTempView,
+          expectedErrorMsgForDataSetTempView,
+          expectedErrorClassForSQLTempView,
+          expectedErrorClassForDataSetTempView)
+      }
+    }
+  }
+
+  testInvalidTempViews("subset cols")(
+    text = "SELECT key FROM tab",
+    expectedErrorClassForSQLTempView = "UNRESOLVED_COLUMN.WITH_SUGGESTION",
+    expectedErrorClassForDataSetTempView = "UNRESOLVED_COLUMN.WITH_SUGGESTION"
+  )
+
+  testInvalidTempViews("superset cols")(
+    text = "SELECT key, value, 1 FROM tab",
+    // The analyzer can't tell whether the table originally had the extra column or not.
+    expectedErrorMsgForSQLTempView = "Can't resolve column 1 in root",
+    expectedErrorMsgForDataSetTempView = "Can't resolve column 1 in root"
+  )
+
+  private def testComplexTempViews(name: String)(text: String, expectedResult: Seq[Row]) = {
+    testWithTempView(s"test update on temp view - $name") { isSQLTempView =>
+        withTable("tab") {
+          Seq((0, 3), (1, 2)).toDF("key", "value").write.format("delta").saveAsTable("tab")
+          createTempViewFromSelect(text, isSQLTempView)
+          executeUpdate(
+            "v",
+            where = "key >= 1 and value < 3",
+            set = "value = key + value, key = key + 1"
+          )
+          checkAnswer(spark.read.format("delta").table("v"), expectedResult)
+        }
+      }
+  }
+
+  testComplexTempViews("nontrivial projection")(
+    text = "SELECT value as key, key as value FROM tab",
+    expectedResult = Seq(Row(3, 0), Row(3, 3))
+  )
+
+  testComplexTempViews("view with too many internal aliases")(
+    text = "SELECT * FROM (SELECT * FROM tab AS t1) AS t2",
+    expectedResult = Seq(Row(0, 3), Row(2, 3))
+  )
+}
+
+trait UpdateBaseMiscTests extends UpdateBaseMixin {
+  import testImplicits._
+
+  val fileFormat: String = "parquet"
 
   test("basic case") {
     append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"))
@@ -74,17 +211,14 @@ abstract class UpdateSuiteBase
   }
 
   Seq(true, false).foreach { isPartitioned =>
-    test(s"basic update - Delta table by path - Partition=$isPartitioned") {
-      withTable("deltaTable") {
-        val partitions = if (isPartitioned) "key" :: Nil else Nil
-        append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"), partitions)
+    test(s"basic update - Partition=$isPartitioned") {
+      val partitions = if (isPartitioned) "key" :: Nil else Nil
+      append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"), partitions)
 
-        checkUpdate(
-          condition = Some("key >= 1"),
-          setClauses = "value = key + value, key = key + 1",
-          expectedResults = Row(0, 3) :: Row(2, 5) :: Row(2, 2) :: Row(3, 4) :: Nil,
-          tableName = Some(s"delta.`$tempPath`"))
-      }
+      checkUpdate(
+        condition = Some("key >= 1"),
+        setClauses = "value = key + value, key = key + 1",
+        expectedResults = Row(0, 3) :: Row(2, 5) :: Row(2, 2) :: Row(3, 4) :: Nil)
     }
   }
 
@@ -93,13 +227,15 @@ abstract class UpdateSuiteBase
       withTable("delta_table") {
         val partitionByClause = if (isPartitioned) "PARTITIONED BY (key)" else ""
         sql(s"""
-             |CREATE TABLE delta_table(key INT, value INT)
-             |USING delta
-             |OPTIONS('path'='$tempPath')
+             |CREATE TABLE delta_table(key INT, value INT) USING delta
              |$partitionByClause
            """.stripMargin)
 
-        append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"))
+        Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value")
+          .write
+          .format("delta")
+          .mode("append")
+          .saveAsTable("delta_table")
 
         checkUpdate(
           condition = Some("key >= 1"),
@@ -284,7 +420,7 @@ abstract class UpdateSuiteBase
   }
 
   // Casts that are not valid implicit casts (e.g. string -> boolean) are allowed only when
-  // storeAssignmentPolicy is LEGACY or ANSI. STRICT is tested in [[UpdateSQLSuite]] only due to
+  // storeAssignmentPolicy is LEGACY or ANSI. STRICT is tested in [[UpdateSQLTests]] only due to
   // limitations when using the Scala API.
   for (storeAssignmentPolicy <- StoreAssignmentPolicy.values - StoreAssignmentPolicy.STRICT)
   test("invalid implicit cast string source type into boolean target, " +
@@ -301,7 +437,7 @@ abstract class UpdateSuiteBase
   }
 
   // Valid implicit casts that are not upcasts (e.g. string -> int) are allowed only when
-  // storeAssignmentPolicy is LEGACY or ANSI. STRICT is tested in [[UpdateSQLSuite]] only due to
+  // storeAssignmentPolicy is LEGACY or ANSI. STRICT is tested in [[UpdateSQLTests]] only due to
   // limitations when using the Scala API.
   for (storeAssignmentPolicy <- StoreAssignmentPolicy.values - StoreAssignmentPolicy.STRICT)
   test("valid implicit cast string source type into int target, " +
@@ -318,20 +454,17 @@ abstract class UpdateSuiteBase
   }
 
   test("update cached table") {
-    Seq((2, 2), (1, 4)).toDF("key", "value")
-      .write.mode("overwrite").format("delta").save(tempPath)
+    append(Seq((2, 2), (1, 4)).toDF("key", "value"))
 
-    spark.read.format("delta").load(tempPath).cache()
-    spark.read.format("delta").load(tempPath).collect()
+    readDeltaTableByIdentifier().cache()
+    readDeltaTableByIdentifier().collect()
 
-    executeUpdate(s"delta.`$tempPath`", set = "key = 3")
-    checkAnswer(spark.read.format("delta").load(tempPath), Row(3, 2) :: Row(3, 4) :: Nil)
+    executeUpdate(tableSQLIdentifier, set = "key = 3")
+    checkAnswer(readDeltaTableByIdentifier(), Row(3, 2) :: Row(3, 4) :: Nil)
   }
 
   test("different variations of column references") {
     append(Seq((99, 2), (100, 4), (101, 3), (102, 5)).toDF("key", "value"))
-
-    spark.read.format("delta").load(tempPath).createOrReplaceTempView("tblName")
 
     checkUpdate(
       condition = Some("key = 99"),
@@ -341,23 +474,6 @@ abstract class UpdateSuiteBase
       condition = Some("`key` = 100"),
       setClauses = "`value` = -1",
       expectedResults = Row(99, -1) :: Row(100, -1) :: Row(101, 3) :: Row(102, 5) :: Nil)
-  }
-
-  test("different variations of column references - TempView") {
-    append(Seq((99, 2), (100, 4), (101, 3), (102, 5)).toDF("key", "value"))
-
-    spark.read.format("delta").load(tempPath).createOrReplaceTempView("tblName")
-
-    checkUpdate(
-      condition = Some("tblName.key = 101"),
-      setClauses = "tblName.value = -1",
-      expectedResults = Row(99, 2) :: Row(100, 4) :: Row(101, -1) :: Row(102, 5) :: Nil,
-      tableName = Some("tblName"))
-    checkUpdate(
-      condition = Some("`tblName`.`key` = 102"),
-      setClauses = "`tblName`.`value` = -1",
-      expectedResults = Row(99, 2) :: Row(100, 4) :: Row(101, -1) :: Row(102, -1) :: Nil,
-      tableName = Some("tblName"))
   }
 
   test("target columns can have db and table qualifiers") {
@@ -382,9 +498,9 @@ abstract class UpdateSuiteBase
 
   test("Negative case - non-delta target") {
     Seq((1, 1), (0, 3), (1, 5)).toDF("key1", "value")
-      .write.mode("overwrite").format("parquet").save(tempPath)
+      .write.mode("overwrite").format("parquet").save(tableSQLIdentifier)
     val e = intercept[DeltaAnalysisException] {
-      executeUpdate(target = s"delta.`$tempPath`", set = "key1 = 3")
+      executeUpdate(target = tableSQLIdentifier, set = "key1 = 3")
     }.getMessage
     assert(e.contains("UPDATE destination only supports Delta sources") ||
       e.contains("is not a Delta table") || e.contains("doesn't exist") ||
@@ -435,15 +551,21 @@ abstract class UpdateSuiteBase
     }
   }
 
-  test("Negative case - UPDATE the child directory") {
-    append(Seq((2, 2), (3, 2)).toDF("key", "value"), partitionBy = "key" :: Nil)
-    val e = intercept[AnalysisException] {
-      executeUpdate(
-        target = s"delta.`$tempPath/key=2`",
-        set = "key = 1, value = 2",
-        where = "value = 2")
-    }.getMessage
-    assert(e.contains("Expect a full scan of Delta sources, but found a partial scan"))
+  test("Negative case - UPDATE the child directory",
+      NameBasedAccessIncompatible) {
+    withTempDir { dir =>
+      val tempPath = dir.getCanonicalPath
+      val df = Seq((2, 2), (3, 2)).toDF("key", "value")
+      df.write.format("delta").partitionBy("key").save(tempPath)
+
+      val e = intercept[AnalysisException] {
+        executeUpdate(
+          target = s"delta.`$tempPath/key=2`",
+          set = "key = 1, value = 2",
+          where = "value = 2")
+      }.getMessage
+      assert(e.contains("Expect a full scan of Delta sources, but found a partial scan"))
+    }
   }
 
   test("Negative case - do not support subquery test") {
@@ -452,7 +574,7 @@ abstract class UpdateSuiteBase
 
     // basic subquery
     val e0 = intercept[AnalysisException] {
-      executeUpdate(target = s"delta.`$tempPath`",
+      executeUpdate(target = tableSQLIdentifier,
         set = "key = 1",
         where = "key < (SELECT max(c) FROM source)")
     }.getMessage
@@ -460,7 +582,7 @@ abstract class UpdateSuiteBase
 
     // subquery with EXISTS
     val e1 = intercept[AnalysisException] {
-      executeUpdate(target = s"delta.`$tempPath`",
+      executeUpdate(target = tableSQLIdentifier,
         set = "key = 1",
         where = "EXISTS (SELECT max(c) FROM source)")
     }.getMessage
@@ -468,7 +590,7 @@ abstract class UpdateSuiteBase
 
     // subquery with NOT EXISTS
     val e2 = intercept[AnalysisException] {
-      executeUpdate(target = s"delta.`$tempPath`",
+      executeUpdate(target = tableSQLIdentifier,
         set = "key = 1",
         where = "NOT EXISTS (SELECT max(c) FROM source)")
     }.getMessage
@@ -476,7 +598,7 @@ abstract class UpdateSuiteBase
 
     // subquery with IN
     val e3 = intercept[AnalysisException] {
-      executeUpdate(target = s"delta.`$tempPath`",
+      executeUpdate(target = tableSQLIdentifier,
         set = "key = 1",
         where = "key IN (SELECT max(c) FROM source)")
     }.getMessage
@@ -484,7 +606,7 @@ abstract class UpdateSuiteBase
 
     // subquery with NOT IN
     val e4 = intercept[AnalysisException] {
-      executeUpdate(target = s"delta.`$tempPath`",
+      executeUpdate(target = tableSQLIdentifier,
         set = "key = 1",
         where = "key NOT IN (SELECT max(c) FROM source)")
     }.getMessage
@@ -746,7 +868,7 @@ abstract class UpdateSuiteBase
    * @param expectException whether an exception is expected to be thrown
    * @param customErrorRegex customized error regex.
    */
-  def testUnsupportedExpression(
+  private def testUnsupportedExpression(
       function: String,
       functionType: String,
       data: => DataFrame,
@@ -843,137 +965,21 @@ abstract class UpdateSuiteBase
       Some(".*ore than one row returned by a subquery used as an expression(?s).*")
   )
 
-  protected def checkUpdateJson(
-      target: Seq[String],
-      source: Seq[String] = Nil,
-      updateWhere: String,
-      set: Seq[String],
-      expected: Seq[String]): Unit = {
-    withTempDir { dir =>
-      withTempView("source") {
-        def toDF(jsonStrs: Seq[String]) = spark.read.json(jsonStrs.toDS)
-        toDF(target).write.format("delta").mode("overwrite").save(dir.toString)
-        if (source.nonEmpty) {
-          toDF(source).createOrReplaceTempView("source")
-        }
-        executeUpdate(s"delta.`$dir`", set, updateWhere)
-        checkAnswer(readDeltaTable(dir.toString), toDF(expected))
-      }
-    }
-  }
-
-  protected def testAnalysisException(
-      targetDF: DataFrame,
-      set: Seq[String],
-      where: String = null,
-      errMsgs: Seq[String] = Nil) = {
-    withTempDir { dir =>
-      targetDF.write.format("delta").save(dir.toString)
-      val e = intercept[AnalysisException] {
-        executeUpdate(target = s"delta.`$dir`", set, where)
-      }
-      errMsgs.foreach { msg =>
-        assert(e.getMessage.toLowerCase(Locale.ROOT).contains(msg.toLowerCase(Locale.ROOT)))
-      }
-    }
-  }
-
-  Seq(true, false).foreach { isPartitioned =>
-    val testName = s"test update on temp view - basic - Partition=$isPartitioned"
-    testWithTempView(testName) { isSQLTempView =>
-      val partitions = if (isPartitioned) "key" :: Nil else Nil
-      append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"), partitions)
-      createTempViewFromTable(s"delta.`$tempPath`", isSQLTempView)
-        checkUpdate(
-          condition = Some("key >= 1"),
-          setClauses = "value = key + value, key = key + 1",
-          expectedResults = Row(0, 3) :: Row(2, 5) :: Row(2, 2) :: Row(3, 4) :: Nil,
-          tableName = Some("v"))
-    }
-  }
-
-  protected def testInvalidTempViews(name: String)(
-      text: String,
-      expectedErrorMsgForSQLTempView: String = null,
-      expectedErrorMsgForDataSetTempView: String = null,
-      expectedErrorClassForSQLTempView: String = null,
-      expectedErrorClassForDataSetTempView: String = null): Unit = {
-    testWithTempView(s"test update on temp view - $name") { isSQLTempView =>
-      withTable("tab") {
-        Seq((0, 3), (1, 2)).toDF("key", "value").write.format("delta").saveAsTable("tab")
-        createTempViewFromSelect(text, isSQLTempView)
-        val ex = intercept[AnalysisException] {
-          executeUpdate(
-            "v",
-            where = "key >= 1 and value < 3",
-            set = "value = key + value, key = key + 1"
-          )
-        }
-        testErrorMessageAndClass(
-          isSQLTempView,
-          ex,
-          expectedErrorMsgForSQLTempView,
-          expectedErrorMsgForDataSetTempView,
-          expectedErrorClassForSQLTempView,
-          expectedErrorClassForDataSetTempView)
-      }
-    }
-  }
-
-  testInvalidTempViews("subset cols")(
-    text = "SELECT key FROM tab",
-    expectedErrorClassForSQLTempView = "UNRESOLVED_COLUMN.WITH_SUGGESTION",
-    expectedErrorClassForDataSetTempView = "UNRESOLVED_COLUMN.WITH_SUGGESTION"
-  )
-
-  testInvalidTempViews("superset cols")(
-    text = "SELECT key, value, 1 FROM tab",
-    // The analyzer can't tell whether the table originally had the extra column or not.
-    expectedErrorMsgForSQLTempView = "Can't resolve column 1 in root",
-    expectedErrorMsgForDataSetTempView = "Can't resolve column 1 in root"
-  )
-
-  protected def testComplexTempViews(name: String)(text: String, expectedResult: Seq[Row]) = {
-    testWithTempView(s"test update on temp view - $name") { isSQLTempView =>
-        withTable("tab") {
-          Seq((0, 3), (1, 2)).toDF("key", "value").write.format("delta").saveAsTable("tab")
-          createTempViewFromSelect(text, isSQLTempView)
-          executeUpdate(
-            "v",
-            where = "key >= 1 and value < 3",
-            set = "value = key + value, key = key + 1"
-          )
-          checkAnswer(spark.read.format("delta").table("v"), expectedResult)
-        }
-      }
-  }
-
-  testComplexTempViews("nontrivial projection")(
-    text = "SELECT value as key, key as value FROM tab",
-    expectedResult = Seq(Row(3, 0), Row(3, 3))
-  )
-
-  testComplexTempViews("view with too many internal aliases")(
-    text = "SELECT * FROM (SELECT * FROM tab AS t1) AS t2",
-    expectedResult = Seq(Row(0, 3), Row(2, 3))
-  )
-
   testSparkMasterOnly("Variant type") {
     val df = sql(
       """SELECT parse_json(cast(id as string)) v, id i
         FROM range(2)""")
     append(df)
-    executeUpdate(target = s"delta.`$tempPath`",
+    executeUpdate(target = tableSQLIdentifier,
         where = "to_json(v) = '1'", set = "i = 10, v = parse_json('123')")
-    checkAnswer(readDeltaTable(tempPath).selectExpr("i", "to_json(v)"),
+    checkAnswer(readDeltaTableByIdentifier().selectExpr("i", "to_json(v)"),
         Seq(Row(0, "0"), Row(10, "123")))
   }
 
   test("update on partitioned table with special chars") {
     val partA = "part%one"
     val partB = "part%two"
-    spark.range(0, 3, 1, 1).toDF("key").withColumn("value", lit(partA))
-      .write.format("delta").partitionBy("value").save(tempPath)
+    append(spark.range(0, 3, 1, 1).toDF("key").withColumn("value", lit(partA)), "value")
     checkUpdate(
       condition = Some(s"value = '$partA' AND key = 1"),
       setClauses = s"value = '$partB'",

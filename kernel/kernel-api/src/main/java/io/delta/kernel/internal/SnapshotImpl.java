@@ -132,7 +132,7 @@ public class SnapshotImpl implements Snapshot {
   @Override
   public ScanBuilder getScanBuilder() {
     return new ScanBuilderImpl(
-        dataPath, protocol, metadata, getSchema(), logReplay, getSnapshotReport());
+        dataPath, version, protocol, metadata, getSchema(), logReplay, getSnapshotReport());
   }
 
   ///////////////////

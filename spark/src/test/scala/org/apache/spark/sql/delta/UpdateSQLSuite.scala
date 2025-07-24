@@ -28,9 +28,20 @@ import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.internal.SQLConf.StoreAssignmentPolicy
 
-class UpdateSQLSuite extends UpdateSuiteBase
-  with DeltaSQLCommandTest {
+trait UpdateSQLMixin extends UpdateBaseMixin
+  with DeltaSQLCommandTest
+  with DeltaDMLTestUtilsPathBased {
 
+  override protected def executeUpdate(
+      target: String,
+      set: String,
+      where: String = null): Unit = {
+    val whereClause = Option(where).map(c => s"WHERE $c").getOrElse("")
+    sql(s"UPDATE $target SET $set $whereClause")
+  }
+}
+
+trait UpdateSQLTests extends UpdateSQLMixin {
   import testImplicits._
 
   test("explain") {
@@ -152,23 +163,15 @@ class UpdateSQLSuite extends UpdateSuiteBase
           "object")))
     }
   }
-
-  override protected def executeUpdate(
-      target: String,
-      set: String,
-      where: String = null): Unit = {
-    val whereClause = Option(where).map(c => s"WHERE $c").getOrElse("")
-    sql(s"UPDATE $target SET $set $whereClause")
-  }
 }
 
-class UpdateSQLWithDeletionVectorsSuite extends UpdateSQLSuite
+trait UpdateSQLWithDeletionVectorsMixin extends UpdateSQLMixin
   with DeltaExcludedTestMixin
   with DeletionVectorsTestUtils {
+
   override def beforeAll(): Unit = {
     super.beforeAll()
     enableDeletionVectors(spark, update = true)
-    spark.conf.set(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key, "false")
   }
 
   override def excluded: Seq[String] = super.excluded ++
@@ -181,7 +184,9 @@ class UpdateSQLWithDeletionVectorsSuite extends UpdateSQLSuite
       "schema pruning on finding files to update",
       "nested schema pruning on finding files to update"
     )
+}
 
+trait UpdateSQLWithDeletionVectorsTests extends UpdateSQLWithDeletionVectorsMixin {
   test("repeated UPDATE produces deletion vectors") {
     withTempDir { dir =>
       val path = dir.getCanonicalPath
@@ -334,14 +339,4 @@ class UpdateSQLWithDeletionVectorsSuite extends UpdateSQLSuite
       for (a <- addFiles) assert(a.deletionVector === null)
     }
   }
-}
-
-class UpdateSQLWithDeletionVectorsAndPredicatePushdownSuite
-    extends UpdateSQLWithDeletionVectorsSuite {
-
-  override def beforeAll(): Unit = {
-    super.beforeAll()
-    spark.conf.set(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key, "true")
-  }
-
 }
