@@ -49,40 +49,58 @@ class SchemaUtilsSuite extends AnyFunSuite {
 
   test("array type") {
     checkConversion(
-      SparkArrayType(SparkIntegerType, true),
-      new KernelArrayType(KernelIntegerType.INTEGER, true))
+      SparkArrayType(SparkIntegerType, containsNull = true),
+      new KernelArrayType(KernelIntegerType.INTEGER, true /* containsNull */ ))
     checkConversion(
-      SparkArrayType(SparkStringType, false),
-      new KernelArrayType(KernelStringType.STRING, false))
+      SparkArrayType(SparkStringType, containsNull = false),
+      new KernelArrayType(KernelStringType.STRING, false /* containsNull */ ))
   }
 
   test("map type") {
     checkConversion(
-      SparkMapType(SparkStringType, SparkIntegerType, true),
-      new KernelMapType(KernelStringType.STRING, KernelIntegerType.INTEGER, true))
+      SparkMapType(SparkStringType, SparkIntegerType, valueContainsNull = true),
+      new KernelMapType(
+        KernelStringType.STRING,
+        KernelIntegerType.INTEGER,
+        true /* valueContainsNull */ ))
     checkConversion(
-      SparkMapType(SparkLongType, SparkBooleanType, false),
-      new KernelMapType(KernelLongType.LONG, KernelBooleanType.BOOLEAN, false))
+      SparkMapType(SparkLongType, SparkBooleanType, valueContainsNull = false),
+      new KernelMapType(
+        KernelLongType.LONG,
+        KernelBooleanType.BOOLEAN,
+        false /* valueContainsNull */ ))
   }
 
   test("struct type") {
     val sparkStruct = SparkStructType(Seq(
-      SparkStructField("a", SparkIntegerType, true),
-      SparkStructField("b", SparkStringType, false)))
+      SparkStructField("a", SparkIntegerType, nullable = true),
+      SparkStructField("b", SparkStringType, nullable = false)))
     val kernelStruct = new KernelStructType()
-      .add("a", KernelIntegerType.INTEGER, true)
-      .add("b", KernelStringType.STRING, false)
+      .add("a", KernelIntegerType.INTEGER, true /* containsNull */ )
+      .add("b", KernelStringType.STRING, false /* containsNull */ )
 
     checkConversion(sparkStruct, kernelStruct)
   }
 
   test("nested types") {
     val sparkStruct = SparkStructType(Seq(
-      SparkStructField("a", SparkArrayType(SparkIntegerType, true), true),
-      SparkStructField("b", SparkMapType(SparkStringType, SparkBooleanType, false), false)))
+      SparkStructField("a", SparkArrayType(SparkIntegerType, containsNull = true), nullable = true),
+      SparkStructField(
+        "b",
+        SparkMapType(SparkStringType, SparkBooleanType, valueContainsNull = false),
+        nullable = false)))
     val kernelStruct = new KernelStructType()
-      .add("a", new KernelArrayType(KernelIntegerType.INTEGER, true), true)
-      .add("b", new KernelMapType(KernelStringType.STRING, KernelBooleanType.BOOLEAN, false), false)
+      .add(
+        "a",
+        new KernelArrayType(KernelIntegerType.INTEGER, true /* containsNull */ ),
+        true /* nullable */ )
+      .add(
+        "b",
+        new KernelMapType(
+          KernelStringType.STRING,
+          KernelBooleanType.BOOLEAN,
+          false /* containsNull */ ),
+        false /* nullable */ )
 
     checkConversion(sparkStruct, kernelStruct)
   }
