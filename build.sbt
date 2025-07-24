@@ -570,6 +570,7 @@ lazy val sharing = (project in file("sharing"))
     scalaStyleSettings,
     releaseSettings,
     crossSparkSettings(),
+    crossScalaVersions := Seq(scala213),
     Compile / compile := runTaskOnlyOnSparkMaster(
       task = Compile / compile,
       taskName = "compile",
