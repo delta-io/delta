@@ -221,8 +221,7 @@ public class Path implements Comparable<Path>, Serializable, ObjectInputValidati
     // Validating this first before applying the regex saves ~40-50% of
     // Path construction time, with a potentially small overhead for
     // cases when paths need normalization.
-    boolean replace = containsRepeatedSlash(path);
-    if (replace) {
+    if (containsRepeatedSlash(path)) {
       // Remove duplicated slashes to ensure all equivalent Path's have
       // the same representation.
       path = SLASHES.matcher(path).replaceAll("/");
@@ -248,12 +247,11 @@ public class Path implements Comparable<Path>, Serializable, ObjectInputValidati
   }
 
   private static boolean containsRepeatedSlash(String path) {
-    for (int x = 0; x < path.length() - 1; x++) {
-      if (path.charAt(x) == '/' && path.charAt(x + 1) == '/') {
-        return true;
-      }
-    }
-    return false;
+    // Not inlining this method back into normalizePath() appears
+    // to be slightly faster (there is a high probability this is noise
+    // but keep out-of-line for now until there is definitive evidence
+    // one way or another).
+    return path.contains("//");
   }
 
   private static boolean hasWindowsDrive(String path) {
