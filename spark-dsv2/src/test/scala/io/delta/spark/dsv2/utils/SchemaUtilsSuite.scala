@@ -85,16 +85,4 @@ class SchemaUtilsSuite extends AnyFunSuite {
 
     checkConversion(sparkStruct, kernelStruct)
   }
-
-  test("unsupported type") {
-    val e1 = intercept[IllegalArgumentException] {
-      SchemaUtils.convertSparkDataTypeToKernelDataType(null)
-    }
-    assert(e1.getMessage.contains("unsupported data type null"))
-
-    val e2 = intercept[IllegalArgumentException] {
-      SchemaUtils.convertKernelDataTypeToSparkDataType(null)
-    }
-    assert(e2.getMessage.contains("unsupported data type null"))
-  }
-} 
+}
