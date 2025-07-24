@@ -280,8 +280,10 @@ class IcebergConverter(spark: SparkSession)
   }
 
   /**
-   * Convert the specified snapshot into Iceberg. NOTE: This operation is blocking. Call
-   * enqueueSnapshotForConversion to run the operation asynchronously.
+   * Convert the specified snapshot into Iceberg.
+   * NOTE: 1. This operation is blocking. Call [[enqueueSnapshotForConversion]] to run the
+   *          operation asynchronously.
+   *       2. This is the main entrance. All other with similar names are wrappers.
    * @param snapshotToConvert the snapshot that needs to be converted to Iceberg
    * @param txnOpt the OptimisticTransaction that created snapshotToConvert.
    *            Used as a hint to avoid recomputing old metadata.
@@ -306,28 +308,26 @@ class IcebergConverter(spark: SparkSession)
     val maxCommitsToConvert =
       spark.sessionState.conf.getConf(DeltaSQLConf.ICEBERG_MAX_COMMITS_TO_CONVERT)
 
-    // Nth to convert
+    // Conversion is up-to-date
     if (lastDeltaVersionConverted.contains(snapshotToConvert.version)) {
       return None
     }
 
-    // Get the most recently converted delta snapshot, if applicable
     val prevConvertedSnapshotOpt = (lastDeltaVersionConverted, txnOpt) match {
+      // The provided Snapshot is the last converted Snapshot
       case (Some(version), Some(txn)) if version == txn.readSnapshot.version =>
         Some(txn.readSnapshot)
-      // Check how long it has been since we last converted to Iceberg. If outside the threshold,
-      // fall back to state reconstruction to get the actions, to protect driver from OOMing.
+      // Some snapshots are pending conversion since last conversion
       case (Some(version), _) if snapshotToConvert.version - version <= maxCommitsToConvert =>
         try {
-          // TODO: We can optimize this by providing a checkpointHint to getSnapshotAt. Check if
-          //  txn.snapshot.version < version. If true, use txn.snapshot's checkpoint as a hint.
           Some(log.getSnapshotAt(version, catalogTableOpt = Some(catalogTable)))
         } catch {
           // If we can't load the file since the last time Iceberg was converted, it's likely that
           // the commit file expired. Treat this like a new Iceberg table conversion.
           case _: DeltaFileNotFoundException => None
         }
-      case (_, _) => None
+      // Never converted before
+      case _ => None
     }
 
     val tableOp = (lastDeltaVersionConverted, prevConvertedSnapshotOpt) match {
@@ -345,16 +345,7 @@ class IcebergConverter(spark: SparkSession)
       spark, cleanedCatalogTable, log.newDeltaHadoopConf(), snapshotToConvert, tableOp,
       lastConvertedIcebergSnapshotId, lastDeltaVersionConverted)
 
-    // Write out the actions taken since the last conversion (or since table creation).
-    // This is done in batches, with each batch corresponding either to one delta file,
-    // or to the specified batch size.
-    val actionBatchSize =
-      spark.sessionState.conf.getConf(DeltaSQLConf.ICEBERG_MAX_ACTIONS_TO_CONVERT)
-    // If there exists any OPTIMIZE action inside actions to convert,
-    // It will trigger snapshot expiration for iceberg table
-    var needsExpireSnapshot = false
-
-    prevConvertedSnapshotOpt match {
+    val convertedCommits: Seq[Option[CommitInfo]] = prevConvertedSnapshotOpt match {
       case Some(prevSnapshot) =>
         // Read the actions directly from the delta json files.
         // TODO: Run this as a spark job on executors
@@ -377,57 +368,53 @@ class IcebergConverter(spark: SparkSession)
         val actionsToConvert = DeltaFileProviderUtils.parallelReadAndParseDeltaFilesAsIterator(
           log, spark, deltaFiles)
         var deltaVersion = prevSnapshot.version
-        actionsToConvert.foreach { actionsIter =>
+        val commitInfos = actionsToConvert.map { actionsIter =>
           try {
             deltaVersion += 1
-            // TODO: get rid of this grouped batching behavior
-            actionsIter.grouped(actionBatchSize).foreach { actionStrs =>
-              val actions = actionStrs.map(Action.fromJson)
-              needsExpireSnapshot ||= existsOptimize(actions)
-
-              runIcebergConversionForActions(
-                icebergTxn,
-                actions,
-                prevConvertedSnapshotOpt,
-                deltaVersion)
-            }
+            runIcebergConversionForActions(
+              icebergTxn,
+              actionsIter.map(Action.fromJson).toSeq,
+              prevConvertedSnapshotOpt,
+              deltaVersion)
           } finally {
             actionsIter.close()
           }
         }
         // If the metadata hasn't changed, this will no-op.
         icebergTxn.updateTableMetadata(snapshotToConvert.metadata, prevSnapshot.metadata)
-
-      // If we don't have a snapshot of the last converted version, get all the table addFiles
-      // (via state reconstruction).
+        commitInfos
       case None =>
-        val numPartitions = math.max(snapshotToConvert.numOfFiles / actionBatchSize, 1)
+        // If we don't have a snapshot of the last converted version, get all the AddFiles
+        // (via state reconstruction).
+        // Batch is always disabled but we still want to reuse the event for conversion
         recordDeltaEvent(
           snapshotToConvert.deltaLog,
           "delta.iceberg.conversion.batch",
           data = Map(
             "version" -> snapshotToConvert.version,
             "numOfFiles" -> snapshotToConvert.numOfFiles,
-            "actionBatchSize" -> actionBatchSize,
-            "numOfPartitions" -> numPartitions
+            "actionBatchSize" -> -1, // This param is ignored as batch is deprecated
+            "numOfPartitions" -> 1
           )
         )
-
-        snapshotToConvert.allFiles
-          .repartition(numPartitions.toInt)
-          .toLocalIterator
-          .asScala
-          .grouped(actionBatchSize)
-          .foreach { actions =>
-            needsExpireSnapshot ||= existsOptimize(actions)
-            runIcebergConversionForActions(icebergTxn, actions, None, snapshotToConvert.version)
-        }
+        runIcebergConversionForActions(
+          icebergTxn,
+          snapshotToConvert.allFiles.toLocalIterator().asScala.toSeq,
+          None,
+          snapshotToConvert.version)
 
         // Always attempt to update table metadata (schema/properties) for REPLACE_TABLE
         if (tableOp == REPLACE_TABLE) {
           icebergTxn.updateTableMetadata(snapshotToConvert.metadata, snapshotToConvert.metadata)
         }
+        Nil
     }
+
+
+    // OPTIMIZE will trigger snapshot expiration for iceberg table
+    val OPR_TRIGGER_EXPIRE = Set(DeltaOperations.OPTIMIZE_OPERATION_NAME)
+    val needsExpireSnapshot =
+      OPR_TRIGGER_EXPIRE.intersect(convertedCommits.flatten.map(_.operation).toSet).nonEmpty
     if (needsExpireSnapshot) {
       logInfo(log"Committing iceberg snapshot expiration for uniform table " +
         log"[path = ${MDC(DeltaLogKeys.PATH, log.logPath)}] tableId=" +
@@ -577,7 +564,7 @@ class IcebergConverter(spark: SparkSession)
       icebergTxn: IcebergConversionTransaction,
       actionsToCommit: Seq[Action],
       prevSnapshotOpt: Option[SnapshotDescriptor],
-      deltaVersion: Long = 0): Unit = {
+      deltaVersion: Long): Option[CommitInfo] = {
 
     var commitInfo: Option[CommitInfo] = None
     var addFiles: Seq[AddFile] = Nil
@@ -590,7 +577,9 @@ class IcebergConverter(spark: SparkSession)
       // This guarantees that the actions are fetched via [[Snapshot.allFiles]] and are unique.
       case None =>
         addFiles = actionsToCommit.asInstanceOf[Seq[AddFile]]
-        if (addFiles.exists(_.deletionVector != null)) {
+        if (addFiles.isEmpty) {
+          icebergTxn.getNullHelper
+        } else if (addFiles.exists(_.deletionVector != null)) {
           throw new UnsupportedOperationException("Deletion Vector is not supported")
         } else {
           icebergTxn.getAppendOnlyHelper
@@ -675,13 +664,8 @@ class IcebergConverter(spark: SparkSession)
     addFiles.foreach(txnHelper.add)
     // Make sure the next snapshot sequence number is deltaVersion
     txnHelper.commit(deltaVersion)
-  }
 
-  private def existsOptimize(actions: Seq[Action]): Boolean = {
-    actions.exists { action =>
-      val sa = action.wrap
-      sa.commitInfo != null && sa.commitInfo.operation == OPTIMIZE_OPERATION_NAME
-    }
+    commitInfo
   }
 
   /**
