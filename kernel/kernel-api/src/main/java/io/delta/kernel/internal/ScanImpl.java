@@ -33,6 +33,7 @@ import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.metrics.ScanMetrics;
 import io.delta.kernel.internal.metrics.ScanReportImpl;
 import io.delta.kernel.internal.metrics.Timer;
+import io.delta.kernel.internal.replay.ActiveAddFilesIterator;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.skipping.DataSkippingPredicate;
 import io.delta.kernel.internal.skipping.DataSkippingUtils;
@@ -42,6 +43,7 @@ import io.delta.kernel.metrics.SnapshotReport;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
+import io.delta.kernel.utils.FileStatus;
 import java.io.IOException;
 import java.util.*;
 import java.util.function.Supplier;
@@ -217,37 +219,20 @@ public class ScanImpl implements Scan {
         dataPath.toUri().toString());
   }
 
+  /** Step 1: engine get ScanFiles from JSONs */
   @Override
-  public CloseableIterator<FilteredColumnarBatch> getScanFilesFromJSON(Engine engine) {
-    return getScanFilesFromJSON(engine, false);
+  public Tuple2<List<FilteredColumnarBatch>, Tombstones> getScanFilesFromJSON(Engine engine) {
+    ActiveAddFilesIterator scanFileIter =
+        logReplay.getAddFilesForJSON(
+            engine, false /* shouldReadStats */, Optional.empty(), scanMetrics);
+    List<FilteredColumnarBatch> allBatches = scanFileIter.toInMemoryList();
+    return new Tuple2<>(allBatches, scanFileIter.getCurrentTombstoneSets());
   }
 
-  public CloseableIterator<FilteredColumnarBatch> getScanFilesFromJSON(
-      Engine engine, boolean shouldReadStats) {
-    Optional<Predicate> predicate =
-        getPartitionsFilters()
-            .map(
-                p ->
-                    rewritePartitionPredicateOnCheckpointFileSchema(
-                        p, partitionColToStructFieldMap.get()));
-
-    return logReplay.getScanFilesForJSON(engine, shouldReadStats, predicate, scanMetrics);
-  }
-
+  /** */
   @Override
-  public ColumnarBatch getLogReplayStates() {
-    return null;
-  }
-
-  @Override
-  public List<Row> getLogSegmentCheckpointFiles() {
-    return null;
-  }
-
-  @Override
-  public CloseableIterator<FilteredColumnarBatch> getScanFileFromCheckpoint(
-      ColumnarBatch tombstone, Row checkpoints) {
-    return null;
+  public List<FileStatus> getLogSegmentCheckpointFiles() {
+    return logReplay.getLogReplayCheckpoints();
   }
 
   @Override

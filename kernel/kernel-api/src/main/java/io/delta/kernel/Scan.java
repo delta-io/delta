@@ -21,6 +21,7 @@ import io.delta.kernel.data.*;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.InternalScanFileUtils;
+import io.delta.kernel.internal.Tombstones;
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.data.ScanStateRow;
 import io.delta.kernel.internal.data.SelectionColumnVector;
@@ -32,6 +33,7 @@ import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
+import io.delta.kernel.utils.FileStatus;
 import java.io.IOException;
 import java.util.List;
 import java.util.Optional;
@@ -118,18 +120,11 @@ public interface Scan {
    */
   Row getScanState(Engine engine);
 
-  // TODO: return iterator of ScanFiles in the JSON file list
-  CloseableIterator<FilteredColumnarBatch> getScanFilesFromJSON(Engine engine);
-
-  // TODO: return info about two hashsets
-  ColumnarBatch getLogReplayStates();
+  // TODO: return list of ScanFiles and log replay states in the JSON file list
+  Tuple2<List<FilteredColumnarBatch>, Tombstones> getScanFilesFromJSON(Engine engine);
 
   // TODO: return list of log segment files (in ScanFileRow format)
-  List<Row> getLogSegmentCheckpointFiles();
-
-  // TODO: return iterator of ScanFiles in the given checkpoint list
-  CloseableIterator<FilteredColumnarBatch> getScanFileFromCheckpoint(
-      ColumnarBatch tombstone, Row checkpoint);
+  List<FileStatus> getLogSegmentCheckpointFiles();
 
   /**
    * Transform the physical data read from the table data file into the logical data that expected

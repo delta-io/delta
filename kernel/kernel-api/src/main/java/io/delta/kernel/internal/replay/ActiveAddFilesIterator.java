@@ -32,6 +32,7 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.ExpressionEvaluator;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.InternalScanFileUtils;
+import io.delta.kernel.internal.Tombstones;
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.metrics.ScanMetrics;
@@ -87,6 +88,29 @@ public class ActiveAddFilesIterator implements CloseableIterator<FilteredColumna
     this.addFilesFromJson = new HashSet<>();
     this.next = Optional.empty();
     this.metrics = metrics;
+  }
+
+  // constructor with injected hashsets
+  ActiveAddFilesIterator(
+      Engine engine,
+      CloseableIterator<ActionWrapper> iter,
+      Path tableRoot,
+      ScanMetrics metrics,
+      Set<UniqueFileActionTuple> tombstonesFromJson,
+      Set<UniqueFileActionTuple> addFilesFromJson) {
+    this.engine = engine;
+    this.tableRoot = tableRoot;
+    this.iter = iter;
+    this.tombstonesFromJson = tombstonesFromJson;
+    this.addFilesFromJson = addFilesFromJson;
+    this.next = Optional.empty();
+    this.metrics = metrics;
+  }
+
+  /** Return tuple */
+  public Tombstones getCurrentTombstoneSets() {
+    // TODO: check 1. distributed log replay 2. JSON iterators must be exhausted
+    return new Tombstones(tombstonesFromJson, tombstonesFromJson);
   }
 
   @Override

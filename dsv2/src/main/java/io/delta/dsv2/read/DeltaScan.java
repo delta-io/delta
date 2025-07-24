@@ -30,7 +30,7 @@ public class DeltaScan implements org.apache.spark.sql.connector.read.Scan, Batc
   private InputPartition[] cachedPartitions;
 
   // ====== Ada Add ===========
-  private boolean isDistributedLogReplayEnabled = true;
+  private boolean isDistributedLogReplayEnabled = false;
   private final JavaSparkContext sparkContext;
   private final SparkSession spark;
 
@@ -65,8 +65,9 @@ public class DeltaScan implements org.apache.spark.sql.connector.read.Scan, Batc
     List<DeltaInputPartition> scanFileAsInputPartitions = new ArrayList<>();
 
     CloseableIterator<FilteredColumnarBatch> columnarBatchIterator = null;
-    if (!isDistributedLogReplayEnabled)
-      columnarBatchIterator = kernelScan.getScanFiles(tableEngine);
+    if (!isDistributedLogReplayEnabled) columnarBatchIterator = kernelScan.getScanFiles(tableEngine);
+
+    /*
     else {
       // get json iterator first
       columnarBatchIterator = kernelScan.getScanFilesFromJSON(tableEngine);
@@ -96,6 +97,7 @@ public class DeltaScan implements org.apache.spark.sql.connector.read.Scan, Batc
 
         // For each checkpoint file, transform it into a bunch of FilteredColumnarBatch.
         // Each partition: a list of FilteredColumnarBatch
+        // Also broadcast engine?
         JavaRDD<FilteredColumnarBatch> batchRDD =
             checkpointRDD.flatMap(
                 checkpointFile -> {
@@ -115,6 +117,8 @@ public class DeltaScan implements org.apache.spark.sql.connector.read.Scan, Batc
 
         // Collect all batches back to the driver
         List<FilteredColumnarBatch> allBatches = batchRDD.collect();
+
+        // apply filter here
       }
       // Ref: how iceberg send log replay tasks to spark executors
       //      JavaRDD<DataFile> dataFileRDD =
@@ -124,6 +128,7 @@ public class DeltaScan implements org.apache.spark.sql.connector.read.Scan, Batc
       //
       //      List<List<DataFile>> dataFileGroups = collectPartitions(dataFileRDD);
     }
+*/
 
     while (columnarBatchIterator.hasNext()) {
       FilteredColumnarBatch columnarBatch = columnarBatchIterator.next();

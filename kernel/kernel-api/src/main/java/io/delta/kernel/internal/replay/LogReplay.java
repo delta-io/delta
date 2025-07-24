@@ -24,6 +24,7 @@ import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Predicate;
+import io.delta.kernel.internal.Tombstones;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.checkpoints.SidecarFile;
 import io.delta.kernel.internal.checksum.CRCInfo;
@@ -230,7 +231,7 @@ public class LogReplay {
   }
 
   // TODO: getScanFilesForFileList -> file list can be of JSON or CP file list or combined file list
-  public CloseableIterator<FilteredColumnarBatch> getScanFilesForJSON(
+  public ActiveAddFilesIterator getAddFilesForJSON(
       Engine engine,
       boolean shouldReadStats,
       Optional<Predicate> checkpointPredicate,
@@ -238,16 +239,43 @@ public class LogReplay {
     final CloseableIterator<ActionWrapper> addRemoveIter =
         new ActionsIterator(
             engine,
-            getLogReplayJSONFiles(getLogSegment()),
+            getLogReplayJSONFiles(),
             getAddRemoveReadSchema(shouldReadStats),
             getAddReadSchema(shouldReadStats),
             checkpointPredicate);
     return new ActiveAddFilesIterator(engine, addRemoveIter, dataPath, scanMetrics);
   }
 
-  private List<FileStatus> getLogReplayJSONFiles(LogSegment logSegment) {
+  public static ActiveAddFilesIterator getAddFilesForOneCheckpoint(
+      Engine engine, String tablePath, FileStatus checkpoint, Tombstones hashSets) {
+
+    boolean shouldReadStats = false;
+    final CloseableIterator<ActionWrapper> addRemoveIter =
+        new ActionsIterator(
+            engine,
+            Collections.singletonList(checkpoint),
+            getAddRemoveReadSchema(shouldReadStats),
+            getAddReadSchema(shouldReadStats),
+            Optional.empty());
+
+    ScanMetrics scanMetrics = new ScanMetrics(); // create a new scan metrics
+    // inject tombstone hashsets here
+    return new ActiveAddFilesIterator(
+        engine,
+        addRemoveIter,
+        new Path(tablePath),
+        scanMetrics,
+        hashSets.removeFileSet,
+        hashSets.alreadyReturnedSet);
+  }
+
+  private List<FileStatus> getLogReplayJSONFiles() {
     // TODO: get a file list of all JSONs in logSegment
-    return logSegment.getDeltas();
+    return getLogSegment().getDeltas();
+  }
+
+  public List<FileStatus> getLogReplayCheckpoints() {
+    return getLogSegment().getCheckpoints();
   }
 
   ////////////////////
