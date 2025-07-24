@@ -1653,41 +1653,6 @@ def normalizeColumnNamesInDataType(
       case (_, other, _) => other
     }
   }
-
-  /**
-   * Renames a column in the metadata, given the old column path, new column path, and an optional
-   * list of column names. If the column names are provided, they will be updated to reflect the
-   * new path.
-   *
-   * @param oldColumnPath The original physical name path of the column to be renamed.
-   * @param newColumnPath The new physical name path for the column.
-   * @param columnNameOpt An optional sequence of unresolved attributes representing the column
-   *                      logical name.
-   * @param deltaConfig   The configuration key for columns that need to be renamed from metadata.
-   * @return              A map containing the updated Delta configuration with new column paths.
-   */
-  def renameColumnForConfig(
-      oldColumnPath: Seq[String],
-      newColumnPath: Seq[String],
-      columnNameOpt: Option[Seq[UnresolvedAttribute]],
-      deltaConfig: String): Map[String, String] = {
-    columnNameOpt.map { deltaColumnsNames =>
-      val deltaColumnsPath = deltaColumnsNames
-        .map(_.nameParts)
-        .map { attributeNameParts =>
-          val commonPrefix = oldColumnPath.zip(attributeNameParts)
-            .takeWhile { case (left, right) => left == right }
-            .size
-          if (commonPrefix == oldColumnPath.size) {
-            newColumnPath ++ attributeNameParts.takeRight(attributeNameParts.size - commonPrefix)
-          } else {
-            attributeNameParts
-          }
-        }
-        .map(columnParts => UnresolvedAttribute(columnParts).name)
-      Map(deltaConfig -> deltaColumnsPath.mkString(","))
-    }.getOrElse(Map.empty[String, String])
-  }
 }
 
 /**

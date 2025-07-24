@@ -563,11 +563,24 @@ object StatisticsCollection extends DeltaCommand {
       newColumnPath: Seq[String]): Map[String, String] = {
     if (oldColumnPath == newColumnPath) return Map.empty[String, String]
     val deltaStatsColumnSpec = configuredDeltaStatsColumnSpec(metadata)
-    SchemaUtils.renameColumnForConfig(
-      oldColumnPath,
-      newColumnPath,
-      deltaStatsColumnSpec.deltaStatsColumnNamesOpt,
-      DeltaConfigs.DATA_SKIPPING_STATS_COLUMNS.key)
+    deltaStatsColumnSpec.deltaStatsColumnNamesOpt.map { deltaColumnsNames =>
+      val deltaStatsColumnsPath = deltaColumnsNames
+        .map(_.nameParts)
+        .map { attributeNameParts =>
+          val commonPrefix = oldColumnPath.zip(attributeNameParts)
+            .takeWhile { case (left, right) => left == right }
+            .size
+          if (commonPrefix == oldColumnPath.size) {
+            newColumnPath ++ attributeNameParts.takeRight(attributeNameParts.size - commonPrefix)
+          } else {
+            attributeNameParts
+          }
+        }
+        .map(columnParts => UnresolvedAttribute(columnParts).name)
+      Map(
+        DeltaConfigs.DATA_SKIPPING_STATS_COLUMNS.key -> deltaStatsColumnsPath.mkString(",")
+      )
+    }.getOrElse(Map.empty[String, String])
   }
 
   /** Returns the configured set of columns to be used for stats collection on a table */
