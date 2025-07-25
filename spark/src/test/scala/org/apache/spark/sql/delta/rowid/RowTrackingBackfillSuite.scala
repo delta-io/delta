@@ -88,19 +88,22 @@ class RowTrackingBackfillSuite
   }
 
   protected def withTestTableWithRowTrackingDisabled()(f: => Unit): Unit = {
-    withRowTrackingEnabled(enabled = true) {
-      withTable(testTableName) {
+    withTable(testTableName) {
+      // Do not create baseRowIds.
+      withRowTrackingEnabled(enabled = false) {
         createTable(testTableName)
-        val log = DeltaLog.forTable(spark, TableIdentifier(testTableName))
-        AlterTableSetPropertiesDeltaCommand(
-          table = DeltaTableV2(spark, log.dataPath),
-          configuration = Map(DeltaConfigs.ROW_TRACKING_ENABLED.key -> "false"))
-          .run(spark)
-        val snapshot = log.update()
-        assert(RowTracking.isSupported(snapshot.protocol))
-        assert(!RowId.isEnabled(snapshot.protocol, snapshot.metadata))
-        f
       }
+      val log = DeltaLog.forTable(spark, TableIdentifier(testTableName))
+      AlterTableSetPropertiesDeltaCommand(
+        table = DeltaTableV2(spark, log.dataPath),
+        configuration = Map(
+          s"delta.feature.${RowTrackingFeature.name}" -> "supported",
+          DeltaConfigs.ROW_TRACKING_ENABLED.key -> "false"))
+        .run(spark)
+      val snapshot = log.update()
+      assert(RowTracking.isSupported(snapshot.protocol))
+      assert(!RowId.isEnabled(snapshot.protocol, snapshot.metadata))
+      f
     }
   }
 
