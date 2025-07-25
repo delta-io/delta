@@ -121,7 +121,7 @@ def getSparkVersion(): String = {
       SPARK_MASTER_VERSION
     case _ =>
       throw new IllegalArgumentException(s"Invalid sparkVersion: $input. Must be one of " +
-          s"${allValidSparkVersionInputs.mkString("{", ",", "}")}")
+        s"${allValidSparkVersionInputs.mkString("{", ",", "}")}")
   }
 }
 
@@ -243,10 +243,10 @@ def crossSparkSettings(): Seq[Setting[_]] = getSparkVersion() match {
 }
 
 def runTaskOnlyOnSparkMaster[T](
-    task: sbt.TaskKey[T],
-    taskName: String,
-    projectName: String,
-    emptyValue: => T): Def.Initialize[Task[T]] = {
+                                 task: sbt.TaskKey[T],
+                                 taskName: String,
+                                 projectName: String,
+                                 emptyValue: => T): Def.Initialize[Task[T]] = {
   if (getSparkVersion() == SPARK_MASTER_VERSION) {
     Def.task(task.value)
   } else {
@@ -475,7 +475,7 @@ lazy val spark = (project in file("spark"))
       "org.mockito" % "mockito-inline" % "4.11.0" % "test",
     ),
     Compile / packageBin / mappings := (Compile / packageBin / mappings).value ++
-        listPythonFiles(baseDirectory.value.getParentFile / "python"),
+      listPythonFiles(baseDirectory.value.getParentFile / "python"),
     Antlr4 / antlr4PackageName := Some("io.delta.sql.parser"),
     Antlr4 / antlr4GenListener := true,
     Antlr4 / antlr4GenVisitor := true,
@@ -637,7 +637,7 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
         !allowedPrefixes.exists(prefix => f.data.getName.startsWith(prefix))
       }
     },
-     assembly / assemblyShadeRules := Seq(
+    assembly / assemblyShadeRules := Seq(
       ShadeRule.rename("com.fasterxml.jackson.**" -> "io.delta.kernel.shaded.com.fasterxml.jackson.@1").inAll
     ),
     assembly / assemblyMergeStrategy := {
@@ -722,7 +722,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
       "org.apache.spark" %% "spark-catalyst" % defaultSparkVersion % "test" classifier "tests",
     ),
     javaCheckstyleSettings("dev/kernel-checkstyle.xml"),
-      // Unidoc settings
+    // Unidoc settings
     unidocSourceFilePatterns += SourceFilePattern("io/delta/kernel/"),
   ).configureUnidoc(docTitle = "Delta Kernel Defaults")
 
@@ -772,7 +772,7 @@ lazy val unity = (project in file("unity"))
       "org.apache.hadoop" % "hadoop-common" % hadoopVersion % "provided",
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
     ),
-    unidocSourceFilePatterns += SourceFilePattern("src/main/java/io/delta/unity/"),
+    unidocSourceFilePatterns += SourceFilePattern("io/delta/unity/"),
   ).configureUnidoc()
 
 // TODO javastyle tests
@@ -824,8 +824,8 @@ lazy val storageS3DynamoDB = (project in file("storage-s3-dynamodb"))
   ).configureUnidoc()
 
 val icebergSparkRuntimeArtifactName = {
- val (expMaj, expMin, _) = getMajorMinorPatch(defaultSparkVersion)
- s"iceberg-spark-runtime-$expMaj.$expMin"
+  val (expMaj, expMin, _) = getMajorMinorPatch(defaultSparkVersion)
+  s"iceberg-spark-runtime-$expMaj.$expMin"
 }
 
 lazy val testDeltaIcebergJar = (project in file("testDeltaIcebergJar"))
@@ -1690,7 +1690,7 @@ lazy val kernelGroup = project
     publish / skip := false,
     unidocSourceFilePatterns := {
       (kernelApi / unidocSourceFilePatterns).value.scopeToProject(kernelApi) ++
-      (kernelDefaults / unidocSourceFilePatterns).value.scopeToProject(kernelDefaults)
+        (kernelDefaults / unidocSourceFilePatterns).value.scopeToProject(kernelDefaults)
     }
   ).configureUnidoc(docTitle = "Delta Kernel")
 

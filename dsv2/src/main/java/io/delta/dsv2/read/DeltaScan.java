@@ -1,7 +1,6 @@
 package io.delta.dsv2.read;
 
 import io.delta.kernel.Scan;
-import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.internal.json.JsonUtils;
@@ -10,9 +9,7 @@ import io.delta.kernel.utils.CloseableIterator;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
-import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
-import org.apache.spark.broadcast.Broadcast;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.connector.read.Batch;
 import org.apache.spark.sql.connector.read.InputPartition;
@@ -65,70 +62,71 @@ public class DeltaScan implements org.apache.spark.sql.connector.read.Scan, Batc
     List<DeltaInputPartition> scanFileAsInputPartitions = new ArrayList<>();
 
     CloseableIterator<FilteredColumnarBatch> columnarBatchIterator = null;
-    if (!isDistributedLogReplayEnabled) columnarBatchIterator = kernelScan.getScanFiles(tableEngine);
+    if (!isDistributedLogReplayEnabled)
+      columnarBatchIterator = kernelScan.getScanFiles(tableEngine);
 
     /*
-    else {
-      // get json iterator first
-      columnarBatchIterator = kernelScan.getScanFilesFromJSON(tableEngine);
-      ColumnarBatch tombstoneHashsets = kernelScan.getLogReplayStates();
-      List<Row> checkpointFileList = kernelScan.getLogSegmentCheckpointFiles();
+        else {
+          // get json iterator first
+          columnarBatchIterator = kernelScan.getScanFilesFromJSON(tableEngine);
+          ColumnarBatch tombstoneHashsets = kernelScan.getLogReplayStates();
+          List<Row> checkpointFileList = kernelScan.getLogSegmentCheckpointFiles();
 
-      boolean isSerial = true;
-      if (isSerial) {
-        // serial implementation, can be used to test Kernel API
-        for (Row checkpointFile : checkpointFileList) {
-          // for each executor
-          CloseableIterator<FilteredColumnarBatch> parquetScanFilesIter =
-              kernelScan.getScanFileFromCheckpoint(tombstoneHashsets, checkpointFile);
-          columnarBatchIterator.combine(parquetScanFilesIter);
+          boolean isSerial = true;
+          if (isSerial) {
+            // serial implementation, can be used to test Kernel API
+            for (Row checkpointFile : checkpointFileList) {
+              // for each executor
+              CloseableIterator<FilteredColumnarBatch> parquetScanFilesIter =
+                  kernelScan.getScanFileFromCheckpoint(tombstoneHashsets, checkpointFile);
+              columnarBatchIterator.combine(parquetScanFilesIter);
+            }
+          } else {
+            // ======== Method one: using SparkSession (like Iceberg) ===============
+            // Distributed implementation
+            // Broadcast shared variables
+            Broadcast<ColumnarBatch> tombstoneHashsetsBroadcast =
+                sparkContext.broadcast(tombstoneHashsets);
+            Broadcast<Scan> kernelScanBroadcast = sparkContext.broadcast(kernelScan);
+
+            // Parallelize checkpoint files across executor
+            JavaRDD<Row> checkpointRDD =
+                sparkContext.parallelize(checkpointFileList, checkpointFileList.size());
+
+            // For each checkpoint file, transform it into a bunch of FilteredColumnarBatch.
+            // Each partition: a list of FilteredColumnarBatch
+            // Also broadcast engine?
+            JavaRDD<FilteredColumnarBatch> batchRDD =
+                checkpointRDD.flatMap(
+                    checkpointFile -> {
+                      ColumnarBatch tombstones = tombstoneHashsetsBroadcast.value();
+                      Scan scan = kernelScanBroadcast.value();
+
+                      // Get iterator of scan files from this checkpoint
+                      try (CloseableIterator<FilteredColumnarBatch> iter =
+                          scan.getScanFileFromCheckpoint(tombstones, checkpointFile)) {
+                        List<FilteredColumnarBatch> result = new ArrayList<>();
+                        while (iter.hasNext()) {
+                          result.add(iter.next());
+                        }
+                        return result.iterator();
+                      }
+                    });
+
+            // Collect all batches back to the driver
+            List<FilteredColumnarBatch> allBatches = batchRDD.collect();
+
+            // apply filter here
+          }
+          // Ref: how iceberg send log replay tasks to spark executors
+          //      JavaRDD<DataFile> dataFileRDD =
+          //          sparkContext
+          //              .parallelize(toBeans(dataManifests), dataManifests.size())
+          //              .flatMap(new ReadDataManifest(tableBroadcast(), context(), withColumnStats));
+          //
+          //      List<List<DataFile>> dataFileGroups = collectPartitions(dataFileRDD);
         }
-      } else {
-        // ======== Method one: using SparkSession (like Iceberg) ===============
-        // Distributed implementation
-        // Broadcast shared variables
-        Broadcast<ColumnarBatch> tombstoneHashsetsBroadcast =
-            sparkContext.broadcast(tombstoneHashsets);
-        Broadcast<Scan> kernelScanBroadcast = sparkContext.broadcast(kernelScan);
-
-        // Parallelize checkpoint files across executor
-        JavaRDD<Row> checkpointRDD =
-            sparkContext.parallelize(checkpointFileList, checkpointFileList.size());
-
-        // For each checkpoint file, transform it into a bunch of FilteredColumnarBatch.
-        // Each partition: a list of FilteredColumnarBatch
-        // Also broadcast engine?
-        JavaRDD<FilteredColumnarBatch> batchRDD =
-            checkpointRDD.flatMap(
-                checkpointFile -> {
-                  ColumnarBatch tombstones = tombstoneHashsetsBroadcast.value();
-                  Scan scan = kernelScanBroadcast.value();
-
-                  // Get iterator of scan files from this checkpoint
-                  try (CloseableIterator<FilteredColumnarBatch> iter =
-                      scan.getScanFileFromCheckpoint(tombstones, checkpointFile)) {
-                    List<FilteredColumnarBatch> result = new ArrayList<>();
-                    while (iter.hasNext()) {
-                      result.add(iter.next());
-                    }
-                    return result.iterator();
-                  }
-                });
-
-        // Collect all batches back to the driver
-        List<FilteredColumnarBatch> allBatches = batchRDD.collect();
-
-        // apply filter here
-      }
-      // Ref: how iceberg send log replay tasks to spark executors
-      //      JavaRDD<DataFile> dataFileRDD =
-      //          sparkContext
-      //              .parallelize(toBeans(dataManifests), dataManifests.size())
-      //              .flatMap(new ReadDataManifest(tableBroadcast(), context(), withColumnStats));
-      //
-      //      List<List<DataFile>> dataFileGroups = collectPartitions(dataFileRDD);
-    }
-*/
+    */
 
     while (columnarBatchIterator.hasNext()) {
       FilteredColumnarBatch columnarBatch = columnarBatchIterator.next();

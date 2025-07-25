@@ -20,8 +20,6 @@ import java.nio.file.Files
 import java.util
 import java.util.Optional
 
-import scala.collection.immutable.Seq
-import scala.jdk.CollectionConverters.setAsJavaSetConverter
 
 import io.delta.kernel.{Operation, Table}
 import io.delta.kernel.data.Row
