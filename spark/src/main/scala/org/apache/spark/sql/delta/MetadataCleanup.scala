@@ -507,15 +507,23 @@ trait MetadataCleanup extends DeltaLogging {
       getLatestCompleteCheckpointFromList(instances).isDefined
     }
 
+    // Iterate logs files in ascending order to find the earliest reliable checkpoint, for the same
+    // version, checkpoint is always processed before commit so that we can identify the candidate
+    // checkpoint first and then verify commits since the candidate's version (inclusive)
     store.listFrom(listingPrefix(logPath, 0L), hadoopConf)
       .map(_.getPath)
       .foreach {
-        case CheckpointFile(f, checkpointVersion) if earliestCheckpointVersionOpt.isEmpty =>
-          if (!currentCheckpointVersionOpt.contains(checkpointVersion)) {
-            // If it's a different checkpoint, clear the existing one.
-            currentCheckpointFiles.clear()
-          }
-          currentCheckpointFiles += f
+        case CheckpointFile(f, checkpointVersion)
+          // Invalidate the candidate if we observe missing commits before the current checkpoint.
+          // the incoming commit will invalidate the candidate as well, but then we miss the current
+          // checkpoint, which is also a valid candidate.
+          if earliestCheckpointVersionOpt.isEmpty || checkpointVersion > prevCommitVersion + 1 =>
+            earliestCheckpointVersionOpt = None
+            if (!currentCheckpointVersionOpt.contains(checkpointVersion)) {
+              // If it's a different checkpoint, clear the existing one.
+              currentCheckpointFiles.clear()
+            }
+            currentCheckpointFiles += f
         case DeltaFile(_, deltaVersion) =>
           if (earliestCheckpointVersionOpt.isEmpty && isCurrentCheckpointComplete) {
             // We have found a complete checkpoint, but we should not stop here. If a future
