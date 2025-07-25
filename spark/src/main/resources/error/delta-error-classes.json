@@ -2243,17 +2243,13 @@
   },
   "DELTA_ROW_TRACKING_BACKFILL_RUNNING_CONCURRENTLY_WITH_UNBACKFILL" : {
     "message" : [
-      "A Row Tracking enablement operation was detected running concurrently with a Row Tracking disablement.",
-      "Aborting the disablement operation.",
-      "Please retry the disablement operation if necessary when the enablement operation is complete."
+      "A Row Tracking enablement operation was detected running concurrently with a Row Tracking disablement. Aborting the disablement operation. Please retry the disablement operation if necessary when the enablement operation is complete."
     ],
     "sqlState" : "22KD0"
   },
   "DELTA_ROW_TRACKING_ILLEGAL_PROPERTY_COMBINATION" : {
     "message" : [
-      "Illegal table state was detected.",
-      "Table properties `<property1>` and `<property2>` are both set to true.",
-      "The issue can be resolved by disabling any of the two table properties."
+      "Illegal table state was detected. Table properties `<property1>` and `<property2>` are both set to true. The issue can be resolved by disabling any of the two table properties."
     ],
     "sqlState" : "55000"
   },
