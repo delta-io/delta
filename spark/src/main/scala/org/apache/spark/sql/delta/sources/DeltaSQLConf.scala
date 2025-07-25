@@ -2379,6 +2379,7 @@ trait DeltaSQLConfBase {
 
   val ICEBERG_MAX_ACTIONS_TO_CONVERT = buildConf("iceberg.maxPendingActions")
     .doc("""
+        |[Deprecated]
         |The maximum number of pending Delta actions to convert to Iceberg incrementally.
         |If there are more than this number of outstanding actions, chunk them into separate
         |Iceberg commits.
