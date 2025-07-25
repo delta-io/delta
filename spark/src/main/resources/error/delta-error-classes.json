@@ -2253,7 +2253,7 @@
     "message" : [
       "Illegal table state was detected.",
       "Table properties `<property1>` and `<property2>` are both set to true.",
-      "The issue can be resolved by disabling any of the two table properties.",
+      "The issue can be resolved by disabling any of the two table properties."
     ],
     "sqlState" : "55000"
   },
