@@ -160,6 +160,10 @@ trait MergeIntoSuiteBaseMixin
     }
   }
 
+  protected implicit def strToJsonSeq(str: String): Seq[String] = {
+    str.split("\n").filter(_.trim.length > 0)
+  }
+
   protected def insertOnlyMergeFeatureFlagOff(sourceName: String, targetName: String): Unit = {
     executeMerge(
       tgt = s"$targetName t",
@@ -1905,494 +1909,6 @@ trait MergeIntoUnlimitedMergeClausesTests extends MergeIntoSuiteBaseMixin {
     expectedMessageParameters = Map.empty)
 }
 
-trait MergeIntoAnalysisExceptionTests extends MergeIntoSuiteBaseMixin {
-  testMergeAnalysisException("update condition - ambiguous reference")(
-    mergeOn = "s.key = t.key",
-    update(condition = "key > 1", set = "tgtValue = srcValue"))(
-    expectedErrorClass = "AMBIGUOUS_REFERENCE",
-    expectedMessageParameters = Map(
-      "name" -> "`key`",
-      "referenceNames" -> "[`s`.`key`, `t`.`key`]"))
-
-  testMergeAnalysisException("update condition - unknown reference")(
-    mergeOn = "s.key = t.key",
-    update(condition = "unknownAttrib > 1", set = "tgtValue = srcValue"))(
-    // Should show unknownAttrib as invalid ref and (key, tgtValue, srcValue) as valid column names.
-    expectedErrorClass = "DELTA_MERGE_UNRESOLVED_EXPRESSION",
-    expectedMessageParameters = Map(
-      "sqlExpr" -> "unknownAttrib",
-      "clause" -> "UPDATE condition",
-      "cols" -> "t.key, t.tgtValue, s.key, s.srcValue"))
-
-  testMergeAnalysisException("update condition - aggregation function")(
-    mergeOn = "s.key = t.key",
-    update(condition = "max(0) > 0", set = "tgtValue = srcValue"))(
-    expectedErrorClass = "DELTA_AGGREGATION_NOT_SUPPORTED",
-    expectedMessageParameters = Map(
-      "operation" -> "UPDATE condition of MERGE operation",
-      "predicate" -> "(condition = (max(0) > 0))"))
-
-  testMergeAnalysisException("update condition - subquery")(
-    mergeOn = "s.key = t.key",
-    update(condition = "s.srcValue in (select value from t)", set = "tgtValue = srcValue"))(
-    expectedErrorClass = "TABLE_OR_VIEW_NOT_FOUND",
-    expectedMessageParameters = Map("relationName" -> "`t`"))
-
-  testMergeAnalysisException("delete condition - ambiguous reference")(
-    mergeOn = "s.key = t.key",
-    delete(condition = "key > 1"))(
-    expectedErrorClass = "AMBIGUOUS_REFERENCE",
-    expectedMessageParameters = Map(
-      "name" -> "`key`",
-      "referenceNames" -> "[`s`.`key`, `t`.`key`]"))
-
-  testMergeAnalysisException("delete condition - unknown reference")(
-    mergeOn = "s.key = t.key",
-    delete(condition = "unknownAttrib > 1"))(
-    // Should show unknownAttrib as invalid ref and (key, tgtValue, srcValue) as valid column names.
-    expectedErrorClass = "DELTA_MERGE_UNRESOLVED_EXPRESSION",
-    expectedMessageParameters = Map(
-      "sqlExpr" -> "unknownAttrib",
-      "clause" -> "DELETE condition",
-      "cols" -> "t.key, t.tgtValue, s.key, s.srcValue"))
-
-  testMergeAnalysisException("delete condition - aggregation function")(
-    mergeOn = "s.key = t.key",
-    delete(condition = "max(0) > 0"))(
-    expectedErrorClass = "DELTA_AGGREGATION_NOT_SUPPORTED",
-    expectedMessageParameters = Map(
-      "operation" -> "DELETE condition of MERGE operation",
-      "predicate" -> "(condition = (max(0) > 0))"))
-
-  testMergeAnalysisException("delete condition - subquery")(
-    mergeOn = "s.key = t.key",
-    delete(condition = "s.srcValue in (select tgtValue from t)"))(
-    expectedErrorClass = "TABLE_OR_VIEW_NOT_FOUND",
-    expectedMessageParameters = Map("relationName" -> "`t`"))
-
-  testMergeAnalysisException("insert condition - unknown reference")(
-    mergeOn = "s.key = t.key",
-    insert(condition = "unknownAttrib > 1", values = "(key, tgtValue) VALUES (s.key, s.srcValue)"))(
-    // Should show unknownAttrib as invalid ref and (key, srcValue) as valid column names,
-    // but not show tgtValue as a valid name as target columns cannot be present in insert clause.
-    expectedErrorClass = "DELTA_MERGE_UNRESOLVED_EXPRESSION",
-    expectedMessageParameters = Map(
-      "sqlExpr" -> "unknownAttrib",
-      "clause" -> "INSERT condition",
-      "cols" -> "s.key, s.srcValue"))
-
-  testMergeAnalysisException("insert condition - reference to target table column")(
-    mergeOn = "s.key = t.key",
-    insert(condition = "tgtValue > 1", values = "(key, tgtValue) VALUES (s.key, s.srcValue)"))(
-    // Should show tgtValue as invalid ref and (key, srcValue) as valid column names
-    expectedErrorClass = "DELTA_MERGE_UNRESOLVED_EXPRESSION",
-    expectedMessageParameters = Map(
-      "sqlExpr" -> "tgtValue",
-      "clause" -> "INSERT condition",
-      "cols" -> "s.key, s.srcValue"))
-
-  testMergeAnalysisException("insert condition - aggregation function")(
-    mergeOn = "s.key = t.key",
-    insert(condition = "max(0) > 0", values = "(key, tgtValue) VALUES (s.key, s.srcValue)"))(
-    expectedErrorClass = "DELTA_AGGREGATION_NOT_SUPPORTED",
-    expectedMessageParameters = Map(
-      "operation" -> "INSERT condition of MERGE operation",
-      "predicate" -> "(condition = (max(0) > 0))"))
-
-  testMergeAnalysisException("insert condition - subquery")(
-    mergeOn = "s.key = t.key",
-    insert(
-      condition = "s.srcValue in (select srcValue from s)",
-      values = "(key, tgtValue) VALUES (s.key, s.srcValue)"))(
-    expectedErrorClass = "TABLE_OR_VIEW_NOT_FOUND",
-    expectedMessageParameters = Map("relationName" -> "`s`"))
-}
-
-trait MergeIntoExtendedSyntaxTests extends MergeIntoSuiteBaseMixin {
-  import testImplicits._
-
-  private def testMergeErrorOnMultipleMatches(
-      name: String,
-      confs: Seq[(String, String)] = Seq.empty)(
-      source: Seq[(Int, Int)],
-      target: Seq[(Int, Int)],
-      mergeOn: String,
-      mergeClauses: MergeClause*): Unit = {
-    test(s"extended syntax - $name") {
-      withSQLConf(confs: _*) {
-        withKeyValueData(source, target) { case (sourceName, targetName) =>
-          val docURL = "/delta-update.html#upsert-into-a-table-using-merge"
-
-          checkError(
-            exception = intercept[DeltaUnsupportedOperationException] {
-              executeMerge(s"$targetName t", s"$sourceName s", mergeOn, mergeClauses: _*)
-            },
-            "DELTA_MULTIPLE_SOURCE_ROW_MATCHING_TARGET_ROW_IN_MERGE",
-            parameters = Map(
-              "usageReference" -> DeltaErrors.generateDocsLink(
-                spark.sparkContext.getConf, docURL, skipValidation = true))
-          )
-        }
-      }
-    }
-  }
-
-  testExtendedMerge("only update")(
-    source = (0, 0) :: (1, 10) :: (3, 30) :: Nil,
-    target = (1, 1) :: (2, 2)  :: Nil,
-    mergeOn = "s.key = t.key",
-    update(set = "key = s.key, value = s.value"))(
-    result = Seq(
-      (1, 10),  // (1, 1) updated
-      (2, 2)
-    ))
-
-  testMergeErrorOnMultipleMatches("only update with multiple matches")(
-    source = (0, 0) :: (1, 10) :: (1, 11) :: (2, 20) :: Nil,
-    target = (1, 1) :: (2, 2) :: Nil,
-    mergeOn = "s.key = t.key",
-    update(set = "key = s.key, value = s.value"))
-
-  testExtendedMerge("only conditional update")(
-    source = (0, 0) :: (1, 10) :: (2, 20) :: (3, 30) :: Nil,
-    target = (1, 1) :: (2, 2) :: (3, 3) :: Nil,
-    mergeOn = "s.key = t.key",
-    update(condition = "s.value <> 20 AND t.value <> 3", set = "key = s.key, value = s.value"))(
-    result = Seq(
-      (1, 10),  // updated
-      (2, 2),   // not updated due to source-only condition `s.value <> 20`
-      (3, 3)    // not updated due to target-only condition `t.value <> 3`
-    ))
-
-  testMergeErrorOnMultipleMatches("only conditional update with multiple matches")(
-    source = (0, 0) :: (1, 10) :: (1, 11) :: (2, 20) :: Nil,
-    target = (1, 1) :: (2, 2) :: Nil,
-    mergeOn = "s.key = t.key",
-    update(condition = "s.value = 10", set = "key = s.key, value = s.value"))
-
-  testExtendedMerge("only delete")(
-    source = (0, 0) :: (1, 10) :: (3, 30) :: Nil,
-    target = (1, 1) :: (2, 2) :: Nil,
-    mergeOn = "s.key = t.key",
-    delete())(
-    result = Seq(
-      (2, 2)    // (1, 1) deleted
-    ))          // (3, 30) not inserted as not insert clause
-
-  // This is not ambiguous even when there are multiple matches
-  testExtendedMerge(s"only delete with multiple matches")(
-    source = (0, 0) :: (1, 10) :: (1, 100) :: (3, 30) :: Nil,
-    target = (1, 1) :: (2, 2) :: Nil,
-    mergeOn = "s.key = t.key",
-    delete())(
-    result = Seq(
-      (2, 2)  // (1, 1) matches multiple source rows but unambiguously deleted
-    )
-  )
-
-  testExtendedMerge("only conditional delete")(
-    source = (0, 0) :: (1, 10) :: (2, 20) :: (3, 30) :: Nil,
-    target = (1, 1) :: (2, 2) :: (3, 3) :: Nil,
-    mergeOn = "s.key = t.key",
-    delete(condition = "s.value <> 20 AND t.value <> 3"))(
-    result = Seq(
-      (2, 2),   // not deleted due to source-only condition `s.value <> 20`
-      (3, 3)    // not deleted due to target-only condition `t.value <> 3`
-    ))          // (1, 1) deleted
-
-  testMergeErrorOnMultipleMatches("only conditional delete with multiple matches")(
-    source = (0, 0) :: (1, 10) :: (1, 100) :: (2, 20) :: Nil,
-    target = (1, 1) :: (2, 2) :: Nil,
-    mergeOn = "s.key = t.key",
-    delete(condition = "s.value = 10"))
-
-  testExtendedMerge("conditional update + delete")(
-    source = (0, 0) :: (1, 10) :: (2, 20) :: Nil,
-    target = (1, 1) :: (2, 2) :: (3, 3) :: Nil,
-    mergeOn = "s.key = t.key",
-    update(condition = "s.key <> 1", set = "key = s.key, value = s.value"),
-    delete())(
-    result = Seq(
-      (2, 20),  // (2, 2) updated, (1, 1) deleted as it did not match update condition
-      (3, 3)
-    ))
-
-  testMergeErrorOnMultipleMatches("conditional update + delete with multiple matches")(
-    source = (0, 0) :: (1, 10) :: (2, 20) :: (2, 200) :: Nil,
-    target = (1, 1) :: (2, 2) :: Nil,
-    mergeOn = "s.key = t.key",
-    update(condition = "s.value = 20", set = "key = s.key, value = s.value"),
-    delete())
-
-  testExtendedMerge("conditional update + conditional delete")(
-    source = (0, 0) :: (1, 10) :: (2, 20) :: (3, 30) :: Nil,
-    target = (1, 1) :: (2, 2) :: (3, 3) :: (4, 4) :: Nil,
-    mergeOn = "s.key = t.key",
-    update(condition = "s.key <> 1", set = "key = s.key, value = s.value"),
-    delete(condition = "s.key <> 2"))(
-    result = Seq(
-      (2, 20),  // (2, 2) updated as it matched update condition
-      (3, 30),  // (3, 3) updated even though it matched update and delete conditions, as update 1st
-      (4, 4)
-    ))          // (1, 1) deleted as it matched delete condition
-
-  testMergeErrorOnMultipleMatches(
-    "conditional update + conditional delete with multiple matches")(
-    source = (0, 0) :: (1, 10) :: (1, 100) :: (2, 20) :: (2, 200) :: Nil,
-    target = (1, 1) :: (2, 2) :: Nil,
-    mergeOn = "s.key = t.key",
-    update(condition = "s.value = 20", set = "key = s.key, value = s.value"),
-    delete(condition = "s.value = 10"))
-
-  testExtendedMerge("conditional delete + conditional update (order matters)")(
-    source = (0, 0) :: (1, 10) :: (2, 20) :: (3, 30) :: Nil,
-    target = (1, 1) :: (2, 2) :: (3, 3) :: (4, 4) :: Nil,
-    mergeOn = "s.key = t.key",
-    delete(condition = "s.key <> 2"),
-    update(condition = "s.key <> 1", set = "key = s.key, value = s.value"))(
-    result = Seq(
-      (2, 20),  // (2, 2) updated as it matched update condition
-      (4, 4)    // (4, 4) unchanged
-    ))          // (1, 1) and (3, 3) deleted as they matched delete condition (before update cond)
-
-  testExtendedMerge("only insert")(
-    source = (0, 0) :: (1, 10) :: (3, 30) :: Nil,
-    target = (1, 1) :: (2, 2) :: Nil,
-    mergeOn = "s.key = t.key",
-    insert(values = "(key, value) VALUES (s.key, s.value)"))(
-    result = Seq(
-      (0, 0),   // (0, 0) inserted
-      (1, 1),   // (1, 1) not updated as no update clause
-      (2, 2),   // (2, 2) not updated as no update clause
-      (3, 30)   // (3, 30) inserted
-    ))
-
-  testExtendedMerge("only conditional insert")(
-    source = (0, 0) :: (1, 10) :: (3, 30) :: Nil,
-    target = (1, 1) :: (2, 2) :: Nil,
-    mergeOn = "s.key = t.key",
-    insert(condition = "s.value <> 30", values = "(key, value) VALUES (s.key, s.value)"))(
-    result = Seq(
-      (0, 0),   // (0, 0) inserted by condition but not (3, 30)
-      (1, 1),
-      (2, 2)
-    ))
-
-  testExtendedMerge("update + conditional insert")(
-    source = (0, 0) :: (1, 10) :: (3, 30) :: Nil,
-    target = (1, 1) :: (2, 2) :: Nil,
-    mergeOn = "s.key = t.key",
-    update("key = s.key, value = s.value"),
-    insert(condition = "s.value <> 30", values = "(key, value) VALUES (s.key, s.value)"))(
-    result = Seq(
-      (0, 0),   // (0, 0) inserted by condition but not (3, 30)
-      (1, 10),  // (1, 1) updated
-      (2, 2)
-    ))
-
-  testExtendedMerge("conditional update + conditional insert")(
-    source = (0, 0) :: (1, 10) :: (2, 20) :: (3, 30) :: Nil,
-    target = (1, 1) :: (2, 2) :: Nil,
-    mergeOn = "s.key = t.key",
-    update(condition = "s.key > 1", set = "key = s.key, value = s.value"),
-    insert(condition = "s.key > 1", values = "(key, value) VALUES (s.key, s.value)"))(
-    result = Seq(
-      (1, 1),   // (1, 1) not updated by condition
-      (2, 20),  // (2, 2) updated by condition
-      (3, 30)   // (3, 30) inserted by condition but not (0, 0)
-    ))
-
-  // This is specifically to test the MergeIntoDeltaCommand.writeOnlyInserts code paths
-  testExtendedMerge("update + conditional insert clause with data to only insert, no updates")(
-    source = (0, 0) :: (3, 30) :: Nil,
-    target = (1, 1) :: (2, 2) :: Nil,
-    mergeOn = "s.key = t.key",
-    update("key = s.key, value = s.value"),
-    insert(condition = "s.value <> 30", values = "(key, value) VALUES (s.key, s.value)"))(
-    result = Seq(
-      (0, 0),   // (0, 0) inserted by condition but not (3, 30)
-      (1, 1),
-      (2, 2)
-    ))
-
-  testExtendedMerge(s"delete + insert with multiple matches for both") (
-    source = (1, 10) :: (1, 100) :: (3, 30) :: (3, 300) :: Nil,
-    target = (1, 1) :: (2, 2) :: Nil,
-    mergeOn = "s.key = t.key",
-    delete(),
-    insert(values = "(key, value) VALUES (s.key, s.value)")) (
-    result = Seq(
-               // (1, 1) matches multiple source rows but unambiguously deleted
-      (2, 2),  // existed previously
-      (3, 30), // inserted
-      (3, 300) // inserted
-    )
-  )
-
-  testExtendedMerge("conditional update + conditional delete + conditional insert")(
-    source = (0, 0) :: (1, 10) :: (2, 20) :: (3, 30) :: (4, 40) :: Nil,
-    target = (1, 1) :: (2, 2) :: (3, 3) :: Nil,
-    mergeOn = "s.key = t.key",
-    update(condition = "s.key < 2", set = "key = s.key, value = s.value"),
-    delete(condition = "s.key < 3"),
-    insert(condition = "s.key > 1", values = "(key, value) VALUES (s.key, s.value)"))(
-    result = Seq(
-      (1, 10),  // (1, 1) updated by condition, but not (2, 2) or (3, 3)
-      (3, 3),   // neither updated nor deleted as it matched neither condition
-      (4, 40)   // (4, 40) inserted by condition, but not (0, 0)
-    ))          // (2, 2) deleted by condition but not (1, 1) or (3, 3)
-
-  testMergeErrorOnMultipleMatches(
-    "conditional update + conditional delete + conditional insert with multiple matches")(
-    source = (0, 0) :: (1, 10) :: (1, 100) :: (2, 20) :: (2, 200) :: Nil,
-    target = (1, 1) :: (2, 2) :: Nil,
-    mergeOn = "s.key = t.key",
-    update(condition = "s.value = 20", set = "key = s.key, value = s.value"),
-    delete(condition = "s.value = 10"),
-    insert(condition = "s.value = 0", values = "(key, value) VALUES (s.key, s.value)"))
-
-  // complex merge condition = has target-only and source-only predicates
-  testExtendedMerge(
-    "conditional update + conditional delete + conditional insert + complex merge condition ")(
-    source = (-1, -10) :: (0, 0) :: (1, 10) :: (2, 20) :: (3, 30) :: (4, 40) :: (5, 50) :: Nil,
-    target = (-1, -1) :: (1, 1) :: (2, 2) :: (3, 3) :: (5, 5) :: Nil,
-    mergeOn = "s.key = t.key AND t.value > 0 AND s.key < 5",
-    update(condition = "s.key < 2", set = "key = s.key, value = s.value"),
-    delete(condition = "s.key < 3"),
-    insert(condition = "s.key > 1", values = "(key, value) VALUES (s.key, s.value)"))(
-    result = Seq(
-      (-1, -1), // (-1, -1) not matched with (-1, -10) by target-only condition 't.value > 0', so
-                // not updated, But (-1, -10) not inserted as insert condition is 's.key > 1'
-                // (0, 0) not matched any target but not inserted as insert condition is 's.key > 1'
-      (1, 10),  // (1, 1) matched with (1, 10) and updated as update condition is 's.key < 2'
-                // (2, 2) matched with (2, 20) and deleted as delete condition is 's.key < 3'
-      (3, 3),   // (3, 3) matched with (3, 30) but neither updated nor deleted as it did not
-                // satisfy update or delete condition
-      (4, 40),  // (4, 40) not matched any target, so inserted as insert condition is 's.key > 1'
-      (5, 5),   // (5, 5) not matched with (5, 50) by source-only condition 's.key < 5', no update
-      (5, 50)   // (5, 50) inserted as inserted as insert condition is 's.key > 1'
-    ))
-
-  test("extended syntax - different # cols in source than target") {
-    val sourceData =
-      (0, 0, 0) :: (1, 10, 100) :: (2, 20, 200) :: (3, 30, 300) :: (4, 40, 400) :: Nil
-    val targetData = (1, 1) :: (2, 2) :: (3, 3) :: Nil
-
-    withTempView("source") {
-      append(targetData.toDF("key", "value"), Nil)
-      sourceData.toDF("key", "value", "extra").createOrReplaceTempView("source")
-      executeMerge(
-        s"$tableSQLIdentifier t",
-        "source s",
-        cond = "s.key = t.key",
-        update(condition = "s.key < 2", set = "key = s.key, value = s.value + s.extra"),
-        delete(condition = "s.key < 3"),
-        insert(condition = "s.key > 1", values = "(key, value) VALUES (s.key, s.value + s.extra)"))
-
-      checkAnswer(
-        readDeltaTableByIdentifier(),
-        Seq(
-          Row(1, 110),  // (1, 1) updated by condition, but not (2, 2) or (3, 3)
-          Row(3, 3),    // neither updated nor deleted as it matched neither condition
-          Row(4, 440)   // (4, 40) inserted by condition, but not (0, 0)
-        ))              // (2, 2) deleted by condition but not (1, 1) or (3, 3)
-    }
-  }
-
-  test("extended syntax - nested data - conditions and actions") {
-    withJsonData(
-      source =
-        """{ "key": { "x": "X1", "y": 1}, "value" : { "a": 100, "b": "B100" } }
-          { "key": { "x": "X2", "y": 2}, "value" : { "a": 200, "b": "B200" } }
-          { "key": { "x": "X3", "y": 3}, "value" : { "a": 300, "b": "B300" } }
-          { "key": { "x": "X4", "y": 4}, "value" : { "a": 400, "b": "B400" } }""",
-      target =
-        """{ "key": { "x": "X1", "y": 1}, "value" : { "a": 1,   "b": "B1" } }
-          { "key": { "x": "X2", "y": 2}, "value" : { "a": 2,   "b": "B2" } }"""
-    ) { case (sourceName, targetName) =>
-      executeMerge(
-        s"$targetName t",
-        s"$sourceName s",
-        cond = "s.key = t.key",
-        update(condition = "s.key.y < 2", set = "key = s.key, value = s.value"),
-        insert(condition = "s.key.x < 'X4'", values = "(key, value) VALUES (s.key, s.value)"))
-
-      checkAnswer(
-        readDeltaTableByIdentifier(),
-        spark.read.json(Seq(
-          """{ "key": { "x": "X1", "y": 1}, "value" : { "a": 100, "b": "B100" } }""", // updated
-          """{ "key": { "x": "X2", "y": 2}, "value" : { "a": 2,   "b": "B2"   } }""", // not updated
-          """{ "key": { "x": "X3", "y": 3}, "value" : { "a": 300, "b": "B300" } }"""  // inserted
-        ).toDS))
-    }
-  }
-
-  testExtendedMerge("insert only merge")(
-    source = (0, 0) :: (1, 10) :: (3, 30) :: Nil,
-    target = (1, 1) :: (2, 2)  :: Nil,
-    mergeOn = "s.key = t.key",
-    insert(values = "*"))(
-    result = Seq(
-      (0, 0), // inserted
-      (1, 1), // existed previously
-      (2, 2), // existed previously
-      (3, 30) // inserted
-    ))
-
-  testExtendedMerge("insert only merge with insert condition on source")(
-    source = (0, 0) :: (1, 10) :: (3, 30) :: Nil,
-    target = (1, 1) :: (2, 2)  :: Nil,
-    mergeOn = "s.key = t.key",
-    insert(values = "*", condition = "s.key = s.value"))(
-    result = Seq(
-      (0, 0), // inserted
-      (1, 1), // existed previously
-      (2, 2)  // existed previously
-    ))
-
-  testExtendedMerge("insert only merge with predicate insert")(
-    source = (0, 0) :: (1, 10) :: (3, 30) :: Nil,
-    target = (1, 1) :: (2, 2)  :: Nil,
-    mergeOn = "s.key = t.key",
-    insert(values = "(t.key, t.value) VALUES (s.key + 10, s.value + 10)"))(
-    result = Seq(
-      (10, 10), // inserted
-      (1, 1), // existed previously
-      (2, 2), // existed previously
-      (13, 40) // inserted
-    ))
-
-  testExtendedMerge(s"insert only merge with multiple matches") (
-    source = (0, 0) :: (1, 10) :: (1, 100) :: (3, 30) :: (3, 300) :: Nil,
-    target = (1, 1) :: (2, 2) :: Nil,
-    mergeOn = "s.key = t.key",
-    insert(values = "(key, value) VALUES (s.key, s.value)")) (
-    result = Seq(
-      (0, 0), // inserted
-      (1, 1), // existed previously
-      (2, 2), // existed previously
-      (3, 30), // inserted
-      (3, 300) // key exists but still inserted
-    )
-  )
-
-  testMergeErrorOnMultipleMatches(
-    "unconditional insert only merge - multiple matches when feature flag off",
-    confs = Seq(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED.key -> "false"))(
-    source = (1, 10) :: (1, 100) :: (2, 20) :: Nil,
-    target = (1, 1) :: Nil,
-    mergeOn = "s.key = t.key",
-    insert(values = "(key, value) VALUES (s.key, s.value)"))
-
-  testMergeErrorOnMultipleMatches(
-    "conditional insert only merge - multiple matches when feature flag off",
-    confs = Seq(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED.key -> "false"))(
-    source = (1, 10) :: (1, 100) :: (2, 20) :: (2, 200) :: Nil,
-    target = (1, 1) :: Nil,
-    mergeOn = "s.key = t.key",
-    insert(condition = "s.value = 20", values = "(key, value) VALUES (s.key, s.value)"))
-}
-
 trait MergeIntoSuiteBaseMiscTests extends MergeIntoSuiteBaseMixin {
   import testImplicits._
 
@@ -2864,6 +2380,425 @@ trait MergeIntoSuiteBaseMiscTests extends MergeIntoSuiteBaseMixin {
     }
   }
 
+
+  testMergeAnalysisException("update condition - ambiguous reference")(
+    mergeOn = "s.key = t.key",
+    update(condition = "key > 1", set = "tgtValue = srcValue"))(
+    expectedErrorClass = "AMBIGUOUS_REFERENCE",
+    expectedMessageParameters = Map(
+      "name" -> "`key`",
+      "referenceNames" -> "[`s`.`key`, `t`.`key`]"))
+
+  testMergeAnalysisException("update condition - unknown reference")(
+    mergeOn = "s.key = t.key",
+    update(condition = "unknownAttrib > 1", set = "tgtValue = srcValue"))(
+    // Should show unknownAttrib as invalid ref and (key, tgtValue, srcValue) as valid column names.
+    expectedErrorClass = "DELTA_MERGE_UNRESOLVED_EXPRESSION",
+    expectedMessageParameters = Map(
+      "sqlExpr" -> "unknownAttrib",
+      "clause" -> "UPDATE condition",
+      "cols" -> "t.key, t.tgtValue, s.key, s.srcValue"))
+
+  testMergeAnalysisException("update condition - aggregation function")(
+    mergeOn = "s.key = t.key",
+    update(condition = "max(0) > 0", set = "tgtValue = srcValue"))(
+    expectedErrorClass = "DELTA_AGGREGATION_NOT_SUPPORTED",
+    expectedMessageParameters = Map(
+      "operation" -> "UPDATE condition of MERGE operation",
+      "predicate" -> "(condition = (max(0) > 0))"))
+
+  testMergeAnalysisException("update condition - subquery")(
+    mergeOn = "s.key = t.key",
+    update(condition = "s.srcValue in (select value from t)", set = "tgtValue = srcValue"))(
+    expectedErrorClass = "TABLE_OR_VIEW_NOT_FOUND",
+    expectedMessageParameters = Map("relationName" -> "`t`"))
+
+  testMergeAnalysisException("delete condition - ambiguous reference")(
+    mergeOn = "s.key = t.key",
+    delete(condition = "key > 1"))(
+    expectedErrorClass = "AMBIGUOUS_REFERENCE",
+    expectedMessageParameters = Map(
+      "name" -> "`key`",
+      "referenceNames" -> "[`s`.`key`, `t`.`key`]"))
+
+  testMergeAnalysisException("delete condition - unknown reference")(
+    mergeOn = "s.key = t.key",
+    delete(condition = "unknownAttrib > 1"))(
+    // Should show unknownAttrib as invalid ref and (key, tgtValue, srcValue) as valid column names.
+    expectedErrorClass = "DELTA_MERGE_UNRESOLVED_EXPRESSION",
+    expectedMessageParameters = Map(
+      "sqlExpr" -> "unknownAttrib",
+      "clause" -> "DELETE condition",
+      "cols" -> "t.key, t.tgtValue, s.key, s.srcValue"))
+
+  testMergeAnalysisException("delete condition - aggregation function")(
+    mergeOn = "s.key = t.key",
+    delete(condition = "max(0) > 0"))(
+    expectedErrorClass = "DELTA_AGGREGATION_NOT_SUPPORTED",
+    expectedMessageParameters = Map(
+      "operation" -> "DELETE condition of MERGE operation",
+      "predicate" -> "(condition = (max(0) > 0))"))
+
+  testMergeAnalysisException("delete condition - subquery")(
+    mergeOn = "s.key = t.key",
+    delete(condition = "s.srcValue in (select tgtValue from t)"))(
+    expectedErrorClass = "TABLE_OR_VIEW_NOT_FOUND",
+    expectedMessageParameters = Map("relationName" -> "`t`"))
+
+  testMergeAnalysisException("insert condition - unknown reference")(
+    mergeOn = "s.key = t.key",
+    insert(condition = "unknownAttrib > 1", values = "(key, tgtValue) VALUES (s.key, s.srcValue)"))(
+    // Should show unknownAttrib as invalid ref and (key, srcValue) as valid column names,
+    // but not show tgtValue as a valid name as target columns cannot be present in insert clause.
+    expectedErrorClass = "DELTA_MERGE_UNRESOLVED_EXPRESSION",
+    expectedMessageParameters = Map(
+      "sqlExpr" -> "unknownAttrib",
+      "clause" -> "INSERT condition",
+      "cols" -> "s.key, s.srcValue"))
+
+  testMergeAnalysisException("insert condition - reference to target table column")(
+    mergeOn = "s.key = t.key",
+    insert(condition = "tgtValue > 1", values = "(key, tgtValue) VALUES (s.key, s.srcValue)"))(
+    // Should show tgtValue as invalid ref and (key, srcValue) as valid column names
+    expectedErrorClass = "DELTA_MERGE_UNRESOLVED_EXPRESSION",
+    expectedMessageParameters = Map(
+      "sqlExpr" -> "tgtValue",
+      "clause" -> "INSERT condition",
+      "cols" -> "s.key, s.srcValue"))
+
+  testMergeAnalysisException("insert condition - aggregation function")(
+    mergeOn = "s.key = t.key",
+    insert(condition = "max(0) > 0", values = "(key, tgtValue) VALUES (s.key, s.srcValue)"))(
+    expectedErrorClass = "DELTA_AGGREGATION_NOT_SUPPORTED",
+    expectedMessageParameters = Map(
+      "operation" -> "INSERT condition of MERGE operation",
+      "predicate" -> "(condition = (max(0) > 0))"))
+
+  testMergeAnalysisException("insert condition - subquery")(
+    mergeOn = "s.key = t.key",
+    insert(
+      condition = "s.srcValue in (select srcValue from s)",
+      values = "(key, tgtValue) VALUES (s.key, s.srcValue)"))(
+    expectedErrorClass = "TABLE_OR_VIEW_NOT_FOUND",
+    expectedMessageParameters = Map("relationName" -> "`s`"))
+
+
+  private def testMergeErrorOnMultipleMatches(
+      name: String,
+      confs: Seq[(String, String)] = Seq.empty)(
+      source: Seq[(Int, Int)],
+      target: Seq[(Int, Int)],
+      mergeOn: String,
+      mergeClauses: MergeClause*): Unit = {
+    test(s"extended syntax - $name") {
+      withSQLConf(confs: _*) {
+        withKeyValueData(source, target) { case (sourceName, targetName) =>
+          val docURL = "/delta-update.html#upsert-into-a-table-using-merge"
+
+          checkError(
+            exception = intercept[DeltaUnsupportedOperationException] {
+              executeMerge(s"$targetName t", s"$sourceName s", mergeOn, mergeClauses: _*)
+            },
+            "DELTA_MULTIPLE_SOURCE_ROW_MATCHING_TARGET_ROW_IN_MERGE",
+            parameters = Map(
+              "usageReference" -> DeltaErrors.generateDocsLink(
+                spark.sparkContext.getConf, docURL, skipValidation = true))
+          )
+        }
+      }
+    }
+  }
+
+  testExtendedMerge("only update")(
+    source = (0, 0) :: (1, 10) :: (3, 30) :: Nil,
+    target = (1, 1) :: (2, 2)  :: Nil,
+    mergeOn = "s.key = t.key",
+    update(set = "key = s.key, value = s.value"))(
+    result = Seq(
+      (1, 10),  // (1, 1) updated
+      (2, 2)
+    ))
+
+  testMergeErrorOnMultipleMatches("only update with multiple matches")(
+    source = (0, 0) :: (1, 10) :: (1, 11) :: (2, 20) :: Nil,
+    target = (1, 1) :: (2, 2) :: Nil,
+    mergeOn = "s.key = t.key",
+    update(set = "key = s.key, value = s.value"))
+
+  testExtendedMerge("only conditional update")(
+    source = (0, 0) :: (1, 10) :: (2, 20) :: (3, 30) :: Nil,
+    target = (1, 1) :: (2, 2) :: (3, 3) :: Nil,
+    mergeOn = "s.key = t.key",
+    update(condition = "s.value <> 20 AND t.value <> 3", set = "key = s.key, value = s.value"))(
+    result = Seq(
+      (1, 10),  // updated
+      (2, 2),   // not updated due to source-only condition `s.value <> 20`
+      (3, 3)    // not updated due to target-only condition `t.value <> 3`
+    ))
+
+  testMergeErrorOnMultipleMatches("only conditional update with multiple matches")(
+    source = (0, 0) :: (1, 10) :: (1, 11) :: (2, 20) :: Nil,
+    target = (1, 1) :: (2, 2) :: Nil,
+    mergeOn = "s.key = t.key",
+    update(condition = "s.value = 10", set = "key = s.key, value = s.value"))
+
+  testExtendedMerge("only delete")(
+    source = (0, 0) :: (1, 10) :: (3, 30) :: Nil,
+    target = (1, 1) :: (2, 2) :: Nil,
+    mergeOn = "s.key = t.key",
+    delete())(
+    result = Seq(
+      (2, 2)    // (1, 1) deleted
+    ))          // (3, 30) not inserted as not insert clause
+
+  // This is not ambiguous even when there are multiple matches
+  testExtendedMerge(s"only delete with multiple matches")(
+    source = (0, 0) :: (1, 10) :: (1, 100) :: (3, 30) :: Nil,
+    target = (1, 1) :: (2, 2) :: Nil,
+    mergeOn = "s.key = t.key",
+    delete())(
+    result = Seq(
+      (2, 2)  // (1, 1) matches multiple source rows but unambiguously deleted
+    )
+  )
+
+  testExtendedMerge("only conditional delete")(
+    source = (0, 0) :: (1, 10) :: (2, 20) :: (3, 30) :: Nil,
+    target = (1, 1) :: (2, 2) :: (3, 3) :: Nil,
+    mergeOn = "s.key = t.key",
+    delete(condition = "s.value <> 20 AND t.value <> 3"))(
+    result = Seq(
+      (2, 2),   // not deleted due to source-only condition `s.value <> 20`
+      (3, 3)    // not deleted due to target-only condition `t.value <> 3`
+    ))          // (1, 1) deleted
+
+  testMergeErrorOnMultipleMatches("only conditional delete with multiple matches")(
+    source = (0, 0) :: (1, 10) :: (1, 100) :: (2, 20) :: Nil,
+    target = (1, 1) :: (2, 2) :: Nil,
+    mergeOn = "s.key = t.key",
+    delete(condition = "s.value = 10"))
+
+  testExtendedMerge("conditional update + delete")(
+    source = (0, 0) :: (1, 10) :: (2, 20) :: Nil,
+    target = (1, 1) :: (2, 2) :: (3, 3) :: Nil,
+    mergeOn = "s.key = t.key",
+    update(condition = "s.key <> 1", set = "key = s.key, value = s.value"),
+    delete())(
+    result = Seq(
+      (2, 20),  // (2, 2) updated, (1, 1) deleted as it did not match update condition
+      (3, 3)
+    ))
+
+  testMergeErrorOnMultipleMatches("conditional update + delete with multiple matches")(
+    source = (0, 0) :: (1, 10) :: (2, 20) :: (2, 200) :: Nil,
+    target = (1, 1) :: (2, 2) :: Nil,
+    mergeOn = "s.key = t.key",
+    update(condition = "s.value = 20", set = "key = s.key, value = s.value"),
+    delete())
+
+  testExtendedMerge("conditional update + conditional delete")(
+    source = (0, 0) :: (1, 10) :: (2, 20) :: (3, 30) :: Nil,
+    target = (1, 1) :: (2, 2) :: (3, 3) :: (4, 4) :: Nil,
+    mergeOn = "s.key = t.key",
+    update(condition = "s.key <> 1", set = "key = s.key, value = s.value"),
+    delete(condition = "s.key <> 2"))(
+    result = Seq(
+      (2, 20),  // (2, 2) updated as it matched update condition
+      (3, 30),  // (3, 3) updated even though it matched update and delete conditions, as update 1st
+      (4, 4)
+    ))          // (1, 1) deleted as it matched delete condition
+
+  testMergeErrorOnMultipleMatches(
+    "conditional update + conditional delete with multiple matches")(
+    source = (0, 0) :: (1, 10) :: (1, 100) :: (2, 20) :: (2, 200) :: Nil,
+    target = (1, 1) :: (2, 2) :: Nil,
+    mergeOn = "s.key = t.key",
+    update(condition = "s.value = 20", set = "key = s.key, value = s.value"),
+    delete(condition = "s.value = 10"))
+
+  testExtendedMerge("conditional delete + conditional update (order matters)")(
+    source = (0, 0) :: (1, 10) :: (2, 20) :: (3, 30) :: Nil,
+    target = (1, 1) :: (2, 2) :: (3, 3) :: (4, 4) :: Nil,
+    mergeOn = "s.key = t.key",
+    delete(condition = "s.key <> 2"),
+    update(condition = "s.key <> 1", set = "key = s.key, value = s.value"))(
+    result = Seq(
+      (2, 20),  // (2, 2) updated as it matched update condition
+      (4, 4)    // (4, 4) unchanged
+    ))          // (1, 1) and (3, 3) deleted as they matched delete condition (before update cond)
+
+  testExtendedMerge("only insert")(
+    source = (0, 0) :: (1, 10) :: (3, 30) :: Nil,
+    target = (1, 1) :: (2, 2) :: Nil,
+    mergeOn = "s.key = t.key",
+    insert(values = "(key, value) VALUES (s.key, s.value)"))(
+    result = Seq(
+      (0, 0),   // (0, 0) inserted
+      (1, 1),   // (1, 1) not updated as no update clause
+      (2, 2),   // (2, 2) not updated as no update clause
+      (3, 30)   // (3, 30) inserted
+    ))
+
+  testExtendedMerge("only conditional insert")(
+    source = (0, 0) :: (1, 10) :: (3, 30) :: Nil,
+    target = (1, 1) :: (2, 2) :: Nil,
+    mergeOn = "s.key = t.key",
+    insert(condition = "s.value <> 30", values = "(key, value) VALUES (s.key, s.value)"))(
+    result = Seq(
+      (0, 0),   // (0, 0) inserted by condition but not (3, 30)
+      (1, 1),
+      (2, 2)
+    ))
+
+  testExtendedMerge("update + conditional insert")(
+    source = (0, 0) :: (1, 10) :: (3, 30) :: Nil,
+    target = (1, 1) :: (2, 2) :: Nil,
+    mergeOn = "s.key = t.key",
+    update("key = s.key, value = s.value"),
+    insert(condition = "s.value <> 30", values = "(key, value) VALUES (s.key, s.value)"))(
+    result = Seq(
+      (0, 0),   // (0, 0) inserted by condition but not (3, 30)
+      (1, 10),  // (1, 1) updated
+      (2, 2)
+    ))
+
+  testExtendedMerge("conditional update + conditional insert")(
+    source = (0, 0) :: (1, 10) :: (2, 20) :: (3, 30) :: Nil,
+    target = (1, 1) :: (2, 2) :: Nil,
+    mergeOn = "s.key = t.key",
+    update(condition = "s.key > 1", set = "key = s.key, value = s.value"),
+    insert(condition = "s.key > 1", values = "(key, value) VALUES (s.key, s.value)"))(
+    result = Seq(
+      (1, 1),   // (1, 1) not updated by condition
+      (2, 20),  // (2, 2) updated by condition
+      (3, 30)   // (3, 30) inserted by condition but not (0, 0)
+    ))
+
+  // This is specifically to test the MergeIntoDeltaCommand.writeOnlyInserts code paths
+  testExtendedMerge("update + conditional insert clause with data to only insert, no updates")(
+    source = (0, 0) :: (3, 30) :: Nil,
+    target = (1, 1) :: (2, 2) :: Nil,
+    mergeOn = "s.key = t.key",
+    update("key = s.key, value = s.value"),
+    insert(condition = "s.value <> 30", values = "(key, value) VALUES (s.key, s.value)"))(
+    result = Seq(
+      (0, 0),   // (0, 0) inserted by condition but not (3, 30)
+      (1, 1),
+      (2, 2)
+    ))
+
+  testExtendedMerge(s"delete + insert with multiple matches for both") (
+    source = (1, 10) :: (1, 100) :: (3, 30) :: (3, 300) :: Nil,
+    target = (1, 1) :: (2, 2) :: Nil,
+    mergeOn = "s.key = t.key",
+    delete(),
+    insert(values = "(key, value) VALUES (s.key, s.value)")) (
+    result = Seq(
+               // (1, 1) matches multiple source rows but unambiguously deleted
+      (2, 2),  // existed previously
+      (3, 30), // inserted
+      (3, 300) // inserted
+    )
+  )
+
+  testExtendedMerge("conditional update + conditional delete + conditional insert")(
+    source = (0, 0) :: (1, 10) :: (2, 20) :: (3, 30) :: (4, 40) :: Nil,
+    target = (1, 1) :: (2, 2) :: (3, 3) :: Nil,
+    mergeOn = "s.key = t.key",
+    update(condition = "s.key < 2", set = "key = s.key, value = s.value"),
+    delete(condition = "s.key < 3"),
+    insert(condition = "s.key > 1", values = "(key, value) VALUES (s.key, s.value)"))(
+    result = Seq(
+      (1, 10),  // (1, 1) updated by condition, but not (2, 2) or (3, 3)
+      (3, 3),   // neither updated nor deleted as it matched neither condition
+      (4, 40)   // (4, 40) inserted by condition, but not (0, 0)
+    ))          // (2, 2) deleted by condition but not (1, 1) or (3, 3)
+
+  testMergeErrorOnMultipleMatches(
+    "conditional update + conditional delete + conditional insert with multiple matches")(
+    source = (0, 0) :: (1, 10) :: (1, 100) :: (2, 20) :: (2, 200) :: Nil,
+    target = (1, 1) :: (2, 2) :: Nil,
+    mergeOn = "s.key = t.key",
+    update(condition = "s.value = 20", set = "key = s.key, value = s.value"),
+    delete(condition = "s.value = 10"),
+    insert(condition = "s.value = 0", values = "(key, value) VALUES (s.key, s.value)"))
+
+  // complex merge condition = has target-only and source-only predicates
+  testExtendedMerge(
+    "conditional update + conditional delete + conditional insert + complex merge condition ")(
+    source = (-1, -10) :: (0, 0) :: (1, 10) :: (2, 20) :: (3, 30) :: (4, 40) :: (5, 50) :: Nil,
+    target = (-1, -1) :: (1, 1) :: (2, 2) :: (3, 3) :: (5, 5) :: Nil,
+    mergeOn = "s.key = t.key AND t.value > 0 AND s.key < 5",
+    update(condition = "s.key < 2", set = "key = s.key, value = s.value"),
+    delete(condition = "s.key < 3"),
+    insert(condition = "s.key > 1", values = "(key, value) VALUES (s.key, s.value)"))(
+    result = Seq(
+      (-1, -1), // (-1, -1) not matched with (-1, -10) by target-only condition 't.value > 0', so
+                // not updated, But (-1, -10) not inserted as insert condition is 's.key > 1'
+                // (0, 0) not matched any target but not inserted as insert condition is 's.key > 1'
+      (1, 10),  // (1, 1) matched with (1, 10) and updated as update condition is 's.key < 2'
+                // (2, 2) matched with (2, 20) and deleted as delete condition is 's.key < 3'
+      (3, 3),   // (3, 3) matched with (3, 30) but neither updated nor deleted as it did not
+                // satisfy update or delete condition
+      (4, 40),  // (4, 40) not matched any target, so inserted as insert condition is 's.key > 1'
+      (5, 5),   // (5, 5) not matched with (5, 50) by source-only condition 's.key < 5', no update
+      (5, 50)   // (5, 50) inserted as inserted as insert condition is 's.key > 1'
+    ))
+
+  test("extended syntax - different # cols in source than target") {
+    val sourceData =
+      (0, 0, 0) :: (1, 10, 100) :: (2, 20, 200) :: (3, 30, 300) :: (4, 40, 400) :: Nil
+    val targetData = (1, 1) :: (2, 2) :: (3, 3) :: Nil
+
+    withTempView("source") {
+      append(targetData.toDF("key", "value"), Nil)
+      sourceData.toDF("key", "value", "extra").createOrReplaceTempView("source")
+      executeMerge(
+        s"$tableSQLIdentifier t",
+        "source s",
+        cond = "s.key = t.key",
+        update(condition = "s.key < 2", set = "key = s.key, value = s.value + s.extra"),
+        delete(condition = "s.key < 3"),
+        insert(condition = "s.key > 1", values = "(key, value) VALUES (s.key, s.value + s.extra)"))
+
+      checkAnswer(
+        readDeltaTableByIdentifier(),
+        Seq(
+          Row(1, 110),  // (1, 1) updated by condition, but not (2, 2) or (3, 3)
+          Row(3, 3),    // neither updated nor deleted as it matched neither condition
+          Row(4, 440)   // (4, 40) inserted by condition, but not (0, 0)
+        ))              // (2, 2) deleted by condition but not (1, 1) or (3, 3)
+    }
+  }
+
+  test("extended syntax - nested data - conditions and actions") {
+    withJsonData(
+      source =
+        """{ "key": { "x": "X1", "y": 1}, "value" : { "a": 100, "b": "B100" } }
+          { "key": { "x": "X2", "y": 2}, "value" : { "a": 200, "b": "B200" } }
+          { "key": { "x": "X3", "y": 3}, "value" : { "a": 300, "b": "B300" } }
+          { "key": { "x": "X4", "y": 4}, "value" : { "a": 400, "b": "B400" } }""",
+      target =
+        """{ "key": { "x": "X1", "y": 1}, "value" : { "a": 1,   "b": "B1" } }
+          { "key": { "x": "X2", "y": 2}, "value" : { "a": 2,   "b": "B2" } }"""
+    ) { case (sourceName, targetName) =>
+      executeMerge(
+        s"$targetName t",
+        s"$sourceName s",
+        cond = "s.key = t.key",
+        update(condition = "s.key.y < 2", set = "key = s.key, value = s.value"),
+        insert(condition = "s.key.x < 'X4'", values = "(key, value) VALUES (s.key, s.value)"))
+
+      checkAnswer(
+        readDeltaTableByIdentifier(),
+        spark.read.json(Seq(
+          """{ "key": { "x": "X1", "y": 1}, "value" : { "a": 100, "b": "B100" } }""", // updated
+          """{ "key": { "x": "X2", "y": 2}, "value" : { "a": 2,   "b": "B2"   } }""", // not updated
+          """{ "key": { "x": "X3", "y": 3}, "value" : { "a": 300, "b": "B300" } }"""  // inserted
+        ).toDS))
+    }
+  }
+
   def testStar(
       name: String)(
       source: Seq[String],
@@ -2921,6 +2856,56 @@ trait MergeIntoSuiteBaseMiscTests extends MergeIntoSuiteBaseMixin {
          { "key": "b", "value" : 2,  "value2" : 2  }
          { "key": "c", "value" : 30, "value2" : 300 }""")
 
+  testExtendedMerge("insert only merge")(
+    source = (0, 0) :: (1, 10) :: (3, 30) :: Nil,
+    target = (1, 1) :: (2, 2)  :: Nil,
+    mergeOn = "s.key = t.key",
+    insert(values = "*"))(
+    result = Seq(
+      (0, 0), // inserted
+      (1, 1), // existed previously
+      (2, 2), // existed previously
+      (3, 30) // inserted
+    ))
+
+  testExtendedMerge("insert only merge with insert condition on source")(
+    source = (0, 0) :: (1, 10) :: (3, 30) :: Nil,
+    target = (1, 1) :: (2, 2)  :: Nil,
+    mergeOn = "s.key = t.key",
+    insert(values = "*", condition = "s.key = s.value"))(
+    result = Seq(
+      (0, 0), // inserted
+      (1, 1), // existed previously
+      (2, 2)  // existed previously
+    ))
+
+  testExtendedMerge("insert only merge with predicate insert")(
+    source = (0, 0) :: (1, 10) :: (3, 30) :: Nil,
+    target = (1, 1) :: (2, 2)  :: Nil,
+    mergeOn = "s.key = t.key",
+    insert(values = "(t.key, t.value) VALUES (s.key + 10, s.value + 10)"))(
+    result = Seq(
+      (10, 10), // inserted
+      (1, 1), // existed previously
+      (2, 2), // existed previously
+      (13, 40) // inserted
+    ))
+
+  testExtendedMerge(s"insert only merge with multiple matches") (
+    source = (0, 0) :: (1, 10) :: (1, 100) :: (3, 30) :: (3, 300) :: Nil,
+    target = (1, 1) :: (2, 2) :: Nil,
+    mergeOn = "s.key = t.key",
+    insert(values = "(key, value) VALUES (s.key, s.value)")) (
+    result = Seq(
+      (0, 0), // inserted
+      (1, 1), // existed previously
+      (2, 2), // existed previously
+      (3, 30), // inserted
+      (3, 300) // key exists but still inserted
+    )
+  )
+
+
   test("insert only merge - turn off feature flag") {
     withSQLConf(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED.key -> "false") {
       withKeyValueData(
@@ -2931,6 +2916,22 @@ trait MergeIntoSuiteBaseMiscTests extends MergeIntoSuiteBaseMixin {
       }
     }
   }
+
+  testMergeErrorOnMultipleMatches(
+    "unconditional insert only merge - multiple matches when feature flag off",
+    confs = Seq(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED.key -> "false"))(
+    source = (1, 10) :: (1, 100) :: (2, 20) :: Nil,
+    target = (1, 1) :: Nil,
+    mergeOn = "s.key = t.key",
+    insert(values = "(key, value) VALUES (s.key, s.value)"))
+
+  testMergeErrorOnMultipleMatches(
+    "conditional insert only merge - multiple matches when feature flag off",
+    confs = Seq(DeltaSQLConf.MERGE_INSERT_ONLY_ENABLED.key -> "false"))(
+    source = (1, 10) :: (1, 100) :: (2, 20) :: (2, 200) :: Nil,
+    target = (1, 1) :: Nil,
+    mergeOn = "s.key = t.key",
+    insert(condition = "s.value = 20", values = "(key, value) VALUES (s.key, s.value)"))
 
   testMergeWithRepartition(
     name = "partition on multiple columns",
