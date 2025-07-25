@@ -28,7 +28,7 @@ object SchemaUtils {
   //////////////////////
 
   def convertKernelSchemaToSparkSchema(kernelSchema: KernelStructType): SparkStructType = {
-    SparkStructType(kernelSchema.fields().asScala.map(convertKernelFieldToSparkField))
+    SparkStructType(kernelSchema.fields().asScala.map(convertKernelFieldToSparkField).toSeq)
   }
 
   def convertKernelFieldToSparkField(kernelField: KernelStructField): SparkStructField = {
