@@ -118,18 +118,8 @@ case class AlterTableSetPropertiesDeltaCommand(
   override def run(sparkSession: SparkSession): Seq[Row] = {
     val deltaLog = table.deltaLog
 
-    val rowTrackingPropertyKey = DeltaConfigs.ROW_TRACKING_ENABLED.key
-    val enableRowTracking = configuration.keySet.contains(rowTrackingPropertyKey) &&
-      configuration(rowTrackingPropertyKey).toBoolean
+    RowTrackingFeature.validateAndBackfill(sparkSession, table, configuration)
 
-    if (enableRowTracking) {
-      // If we're enabling row tracking on an existing table, we need to complete a backfill process
-      // prior to updating the table metadata.
-      RowTrackingBackfillCommand(
-        deltaLog,
-        nameOfTriggeringOperation = DeltaOperations.OP_SET_TBLPROPERTIES,
-        table.catalogTable).run(sparkSession)
-    }
     val columnMappingPropertyKey = DeltaConfigs.COLUMN_MAPPING_MODE.key
     val disableColumnMapping = configuration.get(columnMappingPropertyKey).contains("none")
     val columnMappingRemovalAllowed = sparkSession.sessionState.conf.getConf(
@@ -182,8 +172,20 @@ case class AlterTableSetPropertiesDeltaCommand(
       // Tag if the metadata update is _only_ for enabling row tracking. This allows for
       // an optimization where we can safely not fail concurrent txns from the metadata update.
       var tags = Map.empty[String, String]
-      if (enableRowTracking && configuration.size == 1) {
-        tags += (DeltaCommitTag.RowTrackingEnablementOnlyTag.key -> "true")
+      val enableRowTracking = configuration
+        .getOrElse(DeltaConfigs.ROW_TRACKING_ENABLED.key, "false")
+        .toBoolean
+      if (enableRowTracking) {
+        RowTrackingFeature.validateConfigurations(txn.metadata.configuration ++ configuration)
+        // In general, we should be able to detect any relevant state changes during backfill.
+        // Nevertheless, before enabling row tracking make sure the main invariants are satisfied.
+        // Note, Delta makes sure conflicting txns backfill their own files. However, this does
+        // not cover third party writers.
+        RowTracking.verifyInvariantsForTablePropertyEnablement(txn.snapshot)
+
+        if (configuration.size == 1) {
+          tags += (DeltaCommitTag.RowTrackingEnablementOnlyTag.key -> "true")
+        }
       }
       txn.commit(Nil, DeltaOperations.SetTableProperties(configuration), tags)
 
@@ -281,16 +283,16 @@ case class AlterTableUnsetPropertiesDeltaCommand(
  *
  * To address these issues, we currently provide two implementations:
  *
- * 1) [[DropFeatureWithHistoryTruncation]]. We truncate history at the boundary of version of the
- *    dropped feature (when required). Requires two executions of the drop feature command with
- *    a waiting time in between the two executions.
+ * 1) [[executeDropFeatureWithHistoryTruncation]]. We truncate history at the boundary of version
+ *    of the dropped feature (when required). Requires two executions of the drop feature command
+ *    with a waiting time in between the two executions.
  * 2) [[executeDropFeatureWithCheckpointProtection]], i.e. fast drop feature. We create barrier
  *    checkpoints to protect against log replay and checkpoint creation. The behavior is enforced
  *    with the aid of CheckpointProtectionTableFeature.
  *
  * Config tableFeatures.fastDropFeature.enabled can be used to control which implementation
  * is used. Furthermore, please note the option [TRUNCATE HISTORY] in the SQL syntax is only
- * relevant for [[DropFeatureWithHistoryTruncation]]. When used, we always fallback to that
+ * relevant for [[executeDropFeatureWithHistoryTruncation]]. When used, we always fallback to that
  * implementation.
  *
  * At a high level, dropping a feature consists of two stages (see [[RemovableFeature]]):
@@ -453,7 +455,11 @@ case class AlterTableDropFeatureDeltaCommand(
 
       val op = DeltaOperations.DropTableFeature(featureName, truncateHistory)
       txn.updateProtocol(txn.protocol.removeFeature(removableFeature))
-      txn.commit(Nil, op)
+      val metadataWithNewConfiguration = DropTableFeatureUtils
+        .getDowngradedProtocolMetadata(removableFeature, txn.metadata)
+      val commitActions = removableFeature.actionsToIncludeAtDowngradeCommit(txn.snapshot)
+      txn.updateMetadata(metadataWithNewConfiguration)
+      txn.commit(commitActions, op)
       recordDeltaEvent(
         deltaLog = deltaLog,
         opType = "dropFeatureCompleted.withHistoryTruncation",
@@ -529,23 +535,27 @@ case class AlterTableDropFeatureDeltaCommand(
       if (!removableFeature.validateRemoval(snapshot)) {
         throw DeltaErrors.dropTableFeatureConflictRevalidationFailed()
       }
+      val metadataWithNewConfiguration = DropTableFeatureUtils
+        .getDowngradedProtocolMetadata(removableFeature, txn.metadata)
 
       if (historyBarrierIsRequired) {
-        val newMetadata = CheckpointProtectionTableFeature.metadataWithCheckpointProtection(
-          txn.metadata, txn.readVersion + 1L)
-        txn.updateMetadata(newMetadata)
-
         val newProtocol = txn.protocol
           .denormalized
           .withFeature(CheckpointProtectionTableFeature)
           .removeFeature(removableFeature)
 
         txn.updateProtocol(newProtocol)
+
+        val newMetadata = CheckpointProtectionTableFeature.metadataWithCheckpointProtection(
+          metadataWithNewConfiguration, txn.readVersion + 1L)
+        txn.updateMetadata(newMetadata)
       } else {
         txn.updateProtocol(txn.protocol.removeFeature(removableFeature))
+        txn.updateMetadata(metadataWithNewConfiguration)
       }
 
-      txn.commit(Nil, DeltaOperations.DropTableFeature(featureName, false))
+      val commitActions = removableFeature.actionsToIncludeAtDowngradeCommit(txn.snapshot)
+      txn.commit(commitActions, DeltaOperations.DropTableFeature(featureName, false))
 
       // This is a protected checkpoint.
       if (historyBarrierIsRequired) createCheckpointWithRetries(table, System.nanoTime())

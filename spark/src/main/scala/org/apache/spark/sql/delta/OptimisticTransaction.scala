@@ -1727,9 +1727,9 @@ trait OptimisticTransactionImpl extends TransactionHelper
         deltaLog.protocolWrite(snapshot.protocol)
       }
 
-      allActions = RowId.assignFreshRowIds(protocol, snapshot, allActions, op)
-      allActions = DefaultRowCommitVersion
-        .assignIfMissing(protocol, allActions, getFirstAttemptVersion)
+      allActions = RowId.assignFreshRowIds(spark, protocol, snapshot, allActions, op)
+      allActions = DefaultRowCommitVersion.assignIfMissing(
+        spark, protocol, snapshot, allActions, getFirstAttemptVersion)
 
       val commitStatsComputer = new CommitStatsComputer()
       allActions = commitStatsComputer.addToCommitStats(allActions)
@@ -2117,9 +2117,10 @@ trait OptimisticTransactionImpl extends TransactionHelper
       deltaLog.protocolWrite(snapshot.protocol)
     }
 
-    finalActions = RowId.assignFreshRowIds(protocol, snapshot, finalActions.toIterator, op).toList
-    finalActions = DefaultRowCommitVersion
-      .assignIfMissing(protocol, finalActions.toIterator, getFirstAttemptVersion).toList
+    finalActions = RowId.assignFreshRowIds(
+      spark, protocol, snapshot, finalActions.toIterator, op).toList
+    finalActions = DefaultRowCommitVersion.assignIfMissing(
+      spark, protocol, snapshot, finalActions.toIterator, getFirstAttemptVersion).toList
 
     // We make sure that this isn't an appendOnly table as we check if we need to delete
     // files.

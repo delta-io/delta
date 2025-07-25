@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.commands.backfill
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{AddFile, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 
 import org.apache.spark.sql.{Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
