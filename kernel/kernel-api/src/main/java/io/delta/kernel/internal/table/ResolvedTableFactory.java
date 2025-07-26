@@ -81,6 +81,7 @@ class ResolvedTableFactory {
         protocol,
         metadata,
         lazyLogSegment,
+        ctx.committerOpt,
         logReplay,
         ctx.clock,
         snapshotCtx);

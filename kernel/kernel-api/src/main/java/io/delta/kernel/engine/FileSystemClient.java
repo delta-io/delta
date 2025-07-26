@@ -55,6 +55,10 @@ public interface FileSystemClient {
    */
   String resolvePath(String path) throws IOException;
 
+  default FileStatus getFileStatus(String path) throws IOException {
+    throw new UnsupportedOperationException("getFileStatus is not implemented");
+  }
+
   /**
    * Return an iterator of byte streams one for each read request in {@code readRequests}. The
    * returned streams are in the same order as the given {@link FileReadRequest}s. It is the
