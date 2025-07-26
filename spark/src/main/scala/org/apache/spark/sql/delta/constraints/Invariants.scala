@@ -16,13 +16,15 @@
 
 package org.apache.spark.sql.delta.constraints
 
+import scala.collection.mutable
+
 import org.apache.spark.sql.delta.DeltaErrors
-import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.util.JsonUtils
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.Expression
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.types.{DataType, StructField, StructType}
+
 
 /**
  * List of invariants that can be defined on a Delta table that will allow us to perform
@@ -71,13 +73,52 @@ object Invariants {
 
   /** Extract invariants from the given schema */
   def getFromSchema(schema: StructType, spark: SparkSession): Seq[Constraint] = {
-    val columns = SchemaUtils.filterRecursively(schema, checkComplexTypes = false) { field =>
-      !field.nullable || field.metadata.contains(INVARIANTS_FIELD)
+    /**
+     * Find the fields containing constraints, as well as its nearest nullable ancestor
+     * @return (parent path, the nearest null ancestor idx, field)
+     */
+    def recursiveVisitSchema(
+        columnPath: Seq[String],
+        dataType: DataType,
+        nullableAncestorIdxs: mutable.Buffer[Int]): Seq[(Seq[String], Int, StructField)] = {
+      dataType match {
+        case st: StructType =>
+          st.fields.toList.flatMap { field =>
+            val includeLevel = if (field.metadata.contains(INVARIANTS_FIELD) || !field.nullable) {
+              Seq((
+                columnPath,
+                if (nullableAncestorIdxs.isEmpty) -1 else nullableAncestorIdxs.last,
+                field
+              ))
+            } else {
+              Nil
+            }
+            if (field.nullable) {
+              nullableAncestorIdxs.append(columnPath.size)
+            }
+            val childResults = recursiveVisitSchema(
+              columnPath :+ field.name, field.dataType, nullableAncestorIdxs)
+            if (field.nullable) {
+              nullableAncestorIdxs.trimEnd(1)
+            }
+            includeLevel ++ childResults
+          }
+        case _ => Nil
+      }
     }
-    columns.map {
-      case (parents, field) if !field.nullable =>
-        Constraints.NotNull(parents :+ field.name)
-      case (parents, field) =>
+
+    recursiveVisitSchema(Nil, schema, new mutable.ArrayBuffer[Int]()).map {
+      case (parents, nullableAncestor, field) if !field.nullable =>
+        val fieldPath: Seq[String] = parents :+ field.name
+        if (nullableAncestor != -1) {
+          Constraints.Check("",
+            ArbitraryExpression(spark,
+              s"${parents.take(nullableAncestor + 1).mkString(".")} is null " +
+                s"or ${fieldPath.mkString(".")} is not null").expression)
+        } else {
+          Constraints.NotNull(fieldPath)
+        }
+      case (parents, _, field) =>
         val rule = field.metadata.getString(INVARIANTS_FIELD)
         val invariant = Option(JsonUtils.mapper.readValue[PersistedRule](rule).unwrap) match {
           case Some(PersistedExpression(exprString)) =>
