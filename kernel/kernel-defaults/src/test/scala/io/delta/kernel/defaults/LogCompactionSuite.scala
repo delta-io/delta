@@ -15,11 +15,12 @@
  */
 package io.delta.kernel.defaults
 
-// import scala.collection.JavaConverters._
+import scala.collection.JavaConverters._
 import scala.collection.immutable.Seq
 
 import io.delta.kernel.Table
 import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO
+import io.delta.kernel.defaults.metrics.MetricsReportTestUtils
 import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.SnapshotImpl
@@ -30,7 +31,8 @@ import io.delta.kernel.internal.hook.LogCompactionHook
 import org.apache.hadoop.conf.Configuration
 import org.scalatest.funsuite.AnyFunSuite
 
-class LogCompactionSuite extends AnyFunSuite with DeltaTableWriteSuiteBase with TestUtils {
+class LogCompactionSuite extends AnyFunSuite
+    with DeltaTableWriteSuiteBase with TestUtils with MetricsReportTestUtils {
 
   test("Compaction containing different action types") {
     withTempDirAndEngine { (tblPath, engine) =>
@@ -258,5 +260,63 @@ class LogCompactionSuite extends AnyFunSuite with DeltaTableWriteSuiteBase with 
       compactions = Seq((1, 3), (5, 8)),
       expectedDeltasToBeRead = Set(0, 4, 5, 6),
       expectedCompactionsToBeRead = Set((1, 3)))
+  }
+
+  test("LogCompactionHookTimed records metrics on failure") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // commit 0 - create table and add initial data
+      appendData(
+        engine,
+        tablePath,
+        isNewTable = true,
+        testSchema,
+        data = Seq(Map.empty[String, Literal] -> dataBatches1))
+
+      // commit 1 - add more data
+      appendData(
+        engine,
+        tablePath,
+        false,
+        testSchema,
+        data = Seq(Map.empty[String, Literal] -> dataBatches2))
+
+      val dataPath = new Path(s"file:${tablePath}")
+      val logPath = new Path(s"file:${tablePath}", "_delta_log")
+
+      // Try to compact more versions than exist
+      // (0-5 = 6 versions, but only have 0,1,2 = 3 versions)
+      val (hookExecutionReport, exception) = getPostCommitHookReport(
+        engine => {
+          val timedHook = new LogCompactionHook(dataPath, logPath, 0, 5, 0)
+          timedHook.threadSafeInvoke(engine)
+        },
+        expectException = true)
+
+      // Verify exception was thrown and captured in the report.
+      assert(exception.isDefined, "Hook should have thrown an exception")
+      assert(
+        hookExecutionReport.getException.isPresent,
+        "Should have recorded the exception in metrics")
+
+      // Verify execution details were captured even on failure
+      val details = hookExecutionReport.getHookExecutionDetails.asScala.toMap
+      assert(details("startVersion") == "0")
+      assert(details("commitVersion") == "5")
+
+      // Should still have timing even on failure
+      val metrics = hookExecutionReport.getPostCommitHookMetrics
+      assert(
+        metrics.getLogCompactionDurationNs.isPresent,
+        "Should have recorded duration even on failure")
+      assert(metrics.getLogCompactionDurationNs.get > 0, "Duration should be positive")
+
+      // Verify the exception message
+      val recordedException = hookExecutionReport.getException.get()
+      assert(
+        recordedException.getMessage.contains(
+          "Asked to compact between versions 0 and 5, but found") &&
+          recordedException.getMessage.contains("delta files"),
+        s"Exception should indicate version mismatch, got: ${recordedException.getMessage}")
+    }
   }
 }

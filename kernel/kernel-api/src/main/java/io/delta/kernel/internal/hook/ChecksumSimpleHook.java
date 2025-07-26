@@ -19,18 +19,20 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.engine.Engine;
-import io.delta.kernel.hook.PostCommitHook;
 import io.delta.kernel.internal.checksum.CRCInfo;
 import io.delta.kernel.internal.checksum.ChecksumWriter;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.metrics.hook.PostCommitHookExecutionContext;
 import java.io.IOException;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * A post-commit hook that writes a new checksum file at the version committed by the transaction.
  * This hook performs a simple checksum operation without requiring previous checkpoint or log
  * reading.
  */
-public class ChecksumSimpleHook implements PostCommitHook {
+public class ChecksumSimpleHook extends TimedPostCommitHook {
 
   private final CRCInfo crcInfo;
   private final Path logPath;
@@ -41,7 +43,7 @@ public class ChecksumSimpleHook implements PostCommitHook {
   }
 
   @Override
-  public void threadSafeInvoke(Engine engine) throws IOException {
+  public void executeHook(Engine engine) throws IOException {
     checkArgument(engine != null);
     new ChecksumWriter(logPath).writeCheckSum(engine, crcInfo);
   }
@@ -49,5 +51,14 @@ public class ChecksumSimpleHook implements PostCommitHook {
   @Override
   public PostCommitHookType getType() {
     return PostCommitHookType.CHECKSUM_SIMPLE;
+  }
+
+  @Override
+  public PostCommitHookExecutionContext createHookExecutionContext() {
+    Map<String, String> details = new HashMap<>();
+    details.put("crcVersion", String.valueOf(crcInfo.getVersion()));
+    details.put("numFilesInTable", String.valueOf(crcInfo.getNumFiles()));
+    details.put("tableSizeInBytes", String.valueOf(crcInfo.getTableSizeBytes()));
+    return new PostCommitHookExecutionContext(logPath.toString(), getType(), details);
   }
 }
