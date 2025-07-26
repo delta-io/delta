@@ -718,9 +718,8 @@ private[delta] class ConflictChecker(
         case (domain, _) if RowTrackingMetadataDomain.isSameDomain(domain) => domain
         case (_, Some(_)) =>
           // Any conflict not specifically handled by a previous case must fail the transaction.
-          throw new io.delta.exceptions.ConcurrentTransactionException(
-            s"A conflicting metadata domain ${domainMetadataFromCurrentTransaction.domain} is " +
-              "added.")
+          throw new ConcurrentDomainMetadataException(winningCommitSummary.commitInfo,
+            domainMetadataFromCurrentTransaction.domain)
       }
 
     val mergedDomainMetadata = mutable.Buffer.empty[DomainMetadata]
