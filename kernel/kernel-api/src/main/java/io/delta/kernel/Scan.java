@@ -173,6 +173,16 @@ public interface Scan {
         initIfRequired();
         ColumnarBatch nextDataBatch = physicalDataIter.next();
 
+        // Add partition columns
+        // NOTE: Adding partition columns must be the first thing we do with the data batch because
+        // it is the last thing we remove from the physicalReadSchema when creating a ScanStateRow.
+        nextDataBatch =
+            PartitionUtils.withPartitionColumns(
+                engine.getExpressionHandler(),
+                nextDataBatch,
+                InternalScanFileUtils.getPartitionValues(scanFile),
+                physicalReadSchema);
+
         DeletionVectorDescriptor dv =
             InternalScanFileUtils.getDeletionVectorDescriptorFromRow(scanFile);
 
@@ -186,7 +196,7 @@ public interface Scan {
         } else {
           if (rowIndexOrdinal == -1) {
             throw new IllegalArgumentException(
-                "Row index column is not " + "present in the data read from the Parquet file.");
+                "Row index column is not present in the data read from the Parquet file.");
           }
           if (!dv.equals(currDV)) {
             Tuple2<DeletionVectorDescriptor, RoaringBitmapArray> dvInfo =
@@ -198,16 +208,9 @@ public interface Scan {
           selectionVector = Optional.of(new SelectionColumnVector(currBitmap, rowIndexVector));
         }
         if (rowIndexOrdinal != -1) {
+          // TODO: Only remove rowIndex if it was not explicitly requested by the user
           nextDataBatch = nextDataBatch.withDeletedColumnAt(rowIndexOrdinal);
         }
-
-        // Add partition columns
-        nextDataBatch =
-            PartitionUtils.withPartitionColumns(
-                engine.getExpressionHandler(),
-                nextDataBatch,
-                InternalScanFileUtils.getPartitionValues(scanFile),
-                physicalReadSchema);
 
         // Change back to logical schema
         ColumnMappingMode columnMappingMode = ScanStateRow.getColumnMappingMode(scanState);

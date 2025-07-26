@@ -54,15 +54,17 @@ public class PartitionUtils {
    * Utility method to remove the given columns (as {@code columnsToRemove}) from the given {@code
    * physicalSchema}.
    *
-   * @param physicalSchema
-   * @param logicalSchema To create a logical name to physical name map. Partition column names are
-   *     in logical space and we need to identify the equivalent physical column name.
-   * @param columnsToRemove
-   * @return
+   * @param logicalSchema Logical schema used to map logical partition column names to physical
+   *     column names.
+   * @param physicalSchema Physical schema from which columns will be removed.
+   * @param columnsToRemove Set of partition column names (in logical space) to remove from the
+   *     physical schema.
+   * @return A new {@link StructType} representing the physical schema without the specified
+   *     partition columns.
    */
   public static StructType physicalSchemaWithoutPartitionColumns(
       StructType logicalSchema, StructType physicalSchema, Set<String> columnsToRemove) {
-    if (columnsToRemove == null || columnsToRemove.size() == 0) {
+    if (columnsToRemove == null || columnsToRemove.isEmpty()) {
       return physicalSchema;
     }
 

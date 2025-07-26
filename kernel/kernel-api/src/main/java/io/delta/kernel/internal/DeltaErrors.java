@@ -444,6 +444,13 @@ public final class DeltaErrors {
     return new KernelException("Row tracking support cannot be changed once the table is created.");
   }
 
+  public static KernelException missingRowTrackingColumnRequested(String columnName) {
+    return new KernelException(
+        String.format(
+            "Row tracking is not enabled, but row tracking column '%s' was requested.",
+            columnName));
+  }
+
   public static KernelException cannotModifyAppendOnlyTable(String tablePath) {
     return new KernelException(
         String.format(
