@@ -446,7 +446,7 @@ object DeltaTableV2 {
       catalogTable = catalogTable,
       tableIdentifier = tableIdentifier,
       timeTravelOpt = timeTravelOpt,
-      options = options,
+      options = options
     )
     if (spark == null || spark.sessionState == null ||
         !spark.sessionState.conf.getConf(ENABLE_TABLE_REDIRECT_FEATURE)) {
