@@ -286,19 +286,6 @@ trait CoordinatedCommitsTestUtils
   protected val defaultCommitsCoordinatorName = "tracking-in-memory"
   protected val defaultCommitsCoordinatorConf = Map("randomConf" -> "randomConfValue")
 
-  def getCoordinatedCommitsDefaultProperties(withICT: Boolean = false): Map[String, String] = {
-    val coordinatedCommitsConfJson = JsonUtils.toJson(defaultCommitsCoordinatorConf)
-    val properties = Map(
-      DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key -> defaultCommitsCoordinatorName,
-      DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_CONF.key -> coordinatedCommitsConfJson,
-      DeltaConfigs.COORDINATED_COMMITS_TABLE_CONF.key -> "{}")
-    if (withICT) {
-      properties + (DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key -> "true")
-    } else {
-      properties
-    }
-  }
-
   override def testWithDefaultCommitCoordinatorUnset(testName: String)(f: => Unit): Unit = {
     test(testName) {
       withoutDefaultCCTableFeature {
