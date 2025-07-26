@@ -15,7 +15,7 @@
  */
 package io.delta.kernel.test
 
-import java.lang.{Boolean => BooleanJ, Double => DoubleJ, Float => FloatJ}
+import java.lang.{Boolean => BooleanJ, Double => DoubleJ, Float => FloatJ, Long => LongJ}
 
 import scala.collection.JavaConverters._
 
@@ -45,7 +45,7 @@ trait VectorTestUtils {
     }
   }
 
-  protected def timestampVector(values: Seq[Long]): ColumnVector = {
+  protected def timestampVector(values: Seq[LongJ]): ColumnVector = {
     new ColumnVector {
       override def getDataType: DataType = TimestampType.TIMESTAMP
 
@@ -53,7 +53,7 @@ trait VectorTestUtils {
 
       override def close(): Unit = {}
 
-      override def isNullAt(rowId: Int): Boolean = values(rowId) == -1
+      override def isNullAt(rowId: Int): Boolean = values(rowId) == null || values(rowId) == -1
 
       // Values are stored as Longs representing milliseconds since epoch
       override def getLong(rowId: Int): Long = values(rowId)
@@ -97,7 +97,7 @@ trait VectorTestUtils {
 
       override def close(): Unit = {}
 
-      override def isNullAt(rowId: Int): Boolean = (values(rowId) == null)
+      override def isNullAt(rowId: Int): Boolean = values(rowId) == null
 
       override def getFloat(rowId: Int): Float = values(rowId)
     }
@@ -111,20 +111,20 @@ trait VectorTestUtils {
 
       override def close(): Unit = {}
 
-      override def isNullAt(rowId: Int): Boolean = (values(rowId) == null)
+      override def isNullAt(rowId: Int): Boolean = values(rowId) == null
 
       override def getDouble(rowId: Int): Double = values(rowId)
     }
   }
 
-  def longVector(values: Long*): ColumnVector = new ColumnVector {
+  def longVector(values: Seq[LongJ]): ColumnVector = new ColumnVector {
     override def getDataType: DataType = LongType.LONG
 
-    override def getSize: Int = values.size
+    override def getSize: Int = values.length
 
     override def close(): Unit = {}
 
-    override def isNullAt(rowId: Int): Boolean = false
+    override def isNullAt(rowId: Int): Boolean = values(rowId) == null
 
     override def getLong(rowId: Int): Long = values(rowId)
   }

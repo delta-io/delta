@@ -235,9 +235,9 @@ object CheckpointerSuite extends VectorTestUtils {
 
     override def getColumnVector(ordinal: Int): ColumnVector = {
       ordinal match {
-        case 0 => longVector(40) // version
-        case 1 => longVector(44) // size
-        case 2 => longVector(20); // parts
+        case 0 => longVector(Seq(40)) // version
+        case 1 => longVector(Seq(44)) // size
+        case 2 => longVector(Seq(20)); // parts
       }
     }
 
@@ -248,7 +248,7 @@ object CheckpointerSuite extends VectorTestUtils {
     override def getSchema: StructType = CheckpointMetaData.READ_SCHEMA
 
     // empty vector for all columns
-    override def getColumnVector(ordinal: Int): ColumnVector = longVector()
+    override def getColumnVector(ordinal: Int): ColumnVector = longVector(Seq.empty)
 
     override def getSize: Int = 0
   }
