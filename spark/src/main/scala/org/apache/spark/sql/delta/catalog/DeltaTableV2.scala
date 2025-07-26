@@ -402,7 +402,7 @@ class DeltaTableV2 private[delta](
         catalogTable,
         tableIdentifier,
         timeTravelOpt,
-        options,
+        options
       )
     deltaTableV2.pathInfo.timeTravelByPath = timeTravelByPath
     deltaTableV2.pathInfo.partitionFilters = partitionFilters
