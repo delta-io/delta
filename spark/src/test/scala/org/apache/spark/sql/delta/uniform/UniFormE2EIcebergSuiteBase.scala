@@ -84,6 +84,28 @@ abstract class UniFormE2EIcebergSuiteBase extends UniFormE2ETest {
   }
 
   compatVersions.foreach { compatVersion =>
+    test(s"CTAS - compatV$compatVersion") {
+      withTable(testTableName, "source") {
+        write("CREATE TABLE source (col1 INT) USING DELTA")
+        write("INSERT INTO source VALUES (1), (2), (3)")
+        write(
+          s"""CREATE TABLE `$testTableName` USING DELTA
+             |TBLPROPERTIES (
+             |  'delta.columnMapping.mode' = 'name',
+             |  'delta.enableIcebergCompatV$compatVersion' = 'true',
+             |  'delta.universalFormat.enabledFormats' = 'iceberg'
+             |  ${extraTableProperties(compatVersion)}
+             |) AS SELECT col1 FROM source""".stripMargin)
+        readAndVerify(testTableName, "col1", "col1", Seq(Row(1), Row(2), Row(3)))
+        write(s"UPDATE `$testTableName` SET col1 = 100 WHERE col1 = 1")
+        readAndVerify(testTableName, "col1", "col1", Seq(Row(2), Row(3), Row(100)))
+        write(s"DELETE FROM `$testTableName` WHERE col1 = 3")
+        readAndVerify(testTableName, "col1", "col1", Seq(Row(2), Row(100)))
+      }
+    }
+  }
+
+  compatVersions.foreach { compatVersion =>
     test(s"Nested struct schema test - compatV$compatVersion") {
       withTable(testTableName) {
         write(
@@ -136,7 +158,8 @@ abstract class UniFormE2EIcebergSuiteBase extends UniFormE2ETest {
            |TBLPROPERTIES (
            |  'delta.columnMapping.mode' = 'name',
            |  'delta.enableIcebergCompatV1' = 'true',
-           |  'delta.universalFormat.enabledFormats' = 'iceberg'
+           |  'delta.universalFormat.enabledFormats' = 'iceberg',
+           |  'delta.enableDeletionVectors' = 'false'
            |)""".stripMargin)
       write(s"INSERT INTO $testTableName VALUES (1)")
       readAndVerify(testTableName, "col1", "col1", Seq(Row(1)))
