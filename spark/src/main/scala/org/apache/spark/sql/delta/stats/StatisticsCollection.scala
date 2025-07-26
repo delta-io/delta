@@ -584,7 +584,7 @@ object StatisticsCollection extends DeltaCommand {
   /**
    * Convert the logical name of each field to physical name according to the column mapping mode.
    */
-  private def convertToPhysicalName(
+  private[sql] def convertToPhysicalName(
       fullPath: String,
       field: StructField,
       schemaNames: Seq[String],
@@ -592,7 +592,11 @@ object StatisticsCollection extends DeltaCommand {
     // If mapping mode is NoMapping or the dataSchemaName already contains the mapped
     // column name, the schema mapping can be skipped.
     if (mappingMode == NoMapping || schemaNames.contains(fullPath)) return field
-    // Get the physical co
+    // Check if the physical name exists.
+    if (!DeltaColumnMapping.hasPhysicalName(field)) {
+      throw DeltaErrors.missingPhysicalName(mappingMode, field.name)
+    }
+    // Get the physical column name from metadata.
     val physicalName = field.metadata.getString(COLUMN_MAPPING_PHYSICAL_NAME_KEY)
     field.dataType match {
       case structType: StructType =>
