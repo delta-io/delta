@@ -602,4 +602,18 @@ object DropTableFeatureUtils extends DeltaLogging {
 
     DeltaConfigs.getMilliSeconds(truncateHistoryLogRetention)
   }
+
+  /**
+   * Returns new metadata without `tablePropertiesToRemoveAtDowngradeCommit` table properties.
+   */
+  def getDowngradedProtocolMetadata(
+      feature: RemovableFeature,
+      metadata: Metadata): Metadata = {
+    val propKeys = feature.tablePropertiesToRemoveAtDowngradeCommit
+    val normalizedKeys = DeltaConfigs.normalizeConfigKeys(propKeys)
+    val newConfiguration = metadata.configuration.filterNot {
+      case (key, _) => normalizedKeys.contains(key)
+    }
+    metadata.copy(configuration = newConfiguration)
+  }
 }

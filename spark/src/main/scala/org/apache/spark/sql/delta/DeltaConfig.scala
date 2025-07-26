@@ -749,6 +749,22 @@ trait DeltaConfigsBase extends DeltaLogging {
     helpMessage = "needs to be a boolean.")
 
   /**
+   * Controls whether row tracking operations should be suspended. It blocks the assignment of new
+   * baseRowIds as well as copying existing baseRowIds. It is intended to be used when dropping
+   * row tracking. It can be enabled after setting `delta.enableRowTracking` to false.
+   *
+   * WARNING 1: Should never be enabled when `delta.enableRowTracking` is set to true.
+   * WARNING 2: It should never be manually set. It is only safe to be used in the context of
+   *            DROP FEATURE.
+   */
+  val ROW_TRACKING_SUSPENDED = buildConfig[Boolean](
+    key = "rowTrackingSuspended",
+    defaultValue = false.toString,
+    fromString = _.toBoolean,
+    validationFunction = _ => true,
+    helpMessage = "needs to be a boolean.")
+
+  /**
    * Convert the table's metadata into other storage formats after each Delta commit.
    * Only Iceberg is supported for now
    */

@@ -62,7 +62,7 @@ trait BackfillExecutor extends DeltaLogging {
           val txn = deltaLog.startTransaction(catalogTableOpt, Some(snapshot))
           txn.trackFilesRead(filesInBatch)
           recordDeltaOperation(deltaLog, backFillBatchOpType) {
-            batch.execute(backfillTxnId, batchId, txn, numSuccessfulBatch, numFailedBatch)
+            batch.execute(spark, backfillTxnId, batchId, txn, numSuccessfulBatch, numFailedBatch)
           }
         }
 

@@ -629,7 +629,11 @@ object RecordChecksum {
     DeltaOperations.ComputeStats(Seq.empty).name,
     // Backfill/Tagging re-adds existing AddFiles without changing the underlying data files.
     // Incremental commits should ignore backfill commits.
-    DeltaOperations.RowTrackingBackfill().name
+    DeltaOperations.RowTrackingBackfill().name,
+    // Same as Backfill.
+    DeltaOperations.RowTrackingUnBackfill().name,
+    // Dropping a feature may re-add existing AddFiles without changing the underlying data files.
+    DeltaOperations.OP_DROP_FEATURE
   )
 
   // Operations where we should ignore RemoveFiles in the incremental checksum computation.

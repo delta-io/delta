@@ -478,9 +478,10 @@ object DeltaOperations {
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
   }
   /** Recorded when dropping a table feature. */
+  val OP_DROP_FEATURE = "DROP FEATURE"
   case class DropTableFeature(
       featureName: String,
-      truncateHistory: Boolean) extends Operation("DROP FEATURE") {
+      truncateHistory: Boolean) extends Operation(OP_DROP_FEATURE) {
     override val parameters: Map[String, Any] = Map(
       "featureName" -> featureName,
       "truncateHistory" -> truncateHistory)
@@ -490,7 +491,7 @@ object DeltaOperations {
     // separate transactions, and this check is performed separately.
     override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
 
-    override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
+    override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(true)
   }
 
   /**
@@ -728,6 +729,7 @@ object DeltaOperations {
 
   /** operation name for ROW TRACKING BACKFILL command */
   val ROW_TRACKING_BACKFILL_OPERATION_NAME = "ROW TRACKING BACKFILL"
+  val ROW_TRACKING_UNBACKFILL_OPERATION_NAME = "ROW TRACKING UNBACKFILL"
 
   /** parameter key to indicate whether it's an Auto Compaction */
   val AUTO_COMPACTION_PARAMETER_KEY = "auto"
@@ -876,6 +878,24 @@ object DeltaOperations {
     override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = false
 
     // RowTrackingBackfill only updates tags of existing files.
+    override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(true)
+  }
+
+  /**
+   * Recorded when we unbackfill a Delta table's existing row tracking data from AddFiles.
+   * This operation is used when dropping the row tracking feature.
+   */
+  case class RowTrackingUnBackfill(
+      batchId: Int = 0) extends Operation(ROW_TRACKING_UNBACKFILL_OPERATION_NAME) {
+    override val parameters: Map[String, Any] = Map(
+      "batchId" -> JsonUtils.toJson(batchId)
+    )
+
+    // RowTrackingUnBackfill operation commits AddFiles with files, DVs and stats copied over.
+    // It can happen that tight bound stats were recomputed before by ComputeStats.
+    override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = false
+
+    // RowTrackingUnBackfill only updates metadata of existing files.
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(true)
   }
 

@@ -25,18 +25,23 @@ import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 
 import org.apache.spark.internal.MDC
+import org.apache.spark.sql.SparkSession
 
 trait BackfillBatch extends DeltaLogging {
   /** The files in this batch. */
   def filesInBatch: Seq[AddFile]
   def backfillBatchStatsOpType: String
 
-  protected def prepareFilesAndCommit(txn: OptimisticTransaction, batchId: Int): Unit
+  protected def prepareFilesAndCommit(
+      spark: SparkSession,
+      txn: OptimisticTransaction,
+      batchId: Int): Unit
 
   /**
    * The main method of this trait. This method commits the backfill batch, records metrics and
    * updates the two atomic counters passed in.
    *
+   * @param spark The Spark session.
    * @param backfillTxnId the transaction id associated with the parent command.
    * @param batchId an integer identifier of the batch within a parent [[BackfillCommand]].
    * @param txn transaction used to construct the current batch.
@@ -46,6 +51,7 @@ trait BackfillBatch extends DeltaLogging {
    *                       batches that failed.
    */
   def execute(
+      spark: SparkSession,
       backfillTxnId: String,
       batchId: Int,
       txn: OptimisticTransaction,
@@ -73,7 +79,7 @@ trait BackfillBatch extends DeltaLogging {
       log"${MDC(DeltaLogKeys.NUM_FILES, filesInBatch.size.toLong)} candidate files")
     val txnId = txn.txnId
     try {
-      prepareFilesAndCommit(txn, batchId)
+      prepareFilesAndCommit(spark, txn, batchId)
       recordBackfillBatchStats(txnId, wasSuccessful = true)
     } catch {
       case t: Throwable =>

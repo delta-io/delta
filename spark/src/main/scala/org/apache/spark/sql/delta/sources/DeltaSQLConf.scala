@@ -1079,6 +1079,15 @@ trait DeltaSQLConfBase {
         "delta log entry below 100mb.")
       .fallbackConf(DELTA_ROW_TRACKING_BACKFILL_MAX_NUM_FILES_PER_COMMIT)
 
+  val DELTA_ROW_TRACKING_IGNORE_SUSPENSION =
+    buildConf("rowTracking.ignoreSuspension")
+      .internal()
+      .doc(
+        """Controls whether to ignore `delta.rowTrackingSuspended` property.
+          |This is a testing only config.""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
   ////////////////////////////////////
   // Checkpoint V2 Specific Configs
   ////////////////////////////////////
