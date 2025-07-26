@@ -25,7 +25,7 @@ import scala.collection.mutable.ArrayBuffer
 
 import io.delta.golden.GoldenTableUtils
 import io.delta.kernel.{Scan, Snapshot, Table, TransactionCommitResult}
-import io.delta.kernel.data.{ColumnarBatch, ColumnVector, FilteredColumnarBatch, MapValue, Row}
+import io.delta.kernel.data._
 import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.defaults.internal.data.vector.{DefaultGenericVector, DefaultStructVector}
 import io.delta.kernel.defaults.test.{AbstractResolvedTableAdapter, AbstractTableManagerAdapter, LegacyTableManagerAdapter, TableManagerAdapter}
@@ -51,8 +51,7 @@ import org.apache.spark.sql.delta.util.FileNames
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
-import org.apache.spark.sql.{types => sparktypes}
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{types => sparktypes, SparkSession}
 import org.apache.spark.sql.catalyst.plans.SQLHelper
 import org.scalatest.Assertions
 
@@ -389,17 +388,22 @@ trait AbstractTestUtils extends Assertions with SQLHelper {
    * @param path fully qualified path of the table to check
    * @param expectedAnswer expected rows
    * @param readCols subset of columns to read; if null then all columns will be read
+   * @param metadataCols set of metadata columns to read; if null then no metadata columns will
+   *                     be read
    * @param engine engine to use to read the table
-   * @param expectedSchema expected schema to check for; if null then no check is performed
+   * @param expectedSchema expected schema to check for (ignoring metadata columns);
+   *                       if null then no check is performed
    * @param filter Filter to select a subset of rows form the table
    * @param expectedRemainingFilter Remaining predicate out of the `filter` that is not enforced
    *                                by Kernel.
    * @param expectedVersion expected version of the latest snapshot for the table
    */
+  // scalastyle:off argcount
   def checkTable(
       path: String,
       expectedAnswer: Seq[TestRow],
       readCols: Seq[String] = null,
+      metadataCols: Seq[StructField] = null,
       engine: Engine = defaultEngine,
       expectedSchema: StructType = null,
       filter: Predicate = null,
@@ -417,14 +421,18 @@ trait AbstractTestUtils extends Assertions with SQLHelper {
       getTableManagerAdapter.getResolvedTableAdapterAtLatest(engine, path)
     }
 
-    val readSchema = if (readCols == null) {
-      null
-    } else {
-      val schema = resolvedTableAdapter.getSchema()
-      new StructType(readCols.map(schema.get(_)).asJava)
-    }
+    val readSchema =
+      if (readCols == null && metadataCols == null) null
+      else {
+        val schema = resolvedTableAdapter.getSchema()
+        val readFields = Option(readCols).map(_.map(schema.get)).getOrElse(schema.fields().asScala)
+        val metadataFields = Option(metadataCols).getOrElse(Seq())
+        new StructType((readFields ++ metadataFields).asJava)
+      }
 
     if (expectedSchema != null) {
+      // We ignore metadata columns in this check because metadata columns are not part of the
+      // public table schema.
       assert(
         expectedSchema == resolvedTableAdapter.getSchema(),
         s"""
@@ -451,6 +459,7 @@ trait AbstractTestUtils extends Assertions with SQLHelper {
         engine)
     checkAnswer(result, expectedAnswer)
   }
+  // scalastyle:on argcount
 
   def checkAnswer(result: => Seq[Row], expectedAnswer: Seq[TestRow]): Unit = {
     checkAnswer(result.map(TestRow(_)), expectedAnswer)
@@ -698,6 +707,18 @@ trait AbstractTestUtils extends Assertions with SQLHelper {
       case _ =>
         if (dataType.isInstanceOf[DecimalType]) new BigDecimalJ(rowId * 22342.23)
         else throw new UnsupportedOperationException(s"$dataType is not supported")
+    }
+  }
+
+  /**
+   * Utility method to replicate the behavior of individual values when they are converted from
+   * Row to TestRow.
+   */
+  def testColumnNullableValue(dataType: DataType, rowId: Int): Any = {
+    if (testIsNullValue(dataType, rowId)) {
+      null
+    } else {
+      testColumnValue(dataType, rowId)
     }
   }
 

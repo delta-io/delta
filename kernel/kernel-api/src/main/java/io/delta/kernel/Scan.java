@@ -21,11 +21,13 @@ import io.delta.kernel.data.*;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.InternalScanFileUtils;
+import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.data.ScanStateRow;
 import io.delta.kernel.internal.data.SelectionColumnVector;
 import io.delta.kernel.internal.deletionvectors.DeletionVectorUtils;
 import io.delta.kernel.internal.deletionvectors.RoaringBitmapArray;
+import io.delta.kernel.internal.rowtracking.MaterializedRowTrackingColumn;
 import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
 import io.delta.kernel.internal.util.PartitionUtils;
 import io.delta.kernel.internal.util.Tuple2;
@@ -173,20 +175,36 @@ public interface Scan {
         initIfRequired();
         ColumnarBatch nextDataBatch = physicalDataIter.next();
 
-        DeletionVectorDescriptor dv =
-            InternalScanFileUtils.getDeletionVectorDescriptorFromRow(scanFile);
+        // Add partition columns
+        // NOTE: Adding partition columns must be the first thing we do with the data batch because
+        // it is the last thing we remove from the physicalReadSchema when creating a ScanStateRow.
+        nextDataBatch =
+            PartitionUtils.withPartitionColumns(
+                engine.getExpressionHandler(),
+                nextDataBatch,
+                InternalScanFileUtils.getPartitionValues(scanFile),
+                physicalReadSchema);
 
-        int rowIndexOrdinal =
-            nextDataBatch.getSchema().indexOf(StructField.METADATA_ROW_INDEX_COLUMN_NAME);
+        // Transform physical row tracking columns to logical row tracking columns
+        if (TableConfig.ROW_TRACKING_ENABLED.fromMetadata(
+            ScanStateRow.getConfiguration(scanState))) {
+          nextDataBatch =
+              MaterializedRowTrackingColumn.transformPhysicalData(
+                  nextDataBatch, scanFile, scanState, engine);
+        }
 
         // Get the selectionVector if DV is present
+        DeletionVectorDescriptor dv =
+            InternalScanFileUtils.getDeletionVectorDescriptorFromRow(scanFile);
         Optional<ColumnVector> selectionVector;
         if (dv == null) {
           selectionVector = Optional.empty();
         } else {
+          int rowIndexOrdinal =
+              nextDataBatch.getSchema().indexOf(StructField.METADATA_ROW_INDEX_COLUMN_NAME);
           if (rowIndexOrdinal == -1) {
             throw new IllegalArgumentException(
-                "Row index column is not " + "present in the data read from the Parquet file.");
+                "Row index column is not present in the data read from the Parquet file.");
           }
           if (!dv.equals(currDV)) {
             Tuple2<DeletionVectorDescriptor, RoaringBitmapArray> dvInfo =
@@ -197,17 +215,17 @@ public interface Scan {
           ColumnVector rowIndexVector = nextDataBatch.getColumnVector(rowIndexOrdinal);
           selectionVector = Optional.of(new SelectionColumnVector(currBitmap, rowIndexVector));
         }
-        if (rowIndexOrdinal != -1) {
-          nextDataBatch = nextDataBatch.withDeletedColumnAt(rowIndexOrdinal);
-        }
 
-        // Add partition columns
-        nextDataBatch =
-            PartitionUtils.withPartitionColumns(
-                engine.getExpressionHandler(),
-                nextDataBatch,
-                InternalScanFileUtils.getPartitionValues(scanFile),
-                physicalReadSchema);
+        // If a column was only requested to compute other columns, we remove it
+        for (StructField field : nextDataBatch.getSchema().fields()) {
+          if (field.getMetadata().contains(StructField.IS_INTERNAL_METADATA_COLUMN_KEY)
+              && field.getMetadata().getBoolean(StructField.IS_INTERNAL_METADATA_COLUMN_KEY)) {
+            int columnOrdinal = nextDataBatch.getSchema().indexOf(field.getName());
+            if (columnOrdinal != -1) {
+              nextDataBatch = nextDataBatch.withDeletedColumnAt(columnOrdinal);
+            }
+          }
+        }
 
         // Change back to logical schema
         ColumnMappingMode columnMappingMode = ScanStateRow.getColumnMappingMode(scanState);

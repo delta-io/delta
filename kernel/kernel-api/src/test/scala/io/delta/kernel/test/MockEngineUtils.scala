@@ -189,8 +189,8 @@ class MockReadICTFileJsonHandler(deltaVersionToICTMapping: Map[Long, Long])
 
         override def getColumnVector(ordinal: Int): ColumnVector = {
           val struct = Seq(
-            longVector(ict), /* inCommitTimestamp */
-            longVector(-1L), /* timestamp */
+            longVector(Seq(ict)), /* inCommitTimestamp */
+            longVector(Seq(-1L)), /* timestamp */
             stringVector(Seq("engine")), /* engineInfo */
             stringVector(Seq("operation")), /* operation */
             mapTypeVector(Seq(Map("operationParameter" -> ""))), /* operationParameters */
