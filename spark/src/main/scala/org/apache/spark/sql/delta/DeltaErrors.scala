@@ -1188,6 +1188,13 @@ trait DeltaErrorsBase
     )
   }
 
+  def readSourceSchemaConflictException: Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_READ_SOURCE_SCHEMA_CONFLICT",
+      messageParameters = Array.empty
+    )
+  }
+
   def schemaNotProvidedException: Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_SCHEMA_NOT_PROVIDED",
