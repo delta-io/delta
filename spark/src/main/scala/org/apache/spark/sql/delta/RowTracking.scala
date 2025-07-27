@@ -19,8 +19,11 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.delta.DeltaCommitTag.PreservedRowTrackingTag
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.actions.CommitInfo
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 
-import org.apache.spark.sql.DataFrame
+import org.apache.spark.sql.{DataFrame, SparkSession}
+import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.types.StructField
 
 /**
@@ -47,6 +50,19 @@ object RowTracking {
           s"'${TableFeatureProtocolUtils.propertyKey(RowTrackingFeature)}'.")
     }
     isEnabled
+  }
+
+  def isSuspended(spark: SparkSession, metadata: Metadata): Boolean = {
+    val ignoreIsSuspended = spark.conf.get(DeltaSQLConf.DELTA_ROW_TRACKING_IGNORE_SUSPENSION)
+    if (DeltaUtils.isTesting && ignoreIsSuspended) return false
+
+    val isEnabled = DeltaConfigs.ROW_TRACKING_ENABLED.fromMetaData(metadata)
+    val isSuspended = DeltaConfigs.ROW_TRACKING_SUSPENDED.fromMetaData(metadata)
+    // Make sure a third party client did not miss ROW_TRACKING_SUSPENDED table property.
+    if (isEnabled && isSuspended) {
+      throw DeltaErrors.rowTrackingIllegalPropertyCombination()
+    }
+    isSuspended
   }
 
   /**
@@ -178,5 +194,18 @@ object RowTracking {
       snapshot: SnapshotDescriptor): DataFrame = {
     val dfWithRowIds = RowId.preserveRowIds(dfWithoutRowTrackingColumns, snapshot)
     RowCommitVersion.preserveRowCommitVersions(dfWithRowIds, snapshot)
+  }
+  /**
+   * Verifies that the [[RowTrackingFeature]] is enabled and all files have base row IDs in the
+   * given snapshot. These invariants need to hold to enable the RowTracking table property.
+   */
+  def verifyInvariantsForTablePropertyEnablement(snapshot: Snapshot): Unit = {
+    if (!snapshot.protocol.isFeatureSupported(RowTrackingFeature)) {
+      throw new ProtocolChangedException(None)
+    }
+    val filesRequiringBackfill = snapshot.allFiles.where(col("baseRowId").isNull)
+    if (!filesRequiringBackfill.isEmpty) {
+      throw new ProtocolChangedException(None)
+    }
   }
 }

@@ -21,7 +21,7 @@ import org.apache.spark.sql.delta.actions.{Action, AddFile, DomainMetadata, Meta
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.propertyKey
 import org.apache.spark.sql.util.ScalaExtensions._
 
-import org.apache.spark.sql.{Column, DataFrame}
+import org.apache.spark.sql.{Column, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, FileSourceConstantMetadataStructField, FileSourceGeneratedMetadataStructField}
 import org.apache.spark.sql.catalyst.types.DataTypeUtils
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
@@ -85,11 +85,25 @@ object RowId {
    * a [[RowIdHighWaterMark]] action with the new high-water mark.
    */
   private[delta] def assignFreshRowIds(
+      spark: SparkSession,
       protocol: Protocol,
       snapshot: Snapshot,
       actions: Iterator[Action],
       operation: DeltaOperations.Operation): Iterator[Action] = {
     if (!isSupported(protocol)) return actions
+
+    def metadataDomainSetException = new IllegalStateException(
+      "Manually setting the Row ID high water mark is not allowed")
+
+    // Do not propagate row IDs if generation is suspended.
+    if (RowTracking.isSuspended(spark, snapshot.metadata)) {
+      return actions.map {
+        case a: AddFile if a.baseRowId.isDefined => a.copy(baseRowId = None)
+        case d: DomainMetadata if RowTrackingMetadataDomain.isSameDomain(d) =>
+          throw metadataDomainSetException
+        case o => o
+      }
+    }
 
     val oldHighWatermark = extractHighWatermark(snapshot).getOrElse(MISSING_HIGH_WATER_MARK)
 
@@ -108,8 +122,7 @@ object RowId {
         }
         a.copy(baseRowId = Some(baseRowId))
       case d: DomainMetadata if RowTrackingMetadataDomain.isSameDomain(d) =>
-        throw new IllegalStateException(
-          "Manually setting the Row ID high water mark is not allowed")
+        throw metadataDomainSetException
       case other => other
     }
 
