@@ -50,7 +50,7 @@ val all_scala_versions = Seq(scala212, scala213)
 // sbt 'set default_scala_version := 2.13.13' [commands]
 // FIXME Why not use scalaVersion?
 val default_scala_version = settingKey[String]("Default Scala version")
-Global / default_scala_version := scala213
+Global / default_scala_version := scala212
 
 val LATEST_RELEASED_SPARK_VERSION = "3.5.3"
 val SPARK_MASTER_VERSION = "4.0.1-SNAPSHOT"
@@ -156,7 +156,9 @@ lazy val commonSettings = Seq(
         "--add-opens=java.base/java.lang=ALL-UNNAMED",
         "--add-opens=java.base/java.net=ALL-UNNAMED",
         "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
-        "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED"
+        "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED",
+        "--add-exports=java.base/sun.security.action=ALL-UNNAMED",
+        "--add-opens=java.base/java.io=ALL-UNNAMED"
       )
     } else {
       Seq.empty
@@ -691,6 +693,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
   .dependsOn(goldenTables % "test")
   .settings(
     name := "delta-kernel-defaults",
+    scalaVersion := "2.12.18",
     commonSettings,
     scalaStyleSettings,
     javaOnlyReleaseSettings,

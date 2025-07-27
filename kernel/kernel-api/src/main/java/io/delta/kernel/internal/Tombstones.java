@@ -17,6 +17,7 @@
 package io.delta.kernel.internal;
 
 import io.delta.kernel.internal.replay.LogReplayUtils;
+import java.util.HashSet;
 import java.util.Set;
 
 // TODO: this class must be serializable, or must be able to transfer into sth serializable (like
@@ -30,5 +31,13 @@ public class Tombstones {
       Set<LogReplayUtils.UniqueFileActionTuple> alreadyReturnedSet) {
     this.alreadyReturnedSet = alreadyReturnedSet;
     this.removeFileSet = removeFileSet;
+  }
+
+  public String toSerialize() {
+    return "Ada";
+  }
+
+  public static Tombstones deserializeTombstone(String serializedTombstone) {
+    return new Tombstones(new HashSet<>(), new HashSet<>());
   }
 }

@@ -50,10 +50,10 @@ public class AddFile extends RowBackedAction {
           .add(
               "partitionValues",
               new MapType(StringType.STRING, StringType.STRING, true),
-              false /* nullable*/)
+              true /* nullable*/)
           .add("size", LongType.LONG, false /* nullable*/)
           .add("modificationTime", LongType.LONG, false /* nullable*/)
-          .add("dataChange", BooleanType.BOOLEAN, false /* nullable*/)
+          .add("dataChange", BooleanType.BOOLEAN, true /* nullable*/)
           .add("deletionVector", DeletionVectorDescriptor.READ_SCHEMA, true /* nullable */)
           .add(
               "tags",

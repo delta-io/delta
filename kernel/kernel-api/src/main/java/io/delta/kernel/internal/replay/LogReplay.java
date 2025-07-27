@@ -270,7 +270,6 @@ public class LogReplay {
   }
 
   private List<FileStatus> getLogReplayJSONFiles() {
-    // TODO: get a file list of all JSONs in logSegment
     return getLogSegment().getDeltas();
   }
 

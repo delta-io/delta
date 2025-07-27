@@ -39,6 +39,13 @@ public class DeltaScanBuilder implements ScanBuilder {
   @Override
   public Scan build() {
     return new DeltaScan(
-        scanBuilder.build(), tableEngine, sparkSchema, accessKey, secretKey, sessionToken, spark);
+        scanBuilder.build(),
+        tableEngine,
+        resolvedTable.getPath(),
+        sparkSchema,
+        accessKey,
+        secretKey,
+        sessionToken,
+        spark);
   }
 }
