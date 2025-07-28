@@ -259,7 +259,7 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
         throw unsupportedExpressionException(
             add, "ADD requires exactly two arguments: left and right operands");
       }
-      if (children.get(0).outputType.equivalent(children.get(1).outputType)) {
+      if (!children.get(0).outputType.equivalent(children.get(1).outputType)) {
         throw unsupportedExpressionException(
             add, "ADD is only supported for arguments of the same type");
       }
