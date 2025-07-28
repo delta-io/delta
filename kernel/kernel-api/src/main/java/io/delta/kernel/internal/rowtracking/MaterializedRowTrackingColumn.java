@@ -162,15 +162,12 @@ public final class MaterializedRowTrackingColumn {
    *
    * @param logicalField The logical field to convert.
    * @param logicalSchema The logical schema containing the field.
-   * @param physicalSchema The current physical schema to which the field will be added.
    * @param metadata The current metadata of the table.
-   * @return A new StructType representing the updated physical schema with the added field.
+   * @return A list of {@link StructField}s representing the physical columns corresponding to the
+   *     logical field.
    */
-  public static StructType convertToPhysicalColumn(
-      StructField logicalField,
-      StructType logicalSchema,
-      StructType physicalSchema,
-      Metadata metadata) {
+  public static List<StructField> convertToPhysicalColumn(
+      StructField logicalField, StructType logicalSchema, Metadata metadata) {
     if (!TableConfig.ROW_TRACKING_ENABLED.fromMetadata(metadata)) {
       throw DeltaErrors.missingRowTrackingColumnRequested(logicalField.getName());
     }
@@ -178,11 +175,13 @@ public final class MaterializedRowTrackingColumn {
     if (logicalField.getName().equals(METADATA_ROW_ID_COLUMN_NAME)) {
       // TODO: Use logicalSchema here to determine whether we also need to add row index
       //  to the physical schema to compute non-materialized row IDs.
-      return physicalSchema.add(
+      // We return a list of StructFields here because we may need to add both the row ID and the
+      // row index columns to the physical schema (in scope for a follow-up PR).
+      return Collections.singletonList(
           new StructField(
               ROW_ID.getPhysicalColumnName(metadata), LongType.LONG, true /* nullable */));
     } else if (logicalField.getName().equals(METADATA_ROW_COMMIT_VERSION_COLUMN_NAME)) {
-      return physicalSchema.add(
+      return Collections.singletonList(
           new StructField(
               ROW_COMMIT_VERSION.getPhysicalColumnName(metadata),
               LongType.LONG,
@@ -198,11 +197,10 @@ public final class MaterializedRowTrackingColumn {
     return Optional.ofNullable(metadata.getConfiguration().get(getMaterializedColumnNameProperty()))
         .orElseThrow(
             () ->
-                new InvalidTableException(
-                    metadata.getId(),
+                new IllegalArgumentException(
                     String.format(
-                        "Materialized column name `%s` is missing in the metadata configuration.",
-                        getMaterializedColumnNameProperty())));
+                        "Materialized column name `%s` is missing in the metadata config: %s",
+                        getMaterializedColumnNameProperty(), metadata.getConfiguration())));
   }
 
   /** Generates a random name by concatenating the prefix with a random UUID. */

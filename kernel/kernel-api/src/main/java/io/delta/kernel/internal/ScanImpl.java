@@ -205,7 +205,7 @@ public class ScanImpl implements Scan {
     StructType physicalSchema = createPhysicalSchema();
 
     // Compute the physical data read schema (i.e., the columns to read from a Parquet data file).
-    // The only difference to the physical schema is that we exclude partition columns. ALl other
+    // The only difference to the physical schema is that we exclude partition columns. All other
     // logic (e.g., row tracking columns, row index for DVs) is already handled before.
     List<String> partitionColumns = VectorUtils.toJavaList(metadata.getPartitionColumns());
     StructType physicalDataReadSchema =
@@ -241,38 +241,40 @@ public class ScanImpl implements Scan {
    * @return The physical schema to read data from the data files.
    */
   private StructType createPhysicalSchema() {
-    StructType physicalSchema = new StructType();
-
+    ArrayList<StructField> physicalFields = new ArrayList<>();
     ColumnMapping.ColumnMappingMode mode =
         ColumnMapping.getColumnMappingMode(metadata.getConfiguration());
+
     for (StructField logicalField : readSchema.fields()) {
-      physicalSchema = convertAndAddField(logicalField, physicalSchema, mode);
+      physicalFields.addAll(convertField(logicalField, mode));
     }
 
     if (protocol.getReaderFeatures().contains("deletionVectors")
-        && physicalSchema.indexOf(StructField.METADATA_ROW_INDEX_COLUMN_NAME) == -1) {
+        && physicalFields.stream()
+            .map(StructField::getName)
+            .noneMatch(name -> name.equals(StructField.METADATA_ROW_INDEX_COLUMN_NAME))) {
       // If the row index column is not already present, add it to the physical read schema
-      physicalSchema = physicalSchema.add(StructField.METADATA_ROW_INDEX_COLUMN);
+      physicalFields.add(StructField.METADATA_ROW_INDEX_COLUMN);
     }
 
-    return physicalSchema;
+    return new StructType(physicalFields);
   }
 
-  private StructType convertAndAddField(
-      StructField logicalField, StructType physicalSchema, ColumnMapping.ColumnMappingMode mode) {
+  private List<StructField> convertField(
+      StructField logicalField, ColumnMapping.ColumnMappingMode mode) {
     if (logicalField.isDataColumn()) {
-      return physicalSchema.add(
+      return Collections.singletonList(
           ColumnMapping.convertToPhysicalColumn(logicalField, snapshotSchema, mode));
     }
 
     if (RowTracking.isRowTrackingColumn(logicalField)) {
       return MaterializedRowTrackingColumn.convertToPhysicalColumn(
-          logicalField, readSchema, physicalSchema, metadata);
+          logicalField, readSchema, metadata);
     }
 
     // As of now, metadata columns other than row tracking columns do not require any special
     // handling, so we can just add them to the physical schema as is.
-    return physicalSchema.add(logicalField);
+    return Collections.singletonList(logicalField);
   }
 
   private Optional<Tuple2<Predicate, Predicate>> splitFilters(Optional<Predicate> filter) {
