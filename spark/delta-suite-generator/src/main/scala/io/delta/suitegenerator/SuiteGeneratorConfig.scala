@@ -169,6 +169,7 @@ object SuiteGeneratorConfig {
    * generation of a suite for it.
    */
   lazy val TEST_GROUPS: List[TestGroup] = List(
+    // scalastyle:off line.size.limit
     TestGroup(
       name = "MergeSuites",
       imports = List(
