@@ -249,6 +249,9 @@ trait DeleteBaseTests extends DeleteBaseMixin {
       executeDelete(target = tableSQLIdentifier)
     } match {
       // Thrown when running with path-based SQL
+      case e: DeltaAnalysisException if e.getCondition == "DELTA_TABLE_NOT_FOUND" =>
+        checkError(e, "DELTA_TABLE_NOT_FOUND",
+          parameters = Map("tableName" -> tableSQLIdentifier.stripPrefix("delta.")))
       case e: DeltaAnalysisException if e.getCondition == "DELTA_MISSING_TRANSACTION_LOG" =>
         checkErrorMatchPVals(e, "DELTA_MISSING_TRANSACTION_LOG",
           parameters = Map("operation" -> "read from", "path" -> ".*", "docLink" -> "https://.*"))
