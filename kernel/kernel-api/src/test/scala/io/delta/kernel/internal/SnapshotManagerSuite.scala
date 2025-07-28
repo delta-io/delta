@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.internal
 
+import java.lang.{Long => JLong}
 import java.util.{Arrays, Collections, Optional}
 
 import scala.collection.JavaConverters._
@@ -787,8 +788,9 @@ trait SidecarIteratorProvider extends VectorTestUtils {
 
     override def getColumnVector(ordinal: Int): ColumnVector = ordinal match {
       case 0 => stringVector(sidecars.map(_.getPath)) // path
-      case 1 => longVector(sidecars.map(_.getSize): _*) // size
-      case 2 => longVector(sidecars.map(_.getModificationTime): _*) // modification time
+      case 1 => longVector(sidecars.map(_.getSize).map(JLong.valueOf)) // size
+      case 2 =>
+        longVector(sidecars.map(_.getModificationTime).map(JLong.valueOf)) // modification time
     }
 
     override def getSize: Int = sidecars.length
@@ -843,9 +845,9 @@ class MockReadLastCheckpointFileJsonHandler(
 
         override def getColumnVector(ordinal: Int): ColumnVector = {
           ordinal match {
-            case 0 => longVector(lastCheckpointVersion) /* version */
-            case 1 => longVector(100) /* size */
-            case 2 => longVector(1) /* parts */
+            case 0 => longVector(Seq(lastCheckpointVersion)) /* version */
+            case 1 => longVector(Seq(100)) /* size */
+            case 2 => longVector(Seq(1)) /* parts */
           }
         }
 

@@ -30,7 +30,7 @@ class FilteredColumnarBatchSuite extends AnyFunSuite with VectorTestUtils with M
   private val testSchema = new StructType().add("id", LongType.LONG)
 
   test("constructor should succeed when selectionVector is present and numSelectedRows is valid") {
-    val data = columnarBatch(testSchema, Seq(longVector(0L, 1L, 2L, 3L, 4L)))
+    val data = columnarBatch(testSchema, Seq(longVector(Seq(0L, 1L, 2L, 3L, 4L))))
     val selectionVector = Optional.of(booleanVector(Seq(true, false, true, false, true)))
     val batch = new FilteredColumnarBatch(data, selectionVector, "/test/path", 3)
 
@@ -43,7 +43,7 @@ class FilteredColumnarBatchSuite extends AnyFunSuite with VectorTestUtils with M
   test(
     "constructor should succeed when selectionVector is empty and numSelectedRows " +
       "equals batch size") {
-    val data = columnarBatch(testSchema, Seq(longVector(0L, 1L, 2L, 3L, 4L)))
+    val data = columnarBatch(testSchema, Seq(longVector(Seq(0L, 1L, 2L, 3L, 4L))))
     val selectionVector = Optional.empty[ColumnVector]()
     val batch = new FilteredColumnarBatch(data, selectionVector, "/test/path", 5)
 
@@ -55,7 +55,7 @@ class FilteredColumnarBatchSuite extends AnyFunSuite with VectorTestUtils with M
 
   test("constructor should throw IllegalArgumentException " +
     "when selectionVector is empty and numSelectedRows != batch size") {
-    val data = columnarBatch(testSchema, Seq(longVector(0L, 1L, 2L, 3L, 4L)))
+    val data = columnarBatch(testSchema, Seq(longVector(Seq(0L, 1L, 2L, 3L, 4L))))
     val selectionVector = Optional.empty[ColumnVector]()
     val exMsg = intercept[IllegalArgumentException] {
       new FilteredColumnarBatch(data, selectionVector, "/test/path", 3)
@@ -67,7 +67,7 @@ class FilteredColumnarBatchSuite extends AnyFunSuite with VectorTestUtils with M
 
   test("constructor should throw IllegalArgumentException " +
     "when selectionVector is present and numSelectedRows > batch size") {
-    val data = columnarBatch(testSchema, Seq(longVector(0L, 1L, 2L, 3L)))
+    val data = columnarBatch(testSchema, Seq(longVector(Seq(0L, 1L, 2L, 3L))))
     val selectionVector = Optional.of(booleanVector(Seq(true, false, true, false)))
 
     val exMsg = intercept[IllegalArgumentException] {

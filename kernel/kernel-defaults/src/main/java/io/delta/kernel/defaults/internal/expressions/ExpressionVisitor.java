@@ -63,6 +63,8 @@ abstract class ExpressionVisitor<R> {
 
   abstract R visitSubstring(ScalarExpression subString);
 
+  abstract R visitAdd(ScalarExpression add);
+
   abstract R visitLike(Predicate predicate);
 
   abstract R visitStartsWith(Predicate predicate);
@@ -113,6 +115,8 @@ abstract class ExpressionVisitor<R> {
         return visitIsNull(new Predicate(name, children));
       case "COALESCE":
         return visitCoalesce(expression);
+      case "ADD":
+        return visitAdd(expression);
       case "TIMEADD":
         return visitTimeAdd(expression);
       case "SUBSTRING":

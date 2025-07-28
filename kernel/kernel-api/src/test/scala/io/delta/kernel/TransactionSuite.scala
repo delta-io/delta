@@ -242,7 +242,7 @@ object TransactionSuite extends VectorTestUtils with MockEngineUtils {
   def testBatch(includePartitionCols: Boolean): ColumnarBatch = {
     val testColumnVectors = Seq(
       stringVector(Seq("Alice", "Bob", "Charlie", "David", "Eve")), // name
-      longVector(20L, 30L, 40L, 50L, 60L), // id
+      longVector(Seq(20L, 30L, 40L, 50L, 60L)), // id
       stringVector(Seq("Campbell", "Roanoke", "Dallas", "Monte Sereno", "Minneapolis")) // city
     ) ++ {
       if (includePartitionCols) {
