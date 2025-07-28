@@ -187,12 +187,11 @@ public final class MaterializedRowTrackingColumn {
               ROW_COMMIT_VERSION.getPhysicalColumnName(metadata),
               LongType.LONG,
               true /* nullable */));
-    } else {
-      throw new IllegalArgumentException(
-          String.format(
-              "Logical field `%s` is not a recognized materialized row tracking column.",
-              logicalField.getName()));
     }
+    throw new IllegalArgumentException(
+        String.format(
+            "Logical field `%s` is not a recognized materialized row tracking column.",
+            logicalField.getName()));
   }
 
   private String getPhysicalColumnName(Metadata metadata) {

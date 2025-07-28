@@ -296,26 +296,24 @@ public class ColumnMapping {
             logicalField.getDataType(), completeField.getDataType(), includeFieldId);
     String physicalName = completeField.getMetadata().getString(COLUMN_MAPPING_PHYSICAL_NAME_KEY);
 
-    if (includeFieldId) {
-      Long fieldId = completeField.getMetadata().getLong(COLUMN_MAPPING_ID_KEY);
-      FieldMetadata.Builder builder =
-          FieldMetadata.builder().putLong(PARQUET_FIELD_ID_KEY, fieldId);
-
-      // convertToPhysicalSchema(..) gets called when trying to find the read schema
-      // for the Parquet reader. This currently assumes that if the nested field IDs for
-      // the 'element' and 'key'/'value' fields of Arrays/Maps haven been written,
-      // then IcebergCompatV2 is enabled because the schema we are looking at is from
-      // the DeltaLog and has nested field IDs setup
-      if (hasNestedColumnIds(completeField)) {
-        builder.putFieldMetadata(
-            PARQUET_FIELD_NESTED_IDS_METADATA_KEY, getNestedColumnIds(completeField));
-      }
-
-      return new StructField(
-          physicalName, physicalType, logicalField.isNullable(), builder.build());
-    } else {
+    if (!includeFieldId) {
       return new StructField(physicalName, physicalType, logicalField.isNullable());
     }
+
+    Long fieldId = completeField.getMetadata().getLong(COLUMN_MAPPING_ID_KEY);
+    FieldMetadata.Builder builder = FieldMetadata.builder().putLong(PARQUET_FIELD_ID_KEY, fieldId);
+
+    // convertToPhysicalSchema(..) gets called when trying to find the read schema
+    // for the Parquet reader. This currently assumes that if the nested field IDs for
+    // the 'element' and 'key'/'value' fields of Arrays/Maps haven been written,
+    // then IcebergCompatV2 is enabled because the schema we are looking at is from
+    // the DeltaLog and has nested field IDs setup
+    if (hasNestedColumnIds(completeField)) {
+      builder.putFieldMetadata(
+          PARQUET_FIELD_NESTED_IDS_METADATA_KEY, getNestedColumnIds(completeField));
+    }
+
+    return new StructField(physicalName, physicalType, logicalField.isNullable(), builder.build());
   }
 
   private static DataType convertToPhysicalType(
