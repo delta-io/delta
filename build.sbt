@@ -1231,7 +1231,7 @@ lazy val hive2Tez = (project in file("connectors/hive2-tez"))
  *
  * So, we create an impostor, cosmetic project used only for publishing.
  *
- * build/sbt standaloneCosmetic/package
+ * build/sbt standalone/package
  * - creates connectors/standalone/target/scala-2.12/delta-standalone-original-shaded_2.12-0.2.1-SNAPSHOT.jar
  *   (this is the shaded JAR we want)
  *
