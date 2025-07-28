@@ -29,6 +29,7 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DataSkippingReader
+import org.apache.spark.sql.delta.stats.DataSkippingReaderConf
 import org.apache.spark.sql.delta.stats.DeltaStatsColumnSpec
 import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.spark.sql.delta.util.DeltaCommitFileProvider
@@ -511,7 +512,7 @@ class Snapshot(
         .mapPartitions { iter =>
           val state: LogReplay =
             new InMemoryLogReplay(
-              localMinFileRetentionTimestamp,
+              Some(localMinFileRetentionTimestamp),
               localMinSetTransactionRetentionTimestamp)
           state.append(0, iter.map(_.unwrap))
           state.checkpoint.map(_.wrap)
@@ -608,22 +609,7 @@ class Snapshot(
 
   /** Return the set of properties of the table. */
   def getProperties: mutable.Map[String, String] = {
-    val base = new mutable.LinkedHashMap[String, String]()
-    metadata.configuration.foreach { case (k, v) =>
-      if (k != "path") {
-        base.put(k, v)
-      }
-    }
-    base.put(Protocol.MIN_READER_VERSION_PROP, protocol.minReaderVersion.toString)
-    base.put(Protocol.MIN_WRITER_VERSION_PROP, protocol.minWriterVersion.toString)
-    if (protocol.supportsReaderFeatures || protocol.supportsWriterFeatures) {
-      val features = protocol.readerAndWriterFeatureNames.map(name =>
-        s"${TableFeatureProtocolUtils.FEATURE_PROP_PREFIX}$name" ->
-          TableFeatureProtocolUtils.FEATURE_PROP_SUPPORTED)
-      base ++ features.toSeq.sorted
-    } else {
-      base
-    }
+    Snapshot.getProperties(metadata, protocol)
   }
 
   /** The [[CheckpointProvider]] for the underlying checkpoint */
@@ -751,7 +737,7 @@ object Snapshot extends DeltaLogging {
     // to avoid bloating the .crc file.
     val numIndexedColsThreshold = spark.sessionState.conf
       .getConf(DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_THRESHOLD_INDEXED_COLS)
-      .getOrElse(DataSkippingReader.DATA_SKIPPING_NUM_INDEXED_COLS_DEFAULT_VALUE)
+      .getOrElse(DataSkippingReaderConf.DATA_SKIPPING_NUM_INDEXED_COLS_DEFAULT_VALUE)
     val configuredNumIndexCols =
       DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.fromMetaData(snapshot.metadata)
     if (configuredNumIndexCols > numIndexedColsThreshold) return false
@@ -796,6 +782,40 @@ object Snapshot extends DeltaLogging {
       DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_VERIFICATION_MODE_ENABLED)
     val shouldVerify = verificationConfEnabled || allFilesInCrcVerificationForceEnabled(spark)
     allFilesInCrcWritePathEnabled(spark, snapshot) && shouldVerify
+  }
+
+  /**
+   * Don't include [[AddFile]]s in CRC if this commit is modifying the schema of table in some
+   * way. This is to make sure we don't carry any DROPPED column from previous CRC to this CRC
+   * forever and can start fresh from next commit.
+   * If the oldSnapshot itself is missing, we don't incrementally compute the checksum.
+   */
+  private[delta] def shouldIncludeAddFilesInCrc(
+      spark: SparkSession, snapshot: Snapshot, metadata: Metadata): Boolean = {
+    allFilesInCrcWritePathEnabled(spark, snapshot) &&
+      (snapshot.version == -1 || snapshot.metadata.schema == metadata.schema)
+  }
+
+  /**
+   * Return the set of properties for a given metadata and protocol.
+   */
+  def getProperties(metadata: Metadata, protocol: Protocol): mutable.Map[String, String] = {
+    val base = new mutable.LinkedHashMap[String, String]()
+    metadata.configuration.foreach { case (k, v) =>
+      if (k != "path") {
+        base.put(k, v)
+      }
+    }
+    base.put(Protocol.MIN_READER_VERSION_PROP, protocol.minReaderVersion.toString)
+    base.put(Protocol.MIN_WRITER_VERSION_PROP, protocol.minWriterVersion.toString)
+    if (protocol.supportsReaderFeatures || protocol.supportsWriterFeatures) {
+      val features = protocol.readerAndWriterFeatureNames.map(name =>
+        s"${TableFeatureProtocolUtils.FEATURE_PROP_PREFIX}$name" ->
+          TableFeatureProtocolUtils.FEATURE_PROP_SUPPORTED)
+      base ++ features.toSeq.sorted
+    } else {
+      base
+    }
   }
 }
 

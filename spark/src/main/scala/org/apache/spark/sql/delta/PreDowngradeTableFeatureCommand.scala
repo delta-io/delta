@@ -23,6 +23,7 @@ import scala.util.control.NonFatal
 import org.apache.spark.sql.delta.actions.{DeletionVectorDescriptor, RemoveFile}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.{AlterTableSetPropertiesDeltaCommand, AlterTableUnsetPropertiesDeltaCommand, DeltaReorgTableCommand, DeltaReorgTableMode, DeltaReorgTableSpec}
+import org.apache.spark.sql.delta.commands.backfill.RowTrackingUnBackfillCommand
 import org.apache.spark.sql.delta.commands.columnmapping.RemoveColumnMappingCommand
 import org.apache.spark.sql.delta.commands.optimize.OptimizeMetrics
 import org.apache.spark.sql.delta.constraints.Constraints
@@ -699,6 +700,41 @@ case class RedirectReaderWriterPreDowngradeCommand(table: DeltaTableV2)
     val properties = Seq(DeltaConfigs.REDIRECT_READER_WRITER.key)
     AlterTableUnsetPropertiesDeltaCommand(
       table, properties, ifExists = false, fromDropFeatureCommand = true).run(spark)
+    true
+  }
+}
+
+case class RowTrackingPreDowngradeCommand(table: DeltaTableV2)
+    extends PreDowngradeTableFeatureCommand
+    with DeltaLogging {
+
+  /**
+   * Disabling the feature involves the following steps:
+   *
+   *  1) Set `delta.enableRowTracking` to false so clients do not expect anymore all files
+   *     to have row IDs.
+   *  2) Set `delta.rowTrackingSuspended` to true to suspend row ID generation.
+   *  3) Unbackfill all existing row IDs.
+   *
+   *  Note, the remaining relevant properties/metadataDomains are removed at the downgrade protocol
+   *  commit.
+   *
+   * @return True if the feature traces are removed. False otherwise.
+   */
+  override def removeFeatureTracesIfNeeded(spark: SparkSession): Boolean = {
+    if (RowTrackingFeature.validateRemoval(table.update())) {
+      return false
+    }
+
+    val propertiesToSet = Map(
+      DeltaConfigs.ROW_TRACKING_ENABLED.key -> "false",
+      DeltaConfigs.ROW_TRACKING_SUSPENDED.key -> "true")
+    AlterTableSetPropertiesDeltaCommand(table, propertiesToSet).run(spark)
+
+    RowTrackingUnBackfillCommand(
+      table.deltaLog,
+      nameOfTriggeringOperation = DeltaOperations.OP_DROP_FEATURE,
+      table.catalogTable).run(spark)
     true
   }
 }

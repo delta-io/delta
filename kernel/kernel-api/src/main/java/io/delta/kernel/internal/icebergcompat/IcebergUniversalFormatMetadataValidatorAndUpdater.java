@@ -18,6 +18,8 @@ package io.delta.kernel.internal.icebergcompat;
 import io.delta.kernel.exceptions.InvalidConfigurationValueException;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Set;
 
 /**
@@ -51,14 +53,33 @@ public class IcebergUniversalFormatMetadataValidatorAndUpdater {
 
     Set<String> targetFormats = TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.fromMetadata(metadata);
     boolean isIcebergEnabled = targetFormats.contains(TableConfig.UniversalFormats.FORMAT_ICEBERG);
-    boolean isIcebergCompatV2Enabled = TableConfig.ICEBERG_COMPAT_V2_ENABLED.fromMetadata(metadata);
-    if (isIcebergEnabled && !isIcebergCompatV2Enabled) {
+
+    List<TableConfig<Boolean>> icebergCompatOptions =
+        Arrays.asList(TableConfig.ICEBERG_COMPAT_V2_ENABLED, TableConfig.ICEBERG_COMPAT_V3_ENABLED);
+    long enabledCompatCount =
+        icebergCompatOptions.stream().filter(opt -> opt.fromMetadata(metadata)).count();
+
+    if (isIcebergEnabled && enabledCompatCount == 0) {
+      String optionKeys =
+          String.join(
+              " or ",
+              icebergCompatOptions.stream().map(TableConfig::getKey).toArray(String[]::new));
       throw new InvalidConfigurationValueException(
           TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey(),
           TableConfig.UniversalFormats.FORMAT_ICEBERG,
           String.format(
-              "'%s' must be set to \"true\" to enable iceberg uniform format.",
-              TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey()));
+              "One of %s must be set to \"true\" to enable iceberg uniform format.", optionKeys));
+    }
+
+    if (enabledCompatCount > 1) {
+      String optionKeys =
+          String.join(
+              "' and '",
+              icebergCompatOptions.stream().map(TableConfig::getKey).toArray(String[]::new));
+      throw new InvalidConfigurationValueException(
+          TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey(),
+          TableConfig.UniversalFormats.FORMAT_ICEBERG,
+          String.format("'%s' cannot be enabled at the same time.", optionKeys));
     }
   }
 }

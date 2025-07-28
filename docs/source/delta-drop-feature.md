@@ -26,6 +26,7 @@ You can drop the following Delta table features:
 
 - `deletionVectors`. See [_](delta-deletion-vectors.md).
 - `typeWidening-preview`. See [_](delta-type-widening.md). Type widening is available in preview in <Delta> 3.2.0 and above.
+- `typeWidening`. See [_](delta-type-widening.md). Type widening is available in <Delta> 4.0.0 and above.
 - `v2Checkpoint`. See [V2 Checkpoint Spec](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#v2-spec). Drop support for V2 Checkpoints is available in <Delta> 3.1.0 and above.
 - `columnMapping`. See [_](delta-column-mapping.md). Drop support for column mapping is available in <Delta> 3.3.0 and above.
 - `vacuumProtocolCheck`. See [Vacuum Protocol Check Spec](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#vacuum-protocol-check). Drop support for vacuum protocol check is available in <Delta> 3.3.0 and above.

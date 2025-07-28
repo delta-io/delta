@@ -93,6 +93,20 @@ trait CatalogOwnedTestBaseSuite
   def catalogOwnedDefaultCreationEnabledInTests: Boolean =
     catalogOwnedCoordinatorBackfillBatchSize.nonEmpty
 
+  /**
+   * Returns the commit coordinator client for the specified catalog.
+   *
+   * @param catalogName The name of the catalog to get the commit coordinator client for.
+   * @return The commit coordinator client for the specified catalog.
+   */
+  protected def getCatalogOwnedCommitCoordinatorClient(
+      catalogName: String): CommitCoordinatorClient = {
+    CatalogOwnedCommitCoordinatorProvider.getBuilder(catalogName).getOrElse {
+      throw new IllegalStateException(
+        s"Commit coordinator builder is not available for the specified catalog: $catalogName")
+    }.buildForCatalog(spark, catalogName)
+  }
+
   override protected def sparkConf: SparkConf = {
     if (catalogOwnedDefaultCreationEnabledInTests) {
       super.sparkConf.set(defaultCatalogOwnedFeatureEnabledKey, "supported")
@@ -113,7 +127,9 @@ trait CatalogOwnedTestBaseSuite
     CatalogOwnedCommitCoordinatorProvider.clearBuilders()
     catalogOwnedCoordinatorBackfillBatchSize.foreach { batchSize =>
       CatalogOwnedCommitCoordinatorProvider.registerBuilder(
-        "spark_catalog", TrackingInMemoryCommitCoordinatorBuilder(batchSize = batchSize))
+        catalogName = CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
+        commitCoordinatorBuilder = TrackingInMemoryCommitCoordinatorBuilder(batchSize)
+      )
     }
     DeltaLog.clearCache()
   }
@@ -155,6 +171,22 @@ trait CatalogOwnedTestBaseSuite
         CatalogOwnedCommitCoordinatorProvider.registerBuilder(
           "spark_catalog", TrackingInMemoryCommitCoordinatorBuilder(batchSize = backfillBatchSize))
         f(backfillBatchSize)
+      }
+    }
+  }
+
+  /**
+   * Run the test against a [[TrackingCommitCoordinatorClient]] with backfill batch size =
+   * `batchBackfillSize`
+   */
+  def testWithCatalogOwned(backfillBatchSize: Int)(testName: String)(f: => Unit): Unit = {
+    test(s"$testName [Backfill batch size: $backfillBatchSize]") {
+      CatalogOwnedCommitCoordinatorProvider.clearBuilders()
+      CatalogOwnedCommitCoordinatorProvider.registerBuilder(
+        CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
+        TrackingInMemoryCommitCoordinatorBuilder(batchSize = backfillBatchSize))
+      withDefaultCCTableFeature {
+        f
       }
     }
   }
@@ -208,6 +240,36 @@ trait CatalogOwnedTestBaseSuite
         .dropTable(logPath)
     }
     DeltaLog.clearCache()
+  }
+
+  /**
+   * Constructs the specific table properties for Catalog Owned tables.
+   *
+   * @param spark The Spark session.
+   * @param metadata The metadata of the CC table.
+   * @return A map of CC specific table properties.
+   */
+  def constructCatalogOwnedSpecificTableProperties(
+      spark: SparkSession,
+      metadata: Metadata): Map[String, String] = {
+    if (catalogOwnedDefaultCreationEnabledInTests) {
+      Map(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key -> "true")
+    } else {
+      Map.empty
+    }
+  }
+
+  /**
+   * Returns the properties that are expected to show up in the table properties of a Delta table
+   * when catalog owned is enabled in tests.
+   */
+  def extractCatalogOwnedSpecificPropertiesIfEnabled(
+      metadata: Metadata): Iterable[(String, String)] = {
+    if (catalogOwnedDefaultCreationEnabledInTests) {
+      Option(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key -> "true")
+    } else {
+      Seq.empty
+    }
   }
 
   protected def isICTEnabledForNewTablesCatalogOwned: Boolean = {
@@ -309,21 +371,6 @@ trait CoordinatedCommitsTestUtils
   }
 
   override def isCatalogOwnedTest: Boolean = false
-
-  /**
-   * Run the test against a [[TrackingCommitCoordinatorClient]] with backfill batch size =
-   * `batchBackfillSize`
-   */
-  def testWithCoordinatedCommits(backfillBatchSize: Int)(testName: String)(f: => Unit): Unit = {
-    test(s"$testName [Backfill batch size: $backfillBatchSize]") {
-      CommitCoordinatorProvider.clearNonDefaultBuilders()
-      CommitCoordinatorProvider.registerBuilder(
-        TrackingInMemoryCommitCoordinatorBuilder(backfillBatchSize))
-      withDefaultCCTableFeature {
-        f
-      }
-    }
-  }
 
   /** Run the test with:
    * 1. Without coordinated-commits

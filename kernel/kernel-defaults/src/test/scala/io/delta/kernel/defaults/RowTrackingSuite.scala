@@ -21,10 +21,11 @@ import java.util.Optional
 import scala.collection.JavaConverters._
 import scala.collection.immutable.Seq
 
+import io.delta.kernel.Table
 import io.delta.kernel.data.{FilteredColumnarBatch, Row}
 import io.delta.kernel.defaults.internal.parquet.ParquetSuiteBase
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.exceptions.KernelException
+import io.delta.kernel.exceptions.{ConcurrentWriteException, InvalidTableException, KernelException}
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl, TableConfig, TableImpl}
 import io.delta.kernel.internal.actions.{AddFile, SingleAction}
@@ -184,6 +185,70 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
     }
   }
 
+  test("Provided Row ID high watermark should be set in the txn") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createTableWithRowTracking(engine, tablePath)
+
+      val dataBatch1 = generateData(testSchema, Seq.empty, Map.empty, 100, 1)
+      val commitVersion1 = appendData(
+        engine,
+        tablePath,
+        data = Seq(dataBatch1).map(Map.empty[String, Literal] -> _)).getVersion
+
+      verifyBaseRowIDs(engine, tablePath, Seq(0))
+      verifyDefaultRowCommitVersion(engine, tablePath, Seq(commitVersion1))
+      verifyHighWatermark(engine, tablePath, 99)
+
+      val dataBatch2 = generateData(testSchema, Seq.empty, Map.empty, 200, 1)
+      val rowTrackingMetadataDomain = new RowTrackingMetadataDomain(400)
+
+      val txn2 = createTxnWithDomainMetadatas(
+        engine,
+        tablePath,
+        List(rowTrackingMetadataDomain.toDomainMetadata))
+      val commitVersion2 =
+        commitAppendData(engine, txn2, prepareDataForCommit(dataBatch2)).getVersion
+
+      verifyBaseRowIDs(engine, tablePath, Seq(0, 100))
+      verifyDefaultRowCommitVersion(engine, tablePath, Seq(commitVersion1, commitVersion2))
+      verifyHighWatermark(engine, tablePath, 400)
+    }
+  }
+
+  test("Fail if provided Row ID high watermark is smaller than the calculated high watermark") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createTableWithRowTracking(engine, tablePath)
+
+      val dataBatch1 = generateData(testSchema, Seq.empty, Map.empty, 100, 1)
+      val commitVersion1 = appendData(
+        engine,
+        tablePath,
+        data = Seq(dataBatch1).map(Map.empty[String, Literal] -> _)).getVersion
+
+      verifyBaseRowIDs(engine, tablePath, Seq(0))
+      verifyDefaultRowCommitVersion(engine, tablePath, Seq(commitVersion1))
+      verifyHighWatermark(engine, tablePath, 99)
+
+      val dataBatch2 = generateData(testSchema, Seq.empty, Map.empty, 200, 1)
+
+      // Set a higher value than the calculated high watermark = 299
+      val rowTrackingMetadataDomain = new RowTrackingMetadataDomain(120)
+      val txn2 = createTxnWithDomainMetadatas(
+        engine,
+        tablePath,
+        List(rowTrackingMetadataDomain.toDomainMetadata))
+      val e = intercept[RuntimeException] {
+        commitAppendData(engine, txn2, prepareDataForCommit(dataBatch2)).getVersion
+      }
+
+      assert(
+        e.getMessage.contains(
+          "The provided row ID high watermark (120) must be greater than " +
+            "or equal to the calculated row ID high watermark (299) based " +
+            "on the transaction's data actions."))
+    }
+  }
+
   test("Fail if row tracking is supported but AddFile actions are missing stats") {
     withTempDirAndEngine { (tablePath, engine) =>
       createTableWithRowTracking(engine, tablePath)
@@ -213,6 +278,25 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
           "Cannot write to a rowTracking-supported table without 'numRecords' statistics. "
             + "Connectors are expected to populate the number of records statistics when "
             + "writing to a Delta table with 'rowTracking' table feature supported."))
+    }
+  }
+
+  test("Fail if row tracking is not supported but client call withHighWatermark in txn") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createEmptyTable(engine, tablePath, testSchema)
+
+      val rowTrackingMetadataDomain = new RowTrackingMetadataDomain(30)
+
+      val e = intercept[RuntimeException] {
+        createTxnWithDomainMetadatas(
+          engine,
+          tablePath,
+          List(rowTrackingMetadataDomain.toDomainMetadata))
+      }
+
+      assert(
+        e.getMessage.contains(
+          "Cannot assign a row id high water mark"))
     }
   }
 
@@ -333,6 +417,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
       verifyDefaultRowCommitVersion(engine, tablePath, expectedDefaultRowCommitVersion)
       verifyHighWatermark(engine, tablePath, expectedHighWatermark)
     }
+
     verifyRowTrackingStates()
 
     // Create txn1 but don't commit it yet
@@ -450,6 +535,37 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
         dataSizeTxn3 = 400,
         useSparkTxn3 = true)
     })
+  }
+
+  test("Conflict resolution - " +
+    "conflict resolution is not supported when providedRowIdHighWatermark is set") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createTableWithRowTracking(engine, tablePath)
+
+      // Create txn1 but don't commit it yet
+      val rowTrackingMetadataDomainTxn1 = new RowTrackingMetadataDomain(400)
+      val txn1 = createTxnWithDomainMetadatas(
+        engine,
+        tablePath,
+        List(rowTrackingMetadataDomainTxn1.toDomainMetadata))
+
+      // Create and commit txn2
+      val dataBatch2 = generateData(testSchema, Seq.empty, Map.empty, 100, 1)
+      val commitVersion2 = appendData(
+        engine,
+        tablePath,
+        data = Seq(dataBatch2).map(Map.empty[String, Literal] -> _)).getVersion
+      verifyBaseRowIDs(engine, tablePath, Seq(0L))
+      verifyDefaultRowCommitVersion(engine, tablePath, Seq(commitVersion2))
+      verifyHighWatermark(engine, tablePath, 99)
+
+      // Commit txn1 with a provided row ID high watermark would fail
+      val ex1 = intercept[ConcurrentWriteException] {
+        txn1.commit(engine, emptyIterable())
+      }
+      assert(
+        ex1.getMessage.contains("Transaction has encountered a conflict and can not be committed"))
+    }
   }
 
   private val ROW_TRACKING_ENABLED_PROP = Map(TableConfig.ROW_TRACKING_ENABLED.getKey -> "true")
@@ -600,6 +716,173 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
         }
         assert(e.getMessage.contains(
           s"The Delta table property '$propName' is an internal property and cannot be updated"))
+      }
+    }
+  }
+
+  test("throw if materialized row tracking column configs are missing on an existing table") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // Create a normal table with row tracking enabled first
+      createTableWithRowTracking(engine, tablePath)
+
+      // Get the current metadata and manually remove row tracking materialized column configs
+      val originalMetadata = getMetadata(engine, tablePath)
+      val configWithoutMaterializedCols = originalMetadata.getConfiguration.asScala.toMap
+        .filterNot {
+          case (key, _) =>
+            key == ROW_ID.getMaterializedColumnNameProperty ||
+            key == ROW_COMMIT_VERSION.getMaterializedColumnNameProperty
+        }
+
+      // Create new metadata with row tracking enabled but configs missing
+      val newMetadata =
+        originalMetadata.withReplacedConfiguration(configWithoutMaterializedCols.asJava)
+
+      // Manually commit this problematic metadata
+      val txn = createTxn(engine, tablePath)
+      val metadataAction = SingleAction.createMetadataSingleAction(newMetadata.toRow)
+      commitTransaction(
+        txn,
+        engine,
+        inMemoryIterable(toCloseableIterator(Seq(metadataAction).asJava.iterator())))
+
+      // Verify that row tracking is enabled but configs are missing
+      val metadata = getMetadata(engine, tablePath)
+      assert(TableConfig.ROW_TRACKING_ENABLED.fromMetadata(metadata) == true)
+      assert(!metadata.getConfiguration.containsKey(ROW_ID.getMaterializedColumnNameProperty))
+      assert(
+        !metadata.getConfiguration
+          .containsKey(ROW_COMMIT_VERSION.getMaterializedColumnNameProperty))
+
+      // Now try to perform an append operation on this existing table with missing configs
+      // This should trigger the validation and throw the expected exception
+      val e = intercept[InvalidTableException] {
+        val dataBatch = generateData(testSchema, Seq.empty, Map.empty, 10, 1)
+        appendData(engine, tablePath, data = prepareDataForCommit(dataBatch))
+      }
+
+      assert(
+        e.getMessage.contains(
+          s"Row tracking is enabled but the materialized column name " +
+            s"`${ROW_ID.getMaterializedColumnNameProperty}` is missing."))
+    }
+  }
+
+  /* -------- Test row tracking with replace table -------- */
+  val someData = Seq(Map.empty[String, Literal] -> dataBatches1)
+  val otherData = Seq(Map.empty[String, Literal] -> dataBatches2)
+  // Each tuple represents: (enableBefore, enableAfter, initialData, replaceData)
+  val replaceTableTestCases = Seq(
+    // Row tracking turned on
+    (false, true, Seq(), Seq()),
+    (false, true, Seq(), someData),
+    (false, true, someData, Seq()),
+    (false, true, someData, otherData),
+    // Row tracking turned off
+    (true, false, someData, otherData),
+    (true, false, someData, Seq()),
+    // Row tracking remains unchanged
+    (true, true, someData, Seq()),
+    (true, true, Seq(), someData),
+    (true, true, someData, otherData),
+    (true, true, Seq(), Seq()))
+
+  for ((enableBefore, enableAfter, initialData, replaceData) <- replaceTableTestCases) {
+    val testName = s"""Replace table with row tracking:
+                      |enableBefore=$enableBefore,
+                      |enableAfter=$enableAfter,
+                      |initialData=${initialData.nonEmpty},
+                      |replaceData=${replaceData.nonEmpty}"""
+      .stripMargin
+      .replace("\n", " ")
+
+    test(testName) {
+      withTempDirAndEngine { (tablePath, engine) =>
+        // Create an empty table with row tracking enabled or disabled
+        createEmptyTable(
+          engine,
+          tablePath,
+          testSchema,
+          tableProperties = Map(TableConfig.ROW_TRACKING_ENABLED.getKey -> enableBefore.toString))
+
+        // Optionally fill the table with initial data if provided
+        if (initialData.nonEmpty) {
+          appendData(engine, tablePath, data = initialData)
+        }
+
+        val beforeSnapshot =
+          TableImpl.forPath(engine, tablePath).getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+
+        // Create a REPLACE transaction and commit
+        val replaceTableProps =
+          Map(TableConfig.ROW_TRACKING_ENABLED.getKey -> enableAfter.toString)
+        val txnBuilder = Table.forPath(engine, tablePath).asInstanceOf[TableImpl]
+          .createReplaceTableTransactionBuilder(engine, testEngineInfo)
+          .withSchema(engine, testSchema)
+          .withTableProperties(engine, replaceTableProps.asJava)
+        val txn = txnBuilder.build(engine)
+
+        commitTransaction(txn, engine, getAppendActions(txn, replaceData))
+
+        // Get the latest snapshot of the table after the replace operation
+        val afterSnapshot =
+          TableImpl.forPath(engine, tablePath).getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+
+        // Assert that row tracking is enabled/disabled as expected
+        assertMetadataProp(afterSnapshot, TableConfig.ROW_TRACKING_ENABLED, enableAfter)
+
+        // Assert that the high watermark is preserved or incremented based on the operations
+        // This only applies if row tracking is enabled before and after the replace operation
+        // and if there is initial data present
+        if (enableBefore && enableAfter && initialData.nonEmpty) {
+          val beforeHighWaterMark: Optional[Long] =
+            RowTrackingMetadataDomain.fromSnapshot(beforeSnapshot).map(_.getRowIdHighWaterMark)
+          val afterHighWaterMark: Optional[Long] =
+            RowTrackingMetadataDomain.fromSnapshot(afterSnapshot).map(_.getRowIdHighWaterMark)
+          val numInitialRows = initialData.head._2.map(_.getData.getSize).sum
+
+          assert(beforeHighWaterMark.get() == numInitialRows - 1)
+          if (replaceData.nonEmpty) {
+            // If replace data is provided, the high watermark should be incremented
+            val numReplaceRows = replaceData.head._2.map(_.getData.getSize).sum
+            assert(afterHighWaterMark.get() == numInitialRows + numReplaceRows - 1)
+          } else {
+            // If no replace data, the high watermark should remain the same
+            assert(beforeHighWaterMark.get() == afterHighWaterMark.get())
+          }
+        }
+
+        // Assert that metadata configurations are different before and after
+        // Since REPLACE assigns new materialized column names, the configs should never match
+        val beforeConfig = beforeSnapshot.getMetadata.getConfiguration
+        val afterConfig = afterSnapshot.getMetadata.getConfiguration
+        assert(!beforeConfig.equals(afterConfig))
+
+        // Assert that materialized row tracking columns are present when row tracking is enabled
+        if (enableAfter) {
+          Seq(ROW_ID, ROW_COMMIT_VERSION).foreach { rowTrackingColumn =>
+            assert(afterConfig.containsKey(rowTrackingColumn.getMaterializedColumnNameProperty))
+            assert(
+              afterConfig
+                .get(rowTrackingColumn.getMaterializedColumnNameProperty)
+                .startsWith(rowTrackingColumn.getMaterializedColumnNamePrefix))
+          }
+        }
+
+        // Check that AddFile actions in the new table have a base row ID and default commit version
+        if (replaceData.nonEmpty) {
+          // Base row IDs do not start from 0 if we had initial data and row tracking was enabled
+          val baseRowIds = if (initialData.nonEmpty && enableBefore) {
+            initialData.head._2.map(_.getData.getSize).sum
+          } else {
+            0L
+          }
+          // There was one more previous commit if initialData was present
+          val defaultCommitVersion = if (initialData.nonEmpty) 2 else 1
+
+          verifyBaseRowIDs(engine, tablePath, Seq(baseRowIds))
+          verifyDefaultRowCommitVersion(engine, tablePath, Seq(defaultCommitVersion))
+        }
       }
     }
   }

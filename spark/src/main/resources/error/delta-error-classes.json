@@ -433,6 +433,15 @@
     ],
     "sqlState" : "0AKDC"
   },
+  "DELTA_CLONE_WITH_ROW_TRACKING_WITHOUT_STATS" : {
+    "message" : [
+      "Cannot shallow clone a table without statistics and with row tracking enabled.",
+      "If you want to enable row tracking you need to first collect statistics on the source table by running:",
+      "ANALYZE TABLE table_name COMPUTE DELTA STATISTICS",
+      ""
+    ],
+    "sqlState" : "22000"
+  },
   "DELTA_CLUSTERING_COLUMNS_DATATYPE_NOT_SUPPORTED" : {
     "message" : [
       "CLUSTER BY is not supported because the following column(s): <columnsWithDataTypes> don't support data skipping."
@@ -1622,6 +1631,12 @@
     ],
     "sqlState" : "42K04"
   },
+  "DELTA_LOG_FILE_NOT_FOUND" : {
+    "message" : [
+      "Unable to retrieve the delta log files to construct table version <version> starting from checkpoint version <checkpointVersion> at <logPath>."
+    ],
+    "sqlState" : "42K03"
+  },
   "DELTA_LOG_FILE_NOT_FOUND_FOR_STREAMING_SOURCE" : {
     "message" : [
       "If you never deleted it, it's likely your query is lagging behind. Please delete its checkpoint to restart from scratch. To avoid this happening again, you can update your retention policy of your Delta table"
@@ -1688,6 +1703,12 @@
       "Resolved attribute(s) <missingAttributes> missing from <input> in operator <merge>"
     ],
     "sqlState" : "42601"
+  },
+  "DELTA_MERGE_SOURCE_CACHED_DURING_EXECUTION" : {
+    "message" : [
+      "The MERGE operation failed because (part of) the source plan was cached while the MERGE operation was running."
+    ],
+    "sqlState" : "25000"
   },
   "DELTA_MERGE_UNEXPECTED_ASSIGNMENT_KEY" : {
     "message" : [
@@ -2215,15 +2236,22 @@
   "DELTA_ROW_ID_ASSIGNMENT_WITHOUT_STATS" : {
     "message" : [
       "Cannot assign row IDs without row count statistics.",
-      "Collect statistics for the table by running the following code and retry:",
-      "import org.apache.spark.sql.catalyst.TableIdentifier",
-      "import org.apache.spark.sql.delta.DeltaLog",
-      "import org.apache.spark.sql.delta.stats.StatisticsCollection",
-      "",
-      "val log = DeltaLog.forTable(spark, TableIdentifier(table_name))",
-      "StatisticsCollection.recompute(spark, log)"
+      "Collect statistics for the table by running the ANALYZE TABLE command:",
+      "ANALYZE TABLE tableName COMPUTE DELTA STATISTICS"
     ],
     "sqlState" : "22000"
+  },
+  "DELTA_ROW_TRACKING_BACKFILL_RUNNING_CONCURRENTLY_WITH_UNBACKFILL" : {
+    "message" : [
+      "A Row Tracking enablement operation was detected running concurrently with a Row Tracking disablement. Aborting the disablement operation. Please retry the disablement operation if necessary when the enablement operation is complete."
+    ],
+    "sqlState" : "22KD0"
+  },
+  "DELTA_ROW_TRACKING_ILLEGAL_PROPERTY_COMBINATION" : {
+    "message" : [
+      "Illegal table state was detected. Table properties `<property1>` and `<property2>` are both set to true. The issue can be resolved by disabling any of the two table properties."
+    ],
+    "sqlState" : "55000"
   },
   "DELTA_SCHEMA_CHANGED" : {
     "message" : [

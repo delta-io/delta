@@ -21,7 +21,7 @@ import java.util.concurrent.TimeUnit
 
 import scala.collection.mutable
 
-import org.apache.spark.sql.delta.DeltaOperations.ROW_TRACKING_BACKFILL_OPERATION_NAME
+import org.apache.spark.sql.delta.DeltaOperations.{ROW_TRACKING_BACKFILL_OPERATION_NAME, ROW_TRACKING_UNBACKFILL_OPERATION_NAME}
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
@@ -53,7 +53,7 @@ import org.apache.spark.sql.types.StructType
  */
 private[delta] case class CurrentTransactionInfo(
     val txnId: String,
-    val readPredicates: Seq[DeltaTableReadPredicate],
+    val readPredicates: Vector[DeltaTableReadPredicate],
     val readFiles: Set[AddFile],
     val readWholeTable: Boolean,
     val readAppIds: Set[String],
@@ -103,6 +103,7 @@ private[delta] case class CurrentTransactionInfo(
 
   // Whether this is a row tracking backfill transaction or not.
   val isRowTrackingBackfillTxn = op.name == ROW_TRACKING_BACKFILL_OPERATION_NAME
+  val isRowTrackingUnBackfillTxn = op.name == ROW_TRACKING_UNBACKFILL_OPERATION_NAME
 
   def isConflict(winningTxn: SetTransaction): Boolean = readAppIds.contains(winningTxn.appId)
 }
@@ -122,6 +123,8 @@ private[delta] class WinningCommitSummary(val actions: Seq[Action], val commitVe
   // Whether this is a row tracking backfill transaction or not.
   val isRowTrackingBackfillTxn =
     commitInfo.exists(_.operation == ROW_TRACKING_BACKFILL_OPERATION_NAME)
+  val isRowTrackingUnBackfillTxn =
+    commitInfo.exists(_.operation == ROW_TRACKING_UNBACKFILL_OPERATION_NAME)
   val removedFiles: Seq[RemoveFile] = actions.collect { case a: RemoveFile => a }
   val addedFiles: Seq[AddFile] = actions.collect { case a: AddFile => a }
   // This is used in resolveRowTrackingBackfillConflicts.
@@ -183,6 +186,7 @@ private[delta] class ConflictChecker(
     checkForUpdatedApplicationTransactionIdsThatCurrentTxnDependsOn()
 
     resolveRowTrackingBackfillConflicts()
+    resolveRowTrackingUnBackfillConflicts()
     // Row Tracking reconciliation. We perform this before the file checks to ensure that
     // no files have duplicate row IDs and avoid interacting with files that don't comply with
     // the protocol.
@@ -252,16 +256,22 @@ private[delta] class ConflictChecker(
     val newProtocol = currentTransactionInfo.protocol
     val readProtocol = currentTransactionInfo.readSnapshot.protocol
     if (TableFeature.isProtocolRemovingFeatures(newProtocol, readProtocol)) {
-      val winningSnapshot = deltaLog.getSnapshotAt(
-        winningCommitSummary.commitVersion,
-        catalogTableOpt = currentTransactionInfo.catalogTable)
-      val isDowngradeCommitValid = TableFeature.validateFeatureRemovalAtSnapshot(
-        newProtocol = newProtocol,
-        oldProtocol = readProtocol,
-        snapshot = winningSnapshot)
-      if (!isDowngradeCommitValid) {
-        throw DeltaErrors.dropTableFeatureConflictRevalidationFailed(
-          winningCommitSummary.commitInfo)
+      // Feature specific conflict resolution logic.
+      if (TableFeature.isFeatureDropped(newProtocol, readProtocol, RowTrackingFeature)) {
+        currentTransactionInfo = resolveRowTrackingUnBackfillConflicts(
+          currentTransactionInfo, winningCommitSummary)
+      } else {
+        val winningSnapshot = deltaLog.getSnapshotAt(
+          winningCommitSummary.commitVersion,
+          catalogTableOpt = currentTransactionInfo.catalogTable)
+        val isDowngradeCommitValid = TableFeature.validateFeatureRemovalAtSnapshot(
+          newProtocol = newProtocol,
+          oldProtocol = readProtocol,
+          snapshot = winningSnapshot)
+        if (!isDowngradeCommitValid) {
+          throw DeltaErrors.dropTableFeatureConflictRevalidationFailed(
+            winningCommitSummary.commitInfo)
+        }
       }
       // When the current transaction is removing a feature and CheckpointProtectionTableFeature
       // is enabled, the current transaction will set the requireCheckpointProtectionBeforeVersion
@@ -378,6 +388,80 @@ private[delta] class ConflictChecker(
         currentTransactionInfo = currentTransactionInfo.copy(actions = newActions)
       }
     }
+  }
+
+  /**
+   * Row tracking unbackfill is an operation that removes row tracking metadata from the table.
+   * This is achieved by recommiting existing add files without base row ID and default
+   * row commit version. The operation is invoked as part of the cleanup process when dropping
+   * the row tracking feature from the table.
+   *
+   * In general, Delta writers should never generate baseRowIds while
+   * `delta.rowTrackingSuspended` is enabled. However, the delta protocol does not enforce
+   * the config and as a result third party writers may not respect it. The unbackfill conflict
+   * resolver unbackfills the addFiles of the winning commits to compensate for this.
+   */
+  private def resolveRowTrackingUnBackfillConflicts(): Unit = {
+    // If row tracking is not supported, there can be no unbackfill commit.
+    if (!RowTracking.isSupported(currentTransactionInfo.protocol)) {
+      assert(!currentTransactionInfo.isRowTrackingUnBackfillTxn)
+      assert(!winningCommitSummary.isRowTrackingUnBackfillTxn)
+      return
+    }
+
+    if (!currentTransactionInfo.isRowTrackingUnBackfillTxn) {
+      return
+    }
+    // Third party writers might not use the same operation name for backfill.
+    // In that case we will proceed to conflict resolution.
+    if (winningCommitSummary.isRowTrackingBackfillTxn) {
+      throw DeltaErrors.rowTrackingBackfillRunningConcurrentlyWithUnbackfill()
+    }
+
+    val timerPhaseName = "checked-row-tracking-unbackfill"
+    recordTime(timerPhaseName) {
+      currentTransactionInfo = resolveRowTrackingUnBackfillConflicts(
+        currentTransactionInfo,
+        winningCommitSummary)
+    }
+  }
+
+  /**
+   * Resolve conflicts by cleaning up addFiles of winning commits. Furthermore, make sure
+   * sure that removed files are not resurrected.
+   */
+  private def resolveRowTrackingUnBackfillConflicts(
+      currentTransactionInfo: CurrentTransactionInfo,
+      winningCommitSummary: WinningCommitSummary): CurrentTransactionInfo = {
+
+    // Unbackfill new AddFiles. This has the advantage that will cleanup commits
+    // from third party writers that do not respect `delta.rowTrackingSuspended`.
+    val (pathsToRemoveFromUnBackfill, filesToAddToUnBackfill) =
+      winningCommitSummary.actions.collect {
+        case a: AddFile =>
+          val fileToAdd = if (a.baseRowId.nonEmpty || a.defaultRowCommitVersion.nonEmpty) {
+            Some(a.copy(dataChange = false, baseRowId = None, defaultRowCommitVersion = None))
+          } else {
+            None
+          }
+          (a.path, fileToAdd)
+        case r: RemoveFile => (r.path, None)
+      }.unzip
+    val pathsToRemoveFromUnBackfillSet = pathsToRemoveFromUnBackfill.toSet
+    val filesToAddToUnBackfillSet = filesToAddToUnBackfill.flatten.toSet
+
+    val newActions = currentTransactionInfo.actions.filterNot {
+      case a: AddFile => pathsToRemoveFromUnBackfillSet.contains(a.path)
+      case _ => false
+    } ++ filesToAddToUnBackfillSet
+
+    // We can remove pruned files from the read list. However, we should not add
+    // the new AddFiles because that would cause a conflict, albeit, we already
+    // resolved it.
+    val newReadFiles = currentTransactionInfo.readFiles.filterNot(
+      a => pathsToRemoveFromUnBackfillSet.contains(a.path))
+
+    currentTransactionInfo.copy(actions = newActions, readFiles = newReadFiles)
   }
 
   /**
@@ -548,12 +632,19 @@ private[delta] class ConflictChecker(
     import org.apache.spark.sql.delta.implicits._
     val filesMatchingPartitionPredicates = canonicalPredicates.iterator
       .flatMap { readPredicate =>
-        DeltaLog.filterFileList(
+        val matchingFileOpt = DeltaLog.filterFileList(
           partitionSchema = currentTransactionInfo.partitionSchemaAtReadTime,
           files = filesDf,
           partitionFilters = readPredicate.partitionPredicates,
           shouldRewritePartitionFilters = readPredicate.shouldRewriteFilter
         ).as[AddFile].head(1).headOption
+        matchingFileOpt.foreach { f =>
+          logInfo(log"Partition predicate is matching a file changed by the winning transaction: " +
+            log"predicate=${MDC(DeltaLogKeys.DATA_FILTER,
+              readPredicate.partitionPredicates.toVector)}, " +
+            log"matchingFile=${MDC(DeltaLogKeys.PATH, f.path)}")
+        }
+        matchingFileOpt
       }.take(1).toArray
 
     filesMatchingPartitionPredicates.headOption
@@ -677,6 +768,11 @@ private[delta] class ConflictChecker(
     }
   }
 
+  private lazy val currentTransactionIsReplaceTable: Boolean = currentTransactionInfo.op match {
+    case _: DeltaOperations.ReplaceTable => true
+    case _ => false
+  }
+
   /**
    * Checks [[DomainMetadata]] to capture whether the current transaction conflicts with the
    * winning transaction at any domain.
@@ -721,9 +817,26 @@ private[delta] class ConflictChecker(
       case other => other
     }
 
+
+    // For the REPLACE TABLE command, if domain metadata of a given domain is added for the first
+    // time by the winning transaction, it may need to be marked as removed.
+    val replaceTableRemoveNewDomainMetadataEnabled = spark.conf.get(
+      DeltaSQLConf.DELTA_CONFLICT_DETECTION_ALLOW_REPLACE_TABLE_TO_REMOVE_NEW_DOMAIN_METADATA)
+    val (finalUpdatedActions, finalMergedDomainMetadata) =
+      if (replaceTableRemoveNewDomainMetadataEnabled && currentTransactionIsReplaceTable) {
+        val (domainMetadataActions, nonDomainMetadataActions) =
+          currentTransactionInfo.actions.partition(_.isInstanceOf[DomainMetadata])
+        val updatedDomainMetadataActions = DomainMetadataUtils.handleDomainMetadataForReplaceTable(
+          winningDomainMetadataMap.values.toSeq,
+          domainMetadataActions.map(_.asInstanceOf[DomainMetadata]))
+        ((nonDomainMetadataActions ++ updatedDomainMetadataActions), updatedDomainMetadataActions)
+      } else {
+        (updatedActions, mergedDomainMetadata)
+      }
+
     currentTransactionInfo = currentTransactionInfo.copy(
-      domainMetadata = mergedDomainMetadata.toSeq,
-      actions = updatedActions)
+      domainMetadata = finalMergedDomainMetadata.toSeq,
+      actions = finalUpdatedActions)
   }
 
   /**
@@ -754,7 +867,10 @@ private[delta] class ConflictChecker(
    */
   private def reassignOverlappingRowIds(): Unit = {
     // The current transaction should only assign Row Ids if they are supported.
-    if (!RowId.isSupported(currentTransactionInfo.protocol)) return
+    val currentProtocol = currentTransactionInfo.protocol
+    val currentMetadata = currentTransactionInfo.metadata
+    if (!RowId.isSupported(currentProtocol)) return
+    if (RowTracking.isSuspended(spark, currentMetadata)) return
 
     val readHighWaterMark = currentTransactionInfo.readRowIdHighWatermark
 
@@ -796,11 +912,8 @@ private[delta] class ConflictChecker(
    *     to handle the row tracking feature being enabled by the winning transaction.
    */
   private def reassignRowCommitVersions(): Unit = {
-    if (!RowTracking.isSupported(currentTransactionInfo.protocol) &&
-      // Type widening relies on default row commit versions to be set.
-      !TypeWidening.isSupported(currentTransactionInfo.protocol)) {
-      return
-    }
+    if (!RowId.isSupported(currentTransactionInfo.protocol)) return
+    if (RowTracking.isSuspended(spark, currentTransactionInfo.metadata)) return
 
     val newActions = currentTransactionInfo.actions.map {
       case a: AddFile if a.defaultRowCommitVersion.contains(winningCommitVersion) =>
@@ -848,6 +961,7 @@ private[delta] class ConflictChecker(
     val nextAvailableVersion = winningCommitVersion + 1L
     val updatedMetadata =
       InCommitTimestampUtils.getUpdatedMetadataWithICTEnablementInfo(
+        spark,
         updatedCommitTimestamp,
         currentTransactionInfo.readSnapshot,
         currentTransactionInfo.metadata,

@@ -20,10 +20,11 @@ import java.io.File
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.metering.ScanReport
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.test.ScanReportHelper
 import org.apache.commons.io.FileUtils
@@ -48,7 +49,9 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
     with DeltaSQLCommandTest
     with DataSkippingDeltaTestsUtils
     with GivenWhenThen
-    with ScanReportHelper {
+    with ScanReportHelper
+    with CatalogOwnedTestBaseSuite
+    with DeltaSQLTestUtils {
 
   val defaultNumIndexedCols = DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.fromString(
     DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.defaultValue)
@@ -1180,9 +1183,10 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
 
   test("data skipping with missing columns in DataFrame", tableSchemaOnlyTag) {
     // case-1: dataframe schema has less columns than the dataSkippingNumIndexedCols
-    withTable("table") {
-      sql("CREATE TABLE table (a Int, b Int, c Int, d Int, e Int) USING delta PARTITIONED BY(b)")
-      val r = DeltaLog.forTable(spark, new TableIdentifier("table"))
+    withTempTable(createTable = false) { tableName =>
+      sql(s"CREATE TABLE $tableName (a Int, b Int, c Int, d Int, e Int) " +
+        "USING delta PARTITIONED BY(b)")
+      val r = DeltaLog.forTable(spark, new TableIdentifier(tableName))
       // Only index the first three columns, excluding partition column b
       setNumIndexedColumns(r.dataPath.toString, 3)
       val dataSeq = Seq((1, 2, 3, 4, 5))
@@ -1214,9 +1218,10 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
 
     // case-2: dataframe schema lacks columns that are supposed to be part of the stats schema,
     // but has an additional column that should not collect stats on
-    withTable("table") {
-      sql("CREATE TABLE table (a Int, b Int, c Int, d Int, e Int) USING delta PARTITIONED BY(b)")
-      val r = DeltaLog.forTable(spark, new TableIdentifier("table"))
+    withTempTable(createTable = false) { tableName =>
+      sql(s"CREATE TABLE $tableName (a Int, b Int, c Int, d Int, e Int) " +
+        "USING delta PARTITIONED BY(b)")
+      val r = DeltaLog.forTable(spark, new TableIdentifier(tableName))
       // Only index the first three columns, excluding partition column b
       setNumIndexedColumns(r.dataPath.toString, 3)
       val dataSeq = Seq((1, 2, 3, 4, 5))
@@ -1296,9 +1301,9 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
 
     // case-4: dataframe schema does not have any columns within the first
     // dataSkippingNumIndexedCols columns of the table schema
-    withTable("table") {
-      sql("CREATE TABLE table (a Int, b Int, c Int, d Int, e Int) USING delta")
-      val r = DeltaLog.forTable(spark, new TableIdentifier("table"))
+    withTempTable(createTable = false) { tableName =>
+      sql(s"CREATE TABLE $tableName (a Int, b Int, c Int, d Int, e Int) USING delta")
+      val r = DeltaLog.forTable(spark, new TableIdentifier(tableName))
       // Only index the first three columns
       setNumIndexedColumns(r.dataPath.toString, 3)
       val dataSeq = Seq((1, 2, 3, 4, 5))
@@ -1323,10 +1328,10 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
 
     // case-5: The first dataSkippingNumIndexedCols columns of the table schema has map or array
     // types, which we only collect NULL_COUNT
-    withTable("table") {
-      sql("CREATE TABLE table (a Int, b Map<String, Int>, c Array<Int>, d Int, e Int)" +
+    withTempTable(createTable = false) { tableName =>
+      sql(s"CREATE TABLE $tableName (a Int, b Map<String, Int>, c Array<Int>, d Int, e Int)" +
         " USING delta")
-      val r = DeltaLog.forTable(spark, new TableIdentifier("table"))
+      val r = DeltaLog.forTable(spark, new TableIdentifier(tableName))
       // Only index the first three columns
       setNumIndexedColumns(r.dataPath.toString, 3)
       val dataSeq = Seq((1, Map("key" -> 2), Seq(3, 3, 3), 4, 5))
@@ -2211,7 +2216,8 @@ trait DataSkippingDeltaTestsUtils extends PredicateHelper {
 
 trait DataSkippingDeltaTests extends DataSkippingDeltaTestsBase
 /** Tests code paths within DataSkippingReader.scala */
-class DataSkippingDeltaV1Suite extends DataSkippingDeltaTests
+class DataSkippingDeltaV1Suite
+  extends DataSkippingDeltaTests
 {
   import testImplicits._
 
@@ -2224,7 +2230,9 @@ class DataSkippingDeltaV1Suite extends DataSkippingDeltaTests
     val data = spark.range(10).repartition(2)
 
     Given("appending data without collecting stats")
-    withSQLConf(DeltaSQLConf.DELTA_COLLECT_STATS.key -> "false") {
+    withSQLConf(
+        DeltaSQLConf.DELTA_COLLECT_STATS.key -> "false",
+        DeltaConfigs.ROW_TRACKING_ENABLED.defaultTablePropertyKey -> "false") {
       data.write.format("delta").save(r.dataPath.toString)
       checkAnswer(rStats, Seq(Row(null, null, null), Row(null, null, null)))
     }
@@ -2309,4 +2317,16 @@ class DataSkippingDeltaV1ParquetCheckpointV2Suite extends DataSkippingDeltaV1Sui
       )
     )
   }
+}
+
+class DataSkippingDeltaV1WithCatalogOwnedBatch1Suite extends DataSkippingDeltaV1Suite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
+}
+
+class DataSkippingDeltaV1WithCatalogOwnedBatch2Suite extends DataSkippingDeltaV1Suite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
+}
+
+class DataSkippingDeltaV1WithCatalogOwnedBatch100Suite extends DataSkippingDeltaV1Suite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }

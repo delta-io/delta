@@ -1084,7 +1084,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
   }
 
   test("insert into table - validate serialized json stats equal Spark written stats") {
-    withTempDirAndEngine { (kernelPath, engine) =>
+    withTempDirAndEngine { (dir, engine) =>
       // Test with all Skipping eligible types.
       // TODO(Issue: 4284): Validate TIMESTAMP and TIMESTAMP_NTZ serialization
       // format.
@@ -1103,6 +1103,10 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
             .add("nestedDecimal", DecimalType.USER_DEFAULT)
             .add("nestedDoubleCol", DOUBLE))
 
+      // Create "kernel" and "spark-copy" directories
+      val kernelPath = new File(dir, "kernel").getAbsolutePath
+      val sparkPath = new File(dir, "spark-copy").getAbsolutePath
+
       // Write a batch of data using the Kernel
       val batch =
         generateData(schema, Seq.empty, Map.empty, batchSize = 10, numBatches = 1)
@@ -1114,10 +1118,6 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         partCols = Seq.empty,
         data = Seq(Map.empty[String, Literal] -> batch))
 
-      // Write the same batch of data through Spark to a copy table.
-      withTempDir(tempDir => {})
-
-      val sparkPath = new File(kernelPath, "spark-copy").getAbsolutePath
       spark.read.format("delta").load(kernelPath)
         .write.format("delta").mode("overwrite").save(sparkPath)
 
@@ -1236,19 +1236,5 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     var txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, MANUAL_UPDATE)
     schema.foreach(s => txnBuilder = txnBuilder.withSchema(engine, s))
     txnBuilder.build(engine)
-  }
-
-  def collectStatsFromAddFiles(engine: Engine, path: String): Seq[String] = {
-    val snapshot = Table.forPath(engine, path).getLatestSnapshot(engine)
-    val scan = snapshot.getScanBuilder.build()
-    val scanFiles = scan.asInstanceOf[ScanImpl].getScanFiles(engine, true)
-
-    scanFiles.asScala.toList.flatMap { scanFile =>
-      scanFile.getRows.asScala.toList.flatMap { row =>
-        val add = row.getStruct(row.getSchema.indexOf("add"))
-        val idx = add.getSchema.indexOf("stats")
-        if (idx >= 0 && !add.isNullAt(idx)) List(add.getString(idx)) else Nil
-      }
-    }
   }
 }

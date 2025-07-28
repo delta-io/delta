@@ -32,6 +32,7 @@ import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
 import io.delta.kernel.defaults.internal.data.vector.{DefaultGenericVector, DefaultStructVector}
 import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestUtils}
 import io.delta.kernel.engine.{Engine, JsonHandler, ParquetHandler}
+import io.delta.kernel.engine.FileReadResult
 import io.delta.kernel.expressions._
 import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.internal.{InternalScanFileUtils, ScanImpl, TableConfig}
@@ -1659,7 +1660,7 @@ object ScanSuite {
           override def readParquetFiles(
               fileIter: CloseableIterator[FileStatus],
               physicalSchema: StructType,
-              predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] = {
+              predicate: Optional[Predicate]): CloseableIterator[FileReadResult] = {
             throwErrorIfAddStatsInSchema(physicalSchema)
             super.readParquetFiles(fileIter, physicalSchema, predicate)
           }

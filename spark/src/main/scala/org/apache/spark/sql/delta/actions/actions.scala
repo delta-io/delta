@@ -973,15 +973,15 @@ case class RemoveFile(
  *
  * [[path]] is URL-encoded.
  */
+@JsonIgnoreProperties(Array("stats"))
 case class AddCDCFile(
     override val path: String,
     @JsonInclude(JsonInclude.Include.ALWAYS)
     partitionValues: Map[String, String],
     size: Long,
-    override val tags: Map[String, String] = null) extends FileAction {
+    override val tags: Map[String, String] = null,
+    override val stats: String = null) extends FileAction with HasNumRecords {
   override val dataChange = false
-  @JsonIgnore
-  override val stats: String = null
   @JsonIgnore
   override val deletionVector: DeletionVectorDescriptor = null
 
@@ -992,9 +992,6 @@ case class AddCDCFile(
 
   @JsonIgnore
   override def estLogicalFileSize: Option[Long] = None
-
-  @JsonIgnore
-  override def numLogicalRecords: Option[Long] = None
 }
 
 case class Format(
@@ -1213,7 +1210,7 @@ case class NotebookInfo(notebookId: String)
 
 object NotebookInfo {
   def fromContext(context: Map[String, String]): Option[NotebookInfo] = {
-    context.get("notebookId").map { nbId => NotebookInfo(nbId) }
+    context.get("notebookId").orElse(context.get("notebook_id")).map { nbId => NotebookInfo(nbId) }
   }
 }
 

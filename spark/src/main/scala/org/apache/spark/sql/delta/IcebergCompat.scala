@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.delta.DeltaConfigs._
 import org.apache.spark.sql.delta.actions.{Action, AddFile, Metadata, Protocol}
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
@@ -41,9 +42,9 @@ import org.apache.spark.sql.types._
 
 object IcebergCompatV1 extends IcebergCompatBase(
   version = 1,
-  icebergFormatVersion = 1,
+  icebergFormatVersion = 2,
   config = DeltaConfigs.ICEBERG_COMPAT_V1_ENABLED,
-  requiredTableFeatures = Seq(ColumnMappingTableFeature),
+  tableFeature = IcebergCompatV1TableFeature,
   requiredTableProperties = Seq(RequireColumnMapping),
   incompatibleTableFeatures = Set(DeletionVectorsTableFeature),
   checks = Seq(
@@ -58,9 +59,9 @@ object IcebergCompatV1 extends IcebergCompatBase(
 
 object IcebergCompatV2 extends IcebergCompatBase(
   version = 2,
-  icebergFormatVersion = 1,
+  icebergFormatVersion = 2,
   config = DeltaConfigs.ICEBERG_COMPAT_V2_ENABLED,
-  requiredTableFeatures = Seq(ColumnMappingTableFeature),
+  tableFeature = IcebergCompatV2TableFeature,
   requiredTableProperties = Seq(RequireColumnMapping),
   incompatibleTableFeatures = Set(DeletionVectorsTableFeature),
   checks = Seq(
@@ -89,15 +90,20 @@ object IcebergCompatV2 extends IcebergCompatBase(
  *                @see [[RequiredDeltaTableProperty]]
  */
 case class IcebergCompatBase(
-    version: Integer,
-    icebergFormatVersion: Integer,
+    version: Int,
+    icebergFormatVersion: Int,
     config: DeltaConfig[Option[Boolean]],
-    requiredTableFeatures: Seq[TableFeature],
+    tableFeature: TableFeature,
     requiredTableProperties: Seq[RequiredDeltaTableProperty[_<:Any]],
     incompatibleTableFeatures: Set[TableFeature] = Set.empty,
     checks: Seq[IcebergCompatCheck]) extends DeltaLogging {
   def isEnabled(metadata: Metadata): Boolean = config.fromMetaData(metadata).getOrElse(false)
 
+  /**
+   * @return true if the feature should be auto enabled on the table created / updated with
+   *         the schema
+   */
+  def shouldAutoEnable(schema: StructType, properties: Map[String, String]): Boolean = false
   /**
    * Expected to be called after the newest metadata and protocol have been ~ finalized.
    *
@@ -138,19 +144,11 @@ case class IcebergCompatBase(
         val tblPropertyUpdates = scala.collection.mutable.Map.empty[String, String]
 
         // Check we have all required table features
-        requiredTableFeatures.foreach { f =>
+        tableFeature.requiredFeatures.foreach { f =>
           (prevProtocol.isFeatureSupported(f), newestProtocol.isFeatureSupported(f)) match {
             case (_, true) => // all good
-            case (false, false) => // txn has not supported it!
-              // Note: this code path should be impossible, since the IcebergCompatVxTableFeature
-              //       specifies ColumnMappingTableFeature as a required table feature. Thus,
-              //       it should already have been added during
-              //       OptimisticTransaction::updateMetadataInternal
-              if (isCreatingOrReorgTable) {
-                tblFeatureUpdates += f
-              } else {
-                handleMissingTableFeature(f)
-              }
+            case (false, false) => // txn has not supported it! auto-add the table feature
+              tblFeatureUpdates += f
             case (true, false) => // txn is removing/un-supporting it!
               handleDisablingRequiredTableFeature(f)
           }
@@ -158,16 +156,19 @@ case class IcebergCompatBase(
 
         // Check we have all required delta table properties
         requiredTableProperties.foreach {
-          case RequiredDeltaTableProperty(deltaConfig, validator, autoSetValue) =>
+          case RequiredDeltaTableProperty(
+              deltaConfig, validator, autoSetValue, autoEnableOnExistingTable) =>
             val newestValue = deltaConfig.fromMetaData(newestMetadata)
             val newestValueOkay = validator(newestValue)
             val newestValueExplicitlySet = newestMetadata.configuration.contains(deltaConfig.key)
 
             if (!newestValueOkay) {
-              if (!newestValueExplicitlySet && isCreatingOrReorgTable) {
+              if (!newestValueExplicitlySet &&
+                  (isCreatingOrReorgTable || autoEnableOnExistingTable)) {
                 // This case covers both CREATE and REPLACE TABLE commands that
                 // did not explicitly specify the required deltaConfig. In these
                 // cases, we set the property automatically.
+                // If autoEnableOnExistingTable = true, it auto sets in all cases
                 tblPropertyUpdates += deltaConfig.key -> autoSetValue
               } else {
                 // In all other cases, if the property value is not compatible
@@ -304,12 +305,15 @@ object IcebergCompat extends IcebergCompatVersionBase(
  *
  * @param deltaConfig [[DeltaConfig]] we are checking
  * @param validator A generic method to validate the given value
- * @param autoSetValue The value to set if we can auto-set this value (e.g. during table creation)
+ * @param autoSetValue The value to set if we can auto-set this value
+ * @param autoEnableOnExistingTable this can be true only when the feature
+ *                                  can be confidently enabled on existing table
  */
 case class RequiredDeltaTableProperty[T](
-    deltaConfig: DeltaConfig[T],
-    validator: T => Boolean,
-    autoSetValue: String) {
+      deltaConfig: DeltaConfig[T],
+      validator: T => Boolean,
+      autoSetValue: String,
+      autoEnableOnExistingTable: Boolean = false) {
   /**
    * A callback after all required properties are added to the new metadata.
    * @return Updated metadata. None if no change
@@ -330,7 +334,8 @@ class RequireColumnMapping(allowedModes: Seq[DeltaColumnMappingMode])
       prevMetadata: Metadata,
       newMetadata: Metadata,
       isCreatingNewTable: Boolean): Metadata = {
-    if (newMetadata.configuration.contains(DeltaConfigs.COLUMN_MAPPING_MODE.key)) {
+    if (!prevMetadata.configuration.contains(DeltaConfigs.COLUMN_MAPPING_MODE.key) &&
+        newMetadata.configuration.contains(DeltaConfigs.COLUMN_MAPPING_MODE.key)) {
       assert(isCreatingNewTable, "we only auto-upgrade Column Mapping on new tables")
       val tmpNewMetadata = DeltaColumnMapping.assignColumnIdAndPhysicalName(
         newMetadata = newMetadata,

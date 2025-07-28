@@ -679,6 +679,16 @@ trait DeltaErrorsSuiteBase
       ))
     }
     {
+      val e = intercept[DeltaFileNotFoundException] {
+        throw DeltaErrors.logFileNotFoundException(new Path("file://table"), None, 10)
+      }
+      checkError(e, "DELTA_LOG_FILE_NOT_FOUND", "42K03", Map(
+        "version" -> "LATEST",
+        "checkpointVersion" -> "10",
+        "logPath" -> "file://table"
+      ))
+    }
+    {
       val ex = new FileNotFoundException("reason")
       val e = intercept[DeltaFileNotFoundException] {
         throw DeltaErrors.logFileNotFoundExceptionForStreamingSource(ex)

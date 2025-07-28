@@ -23,10 +23,11 @@ import java.util.UUID
 import com.databricks.spark.util.UsageRecord
 import org.apache.spark.sql.delta.DeltaTestUtils.{collectUsageLogs, createTestAddFile, BOOLEAN_DOMAIN}
 import org.apache.spark.sql.delta.actions.{AddFile, SetTransaction, SingleAction}
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
+import org.apache.spark.sql.delta.util.JsonUtils
 
 import org.apache.spark.sql.{QueryTest, SaveMode}
 import org.apache.spark.sql.catalyst.TableIdentifier
@@ -36,7 +37,8 @@ import org.apache.spark.sql.test.SharedSparkSession
 class DeltaIncrementalSetTransactionsSuite
   extends QueryTest
     with DeltaSQLCommandTest
-    with SharedSparkSession {
+    with SharedSparkSession
+    with CatalogOwnedTestBaseSuite {
 
   protected override def sparkConf = super.sparkConf
     .set(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key, "true")
@@ -80,13 +82,8 @@ class DeltaIncrementalSetTransactionsSuite
       deltaLog: DeltaLog,
       setTransactions: Seq[SetTransaction]): Unit = {
     deltaLog.startTransaction().commit(
-      setTransactions :+
-        AddFile(
-          s"file-${UUID.randomUUID().toString}",
-          partitionValues = Map.empty,
-          size = 1L,
-          modificationTime = 1L,
-          dataChange = true),
+      // Use createTestAddFile to create addFile with default stats for RowTracking.
+      setTransactions :+ createTestAddFile(encodedPath = s"file-${UUID.randomUUID().toString}"),
       DeltaOperations.Write(SaveMode.Append)
     )
   }
@@ -411,20 +408,27 @@ class DeltaIncrementalSetTransactionsSuite
   /** Drops one [[SetTransaction]] operation from checkpoint - the one with max appId */
   private def dropOneSetTransactionFromCheckpoint(log: DeltaLog): Unit = {
     import testImplicits._
-    val checkpointPath = FileNames.checkpointFileSingular(log.logPath, log.snapshot.version)
+    val checkpointPath = log.update().checkpointProvider.topLevelFiles.head.getPath
+    val checkpointPathStr = checkpointPath.toString
+    // Get the checkpoint file format to read and write. Specify format to be compatible
+    // with v2 checkpoint b/c v2 checkpoint format could be either json/parquet.
+    // Test suites that extend w/ CC will enable v2 checkpoint by default.
+    val checkpointFormat = checkpointPathStr.substring(checkpointPathStr.lastIndexOf('.') + 1)
     withTempDir { tmpCheckpoint =>
       // count total rows in checkpoint
       val checkpointDf = spark.read
         .schema(SingleAction.encoder.schema)
-        .parquet(checkpointPath.toString)
+        .format(checkpointFormat).load(checkpointPathStr)
       val initialActionCount = checkpointDf.count().toInt
       val corruptedCheckpointData = checkpointDf
         .orderBy(col("txn.appId").asc_nulls_first) // force non setTransaction actions to front
         .as[SingleAction].take(initialActionCount - 1) // Drop 1 action
 
       corruptedCheckpointData.toSeq.toDS().coalesce(1).write
-        .mode("overwrite").parquet(tmpCheckpoint.toString)
-      assert(spark.read.parquet(tmpCheckpoint.toString).count() === initialActionCount - 1)
+        .mode("overwrite").format(checkpointFormat).save(tmpCheckpoint.toString)
+      assert(
+        spark.read.format(checkpointFormat).load(tmpCheckpoint.toString).count()
+          === initialActionCount - 1)
       val writtenCheckpoint =
         tmpCheckpoint.listFiles().toSeq.filter(_.getName.startsWith("part")).head
       val checkpointFile = new File(checkpointPath.toUri)
@@ -438,7 +442,7 @@ class DeltaIncrementalSetTransactionsSuite
       assert(checkpointFile.delete(), "Failed to delete old checkpoint")
       assert(writtenCheckpoint.renameTo(checkpointFile),
         "Failed to rename corrupt checkpoint")
-      val newCheckpoint = spark.read.parquet(checkpointFile.toString)
+      val newCheckpoint = spark.read.format(checkpointFormat).load(checkpointFile.toString)
       assert(newCheckpoint.count() === initialActionCount - 1,
         "Checkpoint file incorrect:\n" + newCheckpoint.collect().mkString("\n"))
     }
@@ -447,4 +451,19 @@ class DeltaIncrementalSetTransactionsSuite
   private def collectSetTransactionCorruptionReport(f: => Unit): Seq[UsageRecord] = {
     collectUsageLogs("delta.checksum.invalid")(f).toSeq
   }
+}
+
+class DeltaIncrementalSetTransactionsWithCatalogOwnedBatch1Suite
+  extends DeltaIncrementalSetTransactionsSuite {
+  override val catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
+}
+
+class DeltaIncrementalSetTransactionsWithCatalogOwnedBatch2Suite
+  extends DeltaIncrementalSetTransactionsSuite {
+  override val catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
+}
+
+class DeltaIncrementalSetTransactionsWithCatalogOwnedBatch100Suite
+  extends DeltaIncrementalSetTransactionsSuite {
+  override val catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }

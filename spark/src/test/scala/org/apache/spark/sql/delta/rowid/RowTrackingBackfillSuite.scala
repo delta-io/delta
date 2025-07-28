@@ -25,12 +25,14 @@ import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.actions.{AddFile, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.commands.AlterTableSetPropertiesDeltaCommand
 import org.apache.spark.sql.delta.commands.backfill.{BackfillBatch, BackfillBatchStats, BackfillCommandStats, RowTrackingBackfillBatch, RowTrackingBackfillCommand, RowTrackingBackfillExecutor}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.JsonUtils
 
 import org.apache.spark.SparkConf
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.test.SharedSparkSession
 
@@ -39,6 +41,7 @@ case class FailingRowTrackingBackfillBatch(filesInBatch: Seq[AddFile])
   extends BackfillBatch {
   override val backfillBatchStatsOpType = DeltaUsageLogsOpTypes.BACKFILL_BATCH
   override def prepareFilesAndCommit(
+      spark: SparkSession,
       txn: OptimisticTransaction,
       batchId: Int): Unit = {
     throw new IllegalStateException("mock exception for test")
@@ -71,7 +74,7 @@ class RowTrackingBackfillSuite
   }
 
   /** Create the default test table used by this suite, which has row IDs disabled. */
-  protected def withRowIdDisabledTestTable()(f: => Unit): Unit = {
+  protected def withTestTableWithNoRowTracking()(f: => Unit): Unit = {
     withRowTrackingEnabled(enabled = false) {
       withTable(testTableName) {
         createTable(testTableName)
@@ -81,6 +84,26 @@ class RowTrackingBackfillSuite
         assert(!RowId.isEnabled(snapshot.protocol, snapshot.metadata))
         f
       }
+    }
+  }
+
+  protected def withTestTableWithRowTrackingDisabled()(f: => Unit): Unit = {
+    withTable(testTableName) {
+      // Do not create baseRowIds.
+      withRowTrackingEnabled(enabled = false) {
+        createTable(testTableName)
+      }
+      val log = DeltaLog.forTable(spark, TableIdentifier(testTableName))
+      AlterTableSetPropertiesDeltaCommand(
+        table = DeltaTableV2(spark, log.dataPath),
+        configuration = Map(
+          s"delta.feature.${RowTrackingFeature.name}" -> "supported",
+          DeltaConfigs.ROW_TRACKING_ENABLED.key -> "false"))
+        .run(spark)
+      val snapshot = log.update()
+      assert(RowTracking.isSupported(snapshot.protocol))
+      assert(!RowId.isEnabled(snapshot.protocol, snapshot.metadata))
+      f
     }
   }
 
@@ -101,7 +124,7 @@ class RowTrackingBackfillSuite
   }
 
   test("getCandidateFilesToBackfill returns right files on tables with row IDs disabled") {
-    withRowIdDisabledTestTable() {
+    withTestTableWithNoRowTracking() {
       val (log, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(testTableName))
       val initialFilesInTable = snapshot.allFiles.collect().toSet
       assert(initialFilesInTable.size === numFilesInTable,
@@ -132,7 +155,7 @@ class RowTrackingBackfillSuite
 
   test("Trigger backfill by calling command directly") {
     // No one should be calling this directly. We just want to unit test outside of ALTER TABLE.
-    withRowIdDisabledTestTable() {
+    withTestTableWithNoRowTracking() {
       val log = DeltaLog.forTable(spark, TableIdentifier(testTableName))
       RowTrackingBackfillCommand(
         log,
@@ -150,7 +173,7 @@ class RowTrackingBackfillSuite
     "Row Tracking Backfill is not enabled") {
     withSQLConf(DeltaSQLConf.DELTA_ROW_TRACKING_BACKFILL_ENABLED.key -> "false") {
       // No one should be calling this directly. We just want to unit test outside of ALTER TABLE.
-      withRowIdDisabledTestTable() {
+      withTestTableWithNoRowTracking() {
         val log = DeltaLog.forTable(spark, TableIdentifier(testTableName))
 
         val ex = intercept[UnsupportedOperationException] {
@@ -166,7 +189,7 @@ class RowTrackingBackfillSuite
   }
 
   test("Trigger backfill using ALTER TABLE") {
-    withRowIdDisabledTestTable() {
+    withTestTableWithNoRowTracking() {
       val log = DeltaLog.forTable(spark, TableIdentifier(testTableName))
       validateSuccessfulBackfillMetrics(expectedNumSuccessfulBatches = 1) {
         triggerBackfillOnTestTableUsingAlterTable(testTableName, initialNumRows, log)
@@ -190,7 +213,7 @@ class RowTrackingBackfillSuite
 
   test("Backfill respects the max file limit per commit") {
     val maxNumFilesPerCommit = 3
-    withRowIdDisabledTestTable() {
+    withTestTableWithNoRowTracking() {
       withSQLConf(
         DeltaSQLConf.DELTA_BACKFILL_MAX_NUM_FILES_PER_COMMIT.key ->
           maxNumFilesPerCommit.toString) {
@@ -241,7 +264,7 @@ class RowTrackingBackfillSuite
   }
 
   test("Backfill on table that enabled the table feature separately") {
-    withRowIdDisabledTestTable() {
+    withTestTableWithNoRowTracking() {
       val log = DeltaLog.forTable(spark, TableIdentifier(testTableName))
       // User decides to enable the table feature separately first.
       sql(
@@ -279,7 +302,7 @@ class RowTrackingBackfillSuite
   }
 
   test("Backfill should be idempotent") {
-    withRowIdDisabledTestTable() {
+    withTestTableWithNoRowTracking() {
       val log = DeltaLog.forTable(spark, TableIdentifier(testTableName))
       validateSuccessfulBackfillMetrics(expectedNumSuccessfulBatches = 1) {
         triggerBackfillOnTestTableUsingAlterTable(testTableName, initialNumRows, log)
@@ -308,7 +331,7 @@ class RowTrackingBackfillSuite
   }
 
   test("ALTER TABLE that don't enable row tracking should not backfill") {
-    withRowIdDisabledTestTable() {
+    withTestTableWithNoRowTracking() {
       val rowTrackingKey = DeltaConfigs.ROW_TRACKING_ENABLED.key
       sql(s"ALTER TABLE $testTableName SET TBLPROPERTIES('$rowTrackingKey' = false)")
       // This should not upgrade the table protocol and it should not trigger any backfill.
@@ -323,7 +346,7 @@ class RowTrackingBackfillSuite
   }
 
   test("Trigger backfill using ALTER TABLE, but another property fails") {
-    withRowIdDisabledTestTable() {
+    withTestTableWithNoRowTracking() {
       // Enable column mapping
       val columnMappingMode = DeltaConfigs.COLUMN_MAPPING_MODE.key
       val minReaderKey = DeltaConfigs.MIN_READER_VERSION.key
@@ -375,7 +398,7 @@ class RowTrackingBackfillSuite
       DeltaConfigs.MIN_WRITER_VERSION.defaultTablePropertyKey -> initialMinWriterVersion.toString,
       DeltaConfigs.MIN_READER_VERSION.defaultTablePropertyKey -> initialMinReaderVersion.toString
     ) {
-      withRowIdDisabledTestTable() {
+      withTestTableWithNoRowTracking() {
         val (log, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(testTableName))
         val prevProtocol = snapshot.protocol
         val expectedInitialProtocol = Protocol(initialMinReaderVersion, initialMinWriterVersion)
@@ -435,7 +458,7 @@ class RowTrackingBackfillSuite
   }
 
   test("lower MIN_WRITER_VERSION along with Row ID prop can upgrade protocol") {
-    withRowIdDisabledTestTable() {
+    withTestTableWithNoRowTracking() {
       val (log, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(testTableName))
       val prevProtocol = snapshot.protocol
       assert(prevProtocol.minWriterVersion <
@@ -473,28 +496,8 @@ class RowTrackingBackfillSuite
     }
   }
 
-  test("Backfill works with more than 1 batch in parallel") {
-    val expectedNumBackfillCommits = 4
-    val maxNumFilesPerCommit = Math.ceil(
-      numFilesInTable.toDouble / expectedNumBackfillCommits.toDouble).toInt
-    val maxNumBatchesInParallel = expectedNumBackfillCommits
-    withRowIdDisabledTestTable() {
-      withSQLConf(
-        DeltaSQLConf.DELTA_BACKFILL_MAX_NUM_FILES_PER_COMMIT.key ->
-          maxNumFilesPerCommit.toString,
-        DeltaSQLConf.DELTA_BACKFILL_MAX_NUM_BATCHES_IN_PARALLEL.key ->
-          maxNumBatchesInParallel.toString
-      ) {
-        validateSuccessfulBackfillMetrics(expectedNumBackfillCommits) {
-          val log = DeltaLog.forTable(spark, TableIdentifier(testTableName))
-          triggerBackfillOnTestTableUsingAlterTable(testTableName, initialNumRows, log)
-        }
-      }
-    }
-  }
-
   test("BackfillCommandStats metrics are correct in case of failure") {
-    withRowIdDisabledTestTable() {
+    withTestTableWithRowTrackingDisabled() {
       val (log, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(testTableName))
 
       val allFiles = snapshot.allFiles.collect()
@@ -502,29 +505,32 @@ class RowTrackingBackfillSuite
       val filesInSuccessfulBackfill = allFiles.take(numFilesInSuccessfulBackfillBatch)
       val numFilesInFailingBackfillBatch = 2
       val filesInFailingBackfill = allFiles.takeRight(numFilesInFailingBackfillBatch)
-      val maxNumBatchesInParallel = 1
-      // ordered list in order to force the successful batch to execute before the failing batch.
-      val batchIterator = List(
-        RowTrackingBackfillBatch(filesInSuccessfulBackfill),
-        FailingRowTrackingBackfillBatch(filesInFailingBackfill)
-      ).iterator
 
       val txn = log.startTransaction()
       val backfillStats = BackfillCommandStats(
         transactionId = txn.txnId,
-        nameOfTriggeringOperation = DeltaOperations.OP_SET_TBLPROPERTIES,
-        maxNumBatchesInParallel = maxNumBatchesInParallel)
+        nameOfTriggeringOperation = DeltaOperations.OP_SET_TBLPROPERTIES)
       val backfillExecutor = new RowTrackingBackfillExecutor(
         spark,
-        txn,
-        FileMetadataMaterializationTracker.noopTracker,
-        maxNumBatchesInParallel,
+        log,
+        catalogTableOpt = None,
+        txn.txnId,
         backfillStats
-      )
+      ) {
+        var batchIdx = 0
+        override def constructBatch(files: Seq[AddFile]): BackfillBatch = {
+          batchIdx += 1
+          if (batchIdx == 1) {
+            RowTrackingBackfillBatch(filesInSuccessfulBackfill)
+          } else {
+            FailingRowTrackingBackfillBatch(filesInFailingBackfill)
+          }
+        }
+      }
 
       val backfillUsageRecords = Log4jUsageLogger.track {
-        intercept[ExecutionException] {
-          backfillExecutor.run(batchIterator)
+        intercept[IllegalStateException] {
+          backfillExecutor.run(maxNumFilesPerCommit = 3)
         }
       }.filter(_.metric == "tahoeEvent")
 
@@ -538,7 +544,6 @@ class RowTrackingBackfillSuite
       // RowTrackingBackfillCommand, not BackfillExecutor so it is still 0 and false respectively.
       assert(backfillStats.numFailedBatches === 1)
       assert(backfillStats.numSuccessfulBatches === 1)
-      assert(backfillStats.maxNumBatchesInParallel === maxNumBatchesInParallel)
       assert(backfillStats.transactionId === txn.txnId)
       assert(backfillStats.nameOfTriggeringOperation === DeltaOperations.OP_SET_TBLPROPERTIES)
 
@@ -563,7 +568,7 @@ class RowTrackingBackfillSuite
   }
 
   test("BackfillBatchStats failure leads to correct metrics") {
-    withRowIdDisabledTestTable() {
+    withTestTableWithNoRowTracking() {
       val table = DeltaTableV2(spark, TableIdentifier(testTableName))
 
       val filesInBackfillBatch = table.snapshot.allFiles.head(2)
@@ -572,11 +577,11 @@ class RowTrackingBackfillSuite
       val numSuccessfulBatch = new AtomicInteger(0)
       val numFailedBatch = new AtomicInteger(0)
 
+      val backfillTxnId = "backfill-txn-id"
       val txn = table.startTransactionWithInitialSnapshot()
-
       val backfillUsageRecords = Log4jUsageLogger.track {
         intercept[IllegalStateException] {
-          batch.execute(txn, batchId, numSuccessfulBatch, numFailedBatch)
+          batch.execute(spark, backfillTxnId, batchId, txn, numSuccessfulBatch, numFailedBatch)
         }
       }.filter(_.metric == "tahoeEvent")
 
@@ -594,7 +599,7 @@ class RowTrackingBackfillSuite
       assert(backfillBatchStats.initialNumFiles === filesInBackfillBatch.length)
       // Failing batch can have totalExecutionTimeInMs be 0 because it ends faster.
       assert(backfillBatchStats.totalExecutionTimeInMs >= 0)
-      assert(backfillBatchStats.parentTransactionId === txn.txnId)
+      assert(backfillBatchStats.parentTransactionId === backfillTxnId)
       assert(backfillBatchStats.transactionId != null && backfillBatchStats.transactionId.nonEmpty)
     }
   }

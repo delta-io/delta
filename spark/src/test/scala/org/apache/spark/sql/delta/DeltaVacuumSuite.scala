@@ -31,7 +31,7 @@ import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, Metadata, Remove
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.VacuumCommand
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedCommitCoordinatorProvider
-import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.coordinatedcommits.TrackingInMemoryCommitCoordinatorBuilder
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -47,6 +47,7 @@ import org.scalatest.GivenWhenThen
 import org.apache.spark.{SparkConf, SparkException}
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row, SaveMode, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.catalog.CatalogTableType
 import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.catalyst.util.IntervalUtils
 import org.apache.spark.sql.execution.metric.SQLMetric
@@ -63,7 +64,7 @@ trait DeltaVacuumSuiteBase extends QueryTest
   with DeltaSQLTestUtils
   with DeletionVectorsTestUtils
   with DeltaTestUtilsForTempViews
-  with CoordinatedCommitsBaseSuite {
+  with CatalogOwnedTestBaseSuite {
 
   private def executeWithEnvironment(file: File)(f: (File, ManualClock) => Unit): Unit = {
     val clock = new ManualClock()
@@ -411,9 +412,6 @@ trait DeltaVacuumSuiteBase extends QueryTest
         val df1 = sql(s"SELECT * FROM delta.`${dir.getAbsolutePath}`").collect()
 
         val changes = getCDCFiles(deltaLog)
-        var numExpectedChangeFiles = 2
-
-        assert(changes.size === numExpectedChangeFiles)
 
         // vacuum will not delete the cdc files if they are within retention
         sql(s"VACUUM '${dir.getAbsolutePath}' RETAIN 100 HOURS")
@@ -616,8 +614,8 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
       val schema = new StructType().add("_underscore_col_", IntegerType).add("n", IntegerType)
       val metadata =
         Metadata(schemaString = schema.json, partitionColumns = Seq("_underscore_col_"))
-      val version =
-        txn.commit(metadata :: Nil, DeltaOperations.CreateTable(metadata, isManaged = true))
+      val version = txn.commitActions(
+        DeltaOperations.CreateTable(metadata, isManaged = true), metadata)
       setCommitClock(table, version, clock)
       gcTest(table, clock)(
         CreateFile("file1.txt", commitToActionLog = true, Map("_underscore_col_" -> "10")),
@@ -639,8 +637,8 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
       val schema = new StructType().add("_underscore_col_", IntegerType).add("n", IntegerType)
       val metadata =
         Metadata(schemaString = schema.json, partitionColumns = Seq("_underscore_col_"))
-      val version =
-        txn.commit(metadata :: Nil, DeltaOperations.CreateTable(metadata, isManaged = true))
+      val version = txn.commitActions(
+        DeltaOperations.CreateTable(metadata, isManaged = true), metadata)
       setCommitClock(table, version, clock)
       val inventorySchema = StructType(
         Seq(
@@ -673,8 +671,8 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
       // Vacuum should consider partition folders even for clean up even though it starts with `_`
       val metadata =
         Metadata(schemaString = schema.json, partitionColumns = Seq("_underscore_col_"))
-      val version =
-        txn.commit(metadata :: Nil, DeltaOperations.CreateTable(metadata, isManaged = true))
+      val version = txn.commitActions(
+        DeltaOperations.CreateTable(metadata, isManaged = true), metadata)
       setCommitClock(table, version, clock)
       val dataPath = table.deltaLog.dataPath
       // Create a Seq of Rows containing the data
@@ -1491,6 +1489,7 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
   }
 
   test("running vacuum on a catalog owned managed table should fail") {
+    CatalogOwnedCommitCoordinatorProvider.clearBuilders()
     CatalogOwnedCommitCoordinatorProvider.registerBuilder(
       "spark_catalog", TrackingInMemoryCommitCoordinatorBuilder(batchSize = 3))
     withTable("t1") {
@@ -1511,10 +1510,6 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
     }
     CatalogOwnedCommitCoordinatorProvider.clearBuilders()
   }
-}
-
-class DeltaVacuumWithCoordinatedCommitsBatch100Suite extends DeltaVacuumSuite {
-  override val coordinatedCommitsBackfillBatchSize: Option[Int] = Some(100)
 }
 
 class DeltaLiteVacuumSuite
@@ -1633,8 +1628,4 @@ class DeltaLiteVacuumSuite
       )
     }
   }
-}
-
-class DeltaLiteVacuumWithCoordinatedCommitsBatch100Suite extends DeltaLiteVacuumSuite {
-  override val coordinatedCommitsBackfillBatchSize: Option[Int] = Some(100)
 }

@@ -26,6 +26,7 @@ import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
 import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl, TableConfig, TableImpl}
 import io.delta.kernel.internal.actions.{AddFile, GenerateIcebergCompatActionUtils, RemoveFile}
 import io.delta.kernel.internal.checksum.ChecksumReader
+import io.delta.kernel.internal.data.TransactionStateRow
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.stats.FileSizeHistogram
 import io.delta.kernel.internal.util.FileNames.checksumFile
@@ -129,7 +130,8 @@ trait ChecksumStatsSuiteBase extends DeltaTableWriteSuiteBase {
         txn.getTransactionState(engine),
         generateDataFileStatus(tablePath, path, fileSize = size),
         Collections.emptyMap(),
-        true /* dataChange */ )
+        true, /* dataChange */
+        Optional.empty())
     }.toSeq
 
     commitTransaction(
@@ -160,7 +162,8 @@ trait ChecksumStatsSuiteBase extends DeltaTableWriteSuiteBase {
         txn.getTransactionState(engine),
         generateDataFileStatus(tablePath, path, fileSize = size),
         Collections.emptyMap(),
-        true /* dataChange */ )
+        true, /* dataChange */
+        Optional.of(TransactionStateRow.getPhysicalSchema(txn.getTransactionState(engine))))
     }.toSeq
 
     commitTransaction(

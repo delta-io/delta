@@ -107,7 +107,7 @@ trait BaseMockParquetHandler extends ParquetHandler with MockEngineUtils {
   override def readParquetFiles(
       fileIter: CloseableIterator[FileStatus],
       physicalSchema: StructType,
-      predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] =
+      predicate: Optional[Predicate]): CloseableIterator[FileReadResult] =
     throw new UnsupportedOperationException("not supported in this test suite")
 
   override def writeParquetFiles(
@@ -189,8 +189,8 @@ class MockReadICTFileJsonHandler(deltaVersionToICTMapping: Map[Long, Long])
 
         override def getColumnVector(ordinal: Int): ColumnVector = {
           val struct = Seq(
-            longVector(ict), /* inCommitTimestamp */
-            longVector(-1L), /* timestamp */
+            longVector(Seq(ict)), /* inCommitTimestamp */
+            longVector(Seq(-1L)), /* timestamp */
             stringVector(Seq("engine")), /* engineInfo */
             stringVector(Seq("operation")), /* operation */
             mapTypeVector(Seq(Map("operationParameter" -> ""))), /* operationParameters */

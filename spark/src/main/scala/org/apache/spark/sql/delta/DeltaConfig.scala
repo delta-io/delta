@@ -24,8 +24,8 @@ import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol, TableFeat
 import org.apache.spark.sql.delta.hooks.AutoCompactType
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.stats.{DataSkippingReader, StatisticsCollection}
-import org.apache.spark.sql.delta.util.JsonUtils
+import org.apache.spark.sql.delta.stats.{DataSkippingReaderConf, StatisticsCollection}
+import org.apache.spark.sql.delta.util.{DeltaSqlParserUtils, JsonUtils}
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.util.{DateTimeConstants, IntervalUtils}
@@ -43,13 +43,32 @@ case class DeltaConfig[T](
     alternateKeys: Seq[String] = Seq.empty) {
   /**
    * Recover the saved value of this configuration from `Metadata`. If undefined, fall back to
-   * alternate keys, returning defaultValue if none match.
+   * alternate keys, returning defaultValue if none matches.
    */
   def fromMetaData(metadata: Metadata): T = {
-    for (usedKey <- key +: alternateKeys) {
-      metadata.configuration.get(usedKey).map { value => return fromString(value) }
+    fromMap(metadata.configuration)
+  }
+
+  /**
+   * Recover the saved value of this configuration from `Metadata`. If undefined, fall back to
+   * alternate keys, returning `None` if none matches.
+   */
+  protected[delta] def fromMetaDataOption(metadata: Metadata): Option[T] = {
+    fromMapOption(metadata.configuration)
+  }
+
+  def fromMap(configs: Map[String, String]): T = {
+    fromMapOption(configs).getOrElse(fromString(defaultValue))
+  }
+
+  protected[delta] def fromMapOption(configs: Map[String, String]): Option[T] = {
+    for (k <- key +: alternateKeys) {
+      configs.get(k) match {
+        case Some(value) => return Some(fromString(value))
+        case None => // keep looking
+      }
     }
-    fromString(defaultValue)
+    None
   }
 
   /** Validate the setting for this configuration */
@@ -137,7 +156,7 @@ trait DeltaConfigsBase extends DeltaLogging {
    */
   val sqlConfPrefix = "spark.databricks.delta.properties.defaults."
 
-  private val entries = new HashMap[String, DeltaConfig[_]]
+  private[delta] val entries = new HashMap[String, DeltaConfig[_]]
 
   protected def buildConfig[T](
       key: String,
@@ -575,7 +594,7 @@ trait DeltaConfigsBase extends DeltaLogging {
    */
   val DATA_SKIPPING_NUM_INDEXED_COLS = buildConfig[Int](
     "dataSkippingNumIndexedCols",
-    DataSkippingReader.DATA_SKIPPING_NUM_INDEXED_COLS_DEFAULT_VALUE.toString,
+    DataSkippingReaderConf.DATA_SKIPPING_NUM_INDEXED_COLS_DEFAULT_VALUE.toString,
     _.toInt,
     a => a >= -1,
     "needs to be larger than or equal to -1.")
@@ -594,7 +613,7 @@ trait DeltaConfigsBase extends DeltaLogging {
     "dataSkippingStatsColumns",
     null,
     v => Option(v),
-    vOpt => vOpt.forall(v => StatisticsCollection.parseDeltaStatsColumnNames(v).isDefined),
+    vOpt => vOpt.forall(v => DeltaSqlParserUtils.parseMultipartColumnList(v).isDefined),
     """
       |The dataSkippingStatsColumns parameter is a comma-separated list of case-insensitive column
       |identifiers. Each column identifier can consist of letters, digits, and underscores.
@@ -724,6 +743,22 @@ trait DeltaConfigsBase extends DeltaLogging {
    */
   val ROW_TRACKING_ENABLED = buildConfig[Boolean](
     key = "enableRowTracking",
+    defaultValue = false.toString,
+    fromString = _.toBoolean,
+    validationFunction = _ => true,
+    helpMessage = "needs to be a boolean.")
+
+  /**
+   * Controls whether row tracking operations should be suspended. It blocks the assignment of new
+   * baseRowIds as well as copying existing baseRowIds. It is intended to be used when dropping
+   * row tracking. It can be enabled after setting `delta.enableRowTracking` to false.
+   *
+   * WARNING 1: Should never be enabled when `delta.enableRowTracking` is set to true.
+   * WARNING 2: It should never be manually set. It is only safe to be used in the context of
+   *            DROP FEATURE.
+   */
+  val ROW_TRACKING_SUSPENDED = buildConfig[Boolean](
+    key = "rowTrackingSuspended",
     defaultValue = false.toString,
     fromString = _.toBoolean,
     validationFunction = _ => true,

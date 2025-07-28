@@ -283,9 +283,10 @@ trait SnapshotManagement { self: DeltaLog =>
       if (DeltaUtils.isTesting) {
         throw new IllegalStateException(
           s"Delta table at $dataPath unexpectedly still requires additional file-system listing " +
-            s"after an additional file-system listing was already performed to reconcile the gap " +
-            s"between concurrent file-system and commit-owner calls. Details: $eventData")
-        }
+          s"after an additional file-system listing was already performed to reconcile the gap " +
+          s"between concurrent file-system and commit-owner calls. Details: $eventData"
+        )
+      }
     }
 
     val finalLogTuplesFromFsListingOpt: Option[Array[(FileStatus, FileType.Value, Long)]] =
@@ -449,7 +450,7 @@ trait SnapshotManagement { self: DeltaLog =>
       }
 
       if (headDeltaVersion != checkpointVersion + 1) {
-        throw DeltaErrors.logFileNotFoundException(
+        throw DeltaErrors.truncatedTransactionLogException(
           unsafeDeltaFile(logPath, checkpointVersion + 1),
           lastDeltaVersion,
           unsafeVolatileMetadata) // metadata is best-effort only
@@ -500,7 +501,7 @@ trait SnapshotManagement { self: DeltaLog =>
       if (newFiles.isEmpty && lastCheckpointVersion < 0) {
         // We can't construct a snapshot because the directory contained no usable commit
         // files... but we can't return None either, because it was not truly empty.
-        throw DeltaErrors.emptyDirectoryException(logPath.toString)
+        throw DeltaErrors.logFileNotFoundException(logPath, versionToLoad, lastCheckpointVersion)
       } else if (newFiles.isEmpty) {
         // The directory may be deleted and recreated and we may have stale state in our DeltaLog
         // singleton, so try listing from the first version
@@ -911,7 +912,10 @@ trait SnapshotManagement { self: DeltaLog =>
     ).getOrElse {
       // This shouldn't be possible right after a commit
       logError(log"No delta log found for the Delta table at ${MDC(DeltaLogKeys.PATH, logPath)}")
-      throw DeltaErrors.emptyDirectoryException(logPath.toString)
+      throw DeltaErrors.logFileNotFoundException(
+        logPath,
+        version = None,
+        checkpointVersion = getCheckpointVersion(None, Some(oldCheckpointProvider)))
     }
   }
 
@@ -1462,7 +1466,10 @@ trait SnapshotManagement { self: DeltaLog =>
       lastCheckpointInfo = lastCheckpointInfoOpt)
     val logSegment = logSegmentOpt.getOrElse {
       // We can't return InitialSnapshot because our caller asked for a specific snapshot version.
-      throw DeltaErrors.emptyDirectoryException(logPath.toString)
+      throw DeltaErrors.logFileNotFoundException(
+        logPath,
+        Some(version),
+        getCheckpointVersion(lastCheckpointInfoOpt, lastCheckpointProviderOpt))
     }
     createSnapshot(
       initSegment = logSegment,

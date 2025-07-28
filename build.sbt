@@ -414,6 +414,24 @@ lazy val connectServer = (project in file("spark-connect/server"))
     Test / envVars += ("DELTA_TESTING", "1"),
   )
 
+lazy val deltaSuiteGenerator = (project in file("spark/delta-suite-generator"))
+  .disablePlugins(ScalafmtPlugin)
+  .settings (
+    name := "delta-suite-generator",
+    commonSettings,
+    scalaStyleSettings,
+    libraryDependencies ++= Seq(
+      "org.scala-lang.modules" %% "scala-collection-compat" % "2.11.0",
+      "org.scalameta" %% "scalameta" % "4.13.5",
+      "org.scalameta" %% "scalafmt-core" % "3.9.6",
+      "commons-cli" % "commons-cli" % "1.9.0",
+      "commons-codec" % "commons-codec" % "1.17.2",
+      "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
+    ),
+    Compile / mainClass := Some("io.delta.suitegenerator.ModularSuiteGenerator"),
+    Test / baseDirectory := (ThisBuild / baseDirectory).value,
+  )
+
 lazy val spark = (project in file("spark"))
   .dependsOn(storage)
   .enablePlugins(Antlr4Plugin)
@@ -593,7 +611,12 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
       "junit" % "junit" % "4.13.2" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
       "org.slf4j" % "slf4j-log4j12" % "1.7.36" % "test",
-      "org.assertj" % "assertj-core" % "3.26.3" % "test"
+      "org.assertj" % "assertj-core" % "3.26.3" % "test",
+      // JMH dependencies allow writing micro-benchmarks for testing performance of components.
+      // JMH has framework to define benchmarks and takes care of many common functionalities
+      // such as warm runs, cold runs, defining benchmark parameter variables etc.
+      "org.openjdk.jmh" % "jmh-core" % "1.37" % "test",
+      "org.openjdk.jmh" % "jmh-generator-annprocess" % "1.37" % "test"
     ),
     // Shade jackson libraries so that connector developers don't have to worry
     // about jackson version conflicts.
@@ -696,6 +719,26 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
       // Unidoc settings
     unidocSourceFilePatterns += SourceFilePattern("io/delta/kernel/"),
   ).configureUnidoc(docTitle = "Delta Kernel Defaults")
+
+lazy val unity = (project in file("unity"))
+  .enablePlugins(ScalafmtPlugin)
+  .dependsOn(kernelApi % "compile->compile;test->test")
+  .dependsOn(kernelDefaults % "test->test")
+  .dependsOn(storage)
+  .settings (
+    name := "delta-unity",
+    commonSettings,
+    javaOnlyReleaseSettings,
+    javafmtCheckSettings,
+    javaCheckstyleSettings("dev/kernel-checkstyle.xml"),
+    scalaStyleSettings,
+    scalafmtCheckSettings,
+    libraryDependencies ++= Seq(
+      "org.apache.hadoop" % "hadoop-common" % hadoopVersion % "provided",
+      "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
+    ),
+    unidocSourceFilePatterns += SourceFilePattern("src/main/java/io/delta/unity/"),
+  ).configureUnidoc()
 
 // TODO javastyle tests
 // TODO unidoc

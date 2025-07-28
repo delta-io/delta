@@ -121,6 +121,8 @@ def test_missing_delta_storage_jar(root_dir, version, use_local):
     delete_if_exists(os.path.expanduser("~/.m2/repository/io/delta/delta-storage"))
     delete_if_exists(os.path.expanduser("~/.ivy2/cache/io.delta/delta-storage"))
     delete_if_exists(os.path.expanduser("~/.ivy2/local/io.delta/delta-storage"))
+    delete_if_exists(os.path.expanduser("~/.ivy2.5.2/local/io.delta/delta-storage"))
+    delete_if_exists(os.path.expanduser("~/.ivy2.5.2/cache/io.delta/delta-storage"))
 
     python_root_dir = path.join(root_dir, "python")
     extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
@@ -377,7 +379,7 @@ def run_unity_catalog_commit_coordinator_integration_tests(root_dir, version, te
 
     python_root_dir = path.join(root_dir, "python")
     extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
-    packages = "io.delta:delta-%s_2.12:%s" % (get_artifact_name(version), version)
+    packages = "io.delta:delta-%s_2.13:%s" % (get_artifact_name(version), version)
     if extra_packages:
         packages += "," + extra_packages
 
@@ -398,8 +400,11 @@ def run_unity_catalog_commit_coordinator_integration_tests(root_dir, version, te
 
 def clear_artifact_cache():
     print("Clearing Delta artifacts from ivy2 and mvn cache")
-    delete_if_exists(os.path.expanduser("~/.ivy2/cache/io.delta"))
-    delete_if_exists(os.path.expanduser("~/.ivy2/local/io.delta"))
+    ivy_caches_to_clear = [filepath for filepath in os.listdir(os.path.expanduser("~")) if filepath.startswith(".ivy")]
+    print(f"Clearing Ivy caches in: {ivy_caches_to_clear}")
+    for filepath in ivy_caches_to_clear:
+        delete_if_exists(os.path.expanduser(f"~/{filepath}/cache/io.delta"))
+        delete_if_exists(os.path.expanduser(f"~/{filepath}/local/io.delta"))
     delete_if_exists(os.path.expanduser("~/.m2/repository/io/delta/"))
 
 

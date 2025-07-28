@@ -256,7 +256,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     checkBooleanVectors(actOutputVector, expOutputVector)
   }
 
-  test("evaluate expression: coalesce") {
+  test("evaluate expression: coalesce (boolean columns)") {
     val col1 = booleanVector(Seq[BooleanJ](true, null, null, null))
     val col2 = booleanVector(Seq[BooleanJ](false, false, null, null))
     val col3 = booleanVector(Seq[BooleanJ](true, true, true, null))
@@ -284,7 +284,63 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     val expOutputVector3 = booleanVector(Seq[BooleanJ](true, false, true, null))
     val actOutputVector3 = evaluator(schema, coalesceEpxr3, BooleanType.BOOLEAN).eval(batch)
     checkBooleanVectors(actOutputVector3, expOutputVector3)
+  }
 
+  test("evaluate expression: coalesce (long columns)") {
+    val longCol1 = longVector(Seq(1L, null, null, 4L))
+    val longCol2 = longVector(Seq(null, 2L, null, 5L))
+    val longCol3 = longVector(Seq(100L, null, 3L, null))
+    val longSchema = new StructType()
+      .add("longCol1", LongType.LONG)
+      .add("longCol2", LongType.LONG)
+      .add("longCol3", LongType.LONG)
+    val longBatch =
+      new DefaultColumnarBatch(longCol1.getSize, longSchema, Array(longCol1, longCol2, longCol3))
+    val longCoalesceExpr = new ScalarExpression(
+      "COALESCE",
+      util.Arrays.asList(new Column("longCol1"), new Column("longCol2"), new Column("longCol3")))
+    val expLongOutput = longVector(Seq(1L, 2L, 3L, 4L))
+    val actLongOutput = evaluator(longSchema, longCoalesceExpr, LongType.LONG).eval(longBatch)
+    checkLongVectors(actLongOutput, expLongOutput)
+  }
+
+  test("evaluate expression: coalesce (string columns)") {
+    val strCol1 = stringVector(Seq("a", null, null, "d"))
+    val strCol2 = stringVector(Seq("null", "b", null, null))
+    val strCol3 = stringVector(Seq(null, null, "c", "abc"))
+    val strSchema = new StructType()
+      .add("strCol1", StringType.STRING)
+      .add("strCol2", StringType.STRING)
+      .add("strCol3", StringType.STRING)
+    val strBatch =
+      new DefaultColumnarBatch(strCol1.getSize, strSchema, Array(strCol1, strCol2, strCol3))
+    val strCoalesceExpr = new ScalarExpression(
+      "COALESCE",
+      util.Arrays.asList(new Column("strCol1"), new Column("strCol2"), new Column("strCol3")))
+    val expStrOutput = stringVector(Seq("a", "b", "c", "d"))
+    val actStrOutput = evaluator(strSchema, strCoalesceExpr, StringType.STRING).eval(strBatch)
+    checkStringVectors(actStrOutput, expStrOutput)
+  }
+
+  test("evaluate expression: coalesce (timestamp columns)") {
+    val tsCol1 = timestampVector(Seq(1000L, null, null, 4000L))
+    val tsCol2 = timestampVector(Seq(null, 2000L, null, 5000L))
+    val tsCol3 = timestampVector(Seq(10000L, null, 3000L, null))
+    val tsSchema = new StructType()
+      .add("tsCol1", TimestampType.TIMESTAMP)
+      .add("tsCol2", TimestampType.TIMESTAMP)
+      .add("tsCol3", TimestampType.TIMESTAMP)
+    val tsBatch =
+      new DefaultColumnarBatch(tsCol1.getSize, tsSchema, Array(tsCol1, tsCol2, tsCol3))
+    val tsCoalesceExpr = new ScalarExpression(
+      "COALESCE",
+      util.Arrays.asList(new Column("tsCol1"), new Column("tsCol2"), new Column("tsCol3")))
+    val expTsOutput = timestampVector(Seq(1000L, 2000L, 3000L, 4000L))
+    val actTsOutput = evaluator(tsSchema, tsCoalesceExpr, TimestampType.TIMESTAMP).eval(tsBatch)
+    checkLongVectors(actTsOutput, expTsOutput)
+  }
+
+  test("evaluate expression: coalesce (unequal column types)") {
     def checkUnsupportedTypes(
         col1Type: DataType,
         col2Type: DataType,
@@ -311,24 +367,110 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       LongType.LONG,
       IntegerType.INTEGER,
       "Coalesce is only supported for arguments of the same type")
-    // TODO support other types besides boolean
-    checkUnsupportedTypes(
-      IntegerType.INTEGER,
-      IntegerType.INTEGER,
-      "Coalesce is only supported for boolean type expressions")
+  }
+
+  test("evaluate expression: ADD (column and literal)") {
+    val col1 = longVector(Seq(1, 2, 3, 4, null))
+    val schema = new StructType().add("col1", LongType.LONG)
+    val batch = new DefaultColumnarBatch(col1.getSize, schema, Array(col1))
+
+    // ADD with literal
+    val addExpr = new ScalarExpression(
+      "ADD",
+      util.Arrays.asList(new Column("col1"), Literal.ofLong(10L)))
+    val expOutputVector = longVector(Seq(11, 12, 13, 14, null))
+    val actOutputVector = evaluator(schema, addExpr, LongType.LONG).eval(batch)
+    checkLongVectors(actOutputVector, expOutputVector)
+  }
+
+  test("evaluate expression: ADD (column and column)") {
+    val col1 = longVector(Seq(1, 2, null, 4, null))
+    val col2 = longVector(Seq(null, 20, 30, 40, null))
+    val schema = new StructType()
+      .add("col1", LongType.LONG)
+      .add("col2", LongType.LONG)
+    val batch = new DefaultColumnarBatch(col1.getSize, schema, Array(col1, col2))
+
+    // ADD with two columns
+    val addExpr = new ScalarExpression(
+      "ADD",
+      util.Arrays.asList(new Column("col1"), new Column("col2")))
+    val expOutputVector = longVector(Seq(null, 22, null, 44, null))
+    val actOutputVector = evaluator(schema, addExpr, LongType.LONG).eval(batch)
+    checkLongVectors(actOutputVector, expOutputVector)
+  }
+
+  test("evaluate expression: ADD (more than two operands)") {
+    val col1 = longVector(Seq(1, 2, null, 4, null))
+    val col2 = longVector(Seq(null, 20, 30, 40, null))
+    val col3 = longVector(Seq(5, null, 15, null, 25))
+    val schema = new StructType()
+      .add("col1", LongType.LONG)
+      .add("col2", LongType.LONG)
+      .add("col3", LongType.LONG)
+    val batch = new DefaultColumnarBatch(col1.getSize, schema, Array(col1, col2, col3))
+
+    // ADD with three columns
+    val addExpr = new ScalarExpression(
+      "ADD",
+      util.Arrays.asList(new Column("col1"), new Column("col2"), new Column("col3")))
+    val e =
+      intercept[UnsupportedOperationException] {
+        evaluator(schema, addExpr, LongType.LONG).eval(batch)
+      }
+    assert(e.getMessage.contains("ADD requires exactly two arguments: left and right operands"))
+  }
+
+  test("evaluate expression: ADD (unequal operand types") {
+    val col1 = longVector(Seq(1, 2, null, 4, null))
+    val col2 = floatVector(Seq(1.0f, 2.0f, 3.0f, 4.0f, null))
+    val schema = new StructType()
+      .add("col1", LongType.LONG)
+      .add("col2", FloatType.FLOAT)
+    val batch = new DefaultColumnarBatch(col1.getSize, schema, Array(col1, col2))
+
+    // ADD with two columns of different types
+    val addExpr = new ScalarExpression(
+      "ADD",
+      util.Arrays.asList(new Column("col1"), new Column("col2")))
+    val e =
+      intercept[UnsupportedOperationException] {
+        evaluator(schema, addExpr, LongType.LONG).eval(batch)
+      }
+    assert(e.getMessage.contains("ADD is only supported for arguments of the same type"))
+  }
+
+  test("evaluate expression: ADD (unsupported types)") {
+    val col1 = stringVector(Seq("a", "b", null, "d", null))
+    val col2 = stringVector(Seq("x", "y", "z", "w", null))
+    val schema = new StructType()
+      .add("col1", StringType.STRING)
+      .add("col2", StringType.STRING)
+    val batch = new DefaultColumnarBatch(col1.getSize, schema, Array(col1, col2))
+
+    // ADD with two columns of unsupported types
+    val addExpr = new ScalarExpression(
+      "ADD",
+      util.Arrays.asList(new Column("col1"), new Column("col2")))
+    val e =
+      intercept[UnsupportedOperationException] {
+        evaluator(schema, addExpr, StringType.STRING).eval(batch)
+      }
+    assert(e.getMessage.contains(
+      "ADD is only supported for numeric types: byte, short, int, long, float, double"))
   }
 
   test("evaluate expression: TIMEADD with TIMESTAMP columns") {
-    val timestampColumn = timestampVector(Seq[Long](
+    val timestampColumn = timestampVector(Seq(
       1577836800000000L, // 2020-01-01 00:00:00.000
       1577836800123456L, // 2020-01-01 00:00:00.123456
       -1 // Representing null
     ))
 
-    val durationColumn = longVector(Seq[Long](
+    val durationColumn = longVector(Seq(
       1000, // 1 second in milliseconds
       100, // 0.1 second in milliseconds
-      -1): _*)
+      -1))
 
     val schema = new StructType()
       .add("timestamp", TimestampType.TIMESTAMP)
@@ -344,13 +486,11 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       "TIMEADD",
       util.Arrays.asList(new Column("timestamp"), new Column("duration")))
 
-    val expectedTimestamps = Seq[Long](
+    val expOutputVector = timestampVector(Seq(
       1577836801000000L, // 2020-01-01 00:00:01.000
       1577836800123456L + 100000, // 2020-01-01 00:00:00.123556
       -1 // Null should propagate
-    )
-
-    val expOutputVector = timestampVector(expectedTimestamps)
+    ))
     val actOutputVector = evaluator(schema, timeAddExpr, TimestampType.TIMESTAMP).eval(batch)
 
     checkTimestampVectors(actOutputVector, expOutputVector)

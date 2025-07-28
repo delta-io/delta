@@ -16,6 +16,10 @@
 
 package org.apache.spark.sql.delta.uniform
 
+import scala.collection.mutable
+
+import org.apache.spark.sql.delta._
+
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.types._
 
@@ -28,87 +32,134 @@ abstract class UniFormE2EIcebergSuiteBase extends UniFormE2ETest {
 
   val testTableName = "delta_table"
 
-  test("Basic Insert") {
-    withTable(testTableName) {
-      write(
-        s"""CREATE TABLE $testTableName (col1 INT) USING DELTA
-           |TBLPROPERTIES (
-           |  'delta.columnMapping.mode' = 'name',
-           |  'delta.enableIcebergCompatV1' = 'true',
-           |  'delta.universalFormat.enabledFormats' = 'iceberg'
-           |)""".stripMargin)
-      write(s"INSERT INTO $testTableName VALUES (123)")
-      readAndVerify(testTableName, "col1", "col1", Seq(Row(123)))
+  var compatVersions: Seq[Int] = Seq(1, 2)
+
+  def extraTableProperties(compatVersion: Int): String = {
+    val extraProps = mutable.HashMap[String, String]()
+    val compat = IcebergCompat.getForVersion(compatVersion)
+
+    if (compat.incompatibleTableFeatures.contains(DeletionVectorsTableFeature)) {
+      extraProps.put(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key, "false")
+    }
+
+    extraProps.map(pair => s", '${pair._1}' = '${pair._2}'").mkString(" ")
+  }
+
+  compatVersions.foreach { compatVersion =>
+    test(s"Basic Insert - compatV$compatVersion") {
+      withTable(testTableName) {
+        write(
+          s"""CREATE TABLE $testTableName (col1 INT) USING DELTA
+             |TBLPROPERTIES (
+             |  'delta.columnMapping.mode' = 'name',
+             |  'delta.enableIcebergCompatV$compatVersion' = 'true',
+             |  'delta.universalFormat.enabledFormats' = 'iceberg'
+             |  ${extraTableProperties(compatVersion)}
+             |)""".stripMargin)
+        write(s"INSERT INTO $testTableName VALUES (123)")
+        readAndVerify(testTableName, "col1", "col1", Seq(Row(123)))
+      }
     }
   }
 
-  test("CIUD") {
-    withTable(testTableName) {
-      write(
-        s"""CREATE TABLE `$testTableName` (col1 INT) USING DELTA
-           |TBLPROPERTIES (
-           |  'delta.columnMapping.mode' = 'name',
-           |  'delta.enableIcebergCompatV1' = 'true',
-           |  'delta.universalFormat.enabledFormats' = 'iceberg'
-           |)""".stripMargin)
-      write(s"INSERT INTO `$testTableName` VALUES (123),(456),(567),(331)")
-      write(s"UPDATE `$testTableName` SET col1 = 191 WHERE col1 = 567")
-      write(s"DELETE FROM `$testTableName` WHERE col1 = 456")
-
-      readAndVerify(testTableName, "col1", "col1", Seq(Row(123), Row(191), Row(331)))
+  compatVersions.foreach { compatVersion =>
+    test(s"CIUD - compatV$compatVersion") {
+      withTable(testTableName) {
+        write(
+          s"""CREATE TABLE `$testTableName` (col1 INT) USING DELTA
+             |TBLPROPERTIES (
+             |  'delta.columnMapping.mode' = 'name',
+             |  'delta.enableIcebergCompatV$compatVersion' = 'true',
+             |  'delta.universalFormat.enabledFormats' = 'iceberg'
+             |  ${extraTableProperties(compatVersion)}
+             |)""".stripMargin)
+        write(s"INSERT INTO `$testTableName` VALUES (123),(456),(567),(331)")
+        readAndVerify(testTableName, "col1", "col1", Seq(Row(123), Row(331), Row(456), Row(567)))
+        write(s"UPDATE `$testTableName` SET col1 = 191 WHERE col1 = 567")
+        readAndVerify(testTableName, "col1", "col1", Seq(Row(123), Row(191), Row(331), Row(456)))
+        write(s"DELETE FROM `$testTableName` WHERE col1 = 456")
+        readAndVerify(testTableName, "col1", "col1", Seq(Row(123), Row(191), Row(331)))
+      }
     }
   }
 
-  test("Nested struct schema test") {
-    withTable(testTableName) {
-      write(s"""CREATE TABLE $testTableName
-           | (col1 INT, col2 STRUCT<f1: STRUCT<f2: INT, f3: STRUCT<f4: INT, f5: INT>
-           | , f6: INT>, f7: INT>) USING DELTA
-           |TBLPROPERTIES (
-           |  'delta.columnMapping.mode' = 'name',
-           |  'delta.enableIcebergCompatV1' = 'true',
-           |  'delta.universalFormat.enabledFormats' = 'iceberg'
-           |)""".stripMargin)
+  compatVersions.foreach { compatVersion =>
+    test(s"CTAS - compatV$compatVersion") {
+      withTable(testTableName, "source") {
+        write("CREATE TABLE source (col1 INT) USING DELTA")
+        write("INSERT INTO source VALUES (1), (2), (3)")
+        write(
+          s"""CREATE TABLE `$testTableName` USING DELTA
+             |TBLPROPERTIES (
+             |  'delta.columnMapping.mode' = 'name',
+             |  'delta.enableIcebergCompatV$compatVersion' = 'true',
+             |  'delta.universalFormat.enabledFormats' = 'iceberg'
+             |  ${extraTableProperties(compatVersion)}
+             |) AS SELECT col1 FROM source""".stripMargin)
+        readAndVerify(testTableName, "col1", "col1", Seq(Row(1), Row(2), Row(3)))
+        write(s"UPDATE `$testTableName` SET col1 = 100 WHERE col1 = 1")
+        readAndVerify(testTableName, "col1", "col1", Seq(Row(2), Row(3), Row(100)))
+        write(s"DELETE FROM `$testTableName` WHERE col1 = 3")
+        readAndVerify(testTableName, "col1", "col1", Seq(Row(2), Row(100)))
+      }
+    }
+  }
 
-      val data = Seq(
-        Row(1, Row(Row(2, Row(3, 4), 5), 6))
-      )
+  compatVersions.foreach { compatVersion =>
+    test(s"Nested struct schema test - compatV$compatVersion") {
+      withTable(testTableName) {
+        write(
+          s"""CREATE TABLE $testTableName
+             | (col1 INT, col2 STRUCT<f1: STRUCT<f2: INT, f3: STRUCT<f4: INT, f5: INT>
+             | , f6: INT>, f7: INT>) USING DELTA
+             |TBLPROPERTIES (
+             |  'delta.columnMapping.mode' = 'name',
+             |  'delta.enableIcebergCompatV$compatVersion' = 'true',
+             |  'delta.universalFormat.enabledFormats' = 'iceberg'
+             |  ${extraTableProperties(compatVersion)}
+             |)""".stripMargin)
 
-      val innerStruct3 = StructType(
+        val data = Seq(
+          Row(1, Row(Row(2, Row(3, 4), 5), 6))
+        )
+
+        val innerStruct3 = StructType(
           StructField("f4", IntegerType) ::
             StructField("f5", IntegerType) :: Nil)
 
-      val innerStruct2 = StructType(
-        StructField("f2", IntegerType) ::
-          StructField("f3", innerStruct3) ::
-          StructField("f6", IntegerType) :: Nil)
+        val innerStruct2 = StructType(
+          StructField("f2", IntegerType) ::
+            StructField("f3", innerStruct3) ::
+            StructField("f6", IntegerType) :: Nil)
 
-      val innerStruct = StructType(
-        StructField("f1", innerStruct2) ::
-          StructField("f7", IntegerType) :: Nil)
+        val innerStruct = StructType(
+          StructField("f1", innerStruct2) ::
+            StructField("f7", IntegerType) :: Nil)
 
-      val schema = StructType(
-        StructField("col1", IntegerType) ::
-          StructField("col2", innerStruct) :: Nil)
+        val schema = StructType(
+          StructField("col1", IntegerType) ::
+            StructField("col2", innerStruct) :: Nil)
 
-      val tableFullName = tableNameForRead(testTableName)
+        val tableFullName = tableNameForRead(testTableName)
 
-      spark.createDataFrame(spark.sparkContext.parallelize(data), schema)
-        .write.format("delta").mode("append")
-        .saveAsTable(testTableName)
+        spark.createDataFrame(spark.sparkContext.parallelize(data), schema)
+          .write.format("delta").mode("append")
+          .saveAsTable(testTableName)
 
-      readAndVerify(tableFullName, "col1, col2", "col1", data)
+        readAndVerify(tableFullName, "col1, col2", "col1", data)
+      }
     }
   }
 
-  test("Re-enable test") {
+  test("reorg from v1 to v2") {
     withTable(testTableName) {
       write(
         s"""CREATE TABLE $testTableName (col1 INT) USING DELTA
            |TBLPROPERTIES (
            |  'delta.columnMapping.mode' = 'name',
            |  'delta.enableIcebergCompatV1' = 'true',
-           |  'delta.universalFormat.enabledFormats' = 'iceberg'
+           |  'delta.universalFormat.enabledFormats' = 'iceberg',
+           |  'delta.enableDeletionVectors' = 'false'
            |)""".stripMargin)
       write(s"INSERT INTO $testTableName VALUES (1)")
       readAndVerify(testTableName, "col1", "col1", Seq(Row(1)))

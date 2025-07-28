@@ -38,11 +38,12 @@ import com.fasterxml.jackson.module.scala.DefaultScalaModule
 import io.delta.tables.{DeltaTable => IODeltaTable}
 import org.apache.hadoop.fs.FileStatus
 import org.apache.hadoop.fs.Path
-import org.scalatest.BeforeAndAfterEach
+import org.scalactic.source.Position
+import org.scalatest.{BeforeAndAfterEach, Tag}
 
 import org.apache.spark.{SparkContext, SparkFunSuite, SparkThrowable}
 import org.apache.spark.scheduler.{JobFailed, SparkListener, SparkListenerJobEnd, SparkListenerJobStart}
-import org.apache.spark.sql.{AnalysisException, DataFrame, SparkSession}
+import org.apache.spark.sql.{AnalysisException, DataFrame, DataFrameWriter, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.util.{quietly, FailFastMode}
@@ -53,10 +54,15 @@ import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.util.QueryExecutionListener
 import org.apache.spark.util.Utils
 
+object DeltaTestUtilsBase {
+  final val BOOLEAN_DOMAIN: Seq[Boolean] = Seq(true, false)
+}
+
 trait DeltaTestUtilsBase {
   import DeltaTestUtils.TableIdentifierOrPath
 
-  final val BOOLEAN_DOMAIN: Seq[Boolean] = Seq(true, false)
+  // Re-define here to avoid the need to import it before using
+  final def BOOLEAN_DOMAIN: Seq[Boolean] = DeltaTestUtilsBase.BOOLEAN_DOMAIN
 
   class PlanCapturingListener() extends QueryExecutionListener {
 
@@ -568,23 +574,15 @@ trait DeltaDMLTestUtils
 
   import testImplicits._
 
-  protected var tempDir: File = _
-
   protected var deltaLog: DeltaLog = _
 
-  protected def tempPath: String = tempDir.getCanonicalPath
+  protected def tableSQLIdentifier: String
 
-  override protected def beforeEach(): Unit = {
-    super.beforeEach()
-    // Using a space in path to provide coverage for special characters.
-    tempDir = Utils.createTempDir(namePrefix = "spark test")
-    deltaLog = DeltaLog.forTable(spark, new Path(tempPath))
-  }
+  protected def dropTable(): Unit
 
   override protected def afterEach(): Unit = {
     try {
-      Utils.deleteRecursively(tempDir)
-      DeltaLog.clearCache()
+      dropTable()
     } finally {
       super.afterEach()
     }
@@ -595,7 +593,7 @@ trait DeltaDMLTestUtils
     if (partitionBy.nonEmpty) {
       dfw.partitionBy(partitionBy: _*)
     }
-    dfw.save(tempPath)
+    writeTable(dfw, tableSQLIdentifier)
   }
 
   protected def withKeyValueData(
@@ -612,7 +610,7 @@ trait DeltaDMLTestUtils
       if (isKeyPartitioned) Seq(targetKeyValueNames._1) else Nil)
     withTempView("source") {
       source.toDF(sourceKeyValueNames._1, sourceKeyValueNames._2).createOrReplaceTempView("source")
-      thunk("source", s"delta.`$tempPath`")
+      thunk("source", tableSQLIdentifier)
     }
   }
 
@@ -633,11 +631,27 @@ trait DeltaDMLTestUtils
     }
   }
 
-  protected def readDeltaTable(path: String): DataFrame = {
-    spark.read.format("delta").load(path)
+  /**
+   * Reads a delta table by its identifier. The identifier can either be the table name or table
+   * path that is in the form of delta.`tablePath`.
+   */
+  protected def readDeltaTableByIdentifier(
+      tableIdentifier: String = tableSQLIdentifier): DataFrame = {
+    spark.read.format("delta").table(tableIdentifier)
   }
 
-  protected def getDeltaFileStmt(path: String): String = s"SELECT * FROM delta.`$path`"
+  protected def writeTable[T](dfw: DataFrameWriter[T], tableName: String): Unit = {
+    import DeltaTestUtils.TableIdentifierOrPath
+
+    getTableIdentifierOrPath(tableName) match {
+      case TableIdentifierOrPath.Identifier(id, _) => dfw.saveAsTable(id.toString)
+      // A cleaner way to write this is to just use `saveAsTable` where the
+      // table name is delta.`path`. However, it will throw an error when
+      // we use "append" mode and the table does not exist, so we use `save`
+      // here instead.
+      case TableIdentifierOrPath.Path(path, _) => dfw.save(path)
+    }
+  }
 
   /**
    * Finds the latest operation of the given type that ran on the test table and returns the
@@ -663,5 +677,68 @@ trait DeltaDMLTestUtils
         spark)
       .drop(CDCReader.CDC_COMMIT_TIMESTAMP)
       .drop(CDCReader.CDC_COMMIT_VERSION)
+  }
+}
+
+trait DeltaDMLTestUtilsPathBased extends DeltaDMLTestUtils {
+  self: SharedSparkSession =>
+
+  protected var tempDir: File = _
+
+  protected def tempPath: String = tempDir.getCanonicalPath
+
+  override protected def beforeEach(): Unit = {
+    super.beforeEach()
+    // Using a space in path to provide coverage for special characters.
+    tempDir = Utils.createTempDir(namePrefix = "spark test")
+    deltaLog = DeltaLog.forTable(spark, tempPath)
+  }
+
+  override protected def tableSQLIdentifier: String = s"delta.`$tempPath`"
+
+  protected def readDeltaTable(path: String): DataFrame = {
+    spark.read.format("delta").load(path)
+  }
+
+  override protected def dropTable(): Unit = {
+    Utils.deleteRecursively(tempDir)
+    deltaLog = null
+    DeltaLog.clearCache()
+  }
+}
+
+/**
+ * Represents a test that is incompatible with name-based table access
+ */
+case object NameBasedAccessIncompatible extends Tag("NameBasedAccessIncompatible")
+
+trait DeltaDMLTestUtilsNameBased extends DeltaDMLTestUtils {
+  self: SharedSparkSession =>
+
+  override protected def test(testName: String, testTags: Tag*)(testFun: => Any)(
+      implicit pos: Position): Unit = {
+    if (testTags.contains(NameBasedAccessIncompatible)) {
+      super.ignore(testName, testTags: _*)(testFun)
+    } else {
+      super.test(testName, testTags: _*)(testFun)
+    }
+  }
+
+  override protected def append(df: DataFrame, partitionBy: Seq[String] = Nil): Unit = {
+    super.append(df, partitionBy)
+    if (deltaLog == null) {
+      deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableSQLIdentifier))
+    }
+  }
+
+  // Keep this all lowercase. Otherwise, for tests with spark.sql.caseSensitive set to
+  // true, the table name used for dropping the table will not match the created table
+  // name, causing the table not being dropped.
+  override protected def tableSQLIdentifier: String = "test_delta_table"
+
+  override protected def dropTable(): Unit = {
+    spark.sql(s"DROP TABLE IF EXISTS $tableSQLIdentifier")
+    deltaLog = null
+    DeltaLog.clearCache()
   }
 }

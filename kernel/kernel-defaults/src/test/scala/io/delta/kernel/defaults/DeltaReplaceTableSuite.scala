@@ -18,7 +18,7 @@ package io.delta.kernel.defaults
 import scala.collection.JavaConverters._
 import scala.collection.immutable.Seq
 
-import io.delta.kernel.{Operation, Table, Transaction, TransactionBuilder}
+import io.delta.kernel.{Operation, Table, Transaction, TransactionBuilder, TransactionCommitResult}
 import io.delta.kernel.data.FilteredColumnarBatch
 import io.delta.kernel.defaults.utils.TestRow
 import io.delta.kernel.engine.Engine
@@ -205,7 +205,8 @@ trait DeltaReplaceTableSuiteBase extends DeltaTableWriteSuiteBase {
       transactionId: Option[(String, Long)] = None,
       tableProperties: Map[String, String] = Map.empty,
       domainsToAdd: Seq[(String, String)] = Seq.empty,
-      data: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])] = Seq.empty): Unit = {
+      data: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])] = Seq.empty)
+      : TransactionCommitResult = {
 
     val txn = getReplaceTransaction(
       engine,
@@ -237,7 +238,7 @@ trait DeltaReplaceTableSuiteBase extends DeltaTableWriteSuiteBase {
     val oldProtocol = getProtocol(engine, tablePath)
     val wasClusteredTable = oldProtocol.supportsFeature(TableFeatures.CLUSTERING_W_FEATURE)
 
-    commitReplaceTable(
+    val commitResult = commitReplaceTable(
       engine,
       tablePath,
       schema,
@@ -247,6 +248,7 @@ trait DeltaReplaceTableSuiteBase extends DeltaTableWriteSuiteBase {
       tableProperties,
       domainsToAdd,
       data)
+    assertCommitResultHasClusteringCols(commitResult, clusteringColumns.getOrElse(Seq.empty))
 
     verifyWrittenContent(
       tablePath,
@@ -483,29 +485,39 @@ class DeltaReplaceTableSuite extends DeltaReplaceTableSuiteBase {
     }
   }
 
-  test("REPLACE is not supported on existing table with rowTracking feature") {
+  test("REPLACE is not supported on existing table with icebergCompatV3 feature") {
     withTempDirAndEngine { (tablePath, engine) =>
       createInitialTable(
         engine,
         tablePath,
-        tableProperties = Map("delta.feature.rowTracking" -> "supported"))
+        tableProperties = Map(TableConfig.ICEBERG_COMPAT_V3_ENABLED.getKey -> "true"),
+        includeData = false // To avoid writing data with correct CM schema
+      )
       assert(
         intercept[UnsupportedOperationException] {
           commitReplaceTable(engine, tablePath)
-        }.getMessage.contains("REPLACE TABLE is not yet supported on row tracking tables"))
+        }.getMessage.contains("REPLACE TABLE is not yet supported on IcebergCompatV3 tables"))
     }
   }
 
-  test("REPLACE is not supported when enabling rowTracking feature") {
+  test("REPLACE is not supported when enabling icebergCompatV3 feature") {
     withTempDirAndEngine { (tablePath, engine) =>
-      createInitialTable(engine, tablePath)
+      createInitialTable(
+        engine,
+        tablePath,
+        tableProperties = Map(
+          TableConfig.COLUMN_MAPPING_MODE.getKey -> "name"),
+        includeData = false // To avoid writing data with correct CM schema
+      )
       assert(
         intercept[UnsupportedOperationException] {
           commitReplaceTable(
             engine,
             tablePath,
-            tableProperties = Map("delta.feature.rowTracking" -> "supported"))
-        }.getMessage.contains("REPLACE TABLE is not yet supported on row tracking tables"))
+            tableProperties = Map(
+              TableConfig.ICEBERG_COMPAT_V3_ENABLED.getKey -> "true",
+              TableConfig.COLUMN_MAPPING_MODE.getKey -> "name"))
+        }.getMessage.contains("REPLACE TABLE is not yet supported on IcebergCompatV3 tables"))
     }
   }
 

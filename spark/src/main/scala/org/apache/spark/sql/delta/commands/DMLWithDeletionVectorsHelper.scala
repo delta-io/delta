@@ -310,7 +310,7 @@ object DeletionVectorBitmapGenerator {
     spark: SparkSession,
     target: DataFrame,
     targetDeltaLog: DeltaLog,
-    deltaTxn: OptimisticTransaction) {
+    prefixLen: Int) {
 
     case object CardinalityAndBitmapStruct {
       val name: String = "CardinalityAndBitmapStruct"
@@ -350,7 +350,6 @@ object DeletionVectorBitmapGenerator {
 
     protected def bitmapStorageMapper()
       : Iterator[DeletionVectorData] => Iterator[DeletionVectorResult] = {
-      val prefixLen = DeltaUtils.getRandomPrefixLength(deltaTxn.metadata)
       DeletionVectorWriter.createMapperToStoreDeletionVectors(
         spark,
         targetDeltaLog.newDeltaHadoopConf(),
@@ -371,20 +370,34 @@ object DeletionVectorBitmapGenerator {
       spark: SparkSession,
       target: DataFrame,
       targetDeltaLog: DeltaLog,
-      deltaTxn: OptimisticTransaction): Seq[DeletionVectorResult] = {
-    val rowIndexSet = new DeletionVectorSet(spark, target, targetDeltaLog, deltaTxn)
+      prefixLen: Int): Seq[DeletionVectorResult] = {
+    val rowIndexSet = new DeletionVectorSet(spark, target, targetDeltaLog, prefixLen)
     rowIndexSet.computeResult()
   }
 
+  /**
+   * Build a dataframe to find filtered rows with metadata (e.g., file name, row index and
+   * existing DV) from candidate files for DV update.
+   *
+   * @param sparkSession the active spark session
+   * @param tablePath table path of candidate files, used to absolutize path
+   * @param tableHasDVs whether table has DV enabled
+   * @param targetDf a scan of candidate files, whose attribute reference matches 'condition'
+   * @param candidateFiles candidate files to be scanned, used to get existing DVs.
+   * @param condition filter to be applied, whose attribute reference matches 'targetDf'
+   * @param fileNameColumnOpt optional overwrite of file name column name
+   * @param rowIndexColumnOpt optional overwrite of row index column name
+   * @return a dataframe containing filtered rows with corresponding metadata for DV update.
+   */
   def buildRowIndexSetsForFilesMatchingCondition(
       sparkSession: SparkSession,
-      txn: OptimisticTransaction,
+      tablePath: String,
       tableHasDVs: Boolean,
       targetDf: DataFrame,
       candidateFiles: Seq[AddFile],
       condition: Expression,
-      fileNameColumnOpt: Option[Column] = None,
-      rowIndexColumnOpt: Option[Column] = None): Seq[DeletionVectorResult] = {
+      fileNameColumnOpt: Option[Column],
+      rowIndexColumnOpt: Option[Column]): DataFrame = {
     val useMetadataRowIndexConf = DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX
     val useMetadataRowIndex = sparkSession.sessionState.conf.getConf(useMetadataRowIndexConf)
     val fileNameColumn = fileNameColumnOpt.getOrElse(col(s"${METADATA_NAME}.${FILE_PATH}"))
@@ -400,15 +413,14 @@ object DeletionVectorBitmapGenerator {
       .filter(Column(condition))
       .withColumn(ROW_INDEX_COL, rowIndexColumn)
 
-    val df = if (tableHasDVs) {
+    if (tableHasDVs) {
       // When the table already has DVs, join the `matchedRowDf` above to attach for each matched
       // file its existing DeletionVectorDescriptor
-      val basePath = txn.deltaLog.dataPath.toString
       val filePathToDV = candidateFiles.map { add =>
         val serializedDV = Option(add.deletionVector).map(_.serializeToBase64())
         // Paths in the metadata column are canonicalized. Thus we must canonicalize the DV path.
         FileToDvDescriptor(
-          SparkPath.fromPath(absolutePath(basePath, add.path)).urlEncoded,
+          SparkPath.fromPath(absolutePath(tablePath, add.path)).urlEncoded,
           serializedDV)
       }
       val filePathToDVDf = sparkSession.createDataset(filePathToDV)
@@ -425,8 +437,32 @@ object DeletionVectorBitmapGenerator {
       // When the table has no DVs, just add a column to indicate that the existing dv is null
       matchedRowsDf.withColumn(FILE_DV_ID_COL, lit(null))
     }
+  }
 
-    DeletionVectorBitmapGenerator.buildDeletionVectors(sparkSession, df, txn.deltaLog, txn)
+  /** The same as above, except it also updates DVs for the table using the dataframe. */
+  def buildRowIndexSetsForFilesMatchingCondition(
+      sparkSession: SparkSession,
+      txn: OptimisticTransaction,
+      tableHasDVs: Boolean,
+      targetDf: DataFrame,
+      candidateFiles: Seq[AddFile],
+      condition: Expression,
+      fileNameColumnOpt: Option[Column] = None,
+      rowIndexColumnOpt: Option[Column] = None): Seq[DeletionVectorResult] = {
+
+    val df = buildRowIndexSetsForFilesMatchingCondition(
+      sparkSession,
+      txn.deltaLog.dataPath.toString,
+      tableHasDVs,
+      targetDf,
+      candidateFiles,
+      condition,
+      fileNameColumnOpt,
+      rowIndexColumnOpt
+    )
+
+    DeletionVectorBitmapGenerator.buildDeletionVectors(
+      sparkSession, df, txn.deltaLog, DeltaUtils.getRandomPrefixLength(txn.metadata))
   }
 }
 

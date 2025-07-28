@@ -17,8 +17,8 @@ package io.delta.kernel.internal.types
 
 import java.util.HashMap
 
+import scala.collection.JavaConverters._
 import scala.reflect.ClassTag
-import scala.util.control.Breaks.break
 
 import io.delta.kernel.types._
 
@@ -33,10 +33,7 @@ class DataTypeJsonSerDeSuite extends AnyFunSuite {
   private val objectMapper = new ObjectMapper()
 
   private def parse(json: String): DataType = {
-    DataTypeJsonSerDe.parseDataType(
-      objectMapper.readTree(json),
-      "", /* fieldPath */
-      new FieldMetadata.Builder().build() /* collation field metadata */ )
+    DataTypeJsonSerDe.parseDataType(objectMapper.readTree(json))
   }
 
   private def serialize(dataType: DataType): String = {
@@ -166,6 +163,197 @@ class DataTypeJsonSerDeSuite extends AnyFunSuite {
       .add("a1", new StringType("ICU.UNICODE"), true)
 
     assert(!(parse(json) === dataType))
+  }
+
+  test("serialize/deserialize: round-trip type changes metadata") {
+    // Test cases for various type changes based on Delta Protocol specification
+
+    // Case 1: Simple type widening (short -> integer -> long)
+    val simpleTypeChangeJson = structTypeJson(Seq(
+      structFieldJson(
+        "e",
+        "\"long\"",
+        true,
+        metadataJson = Some(
+          """{
+            |"delta.typeChanges": [
+            |  {
+            |    "fromType": "short",
+            |    "toType": "integer"
+            |  },
+            |  {
+            |    "fromType": "integer",
+            |    "toType": "long"
+            |  }
+            |]
+            |}""".stripMargin))))
+
+    val simpleTypeChangeDataType = new StructType()
+      .add(new StructField("e", LongType.LONG, true).withTypeChanges(
+        Seq(
+          new TypeChange(ShortType.SHORT, IntegerType.INTEGER),
+          new TypeChange(IntegerType.INTEGER, LongType.LONG)).asJava))
+
+    testRoundTrip(simpleTypeChangeJson, simpleTypeChangeDataType)
+
+    // Case 2: Map key type change (float -> double)
+    val mapKeyTypeChangeJson = structTypeJson(Seq(
+      structFieldJson(
+        "e",
+        mapTypeJson("\"double\"", "\"integer\"", true),
+        true,
+        metadataJson = Some(
+          """{
+            |"delta.typeChanges": [
+            |  {
+            |    "fromType": "float",
+            |    "toType": "double",
+            |    "fieldPath": "key"
+            |  }
+            |]
+            |}""".stripMargin))))
+
+    val mapKeyTypeChangeDataType = new StructType()
+      .add(new StructField(
+        "e",
+        new MapType(
+          new StructField("key", DoubleType.DOUBLE, false)
+            .withTypeChanges(Seq(new TypeChange(FloatType.FLOAT, DoubleType.DOUBLE)).asJava),
+          new StructField("value", IntegerType.INTEGER, true)),
+        true))
+
+    testRoundTrip(mapKeyTypeChangeJson, mapKeyTypeChangeDataType)
+
+    // Case 3: Nested map value in array type change (decimal scale change)
+    val nestedTypeChangeJson = structTypeJson(Seq(
+      structFieldJson(
+        "e",
+        arrayTypeJson(
+          mapTypeJson("\"string\"", "\"decimal(10,4)\"", true),
+          true),
+        true,
+        metadataJson = Some(
+          """{
+            |"delta.typeChanges": [
+            |  {
+            |    "fromType": "decimal(6,2)",
+            |    "toType": "decimal(10,4)",
+            |    "fieldPath": "element.value"
+            |  }
+            |]
+            |}""".stripMargin))))
+
+    val nestedTypeChangeDataType = new StructType()
+      .add(
+        "e",
+        new ArrayType(
+          new MapType(
+            new StructField("key", StringType.STRING, false),
+            new StructField("value", new DecimalType(10, 4), true)
+              .withTypeChanges(
+                Seq(new TypeChange(new DecimalType(6, 2), new DecimalType(10, 4))).asJava)),
+          true),
+        true)
+
+    testRoundTrip(nestedTypeChangeJson, nestedTypeChangeDataType)
+
+    // Case 4: Combined type changes and collations
+    val combinedJson = structTypeJson(Seq(
+      structFieldJson(
+        "tags",
+        mapTypeJson("\"string\"", "\"string\"", false),
+        true,
+        metadataJson = Some(
+          s"""{
+             |"$COLLATIONS_METADATA_KEY": {
+             |  "tags.key": "SPARK.UTF8_LCASE",
+             |  "tags.value": "ICU.UNICODE"
+             |},
+             |"delta.typeChanges": [
+             |  {
+             |    "fromType": "binary",
+             |    "toType": "string",
+             |    "fieldPath": "value"
+             |  }
+             |]
+             |}""".stripMargin))))
+
+    val combinedDataType = new StructType()
+      .add(
+        "tags",
+        new MapType(
+          new StructField("key", new StringType("SPARK.UTF8_LCASE"), false),
+          new StructField("value", new StringType("ICU.UNICODE"), false)
+            .withTypeChanges(Seq(new TypeChange(BinaryType.BINARY, StringType.STRING)).asJava)),
+        true)
+
+    testRoundTrip(combinedJson, combinedDataType)
+
+    // Case 5: Deeply nested maps
+    val deeplyNestedMapJson = structTypeJson(Seq(
+      structFieldJson(
+        "tags",
+        mapTypeJson(
+          /* key= */ mapTypeJson("\"integer\"", "\"integer\"", false),
+          /* value= */ mapTypeJson("\"long\"", "\"long\"", false),
+          false),
+        true,
+        metadataJson = Some(
+          s"""{
+             |"delta.typeChanges": [
+             |  {
+             |    "fromType": "byte",
+             |    "toType": "integer",
+             |    "fieldPath": "key.key"
+             |  },
+             |  {
+             |    "fromType": "byte",
+             |    "toType": "short",
+             |    "fieldPath": "key.value"
+             |  },
+             |  {
+             |    "fromType": "short",
+             |    "toType": "integer",
+             |    "fieldPath": "key.value"
+             |  },
+             |  {
+             |    "fromType": "short",
+             |    "toType": "long",
+             |    "fieldPath": "value.key"
+             |  },
+             |  {
+             |    "fromType": "byte",
+             |    "toType": "long",
+             |    "fieldPath": "value.value"
+             |  }]
+             |}""".stripMargin))))
+
+    val deeplyNestedMapType = new StructType()
+      .add(
+        "tags",
+        new MapType(
+          new StructField(
+            "key",
+            new MapType(
+              new StructField("key", IntegerType.INTEGER, false)
+                .withTypeChanges(Seq(new TypeChange(ByteType.BYTE, IntegerType.INTEGER)).asJava),
+              new StructField("value", IntegerType.INTEGER, false)
+                .withTypeChanges(
+                  Seq(
+                    new TypeChange(ByteType.BYTE, ShortType.SHORT),
+                    new TypeChange(ShortType.SHORT, IntegerType.INTEGER)).asJava)),
+            false),
+          new StructField(
+            "value",
+            new MapType(
+              new StructField("key", LongType.LONG, false)
+                .withTypeChanges(Seq(new TypeChange(ShortType.SHORT, LongType.LONG)).asJava),
+              new StructField("value", LongType.LONG, false)
+                .withTypeChanges(Seq(new TypeChange(ByteType.BYTE, LongType.LONG)).asJava)),
+            false)),
+        true);
+
+    testRoundTrip(deeplyNestedMapJson, deeplyNestedMapType)
   }
 
   test("serialize/deserialize: special characters for column name") {

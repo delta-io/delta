@@ -16,13 +16,17 @@
 package io.delta.kernel.internal.util;
 
 import static io.delta.kernel.internal.DeltaErrors.columnNotFoundInSchema;
+import static io.delta.kernel.internal.data.TransactionStateRow.getColumnMappingMode;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Collections.singletonMap;
 
+import io.delta.kernel.data.Row;
 import io.delta.kernel.exceptions.InvalidConfigurationValueException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
+import io.delta.kernel.internal.data.TransactionStateRow;
+import io.delta.kernel.internal.icebergcompat.IcebergCompatMetadataValidatorAndUpdater;
 import io.delta.kernel.types.*;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -197,17 +201,37 @@ public class ColumnMapping {
     return new Tuple2<>(new Column(physicalNameParts.toArray(new String[0])), currentType);
   }
 
+  /**
+   * Utility method to block writing into a table with column mapping enabled. Currently Kernel only
+   * supports the metadata updates on tables with column mapping enabled. Data writes into such
+   * tables using the data transformation APIs provided by the Kernel are not supported yet.
+   */
+  public static void blockIfColumnMappingEnabled(Row transactionState) {
+    ColumnMapping.ColumnMappingMode columnMappingMode =
+        TransactionStateRow.getColumnMappingMode(transactionState);
+    if (columnMappingMode != ColumnMapping.ColumnMappingMode.NONE) {
+      throw new UnsupportedOperationException(
+          "Writing into column mapping enabled table is not supported yet.");
+    }
+  }
+
   ////////////////////////////
   // Private Helper Methods //
   ////////////////////////////
 
   /** Visible for testing */
   static int findMaxColumnId(StructType schema) {
-    int maxColumnId = 0;
-    for (StructField field : schema.fields()) {
-      maxColumnId = findMaxColumnId(field, maxColumnId);
-    }
-    return maxColumnId;
+    return new SchemaIterable(schema)
+        .stream()
+            .mapToInt(
+                e -> {
+                  int columnId = hasColumnId(e.getField()) ? getColumnId(e.getField()) : 0;
+                  int nestedMaxId =
+                      hasNestedColumnIds(e.getField()) ? getMaxNestedColumnId(e.getField()) : 0;
+                  return Math.max(columnId, nestedMaxId);
+                })
+            .max()
+            .orElse(0);
   }
 
   static boolean hasColumnId(StructField field) {
@@ -216,33 +240,6 @@ public class ColumnMapping {
 
   static boolean hasPhysicalName(StructField field) {
     return field.getMetadata().contains(COLUMN_MAPPING_PHYSICAL_NAME_KEY);
-  }
-
-  private static int findMaxColumnId(StructField field, int maxColumnId) {
-    if (hasColumnId(field)) {
-      maxColumnId = Math.max(maxColumnId, getColumnId(field));
-
-      if (hasNestedColumnIds(field)) {
-        maxColumnId = Math.max(maxColumnId, getMaxNestedColumnId(field));
-      }
-    }
-
-    if (field.getDataType() instanceof StructType) {
-      StructType structType = (StructType) field.getDataType();
-      for (StructField structField : structType.fields()) {
-        maxColumnId = findMaxColumnId(structField, maxColumnId);
-      }
-      return maxColumnId;
-    } else if (field.getDataType() instanceof ArrayType) {
-      ArrayType arrayType = (ArrayType) field.getDataType();
-      return findMaxColumnId(arrayType.getElementField(), maxColumnId);
-    } else if (field.getDataType() instanceof MapType) {
-      MapType mapType = (MapType) field.getDataType();
-      return Math.max(
-          findMaxColumnId(mapType.getKeyField(), maxColumnId),
-          findMaxColumnId(mapType.getValueField(), maxColumnId));
-    }
-    return maxColumnId;
   }
 
   /**
@@ -331,9 +328,11 @@ public class ColumnMapping {
       Metadata metadata, boolean isNewTable) {
     StructType oldSchema = metadata.getSchema();
 
-    // When icebergWriterCompatV1 is enabled we require physicalName='col-[columnId]'
+    // When icebergWriterCompatV1 or icebergWriterCompatV3 is enabled we require
+    // physicalName='col-[columnId]'
     boolean useColumnIdForPhysicalName =
-        TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.fromMetadata(metadata);
+        TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.fromMetadata(metadata)
+            || TableConfig.ICEBERG_WRITER_COMPAT_V3_ENABLED.fromMetadata(metadata);
 
     // This is the maxColumnId to use when assigning any new field-ids; we update this as we
     // traverse the schema and after traversal this is the value that should be stored in the
@@ -360,15 +359,12 @@ public class ColumnMapping {
                   useColumnIdForPhysicalName));
     }
 
-    if (Boolean.parseBoolean(
-        metadata
-            .getConfiguration()
-            .getOrDefault(TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey(), "false"))) {
+    if (IcebergCompatMetadataValidatorAndUpdater.isIcebergCompatEnabled(metadata)) {
       newSchema = rewriteFieldIdsForIceberg(newSchema, maxColumnId);
     }
 
     // The maxColumnId in the metadata may be out-of-date either due to field-id assignment
-    // performed in this fx, or due to connector adding new fields
+    // performed in this function, or due to connector adding new fields
     boolean shouldUpdateMaxId =
         TableConfig.COLUMN_MAPPING_MAX_COLUMN_ID.fromMetadata(metadata) != maxColumnId.get();
 

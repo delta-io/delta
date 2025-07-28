@@ -23,6 +23,7 @@ import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.tablefeatures.TableFeature;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StructType;
+import io.delta.kernel.types.TypeChange;
 import io.delta.kernel.utils.DataFileStatus;
 import java.io.IOException;
 import java.sql.Timestamp;
@@ -297,6 +298,13 @@ public final class DeltaErrors {
         format("%s does not support the data types: %s.", compatVersion, dataTypes));
   }
 
+  public static KernelException icebergCompatUnsupportedTypeWidening(
+      String compatVersion, TypeChange typeChange) {
+    throw new KernelException(
+        format(
+            "%s does not support type widening present in table: %s.", compatVersion, typeChange));
+  }
+
   public static KernelException icebergCompatUnsupportedTypePartitionColumn(
       String compatVersion, DataType dataType) {
     throw new KernelException(
@@ -322,7 +330,7 @@ public final class DeltaErrors {
         format("%s: requires the feature '%s' to be enabled.", compatVersion, feature));
   }
 
-  public static KernelException enablingIcebergWriterCompatV1OnExistingTable(String key) {
+  public static KernelException enablingIcebergCompatFeatureOnExistingTable(String key) {
     return new KernelException(
         String.format(
             "Cannot enable %s on an existing table. "
@@ -338,7 +346,7 @@ public final class DeltaErrors {
             invalidFields));
   }
 
-  public static KernelException disablingIcebergWriterCompatV1OnExistingTable(String key) {
+  public static KernelException disablingIcebergCompatFeatureOnExistingTable(String key) {
     return new KernelException(
         String.format("Disabling %s on an existing table is not allowed.", key));
   }
@@ -421,6 +429,15 @@ public final class DeltaErrors {
     return new KernelException(
         "Feature 'rowTracking' is supported and depends on feature 'domainMetadata',"
             + " but 'domainMetadata' is unsupported");
+  }
+
+  public static KernelException rowTrackingRequiredForRowIdHighWatermark(
+      String tablePath, String rowIdHighWatermark) {
+    return new KernelException(
+        String.format(
+            "Cannot assign a row id high water mark (`%s`) to a table `%s` that does not support "
+                + "`rowTracking` table feature. Please enable the `rowTracking` table feature.",
+            rowIdHighWatermark, tablePath));
   }
 
   public static KernelException cannotToggleRowTrackingOnExistingTable() {

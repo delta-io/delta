@@ -33,7 +33,7 @@ import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.conf.Configuration
-import shadedForDelta.org.apache.iceberg.{AppendFiles, DataFile, DeleteFiles, ExpireSnapshots, OverwriteFiles, PartitionSpec, PendingUpdate, RewriteFiles, Transaction => IcebergTransaction}
+import shadedForDelta.org.apache.iceberg.{AppendFiles, DataFile, DeleteFiles, ExpireSnapshots, OverwriteFiles, PartitionSpec, PendingUpdate, RewriteFiles, Schema => IcebergSchema, Transaction => IcebergTransaction}
 import shadedForDelta.org.apache.iceberg.mapping.MappingUtil
 import shadedForDelta.org.apache.iceberg.mapping.NameMappingParser
 import shadedForDelta.org.apache.iceberg.util.LocationUtil
@@ -102,20 +102,23 @@ class IcebergConversionTransaction(
     def add(add: AddFile): Unit = throw new UnsupportedOperationException
     def add(remove: RemoveFile): Unit = throw new UnsupportedOperationException
 
-    def commit(): Unit = {
+    def commit(expectedSequenceNumber: Long): Unit = {
       assert(!committed, "Already committed.")
       impl.commit()
       committed = true
     }
 
     private[icebergShaded]def hasCommitted: Boolean = committed
+
+    protected def currentSnapshotId: Option[Long] =
+      Option(txn.table().currentSnapshot()).map(_.snapshotId())
   }
 
   class NullHelper extends TransactionHelper(null) {
     override def opType: String = "null"
     override def add(add: AddFile): Unit = {}
     override def add(remove: RemoveFile): Unit = {}
-    override def commit(): Unit = {}
+    override def commit(deltaCommitVersion: Long): Unit = {}
   }
   /**
    * API for appending new files in a table.
@@ -174,9 +177,7 @@ class IcebergConversionTransaction(
    *
    * e.g. OPTIMIZE
    */
-  class RewriteHelper(
-      rewriter: RewriteFiles,
-      startingSnapshotId: Option[Long]) extends TransactionHelper(rewriter) {
+  class RewriteHelper(rewriter: RewriteFiles) extends TransactionHelper(rewriter) {
 
     override def opType: String = "rewrite"
 
@@ -194,12 +195,12 @@ class IcebergConversionTransaction(
       removeBuffer += remove.toDataFile
     }
 
-    override def commit(): Unit = {
+    override def commit(deltaCommitVersion: Long): Unit = {
       if (removeBuffer.nonEmpty) {
         rewriter.rewriteFiles(removeBuffer.asJava, addBuffer.asJava, 0)
       }
-      startingSnapshotId.foreach(id => rewriter.validateFromSnapshot(id))
-      super.commit()
+      currentSnapshotId.foreach(rewriter.validateFromSnapshot)
+      super.commit(deltaCommitVersion)
     }
   }
 
@@ -224,13 +225,14 @@ class IcebergConversionTransaction(
   //////////////////////
 
   protected val tablePath = postCommitSnapshot.deltaLog.dataPath
-  protected val schemaUtil =
-    IcebergSchemaUtils(postCommitSnapshot.metadata.columnMappingMode == NoMapping)
-  protected val icebergSchema =
-    schemaUtil.convertDeltaSchemaToIcebergSchema(postCommitSnapshot.metadata.schema)
+
+  protected val convert = new DeltaToIcebergConvert(postCommitSnapshot, catalogTable)
+
+  protected def icebergSchema: IcebergSchema = convert.schema
+
   // Initial partition spec converted from Delta
-  protected val partitionSpec =
-    createPartitionSpec(icebergSchema, postCommitSnapshot.metadata.partitionColumns)
+  protected def partitionSpec: PartitionSpec = convert.partition
+
 
   // Current partition spec from iceberg table
   def currentPartitionSpec: PartitionSpec = {
@@ -280,7 +282,7 @@ class IcebergConversionTransaction(
   }
 
   def getRewriteHelper: RewriteHelper = {
-    val ret = new RewriteHelper(txn.newRewrite(), startFromSnapshotId)
+    val ret = new RewriteHelper(txn.newRewrite())
     fileUpdates += ret
     ret
   }

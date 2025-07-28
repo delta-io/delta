@@ -23,6 +23,7 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.FileNames;
 import java.io.IOException;
+import java.nio.file.FileAlreadyExistsException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -41,18 +42,25 @@ public class ChecksumWriter {
   public void writeCheckSum(Engine engine, CRCInfo crcInfo) throws IOException {
     Path newChecksumPath = FileNames.checksumFile(logPath, crcInfo.getVersion());
     logger.info("Writing checksum file to path: {}", newChecksumPath);
-    wrapEngineExceptionThrowsIO(
-        () -> {
-          engine
-              .getJsonHandler()
-              .writeJsonFileAtomically(
-                  newChecksumPath.toString(),
-                  singletonCloseableIterator(crcInfo.toRow()),
-                  false /* overwrite */);
-          logger.info("Write checksum file `{}` succeeds", newChecksumPath);
-          return null;
-        },
-        "Write checksum file `%s`",
-        newChecksumPath);
+
+    try {
+      wrapEngineExceptionThrowsIO(
+          () -> {
+            engine
+                .getJsonHandler()
+                .writeJsonFileAtomically(
+                    newChecksumPath.toString(),
+                    singletonCloseableIterator(crcInfo.toRow()),
+                    false /* overwrite */);
+            logger.info("Write checksum file `{}` succeeds", newChecksumPath);
+            return null;
+          },
+          "Write checksum file `%s`",
+          newChecksumPath);
+    } catch (FileAlreadyExistsException e) {
+      logger.info("Checksum file already exists for version {}", crcInfo.getVersion());
+      // Checksum file has been created while we were computing it.
+      // This is fine - the checksum now exists, which was our goal.
+    }
   }
 }

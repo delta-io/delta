@@ -27,6 +27,7 @@ import io.delta.kernel.defaults.engine.fileio.FileIO
 import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO
 import io.delta.kernel.defaults.utils.TestUtils
 import io.delta.kernel.engine.{Engine, ExpressionHandler, FileSystemClient}
+import io.delta.kernel.engine.FileReadResult
 import io.delta.kernel.expressions.Predicate
 import io.delta.kernel.internal.checkpoints.Checkpointer
 import io.delta.kernel.internal.fs.Path
@@ -34,6 +35,8 @@ import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
+
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.hadoop.conf.Configuration
 import org.scalatest.funsuite.AnyFunSuite
@@ -130,6 +133,27 @@ trait LogReplayBaseSuite extends AnyFunSuite with TestUtils {
 
   protected def appendCommit(path: String): Unit =
     spark.range(10).write.format("delta").mode("append").save(path)
+
+  /**
+   * Creates a temporary directory with a test engine and builds a table with CRC files.
+   * Returns the created table and engine for testing.
+   *
+   * @param f code to run with the table and engine
+   */
+  protected def withTableWithCrc(f: (Table, String, MetricsEngine) => Any): Unit = {
+    withTempDirAndMetricsEngine { (path, engine) =>
+      // Produce a test table with 0 to 11 .json, 0 to 11.crc, 10.checkpoint.parquet
+      withSQLConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true") {
+        spark.sql(
+          s"CREATE TABLE delta.`$path` USING DELTA AS " +
+            s"SELECT 0L as id")
+        for (_ <- 0 to 10) { appendCommit(path) }
+        assert(checkpointFileExistsForTable(path, 10))
+      }
+      val table = Table.forPath(engine, path)
+      f(table, path, engine)
+    }
+  }
 }
 
 ////////////////////
@@ -235,7 +259,7 @@ class MetricsParquetHandler(fileIO: FileIO)
   override def readParquetFiles(
       fileIter: CloseableIterator[FileStatus],
       physicalSchema: StructType,
-      predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] = {
+      predicate: Optional[Predicate]): CloseableIterator[FileReadResult] = {
     val fileReadSet = fileIter.toSeq
     checkpointReadRequestSizes += fileReadSet.size
     super.readParquetFiles(

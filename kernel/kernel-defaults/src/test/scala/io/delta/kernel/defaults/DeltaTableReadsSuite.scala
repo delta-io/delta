@@ -24,7 +24,7 @@ import scala.collection.JavaConverters._
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.Table
-import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
+import io.delta.kernel.defaults.utils.{AbstractTestUtils, TestRow, TestUtils, TestUtilsWithLegacyKernelAPIs, TestUtilsWithTableManagerAPIs}
 import io.delta.kernel.exceptions.{InvalidTableException, KernelException, TableNotFoundException}
 import io.delta.kernel.internal.TableImpl
 import io.delta.kernel.internal.fs.Path
@@ -33,15 +33,40 @@ import io.delta.kernel.internal.util.InternalUtils.daysSinceEpoch
 import io.delta.kernel.types.{LongType, StructType}
 
 import org.apache.spark.sql.delta.{DeltaLog, DeltaOperations}
-import org.apache.spark.sql.delta.actions.{AddFile, Metadata}
-import org.apache.spark.sql.delta.implicits.stringEncoder
+import org.apache.spark.sql.delta.actions.AddFile
 
 import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
-import org.apache.spark.sql.functions.{col, current_timestamp, to_timestamp}
 import org.apache.spark.sql.functions.col
 import org.scalatest.funsuite.AnyFunSuite
 
-class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
+class LegacyDeltaTableReadsSuite
+    extends AbstractDeltaTableReadsSuite
+    with TestUtilsWithLegacyKernelAPIs {
+
+  // Loading a `Table` at a path and then loading a `Snapshot` is only applicable to the Legacy API.
+  test("table deleted after the `Table` creation") {
+    withTempDir { temp =>
+      val source = new File(goldenTablePath("data-reader-primitives"))
+      val target = new File(temp.getCanonicalPath)
+      FileUtils.copyDirectory(source, target)
+
+      val table = Table.forPath(defaultEngine, target.getCanonicalPath)
+      // delete the table and try to get the snapshot. Expect a failure.
+      FileUtils.deleteDirectory(target)
+      val ex = intercept[TableNotFoundException] {
+        table.getLatestSnapshot(defaultEngine)
+      }
+      assert(ex.getMessage.contains(
+        s"Delta table at path `file:${target.getCanonicalPath}` is not found"))
+    }
+  }
+}
+
+class DeltaTableReadsSuite
+    extends AbstractDeltaTableReadsSuite
+    with TestUtilsWithTableManagerAPIs
+
+trait AbstractDeltaTableReadsSuite extends AnyFunSuite { self: AbstractTestUtils =>
 
   //////////////////////////////////////////////////////////////////////////////////
   // Timestamp type tests
@@ -230,7 +255,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
 
   test("invalid path") {
     val invalidPath = "/path/to/non-existent-directory"
-    val table = Table.forPath(defaultEngine, invalidPath)
+    val tableManager = getTableManagerAdapter
 
     def expectTableNotFoundException(fn: () => Unit): Unit = {
       val ex = intercept[TableNotFoundException] {
@@ -239,27 +264,17 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
       assert(ex.getMessage().contains(s"Delta table at path `file:$invalidPath` is not found"))
     }
 
-    expectTableNotFoundException(() => table.getLatestSnapshot(defaultEngine))
-    expectTableNotFoundException(() =>
-      table.getSnapshotAsOfTimestamp(defaultEngine, 1))
-    expectTableNotFoundException(() =>
-      table.getSnapshotAsOfVersion(defaultEngine, 1))
-  }
+    expectTableNotFoundException { () =>
+      tableManager.getResolvedTableAdapterAtLatest(defaultEngine, invalidPath)
+    }
+    expectTableNotFoundException { () =>
+      tableManager.getResolvedTableAdapterAtVersion(defaultEngine, invalidPath, 1)
+    }
 
-  test("table deleted after the `Table` creation") {
-    withTempDir { temp =>
-      val source = new File(goldenTablePath("data-reader-primitives"))
-      val target = new File(temp.getCanonicalPath)
-      FileUtils.copyDirectory(source, target)
-
-      val table = Table.forPath(defaultEngine, target.getCanonicalPath)
-      // delete the table and try to get the snapshot. Expect a failure.
-      FileUtils.deleteDirectory(target)
-      val ex = intercept[TableNotFoundException] {
-        table.getLatestSnapshot(defaultEngine)
+    if (tableManager.supportsTimestampResolution) {
+      expectTableNotFoundException { () =>
+        tableManager.getResolvedTableAdapterAtTimestamp(defaultEngine, invalidPath, 1)
       }
-      assert(ex.getMessage.contains(
-        s"Delta table at path `file:${target.getCanonicalPath}` is not found"))
     }
   }
 
@@ -304,7 +319,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
     val path = "file:" + goldenTablePath("data-reader-partition-values")
 
     // for now we don't support timestamp type partition columns so remove from read columns
-    val readCols = Table.forPath(defaultEngine, path).getLatestSnapshot(defaultEngine)
+    val readCols = getTableManagerAdapter.getResolvedTableAdapterAtLatest(defaultEngine, path)
       .getSchema()
       .withoutField("as_timestamp")
       .fields()
@@ -749,8 +764,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
         expectedVersion = Some(10))
       // Cannot read a version that does not exist
       val e = intercept[RuntimeException] {
-        Table.forPath(defaultEngine, path)
-          .getSnapshotAsOfVersion(defaultEngine, 11)
+        getTableManagerAdapter.getResolvedTableAdapterAtVersion(defaultEngine, path, 11)
       }
       assert(e.getMessage.contains(
         "Cannot load table version 11 as it does not exist. The latest available version is 10"))
@@ -785,8 +799,7 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
 
       // Cannot read a version that has been truncated
       val e = intercept[RuntimeException] {
-        Table.forPath(defaultEngine, tablePath)
-          .getSnapshotAsOfVersion(defaultEngine, 9)
+        getTableManagerAdapter.getResolvedTableAdapterAtVersion(defaultEngine, tablePath, 9)
       }
       assert(e.getMessage.contains("Cannot load table version 9"))
       // Can read version 10
@@ -855,6 +868,8 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
   }
 
   test("getSnapshotAtTimestamp: basic end-to-end read") {
+    assume(getTableManagerAdapter.supportsTimestampResolution, "Timestamp queries not supported")
+
     withTempDir { tempDir =>
       val start = 1540415658000L
       val minuteInMilliseconds = 60000L
@@ -911,30 +926,36 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
   }
 
   test("getSnapshotAtTimestamp: empty _delta_log folder") {
+    assume(getTableManagerAdapter.supportsTimestampResolution, "Timestamp queries not supported")
+
     withTempDir { dir =>
       new File(dir, "_delta_log").mkdirs()
       intercept[TableNotFoundException] {
-        Table.forPath(defaultEngine, dir.getCanonicalPath)
-          .getSnapshotAsOfTimestamp(defaultEngine, 0L)
+        getTableManagerAdapter
+          .getResolvedTableAdapterAtTimestamp(defaultEngine, dir.getCanonicalPath, 0L)
       }
     }
   }
 
   test("getSnapshotAtTimestamp: empty folder no _delta_log dir") {
+    assume(getTableManagerAdapter.supportsTimestampResolution, "Timestamp queries not supported")
+
     withTempDir { dir =>
       intercept[TableNotFoundException] {
-        Table.forPath(defaultEngine, dir.getCanonicalPath)
-          .getSnapshotAsOfTimestamp(defaultEngine, 0L)
+        getTableManagerAdapter
+          .getResolvedTableAdapterAtTimestamp(defaultEngine, dir.getCanonicalPath, 0L)
       }
     }
   }
 
   test("getSnapshotAtTimestamp: non-empty folder not a delta table") {
+    assume(getTableManagerAdapter.supportsTimestampResolution, "Timestamp queries not supported")
+
     withTempDir { dir =>
       spark.range(20).write.format("parquet").mode("overwrite").save(dir.getCanonicalPath)
       intercept[TableNotFoundException] {
-        Table.forPath(defaultEngine, dir.getCanonicalPath)
-          .getSnapshotAsOfTimestamp(defaultEngine, 0L)
+        getTableManagerAdapter
+          .getResolvedTableAdapterAtTimestamp(defaultEngine, dir.getCanonicalPath, 0L)
       }
     }
   }
@@ -946,6 +967,10 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
 
   // Copied from Standalone DeltaLogSuite
   test("getVersionBeforeOrAtTimestamp and getVersionAtOrAfterTimestamp") {
+    // TODO: [delta-io/delta#4770] Implement the `getVersionBeforeOrAtTimestamp` and
+    //       `getVersionAtOrAfterTimestamp` APIs for CatalogManaged tables.
+    assume(getTableManagerAdapter.supportsTimestampResolution, "Timestamp queries not supported")
+
     // Note:
     // - all Xa test cases will test getVersionBeforeOrAtTimestamp
     // - all Xb test cases will test getVersionAtOrAfterTimestamp
@@ -1018,6 +1043,10 @@ class DeltaTableReadsSuite extends AnyFunSuite with TestUtils {
 
   // Copied from Standalone DeltaLogSuite
   test("getVersionBeforeOrAtTimestamp and getVersionAtOrAfterTimestamp - recoverability") {
+    // TODO: [delta-io/delta#4770] Implement the `getVersionBeforeOrAtTimestamp` and
+    //       `getVersionAtOrAfterTimestamp` APIs for CatalogManaged tables.
+    assume(getTableManagerAdapter.supportsTimestampResolution, "Timestamp queries not supported")
+
     withTempDir { dir =>
       // local file system truncates to seconds
       val nowEpochMs = System.currentTimeMillis() / 1000 * 1000

@@ -668,6 +668,13 @@ trait DeltaErrorsBase
     )
   }
 
+  def cloneWithRowTrackingWithoutStats(): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_CLONE_WITH_ROW_TRACKING_WITHOUT_STATS",
+      messageParameters = Array.empty
+    )
+  }
+
   def incorrectArrayAccess(): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_INCORRECT_ARRAY_ACCESS",
@@ -933,7 +940,7 @@ trait DeltaErrorsBase
     )
   }
 
-  def logFileNotFoundException(
+  def truncatedTransactionLogException(
       path: Path,
       version: Long,
       metadata: Metadata): Throwable = {
@@ -948,6 +955,19 @@ trait DeltaErrorsBase
         logRetention.toString,
         DeltaConfigs.CHECKPOINT_RETENTION_DURATION.key,
         checkpointRetention.toString)
+    )
+  }
+
+  def logFileNotFoundException(
+      path: Path,
+      version: Option[Long],
+      checkpointVersion: Long): Throwable = {
+    new DeltaFileNotFoundException(
+      errorClass = "DELTA_LOG_FILE_NOT_FOUND",
+      messageParameters = Array(
+        version.map(_.toString).getOrElse("LATEST"),
+        checkpointVersion.toString,
+        path.toString)
     )
   }
 
@@ -1324,6 +1344,9 @@ trait DeltaErrorsBase
       s"Cannot perform Merge because the source dataset is not deterministic.$docRefer"
     )
   }
+
+  def mergeConcurrentOperationCachedSourceException(): Throwable =
+    new DeltaRuntimeException(errorClass = "DELTA_MERGE_SOURCE_CACHED_DURING_EXECUTION")
 
   def columnOfTargetTableNotFoundInMergeException(targetCol: String,
       colNames: String): Throwable = {
@@ -2726,6 +2749,19 @@ trait DeltaErrorsBase
         rowTrackingDefaultPropertyKey))
   }
 
+  def rowTrackingBackfillRunningConcurrentlyWithUnbackfill(): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_ROW_TRACKING_BACKFILL_RUNNING_CONCURRENTLY_WITH_UNBACKFILL")
+  }
+
+  def rowTrackingIllegalPropertyCombination(): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_ROW_TRACKING_ILLEGAL_PROPERTY_COMBINATION",
+      messageParameters = Array(
+        DeltaConfigs.ROW_TRACKING_ENABLED.key,
+        DeltaConfigs.ROW_TRACKING_SUSPENDED.key))
+  }
+
   /** This is a method only used for testing Py4J exception handling. */
   def throwDeltaIllegalArgumentException(): Throwable = {
     new DeltaIllegalArgumentException(errorClass = "DELTA_UNRECOGNIZED_INVARIANT")
@@ -3467,6 +3503,15 @@ trait DeltaErrorsBase
       errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.UNSUPPORTED_DATA_TYPE",
       messageParameters = Array(version.toString, version.toString,
         dataType.typeName, schema.treeString)
+    )
+  }
+
+  def icebergCompatUnsupportedFieldException(
+      version: Int, field: StructField, schema: StructType): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.UNSUPPORTED_DATA_TYPE",
+      messageParameters = Array(version.toString, version.toString,
+        s"${field.dataType.typeName}:${field.name}", schema.treeString)
     )
   }
 

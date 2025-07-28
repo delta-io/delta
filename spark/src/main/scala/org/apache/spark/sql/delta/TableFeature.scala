@@ -18,9 +18,11 @@ package org.apache.spark.sql.delta
 
 import java.util.Locale
 
+import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
+import org.apache.spark.sql.delta.commands.backfill.RowTrackingBackfillCommand
 import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
 import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsUtils
 import org.apache.spark.sql.delta.redirect.{RedirectReaderWriter, RedirectWriterOnly}
@@ -31,6 +33,7 @@ import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.FileNames
 
 import org.apache.spark.sql.{Dataset, SparkSession}
+import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.types.TimestampNTZType
 
 /* --------------------------------------- *
@@ -198,12 +201,20 @@ sealed trait FeatureAutomaticallyEnabledByMetadata { this: TableFeature =>
  *    unnecessary failure during the history validation of the next DROP FEATURE call. Note,
  *    while the feature-to-remove is supported in the protocol we cannot generate a legit protocol
  *    action that adds support for that feature since it is already supported.
+ *
+ *    Furthermore, methods `tablePropertiesToRemoveAtDowngradeCommit` and
+ *    `actionsToIncludeAtDowngradeCommit` can be optionally implemented. They can be used for
+ *    defining properties/actions that need to be removed/included at the protocol downgrade
+ *    commit.
  */
 sealed trait RemovableFeature { self: TableFeature =>
   def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand
   def validateRemoval(snapshot: Snapshot): Boolean
   def requiresHistoryProtection: Boolean = isReaderWriterFeature
   def actionUsesFeature(action: Action): Boolean
+  def tablePropertiesToRemoveAtDowngradeCommit: Seq[String] = Seq.empty
+  def actionsToIncludeAtDowngradeCommit(snapshot: Snapshot): Seq[Action] = Seq.empty
+
 
   /**
    * Examines all historical commits for traces of the removableFeature.
@@ -435,14 +446,22 @@ object TableFeature {
   protected def getDroppedFeatures(
       newProtocol: Protocol,
       oldProtocol: Protocol): Set[TableFeature] = {
-    val newFeatureNames = newProtocol.implicitlyAndExplicitlySupportedFeatures
-    val oldFeatureNames = oldProtocol.implicitlyAndExplicitlySupportedFeatures
-    oldFeatureNames -- newFeatureNames
+    val newFeatures = newProtocol.implicitlyAndExplicitlySupportedFeatures
+    val oldFeatures = oldProtocol.implicitlyAndExplicitlySupportedFeatures
+    oldFeatures -- newFeatures
   }
 
   /** Identifies whether there was any feature removal between two protocols. */
   def isProtocolRemovingFeatures(newProtocol: Protocol, oldProtocol: Protocol): Boolean = {
     getDroppedFeatures(newProtocol = newProtocol, oldProtocol = oldProtocol).nonEmpty
+  }
+
+  /** Returns true when `newProtocol` drops `feature`. */
+  def isFeatureDropped(
+      newProtocol: Protocol,
+      oldProtocol: Protocol,
+      feature: TableFeature): Boolean = {
+    getDroppedFeatures(newProtocol = newProtocol, oldProtocol = oldProtocol).contains(feature)
   }
 
   /**
@@ -683,6 +702,8 @@ trait BinaryVariantTableFeature {
 object VariantTypePreviewTableFeature extends ReaderWriterFeature(name = "variantType-preview")
   with FeatureAutomaticallyEnabledByMetadata
     with BinaryVariantTableFeature {
+  override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
+
   override def metadataRequiresFeatureToBeEnabled(
       protocol: Protocol, metadata: Metadata, spark: SparkSession): Boolean = {
     if (forcePreviewTableFeature) {
@@ -701,6 +722,8 @@ object VariantTypePreviewTableFeature extends ReaderWriterFeature(name = "varian
 object VariantTypeTableFeature extends ReaderWriterFeature(name = "variantType")
     with FeatureAutomaticallyEnabledByMetadata
     with BinaryVariantTableFeature {
+  override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
+
   override def metadataRequiresFeatureToBeEnabled(
       protocol: Protocol, metadata: Metadata, spark: SparkSession): Boolean = {
     if (forcePreviewTableFeature) {
@@ -769,6 +792,7 @@ object DeletionVectorsTableFeature
 }
 
 object RowTrackingFeature extends WriterFeature(name = "rowTracking")
+  with RemovableFeature
   with FeatureAutomaticallyEnabledByMetadata {
   override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
 
@@ -779,6 +803,104 @@ object RowTrackingFeature extends WriterFeature(name = "rowTracking")
     DeltaConfigs.ROW_TRACKING_ENABLED.fromMetaData(metadata)
 
   override def requiredFeatures: Set[TableFeature] = Set(DomainMetadataTableFeature)
+
+  /**
+   * When dropping row tracking we remove all relevant properties at downgrade commit.
+   * This is because concurrent transactions may still use them while the feature exists in the
+   * protocol.
+   */
+  override def tablePropertiesToRemoveAtDowngradeCommit: Seq[String] = {
+    Seq(
+      DeltaConfigs.ROW_TRACKING_ENABLED.key,
+      DeltaConfigs.ROW_TRACKING_SUSPENDED.key,
+      MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP,
+      MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP)
+  }
+
+  /** Remove rowTracking domain metadata at downgrade commit. */
+  override def actionsToIncludeAtDowngradeCommit(snapshot: Snapshot): Seq[Action] = {
+    val domainOpt = RowTrackingMetadataDomain.fromSnapshot(snapshot)
+    Seq.empty ++ domainOpt.map(_.toDomainMetadata.copy(removed = true))
+  }
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand = {
+    RowTrackingPreDowngradeCommand(table)
+  }
+
+  private[delta] def validateConfigurations(configurations: Map[String, String]): Unit = {
+    val enabled = configurations.getOrElse(
+      DeltaConfigs.ROW_TRACKING_ENABLED.key, "false").toBoolean
+    val suspended = configurations.getOrElse(
+      DeltaConfigs.ROW_TRACKING_SUSPENDED.key, "false").toBoolean
+
+    if (enabled && suspended) {
+      throw DeltaErrors.rowTrackingIllegalPropertyCombination()
+    }
+  }
+
+  private[delta] def validateAndBackfill(
+      spark: SparkSession,
+      table: DeltaTableV2,
+      newConfiguration: Map[String, String]): Unit = {
+
+    // If there is no relevant configuration change, we do not need to do anything.
+    if (!newConfiguration.contains(DeltaConfigs.ROW_TRACKING_ENABLED.key) &&
+        !newConfiguration.contains(DeltaConfigs.ROW_TRACKING_SUSPENDED.key)) {
+      return
+    }
+
+    val snapshot = table.deltaLog.update(catalogTableOpt = table.catalogTable)
+
+    // For overlapping configs, we keep the values of new configuration.
+    validateConfigurations(snapshot.metadata.configuration ++ newConfiguration)
+
+    val justEnabled = newConfiguration.getOrElse(
+      DeltaConfigs.ROW_TRACKING_ENABLED.key, "false").toBoolean
+
+    // If we're enabling row tracking on an existing table, we need to complete a backfill process
+    // prior to updating the table metadata.
+    if (justEnabled) {
+      RowTrackingBackfillCommand(
+        table.deltaLog,
+        nameOfTriggeringOperation = DeltaOperations.OP_SET_TBLPROPERTIES,
+        table.catalogTable).run(spark)
+    }
+  }
+
+  /**
+   * Returns true if no relevant row tracking metadata exist on the table. This excludes
+   * properties/domain metadata that are only removed at the downgrade commit.
+   *
+   * Returns false otherwise.
+   */
+  override def validateRemoval(snapshot: Snapshot): Boolean = {
+    val rowTrackingEnabled = DeltaConfigs.ROW_TRACKING_ENABLED.fromMetaData(snapshot.metadata)
+    val rowTrackingSuspended =
+      DeltaConfigs.ROW_TRACKING_SUSPENDED.fromMetaData(snapshot.metadata)
+
+    if (rowTrackingEnabled || !rowTrackingSuspended) return false
+
+    // In most cases, we should only reach this expensive check only at the protocol downgrade
+    // commit validation.
+    snapshot
+      .allFiles
+      .filter(col("baseRowId").isNotNull || col("defaultRowCommitVersion").isNotNull)
+      .isEmpty
+  }
+
+  /**
+   * Even though Row tracking is a writer-only feature it could benefit from history protection.
+   * Without history protection, oblivious writers could replace past checkpoints that contain
+   * Row Tracking metadata. That could break time travel, i.e. row tracking might appear enabled
+   * in a past version but metadata might be missing.
+   *
+   * On the other hand, history protection dictates the addition of the checkpointProtection
+   * feature when dropping row tracking. For this reason, we choose not to protect history. There
+   * should be no (or very limited) uses cases where row tracking is expected to work for past
+   * versions.
+   */
+  override def requiresHistoryProtection: Boolean = false
+  override def actionUsesFeature(action: Action): Boolean = false
 }
 
 object DomainMetadataTableFeature extends WriterFeature(name = "domainMetadata")
@@ -1077,9 +1199,21 @@ object VacuumProtocolCheckTableFeature
 object CheckpointProtectionTableFeature
     extends WriterFeature(name = "checkpointProtection")
     with RemovableFeature {
+  /**
+   * Gets the version requiring checkpoint protection from `metadata`. If the table property is
+   * not set, return `None`.
+   */
+  def getCheckpointProtectionVersionOption(protocol: Protocol, metadata: Metadata): Option[Long] = {
+    if (!protocol.isFeatureSupported(CheckpointProtectionTableFeature)) return None
+    DeltaConfigs.REQUIRE_CHECKPOINT_PROTECTION_BEFORE_VERSION.fromMetaDataOption(metadata)
+  }
+
+  /**
+   * Gets the version requiring checkpoint protection from `snapshot`. If the table property is
+   * not set, return the default value 0.
+   */
   def getCheckpointProtectionVersion(snapshot: Snapshot): Long = {
-    if (!snapshot.protocol.isFeatureSupported(CheckpointProtectionTableFeature)) return 0
-    DeltaConfigs.REQUIRE_CHECKPOINT_PROTECTION_BEFORE_VERSION.fromMetaData(snapshot.metadata)
+    getCheckpointProtectionVersionOption(snapshot.protocol, snapshot.metadata).getOrElse(0)
   }
 
   def metadataWithCheckpointProtection(metadata: Metadata, version: Long): Metadata = {

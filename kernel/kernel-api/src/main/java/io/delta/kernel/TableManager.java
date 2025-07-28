@@ -17,7 +17,9 @@
 package io.delta.kernel;
 
 import io.delta.kernel.annotation.Experimental;
+import io.delta.kernel.internal.table.ResolvedTableBuilderImpl;
 
+/** The entry point to load and create {@link ResolvedTable}s. */
 @Experimental
 public interface TableManager {
   // TODO static ResolvedTable forPathAtLatest(Engine engine, String path);
@@ -25,8 +27,19 @@ public interface TableManager {
   // TODO static ResolvedTable forPathAtTimestamp(Engine engine, String path, long timestamp);
 
   // TODO: Take in a Committer for write support.
+
+  /**
+   * Creates a builder for loading a Delta table at the given path.
+   *
+   * <p>The returned builder can be configured to load the table at a specific version or with
+   * additional metadata to optimize the loading process.
+   *
+   * @param path the file system path to the Delta table
+   * @return a {@link ResolvedTableBuilder} that can be used to load a {@link ResolvedTable} at the
+   *     given path
+   */
   static ResolvedTableBuilder loadTable(String path) {
-    throw new UnsupportedOperationException("Not implemented");
+    return new ResolvedTableBuilderImpl(path);
   }
 
   // TODO: static CreateTableTransactionBuilder buildCreateTableTransaction(...)

@@ -28,9 +28,9 @@ import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.skipping.StatsSchemaHelper;
+import io.delta.kernel.internal.types.TypeWideningChecker;
 import io.delta.kernel.types.*;
 import java.util.*;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
@@ -54,7 +54,14 @@ public class SchemaUtils {
   public static void validateSchema(StructType schema, boolean isColumnMappingEnabled) {
     checkArgument(schema.length() > 0, "Schema should contain at least one column");
 
-    List<String> flattenColNames = flattenNestedFieldNames(schema);
+    List<String> flattenColNames =
+        new SchemaIterable(schema)
+            .stream()
+                // Paths to struct fields are sufficient to find duplicate columns, as arrays/maps
+                // always have the same names.
+                .filter(SchemaIterable.SchemaElement::isStructField)
+                .map(SchemaIterable.SchemaElement::getNamePath)
+                .collect(Collectors.toList());
 
     // check there are no duplicate column names in the schema
     Set<String> uniqueColNames =
@@ -66,6 +73,7 @@ public class SchemaUtils {
           flattenColNames.stream()
               .map(String::toLowerCase)
               .filter(n -> !uniqueCols.add(n))
+              .sorted(String::compareTo)
               .collect(Collectors.toList());
       throw DeltaErrors.duplicateColumnsInSchema(schema, duplicateColumns);
     }
@@ -88,7 +96,11 @@ public class SchemaUtils {
 
   /**
    * Performs the following validations on an updated table schema using the current schema as a
-   * base for validation. ColumnMapping must be enabled to call this
+   * base for validation. ColumnMapping must be enabled to call this.
+   *
+   * <p>Returns an updated schema if metadata (i.e. TypeChanges needs to be copied over from
+   * currentSchema and new type changes need to be recorded. Kernel is expected to handle this work
+   * instead of clients).
    *
    * <p>The following checks are performed:
    *
@@ -98,12 +110,10 @@ public class SchemaUtils {
    *   <li>Data types are supported
    *   <li>Physical column name consistency is preserved in the new schema
    *   <li>If IcebergWriterCompatV1 is enabled, that map struct keys have not changed
-   *   <li>ToDo: No new non-nullable fields are added or no tightening of nullable fields
    *   <li>ToDo: Nested IDs for array/map types are preserved in the new schema for IcebergCompatV2
-   *   <li>ToDo: No type changes
    * </ul>
    */
-  public static void validateUpdatedSchema(
+  public static Optional<StructType> validateUpdatedSchemaAndGetUpdatedSchema(
       Metadata currentMetadata,
       Metadata newMetadata,
       Set<String> clusteringColumnPhysicalNames,
@@ -118,14 +128,15 @@ public class SchemaUtils {
     int currentMaxFieldId =
         Integer.parseInt(
             currentMetadata.getConfiguration().getOrDefault(COLUMN_MAPPING_MAX_COLUMN_ID_KEY, "0"));
-    validateSchemaEvolution(
+    return validateSchemaEvolution(
         currentMetadata.getSchema(),
         newMetadata.getSchema(),
         ColumnMapping.getColumnMappingMode(newMetadata.getConfiguration()),
         clusteringColumnPhysicalNames,
         currentMaxFieldId,
         allowNewRequiredFields,
-        TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.fromMetadata(newMetadata.getConfiguration()));
+        TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.fromMetadata(newMetadata.getConfiguration()),
+        TableConfig.TYPE_WIDENING_ENABLED.fromMetadata(newMetadata.getConfiguration()));
   }
 
   /**
@@ -140,23 +151,33 @@ public class SchemaUtils {
    * @param allowNewRequiredFields If `false`, adding new required columns throws an error. If
    *     `true`, new required columns are allowed
    * @param icebergWriterCompatV1Enabled `true` if icebergCompatV1 is enabled on the table
+   * @return an updated schema if metadata (e.g. TypeChanges needs to be copied over from the old
+   *     schema
    * @throws IllegalArgumentException if the schema evolution is invalid
    */
-  public static void validateSchemaEvolutionById(
+  // TODO: Consider renaming or refactoring to avoid returning the
+  // StructType here.
+  public static Optional<StructType> validateSchemaEvolutionById(
       StructType currentSchema,
       StructType newSchema,
       Set<String> clusteringColumnPhysicalNames,
       int oldMaxFieldId,
       boolean allowNewRequiredFields,
-      boolean icebergWriterCompatV1Enabled) {
+      boolean icebergWriterCompatV1Enabled,
+      boolean typeWideningEnabled) {
     SchemaChanges schemaChanges = computeSchemaChangesById(currentSchema, newSchema);
     validatePhysicalNameConsistency(schemaChanges.updatedFields());
     // Validates that the updated schema does not contain breaking changes in terms of types and
     // nullability
     validateUpdatedSchemaCompatibility(
-        schemaChanges, oldMaxFieldId, allowNewRequiredFields, icebergWriterCompatV1Enabled);
+        schemaChanges,
+        oldMaxFieldId,
+        allowNewRequiredFields,
+        icebergWriterCompatV1Enabled,
+        typeWideningEnabled);
     validateClusteringColumnsNotDropped(
         schemaChanges.removedFields(), clusteringColumnPhysicalNames);
+    return schemaChanges.updatedSchema();
     // ToDo Potentially validate IcebergCompatV2 nested IDs
   }
 
@@ -293,27 +314,6 @@ public class SchemaUtils {
   }
 
   /**
-   * Finds `StructField`s that match a given check `f`. Returns the path to the column, and the
-   * field of all fields that match the check.
-   *
-   * @param schema The DataType to filter
-   * @param recurseIntoMapOrArrayElements This flag defines whether we should recurse into elements
-   *     types of ArrayType and MapType.
-   * @param f The function to check each StructField
-   * @param stopOnFirstMatch If true, stop the search when the first match is found
-   * @return A List of pairs, each containing a List of Strings (the path) and a StructField. If
-   *     {@code stopOnFirstMatch} is true, the list will contain at most one element.
-   */
-  public static List<Tuple2<List<String>, StructField>> filterRecursively(
-      DataType schema,
-      boolean recurseIntoMapOrArrayElements,
-      boolean stopOnFirstMatch,
-      Function<StructField, Boolean> f) {
-    return recurseIntoComplexTypes(
-        schema, new ArrayList<>(), recurseIntoMapOrArrayElements, stopOnFirstMatch, f);
-  }
-
-  /**
    * Collects all leaf columns from the given schema (including flattened columns only for
    * StructTypes), up to maxColumns. NOTE: If maxColumns = -1, we collect ALL leaf columns in the
    * schema.
@@ -333,96 +333,6 @@ public class SchemaUtils {
   /////////////////////////////////////////////////////////////////////////////////////////////////
   /// Private methods                                                                           ///
   /////////////////////////////////////////////////////////////////////////////////////////////////
-  /**
-   * Returns all column names in this schema as a flat list. For example, a schema like:
-   *
-   * <pre>
-   *   | - a
-   *   | | - 1
-   *   | | - 2
-   *   | - b
-   *   | - c
-   *   | | - nest
-   *   |   | - 3
-   *   will get flattened to: "a", "a.1", "a.2", "b", "c", "c.nest", "c.nest.3"
-   * </pre>
-   */
-  private static List<String> flattenNestedFieldNames(StructType schema) {
-    List<Tuple2<List<String>, StructField>> columnPathToStructFields =
-        filterRecursively(
-            schema,
-            true /* recurseIntoMapOrArrayElements */,
-            false /* stopOnFirstMatch */,
-            sf -> true);
-
-    return columnPathToStructFields.stream()
-        .map(t -> t._1)
-        .map(SchemaUtils::concatWithDot)
-        .collect(Collectors.toList());
-  }
-
-  private static List<Tuple2<List<String>, StructField>> recurseIntoComplexTypes(
-      DataType type,
-      List<String> columnPath,
-      boolean recurseIntoMapOrArrayElements,
-      boolean stopOnFirstMatch,
-      Function<StructField, Boolean> f) {
-    List<Tuple2<List<String>, StructField>> filtered = new ArrayList<>();
-
-    if (type instanceof StructType) {
-      StructType s = (StructType) type;
-      for (StructField sf : s.fields()) {
-        List<String> newColumnPath = new ArrayList<>(columnPath);
-        newColumnPath.add(sf.getName());
-
-        if (f.apply(sf)) {
-          filtered.add(new Tuple2<>(newColumnPath, sf));
-          if (stopOnFirstMatch) {
-            return filtered;
-          }
-        }
-
-        filtered.addAll(
-            recurseIntoComplexTypes(
-                sf.getDataType(),
-                newColumnPath,
-                recurseIntoMapOrArrayElements,
-                stopOnFirstMatch,
-                f));
-
-        if (stopOnFirstMatch && !filtered.isEmpty()) {
-          return filtered;
-        }
-      }
-    } else if (type instanceof ArrayType && recurseIntoMapOrArrayElements) {
-      ArrayType a = (ArrayType) type;
-      List<String> newColumnPath = new ArrayList<>(columnPath);
-      newColumnPath.add("element");
-      return recurseIntoComplexTypes(
-          a.getElementType(), newColumnPath, recurseIntoMapOrArrayElements, stopOnFirstMatch, f);
-    } else if (type instanceof MapType && recurseIntoMapOrArrayElements) {
-      MapType m = (MapType) type;
-      List<String> keyColumnPath = new ArrayList<>(columnPath);
-      keyColumnPath.add("key");
-      List<String> valueColumnPath = new ArrayList<>(columnPath);
-      valueColumnPath.add("value");
-      filtered.addAll(
-          recurseIntoComplexTypes(
-              m.getKeyType(), keyColumnPath, recurseIntoMapOrArrayElements, stopOnFirstMatch, f));
-      if (stopOnFirstMatch && !filtered.isEmpty()) {
-        return filtered;
-      }
-      filtered.addAll(
-          recurseIntoComplexTypes(
-              m.getValueType(),
-              valueColumnPath,
-              recurseIntoMapOrArrayElements,
-              stopOnFirstMatch,
-              f));
-    }
-
-    return filtered;
-  }
 
   /* Compute the SchemaChanges using field IDs */
   static SchemaChanges computeSchemaChangesById(StructType currentSchema, StructType newSchema) {
@@ -437,7 +347,13 @@ public class SchemaUtils {
     // <"", 2>: StructField("b", IntegerType)}
     Map<SchemaElementId, StructField> currentFieldIdToField = fieldsByElementId(currentSchema);
     Set<Integer> addedFieldIds = new HashSet<>();
-    for (SchemaIterable.SchemaElement newElement : new SchemaIterable(newSchema)) {
+    SchemaIterable newSchemaIterable = new SchemaIterable(newSchema);
+    Iterator<SchemaIterable.MutableSchemaElement> newSchemaIterator =
+        newSchemaIterable.newMutableIterator();
+
+    boolean newSchemaHasUpdates = false;
+    while (newSchemaIterator.hasNext()) {
+      SchemaIterable.MutableSchemaElement newElement = newSchemaIterator.next();
       SchemaElementId id = getSchemaElementId(newElement);
       if (addedFieldIds.contains(id.getId())) {
         // Skip early if this is a descendant of an added field.
@@ -475,13 +391,46 @@ public class SchemaUtils {
         // from map to array.
         continue;
       }
-      StructField updatedField = newElement.getField();
-      if (!existingField.equals(updatedField)) {
+      StructField newField = newElement.getField();
+      List<TypeChange> existingTypeChanges = existingField.getTypeChanges();
+      if (!existingTypeChanges.isEmpty() && newField.getTypeChanges().isEmpty()) {
+        // Copy over type changes from existing field because new schemas
+        // might be constructed elsewhere and not have the persisted type
+        // change metadata.
+        newField = newField.withTypeChanges(existingTypeChanges);
+        newElement.updateField(newField);
+        newSchemaHasUpdates = true;
+      }
+
+      // Ensure the schemas are equal now, updating type changes from clients is not supported
+      // so they should be.
+      if (!existingTypeChanges.equals(newField.getTypeChanges())) {
+        throw new KernelException(
+            String.format(
+                "Detected a modified type changes field at '%s' %s != %s",
+                newElement.getNamePath(), existingTypeChanges, newField.getTypeChanges()));
+      }
+
+      if (!existingField.equals(newField)) {
+        if (!existingField.getDataType().isNested()
+            && !newField.getDataType().isNested()
+            && !existingField.getDataType().equivalent(newField.getDataType())) {
+          // Type changes only apply to non-nested types.  This loop evaluates both
+          // nested and non-nested, so we narrow down updates here. Actual type differences
+          // between nested types are validated against SchemaChanges returned by this
+          // function.
+          List<TypeChange> changes = new ArrayList<>(newField.getTypeChanges());
+          changes.add(new TypeChange(existingField.getDataType(), newField.getDataType()));
+          newElement.updateField(newField.withTypeChanges(changes));
+          newSchemaHasUpdates = true;
+        }
         // Field changed name, nullability, metadata or type
-        schemaDiff.withUpdatedField(existingField, updatedField, newElement.getNamePath());
+        schemaDiff.withUpdatedField(existingField, newField, newElement.getNamePath());
       }
     }
-
+    if (newSchemaHasUpdates) {
+      schemaDiff.withUpdatedSchema(newSchemaIterable.getSchema());
+    }
     return schemaDiff.build();
   }
 
@@ -542,26 +491,32 @@ public class SchemaUtils {
     }
   }
 
-  /* Validate if a given schema evolution is safe for a given column mapping mode*/
-  private static void validateSchemaEvolution(
+  /*
+   * Validate if a given schema evolution is safe for a given column mapping mode
+   *
+   * <p>Returns an updated schema if metadata (i.e. TypeChanges needs to be copied
+   * over from currentSchema).
+   */
+  private static Optional<StructType> validateSchemaEvolution(
       StructType currentSchema,
       StructType newSchema,
       ColumnMappingMode columnMappingMode,
       Set<String> clusteringColumnPhysicalNames,
       int currentMaxFieldId,
       boolean allowNewRequiredFields,
-      boolean icebergWriterCompatV1Enabled) {
+      boolean icebergWriterCompatV1Enabled,
+      boolean typeWideningEnabled) {
     switch (columnMappingMode) {
       case ID:
       case NAME:
-        validateSchemaEvolutionById(
+        return validateSchemaEvolutionById(
             currentSchema,
             newSchema,
             clusteringColumnPhysicalNames,
             currentMaxFieldId,
             allowNewRequiredFields,
-            icebergWriterCompatV1Enabled);
-        return;
+            icebergWriterCompatV1Enabled,
+            typeWideningEnabled);
       case NONE:
         throw new UnsupportedOperationException(
             "Schema evolution without column mapping is not supported");
@@ -593,7 +548,8 @@ public class SchemaUtils {
       SchemaChanges schemaChanges,
       int oldMaxFieldId,
       boolean allowNewRequiredFields,
-      boolean icebergWriterCompatV1Enabled) {
+      boolean icebergWriterCompatV1Enabled,
+      boolean typeWideningEnabled) {
     for (StructField addedField : schemaChanges.addedFields()) {
       if (!allowNewRequiredFields && !addedField.isNullable()) {
         throw new KernelException(
@@ -610,7 +566,7 @@ public class SchemaUtils {
     }
 
     for (SchemaChanges.SchemaUpdate updatedFields : schemaChanges.updatedFields()) {
-      validateFieldCompatibility(updatedFields, icebergWriterCompatV1Enabled);
+      validateFieldCompatibility(updatedFields, icebergWriterCompatV1Enabled, typeWideningEnabled);
     }
   }
 
@@ -620,7 +576,9 @@ public class SchemaUtils {
    * tightened
    */
   private static void validateFieldCompatibility(
-      SchemaChanges.SchemaUpdate update, boolean icebergWriterCompatV1Enabled) {
+      SchemaChanges.SchemaUpdate update,
+      boolean icebergWriterCompatV1Enabled,
+      boolean typeWideningEnabled) {
     StructField existingField = update.before();
     StructField newField = update.after();
     if (existingField.isNullable() && !newField.isNullable()) {
@@ -671,8 +629,18 @@ public class SchemaUtils {
           return;
         }
       }
+      DataType existingType = existingField.getDataType();
+      DataType newType = newField.getDataType();
+      if (!existingType.equivalent(newType)) {
 
-      if (!existingField.getDataType().equivalent(newField.getDataType())) {
+        if (typeWideningEnabled) {
+          if ((icebergWriterCompatV1Enabled
+                  && TypeWideningChecker.isIcebergV2Compatible(existingType, newType))
+              || (!icebergWriterCompatV1Enabled
+                  && TypeWideningChecker.isWideningSupported(existingType, newType))) {
+            return;
+          }
+        }
         throw new KernelException(
             String.format(
                 "Cannot change the type of existing field %s from %s to %s",

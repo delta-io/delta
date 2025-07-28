@@ -130,7 +130,7 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
         |    "StringType": "a",
         |    "DateType": "1970-01-02",
         |    "TimestampType": "1970-01-01T00:00:00.000Z",
-        |    "TimestampNTZType": "1970-01-01T00:00:00.000Z",
+        |    "TimestampNTZType": "1970-01-01T00:00:00",
         |    "BinaryType": "a",
         |    "NestedStruct": {
         |      "aa": "a",
@@ -150,7 +150,7 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
         |    "StringType": "z",
         |    "DateType": "1970-01-11",
         |    "TimestampType": "1970-01-01T00:00:00.000Z",
-        |    "TimestampNTZType": "1970-01-01T00:00:00.000Z",
+        |    "TimestampNTZType": "1970-01-01T00:00:00",
         |    "BinaryType": "z",
         |    "NestedStruct": {
         |      "aa": "z",

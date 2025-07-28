@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.internal.rowtracking;
 
+import io.delta.kernel.exceptions.InvalidTableException;
 import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
@@ -77,6 +78,35 @@ public final class MaterializedRowTrackingColumn {
             columnName -> {
               if (logicalColNames.contains(columnName) || physicalColNames.contains(columnName)) {
                 throw DeltaErrors.conflictWithReservedInternalColumnName(columnName);
+              }
+            });
+  }
+
+  /**
+   * Validates that materialized column names for ROW_ID and ROW_COMMIT_VERSION are not missing when
+   * row tracking is enabled. This should be called for existing tables to ensure that row tracking
+   * configs are present when they should be.
+   *
+   * @param metadata The current {@link Metadata} of the table.
+   */
+  public static void validateRowTrackingConfigsNotMissing(Metadata metadata, String tablePath) {
+    // No validation needed if row tracking is disabled
+    if (!TableConfig.ROW_TRACKING_ENABLED.fromMetadata(metadata)) {
+      return;
+    }
+
+    // Check that both materialized column name configs are present when row tracking is enabled
+    Stream.of(ROW_ID, ROW_COMMIT_VERSION)
+        .forEach(
+            column -> {
+              if (!metadata
+                  .getConfiguration()
+                  .containsKey(column.getMaterializedColumnNameProperty())) {
+                throw new InvalidTableException(
+                    tablePath,
+                    String.format(
+                        "Row tracking is enabled but the materialized column name `%s` is missing.",
+                        column.getMaterializedColumnNameProperty()));
               }
             });
   }

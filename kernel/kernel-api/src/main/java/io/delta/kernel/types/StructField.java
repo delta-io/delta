@@ -18,11 +18,9 @@ package io.delta.kernel.types;
 
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.exceptions.KernelException;
-import io.delta.kernel.internal.util.Tuple2;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.Objects;
+import io.delta.kernel.internal.types.DataTypeJsonSerDe;
+import io.delta.kernel.internal.util.SchemaIterable;
+import java.util.*;
 
 /**
  * Represents a subfield of {@link StructType} with additional properties and metadata.
@@ -31,7 +29,6 @@ import java.util.Objects;
  */
 @Evolving
 public class StructField {
-
   ////////////////////////////////////////////////////////////////////////////////
   // Static Fields / Methods
   ////////////////////////////////////////////////////////////////////////////////
@@ -54,6 +51,10 @@ public class StructField {
           Collections.emptyList());
 
   public static final String COLLATIONS_METADATA_KEY = "__COLLATIONS";
+  public static final String FROM_TYPE_KEY = "fromType";
+  public static final String TO_TYPE_KEY = "toType";
+  public static final String FIELD_PATH_KEY = "fieldPath";
+  public static final String DELTA_TYPE_CHANGES_KEY = "delta.typeChanges";
 
   ////////////////////////////////////////////////////////////////////////////////
   // Instance Fields / Methods
@@ -88,9 +89,9 @@ public class StructField {
     this.nullable = nullable;
     this.typeChanges = typeChanges == null ? Collections.emptyList() : typeChanges;
 
-    FieldMetadata collationMetadata = fetchCollationMetadata();
+    FieldMetadata nestedMetadata = collectNestedMapArrayTypeMetadata();
     this.metadata =
-        new FieldMetadata.Builder().fromMetadata(metadata).fromMetadata(collationMetadata).build();
+        new FieldMetadata.Builder().fromMetadata(metadata).fromMetadata(nestedMetadata).build();
     if (!this.typeChanges.isEmpty()
         && (dataType instanceof MapType
             || dataType instanceof StructType
@@ -197,45 +198,63 @@ public class StructField {
     return new StructField(name, newType, nullable, metadata, typeChanges);
   }
 
-  private List<Tuple2<String, String>> getNestedCollatedFields(DataType parent, String path) {
-    List<Tuple2<String, String>> nestedCollatedFields = new ArrayList<>();
-    if (parent instanceof StringType) {
-      StringType stringType = (StringType) parent;
-      if (!stringType
-          .getCollationIdentifier()
-          .equals(CollationIdentifier.fromString("SPARK.UTF8_BINARY"))) {
-        nestedCollatedFields.add(
-            new Tuple2<>(
-                path, ((StringType) parent).getCollationIdentifier().toStringWithoutVersion()));
+  /** Fetches collation and type changes metadata from nested fields. */
+  private FieldMetadata collectNestedMapArrayTypeMetadata() {
+    FieldMetadata.Builder collationBuilder = FieldMetadata.builder();
+    List<FieldMetadata> typeChangesBuilder = new ArrayList<>();
+    // This is a little risky since this isn't fully initialized but should be fine since all fields
+    // we needed are initialized.
+    // StructTypes children would already have their own collation metadata, so skip them here.
+    SchemaIterable iterable =
+        SchemaIterable.newSchemaIterableWithIgnoredRecursion(
+            new StructType().add(this), new Class[] {StructType.class});
+    for (SchemaIterable.SchemaElement element : iterable) {
+      DataType type = element.getField().getDataType();
+      if (type instanceof StringType) {
+        StringType stringType = (StringType) type;
+        if (!stringType
+            .getCollationIdentifier()
+            .equals(CollationIdentifier.fromString("SPARK.UTF8_BINARY"))) {
+          // TODO: Should this account for column mapping?
+          String path =
+              element.getPathFromNearestStructFieldAncestor(
+                  element.getNearestStructFieldAncestor().name);
+          collationBuilder.putString(
+              path, stringType.getCollationIdentifier().toStringWithoutVersion());
+        }
       }
-    } else if (parent instanceof MapType) {
-      nestedCollatedFields.addAll(
-          getNestedCollatedFields(((MapType) parent).getKeyType(), path + ".key"));
-      nestedCollatedFields.addAll(
-          getNestedCollatedFields(((MapType) parent).getValueType(), path + ".value"));
-    } else if (parent instanceof ArrayType) {
-      nestedCollatedFields.addAll(
-          getNestedCollatedFields(((ArrayType) parent).getElementType(), path + ".element"));
+      StructField field = element.getField();
+      if (!field.getTypeChanges().isEmpty()) {
+        for (TypeChange typeChange : field.getTypeChanges()) {
+          FieldMetadata.Builder typeChangeBuilder = FieldMetadata.builder();
+          typeChangeBuilder.putString(FROM_TYPE_KEY, typeAsString(typeChange.getFrom()));
+          typeChangeBuilder.putString(TO_TYPE_KEY, typeAsString(typeChange.getTo()));
+          if (!element.isStructField()) {
+            // For type changes the field name the field name is not a prefix.
+            typeChangeBuilder.putString(
+                FIELD_PATH_KEY, element.getPathFromNearestStructFieldAncestor(""));
+          }
+          typeChangesBuilder.add(typeChangeBuilder.build());
+        }
+      }
     }
-    // We didn't check for StructType because we store the StringType's
-    // collation information in the nearest ancestor StructField's metadata when serializing.
-    return nestedCollatedFields;
+
+    FieldMetadata.Builder finalBuilder = FieldMetadata.builder();
+
+    FieldMetadata collationMetadata = collationBuilder.build();
+    if (!collationMetadata.getEntries().isEmpty()) {
+      finalBuilder.putFieldMetadata(COLLATIONS_METADATA_KEY, collationMetadata);
+    }
+    if (!typeChangesBuilder.isEmpty()) {
+      finalBuilder.putFieldMetadataArray(
+          DELTA_TYPE_CHANGES_KEY, typeChangesBuilder.toArray(new FieldMetadata[0]));
+    }
+    return finalBuilder.build();
   }
 
-  /** Fetches collation metadata from nested collated fields. */
-  private FieldMetadata fetchCollationMetadata() {
-    List<Tuple2<String, String>> nestedCollatedFields = getNestedCollatedFields(dataType, name);
-    if (nestedCollatedFields.isEmpty()) {
-      return FieldMetadata.empty();
-    }
-
-    FieldMetadata.Builder metadataBuilder = new FieldMetadata.Builder();
-    for (Tuple2<String, String> nestedField : nestedCollatedFields) {
-      metadataBuilder.putString(nestedField._1, nestedField._2);
-    }
-
-    return new FieldMetadata.Builder()
-        .putFieldMetadata(COLLATIONS_METADATA_KEY, metadataBuilder.build())
-        .build();
+  private static String typeAsString(DataType dt) {
+    String jsonString = DataTypeJsonSerDe.serializeDataType(dt);
+    // Remove leading/trailing quotes.
+    return jsonString.substring(1, jsonString.length() - 1);
   }
 }
