@@ -414,6 +414,11 @@ class DefaultExpressionUtils {
    */
   static ColumnVector arithmeticVector(
       ColumnVector left, ColumnVector right, ArithmeticOperator operator) {
+    checkArgument(
+        left.getSize() == right.getSize(), "Left and right operand have different vector sizes.");
+    checkArgument(
+        left.getDataType().equals(right.getDataType()),
+        "Left and right operand have different data types.");
     return new ColumnVector() {
       @Override
       public DataType getDataType() {
