@@ -35,6 +35,11 @@ import org.scalatest.funsuite.AnyFunSuite
 /** Unit tests for [[UCCatalogManagedClient]]. */
 class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestUtils {
 
+  /**
+   * If present, loads the given `versionToLoad`, else loads the maxRatifiedVersion of 2.
+   *
+   * Also asserts that the desired `versionToLoad` is, in fact, loaded.
+   */
   private def testCatalogManagedTable(versionToLoad: Optional[java.lang.Long]): Unit = {
     // Step 1: Create the in-memory table data (ratified commits v1, v2)
     val maxRatifiedVersion = 2L
@@ -120,7 +125,8 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
     assert(exMsg.contains("Cannot load table version 9 as the latest version ratified by UC is 2"))
   }
 
-  test("loadTable correctly laods a UC table -- versionToLoad is empty => load latest") {
+  test("loadTable correctly loads a UC table -- versionToLoad is empty => load latest") {
+    // Since versionToLoad is empty, it asserts that the latest version (2) is loaded
     testCatalogManagedTable(versionToLoad = Optional.empty())
   }
 

@@ -125,8 +125,11 @@ public class UCCatalogManagedClient {
               }
             });
 
-    logger.info("[{}] Number of ratified commits: {}", ucTableId, response.getCommits().size());
-    logger.info("[{}] Max ratified version in UC: {}", ucTableId, response.getLatestTableVersion());
+    logger.info(
+        "[{}] Number of ratified commits: {}, Max ratified version in UC: {}",
+        ucTableId,
+        response.getCommits().size(),
+        response.getLatestTableVersion());
 
     return response;
   }
