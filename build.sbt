@@ -718,14 +718,13 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
 
 
 lazy val sparkKernelDsv2 = (project in file("spark-kernel-dsv2"))
-  .enablePlugins(ScalafmtPlugin)
   .dependsOn(kernelApi)
   .dependsOn(kernelDefaults)
   .dependsOn(spark % "test->test")
   .settings(
     name := "delta-spark-dsv2",
     commonSettings,
-    scalaStyleSettings,
+    javafmtCheckSettings,
     skipReleaseSettings,
     Test / javaOptions ++= Seq("-ea"),
     libraryDependencies ++= Seq(
@@ -733,9 +732,11 @@ lazy val sparkKernelDsv2 = (project in file("spark-kernel-dsv2"))
       "org.apache.spark" %% "spark-core" % sparkVersion.value % "provided",
       "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
 
-      "org.scalatest" %% "scalatest" % scalaTestVersion % "test"
+      "org.junit.jupiter" % "junit-jupiter-api" % "5.8.2" % "test",
+      "org.junit.jupiter" % "junit-jupiter-engine" % "5.8.2" % "test",
+      "com.novocode" % "junit-interface" % "0.11" % "test"
     ),
-    unidocSourceFilePatterns := Seq(SourceFilePattern("io/delta/spark/dsv2/"))
+    Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")
   )
 
 lazy val unity = (project in file("unity"))
