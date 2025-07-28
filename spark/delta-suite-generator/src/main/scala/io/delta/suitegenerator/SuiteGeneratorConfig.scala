@@ -230,7 +230,7 @@ object SuiteGeneratorConfig {
         TestConfig(
           "UpdateSQLTests" :: Tests.UPDATE_BASE,
           List(
-            List(Dims.UPDATE_SQL, Dims.NAME_BASED),
+            List(Dims.UPDATE_SQL, Dims.NAME_BASED)
           )
         ),
         TestConfig(
