@@ -34,102 +34,142 @@ import org.apache.spark.sql.delta.rowid._
 class DeleteScalaTestsDeleteScalaSuite extends DeleteScalaTests with DeleteScalaMixin
 class DeleteBaseTestsDeleteScalaSuite extends DeleteBaseTests with DeleteScalaMixin
 
-class DeleteCDCTestsDeleteSQLCDCEnabledSuite
+class DeleteCDCTestsDeleteSQLDeltaDMLTestUtilsPathBasedCDCEnabledSuite
   extends DeleteCDCTests
   with DeleteSQLMixin
+  with DeltaDMLTestUtilsPathBased
   with CDCEnabled
   with DeleteCDCMixin
 
-class DeleteSQLTestsDeleteSQLSuite extends DeleteSQLTests with DeleteSQLMixin
-
-class DeleteSQLTestsDeleteSQLDeltaColumnMappingEnableIdModeSuite
+class DeleteSQLTestsDeleteSQLDeltaDMLTestUtilsNameBasedSuite
   extends DeleteSQLTests
   with DeleteSQLMixin
+  with DeltaDMLTestUtilsNameBased
+
+class DeleteSQLTestsDeleteSQLDeltaDMLTestUtilsPathBasedSuite
+  extends DeleteSQLTests
+  with DeleteSQLMixin
+  with DeltaDMLTestUtilsPathBased
+
+class DeleteSQLTestsDeleteSQLDeltaDMLTestUtilsPathBasedDeltaColumnMappingEnableIdModeSuite
+  extends DeleteSQLTests
+  with DeleteSQLMixin
+  with DeltaDMLTestUtilsPathBased
   with DeltaColumnMappingEnableIdMode
 
-class DeleteSQLTestsDeleteSQLDeltaColumnMappingEnableNameModeSuite
+class DeleteSQLTestsDeleteSQLDeltaDMLTestUtilsPathBasedDeltaColumnMappingEnableNameModeSuite
   extends DeleteSQLTests
   with DeleteSQLMixin
+  with DeltaDMLTestUtilsPathBased
   with DeltaColumnMappingEnableNameMode
   with DeleteSQLNameColumnMappingMixin
 
-class DeleteSQLTestsDeleteSQLDeleteSQLWithDeletionVectorsPredicatePushdownDisabledSuite
+class DeleteSQLTestsDeleteSQLDeltaDMLTestUtilsPathBasedDeleteSQLWithDeletionVectorsPrediSFURCIYSuite
   extends DeleteSQLTests
   with DeleteSQLMixin
+  with DeltaDMLTestUtilsPathBased
   with DeleteSQLWithDeletionVectorsMixin
   with PredicatePushdownDisabled
 
-class DeleteSQLTestsDeleteSQLDeleteSQLWithDeletionVectorsPredicatePushdownEnabledSuite
+class DeleteSQLTestsDeleteSQLDeltaDMLTestUtilsPathBasedDeleteSQLWithDeletionVectorsPrediNRMUHXQSuite
   extends DeleteSQLTests
   with DeleteSQLMixin
+  with DeltaDMLTestUtilsPathBased
   with DeleteSQLWithDeletionVectorsMixin
   with PredicatePushdownEnabled
 
-class DeleteSQLTestsDeleteSQLCDCEnabledSuite
+class DeleteSQLTestsDeleteSQLDeltaDMLTestUtilsPathBasedCDCEnabledSuite
   extends DeleteSQLTests
   with DeleteSQLMixin
+  with DeltaDMLTestUtilsPathBased
   with CDCEnabled
   with DeleteCDCMixin
 
-class DeleteTempViewTestsDeleteSQLSuite extends DeleteTempViewTests with DeleteSQLMixin
-
-class DeleteTempViewTestsDeleteSQLDeltaColumnMappingEnableIdModeSuite
+class DeleteTempViewTestsDeleteSQLDeltaDMLTestUtilsNameBasedSuite
   extends DeleteTempViewTests
   with DeleteSQLMixin
+  with DeltaDMLTestUtilsNameBased
+
+class DeleteTempViewTestsDeleteSQLDeltaDMLTestUtilsPathBasedSuite
+  extends DeleteTempViewTests
+  with DeleteSQLMixin
+  with DeltaDMLTestUtilsPathBased
+
+class DeleteTempViewTestsDeleteSQLDeltaDMLTestUtilsPathBasedDeltaColumnMappingEnableIdModeSuite
+  extends DeleteTempViewTests
+  with DeleteSQLMixin
+  with DeltaDMLTestUtilsPathBased
   with DeltaColumnMappingEnableIdMode
 
-class DeleteTempViewTestsDeleteSQLDeltaColumnMappingEnableNameModeSuite
+class DeleteTempViewTestsDeleteSQLDeltaDMLTestUtilsPathBasedDeltaColumnMappingEnableNameModeSuite
   extends DeleteTempViewTests
   with DeleteSQLMixin
+  with DeltaDMLTestUtilsPathBased
   with DeltaColumnMappingEnableNameMode
   with DeleteSQLNameColumnMappingMixin
 
-class DeleteTempViewTestsDeleteSQLDeleteSQLWithDeletionVectorsPredicatePushdownDisabledSuite
+class DeleteTempViewTestsDeleteSQLDeltaDMLTestUtilsPathBasedDeleteSQLWithDeletionVectorsUF4SBZASuite
   extends DeleteTempViewTests
   with DeleteSQLMixin
+  with DeltaDMLTestUtilsPathBased
   with DeleteSQLWithDeletionVectorsMixin
   with PredicatePushdownDisabled
 
-class DeleteTempViewTestsDeleteSQLDeleteSQLWithDeletionVectorsPredicatePushdownEnabledSuite
+class DeleteTempViewTestsDeleteSQLDeltaDMLTestUtilsPathBasedDeleteSQLWithDeletionVectorsTHW2KHASuite
   extends DeleteTempViewTests
   with DeleteSQLMixin
+  with DeltaDMLTestUtilsPathBased
   with DeleteSQLWithDeletionVectorsMixin
   with PredicatePushdownEnabled
 
-class DeleteTempViewTestsDeleteSQLCDCEnabledSuite
+class DeleteTempViewTestsDeleteSQLDeltaDMLTestUtilsPathBasedCDCEnabledSuite
   extends DeleteTempViewTests
   with DeleteSQLMixin
+  with DeltaDMLTestUtilsPathBased
   with CDCEnabled
   with DeleteCDCMixin
 
-class DeleteBaseTestsDeleteSQLSuite extends DeleteBaseTests with DeleteSQLMixin
-
-class DeleteBaseTestsDeleteSQLDeltaColumnMappingEnableIdModeSuite
+class DeleteBaseTestsDeleteSQLDeltaDMLTestUtilsNameBasedSuite
   extends DeleteBaseTests
   with DeleteSQLMixin
+  with DeltaDMLTestUtilsNameBased
+
+class DeleteBaseTestsDeleteSQLDeltaDMLTestUtilsPathBasedSuite
+  extends DeleteBaseTests
+  with DeleteSQLMixin
+  with DeltaDMLTestUtilsPathBased
+
+class DeleteBaseTestsDeleteSQLDeltaDMLTestUtilsPathBasedDeltaColumnMappingEnableIdModeSuite
+  extends DeleteBaseTests
+  with DeleteSQLMixin
+  with DeltaDMLTestUtilsPathBased
   with DeltaColumnMappingEnableIdMode
 
-class DeleteBaseTestsDeleteSQLDeltaColumnMappingEnableNameModeSuite
+class DeleteBaseTestsDeleteSQLDeltaDMLTestUtilsPathBasedDeltaColumnMappingEnableNameModeSuite
   extends DeleteBaseTests
   with DeleteSQLMixin
+  with DeltaDMLTestUtilsPathBased
   with DeltaColumnMappingEnableNameMode
   with DeleteSQLNameColumnMappingMixin
 
-class DeleteBaseTestsDeleteSQLDeleteSQLWithDeletionVectorsPredicatePushdownDisabledSuite
+class DeleteBaseTestsDeleteSQLDeltaDMLTestUtilsPathBasedDeleteSQLWithDeletionVectorsPredAPDVT7YSuite
   extends DeleteBaseTests
   with DeleteSQLMixin
+  with DeltaDMLTestUtilsPathBased
   with DeleteSQLWithDeletionVectorsMixin
   with PredicatePushdownDisabled
 
-class DeleteBaseTestsDeleteSQLDeleteSQLWithDeletionVectorsPredicatePushdownEnabledSuite
+class DeleteBaseTestsDeleteSQLDeltaDMLTestUtilsPathBasedDeleteSQLWithDeletionVectorsPredFAFSNSYSuite
   extends DeleteBaseTests
   with DeleteSQLMixin
+  with DeltaDMLTestUtilsPathBased
   with DeleteSQLWithDeletionVectorsMixin
   with PredicatePushdownEnabled
 
-class DeleteBaseTestsDeleteSQLCDCEnabledSuite
+class DeleteBaseTestsDeleteSQLDeltaDMLTestUtilsPathBasedCDCEnabledSuite
   extends DeleteBaseTests
   with DeleteSQLMixin
+  with DeltaDMLTestUtilsPathBased
   with CDCEnabled
   with DeleteCDCMixin
 

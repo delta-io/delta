@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
+import org.apache.spark.{SparkThrowable, SparkUnsupportedOperationException}
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.execution.FileSourceScanExec
 import org.apache.spark.sql.functions.{lit, struct}
@@ -244,12 +245,24 @@ trait DeleteBaseTests extends DeleteBaseMixin {
         .mode("overwrite")
         .format("parquet"),
       tableSQLIdentifier)
-    val e = intercept[DeltaAnalysisException] {
+    intercept[SparkThrowable] {
       executeDelete(target = tableSQLIdentifier)
-    }.getMessage
-    assert(e.contains("DELETE destination only supports Delta sources") ||
-      e.contains("is not a Delta table") || e.contains("doesn't exist") ||
-      e.contains("Incompatible format"))
+    } match {
+      // Thrown when running with path-based SQL
+      case e: DeltaAnalysisException if e.getCondition == "DELTA_MISSING_TRANSACTION_LOG" =>
+        checkErrorMatchPVals(e, "DELTA_MISSING_TRANSACTION_LOG",
+          parameters = Map("operation" -> "read from", "path" -> ".*", "docLink" -> "https://.*"))
+      // Thrown when running with path-based Scala API
+      case e: DeltaAnalysisException if e.getCondition == "DELTA_MISSING_DELTA_TABLE" =>
+        checkError(e, "DELTA_MISSING_DELTA_TABLE",
+          parameters = Map("tableName" -> tableSQLIdentifier.stripPrefix("delta.")))
+      // Thrown when running with name-based SQL
+      case e: AnalysisException =>
+        checkErrorMatchPVals(e, "UNSUPPORTED_FEATURE.TABLE_OPERATION",
+          parameters = Map(
+            "tableName" -> s".*$tableSQLIdentifier.*",
+            "operation" -> "DELETE"))
+    }
   }
 
   test("Negative case - non-deterministic condition") {
