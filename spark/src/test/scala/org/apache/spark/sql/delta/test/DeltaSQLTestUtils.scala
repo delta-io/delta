@@ -59,7 +59,7 @@ trait DeltaSQLTestUtils extends SQLTestUtils {
    * returns.
    */
   def withTempDir(prefix: String)(f: File => Unit): Unit = {
-    val path = Utils.createTempDir(namePrefix = s"$prefix-${UUID.randomUUID()}")
+    val path = Utils.createTempDir(namePrefix = prefix)
     try f(path) finally Utils.deleteRecursively(path)
   }
 
@@ -68,7 +68,7 @@ trait DeltaSQLTestUtils extends SQLTestUtils {
    * passed to `f` and will be deleted after `f` returns.
    */
   def withTempPath(prefix: String)(f: File => Unit): Unit = {
-    val path = Utils.createTempDir(namePrefix = s"$prefix-${UUID.randomUUID()}")
+    val path = Utils.createTempDir(namePrefix = prefix)
     path.delete()
     try f(path) finally Utils.deleteRecursively(path)
   }
@@ -79,8 +79,7 @@ trait DeltaSQLTestUtils extends SQLTestUtils {
    */
   protected def withTempPaths(numPaths: Int, prefix: String)(f: Seq[File] => Unit): Unit = {
     val files =
-      Seq.fill[File](numPaths)(
-        Utils.createTempDir(namePrefix = s"$prefix-${UUID.randomUUID()}").getCanonicalFile)
+      Seq.fill[File](numPaths)(Utils.createTempDir(namePrefix = prefix).getCanonicalFile)
     files.foreach(_.delete())
     try f(files) finally {
       files.foreach(Utils.deleteRecursively)

@@ -9,7 +9,7 @@ jobs:
         # These Scala versions must match those in the build.sbt
         scala: [2.13.13]
         # Important: This list of shards must be [0..NUM_SHARDS - 1]
-        shard: [0, 1, 2]
+        shard: [0, 1, 2, 3]
     env:
       SCALA_VERSION: ${{ matrix.scala }}
       # Important: This must be the same as the length of shards in matrix
