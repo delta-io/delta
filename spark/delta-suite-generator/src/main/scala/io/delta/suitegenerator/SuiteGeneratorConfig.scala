@@ -266,9 +266,10 @@ object SuiteGeneratorConfig {
         TestConfig(
           "DeleteCDCTests" :: "DeleteSQLTests" :: Tests.DELETE_BASE,
           List(
-            List(Dims.DELETE_SQL, Dims.COLUMN_MAPPING.asOptional),
-            List(Dims.DELETE_SQL, Dims.DELETE_WITH_DVS, Dims.PREDPUSH),
-            List(Dims.DELETE_SQL, Dims.CDC)
+            List(Dims.DELETE_SQL, Dims.NAME_BASED),
+            List(Dims.DELETE_SQL, Dims.PATH_BASED, Dims.COLUMN_MAPPING.asOptional),
+            List(Dims.DELETE_SQL, Dims.PATH_BASED, Dims.DELETE_WITH_DVS, Dims.PREDPUSH),
+            List(Dims.DELETE_SQL, Dims.PATH_BASED, Dims.CDC)
           )
         ),
         TestConfig(

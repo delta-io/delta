@@ -22,7 +22,7 @@ import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, Del
 import org.apache.spark.sql.Row
 
 trait DeleteSQLMixin extends DeleteBaseMixin
-  with DeltaDMLTestUtilsPathBased
+  with DeltaDMLTestUtils
   with DeltaSQLCommandTest {
 
   override protected def executeDelete(target: String, where: String = null): Unit = {
@@ -37,12 +37,12 @@ trait DeleteSQLTests extends DeleteSQLMixin {
   // For EXPLAIN, which is not supported in OSS
   test("explain") {
     append(Seq((2, 2)).toDF("key", "value"))
-    val df = sql(s"EXPLAIN DELETE FROM delta.`$tempPath` WHERE key = 2")
+    val df = sql(s"EXPLAIN DELETE FROM $tableSQLIdentifier WHERE key = 2")
     val outputs = df.collect().map(_.mkString).mkString
     assert(outputs.contains("Delta"))
     assert(!outputs.contains("index") && !outputs.contains("ActionLog"))
     // no change should be made by explain
-    checkAnswer(readDeltaTable(tempPath), Row(2, 2))
+    checkAnswer(readDeltaTableByIdentifier(), Row(2, 2))
   }
 
   test("delete from a temp view") {
@@ -103,7 +103,8 @@ trait DeleteSQLNameColumnMappingMixin extends DeleteSQLMixin
 
 trait DeleteSQLWithDeletionVectorsMixin extends DeleteSQLMixin
   with DeltaExcludedTestMixin
-  with DeletionVectorsTestUtils {
+  with DeletionVectorsTestUtils
+  with DeltaDMLTestUtilsPathBased {
   override def beforeAll(): Unit = {
     super.beforeAll()
     enableDeletionVectors(spark, delete = true)
