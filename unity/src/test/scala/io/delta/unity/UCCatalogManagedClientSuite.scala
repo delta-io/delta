@@ -16,6 +16,9 @@
 
 package io.delta.unity
 
+import java.lang.{Long => JLong}
+import java.util.Optional
+
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 
@@ -24,6 +27,8 @@ import io.delta.kernel.internal.table.ResolvedTableInternal
 import io.delta.kernel.internal.tablefeatures.TableFeatures.{CATALOG_MANAGED_R_W_FEATURE_PREVIEW, TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
 import io.delta.kernel.internal.util.FileNames
 import io.delta.storage.commit.Commit
+import io.delta.storage.commit.uccommitcoordinator.InvalidTargetTableException
+import io.delta.unity.InMemoryUCClient.TableData
 
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileSystem, Path}
@@ -32,8 +37,14 @@ import org.scalatest.funsuite.AnyFunSuite
 /** Unit tests for [[UCCatalogManagedClient]]. */
 class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestUtils {
 
-  private def testCatalogManagedTable(versionToLoad: Long): Unit = {
+  /**
+   * If present, loads the given `versionToLoad`, else loads the maxRatifiedVersion of 2.
+   *
+   * Also asserts that the desired `versionToLoad` is, in fact, loaded.
+   */
+  private def testCatalogManagedTable(versionToLoad: Optional[java.lang.Long]): Unit = {
     // Step 1: Create the in-memory table data (ratified commits v1, v2)
+    val maxRatifiedVersion = 2L
     val tablePath = getTestResourceFilePath("catalog-owned-preview")
     val ucClient = new InMemoryUCClient("ucMetastoreId")
     val fs = FileSystem.get(new Configuration())
@@ -49,7 +60,7 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
           fileStatus,
           fileStatus.getModificationTime)
       }
-    val tableData = new InMemoryUCClient.TableData(2, ArrayBuffer(catalogCommits: _*))
+    val tableData = new TableData(maxRatifiedVersion, ArrayBuffer(catalogCommits: _*))
     ucClient.createTableIfNotExistsOrThrow("ucTableId", tableData)
 
     // Step 2: Load the table using UCCatalogManagedClient at the desired versionToLoad
@@ -60,7 +71,7 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
 
     // Step 3: Validate
     val protocol = resolvedTable.getProtocol
-    assert(resolvedTable.getVersion == versionToLoad)
+    assert(resolvedTable.getVersion == versionToLoad.orElse(maxRatifiedVersion))
     assert(protocol.getMinReaderVersion == TABLE_FEATURES_MIN_READER_VERSION)
     assert(protocol.getMinWriterVersion == TABLE_FEATURES_MIN_WRITER_VERSION)
     assert(protocol.getReaderFeatures.contains(CATALOG_MANAGED_R_W_FEATURE_PREVIEW.featureName()))
@@ -78,37 +89,80 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
     val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
 
     assertThrows[NullPointerException] {
-      ucCatalogManagedClient.loadTable(null, "ucTableId", "tablePath", 0L) // engine is null
+      // engine is null
+      ucCatalogManagedClient.loadTable(null, "ucTableId", "tablePath", Optional.of(0L))
     }
     assertThrows[NullPointerException] {
-      ucCatalogManagedClient.loadTable(defaultEngine, null, "tablePath", 0L) // ucTableId is null
+      // ucTableId is null
+      ucCatalogManagedClient.loadTable(defaultEngine, null, "tablePath", Optional.of(0L))
     }
     assertThrows[NullPointerException] {
-      ucCatalogManagedClient.loadTable(defaultEngine, "ucTableId", null, 0L) // tablePath is null
+      // tablePath is null
+      ucCatalogManagedClient.loadTable(defaultEngine, "ucTableId", null, Optional.of(0L))
     }
     assertThrows[IllegalArgumentException] {
-      ucCatalogManagedClient.loadTable(defaultEngine, "ucTableId", "tablePath", -1L) // version < 0
+      // version < 0
+      ucCatalogManagedClient.loadTable(defaultEngine, "ucTableId", "tablePath", Optional.of(-1L))
     }
+  }
+
+  Seq(
+    (Optional.empty[java.lang.Long](), "latest (implicitly)"),
+    (Optional.of(JLong.valueOf(0L)), "v0 (explicitly)")).foreach {
+    case (versionToLoad, description) =>
+      test(s"loadTable throws when table doesn't exist in catalog -- $description") {
+        val ucClient = new InMemoryUCClient("ucMetastoreId")
+        val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
+
+        val ex = intercept[RuntimeException] {
+          ucCatalogManagedClient
+            .loadTable(defaultEngine, "nonExistentTableId", "tablePath", versionToLoad)
+        }
+        assert(ex.getCause.isInstanceOf[InvalidTargetTableException])
+      }
+  }
+
+  Seq(
+    (Optional.empty[java.lang.Long](), "latest (implicitly)"),
+    (Optional.of(JLong.valueOf(0L)), "v0 (explicitly)")).foreach {
+    case (versionToLoad, description) =>
+      test(s"table version 0 is loaded when UC maxRatifiedVersion is -1 -- $description") {
+        val tablePath = getTestResourceFilePath("catalog-owned-preview")
+        val ucClient = new InMemoryUCClient("ucMetastoreId")
+        val tableData = new TableData(-1, ArrayBuffer[Commit]())
+        ucClient.createTableIfNotExistsOrThrow("ucTableId", tableData)
+        val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
+
+        val resolvedTable = ucCatalogManagedClient
+          .loadTable(defaultEngine, "ucTableId", tablePath, versionToLoad)
+
+        assert(resolvedTable.getVersion == 0L)
+      }
   }
 
   test("loadTable throws if version to load is greater than max ratified version") {
     val exMsg = intercept[IllegalArgumentException] {
-      testCatalogManagedTable(versionToLoad = 9L)
+      testCatalogManagedTable(versionToLoad = Optional.of(9L))
     }.getMessage
 
     assert(exMsg.contains("Cannot load table version 9 as the latest version ratified by UC is 2"))
   }
 
+  test("loadTable correctly loads a UC table -- versionToLoad is empty => load latest") {
+    // Since versionToLoad is empty, it asserts that the latest version (2) is loaded
+    testCatalogManagedTable(versionToLoad = Optional.empty())
+  }
+
   test("loadTable correctly loads a UC table -- versionToLoad is a ratified commit (the max)") {
-    testCatalogManagedTable(versionToLoad = 2L)
+    testCatalogManagedTable(versionToLoad = Optional.of(2L))
   }
 
   test("loadTable correctly loads a UC table -- versionToLoad is a ratified commit (not the max)") {
-    testCatalogManagedTable(versionToLoad = 1L)
+    testCatalogManagedTable(versionToLoad = Optional.of(1L))
   }
 
   test("loadTable correctly loads a UC table -- versionToLoad is a published commit") {
-    testCatalogManagedTable(versionToLoad = 0L)
+    testCatalogManagedTable(versionToLoad = Optional.of(0L))
   }
 
   test("converts UC Commit into Kernel ParsedLogData.RATIFIED_STAGED_COMMIT") {
