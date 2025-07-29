@@ -17,6 +17,7 @@
 package io.delta.kernel;
 
 import io.delta.kernel.annotation.Experimental;
+import io.delta.kernel.commit.Committer;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
@@ -46,6 +47,8 @@ public interface ResolvedTableBuilder {
   ResolvedTableBuilder atVersion(long version);
 
   // TODO: atTimestamp
+
+  ResolvedTableBuilder withCommitter(Committer committer);
 
   /**
    * Provides parsed log data to optimize table resolution.
