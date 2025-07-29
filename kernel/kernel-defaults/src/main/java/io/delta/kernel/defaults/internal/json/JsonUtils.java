@@ -26,8 +26,14 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.ser.std.StdSerializer;
 import io.delta.kernel.data.*;
 import io.delta.kernel.defaults.internal.data.DefaultJsonRow;
+import io.delta.kernel.defaults.internal.data.DefaultRowBasedColumnarBatch;
+import io.delta.kernel.defaults.internal.data.vector.DefaultBooleanVector;
 import io.delta.kernel.types.*;
+import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
 
 /**
  * Utilities method to serialize and deserialize {@link Row} objects with a limited set of data type
@@ -80,6 +86,130 @@ public class JsonUtils {
       throw new RuntimeException(String.format("Could not parse JSON: %s", json), ex);
     }
   }
+
+  public static String columnarBatchToJSON(ColumnarBatch batch) {
+    List<String> jsonRows = new ArrayList<>();
+    try (CloseableIterator<Row> allRows = batch.getRows()) {
+      while (allRows.hasNext()) {
+        Row row = allRows.next();
+        jsonRows.add(rowToJson(row));
+      }
+      return "[" + String.join(",", jsonRows) + "]";
+    } catch (Exception ex) {
+      throw new RuntimeException("Could not serialize columnar batch to JSON", ex);
+    }
+  }
+
+  public static ColumnarBatch columnarBatchFromJson(String json, StructType schema) {
+    try {
+      JsonNode rootNode = OBJECT_MAPPER.readTree(json);
+      if (!rootNode.isArray()) {
+        throw new IllegalArgumentException("Input JSON must be an array of objects.");
+      }
+
+      List<Row> rows = new ArrayList<>();
+      for (JsonNode element : rootNode) {
+        if (!element.isObject()) {
+          throw new IllegalArgumentException("Each element in JSON array must be a JSON object.");
+        }
+        rows.add(new DefaultJsonRow((ObjectNode) element, schema));
+      }
+
+      return new DefaultRowBasedColumnarBatch(schema, rows);
+    } catch (JsonProcessingException ex) {
+      throw new RuntimeException("Failed to parse input JSON", ex);
+    }
+  }
+
+  public static String filteredColumnarBatchToJson(FilteredColumnarBatch filteredBatch) {
+    String batchJson = columnarBatchToJSON(filteredBatch.getData());
+    String selectionJson =
+        filteredBatch.getSelectionVector().map(JsonUtils::serializeSelectionVector).orElse("null");
+
+    return String.format("{\"columnarBatch\":%s,\"selectionVector\":%s}", batchJson, selectionJson);
+  }
+
+  public static FilteredColumnarBatch filteredColumnarBatchFromJson(
+      String json, StructType schema) {
+    try {
+      JsonNode root = OBJECT_MAPPER.readTree(json);
+
+      // Parse the columnarBatch (rows)
+      JsonNode batchNode = root.get("columnarBatch");
+      if (batchNode == null || !batchNode.isArray()) {
+        throw new IllegalArgumentException("Missing or invalid 'columnarBatch' field");
+      }
+      // Reuse your existing columnarBatchFromJson method by serializing the array back to string
+      String batchJson = OBJECT_MAPPER.writeValueAsString(batchNode);
+      ColumnarBatch batch = columnarBatchFromJson(batchJson, schema);
+
+      // Parse the selection vector
+      JsonNode selNode = root.get("selectionVector");
+      Optional<ColumnVector> selectionVector = Optional.empty();
+      if (selNode != null && !selNode.isNull()) {
+        if (!selNode.isArray()) {
+          throw new IllegalArgumentException("'selectionVector' must be an array");
+        }
+        int size = selNode.size();
+        boolean[] values = new boolean[size];
+        for (int i = 0; i < size; i++) {
+          values[i] = selNode.get(i).asBoolean();
+        }
+        // Wrap boolean[] in BooleanColumnVector implementation
+        selectionVector =
+            Optional.of(
+                new DefaultBooleanVector(size, Optional.empty() /* nullability */, values) {});
+      }
+
+      return new FilteredColumnarBatch(batch, selectionVector);
+    } catch (Exception e) {
+      throw new RuntimeException("Failed to deserialize FilteredColumnarBatch from JSON", e);
+    }
+  }
+
+  private static String serializeSelectionVector(ColumnVector vector) {
+    if (!vector.getDataType().equals(BooleanType.BOOLEAN)) {
+      throw new IllegalArgumentException("Selection vector must be of boolean type");
+    }
+
+    int size = vector.getSize();
+    StringBuilder sb = new StringBuilder("[");
+    for (int i = 0; i < size; i++) {
+      sb.append(vector.getBoolean(i));
+      if (i < size - 1) {
+        sb.append(",");
+      }
+    }
+    sb.append("]");
+    return sb.toString();
+  }
+
+    // todo: this is better; performance; columnar batch pruning reduce overhead
+    // todo: maybe just a list of rows
+    public static String filteredColumnarBatchToJson2(FilteredColumnarBatch filteredBatch) {
+      ColumnarBatch batch = filteredBatch.getData();
+      Optional<ColumnVector> selectionVectorOpt = filteredBatch.getSelectionVector();
+
+      List<String> includedJsonRows = new ArrayList<>();
+      try (CloseableIterator<Row> rowIterator = batch.getRows()) {
+        int rowIndex = 0;
+        while (rowIterator.hasNext()) {
+          Row row = rowIterator.next();
+          boolean include = selectionVectorOpt
+              .map(selectionVector -> selectionVector.getBoolean(rowIndex))
+              .orElse(true); // If selectionVector is empty, include all rows
+
+          if (include) {
+            includedJsonRows.add(JsonUtils.rowToJson(row));
+          }
+          rowIndex++;
+        }
+
+        return "[" + String.join(",", includedJsonRows) + "]";
+      } catch (Exception e) {
+        throw new RuntimeException("Could not serialize FilteredColumnarBatch to JSON", e);
+      }
+    }
 
   public static class RowSerializer extends StdSerializer<Row> {
     public RowSerializer() {

@@ -74,6 +74,7 @@ public class DeltaScan implements org.apache.spark.sql.connector.read.Scan, Batc
       scanFiles = kernelScan.getScanFiles(tableEngine).toInMemoryList();
     } else {
       // ======== Distributed log replay: Using SparkSession (like Iceberg) ===============
+
       Tuple2<List<FilteredColumnarBatch>, Tombstones> result =
           kernelScan.getScanFilesFromJSON(tableEngine);
       scanFiles = new ArrayList<>(result._1);
@@ -84,14 +85,6 @@ public class DeltaScan implements org.apache.spark.sql.connector.read.Scan, Batc
       Broadcast<String> broadcastTablePath = sparkContext.broadcast(tablePath);
 
       List<FileStatus> checkpointFileList = kernelScan.getLogSegmentCheckpointFiles();
-      //      JavaRDD<FileStatus> checkpointRDD =
-      //          sparkContext.parallelize(checkpointFileList, checkpointFileList.size());
-      //      JavaRDD<String> checkpointStringRDD =
-      //          checkpointRDD.map(
-      //              fileStatus -> {
-      //                Row row = InternalScanFileUtils.generateScanFileRow(fileStatus);
-      //                return JsonUtils.rowToJson(row);
-      //              });
       List<String> serializedCheckpoints =
           checkpointFileList.stream()
               .map(
@@ -101,17 +94,32 @@ public class DeltaScan implements org.apache.spark.sql.connector.read.Scan, Batc
                   })
               .collect(Collectors.toList());
 
+      // one checkpoint -> one partition
+      // N executor -> N task to read checkpoint files -> each get some part
       JavaRDD<String> checkpointStringRDD =
           sparkContext.parallelize(serializedCheckpoints, serializedCheckpoints.size());
 
-      // TODO: FilteredColumnarBatch must be serializable
-      JavaRDD<FilteredColumnarBatch> batchRDD =
-          checkpointStringRDD.flatMap(
-              new DistributedLogReplay(tombstoneHashsetsBroadcast, broadcastTablePath));
+      // Step 2: distribute log replay tasks to executors
+      List<String> serializedAddFilesInCheckpoints =
+          checkpointStringRDD
+              .flatMap(new DistributedLogReplay(tombstoneHashsetsBroadcast, broadcastTablePath))
+              .collect();
+
+      List<FilteredColumnarBatch> allAddFilesinCheckpoints =
+          serializedAddFilesInCheckpoints.stream()
+              .map(
+                  json ->
+                      JsonUtils.filteredColumnarBatchFromJson(
+                          json, InternalScanFileUtils.SCAN_FILE_SCHEMA))
+              .collect(Collectors.toList());
 
       // Collect all batches back to the driver
-      scanFiles.addAll(batchRDD.collect());
-      // todo: apply filter here
+      scanFiles.addAll(allAddFilesinCheckpoints);
+      System.out.println("Number of Batches: " + scanFiles.size());
+
+      // todo: apply filter here; we should broadcast filter
+      // todo: serialization overhead
+      // exe: batch: 100 rows; filter: only one row should be selected
     }
 
     for (FilteredColumnarBatch columnarBatch : scanFiles) {
@@ -131,7 +139,11 @@ public class DeltaScan implements org.apache.spark.sql.connector.read.Scan, Batc
     cachedPartitions = scanFileAsInputPartitions.toArray(new InputPartition[0]);
     return cachedPartitions;
   }
-  // ============ Method two: using DSV2 API ================
+  // todo: benchmark; make big table: a lot of tiny files; big multi part checkpoint -> should be terrible (serialization)
+  // also read normal dsv2 (no distributed log replay)
+  // log: keep track of time metrics: how long it take to do xxxx
+  // todo: implement broadcast predicate -> executor side filtering -> should get better
+  // todo: clean up design doc; code: add logs (which executor is on; which executor is process what)
 
   /////////////////////////
   // SparkScan Overrides //

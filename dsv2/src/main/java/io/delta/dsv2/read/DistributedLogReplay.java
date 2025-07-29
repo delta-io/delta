@@ -1,6 +1,5 @@
 package io.delta.dsv2.read;
 
-import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.defaults.internal.json.JsonUtils;
@@ -17,7 +16,7 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.api.java.function.FlatMapFunction;
 import org.apache.spark.broadcast.Broadcast;
 
-public class DistributedLogReplay implements FlatMapFunction<String, FilteredColumnarBatch> {
+public class DistributedLogReplay implements FlatMapFunction<String, String> {
   private final Broadcast<String> tombstoneBroadcast;
   private final Broadcast<String> broadcastTablePath;
 
@@ -27,22 +26,28 @@ public class DistributedLogReplay implements FlatMapFunction<String, FilteredCol
     this.broadcastTablePath = broadcastTablePath;
   }
 
+
   @Override
-  public Iterator<FilteredColumnarBatch> call(String checkpointFileJson) throws Exception {
+  public Iterator<String> call(String checkpointFileJson) throws Exception {
+    // TODO: create a new Checkpoint_File_Schema
     Row scanFileRow =
         JsonUtils.rowFromJson(checkpointFileJson, InternalScanFileUtils.SCAN_FILE_SCHEMA);
+    // deserialize the checkpoint file
     FileStatus checkpointFile = InternalScanFileUtils.getAddFileStatus(scanFileRow);
 
+    // create local engine
     Configuration conf = new Configuration();
     Engine tableEngine = DefaultEngine.create(conf);
 
     // TODO: deserialize tombstone set
     Tombstones deserializedHashset = Tombstones.deserializeTombstone(tombstoneBroadcast.value());
 
-    try (CloseableIterator<FilteredColumnarBatch> iter =
+    System.out.println("Come to one partition");
+    try (CloseableIterator<String> iter =
         LogReplay.getAddFilesForOneCheckpoint(
-            tableEngine, broadcastTablePath.value(), checkpointFile, deserializedHashset)) {
-      List<FilteredColumnarBatch> result = new ArrayList<>();
+                tableEngine, broadcastTablePath.value(), checkpointFile, deserializedHashset)
+            .map(JsonUtils::filteredColumnarBatchToJson)) {
+      List<String> result = new ArrayList<>();
       while (iter.hasNext()) {
         result.add(iter.next());
       }

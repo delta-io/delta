@@ -32,7 +32,7 @@ public class LogReplayUtils {
   private LogReplayUtils() {}
 
   public static class UniqueFileActionTuple extends Tuple2<URI, Optional<String>> {
-    UniqueFileActionTuple(URI fileURI, Optional<String> deletionVectorId) {
+    public UniqueFileActionTuple(URI fileURI, Optional<String> deletionVectorId) {
       super(fileURI, deletionVectorId);
     }
   }

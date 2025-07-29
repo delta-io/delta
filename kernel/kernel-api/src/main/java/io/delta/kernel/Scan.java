@@ -120,10 +120,10 @@ public interface Scan {
    */
   Row getScanState(Engine engine);
 
-  // TODO: return list of ScanFiles and log replay states in the JSON file list
+  // TODO: return list of AddFiles and log replay states in the JSON file list
   Tuple2<List<FilteredColumnarBatch>, Tombstones> getScanFilesFromJSON(Engine engine);
 
-  // TODO: return list of log segment files (in ScanFileRow format)
+  // TODO: return list of checkpoint log segment files (in ScanFileRow format)
   List<FileStatus> getLogSegmentCheckpointFiles();
 
   /**

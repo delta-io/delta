@@ -18,7 +18,7 @@ class BasicDsv2Suite extends QueryTest with SharedSparkSession {
     assert(true) // dummy assert
   }
 
-  test("test reading using dsv2") {
+  test("reading table with multi part checkpoints using dsv2; only AddFiles (no removeFiles)") {
     val conf = new SparkConf()
       .set(
         StaticSQLConf.SPARK_SESSION_EXTENSIONS.key,
@@ -30,16 +30,11 @@ class BasicDsv2Suite extends QueryTest with SharedSparkSession {
       .set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
       .set("spark.sql.catalog.dsv2", "io.delta.dsv2.catalog.TestCatalog")
     val sparkSession = SparkSession.builder().config(conf).getOrCreate()
-//    sparkSession.sql(
-//      s"CREATE OR REPLACE TABLE delta.`/tmp/spark_warehouse/table6`" +
-//        s" (id integer) USING DELTA")
     val tablePath = "/home/ada.ma/delta/kernel/kernel-defaults/src/test/" +
       "resources/ada-multi-checkpoint"
     val df = sparkSession.sql(
       s"SELECT * FROM dsv2.delta.`/home/ada.ma/delta/kernel/kernel-defaults/src/test/" +
         "resources/ada-multi-checkpoint`")
-    println(s"Total row count: ${df.count()}")
+    println(s"Total row count: ${df.count()}") // should be 2000
   }
-
-  test("Ada: reading with dsv2") {}
 }
