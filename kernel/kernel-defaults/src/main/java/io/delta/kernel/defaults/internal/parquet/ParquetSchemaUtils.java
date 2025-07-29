@@ -198,11 +198,8 @@ class ParquetSchemaUtils {
 
       // Assert proper 3-level array structure
       checkArgument(
-          arrayGroupType.getLogicalTypeAnnotation()
-                  instanceof LogicalTypeAnnotation.ListLogicalTypeAnnotation
-              && arrayGroupType.getFieldCount() == 1,
-          "In Parquet's 3-level structure, group type "
-              + "must have list logical type and only contain one sub field");
+          arrayGroupType.getFieldCount() == 1,
+          "In Parquet's 3-level structure, group type " + "must only contain one sub field");
 
       Type listField = arrayGroupType.getType(0);
       checkArgument(
