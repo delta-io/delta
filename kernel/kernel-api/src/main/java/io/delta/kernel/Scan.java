@@ -173,9 +173,9 @@ public interface Scan {
         initIfRequired();
         ColumnarBatch nextDataBatch = physicalDataIter.next();
 
-        // Add partition columns
-        // NOTE: Adding partition columns must be the first thing we do with the data batch because
-        // it is the last thing we remove from the physicalReadSchema when creating a ScanStateRow.
+        // Partition columns are the last thing we remove from the physicalReadSchema when creating
+        // a ScanStateRow. Therefore, we add them back first so that the data batch's schema matches
+        // the physicalReadSchema.
         nextDataBatch =
             PartitionUtils.withPartitionColumns(
                 engine.getExpressionHandler(),
