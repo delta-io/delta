@@ -606,7 +606,8 @@ class DeltaUpdateCatalogSuite
     }
   }
 
-  test("create table with FORCE_ALTER_TABLE_DATA_SCHEMA should store same schema as DELTA_UPDATE_CATALOG_ENABLED") {
+  test("create table with FORCE_ALTER_TABLE_DATA_SCHEMA should store same schema " +
+    "as DELTA_UPDATE_CATALOG_ENABLED") {
     withSQLConf(
       DeltaSQLConf.DELTA_UPDATE_CATALOG_ENABLED.key -> "false",
       DeltaSQLConf.FORCE_ALTER_TABLE_DATA_SCHEMA.key -> "true") {
