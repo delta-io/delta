@@ -201,9 +201,8 @@ class ParquetSchemaUtils {
           arrayGroupType.getLogicalTypeAnnotation()
                   instanceof LogicalTypeAnnotation.ListLogicalTypeAnnotation
               && arrayGroupType.getFieldCount() == 1,
-          "In Parquet's 3-level structure, array type "
-              + "must have list logical type and only contain: %s",
-          arrayGroupType);
+          "In Parquet's 3-level structure, group type "
+              + "must have list logical type and only contain one sub field");
 
       Type listField = arrayGroupType.getType(0);
       checkArgument(
