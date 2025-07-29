@@ -175,33 +175,6 @@ object SuiteGeneratorConfig {
    */
   lazy val TEST_GROUPS: List[TestGroup] = List(
     TestGroup(
-      name = "MergeSetupSuites",
-      imports = List(
-        importer"org.apache.spark.sql.delta._",
-        importer"org.apache.spark.sql.delta.cdc._",
-        importer"org.apache.spark.sql.delta.rowid._"
-      ),
-      testConfigs = List(
-        TestConfig(
-          List("MergeIntoMaterializeSourceTests"),
-          List(
-            List(Dims.MERGE_PERSISTENT_DV_OFF)
-          )
-        ),
-        TestConfig(
-          List("RowTrackingMergeCommonTests"),
-          List(Dims.CDC.asOptional).prependToAll(
-            List(Dims.MERGE_ROW_TRACKING_DV.asOptional),
-            List(Dims.PERSISTENT_DV_OFF, Dims.MERGE_PERSISTENT_DV_OFF)
-          ) :::
-          List(Dims.COLUMN_MAPPING).prependToAll(
-            List(),
-            List(Dims.CDC, Dims.MERGE_ROW_TRACKING_DV)
-          )
-        )
-      )
-    ),
-    TestGroup(
       name = "MergeSuites",
       imports = List(
         importer"org.apache.spark.sql.delta._",
@@ -223,6 +196,23 @@ object SuiteGeneratorConfig {
             List(Dims.PATH_BASED, Dims.MERGE_DVS, Dims.PREDPUSH),
             List(Dims.PATH_BASED, Dims.CDC),
             List(Dims.PATH_BASED, Dims.CDC, Dims.MERGE_DVS, Dims.PREDPUSH)
+          )
+        ),
+        TestConfig(
+          List("MergeIntoMaterializeSourceTests"),
+          List(
+            List(Dims.MERGE_PERSISTENT_DV_OFF)
+          )
+        ),
+        TestConfig(
+          List("RowTrackingMergeCommonTests"),
+          List(Dims.CDC.asOptional).prependToAll(
+            List(Dims.MERGE_ROW_TRACKING_DV.asOptional),
+            List(Dims.PERSISTENT_DV_OFF, Dims.MERGE_PERSISTENT_DV_OFF)
+          ) :::
+          List(Dims.COLUMN_MAPPING).prependToAll(
+            List(),
+            List(Dims.CDC, Dims.MERGE_ROW_TRACKING_DV)
           )
         )
       )
