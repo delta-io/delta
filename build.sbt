@@ -738,6 +738,7 @@ lazy val sparkKernelDsv2 = (project in file("spark-kernel-dsv2"))
     ),
     Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")
   )
+  // TODO to enable unit doc for sparkKernelDsv2.
 
 lazy val unity = (project in file("unity"))
   .enablePlugins(ScalafmtPlugin)
