@@ -465,6 +465,141 @@ trait AbstractDeltaTableReadsSuite extends AnyFunSuite { self: AbstractTestUtils
     }
   }
 
+  test("read subfield of array of struct") {
+    withTempDir { path =>
+      val tbl = "tbl"
+      withTable(tbl) {
+        spark.sql(s"""CREATE TABLE $tbl (
+          id int,
+          array_of_struct array<struct<x: int, y: int>>
+        ) USING delta LOCATION '$path' """)
+        spark.sql(s"""INSERT INTO $tbl VALUES
+        (1, array(struct(2 as x, 3 as y))),
+        (6, array(struct(7 as x, 8 as y))),
+        (11, array(struct(null as x, 8 as y))),
+        (12, array()),
+        (13, null)""")
+
+        // Test reading with pruned schema - only x field from struct
+        val prunedSchema = new io.delta.kernel.types.StructType()
+          .add(
+            "array_of_struct",
+            new io.delta.kernel.types.ArrayType(
+              new io.delta.kernel.types.StructType()
+                .add("x", io.delta.kernel.types.IntegerType.INTEGER),
+              true))
+
+        val result = readSnapshot(
+          latestSnapshot(path.toString),
+          readSchema = prunedSchema)
+
+        val expectedAnswer = Seq(
+          TestRow(Seq(TestRow(2))),
+          TestRow(Seq(TestRow(7))),
+          TestRow(Seq(TestRow(null: Any))),
+          TestRow(Seq()),
+          TestRow(null: Any))
+        checkAnswer(result, expectedAnswer)
+      }
+    }
+  }
+
+  test("read subfield of array of array of struct") {
+    withTempDir { path =>
+      val tbl = "tbl"
+      withTable(tbl) {
+        spark.sql(s"""CREATE TABLE $tbl (
+          id int,
+          array_of_array_of_struct array<array<struct<x: int, y: int>>>
+        ) USING delta LOCATION '$path' """)
+        spark.sql(s"""INSERT INTO $tbl VALUES
+        (1, array(array(struct(4 as x, 5 as y)))),
+        (6, array(array(struct(9 as x, 10 as y)))),
+        (11, array(array(struct(null as x, 10 as y)))),
+        (12, array(array())),
+        (13, array(null))""")
+
+        val prunedSchema = new io.delta.kernel.types.StructType()
+          .add(
+            "array_of_array_of_struct",
+            new io.delta.kernel.types.ArrayType(
+              new io.delta.kernel.types.ArrayType(
+                new io.delta.kernel.types.StructType()
+                  .add("x", io.delta.kernel.types.IntegerType.INTEGER),
+                true),
+              true))
+
+        val result = readSnapshot(
+          latestSnapshot(path.toString),
+          readSchema = prunedSchema)
+
+        val expectedAnswer = Seq(
+          TestRow(Seq(Seq(TestRow(4)))),
+          TestRow(Seq(Seq(TestRow(9)))),
+          TestRow(Seq(Seq(TestRow(null: Any)))),
+          TestRow(Seq(Seq())),
+          TestRow(Seq(null)))
+        checkAnswer(result, expectedAnswer)
+      }
+    }
+  }
+
+  test("read array of array of int") {
+    withTempDir { path =>
+      val tbl = "tbl"
+      withTable(tbl) {
+        spark.sql(s"""CREATE TABLE $tbl (
+          id int,
+          array_of_array_of_int array<array<int>>
+        ) USING delta LOCATION '$path' """)
+        spark.sql(s"""INSERT INTO $tbl VALUES
+        (1, array(array(100, 101))),
+        (6, array(array(102, 103))),
+        (11, array(array(null, 104))),
+        (12, array(array())),
+        (13, array(null))""")
+
+        checkTable(
+          path = path.toString,
+          expectedAnswer = Seq(
+            TestRow(Seq(Seq(100, 101))),
+            TestRow(Seq(Seq(102, 103))),
+            TestRow(Seq(Seq(null, 104))),
+            TestRow(Seq(Seq())),
+            TestRow(Seq(null))),
+          readCols = Seq("array_of_array_of_int"))
+      }
+    }
+  }
+
+  test("read array of int") {
+    withTempDir { path =>
+      val tbl = "tbl"
+      withTable(tbl) {
+        spark.sql(s"""CREATE TABLE $tbl (
+          id int,
+          array_of_int array<int>
+        ) USING delta LOCATION '$path' """)
+        spark.sql(s"""INSERT INTO $tbl VALUES
+        (1, array(200, 201)),
+        (6, array(202, 203)),
+        (11, array(null, 204)),
+        (12, array()),
+        (13, null)""")
+
+        checkTable(
+          path = path.toString,
+          expectedAnswer = Seq(
+            TestRow(Seq(200, 201)),
+            TestRow(Seq(202, 203)),
+            TestRow(Seq(null, 204)),
+            TestRow(Seq()),
+            null),
+          readCols = Seq("array_of_int"))
+      }
+    }
+  }
+
   test("table with type widening on basic types") {
     val path = goldenTablePath("type-widening")
 

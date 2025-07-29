@@ -186,6 +186,47 @@ class ParquetSchemaUtils {
       GroupType groupType = (GroupType) type;
       StructType structType = (StructType) deltaType;
       return groupType.withNewFields(pruneFields(groupType, structType));
+    } else if (type instanceof GroupType && deltaType instanceof ArrayType) {
+      // Handle array types with Parquet's 3-level structure:
+      // optional group array_field (LIST) {
+      //   repeated group list {
+      //     optional <element_type> element;
+      //   }
+      // }
+      GroupType arrayGroupType = (GroupType) type;
+      ArrayType arrayType = (ArrayType) deltaType;
+
+      // Assert proper 3-level array structure
+      checkArgument(
+          arrayGroupType.getLogicalTypeAnnotation()
+                  instanceof LogicalTypeAnnotation.ListLogicalTypeAnnotation
+              && arrayGroupType.getFieldCount() == 1,
+          "In Parquet's 3-level structure, array type "
+              + "must have list logical type and only contain: %s",
+          arrayGroupType);
+
+      Type listField = arrayGroupType.getType(0);
+      checkArgument(
+          listField.isRepetition(Type.Repetition.REPEATED),
+          "Array list field must be repeated: %s",
+          listField);
+
+      if (listField instanceof GroupType) {
+        GroupType listGroup = (GroupType) listField;
+        checkArgument(
+            listGroup.getFieldCount() == 1,
+            "Array list group must have exactly one element: %s",
+            listGroup);
+        Type elementType = listGroup.getType(0);
+        Type prunedElementType = prunedType(elementType, arrayType.getElementType());
+        // Reconstruct the array structure with pruned element
+        GroupType newListGroup =
+            listGroup.withNewFields(Collections.singletonList(prunedElementType));
+        return arrayGroupType.withNewFields(Collections.singletonList(newListGroup));
+      } else {
+        // For primitive arrays like array<int>, no pruning needed on elements
+        return type;
+      }
     } else {
       return type;
     }
