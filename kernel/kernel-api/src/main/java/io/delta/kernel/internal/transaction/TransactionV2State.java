@@ -16,10 +16,14 @@
 
 package io.delta.kernel.internal.transaction;
 
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+import static java.util.Objects.requireNonNull;
+
 import io.delta.kernel.Operation;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.actions.SetTransaction;
+import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.table.ResolvedTableInternal;
 import io.delta.kernel.internal.util.Clock;
 import io.delta.kernel.transaction.TransactionV2;
@@ -48,31 +52,30 @@ public class TransactionV2State {
   public final Optional<ResolvedTableInternal> readTableOpt;
 
   /**
-   * The protocol to use for this transaction, updated with all applicable input from the
-   * transaction builder.
+   * The updated protocol, if any, to use for this transaction, updated with all applicable input
+   * from the transaction builder.
    *
-   * <p>As of this writing, the updatedProtocol never changes during a transaction, e.g. from commit
+   * <p>Non-empty if there is any change from the `readTableOpt`'s protocol, else empty.
+   *
+   * <p>As of this writing, the protocol never changes during a transaction, e.g. from commit
    * attempt to commit attempt.
-   *
-   * <p>Note that the readTableOpt's protocol is the read protocol, while this {@code
-   * updatedProtocol} is the actual protocol to use for the transaction.
    */
-  public final Protocol updatedProtocol;
+  public final Optional<Protocol> updatedProtocolOpt;
 
   /**
-   * The metadata to use for the first commit attempt of this transaction, updated with all the
-   * applicable input from the transaction builder.
+   * The updated metadata, if any, to use for the first commit attempt of this transaction, updated
+   * with all the applicable input from the transaction builder.
+   *
+   * <p>Non-empty if there is any change from the `readTableOpt`'s metadata, else empty.
    *
    * <p>Note that the metadata might change from commit attempt to commit attempt. For example, when
    * ICT is enabled, each commit attempt needs to be updated to write the Delta table property
    * 'delta.inCommitTimestampEnablementVersion', which changes from commit attempt to commit
    * attempt.
    */
-  public final Metadata updatedMetadataForFirstCommitAttempt;
+  public final Optional<Metadata> updatedMetadataForFirstCommitAttemptOpt;
 
   // ===== Update flags =====
-  public final boolean isProtocolUpdate;
-  public final boolean isMetadataUpdate;
   // TODO: final boolean shouldUpdateClusteringDomainMetadata
 
   // ===== Test infrastructure =====
@@ -88,31 +91,53 @@ public class TransactionV2State {
       String engineInfo,
       Operation operation,
       String dataPath,
-      String logPath,
       Optional<ResolvedTableInternal> readTableOpt,
-      Protocol updatedProtocol,
-      Metadata updatedMetadataForFirstCommitAttempt,
-      boolean isProtocolUpdate,
-      boolean isMetadataUpdate,
+      Optional<Protocol> updatedProtocolOpt,
+      Optional<Metadata> updatedMetadataForFirstCommitAttemptOpt,
       Clock clock,
       Optional<SetTransaction> setTxnOpt) {
+    requireNonNull(readTableOpt, "readTableOpt is null");
+    requireNonNull(updatedProtocolOpt, "updatedProtocolOpt is null");
+    requireNonNull(
+        updatedMetadataForFirstCommitAttemptOpt, "updatedMetadataForFirstCommitAttemptOpt is null");
+    checkArgument(
+        updatedProtocolOpt.isPresent() || readTableOpt.isPresent(),
+        "Either updatedProtocolOpt or readTableOpt must be present");
+    checkArgument(
+        updatedMetadataForFirstCommitAttemptOpt.isPresent() || readTableOpt.isPresent(),
+        "Either updatedMetadataForFirstCommitAttemptOpt or readTableOpt must be present");
+
     this.txnId = UUID.randomUUID().toString();
     this.isCreateOrReplace = isCreateOrReplace;
-    this.engineInfo = engineInfo;
-    this.operation = operation;
+    this.engineInfo = requireNonNull(engineInfo, "engineInfo is null");
+    this.operation = requireNonNull(operation, "operation is null");
 
-    this.dataPath = dataPath;
-    this.logPath = logPath;
+    this.dataPath = requireNonNull(dataPath, "dataPath is null");
+    this.logPath = new Path(dataPath, "_delta_log").toString();
 
     this.readTableOpt = readTableOpt;
-    this.updatedProtocol = updatedProtocol;
-    this.updatedMetadataForFirstCommitAttempt = updatedMetadataForFirstCommitAttempt;
+    this.updatedProtocolOpt = updatedProtocolOpt;
+    this.updatedMetadataForFirstCommitAttemptOpt = updatedMetadataForFirstCommitAttemptOpt;
 
-    this.isProtocolUpdate = isProtocolUpdate;
-    this.isMetadataUpdate = isMetadataUpdate;
+    this.clock = requireNonNull(clock, "clock is null");
 
-    this.clock = clock;
+    this.setTxnOpt = requireNonNull(setTxnOpt, "setTxnOpt is null");
+  }
 
-    this.setTxnOpt = setTxnOpt;
+  public Protocol getEffectiveProtocol() {
+    return updatedProtocolOpt.orElseGet(() -> readTableOpt.get().getProtocol());
+  }
+
+  public Metadata getEffectiveMetadataForFirstCommitAttempt() {
+    return updatedMetadataForFirstCommitAttemptOpt.orElseGet(
+        () -> readTableOpt.get().getMetadata());
+  }
+
+  public boolean isProtocolUpdate() {
+    return updatedProtocolOpt.isPresent();
+  }
+
+  public boolean isMetadataUpdate() {
+    return updatedMetadataForFirstCommitAttemptOpt.isPresent();
   }
 }

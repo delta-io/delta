@@ -76,7 +76,7 @@ public class CommitContextImpl implements CommitContext {
     this.commitAttemptTimestampMs = txnState.clock.getTimeMillis();
 
     // TODO: update with ICT enablement info on conflict
-    this.metadata = txnState.updatedMetadataForFirstCommitAttempt;
+    this.metadata = txnState.getEffectiveMetadataForFirstCommitAttempt();
     this.commitInfo = getCommitInfo();
     this.iteratorConsumed = new AtomicBoolean(false);
   }
@@ -101,8 +101,8 @@ public class CommitContextImpl implements CommitContext {
         commitInfo,
         txnState.readTableOpt.map(ResolvedTableInternal::getProtocol),
         txnState.readTableOpt.map(ResolvedTableInternal::getMetadata),
-        txnState.isProtocolUpdate ? Optional.of(txnState.updatedProtocol) : Optional.empty(),
-        txnState.isMetadataUpdate ? Optional.of(metadata) : Optional.empty());
+        txnState.updatedProtocolOpt,
+        txnState.isMetadataUpdate() ? Optional.of(metadata) : Optional.empty());
   }
 
   ////////////////////
@@ -114,11 +114,11 @@ public class CommitContextImpl implements CommitContext {
 
     metadataActions.add(createCommitInfoSingleAction(commitInfo.toRow()));
 
-    if (txnState.isProtocolUpdate) {
-      metadataActions.add(createProtocolSingleAction(txnState.updatedProtocol.toRow()));
+    if (txnState.isProtocolUpdate()) {
+      metadataActions.add(createProtocolSingleAction(txnState.getEffectiveProtocol().toRow()));
     }
 
-    if (txnState.isMetadataUpdate) {
+    if (txnState.isMetadataUpdate()) {
       metadataActions.add(createMetadataSingleAction(metadata.toRow()));
     }
 

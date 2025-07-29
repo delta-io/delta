@@ -40,16 +40,19 @@ public class TransactionV2Impl implements TransactionV2 {
   public Row getTransactionState() {
     // TODO: We probably shouldn't have to pass in maxRetries?
     return TransactionStateRow.of(
-        txnState.updatedMetadataForFirstCommitAttempt, txnState.dataPath, 0 /* maxRetries */);
+        txnState.getEffectiveMetadataForFirstCommitAttempt(),
+        txnState.dataPath,
+        0 /* maxRetries */);
   }
 
   @Override
   public CommitContext getCommitContextForFirstCommitAttempt(
       Engine engine, CloseableIterator<Row> dataActions) {
-    if (TableFeatures.isRowTrackingSupported(txnState.updatedProtocol)) {
+    if (TableFeatures.isRowTrackingSupported(txnState.getEffectiveProtocol())) {
       throw new UnsupportedOperationException("Row Tracking not yet supported in TransactionV2");
     }
-    if (IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(txnState.updatedMetadataForFirstCommitAttempt)) {
+    if (IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(
+        txnState.getEffectiveMetadataForFirstCommitAttempt())) {
       throw new UnsupportedOperationException(
           "In Commit Timestamps not yet supported in TransactionV2");
     }

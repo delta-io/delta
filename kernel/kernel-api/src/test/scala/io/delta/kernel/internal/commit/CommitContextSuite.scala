@@ -20,26 +20,19 @@ import java.util.Optional
 
 import io.delta.kernel.{Operation, TableManager}
 import io.delta.kernel.data.Row
-import io.delta.kernel.internal.actions.{SetTransaction, SingleAction}
-import io.delta.kernel.internal.table.{ResolvedTableBuilderImpl, ResolvedTableInternal}
-import io.delta.kernel.internal.transaction.TransactionV2State
-import io.delta.kernel.internal.util.Clock
-import io.delta.kernel.test.{ActionUtils, MockEngineUtils, MockFileSystemClientUtils}
-import io.delta.kernel.types.{IntegerType, StructType}
+import io.delta.kernel.internal.actions.SingleAction
+import io.delta.kernel.internal.table.ResolvedTableBuilderImpl
+import io.delta.kernel.test.{ActionUtils, MockEngineUtils, MockFileSystemClientUtils, TransactionV2TestUtils}
 import io.delta.kernel.utils.CloseableIterator
 
 import org.scalatest.funsuite.AnyFunSuite
 
 class CommitContextSuite
-    extends AnyFunSuite with ActionUtils with MockEngineUtils {
+    extends AnyFunSuite with ActionUtils with MockEngineUtils with TransactionV2TestUtils {
 
   private val dataPath = "/path/to/table"
-  private val logPath = s"$dataPath/_delta_log"
-  private val schema = new StructType()
-    .add("part1", IntegerType.INTEGER).add("col1", IntegerType.INTEGER)
-  private val partCols = Seq("part1")
   private val protocol = protocolWithCatalogManagedSupport
-  private val metadata = testMetadata(schema, partCols)
+  private val metadata = basicPartitionedMetadata
   private val emptyDataActionsIterator = new CloseableIterator[Row] {
     override def hasNext: Boolean = false
     override def next(): Row = throw new NoSuchElementException("No more elements")
@@ -47,39 +40,18 @@ class CommitContextSuite
   }
   private val emptyMockEngine = MockFileSystemClientUtils.createMockFSListFromEngine(Nil)
 
-  private def createTestTxnState(
-      isCreateOrReplace: Boolean,
-      operation: Operation,
-      readTableOpt: Optional[ResolvedTableInternal],
-      isProtocolUpdate: Boolean,
-      isMetadataUpdate: Boolean): TransactionV2State = {
-    new TransactionV2State(
-      isCreateOrReplace,
-      "engineInfo",
-      operation,
-      dataPath,
-      logPath,
-      readTableOpt,
-      protocol,
-      metadata,
-      isProtocolUpdate,
-      isMetadataUpdate,
-      new Clock {
-        override def getTimeMillis: Long = System.currentTimeMillis()
-      },
-      Optional.of(new SetTransaction("appId", 123, Optional.empty() /* lastUpdated */ )))
-  }
-
   private val createTableTxnState = createTestTxnState(
     isCreateOrReplace = true,
     Operation.CREATE_TABLE,
+    dataPath,
     readTableOpt = Optional.empty(),
-    isProtocolUpdate = true,
-    isMetadataUpdate = true)
+    updatedProtocolOpt = Optional.of(protocol),
+    updatedMetadataOpt = Optional.of(metadata))
 
   private val updateTableTxnState = createTestTxnState(
     isCreateOrReplace = false,
     Operation.WRITE,
+    dataPath,
     readTableOpt = Optional.of(
       TableManager
         .loadTable(dataPath)
@@ -87,8 +59,8 @@ class CommitContextSuite
         .atVersion(10L)
         .withProtocolAndMetadata(protocol, metadata)
         .build(emptyMockEngine)),
-    isProtocolUpdate = false,
-    isMetadataUpdate = false)
+    updatedProtocolOpt = Optional.empty(),
+    updatedMetadataOpt = Optional.empty())
 
   test("getFinalizedActions can only be called once") {
     val commitContext = CommitContextImpl
@@ -101,7 +73,7 @@ class CommitContextSuite
     }
   }
 
-  test("getFinalizedActions metadata actions order: CommitInfo, Protocol, Metadata, SetTxn") {
+  test("getFinalizedActions newTxnMetadata actions order: CommitInfo, Protocol, Metadata, SetTxn") {
     val commitContext = CommitContextImpl
       .forFirstCommitAttempt(emptyMockEngine, createTableTxnState, emptyDataActionsIterator)
     val finalizedActions = commitContext.getFinalizedActions
@@ -126,5 +98,5 @@ class CommitContextSuite
     assert(commitContext.getCommitMetadata.getVersion == 11L)
   }
 
-  // TODO: getFinalizedActions metadata actions are equal to the CommitMetadata actions
+  // TODO: getFinalizedActions newTxnMetadata actions are equal to the CommitMetadata actions
 }

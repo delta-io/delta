@@ -23,7 +23,7 @@ import scala.collection.JavaConverters._
 import io.delta.kernel.data.{ArrayValue, ColumnVector, MapValue}
 import io.delta.kernel.internal.actions.{Format, Metadata, Protocol}
 import io.delta.kernel.internal.tablefeatures.TableFeatures
-import io.delta.kernel.types.StructType
+import io.delta.kernel.types.{IntegerType, StructType}
 
 trait ActionUtils extends VectorTestUtils {
   val protocolWithCatalogManagedSupport: Protocol =
@@ -35,6 +35,11 @@ trait ActionUtils extends VectorTestUtils {
       Set(
         TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW.featureName(),
         TableFeatures.IN_COMMIT_TIMESTAMP_W_FEATURE.featureName()).asJava)
+
+  val basicPartitionedMetadata = testMetadata(
+    schema = new StructType()
+      .add("part1", IntegerType.INTEGER).add("col1", IntegerType.INTEGER),
+    partitionCols = Seq("part1"))
 
   def testMetadata(
       schema: StructType,
