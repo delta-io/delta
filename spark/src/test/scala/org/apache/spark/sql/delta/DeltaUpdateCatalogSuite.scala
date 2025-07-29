@@ -590,4 +590,37 @@ class DeltaUpdateCatalogSuite
       )
     }
   }
+
+  test("create table with DELTA_UPDATE_CATALOG_ENABLED should store correct schema in catalog") {
+    withSQLConf(DeltaSQLConf.DELTA_UPDATE_CATALOG_ENABLED.key -> "true") {
+      withTable(tbl) {
+        val df = spark.range(10).withColumn("name", lit("test")).withColumn("value", lit(1.0))
+        df.writeTo(tbl).using("delta").create()
+
+        // Verify the schema is correctly stored in the in-memory catalog
+        verifyTableMetadata(
+          expectedSchema = df.schema.asNullable,
+          expectedProperties = getBaseProperties(snapshot)
+        )
+      }
+    }
+  }
+
+  test("create table with FORCE_ALTER_TABLE_DATA_SCHEMA should store same schema as DELTA_UPDATE_CATALOG_ENABLED") {
+    withSQLConf(
+      DeltaSQLConf.DELTA_UPDATE_CATALOG_ENABLED.key -> "false",
+      DeltaSQLConf.FORCE_ALTER_TABLE_DATA_SCHEMA.key -> "true") {
+      withTable(tbl) {
+        val df = spark.range(10).withColumn("name", lit("test")).withColumn("value", lit(1.0))
+        df.writeTo(tbl).using("delta").create()
+
+        // Verify the schema is correctly stored in the in-memory catalog
+        // This should result in the same schema being uploaded to the catalog as the first test
+        verifyTableMetadata(
+          expectedSchema = df.schema.asNullable,
+          expectedProperties = getBaseProperties(snapshot)
+        )
+      }
+    }
+  }
 }
