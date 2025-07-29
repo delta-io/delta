@@ -26,7 +26,9 @@ import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.catalyst.TableIdentifier
 
-trait UpdateCDCTests extends UpdateSQLMixin with DeltaColumnMappingTestUtils {
+trait UpdateCDCTests  extends UpdateSQLMixin
+  with DeltaColumnMappingTestUtils
+  with DeltaDMLTestUtilsPathBased {
   import testImplicits._
 
   test("CDC for unconditional update") {

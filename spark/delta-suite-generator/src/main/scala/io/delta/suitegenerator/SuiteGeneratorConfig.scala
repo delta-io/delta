@@ -169,6 +169,7 @@ object SuiteGeneratorConfig {
    * generation of a suite for it.
    */
   lazy val TEST_GROUPS: List[TestGroup] = List(
+    // scalastyle:off line.size.limit
     TestGroup(
       name = "MergeSuites",
       imports = List(
@@ -228,15 +229,21 @@ object SuiteGeneratorConfig {
           )
         ),
         TestConfig(
+          "UpdateSQLTests" :: Tests.UPDATE_BASE,
+          List(
+            List(Dims.UPDATE_SQL, Dims.NAME_BASED)
+          )
+        ),
+        TestConfig(
           "UpdateCDCWithDeletionVectorsTests" ::
             "UpdateCDCTests" ::
             "UpdateSQLWithDeletionVectorsTests" ::
             "UpdateSQLTests" ::
             Tests.UPDATE_BASE,
           List(
-            List(Dims.UPDATE_SQL, Dims.CDC.asOptional, Dims.ROW_TRACKING.asOptional),
-            List(Dims.UPDATE_SQL, Dims.CDC, Dims.UPDATE_DVS),
-            List(Dims.UPDATE_SQL, Dims.UPDATE_DVS, Dims.PREDPUSH)
+            List(Dims.UPDATE_SQL, Dims.PATH_BASED, Dims.CDC.asOptional, Dims.ROW_TRACKING.asOptional),
+            List(Dims.UPDATE_SQL, Dims.PATH_BASED, Dims.CDC, Dims.UPDATE_DVS),
+            List(Dims.UPDATE_SQL, Dims.PATH_BASED, Dims.UPDATE_DVS, Dims.PREDPUSH)
           )
         ),
         TestConfig(
@@ -282,6 +289,7 @@ object SuiteGeneratorConfig {
         )
       )
     )
+    // scalastyle:on line.size.limit
   )
 
   /**

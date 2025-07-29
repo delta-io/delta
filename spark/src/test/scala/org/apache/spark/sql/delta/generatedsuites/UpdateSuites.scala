@@ -35,198 +35,254 @@ import org.apache.spark.sql.delta.rowtracking._
 class UpdateScalaTestsUpdateScalaSuite extends UpdateScalaTests with UpdateScalaMixin
 class UpdateBaseMiscTestsUpdateScalaSuite extends UpdateBaseMiscTests with UpdateScalaMixin
 
-class UpdateCDCWithDeletionVectorsTestsUpdateSQLCDCEnabledUpdateSQLWithDeletionVectorsSuite
+class UpdateSQLTestsUpdateSQLDeltaDMLTestUtilsNameBasedSuite
+  extends UpdateSQLTests
+  with UpdateSQLMixin
+  with DeltaDMLTestUtilsNameBased
+
+class UpdateBaseTempViewTestsUpdateSQLDeltaDMLTestUtilsNameBasedSuite
+  extends UpdateBaseTempViewTests
+  with UpdateSQLMixin
+  with DeltaDMLTestUtilsNameBased
+
+class UpdateBaseMiscTestsUpdateSQLDeltaDMLTestUtilsNameBasedSuite
+  extends UpdateBaseMiscTests
+  with UpdateSQLMixin
+  with DeltaDMLTestUtilsNameBased
+
+class UpdateCDCWithDeletionVectorsTestsUpdateSQLDeltaDMLTestUtilsPathBasedCDCEnabledUpda3PDSKEYSuite
   extends UpdateCDCWithDeletionVectorsTests
   with UpdateSQLMixin
+  with DeltaDMLTestUtilsPathBased
   with CDCEnabled
   with UpdateSQLWithDeletionVectorsMixin
 
-class UpdateCDCTestsUpdateSQLCDCEnabledSuite
+class UpdateCDCTestsUpdateSQLDeltaDMLTestUtilsPathBasedCDCEnabledSuite
   extends UpdateCDCTests
   with UpdateSQLMixin
+  with DeltaDMLTestUtilsPathBased
   with CDCEnabled
 
-class UpdateCDCTestsUpdateSQLCDCEnabledRowTrackingDisabledSuite
+class UpdateCDCTestsUpdateSQLDeltaDMLTestUtilsPathBasedCDCEnabledRowTrackingDisabledSuite
   extends UpdateCDCTests
   with UpdateSQLMixin
+  with DeltaDMLTestUtilsPathBased
   with CDCEnabled
   with RowTrackingDisabled
 
-class UpdateCDCTestsUpdateSQLCDCEnabledRowTrackingEnabledSuite
+class UpdateCDCTestsUpdateSQLDeltaDMLTestUtilsPathBasedCDCEnabledRowTrackingEnabledSuite
   extends UpdateCDCTests
   with UpdateSQLMixin
+  with DeltaDMLTestUtilsPathBased
   with CDCEnabled
   with RowTrackingEnabled
   with UpdateWithRowTrackingOverrides
 
-class UpdateCDCTestsUpdateSQLCDCEnabledUpdateSQLWithDeletionVectorsSuite
+class UpdateCDCTestsUpdateSQLDeltaDMLTestUtilsPathBasedCDCEnabledUpdateSQLWithDeletionVectorsSuite
   extends UpdateCDCTests
   with UpdateSQLMixin
+  with DeltaDMLTestUtilsPathBased
   with CDCEnabled
   with UpdateSQLWithDeletionVectorsMixin
 
-class UpdateSQLWithDeletionVectorsTestsUpdateSQLCDCEnabledUpdateSQLWithDeletionVectorsSuite
+class UpdateSQLWithDeletionVectorsTestsUpdateSQLDeltaDMLTestUtilsPathBasedCDCEnabledUpdaPVZZTXISuite
   extends UpdateSQLWithDeletionVectorsTests
   with UpdateSQLMixin
+  with DeltaDMLTestUtilsPathBased
   with CDCEnabled
   with UpdateSQLWithDeletionVectorsMixin
 
-class UpdateSQLWithDeletionVectorsTestsUpdateSQLUpdateSQLWithDeletionVectorsPredicatePusPMYHPCISuite
+class UpdateSQLWithDeletionVectorsTestsUpdateSQLDeltaDMLTestUtilsPathBasedUpdateSQLWithDB5H4F4QSuite
   extends UpdateSQLWithDeletionVectorsTests
   with UpdateSQLMixin
+  with DeltaDMLTestUtilsPathBased
   with UpdateSQLWithDeletionVectorsMixin
   with PredicatePushdownDisabled
 
-class UpdateSQLWithDeletionVectorsTestsUpdateSQLUpdateSQLWithDeletionVectorsPredicatePusBKLJDXQSuite
+class UpdateSQLWithDeletionVectorsTestsUpdateSQLDeltaDMLTestUtilsPathBasedUpdateSQLWithDGYHUBZYSuite
   extends UpdateSQLWithDeletionVectorsTests
   with UpdateSQLMixin
+  with DeltaDMLTestUtilsPathBased
   with UpdateSQLWithDeletionVectorsMixin
   with PredicatePushdownEnabled
 
-class UpdateSQLTestsUpdateSQLSuite extends UpdateSQLTests with UpdateSQLMixin
-
-class UpdateSQLTestsUpdateSQLCDCEnabledSuite
+class UpdateSQLTestsUpdateSQLDeltaDMLTestUtilsPathBasedSuite
   extends UpdateSQLTests
   with UpdateSQLMixin
+  with DeltaDMLTestUtilsPathBased
+
+class UpdateSQLTestsUpdateSQLDeltaDMLTestUtilsPathBasedCDCEnabledSuite
+  extends UpdateSQLTests
+  with UpdateSQLMixin
+  with DeltaDMLTestUtilsPathBased
   with CDCEnabled
 
-class UpdateSQLTestsUpdateSQLRowTrackingDisabledSuite
+class UpdateSQLTestsUpdateSQLDeltaDMLTestUtilsPathBasedRowTrackingDisabledSuite
   extends UpdateSQLTests
   with UpdateSQLMixin
+  with DeltaDMLTestUtilsPathBased
   with RowTrackingDisabled
 
-class UpdateSQLTestsUpdateSQLRowTrackingEnabledSuite
+class UpdateSQLTestsUpdateSQLDeltaDMLTestUtilsPathBasedRowTrackingEnabledSuite
   extends UpdateSQLTests
   with UpdateSQLMixin
+  with DeltaDMLTestUtilsPathBased
   with RowTrackingEnabled
   with UpdateWithRowTrackingOverrides
 
-class UpdateSQLTestsUpdateSQLCDCEnabledRowTrackingDisabledSuite
+class UpdateSQLTestsUpdateSQLDeltaDMLTestUtilsPathBasedCDCEnabledRowTrackingDisabledSuite
   extends UpdateSQLTests
   with UpdateSQLMixin
+  with DeltaDMLTestUtilsPathBased
   with CDCEnabled
   with RowTrackingDisabled
 
-class UpdateSQLTestsUpdateSQLCDCEnabledRowTrackingEnabledSuite
+class UpdateSQLTestsUpdateSQLDeltaDMLTestUtilsPathBasedCDCEnabledRowTrackingEnabledSuite
   extends UpdateSQLTests
   with UpdateSQLMixin
+  with DeltaDMLTestUtilsPathBased
   with CDCEnabled
   with RowTrackingEnabled
   with UpdateWithRowTrackingOverrides
 
-class UpdateSQLTestsUpdateSQLCDCEnabledUpdateSQLWithDeletionVectorsSuite
+class UpdateSQLTestsUpdateSQLDeltaDMLTestUtilsPathBasedCDCEnabledUpdateSQLWithDeletionVectorsSuite
   extends UpdateSQLTests
   with UpdateSQLMixin
+  with DeltaDMLTestUtilsPathBased
   with CDCEnabled
   with UpdateSQLWithDeletionVectorsMixin
 
-class UpdateSQLTestsUpdateSQLUpdateSQLWithDeletionVectorsPredicatePushdownDisabledSuite
+class UpdateSQLTestsUpdateSQLDeltaDMLTestUtilsPathBasedUpdateSQLWithDeletionVectorsPrediLZKT67ASuite
   extends UpdateSQLTests
   with UpdateSQLMixin
+  with DeltaDMLTestUtilsPathBased
   with UpdateSQLWithDeletionVectorsMixin
   with PredicatePushdownDisabled
 
-class UpdateSQLTestsUpdateSQLUpdateSQLWithDeletionVectorsPredicatePushdownEnabledSuite
+class UpdateSQLTestsUpdateSQLDeltaDMLTestUtilsPathBasedUpdateSQLWithDeletionVectorsPrediULIY7MYSuite
   extends UpdateSQLTests
   with UpdateSQLMixin
+  with DeltaDMLTestUtilsPathBased
   with UpdateSQLWithDeletionVectorsMixin
   with PredicatePushdownEnabled
 
-class UpdateBaseTempViewTestsUpdateSQLSuite extends UpdateBaseTempViewTests with UpdateSQLMixin
-
-class UpdateBaseTempViewTestsUpdateSQLCDCEnabledSuite
+class UpdateBaseTempViewTestsUpdateSQLDeltaDMLTestUtilsPathBasedSuite
   extends UpdateBaseTempViewTests
   with UpdateSQLMixin
+  with DeltaDMLTestUtilsPathBased
+
+class UpdateBaseTempViewTestsUpdateSQLDeltaDMLTestUtilsPathBasedCDCEnabledSuite
+  extends UpdateBaseTempViewTests
+  with UpdateSQLMixin
+  with DeltaDMLTestUtilsPathBased
   with CDCEnabled
 
-class UpdateBaseTempViewTestsUpdateSQLRowTrackingDisabledSuite
+class UpdateBaseTempViewTestsUpdateSQLDeltaDMLTestUtilsPathBasedRowTrackingDisabledSuite
   extends UpdateBaseTempViewTests
   with UpdateSQLMixin
+  with DeltaDMLTestUtilsPathBased
   with RowTrackingDisabled
 
-class UpdateBaseTempViewTestsUpdateSQLRowTrackingEnabledSuite
+class UpdateBaseTempViewTestsUpdateSQLDeltaDMLTestUtilsPathBasedRowTrackingEnabledSuite
   extends UpdateBaseTempViewTests
   with UpdateSQLMixin
+  with DeltaDMLTestUtilsPathBased
   with RowTrackingEnabled
   with UpdateWithRowTrackingOverrides
 
-class UpdateBaseTempViewTestsUpdateSQLCDCEnabledRowTrackingDisabledSuite
+class UpdateBaseTempViewTestsUpdateSQLDeltaDMLTestUtilsPathBasedCDCEnabledRowTrackingDisabledSuite
   extends UpdateBaseTempViewTests
   with UpdateSQLMixin
+  with DeltaDMLTestUtilsPathBased
   with CDCEnabled
   with RowTrackingDisabled
 
-class UpdateBaseTempViewTestsUpdateSQLCDCEnabledRowTrackingEnabledSuite
+class UpdateBaseTempViewTestsUpdateSQLDeltaDMLTestUtilsPathBasedCDCEnabledRowTrackingEnabledSuite
   extends UpdateBaseTempViewTests
   with UpdateSQLMixin
+  with DeltaDMLTestUtilsPathBased
   with CDCEnabled
   with RowTrackingEnabled
   with UpdateWithRowTrackingOverrides
 
-class UpdateBaseTempViewTestsUpdateSQLCDCEnabledUpdateSQLWithDeletionVectorsSuite
+class UpdateBaseTempViewTestsUpdateSQLDeltaDMLTestUtilsPathBasedCDCEnabledUpdateSQLWithDLFJQJDASuite
   extends UpdateBaseTempViewTests
   with UpdateSQLMixin
+  with DeltaDMLTestUtilsPathBased
   with CDCEnabled
   with UpdateSQLWithDeletionVectorsMixin
 
-class UpdateBaseTempViewTestsUpdateSQLUpdateSQLWithDeletionVectorsPredicatePushdownDisabledSuite
+class UpdateBaseTempViewTestsUpdateSQLDeltaDMLTestUtilsPathBasedUpdateSQLWithDeletionVecIPXDUFQSuite
   extends UpdateBaseTempViewTests
   with UpdateSQLMixin
+  with DeltaDMLTestUtilsPathBased
   with UpdateSQLWithDeletionVectorsMixin
   with PredicatePushdownDisabled
 
-class UpdateBaseTempViewTestsUpdateSQLUpdateSQLWithDeletionVectorsPredicatePushdownEnabledSuite
+class UpdateBaseTempViewTestsUpdateSQLDeltaDMLTestUtilsPathBasedUpdateSQLWithDeletionVecUAPFF6YSuite
   extends UpdateBaseTempViewTests
   with UpdateSQLMixin
+  with DeltaDMLTestUtilsPathBased
   with UpdateSQLWithDeletionVectorsMixin
   with PredicatePushdownEnabled
 
-class UpdateBaseMiscTestsUpdateSQLSuite extends UpdateBaseMiscTests with UpdateSQLMixin
-
-class UpdateBaseMiscTestsUpdateSQLCDCEnabledSuite
+class UpdateBaseMiscTestsUpdateSQLDeltaDMLTestUtilsPathBasedSuite
   extends UpdateBaseMiscTests
   with UpdateSQLMixin
+  with DeltaDMLTestUtilsPathBased
+
+class UpdateBaseMiscTestsUpdateSQLDeltaDMLTestUtilsPathBasedCDCEnabledSuite
+  extends UpdateBaseMiscTests
+  with UpdateSQLMixin
+  with DeltaDMLTestUtilsPathBased
   with CDCEnabled
 
-class UpdateBaseMiscTestsUpdateSQLRowTrackingDisabledSuite
+class UpdateBaseMiscTestsUpdateSQLDeltaDMLTestUtilsPathBasedRowTrackingDisabledSuite
   extends UpdateBaseMiscTests
   with UpdateSQLMixin
+  with DeltaDMLTestUtilsPathBased
   with RowTrackingDisabled
 
-class UpdateBaseMiscTestsUpdateSQLRowTrackingEnabledSuite
+class UpdateBaseMiscTestsUpdateSQLDeltaDMLTestUtilsPathBasedRowTrackingEnabledSuite
   extends UpdateBaseMiscTests
   with UpdateSQLMixin
+  with DeltaDMLTestUtilsPathBased
   with RowTrackingEnabled
   with UpdateWithRowTrackingOverrides
 
-class UpdateBaseMiscTestsUpdateSQLCDCEnabledRowTrackingDisabledSuite
+class UpdateBaseMiscTestsUpdateSQLDeltaDMLTestUtilsPathBasedCDCEnabledRowTrackingDisabledSuite
   extends UpdateBaseMiscTests
   with UpdateSQLMixin
+  with DeltaDMLTestUtilsPathBased
   with CDCEnabled
   with RowTrackingDisabled
 
-class UpdateBaseMiscTestsUpdateSQLCDCEnabledRowTrackingEnabledSuite
+class UpdateBaseMiscTestsUpdateSQLDeltaDMLTestUtilsPathBasedCDCEnabledRowTrackingEnabledSuite
   extends UpdateBaseMiscTests
   with UpdateSQLMixin
+  with DeltaDMLTestUtilsPathBased
   with CDCEnabled
   with RowTrackingEnabled
   with UpdateWithRowTrackingOverrides
 
-class UpdateBaseMiscTestsUpdateSQLCDCEnabledUpdateSQLWithDeletionVectorsSuite
+class UpdateBaseMiscTestsUpdateSQLDeltaDMLTestUtilsPathBasedCDCEnabledUpdateSQLWithDeletQQ37XLISuite
   extends UpdateBaseMiscTests
   with UpdateSQLMixin
+  with DeltaDMLTestUtilsPathBased
   with CDCEnabled
   with UpdateSQLWithDeletionVectorsMixin
 
-class UpdateBaseMiscTestsUpdateSQLUpdateSQLWithDeletionVectorsPredicatePushdownDisabledSuite
+class UpdateBaseMiscTestsUpdateSQLDeltaDMLTestUtilsPathBasedUpdateSQLWithDeletionVectors7ZKMJHISuite
   extends UpdateBaseMiscTests
   with UpdateSQLMixin
+  with DeltaDMLTestUtilsPathBased
   with UpdateSQLWithDeletionVectorsMixin
   with PredicatePushdownDisabled
 
-class UpdateBaseMiscTestsUpdateSQLUpdateSQLWithDeletionVectorsPredicatePushdownEnabledSuite
+class UpdateBaseMiscTestsUpdateSQLDeltaDMLTestUtilsPathBasedUpdateSQLWithDeletionVectorsAVHZNOASuite
   extends UpdateBaseMiscTests
   with UpdateSQLMixin
+  with DeltaDMLTestUtilsPathBased
   with UpdateSQLWithDeletionVectorsMixin
   with PredicatePushdownEnabled
 
