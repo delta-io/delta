@@ -16,12 +16,12 @@
 
 package io.delta.kernel.test
 
-import java.util.{Arrays, Collections, HashSet, Optional}
+import java.util.{Collections, Optional}
 
 import scala.collection.JavaConverters._
 
 import io.delta.kernel.data.{ArrayValue, ColumnVector, MapValue}
-import io.delta.kernel.internal.actions.{Format, Metadata, Protocol}
+import io.delta.kernel.internal.actions.{CommitInfo, Format, Metadata, Protocol}
 import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.types.{IntegerType, StructType}
 
@@ -40,6 +40,19 @@ trait ActionUtils extends VectorTestUtils {
     schema = new StructType()
       .add("part1", IntegerType.INTEGER).add("col1", IntegerType.INTEGER),
     partitionCols = Seq("part1"))
+
+  def testCommitInfo: CommitInfo = {
+    new CommitInfo(
+      Optional.empty(),
+      -1,
+      "engineInfo",
+      "operation",
+      Collections.emptyMap(), // operationParameters
+      false, // isBlindAppend
+      "txnId",
+      Collections.emptyMap() // operationMetrics
+    )
+  }
 
   def testMetadata(
       schema: StructType,

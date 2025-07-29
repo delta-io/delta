@@ -50,6 +50,7 @@ public class ResolvedTableInternalImpl implements ResolvedTableInternal {
   private final Metadata metadata;
   private final Lazy<LogSegment> lazyLogSegment;
   private final LogReplay logReplay;
+  private final Committer committer;
   private final Clock clock;
   private final SnapshotReport snapshotReport;
 
@@ -60,6 +61,7 @@ public class ResolvedTableInternalImpl implements ResolvedTableInternal {
       Metadata metadata,
       Lazy<LogSegment> lazyLogSegment,
       LogReplay logReplay,
+      Committer committer,
       Clock clock,
       SnapshotQueryContext snapshotCtx) {
     this.path = requireNonNull(path, "path is null");
@@ -69,6 +71,7 @@ public class ResolvedTableInternalImpl implements ResolvedTableInternal {
     this.metadata = requireNonNull(metadata, "metadata is null");
     this.lazyLogSegment = requireNonNull(lazyLogSegment, "lazyLogSegment is null");
     this.logReplay = requireNonNull(logReplay, "logReplay is null");
+    this.committer = requireNonNull(committer, "committer is null");
     this.clock = requireNonNull(clock, "clock is null");
     this.snapshotReport = SnapshotReportImpl.forSuccess(snapshotCtx);
   }
@@ -124,7 +127,7 @@ public class ResolvedTableInternalImpl implements ResolvedTableInternal {
 
   @Override
   public Committer getCommitter() {
-    throw new UnsupportedOperationException("not implemented");
+    return committer;
   }
 
   ///////////////////////////////////////

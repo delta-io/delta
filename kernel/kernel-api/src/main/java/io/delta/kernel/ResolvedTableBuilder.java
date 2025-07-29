@@ -17,6 +17,7 @@
 package io.delta.kernel;
 
 import io.delta.kernel.annotation.Experimental;
+import io.delta.kernel.commit.Committer;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
@@ -46,6 +47,23 @@ public interface ResolvedTableBuilder {
   ResolvedTableBuilder atVersion(long version);
 
   // TODO: atTimestamp
+
+  /**
+   * Provides a custom committer to use at transaction commit time.
+   *
+   * <p>Catalog implementations that wish to support the catalogManaged Delta table feature should
+   * provide to engines their own catalog-specific Committer implementation which may, for example,
+   * send a commit RPC to the catalog service to finalize the commit.
+   *
+   * <p>If no committer is provided, a default committer will be created that only supports writing
+   * into filesystem-managed Delta tables.
+   *
+   * @param committer the committer to use
+   * @return a new builder instance with the provided committer
+   * @see io.delta.kernel.transaction.TransactionV2
+   * @see Committer
+   */
+  ResolvedTableBuilder withCommitter(Committer committer);
 
   /**
    * Provides parsed log data to optimize table resolution.
