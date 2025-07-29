@@ -16,6 +16,7 @@
 
 package io.delta.unity
 
+import java.lang.{Long => JLong}
 import java.util.Optional
 
 import scala.collection.JavaConverters._
@@ -26,6 +27,7 @@ import io.delta.kernel.internal.table.ResolvedTableInternal
 import io.delta.kernel.internal.tablefeatures.TableFeatures.{CATALOG_MANAGED_R_W_FEATURE_PREVIEW, TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
 import io.delta.kernel.internal.util.FileNames
 import io.delta.storage.commit.Commit
+import io.delta.storage.commit.uccommitcoordinator.InvalidTargetTableException
 import io.delta.unity.InMemoryUCClient.TableData
 
 import org.apache.hadoop.conf.Configuration
@@ -104,17 +106,38 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
     }
   }
 
-  test("table version 0 is loaded when UC maxRatifiedVersion is -1") {
-    val tablePath = getTestResourceFilePath("catalog-owned-preview")
-    val ucClient = new InMemoryUCClient("ucMetastoreId")
-    val tableData = new TableData(-1, ArrayBuffer[Commit]())
-    ucClient.createTableIfNotExistsOrThrow("ucTableId", tableData)
-    val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
-    val resolvedTable = ucCatalogManagedClient
-      .loadTable(defaultEngine, "ucTableId", tablePath, Optional.empty())
-      .asInstanceOf[ResolvedTableInternal]
+  Seq(
+    (Optional.empty[java.lang.Long](), "latest (implicitly)"),
+    (Optional.of(JLong.valueOf(0L)), "v0 (explicitly)")).foreach {
+    case (versionToLoad, description) =>
+      test(s"loadTable throws when table doesn't exist in catalog -- $description") {
+        val ucClient = new InMemoryUCClient("ucMetastoreId")
+        val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
 
-    assert(resolvedTable.getVersion == 0L)
+        val ex = intercept[RuntimeException] {
+          ucCatalogManagedClient
+            .loadTable(defaultEngine, "nonExistentTableId", "tablePath", versionToLoad)
+        }
+        assert(ex.getCause.isInstanceOf[InvalidTargetTableException])
+      }
+  }
+
+  Seq(
+    (Optional.empty[java.lang.Long](), "latest (implicitly)"),
+    (Optional.of(JLong.valueOf(0L)), "v0 (explicitly)")).foreach {
+    case (versionToLoad, description) =>
+      test(s"table version 0 is loaded when UC maxRatifiedVersion is -1 -- $description") {
+        val tablePath = getTestResourceFilePath("catalog-owned-preview")
+        val ucClient = new InMemoryUCClient("ucMetastoreId")
+        val tableData = new TableData(-1, ArrayBuffer[Commit]())
+        ucClient.createTableIfNotExistsOrThrow("ucTableId", tableData)
+        val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
+
+        val resolvedTable = ucCatalogManagedClient
+          .loadTable(defaultEngine, "ucTableId", tablePath, versionToLoad)
+
+        assert(resolvedTable.getVersion == 0L)
+      }
   }
 
   test("loadTable throws if version to load is greater than max ratified version") {
