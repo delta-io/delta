@@ -13,7 +13,7 @@ jobs:
     env:
       SCALA_VERSION: ${{ matrix.scala }}
       # Important: This must be the same as the length of shards in matrix
-      NUM_SHARDS: 3
+      NUM_SHARDS: 4
     steps:
       - uses: actions/checkout@v3
       - uses: technote-space/get-diff-action@v4
