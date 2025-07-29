@@ -22,11 +22,13 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.types.DataTypeJsonSerDe;
 import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.types.*;
+import java.net.URI;
 import java.util.*;
 import java.util.stream.IntStream;
 
@@ -139,6 +141,7 @@ public class ScanStateRow extends GenericRow {
    * @return Fully qualified path to the location of the table.
    */
   public static String getTableRoot(Row scanState) {
-    return scanState.getString(COL_NAME_TO_ORDINAL.get("tablePath"));
+    return new Path(URI.create(scanState.getString(COL_NAME_TO_ORDINAL.get("tablePath"))))
+        .toString();
   }
 }
