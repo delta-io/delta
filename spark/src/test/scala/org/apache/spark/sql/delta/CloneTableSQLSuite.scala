@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta
 import scala.collection.immutable.NumericRange
 
 import org.apache.spark.sql.delta.actions.{AddFile, FileAction, RemoveFile}
-import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogManagedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaExcludedTestMixin, DeltaSQLCommandTest}
 import org.apache.hadoop.fs.Path
@@ -33,7 +33,7 @@ class CloneTableSQLSuite
   extends CloneTableSuiteBase
   with CloneTableSQLTestMixin
   with DeltaColumnMappingTestUtils
-  with CatalogOwnedTestBaseSuite {
+  with CatalogManagedTestBaseSuite {
 
   override def beforeAll(): Unit = {
     super.beforeAll()
@@ -254,22 +254,22 @@ class CloneTableSQLSuite
 }
 
 
-class CloneTableSQLWithCatalogOwnedBatch1Suite
+class CloneTableSQLWithCatalogManagedBatch1Suite
   extends CloneTableSQLSuite
 {
-  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
+  override def catalogManagedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
 }
 
-class CloneTableSQLWithCatalogOwnedBatch2Suite
+class CloneTableSQLWithCatalogManagedBatch2Suite
   extends CloneTableSQLSuite
 {
-  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
+  override def catalogManagedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
 }
 
-class CloneTableSQLWithCatalogOwnedBatch100Suite
+class CloneTableSQLWithCatalogManagedBatch100Suite
   extends CloneTableSQLSuite
 {
-  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
+  override def catalogManagedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }
 
 class CloneTableSQLIdColumnMappingSuite

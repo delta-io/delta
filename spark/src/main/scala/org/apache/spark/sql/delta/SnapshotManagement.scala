@@ -29,7 +29,7 @@ import scala.util.control.NonFatal
 // scalastyle:off import.ordering.noEmptyLine
 import com.databricks.spark.util.TagDefinitions.TAG_ASYNC
 import org.apache.spark.sql.delta.actions.Metadata
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUsageLogs, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedTableUtils, CoordinatedCommitsUsageLogs, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -1192,12 +1192,12 @@ trait SnapshotManagement { self: DeltaLog =>
       newSnapshot.tableCommitCoordinatorClientOpt.exists { newStore =>
         initialTableCommitCoordinatorClient.forall(!_.semanticsEquals(newStore))
       }
-    // If the snapshot is catalog owned and if this call site is invoked from initial snapshot
-    // creation, we can only identify that this is CatalogOwned table after reading it from
-    // filesystem. In this case, now we know that this is CatalogOwned table, do another read to get
-    // the commits from the catalog's commit-coordinator.
+    // If the snapshot is catalog managed and if this call site is invoked from initial snapshot
+    // creation, we can only identify that this is CatalogManaged table after reading it from
+    // filesystem. In this case, now we know that this is CatalogManaged table, do another read to
+    // get the commits from the catalog's commit-coordinator.
     val needToReadSnapshotUsingCatalogCommitCoordinator =
-      newSnapshot.isCatalogOwned && initialTableCommitCoordinatorClient.isEmpty
+      newSnapshot.isCatalogManaged && initialTableCommitCoordinatorClient.isEmpty
     if (usedStaleCommitCoordinator || needToReadSnapshotUsingCatalogCommitCoordinator) {
       val commitCoordinatorOpt =
         populateCommitCoordinator(spark, catalogTableOpt, newSnapshot)
@@ -1478,12 +1478,12 @@ trait SnapshotManagement { self: DeltaLog =>
       checksumOpt = None)
   }
 
-  // Populate commit coordinator using catalogOpt if the snapshot is catalog owned.
+  // Populate commit coordinator using catalogOpt if the snapshot is catalog managed.
   protected def populateCommitCoordinator(
     spark: SparkSession, catalogTableOpt: Option[CatalogTable], snapshot: Snapshot)
   : Option[TableCommitCoordinatorClient] = {
-    if (snapshot.isCatalogOwned) {
-      CatalogOwnedTableUtils.populateTableCommitCoordinatorFromCatalog(
+    if (snapshot.isCatalogManaged) {
+      CatalogManagedTableUtils.populateTableCommitCoordinatorFromCatalog(
         spark,
         catalogTableOpt,
         snapshot

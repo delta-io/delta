@@ -159,9 +159,9 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       val log = createTableWithProtocol(Protocol(1, 1), path)
       assert(log.snapshot.protocol === Protocol(1, 1))
       log.upgradeProtocol(Action.supportedProtocolVersion(
-        featuresToExclude = Seq(CatalogOwnedTableFeature)))
+        featuresToExclude = Seq(CatalogManagedTableFeature)))
       assert(log.snapshot.protocol === Action.supportedProtocolVersion(
-        featuresToExclude = Seq(CatalogOwnedTableFeature)))
+        featuresToExclude = Seq(CatalogManagedTableFeature)))
     }
   }
 
@@ -3791,10 +3791,10 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
       featureExpectedAtTheEnd: Boolean = false): Unit = {
     val featureName = VacuumProtocolCheckTableFeature.name
     withTempTable(createTable = false) { tableName =>
-      // Register a temporary InMemory-CC builder to support CatalogOwned table creation.
-      CatalogOwnedCommitCoordinatorProvider.clearBuilders()
-      CatalogOwnedCommitCoordinatorProvider.registerBuilder(
-        catalogName = CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
+      // Register a temporary InMemory-CC builder to support CatalogManaged table creation.
+      CatalogManagedCommitCoordinatorProvider.clearBuilders()
+      CatalogManagedCommitCoordinatorProvider.registerBuilder(
+        catalogName = CatalogManagedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING,
         TrackingInMemoryCommitCoordinatorBuilder(batchSize = 1)
       )
       val finalAdditionalTableProperty = if (enableFeatureInitially) {
@@ -3847,11 +3847,11 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
   }
 
   test("Removing VacuumProtocolCheckTableFeature should fail when dependent feature " +
-      "Catalog Owned is enabled") {
+      "Catalog Managed is enabled") {
     testRemoveVacuumProtocolCheckTableFeature(
       enableFeatureInitially = true,
       additionalTableProperties = Seq(
-        (s"$FEATURE_PROP_PREFIX${CatalogOwnedTableFeature.name}", "supported")),
+        (s"$FEATURE_PROP_PREFIX${CatalogManagedTableFeature.name}", "supported")),
       downgradeFailsWithException = Some("DELTA_FEATURE_DROP_DEPENDENT_FEATURE"),
       featureExpectedAtTheEnd = true)
   }

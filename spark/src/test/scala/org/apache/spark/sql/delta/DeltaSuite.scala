@@ -23,7 +23,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import org.apache.spark.sql.delta.DeltaSuiteShims._
 import org.apache.spark.sql.delta.actions.{Action, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CatalogOwnedTestBaseSuite}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedTableUtils, CatalogManagedTestBaseSuite}
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -55,7 +55,7 @@ class DeltaSuite extends QueryTest
   with DeltaColumnMappingTestUtils
   with DeltaSQLTestUtils
   with DeltaSQLCommandTest
-  with CatalogOwnedTestBaseSuite {
+  with CatalogManagedTestBaseSuite {
 
   import testImplicits._
 
@@ -1688,8 +1688,8 @@ class DeltaSuite extends QueryTest
           Seq((2, 99), (5, 99)).toDF("key", "value")
         )
 
-        if (catalogOwnedDefaultCreationEnabledInTests) {
-          cancel("VACUUM is not supported on catalog owned managed tables")
+        if (catalogManagedDefaultCreationEnabledInTests) {
+          cancel("VACUUM is not supported on catalog managed tables")
         }
 
         // VACUUM
@@ -2018,7 +2018,7 @@ class DeltaSuite extends QueryTest
   }
 
   // This test is only compatible w/ backfill batch size = 1.
-  testWithCatalogOwned(backfillBatchSize = 1)(
+  testWithCatalogManaged(backfillBatchSize = 1)(
       "An external write should be reflected during analysis of a path based query") {
     val tempDir = Utils.createTempDir().toString
     spark.range(10).coalesce(1).write.format("delta").mode("append").save(tempDir)
@@ -2043,7 +2043,7 @@ class DeltaSuite extends QueryTest
     // Now make a commit that comes from an "external" writer that deletes existing data and
     // changes the schema
     val actions = Seq(Action.supportedProtocolVersion(
-      featuresToExclude = Seq(CatalogOwnedTableFeature)), newMetadata) ++ files.map(_.remove)
+      featuresToExclude = Seq(CatalogManagedTableFeature)), newMetadata) ++ files.map(_.remove)
     deltaLog.store.write(
       FileNames.unsafeDeltaFile(deltaLog.logPath, snapshot.version + 1),
       actions.map(_.json).iterator,
@@ -2242,7 +2242,7 @@ class DeltaSuite extends QueryTest
             .filter { case (k, _) => !k.startsWith("delta.columnMapping.") &&
               !k.startsWith("delta.enableDeletionVectors")} ===
           Map("delta.logRetentionDuration" -> "123 days") ++
-            extractCatalogOwnedSpecificPropertiesIfEnabled(metadata))
+            extractCatalogManagedSpecificPropertiesIfEnabled(metadata))
       }
     }
   }
@@ -3238,17 +3238,17 @@ class DeltaNameColumnMappingSuite extends DeltaSuite
   }
 }
 
-class DeltaWithCatalogOwnedBatch1Suite
+class DeltaWithCatalogManagedBatch1Suite
     extends DeltaSuite {
-  override val catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
+  override val catalogManagedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
 }
 
-class DeltaWithCatalogOwnedBatch2Suite
+class DeltaWithCatalogManagedBatch2Suite
     extends DeltaSuite {
-  override val catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
+  override val catalogManagedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
 }
 
-class DeltaWithCatalogOwnedBatch100Suite
+class DeltaWithCatalogManagedBatch100Suite
     extends DeltaSuite {
-  override val catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
+  override val catalogManagedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }

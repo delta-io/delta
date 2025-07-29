@@ -21,7 +21,7 @@ import java.io.FileNotFoundException
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.{TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
-import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogManagedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
@@ -34,7 +34,7 @@ import org.apache.spark.util.Utils
 
 trait DescribeDeltaDetailSuiteBase extends QueryTest
   with SharedSparkSession
-  with CatalogOwnedTestBaseSuite
+  with CatalogManagedTestBaseSuite
   with DeltaTestUtilsForTempViews {
 
   import testImplicits._
@@ -231,18 +231,18 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
           metadata.configuration ++ Map("foo" -> "bar")
         )
         txn.commit(newMetadata :: Nil, DeltaOperations.ManualUpdate)
-        val catalogOwnedProperties = constructCatalogOwnedSpecificTableProperties(
+        val catalogManagedProperties = constructCatalogManagedSpecificTableProperties(
           spark, newMetadata)
         checkResult(sql(s"DESCRIBE DETAIL $tableName"),
-          Seq(Map("foo" -> "bar") ++ catalogOwnedProperties),
+          Seq(Map("foo" -> "bar") ++ catalogManagedProperties),
           Seq("properties")
         )
       }
   }
 
   test("delta table: describe detail shows table features") {
-    if (catalogOwnedDefaultCreationEnabledInTests) {
-      cancel("CatalogOwned is not compatible w/ the test since protocol version would be " +
+    if (catalogManagedDefaultCreationEnabledInTests) {
+      cancel("CatalogManaged is not compatible w/ the test since protocol version would be " +
         "set to (3, 7) by default for CC tables.")
     }
     withTable("t1") {
@@ -361,14 +361,14 @@ trait DescribeDeltaDetailSuiteBase extends QueryTest
 class DescribeDeltaDetailSuite
   extends DescribeDeltaDetailSuiteBase with DeltaSQLCommandTest
 
-class DescribeDeltaDetailWithCatalogOwnedBatch1Suite extends DescribeDeltaDetailSuite {
-  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
+class DescribeDeltaDetailWithCatalogManagedBatch1Suite extends DescribeDeltaDetailSuite {
+  override def catalogManagedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
 }
 
-class DescribeDeltaDetailWithCatalogOwnedBatch2Suite extends DescribeDeltaDetailSuite {
-  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
+class DescribeDeltaDetailWithCatalogManagedBatch2Suite extends DescribeDeltaDetailSuite {
+  override def catalogManagedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
 }
 
-class DescribeDeltaDetailWithCatalogOwnedBatch100Suite extends DescribeDeltaDetailSuite {
-  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
+class DescribeDeltaDetailWithCatalogManagedBatch100Suite extends DescribeDeltaDetailSuite {
+  override def catalogManagedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }

@@ -382,7 +382,7 @@ object TableFeature {
       VariantTypePreviewTableFeature,
       VariantTypeTableFeature,
       VariantShreddingPreviewTableFeature,
-      CatalogOwnedTableFeature,
+      CatalogManagedTableFeature,
       CoordinatedCommitsTableFeature,
       CheckpointProtectionTableFeature)
     if (isTesting && testingFeaturesEnabled) {
@@ -1037,7 +1037,7 @@ object CoordinatedCommitsTableFeature
 }
 
 /** Table feature to represent tables that commits are managed by catalog */
-object CatalogOwnedTableFeature
+object CatalogManagedTableFeature
   extends ReaderWriterFeature(name = "catalogOwned-preview")
   with RemovableFeature {
 
