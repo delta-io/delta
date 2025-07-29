@@ -211,22 +211,22 @@ class ParquetSchemaUtils {
           "Array list field must be repeated: %s",
           listField);
 
-      if (listField instanceof GroupType) {
-        GroupType listGroup = (GroupType) listField;
-        checkArgument(
-            listGroup.getFieldCount() == 1,
-            "Array list group must have exactly one element: %s",
-            listGroup);
-        Type elementType = listGroup.getType(0);
-        Type prunedElementType = prunedType(elementType, arrayType.getElementType());
-        // Reconstruct the array structure with pruned element
-        GroupType newListGroup =
-            listGroup.withNewFields(Collections.singletonList(prunedElementType));
-        return arrayGroupType.withNewFields(Collections.singletonList(newListGroup));
-      } else {
-        // For primitive arrays like array<int>, no pruning needed on elements
+      if (!(listField instanceof GroupType)) {
+        // For primitive arrays like array<int>, no pruning needed.
         return type;
       }
+
+      // array_field.list.element
+      GroupType listGroup = (GroupType) listField;
+      checkArgument(
+          listGroup.getFieldCount() == 1,
+          "Array list group must have exactly one element: %s",
+          listGroup);
+      Type elementType = listGroup.getType(0);
+      GroupType newListGroup =
+          listGroup.withNewFields(
+              Collections.singletonList(prunedType(elementType, arrayType.getElementType())));
+      return arrayGroupType.withNewFields(Collections.singletonList(newListGroup));
     } else {
       return type;
     }
