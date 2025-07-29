@@ -118,6 +118,33 @@ public class ColumnMapping {
     }
   }
 
+  /**
+   * Converts a logical column to a physical column based on the table's column mapping mode. The
+   * field-id metadata is preserved when cmMode = ID, all column metadata is otherwise removed.
+   *
+   * <p>We require {@code fullSchema} in addition to the logical field we want to convert since we
+   * need the complete field metadata as it is stored in the schema in the _delta_log. We cannot be
+   * sure (and do not enforce) that this metadata is preserved by the connector.
+   *
+   * @param logicalField the logical read column requested by the connector
+   * @param fullSchema the full delta schema (with complete metadata) as read from the _delta_log
+   * @param columnMappingMode Column mapping mode
+   */
+  public static StructField convertToPhysicalColumn(
+      StructField logicalField, StructType fullSchema, ColumnMappingMode columnMappingMode) {
+    switch (columnMappingMode) {
+      case NONE:
+        return logicalField;
+      case ID: // fall through
+      case NAME:
+        boolean includeFieldIds = columnMappingMode == ColumnMappingMode.ID;
+        return convertToPhysicalColumn(logicalField, fullSchema, includeFieldIds);
+      default:
+        throw new UnsupportedOperationException(
+            "Unsupported column mapping mode: " + columnMappingMode);
+    }
+  }
+
   /** Returns the physical name for a given {@link StructField} */
   public static String getPhysicalName(StructField field) {
     if (hasPhysicalName(field)) {
@@ -251,34 +278,42 @@ public class ColumnMapping {
       StructType prunedSchema, StructType fullSchema, boolean includeFieldId) {
     StructType newSchema = new StructType();
     for (StructField prunedField : prunedSchema.fields()) {
-      StructField completeField = fullSchema.get(prunedField.getName());
-      DataType physicalType =
-          convertToPhysicalType(
-              prunedField.getDataType(), completeField.getDataType(), includeFieldId);
-      String physicalName = completeField.getMetadata().getString(COLUMN_MAPPING_PHYSICAL_NAME_KEY);
-
-      if (includeFieldId) {
-        Long fieldId = completeField.getMetadata().getLong(COLUMN_MAPPING_ID_KEY);
-        FieldMetadata.Builder builder =
-            FieldMetadata.builder().putLong(PARQUET_FIELD_ID_KEY, fieldId);
-
-        // convertToPhysicalSchema(..) gets called when trying to find the read schema
-        // for the Parquet reader. This currently assumes that if the nested field IDs for
-        // the 'element' and 'key'/'value' fields of Arrays/Maps haven been written,
-        // then IcebergCompatV2 is enabled because the schema we are looking at is from
-        // the DeltaLog and has nested field IDs setup
-        if (hasNestedColumnIds(completeField)) {
-          builder.putFieldMetadata(
-              PARQUET_FIELD_NESTED_IDS_METADATA_KEY, getNestedColumnIds(completeField));
-        }
-
-        newSchema =
-            newSchema.add(physicalName, physicalType, prunedField.isNullable(), builder.build());
-      } else {
-        newSchema = newSchema.add(physicalName, physicalType, prunedField.isNullable());
-      }
+      newSchema = newSchema.add(convertToPhysicalColumn(prunedField, fullSchema, includeFieldId));
     }
     return newSchema;
+  }
+
+  /**
+   * Utility method to convert the given logical field to a physical field, recursively converting
+   * sub-types in case of complex types. When {@code includeFieldId} is true, converted physical
+   * schema will have field ids in the metadata. Column metadata is otherwise removed.
+   */
+  private static StructField convertToPhysicalColumn(
+      StructField logicalField, StructType fullSchema, boolean includeFieldId) {
+    StructField completeField = fullSchema.get(logicalField.getName());
+    DataType physicalType =
+        convertToPhysicalType(
+            logicalField.getDataType(), completeField.getDataType(), includeFieldId);
+    String physicalName = completeField.getMetadata().getString(COLUMN_MAPPING_PHYSICAL_NAME_KEY);
+
+    if (!includeFieldId) {
+      return new StructField(physicalName, physicalType, logicalField.isNullable());
+    }
+
+    Long fieldId = completeField.getMetadata().getLong(COLUMN_MAPPING_ID_KEY);
+    FieldMetadata.Builder builder = FieldMetadata.builder().putLong(PARQUET_FIELD_ID_KEY, fieldId);
+
+    // convertToPhysicalSchema(..) gets called when trying to find the read schema
+    // for the Parquet reader. This currently assumes that if the nested field IDs for
+    // the 'element' and 'key'/'value' fields of Arrays/Maps haven been written,
+    // then IcebergCompatV2 is enabled because the schema we are looking at is from
+    // the DeltaLog and has nested field IDs setup
+    if (hasNestedColumnIds(completeField)) {
+      builder.putFieldMetadata(
+          PARQUET_FIELD_NESTED_IDS_METADATA_KEY, getNestedColumnIds(completeField));
+    }
+
+    return new StructField(physicalName, physicalType, logicalField.isNullable(), builder.build());
   }
 
   private static DataType convertToPhysicalType(
