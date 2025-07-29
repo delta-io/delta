@@ -56,57 +56,39 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap
 import org.apache.spark.util.{Clock, SystemClock}
 
 /**
- * Paths that represent access to a Delta table. This is mostly useful because Delta allows certain
- * magic to be performed through the paths, such as /some/path/partition=1@v1234.
- *
- * @param rootPath The Delta table's root path.
- * @param partitionFilters Partition filters embedded in the original path, e.g. partition=1.
- * @param timeTravelByPath Time-travel spec embedded in the original path, e.g. v1234.
- */
-case class PathInfo(
-  rootPath: Path,
-  partitionFilters: Seq[(String, String)],
-  timeTravelByPath: Option[DeltaTimeTravelSpec]
-)
-
-object PathInfo {
-  def apply(
-    spark: SparkSession,
-    path: Path,
-    catalogTableOpt: Option[CatalogTable],
-    options: Map[String, String]
-  ): PathInfo = {
-    catalogTableOpt match {
-      // Fast path for reducing path munging overhead
-      case Some(catalogTable) =>
-        PathInfo(new Path(catalogTable.location), Seq.empty, None)
-      case None if spark != null =>
-        DeltaDataSource.parsePathIdentifier(spark, path.toString, options)
-      case _ =>
-        null
-    }
-  }
-}
-
-/**
  * The data source V2 representation of a Delta table that exists.
  *
  * @param path The path to the table
  * @param tableIdentifier The table identifier for this table
  */
-class DeltaTableV2 private(
+class DeltaTableV2 private[delta](
     val spark: SparkSession,
     val path: Path,
     val catalogTable: Option[CatalogTable],
     val tableIdentifier: Option[String],
     val timeTravelOpt: Option[DeltaTimeTravelSpec],
-    val options: Map[String, String],
-    val pathInfo: PathInfo
-)
+    val options: Map[String, String])
   extends Table
   with SupportsWrite
   with V2TableWithV1Fallback
   with DeltaLogging {
+
+  case class PathInfo(
+      rootPath: Path,
+      private[delta] var partitionFilters: Seq[(String, String)],
+      private[delta] var timeTravelByPath: Option[DeltaTimeTravelSpec]
+  )
+
+  private lazy val pathInfo: PathInfo = {
+    if (catalogTable.isDefined) {
+      // Fast path for reducing path munging overhead
+      PathInfo(new Path(catalogTable.get.location), Seq.empty, None)
+    } else {
+      val (rootPath, filters, timeTravel) =
+        DeltaDataSource.parsePathIdentifier(spark, path.toString, options)
+      PathInfo(rootPath, filters, timeTravel)
+    }
+  }
 
   private def rootPath = pathInfo.rootPath
 
@@ -412,15 +394,11 @@ class DeltaTableV2 private(
     timeTravelOpt: Option[DeltaTimeTravelSpec] = this.timeTravelOpt,
     options: Map[String, String] = this.options
   ): DeltaTableV2 = {
-    // Must go through `apply` so that `path` is correctly parsed.
-    DeltaTableV2(
-      spark,
-      path,
-      catalogTable,
-      tableIdentifier,
-      options,
-      timeTravelOpt
-    )
+    val deltaTableV2 =
+      new DeltaTableV2(spark, path, catalogTable, tableIdentifier, timeTravelOpt, options)
+    deltaTableV2.pathInfo.timeTravelByPath = timeTravelByPath
+    deltaTableV2.pathInfo.partitionFilters = partitionFilters
+    deltaTableV2
   }
 
   override def toString: String =
@@ -460,13 +438,7 @@ object DeltaTableV2 {
       catalogTable = catalogTable,
       tableIdentifier = tableIdentifier,
       timeTravelOpt = timeTravelOpt,
-      options = options,
-      pathInfo = PathInfo(
-        spark = spark,
-        path = path,
-        catalogTableOpt = catalogTable,
-        options = options
-      )
+      options = options
     )
     if (spark == null || spark.sessionState == null ||
         !spark.sessionState.conf.getConf(ENABLE_TABLE_REDIRECT_FEATURE)) {
@@ -478,28 +450,18 @@ object DeltaTableV2 {
       val deltaLog = deltaTable.deltaLog
       val rootDeltaLogPath = DeltaLog.logPathFor(deltaTable.rootPath.toString)
       val finalDeltaLogPath = DeltaLog.formalizeDeltaPath(spark, options, rootDeltaLogPath)
-      if (finalDeltaLogPath == deltaLog.logPath) {
-        // If there is no redirection, use existing delta table.
-        deltaTable
+      val catalogTableOpt = if (finalDeltaLogPath == deltaLog.logPath) {
+        // If there is no redirection, use existing catalogTable.
+        catalogTable
       } else {
         // If there is redirection, use the catalogTable of deltaLog.
-        val catalogTable = deltaLog.getInitialCatalogTable
-        val newPath = new Path(deltaLog.dataPath.toUri)
-        new DeltaTableV2(
-          spark,
-          path = newPath,
-          catalogTable = catalogTable,
-          tableIdentifier = catalogTable.map(_.identifier.identifier),
-          timeTravelOpt = timeTravelOpt,
-          options = options,
-          pathInfo = PathInfo(
-            spark = spark,
-            path = newPath,
-            catalogTableOpt = catalogTable,
-            options = options
-          )
-        )
+        deltaLog.getInitialCatalogTable
       }
+      val tableIdentifier = catalogTableOpt.map(_.identifier.identifier)
+      val newPath = new Path(deltaLog.dataPath.toUri)
+      deltaTable.copy(
+        path = newPath, catalogTable = catalogTableOpt, tableIdentifier = tableIdentifier
+      )
     }
   }
 
@@ -532,26 +494,6 @@ object DeltaTableV2 {
     case ResolvedTable(_, _, t: V1Table, _) if DeltaTableUtils.isDeltaTable(t.catalogTable) =>
       Some(DeltaTableV2(SparkSession.active, new Path(t.v1Table.location), Some(t.v1Table)))
     case _ => None
-  }
-
-  /**
-   * Creates a DeltaTableV2 instance with a custom DeltaLog object for testing purposes. This is
-   * useful because the DeltaTableV2 constructor is private and cannot be called from
-   * DeltaTestImplicit.
-   */
-  def testOnlyApplyWithCustomDeltaLog(
-    spark: SparkSession, path: Path, clock: Clock): DeltaTableV2 = {
-    new DeltaTableV2(
-      spark,
-      path,
-      catalogTable = None,
-      tableIdentifier = None,
-      timeTravelOpt = None,
-      options = Map.empty,
-      pathInfo = PathInfo(spark, path, catalogTableOpt = None, options = Map.empty)
-    ) {
-      override lazy val deltaLog: DeltaLog = DeltaLog.forTable(spark, path, clock)
-    }
   }
 
   /**
