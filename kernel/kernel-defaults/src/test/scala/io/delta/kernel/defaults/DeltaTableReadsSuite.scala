@@ -594,7 +594,7 @@ trait AbstractDeltaTableReadsSuite extends AnyFunSuite { self: AbstractTestUtils
             TestRow(Seq(202, 203)),
             TestRow(Seq(null, 204)),
             TestRow(Seq()),
-            null),
+            TestRow(null: Any)),
           readCols = Seq("array_of_int"))
       }
     }
