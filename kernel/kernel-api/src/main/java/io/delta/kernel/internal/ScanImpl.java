@@ -270,7 +270,7 @@ public class ScanImpl implements Scan {
               false,
               FieldMetadata.builder()
                   .putBoolean(StructField.IS_METADATA_COLUMN_KEY, true)
-                  .putBoolean(StructField.IS_INTERNAL_METADATA_COLUMN_KEY, true)
+                  .putBoolean(StructField.IS_INTERNAL_COLUMN_KEY, true)
                   .build()));
     }
 

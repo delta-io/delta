@@ -35,6 +35,7 @@ import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -186,11 +187,11 @@ public interface Scan {
                 physicalReadSchema);
 
         // Transform physical row tracking columns to logical row tracking columns
-        if (TableConfig.ROW_TRACKING_ENABLED.fromMetadata(
-            ScanStateRow.getConfiguration(scanState))) {
+        Map<String, String> configuration = ScanStateRow.getConfiguration(scanState);
+        if (TableConfig.ROW_TRACKING_ENABLED.fromMetadata(configuration)) {
           nextDataBatch =
               MaterializedRowTrackingColumn.transformPhysicalData(
-                  nextDataBatch, scanFile, scanState, engine);
+                  nextDataBatch, scanFile, configuration, engine);
         }
 
         // Get the selectionVector if DV is present
@@ -218,12 +219,17 @@ public interface Scan {
 
         // If a column was only requested to compute other columns, we remove it
         for (StructField field : nextDataBatch.getSchema().fields()) {
-          if (field.getMetadata().contains(StructField.IS_INTERNAL_METADATA_COLUMN_KEY)
-              && field.getMetadata().getBoolean(StructField.IS_INTERNAL_METADATA_COLUMN_KEY)) {
+          if (field.getMetadata().contains(StructField.IS_INTERNAL_COLUMN_KEY)
+              && field.getMetadata().getBoolean(StructField.IS_INTERNAL_COLUMN_KEY)) {
             int columnOrdinal = nextDataBatch.getSchema().indexOf(field.getName());
-            if (columnOrdinal != -1) {
-              nextDataBatch = nextDataBatch.withDeletedColumnAt(columnOrdinal);
+            if (columnOrdinal == -1) {
+              // This should never happen since we only interact with a single schema
+              throw new IllegalArgumentException(
+                  String.format(
+                      "Column %s was requested internally but is not present in the data batch.",
+                      field.getName()));
             }
+            nextDataBatch = nextDataBatch.withDeletedColumnAt(columnOrdinal);
           }
         }
 
