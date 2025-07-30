@@ -146,7 +146,7 @@ public class ScanImpl implements Scan {
     boolean shouldReadStats = hasDataSkippingFilter || includeStats;
 
     Timer.Timed planningDuration = scanMetrics.totalPlanningTimer.start();
-    // ScanReportReporter stores the current context and can be invoked (in the  future) with
+    // ScanReportReporter stores the current context and can be invoked (in the future) with
     // `reportError` or `reportSuccess` to stop the planning duration timer and push a report to
     // the engine
     ScanReportReporter reportReporter =
