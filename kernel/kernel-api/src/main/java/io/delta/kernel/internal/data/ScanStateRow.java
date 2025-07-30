@@ -140,8 +140,7 @@ public class ScanStateRow extends GenericRow {
    * @param scanState Scan state {@link Row}
    * @return Fully qualified path to the location of the table.
    */
-  public static String getTableRoot(Row scanState) {
-    return new Path(URI.create(scanState.getString(COL_NAME_TO_ORDINAL.get("tablePath"))))
-        .toString();
+  public static Path getTableRoot(Row scanState) {
+    return new Path(URI.create(scanState.getString(COL_NAME_TO_ORDINAL.get("tablePath"))));
   }
 }
