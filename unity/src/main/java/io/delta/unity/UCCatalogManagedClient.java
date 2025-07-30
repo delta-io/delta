@@ -19,6 +19,7 @@ package io.delta.unity;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.ResolvedTable;
+import io.delta.kernel.ResolvedTableBuilder;
 import io.delta.kernel.TableManager;
 import io.delta.kernel.annotation.Experimental;
 import io.delta.kernel.engine.Engine;
@@ -30,10 +31,7 @@ import io.delta.storage.commit.uccommitcoordinator.UCClient;
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorException;
 import java.io.IOException;
 import java.io.UncheckedIOException;
-import java.util.Comparator;
-import java.util.List;
-import java.util.Objects;
-import java.util.Optional;
+import java.util.*;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import org.apache.hadoop.fs.Path;
@@ -59,56 +57,95 @@ public class UCCatalogManagedClient {
   // TODO: [delta-io/delta#4817] loadTable API that takes in a UC TableInfo object
 
   /**
-   * Loads a Kernel {@link ResolvedTable} at a specific version.
+   * Loads a Kernel {@link ResolvedTable}. If no version is specified, the latest version of the
+   * table is loaded.
    *
    * @param engine The Delta Kernel {@link Engine} to use for loading the table.
    * @param ucTableId The Unity Catalog table ID, which is a unique identifier for the table in UC.
    * @param tablePath The path to the Delta table in the underlying storage system.
-   * @param version The version of the table to load.
+   * @param versionOpt The optional version of the table to load.
    */
-  public ResolvedTable loadTable(Engine engine, String ucTableId, String tablePath, long version) {
+  public ResolvedTable loadTable(
+      Engine engine, String ucTableId, String tablePath, Optional<Long> versionOpt) {
     Objects.requireNonNull(engine, "engine is null");
     Objects.requireNonNull(ucTableId, "ucTableId is null");
     Objects.requireNonNull(tablePath, "tablePath is null");
-    checkArgument(version >= 0, "version must be non-negative");
+    Objects.requireNonNull(versionOpt, "versionOpt is null");
+    versionOpt.ifPresent(version -> checkArgument(version >= 0, "version must be non-negative"));
 
-    logger.info("[{}] Resolving table at version {}", ucTableId, version);
-    final GetCommitsResponse response = getRatifiedCommitsFromUC(ucTableId, tablePath, version);
-    validateLoadTableVersionExists(ucTableId, version, response.getLatestTableVersion());
+    logger.info(
+        "[{}] Loading ResolvedTable at version {}", ucTableId, getVersionString(versionOpt));
+    final GetCommitsResponse response = getRatifiedCommitsFromUC(ucTableId, tablePath, versionOpt);
+    final long ucTableVersion = getTrueUCTableVersion(ucTableId, response.getLatestTableVersion());
+    versionOpt.ifPresent(
+        version -> validateLoadTableVersionExists(ucTableId, version, ucTableVersion));
     final List<ParsedLogData> logData =
         getSortedKernelLogDataFromRatifiedCommits(ucTableId, response.getCommits());
 
     return timeOperation(
         "TableManager.loadTable",
         ucTableId,
-        () ->
-            TableManager.loadTable(tablePath)
-                .atVersion(version)
-                .withLogData(logData)
-                .build(engine));
+        () -> {
+          ResolvedTableBuilder resolvedTableBuilder = TableManager.loadTable(tablePath);
+
+          if (versionOpt.isPresent()) {
+            resolvedTableBuilder = resolvedTableBuilder.atVersion(versionOpt.get());
+          }
+
+          return resolvedTableBuilder.withLogData(logData).build(engine);
+        });
+  }
+
+  private String getVersionString(Optional<Long> versionOpt) {
+    return versionOpt.map(String::valueOf).orElse("latest");
   }
 
   private GetCommitsResponse getRatifiedCommitsFromUC(
-      String ucTableId, String tablePath, long version) {
+      String ucTableId, String tablePath, Optional<Long> versionOpt) {
     logger.info(
-        "[{}] Invoking the UCClient to get ratified commits at version {}", ucTableId, version);
-
-    return timeOperation(
-        "UCClient.getCommits",
+        "[{}] Invoking the UCClient to get ratified commits at version {}",
         ucTableId,
-        () -> {
-          try {
-            return ucClient.getCommits(
-                ucTableId,
-                new Path(tablePath).toUri(),
-                Optional.empty() /* startVersion */,
-                Optional.of(version) /* endVersion */);
-          } catch (IOException ex) {
-            throw new UncheckedIOException(ex);
-          } catch (UCCommitCoordinatorException ex) {
-            throw new RuntimeException(ex);
-          }
-        });
+        getVersionString(versionOpt));
+
+    final GetCommitsResponse response =
+        timeOperation(
+            "UCClient.getCommits",
+            ucTableId,
+            () -> {
+              try {
+                return ucClient.getCommits(
+                    ucTableId,
+                    new Path(tablePath).toUri(),
+                    Optional.empty() /* startVersion */,
+                    versionOpt /* endVersion */);
+              } catch (IOException ex) {
+                throw new UncheckedIOException(ex);
+              } catch (UCCommitCoordinatorException ex) {
+                throw new RuntimeException(ex);
+              }
+            });
+
+    logger.info(
+        "[{}] Number of ratified commits: {}, Max ratified version in UC: {}",
+        ucTableId,
+        response.getCommits().size(),
+        response.getLatestTableVersion());
+
+    return response;
+  }
+
+  /**
+   * As of this writing, UC catalog service is not informed when 0.json is successfully written
+   * during table creation. Thus, when 0.json exists, the max ratified version returned by UC is -1.
+   */
+  private long getTrueUCTableVersion(String ucTableId, long maxRatifiedVersion) {
+    if (maxRatifiedVersion == -1) {
+      logger.info(
+          "[{}] UC max ratified version is -1. This means 0.json exists. Version is 0.", ucTableId);
+      return 0;
+    }
+
+    return maxRatifiedVersion;
   }
 
   private void validateLoadTableVersionExists(

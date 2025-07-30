@@ -28,7 +28,7 @@ import io.delta.kernel.utils.CloseableIterator;
  * required for the commit process. Engines use this context to provide inputs to the {@link
  * Committer#commit} method.
  *
- * @see TransactionV2#getInitialCommitContext
+ * @see TransactionV2#getCommitContextForFirstCommitAttempt
  */
 @Experimental
 public interface CommitContext {

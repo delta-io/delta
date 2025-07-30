@@ -169,6 +169,7 @@ object SuiteGeneratorConfig {
    * generation of a suite for it.
    */
   lazy val TEST_GROUPS: List[TestGroup] = List(
+    // scalastyle:off line.size.limit
     TestGroup(
       name = "MergeSuites",
       imports = List(
@@ -228,15 +229,21 @@ object SuiteGeneratorConfig {
           )
         ),
         TestConfig(
+          "UpdateSQLTests" :: Tests.UPDATE_BASE,
+          List(
+            List(Dims.UPDATE_SQL, Dims.NAME_BASED)
+          )
+        ),
+        TestConfig(
           "UpdateCDCWithDeletionVectorsTests" ::
             "UpdateCDCTests" ::
             "UpdateSQLWithDeletionVectorsTests" ::
             "UpdateSQLTests" ::
             Tests.UPDATE_BASE,
           List(
-            List(Dims.UPDATE_SQL, Dims.CDC.asOptional, Dims.ROW_TRACKING.asOptional),
-            List(Dims.UPDATE_SQL, Dims.CDC, Dims.UPDATE_DVS),
-            List(Dims.UPDATE_SQL, Dims.UPDATE_DVS, Dims.PREDPUSH)
+            List(Dims.UPDATE_SQL, Dims.PATH_BASED, Dims.CDC.asOptional, Dims.ROW_TRACKING.asOptional),
+            List(Dims.UPDATE_SQL, Dims.PATH_BASED, Dims.CDC, Dims.UPDATE_DVS),
+            List(Dims.UPDATE_SQL, Dims.PATH_BASED, Dims.UPDATE_DVS, Dims.PREDPUSH)
           )
         ),
         TestConfig(
@@ -266,9 +273,10 @@ object SuiteGeneratorConfig {
         TestConfig(
           "DeleteCDCTests" :: "DeleteSQLTests" :: Tests.DELETE_BASE,
           List(
-            List(Dims.DELETE_SQL, Dims.COLUMN_MAPPING.asOptional),
-            List(Dims.DELETE_SQL, Dims.DELETE_WITH_DVS, Dims.PREDPUSH),
-            List(Dims.DELETE_SQL, Dims.CDC)
+            List(Dims.DELETE_SQL, Dims.NAME_BASED),
+            List(Dims.DELETE_SQL, Dims.PATH_BASED, Dims.COLUMN_MAPPING.asOptional),
+            List(Dims.DELETE_SQL, Dims.PATH_BASED, Dims.DELETE_WITH_DVS, Dims.PREDPUSH),
+            List(Dims.DELETE_SQL, Dims.PATH_BASED, Dims.CDC)
           )
         ),
         TestConfig(
@@ -281,6 +289,7 @@ object SuiteGeneratorConfig {
         )
       )
     )
+    // scalastyle:on line.size.limit
   )
 
   /**

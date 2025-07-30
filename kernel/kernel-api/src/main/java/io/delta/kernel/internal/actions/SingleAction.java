@@ -71,12 +71,12 @@ public class SingleAction {
   // Once we start supporting updating CDC or domain metadata enabled tables, we should add the
   // schema for those fields here.
 
-  private static final int TXN_ORDINAL = FULL_SCHEMA.indexOf("txn");
+  public static final int TXN_ORDINAL = FULL_SCHEMA.indexOf("txn");
   public static final int ADD_FILE_ORDINAL = FULL_SCHEMA.indexOf("add");
   public static final int REMOVE_FILE_ORDINAL = FULL_SCHEMA.indexOf("remove");
-  private static final int METADATA_ORDINAL = FULL_SCHEMA.indexOf("metaData");
-  private static final int PROTOCOL_ORDINAL = FULL_SCHEMA.indexOf("protocol");
-  private static final int COMMIT_INFO_ORDINAL = FULL_SCHEMA.indexOf("commitInfo");
+  public static final int METADATA_ORDINAL = FULL_SCHEMA.indexOf("metaData");
+  public static final int PROTOCOL_ORDINAL = FULL_SCHEMA.indexOf("protocol");
+  public static final int COMMIT_INFO_ORDINAL = FULL_SCHEMA.indexOf("commitInfo");
   private static final int DOMAIN_METADATA_ORDINAL = FULL_SCHEMA.indexOf("domainMetadata");
 
   public static Row createAddFileSingleAction(Row addFile) {

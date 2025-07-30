@@ -34,7 +34,7 @@ public class StructField {
   ////////////////////////////////////////////////////////////////////////////////
 
   /** Indicates a metadata column when present in the field metadata and the value is true */
-  private static String IS_METADATA_COLUMN_KEY = "isMetadataColumn";
+  public static final String IS_METADATA_COLUMN_KEY = "isMetadataColumn";
 
   /**
    * The name of a row index metadata column. When present this column must be populated with row
