@@ -43,7 +43,7 @@ public class StructField {
   private static final String DEFAULT_ROW_INDEX_NAME = "_metadata.row_index";
 
   public static StructField ROW_INDEX_COLUMN =
-      new StructField(DEFAULT_ROW_INDEX_NAME, LongType.LONG, false);
+      new StructField(DEFAULT_ROW_INDEX_NAME, MetadataType.ROW_INDEX, false);
 
   public static final String COLLATIONS_METADATA_KEY = "__COLLATIONS";
   public static final String FROM_TYPE_KEY = "fromType";

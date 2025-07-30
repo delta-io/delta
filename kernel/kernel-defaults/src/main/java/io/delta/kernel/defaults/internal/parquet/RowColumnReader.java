@@ -80,9 +80,6 @@ class RowColumnReader extends GroupConverter implements ParquetColumnReaders.Bas
               : null;
       if (typeFromFile == null) {
         if (field.getDataType().equals(MetadataType.ROW_INDEX)) {
-          checkArgument(
-              field.getDataType() instanceof LongType,
-              "row index metadata column must be type long");
           converters[i] = new ParquetColumnReaders.FileRowIndexColumnReader(initialBatchSize);
         } else {
           converters[i] = new ParquetColumnReaders.NonExistentColumnReader(typeFromClient);
