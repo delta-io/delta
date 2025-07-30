@@ -460,8 +460,7 @@ public final class DeltaErrors {
 
   public static KernelException rowTrackingMetadataMissingInFile(String entry, String filePath) {
     return new KernelException(
-        String.format(
-            "Required metadata key %s is not present in scan file %s.", entry, filePath));
+        String.format("Required metadata key %s is not present in scan file %s.", entry, filePath));
   }
 
   /* ------------------------ HELPER METHODS ----------------------------- */
