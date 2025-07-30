@@ -41,15 +41,6 @@ import org.junit.jupiter.api.Test;
 
 public class SchemaUtilsTest {
 
-  private void checkConversion(
-      org.apache.spark.sql.types.DataType sparkDataType, DataType kernelDataType) {
-    DataType toKernel = SchemaUtils.convertSparkDataTypeToKernelDataType(sparkDataType);
-    assertEquals(kernelDataType, toKernel);
-    org.apache.spark.sql.types.DataType toSpark =
-        SchemaUtils.convertKernelDataTypeToSparkDataType(kernelDataType);
-    assertEquals(sparkDataType, toSpark);
-  }
-
   @Test
   public void testPrimitiveTypes() {
     checkConversion(DataTypes.StringType, StringType.STRING);
@@ -132,5 +123,14 @@ public class SchemaUtilsTest {
                 false /* nullable */);
 
     checkConversion(sparkStruct, kernelStruct);
+  }
+
+  private void checkConversion(
+      org.apache.spark.sql.types.DataType sparkDataType, DataType kernelDataType) {
+    DataType toKernel = SchemaUtils.convertSparkDataTypeToKernelDataType(sparkDataType);
+    assertEquals(kernelDataType, toKernel);
+    org.apache.spark.sql.types.DataType toSpark =
+        SchemaUtils.convertKernelDataTypeToSparkDataType(kernelDataType);
+    assertEquals(sparkDataType, toSpark);
   }
 }
