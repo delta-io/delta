@@ -22,6 +22,7 @@ import io.delta.kernel.commit.CommitContext;
 import io.delta.kernel.commit.CommitMetadata;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.exceptions.DomainDoesNotExistException;
 import io.delta.kernel.utils.CloseableIterator;
 import java.util.Map;
 
@@ -88,6 +89,43 @@ public interface TransactionV2 {
    * @return the internal state {@link Row}
    */
   Row getTransactionState();
+
+  /**
+   * Include the provided domain metadata as part of this transaction. If this is called more than
+   * once with the same {@code domain}, the latest provided {@code config} will be committed in the
+   * transaction.
+   *
+   * <p><b>Restrictions:</b>
+   *
+   * <ul>
+   *   <li>Only user-controlled domains are allowed (i.e., domains with {@code delta.} prefix are
+   *       forbidden)
+   *   <li>Adding domain metadata requires the domain metadata table feature to be enabled
+   *   <li>Adding and removing a domain with the same identifier in the same transaction is not
+   *       allowed
+   * </ul>
+   *
+   * @param domain the domain identifier (must not have {@code delta.} prefix)
+   * @param config the configuration string for this domain (will replace any existing config)
+   */
+  void addDomainMetadata(String domain, String config);
+
+  /**
+   * Mark the domain metadata with identifier {@code domain} as removed in this transaction.
+   *
+   * <p>If this domain does not exist in the latest version of the table, calling the commit method
+   * will throw a {@link DomainDoesNotExistException}.
+   *
+   * <p><b>Restrictions:</b>
+   *
+   * <ul>
+   *   <li>Adding and removing a domain with the same identifier in the same transaction is not
+   *       allowed
+   * </ul>
+   *
+   * @param domain the domain identifier for the domain to remove
+   */
+  void removeDomainMetadata(String domain);
 
   /**
    * Returns a {@link CommitContext} that can be used only for the first commit attempt of <i>this
