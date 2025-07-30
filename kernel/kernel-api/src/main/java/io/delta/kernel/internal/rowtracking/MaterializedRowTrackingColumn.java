@@ -30,7 +30,6 @@ import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.types.*;
-import io.delta.kernel.types.LongType;
 import java.util.*;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -183,15 +182,7 @@ public final class MaterializedRowTrackingColumn {
               LongType.LONG,
               true /* nullable */));
       if (logicalSchema.indexOf(StructField.METADATA_ROW_INDEX_COLUMN_NAME) == -1) {
-        physicalFields.add(
-            new StructField(
-                StructField.METADATA_ROW_INDEX_COLUMN_NAME,
-                LongType.LONG,
-                false /* nullable */,
-                FieldMetadata.builder()
-                    .putBoolean(StructField.IS_METADATA_COLUMN_KEY, true)
-                    .putBoolean(StructField.IS_INTERNAL_COLUMN_KEY, true)
-                    .build()));
+        physicalFields.add(StructField.createInternalColumn(StructField.METADATA_ROW_INDEX_COLUMN));
       }
       return physicalFields;
     } else if (logicalField.getName().equals(METADATA_ROW_COMMIT_VERSION_COLUMN_NAME)) {
@@ -208,7 +199,9 @@ public final class MaterializedRowTrackingColumn {
   }
 
   /**
-   * Transforms physical data related to row tracking to the logical metadata requested by the user.
+   * Computes row IDs and row commit versions based on their materialized values if present in the
+   * data returned by the Parquet reader, using the base row ID and default row commit version from
+   * the AddFile otherwise.
    *
    * @param dataBatch a batch of physical data read from the table.
    * @param scanFile the {@link Row} representing the scan file metadata.
@@ -248,6 +241,7 @@ public final class MaterializedRowTrackingColumn {
     return dataBatch;
   }
 
+  /** Row IDs are computed as <code>COALESCE(materializedRowId, baseRowId + rowIndex)</code>. */
   private static ColumnarBatch transformPhysicalRowId(
       ColumnarBatch dataBatch,
       Row scanFile,
@@ -260,7 +254,7 @@ public final class MaterializedRowTrackingColumn {
             .orElseThrow(
                 () ->
                     DeltaErrors.rowTrackingMetadataMissingInFile(
-                        "Base row ID", InternalScanFileUtils.getFilePath(scanFile)));
+                        "baseRowId", InternalScanFileUtils.getFilePath(scanFile)));
     Expression rowIdExpr =
         new ScalarExpression(
             "COALESCE",
@@ -282,6 +276,10 @@ public final class MaterializedRowTrackingColumn {
     return dataBatch;
   }
 
+  /**
+   * Row commit versions are computed as <code>COALESCE(materializedRowCommitVersion,
+   * defaultRowCommitVersion)</code>.
+   */
   private static ColumnarBatch transformPhysicalCommitVersion(
       ColumnarBatch dataBatch,
       Row scanFile,
@@ -294,7 +292,7 @@ public final class MaterializedRowTrackingColumn {
             .orElseThrow(
                 () ->
                     DeltaErrors.rowTrackingMetadataMissingInFile(
-                        "Default row commit version", InternalScanFileUtils.getFilePath(scanFile)));
+                        "defaultRowCommitVersion", InternalScanFileUtils.getFilePath(scanFile)));
     Expression commitVersionExpr =
         new ScalarExpression(
             "COALESCE",

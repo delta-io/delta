@@ -256,15 +256,7 @@ public class ScanImpl implements Scan {
             .map(StructField::getName)
             .noneMatch(name -> name.equals(StructField.METADATA_ROW_INDEX_COLUMN_NAME))) {
       // If the row index column is not already present, add it to the physical read schema
-      physicalFields.add(
-          new StructField(
-              StructField.METADATA_ROW_INDEX_COLUMN_NAME,
-              LongType.LONG,
-              false,
-              FieldMetadata.builder()
-                  .putBoolean(StructField.IS_METADATA_COLUMN_KEY, true)
-                  .putBoolean(StructField.IS_INTERNAL_COLUMN_KEY, true)
-                  .build()));
+      physicalFields.add(StructField.createInternalColumn(StructField.METADATA_ROW_INDEX_COLUMN));
     }
 
     return new StructType(physicalFields);

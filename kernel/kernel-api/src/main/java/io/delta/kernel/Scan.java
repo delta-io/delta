@@ -219,8 +219,7 @@ public interface Scan {
 
         // If a column was only requested to compute other columns, we remove it
         for (StructField field : nextDataBatch.getSchema().fields()) {
-          if (field.getMetadata().contains(StructField.IS_INTERNAL_COLUMN_KEY)
-              && field.getMetadata().getBoolean(StructField.IS_INTERNAL_COLUMN_KEY)) {
+          if (field.isInternalColumn()) {
             int columnOrdinal = nextDataBatch.getSchema().indexOf(field.getName());
             if (columnOrdinal == -1) {
               // This should never happen since we only interact with a single schema

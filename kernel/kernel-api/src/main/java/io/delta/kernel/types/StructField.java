@@ -34,13 +34,14 @@ public class StructField {
   ////////////////////////////////////////////////////////////////////////////////
 
   /** Indicates a metadata column when present in the field metadata and the value is true */
+  // TODO: Make this private once we migrate to the new metadata column API.
   public static final String IS_METADATA_COLUMN_KEY = "isMetadataColumn";
 
   /**
-   * Indicates that a metadata column was requested for internal computations and should not be
-   * exposed to the user.
+   * Indicates that a column was requested for internal computations and should not be returned to
+   * the user.
    */
-  public static final String IS_INTERNAL_COLUMN_KEY = "isInternalColumn";
+  private static final String IS_INTERNAL_COLUMN_KEY = "isInternalColumn";
 
   /**
    * The name of a row index metadata column. When present this column must be populated with row
@@ -147,6 +148,10 @@ public class StructField {
     return !isMetadataColumn();
   }
 
+  public boolean isInternalColumn() {
+    return Optional.ofNullable(metadata.getBoolean(IS_INTERNAL_COLUMN_KEY)).orElse(false);
+  }
+
   @Override
   public String toString() {
     return String.format(
@@ -202,6 +207,19 @@ public class StructField {
    */
   public StructField withDataType(DataType newType) {
     return new StructField(name, newType, nullable, metadata, typeChanges);
+  }
+
+  public static StructField createInternalColumn(StructField field) {
+    FieldMetadata.Builder metadataBuilder =
+        FieldMetadata.builder()
+            .fromMetadata(field.metadata)
+            .putBoolean(IS_INTERNAL_COLUMN_KEY, true);
+    return new StructField(
+        field.getName(),
+        field.getDataType(),
+        field.isNullable(),
+        metadataBuilder.build(),
+        field.getTypeChanges());
   }
 
   /** Fetches collation and type changes metadata from nested fields. */
