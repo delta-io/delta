@@ -433,6 +433,8 @@ public class DataTypeJsonSerDe {
   private static DataType nameToType(String name) {
     if (BasePrimitiveType.isPrimitiveType(name)) {
       return BasePrimitiveType.createPrimitive(name);
+    } else if (MetadataType.isMetadataType(name)) {
+      return MetadataType.createMetadataType(name);
     } else if (name.equals("decimal")) {
       return DecimalType.USER_DEFAULT;
     } else if ("void".equalsIgnoreCase(name)) {

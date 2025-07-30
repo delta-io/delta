@@ -33,22 +33,17 @@ public class StructField {
   // Static Fields / Methods
   ////////////////////////////////////////////////////////////////////////////////
 
-  /** Indicates a metadata column when present in the field metadata and the value is true */
-  public static final String IS_METADATA_COLUMN_KEY = "isMetadataColumn";
-
   /**
-   * The name of a row index metadata column. When present this column must be populated with row
-   * index of each row when reading from parquet.
+   * Indicates that a column was requested for internal computations and should not be returned to
+   * the user.
    */
-  public static String METADATA_ROW_INDEX_COLUMN_NAME = "_metadata.row_index";
+  public static final String IS_INTERNAL_COLUMN_KEY = "isInternalColumn";
 
-  public static StructField METADATA_ROW_INDEX_COLUMN =
-      new StructField(
-          METADATA_ROW_INDEX_COLUMN_NAME,
-          LongType.LONG,
-          false,
-          FieldMetadata.builder().putBoolean(IS_METADATA_COLUMN_KEY, true).build(),
-          Collections.emptyList());
+  /** The default name of row index columns that kernel assigns when requesting row index values. */
+  private static final String DEFAULT_ROW_INDEX_NAME = "_metadata.row_index";
+
+  public static StructField ROW_INDEX_COLUMN =
+      new StructField(DEFAULT_ROW_INDEX_NAME, LongType.LONG, false);
 
   public static final String COLLATIONS_METADATA_KEY = "__COLLATIONS";
   public static final String FROM_TYPE_KEY = "fromType";
@@ -133,12 +128,15 @@ public class StructField {
   }
 
   public boolean isMetadataColumn() {
-    return metadata.contains(IS_METADATA_COLUMN_KEY)
-        && (boolean) metadata.get(IS_METADATA_COLUMN_KEY);
+    return dataType instanceof MetadataType;
   }
 
   public boolean isDataColumn() {
     return !isMetadataColumn();
+  }
+
+  public boolean isInternalColumn() {
+    return Optional.ofNullable(metadata.getBoolean(IS_INTERNAL_COLUMN_KEY)).orElse(false);
   }
 
   @Override
@@ -196,6 +194,19 @@ public class StructField {
    */
   public StructField withDataType(DataType newType) {
     return new StructField(name, newType, nullable, metadata, typeChanges);
+  }
+
+  public static StructField createInternalField(StructField field) {
+    FieldMetadata.Builder metadataBuilder =
+        FieldMetadata.builder()
+            .fromMetadata(field.metadata)
+            .putBoolean(IS_INTERNAL_COLUMN_KEY, true);
+    return new StructField(
+        field.getName(),
+        field.getDataType(),
+        field.isNullable(),
+        metadataBuilder.build(),
+        field.getTypeChanges());
   }
 
   /** Fetches collation and type changes metadata from nested fields. */

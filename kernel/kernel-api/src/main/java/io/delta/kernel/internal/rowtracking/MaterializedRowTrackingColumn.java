@@ -15,14 +15,13 @@
  */
 package io.delta.kernel.internal.rowtracking;
 
-import static io.delta.kernel.internal.rowtracking.RowTracking.*;
-
 import io.delta.kernel.exceptions.InvalidTableException;
 import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.types.LongType;
+import io.delta.kernel.types.MetadataType;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import java.util.*;
@@ -33,12 +32,12 @@ import java.util.stream.Stream;
 public final class MaterializedRowTrackingColumn {
 
   /** Static instance for the materialized row ID column. */
-  public static final MaterializedRowTrackingColumn ROW_ID =
+  public static final MaterializedRowTrackingColumn MATERIALIZED_ROW_ID =
       new MaterializedRowTrackingColumn(
           TableConfig.MATERIALIZED_ROW_ID_COLUMN_NAME, "_row-id-col-");
 
   /** Static instance for the materialized row commit version column. */
-  public static final MaterializedRowTrackingColumn ROW_COMMIT_VERSION =
+  public static final MaterializedRowTrackingColumn MATERIALIZED_ROW_COMMIT_VERSION =
       new MaterializedRowTrackingColumn(
           TableConfig.MATERIALIZED_ROW_COMMIT_VERSION_COLUMN_NAME, "_row-commit-version-col-");
 
@@ -74,7 +73,7 @@ public final class MaterializedRowTrackingColumn {
     Set<String> physicalColNames =
         schema.fields().stream().map(ColumnMapping::getPhysicalName).collect(Collectors.toSet());
 
-    Stream.of(ROW_ID, ROW_COMMIT_VERSION)
+    Stream.of(MATERIALIZED_ROW_ID, MATERIALIZED_ROW_COMMIT_VERSION)
         .map(column -> metadata.getConfiguration().get(column.getMaterializedColumnNameProperty()))
         .filter(Objects::nonNull)
         .forEach(
@@ -99,7 +98,7 @@ public final class MaterializedRowTrackingColumn {
     }
 
     // Check that both materialized column name configs are present when row tracking is enabled
-    Stream.of(ROW_ID, ROW_COMMIT_VERSION)
+    Stream.of(MATERIALIZED_ROW_ID, MATERIALIZED_ROW_COMMIT_VERSION)
         .forEach(
             column -> {
               if (!metadata
@@ -130,7 +129,7 @@ public final class MaterializedRowTrackingColumn {
 
     Map<String, String> configsToAdd = new HashMap<>();
 
-    Stream.of(ROW_ID, ROW_COMMIT_VERSION)
+    Stream.of(MATERIALIZED_ROW_ID, MATERIALIZED_ROW_COMMIT_VERSION)
         .filter(
             column ->
                 !metadata
@@ -172,18 +171,20 @@ public final class MaterializedRowTrackingColumn {
       throw DeltaErrors.missingRowTrackingColumnRequested(logicalField.getName());
     }
 
-    if (logicalField.getName().equals(METADATA_ROW_ID_COLUMN_NAME)) {
+    if (logicalField.getDataType().equals(MetadataType.ROW_ID)) {
       // TODO: Use logicalSchema here to determine whether we also need to add row index
       //  to the physical schema to compute non-materialized row IDs.
       // We return a list of StructFields here because we may need to add both the row ID and the
       // row index columns to the physical schema (in scope for a follow-up PR).
       return Collections.singletonList(
           new StructField(
-              ROW_ID.getPhysicalColumnName(metadata), LongType.LONG, true /* nullable */));
-    } else if (logicalField.getName().equals(METADATA_ROW_COMMIT_VERSION_COLUMN_NAME)) {
+              MATERIALIZED_ROW_ID.getPhysicalColumnName(metadata),
+              LongType.LONG,
+              true /* nullable */));
+    } else if (logicalField.getDataType().equals(MetadataType.ROW_COMMIT_VERSION)) {
       return Collections.singletonList(
           new StructField(
-              ROW_COMMIT_VERSION.getPhysicalColumnName(metadata),
+              MATERIALIZED_ROW_COMMIT_VERSION.getPhysicalColumnName(metadata),
               LongType.LONG,
               true /* nullable */));
     }

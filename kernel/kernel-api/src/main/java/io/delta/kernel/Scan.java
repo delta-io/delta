@@ -29,7 +29,7 @@ import io.delta.kernel.internal.deletionvectors.RoaringBitmapArray;
 import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
 import io.delta.kernel.internal.util.PartitionUtils;
 import io.delta.kernel.internal.util.Tuple2;
-import io.delta.kernel.types.StructField;
+import io.delta.kernel.types.MetadataType;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
@@ -186,15 +186,14 @@ public interface Scan {
         DeletionVectorDescriptor dv =
             InternalScanFileUtils.getDeletionVectorDescriptorFromRow(scanFile);
 
-        int rowIndexOrdinal =
-            nextDataBatch.getSchema().indexOf(StructField.METADATA_ROW_INDEX_COLUMN_NAME);
+        StructType schema = nextDataBatch.getSchema();
 
         // Get the selectionVector if DV is present
         Optional<ColumnVector> selectionVector;
         if (dv == null) {
           selectionVector = Optional.empty();
         } else {
-          if (rowIndexOrdinal == -1) {
+          if (!schema.contains(MetadataType.ROW_INDEX)) {
             throw new IllegalArgumentException(
                 "Row index column is not present in the data read from the Parquet file.");
           }
@@ -204,12 +203,16 @@ public interface Scan {
             this.currDV = dvInfo._1;
             this.currBitmap = dvInfo._2;
           }
-          ColumnVector rowIndexVector = nextDataBatch.getColumnVector(rowIndexOrdinal);
+          ColumnVector rowIndexVector =
+              nextDataBatch.getColumnVector(schema.getFirst(MetadataType.ROW_INDEX));
           selectionVector = Optional.of(new SelectionColumnVector(currBitmap, rowIndexVector));
         }
-        if (rowIndexOrdinal != -1) {
-          // TODO: Only remove rowIndex if it was not explicitly requested by the user
-          nextDataBatch = nextDataBatch.withDeletedColumnAt(rowIndexOrdinal);
+
+        // Remove columns the kernel requested internally from the data batch
+        for (int i = schema.length() - 1; i >= 0; i--) {
+          if (schema.fields().get(i).isInternalColumn()) {
+            nextDataBatch = nextDataBatch.withDeletedColumnAt(i);
+          }
         }
 
         // Change back to logical schema
