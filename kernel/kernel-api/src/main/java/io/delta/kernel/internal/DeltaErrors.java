@@ -458,10 +458,10 @@ public final class DeltaErrors {
             tablePath, TableConfig.APPEND_ONLY_ENABLED.getKey()));
   }
 
-  public static KernelException missingRowTrackingEntryInFile(String filePath, String entry) {
+  public static KernelException rowTrackingMetadataMissingInFile(String entry, String filePath) {
     return new KernelException(
         String.format(
-            "%s is not present in scan file %s of table with row tracking.", entry, filePath));
+            "Required metadata key %s is not present in scan file %s.", entry, filePath));
   }
 
   /* ------------------------ HELPER METHODS ----------------------------- */

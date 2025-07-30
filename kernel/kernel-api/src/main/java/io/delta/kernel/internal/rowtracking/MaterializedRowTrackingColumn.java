@@ -104,8 +104,7 @@ public final class MaterializedRowTrackingColumn {
       return;
     }
 
-    // Check that both materialized column name configs are present when row
-    // tracking is enabled
+    // Check that both materialized column name configs are present when row tracking is enabled
     Stream.of(ROW_ID, ROW_COMMIT_VERSION)
         .forEach(
             column -> {
@@ -260,8 +259,8 @@ public final class MaterializedRowTrackingColumn {
         InternalScanFileUtils.getBaseRowId(scanFile)
             .orElseThrow(
                 () ->
-                    DeltaErrors.missingRowTrackingEntryInFile(
-                        InternalScanFileUtils.getFilePath(scanFile), "Base row ID"));
+                    DeltaErrors.rowTrackingMetadataMissingInFile(
+                        "Base row ID", InternalScanFileUtils.getFilePath(scanFile)));
     Expression rowIdExpr =
         new ScalarExpression(
             "COALESCE",
@@ -294,8 +293,8 @@ public final class MaterializedRowTrackingColumn {
         InternalScanFileUtils.getDefaultRowCommitVersion(scanFile)
             .orElseThrow(
                 () ->
-                    DeltaErrors.missingRowTrackingEntryInFile(
-                        InternalScanFileUtils.getFilePath(scanFile), "Default row commit version"));
+                    DeltaErrors.rowTrackingMetadataMissingInFile(
+                        "Default row commit version", InternalScanFileUtils.getFilePath(scanFile)));
     Expression commitVersionExpr =
         new ScalarExpression(
             "COALESCE",
