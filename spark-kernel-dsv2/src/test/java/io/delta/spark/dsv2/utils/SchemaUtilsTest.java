@@ -39,6 +39,7 @@ import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
 import org.junit.jupiter.api.Test;
 
+/** Tests for {@link SchemaUtils}. */
 public class SchemaUtilsTest {
 
   @Test
@@ -123,6 +124,39 @@ public class SchemaUtilsTest {
                 false /* nullable */);
 
     checkConversion(sparkStruct, kernelStruct);
+  }
+
+  @Test
+  public void testConvertSparkSchemaToKernelSchema() {
+    org.apache.spark.sql.types.StructType sparkSchema =
+        DataTypes.createStructType(
+            new org.apache.spark.sql.types.StructField[] {
+              DataTypes.createStructField("a", DataTypes.IntegerType, true),
+              DataTypes.createStructField("b", DataTypes.StringType, false)
+            });
+
+    StructType expectedKernelSchema =
+        new StructType().add("a", IntegerType.INTEGER, true).add("b", StringType.STRING, false);
+
+    StructType actualKernelSchema = SchemaUtils.convertSparkSchemaToKernelSchema(sparkSchema);
+    assertEquals(expectedKernelSchema, actualKernelSchema);
+  }
+
+  @Test
+  public void testConvertKernelSchemaToSparkSchema() {
+    StructType kernelSchema =
+        new StructType().add("a", IntegerType.INTEGER, true).add("b", StringType.STRING, false);
+
+    org.apache.spark.sql.types.StructType expectedSparkSchema =
+        DataTypes.createStructType(
+            new org.apache.spark.sql.types.StructField[] {
+              DataTypes.createStructField("a", DataTypes.IntegerType, true),
+              DataTypes.createStructField("b", DataTypes.StringType, false)
+            });
+
+    org.apache.spark.sql.types.StructType actualSparkSchema =
+        SchemaUtils.convertKernelSchemaToSparkSchema(kernelSchema);
+    assertEquals(expectedSparkSchema, actualSparkSchema);
   }
 
   private void checkConversion(

@@ -13,7 +13,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package io.delta.spark.dsv2.utils;
 
 import io.delta.kernel.types.ArrayType;
@@ -39,6 +38,7 @@ import java.util.List;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.Metadata;
 
+/** A utility class for converting between Delta Kernel and Spark schemas and data types. */
 public class SchemaUtils {
 
   //////////////////////
@@ -135,33 +135,33 @@ public class SchemaUtils {
   /** Converts a Spark data type to a Delta Kernel data type. */
   public static DataType convertSparkDataTypeToKernelDataType(
       org.apache.spark.sql.types.DataType sparkDataType) {
-    if (sparkDataType == DataTypes.StringType) {
+    if (sparkDataType instanceof org.apache.spark.sql.types.StringType) {
       return StringType.STRING;
-    } else if (sparkDataType == DataTypes.BooleanType) {
+    } else if (sparkDataType instanceof org.apache.spark.sql.types.BooleanType) {
       return BooleanType.BOOLEAN;
-    } else if (sparkDataType == DataTypes.IntegerType) {
+    } else if (sparkDataType instanceof org.apache.spark.sql.types.IntegerType) {
       return IntegerType.INTEGER;
-    } else if (sparkDataType == DataTypes.LongType) {
+    } else if (sparkDataType instanceof org.apache.spark.sql.types.LongType) {
       return LongType.LONG;
-    } else if (sparkDataType == DataTypes.BinaryType) {
+    } else if (sparkDataType instanceof org.apache.spark.sql.types.BinaryType) {
       return BinaryType.BINARY;
-    } else if (sparkDataType == DataTypes.ByteType) {
+    } else if (sparkDataType instanceof org.apache.spark.sql.types.ByteType) {
       return ByteType.BYTE;
-    } else if (sparkDataType == DataTypes.DateType) {
+    } else if (sparkDataType instanceof org.apache.spark.sql.types.DateType) {
       return DateType.DATE;
     } else if (sparkDataType instanceof org.apache.spark.sql.types.DecimalType) {
       org.apache.spark.sql.types.DecimalType sparkDecimal =
           (org.apache.spark.sql.types.DecimalType) sparkDataType;
       return new DecimalType(sparkDecimal.precision(), sparkDecimal.scale());
-    } else if (sparkDataType == DataTypes.DoubleType) {
+    } else if (sparkDataType instanceof org.apache.spark.sql.types.DoubleType) {
       return DoubleType.DOUBLE;
-    } else if (sparkDataType == DataTypes.FloatType) {
+    } else if (sparkDataType instanceof org.apache.spark.sql.types.FloatType) {
       return FloatType.FLOAT;
-    } else if (sparkDataType == DataTypes.ShortType) {
+    } else if (sparkDataType instanceof org.apache.spark.sql.types.ShortType) {
       return ShortType.SHORT;
-    } else if (sparkDataType == DataTypes.TimestampType) {
+    } else if (sparkDataType instanceof org.apache.spark.sql.types.TimestampType) {
       return TimestampType.TIMESTAMP;
-    } else if (sparkDataType == DataTypes.TimestampNTZType) {
+    } else if (sparkDataType instanceof org.apache.spark.sql.types.TimestampNTZType) {
       return TimestampNTZType.TIMESTAMP_NTZ;
     } else if (sparkDataType instanceof org.apache.spark.sql.types.ArrayType) {
       org.apache.spark.sql.types.ArrayType sparkArray =
