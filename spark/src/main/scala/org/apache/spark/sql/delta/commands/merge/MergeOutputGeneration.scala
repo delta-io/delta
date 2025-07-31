@@ -20,7 +20,6 @@ import scala.collection.mutable
 
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.{RowCommitVersion, RowId}
-import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.commands.MergeIntoCommandBase
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 
@@ -29,6 +28,7 @@ import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.functions._
+import org.apache.spark.sql.catalyst.expressions.RaiseError
 
 /**
  * Contains logic to transform the merge clauses into expressions that can be evaluated to obtain
@@ -105,10 +105,12 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
       rowCommitVersionColumnExpressionOpt: Option[NamedExpression],
       targetWriteColNames: Seq[String],
       noopCopyExprs: Seq[Expression],
+      writeUnmodifiedRows: Boolean,
       clausesWithPrecompConditions: Seq[DeltaMergeIntoClause],
       cdcEnabled: Boolean,
-      shouldCountDeletedRows: Boolean = true,
-      needSetRowTrackingFieldIdForUniform: Boolean): IndexedSeq[Column] = {
+      joinType: String,
+      needSetRowTrackingFieldIdForUniform: Boolean,
+      shouldCountDeletedRows: Boolean = true): IndexedSeq[Column] = {
 
     val numOutputCols = targetWriteColNames.size
 
@@ -120,10 +122,12 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
       clausesWithPrecompConditions.collect { case c: DeltaMergeIntoMatchedClause => c },
       cdcEnabled,
       shouldCountDeletedRows)
-    val matchedExprs: Seq[Expression] = generateClauseOutputExprs(
-      numOutputCols,
-      processedMatchClauses,
-      noopCopyExprs)
+    val matchedExprs: Seq[Expression] =
+      generateClauseOutputExprs(
+        numOutputCols,
+        processedMatchClauses,
+        noopCopyExprs,
+        writeUnmodifiedRows)
 
     // N + 1 (or N + 2 with CDC, N + 4 preserving Row Tracking and CDC) expressions to delete the
     // unmatched source row when it should not be inserted. `target.output` will produce NULLs
@@ -144,10 +148,12 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
       clausesWithPrecompConditions.collect { case c: DeltaMergeIntoNotMatchedClause => c },
       cdcEnabled,
       shouldCountDeletedRows)
-    val notMatchedExprs: Seq[Expression] = generateClauseOutputExprs(
-      numOutputCols,
-      processedNotMatchClauses,
-      deleteSourceRowExprs)
+    val notMatchedExprs: Seq[Expression] =
+      generateClauseOutputExprs(
+        numOutputCols,
+        processedNotMatchClauses,
+        noopCopyExprs,
+        writeUnmodifiedRows)
 
     // === Generate N + 2 (N + 4 with Row Tracking) expressions for NOT MATCHED BY SOURCE clause ===
     val processedNotMatchBySourceClauses: Seq[ProcessedClause] = generateAllActionExprs(
@@ -157,10 +163,12 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
       clausesWithPrecompConditions.collect { case c: DeltaMergeIntoNotMatchedBySourceClause => c },
       cdcEnabled,
       shouldCountDeletedRows)
-    val notMatchedBySourceExprs: Seq[Expression] = generateClauseOutputExprs(
-      numOutputCols,
-      processedNotMatchBySourceClauses,
-      noopCopyExprs)
+    val notMatchedBySourceExprs: Seq[Expression] =
+      generateClauseOutputExprs(
+        numOutputCols,
+        processedNotMatchBySourceClauses,
+        noopCopyExprs,
+        writeUnmodifiedRows)
 
     // ==== Generate N + 2 (N + 4 preserving Row Tracking) expressions that invokes the MATCHED,
     // NOT MATCHED and NOT MATCHED BY SOURCE expressions ====
@@ -200,10 +208,25 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
       //               ...
       //               ELSE <execute i-th expression to noop-copy>
       //
-      val caseWhen = CaseWhen(Seq(
-        ifSourceRowNull -> notMatchedBySourceExprs(i),
-        ifTargetRowNull -> notMatchedExprs(i)),
-        /*  otherwise  */ matchedExprs(i))
+      val caseWhen = joinType match {
+        case "inner" => matchedExprs(i)
+        case "leftOuter" =>
+          // The source row is never null, so we only need to check if the target row is null.
+          assert(notMatchedBySourceExprs.isEmpty)
+          If(ifTargetRowNull, notMatchedExprs(i), matchedExprs(i))
+        case "rightOuter" =>
+          // The target row is never null, so we only need to check if the source row is null.
+          assert(notMatchedExprs.isEmpty)
+          If(ifSourceRowNull, notMatchedBySourceExprs(i), matchedExprs(i))
+        case "fullOuter" =>
+          CaseWhen(Seq(
+            ifSourceRowNull -> notMatchedBySourceExprs(i),
+            ifTargetRowNull -> notMatchedExprs(i)),
+            /*  otherwise  */ matchedExprs(i))
+        case _ =>
+          // We should not be here.
+          RaiseError(Literal("Unexpected join type: " + joinType))
+      }
       if (rowIdColumnExpressionOpt.exists(_.name == name)) {
         // Add Row ID metadata to allow writing the column.
         Column(Alias(caseWhen, name)(
@@ -332,52 +355,64 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
    * based on all clause conditions.
    * @param numOutputCols Number of output columns.
    * @param clauses List of preprocessed merge clauses to bind together.
-   * @param noopExprs Default expression to apply when no condition holds.
+   * @param noopCopyExprs The expressions to use for unmatched rows if writeUnmodifiedRows is true.
+   * @param writeUnmodifiedRows Whether to fallback to noopCopyExprs for unmatched rows.
    * @return A list of one expression per output column to apply for a type of merge clause.
    */
   protected def generateClauseOutputExprs(
       numOutputCols: Int,
       clauses: Seq[ProcessedClause],
-      noopExprs: Seq[Expression]): Seq[Expression] = {
-    val clauseExprs = if (clauses.isEmpty) {
-      // Nothing to update or delete
-      noopExprs
-    } else {
-      if (clauses.head.condition.isEmpty) {
-        // Only one clause without any condition, so the corresponding action expressions
-        // can be evaluated directly to generate the output columns.
-        clauses.head.actions
-      } else if (clauses.length == 1) {
-        // Only one clause _with_ a condition, so generate IF/THEN instead of CASE WHEN.
-        //
-        // For the i-th output column, generate
-        // IF <condition> THEN <execute i-th expression of action>
-        //                ELSE <execute i-th expression to noop-copy>
-        //
-        val condition = clauses.head.condition.get
-        clauses.head.actions.zip(noopExprs).map { case (a, noop) => If(condition, a, noop) }
+      noopCopyExprs: Seq[Expression],
+      writeUnmodifiedRows: Boolean
+      ): Seq[Expression] = {
+    if (clauses.isEmpty) {
+      if (writeUnmodifiedRows) {
+        noopCopyExprs
       } else {
-        // There are multiple clauses. Use `CaseWhen` to conditionally evaluate the right
-        // action expressions to output columns
-        Seq.range(0, numOutputCols).map { i =>
-          // For the i-th output column, generate
-          // CASE
-          //     WHEN <condition 1> THEN <execute i-th expression of action 1>
-          //     WHEN <condition 2> THEN <execute i-th expression of action 2>
-          //                        ...
-          //                        ELSE <execute i-th expression to noop-copy>
-          //
-          val conditionalBranches = clauses.map { precomp =>
-            precomp.condition.getOrElse(Literal.TrueLiteral) -> precomp.actions(i)
-          }
-          CaseWhen(conditionalBranches, Some(noopExprs(i)))
+        Seq.empty
+      }
+    } else if (clauses.head.condition.isEmpty) {
+      // Only one clause without any condition, so the corresponding action expressions
+      // can be evaluated directly to generate the output columns.
+      clauses.head.actions
+    } else if (clauses.length == 1) {
+      // Only one clause _with_ a condition, so generate IF/THEN instead of CASE WHEN.
+      // For the i-th output column, generate
+      // IF <condition> THEN <execute i-th expression of action>
+      //                ELSE fallback (noopCopyExprs or RaiseError)
+      val condition = clauses.head.condition.get
+      clauses.head.actions.zipWithIndex.map { case (a, i) =>
+        if (writeUnmodifiedRows) {
+          If(condition, a, noopCopyExprs(i))
+        } else {
+          If(condition, a, RaiseError(Literal("Unexpected row: did not match any merge clause")))
         }
       }
+    } else {
+      // There are multiple clauses. Use `CaseWhen` to conditionally evaluate the right
+      // action expressions to output columns
+      Seq.range(0, numOutputCols).map { i =>
+        // For the i-th output column, generate
+        // CASE
+        //     WHEN <condition 1> THEN <execute i-th expression of action 1>
+        //     WHEN <condition 2> THEN <execute i-th expression of action 2>
+        //                        ...
+        //                        ELSE fallback (noopCopyExprs or RaiseError)
+        //
+        //
+        val conditionalBranches = clauses.map { precomp =>
+          precomp.condition.getOrElse(Literal.TrueLiteral) -> precomp.actions(i)
+        }
+        val elseBranch =
+          if (writeUnmodifiedRows) Some(noopCopyExprs(i))
+          else Some(
+            RaiseError(
+              Literal("Unexpected row: did not match any merge clause")
+            )
+          )
+        CaseWhen(conditionalBranches, elseBranch)
+      }
     }
-    assert(clauseExprs.size == numOutputCols,
-      s"incorrect # expressions:\n\t" + seqToString(clauseExprs))
-    logDebug(s"writeAllChanges: expressions\n\t" + seqToString(clauseExprs))
-    clauseExprs
   }
 
   /**
