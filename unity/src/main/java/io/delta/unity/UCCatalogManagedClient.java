@@ -18,8 +18,8 @@ package io.delta.unity;
 
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
-import io.delta.kernel.ResolvedTable;
 import io.delta.kernel.ResolvedTableBuilder;
+import io.delta.kernel.Snapshot;
 import io.delta.kernel.TableManager;
 import io.delta.kernel.annotation.Experimental;
 import io.delta.kernel.engine.Engine;
@@ -42,7 +42,7 @@ import org.slf4j.LoggerFactory;
  * Client for interacting with Unity Catalog (UC) catalog-managed Delta tables.
  *
  * @see UCClient
- * @see ResolvedTable
+ * @see Snapshot
  */
 @Experimental
 public class UCCatalogManagedClient {
@@ -57,15 +57,15 @@ public class UCCatalogManagedClient {
   // TODO: [delta-io/delta#4817] loadTable API that takes in a UC TableInfo object
 
   /**
-   * Loads a Kernel {@link ResolvedTable}. If no version is specified, the latest version of the
-   * table is loaded.
+   * Loads a Kernel {@link Snapshot}. If no version is specified, the latest version of the table is
+   * loaded.
    *
    * @param engine The Delta Kernel {@link Engine} to use for loading the table.
    * @param ucTableId The Unity Catalog table ID, which is a unique identifier for the table in UC.
    * @param tablePath The path to the Delta table in the underlying storage system.
    * @param versionOpt The optional version of the table to load.
    */
-  public ResolvedTable loadTable(
+  public Snapshot loadTable(
       Engine engine, String ucTableId, String tablePath, Optional<Long> versionOpt) {
     Objects.requireNonNull(engine, "engine is null");
     Objects.requireNonNull(ucTableId, "ucTableId is null");

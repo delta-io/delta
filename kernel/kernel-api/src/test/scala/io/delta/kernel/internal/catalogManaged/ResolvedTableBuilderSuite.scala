@@ -29,7 +29,7 @@ import io.delta.kernel.internal.actions.Protocol
 import io.delta.kernel.internal.commit.DefaultFileSystemManagedTableOnlyCommitter
 import io.delta.kernel.internal.files.ParsedLogData
 import io.delta.kernel.internal.files.ParsedLogData.ParsedLogType
-import io.delta.kernel.internal.table.ResolvedTableInternal
+import io.delta.kernel.internal.table.ResolvedTableBuilderImpl
 import io.delta.kernel.test.{ActionUtils, MockFileSystemClientUtils, VectorTestUtils}
 import io.delta.kernel.types.{IntegerType, StructType}
 import io.delta.kernel.utils.CloseableIterator
@@ -208,11 +208,11 @@ class ResolvedTableBuilderSuite extends AnyFunSuite
   test("if P & M are provided then LogSegment is not loaded") {
     val resolvedTable = TableManager
       .loadTable(dataPath.toString)
+      .asInstanceOf[ResolvedTableBuilderImpl]
       .atVersion(13)
       .withProtocolAndMetadata(protocol, metadata)
       .withLogData(Collections.emptyList())
       .build(emptyMockEngine)
-      .asInstanceOf[ResolvedTableInternal]
 
     assert(!resolvedTable.getLazyLogSegment.isPresent)
   }

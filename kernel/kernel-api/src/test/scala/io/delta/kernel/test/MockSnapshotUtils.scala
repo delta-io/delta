@@ -21,7 +21,9 @@ import scala.collection.JavaConverters._
 import io.delta.kernel.TransactionSuite.testSchema
 import io.delta.kernel.internal.{SnapshotImpl, TableConfig}
 import io.delta.kernel.internal.actions.{Format, Metadata}
+import io.delta.kernel.internal.commit.DefaultFileSystemManagedTableOnlyCommitter
 import io.delta.kernel.internal.fs.Path
+import io.delta.kernel.internal.lang.Lazy
 import io.delta.kernel.internal.metrics.SnapshotQueryContext
 import io.delta.kernel.internal.snapshot.LogSegment
 import io.delta.kernel.internal.util.FileNames
@@ -78,10 +80,12 @@ object MockSnapshotUtils {
     val snapshotQueryContext = SnapshotQueryContext.forLatestSnapshot(dataPath.toString)
     new SnapshotImpl(
       dataPath, /* dataPath */
-      logSegment, /* logSegment */
+      logSegment.getVersion, /* version */
+      new Lazy(() => logSegment), /* logSegment */
       null, /* logReplay */
       null, /* protocol */
       metadata,
+      DefaultFileSystemManagedTableOnlyCommitter.INSTANCE,
       snapshotQueryContext /* snapshotContext */
     )
   }

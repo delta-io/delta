@@ -17,6 +17,7 @@
 package io.delta.kernel;
 
 import io.delta.kernel.annotation.Evolving;
+import io.delta.kernel.commit.Committer;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.types.StructType;
 import java.util.List;
@@ -29,6 +30,9 @@ import java.util.Optional;
  */
 @Evolving
 public interface Snapshot {
+
+  /** @return the file system path to this table */
+  String getPath();
 
   /**
    * Get the version of this snapshot in the table.
@@ -76,4 +80,7 @@ public interface Snapshot {
    * @return an instance of {@link ScanBuilder}
    */
   ScanBuilder getScanBuilder();
+
+  /** @return a committer that owns and controls commits to this table */
+  Committer getCommitter();
 }

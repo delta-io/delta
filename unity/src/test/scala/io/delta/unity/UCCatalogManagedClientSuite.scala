@@ -22,6 +22,7 @@ import java.util.Optional
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 
+import io.delta.kernel.internal.SnapshotImpl
 import io.delta.kernel.internal.files.ParsedLogData.ParsedLogType
 import io.delta.kernel.internal.table.ResolvedTableInternal
 import io.delta.kernel.internal.tablefeatures.TableFeatures.{CATALOG_MANAGED_R_W_FEATURE_PREVIEW, TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
@@ -67,7 +68,7 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
     val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
     val resolvedTable = ucCatalogManagedClient
       .loadTable(defaultEngine, "ucTableId", tablePath, versionToLoad)
-      .asInstanceOf[ResolvedTableInternal]
+      .asInstanceOf[SnapshotImpl]
 
     // Step 3: Validate
     val protocol = resolvedTable.getProtocol

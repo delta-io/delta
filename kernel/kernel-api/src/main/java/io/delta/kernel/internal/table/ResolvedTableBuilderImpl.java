@@ -20,14 +20,15 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.ResolvedTableBuilder;
+import io.delta.kernel.Snapshot;
 import io.delta.kernel.commit.Committer;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.files.ParsedLogData;
 import io.delta.kernel.internal.files.ParsedLogData.ParsedLogType;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
-import io.delta.kernel.internal.util.Clock;
 import io.delta.kernel.internal.util.Tuple2;
 import java.util.Collections;
 import java.util.List;
@@ -38,7 +39,7 @@ import java.util.Optional;
  *
  * <p>Note: The primary responsibility of this class is to take input, validate that input, and then
  * pass the input to the {@link ResolvedTableFactory}, which is then responsible for actually
- * creating the {@link ResolvedTableInternal} instance.
+ * creating the {@link Snapshot} instance.
  */
 public class ResolvedTableBuilderImpl implements ResolvedTableBuilder {
 
@@ -48,7 +49,6 @@ public class ResolvedTableBuilderImpl implements ResolvedTableBuilder {
     public Optional<Committer> committerOpt;
     public List<ParsedLogData> logDatas;
     public Optional<Tuple2<Protocol, Metadata>> protocolAndMetadataOpt;
-    public Clock clock;
 
     public Context(String unresolvedPath) {
       this.unresolvedPath = requireNonNull(unresolvedPath, "unresolvedPath is null");
@@ -56,7 +56,6 @@ public class ResolvedTableBuilderImpl implements ResolvedTableBuilder {
       this.committerOpt = Optional.empty();
       this.logDatas = Collections.emptyList();
       this.protocolAndMetadataOpt = Optional.empty();
-      this.clock = System::currentTimeMillis;
     }
   }
 
@@ -64,15 +63,6 @@ public class ResolvedTableBuilderImpl implements ResolvedTableBuilder {
 
   public ResolvedTableBuilderImpl(String unresolvedPath) {
     ctx = new Context(unresolvedPath);
-  }
-
-  /////////////////////////////////
-  // Additional Internal Methods //
-  /////////////////////////////////
-
-  public ResolvedTableBuilderImpl withClock(Clock clock) {
-    ctx.clock = requireNonNull(clock, "clock is null");
-    return this;
   }
 
   /////////////////////////////////////////
@@ -109,7 +99,7 @@ public class ResolvedTableBuilderImpl implements ResolvedTableBuilder {
   }
 
   @Override
-  public ResolvedTableInternal build(Engine engine) {
+  public SnapshotImpl build(Engine engine) {
     validateInputOnBuild();
     return new ResolvedTableFactory(engine, ctx).create(engine);
   }

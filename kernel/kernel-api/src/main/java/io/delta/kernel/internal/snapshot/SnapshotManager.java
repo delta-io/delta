@@ -26,6 +26,7 @@ import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.*;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.checkpoints.*;
+import io.delta.kernel.internal.commit.DefaultFileSystemManagedTableOnlyCommitter;
 import io.delta.kernel.internal.files.ParsedLogData;
 import io.delta.kernel.internal.files.ParsedLogData.ParsedLogCategory;
 import io.delta.kernel.internal.files.ParsedLogData.ParsedLogType;
@@ -210,10 +211,12 @@ public class SnapshotManager {
     final SnapshotImpl snapshot =
         new SnapshotImpl(
             tablePath,
-            initSegment,
+            initSegment.getVersion(),
+            new Lazy<>(() -> initSegment),
             logReplay,
             logReplay.getProtocol(),
             logReplay.getMetadata(),
+            DefaultFileSystemManagedTableOnlyCommitter.INSTANCE,
             snapshotContext);
 
     final SnapshotHint hint =

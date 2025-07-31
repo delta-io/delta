@@ -19,10 +19,9 @@ package io.delta.kernel.defaults.catalogManaged
 import scala.collection.JavaConverters._
 
 import io.delta.kernel.TableManager
-import io.delta.kernel.defaults.test.ResolvedTableAdapterImplicits._
 import io.delta.kernel.defaults.utils.{TestRow, TestUtilsWithTableManagerAPIs}
 import io.delta.kernel.internal.files.ParsedLogData
-import io.delta.kernel.internal.table.ResolvedTableInternal
+import io.delta.kernel.internal.table.ResolvedTableBuilderImpl
 import io.delta.kernel.internal.tablefeatures.TableFeatures.{CATALOG_MANAGED_R_W_FEATURE_PREVIEW, TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
 import io.delta.kernel.utils.FileStatus
 
@@ -64,10 +63,10 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite with TestUtilsWithTableMana
 
     val resolvedTable = TableManager
       .loadTable(tablePath)
+      .asInstanceOf[ResolvedTableBuilderImpl]
       .atVersion(2)
       .withLogData(parsedLogData)
       .build(defaultEngine)
-      .asInstanceOf[ResolvedTableInternal]
 
     assert(resolvedTable.getVersion === 2)
     assert(resolvedTable.getLogSegment.getDeltas.size() === 3)
@@ -78,7 +77,7 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite with TestUtilsWithTableMana
     assert(protocol.getReaderFeatures.contains(CATALOG_MANAGED_R_W_FEATURE_PREVIEW.featureName()))
     assert(protocol.getWriterFeatures.contains(CATALOG_MANAGED_R_W_FEATURE_PREVIEW.featureName()))
 
-    val actualResult = readResolvedTableAdapter(resolvedTable.toTestAdapter)
+    val actualResult = readSnapshot(resolvedTable)
     val expectedResult = (0 to 199).map { x => TestRow(x / 100, x) }
     checkAnswer(actualResult, expectedResult)
   }

@@ -26,15 +26,17 @@ import io.delta.kernel.internal.files.ParsedLogData.ParsedLogType;
 import java.util.List;
 
 /**
- * Builder for constructing a {@link ResolvedTable} instance.
+ * Builder for constructing a {@link Snapshot} instance.
  *
  * <p>This builder allows table managers (filesystems, catalogs) to provide any information they may
- * know about a Delta table and get back a {@link ResolvedTable}. When {@link #build(Engine)} is
- * invoked, Kernel will automatically fill any missing information needed to construct the {@link
- * ResolvedTable} by reading from the filesystem as needed.
+ * know about a Delta table and get back a {@link Snapshot}. When {@link #build(Engine)} is invoked,
+ * Kernel will automatically fill any missing information needed to construct the {@link Snapshot}
+ * by reading from the filesystem as needed.
  *
  * <p>If no version is specified, the builder will resolve to the latest version. Depending on the
  * {@link ParsedLogData} provided, Kernel can avoid expensive filesystem operations.
+ *
+ * <p>TODO: Rename to ResolvedTableBuilder
  */
 @Experimental
 public interface ResolvedTableBuilder {
@@ -92,7 +94,7 @@ public interface ResolvedTableBuilder {
   ResolvedTableBuilder withProtocolAndMetadata(Protocol protocol, Metadata metadata);
 
   /**
-   * Constructs the {@link ResolvedTable} using the provided engine.
+   * Constructs the {@link Snapshot} using the provided engine.
    *
    * <p>This method will read any missing information from the filesystem using the provided engine
    * to complete the table resolution process.
@@ -100,5 +102,5 @@ public interface ResolvedTableBuilder {
    * @param engine the engine to use for filesystem operations
    * @return the resolved table instance
    */
-  ResolvedTable build(Engine engine);
+  Snapshot build(Engine engine);
 }

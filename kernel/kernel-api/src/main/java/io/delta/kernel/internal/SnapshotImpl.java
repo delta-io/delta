@@ -20,11 +20,13 @@ import static io.delta.kernel.internal.TableConfig.TOMBSTONE_RETENTION;
 
 import io.delta.kernel.ScanBuilder;
 import io.delta.kernel.Snapshot;
+import io.delta.kernel.commit.Committer;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.checksum.CRCInfo;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
@@ -45,27 +47,31 @@ public class SnapshotImpl implements Snapshot {
   private final Path logPath;
   private final Path dataPath;
   private final long version;
+  private final Lazy<LogSegment> lazyLogSegment;
   private final LogReplay logReplay;
   private final Protocol protocol;
   private final Metadata metadata;
-  private final LogSegment logSegment;
+  private final Committer committer;
   private Optional<Long> inCommitTimestampOpt;
   private Lazy<SnapshotReport> lazySnapshotReport;
 
   public SnapshotImpl(
       Path dataPath,
-      LogSegment logSegment,
+      long version,
+      Lazy<LogSegment> lazyLogSegment,
       LogReplay logReplay,
       Protocol protocol,
       Metadata metadata,
+      Committer committer,
       SnapshotQueryContext snapshotContext) {
     this.logPath = new Path(dataPath, "_delta_log");
     this.dataPath = dataPath;
-    this.version = logSegment.getVersion();
-    this.logSegment = logSegment;
+    this.version = version;
+    this.lazyLogSegment = lazyLogSegment;
     this.logReplay = logReplay;
     this.protocol = protocol;
     this.metadata = metadata;
+    this.committer = committer;
     this.inCommitTimestampOpt = Optional.empty();
 
     // We create the actual Snapshot report lazily (on first access) instead of eagerly in this
@@ -78,6 +84,11 @@ public class SnapshotImpl implements Snapshot {
   /////////////////
   // Public APIs //
   /////////////////
+
+  @Override
+  public String getPath() {
+    return dataPath.toString();
+  }
 
   @Override
   public long getVersion() {
@@ -105,16 +116,15 @@ public class SnapshotImpl implements Snapshot {
   public long getTimestamp(Engine engine) {
     if (IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata)) {
       if (!inCommitTimestampOpt.isPresent()) {
-        Optional<CommitInfo> commitInfoOpt =
-            CommitInfo.getCommitInfoOpt(engine, logPath, logSegment.getVersion());
+        Optional<CommitInfo> commitInfoOpt = CommitInfo.getCommitInfoOpt(engine, logPath, version);
         inCommitTimestampOpt =
             Optional.of(
                 CommitInfo.getRequiredInCommitTimestamp(
-                    commitInfoOpt, String.valueOf(logSegment.getVersion()), dataPath));
+                    commitInfoOpt, String.valueOf(version), dataPath));
       }
       return inCommitTimestampOpt.get();
     } else {
-      return logSegment.getLastCommitTimestamp();
+      return getLogSegment().getLastCommitTimestamp();
     }
   }
 
@@ -133,6 +143,10 @@ public class SnapshotImpl implements Snapshot {
   public ScanBuilder getScanBuilder() {
     return new ScanBuilderImpl(
         dataPath, version, protocol, metadata, getSchema(), logReplay, getSnapshotReport());
+  }
+
+  public Committer getCommitter() {
+    return committer;
   }
 
   ///////////////////
@@ -177,13 +191,18 @@ public class SnapshotImpl implements Snapshot {
   }
 
   public LogSegment getLogSegment() {
-    return logSegment;
+    return lazyLogSegment.get();
+  }
+
+  @VisibleForTesting
+  public Lazy<LogSegment> getLazyLogSegment() {
+    return lazyLogSegment;
   }
 
   public CreateCheckpointIterator getCreateCheckpointIterator(Engine engine) {
     long minFileRetentionTimestampMillis =
         System.currentTimeMillis() - TOMBSTONE_RETENTION.fromMetadata(metadata);
-    return new CreateCheckpointIterator(engine, logSegment, minFileRetentionTimestampMillis);
+    return new CreateCheckpointIterator(engine, getLogSegment(), minFileRetentionTimestampMillis);
   }
 
   /**

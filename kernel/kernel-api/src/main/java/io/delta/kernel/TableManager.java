@@ -19,7 +19,7 @@ package io.delta.kernel;
 import io.delta.kernel.annotation.Experimental;
 import io.delta.kernel.internal.table.ResolvedTableBuilderImpl;
 
-/** The entry point to load and create {@link ResolvedTable}s. */
+/** The entry point to load and create {@link Snapshot}s. */
 @Experimental
 public interface TableManager {
   // TODO static ResolvedTable forPathAtLatest(Engine engine, String path);
@@ -35,8 +35,8 @@ public interface TableManager {
    * additional metadata to optimize the loading process.
    *
    * @param path the file system path to the Delta table
-   * @return a {@link ResolvedTableBuilder} that can be used to load a {@link ResolvedTable} at the
-   *     given path
+   * @return a {@link ResolvedTableBuilder} that can be used to load a {@link Snapshot} at the given
+   *     path
    */
   static ResolvedTableBuilder loadTable(String path) {
     return new ResolvedTableBuilderImpl(path);
