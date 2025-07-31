@@ -21,7 +21,13 @@ import static java.lang.String.format;
 import static org.apache.parquet.schema.LogicalTypeAnnotation.TimeUnit.MICROS;
 import static org.apache.parquet.schema.LogicalTypeAnnotation.decimalType;
 import static org.apache.parquet.schema.LogicalTypeAnnotation.timestampType;
-import static org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName.*;
+import static org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName.BINARY;
+import static org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName.BOOLEAN;
+import static org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName.DOUBLE;
+import static org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName.FIXED_LEN_BYTE_ARRAY;
+import static org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName.FLOAT;
+import static org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName.INT32;
+import static org.apache.parquet.schema.PrimitiveType.PrimitiveTypeName.INT64;
 import static org.apache.parquet.schema.Type.Repetition.OPTIONAL;
 import static org.apache.parquet.schema.Type.Repetition.REQUIRED;
 import static org.apache.parquet.schema.Types.primitive;
@@ -187,45 +193,95 @@ class ParquetSchemaUtils {
       StructType structType = (StructType) deltaType;
       return groupType.withNewFields(pruneFields(groupType, structType));
     } else if (type instanceof GroupType && deltaType instanceof ArrayType) {
-      // Handle array types with Parquet's 3-level structure:
-      // optional group array_field (LIST) {
-      //   repeated group list {
-      //     optional <element_type> element;
-      //   }
-      // }
       GroupType arrayGroupType = (GroupType) type;
-      ArrayType arrayType = (ArrayType) deltaType;
-
-      // Assert proper 3-level array structure
-      checkArgument(
-          arrayGroupType.getFieldCount() == 1,
-          "In Parquet's 3-level structure, group type " + "must only contain one sub field");
-
+      ArrayType deltaArrayType = (ArrayType) deltaType;
+      // For standard 3-level arrays, extract the element type and recursively prune it
+      Type elementType = validateAndGetThreeLevelParquetArrayElementType(arrayGroupType);
       Type listField = arrayGroupType.getType(0);
-      checkArgument(
-          listField.isRepetition(Type.Repetition.REPEATED),
-          "Array list field must be repeated: %s",
-          listField);
-
-      if (!(listField instanceof GroupType)) {
-        // For primitive arrays like array<int>, no pruning needed.
-        return type;
-      }
-
-      // array_field.list.element
       GroupType listGroup = (GroupType) listField;
-      checkArgument(
-          listGroup.getFieldCount() == 1,
-          "Array list group must have exactly one element: %s",
-          listGroup);
-      Type elementType = listGroup.getType(0);
+
       GroupType newListGroup =
           listGroup.withNewFields(
-              Collections.singletonList(prunedType(elementType, arrayType.getElementType())));
+              Collections.singletonList(prunedType(elementType, deltaArrayType.getElementType())));
       return arrayGroupType.withNewFields(Collections.singletonList(newListGroup));
     } else {
       return type;
     }
+  }
+
+  /**
+   * Validates and extracts the element type from a 3-level Parquet array type.
+   *
+   * <p>According to Parquet specification, all arrays (including primitive arrays) should use the
+   * standard 3-level structure:
+   *
+   * <pre>
+   * optional group array_field (LIST) {
+   *   repeated group list {
+   *     optional <element-type> element;
+   *   }
+   * }
+   * </pre>
+   *
+   * Examples: - For array of int:
+   *
+   * <pre>
+   * optional group array_field (LIST) {
+   *   repeated group list {
+   *     optional int32 element;
+   *   }
+   * }
+   * </pre>
+   *
+   * - For array of struct{x:int, y:string};:
+   *
+   * <pre>
+   * optional group array_field (LIST) {
+   *   repeated group list {
+   *     optional group element {
+   *       optional int32 x;
+   *       optional binary y (STRING);
+   *     }
+   *   }
+   * }
+   * </pre>
+   *
+   * @param arrayGroupType The group type of the array, which must be a LIST.
+   * @return The Parquet type of the array element.
+   * @throws IllegalArgumentException if the structure doesn't follow 3-level format.
+   */
+  public static Type validateAndGetThreeLevelParquetArrayElementType(GroupType arrayGroupType) {
+    checkArgument(
+        arrayGroupType.getLogicalTypeAnnotation()
+            instanceof LogicalTypeAnnotation.ListLogicalTypeAnnotation,
+        "Expected a LIST logical type, but got: %s",
+        arrayGroupType);
+    checkArgument(
+        arrayGroupType.getFieldCount() == 1,
+        "In Parquet's 3-level structure, group type must only contain one sub field: %s",
+        arrayGroupType);
+
+    Type listField = arrayGroupType.getType(0);
+    checkArgument(
+        listField.isRepetition(Type.Repetition.REPEATED),
+        "Array list field must be repeated: %s",
+        listField);
+
+    // Ensure this is a proper 3-level structure
+    checkArgument(
+        listField instanceof GroupType,
+        "Expected 3-level array structure with repeated group, but got: %s",
+        listField);
+
+    // array_field.list
+    GroupType listGroup = (GroupType) listField;
+    checkArgument(
+        listGroup.getFieldCount() == 1,
+        "Array list group must have exactly one element: %s",
+        listGroup);
+
+    // array_field.list.element
+    return listGroup.getType(0);
   }
 
   /**
