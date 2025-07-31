@@ -457,8 +457,8 @@ object DeltaDataSource extends DatabricksLogging {
   }
 
   private def verifyReadSchemaMatchesTheTableSchema(
-                                                     schema: Option[StructType],
-                                                     readSchema: StructType): Unit = {
+    schema: Option[StructType],
+    readSchema: StructType): Unit = {
     if (schema.nonEmpty && schema.get.nonEmpty &&
       !DataType.equalsIgnoreCompatibleNullability(readSchema, schema.get)) {
       throw DeltaErrors.readSourceSchemaConflictException
