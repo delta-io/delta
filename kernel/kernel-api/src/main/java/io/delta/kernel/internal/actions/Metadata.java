@@ -104,6 +104,8 @@ public class Metadata {
       ArrayValue partitionColumns,
       Optional<Long> createdTime,
       MapValue configurationMapValue) {
+    ensureNoMetadataColumns(schema);
+
     this.id = requireNonNull(id, "id is null");
     this.name = name;
     this.description = requireNonNull(description, "description is null");
@@ -347,5 +349,15 @@ public class Metadata {
       partitionColumnNames.add(partitionColName.toLowerCase(Locale.ROOT));
     }
     return Collections.unmodifiableSet(partitionColumnNames);
+  }
+
+  /** Helper method to ensure that a table schema never contains metadata columns. */
+  private static void ensureNoMetadataColumns(StructType schema) {
+    for (StructField field : schema.fields()) {
+      if (field.isMetadataColumn()) {
+        throw new IllegalArgumentException(
+            "Table schema cannot contain metadata columns: " + field.getName());
+      }
+    }
   }
 }
