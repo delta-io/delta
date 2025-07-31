@@ -153,7 +153,7 @@ public interface Scan {
         physicalReadSchema = ScanStateRow.getPhysicalSchema(scanState);
         logicalReadSchema = ScanStateRow.getLogicalSchema(scanState);
 
-        tablePath = ScanStateRow.getTableRoot(scanState);
+        tablePath = ScanStateRow.getTableRoot(scanState).toString();
         inited = true;
       }
 
