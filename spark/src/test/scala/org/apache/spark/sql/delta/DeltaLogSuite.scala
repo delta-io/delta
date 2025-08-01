@@ -858,14 +858,14 @@ class DeltaLogSuite extends QueryTest
   }
 }
 
-class CatalogOwnedBatchBackfill1DeltaLogSuite extends DeltaLogSuite {
+class DeltaLogWithCatalogOwnedBatch1Suite extends DeltaLogSuite {
   override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
 }
 
-class CatalogOwnedBatchBackfill2DeltaLogSuite extends DeltaLogSuite {
+class DeltaLogWithCatalogOwnedBatch2Suite extends DeltaLogSuite {
   override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
 }
 
-class CatalogOwnedBatchBackfill100DeltaLogSuite extends DeltaLogSuite {
+class DeltaLogWithCatalogOwnedBatch100Suite extends DeltaLogSuite {
   override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }

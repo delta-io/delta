@@ -49,13 +49,17 @@ class CatalogOwnedEnablementSuite
   private val ICT_ENABLED_KEY = DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key
 
   /**
-   * Validate that the snapshot has the expected enablement of Catalog-Owned table feature.
+   * Validate that the table has the expected enablement of Catalog-Owned table feature.
+   * Specifically, [[CatalogOwnedTableFeature]] and its dependent features should be present
+   * in the table protocol.
    *
-   * @param snapshot The snapshot to validate.
-   * @param expectEnabled Whether the Catalog-Owned table features should be enabled or not.
+   * @param tableName The name of the table to validate.
+   * @param expectEnabled Whether the Catalog-Owned table feature should be enabled or not.
    */
   private def validateCatalogOwnedCompleteEnablement(
-      snapshot: Snapshot, expectEnabled: Boolean): Unit = {
+      tableName: String,
+      expectEnabled: Boolean): Unit = {
+    val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(tableName))
     assert(snapshot.isCatalogOwned == expectEnabled)
     Seq(
       CatalogOwnedTableFeature,
@@ -73,13 +77,14 @@ class CatalogOwnedEnablementSuite
   }
 
   /**
-   * Test setup for ALTER TABLE commands on Catalog-Owned enabled tables.
+   * Helper function to set up and validate the initial table to be tested
+   * for Catalog Owned enablement.
    *
    * @param tableName The name of the table to be created for the test.
    * @param createCatalogOwnedTableAtInit Whether to enable Catalog-Owned table feature
    *                                      at the time of table creation.
    */
-  private def testCatalogOwnedAlterTableSetup(
+  private def testCatalogOwnedEnablementSetup(
       tableName: String,
       createCatalogOwnedTableAtInit: Boolean): Unit = {
     if (createCatalogOwnedTableAtInit) {
@@ -91,9 +96,8 @@ class CatalogOwnedEnablementSuite
     // Insert initial data to the table
     spark.sql(s"INSERT INTO $tableName VALUES 1") // commit 1
     spark.sql(s"INSERT INTO $tableName VALUES 2") // commit 2
-    val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(tableName))
     validateCatalogOwnedCompleteEnablement(
-      snapshot = snapshot,
+      tableName,
       expectEnabled = createCatalogOwnedTableAtInit)
   }
 
@@ -106,7 +110,7 @@ class CatalogOwnedEnablementSuite
       createCatalogOwnedTableAtInit: Boolean)(f: String => Unit): Unit = {
     val randomTableName = s"testTable_${UUID.randomUUID().toString.replace("-", "")}"
     withTable(randomTableName) {
-      testCatalogOwnedAlterTableSetup(randomTableName, createCatalogOwnedTableAtInit)
+      testCatalogOwnedEnablementSetup(randomTableName, createCatalogOwnedTableAtInit)
       f(randomTableName)
     }
   }

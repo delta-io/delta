@@ -1048,7 +1048,7 @@ class DeltaRetentionSuite extends QueryTest
 }
 
 class DeltaRetentionWithCatalogOwnedBatch1Suite extends DeltaRetentionSuite {
-  override val catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
 }
 
 /**
@@ -1057,9 +1057,11 @@ class DeltaRetentionWithCatalogOwnedBatch1Suite extends DeltaRetentionSuite {
  * files. However, in this suite, delta files might be backfilled asynchronously, which means
  * setting the modification time will not work as expected.
  */
-class DeltaRetentionWithCatalogOwnedBatch2Suite extends QueryTest
-    with DeltaSQLCommandTest
-    with DeltaRetentionSuiteBase {
+class DeltaRetentionWithCatalogOwnedBatch2Suite
+  extends QueryTest
+  with DeltaSQLCommandTest
+  with DeltaRetentionSuiteBase {
+
   override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
 
   override def getLogFiles(dir: File): Seq[File] =
