@@ -148,7 +148,8 @@ public class LogSegment {
           long checksumVersion = FileNames.checksumVersion(new Path(checksumFile.getPath()));
           checkArgument(
               checksumVersion <= version,
-              "checksum file's version should be less than or equal to logSegment's version");
+              "checksum file's version %s should be less than or equal to logSegment's version %s",
+                  checksumVersion, version);
           checkpointVersionOpt.ifPresent(
               checkpointVersion ->
                   checkArgument(
