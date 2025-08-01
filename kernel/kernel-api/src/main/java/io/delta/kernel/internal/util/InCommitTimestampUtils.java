@@ -44,7 +44,8 @@ public class InCommitTimestampUtils {
       Optional<SnapshotImpl> readSnapshot,
       Metadata metadata,
       long commitVersion) {
-    if (readSnapshot.isPresent() && didCurrentTransactionEnableICT(engine, metadata, readSnapshot.get())) {
+    if (readSnapshot.isPresent()
+        && didCurrentTransactionEnableICT(engine, metadata, readSnapshot.get())) {
       Map<String, String> enablementTrackingProperties = new HashMap<>();
       enablementTrackingProperties.put(
           TableConfig.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.getKey(),

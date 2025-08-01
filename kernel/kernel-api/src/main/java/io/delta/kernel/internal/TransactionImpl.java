@@ -119,8 +119,6 @@ public class TransactionImpl implements Transaction {
     this.isCreateOrReplace = isCreateOrReplace;
     this.dataPath = dataPath;
     this.logPath = logPath;
-    readSnapshot.ifPresent(snapshot ->
-        checkArgument(snapshot.getVersion() >= 0, "readSnapshot should be empty if the table does not exist"));
     this.readSnapshot = readSnapshot;
     this.engineInfo = engineInfo;
     this.operation = operation;
