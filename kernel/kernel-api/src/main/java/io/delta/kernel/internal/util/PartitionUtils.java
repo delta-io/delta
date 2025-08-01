@@ -84,43 +84,49 @@ public class PartitionUtils {
             .collect(Collectors.toList()));
   }
 
+  /**
+   * Utility method to attach partition columns to the given data batch.
+   *
+   * @param dataBatch Data batch to which the partition columns will be added.
+   * @param logicalSchema Logical schema of the table scan. Used to map logical partition column
+   *     names to physical column names.
+   * @param partitionValues Map of partition column name to value.
+   * @param expressionHandler Expression handler used to evaluate the partition values.
+   * @return A new {@link ColumnarBatch} with the partition columns added.
+   */
   public static ColumnarBatch withPartitionColumns(
-      ExpressionHandler expressionHandler,
       ColumnarBatch dataBatch,
+      StructType logicalSchema,
       Map<String, String> partitionValues,
-      StructType schemaWithPartitionCols) {
-    if (partitionValues == null || partitionValues.size() == 0) {
-      // no partition column vectors to attach to.
+      ExpressionHandler expressionHandler) {
+    if (partitionValues == null || partitionValues.isEmpty()) {
+      // No partition column vectors to attach to the data batch
       return dataBatch;
     }
 
-    for (int colIdx = 0; colIdx < schemaWithPartitionCols.length(); colIdx++) {
-      StructField structField = schemaWithPartitionCols.at(colIdx);
-
-      if (partitionValues.containsKey(structField.getName())) {
-        // Create a partition vector
-
-        ColumnarBatch finalDataBatch = dataBatch;
+    for (int colIdx = 0; colIdx < logicalSchema.length(); colIdx++) {
+      StructField structField = logicalSchema.at(colIdx);
+      String physicalName = ColumnMapping.getPhysicalName(structField);
+      if (partitionValues.containsKey(physicalName)) {
+        // Create a partition column vector
+        final ColumnarBatch finalDataBatch = dataBatch;
+        Literal partitionValue =
+            literalForPartitionValue(structField.getDataType(), partitionValues.get(physicalName));
         ExpressionEvaluator evaluator =
             wrapEngineException(
                 () ->
                     expressionHandler.getEvaluator(
-                        finalDataBatch.getSchema(),
-                        literalForPartitionValue(
-                            structField.getDataType(), partitionValues.get(structField.getName())),
-                        structField.getDataType()),
-                "Get the expression evaluator for partition column %s with datatype=%s and "
-                    + "value=%s",
-                structField.getName(),
+                        finalDataBatch.getSchema(), partitionValue, structField.getDataType()),
+                "Get the expression evaluator for partition column %s with type=%s and value=%s",
+                physicalName,
                 structField.getDataType(),
-                partitionValues.get(structField.getName()));
+                partitionValues.get(physicalName));
 
         ColumnVector partitionVector =
             wrapEngineException(
                 () -> evaluator.eval(finalDataBatch),
                 "Evaluating the partition value expression %s",
-                literalForPartitionValue(
-                    structField.getDataType(), partitionValues.get(structField.getName())));
+                partitionValue);
         dataBatch = dataBatch.withNewColumn(colIdx, structField, partitionVector);
       }
     }

@@ -96,8 +96,8 @@ public interface Scan {
    *           <ul>
    *             <li>name: {@code tableRoot}, type: {@code string}
    *             <li>Description: Absolute path of the table location. The path is a URI as
-   *                 specified by RFC 2396 URI Generic Syntax, which needs to be decode to get the
-   *                 data file path. NOTE: this is temporary. Will be removed in future.
+   *                 specified by RFC 2396 URI Generic Syntax, which needs to be decoded to get the
+   *                 data file path. NOTE: this is temporary. Will be removed in the future.
    * @see <a href=https://github.com/delta-io/delta/issues/2089></a>
    *     </ul>
    *     </ol>
@@ -122,8 +122,8 @@ public interface Scan {
   Row getScanState(Engine engine);
 
   /**
-   * Transform the physical data read from the table data file into the logical data that are
-   * expected out of the Delta table.
+   * Transform the physical data read from the table data file to the logical data that are expected
+   * out of the Delta table.
    *
    * <p>This iterator effectively reverses the logical-to-physical schema transformation performed
    * in {@link ScanImpl#getScanState(Engine)} by transforming physical data batches into the logical
@@ -147,8 +147,8 @@ public interface Scan {
       boolean inited = false;
 
       // initialized as part of init()
-      StructType physicalReadSchema = null;
-      StructType logicalReadSchema = null;
+      StructType physicalSchema = null;  // TODO: This is unused and could be removed
+      StructType logicalSchema = null;
       String tablePath = null;
 
       RoaringBitmapArray currBitmap = null;
@@ -158,8 +158,8 @@ public interface Scan {
         if (inited) {
           return;
         }
-        physicalReadSchema = ScanStateRow.getPhysicalSchema(scanState);
-        logicalReadSchema = ScanStateRow.getLogicalSchema(scanState);
+        physicalSchema = ScanStateRow.getPhysicalDataReadSchema(scanState);
+        logicalSchema = ScanStateRow.getLogicalSchema(scanState);
 
         tablePath = ScanStateRow.getTableRoot(scanState).toString();
         inited = true;
@@ -181,18 +181,8 @@ public interface Scan {
         initIfRequired();
         ColumnarBatch nextDataBatch = physicalDataIter.next();
 
-        // Partition columns are the last thing we remove from the physicalReadSchema when creating
-        // a ScanStateRow. Therefore, we add them back first so that the data batch's schema matches
-        // the physicalReadSchema.
-        nextDataBatch =
-            PartitionUtils.withPartitionColumns(
-                engine.getExpressionHandler(),
-                nextDataBatch,
-                InternalScanFileUtils.getPartitionValues(scanFile),
-                physicalReadSchema);
-
-        // If row tracking is enabled, check for physical row tracking columns in the data batch
-        // and transform them to logical row tracking columns as needed
+        // Step 1: If row tracking is enabled, check for physical row tracking columns in the data
+        // batch and transform them to logical row tracking columns as needed
         Map<String, String> configuration = ScanStateRow.getConfiguration(scanState);
         if (TableConfig.ROW_TRACKING_ENABLED.fromMetadata(configuration)) {
           nextDataBatch =
@@ -200,7 +190,7 @@ public interface Scan {
                   nextDataBatch, scanFile, configuration, engine);
         }
 
-        // Get the selectionVector if DV is present
+        // Step 2: Get the selectionVector if DV is present
         DeletionVectorDescriptor dv =
             InternalScanFileUtils.getDeletionVectorDescriptorFromRow(scanFile);
         Optional<ColumnVector> selectionVector;
@@ -223,7 +213,7 @@ public interface Scan {
           selectionVector = Optional.of(new SelectionColumnVector(currBitmap, rowIndexVector));
         }
 
-        // If a column was only requested to compute other columns, we remove it
+        // Step 3: If a column was only requested to compute other columns, we remove it
         for (StructField field : nextDataBatch.getSchema().fields()) {
           if (field.isInternalColumn()) {
             int columnOrdinal = nextDataBatch.getSchema().indexOf(field.getName());
@@ -238,12 +228,20 @@ public interface Scan {
           }
         }
 
-        // Change back to logical schema
+        // Step 4: Add partition columns back to the data batch
+        nextDataBatch =
+            PartitionUtils.withPartitionColumns(
+                nextDataBatch,
+                logicalSchema,
+                InternalScanFileUtils.getPartitionValues(scanFile),
+                engine.getExpressionHandler());
+
+        // Step 5: Transform column names back to logical names if column mapping is enabled
         ColumnMappingMode columnMappingMode = ScanStateRow.getColumnMappingMode(scanState);
         switch (columnMappingMode) {
           case NAME: // fall through
           case ID:
-            nextDataBatch = nextDataBatch.withNewSchema(logicalReadSchema);
+            nextDataBatch = nextDataBatch.withNewSchema(logicalSchema);
             break;
           case NONE:
             break;
