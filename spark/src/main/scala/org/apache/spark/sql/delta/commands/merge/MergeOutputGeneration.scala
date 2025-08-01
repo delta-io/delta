@@ -108,7 +108,6 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
       writeUnmodifiedRows: Boolean,
       clausesWithPrecompConditions: Seq[DeltaMergeIntoClause],
       cdcEnabled: Boolean,
-      joinType: String,
       needSetRowTrackingFieldIdForUniform: Boolean,
       shouldCountDeletedRows: Boolean = true): IndexedSeq[Column] = {
 
@@ -208,23 +207,10 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
       //               ...
       //               ELSE <execute i-th expression to noop-copy or RaiseError>
       //
-      val caseWhen = joinType match {
-        case "inner" => matchedExprs(i)
-        case "leftOuter" =>
-          // The source row is never null, so we only need to check if the target row is null.
-          If(ifTargetRowNull, notMatchedExprs(i), matchedExprs(i))
-        case "rightOuter" =>
-          // The target row is never null, so we only need to check if the source row is null.
-          If(ifSourceRowNull, notMatchedBySourceExprs(i), matchedExprs(i))
-        case "fullOuter" =>
-          CaseWhen(Seq(
-            ifSourceRowNull -> notMatchedBySourceExprs(i),
-            ifTargetRowNull -> notMatchedExprs(i)),
-            /*  otherwise  */ matchedExprs(i))
-        case _ =>
-          // We should not be here.
-          RaiseError(Literal("Unexpected join type: " + joinType))
-      }
+      val caseWhen = CaseWhen(Seq(
+        ifSourceRowNull -> notMatchedBySourceExprs(i),
+        ifTargetRowNull -> notMatchedExprs(i)),
+        /*  otherwise  */ matchedExprs(i))
       if (rowIdColumnExpressionOpt.exists(_.name == name)) {
         // Add Row ID metadata to allow writing the column.
         Column(Alias(caseWhen, name)(

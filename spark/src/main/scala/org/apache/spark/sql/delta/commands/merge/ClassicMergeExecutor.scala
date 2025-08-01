@@ -442,7 +442,6 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
       writeUnmodifiedRows,
       clausesWithPrecompConditions,
       cdcEnabled,
-      joinType,
       needSetRowTrackingFieldIdForUniform
     )
 
