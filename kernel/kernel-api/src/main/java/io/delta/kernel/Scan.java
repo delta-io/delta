@@ -147,7 +147,7 @@ public interface Scan {
       boolean inited = false;
 
       // initialized as part of init()
-      StructType physicalSchema = null;  // TODO: This is unused and could be removed
+      StructType physicalSchema = null; // TODO: This is unused and could be removed
       StructType logicalSchema = null;
       String tablePath = null;
 

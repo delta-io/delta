@@ -108,6 +108,21 @@ public class ScanStateRow extends GenericRow {
   }
 
   /**
+   * Utility method to get the physical schema from the scan state {@link Row} returned by {@link
+   * Scan#getScanState(Engine)}. This schema is used to request data from the scan files for the
+   * query.
+   *
+   * @deprecated The engine parameter is not needed and this method will be removed in a future
+   *     release. Use {@link #getPhysicalDataReadSchema(Row)} instead.
+   * @param scanState Scan state {@link Row}
+   * @return Physical schema to read from the data files.
+   */
+  @Deprecated
+  public static StructType getPhysicalDataReadSchema(Engine engine, Row scanState) {
+    return getPhysicalDataReadSchema(scanState);
+  }
+
+  /**
    * Get the list of partition column names from the scan state {@link Row} returned by {@link
    * Scan#getScanState(Engine)}.
    *
