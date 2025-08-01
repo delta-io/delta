@@ -105,7 +105,7 @@ public class RowTracking {
    *     defaultRowCommitVersions assigned or reassigned
    */
   public static CloseableIterable<Row> assignBaseRowIdAndDefaultRowCommitVersion(
-      SnapshotImpl txnReadSnapshot,
+      Optional<SnapshotImpl> txnReadSnapshot,
       Protocol txnProtocol,
       Optional<Long> winningTxnRowIdHighWatermark,
       Optional<Long> prevCommitVersion,
@@ -126,7 +126,8 @@ public class RowTracking {
       public CloseableIterator<Row> iterator() {
         // The row ID high watermark from the snapshot of the table that this transaction is reading
         // at. Any baseRowIds higher than this watermark are assigned by this transaction.
-        final long prevRowIdHighWatermark = readRowIdHighWaterMark(txnReadSnapshot);
+        final long prevRowIdHighWatermark =
+            txnReadSnapshot.map(RowTracking::readRowIdHighWaterMark).orElse(-1L);
 
         // Used to track the current high watermark as we iterate through the data actions and
         // assign baseRowIds. Use an AtomicLong to allow for updating in the lambda.
@@ -193,7 +194,7 @@ public class RowTracking {
    * @return Updated list of domain metadata actions for commit
    */
   public static List<DomainMetadata> updateRowIdHighWatermarkIfNeeded(
-      SnapshotImpl txnReadSnapshot,
+      Optional<SnapshotImpl> txnReadSnapshot,
       Protocol txnProtocol,
       Optional<Long> winningTxnRowIdHighWatermark,
       CloseableIterable<Row> txnDataActions,
@@ -215,7 +216,8 @@ public class RowTracking {
 
     // The row ID high watermark from the snapshot of the table that this transaction is reading at.
     // Any baseRowIds higher than this watermark are assigned by this transaction.
-    final long prevRowIdHighWatermark = readRowIdHighWaterMark(txnReadSnapshot);
+    final long prevRowIdHighWatermark =
+        txnReadSnapshot.map(RowTracking::readRowIdHighWaterMark).orElse(-1L);
 
     // Tracks the new row ID high watermark as we iterate through data actions and counting new rows
     // added in this transaction.

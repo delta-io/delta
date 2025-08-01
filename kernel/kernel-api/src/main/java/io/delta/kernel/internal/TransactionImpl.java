@@ -21,6 +21,7 @@ import static io.delta.kernel.internal.actions.SingleAction.*;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Preconditions.checkState;
 import static io.delta.kernel.internal.util.Utils.toCloseableIterator;
+import static java.util.Collections.emptyMap;
 
 import io.delta.kernel.*;
 import io.delta.kernel.data.Row;
@@ -79,10 +80,11 @@ public class TransactionImpl implements Transaction {
   private final boolean isCreateOrReplace;
   private final String engineInfo;
   private final Operation operation;
-  private final Path dataPath;
-  private final Path logPath;
+  public final Path dataPath;
+  // TODO make method
+  public final Path logPath;
   private final Protocol protocol;
-  private final SnapshotImpl readSnapshot;
+  private final Optional<SnapshotImpl> readSnapshot;
   private final Optional<SetTransaction> setTxnOpt;
   private final Optional<List<Column>> clusteringColumnsOpt;
   private final boolean shouldUpdateProtocol;
@@ -102,7 +104,7 @@ public class TransactionImpl implements Transaction {
       boolean isCreateOrReplace,
       Path dataPath,
       Path logPath,
-      SnapshotImpl readSnapshot,
+      Optional<SnapshotImpl> readSnapshot,
       String engineInfo,
       Operation operation,
       Protocol protocol,
@@ -131,7 +133,7 @@ public class TransactionImpl implements Transaction {
     this.maxRetries = maxRetries;
     this.logCompactionInterval = logCompactionInterval;
     this.clock = clock;
-    this.currentCrcInfo = readSnapshot.getCurrentCrcInfo();
+    this.currentCrcInfo = readSnapshot.flatMap(SnapshotImpl::getCurrentCrcInfo);
   }
 
   @Override
@@ -151,7 +153,7 @@ public class TransactionImpl implements Transaction {
 
   @Override
   public long getReadTableVersion() {
-    return readSnapshot.getVersion();
+    return readSnapshot.map(SnapshotImpl::getVersion).orElse(-1L);
   }
 
   public Optional<SetTransaction> getSetTxnOpt() {
@@ -208,10 +210,12 @@ public class TransactionImpl implements Transaction {
     // For a new table or when fileSizeHistogram is available in the CRC of the readSnapshot
     // we update it in the commit. When it is not available we do nothing.
     TransactionMetrics transactionMetrics =
-        readSnapshot.getVersion() < 0
-            ? TransactionMetrics.forNewTable()
-            : TransactionMetrics.withExistingTableFileSizeHistogram(
-                readSnapshot.getCurrentCrcInfo().flatMap(CRCInfo::getFileSizeHistogram));
+        readSnapshot
+            .map(
+                snapshot ->
+                    TransactionMetrics.withExistingTableFileSizeHistogram(
+                        snapshot.getCurrentCrcInfo().flatMap(CRCInfo::getFileSizeHistogram)))
+            .orElse(TransactionMetrics.forNewTable());
     try {
       long committedVersion =
           transactionMetrics.totalCommitTimer.time(
@@ -243,11 +247,11 @@ public class TransactionImpl implements Transaction {
   private long commitWithRetry(
       Engine engine, CloseableIterable<Row> dataActions, TransactionMetrics transactionMetrics) {
     try {
-      long commitAsVersion = readSnapshot.getVersion() + 1;
+      long commitAsVersion = getReadTableVersion() + 1;
       // Generate the commit action with the inCommitTimestamp if ICT is enabled.
       CommitInfo attemptCommitInfo = generateCommitAction(engine);
       updateMetadataWithICTIfRequired(
-          engine, attemptCommitInfo.getInCommitTimestamp(), readSnapshot.getVersion());
+          engine, attemptCommitInfo.getInCommitTimestamp(), getReadTableVersion());
       List<DomainMetadata> resolvedDomainMetadatas =
           domainMetadataState.getComputedDomainMetadatasToCommit();
 
@@ -514,7 +518,9 @@ public class TransactionImpl implements Transaction {
   private Optional<Long> generateInCommitTimestampForFirstCommitAttempt(
       Engine engine, long currentTimestamp) {
     if (IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata)) {
-      long lastCommitTimestamp = readSnapshot.getTimestamp(engine);
+      // currently InitialSnapshot.getTimestamp returns -1
+      long lastCommitTimestamp =
+          readSnapshot.map(snapshot -> snapshot.getTimestamp(engine)).orElse(-1L);
       return Optional.of(Math.max(currentTimestamp, lastCommitTimestamp + 1));
     } else {
       return Optional.empty();
@@ -531,7 +537,7 @@ public class TransactionImpl implements Transaction {
         getOperationParameters(), /* operationParameters */
         isBlindAppend(), /* isBlindAppend */
         txnId.toString(), /* txnId */
-        Collections.emptyMap() /* operationMetrics */);
+        emptyMap() /* operationMetrics */);
   }
 
   private boolean isReadyForCheckpoint(long newVersion) {
@@ -548,7 +554,7 @@ public class TransactionImpl implements Transaction {
               .collect(Collectors.joining(",", "[", "]"));
       return Collections.singletonMap("partitionBy", partitionBy);
     }
-    return Collections.emptyMap();
+    return emptyMap();
   }
 
   private TransactionReport recordTransactionReport(
@@ -565,7 +571,7 @@ public class TransactionImpl implements Transaction {
             committedVersion,
             clusteringColumnsOpt,
             transactionMetrics,
-            readSnapshot.getSnapshotReport(),
+            readSnapshot.map(SnapshotImpl::getSnapshotReport),
             exception);
     engine.getMetricsReporters().forEach(reporter -> reporter.report(transactionReport));
 
@@ -699,6 +705,7 @@ public class TransactionImpl implements Transaction {
         // In the case of replace table we need to completely reset the table state by removing
         // any existing domain metadata
         readSnapshot
+            .get() // if replaceTable we know snapshot is present
             .getActiveDomainMetadataMap()
             .forEach(
                 (domainName, domainMetadata) -> {
@@ -722,7 +729,7 @@ public class TransactionImpl implements Transaction {
 
       // Generate the tombstones for removed domains
       Map<String, DomainMetadata> snapshotDomainMetadataMap =
-          readSnapshot.getActiveDomainMetadataMap();
+          readSnapshot.map(SnapshotImpl::getActiveDomainMetadataMap).orElse(emptyMap());
       for (String domainName : domainsToRemove) {
         if (snapshotDomainMetadataMap.containsKey(domainName)) {
           // Note: we know domainName is not already in finalDomainMetadatas because we do not allow
@@ -743,7 +750,7 @@ public class TransactionImpl implements Transaction {
           // Conflict resolution should fail but since the domain does not exist we cannot create
           // a tombstone to mark it as removed and correctly perform conflict resolution.
           throw new DomainDoesNotExistException(
-              dataPath.toString(), domainName, readSnapshot.getVersion());
+              dataPath.toString(), domainName, getReadTableVersion());
         }
       }
 
@@ -760,7 +767,7 @@ public class TransactionImpl implements Transaction {
      * Returns the set of active domain metadata of the table, removed domain metadata are excluded.
      */
     public Optional<Set<DomainMetadata>> getPostCommitDomainMetadatas() {
-      if (readSnapshot.getVersion() < 0) {
+      if (!readSnapshot.isPresent()) {
         return Optional.of(
             getComputedDomainMetadatasToCommit().stream()
                 .filter(dm -> !dm.isRemoved())
@@ -819,8 +826,8 @@ public class TransactionImpl implements Transaction {
    */
   private CloseableIterator<Row> getRemoveActionsForReplace(Engine engine) {
     checkArgument(
-        readSnapshot.getVersion() >= 0, "Cannot generate removes for a snapshot with version < 0");
-    Scan scan = readSnapshot.getScanBuilder().build();
+        readSnapshot.isPresent(), "Cannot generate removes for a snapshot with version < 0");
+    Scan scan = readSnapshot.get().getScanBuilder().build();
     return Utils.intoRows(scan.getScanFiles(engine))
         .map(
             scanRow -> {
@@ -846,6 +853,6 @@ public class TransactionImpl implements Transaction {
   }
 
   private boolean isReplaceTable() {
-    return isCreateOrReplace && readSnapshot.getVersion() >= 0;
+    return isCreateOrReplace && readSnapshot.isPresent();
   }
 }

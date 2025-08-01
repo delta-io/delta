@@ -41,9 +41,11 @@ public class InCommitTimestampUtils {
   public static Optional<Metadata> getUpdatedMetadataWithICTEnablementInfo(
       Engine engine,
       long inCommitTimestamp,
-      SnapshotImpl readSnapshot,
+      Optional<SnapshotImpl> readSnapshot,
       Metadata metadata,
       long commitVersion) {
+    // Instead of commitVersion this can use readSnapshot.isPresent? Make helper fx only for
+    // existing tables
     if (didCurrentTransactionEnableICT(engine, metadata, readSnapshot) && commitVersion != 0) {
       Map<String, String> enablementTrackingProperties = new HashMap<>();
       enablementTrackingProperties.put(
@@ -85,7 +87,7 @@ public class InCommitTimestampUtils {
 
   /** Returns true if the current transaction implicitly/explicitly enables ICT. */
   private static boolean didCurrentTransactionEnableICT(
-      Engine engine, Metadata currentTransactionMetadata, SnapshotImpl readSnapshot) {
+      Engine engine, Metadata currentTransactionMetadata, Optional<SnapshotImpl> readSnapshot) {
     // If ICT is currently enabled, and the read snapshot did not have ICT enabled,
     // then the current transaction must have enabled it.
     // In case of a conflict, any winning transaction that enabled it after
@@ -98,8 +100,8 @@ public class InCommitTimestampUtils {
     boolean isICTCurrentlyEnabled =
         IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(currentTransactionMetadata);
     boolean wasICTEnabledInReadSnapshot =
-        readSnapshot.getVersion() != -1
-            && IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(readSnapshot.getMetadata());
+        readSnapshot.isPresent()
+            && IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(readSnapshot.get().getMetadata());
     return isICTCurrentlyEnabled && !wasICTEnabledInReadSnapshot;
   }
 

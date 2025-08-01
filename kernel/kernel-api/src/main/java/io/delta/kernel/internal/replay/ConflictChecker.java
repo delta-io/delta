@@ -64,7 +64,7 @@ public class ConflictChecker {
 
   // Snapshot of the table read by the transaction that encountered the conflict
   // (a.k.a the losing transaction)
-  private final SnapshotImpl snapshot;
+  private final Optional<SnapshotImpl> snapshot;
 
   // Losing transaction
   private final TransactionImpl transaction;
@@ -76,7 +76,7 @@ public class ConflictChecker {
   private Optional<Long> lastWinningRowIdHighWatermark = Optional.empty();
 
   private ConflictChecker(
-      SnapshotImpl snapshot,
+      Optional<SnapshotImpl> snapshot,
       TransactionImpl transaction,
       long attemptVersion,
       List<DomainMetadata> domainMetadatas,
@@ -106,7 +106,7 @@ public class ConflictChecker {
    */
   public static TransactionRebaseState resolveConflicts(
       Engine engine,
-      SnapshotImpl snapshot,
+      Optional<SnapshotImpl> snapshot,
       long attemptVersion,
       TransactionImpl transaction,
       List<DomainMetadata> domainMetadatas,
@@ -178,7 +178,7 @@ public class ConflictChecker {
     Optional<CRCInfo> updatedCrcInfo =
         ChecksumReader.getCRCInfo(
             engine,
-            FileStatus.of(checksumFile(snapshot.getLogPath(), lastWinningVersion).toString()));
+            FileStatus.of(checksumFile(transaction.logPath, lastWinningVersion).toString()));
 
     // if we get here, we have successfully rebased (i.e no logical conflicts)
     // against the winning transactions
@@ -368,7 +368,7 @@ public class ConflictChecker {
   }
 
   private List<FileStatus> getWinningCommitFiles(Engine engine) {
-    String firstWinningCommitFile = deltaFile(snapshot.getLogPath(), snapshot.getVersion() + 1);
+    String firstWinningCommitFile = deltaFile(transaction.logPath, attemptVersion);
 
     try (CloseableIterator<FileStatus> files =
         wrapEngineExceptionThrowsIO(
@@ -407,12 +407,12 @@ public class ConflictChecker {
       long lastWinningVersion,
       FileStatus lastWinningTxn,
       Optional<CommitInfo> winningCommitInfoOpt) {
-    if (snapshot.getVersion() == -1
-        || !IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(snapshot.getMetadata())) {
+    if (!snapshot.isPresent()
+        || !IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(snapshot.get().getMetadata())) {
       return lastWinningTxn.getModificationTime();
     } else {
       return CommitInfo.getRequiredInCommitTimestamp(
-          winningCommitInfoOpt, String.valueOf(lastWinningVersion), snapshot.getDataPath());
+          winningCommitInfoOpt, String.valueOf(lastWinningVersion), transaction.dataPath);
     }
   }
 
