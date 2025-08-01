@@ -368,7 +368,15 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
         if (writeUnmodifiedRows) {
           noopCopyExprs
         } else {
-          Seq.empty
+          // In this case, merge-on-read is enabled *and* there is no action defined for
+          // the MATCHED, NOT MATCHED or NOT MATCHED BY SOURCE cases.
+          // In this case, these expressions will never be evaluated, because
+          // we filtered to rows that match at least one merge clause.
+          // Returning RaiseError here is a sanity check to ensure that the code is correct.
+          val errExpr = RaiseError(
+            Literal("Unexpected row: did not match any merge clause")
+          )
+          Seq.fill(numOutputCols)(errExpr)
         }
       } else if (clauses.head.condition.isEmpty) {
         // Only one clause without any condition, so the corresponding action expressions
@@ -417,19 +425,9 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
         }
       }
     }
-    if (clauses.isEmpty && !writeUnmodifiedRows) {
-        // In this case, merge-on-read is enabled *and* there is no action defined for
-        // the MATCHED, NOT MATCHED or NOT MATCHED BY SOURCE cases.
-        // In this case, we should have no expressions.
-        // Returning an empty seq here is a sanity check to ensure that the code is correct,
-        // because there is no need to generate expressions for the output columns, and
-        // if we try to, we will get an OutOfBoundsException.
-        assert(clauseExprs.isEmpty)
-    } else {
-        // If there are clauses, we should have the correct number of expressions.
-        assert(clauseExprs.size == numOutputCols,
-          s"incorrect # expressions:\n\t" + seqToString(clauseExprs))
-    }
+    // If there are clauses, we should have the correct number of expressions.
+    assert(clauseExprs.size == numOutputCols,
+      s"incorrect # expressions:\n\t" + seqToString(clauseExprs))
     logDebug(s"writeAllChanges: expressions\n\t" + seqToString(clauseExprs))
     clauseExprs
   }
