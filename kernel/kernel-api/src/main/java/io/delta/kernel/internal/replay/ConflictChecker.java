@@ -368,9 +368,9 @@ public class ConflictChecker {
   }
 
   private List<FileStatus> getWinningCommitFiles(Engine engine) {
-    // TODO doesn't current impl mean we always try to resolve conflicts from readSnapshot version
-    //  again? instead of iteratively on only the newest commit
-    String firstWinningCommitFile = deltaFile(transaction.getLogPath(), attemptVersion);
+    // TODO this should be based on attemptVersion not readSnapshot version
+    long firstWinningCommitVersion = snapshot.map(SnapshotImpl::getVersion).orElse(-1L) + 1;
+    String firstWinningCommitFile = deltaFile(transaction.getLogPath(), firstWinningCommitVersion);
 
     try (CloseableIterator<FileStatus> files =
         wrapEngineExceptionThrowsIO(

@@ -732,62 +732,6 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     return updatedMetadata;
   }
 
-  private SnapshotImpl getInitialEmptySnapshot(
-      Engine engine, Metadata metadata, Protocol protocol) {
-    SnapshotQueryContext snapshotContext =
-        SnapshotQueryContext.forVersionSnapshot(table.getPath(engine), -1);
-    LogReplay logReplay =
-        getEmptyLogReplay(engine, metadata, protocol, snapshotContext.getSnapshotMetrics());
-    return new InitialSnapshot(table.getDataPath(), logReplay, metadata, protocol, snapshotContext);
-  }
-
-  private class InitialSnapshot extends SnapshotImpl {
-    InitialSnapshot(
-        Path dataPath,
-        LogReplay logReplay,
-        Metadata metadata,
-        Protocol protocol,
-        SnapshotQueryContext snapshotContext) {
-      super(
-          dataPath,
-          LogSegment.empty(table.getLogPath()),
-          logReplay,
-          protocol,
-          metadata,
-          snapshotContext);
-    }
-
-    @Override
-    public long getTimestamp(Engine engine) {
-      return -1L;
-    }
-  }
-
-  private LogReplay getEmptyLogReplay(
-      Engine engine, Metadata metadata, Protocol protocol, SnapshotMetrics snapshotMetrics) {
-    return new LogReplay(
-        table.getDataPath(),
-        engine,
-        new Lazy<>(() -> LogSegment.empty(table.getLogPath())),
-        Optional.empty(),
-        snapshotMetrics) {
-
-      @Override
-      protected Tuple2<Protocol, Metadata> loadTableProtocolAndMetadata(
-          Engine engine,
-          LogSegment logSegment,
-          Optional<SnapshotHint> snapshotHint,
-          long snapshotVersion) {
-        return new Tuple2<>(protocol, metadata);
-      }
-
-      @Override
-      public Optional<Long> getLatestTransactionIdentifier(Engine engine, String applicationId) {
-        return Optional.empty();
-      }
-    };
-  }
-
   private Metadata getInitialMetadata() {
     List<String> partitionColumnsCasePreserving =
         casePreservingPartitionColNames(schema.get(), partitionColumns.orElse(emptyList()));
