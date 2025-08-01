@@ -204,6 +204,7 @@ class ParquetSchemaUtils {
           listGroup.withNewFields(
               Collections.singletonList(prunedType(elementType, deltaArrayType.getElementType())));
       return arrayGroupType.withNewFields(Collections.singletonList(newListGroup));
+    // TODO: check if we need to fix map type.
     } else {
       return type;
     }
