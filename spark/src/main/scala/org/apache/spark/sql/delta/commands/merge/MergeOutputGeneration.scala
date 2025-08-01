@@ -189,7 +189,7 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
       //               WHEN <not-matched-by-source condition 2>
       //               THEN <execute i-th expression of not-matched-by-source action 2>
       //               ...
-      //               ELSE <execute i-th expression to noop-copy>
+      //               ELSE <execute i-th expression to noop-copy or RaiseError>
       //
       //      WHEN <source row not matched>           (target row is null)
       //      THEN
@@ -198,7 +198,7 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
       //               WHEN <not-matched condition 2>
       //               THEN <execute i-th expression of not-matched (insert) action 2>
       //               ...
-      //               ELSE <execute i-th expression to delete>
+      //               ELSE <execute i-th expression to delete or RaiseError>
       //
       //      ELSE                                    (both source and target row are not null)
       //          CASE WHEN <match condition 1>
@@ -206,7 +206,7 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
       //               WHEN <match condition 2>
       //               THEN <execute i-th expression of match action 2>
       //               ...
-      //               ELSE <execute i-th expression to noop-copy>
+      //               ELSE <execute i-th expression to noop-copy or RaiseError>
       //
       val caseWhen = joinType match {
         case "inner" => matchedExprs(i)
@@ -384,6 +384,8 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
           if (writeUnmodifiedRows) {
             If(condition, a, noopCopyExprs(i))
           } else {
+            // Since writeUnmodifiedRows is false, we know we will never reach the else branch
+            // because we filtered to rows that match at least one merge clause.
             If(condition, a, RaiseError(Literal("Unexpected row: did not match any merge clause")))
           }
         }
@@ -404,6 +406,8 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
           }
           val elseBranch =
             if (writeUnmodifiedRows) Some(noopCopyExprs(i))
+            // Since writeUnmodifiedRows is false, we know we will never reach the else branch
+            // because we filtered to rows that match at least one merge clause.
             else Some(
               RaiseError(
                 Literal("Unexpected row: did not match any merge clause")
@@ -413,8 +417,19 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
         }
       }
     }
-    assert(clauseExprs.size == numOutputCols,
-      s"incorrect # expressions:\n\t" + seqToString(clauseExprs))
+    if (clauses.isEmpty && !writeUnmodifiedRows) {
+        // In this case, merge-on-read is enabled *and* there is no action defined for
+        // the MATCHED, NOT MATCHED or NOT MATCHED BY SOURCE cases.
+        // In this case, we should have no expressions.
+        // Returning an empty seq here is a sanity check to ensure that the code is correct,
+        // because there is no need to generate expressions for the output columns, and
+        // if we try to, we will get an OutOfBoundsException.
+        assert(clauseExprs.isEmpty)
+    } else {
+        // If there are clauses, we should have the correct number of expressions.
+        assert(clauseExprs.size == numOutputCols,
+          s"incorrect # expressions:\n\t" + seqToString(clauseExprs))
+    }
     logDebug(s"writeAllChanges: expressions\n\t" + seqToString(clauseExprs))
     clauseExprs
   }
