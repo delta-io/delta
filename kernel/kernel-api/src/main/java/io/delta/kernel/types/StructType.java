@@ -93,6 +93,22 @@ public final class StructType extends DataType {
     return fieldAndOrdinal != null ? fieldAndOrdinal._2 : -1;
   }
 
+  /** @return the index of the first field with the given metadata type, or -1 if not found */
+  public int getFirst(DataType type) {
+    for (int i = 0; i < fields.size(); i++) {
+      StructField field = fields.get(i);
+      if (field.getDataType().equals(type)) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  /** @return true if the struct type contains a field with the given data type, false otherwise */
+  public boolean contains(DataType type) {
+    return getFirst(type) >= 0;
+  }
+
   public StructField get(String fieldName) {
     return nameToFieldAndOrdinal.get(fieldName)._1;
   }

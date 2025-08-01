@@ -310,7 +310,7 @@ class ParquetFileReaderSuite extends AnyFunSuite
   test("request row indices") {
     val readSchema = new StructType()
       .add("id", LongType.LONG)
-      .add(StructField.METADATA_ROW_INDEX_COLUMN)
+      .add(StructField.ROW_INDEX_COLUMN)
 
     val path = getTestResourceFilePath("parquet-basic-row-indexes")
     val actResult1 = readParquetFilesUsingKernel(path, readSchema)

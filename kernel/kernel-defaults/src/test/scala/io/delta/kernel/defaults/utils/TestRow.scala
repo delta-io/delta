@@ -107,6 +107,10 @@ object TestRow {
         case _: StringType => row.getString(i)
         case _: BinaryType => row.getBinary(i)
         case _: DecimalType => row.getDecimal(i)
+        case t: MetadataType => t.getDataType match {
+            case _: LongType => row.getLong(i)
+            case _: StringType => row.getString(i)
+          }
         case _: ArrayType => arrayValueToScalaSeq(row.getArray(i))
         case _: MapType => mapValueToScalaMap(row.getMap(i))
         case _: StructType => TestRow(row.getStruct(i))
