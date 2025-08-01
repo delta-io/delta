@@ -26,6 +26,7 @@ import io.delta.kernel.exceptions.InvalidTableException;
 import io.delta.kernel.expressions.*;
 import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.InternalScanFileUtils;
+import io.delta.kernel.internal.ScanImpl;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.util.ColumnMapping;
@@ -182,7 +183,7 @@ public final class MaterializedRowTrackingColumn {
               LongType.LONG,
               true /* nullable */));
       if (logicalSchema.indexOf(StructField.METADATA_ROW_INDEX_COLUMN_NAME) == -1) {
-        physicalFields.add(StructField.createInternalColumn(StructField.METADATA_ROW_INDEX_COLUMN));
+        physicalFields.add(ScanImpl.createInternalColumn(StructField.METADATA_ROW_INDEX_COLUMN));
       }
       return physicalFields;
     } else if (logicalField.getName().equals(METADATA_ROW_COMMIT_VERSION_COLUMN_NAME)) {
