@@ -16,6 +16,8 @@
 
 package io.delta.kernel.internal.commit;
 
+import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
+
 import io.delta.kernel.commit.CommitFailedException;
 import io.delta.kernel.commit.CommitMetadata;
 import io.delta.kernel.commit.CommitResponse;
@@ -24,8 +26,13 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaErrorsInternal;
 import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.files.ParsedLogData;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
+import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.utils.CloseableIterator;
+import io.delta.kernel.utils.FileStatus;
+import java.io.IOException;
+import java.nio.file.FileAlreadyExistsException;
 
 public class DefaultFileSystemManagedTableOnlyCommitter implements Committer {
   public static final DefaultFileSystemManagedTableOnlyCommitter INSTANCE =
@@ -39,7 +46,40 @@ public class DefaultFileSystemManagedTableOnlyCommitter implements Committer {
       throws CommitFailedException {
     commitMetadata.getReadProtocolOpt().ifPresent(this::validateProtocol);
     commitMetadata.getNewProtocolOpt().ifPresent(this::validateProtocol);
-    throw new UnsupportedOperationException("Default Committer not yet implemented");
+
+    final String jsonCommitFile =
+        FileNames.deltaFile(commitMetadata.getDeltaLogDirPath(), commitMetadata.getVersion());
+
+    try {
+      wrapEngineExceptionThrowsIO(
+          () -> {
+            engine
+                .getJsonHandler()
+                .writeJsonFileAtomically(jsonCommitFile, finalizedActions, false /* overwrite */);
+            return null;
+          },
+          String.format("Write file actions to JSON log file `%s`", jsonCommitFile));
+    } catch (FileAlreadyExistsException e) {
+      throw new CommitFailedException(
+          true /* retryable */,
+          true /* conflict */,
+          "Concurrent write detected for version " + commitMetadata.getVersion(),
+          e);
+    } catch (IOException e) {
+      throw new CommitFailedException(
+          true /* retryable */,
+          false /* conflict */,
+          "Failed to write commit file due to I/O error: " + e.getMessage(),
+          e);
+    } catch (Exception e) {
+      throw new CommitFailedException(
+          false /* retryable */,
+          false /* conflict */,
+          "Failed to write commit file: " + e.getMessage(),
+          e);
+    }
+
+    return new CommitResponse(ParsedLogData.forFileStatus(FileStatus.of(jsonCommitFile)));
   }
 
   private void validateProtocol(Protocol protocol) {
