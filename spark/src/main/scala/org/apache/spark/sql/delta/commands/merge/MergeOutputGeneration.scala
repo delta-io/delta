@@ -152,7 +152,7 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
       generateClauseOutputExprs(
         numOutputCols,
         processedNotMatchClauses,
-        noopCopyExprs,
+        deleteSourceRowExprs,
         writeUnmodifiedRows)
 
     // === Generate N + 2 (N + 4 with Row Tracking) expressions for NOT MATCHED BY SOURCE clause ===
