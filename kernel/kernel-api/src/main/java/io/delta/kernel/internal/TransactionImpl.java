@@ -313,7 +313,14 @@ public class TransactionImpl implements Transaction {
 
       int numTries = 0;
       while (true) {
-        logger.info("Committing transaction as version = {}.", commitAsVersion);
+        // This loop exits upon either (a) commit success (return statement) or (b) commit failure,
+        // if the number of retries has been exhausted or the commit is not retryable.
+
+        logger.info(
+            "Attempting to commit transaction at version {}. Attempt {}/{}",
+            commitAsVersion,
+            numTries + 1,
+            maxRetries);
         try {
           transactionMetrics.commitAttemptsCounter.increment();
           return doCommit(
@@ -338,7 +345,7 @@ public class TransactionImpl implements Transaction {
           } else if (cfe.isConflict()) {
             logger.warn(
                 "Commit attempt for version {} failed with a retryable exception due to a "
-                    + "physical conflict. {} Error: {}",
+                    + "physical conflict. Error: {}",
                 commitAsVersion,
                 cfe.getMessage());
 
@@ -348,8 +355,8 @@ public class TransactionImpl implements Transaction {
             dataActions = rebaseState.getUpdatedDataActions();
             domainMetadataState.setComputedDomainMetadatas(rebaseState.getUpdatedDomainMetadatas());
             currentCrcInfo = rebaseState.getUpdatedCrcInfo();
-            // Action counters may be partially incremented from previous tries, reset the
-            // counters to 0 and drop fileSizeHistogram
+            // Action counters may be partially incremented from previous tries, reset the counters
+            // to 0 and drop fileSizeHistogram
             // TODO: reconcile fileSizeHistogram.
             transactionMetrics.resetActionMetricsForRetry();
           } else {
@@ -357,12 +364,12 @@ public class TransactionImpl implements Transaction {
 
             logger.warn(
                 "Commit attempt for version {} failed with a retryable exception due to a "
-                    + "transient error. {} Skipping conflict resolution and trying again. Error: {}",
+                    + "transient error. Skipping conflict resolution and trying again. Error: {}",
                 commitAsVersion,
                 cfe.getMessage());
           }
+          numTries++;
         }
-        numTries++;
       }
     } finally {
       closed = true;
