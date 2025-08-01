@@ -65,13 +65,13 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
 
     // Step 2: Load the table using UCCatalogManagedClient at the desired versionToLoad
     val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
-    val resolvedTable = ucCatalogManagedClient
-      .loadTable(defaultEngine, "ucTableId", tablePath, versionToLoad)
+    val snapshot = ucCatalogManagedClient
+      .loadSnapshot(defaultEngine, "ucTableId", tablePath, versionToLoad)
       .asInstanceOf[SnapshotImpl]
 
     // Step 3: Validate
-    val protocol = resolvedTable.getProtocol
-    assert(resolvedTable.getVersion == versionToLoad.orElse(maxRatifiedVersion))
+    val protocol = snapshot.getProtocol
+    assert(snapshot.getVersion == versionToLoad.orElse(maxRatifiedVersion))
     assert(protocol.getMinReaderVersion == TABLE_FEATURES_MIN_READER_VERSION)
     assert(protocol.getMinWriterVersion == TABLE_FEATURES_MIN_WRITER_VERSION)
     assert(protocol.getReaderFeatures.contains(CATALOG_MANAGED_R_W_FEATURE_PREVIEW.featureName()))
@@ -90,19 +90,19 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
 
     assertThrows[NullPointerException] {
       // engine is null
-      ucCatalogManagedClient.loadTable(null, "ucTableId", "tablePath", Optional.of(0L))
+      ucCatalogManagedClient.loadSnapshot(null, "ucTableId", "tablePath", Optional.of(0L))
     }
     assertThrows[NullPointerException] {
       // ucTableId is null
-      ucCatalogManagedClient.loadTable(defaultEngine, null, "tablePath", Optional.of(0L))
+      ucCatalogManagedClient.loadSnapshot(defaultEngine, null, "tablePath", Optional.of(0L))
     }
     assertThrows[NullPointerException] {
       // tablePath is null
-      ucCatalogManagedClient.loadTable(defaultEngine, "ucTableId", null, Optional.of(0L))
+      ucCatalogManagedClient.loadSnapshot(defaultEngine, "ucTableId", null, Optional.of(0L))
     }
     assertThrows[IllegalArgumentException] {
       // version < 0
-      ucCatalogManagedClient.loadTable(defaultEngine, "ucTableId", "tablePath", Optional.of(-1L))
+      ucCatalogManagedClient.loadSnapshot(defaultEngine, "ucTableId", "tablePath", Optional.of(-1L))
     }
   }
 
@@ -116,7 +116,7 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
 
         val ex = intercept[RuntimeException] {
           ucCatalogManagedClient
-            .loadTable(defaultEngine, "nonExistentTableId", "tablePath", versionToLoad)
+            .loadSnapshot(defaultEngine, "nonExistentTableId", "tablePath", versionToLoad)
         }
         assert(ex.getCause.isInstanceOf[InvalidTargetTableException])
       }
@@ -133,10 +133,10 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
         ucClient.createTableIfNotExistsOrThrow("ucTableId", tableData)
         val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
 
-        val resolvedTable = ucCatalogManagedClient
-          .loadTable(defaultEngine, "ucTableId", tablePath, versionToLoad)
+        val snapshot = ucCatalogManagedClient
+          .loadSnapshot(defaultEngine, "ucTableId", tablePath, versionToLoad)
 
-        assert(resolvedTable.getVersion == 0L)
+        assert(snapshot.getVersion == 0L)
       }
   }
 

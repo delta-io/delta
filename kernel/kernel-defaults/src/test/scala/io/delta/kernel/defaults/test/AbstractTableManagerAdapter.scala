@@ -19,7 +19,7 @@ package io.delta.kernel.defaults.test
 import io.delta.kernel.{Table, TableManager}
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.{SnapshotImpl, TableImpl}
-import io.delta.kernel.internal.table.ResolvedTableBuilderImpl
+import io.delta.kernel.internal.table.SnapshotBuilderImpl
 
 /**
  * Test framework adapter that provides a unified interface for **loading** Delta tables.
@@ -47,7 +47,7 @@ trait AbstractTableManagerAdapter {
 }
 
 /**
- * Legacy implementation using the [[Table.forPath]] API which then wraps a [[Snapshot]].
+ * Legacy implementation using the [[Table.forPath]] API.
  */
 class LegacyTableManagerAdapter extends AbstractTableManagerAdapter {
   override def supportsTimestampResolution: Boolean = true
@@ -74,8 +74,7 @@ class LegacyTableManagerAdapter extends AbstractTableManagerAdapter {
 }
 
 /**
- * Current implementation using the [[TableManager.loadTable]] API, which then wraps a
- * [[ResolvedTable]].
+ * New implementation using the [[TableManager.loadSnapshot]] API.
  */
 class TableManagerAdapter extends AbstractTableManagerAdapter {
   override def supportsTimestampResolution: Boolean = false
@@ -83,7 +82,7 @@ class TableManagerAdapter extends AbstractTableManagerAdapter {
   override def getSnapshotAtLatest(
       engine: Engine,
       path: String): SnapshotImpl = {
-    TableManager.loadTable(path).asInstanceOf[ResolvedTableBuilderImpl].build(engine)
+    TableManager.loadSnapshot(path).asInstanceOf[SnapshotBuilderImpl].build(engine)
   }
 
   override def getSnapshotAtVersion(
@@ -91,7 +90,7 @@ class TableManagerAdapter extends AbstractTableManagerAdapter {
       path: String,
       version: Long): SnapshotImpl = {
     TableManager
-      .loadTable(path).asInstanceOf[ResolvedTableBuilderImpl].atVersion(version).build(engine)
+      .loadSnapshot(path).asInstanceOf[SnapshotBuilderImpl].atVersion(version).build(engine)
   }
 
   override def getSnapshotAtTimestamp(

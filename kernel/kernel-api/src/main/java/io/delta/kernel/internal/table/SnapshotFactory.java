@@ -38,17 +38,17 @@ import java.util.Optional;
 /**
  * Factory class responsible for creating {@link Snapshot} instances.
  *
- * <p>Note: The {@link ResolvedTableBuilderImpl} is responsible for receiving and validating all
- * builder parameters, and then passing that information to this factory to actually create the
- * {@link Snapshot}
+ * <p>Note: The {@link SnapshotBuilderImpl} is responsible for receiving and validating all builder
+ * parameters, and then passing that information to this factory to actually create the {@link
+ * Snapshot}
  */
-class ResolvedTableFactory {
+class SnapshotFactory {
 
-  private final ResolvedTableBuilderImpl.Context ctx;
+  private final SnapshotBuilderImpl.Context ctx;
   private final String resolvedPath;
   private final Path wrappedTablePath;
 
-  ResolvedTableFactory(Engine engine, ResolvedTableBuilderImpl.Context ctx) {
+  SnapshotFactory(Engine engine, SnapshotBuilderImpl.Context ctx) {
     this.ctx = ctx;
     this.resolvedPath = resolvePath(engine);
     this.wrappedTablePath = new Path(resolvedPath);
@@ -125,7 +125,7 @@ class ResolvedTableFactory {
         engine,
         lazyLogSegment,
         Optional.empty() /* snapshotHint */,
-        // TODO: Proper ResolvedTable-oriented metrics
+        // TODO: Proper metrics
         new SnapshotMetrics());
   }
 

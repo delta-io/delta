@@ -20,7 +20,7 @@ import scala.collection.JavaConverters._
 
 import io.delta.kernel.TableManager
 import io.delta.kernel.internal.actions.Protocol
-import io.delta.kernel.internal.table.ResolvedTableBuilderImpl
+import io.delta.kernel.internal.table.SnapshotBuilderImpl
 import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.test.{ActionUtils, MockFileSystemClientUtils}
 import io.delta.kernel.types.{IntegerType, StructType}
@@ -51,8 +51,8 @@ class CatalogManagedLogSegmentSuite extends AnyFunSuite
       val testSchema = new StructType().add("c1", IntegerType.INTEGER);
 
       val builder = TableManager
-        .loadTable(dataPath.toString)
-        .asInstanceOf[ResolvedTableBuilderImpl]
+        .loadSnapshot(dataPath.toString)
+        .asInstanceOf[SnapshotBuilderImpl]
         .atVersion(versionToLoad)
         .withProtocolAndMetadata(new Protocol(1, 2), testMetadata(testSchema))
         .withLogData(ratifiedCommitParsedLogDatas.toList.asJava)
@@ -64,8 +64,8 @@ class CatalogManagedLogSegmentSuite extends AnyFunSuite
         }
         assert(expectedExceptionClassOpt.get.isInstance(exception))
       } else {
-        val resolvedTable = builder.build(engine)
-        val actualDeltaAndCommitFileStatuses = resolvedTable.getLogSegment.getDeltas.asScala
+        val snapshot = builder.build(engine)
+        val actualDeltaAndCommitFileStatuses = snapshot.getLogSegment.getDeltas.asScala
 
         // Check: we got the expected versions
         val actualDeltaAndCommitVersions =

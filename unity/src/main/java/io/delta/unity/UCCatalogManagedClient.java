@@ -18,8 +18,8 @@ package io.delta.unity;
 
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
-import io.delta.kernel.ResolvedTableBuilder;
 import io.delta.kernel.Snapshot;
+import io.delta.kernel.SnapshotBuilder;
 import io.delta.kernel.TableManager;
 import io.delta.kernel.annotation.Experimental;
 import io.delta.kernel.engine.Engine;
@@ -54,7 +54,7 @@ public class UCCatalogManagedClient {
     this.ucClient = Objects.requireNonNull(ucClient, "ucClient is null");
   }
 
-  // TODO: [delta-io/delta#4817] loadTable API that takes in a UC TableInfo object
+  // TODO: [delta-io/delta#4817] loadSnapshot API that takes in a UC TableInfo object
 
   /**
    * Loads a Kernel {@link Snapshot}. If no version is specified, the latest version of the table is
@@ -65,7 +65,7 @@ public class UCCatalogManagedClient {
    * @param tablePath The path to the Delta table in the underlying storage system.
    * @param versionOpt The optional version of the table to load.
    */
-  public Snapshot loadTable(
+  public Snapshot loadSnapshot(
       Engine engine, String ucTableId, String tablePath, Optional<Long> versionOpt) {
     Objects.requireNonNull(engine, "engine is null");
     Objects.requireNonNull(ucTableId, "ucTableId is null");
@@ -73,8 +73,7 @@ public class UCCatalogManagedClient {
     Objects.requireNonNull(versionOpt, "versionOpt is null");
     versionOpt.ifPresent(version -> checkArgument(version >= 0, "version must be non-negative"));
 
-    logger.info(
-        "[{}] Loading ResolvedTable at version {}", ucTableId, getVersionString(versionOpt));
+    logger.info("[{}] Loading Snapshot at version {}", ucTableId, getVersionString(versionOpt));
     final GetCommitsResponse response = getRatifiedCommitsFromUC(ucTableId, tablePath, versionOpt);
     final long ucTableVersion = getTrueUCTableVersion(ucTableId, response.getLatestTableVersion());
     versionOpt.ifPresent(
@@ -86,13 +85,13 @@ public class UCCatalogManagedClient {
         "TableManager.loadTable",
         ucTableId,
         () -> {
-          ResolvedTableBuilder resolvedTableBuilder = TableManager.loadTable(tablePath);
+          SnapshotBuilder snapshotBuilder = TableManager.loadSnapshot(tablePath);
 
           if (versionOpt.isPresent()) {
-            resolvedTableBuilder = resolvedTableBuilder.atVersion(versionOpt.get());
+            snapshotBuilder = snapshotBuilder.atVersion(versionOpt.get());
           }
 
-          return resolvedTableBuilder.withLogData(logData).build(engine);
+          return snapshotBuilder.withLogData(logData).build(engine);
         });
   }
 

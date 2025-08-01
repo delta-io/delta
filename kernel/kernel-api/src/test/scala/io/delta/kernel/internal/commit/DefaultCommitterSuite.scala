@@ -44,7 +44,7 @@ class DefaultCommitterSuite extends AnyFunSuite
       val emptyMockEngine = createMockFSListFromEngine(Nil)
       val schema = new StructType().add("col1", IntegerType.INTEGER)
       val metadata = testMetadata(schema, Seq[String]())
-      val committer = TableManager.loadTable(dataPath.toString)
+      val committer = TableManager.loadSnapshot(dataPath.toString)
         .withProtocolAndMetadata(readProtocol, metadata)
         .atVersion(1)
         .build(emptyMockEngine)

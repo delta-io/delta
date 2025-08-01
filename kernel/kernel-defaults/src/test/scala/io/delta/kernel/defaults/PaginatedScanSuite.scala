@@ -59,7 +59,7 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
 
   // TODO: this can be a testUtil?
   private def getScanBuilder(tablePath: String, tableVersionOpt: Optional[Long]): ScanBuilder = {
-    val resolvedTableAdapter = {
+    val snapshot = {
       if (tableVersionOpt.isPresent) {
         tableManager.getSnapshotAtVersion(
           customEngine,
@@ -69,7 +69,7 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
         tableManager.getSnapshotAtLatest(customEngine, tablePath)
       }
     }
-    resolvedTableAdapter.getScanBuilder()
+    snapshot.getScanBuilder()
   }
 
   private def createPaginatedScan(

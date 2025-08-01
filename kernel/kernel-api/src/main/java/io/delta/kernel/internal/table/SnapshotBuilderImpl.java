@@ -19,8 +19,8 @@ package io.delta.kernel.internal.table;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
-import io.delta.kernel.ResolvedTableBuilder;
 import io.delta.kernel.Snapshot;
+import io.delta.kernel.SnapshotBuilder;
 import io.delta.kernel.commit.Committer;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.SnapshotImpl;
@@ -35,13 +35,13 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * An implementation of {@link ResolvedTableBuilder}.
+ * An implementation of {@link SnapshotBuilder}.
  *
  * <p>Note: The primary responsibility of this class is to take input, validate that input, and then
- * pass the input to the {@link ResolvedTableFactory}, which is then responsible for actually
- * creating the {@link Snapshot} instance.
+ * pass the input to the {@link SnapshotFactory}, which is then responsible for actually creating
+ * the {@link Snapshot} instance.
  */
-public class ResolvedTableBuilderImpl implements ResolvedTableBuilder {
+public class SnapshotBuilderImpl implements SnapshotBuilder {
 
   public static class Context {
     public final String unresolvedPath;
@@ -61,35 +61,35 @@ public class ResolvedTableBuilderImpl implements ResolvedTableBuilder {
 
   private final Context ctx;
 
-  public ResolvedTableBuilderImpl(String unresolvedPath) {
+  public SnapshotBuilderImpl(String unresolvedPath) {
     ctx = new Context(unresolvedPath);
   }
 
-  /////////////////////////////////////////
-  // Public ResolvedTableBuilder Methods //
-  /////////////////////////////////////////
+  ////////////////////////////////////
+  // Public SnapshotBuilder Methods //
+  ////////////////////////////////////
 
   @Override
-  public ResolvedTableBuilderImpl atVersion(long version) {
+  public SnapshotBuilderImpl atVersion(long version) {
     ctx.versionOpt = Optional.of(version);
     return this;
   }
 
   @Override
-  public ResolvedTableBuilder withCommitter(Committer committer) {
+  public SnapshotBuilder withCommitter(Committer committer) {
     ctx.committerOpt = Optional.of(requireNonNull(committer, "committer is null"));
     return this;
   }
 
   /** For now, only log datas of type {@link ParsedLogType#RATIFIED_STAGED_COMMIT}s are supported */
   @Override
-  public ResolvedTableBuilderImpl withLogData(List<ParsedLogData> logDatas) {
+  public SnapshotBuilderImpl withLogData(List<ParsedLogData> logDatas) {
     ctx.logDatas = requireNonNull(logDatas, "logDatas is null");
     return this;
   }
 
   @Override
-  public ResolvedTableBuilderImpl withProtocolAndMetadata(Protocol protocol, Metadata metadata) {
+  public SnapshotBuilderImpl withProtocolAndMetadata(Protocol protocol, Metadata metadata) {
     ctx.protocolAndMetadataOpt =
         Optional.of(
             new Tuple2<>(
@@ -101,7 +101,7 @@ public class ResolvedTableBuilderImpl implements ResolvedTableBuilder {
   @Override
   public SnapshotImpl build(Engine engine) {
     validateInputOnBuild();
-    return new ResolvedTableFactory(engine, ctx).create(engine);
+    return new SnapshotFactory(engine, ctx).create(engine);
   }
 
   ////////////////////////////

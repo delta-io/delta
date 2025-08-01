@@ -35,18 +35,16 @@ import java.util.List;
  *
  * <p>If no version is specified, the builder will resolve to the latest version. Depending on the
  * {@link ParsedLogData} provided, Kernel can avoid expensive filesystem operations.
- *
- * <p>TODO: Rename to ResolvedTableBuilder
  */
 @Experimental
-public interface ResolvedTableBuilder {
+public interface SnapshotBuilder {
   /**
    * Configures the builder to resolve the table at a specific version.
    *
    * @param version the version number to resolve to
    * @return a new builder instance configured for the specified version
    */
-  ResolvedTableBuilder atVersion(long version);
+  SnapshotBuilder atVersion(long version);
 
   // TODO: atTimestamp
 
@@ -65,7 +63,7 @@ public interface ResolvedTableBuilder {
    * @see io.delta.kernel.transaction.TransactionV2
    * @see Committer
    */
-  ResolvedTableBuilder withCommitter(Committer committer);
+  SnapshotBuilder withCommitter(Committer committer);
 
   /**
    * Provides parsed log data to optimize table resolution.
@@ -77,7 +75,7 @@ public interface ResolvedTableBuilder {
    * @return a new builder instance with the provided log data
    */
   /** For now, only log datas of type {@link ParsedLogType#RATIFIED_STAGED_COMMIT}s are supported */
-  ResolvedTableBuilder withLogData(List<ParsedLogData> logData);
+  SnapshotBuilder withLogData(List<ParsedLogData> logData);
 
   /**
    * Provides protocol and metadata information to optimize table resolution.
@@ -91,7 +89,7 @@ public interface ResolvedTableBuilder {
    */
   // TODO: [delta-io/delta#4820] Public Protocol API
   // TODO: [delta-io/delta#4821] Public Metadata API
-  ResolvedTableBuilder withProtocolAndMetadata(Protocol protocol, Metadata metadata);
+  SnapshotBuilder withProtocolAndMetadata(Protocol protocol, Metadata metadata);
 
   /**
    * Constructs the {@link Snapshot} using the provided engine.
