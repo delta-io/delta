@@ -21,11 +21,14 @@ import io.delta.kernel.data.*;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.InternalScanFileUtils;
+import io.delta.kernel.internal.ScanImpl;
+import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.data.ScanStateRow;
 import io.delta.kernel.internal.data.SelectionColumnVector;
 import io.delta.kernel.internal.deletionvectors.DeletionVectorUtils;
 import io.delta.kernel.internal.deletionvectors.RoaringBitmapArray;
+import io.delta.kernel.internal.rowtracking.MaterializedRowTrackingColumn;
 import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
 import io.delta.kernel.internal.util.PartitionUtils;
 import io.delta.kernel.internal.util.Tuple2;
@@ -33,6 +36,7 @@ import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -118,8 +122,12 @@ public interface Scan {
   Row getScanState(Engine engine);
 
   /**
-   * Transform the physical data read from the table data file into the logical data that expected
-   * out of the Delta table.
+   * Transform the physical data read from the table data file into the logical data that are
+   * expected out of the Delta table.
+   *
+   * <p>This iterator effectively reverses the logical-to-physical schema transformation performed
+   * in {@link ScanImpl#getScanState(Engine)} by transforming physical data batches into the logical
+   * data requested by the connector.
    *
    * @param engine Connector provided {@link Engine} implementation.
    * @param scanState Scan state returned by {@link Scan#getScanState(Engine)}
@@ -183,17 +191,24 @@ public interface Scan {
                 InternalScanFileUtils.getPartitionValues(scanFile),
                 physicalReadSchema);
 
-        DeletionVectorDescriptor dv =
-            InternalScanFileUtils.getDeletionVectorDescriptorFromRow(scanFile);
-
-        int rowIndexOrdinal =
-            nextDataBatch.getSchema().indexOf(StructField.METADATA_ROW_INDEX_COLUMN_NAME);
+        // If row tracking is enabled, check for physical row tracking columns in the data batch
+        // and transform them to logical row tracking columns as needed
+        Map<String, String> configuration = ScanStateRow.getConfiguration(scanState);
+        if (TableConfig.ROW_TRACKING_ENABLED.fromMetadata(configuration)) {
+          nextDataBatch =
+              MaterializedRowTrackingColumn.transformPhysicalData(
+                  nextDataBatch, scanFile, configuration, engine);
+        }
 
         // Get the selectionVector if DV is present
+        DeletionVectorDescriptor dv =
+            InternalScanFileUtils.getDeletionVectorDescriptorFromRow(scanFile);
         Optional<ColumnVector> selectionVector;
         if (dv == null) {
           selectionVector = Optional.empty();
         } else {
+          int rowIndexOrdinal =
+              nextDataBatch.getSchema().indexOf(StructField.METADATA_ROW_INDEX_COLUMN_NAME);
           if (rowIndexOrdinal == -1) {
             throw new IllegalArgumentException(
                 "Row index column is not present in the data read from the Parquet file.");
@@ -207,9 +222,20 @@ public interface Scan {
           ColumnVector rowIndexVector = nextDataBatch.getColumnVector(rowIndexOrdinal);
           selectionVector = Optional.of(new SelectionColumnVector(currBitmap, rowIndexVector));
         }
-        if (rowIndexOrdinal != -1) {
-          // TODO: Only remove rowIndex if it was not explicitly requested by the user
-          nextDataBatch = nextDataBatch.withDeletedColumnAt(rowIndexOrdinal);
+
+        // If a column was only requested to compute other columns, we remove it
+        for (StructField field : nextDataBatch.getSchema().fields()) {
+          if (field.isInternalColumn()) {
+            int columnOrdinal = nextDataBatch.getSchema().indexOf(field.getName());
+            if (columnOrdinal == -1) {
+              // This should never happen since we only interact with a single schema
+              throw new IllegalArgumentException(
+                  String.format(
+                      "Column %s was requested internally but is not present in the data batch.",
+                      field.getName()));
+            }
+            nextDataBatch = nextDataBatch.withDeletedColumnAt(columnOrdinal);
+          }
         }
 
         // Change back to logical schema

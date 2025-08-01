@@ -75,6 +75,17 @@ public class ScanStateRow extends GenericRow {
   }
 
   /**
+   * Utility method to get the configuration map from the scan state {@link Row} returned by {@link
+   * Scan#getScanState(Engine)}.
+   *
+   * @param scanState Scan state {@link Row}
+   * @return Map of configuration key-value pairs.
+   */
+  public static Map<String, String> getConfiguration(Row scanState) {
+    return VectorUtils.toJavaMap(scanState.getMap(COL_NAME_TO_ORDINAL.get("configuration")));
+  }
+
+  /**
    * Utility method to get the logical schema from the scan state {@link Row} returned by {@link
    * Scan#getScanState(Engine)}.
    *
@@ -129,9 +140,7 @@ public class ScanStateRow extends GenericRow {
    * Scan#getScanState(Engine)}.
    */
   public static ColumnMappingMode getColumnMappingMode(Row scanState) {
-    Map<String, String> configuration =
-        VectorUtils.toJavaMap(scanState.getMap(COL_NAME_TO_ORDINAL.get("configuration")));
-    return ColumnMapping.getColumnMappingMode(configuration);
+    return ColumnMapping.getColumnMappingMode(getConfiguration(scanState));
   }
 
   /**

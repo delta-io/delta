@@ -458,6 +458,11 @@ public final class DeltaErrors {
             tablePath, TableConfig.APPEND_ONLY_ENABLED.getKey()));
   }
 
+  public static KernelException rowTrackingMetadataMissingInFile(String entry, String filePath) {
+    return new KernelException(
+        String.format("Required metadata key %s is not present in scan file %s.", entry, filePath));
+  }
+
   /* ------------------------ HELPER METHODS ----------------------------- */
   private static String formatTimestamp(long millisSinceEpochUTC) {
     return new Timestamp(millisSinceEpochUTC).toInstant().toString();

@@ -34,7 +34,14 @@ public class StructField {
   ////////////////////////////////////////////////////////////////////////////////
 
   /** Indicates a metadata column when present in the field metadata and the value is true */
+  // TODO: Make this private once we migrate to the new metadata column API.
   public static final String IS_METADATA_COLUMN_KEY = "isMetadataColumn";
+
+  /**
+   * Indicates that a column was requested for internal computations and should not be returned to
+   * the user.
+   */
+  public static final String IS_INTERNAL_COLUMN_KEY = "isInternalColumn";
 
   /**
    * The name of a row index metadata column. When present this column must be populated with row
@@ -139,6 +146,10 @@ public class StructField {
 
   public boolean isDataColumn() {
     return !isMetadataColumn();
+  }
+
+  public boolean isInternalColumn() {
+    return Optional.ofNullable(metadata.getBoolean(IS_INTERNAL_COLUMN_KEY)).orElse(false);
   }
 
   @Override
