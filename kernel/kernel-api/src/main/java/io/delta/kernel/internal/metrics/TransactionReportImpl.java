@@ -57,7 +57,7 @@ public class TransactionReportImpl extends DeltaOperationReportImpl implements T
       Optional<Long> committedVersion,
       Optional<List<Column>> clusteringColumns,
       TransactionMetrics transactionMetrics,
-      SnapshotReport snapshotReport,
+      Optional<SnapshotReport> snapshotReport,
       Optional<Exception> exception) {
     super(tablePath, exception);
     this.operation = requireNonNull(operation);
@@ -66,18 +66,18 @@ public class TransactionReportImpl extends DeltaOperationReportImpl implements T
     this.committedVersion = committedVersion;
     this.clusteringColumns = requireNonNull(clusteringColumns).orElse(Collections.emptyList());
     requireNonNull(snapshotReport);
-    checkArgument(
-        !snapshotReport.getException().isPresent(),
-        "Expected a successful SnapshotReport provided report has exception");
-    checkArgument(
-        snapshotReport.getVersion().isPresent(),
-        "Expected a successful SnapshotReport but missing version");
-    this.snapshotVersion = requireNonNull(snapshotReport).getVersion().get();
-    if (snapshotVersion < 0) {
-      // For a new table, no Snapshot is actually loaded and thus no SnapshotReport is emitted
-      this.snapshotReportUUID = Optional.empty();
+    if (snapshotReport.isPresent()) {
+      checkArgument(
+          !snapshotReport.get().getException().isPresent(),
+          "Expected a successful SnapshotReport provided report has exception");
+      checkArgument(
+          snapshotReport.get().getVersion().isPresent(),
+          "Expected a successful SnapshotReport but missing version");
+      this.snapshotVersion = snapshotReport.get().getVersion().get();
+      this.snapshotReportUUID = Optional.of(snapshotReport.get().getReportUUID());
     } else {
-      this.snapshotReportUUID = Optional.of(snapshotReport.getReportUUID());
+      this.snapshotVersion = -1;
+      this.snapshotReportUUID = Optional.empty();
     }
   }
 

@@ -177,7 +177,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
       Optional.of(Collections.singletonList(
         new Column(Array[String]("test-clustering-col1", "nested")))),
       transactionMetrics1,
-      snapshotReport1,
+      Optional.of(snapshotReport1),
       Optional.of(exception))
 
     // Manually check expected JSON
@@ -220,7 +220,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
       Optional.of(Collections.singletonList(new Column("test-clustering-col1"))),
       // empty/un-incremented transaction metrics
       TransactionMetrics.withExistingTableFileSizeHistogram(Optional.empty()),
-      snapshotReport2,
+      Optional.of(snapshotReport2),
       Optional.empty() /* exception */
     )
     testTransactionReport(transactionReport2)

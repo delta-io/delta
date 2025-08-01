@@ -262,7 +262,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
           false, // isCreateOrReplace
           table.getDataPath(),
           table.getLogPath(),
-          latestSnapshot.get(),
+          latestSnapshot,
           engineInfo,
           operation,
           latestSnapshot.get().getProtocol(), // reuse latest protocol
@@ -327,14 +327,6 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     Optional<Protocol> newProtocol = updatedProtocolAndMetadata._1;
     Optional<Metadata> newMetadata = updatedProtocolAndMetadata._2;
 
-    if (!latestSnapshot.isPresent()) {
-      // For now, we generate an empty snapshot (with version -1) for a new table. In the future,
-      // we should define an internal interface to expose just the information the transaction
-      // needs instead of the entire SnapshotImpl class. This should also let us avoid creating
-      // this fake empty initial snapshot.
-      latestSnapshot = Optional.of(getInitialEmptySnapshot(engine, baseMetadata, baseProtocol));
-    }
-
     // Block this for now - in a future PR we will enable this
     if (operation == Operation.REPLACE_TABLE) {
       if (newProtocol
@@ -351,7 +343,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         isCreateOrReplace,
         table.getDataPath(),
         table.getLogPath(),
-        latestSnapshot.get(),
+        latestSnapshot,
         engineInfo,
         operation,
         newProtocol.orElse(baseProtocol),
@@ -738,62 +730,6 @@ public class TransactionBuilderImpl implements TransactionBuilder {
 
     MaterializedRowTrackingColumn.throwIfColumnNamesConflictWithSchema(newMetadata);
     return updatedMetadata;
-  }
-
-  private SnapshotImpl getInitialEmptySnapshot(
-      Engine engine, Metadata metadata, Protocol protocol) {
-    SnapshotQueryContext snapshotContext =
-        SnapshotQueryContext.forVersionSnapshot(table.getPath(engine), -1);
-    LogReplay logReplay =
-        getEmptyLogReplay(engine, metadata, protocol, snapshotContext.getSnapshotMetrics());
-    return new InitialSnapshot(table.getDataPath(), logReplay, metadata, protocol, snapshotContext);
-  }
-
-  private class InitialSnapshot extends SnapshotImpl {
-    InitialSnapshot(
-        Path dataPath,
-        LogReplay logReplay,
-        Metadata metadata,
-        Protocol protocol,
-        SnapshotQueryContext snapshotContext) {
-      super(
-          dataPath,
-          LogSegment.empty(table.getLogPath()),
-          logReplay,
-          protocol,
-          metadata,
-          snapshotContext);
-    }
-
-    @Override
-    public long getTimestamp(Engine engine) {
-      return -1L;
-    }
-  }
-
-  private LogReplay getEmptyLogReplay(
-      Engine engine, Metadata metadata, Protocol protocol, SnapshotMetrics snapshotMetrics) {
-    return new LogReplay(
-        table.getDataPath(),
-        engine,
-        new Lazy<>(() -> LogSegment.empty(table.getLogPath())),
-        Optional.empty(),
-        snapshotMetrics) {
-
-      @Override
-      protected Tuple2<Protocol, Metadata> loadTableProtocolAndMetadata(
-          Engine engine,
-          LogSegment logSegment,
-          Optional<SnapshotHint> snapshotHint,
-          long snapshotVersion) {
-        return new Tuple2<>(protocol, metadata);
-      }
-
-      @Override
-      public Optional<Long> getLatestTransactionIdentifier(Engine engine, String applicationId) {
-        return Optional.empty();
-      }
-    };
   }
 
   private Metadata getInitialMetadata() {
