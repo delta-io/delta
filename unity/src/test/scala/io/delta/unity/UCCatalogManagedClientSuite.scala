@@ -24,7 +24,6 @@ import scala.collection.mutable.ArrayBuffer
 
 import io.delta.kernel.internal.SnapshotImpl
 import io.delta.kernel.internal.files.ParsedLogData.ParsedLogType
-import io.delta.kernel.internal.table.ResolvedTableInternal
 import io.delta.kernel.internal.tablefeatures.TableFeatures.{CATALOG_MANAGED_R_W_FEATURE_PREVIEW, TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
 import io.delta.kernel.internal.util.FileNames
 import io.delta.storage.commit.Commit
