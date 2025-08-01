@@ -55,7 +55,6 @@ object MockSnapshotUtils {
       Optional.empty(), /* name */
       Optional.empty(), /* description */
       new Format(),
-      testSchema.toJson,
       testSchema,
       buildArrayValue(java.util.Arrays.asList("c3"), StringType.STRING),
       Optional.of(123),
