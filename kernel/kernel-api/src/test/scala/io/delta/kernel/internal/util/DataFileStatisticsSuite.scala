@@ -456,4 +456,302 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
       ": expected integer, but found string"
     assert(exception.getMessage === expectedMessage)
   }
+
+  test("deserializeFromJson handles all data types correctly") {
+    val json =
+      """{
+        |  "numRecords": 100,
+        |  "minValues": {
+        |    "ByteType": 1,
+        |    "ShortType": 1,
+        |    "IntegerType": 1,
+        |    "LongType": 1,
+        |    "FloatType": 0.1,
+        |    "DoubleType": 0.1,
+        |    "DecimalType": 123.45,
+        |    "StringType": "a",
+        |    "DateType": "1970-01-02",
+        |    "TimestampType": "1970-01-01T00:00:00.001Z",
+        |    "TimestampNTZType": "1970-01-01T00:00:00.001",
+        |    "BinaryType": "a",
+        |    "BooleanType": true
+        |  },
+        |  "maxValues": {
+        |    "ByteType": 10,
+        |    "ShortType": 10,
+        |    "IntegerType": 10,
+        |    "LongType": 10,
+        |    "FloatType": 10.1,
+        |    "DoubleType": 10.1,
+        |    "DecimalType": 456.78,
+        |    "StringType": "z",
+        |    "DateType": "1970-01-11",
+        |    "TimestampType": "1970-01-01T00:00:00.010Z",
+        |    "TimestampNTZType": "1970-01-01T00:00:00.010",
+        |    "BinaryType": "z",
+        |    "BooleanType": false
+        |  },
+        |  "nullCount": {
+        |    "ByteType": 1,
+        |    "StringType": 2,
+        |    "DecimalType": 0,
+        |    "BooleanType": 5
+        |  }
+        |}""".stripMargin
+
+    val result = StatsUtils.deserializeFromJson(json)
+    assert(result.isPresent)
+
+    val stats = result.get()
+    assert(stats.getNumRecords == 100)
+
+    // Verify specific data types are parsed correctly
+    val minValues = stats.getMinValues
+    assert(minValues.get(new Column("ByteType")).getValue == 1.toByte)
+    assert(minValues.get(new Column("IntegerType")).getValue == 1)
+    assert(minValues.get(new Column("FloatType")).getValue == 0.1)
+    assert(minValues.get(new Column("StringType")).getValue == "a")
+    assert(minValues.get(new Column("BooleanType")).getValue == true)
+
+    val maxValues = stats.getMaxValues
+    assert(maxValues.get(new Column("LongType")).getValue == 10L)
+    assert(maxValues.get(new Column("DoubleType")).getValue == 10.1)
+    assert(maxValues.get(new Column("BooleanType")).getValue == false)
+
+    val nullCount = stats.getNullCount
+    assert(nullCount.get(new Column("ByteType")) == 1L)
+    assert(nullCount.get(new Column("StringType")) == 2L)
+    assert(nullCount.get(new Column("DecimalType")) == 0L)
+  }
+
+  test("deserializeFromJson handles nested structures correctly") {
+    val json =
+      """{
+        |  "numRecords": 50,
+        |  "minValues": {
+        |    "simple": "value1",
+        |    "nested": {
+        |      "field1": 10,
+        |      "deep": {
+        |        "field2": "nested_value",
+        |        "deeper": {
+        |          "field3": 42
+        |        }
+        |      }
+        |    }
+        |  },
+        |  "maxValues": {
+        |    "simple": "value2",
+        |    "nested": {
+        |      "field1": 100,
+        |      "deep": {
+        |        "field2": "zzz_value"
+        |      }
+        |    }
+        |  },
+        |  "nullCount": {
+        |    "simple": 0,
+        |    "nested": {
+        |      "field1": 5,
+        |      "deep": {
+        |        "field2": 2,
+        |        "deeper": {
+        |          "field3": 1
+        |        }
+        |      }
+        |    }
+        |  }
+        |}""".stripMargin
+
+    val result = StatsUtils.deserializeFromJson(json)
+    assert(result.isPresent)
+
+    val stats = result.get()
+    assert(stats.getNumRecords == 50)
+
+    // Test simple column
+    val minValues = stats.getMinValues
+    assert(minValues.get(new Column("simple")).getValue == "value1")
+
+    // Test nested columns with different path depths
+    assert(minValues.get(new Column(Array("nested", "field1"))).getValue == 10)
+    assert(minValues.get(new Column(Array("nested", "deep", "field2"))).getValue == "nested_value")
+    assert(minValues.get(new Column(Array("nested", "deep", "deeper", "field3"))).getValue == 42)
+
+    // Test that max values work for nested too
+    val maxValues = stats.getMaxValues
+    assert(maxValues.get(new Column(Array("nested", "field1"))).getValue == 100)
+    assert(maxValues.get(new Column(Array("nested", "deep", "field2"))).getValue == "zzz_value")
+
+    // Test null counts for nested
+    val nullCount = stats.getNullCount
+    assert(nullCount.get(new Column(Array("nested", "field1"))) == 5L)
+    assert(nullCount.get(new Column(Array("nested", "deep", "deeper", "field3"))) == 1L)
+  }
+
+  test("round-trip serialization and deserialization consistency") {
+    val nestedStructType = new StructType()
+      .add("aa", StringType.STRING)
+      .add("ac", new StructType().add("aca", IntegerType.INTEGER))
+
+    val schema = new StructType()
+      .add("IntegerType", IntegerType.INTEGER)
+      .add("StringType", StringType.STRING)
+      .add("DoubleType", DoubleType.DOUBLE)
+      .add("NestedStruct", nestedStructType)
+
+    val minValues = Map(
+      new Column("IntegerType") -> Literal.ofInt(1),
+      new Column("StringType") -> Literal.ofString("a"),
+      new Column("DoubleType") -> Literal.ofDouble(0.1),
+      new Column(Array("NestedStruct", "aa")) -> Literal.ofString("nested_a"),
+      new Column(Array("NestedStruct", "ac", "aca")) -> Literal.ofInt(5)).asJava
+
+    val maxValues = Map(
+      new Column("IntegerType") -> Literal.ofInt(100),
+      new Column("StringType") -> Literal.ofString("z"),
+      new Column("DoubleType") -> Literal.ofDouble(99.9),
+      new Column(Array("NestedStruct", "aa")) -> Literal.ofString("nested_z"),
+      new Column(Array("NestedStruct", "ac", "aca")) -> Literal.ofInt(50)).asJava
+
+    val nullCount = Map(
+      new Column("IntegerType") -> 2L,
+      new Column("StringType") -> 0L,
+      new Column(Array("NestedStruct", "aa")) -> 1L).map { case (k, v) =>
+      (k, java.lang.Long.valueOf(v))
+    }.asJava
+
+    val originalStats = new DataFileStatistics(123L, minValues, maxValues, nullCount)
+
+    // Serialize then deserialize
+    val json = originalStats.serializeAsJson(schema)
+    val deserializedOpt = StatsUtils.deserializeFromJson(json)
+
+    assert(deserializedOpt.isPresent)
+    val deserializedStats = deserializedOpt.get()
+
+    // Verify they are equal
+    assert(deserializedStats.getNumRecords == originalStats.getNumRecords)
+    assert(deserializedStats.getMinValues.size() == originalStats.getMinValues.size())
+    assert(deserializedStats.getMaxValues.size() == originalStats.getMaxValues.size())
+    assert(deserializedStats.getNullCount.size() == originalStats.getNullCount.size())
+
+    // Verify specific values match
+    assert(deserializedStats.getMinValues.get(new Column("IntegerType")).getValue == 1)
+    assert(deserializedStats.getMaxValues.get(new Column(Array(
+      "NestedStruct",
+      "ac",
+      "aca"))).getValue == 50)
+    assert(deserializedStats.getNullCount.get(new Column("StringType")) == 0L)
+  }
+
+  test("deserializeFromJson handles NaN and Infinity correctly") {
+    val json =
+      """{
+        |  "numRecords": 10,
+        |  "minValues": {
+        |    "FloatType": "NaN",
+        |    "DoubleType": "-Infinity"
+        |  },
+        |  "maxValues": {
+        |    "FloatType": "Infinity",
+        |    "DoubleType": "NaN"
+        |  },
+        |  "nullCount": {
+        |    "FloatType": 1,
+        |    "DoubleType": 2
+        |  }
+        |}""".stripMargin
+
+    val result = StatsUtils.deserializeFromJson(json)
+    assert(result.isPresent)
+
+    val stats = result.get()
+    assert(stats.getNumRecords == 10)
+
+    val minValues = stats.getMinValues
+    val maxValues = stats.getMaxValues
+
+    // Test NaN and Infinity values
+    assert(
+      java.lang.Double.isNaN(minValues.get(new Column("FloatType")).getValue.asInstanceOf[Double]))
+    assert(minValues.get(new Column("DoubleType")).getValue == Double.NegativeInfinity)
+    assert(maxValues.get(new Column("FloatType")).getValue == Double.PositiveInfinity)
+    assert(
+      java.lang.Double.isNaN(maxValues.get(new Column("DoubleType")).getValue.asInstanceOf[Double]))
+
+    val nullCount = stats.getNullCount
+    assert(nullCount.get(new Column("FloatType")) == 1L)
+    assert(nullCount.get(new Column("DoubleType")) == 2L)
+  }
+
+  test("deserializeFromJson handles empty stats correctly") {
+    val json =
+      """{
+        |  "numRecords": 42,
+        |  "minValues": {},
+        |  "maxValues": {},
+        |  "nullCount": {}
+        |}""".stripMargin
+
+    val result = StatsUtils.deserializeFromJson(json)
+    assert(result.isPresent)
+
+    val stats = result.get()
+    assert(stats.getNumRecords == 42)
+    assert(stats.getMinValues.isEmpty)
+    assert(stats.getMaxValues.isEmpty)
+    assert(stats.getNullCount.isEmpty)
+  }
+
+  test("deserializeFromJson handles partial nested objects correctly") {
+    val json =
+      """{
+        |  "numRecords": 25,
+        |  "minValues": {
+        |    "simple": "value",
+        |    "nested": {
+        |      "field1": 10
+        |    }
+        |  },
+        |  "maxValues": {
+        |    "nested": {
+        |      "field2": "different_field"
+        |    },
+        |    "other": 99
+        |  },
+        |  "nullCount": {
+        |    "simple": 1,
+        |    "nested": {
+        |      "field1": 0,
+        |      "field2": 5
+        |    }
+        |  }
+        |}""".stripMargin
+
+    val result = StatsUtils.deserializeFromJson(json)
+    assert(result.isPresent)
+
+    val stats = result.get()
+    assert(stats.getNumRecords == 25)
+
+    val minValues = stats.getMinValues
+    val maxValues = stats.getMaxValues
+    val nullCount = stats.getNullCount
+
+    // minValues has simple + nested.field1
+    assert(minValues.get(new Column("simple")).getValue == "value")
+    assert(minValues.get(new Column(Array("nested", "field1"))).getValue == 10)
+    assert(minValues.get(new Column(Array("nested", "field2"))) == null) // not present in minValues
+
+    // maxValues has nested.field2 + other (different structure)
+    assert(maxValues.get(new Column("simple")) == null) // not present in maxValues
+    assert(maxValues.get(new Column(Array("nested", "field2"))).getValue == "different_field")
+    assert(maxValues.get(new Column("other")).getValue == 99)
+
+    // nullCount has both fields under nested
+    assert(nullCount.get(new Column("simple")) == 1L)
+    assert(nullCount.get(new Column(Array("nested", "field1"))) == 0L)
+    assert(nullCount.get(new Column(Array("nested", "field2"))) == 5L)
+  }
 }

@@ -43,7 +43,7 @@ import java.util.Objects;
  * truncation, prior to constructing this class.
  */
 public class DataFileStatistics {
-  private static final DateTimeFormatter TIMESTAMP_FORMATTER =
+  public static final DateTimeFormatter TIMESTAMP_FORMATTER =
       DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSX");
   public static final OffsetDateTime EPOCH = Instant.ofEpochSecond(0).atOffset(ZoneOffset.UTC);
 
