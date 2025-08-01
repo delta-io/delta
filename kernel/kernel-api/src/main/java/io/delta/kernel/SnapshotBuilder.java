@@ -34,7 +34,8 @@ import java.util.List;
  * by reading from the filesystem as needed.
  *
  * <p>If no version is specified, the builder will resolve to the latest version. Depending on the
- * {@link ParsedLogData} provided, Kernel can avoid expensive filesystem operations.
+ * {@link ParsedLogData} provided, Kernel can avoid expensive filesystem operations to improve
+ * performance.
  */
 @Experimental
 public interface SnapshotBuilder {
@@ -69,12 +70,12 @@ public interface SnapshotBuilder {
    * Provides parsed log data to optimize table resolution.
    *
    * <p>When log data is provided, Kernel can avoid reading from the filesystem for information that
-   * is already available in the parsed data, improving performance.
+   * is already available in the parsed data, improving performance. Currently, only log data of
+   * type {@link ParsedLogType#RATIFIED_STAGED_COMMIT} is supported.
    *
    * @param logData the parsed log data to use for optimization
    * @return a new builder instance with the provided log data
    */
-  /** For now, only log datas of type {@link ParsedLogType#RATIFIED_STAGED_COMMIT}s are supported */
   SnapshotBuilder withLogData(List<ParsedLogData> logData);
 
   /**
@@ -95,10 +96,10 @@ public interface SnapshotBuilder {
    * Constructs the {@link Snapshot} using the provided engine.
    *
    * <p>This method will read any missing information from the filesystem using the provided engine
-   * to complete the table resolution process.
+   * to complete the snapshot resolution process.
    *
    * @param engine the engine to use for filesystem operations
-   * @return the resolved table instance
+   * @return the resolved snapshot instance
    */
   Snapshot build(Engine engine);
 }

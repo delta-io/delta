@@ -38,9 +38,13 @@ import java.util.Optional;
 /**
  * Factory class responsible for creating {@link Snapshot} instances.
  *
+ * <p>This factory takes validated parameters from {@link SnapshotBuilderImpl} and orchestrates the
+ * actual snapshot creation process. It handles path resolution, log segment loading, and
+ * coordinates with various internal components to construct a fully initialized {@link Snapshot}.
+ *
  * <p>Note: The {@link SnapshotBuilderImpl} is responsible for receiving and validating all builder
  * parameters, and then passing that information to this factory to actually create the {@link
- * Snapshot}
+ * Snapshot}.
  */
 class SnapshotFactory {
 

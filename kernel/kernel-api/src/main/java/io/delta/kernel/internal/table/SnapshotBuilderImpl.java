@@ -81,7 +81,6 @@ public class SnapshotBuilderImpl implements SnapshotBuilder {
     return this;
   }
 
-  /** For now, only log datas of type {@link ParsedLogType#RATIFIED_STAGED_COMMIT}s are supported */
   @Override
   public SnapshotBuilderImpl withLogData(List<ParsedLogData> logDatas) {
     ctx.logDatas = requireNonNull(logDatas, "logDatas is null");
