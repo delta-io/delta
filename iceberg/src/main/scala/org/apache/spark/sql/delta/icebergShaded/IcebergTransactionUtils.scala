@@ -72,7 +72,8 @@ object IcebergTransactionUtils
     // Recall that FileActions can have either relative paths or absolute paths (i.e. from shallow-
     // cloned files).
     // Iceberg spec requires path be fully qualified path, suitable for constructing a Hadoop Path
-    if (f.pathAsUri.isAbsolute) f.path else new Path(tablePath, f.toPath.toString).toString
+    if (f.pathAsUri.isAbsolute) new Path(f.pathAsUri).toString
+    else new Path(tablePath, f.toPath.toString).toString
   }
 
   /** Returns the (deletions, additions) iceberg table property changes. */
