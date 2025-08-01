@@ -24,13 +24,19 @@ import io.delta.kernel.annotation.Evolving;
  */
 @Evolving
 public class ConcurrentWriteException extends KernelException {
+  static final String msg =
+      "Transaction has encountered a conflict and can not be committed. "
+          + "Query needs to be re-executed using the latest version of the table.";
+
   public ConcurrentWriteException() {
-    super(
-        "Transaction has encountered a conflict and can not be committed. "
-            + "Query needs to be re-executed using the latest version of the table.");
+    super(msg);
   }
 
   public ConcurrentWriteException(String message) {
     super(message);
+  }
+
+  public ConcurrentWriteException(Throwable cause) {
+    super(msg, cause);
   }
 }
