@@ -327,13 +327,17 @@ public class TransactionImpl implements Transaction {
               engine, commitAsVersion, attemptCommitInfo, dataActions, transactionMetrics);
         } catch (CommitFailedException cfe) {
           if (!cfe.isRetryable()) {
+            // Case 1: Non-retryable exception. We must throw this.
             logger.error(
                 "Commit attempt for version {} failed with a non-retryable exception and will not "
                     + "be retried. Error: {}",
                 commitAsVersion,
                 cfe.getMessage());
+
             throw new RuntimeException(cfe);
           } else if (numTries >= maxRetries) {
+            // Case 2: Despite the error being retryable, we have exhausted the maximum number of
+            // retries. Will have to throw here, too.
             logger.error(
                 "Commit attempt for version {} failed with a retryable exception but will not be "
                     + "retried because the maximum number of retries ({}) has been exhausted. "
@@ -341,8 +345,16 @@ public class TransactionImpl implements Transaction {
                 commitAsVersion,
                 maxRetries,
                 cfe.getMessage());
-            throw new RuntimeException(cfe);
+
+            if (cfe.isConflict()) {
+              // Case 2A: We know why this commit failed, so we can throw a more specific exception.
+              throw new ConcurrentWriteException(cfe);
+            } else {
+              // Case 2B: We don't know why this commit failed, so we throw a generic exception.
+              throw new RuntimeException(cfe);
+            }
           } else if (cfe.isConflict()) {
+            // Case 3: Retryable exception due to a conflict. We will resolve the conflict and retry
             logger.warn(
                 "Commit attempt for version {} failed with a retryable exception due to a physical "
                     + "conflict. Performing conflict resolution and trying again. Error: {}",
@@ -356,7 +368,7 @@ public class TransactionImpl implements Transaction {
             domainMetadataState.setComputedDomainMetadatas(rebaseState.getUpdatedDomainMetadatas());
             currentCrcInfo = rebaseState.getUpdatedCrcInfo();
           } else {
-            // No conflict so no conflict resolution needed - just retry with same version
+            // Case 4: No conflict so no conflict resolution needed - just retry with same version.
 
             logger.warn(
                 "Commit attempt for version {} failed with a retryable exception due to a "

@@ -1365,42 +1365,68 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     }
   }
 
-  test("Transaction will fail upon hitting max retries limit") {
-    withTempDirAndEngine { (tablePath, engine) =>
-      val table = Table.forPath(engine, tablePath)
-      val initialTxn = createWriteTxnBuilder(table)
-        .withSchema(engine, testSchema)
-        .build(engine)
-      commitTransaction(initialTxn, engine, emptyIterable())
+  case class MaxRetriesTestCase(
+      description: String,
+      isConflictOnFinalAttempt: Boolean,
+      expectedExceptionType: Class[_])
 
-      var attemptCount = 0
-      val maxRetries = 2 // Allow 3 total attempts (0, 1, 2)
+  Seq(
+    MaxRetriesTestCase(
+      description = "non-conflict case",
+      isConflictOnFinalAttempt = false,
+      expectedExceptionType = classOf[RuntimeException]),
+    MaxRetriesTestCase(
+      description = "conflict case",
+      isConflictOnFinalAttempt = true,
+      expectedExceptionType = classOf[ConcurrentWriteException])).foreach { testCase =>
+    test(s"Transaction will fail upon hitting max retries limit - ${testCase.description}") {
+      withTempDirAndEngine { (tablePath, engine) =>
+        val table = Table.forPath(engine, tablePath)
+        val initialTxn = createWriteTxnBuilder(table)
+          .withSchema(engine, testSchema)
+          .build(engine)
+        commitTransaction(initialTxn, engine, emptyIterable())
 
-      val fileIO = new HadoopFileIO(new Configuration())
+        var attemptCount = 0
+        val maxRetries = 2 // Allow 3 total attempts (0, 1, 2)
 
-      class AlwaysFailingJsonHandler extends DefaultJsonHandler(fileIO) {
-        override def writeJsonFileAtomically(
-            filePath: String,
-            data: CloseableIterator[Row],
-            overwrite: Boolean): Unit = {
-          attemptCount += 1
-          throw new java.io.IOException(s"Persistent transient error on attempt $attemptCount")
+        val fileIO = new HadoopFileIO(new Configuration())
+
+        class FailingJsonHandler extends DefaultJsonHandler(fileIO) {
+          override def writeJsonFileAtomically(
+              filePath: String,
+              data: CloseableIterator[Row],
+              overwrite: Boolean): Unit = {
+            attemptCount += 1
+            if (attemptCount <= 2) {
+              // First 2 attempts: throw IOException (retryable, non-conflict)
+              throw new java.io.IOException(s"Transient error on attempt $attemptCount")
+            } else {
+              // 3rd attempt: throw different exception based on test case
+              if (testCase.isConflictOnFinalAttempt) {
+                throw new FileAlreadyExistsException(s"$filePath already exists")
+              } else {
+                throw new java.io.IOException(s"Persistent error on attempt $attemptCount")
+              }
+            }
+          }
         }
+
+        class FailingEngine extends DefaultEngine(fileIO) {
+          override def getJsonHandler: JsonHandler = new FailingJsonHandler()
+        }
+
+        val failingEngine = new FailingEngine()
+
+        val txn = createWriteTxnBuilder(table).withMaxRetries(maxRetries).build(failingEngine)
+
+        val ex = intercept[Exception] {
+          commitTransaction(txn, failingEngine, emptyIterable())
+        }
+
+        assert(attemptCount == 3)
+        assert(testCase.expectedExceptionType.isInstance(ex))
       }
-
-      class AlwaysFailingEngine extends DefaultEngine(fileIO) {
-        override def getJsonHandler: JsonHandler = new AlwaysFailingJsonHandler()
-      }
-
-      val alwaysFailingEngine = new AlwaysFailingEngine()
-
-      val txn = createWriteTxnBuilder(table).withMaxRetries(maxRetries).build(alwaysFailingEngine)
-
-      intercept[RuntimeException] {
-        commitTransaction(txn, alwaysFailingEngine, emptyIterable())
-      }
-
-      assert(attemptCount == 3)
     }
   }
 
