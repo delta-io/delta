@@ -252,11 +252,6 @@ class ParquetSchemaUtils {
    */
   public static Type validateAndGetThreeLevelParquetArrayElementType(GroupType arrayGroupType) {
     checkArgument(
-        arrayGroupType.getLogicalTypeAnnotation()
-            instanceof LogicalTypeAnnotation.ListLogicalTypeAnnotation,
-        "Expected a LIST logical type, but got: %s",
-        arrayGroupType);
-    checkArgument(
         arrayGroupType.getFieldCount() == 1,
         "In Parquet's 3-level structure, group type must only contain one sub field: %s",
         arrayGroupType);
