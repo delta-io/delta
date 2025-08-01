@@ -341,11 +341,11 @@ public class TransactionImpl implements Transaction {
                 commitAsVersion,
                 maxRetries,
                 cfe.getMessage());
-            throw new ConcurrentWriteException();
+            throw new RuntimeException(cfe);
           } else if (cfe.isConflict()) {
             logger.warn(
-                "Commit attempt for version {} failed with a retryable exception due to a "
-                    + "physical conflict. Error: {}",
+                "Commit attempt for version {} failed with a retryable exception due to a physical "
+                    + "conflict. Performing conflict resolution and trying again. Error: {}",
                 commitAsVersion,
                 cfe.getMessage());
 
@@ -355,12 +355,8 @@ public class TransactionImpl implements Transaction {
             dataActions = rebaseState.getUpdatedDataActions();
             domainMetadataState.setComputedDomainMetadatas(rebaseState.getUpdatedDomainMetadatas());
             currentCrcInfo = rebaseState.getUpdatedCrcInfo();
-            // Action counters may be partially incremented from previous tries, reset the counters
-            // to 0 and drop fileSizeHistogram
-            // TODO: reconcile fileSizeHistogram.
-            transactionMetrics.resetActionMetricsForRetry();
           } else {
-            // No conflict resolution needed - just retry with same version
+            // No conflict so no conflict resolution needed - just retry with same version
 
             logger.warn(
                 "Commit attempt for version {} failed with a retryable exception due to a "
@@ -368,6 +364,12 @@ public class TransactionImpl implements Transaction {
                 commitAsVersion,
                 cfe.getMessage());
           }
+          // We will be retrying the commit.
+          //
+          // Action counters may be partially incremented from previous tries, reset the counters
+          // to 0 and drop fileSizeHistogram
+          // TODO: reconcile fileSizeHistogram.
+          transactionMetrics.resetActionMetricsForRetry();
           numTries++;
         }
       }

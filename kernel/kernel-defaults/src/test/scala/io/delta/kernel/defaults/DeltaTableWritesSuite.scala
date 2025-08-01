@@ -16,7 +16,7 @@
 package io.delta.kernel.defaults
 
 import java.io.File
-import java.nio.file.Files
+import java.nio.file.{FileAlreadyExistsException, Files}
 import java.util.{Locale, Optional}
 
 import scala.collection.JavaConverters._
@@ -25,12 +25,14 @@ import scala.collection.immutable.Seq
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel._
 import io.delta.kernel.Operation.{CREATE_TABLE, MANUAL_UPDATE, WRITE}
-import io.delta.kernel.data.{ColumnarBatch, FilteredColumnarBatch, Row}
+import io.delta.kernel.data.{ColumnarBatch, ColumnVector, FilteredColumnarBatch, Row}
+import io.delta.kernel.defaults.engine.{DefaultEngine, DefaultJsonHandler}
+import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO
 import io.delta.kernel.defaults.internal.parquet.ParquetSuiteBase
 import io.delta.kernel.defaults.utils.TestRow
-import io.delta.kernel.engine.Engine
+import io.delta.kernel.engine.{Engine, JsonHandler}
 import io.delta.kernel.exceptions._
-import io.delta.kernel.expressions.Literal
+import io.delta.kernel.expressions.{Literal, Predicate}
 import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.internal.{ScanImpl, SnapshotImpl, TableConfig}
 import io.delta.kernel.internal.checkpoints.CheckpointerSuite.selectSingleElement
@@ -48,8 +50,10 @@ import io.delta.kernel.types.ShortType.SHORT
 import io.delta.kernel.types.StringType.STRING
 import io.delta.kernel.types.StructType
 import io.delta.kernel.types.TimestampType.TIMESTAMP
-import io.delta.kernel.utils.CloseableIterable
+import io.delta.kernel.utils.{CloseableIterable, CloseableIterator, FileStatus}
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
+
+import org.apache.hadoop.conf.Configuration
 
 /** Transaction commit in this suite IS REQUIRED TO use commitTransaction than .commit */
 class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
@@ -1237,4 +1241,170 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     schema.foreach(s => txnBuilder = txnBuilder.withSchema(engine, s))
     txnBuilder.build(engine)
   }
+
+  ///////////////////////////////////////////////////
+  // CommitFailedException Handling Tests -- START //
+  ///////////////////////////////////////////////////
+
+  test("Transaction will attempt to re-commit next file upon Retryable & Conflict error") {
+    import org.apache.spark.sql.functions.col
+
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val initialTxn = createWriteTxnBuilder(table)
+        .withSchema(engine, testSchema)
+        .build(engine)
+      commitTransaction(initialTxn, engine, emptyIterable()) // 000.json
+
+      assert(table.getLatestSnapshot(engine).getVersion == 0)
+
+      val kernelTxn = createWriteTxnBuilder(table).withMaxRetries(5).build(engine)
+
+      // Create 001.json -- this will make the engine throw a FileAlreadyExistsException when trying
+      // to write 001.json. The default committer will turn this into a CommitFailedException with
+      // isRetryable = true and isConflict = true.
+
+      spark.range(0, 10)
+        .select(col("id").cast("int"))
+        .write.format("delta").mode("append").save(tablePath)
+
+      assert(table.getLatestSnapshot(engine).getVersion == 1)
+
+      val result = commitTransaction(kernelTxn, engine, emptyIterable())
+
+      assert(result.getVersion == 2)
+      assert(result.getTransactionReport.getTransactionMetrics.getNumCommitAttempts == 2)
+    }
+  }
+
+  test("Transaction will attempt to re-commit same file upon Retryable & Non-Conflict error") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val initialTxn = createWriteTxnBuilder(table).withSchema(engine, testSchema).build(engine)
+      commitTransaction(initialTxn, engine, emptyIterable()) // 000.json
+
+      var attemptCount = 0
+      val maxRetries = 3
+      val attemptedFilePaths = scala.collection.mutable.Set[String]()
+
+      val fileIO = new HadoopFileIO(new Configuration())
+
+      class TransientErrorJsonHandler extends DefaultJsonHandler(fileIO) {
+        override def writeJsonFileAtomically(
+            filePath: String,
+            data: CloseableIterator[Row],
+            overwrite: Boolean): Unit = {
+          attemptCount += 1
+          attemptedFilePaths += filePath
+          if (attemptCount <= 2) {
+            // The default committer will turn this into a CommitFailedException with
+            // isRetryable = true and isConflict = false.
+            throw new java.io.IOException(s"Transient network error on attempt $attemptCount")
+          }
+          super.writeJsonFileAtomically(filePath, data, overwrite)
+        }
+      }
+
+      class TransientErrorEngine extends DefaultEngine(fileIO) {
+        override def getJsonHandler: JsonHandler = new TransientErrorJsonHandler()
+      }
+
+      val transientErrorEngine = new TransientErrorEngine()
+
+      val txn = createWriteTxnBuilder(table).withMaxRetries(maxRetries).build(transientErrorEngine)
+
+      val result = commitTransaction(txn, transientErrorEngine, emptyIterable())
+
+      assert(result.getVersion > 0)
+      assert(attemptCount == 3)
+      assert(attemptedFilePaths.size == 1) // we should only be attempting to write 001.json
+      assert(result.getTransactionReport.getTransactionMetrics.getNumCommitAttempts == 3)
+    }
+  }
+
+  test("Transaction will fail upon non-retryable error") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val initialTxn = createWriteTxnBuilder(table)
+        .withSchema(engine, testSchema)
+        .build(engine)
+      commitTransaction(initialTxn, engine, emptyIterable())
+
+      var attemptCount = 0
+      val maxRetries = 3
+
+      val fileIO = new HadoopFileIO(new Configuration())
+
+      class NonRetryableJsonHandler extends DefaultJsonHandler(fileIO) {
+        override def writeJsonFileAtomically(
+            filePath: String,
+            data: CloseableIterator[Row],
+            overwrite: Boolean): Unit = {
+          attemptCount += 1
+          // The default committer will turn this into a CommitFailedException with
+          // isRetryable = false and isConflict = false.
+          throw new SecurityException("Access denied - non-retryable error")
+        }
+      }
+
+      class NonRetryableEngine extends DefaultEngine(fileIO) {
+        override def getJsonHandler: JsonHandler = new NonRetryableJsonHandler()
+      }
+
+      val nonRetryableEngine = new NonRetryableEngine()
+
+      val txn = createWriteTxnBuilder(table).withMaxRetries(maxRetries).build(nonRetryableEngine)
+
+      val ex = intercept[RuntimeException] {
+        commitTransaction(txn, nonRetryableEngine, emptyIterable())
+      }
+
+      val commitEx = ex.getCause.asInstanceOf[io.delta.kernel.commit.CommitFailedException]
+      assert(!commitEx.isRetryable)
+      assert(attemptCount == 1)
+    }
+  }
+
+  test("Transaction will fail upon hitting max retries limit") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val initialTxn = createWriteTxnBuilder(table)
+        .withSchema(engine, testSchema)
+        .build(engine)
+      commitTransaction(initialTxn, engine, emptyIterable())
+
+      var attemptCount = 0
+      val maxRetries = 2 // Allow 3 total attempts (0, 1, 2)
+
+      val fileIO = new HadoopFileIO(new Configuration())
+
+      class AlwaysFailingJsonHandler extends DefaultJsonHandler(fileIO) {
+        override def writeJsonFileAtomically(
+            filePath: String,
+            data: CloseableIterator[Row],
+            overwrite: Boolean): Unit = {
+          attemptCount += 1
+          throw new java.io.IOException(s"Persistent transient error on attempt $attemptCount")
+        }
+      }
+
+      class AlwaysFailingEngine extends DefaultEngine(fileIO) {
+        override def getJsonHandler: JsonHandler = new AlwaysFailingJsonHandler()
+      }
+
+      val alwaysFailingEngine = new AlwaysFailingEngine()
+
+      val txn = createWriteTxnBuilder(table).withMaxRetries(maxRetries).build(alwaysFailingEngine)
+
+      intercept[RuntimeException] {
+        commitTransaction(txn, alwaysFailingEngine, emptyIterable())
+      }
+
+      assert(attemptCount == 3)
+    }
+  }
+
+  /////////////////////////////////////////////////
+  // CommitFailedException Handling Tests -- END //
+  /////////////////////////////////////////////////
 }
