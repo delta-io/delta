@@ -56,6 +56,7 @@ public class SchemaUtils {
               field.getName(),
               convertKernelDataTypeToSparkDataType(field.getDataType()),
               field.isNullable(),
+              // TODO: understand and plumb field metadata.
               Metadata.empty()));
     }
 
