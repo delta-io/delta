@@ -212,11 +212,9 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
         case "inner" => matchedExprs(i)
         case "leftOuter" =>
           // The source row is never null, so we only need to check if the target row is null.
-          assert(notMatchedBySourceExprs.isEmpty)
           If(ifTargetRowNull, notMatchedExprs(i), matchedExprs(i))
         case "rightOuter" =>
           // The target row is never null, so we only need to check if the source row is null.
-          assert(notMatchedExprs.isEmpty)
           If(ifSourceRowNull, notMatchedBySourceExprs(i), matchedExprs(i))
         case "fullOuter" =>
           CaseWhen(Seq(
