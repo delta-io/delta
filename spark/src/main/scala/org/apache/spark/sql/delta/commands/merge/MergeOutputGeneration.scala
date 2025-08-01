@@ -363,54 +363,60 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
       noopCopyExprs: Seq[Expression],
       writeUnmodifiedRows: Boolean
       ): Seq[Expression] = {
-    if (clauses.isEmpty) {
-      if (writeUnmodifiedRows) {
-        noopCopyExprs
-      } else {
-        Seq.empty
-      }
-    } else if (clauses.head.condition.isEmpty) {
-      // Only one clause without any condition, so the corresponding action expressions
-      // can be evaluated directly to generate the output columns.
-      clauses.head.actions
-    } else if (clauses.length == 1) {
-      // Only one clause _with_ a condition, so generate IF/THEN instead of CASE WHEN.
-      // For the i-th output column, generate
-      // IF <condition> THEN <execute i-th expression of action>
-      //                ELSE fallback (noopCopyExprs or RaiseError)
-      val condition = clauses.head.condition.get
-      clauses.head.actions.zipWithIndex.map { case (a, i) =>
+    val clauseExprs = {
+      if (clauses.isEmpty) {
         if (writeUnmodifiedRows) {
-          If(condition, a, noopCopyExprs(i))
+          noopCopyExprs
         } else {
-          If(condition, a, RaiseError(Literal("Unexpected row: did not match any merge clause")))
+          Seq.empty
         }
-      }
-    } else {
-      // There are multiple clauses. Use `CaseWhen` to conditionally evaluate the right
-      // action expressions to output columns
-      Seq.range(0, numOutputCols).map { i =>
+      } else if (clauses.head.condition.isEmpty) {
+        // Only one clause without any condition, so the corresponding action expressions
+        // can be evaluated directly to generate the output columns.
+        clauses.head.actions
+      } else if (clauses.length == 1) {
+        // Only one clause _with_ a condition, so generate IF/THEN instead of CASE WHEN.
         // For the i-th output column, generate
-        // CASE
-        //     WHEN <condition 1> THEN <execute i-th expression of action 1>
-        //     WHEN <condition 2> THEN <execute i-th expression of action 2>
-        //                        ...
-        //                        ELSE fallback (noopCopyExprs or RaiseError)
-        //
-        //
-        val conditionalBranches = clauses.map { precomp =>
-          precomp.condition.getOrElse(Literal.TrueLiteral) -> precomp.actions(i)
+        // IF <condition> THEN <execute i-th expression of action>
+        //                ELSE fallback (noopCopyExprs or RaiseError)
+        val condition = clauses.head.condition.get
+        clauses.head.actions.zipWithIndex.map { case (a, i) =>
+          if (writeUnmodifiedRows) {
+            If(condition, a, noopCopyExprs(i))
+          } else {
+            If(condition, a, RaiseError(Literal("Unexpected row: did not match any merge clause")))
+          }
         }
-        val elseBranch =
-          if (writeUnmodifiedRows) Some(noopCopyExprs(i))
-          else Some(
-            RaiseError(
-              Literal("Unexpected row: did not match any merge clause")
+      } else {
+        // There are multiple clauses. Use `CaseWhen` to conditionally evaluate the right
+        // action expressions to output columns
+        Seq.range(0, numOutputCols).map { i =>
+          // For the i-th output column, generate
+          // CASE
+          //     WHEN <condition 1> THEN <execute i-th expression of action 1>
+          //     WHEN <condition 2> THEN <execute i-th expression of action 2>
+          //                        ...
+          //                        ELSE fallback (noopCopyExprs or RaiseError)
+          //
+          //
+          val conditionalBranches = clauses.map { precomp =>
+            precomp.condition.getOrElse(Literal.TrueLiteral) -> precomp.actions(i)
+          }
+          val elseBranch =
+            if (writeUnmodifiedRows) Some(noopCopyExprs(i))
+            else Some(
+              RaiseError(
+                Literal("Unexpected row: did not match any merge clause")
+              )
             )
-          )
-        CaseWhen(conditionalBranches, elseBranch)
+          CaseWhen(conditionalBranches, elseBranch)
+        }
       }
     }
+    assert(clauseExprs.size == numOutputCols,
+      s"incorrect # expressions:\n\t" + seqToString(clauseExprs))
+    logDebug(s"writeAllChanges: expressions\n\t" + seqToString(clauseExprs))
+    clauseExprs
   }
 
   /**
