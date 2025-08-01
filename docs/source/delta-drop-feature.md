@@ -33,7 +33,7 @@ You cannot drop other [Delta table features](https://github.com/delta-io/delta/b
 
 ## What happens when a table feature is dropped?
 
-When you drop a table feature, Delta Lake atomically commits changes to the table to accomplish the following:
+When you drop a table feature, Delta Lake performs a series of atomic operations:
 
 - Disable table properties that use the table feature.
 - Rewrite data files as necessary to remove all traces of the table feature from the data files backing the table in the current version.
@@ -43,7 +43,7 @@ When you drop a table feature, Delta Lake atomically commits changes to the tabl
 
 ## What is the checkpointProtection table feature?
 
-When you drop a feature, Delta Lake rewrites data and metadata in the table's history as protected checkpoints to respect the protocol downgrade. After the downgrade, the table should always be readable by more reader clients. This is because the protocol for the table now reflects that support for the dropped feature is no longer required to read the table. The protected checkpoints and the checkpointProtection feature accomplish the following:
+When you drop a feature, Delta Lake rewrites data and metadata in the table's history as protected checkpoints to respect the protocol downgrade. After the downgrade, the table should always be readable by more clients. This is because the protocol for the table now reflects that support for the dropped feature is no longer required to read the table. The protected checkpoints and the checkpointProtection feature accomplish the following:
 
 - Reader clients that understand the dropped table feature can access all available table history.
 - Reader clients that do not support the dropped table feature only need to read the table history starting from the protocol downgrade version.
@@ -51,7 +51,7 @@ When you drop a feature, Delta Lake rewrites data and metadata in the table's hi
 - Table maintenance operations respect requirements set by `checkpointProtection`, which mark protocol downgrade checkpoints as protected.
 - While you can only drop one table feature with each DROP FEATURE command, a table can have multiple protected checkpoints and dropped features in its table history.
 
-The table feature `checkpointProtection` should not block read-only access from Delta Lake clients. To fully downgrade the table and remove the `checkpointProtection` table feature, you must use TRUNCATE HISTORY. The recommendation is to only using this pattern if you need to write to tables with external Delta clients that do not support checkpointProtection.
+The table feature `checkpointProtection` should not block read-only access from Delta Lake clients. To fully downgrade the table and remove the `checkpointProtection` table feature, you must use TRUNCATE HISTORY. The recommendation is to only use this pattern if you need to write to tables with external Delta clients that do not support checkpointProtection.
 
 
 ## Fully downgrade table protocols for legacy clients
