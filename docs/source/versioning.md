@@ -32,6 +32,7 @@ The following <Delta> features break forward compatibility. Features are enabled
    Identity columns, [Delta Lake 3.3.0](https://github.com/delta-io/delta/releases/tag/v3.3.0),[_](/delta-batch.md#use-identity-columns)
    Variant Type, [Delta Lake 4.0.0](https://github.com/delta-io/delta/releases/tag/v4.0.0),[Variant Type](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#variant-data-type)
    Variant Shredding (Preview), [Delta Lake 4.0.0](https://github.com/delta-io/delta/releases/tag/v4.0.0),[Variant Shredding](https://github.com/delta-io/delta/blob/master/protocol_rfcs/variant-shredding.md)
+   Checkpoint Protection, [Delta Lake 4.0.0](https://github.com/delta-io/delta/releases/tag/v4.0.0),[Checkpoint Protection](https://github.com/delta-io/delta/blob/master/protocol_rfcs/checkpoint-protection.md)
 
 <a id="table-protocol"></a>
 
