@@ -48,6 +48,7 @@ public class StatsSchemaHelper {
   public static final String MIN = "minValues";
   public static final String MAX = "maxValues";
   public static final String NULL_COUNT = "nullCount";
+  public static final String TIGHT_BOUNDS = "tightBounds";
 
   /**
    * Returns true if the given literal is skipping-eligible. Delta tracks min/max stats for a
@@ -72,30 +73,49 @@ public class StatsSchemaHelper {
    * <p>Here is an example of a data schema along with the schema of the statistics that would be
    * collected.
    *
-   * <p>Data Schema: {{{ |-- a: struct (nullable = true) | |-- b: struct (nullable = true) | | |--
-   * c: long (nullable = true) }}}
+   * <p>Data Schema:
    *
-   * <p>Collected Statistics: {{{ |-- stats: struct (nullable = true) | |-- numRecords: long
-   * (nullable = false) | |-- minValues: struct (nullable = false) | | |-- a: struct (nullable =
-   * false) | | | |-- b: struct (nullable = false) | | | | |-- c: long (nullable = true) | |--
-   * maxValues: struct (nullable = false) | | |-- a: struct (nullable = false) | | | |-- b: struct
-   * (nullable = false) | | | | |-- c: long (nullable = true) | |-- nullCount: struct (nullable =
-   * false) | | |-- a: struct (nullable = false) | | | |-- b: struct (nullable = false) | | | | |--
-   * c: long (nullable = true) }}}
+   * <pre>
+   * |-- a: struct (nullable = true)
+   * |  |-- b: struct (nullable = true)
+   * |  |  |-- c: long (nullable = true)
+   * </pre>
+   *
+   * <p>Collected Statistics:
+   *
+   * <pre>
+   * |-- stats: struct (nullable = true)
+   * |  |-- numRecords: long (nullable = false)
+   * |  |-- minValues: struct (nullable = false)
+   * |  |  |-- a: struct (nullable = false)
+   * |  |  |  |-- b: struct (nullable = false)
+   * |  |  |  |  |-- c: long (nullable = true)
+   * |  |-- maxValues: struct (nullable = false)
+   * |  |  |-- a: struct (nullable = false)
+   * |  |  |  |-- b: struct (nullable = false)
+   * |  |  |  |  |-- c: long (nullable = true)
+   * |  |-- nullCount: struct (nullable = false)
+   * |  |  |-- a: struct (nullable = false)
+   * |  |  |  |-- b: struct (nullable = false)
+   * |  |  |  |  |-- c: long (nullable = true)
+   * |  |-- tightBounds: boolean (nullable = true)
+   * </pre>
    */
   public static StructType getStatsSchema(StructType dataSchema) {
     StructType statsSchema = new StructType().add(NUM_RECORDS, LongType.LONG, true);
+
     StructType minMaxStatsSchema = getMinMaxStatsSchema(dataSchema);
     if (minMaxStatsSchema.length() > 0) {
-      statsSchema =
-          statsSchema
-              .add(MIN, getMinMaxStatsSchema(dataSchema), true)
-              .add(MAX, getMinMaxStatsSchema(dataSchema), true);
+      statsSchema = statsSchema.add(MIN, minMaxStatsSchema, true).add(MAX, minMaxStatsSchema, true);
     }
+
     StructType nullCountSchema = getNullCountSchema(dataSchema);
     if (nullCountSchema.length() > 0) {
-      statsSchema = statsSchema.add(NULL_COUNT, getNullCountSchema(dataSchema), true);
+      statsSchema = statsSchema.add(NULL_COUNT, nullCountSchema, true);
     }
+
+    statsSchema = statsSchema.add(TIGHT_BOUNDS, BooleanType.BOOLEAN, true);
+
     return statsSchema;
   }
 

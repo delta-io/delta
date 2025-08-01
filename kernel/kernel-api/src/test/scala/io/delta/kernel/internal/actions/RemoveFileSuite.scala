@@ -21,8 +21,9 @@ import java.util.Optional
 import scala.collection.JavaConverters._
 
 import io.delta.kernel.data.Row
-import io.delta.kernel.internal.util.{StatsUtils, VectorUtils}
+import io.delta.kernel.internal.util.VectorUtils
 import io.delta.kernel.internal.util.VectorUtils.stringStringMapValue
+import io.delta.kernel.statistics.DataFileStatistics
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -51,7 +52,7 @@ class RemoveFileSuite extends AnyFunSuite {
       dataChange,
       stringStringMapValue(partitionValues.asJava),
       size,
-      StatsUtils.deserializeFromJson(stats.getOrElse("")),
+      DataFileStatistics.deserializeFromJson(stats.getOrElse(""), null),
       null, // physicalSchema
       toJavaOptional(baseRowId.asInstanceOf[Option[JLong]]),
       toJavaOptional(defaultRowCommitVersion.asInstanceOf[Option[JLong]]),
@@ -84,8 +85,8 @@ class RemoveFileSuite extends AnyFunSuite {
     assert(removeFile.getPartitionValues.isPresent &&
       VectorUtils.toJavaMap(removeFile.getPartitionValues.get).asScala.equals(Map("a" -> "1")))
     assert(removeFile.getSize == Optional.of(55555L))
-    assert(removeFile.getStats.isPresent &&
-      removeFile.getStats.get.serializeAsJson(null) == "{\"numRecords\":100}")
+    assert(removeFile.getStats(null).isPresent &&
+      removeFile.getStats(null).get.serializeAsJson(null) == "{\"numRecords\":100}")
     assert(!removeFile.getTags.isPresent)
     assert(removeFile.getDeletionVector.isPresent)
     assert(removeFile.getDeletionVector.get == deletionVectorDescriptor)
@@ -119,8 +120,9 @@ class RemoveFileSuite extends AnyFunSuite {
     assert(removeFile.getPartitionValues.isPresent &&
       VectorUtils.toJavaMap(removeFile.getPartitionValues.get).asScala.equals(Map("a" -> "1")))
     assert(removeFile.getSize == Optional.of(55555L))
-    assert(removeFile.getStats.isPresent &&
-      removeFile.getStats.get.serializeAsJson(null) == "{\"numRecords\":100}")
+    assert(removeFile.getStats(null).isPresent &&
+      removeFile.getStats(
+        null).get.serializeAsJson(null) == "{\"numRecords\":100}")
     assert(removeFile.getBaseRowId === Optional.of(30L))
     assert(removeFile.getDefaultRowCommitVersion === Optional.of(40L))
     assert(removeFile.getDeletionVector.get == deletionVectorDescriptor)
