@@ -178,7 +178,7 @@ public class ConflictChecker {
     Optional<CRCInfo> updatedCrcInfo =
         ChecksumReader.getCRCInfo(
             engine,
-            FileStatus.of(checksumFile(transaction.logPath, lastWinningVersion).toString()));
+            FileStatus.of(checksumFile(transaction.getLogPath(), lastWinningVersion).toString()));
 
     // if we get here, we have successfully rebased (i.e no logical conflicts)
     // against the winning transactions
@@ -368,7 +368,9 @@ public class ConflictChecker {
   }
 
   private List<FileStatus> getWinningCommitFiles(Engine engine) {
-    String firstWinningCommitFile = deltaFile(transaction.logPath, attemptVersion);
+    // TODO doesn't current impl mean we always try to resolve conflicts from readSnapshot version
+    //  again? instead of iteratively on only the newest commit
+    String firstWinningCommitFile = deltaFile(transaction.getLogPath(), attemptVersion);
 
     try (CloseableIterator<FileStatus> files =
         wrapEngineExceptionThrowsIO(
@@ -412,7 +414,7 @@ public class ConflictChecker {
       return lastWinningTxn.getModificationTime();
     } else {
       return CommitInfo.getRequiredInCommitTimestamp(
-          winningCommitInfoOpt, String.valueOf(lastWinningVersion), transaction.dataPath);
+          winningCommitInfoOpt, String.valueOf(lastWinningVersion), transaction.getDataPath());
     }
   }
 

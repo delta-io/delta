@@ -80,9 +80,8 @@ public class TransactionImpl implements Transaction {
   private final boolean isCreateOrReplace;
   private final String engineInfo;
   private final Operation operation;
-  public final Path dataPath;
-  // TODO make method
-  public final Path logPath;
+  private final Path dataPath;
+  private final Path logPath;
   private final Protocol protocol;
   private final Optional<SnapshotImpl> readSnapshot;
   private final Optional<SetTransaction> setTxnOpt;
@@ -201,6 +200,14 @@ public class TransactionImpl implements Transaction {
 
   public Protocol getProtocol() {
     return protocol;
+  }
+
+  public Path getDataPath() {
+    return dataPath;
+  }
+
+  public Path getLogPath() {
+    return logPath;
   }
 
   @Override
@@ -518,10 +525,12 @@ public class TransactionImpl implements Transaction {
   private Optional<Long> generateInCommitTimestampForFirstCommitAttempt(
       Engine engine, long currentTimestamp) {
     if (IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata)) {
-      // currently InitialSnapshot.getTimestamp returns -1
-      long lastCommitTimestamp =
-          readSnapshot.map(snapshot -> snapshot.getTimestamp(engine)).orElse(-1L);
-      return Optional.of(Math.max(currentTimestamp, lastCommitTimestamp + 1));
+      if (readSnapshot.isPresent()) {
+        long lastCommitTimestamp = readSnapshot.get().getTimestamp(engine);
+        return Optional.of(Math.max(currentTimestamp, lastCommitTimestamp + 1));
+      } else { // For a new table this is just the current timestamp
+        return Optional.of(currentTimestamp);
+      }
     } else {
       return Optional.empty();
     }
