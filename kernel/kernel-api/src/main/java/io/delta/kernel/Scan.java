@@ -21,6 +21,7 @@ import io.delta.kernel.data.*;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.InternalScanFileUtils;
+import io.delta.kernel.internal.ScanImpl;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.data.ScanStateRow;
@@ -121,8 +122,12 @@ public interface Scan {
   Row getScanState(Engine engine);
 
   /**
-   * Transform the physical data read from the table data file into the logical data that expected
-   * out of the Delta table.
+   * Transform the physical data read from the table data file into the logical data that are
+   * expected out of the Delta table.
+   *
+   * <p>This iterator effectively reverses the logical-to-physical schema transformation performed
+   * in {@link ScanImpl#getScanState(Engine)} by transforming physical data batches into the logical
+   * data requested by the connector.
    *
    * @param engine Connector provided {@link Engine} implementation.
    * @param scanState Scan state returned by {@link Scan#getScanState(Engine)}
@@ -186,7 +191,8 @@ public interface Scan {
                 InternalScanFileUtils.getPartitionValues(scanFile),
                 physicalReadSchema);
 
-        // Transform physical row tracking columns to logical row tracking columns
+        // If row tracking is enabled, check for physical row tracking columns in the data batch
+        // and transform them to logical row tracking columns as needed
         Map<String, String> configuration = ScanStateRow.getConfiguration(scanState);
         if (TableConfig.ROW_TRACKING_ENABLED.fromMetadata(configuration)) {
           nextDataBatch =

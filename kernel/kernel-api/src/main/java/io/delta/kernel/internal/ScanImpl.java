@@ -227,8 +227,12 @@ public class ScanImpl implements Scan {
   }
 
   /**
-   * Create a physical schema that is used to read data from files based on the scan's logical
-   * schema.
+   * Transform the logical schema requested by the connector into a physical schema that is passed
+   * to the engine's parquet reader.
+   *
+   * <p>The logical-to-physical conversion is reversed in {@link Scan#transformPhysicalData(Engine,
+   * Row, Row, CloseableIterator)} when physical data batches returned by the parquet reader are
+   * converted into logical data batches requested by the connector.
    *
    * <p>The logical-to-physical conversion follows these high-level steps:
    *
