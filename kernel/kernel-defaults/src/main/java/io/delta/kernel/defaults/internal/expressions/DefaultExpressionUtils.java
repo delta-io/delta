@@ -500,7 +500,7 @@ class DefaultExpressionUtils {
   }
 
   static void checkIsStringType(DataType dataType, Expression parentExpr, String errorMessage) {
-    if (StringType.STRING.equals(dataType)) {
+    if (dataType instanceof StringType) {
       return;
     }
     throw unsupportedExpressionException(parentExpr, errorMessage);
