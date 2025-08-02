@@ -450,6 +450,7 @@ class IcebergConversionTransaction(
       hiveCatalog
         .buildTable(icebergTableId, icebergSchema)
         .withPartitionSpec(partitionSpec)
+        .withLocation(this.tablePath.toString)
         .withProperties(properties.asJava)
     }
 
