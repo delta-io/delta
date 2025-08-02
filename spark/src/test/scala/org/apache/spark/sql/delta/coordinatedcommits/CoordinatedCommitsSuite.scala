@@ -26,7 +26,7 @@ import scala.collection.mutable.ArrayBuffer
 import com.databricks.spark.util.Log4jUsageLogger
 import com.databricks.spark.util.UsageRecord
 import org.apache.spark.sql.delta.{CommitStats, CoordinatedCommitsStats, CoordinatedCommitsTableFeature, DeltaOperations, DeltaTestUtilsBase, DeltaUnsupportedOperationException, V2CheckpointTableFeature}
-import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, CommitCoordinatorGetCommitsFailedException, DeltaIllegalArgumentException}
+import org.apache.spark.sql.delta.{CatalogManagedTableFeature, CommitCoordinatorGetCommitsFailedException, DeltaIllegalArgumentException}
 import org.apache.spark.sql.delta.CoordinatedCommitType._
 import org.apache.spark.sql.delta.DeltaConfigs.{CHECKPOINT_INTERVAL, COORDINATED_COMMITS_COORDINATOR_CONF, COORDINATED_COMMITS_COORDINATOR_NAME, COORDINATED_COMMITS_TABLE_CONF, IN_COMMIT_TIMESTAMPS_ENABLED}
 import org.apache.spark.sql.delta.DeltaLog
@@ -366,13 +366,13 @@ class CoordinatedCommitsSuite
   }
 }
 
-class CatalogOwnedSuite
+class CatalogManagedSuite
   extends CommitCoordinatorSuiteBase
-  with CatalogOwnedTestBaseSuite {
+  with CatalogManagedTestBaseSuite {
 
   override def sparkConf: SparkConf = {
-    // Make sure all new tables in tests use CatalogOwned table feature by default.
-    super.sparkConf.set(defaultCatalogOwnedFeatureEnabledKey, "supported")
+    // Make sure all new tables in tests use CatalogManaged table feature by default.
+    super.sparkConf.set(defaultCatalogManagedFeatureEnabledKey, "supported")
   }
 }
 
@@ -390,7 +390,7 @@ abstract class CommitCoordinatorSuiteBase
   test("0th commit happens via filesystem") {
     val commitCoordinatorName = "tracking-in-memory"
     object NoBackfillingCommitCoordinatorBuilder$
-        extends CatalogOwnedCommitCoordinatorBuilder {
+        extends CatalogManagedCommitCoordinatorBuilder {
 
       override def getName: String = commitCoordinatorName
 
@@ -494,10 +494,10 @@ abstract class CommitCoordinatorSuiteBase
   // Test commit-coordinator changed on concurrent cluster
   testWithDefaultCommitCoordinatorUnset("snapshot is updated recursively when FS table" +
       " is converted to commit-coordinator table on a concurrent cluster") {
-    if (isCatalogOwnedTest) {
-      // TODO: CatalogOwned table cannot change its catalog, hence modify below to
+    if (isCatalogManagedTest) {
+      // TODO: CatalogManaged table cannot change its catalog, hence modify below to
       // test race upgrade from normal table after implementing upgrade.
-      cancel("Upgrade is not yet supported for catalog owned tables")
+      cancel("Upgrade is not yet supported for catalog managed tables")
     }
     val commitCoordinatorClient =
       new TrackingCommitCoordinatorClient(new InMemoryCommitCoordinator(batchSize = 10))
@@ -572,11 +572,11 @@ abstract class CommitCoordinatorSuiteBase
   // 8. Invoke deltaLog.update() two more times. 3rd attempt will succeed.
   //    - the recorded timestamp for this should be clock timestamp.
   test("failures inside getCommits, correct timestamp is added in CapturedSnapshot") {
-    if (isCatalogOwnedTest) {
+    if (isCatalogManagedTest) {
       // TODO: This test is important to test the robustness of the ability to resolve
       // stale snapshot status interaction with upgrade/downgrade. Implement this suite
-      // for catalog owned tables once we enable upgrade.
-      cancel("Upgrade is not yet supported for catalog owned tables")
+      // for catalog managed tables once we enable upgrade.
+      cancel("Upgrade is not yet supported for catalog managed tables")
     }
     val batchSize = 10
     val cs1 = new TrackingCommitCoordinatorClient(new InMemoryCommitCoordinator(batchSize))
@@ -921,8 +921,8 @@ abstract class CommitCoordinatorSuiteBase
   }
 
   private def upgradeLogWithCCTableFeature(deltaLog: DeltaLog, commitCoordinator: String): Unit = {
-    if (isCatalogOwnedTest) {
-      cancel("Upgrade is not yet supported for catalog owned tables")
+    if (isCatalogManagedTest) {
+      cancel("Upgrade is not yet supported for catalog managed tables")
     }
     val oldMetadata = deltaLog.update().metadata
     val commitCoordinatorConf = (COORDINATED_COMMITS_COORDINATOR_NAME.key -> commitCoordinator)
@@ -934,12 +934,12 @@ abstract class CommitCoordinatorSuiteBase
   for (upgradeExistingTable <- BOOLEAN_DOMAIN)
   testWithDifferentBackfillInterval("upgrade + downgrade [FS -> CC1 -> FS -> CC2]," +
       s" upgradeExistingTable = $upgradeExistingTable") { backfillInterval =>
-    if (isCatalogOwnedTest) {
+    if (isCatalogManagedTest) {
       // TODO: Once upgrade is supported, this unit test can only test
       // first upgrade part (FS -> CC1) because there is no CC1 -> FS -> CC2 transition
-      // in CatalogOwned table feature. Note that only one Catalog can exist for
+      // in CatalogManaged table feature. Note that only one Catalog can exist for
       // each table identifier.
-      cancel("Upgrade is not yet supported for catalog owned tables")
+      cancel("Upgrade is not yet supported for catalog managed tables")
     }
     withoutDefaultCCTableFeature {
       clearBuilders()
@@ -1123,8 +1123,8 @@ abstract class CommitCoordinatorSuiteBase
 
 
   testWithDefaultCommitCoordinatorUnset("FS -> CC upgrade is not retried on a conflict") {
-    if (isCatalogOwnedTest) {
-      cancel("Upgrade is not yet supported for catalog owned tables")
+    if (isCatalogManagedTest) {
+      cancel("Upgrade is not yet supported for catalog managed tables")
     }
     val builder = TrackingInMemoryCommitCoordinatorBuilder(batchSize = 10)
     registerBuilder(builder)
@@ -1143,8 +1143,8 @@ abstract class CommitCoordinatorSuiteBase
   }
 
   testWithDefaultCommitCoordinatorUnset("FS -> CC upgrade with commitLarge API") {
-    if (isCatalogOwnedTest) {
-      cancel("Upgrade is not yet supported for catalog owned tables")
+    if (isCatalogManagedTest) {
+      cancel("Upgrade is not yet supported for catalog managed tables")
     }
     val builder = TrackingInMemoryCommitCoordinatorBuilder(batchSize = 10)
     val cs =
@@ -1211,8 +1211,8 @@ abstract class CommitCoordinatorSuiteBase
   }
 
   test("Incomplete backfills are handled properly by next commit after CC to FS conversion") {
-    if (isCatalogOwnedTest) {
-      cancel("Downgrade is not yet supported for catalog owned tables")
+    if (isCatalogManagedTest) {
+      cancel("Downgrade is not yet supported for catalog managed tables")
     }
     val batchSize = 10
     val neverBackfillingCommitCoordinator =
@@ -1357,8 +1357,8 @@ abstract class CommitCoordinatorSuiteBase
 
   for (ignoreMissingCCImpl <- BOOLEAN_DOMAIN)
   test(s"missing coordinator implementation [ignoreMissingCCImpl = $ignoreMissingCCImpl]") {
-    if (isCatalogOwnedTest) {
-      cancel("Error message is not yet customized for CatalogOwned table.")
+    if (isCatalogManagedTest) {
+      cancel("Error message is not yet customized for CatalogManaged table.")
     }
     clearBuilders()
     registerBuilder(TrackingInMemoryCommitCoordinatorBuilder(batchSize = 2))
@@ -1454,8 +1454,8 @@ abstract class CommitCoordinatorSuiteBase
       upgradeToCoordinatedCommitsVersion: Int,
       backfillInterval: Int,
       requiredDeltaLogVersions: Set[Int]): Map[Int, DeltaLog] = {
-    if (isCatalogOwnedTest) {
-      cancel("Upgrade is not yet supported for catalog owned tables")
+    if (isCatalogManagedTest) {
+      cancel("Upgrade is not yet supported for catalog managed tables")
     }
     val commitCoordinatorClient =
       new TrackingCommitCoordinatorClient(new InMemoryCommitCoordinator(backfillInterval))
@@ -1670,7 +1670,7 @@ abstract class CommitCoordinatorSuiteBase
   /////////////////////////////////////////////////////////////////////////////////////////////
 
   test("During ALTER, overriding ICT configurations on (potential) Coordinated Commits " +
-      "or Catalog Owned tables throws an exception.") {
+      "or Catalog Managed tables throws an exception.") {
     registerBuilder(TrackingInMemoryCommitCoordinatorBuilder(1))
 
     // For a table that had Coordinated Commits enabled before the ALTER command.
@@ -1681,10 +1681,10 @@ abstract class CommitCoordinatorSuiteBase
         sql(s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` SET TBLPROPERTIES " +
           s"('${IN_COMMIT_TIMESTAMPS_ENABLED.key}' = 'false')")
       }
-      if (isCatalogOwnedTest) {
+      if (isCatalogManagedTest) {
         checkError(
           e,
-          "DELTA_CANNOT_MODIFY_CATALOG_OWNED_DEPENDENCIES",
+          "DELTA_CANNOT_MODIFY_CATALOG_MANAGED_DEPENDENCIES",
           sqlState = "42616",
           parameters = Map[String, String]())
       } else {
@@ -1696,8 +1696,8 @@ abstract class CommitCoordinatorSuiteBase
       }
     }
 
-    if (isCatalogOwnedTest) {
-      cancel("Upgrade is not yet supported for catalog owned tables")
+    if (isCatalogManagedTest) {
+      cancel("Upgrade is not yet supported for catalog managed tables")
     }
     // For a table that is about to enable Coordinated Commits during the same ALTER command.
     withoutDefaultCCTableFeature {
@@ -1729,10 +1729,10 @@ abstract class CommitCoordinatorSuiteBase
         sql(s"ALTER TABLE delta.`${tempDir.getAbsolutePath}` UNSET TBLPROPERTIES " +
           s"('${IN_COMMIT_TIMESTAMPS_ENABLED.key}')")
       }
-      if (isCatalogOwnedTest) {
+      if (isCatalogManagedTest) {
         checkError(
           e,
-          "DELTA_CANNOT_MODIFY_CATALOG_OWNED_DEPENDENCIES",
+          "DELTA_CANNOT_MODIFY_CATALOG_MANAGED_DEPENDENCIES",
           sqlState = "42616",
           parameters = Map[String, String]())
       } else {
@@ -1756,7 +1756,7 @@ abstract class CommitCoordinatorSuiteBase
         sql(s"REPLACE TABLE delta.`${tempDir.getAbsolutePath}` (id STRING) USING delta")
       }
       assert(DeltaLog.forTable(spark, tempDir).snapshot.tableCommitCoordinatorClientOpt.isEmpty)
-      assert(!DeltaLog.forTable(spark, tempDir).snapshot.isCatalogOwned)
+      assert(!DeltaLog.forTable(spark, tempDir).snapshot.isCatalogManaged)
       assert(DeltaLog.forTable(spark, tempDir).snapshot.metadata.configuration.contains(
         IN_COMMIT_TIMESTAMPS_ENABLED.key))
     }
@@ -1771,7 +1771,7 @@ abstract class CommitCoordinatorSuiteBase
       sql(s"REPLACE TABLE delta.`${tempDir.getAbsolutePath}` (id STRING) USING delta")
       val snapshot = DeltaLog.forTable(spark, tempDir).unsafeVolatileSnapshot
       assert(snapshot.tableCommitCoordinatorClientOpt.isEmpty)
-      assert(!snapshot.isCatalogOwned)
+      assert(!snapshot.isCatalogManaged)
       assert(!snapshot.metadata.configuration.contains(IN_COMMIT_TIMESTAMPS_ENABLED.key))
     }
   }
@@ -1780,7 +1780,7 @@ abstract class CommitCoordinatorSuiteBase
     registerBuilder(TrackingInMemoryCommitCoordinatorBuilder(1))
 
     withTable("t1") {
-      if (isCatalogOwnedTest) {
+      if (isCatalogManagedTest) {
         sql(s"CREATE TABLE t1 (id LONG) USING delta")
         sql(s"INSERT INTO t1 VALUES (0)")
       } else {
@@ -1795,9 +1795,9 @@ abstract class CommitCoordinatorSuiteBase
         // REPLACE w/o default CC confs => CC, and all ICT confs.
         sql(s"REPLACE TABLE t1 (id STRING) USING delta")
         val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, CatalystTableIdentifier("t1"))
-        if (isCatalogOwnedTest) {
-          assert(snapshot.isCatalogOwned)
-          // Only [[IN_COMMIT_TIMESTAMPS_ENABLED]] should be set for CatalogOwned
+        if (isCatalogManagedTest) {
+          assert(snapshot.isCatalogManaged)
+          // Only [[IN_COMMIT_TIMESTAMPS_ENABLED]] should be set for CatalogManaged
           // since we don't support upgrade yet.
           assert(snapshot.metadata.configuration.contains(IN_COMMIT_TIMESTAMPS_ENABLED.key))
         } else {
@@ -1820,12 +1820,12 @@ abstract class CommitCoordinatorSuiteBase
     sql(s"CREATE TABLE $target LIKE $source")
     val snapshot = DeltaLog.forTable(spark, target).unsafeVolatileSnapshot
     assert(snapshot.tableCommitCoordinatorClientOpt.isEmpty)
-    assert(!snapshot.isCatalogOwned)
+    assert(!snapshot.isCatalogManaged)
   }
 
   test("CREATE an external table in a location with an existing table works correctly.") {
-    if (isCatalogOwnedTest) {
-      cancel("Creating an external table is not yet supported for CatalogOwned.")
+    if (isCatalogManagedTest) {
+      cancel("Creating an external table is not yet supported for CatalogManaged.")
     }
     registerBuilder(TrackingInMemoryCommitCoordinatorBuilder(1))
 
@@ -1839,7 +1839,7 @@ abstract class CommitCoordinatorSuiteBase
       sql(s"CREATE TABLE $tableName (id LONG) USING delta TBLPROPERTIES " +
         s"('foo' = 'bar') LOCATION '${dir.getAbsolutePath}'")
       val snapshot = DeltaLog.forTable(spark, tablePath).snapshot
-      assert(snapshot.tableCommitCoordinatorClientOpt.nonEmpty || snapshot.isCatalogOwned)
+      assert(snapshot.tableCommitCoordinatorClientOpt.nonEmpty || snapshot.isCatalogManaged)
       assert(snapshot.metadata.configuration.contains(IN_COMMIT_TIMESTAMPS_ENABLED.key))
     }
   }

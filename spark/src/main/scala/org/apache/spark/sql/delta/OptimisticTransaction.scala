@@ -34,7 +34,7 @@ import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedTableUtils, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.files._
 import org.apache.spark.sql.delta.hooks.{CheckpointHook, ChecksumHook, GenerateSymlinkManifest, HudiConverterHook, IcebergConverterHook, PostCommitHook, UpdateCatalogFactory}
 import org.apache.spark.sql.delta.implicits.addFileEncoder
@@ -377,27 +377,27 @@ trait OptimisticTransactionImpl extends TransactionHelper
   private def withGlobalConfigDefaults(metadata: Metadata): Metadata = {
     val isActiveReplaceCommand = isCreatingNewTable && readVersion != -1
     val conf = if (isActiveReplaceCommand &&
-                   CatalogOwnedTableUtils.defaultCatalogOwnedEnabled(spark)) {
-      // Unset default CatalogOwned enablement iff:
+                   CatalogManagedTableUtils.defaultCatalogManagedEnabled(spark)) {
+      // Unset default CatalogManaged enablement iff:
       // 0. `isCreatingNewTable` indicates that this either is a REPLACE or CREATE command.
       // 1. `readVersion != 1` indicates the table already exists.
       //    - 0) and 1) suggest that this is an active REPLACE command.
       // 2. Default CC enablement is set in the spark conf.
       // This prevents any unintended modifications to the `newProtocol`.
-      // E.g., [[CatalogOwnedTableFeature]] and its dependent features
+      // E.g., [[CatalogManagedTableFeature]] and its dependent features
       //       [[InCommitTimestampTableFeature]] & [[VacuumProtocolCheckTableFeature]].
       //
       // Note that this does *not* affect global spark conf state as we are modifying
-      // the copy of `spark.sessionState.conf`. Thus, `defaultCatalogOwnedFeatureEnabledKey`
+      // the copy of `spark.sessionState.conf`. Thus, `defaultCatalogManagedFeatureEnabledKey`
       // will remain unchanged for any concurrent operations that use the same SparkSession.
-      val defaultCatalogOwnedFeatureEnabledKey =
-        TableFeatureProtocolUtils.defaultPropertyKey(CatalogOwnedTableFeature)
+      val defaultCatalogManagedFeatureEnabledKey =
+        TableFeatureProtocolUtils.defaultPropertyKey(CatalogManagedTableFeature)
       // Isolate the spark conf to be used in the subsequent [[DeltaConfigs.mergeGlobalConfigs]]
       // by cloning the existing configuration.
       // Note: [[SQLConf.clone]] is already atomic so no extra synchronization is needed.
       val clonedConf = spark.sessionState.conf.clone()
       // Unset default CC conf on the cloned spark conf.
-      clonedConf.unsetConf(defaultCatalogOwnedFeatureEnabledKey)
+      clonedConf.unsetConf(defaultCatalogManagedFeatureEnabledKey)
       clonedConf
     } else {
       spark.sessionState.conf
@@ -735,13 +735,13 @@ trait OptimisticTransactionImpl extends TransactionHelper
           .withFeatures(newFeaturesFromTableConf)
           .merge(newProtocolBeforeAddingFeatures))
     }
-    // For CatalogOwned table feature, we don't support the upgrade yet.
+    // For CatalogManaged table feature, we don't support the upgrade yet.
     newProtocol.foreach { p =>
       if (!isCreatingNewTable &&
-          p.readerAndWriterFeatureNames.contains(CatalogOwnedTableFeature.name) &&
-          !existingFeatureNames.contains(CatalogOwnedTableFeature.name)) {
-        throw new NotImplementedException("Upgrading to CatalogOwned table is not yet " +
-          s"supported. Please create a new table with the CatalogOwned table feature.")
+          p.readerAndWriterFeatureNames.contains(CatalogManagedTableFeature.name) &&
+          !existingFeatureNames.contains(CatalogManagedTableFeature.name)) {
+        throw new NotImplementedException("Upgrading to CatalogManaged table is not yet " +
+          s"supported. Please create a new table with the CatalogManaged table feature.")
       }
     }
 
@@ -803,7 +803,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     assert(CoordinatedCommitsUtils.getExplicitCCConfigurations(metadata.configuration).isEmpty,
       "Command-specified Coordinated Commits configurations should have been blocked earlier.")
     assert(!metadata.configuration.contains(UCCommitCoordinatorClient.UC_TABLE_ID_KEY),
-      "Command-specified Catalog-Owned table UUID (ucTableId) should have been blocked earlier.")
+      "Command-specified Catalog-Managed table UUID (ucTableId) should have been blocked earlier.")
     // Extract any existing ucTableId from the snapshot metadata.
     val existingUCTableIdConf: Map[String, String] =
       snapshot.metadata.configuration.filter { case (k, v) =>
@@ -833,12 +833,12 @@ trait OptimisticTransactionImpl extends TransactionHelper
     var newConfs: Map[String, String] = newConfsWithoutCC ++ existingCCConfs ++
       existingUCTableIdConf
     // We also need to retain the existing ICT dependency configurations, but only when the
-    // existing table does have Coordinated Commits configurations or Catalog-Owned enabled.
+    // existing table does have Coordinated Commits configurations or Catalog-Managed enabled.
     // Otherwise, we treat the ICT configurations the same as any other configurations,
     // by merging them from the default.
-    val isCatalogOwnedEnabledBeforeReplace = snapshot.protocol
-      .readerAndWriterFeatureNames.contains(CatalogOwnedTableFeature.name)
-    if (existingCCConfs.nonEmpty || isCatalogOwnedEnabledBeforeReplace) {
+    val isCatalogManagedEnabledBeforeReplace = snapshot.protocol
+      .readerAndWriterFeatureNames.contains(CatalogManagedTableFeature.name)
+    if (existingCCConfs.nonEmpty || isCatalogManagedEnabledBeforeReplace) {
       val newConfsWithoutICT = newConfs -- CoordinatedCommitsUtils.ICT_TABLE_PROPERTY_KEYS
       newConfs = newConfsWithoutICT ++ existingICTConfs
     }
@@ -931,8 +931,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
   private def getMetadataWithDependentFeaturesEnabled(
       metadata: Metadata, protocols: Seq[Protocol]): Metadata = {
     if (DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.fromMetaData(metadata).isDefined ||
-        protocols.exists(_.readerAndWriterFeatureNames.contains(CatalogOwnedTableFeature.name))) {
-      // coordinated-commits/catalog-owned require ICT to be enabled as per the spec.
+        protocols.exists(_.readerAndWriterFeatureNames.contains(CatalogManagedTableFeature.name))) {
+      // coordinated-commits/catalog-managed require ICT to be enabled as per the spec.
       // If ICT is just in Protocol and not in Metadata,
       // then it is in a 'supported' state but not enabled.
       // In order to enable ICT, we have to set the table property in Metadata.

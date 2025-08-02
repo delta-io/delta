@@ -62,8 +62,8 @@ spark = SparkSession \
     .config("spark.hadoop.fs.s3.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem") \
     .getOrCreate()
 
-MANAGED_CATALOG_OWNED_TABLE_FULL_NAME = f"{CATALOG_NAME}.{SCHEMA}.{MANAGED_CC_TABLE}"
-MANAGED_NON_CATALOG_OWNED_TABLE_FULL_NAME = f"{CATALOG_NAME}.{SCHEMA}.{MANAGED_NON_CC_TABLE}"
+MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME = f"{CATALOG_NAME}.{SCHEMA}.{MANAGED_CC_TABLE}"
+MANAGED_NON_CATALOG_MANAGED_TABLE_FULL_NAME = f"{CATALOG_NAME}.{SCHEMA}.{MANAGED_NON_CC_TABLE}"
 
 
 class UnityCatalogManagedTableTestBase(unittest.TestCase):
@@ -74,7 +74,7 @@ class UnityCatalogManagedTableTestBase(unittest.TestCase):
                                      schema=StructType([StructField("id", IntegerType(), True)]))
 
     def setUp(self) -> None:
-        self.setup_df.write.mode("overwrite").insertInto(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME)
+        self.setup_df.write.mode("overwrite").insertInto(MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME)
 
     # Helper methods
     def read(self, table_name: str) -> DataFrame:
@@ -103,40 +103,40 @@ class UnityCatalogManagedTableTestBase(unittest.TestCase):
 
 class UnityCatalogManagedTableBasicSuite(UnityCatalogManagedTableTestBase):
     """
-    Suite covering basic functionality of catalog owned tables.
+    Suite covering basic functionality of catalog managed tables.
     """
 
-    def test_read_from_managed_table_without_catalog_owned(self) -> None:
-        self.read(MANAGED_NON_CATALOG_OWNED_TABLE_FULL_NAME)
+    def test_read_from_managed_table_without_catalog_managed(self) -> None:
+        self.read(MANAGED_NON_CATALOG_MANAGED_TABLE_FULL_NAME)
 
-    def test_write_to_managed_catalog_owned_table(self) -> None:
-        self.append(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME)
-        updated_tbl = self.read(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME).toDF("id")
+    def test_write_to_managed_catalog_managed_table(self) -> None:
+        self.append(MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME)
+        updated_tbl = self.read(MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME).toDF("id")
         assertDataFrameEqual(updated_tbl,
                              self.create_df_with_rows([(1, ), (2, ), (3, ), (4, ), (5, )]))
 
-    def test_read_from_managed_catalog_owned_table(self) -> None:
-        self.read(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME)
-        updated_tbl = self.read(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME).toDF("id")
+    def test_read_from_managed_catalog_managed_table(self) -> None:
+        self.read(MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME)
+        updated_tbl = self.read(MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME).toDF("id")
         assertDataFrameEqual(updated_tbl, self.setup_df)
 
-    # Writing to tables that are not catalog owned is not supported.
-    def test_write_to_managed_table_without_catalog_owned(self) -> None:
+    # Writing to tables that are not catalog managed is not supported.
+    def test_write_to_managed_table_without_catalog_managed(self) -> None:
         try:
-            self.append(MANAGED_NON_CATALOG_OWNED_TABLE_FULL_NAME)
+            self.append(MANAGED_NON_CATALOG_MANAGED_TABLE_FULL_NAME)
         except py4j.protocol.Py4JJavaError as error:
             assert("[TASK_WRITE_FAILED] Task failed while writing rows to s3" in str(error))
 
-    def test_unset_catalog_owned_feature(self) -> None:
+    def test_unset_catalog_managed_feature(self) -> None:
         try:
-            spark.sql(f"ALTER TABLE {MANAGED_CATALOG_OWNED_TABLE_FULL_NAME} "
+            spark.sql(f"ALTER TABLE {MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME} "
                       f"UNSET TBLPROPERTIES ('delta.feature.catalogOwned-preview')")
         except UnsupportedOperationException as error:
             assert("Altering a table is not supported yet" in str(error))
 
-    def test_drop_catalog_owned_property(self) -> None:
+    def test_drop_catalog_managed_property(self) -> None:
         try:
-            spark.sql(f"ALTER TABLE {MANAGED_CATALOG_OWNED_TABLE_FULL_NAME} "
+            spark.sql(f"ALTER TABLE {MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME} "
                       f"DROP FEATURE 'catalogOwned-preview'")
         except UnsupportedOperationException as error:
             assert("Altering a table is not supported yet" in str(error))
@@ -144,33 +144,33 @@ class UnityCatalogManagedTableBasicSuite(UnityCatalogManagedTableTestBase):
 
 class UnityCatalogManagedTableDMLSuite(UnityCatalogManagedTableTestBase):
     """
-    Suite covering DMLs (INSERT, MERGE, UPDATE, DELETE) on catalog owned tables.
+    Suite covering DMLs (INSERT, MERGE, UPDATE, DELETE) on catalog managed tables.
     """
 
     def test_update(self) -> None:
-        dt = DeltaTable.forName(spark, MANAGED_CATALOG_OWNED_TABLE_FULL_NAME)
+        dt = DeltaTable.forName(spark, MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME)
         dt.update(condition="id = 1", set={"id": "4"})
-        updated_tbl = self.read(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME).toDF("id")
+        updated_tbl = self.read(MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME).toDF("id")
         assertDataFrameEqual(updated_tbl, self.create_df_with_rows([(4, ), (2, ), (3, )]))
 
     def test_sql_update(self) -> None:
-        spark.sql(f"UPDATE {MANAGED_CATALOG_OWNED_TABLE_FULL_NAME} SET id=4 WHERE id=1")
-        updated_tbl = self.read(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME).toDF("id")
+        spark.sql(f"UPDATE {MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME} SET id=4 WHERE id=1")
+        updated_tbl = self.read(MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME).toDF("id")
         assertDataFrameEqual(updated_tbl, self.create_df_with_rows([(4, ), (2, ), (3, )]))
 
     def test_delete(self) -> None:
-        dt = DeltaTable.forName(spark, MANAGED_CATALOG_OWNED_TABLE_FULL_NAME)
+        dt = DeltaTable.forName(spark, MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME)
         dt.delete(condition="id = 1")
-        updated_tbl = self.read(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME).toDF("id")
+        updated_tbl = self.read(MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME).toDF("id")
         assertDataFrameEqual(updated_tbl, self.create_df_with_rows([(2, ), (3, )]))
 
     def test_sql_delete(self) -> None:
-        spark.sql(f"DELETE FROM {MANAGED_CATALOG_OWNED_TABLE_FULL_NAME} where id=1")
-        updated_tbl = self.read(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME).toDF("id")
+        spark.sql(f"DELETE FROM {MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME} where id=1")
+        updated_tbl = self.read(MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME).toDF("id")
         assertDataFrameEqual(updated_tbl, self.create_df_with_rows([(2, ), (3, )]))
 
     def test_merge(self) -> None:
-        dt = DeltaTable.forName(spark, MANAGED_CATALOG_OWNED_TABLE_FULL_NAME)
+        dt = DeltaTable.forName(spark, MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME)
         src = self.create_df_with_rows([(1, ), (2, ), (3, ), (4, ), (5, )])
         dt.alias("target") \
             .merge(
@@ -179,22 +179,22 @@ class UnityCatalogManagedTableDMLSuite(UnityCatalogManagedTableTestBase):
             .whenNotMatchedInsertAll() \
             .execute()
 
-        updated_tbl = self.read(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME).toDF("id")
+        updated_tbl = self.read(MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME).toDF("id")
         assertDataFrameEqual(updated_tbl,
                              self.create_df_with_rows([(1, ), (2, ), (3, ), (4, ), (5, )]))
 
     def test_sql_merge(self) -> None:
-        spark.sql(f"MERGE INTO {MANAGED_CATALOG_OWNED_TABLE_FULL_NAME} AS target "
+        spark.sql(f"MERGE INTO {MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME} AS target "
                   f"USING (VALUES 2, 3, 4, 5 AS src(id)) AS src "
                   f"ON src.id = target.id WHEN NOT MATCHED THEN INSERT *;")
-        updated_tbl = self.read(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME).toDF("id")
+        updated_tbl = self.read(MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME).toDF("id")
         assertDataFrameEqual(updated_tbl,
                              self.create_df_with_rows([(1, ), (2, ), (3, ), (4, ), (5, )]))
 
     def test_merge_schema_evolution(self) -> None:
         spark.conf.set("spark.databricks.delta.schema.autoMerge.enabled", "true")
         try:
-            spark.sql(f"MERGE INTO {MANAGED_CATALOG_OWNED_TABLE_FULL_NAME} AS target "
+            spark.sql(f"MERGE INTO {MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME} AS target "
                       f"USING (VALUES (2, 2), (3, 3), (4, 4), (5, 5) AS src(id, extra)) AS src "
                       f"ON src.id = target.id WHEN NOT MATCHED THEN INSERT *;")
         except py4j.protocol.Py4JJavaError as error:
@@ -205,7 +205,7 @@ class UnityCatalogManagedTableDMLSuite(UnityCatalogManagedTableTestBase):
         finally:
             spark.conf.unset("spark.databricks.delta.schema.autoMerge.enabled")
 
-        updated_tbl = self.read(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME).toDF("id")
+        updated_tbl = self.read(MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME).toDF("id")
         assertDataFrameEqual(updated_tbl, self.setup_df)
 
     def test_insert_schema_evolution(self) -> None:
@@ -213,43 +213,43 @@ class UnityCatalogManagedTableDMLSuite(UnityCatalogManagedTableTestBase):
         try:
             two_cols_df\
                 .write.mode("append").option("mergeSchema", "true")\
-                .insertInto(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME)
+                .insertInto(MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME)
         except py4j.protocol.Py4JJavaError as error:
             assert(
                 "A table's Delta metadata can only be changed from a cluster or warehouse"
                 in str(error)
             )
 
-        updated_tbl = self.read(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME).toDF("id")
+        updated_tbl = self.read(MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME).toDF("id")
         assertDataFrameEqual(updated_tbl, self.setup_df)
 
     def test_sql_insert(self) -> None:
-        spark.sql(f"INSERT INTO {MANAGED_CATALOG_OWNED_TABLE_FULL_NAME} "
+        spark.sql(f"INSERT INTO {MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME} "
                   f"VALUES (4), (5)")
-        updated_tbl = self.read(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME).toDF("id")
+        updated_tbl = self.read(MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME).toDF("id")
         assertDataFrameEqual(updated_tbl,
                              self.create_df_with_rows([(1,), (2,), (3,), (4,), (5,)]))
 
     def test_sql_insert_overwrite(self) -> None:
-        spark.sql(f"INSERT OVERWRITE {MANAGED_CATALOG_OWNED_TABLE_FULL_NAME} "
+        spark.sql(f"INSERT OVERWRITE {MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME} "
                   f"VALUES (2), (3), (4), (5)")
-        updated_tbl = self.read(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME).toDF("id")
+        updated_tbl = self.read(MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME).toDF("id")
         assertDataFrameEqual(updated_tbl,
                              self.create_df_with_rows([(2,), (3,), (4,), (5,)]))
 
     def test_sql_insert_replace_where(self) -> None:
-        spark.sql(f"INSERT INTO {MANAGED_CATALOG_OWNED_TABLE_FULL_NAME} "
+        spark.sql(f"INSERT INTO {MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME} "
                   f"REPLACE WHERE id = 1 "
                   f"VALUES (1)")
-        updated_tbl = self.read(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME).toDF("id")
+        updated_tbl = self.read(MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME).toDF("id")
         assertDataFrameEqual(updated_tbl,
                              self.create_df_with_rows([(1,), (2,), (3,)]))
 
     def test_sql_insert_dynamic_partition_overwrite(self) -> None:
         spark.conf.set("spark.databricks.delta.dynamicPartitionOverwrite.enabled", "true")
         try:
-            spark.sql(f"INSERT INTO {MANAGED_CATALOG_OWNED_TABLE_FULL_NAME} VALUES (5)")
-            updated_tbl = self.read(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME).toDF("id")
+            spark.sql(f"INSERT INTO {MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME} VALUES (5)")
+            updated_tbl = self.read(MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME).toDF("id")
             assertDataFrameEqual(updated_tbl,
                                  self.create_df_with_rows([(1,), (2,), (3,), (5,)]))
         finally:
@@ -258,39 +258,39 @@ class UnityCatalogManagedTableDMLSuite(UnityCatalogManagedTableTestBase):
     # Dataframe Writer V1 Tests #
     def test_insert_into_append(self) -> None:
         single_col_df = spark.createDataFrame([(4, ), (5, )], schema=["id"])
-        single_col_df.write.mode("append").insertInto(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME)
-        updated_tbl = self.read(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME).toDF("id")
+        single_col_df.write.mode("append").insertInto(MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME)
+        updated_tbl = self.read(MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME).toDF("id")
         assertDataFrameEqual(updated_tbl,
                              self.create_df_with_rows([(1, ), (2, ), (3, ), (4, ), (5, )]))
 
     def test_insert_into_overwrite(self) -> None:
         single_col_df = spark.createDataFrame([(5, )], schema=["id"])
         single_col_df.write.mode("overwrite").insertInto(
-            MANAGED_CATALOG_OWNED_TABLE_FULL_NAME, True)
-        updated_tbl = self.read(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME).toDF("id")
+            MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME, True)
+        updated_tbl = self.read(MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME).toDF("id")
         assertDataFrameEqual(updated_tbl, self.create_df_with_rows([(5, )]))
 
     def test_insert_into_overwrite_replace_where(self) -> None:
         single_col_df = spark.createDataFrame([(5, )], schema=["id"])
         single_col_df.write.mode("overwrite").option("replaceWhere", "id > 1").insertInto(
-            f"{MANAGED_CATALOG_OWNED_TABLE_FULL_NAME}", True)
-        updated_tbl = self.read(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME).toDF("id")
+            f"{MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME}", True)
+        updated_tbl = self.read(MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME).toDF("id")
         assertDataFrameEqual(updated_tbl, self.create_df_with_rows([(1, ), (5, )]))
 
     def test_insert_into_overwrite_partition_overwrite(self) -> None:
         single_col_df = spark.createDataFrame([(5,)], schema=["id"])
         single_col_df.write.mode("overwrite").option(
             "partitionOverwriteMode", "dynamic").insertInto(
-            MANAGED_CATALOG_OWNED_TABLE_FULL_NAME, True)
-        updated_tbl = self.read(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME).toDF("id")
+            MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME, True)
+        updated_tbl = self.read(MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME).toDF("id")
         assertDataFrameEqual(updated_tbl, self.create_df_with_rows([(5,)]))
 
     def test_save_as_table_append_existing_table(self) -> None:
         single_col_df = spark.createDataFrame(
             [(4, ), (5, )], schema=StructType([StructField("id", IntegerType(), True)]))
         single_col_df.write.format("delta").mode("append").saveAsTable(
-            MANAGED_CATALOG_OWNED_TABLE_FULL_NAME)
-        updated_tbl = self.read(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME).toDF("id")
+            MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME)
+        updated_tbl = self.read(MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME).toDF("id")
         assertDataFrameEqual(updated_tbl,
                              self.create_df_with_rows([(1, ), (2, ), (3, ), (4, ), (5, )]))
 
@@ -300,39 +300,39 @@ class UnityCatalogManagedTableDMLSuite(UnityCatalogManagedTableTestBase):
         # Fetch managed table path and attempt to side-step UC
         # and directly update table using path based access.
         tbl_path = spark.sql(
-            f"DESCRIBE formatted {MANAGED_CATALOG_OWNED_TABLE_FULL_NAME}").collect()[5].data_type
+            f"DESCRIBE formatted {MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME}").collect()[5].data_type
         try:
             single_col_df.write.format("delta").save(mode="append", path=tbl_path)
         except py4j.protocol.Py4JJavaError as error:
             assert("AccessDeniedException" in str(error))
-        updated_tbl = self.read(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME).toDF("id")
+        updated_tbl = self.read(MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME).toDF("id")
         assertDataFrameEqual(updated_tbl, self.setup_df)
 
     # DataFrame V2 Tests #
     def test_append(self) -> None:
-        self.append(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME)
-        updated_tbl = self.read(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME).toDF("id")
+        self.append(MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME)
+        updated_tbl = self.read(MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME).toDF("id")
         assertDataFrameEqual(updated_tbl,
                              self.create_df_with_rows([(1, ), (2, ), (3, ), (4, ), (5, )]))
 
     def test_overwrite(self) -> None:
         single_col_df = spark.createDataFrame(
             [(5,)], schema=StructType([StructField("id", IntegerType(), True)]))
-        single_col_df.writeTo(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME).overwrite(lit(True))
-        updated_tbl = self.read(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME).toDF("id")
+        single_col_df.writeTo(MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME).overwrite(lit(True))
+        updated_tbl = self.read(MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME).toDF("id")
         assertDataFrameEqual(updated_tbl, self.create_df_with_rows([(5,)]))
 
     def test_overwrite_partitions(self) -> None:
         single_col_df = spark.createDataFrame(
             [(5,)], schema=StructType([StructField("id", IntegerType(), True)]))
-        single_col_df.writeTo(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME).overwritePartitions()
-        updated_tbl = self.read(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME).toDF("id")
+        single_col_df.writeTo(MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME).overwritePartitions()
+        updated_tbl = self.read(MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME).toDF("id")
         assertDataFrameEqual(updated_tbl, self.create_df_with_rows([(5,)]))
 
 
 class UnityCatalogManagedTableDDLSuite(UnityCatalogManagedTableTestBase):
     """
-    Suite covering DDLs (CREATE, REPLACE, CLONE, ALTER) on catalog owned tables.
+    Suite covering DDLs (CREATE, REPLACE, CLONE, ALTER) on catalog managed tables.
     """
 
     def test_create_non_delta(self) -> None:
@@ -367,7 +367,7 @@ class UnityCatalogManagedTableDDLSuite(UnityCatalogManagedTableTestBase):
                 in str(error)
             )
 
-    def test_create_non_catalog_owned(self) -> None:
+    def test_create_non_catalog_managed(self) -> None:
         try:
             # This ignores the catalog name passed and tries to create the table under
             # 'spark_catalog'.
@@ -378,44 +378,44 @@ class UnityCatalogManagedTableDDLSuite(UnityCatalogManagedTableTestBase):
                 in str(error)
             )
 
-    def test_clone_into_catalog_owned(self) -> None:
+    def test_clone_into_catalog_managed(self) -> None:
         try:
             # CLONE fails with an assertion error in UCSingleCatalog
             spark.sql(f"CREATE TABLE {CATALOG_NAME}.{SCHEMA}.created_table" +
-                      f" SHALLOW CLONE {MANAGED_CATALOG_OWNED_TABLE_FULL_NAME}")
+                      f" SHALLOW CLONE {MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME}")
         except py4j.protocol.Py4JJavaError as error:
             assert("java.lang.AssertionError: assertion failed" in str(error))
 
-    def test_clone_into_non_catalog_owned(self) -> None:
+    def test_clone_into_non_catalog_managed(self) -> None:
         try:
             # CLONE fails with an assertion error in UCSingleCatalog
             spark.sql(f"CREATE TABLE {CATALOG_NAME}.{SCHEMA}.created_table" +
-                      f" SHALLOW CLONE {MANAGED_CATALOG_OWNED_TABLE_FULL_NAME} "
+                      f" SHALLOW CLONE {MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME} "
                       f"TBLPROPERTIES ('delta.feature.catalogOwned-preview' = 'false')")
         except py4j.protocol.Py4JJavaError as error:
             assert("java.lang.AssertionError: assertion failed" in str(error))
 
     def test_alter_table_comment(self) -> None:
         try:
-            spark.sql(f"ALTER TABLE {MANAGED_CATALOG_OWNED_TABLE_FULL_NAME} "
+            spark.sql(f"ALTER TABLE {MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME} "
                       f"ALTER COLUMN id COMMENT 'comment'")
         except UnsupportedOperationException as error:
             assert("Altering a table is not supported yet" in str(error))
 
     def test_alter_table_add_column(self) -> None:
         try:
-            spark.sql(f"ALTER TABLE {MANAGED_CATALOG_OWNED_TABLE_FULL_NAME} ADD COLUMN extra INT")
+            spark.sql(f"ALTER TABLE {MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME} ADD COLUMN extra INT")
         except UnsupportedOperationException as error:
             assert("Altering a table is not supported yet" in str(error))
 
     def test_alter_table_set_tbl_properties(self) -> None:
         try:
-            spark.sql(f"ALTER TABLE {MANAGED_CATALOG_OWNED_TABLE_FULL_NAME} "
+            spark.sql(f"ALTER TABLE {MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME} "
                       f"SET TBLPROPERTIES ('customProp' = 'customValue')")
         except UnsupportedOperationException as error:
             assert("Altering a table is not supported yet" in str(error))
 
-        description = spark.sql(f"DESCRIBE EXTENDED {MANAGED_CATALOG_OWNED_TABLE_FULL_NAME}")\
+        description = spark.sql(f"DESCRIBE EXTENDED {MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME}")\
             .filter("col_name = 'Table Properties'").collect()[0][1]
         assert("customProp" not in description)
 
@@ -426,23 +426,23 @@ class UnityCatalogManagedTableUtilitySuite(UnityCatalogManagedTableTestBase):
     VACUUM, ...
     """
     def test_optimize(self) -> None:
-        spark.sql(f"OPTIMIZE {MANAGED_CATALOG_OWNED_TABLE_FULL_NAME}")
-        updated_tbl = self.read(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME).toDF("id")
+        spark.sql(f"OPTIMIZE {MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME}")
+        updated_tbl = self.read(MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME).toDF("id")
         assertDataFrameEqual(updated_tbl, self.create_df_with_rows([(1, ), (2, ), (3, )]))
 
     def test_optimize_sql(self) -> None:
-        spark.sql(f"OPTIMIZE {MANAGED_CATALOG_OWNED_TABLE_FULL_NAME}")
-        updated_tbl = self.read(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME).toDF("id")
+        spark.sql(f"OPTIMIZE {MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME}")
+        updated_tbl = self.read(MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME).toDF("id")
         assertDataFrameEqual(updated_tbl, self.create_df_with_rows([(1, ), (2, ), (3, )]))
 
     def test_zorder_by(self) -> None:
-        spark.sql(f"OPTIMIZE {MANAGED_CATALOG_OWNED_TABLE_FULL_NAME} ZORDER BY (id)")
-        updated_tbl = self.read(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME).toDF("id")
+        spark.sql(f"OPTIMIZE {MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME} ZORDER BY (id)")
+        updated_tbl = self.read(MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME).toDF("id")
         assertDataFrameEqual(updated_tbl, self.create_df_with_rows([(1, ), (2, ), (3, )]))
 
     def test_analyze(self) -> None:
         try:
-            spark.sql(f"ANALYZE TABLE {MANAGED_CATALOG_OWNED_TABLE_FULL_NAME} COMPUTE STATISTICS")
+            spark.sql(f"ANALYZE TABLE {MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME} COMPUTE STATISTICS")
         except AnalysisException as error:
             assert(
                 "[NOT_SUPPORTED_COMMAND_FOR_V2_TABLE] ANALYZE TABLE is not supported for v2 tables."
@@ -450,29 +450,29 @@ class UnityCatalogManagedTableUtilitySuite(UnityCatalogManagedTableTestBase):
             )
 
     def test_describe_table(self) -> None:
-        description = spark.sql(f"DESCRIBE {MANAGED_CATALOG_OWNED_TABLE_FULL_NAME}").collect()
+        description = spark.sql(f"DESCRIBE {MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME}").collect()
         expected = spark.createDataFrame([("id", "int", None)],
                                          "col_name string, data_type string, comment string")
         assertDataFrameEqual(description, expected)
 
     def test_history(self) -> None:
         try:
-            # DESCRIBE HISTORY is currently unsupported on catalog owned tables.
-            self.get_table_history(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME).collect()
+            # DESCRIBE HISTORY is currently unsupported on catalog managed tables.
+            self.get_table_history(MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME).collect()
         except py4j.protocol.Py4JJavaError as error:
-            assert("Path based access is not supported for Catalog-Owned table" in str(error))
+            assert("Path based access is not supported for Catalog-Managed table" in str(error))
 
     def test_vacuum(self) -> None:
         try:
-            # VACUUM is currently unsupported on catalog owned tables.
-            spark.sql(f"VACUUM {MANAGED_CATALOG_OWNED_TABLE_FULL_NAME}")
+            # VACUUM is currently unsupported on catalog managed tables.
+            spark.sql(f"VACUUM {MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME}")
         except UnsupportedOperationException as error:
             assert("DELTA_UNSUPPORTED_VACUUM_ON_MANAGED_TABLE" in str(error))
 
     def test_restore(self) -> None:
         try:
-            # Restore is currently unsupported on catalog owned tables.
-            spark.sql(f"RESTORE TABLE {MANAGED_CATALOG_OWNED_TABLE_FULL_NAME} TO VERSION AS OF 0")
+            # Restore is currently unsupported on catalog managed tables.
+            spark.sql(f"RESTORE TABLE {MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME} TO VERSION AS OF 0")
         except py4j.protocol.Py4JJavaError as error:
             assert("A table's Delta metadata can only be changed from a cluster or warehouse"
                    in str(error))
@@ -484,49 +484,49 @@ class UnityCatalogManagedTableReadSuite(UnityCatalogManagedTableTestBase):
     """
 
     def test_time_travel_read(self) -> None:
-        dt = DeltaTable.forName(spark, MANAGED_CATALOG_OWNED_TABLE_FULL_NAME)
+        dt = DeltaTable.forName(spark, MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME)
         current_version = dt.history().selectExpr("max(version)").collect()[0][0]
         current_timestamp = str(datetime.datetime.now())
-        self.append(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME)
+        self.append(MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME)
 
         result = spark.read.option("timestampAsOf", current_timestamp)\
-            .table(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME)
+            .table(MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME)
         assertDataFrameEqual(result, self.setup_df)
 
         result = spark.read.option("versionAsOf", current_version)\
-            .table(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME)
+            .table(MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME)
         assertDataFrameEqual(result, self.setup_df)
 
-        result = spark.sql(f"SELECT * FROM {MANAGED_CATALOG_OWNED_TABLE_FULL_NAME} "
+        result = spark.sql(f"SELECT * FROM {MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME} "
                            f"TIMESTAMP AS OF '{current_timestamp}'")
         assertDataFrameEqual(result, self.setup_df)
 
-        result = spark.sql(f"SELECT * FROM {MANAGED_CATALOG_OWNED_TABLE_FULL_NAME} "
+        result = spark.sql(f"SELECT * FROM {MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME} "
                            f"VERSION AS OF {current_version}")
         assertDataFrameEqual(result, self.setup_df)
 
-    # CDC (Timestamps, Versions) are currently unsupported for Catalog owned tables.
+    # CDC (Timestamps, Versions) are currently unsupported for Catalog managed tables.
     def test_change_data_feed_with_timestamp(self) -> None:
         timestamp = str(datetime.datetime.now())
-        self.append(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME)
+        self.append(MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME)
         try:
             self.read_with_cdf_timestamp(
-                timestamp, MANAGED_CATALOG_OWNED_TABLE_FULL_NAME).select("id", "_change_type")
+                timestamp, MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME).select("id", "_change_type")
         except py4j.protocol.Py4JJavaError as error:
-            assert("Path based access is not supported for Catalog-Owned table" in str(error))
+            assert("Path based access is not supported for Catalog-Managed table" in str(error))
 
     def test_change_data_feed_with_version(self) -> None:
-        self.append(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME)
+        self.append(MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME)
         try:
             self.read_with_cdf_version(
                 0,
-                MANAGED_CATALOG_OWNED_TABLE_FULL_NAME).select("id", "_change_type")
+                MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME).select("id", "_change_type")
         except py4j.protocol.Py4JJavaError as error:
-            assert("Path based access is not supported for Catalog-Owned table" in str(error))
+            assert("Path based access is not supported for Catalog-Managed table" in str(error))
 
     def test_delta_table_for_path(self) -> None:
         tbl_path = spark.sql(
-            f"DESCRIBE formatted {MANAGED_CATALOG_OWNED_TABLE_FULL_NAME}").collect()[5].data_type
+            f"DESCRIBE formatted {MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME}").collect()[5].data_type
         try:
             DeltaTable.forPath(spark, tbl_path)
         except py4j.protocol.Py4JJavaError as error:
@@ -537,12 +537,13 @@ class UnityCatalogManagedTableReadSuite(UnityCatalogManagedTableTestBase):
     def test_streaming_read(self) -> None:
         try:
             spark.readStream\
-                .table(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME)\
+                .table(MANAGED_CATALOG_MANAGED_TABLE_FULL_NAME)\
                 .writeStream\
                 .option("checkpointLocation", "test")\
                 .toTable("output_table")
         except py4j.protocol.Py4JJavaError as error:
-            # Streaming from a catalog owned table fails as it attempts to access the table by path.
+            # Streaming from a catalog managed table fails as it attempts to access the table
+            # by path.
             # This could also throw a better error than jsut 'access denied'.
             assert("AccessDeniedException" in str(error))
 

@@ -26,7 +26,7 @@ import scala.language.postfixOps
 import org.apache.spark.sql.delta.DeltaOperations.Truncate
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions._
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CatalogOwnedTestBaseSuite, InMemoryCommitCoordinator, TrackingCommitCoordinatorClient}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedTableUtils, CatalogManagedTestBaseSuite, InMemoryCommitCoordinator, TrackingCommitCoordinatorClient}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
@@ -51,7 +51,7 @@ import org.apache.spark.util.Utils
 class DeltaLogSuite extends QueryTest
   with SharedSparkSession
   with DeltaSQLCommandTest
-  with CatalogOwnedTestBaseSuite
+  with CatalogManagedTestBaseSuite
   with DeltaCheckpointTestUtils
   with DeltaSQLTestUtils {
 
@@ -249,7 +249,7 @@ class DeltaLogSuite extends QueryTest
         log.store.write(
           FileNames.unsafeDeltaFile(log.logPath, 0L),
           Iterator(Action.supportedProtocolVersion(
-            featuresToExclude = Seq(CatalogOwnedTableFeature)), Metadata(), add)
+            featuresToExclude = Seq(CatalogManagedTableFeature)), Metadata(), add)
             .map(a => JsonUtils.toJson(a.wrap)),
           overwrite = false,
           log.newDeltaHadoopConf())
@@ -279,7 +279,7 @@ class DeltaLogSuite extends QueryTest
         log.store.write(
           FileNames.unsafeDeltaFile(log.logPath, 0L),
           Iterator(Action.supportedProtocolVersion(
-            featuresToExclude = Seq(CatalogOwnedTableFeature)), Metadata(), add)
+            featuresToExclude = Seq(CatalogManagedTableFeature)), Metadata(), add)
             .map(a => JsonUtils.toJson(a.wrap)),
           overwrite = false,
           log.newDeltaHadoopConf())
@@ -341,7 +341,7 @@ class DeltaLogSuite extends QueryTest
   }
 
   test("error - versions not contiguous") {
-    if (catalogOwnedCoordinatorBackfillBatchSize.contains(100L)) {
+    if (catalogManagedCoordinatorBackfillBatchSize.contains(100L)) {
       cancel("Backfill size of 100 is not compatible w/ the test.")
     }
     withTempDir { dir =>
@@ -511,12 +511,12 @@ class DeltaLogSuite extends QueryTest
           deltaLog.newDeltaHadoopConf())
         .filter(!_.getPath.getName.startsWith("_"))
         .foreach(f => fs.delete(f.getPath, true))
-      if (catalogOwnedDefaultCreationEnabledInTests) {
-        // For Catalog Owned table with a commit that is not backfilled, we can't use
+      if (catalogManagedDefaultCreationEnabledInTests) {
+        // For Catalog Managed table with a commit that is not backfilled, we can't use
         // 00000000002.json yet. Contact commit coordinator to get uuid file path to malform json
         // file.
-        val oc = getCatalogOwnedCommitCoordinatorClient(
-          catalogName = CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING)
+        val oc = getCatalogManagedCommitCoordinatorClient(
+          catalogName = CatalogManagedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING)
         val tableDesc =
           new TableDescriptor(deltaLog.logPath, Optional.empty(), Map.empty[String, String].asJava)
         val commitResponse = oc.getCommits(tableDesc, 2, null)
@@ -545,9 +545,9 @@ class DeltaLogSuite extends QueryTest
           deltaLog.newDeltaHadoopConf())
         .filter(!_.getPath.getName.startsWith("_"))
         .foreach(f => fs.delete(f.getPath, true))
-      if (catalogOwnedDefaultCreationEnabledInTests) {
-        val oc = getCatalogOwnedCommitCoordinatorClient(
-          catalogName = CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING)
+      if (catalogManagedDefaultCreationEnabledInTests) {
+        val oc = getCatalogManagedCommitCoordinatorClient(
+          catalogName = CatalogManagedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING)
         oc.asInstanceOf[TrackingCommitCoordinatorClient]
           .delegatingCommitCoordinatorClient
           .asInstanceOf[InMemoryCommitCoordinator]
@@ -623,12 +623,12 @@ class DeltaLogSuite extends QueryTest
 
       val log = DeltaLog.forTable(spark, path)
       var commitFilePath = FileNames.unsafeDeltaFile(log.logPath, 1L)
-      if (catalogOwnedDefaultCreationEnabledInTests) {
-        // For Catalog Owned table with a commit that is not backfilled, we can't use
+      if (catalogManagedDefaultCreationEnabledInTests) {
+        // For Catalog Managed table with a commit that is not backfilled, we can't use
         // 00000000001.json yet. Contact commit coordinator to get uuid file path to malform json
         // file.
-        val oc = getCatalogOwnedCommitCoordinatorClient(
-          catalogName = CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING)
+        val oc = getCatalogManagedCommitCoordinatorClient(
+          catalogName = CatalogManagedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING)
         val tableDesc =
           new TableDescriptor(log.logPath, Optional.empty(), Map.empty[String, String].asJava)
         val commitResponse = oc.getCommits(tableDesc, 1, null)
@@ -789,7 +789,7 @@ class DeltaLogSuite extends QueryTest
       assert(FileNames.getFileVersion(fileV3) === 3)
 
       val backfillInterval =
-        catalogOwnedCoordinatorBackfillBatchSize.getOrElse(0L)
+        catalogManagedCoordinatorBackfillBatchSize.getOrElse(0L)
       if (backfillInterval == 0 || backfillInterval == 1) {
         assert(filesAreUnbackfilledArray === Seq(false, false, false))
       } else if (backfillInterval == 2) {
@@ -858,14 +858,14 @@ class DeltaLogSuite extends QueryTest
   }
 }
 
-class CatalogOwnedBatchBackfill1DeltaLogSuite extends DeltaLogSuite {
-  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
+class CatalogManagedBatchBackfill1DeltaLogSuite extends DeltaLogSuite {
+  override def catalogManagedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
 }
 
-class CatalogOwnedBatchBackfill2DeltaLogSuite extends DeltaLogSuite {
-  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
+class CatalogManagedBatchBackfill2DeltaLogSuite extends DeltaLogSuite {
+  override def catalogManagedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
 }
 
-class CatalogOwnedBatchBackfill100DeltaLogSuite extends DeltaLogSuite {
-  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
+class CatalogManagedBatchBackfill100DeltaLogSuite extends DeltaLogSuite {
+  override def catalogManagedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }

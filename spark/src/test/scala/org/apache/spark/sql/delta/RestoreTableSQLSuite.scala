@@ -80,16 +80,16 @@ class RestoreTableSQLSuite extends RestoreTableSuiteBase {
   }
 }
 
-class RestoreTableSQLWithCatalogOwnedBatch1Suite extends RestoreTableSQLSuite {
-  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
+class RestoreTableSQLWithCatalogManagedBatch1Suite extends RestoreTableSQLSuite {
+  override def catalogManagedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
 }
 
-class RestoreTableSQLWithCatalogOwnedBatch2Suite extends RestoreTableSQLSuite {
-  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
+class RestoreTableSQLWithCatalogManagedBatch2Suite extends RestoreTableSQLSuite {
+  override def catalogManagedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
 }
 
-class RestoreTableSQLWithCatalogOwnedBatch100Suite extends RestoreTableSQLSuite {
-  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
+class RestoreTableSQLWithCatalogManagedBatch100Suite extends RestoreTableSQLSuite {
+  override def catalogManagedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }
 
 

@@ -627,7 +627,7 @@ class DeltaRetentionSuite extends QueryTest
         val sqlCommand = s"SELECT * FROM " +
           s"table_changes_by_path('${tempDir.getCanonicalPath}', $version, 25)"
         if (version < earliestExpectedChkVersion) {
-          if (catalogOwnedDefaultCreationEnabledInTests) {
+          if (catalogManagedDefaultCreationEnabledInTests) {
             intercept[IllegalStateException] {
               spark.sql(sqlCommand).collect()
             }
@@ -1047,8 +1047,8 @@ class DeltaRetentionSuite extends QueryTest
   }
 }
 
-class DeltaRetentionWithCatalogOwnedBatch1Suite extends DeltaRetentionSuite {
-  override val catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
+class DeltaRetentionWithCatalogManagedBatch1Suite extends DeltaRetentionSuite {
+  override val catalogManagedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
 }
 
 /**
@@ -1057,10 +1057,10 @@ class DeltaRetentionWithCatalogOwnedBatch1Suite extends DeltaRetentionSuite {
  * files. However, in this suite, delta files might be backfilled asynchronously, which means
  * setting the modification time will not work as expected.
  */
-class DeltaRetentionWithCatalogOwnedBatch2Suite extends QueryTest
+class DeltaRetentionWithCatalogManagedBatch2Suite extends QueryTest
     with DeltaSQLCommandTest
     with DeltaRetentionSuiteBase {
-  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
+  override def catalogManagedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
 
   override def getLogFiles(dir: File): Seq[File] =
     getDeltaFiles(dir) ++ getUnbackfilledDeltaFiles(dir) ++ getCheckpointFiles(dir)

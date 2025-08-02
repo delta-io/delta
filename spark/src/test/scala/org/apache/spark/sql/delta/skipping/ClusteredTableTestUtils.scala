@@ -22,7 +22,7 @@ import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
 import org.apache.spark.sql.delta.DeltaOperations
 import org.apache.spark.sql.delta.DeltaOperations.{CLUSTERING_PARAMETER_KEY, ZORDER_PARAMETER_KEY}
 import org.apache.spark.sql.delta.commands.optimize.OptimizeMetrics
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CatalogOwnedTestBaseSuite, CoordinatedCommitsBaseSuite}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedTableUtils, CatalogManagedTestBaseSuite, CoordinatedCommitsBaseSuite}
 import org.apache.spark.sql.delta.hooks.UpdateCatalog
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
@@ -37,7 +37,7 @@ import org.apache.spark.util.Utils
 trait ClusteredTableTestUtilsBase
   extends SparkFunSuite
   with SharedSparkSession
-  with CatalogOwnedTestBaseSuite {
+  with CatalogManagedTestBaseSuite {
 
   import testImplicits._
 
@@ -222,9 +222,9 @@ trait ClusteredTableTestUtilsBase
   protected def deleteTableFromCommitCoordinatorIfNeeded(table: String): Unit = {
     // Clean up the table data in commit coordinator because DROP/REPLACE TABLE does not bother
     // commit coordinator.
-    if (CatalogOwnedTableUtils.defaultCatalogOwnedEnabled(spark) &&
-        catalogOwnedDefaultCreationEnabledInTests) {
-      deleteCatalogOwnedTableFromCommitCoordinator(table)
+    if (CatalogManagedTableUtils.defaultCatalogManagedEnabled(spark) &&
+        catalogManagedDefaultCreationEnabledInTests) {
+      deleteCatalogManagedTableFromCommitCoordinator(table)
     }
   }
 

@@ -248,11 +248,11 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
       // VACUUM can break clones by removing files that clones still references for managed tables.
       // Eventually the catalog should track this dependency to avoid breaking clones,
       // but for now we block running VACUUM on CC tables.
-      if (snapshot.isCatalogOwned) {
+      if (snapshot.isCatalogManaged) {
         table.catalogTable.foreach { catalogTable =>
           assert(
             catalogTable.tableType == CatalogTableType.MANAGED,
-            s"All Catalog Owned tables should be MANAGED tables, " +
+            s"All Catalog Managed tables should be MANAGED tables, " +
               s"but found ${catalogTable.tableType} for table ${catalogTable.identifier}."
           )
         }

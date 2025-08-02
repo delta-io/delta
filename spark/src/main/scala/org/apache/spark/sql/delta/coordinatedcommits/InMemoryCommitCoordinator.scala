@@ -233,7 +233,7 @@ class InMemoryCommitCoordinator(val batchSize: Long)
  * [[InMemoryCommitCoordinator]] with the specified batchSize.
  */
 case class InMemoryCommitCoordinatorBuilder(batchSize: Long)
-    extends CatalogOwnedCommitCoordinatorBuilder {
+    extends CatalogManagedCommitCoordinatorBuilder {
   private lazy val inMemoryStore = new InMemoryCommitCoordinator(batchSize)
 
   /** Name of the commit-coordinator */

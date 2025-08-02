@@ -59,7 +59,7 @@ trait OptimisticTransactionSuiteBase
       name: String,
       conflicts: Boolean,
       setup: Seq[Action] = Seq(Metadata(), Action.supportedProtocolVersion(
-        featuresToExclude = Seq(CatalogOwnedTableFeature))),
+        featuresToExclude = Seq(CatalogManagedTableFeature))),
       reads: Seq[OptimisticTransaction => Unit],
       concurrentWrites: Seq[Action],
       actions: Seq[Action],

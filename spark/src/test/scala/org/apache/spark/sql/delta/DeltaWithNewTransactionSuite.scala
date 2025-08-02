@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.DeltaTestUtils._
 import org.apache.spark.sql.delta.actions.AddFile
-import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogManagedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
@@ -30,7 +30,7 @@ trait DeltaWithNewTransactionSuiteBase extends QueryTest
   with SharedSparkSession
   with DeltaColumnMappingTestUtils
   with DeltaSQLCommandTest
-  with CatalogOwnedTestBaseSuite {
+  with CatalogManagedTestBaseSuite {
 
   /**
    * Test whether `withNewTransaction` captures all delta read made within it and correctly
@@ -376,17 +376,17 @@ class DeltaWithNewTransactionIdColumnMappingSuite extends DeltaWithNewTransactio
 class DeltaWithNewTransactionNameColumnMappingSuite extends DeltaWithNewTransactionSuite
   with DeltaColumnMappingEnableNameMode
 
-class DeltaWithNewTransactionWithCatalogOwnedBatch1Suite
+class DeltaWithNewTransactionWithCatalogManagedBatch1Suite
     extends DeltaWithNewTransactionSuite {
-  override val catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
+  override val catalogManagedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
 }
 
-class DeltaWithNewTransactionWithCatalogOwnedBatch2Suite
+class DeltaWithNewTransactionWithCatalogManagedBatch2Suite
     extends DeltaWithNewTransactionSuite {
-  override val catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
+  override val catalogManagedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
 }
 
-class DeltaWithNewTransactionWithCatalogOwnedBatch100Suite
+class DeltaWithNewTransactionWithCatalogManagedBatch100Suite
    extends DeltaWithNewTransactionSuite {
-  override val catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
+  override val catalogManagedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }

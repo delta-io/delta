@@ -59,16 +59,16 @@ class RestoreTableScalaSuite extends RestoreTableSuiteBase {
   }
 }
 
-class RestoreTableScalaWithCatalogOwnedBatch1Suite extends RestoreTableScalaSuite {
-  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
+class RestoreTableScalaWithCatalogManagedBatch1Suite extends RestoreTableScalaSuite {
+  override def catalogManagedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
 }
 
-class RestoreTableScalaWithCatalogOwnedBatch2Suite extends RestoreTableScalaSuite {
-  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
+class RestoreTableScalaWithCatalogManagedBatch2Suite extends RestoreTableScalaSuite {
+  override def catalogManagedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
 }
 
-class RestoreTableScalaWithCatalogOwnedBatch100Suite extends RestoreTableScalaSuite {
-  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
+class RestoreTableScalaWithCatalogManagedBatch100Suite extends RestoreTableScalaSuite {
+  override def catalogManagedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }
 
 class RestoreTableScalaDeletionVectorSuite

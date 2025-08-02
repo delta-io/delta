@@ -21,7 +21,7 @@ import java.util.TimeZone
 
 import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.DeltaTestUtils._
-import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogManagedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -40,7 +40,7 @@ class ChecksumSuite
   with DeltaTestUtilsBase
   with DeltaSQLCommandTest
   with DeltaSQLTestUtils
-  with CatalogOwnedTestBaseSuite {
+  with CatalogManagedTestBaseSuite {
 
   override def sparkConf: SparkConf = super.sparkConf
     .set(DeltaSQLConf.INCREMENTAL_COMMIT_FORCE_VERIFY_IN_TESTS, false)
@@ -263,14 +263,14 @@ class ChecksumSuite
   }
 }
 
-class ChecksumWithCatalogOwnedBatch1Suite extends ChecksumSuite {
-  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
+class ChecksumWithCatalogManagedBatch1Suite extends ChecksumSuite {
+  override def catalogManagedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
 }
 
-class ChecksumWithCatalogOwnedBatch2Suite extends ChecksumSuite {
-  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
+class ChecksumWithCatalogManagedBatch2Suite extends ChecksumSuite {
+  override def catalogManagedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
 }
 
-class ChecksumWithCatalogOwnedBatch100Suite extends ChecksumSuite {
-  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
+class ChecksumWithCatalogManagedBatch100Suite extends ChecksumSuite {
+  override def catalogManagedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }

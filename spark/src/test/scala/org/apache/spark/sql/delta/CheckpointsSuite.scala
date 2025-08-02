@@ -26,7 +26,7 @@ import scala.concurrent.duration._
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions, UsageRecord}
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions._
-import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogManagedTestBaseSuite
 import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LocalLogStore
@@ -52,7 +52,7 @@ class CheckpointsSuite
   with DeltaCheckpointTestUtils
   with DeltaSQLCommandTest
   with DeltaSQLTestUtils
-  with CatalogOwnedTestBaseSuite {
+  with CatalogManagedTestBaseSuite {
 
   def testDifferentV2Checkpoints(testName: String)(f: => Unit): Unit = {
     for (checkpointFormat <- Seq(V2Checkpoint.Format.JSON.name, V2Checkpoint.Format.PARQUET.name)) {
@@ -1128,15 +1128,15 @@ class FakeGCSFileSystemValidatingCommits extends FakeGCSFileSystemValidatingChec
   override protected def shouldValidateFilePattern(f: Path): Boolean = f.getName.contains(".json")
 }
 
-class CheckpointsWithCatalogOwnedBatch1Suite extends CheckpointsSuite {
-  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
+class CheckpointsWithCatalogManagedBatch1Suite extends CheckpointsSuite {
+  override def catalogManagedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
 }
 
-class CheckpointsWithCatalogOwnedBatch2Suite extends CheckpointsSuite {
-  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
+class CheckpointsWithCatalogManagedBatch2Suite extends CheckpointsSuite {
+  override def catalogManagedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
 }
 
-class CheckpointsWithCatalogOwnedBatch100Suite extends CheckpointsSuite {
-  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
+class CheckpointsWithCatalogManagedBatch100Suite extends CheckpointsSuite {
+  override def catalogManagedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }
 

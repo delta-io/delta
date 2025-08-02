@@ -20,7 +20,7 @@ import java.io.File
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.AddFile
-import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogManagedTestBaseSuite
 import org.apache.spark.sql.delta.metering.ScanReport
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -50,7 +50,7 @@ trait DataSkippingDeltaTestsBase extends DeltaExcludedBySparkVersionTestMixinShi
     with DataSkippingDeltaTestsUtils
     with GivenWhenThen
     with ScanReportHelper
-    with CatalogOwnedTestBaseSuite
+    with CatalogManagedTestBaseSuite
     with DeltaSQLTestUtils {
 
   val defaultNumIndexedCols = DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.fromString(
@@ -2319,14 +2319,14 @@ class DataSkippingDeltaV1ParquetCheckpointV2Suite extends DataSkippingDeltaV1Sui
   }
 }
 
-class DataSkippingDeltaV1WithCatalogOwnedBatch1Suite extends DataSkippingDeltaV1Suite {
-  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
+class DataSkippingDeltaV1WithCatalogManagedBatch1Suite extends DataSkippingDeltaV1Suite {
+  override def catalogManagedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
 }
 
-class DataSkippingDeltaV1WithCatalogOwnedBatch2Suite extends DataSkippingDeltaV1Suite {
-  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
+class DataSkippingDeltaV1WithCatalogManagedBatch2Suite extends DataSkippingDeltaV1Suite {
+  override def catalogManagedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
 }
 
-class DataSkippingDeltaV1WithCatalogOwnedBatch100Suite extends DataSkippingDeltaV1Suite {
-  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
+class DataSkippingDeltaV1WithCatalogManagedBatch100Suite extends DataSkippingDeltaV1Suite {
+  override def catalogManagedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }
