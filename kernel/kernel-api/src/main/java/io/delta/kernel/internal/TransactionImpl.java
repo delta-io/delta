@@ -23,6 +23,8 @@ import static io.delta.kernel.internal.util.Preconditions.checkState;
 import static io.delta.kernel.internal.util.Utils.toCloseableIterator;
 
 import io.delta.kernel.*;
+import io.delta.kernel.commit.CommitFailedException;
+import io.delta.kernel.commit.CommitMetadata;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.ConcurrentWriteException;
@@ -33,6 +35,7 @@ import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.checksum.CRCInfo;
 import io.delta.kernel.internal.clustering.ClusteringUtils;
+import io.delta.kernel.internal.commit.DefaultFileSystemManagedTableOnlyCommitter;
 import io.delta.kernel.internal.compaction.LogCompactionWriter;
 import io.delta.kernel.internal.data.TransactionStateRow;
 import io.delta.kernel.internal.fs.Path;
@@ -50,7 +53,6 @@ import io.delta.kernel.internal.stats.FileSizeHistogram;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.*;
 import io.delta.kernel.internal.util.Clock;
-import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.InCommitTimestampUtils;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.metrics.TransactionMetricsResult;
@@ -60,7 +62,6 @@ import io.delta.kernel.utils.CloseableIterable;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
 import java.io.UncheckedIOException;
-import java.nio.file.FileAlreadyExistsException;
 import java.util.*;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -275,38 +276,82 @@ public class TransactionImpl implements Transaction {
       }
 
       int numTries = 0;
-      while (numTries <= maxRetries) { // leq because the first is a try, not a retry
-        logger.info("Committing transaction as version = {}.", commitAsVersion);
+      while (true) {
+        // This loop exits upon either (a) commit success (return statement) or (b) commit failure,
+        // if the number of retries has been exhausted or the commit is not retryable.
+
+        logger.info(
+            "Attempting to commit transaction at version {}. Attempt {}/{}",
+            commitAsVersion,
+            numTries + 1,
+            maxRetries);
         try {
           transactionMetrics.commitAttemptsCounter.increment();
           return doCommit(
               engine, commitAsVersion, attemptCommitInfo, dataActions, transactionMetrics);
-        } catch (FileAlreadyExistsException fnfe) {
-          logger.info(
-              "Concurrent write detected when committing as version = {}.", commitAsVersion);
-          if (numTries < maxRetries) {
-            // only try and resolve conflicts if we're going to retry
+        } catch (CommitFailedException cfe) {
+          if (!cfe.isRetryable()) {
+            // Case 1: Non-retryable exception. We must throw this.
+            logger.error(
+                "Commit attempt for version {} failed with a non-retryable exception and will not "
+                    + "be retried. Error: {}",
+                commitAsVersion,
+                cfe.getMessage());
+
+            throw new RuntimeException(cfe);
+          } else if (numTries >= maxRetries) {
+            // Case 2: Despite the error being retryable, we have exhausted the maximum number of
+            // retries. Will have to throw here, too.
+            logger.error(
+                "Commit attempt for version {} failed with a retryable exception but will not be "
+                    + "retried because the maximum number of retries ({}) has been exhausted. "
+                    + "Error: {}",
+                commitAsVersion,
+                maxRetries,
+                cfe.getMessage());
+
+            if (cfe.isConflict()) {
+              // Case 2A: We know why this commit failed, so we can throw a more specific exception.
+              throw new ConcurrentWriteException(cfe);
+            } else {
+              // Case 2B: We don't know why this commit failed, so we throw a generic exception.
+              throw new RuntimeException(cfe);
+            }
+          } else if (cfe.isConflict()) {
+            // Case 3: Retryable exception due to a conflict. We will resolve the conflict and retry
+            logger.warn(
+                "Commit attempt for version {} failed with a retryable exception due to a physical "
+                    + "conflict. Performing conflict resolution and trying again. Error: {}",
+                commitAsVersion,
+                cfe.getMessage());
+
             TransactionRebaseState rebaseState =
                 resolveConflicts(engine, commitAsVersion, attemptCommitInfo, numTries, dataActions);
             commitAsVersion = rebaseState.getLatestVersion() + 1;
             dataActions = rebaseState.getUpdatedDataActions();
             domainMetadataState.setComputedDomainMetadatas(rebaseState.getUpdatedDomainMetadatas());
             currentCrcInfo = rebaseState.getUpdatedCrcInfo();
-            // Action counters may be partially incremented from previous tries, reset the counters
-            // to 0 and drop fileSizeHistogram
-            // TODO: reconcile fileSizeHistogram.
-            transactionMetrics.resetActionMetricsForRetry();
+          } else {
+            // Case 4: No conflict so no conflict resolution needed - just retry with same version.
+
+            logger.warn(
+                "Commit attempt for version {} failed with a retryable exception due to a "
+                    + "transient error. Skipping conflict resolution and trying again. Error: {}",
+                commitAsVersion,
+                cfe.getMessage());
           }
+          // We will be retrying the commit.
+          //
+          // Action counters may be partially incremented from previous tries, reset the counters
+          // to 0 and drop fileSizeHistogram
+          // TODO: reconcile fileSizeHistogram.
+          transactionMetrics.resetActionMetricsForRetry();
+          numTries++;
         }
-        numTries++;
       }
     } finally {
       closed = true;
     }
-
-    // we have exhausted the number of retries, give up.
-    logger.info("Exhausted maximum retries ({}) for committing transaction.", maxRetries);
-    throw new ConcurrentWriteException();
   }
 
   private TransactionRebaseState resolveConflicts(
@@ -379,7 +424,7 @@ public class TransactionImpl implements Transaction {
       CommitInfo attemptCommitInfo,
       CloseableIterable<Row> dataActions,
       TransactionMetrics transactionMetrics)
-      throws FileAlreadyExistsException {
+      throws CommitFailedException {
     List<Row> metadataActions = new ArrayList<>();
     metadataActions.add(createCommitInfoSingleAction(attemptCommitInfo.toRow()));
     if (shouldUpdateMetadata) {
@@ -409,10 +454,25 @@ public class TransactionImpl implements Transaction {
       } else {
         completeFileActionIter = userStageDataIter;
       }
+
+      boolean isAppendOnlyTable = APPEND_ONLY_ENABLED.fromMetadata(metadata);
+
       // Create a new CloseableIterator that will return the metadata actions followed by the
       // data actions.
       CloseableIterator<Row> dataAndMetadataActions =
-          toCloseableIterator(metadataActions.iterator()).combine(completeFileActionIter);
+          toCloseableIterator(metadataActions.iterator())
+              .combine(completeFileActionIter)
+              .map(
+                  action -> {
+                    incrementMetricsForFileActionRow(transactionMetrics, action);
+                    if (!action.isNullAt(REMOVE_FILE_ORDINAL)) {
+                      RemoveFile removeFile = new RemoveFile(action.getStruct(REMOVE_FILE_ORDINAL));
+                      if (isAppendOnlyTable && removeFile.getDataChange()) {
+                        throw DeltaErrors.cannotModifyAppendOnlyTable(dataPath.toString());
+                      }
+                    }
+                    return action;
+                  });
 
       if (commitAsVersion == 0) {
         // New table, create a delta log directory
@@ -424,37 +484,27 @@ public class TransactionImpl implements Transaction {
         }
       }
 
-      boolean isAppendOnlyTable = APPEND_ONLY_ENABLED.fromMetadata(metadata);
+      final CommitMetadata commitMetadata =
+          new CommitMetadata(
+              commitAsVersion,
+              logPath.toString(),
+              attemptCommitInfo,
+              readSnapshot.getVersion() >= 0
+                  ? Optional.of(readSnapshot.getProtocol())
+                  : Optional.empty(),
+              readSnapshot.getVersion() >= 0
+                  ? Optional.of(readSnapshot.getMetadata())
+                  : Optional.empty(),
+              shouldUpdateProtocol ? Optional.of(protocol) : Optional.empty(),
+              shouldUpdateMetadata ? Optional.of(metadata) : Optional.empty());
 
-      // Write the staged data to a delta file
-      wrapEngineExceptionThrowsIO(
-          () -> {
-            engine
-                .getJsonHandler()
-                .writeJsonFileAtomically(
-                    FileNames.deltaFile(logPath, commitAsVersion),
-                    dataAndMetadataActions.map(
-                        action -> {
-                          incrementMetricsForFileActionRow(transactionMetrics, action);
-                          if (!action.isNullAt(REMOVE_FILE_ORDINAL)) {
-                            RemoveFile removeFile =
-                                new RemoveFile(action.getStruct(REMOVE_FILE_ORDINAL));
-                            if (isAppendOnlyTable && removeFile.getDataChange()) {
-                              throw DeltaErrors.cannotModifyAppendOnlyTable(dataPath.toString());
-                            }
-                          }
-                          return action;
-                        }),
-                    false /* overwrite */);
-            return null;
-          },
-          "Write file actions to JSON log file `%s`",
-          FileNames.deltaFile(logPath, commitAsVersion));
+      // May throw CommitFailedException
+      DefaultFileSystemManagedTableOnlyCommitter.INSTANCE.commit(
+          engine, dataAndMetadataActions, commitMetadata);
 
       return commitAsVersion;
-    } catch (FileAlreadyExistsException e) {
-      throw e;
     } catch (IOException ioe) {
+      // Error closing the CloseableIterator of actions or error creating the delta log directory
       throw new UncheckedIOException(ioe);
     }
   }
