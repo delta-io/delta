@@ -13,7 +13,7 @@ def main():
     """Script to manage the deployment of Delta Lake docs to the hosting bucket.
        To build the docs:
        $ generate_docs --livehtml
-
+    
     """
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -37,25 +37,16 @@ def main():
     api_docs_root_dir = os.path.join(docs_root_dir, "apis")
 
     with WorkingDirectory(docs_root_dir):
-        html_output = os.path.join(docs_root_dir, '_site', 'html')
-        if os.path.exists(html_output):
-           print("Deleting previous output directory %s" % (html_output))
-           shutil.rmtree(html_output)
+        api_html_output = os.path.join(docs_root_dir, 'public', 'api', 'latest')
 
-        os.makedirs(html_output, exist_ok=False)
-
-        html_source = os.path.join(docs_root_dir, 'source')
         print("Building content")
-        env = { "TARGET_CLOUD": "delta-oss-only" }
 
-        sphinx_cmd = "sphinx-build"
+        build_docs_cmd = "pnpm run build"
         if args.livehtml:
-            sphinx_cmd = "sphinx-autobuild"
-        build_docs_args = "%s -b html -d /tmp/build/doctrees %s %s" % (
-            sphinx_cmd, html_source, html_output)
+            build_docs_cmd = "pnpm dev"
         if args.api_docs:
-            generate_and_copy_api_docs(api_docs_root_dir, html_output)
-        run_cmd(build_docs_args, env=env, shell=True, stream_output=True)
+            generate_and_copy_api_docs(api_docs_root_dir, api_html_output)
+        run_cmd(build_docs_cmd, shell=True, stream_output=True)
 
 
 def generate_and_copy_api_docs(api_docs_root_dir, target_loc):
@@ -67,7 +58,7 @@ def generate_and_copy_api_docs(api_docs_root_dir, target_loc):
         run_cmd(["python3", script_path], stream_output=True)
         assert os.path.exists(api_docs_dir), \
             "Doc generation didn't create the expected api directory"
-        api_docs_dest_dir = os.path.join(target_loc, "api")
+        api_docs_dest_dir = target_loc
         shutil.copytree(api_docs_dir, api_docs_dest_dir)
 
 
