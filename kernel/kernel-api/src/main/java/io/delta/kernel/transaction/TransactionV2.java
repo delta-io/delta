@@ -65,7 +65,7 @@ import java.util.Map;
  * <pre>{@code
  * CloseableIterator<Row> allDataActionsIter = ... // Collect from executors
  * CommitContext context = txn.getCommitContextForFirstCommitAttempt(engine, allDataActionsIter);
- * resolvedTable.getCommitter.commit(
+ * snapshot.getCommitter.commit(
  *   engine,
  *   context.getFinalizedActions(),
  *   context.getCommitMetadata()

@@ -36,6 +36,7 @@ import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.clustering.ClusteringUtils;
+import io.delta.kernel.internal.commit.DefaultFileSystemManagedTableOnlyCommitter;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.icebergcompat.IcebergCompatV2MetadataValidatorAndUpdater;
 import io.delta.kernel.internal.icebergcompat.IcebergCompatV3MetadataValidatorAndUpdater;
@@ -758,10 +759,12 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         SnapshotQueryContext snapshotContext) {
       super(
           dataPath,
-          LogSegment.empty(table.getLogPath()),
+          -1,
+          new Lazy<>(() -> LogSegment.empty(table.getLogPath())),
           logReplay,
           protocol,
           metadata,
+          DefaultFileSystemManagedTableOnlyCommitter.INSTANCE,
           snapshotContext);
     }
 

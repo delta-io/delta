@@ -17,8 +17,9 @@
 package io.delta.kernel.defaults.test
 
 import io.delta.kernel.{Table, TableManager}
-import io.delta.kernel.defaults.test.ResolvedTableAdapterImplicits._
 import io.delta.kernel.engine.Engine
+import io.delta.kernel.internal.{SnapshotImpl, TableImpl}
+import io.delta.kernel.internal.table.SnapshotBuilderImpl
 
 /**
  * Test framework adapter that provides a unified interface for **loading** Delta tables.
@@ -38,70 +39,64 @@ trait AbstractTableManagerAdapter {
   /** Does this adapter support resolving a timestamp to a version? */
   def supportsTimestampResolution: Boolean
 
-  def getResolvedTableAdapterAtLatest(engine: Engine, path: String): AbstractResolvedTableAdapter
+  def getSnapshotAtLatest(engine: Engine, path: String): SnapshotImpl
 
-  def getResolvedTableAdapterAtVersion(
-      engine: Engine,
-      path: String,
-      version: Long): AbstractResolvedTableAdapter
+  def getSnapshotAtVersion(engine: Engine, path: String, version: Long): SnapshotImpl
 
-  def getResolvedTableAdapterAtTimestamp(
-      engine: Engine,
-      path: String,
-      timestamp: Long): AbstractResolvedTableAdapter
+  def getSnapshotAtTimestamp(engine: Engine, path: String, timestamp: Long): SnapshotImpl
 }
 
 /**
- * Legacy implementation using the [[Table.forPath]] API which then wraps a [[Snapshot]].
+ * Legacy implementation using the [[Table.forPath]] API.
  */
 class LegacyTableManagerAdapter extends AbstractTableManagerAdapter {
   override def supportsTimestampResolution: Boolean = true
 
-  override def getResolvedTableAdapterAtLatest(
+  override def getSnapshotAtLatest(
       engine: Engine,
-      path: String): AbstractResolvedTableAdapter = {
-    Table.forPath(engine, path).getLatestSnapshot(engine).toTestAdapter
+      path: String): SnapshotImpl = {
+    Table.forPath(engine, path).asInstanceOf[TableImpl].getLatestSnapshot(engine)
   }
 
-  override def getResolvedTableAdapterAtVersion(
+  override def getSnapshotAtVersion(
       engine: Engine,
       path: String,
-      version: Long): AbstractResolvedTableAdapter = {
-    Table.forPath(engine, path).getSnapshotAsOfVersion(engine, version).toTestAdapter
+      version: Long): SnapshotImpl = {
+    Table.forPath(engine, path).asInstanceOf[TableImpl].getSnapshotAsOfVersion(engine, version)
   }
 
-  override def getResolvedTableAdapterAtTimestamp(
+  override def getSnapshotAtTimestamp(
       engine: Engine,
       path: String,
-      timestamp: Long): AbstractResolvedTableAdapter = {
-    Table.forPath(engine, path).getSnapshotAsOfTimestamp(engine, timestamp).toTestAdapter
+      timestamp: Long): SnapshotImpl = {
+    Table.forPath(engine, path).asInstanceOf[TableImpl].getSnapshotAsOfTimestamp(engine, timestamp)
   }
 }
 
 /**
- * Current implementation using the [[TableManager.loadTable]] API, which then wraps a
- * [[ResolvedTable]].
+ * New implementation using the [[TableManager.loadSnapshot]] API.
  */
 class TableManagerAdapter extends AbstractTableManagerAdapter {
   override def supportsTimestampResolution: Boolean = false
 
-  override def getResolvedTableAdapterAtLatest(
+  override def getSnapshotAtLatest(
       engine: Engine,
-      path: String): AbstractResolvedTableAdapter = {
-    TableManager.loadTable(path).build(engine).toTestAdapter
+      path: String): SnapshotImpl = {
+    TableManager.loadSnapshot(path).asInstanceOf[SnapshotBuilderImpl].build(engine)
   }
 
-  override def getResolvedTableAdapterAtVersion(
+  override def getSnapshotAtVersion(
       engine: Engine,
       path: String,
-      version: Long): AbstractResolvedTableAdapter = {
-    TableManager.loadTable(path).atVersion(version).build(engine).toTestAdapter
+      version: Long): SnapshotImpl = {
+    TableManager
+      .loadSnapshot(path).asInstanceOf[SnapshotBuilderImpl].atVersion(version).build(engine)
   }
 
-  override def getResolvedTableAdapterAtTimestamp(
+  override def getSnapshotAtTimestamp(
       engine: Engine,
       path: String,
-      timestamp: Long): AbstractResolvedTableAdapter = {
+      timestamp: Long): SnapshotImpl = {
     throw new UnsupportedOperationException("not implemented")
   }
 }

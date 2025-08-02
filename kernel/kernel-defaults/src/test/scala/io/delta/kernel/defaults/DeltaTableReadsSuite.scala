@@ -265,15 +265,15 @@ trait AbstractDeltaTableReadsSuite extends AnyFunSuite { self: AbstractTestUtils
     }
 
     expectTableNotFoundException { () =>
-      tableManager.getResolvedTableAdapterAtLatest(defaultEngine, invalidPath)
+      tableManager.getSnapshotAtLatest(defaultEngine, invalidPath)
     }
     expectTableNotFoundException { () =>
-      tableManager.getResolvedTableAdapterAtVersion(defaultEngine, invalidPath, 1)
+      tableManager.getSnapshotAtVersion(defaultEngine, invalidPath, 1)
     }
 
     if (tableManager.supportsTimestampResolution) {
       expectTableNotFoundException { () =>
-        tableManager.getResolvedTableAdapterAtTimestamp(defaultEngine, invalidPath, 1)
+        tableManager.getSnapshotAtTimestamp(defaultEngine, invalidPath, 1)
       }
     }
   }
@@ -319,7 +319,7 @@ trait AbstractDeltaTableReadsSuite extends AnyFunSuite { self: AbstractTestUtils
     val path = "file:" + goldenTablePath("data-reader-partition-values")
 
     // for now we don't support timestamp type partition columns so remove from read columns
-    val readCols = getTableManagerAdapter.getResolvedTableAdapterAtLatest(defaultEngine, path)
+    val readCols = getTableManagerAdapter.getSnapshotAtLatest(defaultEngine, path)
       .getSchema()
       .withoutField("as_timestamp")
       .fields()
@@ -764,7 +764,7 @@ trait AbstractDeltaTableReadsSuite extends AnyFunSuite { self: AbstractTestUtils
         expectedVersion = Some(10))
       // Cannot read a version that does not exist
       val e = intercept[RuntimeException] {
-        getTableManagerAdapter.getResolvedTableAdapterAtVersion(defaultEngine, path, 11)
+        getTableManagerAdapter.getSnapshotAtVersion(defaultEngine, path, 11)
       }
       assert(e.getMessage.contains(
         "Cannot load table version 11 as it does not exist. The latest available version is 10"))
@@ -799,7 +799,7 @@ trait AbstractDeltaTableReadsSuite extends AnyFunSuite { self: AbstractTestUtils
 
       // Cannot read a version that has been truncated
       val e = intercept[RuntimeException] {
-        getTableManagerAdapter.getResolvedTableAdapterAtVersion(defaultEngine, tablePath, 9)
+        getTableManagerAdapter.getSnapshotAtVersion(defaultEngine, tablePath, 9)
       }
       assert(e.getMessage.contains("Cannot load table version 9"))
       // Can read version 10
@@ -932,7 +932,7 @@ trait AbstractDeltaTableReadsSuite extends AnyFunSuite { self: AbstractTestUtils
       new File(dir, "_delta_log").mkdirs()
       intercept[TableNotFoundException] {
         getTableManagerAdapter
-          .getResolvedTableAdapterAtTimestamp(defaultEngine, dir.getCanonicalPath, 0L)
+          .getSnapshotAtTimestamp(defaultEngine, dir.getCanonicalPath, 0L)
       }
     }
   }
@@ -943,7 +943,7 @@ trait AbstractDeltaTableReadsSuite extends AnyFunSuite { self: AbstractTestUtils
     withTempDir { dir =>
       intercept[TableNotFoundException] {
         getTableManagerAdapter
-          .getResolvedTableAdapterAtTimestamp(defaultEngine, dir.getCanonicalPath, 0L)
+          .getSnapshotAtTimestamp(defaultEngine, dir.getCanonicalPath, 0L)
       }
     }
   }
@@ -955,7 +955,7 @@ trait AbstractDeltaTableReadsSuite extends AnyFunSuite { self: AbstractTestUtils
       spark.range(20).write.format("parquet").mode("overwrite").save(dir.getCanonicalPath)
       intercept[TableNotFoundException] {
         getTableManagerAdapter
-          .getResolvedTableAdapterAtTimestamp(defaultEngine, dir.getCanonicalPath, 0L)
+          .getSnapshotAtTimestamp(defaultEngine, dir.getCanonicalPath, 0L)
       }
     }
   }

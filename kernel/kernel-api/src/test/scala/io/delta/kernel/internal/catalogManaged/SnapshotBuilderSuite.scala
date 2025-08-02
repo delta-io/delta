@@ -29,14 +29,14 @@ import io.delta.kernel.internal.actions.Protocol
 import io.delta.kernel.internal.commit.DefaultFileSystemManagedTableOnlyCommitter
 import io.delta.kernel.internal.files.ParsedLogData
 import io.delta.kernel.internal.files.ParsedLogData.ParsedLogType
-import io.delta.kernel.internal.table.ResolvedTableInternal
+import io.delta.kernel.internal.table.SnapshotBuilderImpl
 import io.delta.kernel.test.{ActionUtils, MockFileSystemClientUtils, VectorTestUtils}
 import io.delta.kernel.types.{IntegerType, StructType}
 import io.delta.kernel.utils.CloseableIterator
 
 import org.scalatest.funsuite.AnyFunSuite
 
-class ResolvedTableBuilderSuite extends AnyFunSuite
+class SnapshotBuilderSuite extends AnyFunSuite
     with MockFileSystemClientUtils
     with ActionUtils
     with VectorTestUtils {
@@ -51,14 +51,14 @@ class ResolvedTableBuilderSuite extends AnyFunSuite
 
   test("loadTable: null path throws NullPointerException") {
     assertThrows[NullPointerException] {
-      TableManager.loadTable(null)
+      TableManager.loadSnapshot(null)
     }
   }
 
   // ===== Version Tests ===== //
 
   test("atVersion: negative version throws IllegalArgumentException") {
-    val builder = TableManager.loadTable(dataPath.toString).atVersion(-1)
+    val builder = TableManager.loadSnapshot(dataPath.toString).atVersion(-1)
 
     val exMsg = intercept[IllegalArgumentException] {
       builder.build(emptyMockEngine)
@@ -71,12 +71,12 @@ class ResolvedTableBuilderSuite extends AnyFunSuite
 
   test("withCommitter: null committer throws NullPointerException") {
     assertThrows[NullPointerException] {
-      TableManager.loadTable(dataPath.toString).withCommitter(null)
+      TableManager.loadSnapshot(dataPath.toString).withCommitter(null)
     }
   }
 
   test("when no committer is provided, the default committer is created") {
-    val committer = TableManager.loadTable(dataPath.toString)
+    val committer = TableManager.loadSnapshot(dataPath.toString)
       .atVersion(1)
       .withProtocolAndMetadata(protocol, metadata) // avoid trying to use engine to load log segment
       .build(emptyMockEngine)
@@ -95,7 +95,7 @@ class ResolvedTableBuilderSuite extends AnyFunSuite
       }
     }
 
-    val committer = TableManager.loadTable(dataPath.toString)
+    val committer = TableManager.loadSnapshot(dataPath.toString)
       .atVersion(1)
       .withCommitter(new CustomCommitter())
       .withProtocolAndMetadata(protocol, metadata) // avoid trying to use engine to load log segment
@@ -109,19 +109,19 @@ class ResolvedTableBuilderSuite extends AnyFunSuite
 
   test("withProtocolAndMetadata: null protocol throws NullPointerException") {
     assertThrows[NullPointerException] {
-      TableManager.loadTable(dataPath.toString)
+      TableManager.loadSnapshot(dataPath.toString)
         .withProtocolAndMetadata(null, metadata)
     }
 
     assertThrows[NullPointerException] {
-      TableManager.loadTable(dataPath.toString)
+      TableManager.loadSnapshot(dataPath.toString)
         .withProtocolAndMetadata(protocol, null)
     }
   }
 
   test("withProtocolAndMetadata: only if version is provided") {
     val exMsg = intercept[IllegalArgumentException] {
-      TableManager.loadTable(dataPath.toString)
+      TableManager.loadSnapshot(dataPath.toString)
         .withProtocolAndMetadata(protocol, metadata)
         .build(emptyMockEngine)
     }.getMessage
@@ -131,7 +131,7 @@ class ResolvedTableBuilderSuite extends AnyFunSuite
 
   test("withProtocolAndMetadata: invalid readerVersion throws KernelException") {
     val exMsg = intercept[KernelException] {
-      TableManager.loadTable(dataPath.toString)
+      TableManager.loadSnapshot(dataPath.toString)
         .atVersion(10)
         .withProtocolAndMetadata(new Protocol(999, 2), metadata)
         .build(emptyMockEngine)
@@ -142,7 +142,7 @@ class ResolvedTableBuilderSuite extends AnyFunSuite
 
   test("withProtocolAndMetadata: unknown reader feature throws KernelException") {
     val exMsg = intercept[KernelException] {
-      TableManager.loadTable(dataPath.toString)
+      TableManager.loadSnapshot(dataPath.toString)
         .atVersion(10)
         .withProtocolAndMetadata(
           new Protocol(3, 7, Set("unknownReaderFeature").asJava, Collections.emptySet()),
@@ -157,7 +157,7 @@ class ResolvedTableBuilderSuite extends AnyFunSuite
 
   test("withLogData: null input throws NullPointerException") {
     assertThrows[NullPointerException] {
-      TableManager.loadTable(dataPath.toString).withLogData(null)
+      TableManager.loadSnapshot(dataPath.toString).withLogData(null)
     }
   }
 
@@ -167,7 +167,7 @@ class ResolvedTableBuilderSuite extends AnyFunSuite
     val suffix = s"- type=${parsedLogData.`type`}"
     test(s"withLogData: non-RATIFIED_STAGED_COMMIT throws IllegalArgumentException $suffix") {
       val builder = TableManager
-        .loadTable(dataPath.toString)
+        .loadSnapshot(dataPath.toString)
         .atVersion(1)
         .withLogData(Collections.singletonList(parsedLogData))
 
@@ -181,7 +181,7 @@ class ResolvedTableBuilderSuite extends AnyFunSuite
 
   test("withLogData: non-contiguous input throws IllegalArgumentException") {
     val exMsg = intercept[IllegalArgumentException] {
-      TableManager.loadTable(dataPath.toString)
+      TableManager.loadSnapshot(dataPath.toString)
         .atVersion(2)
         .withLogData(parsedRatifiedStagedCommits(Seq(0, 2)).toList.asJava)
         .build(emptyMockEngine)
@@ -192,7 +192,7 @@ class ResolvedTableBuilderSuite extends AnyFunSuite
 
   test("withLogData: non-sorted input throws IllegalArgumentException") {
     val exMsg = intercept[IllegalArgumentException] {
-      TableManager.loadTable(dataPath.toString)
+      TableManager.loadSnapshot(dataPath.toString)
         .atVersion(2)
         .withLogData(parsedRatifiedStagedCommits(Seq(2, 1, 0)).toList.asJava)
         .build(emptyMockEngine)
@@ -206,15 +206,15 @@ class ResolvedTableBuilderSuite extends AnyFunSuite
   /////////////////////////////////////
 
   test("if P & M are provided then LogSegment is not loaded") {
-    val resolvedTable = TableManager
-      .loadTable(dataPath.toString)
+    val snapshot = TableManager
+      .loadSnapshot(dataPath.toString)
+      .asInstanceOf[SnapshotBuilderImpl]
       .atVersion(13)
       .withProtocolAndMetadata(protocol, metadata)
       .withLogData(Collections.emptyList())
       .build(emptyMockEngine)
-      .asInstanceOf[ResolvedTableInternal]
 
-    assert(!resolvedTable.getLazyLogSegment.isPresent)
+    assert(!snapshot.getLazyLogSegment.isPresent)
   }
 
   // TODO: Mock JSON reading and then actually read the P & M
