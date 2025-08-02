@@ -31,7 +31,8 @@ import java.io.IOException;
 import org.apache.hadoop.conf.Configuration;
 
 import com.amazonaws.auth.AWSCredentialsProvider;
-import com.amazonaws.services.dynamodbv2.AmazonDynamoDBClient;
+import com.amazonaws.services.dynamodbv2.AmazonDynamoDB;
+import com.amazonaws.services.dynamodbv2.AmazonDynamoDBClientBuilder;
 import com.amazonaws.services.dynamodbv2.model.AttributeDefinition;
 import com.amazonaws.services.dynamodbv2.model.AttributeValue;
 import com.amazonaws.services.dynamodbv2.model.ComparisonOperator;
@@ -49,8 +50,6 @@ import com.amazonaws.services.dynamodbv2.model.QueryRequest;
 import com.amazonaws.services.dynamodbv2.model.ResourceNotFoundException;
 import com.amazonaws.services.dynamodbv2.model.ResourceInUseException;
 import com.amazonaws.services.dynamodbv2.model.ScalarAttributeType;
-import com.amazonaws.regions.Region;
-import com.amazonaws.regions.Regions;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -103,7 +102,7 @@ public class S3DynamoDBLogStore extends BaseExternalLogStore {
     /**
      * Member fields
      */
-    private final AmazonDynamoDBClient client;
+    private final AmazonDynamoDB client;
     private final String tableName;
     private final String credentialsProviderName;
     private final String regionName;
@@ -319,13 +318,17 @@ public class S3DynamoDBLogStore extends BaseExternalLogStore {
         };
     }
 
-    private AmazonDynamoDBClient getClient() throws java.io.IOException {
+    /**
+     * Create the Amazon DynamoDB client.
+     */
+    protected AmazonDynamoDB getClient() throws java.io.IOException {
         try {
             final AWSCredentialsProvider awsCredentialsProvider =
                     ReflectionUtils.createAwsCredentialsProvider(credentialsProviderName, initHadoopConf());
-            final AmazonDynamoDBClient client = new AmazonDynamoDBClient(awsCredentialsProvider);
-            client.setRegion(Region.getRegion(Regions.fromName(regionName)));
-            return client;
+            return AmazonDynamoDBClientBuilder.standard()
+                .withCredentials(awsCredentialsProvider)
+                .withRegion(regionName)
+                .build();
         } catch (ReflectiveOperationException e) {
             throw new java.io.IOException(e);
         }
