@@ -24,7 +24,7 @@ import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaFileProviderUtils, IcebergConstants, NoMapping, Snapshot}
+import org.apache.spark.sql.delta.{DeltaFileProviderUtils, DummySnapshot, IcebergConstants, NoMapping, Snapshot}
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, RemoveFile}
 import org.apache.spark.sql.delta.icebergShaded.IcebergTransactionUtils._
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
@@ -226,13 +226,12 @@ class IcebergConversionTransaction(
 
   protected val tablePath = postCommitSnapshot.deltaLog.dataPath
 
-  protected val convert = new DeltaToIcebergConvert(postCommitSnapshot, catalogTable)
+  protected val convert = new DeltaToIcebergConverter(postCommitSnapshot, catalogTable)
 
   protected def icebergSchema: IcebergSchema = convert.schema
 
   // Initial partition spec converted from Delta
   protected def partitionSpec: PartitionSpec = convert.partition
-
 
   // Current partition spec from iceberg table
   def currentPartitionSpec: PartitionSpec = {
@@ -299,9 +298,11 @@ class IcebergConversionTransaction(
    * - schema update -> sets the full new schema
    * - properties update -> applies only the new properties
    */
-  def updateTableMetadata(newMetadata: Metadata, prevMetadata: Metadata): Unit = {
+  def updateTableMetadata(prevMetadata: Metadata): Unit = {
     assert(!isMetadataUpdate, "updateTableMetadata already called")
     isMetadataUpdate = true
+
+    val newMetadata = postCommitSnapshot.metadata
 
     // Throws if partition evolution detected
     if (newMetadata.partitionColumns != prevMetadata.partitionColumns) {
@@ -335,8 +336,26 @@ class IcebergConversionTransaction(
       )
     }
 
-    val (propertyDeletes, propertyAdditions) =
-      detectPropertiesChange(newMetadata.configuration, prevMetadata.configuration)
+    // Compute and apply properties changes
+    val (propertyDeletes, propertyAdditions) = {
+      val newIcebergProperties = convert.properties
+      val prevIcebergProperties = new DeltaToIcebergConverter(
+        new DummySnapshot(
+          logPath = postCommitSnapshot.path,
+          deltaLog = postCommitSnapshot.deltaLog,
+          metadata = prevMetadata),
+        catalogTable
+      ).properties
+
+      if (prevIcebergProperties == newIcebergProperties) {
+        (Set.empty, Map.empty)
+      } else {
+        (
+          prevIcebergProperties.keySet.diff(newIcebergProperties.keySet),
+          newIcebergProperties
+        )
+      }
+    }
 
     if (propertyDeletes.nonEmpty || propertyAdditions.nonEmpty) {
       val updater = txn.updateProperties()
@@ -443,14 +462,10 @@ class IcebergConversionTransaction(
     val tableExists = hiveCatalog.tableExists(icebergTableId)
 
     def tableBuilder = {
-      val properties = DeltaToIcebergConvert.TableProperties(
-        postCommitSnapshot.metadata.configuration
-      )
-
       hiveCatalog
         .buildTable(icebergTableId, icebergSchema)
         .withPartitionSpec(partitionSpec)
-        .withProperties(properties.asJava)
+        .withProperties(convert.properties.asJava)
     }
 
     tableOpOpt.getOrElse(tableOp) match {

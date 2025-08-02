@@ -76,22 +76,6 @@ object IcebergTransactionUtils
     else new Path(tablePath, f.toPath.toString).toString
   }
 
-  /** Returns the (deletions, additions) iceberg table property changes. */
-  def detectPropertiesChange(
-      newProperties: Map[String, String],
-      prevProperties: Map[String, String]): (Set[String], Map[String, String]) = {
-    val newPropertiesIcebergOnly = DeltaToIcebergConvert.TableProperties(newProperties)
-    val prevPropertiesOptIcebergOnly =
-      DeltaToIcebergConvert.TableProperties(prevProperties)
-
-    if (prevPropertiesOptIcebergOnly == newPropertiesIcebergOnly) return (Set.empty, Map.empty)
-
-    (
-      prevPropertiesOptIcebergOnly.keySet.diff(newPropertiesIcebergOnly.keySet),
-      newPropertiesIcebergOnly
-    )
-  }
-
   /** Returns the mapping of logicalPartitionColName -> physicalPartitionColName */
   def getPartitionPhysicalNameMapping(partitionSchema: StructType): Map[String, String] = {
     partitionSchema.fields.map(f => f.name -> DeltaColumnMapping.getPhysicalName(f)).toMap

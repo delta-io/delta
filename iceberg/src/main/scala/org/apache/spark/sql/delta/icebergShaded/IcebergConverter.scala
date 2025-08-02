@@ -381,7 +381,7 @@ class IcebergConverter(spark: SparkSession)
           }
         }
         // If the metadata hasn't changed, this will no-op.
-        icebergTxn.updateTableMetadata(snapshotToConvert.metadata, prevSnapshot.metadata)
+        icebergTxn.updateTableMetadata(prevSnapshot.metadata)
         commitInfos
       case None =>
         // If we don't have a snapshot of the last converted version, get all the AddFiles
@@ -405,7 +405,7 @@ class IcebergConverter(spark: SparkSession)
 
         // Always attempt to update table metadata (schema/properties) for REPLACE_TABLE
         if (tableOp == REPLACE_TABLE) {
-          icebergTxn.updateTableMetadata(snapshotToConvert.metadata, snapshotToConvert.metadata)
+          icebergTxn.updateTableMetadata(snapshotToConvert.metadata)
         }
         Nil
     }
