@@ -22,7 +22,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import scala.collection.mutable
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, DeltaConfigs, DeltaLog, DeltaTestUtilsBase}
+import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, CheckpointPolicy, DeltaConfigs, DeltaLog, DeltaTestUtilsBase}
 import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, JsonUtils}
 import io.delta.storage.LogStore
@@ -271,6 +271,19 @@ trait CatalogOwnedTestBaseSuite
       Seq.empty
     }
   }
+
+  protected def withClassicCheckpointPolicyForCatalogOwned(f: => Unit): Unit = {
+    if (catalogOwnedDefaultCreationEnabledInTests) {
+      withSQLConf(
+        DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey -> CheckpointPolicy.Classic.name) {
+        f
+      }
+    } else {
+      f
+    }
+  }
+
+
 
   protected def isICTEnabledForNewTablesCatalogOwned: Boolean = {
     catalogOwnedCoordinatorBackfillBatchSize.nonEmpty ||

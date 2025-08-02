@@ -376,8 +376,9 @@ trait OptimisticTransactionImpl extends TransactionHelper
   /** Creates new metadata with global Delta configuration defaults. */
   private def withGlobalConfigDefaults(metadata: Metadata): Metadata = {
     val isActiveReplaceCommand = isCreatingNewTable && readVersion != -1
-    val conf = if (isActiveReplaceCommand &&
-                   CatalogOwnedTableUtils.defaultCatalogOwnedEnabled(spark)) {
+    val shouldUnsetCatalogOwnedConf =
+      isActiveReplaceCommand && CatalogOwnedTableUtils.defaultCatalogOwnedEnabled(spark)
+    val conf = if (shouldUnsetCatalogOwnedConf) {
       // Unset default CatalogOwned enablement iff:
       // 0. `isCreatingNewTable` indicates that this either is a REPLACE or CREATE command.
       // 1. `readVersion != 1` indicates the table already exists.

@@ -3238,17 +3238,14 @@ class DeltaNameColumnMappingSuite extends DeltaSuite
   }
 }
 
-class DeltaWithCatalogOwnedBatch1Suite
-    extends DeltaSuite {
-  override val catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
+class DeltaWithCatalogOwnedBatch1Suite extends DeltaSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
 }
 
-class DeltaWithCatalogOwnedBatch2Suite
-    extends DeltaSuite {
-  override val catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
+class DeltaWithCatalogOwnedBatch2Suite extends DeltaSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
 }
 
-class DeltaWithCatalogOwnedBatch100Suite
-    extends DeltaSuite {
-  override val catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
+class DeltaWithCatalogOwnedBatch100Suite extends DeltaSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }
