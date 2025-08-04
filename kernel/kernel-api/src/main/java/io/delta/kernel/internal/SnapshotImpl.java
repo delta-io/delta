@@ -76,8 +76,11 @@ public class SnapshotImpl implements Snapshot {
     // io.delta.kernel.metrics.SnapshotMetricsResult#getLoadSnapshotTotalDurationNs}, are only
     // completed *after* the Snapshot has been constructed.
     this.lazySnapshotReport = new Lazy<>(() -> SnapshotReportImpl.forSuccess(snapshotContext));
-    this.lazyClusteringColumns = new Lazy<>(() -> ClusteringMetadataDomain.fromSnapshot(this)
-        .map(ClusteringMetadataDomain::getClusteringColumns));
+    this.lazyClusteringColumns =
+        new Lazy<>(
+            () ->
+                ClusteringMetadataDomain.fromSnapshot(this)
+                    .map(ClusteringMetadataDomain::getClusteringColumns));
   }
 
   /////////////////

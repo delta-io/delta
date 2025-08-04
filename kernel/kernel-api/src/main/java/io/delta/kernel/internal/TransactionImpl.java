@@ -202,8 +202,9 @@ public class TransactionImpl implements Transaction {
     if (isCreateOrReplace) {
       return newClusteringColumnsOpt;
     } else {
-      return newClusteringColumnsOpt.isPresent() ? newClusteringColumnsOpt :
-          readSnapshot.getClusteringColumns();
+      return newClusteringColumnsOpt.isPresent()
+          ? newClusteringColumnsOpt
+          : readSnapshot.getClusteringColumns();
     }
   }
 
@@ -225,7 +226,8 @@ public class TransactionImpl implements Transaction {
       TransactionReport transactionReport =
           recordTransactionReport(
               engine,
-              Optional.of(committedVersion), getEffectiveClusteringColumns(),
+              Optional.of(committedVersion),
+              getEffectiveClusteringColumns(),
               transactionMetrics,
               Optional.empty() /* exception */);
       TransactionMetricsResult txnMetricsCaptured =
@@ -237,7 +239,8 @@ public class TransactionImpl implements Transaction {
     } catch (Exception e) {
       recordTransactionReport(
           engine,
-          Optional.empty() /* committedVersion */, getEffectiveClusteringColumns(),
+          Optional.empty() /* committedVersion */,
+          getEffectiveClusteringColumns(),
           transactionMetrics,
           Optional.of(e) /* exception */);
       throw e;

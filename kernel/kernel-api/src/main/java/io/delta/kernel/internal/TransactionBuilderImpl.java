@@ -309,11 +309,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
 
     Tuple2<Optional<Protocol>, Optional<Metadata>> updatedProtocolAndMetadata =
         validateAndUpdateProtocolAndMetadata(
-            engine,
-            baseMetadata,
-            baseProtocol,
-            isCreateOrReplace,
-            latestSnapshot);
+            engine, baseMetadata, baseProtocol, isCreateOrReplace, latestSnapshot);
     Optional<Protocol> newProtocol = updatedProtocolAndMetadata._1;
     Optional<Metadata> newMetadata = updatedProtocolAndMetadata._2;
 
@@ -346,7 +342,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         operation,
         newProtocol.orElse(baseProtocol),
         newMetadata.orElse(baseMetadata),
-        setTxnOpt, newResolvedClusteringColumns, /* new clustering columns only */
+        setTxnOpt,
+        newResolvedClusteringColumns, /* new clustering columns only */
         newMetadata.isPresent() || isCreateOrReplace /* shouldUpdateMetadata */,
         newProtocol.isPresent() || isCreateOrReplace /* shouldUpdateProtocol */,
         maxRetries,
@@ -499,8 +496,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     // This is only done if clustering columns are explicitly set in this transaction.
     StructType updatedSchema = newMetadata.orElse(baseMetadata).getSchema();
     this.newResolvedClusteringColumns =
-        initialClusteringColumns.map(cols ->
-            SchemaUtils.casePreservingEligibleClusterColumns(updatedSchema, cols));
+        initialClusteringColumns.map(
+            cols -> SchemaUtils.casePreservingEligibleClusterColumns(updatedSchema, cols));
 
     /* ----- 6: Update the METADATA with materialized row tracking column name if applicable----- */
     Optional<Metadata> rowTrackingMetadata =
@@ -516,8 +513,9 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       // Use physicalClusteringColumns if clustering column is set in this txn,
       // otherwise fallback to existingClusteringCols
       Optional<List<Column>> effectiveClusteringCols =
-          (isCreateOrReplace || initialClusteringColumns.isPresent()) ?
-          newResolvedClusteringColumns : latestSnapshot.get().getClusteringColumns();
+          (isCreateOrReplace || initialClusteringColumns.isPresent())
+              ? newResolvedClusteringColumns
+              : latestSnapshot.get().getClusteringColumns();
 
       Optional<Metadata> schemaUpdatedMetadata =
           validateMetadataChangeAndUpdateMetadata(
