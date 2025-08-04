@@ -105,6 +105,7 @@ public class TransactionImpl implements Transaction {
   private Metadata metadata;
   private boolean shouldUpdateMetadata;
   private int maxRetries;
+  private int maxCommitAttempts;
   private int logCompactionInterval;
   private Optional<CRCInfo> currentCrcInfo;
   private Optional<Long> providedRowIdHighWatermark = Optional.empty();
@@ -141,6 +142,7 @@ public class TransactionImpl implements Transaction {
     this.shouldUpdateMetadata = shouldUpdateMetadata;
     this.shouldUpdateProtocol = shouldUpdateProtocol;
     this.maxRetries = maxRetries;
+    this.maxCommitAttempts = maxRetries + 1; // +1 because the first attempt is not a retry
     this.logCompactionInterval = logCompactionInterval;
     this.clock = clock;
     this.currentCrcInfo = readSnapshotOpt.flatMap(SnapshotImpl::getCurrentCrcInfo);
@@ -311,7 +313,7 @@ public class TransactionImpl implements Transaction {
                 dataActions);
       }
 
-      int numTries = 0;
+      int attempt = 1;
       while (true) {
         // This loop exits upon either (a) commit success (return statement) or (b) commit failure,
         // if the number of retries has been exhausted or the commit is not retryable.
@@ -319,8 +321,8 @@ public class TransactionImpl implements Transaction {
         logger.info(
             "Attempting to commit transaction at version {}. Attempt {}/{}",
             commitAsVersion,
-            numTries + 1,
-            maxRetries);
+            attempt,
+            maxCommitAttempts);
         try {
           transactionMetrics.commitAttemptsCounter.increment();
           return doCommit(
@@ -332,10 +334,10 @@ public class TransactionImpl implements Transaction {
                 "Commit attempt for version {} failed with a non-retryable exception and will not "
                     + "be retried. Error: {}",
                 commitAsVersion,
-                cfe.getMessage());
+                cfe);
 
             throw new RuntimeException(cfe);
-          } else if (numTries >= maxRetries) {
+          } else if (attempt >= maxCommitAttempts) {
             // Case 2: Despite the error being retryable, we have exhausted the maximum number of
             // retries. Will have to throw here, too.
             logger.error(
@@ -344,7 +346,7 @@ public class TransactionImpl implements Transaction {
                     + "Error: {}",
                 commitAsVersion,
                 maxRetries,
-                cfe.getMessage());
+                cfe);
 
             if (cfe.isConflict()) {
               // Case 2A: We know why this commit failed, so we can throw a more specific exception.
@@ -359,22 +361,21 @@ public class TransactionImpl implements Transaction {
                 "Commit attempt for version {} failed with a retryable exception due to a physical "
                     + "conflict. Performing conflict resolution and trying again. Error: {}",
                 commitAsVersion,
-                cfe.getMessage());
+                cfe);
 
             TransactionRebaseState rebaseState =
-                resolveConflicts(engine, commitAsVersion, attemptCommitInfo, numTries, dataActions);
+                resolveConflicts(engine, commitAsVersion, attemptCommitInfo, attempt, dataActions);
             commitAsVersion = rebaseState.getLatestVersion() + 1;
             dataActions = rebaseState.getUpdatedDataActions();
             domainMetadataState.setComputedDomainMetadatas(rebaseState.getUpdatedDomainMetadatas());
             currentCrcInfo = rebaseState.getUpdatedCrcInfo();
           } else {
             // Case 4: No conflict so no conflict resolution needed - just retry with same version.
-
             logger.warn(
                 "Commit attempt for version {} failed with a retryable exception due to a "
                     + "transient error. Skipping conflict resolution and trying again. Error: {}",
                 commitAsVersion,
-                cfe.getMessage());
+                cfe);
           }
           // We will be retrying the commit.
           //
@@ -382,7 +383,7 @@ public class TransactionImpl implements Transaction {
           // to 0 and drop fileSizeHistogram
           // TODO: reconcile fileSizeHistogram.
           transactionMetrics.resetActionMetricsForRetry();
-          numTries++;
+          attempt++;
         }
       }
     } finally {
@@ -394,13 +395,13 @@ public class TransactionImpl implements Transaction {
       Engine engine,
       long commitAsVersion,
       CommitInfo attemptCommitInfo,
-      int numTries,
+      int attempt,
       CloseableIterable<Row> dataActions) {
     logger.info(
-        "Table {}, trying to resolve conflicts and retry commit. (tries/maxRetries: {}/{})",
+        "Table {}, trying to resolve conflicts and retry commit. Attempt {}/{}.",
         dataPath,
-        numTries,
-        maxRetries);
+        attempt,
+        maxCommitAttempts);
     TransactionRebaseState rebaseState =
         ConflictChecker.resolveConflicts(
             engine,

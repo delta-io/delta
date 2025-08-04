@@ -1263,7 +1263,6 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       // Create 001.json -- this will make the engine throw a FileAlreadyExistsException when trying
       // to write 001.json. The default committer will turn this into a CommitFailedException with
       // isRetryable = true and isConflict = true.
-
       spark.range(0, 10)
         .select(col("id").cast("int"))
         .write.format("delta").mode("append").save(tablePath)
@@ -1283,8 +1282,9 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       val initialTxn = createWriteTxnBuilder(table).withSchema(engine, testSchema).build(engine)
       commitTransaction(initialTxn, engine, emptyIterable()) // 000.json
 
-      var attemptCount = 0
+      var attemptCount = 0 // Will be incremented when actual writeJson attempt occurs
       val maxRetries = 3
+      val maxCommitAttempts = maxRetries + 1 // First commit attempt is not a retry
       val attemptedFilePaths = scala.collection.mutable.Set[String]()
 
       val fileIO = new HadoopFileIO(new Configuration())
@@ -1296,11 +1296,12 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
             overwrite: Boolean): Unit = {
           attemptCount += 1
           attemptedFilePaths += filePath
-          if (attemptCount <= 2) {
+          if (attemptCount < maxCommitAttempts) {
             // The default committer will turn this into a CommitFailedException with
             // isRetryable = true and isConflict = false.
-            throw new java.io.IOException(s"Transient network error on attempt $attemptCount")
+            throw new java.io.IOException("Transient network error")
           }
+          // On the last attempt, write the file successfully so we can get the txn metrics
           super.writeJsonFileAtomically(filePath, data, overwrite)
         }
       }
@@ -1316,9 +1317,9 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       val result = commitTransaction(txn, transientErrorEngine, emptyIterable())
 
       assert(result.getVersion > 0)
-      assert(attemptCount == 3)
+      assert(attemptCount == 4)
       assert(attemptedFilePaths.size == 1) // we should only be attempting to write 001.json
-      assert(result.getTransactionReport.getTransactionMetrics.getNumCommitAttempts == 3)
+      assert(result.getTransactionReport.getTransactionMetrics.getNumCommitAttempts == 4)
     }
   }
 
@@ -1330,7 +1331,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         .build(engine)
       commitTransaction(initialTxn, engine, emptyIterable())
 
-      var attemptCount = 0
+      var attemptCount = 0 // Will be incremented when actual writeJson attempt occurs
       val maxRetries = 3
 
       val fileIO = new HadoopFileIO(new Configuration())
@@ -1387,8 +1388,9 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
           .build(engine)
         commitTransaction(initialTxn, engine, emptyIterable())
 
-        var attemptCount = 0
-        val maxRetries = 2 // Allow 3 total attempts (0, 1, 2)
+        var attemptCount = 0 // Will be incremented when actual writeJson attempt occurs
+        val maxRetries = 3
+        val maxCommitAttempts = maxRetries + 1 // First commit attempt is not a retry
 
         val fileIO = new HadoopFileIO(new Configuration())
 
@@ -1398,15 +1400,14 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
               data: CloseableIterator[Row],
               overwrite: Boolean): Unit = {
             attemptCount += 1
-            if (attemptCount <= 2) {
-              // First 2 attempts: throw IOException (retryable, non-conflict)
-              throw new java.io.IOException(s"Transient error on attempt $attemptCount")
+            if (attemptCount < maxCommitAttempts) {
+              throw new java.io.IOException("Transient error")
             } else {
-              // 3rd attempt: throw different exception based on test case
+              // On the last attempt, throw the appropriate exception based on the test case
               if (testCase.isConflictOnFinalAttempt) {
                 throw new FileAlreadyExistsException(s"$filePath already exists")
               } else {
-                throw new java.io.IOException(s"Persistent error on attempt $attemptCount")
+                throw new java.io.IOException("Persistent error")
               }
             }
           }
@@ -1424,7 +1425,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
           commitTransaction(txn, failingEngine, emptyIterable())
         }
 
-        assert(attemptCount == 3)
+        assert(attemptCount == maxCommitAttempts)
         assert(testCase.expectedExceptionType.isInstance(ex))
       }
     }
