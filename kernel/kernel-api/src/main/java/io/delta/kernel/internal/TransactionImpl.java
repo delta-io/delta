@@ -214,13 +214,16 @@ public class TransactionImpl implements Transaction {
 
   public Optional<List<Column>> getEffectiveClusteringColumns() {
     if (isCreateOrReplace) {
+      // if isCreateOrReplace return the columns set in this txn
       return newClusteringColumnsOpt;
-    } else {
-      return newClusteringColumnsOpt.isPresent()
-          ? newClusteringColumnsOpt
-          :
-          // we know if !isCreateOrReplace readSnapshotOpt must be present
-          readSnapshotOpt.flatMap(SnapshotImpl::getPhysicalClusteringColumns);
+    } else { // since !isCreateOrReplace must be an update to an existing table
+      if (newClusteringColumnsOpt.isPresent()) {
+        // if the clustering columns are being updated in this txn return those
+        return newClusteringColumnsOpt;
+      } else {
+        // else, return the current existing clustering columns (readSnapshotOpt must be present)
+        return readSnapshotOpt.flatMap(SnapshotImpl::getPhysicalClusteringColumns);
+      }
     }
   }
 
