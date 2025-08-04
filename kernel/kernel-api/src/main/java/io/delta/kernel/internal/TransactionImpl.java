@@ -21,6 +21,7 @@ import static io.delta.kernel.internal.actions.SingleAction.*;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Preconditions.checkState;
 import static io.delta.kernel.internal.util.Utils.toCloseableIterator;
+import static java.util.Collections.emptyMap;
 
 import io.delta.kernel.*;
 import io.delta.kernel.data.Row;
@@ -82,7 +83,7 @@ public class TransactionImpl implements Transaction {
   private final Path dataPath;
   private final Path logPath;
   private final Protocol protocol;
-  private final SnapshotImpl readSnapshot;
+  private final Optional<SnapshotImpl> readSnapshotOpt;
   private final Optional<SetTransaction> setTxnOpt;
   /**
    * The new clustering columns to write in the domain metadata in this transaction if provided.
@@ -113,7 +114,7 @@ public class TransactionImpl implements Transaction {
       boolean isCreateOrReplace,
       Path dataPath,
       Path logPath,
-      SnapshotImpl readSnapshot,
+      Optional<SnapshotImpl> readSnapshotOpt,
       String engineInfo,
       Operation operation,
       Protocol protocol,
@@ -125,10 +126,11 @@ public class TransactionImpl implements Transaction {
       int maxRetries,
       int logCompactionInterval,
       Clock clock) {
+    checkArgument(isCreateOrReplace || readSnapshotOpt.isPresent());
     this.isCreateOrReplace = isCreateOrReplace;
     this.dataPath = dataPath;
     this.logPath = logPath;
-    this.readSnapshot = readSnapshot;
+    this.readSnapshotOpt = readSnapshotOpt;
     this.engineInfo = engineInfo;
     this.operation = operation;
     this.protocol = protocol;
@@ -140,7 +142,7 @@ public class TransactionImpl implements Transaction {
     this.maxRetries = maxRetries;
     this.logCompactionInterval = logCompactionInterval;
     this.clock = clock;
-    this.currentCrcInfo = readSnapshot.getCurrentCrcInfo();
+    this.currentCrcInfo = readSnapshotOpt.flatMap(SnapshotImpl::getCurrentCrcInfo);
   }
 
   @Override
@@ -160,7 +162,7 @@ public class TransactionImpl implements Transaction {
 
   @Override
   public long getReadTableVersion() {
-    return readSnapshot.getVersion();
+    return readSnapshotOpt.map(SnapshotImpl::getVersion).orElse(-1L);
   }
 
   public Optional<SetTransaction> getSetTxnOpt() {
@@ -216,21 +218,33 @@ public class TransactionImpl implements Transaction {
     } else {
       return newClusteringColumnsOpt.isPresent()
           ? newClusteringColumnsOpt
-          : readSnapshot.getPhysicalClusteringColumns();
+          :
+          // we know if !isCreateOrReplace readSnapshotOpt must be present
+          readSnapshotOpt.flatMap(SnapshotImpl::getPhysicalClusteringColumns);
     }
+  }
+
+  public Path getDataPath() {
+    return dataPath;
+  }
+
+  public Path getLogPath() {
+    return logPath;
   }
 
   @Override
   public TransactionCommitResult commit(Engine engine, CloseableIterable<Row> dataActions)
       throws ConcurrentWriteException {
     checkState(!closed, "Transaction is already attempted to commit. Create a new transaction.");
-    // For a new table or when fileSizeHistogram is available in the CRC of the readSnapshot
+    // For a new table or when fileSizeHistogram is available in the CRC of the readSnapshotOpt
     // we update it in the commit. When it is not available we do nothing.
     TransactionMetrics transactionMetrics =
-        readSnapshot.getVersion() < 0
-            ? TransactionMetrics.forNewTable()
-            : TransactionMetrics.withExistingTableFileSizeHistogram(
-                readSnapshot.getCurrentCrcInfo().flatMap(CRCInfo::getFileSizeHistogram));
+        readSnapshotOpt
+            .map(
+                snapshot ->
+                    TransactionMetrics.withExistingTableFileSizeHistogram(
+                        snapshot.getCurrentCrcInfo().flatMap(CRCInfo::getFileSizeHistogram)))
+            .orElse(TransactionMetrics.forNewTable());
     try {
       long committedVersion =
           transactionMetrics.totalCommitTimer.time(
@@ -262,11 +276,11 @@ public class TransactionImpl implements Transaction {
   private long commitWithRetry(
       Engine engine, CloseableIterable<Row> dataActions, TransactionMetrics transactionMetrics) {
     try {
-      long commitAsVersion = readSnapshot.getVersion() + 1;
+      long commitAsVersion = getReadTableVersion() + 1;
       // Generate the commit action with the inCommitTimestamp if ICT is enabled.
       CommitInfo attemptCommitInfo = generateCommitAction(engine);
       updateMetadataWithICTIfRequired(
-          engine, attemptCommitInfo.getInCommitTimestamp(), readSnapshot.getVersion());
+          engine, attemptCommitInfo.getInCommitTimestamp(), getReadTableVersion());
       List<DomainMetadata> resolvedDomainMetadatas =
           domainMetadataState.getComputedDomainMetadatasToCommit();
 
@@ -276,7 +290,7 @@ public class TransactionImpl implements Transaction {
       if (TableFeatures.isRowTrackingSupported(protocol)) {
         List<DomainMetadata> updatedDomainMetadata =
             RowTracking.updateRowIdHighWatermarkIfNeeded(
-                readSnapshot,
+                readSnapshotOpt,
                 protocol,
                 Optional.empty() /* winningTxnRowIdHighWatermark */,
                 dataActions,
@@ -285,7 +299,7 @@ public class TransactionImpl implements Transaction {
         domainMetadataState.setComputedDomainMetadatas(updatedDomainMetadata);
         dataActions =
             RowTracking.assignBaseRowIdAndDefaultRowCommitVersion(
-                readSnapshot,
+                readSnapshotOpt,
                 protocol,
                 Optional.empty() /* winningTxnRowIdHighWatermark */,
                 Optional.empty() /* prevCommitVersion */,
@@ -342,7 +356,7 @@ public class TransactionImpl implements Transaction {
     TransactionRebaseState rebaseState =
         ConflictChecker.resolveConflicts(
             engine,
-            readSnapshot,
+            readSnapshotOpt,
             commitAsVersion,
             this,
             domainMetadataState.getComputedDomainMetadatasToCommit(),
@@ -377,7 +391,7 @@ public class TransactionImpl implements Transaction {
         inCommitTimestamp -> {
           Optional<Metadata> metadataWithICTInfo =
               InCommitTimestampUtils.getUpdatedMetadataWithICTEnablementInfo(
-                  engine, inCommitTimestamp, readSnapshot, metadata, lastCommitVersion + 1L);
+                  engine, inCommitTimestamp, readSnapshotOpt, metadata, lastCommitVersion + 1L);
           metadataWithICTInfo.ifPresent(this::updateMetadata);
         });
   }
@@ -527,14 +541,18 @@ public class TransactionImpl implements Transaction {
   }
 
   /**
-   * Generates a timestamp which is greater than the commit timestamp of the readSnapshot. This can
-   * result in an additional file read and that this will only happen if ICT is enabled.
+   * Generates a timestamp which is greater than the commit timestamp of the readSnapshotOpt. This
+   * can result in an additional file read and that this will only happen if ICT is enabled.
    */
   private Optional<Long> generateInCommitTimestampForFirstCommitAttempt(
       Engine engine, long currentTimestamp) {
     if (IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata)) {
-      long lastCommitTimestamp = readSnapshot.getTimestamp(engine);
-      return Optional.of(Math.max(currentTimestamp, lastCommitTimestamp + 1));
+      if (readSnapshotOpt.isPresent()) {
+        long lastCommitTimestamp = readSnapshotOpt.get().getTimestamp(engine);
+        return Optional.of(Math.max(currentTimestamp, lastCommitTimestamp + 1));
+      } else { // For a new table this is just the current timestamp
+        return Optional.of(currentTimestamp);
+      }
     } else {
       return Optional.empty();
     }
@@ -550,7 +568,7 @@ public class TransactionImpl implements Transaction {
         getOperationParameters(), /* operationParameters */
         isBlindAppend(), /* isBlindAppend */
         txnId.toString(), /* txnId */
-        Collections.emptyMap() /* operationMetrics */);
+        emptyMap() /* operationMetrics */);
   }
 
   private boolean isReadyForCheckpoint(long newVersion) {
@@ -567,7 +585,7 @@ public class TransactionImpl implements Transaction {
               .collect(Collectors.joining(",", "[", "]"));
       return Collections.singletonMap("partitionBy", partitionBy);
     }
-    return Collections.emptyMap();
+    return emptyMap();
   }
 
   private TransactionReport recordTransactionReport(
@@ -584,7 +602,7 @@ public class TransactionImpl implements Transaction {
             committedVersion,
             clusteringColumnsOpt,
             transactionMetrics,
-            readSnapshot.getSnapshotReport(),
+            readSnapshotOpt.map(SnapshotImpl::getSnapshotReport),
             exception);
     engine.getMetricsReporters().forEach(reporter -> reporter.report(transactionReport));
 
@@ -717,7 +735,8 @@ public class TransactionImpl implements Transaction {
       if (isReplaceTable()) {
         // In the case of replace table we need to completely reset the table state by removing
         // any existing domain metadata
-        readSnapshot
+        readSnapshotOpt
+            .get() // if replaceTable we know snapshot is present
             .getActiveDomainMetadataMap()
             .forEach(
                 (domainName, domainMetadata) -> {
@@ -741,7 +760,7 @@ public class TransactionImpl implements Transaction {
 
       // Generate the tombstones for removed domains
       Map<String, DomainMetadata> snapshotDomainMetadataMap =
-          readSnapshot.getActiveDomainMetadataMap();
+          readSnapshotOpt.map(SnapshotImpl::getActiveDomainMetadataMap).orElse(emptyMap());
       for (String domainName : domainsToRemove) {
         if (snapshotDomainMetadataMap.containsKey(domainName)) {
           // Note: we know domainName is not already in finalDomainMetadatas because we do not allow
@@ -762,7 +781,7 @@ public class TransactionImpl implements Transaction {
           // Conflict resolution should fail but since the domain does not exist we cannot create
           // a tombstone to mark it as removed and correctly perform conflict resolution.
           throw new DomainDoesNotExistException(
-              dataPath.toString(), domainName, readSnapshot.getVersion());
+              dataPath.toString(), domainName, getReadTableVersion());
         }
       }
 
@@ -779,7 +798,7 @@ public class TransactionImpl implements Transaction {
      * Returns the set of active domain metadata of the table, removed domain metadata are excluded.
      */
     public Optional<Set<DomainMetadata>> getPostCommitDomainMetadatas() {
-      if (readSnapshot.getVersion() < 0) {
+      if (!readSnapshotOpt.isPresent()) {
         return Optional.of(
             getComputedDomainMetadatasToCommit().stream()
                 .filter(dm -> !dm.isRemoved())
@@ -837,8 +856,8 @@ public class TransactionImpl implements Transaction {
    */
   private CloseableIterator<Row> getRemoveActionsForReplace(Engine engine) {
     checkArgument(
-        readSnapshot.getVersion() >= 0, "Cannot generate removes for a snapshot with version < 0");
-    Scan scan = readSnapshot.getScanBuilder().build();
+        readSnapshotOpt.isPresent(), "Cannot generate removes for a snapshot with version < 0");
+    Scan scan = readSnapshotOpt.get().getScanBuilder().build();
     return Utils.intoRows(scan.getScanFiles(engine))
         .map(
             scanRow -> {
@@ -864,6 +883,6 @@ public class TransactionImpl implements Transaction {
   }
 
   private boolean isReplaceTable() {
-    return isCreateOrReplace && readSnapshot.getVersion() >= 0;
+    return isCreateOrReplace && readSnapshotOpt.isPresent();
   }
 }

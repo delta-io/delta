@@ -1159,16 +1159,19 @@ and Row Commit Versions, which make it possible to check whether two rows with t
 
 Row Tracking is defined to be **supported** or **enabled** on a table as follows:
 - When the feature `rowTracking` exists in the table `protocol`'s `writerFeatures`, then we say that Row Tracking is **supported**.
-  In this situation, writers must assign Row IDs and Commit Versions, but they cannot yet be relied upon to be present in the table.
+  In this situation, writers must assign Row IDs and Commit Versions as long as `delta.rowTrackingSuspended` table property is absent or set to false. However, they cannot yet be relied upon to be present in the table.
   When Row Tracking is supported but not yet enabled writers cannot preserve Row IDs and Commit Versions.
 - When additionally the table property `delta.enableRowTracking` is set to `true`, then we say that Row Tracking is **enabled**.
   In this situation, Row IDs and Row Commit versions can be relied upon to be present in the table for all rows.
   When Row Tracking is enabled writers are expected to preserve Row IDs and Commit Versions.
+- When the table property `delta.rowTrackingSuspended` is set to true, writers should suspend the assignment of Row IDs and Commit Versions.
+  Table property `delta.rowTrackingSuspended` should not be enabled together with table property `delta.enableRowTracking`.
 
 Enablement:
 - The table must be on Writer Version 7.
 - The feature `rowTracking` must exist in the table `protocol`'s `writerFeatures`. The feature `domainMetadata` is required in the table `protocol`'s `writerFeatures`.
 - The table property `delta.enableRowTracking` must be set to `true`.
+- The table property `delta.rowTrackingSuspended` should be absent or set to `false`.
 
 ## Row IDs
 
@@ -1247,7 +1250,7 @@ When Row Tracking is enabled (when the table property `delta.enableRowTracking` 
 
 ## Writer Requirements for Row Tracking
 
-When Row Tracking is supported (when the `writerFeatures` field of a table's `protocol` action contains `rowTracking`), then:
+When Row Tracking is supported (when the `writerFeatures` field of a table's `protocol` action contains `rowTracking`) and Row Tracking is not suspended (when `delta.rowTrackingSuspended` table property is absent or set to false), then:
 - Writers must assign unique fresh Row IDs to all rows that they commit.
   - Writers must set the `baseRowId` field in all `add` actions that they commit so that all default generated Row IDs are unique in the table version.
     Writers must never commit duplicate Row IDs in the table in any version.
@@ -1263,6 +1266,8 @@ When Row Tracking is supported (when the `writerFeatures` field of a table's `pr
   - Writers must set the `defaultRowCommitVersion` field in new `add` actions to the version number of the log enty containing the `add` action.
   - Writers must set the `defaultRowCommitVersion` field in recommitted and checkpointed `add` actions and `remove` actions to the `defaultRowCommitVersion` of the last committed `add` action with the same `path`.
 
+On the other hand, when Row Tracking is supported but suspended (table property `delta.rowTrackingSuspended` is set to `true`), writers should not assign the `baseRowId` or the `defaultRowCommitVersion`.
+
 Writers can enable Row Tracking by setting `delta.enableRowTracking` to `true` in the `configuration` of the table's `metaData`.
 This is only allowed if the following requirements are satisfied:
 - The feature `rowTracking` has been added to the `writerFeatures` field of a table's `protocol` action either in the same version of the table or in an earlier version of the table.
@@ -1274,6 +1279,7 @@ This is only allowed if the following requirements are satisfied:
 - If the `baseRowId` and `defaultRowCommitVersion` fields are not set in some active `add` action in the table, then writers must first commit new `add` actions that set these fields to replace the `add` actions that do not have these fields set.
   This can be done in the commit that sets `delta.enableRowTracking` to `true` or in an earlier commit.
   The assigned `baseRowId` and `defaultRowCommitVersion` values must satisfy the same requirements as when assigning fresh Row IDs and fresh Row Commit Versions respectively.
+Furthermore, writers should also verify table property `delta.rowTrackingSuspended` is absent or set to false before enabling Row Tracking.
 
 When Row Tracking is enabled (when the table property `delta.enableRowTracking` is set to `true`), then:
 - Writers must assign stable Row IDs to all rows.
