@@ -1366,21 +1366,10 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     }
   }
 
-  case class MaxRetriesTestCase(
-      description: String,
-      isConflictOnFinalAttempt: Boolean,
-      expectedExceptionType: Class[_])
-
   Seq(
-    MaxRetriesTestCase(
-      description = "non-conflict case",
-      isConflictOnFinalAttempt = false,
-      expectedExceptionType = classOf[RuntimeException]),
-    MaxRetriesTestCase(
-      description = "conflict case",
-      isConflictOnFinalAttempt = true,
-      expectedExceptionType = classOf[ConcurrentWriteException])).foreach { testCase =>
-    test(s"Transaction will fail upon hitting max retries limit - ${testCase.description}") {
+    ("non-conflict case", false),
+    ("conflict case", true)).foreach { case (testCaseStr, finalAttemptIsFileConflict) =>
+    test(s"Transaction will fail upon hitting max retries limit - $testCaseStr") {
       withTempDirAndEngine { (tablePath, engine) =>
         val table = Table.forPath(engine, tablePath)
         val initialTxn = createWriteTxnBuilder(table)
@@ -1404,7 +1393,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
               throw new java.io.IOException("Transient error")
             } else {
               // On the last attempt, throw the appropriate exception based on the test case
-              if (testCase.isConflictOnFinalAttempt) {
+              if (finalAttemptIsFileConflict) {
                 throw new FileAlreadyExistsException(s"$filePath already exists")
               } else {
                 throw new java.io.IOException("Persistent error")
@@ -1421,12 +1410,11 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
 
         val txn = createWriteTxnBuilder(table).withMaxRetries(maxRetries).build(failingEngine)
 
-        val ex = intercept[Exception] {
+        val ex = intercept[MaxCommitRetriesReachedException] {
           commitTransaction(txn, failingEngine, emptyIterable())
         }
 
         assert(attemptCount == maxCommitAttempts)
-        assert(testCase.expectedExceptionType.isInstance(ex))
       }
     }
   }

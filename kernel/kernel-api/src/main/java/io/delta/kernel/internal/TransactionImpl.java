@@ -30,6 +30,7 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.ConcurrentWriteException;
 import io.delta.kernel.exceptions.DomainDoesNotExistException;
+import io.delta.kernel.exceptions.MaxCommitRetriesReachedException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.hook.PostCommitHook;
 import io.delta.kernel.internal.actions.*;
@@ -329,32 +330,17 @@ public class TransactionImpl implements Transaction {
               engine, commitAsVersion, attemptCommitInfo, dataActions, transactionMetrics);
         } catch (CommitFailedException cfe) {
           if (!cfe.isRetryable()) {
-            // Case 1: Non-retryable exception. We must throw this.
-            logger.error(
-                "Commit attempt for version {} failed with a non-retryable exception and will not "
-                    + "be retried. Error: {}",
-                commitAsVersion,
+            // Case 1: Non-retryable exception. We must throw this. We don't expect connectors to
+            //         be able to recover from this.
+            throw new RuntimeException(
+                String.format(
+                    "Commit attempt for version %d failed with a non-retryable exception.",
+                    commitAsVersion),
                 cfe);
-
-            throw new RuntimeException(cfe);
           } else if (attempt >= maxCommitAttempts) {
             // Case 2: Despite the error being retryable, we have exhausted the maximum number of
-            // retries. Will have to throw here, too.
-            logger.error(
-                "Commit attempt for version {} failed with a retryable exception but will not be "
-                    + "retried because the maximum number of retries ({}) has been exhausted. "
-                    + "Error: {}",
-                commitAsVersion,
-                maxRetries,
-                cfe);
-
-            if (cfe.isConflict()) {
-              // Case 2A: We know why this commit failed, so we can throw a more specific exception.
-              throw new ConcurrentWriteException(cfe);
-            } else {
-              // Case 2B: We don't know why this commit failed, so we throw a generic exception.
-              throw new RuntimeException(cfe);
-            }
+            //         retries. We must throw here, too.
+            throw new MaxCommitRetriesReachedException(commitAsVersion, maxRetries, cfe);
           } else if (cfe.isConflict()) {
             // Case 3: Retryable exception due to a conflict. We will resolve the conflict and retry
             logger.warn(

@@ -71,7 +71,7 @@ public class DefaultFileSystemManagedTableOnlyCommitter implements Committer {
           false /* conflict */,
           "Failed to write commit file due to I/O error: " + e.getMessage(),
           e);
-    } catch (Exception e) {
+    } catch (RuntimeException e) {
       throw new CommitFailedException(
           false /* retryable */,
           false /* conflict */,
@@ -79,6 +79,7 @@ public class DefaultFileSystemManagedTableOnlyCommitter implements Committer {
           e);
     }
 
+    // TODO: [delta-io/delta#5021] Use FileSystemClient::getFileStatus API instead
     return new CommitResponse(ParsedLogData.forFileStatus(FileStatus.of(jsonCommitFile)));
   }
 
