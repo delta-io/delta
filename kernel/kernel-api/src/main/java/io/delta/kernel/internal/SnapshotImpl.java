@@ -65,7 +65,7 @@ public class SnapshotImpl implements Snapshot {
       Metadata metadata,
       Committer committer,
       SnapshotQueryContext snapshotContext) {
-    checkArgument(logSegment.getVersion() >= 0, "A snapshot cannot have version < 0");
+    checkArgument(version >= 0, "A snapshot cannot have version < 0");
     this.logPath = new Path(dataPath, "_delta_log");
     this.dataPath = dataPath;
     this.version = version;
