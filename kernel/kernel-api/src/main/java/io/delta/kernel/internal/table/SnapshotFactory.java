@@ -18,7 +18,9 @@ package io.delta.kernel.internal.table;
 
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 
+import io.delta.kernel.Snapshot;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.commit.DefaultFileSystemManagedTableOnlyCommitter;
@@ -34,25 +36,29 @@ import java.io.UncheckedIOException;
 import java.util.Optional;
 
 /**
- * Factory class responsible for creating {@link ResolvedTableInternal} instances.
+ * Factory class responsible for creating {@link Snapshot} instances.
  *
- * <p>Note: The {@link ResolvedTableBuilderImpl} is responsible for receiving and validating all
- * builder parameters, and then passing that information to this factory to actually create the
- * {@link ResolvedTableInternal}
+ * <p>This factory takes validated parameters from {@link SnapshotBuilderImpl} and orchestrates the
+ * actual snapshot creation process. It handles path resolution, log segment loading, and
+ * coordinates with various internal components to construct a fully initialized {@link Snapshot}.
+ *
+ * <p>Note: The {@link SnapshotBuilderImpl} is responsible for receiving and validating all builder
+ * parameters, and then passing that information to this factory to actually create the {@link
+ * Snapshot}.
  */
-class ResolvedTableFactory {
+class SnapshotFactory {
 
-  private final ResolvedTableBuilderImpl.Context ctx;
+  private final SnapshotBuilderImpl.Context ctx;
   private final String resolvedPath;
   private final Path wrappedTablePath;
 
-  ResolvedTableFactory(Engine engine, ResolvedTableBuilderImpl.Context ctx) {
+  SnapshotFactory(Engine engine, SnapshotBuilderImpl.Context ctx) {
     this.ctx = ctx;
     this.resolvedPath = resolvePath(engine);
     this.wrappedTablePath = new Path(resolvedPath);
   }
 
-  ResolvedTableInternalImpl create(Engine engine) {
+  SnapshotImpl create(Engine engine) {
     final SnapshotQueryContext snapshotCtx = getSnapshotQueryContext();
 
     try {
@@ -63,19 +69,18 @@ class ResolvedTableFactory {
     }
   }
 
-  private ResolvedTableInternalImpl createImpl(Engine engine, SnapshotQueryContext snapshotCtx) {
+  private SnapshotImpl createImpl(Engine engine, SnapshotQueryContext snapshotCtx) {
     final Lazy<LogSegment> lazyLogSegment = getLazyLogSegment(engine, snapshotCtx);
     final LogReplay logReplay = getLogReplay(engine, lazyLogSegment);
 
-    return new ResolvedTableInternalImpl(
-        resolvedPath,
+    return new SnapshotImpl(
+        wrappedTablePath,
         ctx.versionOpt.orElseGet(() -> lazyLogSegment.get().getVersion()),
-        getProtocol(logReplay),
-        getMetadata(logReplay),
         lazyLogSegment,
         logReplay,
+        getProtocol(logReplay),
+        getMetadata(logReplay),
         ctx.committerOpt.orElse(DefaultFileSystemManagedTableOnlyCommitter.INSTANCE),
-        ctx.clock,
         snapshotCtx);
   }
 
@@ -123,8 +128,8 @@ class ResolvedTableFactory {
         wrappedTablePath,
         engine,
         lazyLogSegment,
-        // TODO: Proper ResolvedTable-oriented metrics
         Optional.empty() /* snapshotHint */,
+        // TODO: Proper metrics
         new SnapshotMetrics());
   }
 

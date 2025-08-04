@@ -97,7 +97,7 @@ public class TableImpl implements Table {
   }
 
   @Override
-  public Snapshot getLatestSnapshot(Engine engine) throws TableNotFoundException {
+  public SnapshotImpl getLatestSnapshot(Engine engine) throws TableNotFoundException {
     SnapshotQueryContext snapshotContext = SnapshotQueryContext.forLatestSnapshot(tablePath);
     return loadSnapshotWithMetrics(
         engine,
@@ -107,7 +107,7 @@ public class TableImpl implements Table {
   }
 
   @Override
-  public Snapshot getSnapshotAsOfVersion(Engine engine, long versionId)
+  public SnapshotImpl getSnapshotAsOfVersion(Engine engine, long versionId)
       throws TableNotFoundException {
     SnapshotQueryContext snapshotContext =
         SnapshotQueryContext.forVersionSnapshot(tablePath, versionId);
@@ -119,7 +119,7 @@ public class TableImpl implements Table {
   }
 
   @Override
-  public Snapshot getSnapshotAsOfTimestamp(Engine engine, long millisSinceEpochUTC)
+  public SnapshotImpl getSnapshotAsOfTimestamp(Engine engine, long millisSinceEpochUTC)
       throws TableNotFoundException {
     SnapshotQueryContext snapshotContext =
         SnapshotQueryContext.forTimestampSnapshot(tablePath, millisSinceEpochUTC);
@@ -325,7 +325,7 @@ public class TableImpl implements Table {
   }
 
   /** Helper method that loads a snapshot with proper metrics recording, logging, and reporting. */
-  private Snapshot loadSnapshotWithMetrics(
+  private SnapshotImpl loadSnapshotWithMetrics(
       Engine engine,
       Supplier<SnapshotImpl> loadSnapshot,
       SnapshotQueryContext snapshotContext,

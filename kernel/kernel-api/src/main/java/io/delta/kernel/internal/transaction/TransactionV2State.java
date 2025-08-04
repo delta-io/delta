@@ -20,11 +20,11 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.Operation;
+import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.actions.SetTransaction;
 import io.delta.kernel.internal.fs.Path;
-import io.delta.kernel.internal.table.ResolvedTableInternal;
 import io.delta.kernel.internal.util.Clock;
 import io.delta.kernel.transaction.TransactionV2;
 import java.util.Optional;
@@ -49,7 +49,7 @@ public class TransactionV2State {
 
   // ===== Table state =====
   /** The base table version from which this transaction is started. */
-  public final Optional<ResolvedTableInternal> readTableOpt;
+  public final Optional<SnapshotImpl> readTableOpt;
 
   /**
    * The updated protocol, if any, to use for this transaction, updated with all applicable input
@@ -91,7 +91,7 @@ public class TransactionV2State {
       String engineInfo,
       Operation operation,
       String dataPath,
-      Optional<ResolvedTableInternal> readTableOpt,
+      Optional<SnapshotImpl> readTableOpt,
       Optional<Protocol> updatedProtocolOpt,
       Optional<Metadata> updatedMetadataForFirstCommitAttemptOpt,
       Clock clock,

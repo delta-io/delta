@@ -21,7 +21,7 @@ import java.util.Optional
 import io.delta.kernel.{Operation, TableManager}
 import io.delta.kernel.data.Row
 import io.delta.kernel.internal.actions.SingleAction
-import io.delta.kernel.internal.table.ResolvedTableBuilderImpl
+import io.delta.kernel.internal.table.SnapshotBuilderImpl
 import io.delta.kernel.test.{ActionUtils, MockEngineUtils, MockFileSystemClientUtils, TransactionV2TestUtils}
 import io.delta.kernel.utils.CloseableIterator
 
@@ -54,8 +54,8 @@ class CommitContextSuite
     dataPath,
     readTableOpt = Optional.of(
       TableManager
-        .loadTable(dataPath)
-        .asInstanceOf[ResolvedTableBuilderImpl]
+        .loadSnapshot(dataPath)
+        .asInstanceOf[SnapshotBuilderImpl]
         .atVersion(10L)
         .withProtocolAndMetadata(protocol, metadata)
         .build(emptyMockEngine)),

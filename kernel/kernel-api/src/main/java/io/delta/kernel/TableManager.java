@@ -17,29 +17,30 @@
 package io.delta.kernel;
 
 import io.delta.kernel.annotation.Experimental;
-import io.delta.kernel.internal.table.ResolvedTableBuilderImpl;
+import io.delta.kernel.internal.table.SnapshotBuilderImpl;
 
-/** The entry point to load and create {@link ResolvedTable}s. */
+/**
+ * The entry point for loading and creating Delta tables.
+ *
+ * <p>TableManager provides static factory methods for creating builders that can resolve Delta
+ * tables to specific snapshots. This is the primary interface for table discovery and resolution in
+ * the Delta Kernel.
+ */
 @Experimental
 public interface TableManager {
-  // TODO static ResolvedTable forPathAtLatest(Engine engine, String path);
-  // TODO static ResolvedTable forPathAtVersion(Engine engine, String path, long version);
-  // TODO static ResolvedTable forPathAtTimestamp(Engine engine, String path, long timestamp);
-
-  // TODO: Take in a Committer for write support.
 
   /**
-   * Creates a builder for loading a Delta table at the given path.
+   * Creates a builder for loading a snapshot at the given path.
    *
-   * <p>The returned builder can be configured to load the table at a specific version or with
-   * additional metadata to optimize the loading process.
+   * <p>The returned builder can be configured to load the snapshot at a specific version or with
+   * additional metadata to optimize the loading process. If no version is specified, the builder
+   * will resolve to the latest version of the table.
    *
    * @param path the file system path to the Delta table
-   * @return a {@link ResolvedTableBuilder} that can be used to load a {@link ResolvedTable} at the
-   *     given path
+   * @return a {@link SnapshotBuilder} that can be used to load a {@link Snapshot} at the given path
    */
-  static ResolvedTableBuilder loadTable(String path) {
-    return new ResolvedTableBuilderImpl(path);
+  static SnapshotBuilder loadSnapshot(String path) {
+    return new SnapshotBuilderImpl(path);
   }
 
   // TODO: static CreateTableTransactionBuilder buildCreateTableTransaction(...)
