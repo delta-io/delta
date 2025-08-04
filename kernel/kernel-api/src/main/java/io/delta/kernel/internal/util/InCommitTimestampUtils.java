@@ -41,10 +41,11 @@ public class InCommitTimestampUtils {
   public static Optional<Metadata> getUpdatedMetadataWithICTEnablementInfo(
       Engine engine,
       long inCommitTimestamp,
-      SnapshotImpl readSnapshot,
+      Optional<SnapshotImpl> readSnapshotOpt,
       Metadata metadata,
       long commitVersion) {
-    if (didCurrentTransactionEnableICT(engine, metadata, readSnapshot) && commitVersion != 0) {
+    if (readSnapshotOpt.isPresent()
+        && didCurrentTransactionEnableICT(engine, metadata, readSnapshotOpt.get())) {
       Map<String, String> enablementTrackingProperties = new HashMap<>();
       enablementTrackingProperties.put(
           TableConfig.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.getKey(),
@@ -98,8 +99,7 @@ public class InCommitTimestampUtils {
     boolean isICTCurrentlyEnabled =
         IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(currentTransactionMetadata);
     boolean wasICTEnabledInReadSnapshot =
-        readSnapshot.getVersion() != -1
-            && IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(readSnapshot.getMetadata());
+        IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(readSnapshot.getMetadata());
     return isICTCurrentlyEnabled && !wasICTEnabledInReadSnapshot;
   }
 

@@ -17,6 +17,7 @@ package io.delta.kernel.internal;
 
 import static io.delta.kernel.internal.TableConfig.*;
 import static io.delta.kernel.internal.TableConfig.TOMBSTONE_RETENTION;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.ScanBuilder;
 import io.delta.kernel.Snapshot;
@@ -64,6 +65,7 @@ public class SnapshotImpl implements Snapshot {
       Metadata metadata,
       Committer committer,
       SnapshotQueryContext snapshotContext) {
+    checkArgument(version >= 0, "A snapshot cannot have version < 0");
     this.logPath = new Path(dataPath, "_delta_log");
     this.dataPath = dataPath;
     this.version = version;
