@@ -82,21 +82,22 @@ public class PartitionUtils {
           logicalSchema.length(), partitionValues.size(), dataBatch.getSchema().length());
     }
 
-    for (StructField field : logicalSchema.fields()) {
-      String physicalName = ColumnMapping.getPhysicalName(field);
+    for (int colIdx = 0; colIdx < logicalSchema.length(); colIdx++) {
+      StructField structField = logicalSchema.at(colIdx);
+      String physicalName = ColumnMapping.getPhysicalName(structField);
       if (partitionValues.containsKey(physicalName)) {
         // Create a partition column vector
         final ColumnarBatch finalDataBatch = dataBatch;
         Literal partitionValue =
-            literalForPartitionValue(field.getDataType(), partitionValues.get(physicalName));
+            literalForPartitionValue(structField.getDataType(), partitionValues.get(physicalName));
         ExpressionEvaluator evaluator =
             wrapEngineException(
                 () ->
                     expressionHandler.getEvaluator(
-                        finalDataBatch.getSchema(), partitionValue, field.getDataType()),
+                        finalDataBatch.getSchema(), partitionValue, structField.getDataType()),
                 "Get the expression evaluator for partition column %s with type=%s and value=%s",
                 physicalName,
-                field.getDataType(),
+                structField.getDataType(),
                 partitionValues.get(physicalName));
 
         ColumnVector partitionVector =
@@ -104,8 +105,7 @@ public class PartitionUtils {
                 () -> evaluator.eval(finalDataBatch),
                 "Evaluating the partition value expression %s",
                 partitionValue);
-        dataBatch =
-            dataBatch.withNewColumn(logicalSchema.indexOf(field.getName()), field, partitionVector);
+        dataBatch = dataBatch.withNewColumn(colIdx, structField, partitionVector);
       }
     }
 
