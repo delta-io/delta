@@ -240,11 +240,13 @@ public class ScanImpl implements Scan {
     ArrayList<StructField> physicalFields = new ArrayList<>();
     ColumnMapping.ColumnMappingMode mode =
         ColumnMapping.getColumnMappingMode(metadata.getConfiguration());
-    HashSet<String> partitionColumns =
-        new HashSet<>(VectorUtils.toJavaList(metadata.getPartitionColumns()));
 
     for (StructField logicalField : readSchema.fields()) {
-      physicalFields.addAll(convertField(logicalField, mode, partitionColumns));
+      if (!metadata
+          .getPartitionColNames()
+          .contains(logicalField.getName().toLowerCase(Locale.ROOT))) {
+        physicalFields.addAll(convertField(logicalField, mode));
+      }
     }
 
     if (protocol.getReaderFeatures().contains("deletionVectors")
@@ -259,15 +261,7 @@ public class ScanImpl implements Scan {
   }
 
   private List<StructField> convertField(
-      StructField logicalField,
-      ColumnMapping.ColumnMappingMode mode,
-      Set<String> partitionColumns) {
-    if (partitionColumns.contains(logicalField.getName())) {
-      // Partition columns are not part of the physical schema (their values are defined by the
-      // partitioning of the data files).
-      return Collections.emptyList();
-    }
-
+      StructField logicalField, ColumnMapping.ColumnMappingMode mode) {
     if (logicalField.isDataColumn()) {
       return Collections.singletonList(
           ColumnMapping.convertToPhysicalColumn(logicalField, snapshotSchema, mode));

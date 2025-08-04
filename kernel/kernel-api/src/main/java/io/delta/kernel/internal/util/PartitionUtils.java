@@ -27,6 +27,7 @@ import io.delta.kernel.data.*;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.engine.ExpressionHandler;
 import io.delta.kernel.expressions.*;
+import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.DeltaErrorsInternal;
 import io.delta.kernel.internal.InternalScanFileUtils;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
@@ -88,8 +89,9 @@ public class PartitionUtils {
    * Utility method to attach partition columns to the given data batch.
    *
    * @param dataBatch Data batch to which the partition columns will be added.
-   * @param logicalSchema Logical schema of the table scan. Used to map logical partition column
-   *     names to physical column names.
+   * @param logicalSchema Logical schema of the table scan. Used insert partition columns at the
+   *     right positions in the data batch. This logical schema must contain column mapping metadata
+   *     if column mapping is enabled.
    * @param partitionValues Map of partition column name to value.
    * @param expressionHandler Expression handler used to evaluate the partition values.
    * @return A new {@link ColumnarBatch} with the partition columns added.
@@ -102,6 +104,11 @@ public class PartitionUtils {
     if (partitionValues == null || partitionValues.isEmpty()) {
       // No partition column vectors to attach to the data batch
       return dataBatch;
+    }
+
+    if (logicalSchema.length() != dataBatch.getSchema().length() + partitionValues.size()) {
+      throw DeltaErrors.logicalPhysicalSchemaMismatch(
+          logicalSchema.length(), dataBatch.getSchema().length(), partitionValues.size());
     }
 
     for (int colIdx = 0; colIdx < logicalSchema.length(); colIdx++) {

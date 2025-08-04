@@ -147,7 +147,6 @@ public interface Scan {
       boolean inited = false;
 
       // initialized as part of init()
-      StructType physicalSchema = null; // TODO: This is unused and could be removed
       StructType logicalSchema = null;
       String tablePath = null;
 
@@ -158,7 +157,6 @@ public interface Scan {
         if (inited) {
           return;
         }
-        physicalSchema = ScanStateRow.getPhysicalDataReadSchema(scanState);
         logicalSchema = ScanStateRow.getLogicalSchema(scanState);
 
         tablePath = ScanStateRow.getTableRoot(scanState).toString();

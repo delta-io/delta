@@ -102,7 +102,6 @@ public class ScanStateRow extends GenericRow {
    * @return Physical schema to read from the data files.
    */
   public static StructType getPhysicalDataReadSchema(Row scanState) {
-    // TODO: This method should be deprecated in favor of getPhysicalSchema
     String serializedSchema = scanState.getString(COL_NAME_TO_ORDINAL.get("physicalSchemaString"));
     return DataTypeJsonSerDe.deserializeStructType(serializedSchema);
   }

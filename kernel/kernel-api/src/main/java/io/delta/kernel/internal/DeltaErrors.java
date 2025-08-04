@@ -463,6 +463,15 @@ public final class DeltaErrors {
         String.format("Required metadata key %s is not present in scan file %s.", entry, filePath));
   }
 
+  public static KernelException logicalPhysicalSchemaMismatch(
+      int logical_size, int physical_size, int num_partition_cols) {
+    return new KernelException(
+        String.format(
+            "Logical schema (%s) size does not equal physical schema size (%s) plus number of "
+                + "partition columns (%s).",
+            logical_size, physical_size, num_partition_cols));
+  }
+
   /* ------------------------ HELPER METHODS ----------------------------- */
   private static String formatTimestamp(long millisSinceEpochUTC) {
     return new Timestamp(millisSinceEpochUTC).toInstant().toString();
