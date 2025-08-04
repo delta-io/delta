@@ -127,7 +127,9 @@ public class RowTracking {
         // The row ID high watermark from the snapshot of the table that this transaction is reading
         // at. Any baseRowIds higher than this watermark are assigned by this transaction.
         final long prevRowIdHighWatermark =
-            txnReadSnapshot.map(RowTracking::readRowIdHighWaterMark).orElse(-1L);
+            txnReadSnapshot
+                .map(RowTracking::readRowIdHighWaterMark)
+                .orElse(RowTrackingMetadataDomain.MISSING_ROW_ID_HIGH_WATERMARK);
 
         // Used to track the current high watermark as we iterate through the data actions and
         // assign baseRowIds. Use an AtomicLong to allow for updating in the lambda.
@@ -217,7 +219,9 @@ public class RowTracking {
     // The row ID high watermark from the snapshot of the table that this transaction is reading at.
     // Any baseRowIds higher than this watermark are assigned by this transaction.
     final long prevRowIdHighWatermark =
-        txnReadSnapshot.map(RowTracking::readRowIdHighWaterMark).orElse(-1L);
+        txnReadSnapshot
+            .map(RowTracking::readRowIdHighWaterMark)
+            .orElse(RowTrackingMetadataDomain.MISSING_ROW_ID_HIGH_WATERMARK);
 
     // Tracks the new row ID high watermark as we iterate through data actions and counting new rows
     // added in this transaction.
