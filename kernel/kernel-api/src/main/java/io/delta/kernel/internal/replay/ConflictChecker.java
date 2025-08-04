@@ -369,8 +369,8 @@ public class ConflictChecker {
 
   private List<FileStatus> getWinningCommitFiles(Engine engine) {
     // TODO this should be based on attemptVersion not readSnapshot version
-    long firstWinningCommitVersion = snapshot.map(SnapshotImpl::getVersion).orElse(-1L) + 1;
-    String firstWinningCommitFile = deltaFile(transaction.getLogPath(), firstWinningCommitVersion);
+    String firstWinningCommitFile =
+        deltaFile(transaction.getLogPath(), transaction.getReadTableVersion() + 1);
 
     try (CloseableIterator<FileStatus> files =
         wrapEngineExceptionThrowsIO(
