@@ -235,7 +235,6 @@ trait ConvertUtilsBase extends DeltaLogging {
     )
   }
 
-
   /**
    * A helper function to check whether a directory should be skipped during conversion.
    *
