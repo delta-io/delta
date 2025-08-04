@@ -15,6 +15,8 @@
  */
 package io.delta.spark.dsv2.utils;
 
+import static java.util.Objects.requireNonNull;
+
 import io.delta.kernel.types.ArrayType;
 import io.delta.kernel.types.BinaryType;
 import io.delta.kernel.types.BooleanType;
@@ -37,8 +39,6 @@ import java.util.ArrayList;
 import java.util.List;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.Metadata;
-
-import static java.util.Objects.requireNonNull;
 
 /** A utility class for converting between Delta Kernel and Spark schemas and data types. */
 public class SchemaUtils {
