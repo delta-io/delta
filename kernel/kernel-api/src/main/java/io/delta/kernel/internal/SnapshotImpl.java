@@ -23,12 +23,14 @@ import io.delta.kernel.ScanBuilder;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.commit.Committer;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.checksum.CRCInfo;
+import io.delta.kernel.internal.clustering.ClusteringMetadataDomain;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
@@ -55,6 +57,7 @@ public class SnapshotImpl implements Snapshot {
   private final Committer committer;
   private Optional<Long> inCommitTimestampOpt;
   private Lazy<SnapshotReport> lazySnapshotReport;
+  private Lazy<Optional<List<Column>>> lazyClusteringColumns;
 
   public SnapshotImpl(
       Path dataPath,
@@ -81,6 +84,11 @@ public class SnapshotImpl implements Snapshot {
     // io.delta.kernel.metrics.SnapshotMetricsResult#getLoadSnapshotTotalDurationNs}, are only
     // completed *after* the Snapshot has been constructed.
     this.lazySnapshotReport = new Lazy<>(() -> SnapshotReportImpl.forSuccess(snapshotContext));
+    this.lazyClusteringColumns =
+        new Lazy<>(
+            () ->
+                ClusteringMetadataDomain.fromSnapshot(this)
+                    .map(ClusteringMetadataDomain::getClusteringColumns));
   }
 
   /////////////////
@@ -169,6 +177,21 @@ public class SnapshotImpl implements Snapshot {
 
   public SnapshotReport getSnapshotReport() {
     return lazySnapshotReport.get();
+  }
+
+  /**
+   * Returns the clustering columns for this snapshot.
+   *
+   * <ul>
+   *   <li>Optional.empty() - unclustered table (clustering is not enabled)
+   *   <li>Optional.of([]) - clustered table with no clustering columns (clustering is enabled)
+   *   <li>Optional.of([col1, col2]) - clustered table with the given physical clustering columns
+   * </ul>
+   *
+   * @return the physical clustering columns in this snapshot
+   */
+  public Optional<List<Column>> getPhysicalClusteringColumns() {
+    return lazyClusteringColumns.get();
   }
 
   /**

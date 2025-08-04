@@ -85,9 +85,20 @@ public class TransactionImpl implements Transaction {
   private final Protocol protocol;
   private final Optional<SnapshotImpl> readSnapshotOpt;
   private final Optional<SetTransaction> setTxnOpt;
-  private final Optional<List<Column>> clusteringColumnsOpt;
+  /**
+   * The new clustering columns to write in the domain metadata in this transaction if provided.
+   *
+   * <ul>
+   *   <li>Optional.empty() - do not update the clustering domain metadata in this txn
+   *   <li>Optional.of([]) - update the clustering domain metadata to store an empty list in this
+   *       txn
+   *   <li>Optional.of([col1, col2]) - update the clustering domain metadata to store these columns
+   *       in this txn
+   * </ul>
+   */
+  private final Optional<List<Column>> newClusteringColumnsOpt;
+
   private final boolean shouldUpdateProtocol;
-  private final boolean shouldUpdateClusteringDomainMetadata;
   private final Clock clock;
   private final DomainMetadataState domainMetadataState = new DomainMetadataState();
   private Metadata metadata;
@@ -109,8 +120,7 @@ public class TransactionImpl implements Transaction {
       Protocol protocol,
       Metadata metadata,
       Optional<SetTransaction> setTxnOpt,
-      Optional<List<Column>> clusteringColumnsOpt,
-      boolean shouldUpdateClusteringDomainMetadata,
+      Optional<List<Column>> newClusteringColumnsOpt,
       boolean shouldUpdateMetadata,
       boolean shouldUpdateProtocol,
       int maxRetries,
@@ -126,8 +136,7 @@ public class TransactionImpl implements Transaction {
     this.protocol = protocol;
     this.metadata = metadata;
     this.setTxnOpt = setTxnOpt;
-    this.clusteringColumnsOpt = clusteringColumnsOpt;
-    this.shouldUpdateClusteringDomainMetadata = shouldUpdateClusteringDomainMetadata;
+    this.newClusteringColumnsOpt = newClusteringColumnsOpt;
     this.shouldUpdateMetadata = shouldUpdateMetadata;
     this.shouldUpdateProtocol = shouldUpdateProtocol;
     this.maxRetries = maxRetries;
@@ -203,6 +212,21 @@ public class TransactionImpl implements Transaction {
     return protocol;
   }
 
+  public Optional<List<Column>> getEffectiveClusteringColumns() {
+    if (isCreateOrReplace) {
+      // if isCreateOrReplace return the columns set in this txn
+      return newClusteringColumnsOpt;
+    } else { // since !isCreateOrReplace must be an update to an existing table
+      if (newClusteringColumnsOpt.isPresent()) {
+        // if the clustering columns are being updated in this txn return those
+        return newClusteringColumnsOpt;
+      } else {
+        // else, return the current existing clustering columns (readSnapshotOpt must be present)
+        return readSnapshotOpt.flatMap(SnapshotImpl::getPhysicalClusteringColumns);
+      }
+    }
+  }
+
   public Path getDataPath() {
     return dataPath;
   }
@@ -232,7 +256,7 @@ public class TransactionImpl implements Transaction {
           recordTransactionReport(
               engine,
               Optional.of(committedVersion),
-              clusteringColumnsOpt,
+              getEffectiveClusteringColumns(),
               transactionMetrics,
               Optional.empty() /* exception */);
       TransactionMetricsResult txnMetricsCaptured =
@@ -245,7 +269,7 @@ public class TransactionImpl implements Transaction {
       recordTransactionReport(
           engine,
           Optional.empty() /* committedVersion */,
-          clusteringColumnsOpt,
+          getEffectiveClusteringColumns(),
           transactionMetrics,
           Optional.of(e) /* exception */);
       throw e;
@@ -809,15 +833,14 @@ public class TransactionImpl implements Transaction {
      */
     private void generateClusteringDomainMetadataIfNeeded() {
       if (TableFeatures.isClusteringTableFeatureSupported(protocol)
-          && clusteringColumnsOpt.isPresent()
-          && shouldUpdateClusteringDomainMetadata) {
+          && newClusteringColumnsOpt.isPresent()) {
         DomainMetadata clusteringDomainMetadata =
-            ClusteringUtils.getClusteringDomainMetadata(clusteringColumnsOpt.get());
+            ClusteringUtils.getClusteringDomainMetadata(newClusteringColumnsOpt.get());
         addDomain(
             clusteringDomainMetadata.getDomain(), clusteringDomainMetadata.getConfiguration());
       } else if (TableFeatures.isClusteringTableFeatureSupported(protocol)
           && isReplaceTable()
-          && !clusteringColumnsOpt.isPresent()) {
+          && !newClusteringColumnsOpt.isPresent()) {
         // When clustering is in the writer features we require there to be a clustering domain
         // metadata present; when the table is no longer a clustered table this means we must have
         // a domain metadata with clusteringColumns=[]
