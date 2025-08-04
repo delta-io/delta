@@ -38,6 +38,8 @@ import java.util.List;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.Metadata;
 
+import static java.util.Objects.requireNonNull;
+
 /** A utility class for converting between Delta Kernel and Spark schemas and data types. */
 public class SchemaUtils {
 
@@ -48,6 +50,7 @@ public class SchemaUtils {
   /** Converts a Delta Kernel schema to a Spark schema. */
   public static org.apache.spark.sql.types.StructType convertKernelSchemaToSparkSchema(
       StructType kernelSchema) {
+    requireNonNull(kernelSchema);
     List<org.apache.spark.sql.types.StructField> fields = new ArrayList<>();
 
     for (StructField field : kernelSchema.fields()) {
@@ -67,6 +70,7 @@ public class SchemaUtils {
   /** Converts a Delta Kernel data type to a Spark data type. */
   public static org.apache.spark.sql.types.DataType convertKernelDataTypeToSparkDataType(
       DataType kernelDataType) {
+    requireNonNull(kernelDataType);
     if (kernelDataType instanceof StringType) {
       return DataTypes.StringType;
     } else if (kernelDataType instanceof BooleanType) {
@@ -120,9 +124,11 @@ public class SchemaUtils {
   /** Converts a Spark schema to a Delta Kernel schema. */
   public static StructType convertSparkSchemaToKernelSchema(
       org.apache.spark.sql.types.StructType sparkSchema) {
+    requireNonNull(sparkSchema);
     List<StructField> kernelFields = new ArrayList<>();
 
     for (org.apache.spark.sql.types.StructField field : sparkSchema.fields()) {
+      // TODO: understand and plumb field metadata.
       kernelFields.add(
           new StructField(
               field.name(),
@@ -136,6 +142,7 @@ public class SchemaUtils {
   /** Converts a Spark data type to a Delta Kernel data type. */
   public static DataType convertSparkDataTypeToKernelDataType(
       org.apache.spark.sql.types.DataType sparkDataType) {
+    requireNonNull(sparkDataType);
     if (sparkDataType instanceof org.apache.spark.sql.types.StringType) {
       return StringType.STRING;
     } else if (sparkDataType instanceof org.apache.spark.sql.types.BooleanType) {
