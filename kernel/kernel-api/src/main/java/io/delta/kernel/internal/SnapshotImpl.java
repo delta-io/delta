@@ -177,8 +177,18 @@ public class SnapshotImpl implements Snapshot {
     return lazySnapshotReport.get();
   }
 
-  /** @returns the physical clustering columns in this snapshot */
-  public Optional<List<Column>> getClusteringColumns() {
+  /**
+   * Returns the clustering columns for this snapshot.
+   *
+   * <ul>
+   *   <li>Optional.empty() - unclustered table (clustering is not enabled)
+   *   <li>Optional.of([]) - clustered table with no clustering columns (clustering is enabled)
+   *   <li>Optional.of([col1, col2]) - clustered table with the given physical clustering columns
+   * </ul>
+   *
+   * @return the physical clustering columns in this snapshot
+   */
+  public Optional<List<Column>> getPhysicalClusteringColumns() {
     return lazyClusteringColumns.get();
   }
 

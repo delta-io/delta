@@ -78,10 +78,11 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   // The original clustering columns provided by the user when building the transaction.
   // This represents logical column references before schema resolution is applied.
   // (e.g., case sensitivity, column mapping)
-  private Optional<List<Column>> initialClusteringColumns = Optional.empty();
-  // The resolved clustering columns that will be written into domain metadata. This reflects
-  // case-preserved column names or physical column names if column mapping is enabled.
-  // This would only be set after schema resolution and must align with the resolved schema.
+  private Optional<List<Column>> inputLogicalClusteringColumns = Optional.empty();
+  // The resolved clustering columns that will be written into domain metadata in the txn. This
+  // reflects case-preserved column names or physical column names if column mapping is enabled.
+  // This is set during transaction building after the schema has been updated/resolved with any
+  // column mapping info. These are the physical columns of `inputLogicalClusteringColumns`.
   private Optional<List<Column>> newResolvedClusteringColumns = Optional.empty();
 
   protected final TableImpl table;
@@ -144,7 +145,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
    */
   @Override
   public TransactionBuilder withClusteringColumns(Engine engine, List<Column> clusteringColumns) {
-    this.initialClusteringColumns = Optional.of(clusteringColumns);
+    this.inputLogicalClusteringColumns = Optional.of(clusteringColumns);
     return this;
   }
 
@@ -250,7 +251,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
             || schema.isPresent() // schema evolution
             || tableProperties.isPresent() // table properties updated
             || unsetTablePropertiesKeys.isPresent() // table properties unset
-            || initialClusteringColumns.isPresent() // clustering columns changed
+            || inputLogicalClusteringColumns.isPresent() // clustering columns changed
             || enablesDomainMetadataSupport; // domain metadata support added
 
     if (!needsMetadataOrProtocolUpdate) {
@@ -401,7 +402,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     if (needDomainMetadataSupport) {
       manuallyEnabledFeatures.add(TableFeatures.DOMAIN_METADATA_W_FEATURE);
     }
-    if (initialClusteringColumns.isPresent()) {
+    if (inputLogicalClusteringColumns.isPresent()) {
       manuallyEnabledFeatures.add(TableFeatures.CLUSTERING_W_FEATURE);
     }
 
@@ -497,7 +498,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     // This is only done if clustering columns are explicitly set in this transaction.
     StructType updatedSchema = newMetadata.orElse(baseMetadata).getSchema();
     this.newResolvedClusteringColumns =
-        initialClusteringColumns.map(
+        inputLogicalClusteringColumns.map(
             cols -> SchemaUtils.casePreservingEligibleClusterColumns(updatedSchema, cols));
 
     /* ----- 6: Update the METADATA with materialized row tracking column name if applicable----- */
@@ -514,9 +515,9 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       // Use physicalClusteringColumns if clustering column is set in this txn,
       // otherwise fallback to existingClusteringCols
       Optional<List<Column>> effectiveClusteringCols =
-          (isCreateOrReplace || initialClusteringColumns.isPresent())
+          (isCreateOrReplace || inputLogicalClusteringColumns.isPresent())
               ? newResolvedClusteringColumns
-              : latestSnapshot.get().getClusteringColumns();
+              : latestSnapshot.get().getPhysicalClusteringColumns();
 
       Optional<Metadata> schemaUpdatedMetadata =
           validateMetadataChangeAndUpdateMetadata(
@@ -554,12 +555,12 @@ public class TransactionBuilderImpl implements TransactionBuilder {
           }
         });
     if (!isCreateOrReplace
-        && initialClusteringColumns.isPresent()
+        && inputLogicalClusteringColumns.isPresent()
         && snapshot.getMetadata().getPartitionColumns().getSize() != 0) {
       throw DeltaErrors.enablingClusteringOnPartitionedTableNotAllowed(
           table.getPath(engine),
           snapshot.getMetadata().getPartitionColNames(),
-          initialClusteringColumns.get());
+          inputLogicalClusteringColumns.get());
     }
   }
 
@@ -585,7 +586,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       }
     } else {
       checkArgument(
-          !(partitionColumns.isPresent() && initialClusteringColumns.isPresent()),
+          !(partitionColumns.isPresent() && inputLogicalClusteringColumns.isPresent()),
           "Partition Columns and Clustering Columns cannot be set at the same time");
 
       // New table verify the given schema and partition columns

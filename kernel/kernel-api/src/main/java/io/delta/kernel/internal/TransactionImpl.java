@@ -84,7 +84,19 @@ public class TransactionImpl implements Transaction {
   private final Protocol protocol;
   private final SnapshotImpl readSnapshot;
   private final Optional<SetTransaction> setTxnOpt;
+  /**
+   * The new clustering columns to write in the domain metadata in this transaction if provided.
+   *
+   * <ul>
+   *   <li>Optional.empty() - do not update the clustering domain metadata in this txn
+   *   <li>Optional.of([]) - update the clustering domain metadata to store an empty list in this
+   *       txn
+   *   <li>Optional.of([col1, col2]) - update the clustering domain metadata to store these columns
+   *       in this txn
+   * </ul>
+   */
   private final Optional<List<Column>> newClusteringColumnsOpt;
+
   private final boolean shouldUpdateProtocol;
   private final Clock clock;
   private final DomainMetadataState domainMetadataState = new DomainMetadataState();
@@ -204,7 +216,7 @@ public class TransactionImpl implements Transaction {
     } else {
       return newClusteringColumnsOpt.isPresent()
           ? newClusteringColumnsOpt
-          : readSnapshot.getClusteringColumns();
+          : readSnapshot.getPhysicalClusteringColumns();
     }
   }
 
