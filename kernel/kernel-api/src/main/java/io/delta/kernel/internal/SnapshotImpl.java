@@ -21,11 +21,13 @@ import static io.delta.kernel.internal.TableConfig.TOMBSTONE_RETENTION;
 import io.delta.kernel.ScanBuilder;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.checksum.CRCInfo;
+import io.delta.kernel.internal.clustering.ClusteringMetadataDomain;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
@@ -51,6 +53,7 @@ public class SnapshotImpl implements Snapshot {
   private final LogSegment logSegment;
   private Optional<Long> inCommitTimestampOpt;
   private Lazy<SnapshotReport> lazySnapshotReport;
+  private Lazy<Optional<List<Column>>> lazyClusteringColumns;
 
   public SnapshotImpl(
       Path dataPath,
@@ -73,6 +76,8 @@ public class SnapshotImpl implements Snapshot {
     // io.delta.kernel.metrics.SnapshotMetricsResult#getLoadSnapshotTotalDurationNs}, are only
     // completed *after* the Snapshot has been constructed.
     this.lazySnapshotReport = new Lazy<>(() -> SnapshotReportImpl.forSuccess(snapshotContext));
+    this.lazyClusteringColumns = new Lazy<>(() -> ClusteringMetadataDomain.fromSnapshot(this)
+        .map(ClusteringMetadataDomain::getClusteringColumns));
   }
 
   /////////////////
@@ -153,6 +158,11 @@ public class SnapshotImpl implements Snapshot {
 
   public SnapshotReport getSnapshotReport() {
     return lazySnapshotReport.get();
+  }
+
+  // TODO: put this on the public Snapshot API? (need to convert to logical?)
+  public Optional<List<Column>> getClusteringColumns() {
+    return lazyClusteringColumns.get();
   }
 
   /**

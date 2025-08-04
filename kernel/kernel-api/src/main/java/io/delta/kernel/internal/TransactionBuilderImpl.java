@@ -35,7 +35,6 @@ import io.delta.kernel.exceptions.TableAlreadyExistsException;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.actions.*;
-import io.delta.kernel.internal.clustering.ClusteringUtils;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.icebergcompat.IcebergCompatV2MetadataValidatorAndUpdater;
 import io.delta.kernel.internal.icebergcompat.IcebergCompatV3MetadataValidatorAndUpdater;
@@ -79,12 +78,10 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   // This represents logical column references before schema resolution is applied.
   // (e.g., case sensitivity, column mapping)
   private Optional<List<Column>> initialClusteringColumns = Optional.empty();
-
   // The resolved clustering columns that will be written into domain metadata. This reflects
   // case-preserved column names or physical column names if column mapping is enabled.
   // This would only be set after schema resolution and must align with the resolved schema.
-  private Optional<List<Column>> resolvedClusteringColumns = Optional.empty();
-  private boolean shouldUpdateClusteringDomainMetadata = false;
+  private Optional<List<Column>> newResolvedClusteringColumns = Optional.empty();
 
   protected final TableImpl table;
   protected Optional<StructType> schema = Optional.empty();
@@ -269,8 +266,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
           latestSnapshot.get().getMetadata(), // reuse latest metadata
           setTxnOpt,
           // TODO: not yet initialized, fix it as part of #4713
-          resolvedClusteringColumns, /* clustering cols=empty */
-          false /* shouldUpdateClusteringDomainMetadata=false */,
+          newResolvedClusteringColumns, /* clustering cols=empty */
           false /* shouldUpdateMetadata=false */,
           false /* shouldUpdateProtocol=false */,
           maxRetries,
@@ -311,18 +307,12 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       baseProtocol = getInitialProtocol();
     }
 
-    // We use the existing clustering columns to validate schema evolution
-    Optional<List<Column>> existingClusteringCols =
-        isCreateOrReplace || initialClusteringColumns.isPresent()
-            ? Optional.empty()
-            : ClusteringUtils.getClusteringColumnsOptional(latestSnapshot.get());
     Tuple2<Optional<Protocol>, Optional<Metadata>> updatedProtocolAndMetadata =
         validateAndUpdateProtocolAndMetadata(
             engine,
             baseMetadata,
             baseProtocol,
             isCreateOrReplace,
-            existingClusteringCols,
             latestSnapshot);
     Optional<Protocol> newProtocol = updatedProtocolAndMetadata._1;
     Optional<Metadata> newMetadata = updatedProtocolAndMetadata._2;
@@ -356,9 +346,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         operation,
         newProtocol.orElse(baseProtocol),
         newMetadata.orElse(baseMetadata),
-        setTxnOpt,
-        resolvedClusteringColumns,
-        shouldUpdateClusteringDomainMetadata,
+        setTxnOpt, newResolvedClusteringColumns, /* new clustering columns only */
         newMetadata.isPresent() || isCreateOrReplace /* shouldUpdateMetadata */,
         newProtocol.isPresent() || isCreateOrReplace /* shouldUpdateProtocol */,
         maxRetries,
@@ -372,7 +360,6 @@ public class TransactionBuilderImpl implements TransactionBuilder {
    * @param baseMetadata the starting metadata to update
    * @param baseProtocol the starting protocol to update
    * @param isCreateOrReplace whether we are defining a new table definition or not
-   * @param existingClusteringCols the existing clustering columns for the table (if it exists)
    * @return an updated protocol and metadata if any updates are necessary
    */
   protected Tuple2<Optional<Protocol>, Optional<Metadata>> validateAndUpdateProtocolAndMetadata(
@@ -380,11 +367,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       Metadata baseMetadata,
       Protocol baseProtocol,
       boolean isCreateOrReplace,
-      Optional<List<Column>> existingClusteringCols,
       Optional<SnapshotImpl> latestSnapshot) {
-    if (isCreateOrReplace) {
-      checkArgument(!existingClusteringCols.isPresent());
-    }
+    checkArgument(isCreateOrReplace || latestSnapshot.isPresent());
 
     Optional<Metadata> newMetadata = Optional.empty();
     Optional<Protocol> newProtocol = Optional.empty();
@@ -514,12 +498,9 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     // Get the physical names of clustering columns based on the updated schema.
     // This is only done if clustering columns are explicitly set in this transaction.
     StructType updatedSchema = newMetadata.orElse(baseMetadata).getSchema();
-    this.resolvedClusteringColumns =
-        initialClusteringColumns.isPresent()
-            ? initialClusteringColumns.map(
-                cols -> SchemaUtils.casePreservingEligibleClusterColumns(updatedSchema, cols))
-            : existingClusteringCols;
-    shouldUpdateClusteringDomainMetadata = initialClusteringColumns.isPresent();
+    this.newResolvedClusteringColumns =
+        initialClusteringColumns.map(cols ->
+            SchemaUtils.casePreservingEligibleClusterColumns(updatedSchema, cols));
 
     /* ----- 6: Update the METADATA with materialized row tracking column name if applicable----- */
     Optional<Metadata> rowTrackingMetadata =
@@ -535,9 +516,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       // Use physicalClusteringColumns if clustering column is set in this txn,
       // otherwise fallback to existingClusteringCols
       Optional<List<Column>> effectiveClusteringCols =
-          resolvedClusteringColumns.isPresent()
-              ? resolvedClusteringColumns
-              : existingClusteringCols;
+          (isCreateOrReplace || initialClusteringColumns.isPresent()) ?
+          newResolvedClusteringColumns : latestSnapshot.get().getClusteringColumns();
 
       Optional<Metadata> schemaUpdatedMetadata =
           validateMetadataChangeAndUpdateMetadata(

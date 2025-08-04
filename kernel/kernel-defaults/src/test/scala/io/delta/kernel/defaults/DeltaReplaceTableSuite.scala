@@ -265,14 +265,14 @@ trait DeltaReplaceTableSuiteBase extends DeltaTableWriteSuiteBase {
         assertHasWriterFeature(snapshot, "domainMetadata")
         // Validate clustering columns are correct
         // TODO when we support column mapping we will need to convert to physical-name here
-        assert(ClusteringUtils.getClusteringColumnsOptional(snapshot).toScala
+        assert(snapshot.getClusteringColumns.toScala
           .exists(_.asScala == clusteringCols))
       case None =>
         if (wasClusteredTable) {
           // If the table was previously clustered we expect the table feature to remain and for
           // there to be a clustering domain metadata with clusteringColumns=[]
           assertHasWriterFeature(snapshot, "clustering")
-          assert(ClusteringUtils.getClusteringColumnsOptional(snapshot).toScala
+          assert(snapshot.getClusteringColumns.toScala
             .exists(_.isEmpty))
         } else {
           // Otherwise there should be no table feature and no clustering domain metadata

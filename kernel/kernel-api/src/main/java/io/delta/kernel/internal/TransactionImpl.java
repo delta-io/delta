@@ -84,9 +84,8 @@ public class TransactionImpl implements Transaction {
   private final Protocol protocol;
   private final SnapshotImpl readSnapshot;
   private final Optional<SetTransaction> setTxnOpt;
-  private final Optional<List<Column>> clusteringColumnsOpt;
+  private final Optional<List<Column>> newClusteringColumnsOpt;
   private final boolean shouldUpdateProtocol;
-  private final boolean shouldUpdateClusteringDomainMetadata;
   private final Clock clock;
   private final DomainMetadataState domainMetadataState = new DomainMetadataState();
   private Metadata metadata;
@@ -108,13 +107,13 @@ public class TransactionImpl implements Transaction {
       Protocol protocol,
       Metadata metadata,
       Optional<SetTransaction> setTxnOpt,
-      Optional<List<Column>> clusteringColumnsOpt,
-      boolean shouldUpdateClusteringDomainMetadata,
+      Optional<List<Column>> newClusteringColumnsOpt,
       boolean shouldUpdateMetadata,
       boolean shouldUpdateProtocol,
       int maxRetries,
       int logCompactionInterval,
       Clock clock) {
+    // checkArgument(isCreateOrReplace || readSnapshot.isPresent());
     this.isCreateOrReplace = isCreateOrReplace;
     this.dataPath = dataPath;
     this.logPath = logPath;
@@ -124,8 +123,7 @@ public class TransactionImpl implements Transaction {
     this.protocol = protocol;
     this.metadata = metadata;
     this.setTxnOpt = setTxnOpt;
-    this.clusteringColumnsOpt = clusteringColumnsOpt;
-    this.shouldUpdateClusteringDomainMetadata = shouldUpdateClusteringDomainMetadata;
+    this.newClusteringColumnsOpt = newClusteringColumnsOpt;
     this.shouldUpdateMetadata = shouldUpdateMetadata;
     this.shouldUpdateProtocol = shouldUpdateProtocol;
     this.maxRetries = maxRetries;
@@ -201,6 +199,15 @@ public class TransactionImpl implements Transaction {
     return protocol;
   }
 
+  public Optional<List<Column>> getEffectiveClusteringColumns() {
+    if (isCreateOrReplace) {
+      return newClusteringColumnsOpt;
+    } else {
+      return newClusteringColumnsOpt.isPresent() ? newClusteringColumnsOpt :
+          readSnapshot.getClusteringColumns();
+    }
+  }
+
   @Override
   public TransactionCommitResult commit(Engine engine, CloseableIterable<Row> dataActions)
       throws ConcurrentWriteException {
@@ -219,8 +226,7 @@ public class TransactionImpl implements Transaction {
       TransactionReport transactionReport =
           recordTransactionReport(
               engine,
-              Optional.of(committedVersion),
-              clusteringColumnsOpt,
+              Optional.of(committedVersion), getEffectiveClusteringColumns(),
               transactionMetrics,
               Optional.empty() /* exception */);
       TransactionMetricsResult txnMetricsCaptured =
@@ -232,8 +238,7 @@ public class TransactionImpl implements Transaction {
     } catch (Exception e) {
       recordTransactionReport(
           engine,
-          Optional.empty() /* committedVersion */,
-          clusteringColumnsOpt,
+          Optional.empty() /* committedVersion */, getEffectiveClusteringColumns(),
           transactionMetrics,
           Optional.of(e) /* exception */);
       throw e;
@@ -792,15 +797,14 @@ public class TransactionImpl implements Transaction {
      */
     private void generateClusteringDomainMetadataIfNeeded() {
       if (TableFeatures.isClusteringTableFeatureSupported(protocol)
-          && clusteringColumnsOpt.isPresent()
-          && shouldUpdateClusteringDomainMetadata) {
+          && newClusteringColumnsOpt.isPresent()) {
         DomainMetadata clusteringDomainMetadata =
-            ClusteringUtils.getClusteringDomainMetadata(clusteringColumnsOpt.get());
+            ClusteringUtils.getClusteringDomainMetadata(newClusteringColumnsOpt.get());
         addDomain(
             clusteringDomainMetadata.getDomain(), clusteringDomainMetadata.getConfiguration());
       } else if (TableFeatures.isClusteringTableFeatureSupported(protocol)
           && isReplaceTable()
-          && !clusteringColumnsOpt.isPresent()) {
+          && !newClusteringColumnsOpt.isPresent()) {
         // When clustering is in the writer features we require there to be a clustering domain
         // metadata present; when the table is no longer a clustered table this means we must have
         // a domain metadata with clusteringColumns=[]
