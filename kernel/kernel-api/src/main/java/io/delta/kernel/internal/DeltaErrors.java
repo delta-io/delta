@@ -464,11 +464,11 @@ public final class DeltaErrors {
   }
 
   public static KernelException logicalPhysicalSchemaMismatch(
-      int logical_size, int physical_size, int num_partition_cols) {
+      int logical_size, int num_partition_cols, int physical_size) {
     return new KernelException(
         String.format(
-            "Logical schema (%s) size does not equal physical schema size (%s) plus number of "
-                + "partition columns (%s).",
+            "Logical schema (%s) size minus number of partition columns (%s) does not equal "
+                + "physical schema size (%s).",
             logical_size, physical_size, num_partition_cols));
   }
 

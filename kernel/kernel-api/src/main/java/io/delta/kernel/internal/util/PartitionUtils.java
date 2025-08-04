@@ -43,7 +43,6 @@ import java.time.format.DateTimeParseException;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
-import java.util.stream.IntStream;
 
 public class PartitionUtils {
   private static final DateTimeFormatter PARTITION_TIMESTAMP_FORMATTER =
@@ -52,44 +51,10 @@ public class PartitionUtils {
   private PartitionUtils() {}
 
   /**
-   * Utility method to remove the given columns (as {@code columnsToRemove}) from the given {@code
-   * physicalSchema}.
-   *
-   * @param logicalSchema Logical schema used to map logical partition column names to physical
-   *     column names.
-   * @param physicalSchema Physical schema from which columns will be removed.
-   * @param columnsToRemove Set of partition column names (in logical space) to remove from the
-   *     physical schema.
-   * @return A new {@link StructType} representing the physical schema without the specified
-   *     partition columns.
-   */
-  public static StructType physicalSchemaWithoutPartitionColumns(
-      StructType logicalSchema, StructType physicalSchema, Set<String> columnsToRemove) {
-    if (columnsToRemove == null || columnsToRemove.isEmpty()) {
-      return physicalSchema;
-    }
-
-    // Partition columns are top-level only
-    Map<String, String> physicalToLogical =
-        new HashMap<String, String>() {
-          {
-            IntStream.range(0, logicalSchema.length())
-                .mapToObj(i -> new Tuple2<>(logicalSchema.at(i), physicalSchema.at(i)))
-                .forEach(tuple2 -> put(tuple2._2.getName(), tuple2._1.getName()));
-          }
-        };
-
-    return new StructType(
-        physicalSchema.fields().stream()
-            .filter(field -> !columnsToRemove.contains(physicalToLogical.get(field.getName())))
-            .collect(Collectors.toList()));
-  }
-
-  /**
    * Utility method to attach partition columns to the given data batch.
    *
    * @param dataBatch Data batch to which the partition columns will be added.
-   * @param logicalSchema Logical schema of the table scan. Used insert partition columns at the
+   * @param logicalSchema Logical schema of the table scan. Used to insert partition columns at the
    *     right positions in the data batch. This logical schema must contain column mapping metadata
    *     if column mapping is enabled.
    * @param partitionValues Map of partition column name to value.
@@ -106,27 +71,32 @@ public class PartitionUtils {
       return dataBatch;
     }
 
-    if (logicalSchema.length() != dataBatch.getSchema().length() + partitionValues.size()) {
+    int numPartitionColumnsInSchema =
+        (int)
+            logicalSchema.fields().stream()
+                .map(ColumnMapping::getPhysicalName)
+                .filter(partitionValues::containsKey)
+                .count();
+    if (logicalSchema.length() - numPartitionColumnsInSchema != dataBatch.getSchema().length()) {
       throw DeltaErrors.logicalPhysicalSchemaMismatch(
-          logicalSchema.length(), dataBatch.getSchema().length(), partitionValues.size());
+          logicalSchema.length(), partitionValues.size(), dataBatch.getSchema().length());
     }
 
-    for (int colIdx = 0; colIdx < logicalSchema.length(); colIdx++) {
-      StructField structField = logicalSchema.at(colIdx);
-      String physicalName = ColumnMapping.getPhysicalName(structField);
+    for (StructField field : logicalSchema.fields()) {
+      String physicalName = ColumnMapping.getPhysicalName(field);
       if (partitionValues.containsKey(physicalName)) {
         // Create a partition column vector
         final ColumnarBatch finalDataBatch = dataBatch;
         Literal partitionValue =
-            literalForPartitionValue(structField.getDataType(), partitionValues.get(physicalName));
+            literalForPartitionValue(field.getDataType(), partitionValues.get(physicalName));
         ExpressionEvaluator evaluator =
             wrapEngineException(
                 () ->
                     expressionHandler.getEvaluator(
-                        finalDataBatch.getSchema(), partitionValue, structField.getDataType()),
+                        finalDataBatch.getSchema(), partitionValue, field.getDataType()),
                 "Get the expression evaluator for partition column %s with type=%s and value=%s",
                 physicalName,
-                structField.getDataType(),
+                field.getDataType(),
                 partitionValues.get(physicalName));
 
         ColumnVector partitionVector =
@@ -134,7 +104,8 @@ public class PartitionUtils {
                 () -> evaluator.eval(finalDataBatch),
                 "Evaluating the partition value expression %s",
                 partitionValue);
-        dataBatch = dataBatch.withNewColumn(colIdx, structField, partitionVector);
+        dataBatch =
+            dataBatch.withNewColumn(logicalSchema.indexOf(field.getName()), field, partitionVector);
       }
     }
 
