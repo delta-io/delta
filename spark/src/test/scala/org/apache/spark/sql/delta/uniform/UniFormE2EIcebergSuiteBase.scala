@@ -106,6 +106,24 @@ abstract class UniFormE2EIcebergSuiteBase extends UniFormE2ETest {
   }
 
   compatVersions.foreach { compatVersion =>
+    test(s"Table with partition - compatV$compatVersion") {
+      withTable(testTableName) {
+        write(
+          s"""CREATE TABLE $testTableName (id INT, part STRING) USING delta
+             |PARTITIONED BY (part)
+             |TBLPROPERTIES (
+             |  'delta.columnMapping.mode' = 'name',
+             |  'delta.enableIcebergCompatV$compatVersion' = 'true',
+             |  'delta.universalFormat.enabledFormats' = 'iceberg'
+             |)""".stripMargin)
+        write(s"INSERT INTO `$testTableName` VALUES (123, 'p1'), (456, 'p2'), (789, 'p1')")
+        readAndVerify(testTableName, "id, part", "id",
+          Seq(Row(123, "p1"), Row(456, "p2"), Row(789, "p1")))
+      }
+    }
+  }
+
+  compatVersions.foreach { compatVersion =>
     test(s"Nested struct schema test - compatV$compatVersion") {
       withTable(testTableName) {
         write(
