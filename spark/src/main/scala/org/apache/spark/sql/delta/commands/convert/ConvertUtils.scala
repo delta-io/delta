@@ -224,9 +224,17 @@ trait ConvertUtilsBase extends DeltaLogging {
       fs.makeQualified(path).toUri.toString
     }
 
-    AddFile(pathStrForAddFile, partition, file.length, file.modificationTime, dataChange = true,
-      stats = targetFile.stats.orNull)
+
+    AddFile(
+      pathStrForAddFile,
+      partition,
+      file.length,
+      file.modificationTime,
+      dataChange = true,
+      stats = targetFile.stats.orNull
+    )
   }
+
 
   /**
    * A helper function to check whether a directory should be skipped during conversion.

@@ -1707,14 +1707,6 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
-  val DELTA_CONVERT_ICEBERG_UNSAFE_MOR_TABLE_ENABLE =
-    buildConf("convert.iceberg.unsafeConvertMorTable.enabled")
-      .doc("If enabled, iceberg merge-on-read tables can be unsafely converted by ignoring " +
-        "deletion files. This could cause data duplication and is strongly not recommended.")
-      .internal()
-      .booleanConf
-      .createWithDefault(false)
-
   val DELTA_CONVERT_ICEBERG_CAST_TIME_TYPE = {
     buildConf("convert.iceberg.castTimeType")
       .internal()

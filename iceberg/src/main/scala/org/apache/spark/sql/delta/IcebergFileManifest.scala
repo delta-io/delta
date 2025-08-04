@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.commands.convert
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 
-import org.apache.spark.sql.delta.{DeltaColumnMapping, SerializableFileStatus}
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaLog, SerializableFileStatus, Snapshot => DeltaSnapshot}
 import org.apache.spark.sql.delta.DeltaErrors.cloneFromIcebergSourceWithPartitionEvolution
 import org.apache.spark.sql.delta.commands.convert.IcebergTable.ERR_MULTIPLE_PARTITION_SPECS
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
@@ -100,14 +100,8 @@ class IcebergFileManifest(
       return spark.emptyDataset[ConvertTargetFile]
     }
 
-    // We do not support Iceberg Merge-On-Read using delete files and will by default
-    // throw errors when encountering them. This flag will bypass the check and ignore the delete
-    // files, and in other words, generating a CORRUPTED table. We keep this flag only for
-    // backward compatibility. No new use cases of this flag should be allowed.
-    val unsafeConvertMorTable =
-      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CONVERT_ICEBERG_UNSAFE_MOR_TABLE_ENABLE)
     val hasMergeOnReadDeletionFiles = table.currentSnapshot().deleteManifests(table.io()).size() > 0
-    if (hasMergeOnReadDeletionFiles && !unsafeConvertMorTable) {
+    if (hasMergeOnReadDeletionFiles) {
       throw new UnsupportedOperationException(
         s"Cannot support convert Iceberg table with row-level deletes." +
           s"Please trigger an Iceberg compaction and retry the command.")
@@ -142,8 +136,7 @@ class IcebergFileManifest(
 
     val dataFiles = loadIcebergFiles()
 
-    dataFiles
-      .map { dataFile: DataFileWrapper =>
+    dataFiles.map { dataFile: DataFileWrapper =>
         if (shouldCheckPartitionEvolution) {
           IcebergFileManifest.validateLimitedPartitionEvolution(
             dataFile.specId,
