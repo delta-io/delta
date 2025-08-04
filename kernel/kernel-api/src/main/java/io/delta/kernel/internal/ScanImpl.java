@@ -42,7 +42,6 @@ import io.delta.kernel.internal.skipping.DataSkippingUtils;
 import io.delta.kernel.internal.util.*;
 import io.delta.kernel.metrics.ScanReport;
 import io.delta.kernel.metrics.SnapshotReport;
-import io.delta.kernel.types.FieldMetadata;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
@@ -218,16 +217,6 @@ public class ScanImpl implements Scan {
     return getDataFilters();
   }
 
-  /** Helper method to create a copy of a column that is marked as an internal column. */
-  public static StructField createInternalColumn(StructField field) {
-    FieldMetadata metadata =
-        FieldMetadata.builder()
-            .fromMetadata(field.getMetadata())
-            .putBoolean(StructField.IS_INTERNAL_COLUMN_KEY, true)
-            .build();
-    return field.withNewMetadata(metadata);
-  }
-
   /**
    * Transform the logical schema requested by the connector into a physical schema that is passed
    * to the engine's parquet reader.
@@ -263,7 +252,7 @@ public class ScanImpl implements Scan {
             .map(StructField::getName)
             .noneMatch(name -> name.equals(StructField.METADATA_ROW_INDEX_COLUMN_NAME))) {
       // If the row index column is not already present, add it to the physical read schema
-      physicalFields.add(createInternalColumn(StructField.METADATA_ROW_INDEX_COLUMN));
+      physicalFields.add(SchemaUtils.createInternalColumn(StructField.METADATA_ROW_INDEX_COLUMN));
     }
 
     return new StructType(physicalFields);
