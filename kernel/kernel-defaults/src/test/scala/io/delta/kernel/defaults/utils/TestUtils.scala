@@ -28,7 +28,7 @@ import io.delta.kernel.{Scan, Snapshot, Table, TransactionCommitResult}
 import io.delta.kernel.data._
 import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.defaults.internal.data.vector.{DefaultGenericVector, DefaultStructVector}
-import io.delta.kernel.defaults.test.{AbstractResolvedTableAdapter, AbstractTableManagerAdapter, LegacyTableManagerAdapter, TableManagerAdapter}
+import io.delta.kernel.defaults.test.{AbstractTableManagerAdapter, LegacyTableManagerAdapter, TableManagerAdapter}
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.expressions.{Column, Predicate}
 import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
@@ -70,8 +70,6 @@ trait TestUtilsWithTableManagerAPIs extends AbstractTestUtils {
 }
 
 trait AbstractTestUtils extends Assertions with SQLHelper {
-
-  import io.delta.kernel.defaults.test.ResolvedTableAdapterImplicits._
 
   def getTableManagerAdapter: AbstractTableManagerAdapter
 
@@ -228,24 +226,10 @@ trait AbstractTestUtils extends Assertions with SQLHelper {
       filter: Predicate = null,
       expectedRemainingFilter: Predicate = null,
       engine: Engine = defaultEngine): Seq[Row] = {
-    readResolvedTableAdapter(
-      snapshot.toTestAdapter,
-      readSchema,
-      filter,
-      expectedRemainingFilter,
-      engine)
-  }
-
-  def readResolvedTableAdapter(
-      resolvedTableAdapter: AbstractResolvedTableAdapter,
-      readSchema: StructType = null,
-      filter: Predicate = null,
-      expectedRemainingFilter: Predicate = null,
-      engine: Engine = defaultEngine): Seq[Row] = {
 
     val result = ArrayBuffer[Row]()
 
-    var scanBuilder = resolvedTableAdapter.getScanBuilder()
+    var scanBuilder = snapshot.getScanBuilder()
 
     if (readSchema != null) {
       scanBuilder = scanBuilder.withReadSchema(readSchema)
@@ -413,18 +397,18 @@ trait AbstractTestUtils extends Assertions with SQLHelper {
       expectedVersion: Option[Long] = None): Unit = {
     assert(version.isEmpty || timestamp.isEmpty, "Cannot provide both a version and timestamp")
 
-    val resolvedTableAdapter = if (version.isDefined) {
-      getTableManagerAdapter.getResolvedTableAdapterAtVersion(engine, path, version.get)
+    val snapshot = if (version.isDefined) {
+      getTableManagerAdapter.getSnapshotAtVersion(engine, path, version.get)
     } else if (timestamp.isDefined) {
-      getTableManagerAdapter.getResolvedTableAdapterAtTimestamp(engine, path, timestamp.get)
+      getTableManagerAdapter.getSnapshotAtTimestamp(engine, path, timestamp.get)
     } else {
-      getTableManagerAdapter.getResolvedTableAdapterAtLatest(engine, path)
+      getTableManagerAdapter.getSnapshotAtLatest(engine, path)
     }
 
     val readSchema =
       if (readCols == null && metadataCols == null) null
       else {
-        val schema = resolvedTableAdapter.getSchema()
+        val schema = snapshot.getSchema()
         val readFields = Option(readCols).map(_.map(schema.get)).getOrElse(schema.fields().asScala)
         val metadataFields = Option(metadataCols).getOrElse(Seq())
         new StructType((readFields ++ metadataFields).asJava)
@@ -434,15 +418,15 @@ trait AbstractTestUtils extends Assertions with SQLHelper {
       // We ignore metadata columns in this check because metadata columns are not part of the
       // public table schema.
       assert(
-        expectedSchema == resolvedTableAdapter.getSchema(),
+        expectedSchema == snapshot.getSchema(),
         s"""
            |Expected schema does not match actual schema:
            |Expected schema: $expectedSchema
-           |Actual schema: ${resolvedTableAdapter.getSchema()}
+           |Actual schema: ${snapshot.getSchema()}
            |""".stripMargin)
     }
 
-    val actualVersion = resolvedTableAdapter.getVersion()
+    val actualVersion = snapshot.getVersion()
 
     expectedVersion.foreach { version =>
       assert(
@@ -451,8 +435,8 @@ trait AbstractTestUtils extends Assertions with SQLHelper {
     }
 
     val result =
-      readResolvedTableAdapter(
-        resolvedTableAdapter,
+      readSnapshot(
+        snapshot,
         readSchema,
         filter,
         expectedRemainingFilter,

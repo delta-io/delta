@@ -19,8 +19,8 @@ package io.delta.kernel.test
 import java.util.Optional
 
 import io.delta.kernel.Operation
+import io.delta.kernel.internal.SnapshotImpl
 import io.delta.kernel.internal.actions.{Metadata, Protocol, SetTransaction}
-import io.delta.kernel.internal.table.ResolvedTableInternal
 import io.delta.kernel.internal.transaction.TransactionV2State
 import io.delta.kernel.internal.util.Clock
 
@@ -29,7 +29,7 @@ trait TransactionV2TestUtils {
       isCreateOrReplace: Boolean,
       operation: Operation,
       dataPath: String,
-      readTableOpt: Optional[ResolvedTableInternal],
+      readTableOpt: Optional[SnapshotImpl],
       updatedProtocolOpt: Optional[Protocol],
       updatedMetadataOpt: Optional[Metadata]): TransactionV2State = {
     new TransactionV2State(
