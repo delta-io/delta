@@ -160,7 +160,7 @@ public class SnapshotImpl implements Snapshot {
     return lazySnapshotReport.get();
   }
 
-  // TODO: put this on the public Snapshot API? (need to convert to logical?)
+  /** @returns the physical clustering columns in this snapshot */
   public Optional<List<Column>> getClusteringColumns() {
     return lazyClusteringColumns.get();
   }

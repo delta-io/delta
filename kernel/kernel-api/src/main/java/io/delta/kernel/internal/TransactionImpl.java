@@ -113,7 +113,6 @@ public class TransactionImpl implements Transaction {
       int maxRetries,
       int logCompactionInterval,
       Clock clock) {
-    // checkArgument(isCreateOrReplace || readSnapshot.isPresent());
     this.isCreateOrReplace = isCreateOrReplace;
     this.dataPath = dataPath;
     this.logPath = logPath;
