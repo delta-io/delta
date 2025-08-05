@@ -62,7 +62,9 @@ case class TestWriterFeaturePreDowngradeCommand(table: DeltaTableV2)
   // To remove the feature we only need to remove the table property.
   override def removeFeatureTracesIfNeeded(spark: SparkSession): Boolean = {
     // Make sure feature data/metadata exist before proceeding.
-    if (TestRemovableWriterFeature.validateRemoval(table.initialSnapshot)) return false
+    if (TestRemovableWriterFeature.validateDropInvariants(table, table.initialSnapshot)) {
+      return false
+    }
 
     if (DeltaUtils.isTesting) {
       recordDeltaEvent(table.deltaLog, "delta.test.TestWriterFeaturePreDowngradeCommand")
@@ -91,7 +93,8 @@ case class TestWriterWithHistoryValidationFeaturePreDowngradeCommand(table: Delt
   // To remove the feature we only need to remove the table property.
   override def removeFeatureTracesIfNeeded(spark: SparkSession): Boolean = {
     // Make sure feature data/metadata exist before proceeding.
-    if (TestRemovableWriterWithHistoryTruncationFeature.validateRemoval(table.initialSnapshot)) {
+    val snapshot = table.initialSnapshot
+    if (TestRemovableWriterWithHistoryTruncationFeature.validateDropInvariants(table, snapshot)) {
       return false
     }
 
@@ -108,7 +111,10 @@ case class TestReaderWriterFeaturePreDowngradeCommand(table: DeltaTableV2)
   // To remove the feature we only need to remove the table property.
   override def removeFeatureTracesIfNeeded(spark: SparkSession): Boolean = {
     // Make sure feature data/metadata exist before proceeding.
-    if (TestRemovableReaderWriterFeature.validateRemoval(table.initialSnapshot)) return false
+    if (TestRemovableReaderWriterFeature.validateDropInvariants(table, table.initialSnapshot)) {
+      return false
+    }
+
 
     if (DeltaUtils.isTesting) {
       recordDeltaEvent(table.deltaLog, "delta.test.TestReaderWriterFeaturePreDowngradeCommand")
@@ -125,7 +131,9 @@ case class TestLegacyWriterFeaturePreDowngradeCommand(table: DeltaTableV2)
   extends PreDowngradeTableFeatureCommand {
   /** Return true if we removed the property, false if no action was needed. */
   override def removeFeatureTracesIfNeeded(spark: SparkSession): Boolean = {
-    if (TestRemovableLegacyWriterFeature.validateRemoval(table.initialSnapshot)) return false
+    if (TestRemovableLegacyWriterFeature.validateDropInvariants(table, table.initialSnapshot)) {
+      return false
+    }
 
     val properties = Seq(TestRemovableLegacyWriterFeature.TABLE_PROP_KEY)
     AlterTableUnsetPropertiesDeltaCommand(
@@ -138,7 +146,10 @@ case class TestLegacyReaderWriterFeaturePreDowngradeCommand(table: DeltaTableV2)
   extends PreDowngradeTableFeatureCommand {
   /** Return true if we removed the property, false if no action was needed. */
   override def removeFeatureTracesIfNeeded(spark: SparkSession): Boolean = {
-    if (TestRemovableLegacyReaderWriterFeature.validateRemoval(table.initialSnapshot)) return false
+    val snapshot = table.initialSnapshot
+    if (TestRemovableLegacyReaderWriterFeature.validateDropInvariants(table, snapshot)) {
+      return false
+    }
 
     val properties = Seq(TestRemovableLegacyReaderWriterFeature.TABLE_PROP_KEY)
     AlterTableUnsetPropertiesDeltaCommand(
@@ -283,7 +294,7 @@ case class DeletionVectorsPreDowngradeCommand(table: DeltaTableV2)
     // Latest snapshot looks clean. No action is required. We may proceed
     // to the protocol downgrade phase.
     val snapshot = table.update()
-    val tracesFound = !DeletionVectorsTableFeature.validateRemoval(snapshot)
+    val tracesFound = !DeletionVectorsTableFeature.validateDropInvariants(table, snapshot)
     if (tracesFound) {
       val properties = Seq(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key)
       AlterTableUnsetPropertiesDeltaCommand(
@@ -326,7 +337,9 @@ case class V2CheckpointPreDowngradeCommand(table: DeltaTableV2)
    */
   override def removeFeatureTracesIfNeeded(spark: SparkSession): Boolean = {
 
-    if (V2CheckpointTableFeature.validateRemoval(table.initialSnapshot)) return false
+    if (V2CheckpointTableFeature.validateDropInvariants(table, table.initialSnapshot)) {
+      return false
+    }
 
     val startTimeNs = System.nanoTime()
     val properties = Map(DeltaConfigs.CHECKPOINT_POLICY.key -> CheckpointPolicy.Classic.name)
@@ -494,7 +507,9 @@ case class TypeWideningPreDowngradeCommand(table: DeltaTableV2)
    * @return Return true if files were rewritten or metadata was removed. False otherwise.
    */
   override def removeFeatureTracesIfNeeded(spark: SparkSession): Boolean = {
-    if (TypeWideningTableFeature.validateRemoval(table.initialSnapshot)) return false
+    if (TypeWideningTableFeature.validateDropInvariants(table, table.initialSnapshot)) {
+      return false
+    }
 
     val startTimeNs = System.nanoTime()
     val properties = Seq(DeltaConfigs.ENABLE_TYPE_WIDENING.key)
@@ -577,7 +592,9 @@ case class ColumnMappingPreDowngradeCommand(table: DeltaTableV2)
   override def removeFeatureTracesIfNeeded(spark: SparkSession): Boolean = {
     // Latest snapshot looks clean. No action is required. We may proceed
     // to the protocol downgrade phase.
-    if (ColumnMappingTableFeature.validateRemoval(table.initialSnapshot)) return false
+    if (ColumnMappingTableFeature.validateDropInvariants(table, table.initialSnapshot)) {
+      return false
+    }
 
     recordDeltaOperation(
       table.deltaLog,
@@ -672,7 +689,7 @@ case class RedirectWriterOnlyPreDowngradeCommand(table: DeltaTableV2)
    */
   override def removeFeatureTracesIfNeeded(spark: SparkSession): Boolean = {
     // Make sure feature data/metadata exist before proceeding.
-    if (RedirectWriterOnlyFeature.validateRemoval(table.initialSnapshot)) {
+    if (RedirectWriterOnlyFeature.validateDropInvariants(table, table.initialSnapshot)) {
       return false
     }
 
@@ -693,7 +710,7 @@ case class RedirectReaderWriterPreDowngradeCommand(table: DeltaTableV2)
    */
   override def removeFeatureTracesIfNeeded(spark: SparkSession): Boolean = {
     // Make sure feature data/metadata exist before proceeding.
-    if (RedirectReaderWriterFeature.validateRemoval(table.initialSnapshot)) {
+    if (RedirectReaderWriterFeature.validateDropInvariants(table, table.initialSnapshot)) {
       return false
     }
 
@@ -722,7 +739,7 @@ case class RowTrackingPreDowngradeCommand(table: DeltaTableV2)
    * @return True if the feature traces are removed. False otherwise.
    */
   override def removeFeatureTracesIfNeeded(spark: SparkSession): Boolean = {
-    if (RowTrackingFeature.validateRemoval(table.update())) {
+    if (RowTrackingFeature.validateDropInvariants(table, table.update())) {
       return false
     }
 
@@ -735,6 +752,37 @@ case class RowTrackingPreDowngradeCommand(table: DeltaTableV2)
       table.deltaLog,
       nameOfTriggeringOperation = DeltaOperations.OP_DROP_FEATURE,
       table.catalogTable).run(spark)
+    true
+  }
+}
+
+case class DomainMetadataPreDowngradeCommand(table: DeltaTableV2)
+    extends PreDowngradeTableFeatureCommand {
+
+  /**
+   * Removes domain metadata from the table. In general, each feature should be responsible
+   * for removing its own domain metadata when dropped. The cleanup process here is to make sure
+   * the domainMetadata feature can be dropped in cases where domain metadata is leaked.
+   *
+   * Note, the domainMetadata feature can only be dropped when no dependent features are present
+   * in the table. This ensures that any domain metadata found on the table are leaked metadata.
+   *
+   * @return True if the feature traces are removed. False otherwise.
+   */
+  override def removeFeatureTracesIfNeeded(spark: SparkSession): Boolean = {
+    val deltaLog = table.deltaLog
+    val snapshot = deltaLog.update()
+    if (DomainMetadataTableFeature.validateDropInvariants(table, snapshot)) {
+      return false
+    }
+
+    val actionsToCommit = snapshot
+      .domainMetadata
+      .map(_.copy(removed = true))
+
+    deltaLog
+      .startTransaction(catalogTableOpt = None)
+      .commit(actionsToCommit, DeltaOperations.DomainMetadataCleanup(actionsToCommit.length))
     true
   }
 }

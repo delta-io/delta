@@ -909,6 +909,22 @@ object DeltaOperations {
   }
 
   /**
+   * Recorded when cleaning up domain metadata. This process takes place when dropping
+   * the domainMetadata feature.
+   */
+  case class DomainMetadataCleanup(domainMetadataRemovedCount: Int)
+      extends Operation("DOMAIN METADATA CLEANUP") {
+    override val parameters: Map[String, Any] = Map(
+      "domainMetadataRemovedCount" -> domainMetadataRemovedCount)
+
+    // This operation shouldn't be introducing AddFile actions with DVs and tight bounds stats.
+    override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
+
+    // Only removes domain metadata.
+    override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
+  }
+
+  /**
    * Qualified column type with position. We define a copy of the type here to avoid depending on
    * the parser output classes in our logging.
    */

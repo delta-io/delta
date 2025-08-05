@@ -24,6 +24,7 @@ import scala.collection.mutable
 import org.apache.spark.sql.delta.DeltaOperations.{ROW_TRACKING_BACKFILL_OPERATION_NAME, ROW_TRACKING_UNBACKFILL_OPERATION_NAME}
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils
@@ -267,6 +268,10 @@ private[delta] class ConflictChecker(
         val isDowngradeCommitValid = TableFeature.validateFeatureRemovalAtSnapshot(
           newProtocol = newProtocol,
           oldProtocol = readProtocol,
+          table = DeltaTableV2(
+            spark = spark,
+            path = deltaLog.dataPath,
+            catalogTable = currentTransactionInfo.catalogTable),
           snapshot = winningSnapshot)
         if (!isDowngradeCommitValid) {
           throw DeltaErrors.dropTableFeatureConflictRevalidationFailed(
