@@ -1128,7 +1128,6 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
   test(s"vacuum after purging deletion vectors") {
     import org.apache.spark.sql.delta.test.DeltaTestImplicits.DeltaTableV2ObjectTestHelper
     val tableName = "testTable"
-    val clock = new ManualClock()
     withDeletionVectorsEnabled() {
       withSQLConf(
           DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false") {
@@ -1136,39 +1135,64 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
           // Create Delta table with 5 files of 10 rows.
           spark.range(0, 50, step = 1, numPartitions = 5)
             .write.format("delta").saveAsTable(tableName)
+          // The following is done to ensure deltaLog object uses the same clock that Vacuum
+          // logic uses.
+          val deltaLogThrowaway = DeltaLog.forTable(spark, TableIdentifier(tableName))
+          val tablePath = deltaLogThrowaway.dataPath
+          DeltaLog.clearCache()
+          val clock = new ManualClock(System.currentTimeMillis())
+          val deltaLog = DeltaLog.forTable(spark, tablePath, clock)
           val deltaTable = DeltaTableV2(spark, TableIdentifier(tableName))
-          val deltaLog = deltaTable.deltaLog
           assertNumFiles(deltaLog, addFiles = 5, addFilesWithDVs = 0, dvFiles = 0, dataFiles = 5)
 
           // Delete 1 row from each file. DVs will be packed to one DV file.
           val deletedRows1 = Seq(0, 10, 20, 30, 40)
           val deletedRowsStr1 = deletedRows1.mkString("(", ",", ")")
           spark.sql(s"DELETE FROM $tableName WHERE id IN $deletedRowsStr1")
-          val timestampV1 = deltaTable.update().timestamp
+          val snapshotV1 = deltaTable.update()
+          // We retrieve both timestamp and file modification time b/c when ICT is enabled,
+          // timestamp represents ICT instead of file modification time. Lite vacuum relies on
+          // both the ICT and the file modification time to determine cleanup behavior.
+          val timestampV1 = snapshotV1.timestamp
+          val fileModificationTimeV1 = snapshotV1.logSegment.lastCommitFileModificationTimestamp
           assertNumFiles(deltaLog, addFiles = 5, addFilesWithDVs = 5, dvFiles = 1, dataFiles = 5)
 
           // Delete all rows from the first file. An ephemeral DV will still be created.
+          // We need to add 1000 ms for local filesystems that only write modificationTimes to the
+          // second precision.
           Thread.sleep(1000) // Ensure it's been at least 1000 ms since V1
+          // Assign clock to the current system time so that the ICT falls within
+          // (fileModificationTimeV(X-1) + 1000, fileModificationTimeV(X+1)]. This ensures we can
+          // later manually adjust the clock time to test both full and lite vacuum behavior.
+          clock.setTime(System.currentTimeMillis())
           spark.sql(s"DELETE FROM $tableName WHERE id < 10")
-          val timestampV2 = deltaTable.update().timestamp
+          val snapshotV2 = deltaTable.update()
+          val timestampV2 = snapshotV2.timestamp
+          val fileModificationTimeV2 = snapshotV2.logSegment.lastCommitFileModificationTimestamp
           assertNumFiles(deltaLog, addFiles = 4, addFilesWithDVs = 4, dvFiles = 2, dataFiles = 5)
           val expectedAnswerV2 = Seq.range(0, 50).filterNot(deletedRows1.contains).filterNot(_ < 10)
 
           // Delete 1 more row from each file.
           Thread.sleep(1000) // Ensure it's been at least 1000 ms since V2
+          clock.setTime(System.currentTimeMillis())
           val deletedRows2 = Seq(11, 21, 31, 41)
           val deletedRowsStr2 = deletedRows2.mkString("(", ",", ")")
           spark.sql(s"DELETE FROM $tableName WHERE id IN $deletedRowsStr2")
-          val timestampV3 = deltaTable.update().timestamp
+          val snapshotV3 = deltaTable.update()
+          val timestampV3 = snapshotV3.timestamp
+          val fileModificationTimeV3 = snapshotV3.logSegment.lastCommitFileModificationTimestamp
           assertNumFiles(deltaLog, addFiles = 4, addFilesWithDVs = 4, dvFiles = 3, dataFiles = 5)
           val expectedAnswerV3 = expectedAnswerV2.filterNot(deletedRows2.contains)
 
           // Delete DVs by rewriting the data files with DVs.
           Thread.sleep(1000) // Ensure it's been at least 1000 ms since V3
+          clock.setTime(System.currentTimeMillis())
           purgeDVs(tableName)
 
           val numFilesAfterPurge = 4
-          val timestampV4 = deltaTable.update().timestamp
+          val snapshotV4 = deltaTable.update()
+          val timestampV4 = snapshotV4.timestamp
+          val fileModificationTimeV4 = snapshotV4.logSegment.lastCommitFileModificationTimestamp
           assertNumFiles(deltaLog, addFiles = numFilesAfterPurge, addFilesWithDVs = 0, dvFiles = 3,
             dataFiles = 9)
 
@@ -1179,9 +1203,17 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
           assertNumFiles(deltaLog, addFiles = numFilesAfterPurge, addFilesWithDVs = 0, dvFiles = 3,
             dataFiles = 9)
 
+          val oneHour = TimeUnit.HOURS.toMillis(1)
           // Run VACUUM @ V1.
-          // We need to add 1000 ms for local filesystems that only write modificationTimes to the s
-          clock.setTime(timestampV1 + TimeUnit.HOURS.toMillis(1) + 1000)
+          // The clock time must be set such that: (X is the version where we run VACUUM)
+          // 1. (clock time - retention time) falls within
+          //    (fileModificationTimeV(X), fileModificationTimeV(X+1)] for both lite and full
+          //    vacuum, since both use file modification time to determine if the files are valid
+          //    for cleanup.
+          // 2. (clock time - retention time) falls within [timestampV(X), timestampV(X+1)) for
+          //    lite vacuum, since it uses [[DeltaHistoryManager(deltaLog).getActiveCommitAtTime]]
+          //    which depends on timestamp to capture files of commit-X as candidates for cleanup.
+          clock.setTime(Math.max(fileModificationTimeV1 + 1, timestampV1) + oneHour)
           VacuumCommand.gc(
             spark, deltaTable, retentionHours = Some(1), clock = clock, dryRun = false)
           assertNumFiles(deltaLog, addFiles = numFilesAfterPurge, addFilesWithDVs = 0, dvFiles = 3,
@@ -1191,7 +1223,7 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
           // Since ephemeral DV is not GC'ed by Lite Vacuum, the number of DVs we expect will be
           // one more in case of lite Vacuum
           val numDVstoAdd = if (isLiteVacuum) 1 else 0
-          clock.setTime(timestampV2 + TimeUnit.HOURS.toMillis(1) + 1000)
+          clock.setTime(Math.max(fileModificationTimeV2 + 1, timestampV2) + oneHour)
           VacuumCommand.gc(
             spark, deltaTable, retentionHours = Some(1), clock = clock, dryRun = false)
           assertNumFiles(deltaLog, addFiles = numFilesAfterPurge, addFilesWithDVs = 0,
@@ -1200,7 +1232,7 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
             spark.sql(s"SELECT * FROM $tableName VERSION AS OF 2"), expectedAnswerV2.toDF)
 
           // Run VACUUM @ V3. It should delete the persistent DVs from V1.
-          clock.setTime(timestampV3 + TimeUnit.HOURS.toMillis(1) + 1000)
+          clock.setTime(Math.max(fileModificationTimeV3 + 1, timestampV3) + oneHour)
           VacuumCommand.gc(
             spark, deltaTable, retentionHours = Some(1), clock = clock, dryRun = false)
           assertNumFiles(deltaLog, addFiles = numFilesAfterPurge, addFilesWithDVs = 0,
@@ -1209,7 +1241,7 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
             spark.sql(s"SELECT * FROM $tableName VERSION AS OF 3"), expectedAnswerV3.toDF)
 
           // Run VACUUM @ V4. It should delete the Parquet files and DVs of V3.
-          clock.setTime(timestampV4 + TimeUnit.HOURS.toMillis(1) + 1000)
+          clock.setTime(Math.max(fileModificationTimeV4 + 1, timestampV4) + oneHour)
           VacuumCommand.gc(
             spark, deltaTable, retentionHours = Some(1), clock = clock, dryRun = false)
           assertNumFiles(deltaLog, addFiles = numFilesAfterPurge, addFilesWithDVs = 0,
@@ -1218,7 +1250,7 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
             spark.sql(s"SELECT * FROM $tableName VERSION AS OF 4"), expectedAnswerV3.toDF)
 
           // Run VACUUM with zero retention period. It should not delete anything.
-          clock.setTime(timestampV4 + TimeUnit.HOURS.toMillis(1) + 1000)
+          clock.setTime(Math.max(fileModificationTimeV4 + 1, timestampV4) + oneHour)
           VacuumCommand.gc(
             spark, deltaTable, retentionHours = Some(0), clock = clock, dryRun = false)
           assertNumFiles(deltaLog, addFiles = numFilesAfterPurge, addFilesWithDVs = 0,
