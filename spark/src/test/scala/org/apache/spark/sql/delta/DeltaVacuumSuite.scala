@@ -939,25 +939,27 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
   }
 
   test("retention duration must be greater than 0") {
-    withEnvironment { (tempDir, clock) =>
-      val table = DeltaTableV2(spark, tempDir, clock)
-      gcTest(table, clock)(
-        CreateFile("file1.txt", commitToActionLog = true),
-        CheckFiles(Seq("file1.txt")),
-        ExpectFailure(
-          GC(false, Seq(tempDir), Some(-2)),
-          classOf[IllegalArgumentException],
-          Seq("Retention", "less than", "0"))
-      )
-      val deltaTable = io.delta.tables.DeltaTable.forPath(spark, tempDir.getAbsolutePath)
-      gcTest(table, clock)(
-        CreateFile("file2.txt", commitToActionLog = true),
-        CheckFiles(Seq("file2.txt")),
-        ExpectFailure(
-          ExecuteVacuumInScala(deltaTable, Seq(), Some(-2)),
-          classOf[IllegalArgumentException],
-          Seq("Retention", "less than", "0"))
-      )
+    withSQLConf("spark.databricks.delta.vacuum.retentionWindowIgnore.enabled" -> "false") {
+      withEnvironment { (tempDir, clock) =>
+        val table = DeltaTableV2(spark, tempDir, clock)
+        gcTest(table, clock)(
+          CreateFile("file1.txt", commitToActionLog = true),
+          CheckFiles(Seq("file1.txt")),
+          ExpectFailure(
+            GC(false, Seq(tempDir), Some(-2)),
+            classOf[IllegalArgumentException],
+            Seq("Retention", "less than", "0"))
+        )
+        val deltaTable = io.delta.tables.DeltaTable.forPath(spark, tempDir.getAbsolutePath)
+        gcTest(table, clock)(
+          CreateFile("file2.txt", commitToActionLog = true),
+          CheckFiles(Seq("file2.txt")),
+          ExpectFailure(
+            ExecuteVacuumInScala(deltaTable, Seq(), Some(-2)),
+            classOf[IllegalArgumentException],
+            Seq("Retention", "less than", "0"))
+        )
+      }
     }
   }
 
@@ -1134,7 +1136,10 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
         withTable(tableName) {
           // Create Delta table with 5 files of 10 rows.
           spark.range(0, 50, step = 1, numPartitions = 5)
-            .write.format("delta").saveAsTable(tableName)
+            .write
+            .format("delta")
+            .option("delta.deletedFileRetentionDuration", "interval 1 hours")
+            .saveAsTable(tableName)
           // The following is done to ensure deltaLog object uses the same clock that Vacuum
           // logic uses.
           val deltaLogThrowaway = DeltaLog.forTable(spark, TableIdentifier(tableName))
@@ -1361,8 +1366,18 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
       withSQLConf(DeltaSQLConf.DELTA_VACUUM_LOGGING_ENABLED.key -> loggingEnabled.toString) {
         withEnvironment { (dir, clock) =>
           clock.setTime(System.currentTimeMillis())
-          spark.range(2).write.format("delta").save(dir.getAbsolutePath)
+          spark
+            .range(2)
+            .write
+            .format("delta")
+            .option("delta.deletedFileRetentionDuration", s"interval $retentionHours hours")
+            .save(dir.getAbsolutePath)
           val table = DeltaTableV2(spark, dir, clock)
+          // The following is done to ensure deltaLog object uses the same clock that Vacuum
+          // logic uses.
+          DeltaLog.clearCache()
+          DeltaLog.forTable(spark, dir, clock)
+
           setCommitClock(table, 0L, clock)
           val expectedReturn = if (isDryRun) {
             // dry run returns files that will be deleted
@@ -1396,9 +1411,12 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
             assert(operationParamsBegin("retentionCheckEnabled") === "false")
             assert(operationMetricsBegin("numFilesToDelete") === filesDeleted.toString)
             assert(operationMetricsBegin("sizeOfDataToDelete") === (filesDeleted * 9).toString)
-            assert(
-              operationParamsBegin("specifiedRetentionMillis") ===
-                (retentionHours * 60 * 60 * 1000).toString)
+
+            if (retentionHours == 0) {
+              assert(
+                operationParamsBegin("specifiedRetentionMillis") ===
+                  (retentionHours * 60 * 60 * 1000).toString)
+            }
             assert(
               operationParamsBegin("defaultRetentionMillis") ===
                 DeltaLog.tombstoneRetentionMillis(table.initialSnapshot.metadata).toString)
@@ -1415,7 +1433,7 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
   testEventLogging(
     isDryRun = false,
     loggingEnabled = true,
-    retentionHours = 5,
+    retentionHours = 0,
     timeGapHours = 10
   )
 
@@ -1657,6 +1675,28 @@ class DeltaLiteVacuumSuite
         AdvanceClock(defaultTombstoneInterval + 1000),
         GC(dryRun = true, Seq()),
         GC(dryRun = false, Seq(reservoirDir.toString))
+      )
+    }
+  }
+
+  test("Vacuum retain argument is ignored if it's not 0 hours") {
+    withEnvironment { (tempDir, clock) =>
+      val reservoirDir = new File(tempDir.getAbsolutePath, "reservoir")
+      val table = DeltaTableV2(spark, reservoirDir, clock)
+
+      gcTest(table, clock)(
+        // create 2  files
+        CreateFile("file1.txt", commitToActionLog = true),
+        CreateFile("file2.txt", commitToActionLog = true),
+        LogicallyDeleteFile("file1.txt"),
+        AdvanceClock(defaultTombstoneInterval + 1000),
+        LogicallyDeleteFile("file2.txt"),
+        CheckFiles(Seq("file1.txt", "file2.txt")),
+        AdvanceClock((24 * 60 * 60 * 1000) + 1000), // 24 hours + 1000 ms
+        // 24 hours retain argument is ignored and only file1.txt is eligible for GC
+        GC(dryRun = true, Seq(reservoirDir.toString + "/file1.txt"), retentionHours = Some(24)),
+        GC(dryRun = false, Seq(reservoirDir.toString), retentionHours = Some(24)),
+        CheckFiles(Seq("file2.txt"))
       )
     }
   }

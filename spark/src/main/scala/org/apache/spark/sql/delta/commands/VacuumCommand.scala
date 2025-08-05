@@ -259,8 +259,22 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
         throw DeltaErrors.deltaCannotVacuumManagedTable()
       }
 
+
       val snapshotTombstoneRetentionMillis = DeltaLog.tombstoneRetentionMillis(snapshot.metadata)
-      val retentionMillis = retentionHours.map(h => TimeUnit.HOURS.toMillis(math.round(h)))
+      val retentionMillis = retentionHours.flatMap { h =>
+        val retentionArgument = TimeUnit.HOURS.toMillis(math.round(h))
+        // We ignore retention window argument unless the specified value is 0 hours.
+        if (spark.sessionState.conf.getConf(
+          DeltaSQLConf.DELTA_VACUUM_RETENTION_WINDOW_IGNORE_ENABLED) &&
+          retentionArgument != 0L) {
+          logWarning(s"Vacuum with retention threshold other than 0 hours is ignored." +
+            s" Please set ${DeltaConfigs.TOMBSTONE_RETENTION.key} table property to configure" +
+            s" the retention period.")
+          None
+        } else {
+          Some(retentionArgument)
+        }
+      }
       val deleteBeforeTimestamp = retentionMillis match {
         case Some(millis) => clock.getTimeMillis() - millis
         case _ => snapshot.minFileRetentionTimestamp
