@@ -28,6 +28,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.BiFunction;
 import java.util.stream.Stream;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.connector.catalog.Column;
@@ -41,7 +42,7 @@ import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
-public class DeltaDsv2TableTest {
+public class DeltaKernelTableTest {
 
   private static SparkSession spark;
   private static Engine defaultEngine;
@@ -51,7 +52,7 @@ public class DeltaDsv2TableTest {
     spark =
         SparkSession.builder()
             .master("local[*]")
-            .appName("DeltaDsv2TableTest")
+            .appName("DeltaKernelTableTest")
             .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
             .config(
                 "spark.sql.catalog.spark_catalog",
@@ -70,22 +71,22 @@ public class DeltaDsv2TableTest {
 
   @ParameterizedTest(name = "{0}")
   @MethodSource("tableTestCases")
-  public void testDeltaDsv2Table(TableTestCase testCase, @TempDir File tempDir) {
+  public void testDeltaKernelTable(TableTestCase testCase, @TempDir File tempDir) {
     String path = tempDir.getAbsolutePath();
     String tableName = "test_" + testCase.name.toLowerCase().replace(" ", "_");
-    spark.sql(String.format(testCase.createTableSql, tableName, path));
+    testCase.createTableSql.apply(tableName, path);
     Snapshot snapshot = TableManager.loadSnapshot(path).build(defaultEngine);
     Identifier identifier = Identifier.of(new String[] {"test_namespace"}, tableName);
 
-    DeltaDsv2Table dsv2Table = new DeltaDsv2Table(identifier, (SnapshotImpl) snapshot);
+    DeltaKernelTable kernelTable = new DeltaKernelTable(identifier, (SnapshotImpl) snapshot);
 
-    // Test name
-    assertEquals(tableName, dsv2Table.name());
-    // Test schema
-    StructType sparkSchema = dsv2Table.schema();
-    Column[] actualColumns = dsv2Table.columns();
+    // ===== Test table name =====
+    assertEquals(tableName, kernelTable.name());
+
+    // ===== Test schema =====
+    StructType sparkSchema = kernelTable.schema();
+    Column[] actualColumns = kernelTable.columns();
     assertEquals(testCase.expectedColumns.size(), sparkSchema.fields().length);
-
     for (int i = 0; i < testCase.expectedColumns.size(); i++) {
       Column expectedCol = testCase.expectedColumns.get(i);
       assertEquals(
@@ -96,12 +97,12 @@ public class DeltaDsv2TableTest {
           expectedCol.dataType(),
           sparkSchema.fields()[i].dataType(),
           "Data type mismatch for column: " + expectedCol.name());
-      // Check column object from table.column()
+      // Check column object from table.columns()
       assertEquals(expectedCol, actualColumns[i], "Column mismatch at position " + i);
     }
 
-    // Test partitioning
-    Transform[] partitioning = dsv2Table.partitioning();
+    // ===== Test partitioning =====
+    Transform[] partitioning = kernelTable.partitioning();
     assertEquals(testCase.expectedPartitionColumns.length, partitioning.length);
     for (int i = 0; i < testCase.expectedPartitionColumns.length; i++) {
       assertEquals(
@@ -110,29 +111,29 @@ public class DeltaDsv2TableTest {
           "Partition column mismatch at position " + i);
     }
 
-    // Test properties
-    Map<String, String> properties = dsv2Table.properties();
+    // ===== Test properties =====
+    Map<String, String> properties = kernelTable.properties();
     testCase.expectedProperties.forEach(
         (key, value) -> {
           assertTrue(properties.containsKey(key), "Property not found: " + key);
           assertEquals(value, properties.get(key), "Property value mismatch for: " + key);
         });
 
-    // Test capabilities
-    assertTrue(dsv2Table.capabilities().isEmpty());
+    // ===== Test capabilities =====
+    assertTrue(kernelTable.capabilities().isEmpty());
   }
 
   /** Represents a test case configuration for Delta tables */
   private static class TableTestCase {
     final String name;
-    final String createTableSql;
+    final BiFunction<String, String, Void> createTableSql;
     final List<Column> expectedColumns;
     final String[] expectedPartitionColumns;
     final Map<String, String> expectedProperties;
 
     public TableTestCase(
         String name,
-        String createTableSql,
+        BiFunction<String, String, Void> createTableSql,
         List<Column> expectedColumns,
         String[] expectedPartitionColumns,
         Map<String, String> expectedProperties) {
@@ -152,19 +153,23 @@ public class DeltaDsv2TableTest {
 
   /** Provides different test cases for Delta tables */
   static Stream<TableTestCase> tableTestCases() {
-    // Basic table with partitioning and properties
-    Map<String, String> basicProps = new HashMap<>();
-    basicProps.put("foo", "bar");
 
+    // ===== Partitioned Table =====
     List<Column> partitionedTableColumns = new ArrayList<>();
     partitionedTableColumns.add(Column.create("id", DataTypes.IntegerType));
     partitionedTableColumns.add(Column.create("data", DataTypes.StringType));
     partitionedTableColumns.add(Column.create("part", DataTypes.IntegerType));
 
+    // ===== Unpartitioned Table =====
     List<Column> unPartitionedTableColumns = new ArrayList<>();
     unPartitionedTableColumns.add(Column.create("id", DataTypes.IntegerType));
     unPartitionedTableColumns.add(Column.create("data", DataTypes.StringType));
 
+    // ===== Setup Single Properties =====
+    Map<String, String> basicProps = new HashMap<>();
+    basicProps.put("foo", "bar");
+
+    // ===== Setup Multiple Properties =====
     Map<String, String> multiProps = new HashMap<>();
     multiProps.put("prop1", "value1");
     multiProps.put("prop2", "value2");
@@ -176,22 +181,40 @@ public class DeltaDsv2TableTest {
     return Stream.of(
         new TableTestCase(
             "Partitioned Table",
-            "CREATE TABLE %s (id INT, data STRING, part INT) USING delta "
-                + "PARTITIONED BY (part) TBLPROPERTIES ('foo'='bar') LOCATION '%s'",
+            (tableName, path) -> {
+              spark.sql(
+                  String.format(
+                      "CREATE TABLE %s (id INT, data STRING, part INT) USING delta "
+                          + "PARTITIONED BY (part) TBLPROPERTIES ('foo'='bar') LOCATION '%s'",
+                      tableName, path));
+              return null;
+            },
             partitionedTableColumns,
             new String[] {"part"},
             basicProps),
         new TableTestCase(
             "UnPartitioned Table",
-            "CREATE TABLE %s (id INT, data STRING) USING delta LOCATION '%s'",
+            (tableName, path) -> {
+              spark.sql(
+                  String.format(
+                      "CREATE TABLE %s (id INT, data STRING) USING delta LOCATION '%s'",
+                      tableName, path));
+              return null;
+            },
             unPartitionedTableColumns,
             new String[] {},
             new HashMap<>()),
         new TableTestCase(
             "Multiple Properties",
-            "CREATE TABLE %s (id INT) USING delta "
-                + "TBLPROPERTIES ('prop1'='value1', 'prop2'='value2', 'delta.enableChangeDataFeed'='true') "
-                + "LOCATION '%s'",
+            (tableName, path) -> {
+              spark.sql(
+                  String.format(
+                      "CREATE TABLE %s (id INT) USING delta "
+                          + "TBLPROPERTIES ('prop1'='value1', 'prop2'='value2', 'delta.enableChangeDataFeed'='true') "
+                          + "LOCATION '%s'",
+                      tableName, path));
+              return null;
+            },
             singleColumn,
             new String[] {},
             multiProps));

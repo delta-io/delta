@@ -30,23 +30,21 @@ import org.apache.spark.sql.connector.expressions.Transform;
 import org.apache.spark.sql.types.StructType;
 
 /** A DataSource V2 Table implementation for Delta Lake tables using the Delta Kernel API. */
-public class DeltaDsv2Table implements Table {
+public class DeltaKernelTable implements Table {
 
   private final Identifier identifier;
-  // TODO: add getProperties() in snapshot to avoid using Impl class.
+  // TODO: [delta-io/delta#5029] Add getProperties() in snapshot to avoid using Impl class.
   private final SnapshotImpl snapshot;
 
   /**
-   * Creates a new DeltaDsv2Table instance.
+   * Creates a new DeltaKernelTable instance.
    *
    * @param identifier the table identifier
    * @param snapshot the Delta table snapshot
    */
-  public DeltaDsv2Table(Identifier identifier, SnapshotImpl snapshot) {
-    requireNonNull(identifier);
-    requireNonNull(snapshot);
-    this.identifier = identifier;
-    this.snapshot = snapshot;
+  public DeltaKernelTable(Identifier identifier, SnapshotImpl snapshot) {
+    this.identifier = requireNonNull(identifier, "identifier is null");
+    this.snapshot = requireNonNull(snapshot, "snapshot is null");
   }
 
   @Override
@@ -79,7 +77,7 @@ public class DeltaDsv2Table implements Table {
 
   @Override
   public Set<TableCapability> capabilities() {
-    // TODO: fill in when implementing mix-in interface
+    // TODO: [delta-io/delta#5001] fill in when implementing mix-in interface
     return Collections.unmodifiableSet(new HashSet<>());
   }
 }
