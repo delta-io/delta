@@ -25,7 +25,6 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.fs.Path;
-import io.delta.kernel.internal.util.StatsUtils;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.statistics.DataFileStatistics;
 import io.delta.kernel.types.*;
@@ -207,7 +206,7 @@ public class AddFile extends RowBackedAction {
             index ->
                 row.isNullAt(index)
                     ? Optional.empty()
-                    : StatsUtils.deserializeFromJson(row.getString(index)));
+                    : DataFileStatistics.deserializeFromJson(row.getString(index)));
   }
 
   public Optional<Long> getNumRecords() {

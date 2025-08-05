@@ -21,8 +21,9 @@ import java.util.Optional
 import scala.collection.JavaConverters._
 
 import io.delta.kernel.data.Row
-import io.delta.kernel.internal.util.{StatsUtils, VectorUtils}
+import io.delta.kernel.internal.util.VectorUtils
 import io.delta.kernel.internal.util.VectorUtils.stringStringMapValue
+import io.delta.kernel.statistics.DataFileStatistics
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -51,7 +52,7 @@ class RemoveFileSuite extends AnyFunSuite {
       dataChange,
       stringStringMapValue(partitionValues.asJava),
       size,
-      StatsUtils.deserializeFromJson(stats.getOrElse("")),
+      DataFileStatistics.deserializeFromJson(stats.getOrElse("")),
       null, // physicalSchema
       toJavaOptional(baseRowId.asInstanceOf[Option[JLong]]),
       toJavaOptional(defaultRowCommitVersion.asInstanceOf[Option[JLong]]),

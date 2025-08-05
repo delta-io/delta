@@ -345,7 +345,7 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
         |}""".stripMargin
 
     val exception = intercept[KernelException] {
-      StatsUtils.deserializeFromJson(malformedJson)
+      DataFileStatistics.deserializeFromJson(malformedJson)
     }
     assert(exception.getMessage.contains("Failed to parse JSON string"))
   }
@@ -360,7 +360,7 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
       Collections.emptyMap())
 
     val json = stats.serializeAsJson(dataSchema)
-    val deserialized = StatsUtils.deserializeFromJson(json)
+    val deserialized = DataFileStatistics.deserializeFromJson(json)
 
     assert(deserialized.get().getNumRecords == stats.getNumRecords)
   }
@@ -514,7 +514,7 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
         |  }
         |}""".stripMargin
 
-    val result = StatsUtils.deserializeFromJson(json, schema)
+    val result = DataFileStatistics.deserializeFromJson(json, schema)
     assert(result.isPresent)
 
     val stats = result.get()
@@ -592,7 +592,7 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
         |  }
         |}""".stripMargin
 
-    val result = StatsUtils.deserializeFromJson(json, schema)
+    val result = DataFileStatistics.deserializeFromJson(json, schema)
     assert(result.isPresent)
 
     val stats = result.get()
@@ -654,7 +654,7 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
 
     // Serialize then deserialize
     val json = originalStats.serializeAsJson(schema)
-    val deserializedOpt = StatsUtils.deserializeFromJson(json, schema) // Added schema parameter
+    val deserializedOpt = DataFileStatistics.deserializeFromJson(json, schema)
 
     assert(deserializedOpt.isPresent)
     val deserializedStats = deserializedOpt.get()
@@ -696,7 +696,7 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
         |  }
         |}""".stripMargin
 
-    val result = StatsUtils.deserializeFromJson(json, schema) // Added schema parameter
+    val result = DataFileStatistics.deserializeFromJson(json, schema)
     assert(result.isPresent)
 
     val stats = result.get()
@@ -729,7 +729,7 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
         |  "nullCount": {}
         |}""".stripMargin
 
-    val result = StatsUtils.deserializeFromJson(json, schema)
+    val result = DataFileStatistics.deserializeFromJson(json, schema)
     assert(result.isPresent)
 
     val stats = result.get()
@@ -774,7 +774,7 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
         |  }
         |}""".stripMargin
 
-    val result = StatsUtils.deserializeFromJson(json, schema)
+    val result = DataFileStatistics.deserializeFromJson(json, schema)
     assert(result.isPresent)
 
     val stats = result.get()
