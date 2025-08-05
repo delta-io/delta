@@ -358,13 +358,6 @@ trait DeltaErrorsBase
     )
   }
 
-  def cannotDropDomainMetadataFeatureFromManagedIcebergTable(
-      name: String): DeltaTableFeatureException = {
-    new DeltaTableFeatureException(
-      errorClass = "DELTA_CANNOT_DROP_DOMAIN_METADATA_FEATURE_FROM_MANAGED_ICEBERG_TABLE",
-      messageParameters = Array(name))
-  }
-
   def deltaRelationPathMismatch(
       relationPath: Seq[String],
       targetType: String,
