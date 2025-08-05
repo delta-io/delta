@@ -224,8 +224,15 @@ trait ConvertUtilsBase extends DeltaLogging {
       fs.makeQualified(path).toUri.toString
     }
 
-    AddFile(pathStrForAddFile, partition, file.length, file.modificationTime, dataChange = true,
-      stats = targetFile.stats.orNull)
+
+    AddFile(
+      pathStrForAddFile,
+      partition,
+      file.length,
+      file.modificationTime,
+      dataChange = true,
+      stats = targetFile.stats.orNull
+    )
   }
 
   /**
