@@ -27,7 +27,6 @@ import io.delta.kernel.data.*;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.engine.ExpressionHandler;
 import io.delta.kernel.expressions.*;
-import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.DeltaErrorsInternal;
 import io.delta.kernel.internal.InternalScanFileUtils;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
@@ -78,7 +77,7 @@ public class PartitionUtils {
                 .filter(partitionValues::containsKey)
                 .count();
     if (logicalSchema.length() - numPartitionColumnsInSchema != dataBatch.getSchema().length()) {
-      throw DeltaErrors.logicalPhysicalSchemaMismatch(
+      throw DeltaErrorsInternal.logicalPhysicalSchemaMismatch(
           logicalSchema.length(), partitionValues.size(), dataBatch.getSchema().length());
     }
 

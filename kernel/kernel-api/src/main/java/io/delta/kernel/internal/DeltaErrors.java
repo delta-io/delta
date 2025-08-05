@@ -350,6 +350,7 @@ public final class DeltaErrors {
     return new KernelException(
         String.format("Disabling %s on an existing table is not allowed.", key));
   }
+
   // End: icebergCompat exceptions
 
   public static KernelException partitionColumnMissingInData(
@@ -461,15 +462,6 @@ public final class DeltaErrors {
   public static KernelException rowTrackingMetadataMissingInFile(String entry, String filePath) {
     return new KernelException(
         String.format("Required metadata key %s is not present in scan file %s.", entry, filePath));
-  }
-
-  public static KernelException logicalPhysicalSchemaMismatch(
-      int logical_size, int num_partition_cols, int physical_size) {
-    return new KernelException(
-        String.format(
-            "Logical schema (%s) size minus number of partition columns (%s) does not equal "
-                + "physical schema size (%s).",
-            logical_size, physical_size, num_partition_cols));
   }
 
   /* ------------------------ HELPER METHODS ----------------------------- */
