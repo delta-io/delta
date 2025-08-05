@@ -82,6 +82,8 @@ public class PartitionUtils {
     }
 
     for (int colIdx = 0; colIdx < logicalSchema.length(); colIdx++) {
+      // We must iterate the logical schema in order since we insert partition columns into the data
+      // batch according to their ordinal in the logical schema.
       StructField structField = logicalSchema.at(colIdx);
       String physicalName = ColumnMapping.getPhysicalName(structField);
       if (partitionValues.containsKey(physicalName)) {
