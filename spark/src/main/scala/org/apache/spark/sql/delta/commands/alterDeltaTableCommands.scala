@@ -396,7 +396,7 @@ case class AlterTableDropFeatureDeltaCommand(
       // c) Undoing (b) should cause the preDowngrade command to fail.
       //
       // Note, for features that cannot be disabled we solely rely for correctness on
-      // validateRemoval.
+      // isSnapshotClean.
       val requiresHistoryValidation = removableFeature.requiresHistoryProtection
       val startTimeNs = table.deltaLog.clock.nanoTime()
       val preDowngradeMadeChanges =
@@ -424,7 +424,7 @@ case class AlterTableDropFeatureDeltaCommand(
       // Verify whether all requirements hold before performing the protocol downgrade.
       // If any concurrent transactions interfere with the protocol downgrade txn we
       // revalidate the requirements against the snapshot of the winning txn.
-      if (!removableFeature.validateRemoval(snapshot)) {
+      if (!removableFeature.validateDropInvariants(table, snapshot)) {
         throw DeltaErrors.dropTableFeatureConflictRevalidationFailed()
       }
 
@@ -447,6 +447,7 @@ case class AlterTableDropFeatureDeltaCommand(
 
         val historyContainsFeature = removableFeature.historyContainsFeature(
           spark = sparkSession,
+          table = table,
           downgradeTxnReadSnapshot = snapshot)
         if (historyContainsFeature) {
           throw DeltaErrors.dropTableFeatureHistoricalVersionsExist(featureName, snapshot.metadata)
@@ -532,7 +533,7 @@ case class AlterTableDropFeatureDeltaCommand(
       // Verify whether all requirements hold before performing the protocol downgrade.
       // If any concurrent transactions interfere with the protocol downgrade txn we
       // revalidate the requirements against the snapshot of the winning txn.
-      if (!removableFeature.validateRemoval(snapshot)) {
+      if (!removableFeature.validateDropInvariants(table, snapshot)) {
         throw DeltaErrors.dropTableFeatureConflictRevalidationFailed()
       }
       val metadataWithNewConfiguration = DropTableFeatureUtils
