@@ -175,6 +175,11 @@ class DeltaSourceMetadataTrackingLog private(
     trackingLog.getCurrentTrackedSchema
 
   /**
+   * Get the current tracked seq num by this schema log or -1 if no schema has been tracked yet.
+   */
+  def getCurrentTrackedSeqNum: Long = trackingLog.getCurrentTrackedSeqNum
+
+  /**
    * Get the logically-previous tracked seq num by this schema log.
    * Considering the prev pointer from the latest entry if defined.
    */
