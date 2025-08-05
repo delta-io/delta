@@ -16,6 +16,7 @@
 package io.delta.kernel.internal.util;
 
 import static io.delta.kernel.internal.DeltaErrors.*;
+import static io.delta.kernel.internal.tablefeatures.TableFeatures.*;
 import static io.delta.kernel.internal.util.ColumnMapping.*;
 import static io.delta.kernel.internal.util.ColumnMapping.getColumnId;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
@@ -27,6 +28,8 @@ import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
+import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.columndefaults.ColumnDefaults;
 import io.delta.kernel.internal.skipping.StatsSchemaHelper;
 import io.delta.kernel.internal.types.TypeWideningChecker;
 import io.delta.kernel.types.*;
@@ -43,7 +46,7 @@ public class SchemaUtils {
 
   /**
    * Validate the schema. This method checks if the schema has no duplicate columns, the names
-   * contain only valid characters and the data types are supported.
+   * contain only valid characters, the data types are supported, and the column metadata is valid.
    *
    * @param schema the schema to validate
    * @param isColumnMappingEnabled whether column mapping is enabled. When column mapping is
@@ -51,7 +54,8 @@ public class SchemaUtils {
    *     column names in the Parquet file
    * @throws IllegalArgumentException if the schema is invalid
    */
-  public static void validateSchema(StructType schema, boolean isColumnMappingEnabled) {
+  public static void validateSchema(
+      StructType schema, boolean isColumnMappingEnabled, boolean isColumnDefaultEnabled) {
     checkArgument(schema.length() > 0, "Schema should contain at least one column");
 
     List<String> flattenColNames =
@@ -92,6 +96,12 @@ public class SchemaUtils {
     }
 
     validateSupportedType(schema);
+    ColumnDefaults.validate(schema, isColumnDefaultEnabled);
+  }
+
+  /** Override with default param */
+  public static void validateSchema(StructType schema, boolean isColumnMappingEnabled) {
+    validateSchema(schema, isColumnMappingEnabled, false /*isColumnDefaultEnabled*/);
   }
 
   /**
@@ -116,13 +126,17 @@ public class SchemaUtils {
   public static Optional<StructType> validateUpdatedSchemaAndGetUpdatedSchema(
       Metadata currentMetadata,
       Metadata newMetadata,
+      Protocol newProtocol,
       Set<String> clusteringColumnPhysicalNames,
       boolean allowNewRequiredFields) {
     checkArgument(
         isColumnMappingModeEnabled(
             ColumnMapping.getColumnMappingMode(newMetadata.getConfiguration())),
         "Cannot validate updated schema when column mapping is disabled");
-    validateSchema(newMetadata.getSchema(), true /*columnMappingEnabled*/);
+    validateSchema(
+        newMetadata.getSchema(),
+        true /*columnMappingEnabled*/,
+        ColumnDefaults.isEnabled(newProtocol, newMetadata));
     validatePartitionColumns(
         newMetadata.getSchema(), new ArrayList<>(newMetadata.getPartitionColNames()));
     int currentMaxFieldId =
@@ -139,6 +153,19 @@ public class SchemaUtils {
         TableConfig.TYPE_WIDENING_ENABLED.fromMetadata(newMetadata.getConfiguration()));
   }
 
+  /** Override with default params */
+  public static Optional<StructType> validateUpdatedSchemaAndGetUpdatedSchema(
+      Metadata currentMetadata,
+      Metadata newMetadata,
+      Set<String> clusteringColumnPhysicalNames,
+      boolean allowNewRequiredFields) {
+    return validateUpdatedSchemaAndGetUpdatedSchema(
+        currentMetadata,
+        newMetadata,
+        new Protocol(0, 0),
+        clusteringColumnPhysicalNames,
+        allowNewRequiredFields);
+  }
   /**
    * Validates a given schema evolution by using field ID as the source of truth for identifying
    * fields
