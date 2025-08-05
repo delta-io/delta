@@ -259,11 +259,15 @@ public class LogReplay {
       Engine engine, Optional<SnapshotHint> hint, SnapshotMetrics snapshotMetrics) {
     return new Lazy<>(
         () -> {
+          // Ensure log segment is loaded and valid before starting any protocol/metadata loading
+          // timers. This ensures that failures during log segment construction (e.g., invalid
+          // version, missing table) occur before protocol/metadata loading metrics are recorded.
+          final LogSegment logSegment = getLogSegment();
+          final long targetVersion = logSegment.getVersion();
+
           final Tuple2<Protocol, Metadata> result =
               snapshotMetrics.loadProtocolMetadataTotalDurationTimer.time(
                   () -> {
-                    final long targetVersion = getVersion();
-
                     // Ignore the snapshot hint whose version is larger than the snapshot version.
                     Optional<SnapshotHint> baseHint = hint;
                     if (hint.isPresent() && hint.get().getVersion() > targetVersion) {
@@ -272,11 +276,10 @@ public class LogReplay {
 
                     final Optional<SnapshotHint> newestHint =
                         crcInfoContext.maybeGetNewerSnapshotHintAndUpdateCache(
-                            engine, getLogSegment(), baseHint, targetVersion);
+                            engine, logSegment, baseHint, targetVersion);
 
                     Tuple2<Protocol, Metadata> protocolAndMetadata =
-                        loadTableProtocolAndMetadata(
-                            engine, getLogSegment(), newestHint, targetVersion);
+                        loadTableProtocolAndMetadata(engine, logSegment, newestHint, targetVersion);
 
                     TableFeatures.validateKernelCanReadTheTable(
                         protocolAndMetadata._1, dataPath.toString());
@@ -288,7 +291,7 @@ public class LogReplay {
               "[{}] Took {}ms to load Protocol and Metadata at version {}",
               dataPath.toString(),
               snapshotMetrics.loadProtocolMetadataTotalDurationTimer.totalDurationMs(),
-              getVersion());
+              targetVersion);
 
           return result;
         });
