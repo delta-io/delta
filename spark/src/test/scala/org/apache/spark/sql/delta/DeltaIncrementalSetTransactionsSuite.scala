@@ -455,15 +455,18 @@ class DeltaIncrementalSetTransactionsSuite
 
 class DeltaIncrementalSetTransactionsWithCatalogOwnedBatch1Suite
   extends DeltaIncrementalSetTransactionsSuite {
-  override val catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
+
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
 }
 
 class DeltaIncrementalSetTransactionsWithCatalogOwnedBatch2Suite
   extends DeltaIncrementalSetTransactionsSuite {
-  override val catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
+
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
 }
 
 class DeltaIncrementalSetTransactionsWithCatalogOwnedBatch100Suite
   extends DeltaIncrementalSetTransactionsSuite {
-  override val catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
+
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }
