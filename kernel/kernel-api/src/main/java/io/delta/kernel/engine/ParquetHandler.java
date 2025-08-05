@@ -20,6 +20,7 @@ import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.data.*;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Predicate;
+import io.delta.kernel.types.MetadataColumnType;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.*;
@@ -41,9 +42,9 @@ public interface ParquetHandler {
    * Read the Parquet format files at the given locations and return the data as a {@link
    * ColumnarBatch} with the columns requested by {@code physicalSchema}.
    *
-   * <p>If {@code physicalSchema} has a {@link StructField} with column name {@link
-   * StructField#METADATA_ROW_INDEX_COLUMN_NAME} and the field is a metadata column {@link
-   * StructField#isMetadataColumn()} the column must be populated with the file row index.
+   * <p>If {@code physicalSchema} has a {@link StructField} that is a metadata column {@link
+   * StructField#isMetadataColumn()} of type {@link MetadataColumnType#ROW_INDEX}, the column must
+   * be populated with the file row index.
    *
    * <p>How does a column in {@code physicalSchema} match to the column in the Parquet file? If the
    * {@link StructField} has a field id in the {@code metadata} with key `parquet.field.id` the

@@ -16,6 +16,8 @@
 
 package io.delta.kernel.types;
 
+import static io.delta.kernel.types.MetadataColumnType.*;
+
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.internal.types.DataTypeJsonSerDe;
@@ -33,9 +35,11 @@ public class StructField {
   // Static Fields / Methods
   ////////////////////////////////////////////////////////////////////////////////
 
-  /** Indicates a metadata column when present in the field metadata and the value is true */
-  // TODO: Make this private once we migrate to the new metadata column API.
-  public static final String IS_METADATA_COLUMN_KEY = "isMetadataColumn";
+  /**
+   * The existing of this key indicates that a column is a metadata column and its values indicates
+   * what kind of {@link MetadataColumnType} it is.
+   */
+  public static final String METADATA_TYPE_KEY = "metadataType";
 
   /**
    * Indicates that a column was requested for internal computations and should not be returned to
@@ -47,15 +51,7 @@ public class StructField {
    * The name of a row index metadata column. When present this column must be populated with row
    * index of each row when reading from parquet.
    */
-  public static String METADATA_ROW_INDEX_COLUMN_NAME = "_metadata.row_index";
-
-  public static StructField METADATA_ROW_INDEX_COLUMN =
-      new StructField(
-          METADATA_ROW_INDEX_COLUMN_NAME,
-          LongType.LONG,
-          false,
-          FieldMetadata.builder().putBoolean(IS_METADATA_COLUMN_KEY, true).build(),
-          Collections.emptyList());
+  public static String DEFAULT_ROW_INDEX_COLUMN_NAME = "_metadata.row_index";
 
   public static final String COLLATIONS_METADATA_KEY = "__COLLATIONS";
   public static final String FROM_TYPE_KEY = "fromType";
@@ -140,12 +136,15 @@ public class StructField {
   }
 
   public boolean isMetadataColumn() {
-    return metadata.contains(IS_METADATA_COLUMN_KEY)
-        && (boolean) metadata.get(IS_METADATA_COLUMN_KEY);
+    return metadata.contains(METADATA_TYPE_KEY);
   }
 
   public boolean isDataColumn() {
     return !isMetadataColumn();
+  }
+
+  public MetadataColumnType getMetadataColumnType() {
+    return metadata.getMetadataType(METADATA_TYPE_KEY);
   }
 
   public boolean isInternalColumn() {
@@ -207,6 +206,33 @@ public class StructField {
    */
   public StructField withDataType(DataType newType) {
     return new StructField(name, newType, nullable, metadata, typeChanges);
+  }
+
+  public static StructField createMetadataColumn(String name, MetadataColumnType metadataType) {
+    switch (metadataType) {
+      case ROW_INDEX:
+        return new StructField(
+            name,
+            LongType.LONG,
+            false /* nullable */,
+            new FieldMetadata.Builder().putMetadataType(METADATA_TYPE_KEY, ROW_INDEX).build());
+      case ROW_ID:
+        return new StructField(
+            name,
+            LongType.LONG,
+            false /* nullable */,
+            new FieldMetadata.Builder().putMetadataType(METADATA_TYPE_KEY, ROW_ID).build());
+      case ROW_COMMIT_VERSION:
+        return new StructField(
+            name,
+            LongType.LONG,
+            false /* nullable */,
+            new FieldMetadata.Builder()
+                .putMetadataType(METADATA_TYPE_KEY, ROW_COMMIT_VERSION)
+                .build());
+      default:
+        throw new IllegalArgumentException("Unknown MetadataColumnType: " + metadataType);
+    }
   }
 
   /** Fetches collation and type changes metadata from nested fields. */

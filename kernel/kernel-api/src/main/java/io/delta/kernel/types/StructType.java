@@ -72,6 +72,14 @@ public final class StructType extends DataType {
     return add(new StructField(name, dataType, nullable, metadata));
   }
 
+  public StructType addMetadataColumn(String name, MetadataColumnType type) {
+    if (contains(type)) {
+      throw new IllegalArgumentException(
+          String.format("Metadata column %s already exists in the struct type", type));
+    }
+    return add(StructField.createMetadataColumn(name, type));
+  }
+
   /** @return array of fields */
   public List<StructField> fields() {
     return Collections.unmodifiableList(fields);
@@ -91,6 +99,20 @@ public final class StructType extends DataType {
   public int indexOf(String fieldName) {
     Tuple2<StructField, Integer> fieldAndOrdinal = nameToFieldAndOrdinal.get(fieldName);
     return fieldAndOrdinal != null ? fieldAndOrdinal._2 : -1;
+  }
+
+  public int indexOf(MetadataColumnType type) {
+    // For now, we only allow each metadata column type to appear at most once in the schema.
+    for (int i = 0; i < fields.size(); i++) {
+      if (type.equals(fields.get(i).getMetadataColumnType())) {
+        return i;
+      }
+    }
+    return -1; // Not found
+  }
+
+  public boolean contains(MetadataColumnType type) {
+    return indexOf(type) >= 0;
   }
 
   public StructField get(String fieldName) {
