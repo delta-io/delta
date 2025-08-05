@@ -18,8 +18,8 @@ package io.delta.kernel.statistics;
 import static io.delta.kernel.internal.DeltaErrors.unsupportedStatsDataType;
 import static java.time.format.DateTimeFormatter.ISO_LOCAL_DATE;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.core.JsonGenerator;
+import com.fasterxml.jackson.databind.JsonNode;
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Literal;
@@ -34,9 +34,9 @@ import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
-import java.util.HashMap;
 import java.util.Optional;
 
 /**
@@ -108,8 +108,8 @@ public class DataFileStatistics {
 
     long numRecords = numRecordsNode.asLong();
     return Optional.of(
-            new DataFileStatistics(
-                    numRecords, Collections.emptyMap(), Collections.emptyMap(), Collections.emptyMap()));
+        new DataFileStatistics(
+            numRecords, Collections.emptyMap(), Collections.emptyMap(), Collections.emptyMap()));
   }
 
   /**
@@ -124,7 +124,7 @@ public class DataFileStatistics {
    * @throws KernelException if JSON parsing fails or if values don't match expected types
    */
   public static Optional<DataFileStatistics> deserializeFromJson(
-          String json, StructType physicalSchema) {
+      String json, StructType physicalSchema) {
     JsonNode root;
     try {
       root = JsonUtils.mapper().readTree(json);
@@ -439,7 +439,7 @@ public class DataFileStatistics {
    * @param schema The schema for the current level
    */
   private static void parseMinMaxValues(
-          JsonNode node, Map<Column, Literal> resultMap, Column currentColumn, StructType schema) {
+      JsonNode node, Map<Column, Literal> resultMap, Column currentColumn, StructType schema) {
     if (node == null || !node.isObject() || schema == null) {
       return;
     }
@@ -503,7 +503,7 @@ public class DataFileStatistics {
    * @param schema The schema for the current level
    */
   private static void parseNullCounts(
-          JsonNode node, Map<Column, Long> resultMap, Column currentColumn, StructType schema) {
+      JsonNode node, Map<Column, Long> resultMap, Column currentColumn, StructType schema) {
     if (node == null || !node.isObject() || schema == null) {
       return;
     }
@@ -552,35 +552,35 @@ public class DataFileStatistics {
       if (dataType instanceof BooleanType) {
         if (!valueNode.isBoolean()) {
           throw new KernelException(
-                  String.format("Expected boolean value but got: %s", valueNode.toString()));
+              String.format("Expected boolean value but got: %s", valueNode.toString()));
         }
         return Literal.ofBoolean(valueNode.asBoolean());
 
       } else if (dataType instanceof ByteType) {
         if (!valueNode.isNumber()) {
           throw new KernelException(
-                  String.format("Expected byte value but got: %s", valueNode.toString()));
+              String.format("Expected byte value but got: %s", valueNode.toString()));
         }
         return Literal.ofByte((byte) valueNode.asInt());
 
       } else if (dataType instanceof ShortType) {
         if (!valueNode.isNumber()) {
           throw new KernelException(
-                  String.format("Expected short value but got: %s", valueNode.toString()));
+              String.format("Expected short value but got: %s", valueNode.toString()));
         }
         return Literal.ofShort(valueNode.shortValue());
 
       } else if (dataType instanceof IntegerType) {
         if (!valueNode.isNumber()) {
           throw new KernelException(
-                  String.format("Expected integer value but got: %s", valueNode.toString()));
+              String.format("Expected integer value but got: %s", valueNode.toString()));
         }
         return Literal.ofInt(valueNode.asInt());
 
       } else if (dataType instanceof LongType) {
         if (!valueNode.isNumber()) {
           throw new KernelException(
-                  String.format("Expected long value but got: %s", valueNode.toString()));
+              String.format("Expected long value but got: %s", valueNode.toString()));
         }
         return Literal.ofLong(valueNode.asLong());
 
@@ -597,12 +597,12 @@ public class DataFileStatistics {
               return Literal.ofFloat(Float.NEGATIVE_INFINITY);
             default:
               throw new KernelException(
-                      String.format("Expected float value but got unexpected string: %s", textValue));
+                  String.format("Expected float value but got unexpected string: %s", textValue));
           }
         }
         if (!valueNode.isNumber()) {
           throw new KernelException(
-                  String.format("Expected float value but got: %s", valueNode.toString()));
+              String.format("Expected float value but got: %s", valueNode.toString()));
         }
         return Literal.ofFloat(valueNode.floatValue());
 
@@ -619,26 +619,26 @@ public class DataFileStatistics {
               return Literal.ofDouble(Double.NEGATIVE_INFINITY);
             default:
               throw new KernelException(
-                      String.format("Expected double value but got unexpected string: %s", textValue));
+                  String.format("Expected double value but got unexpected string: %s", textValue));
           }
         }
         if (!valueNode.isNumber()) {
           throw new KernelException(
-                  String.format("Expected double value but got: %s", valueNode.toString()));
+              String.format("Expected double value but got: %s", valueNode.toString()));
         }
         return Literal.ofDouble(valueNode.asDouble());
 
       } else if (dataType instanceof StringType) {
         if (!valueNode.isTextual()) {
           throw new KernelException(
-                  String.format("Expected string value but got: %s", valueNode.toString()));
+              String.format("Expected string value but got: %s", valueNode.toString()));
         }
         return Literal.ofString(valueNode.asText());
 
       } else if (dataType instanceof BinaryType) {
         if (!valueNode.isTextual()) {
           throw new KernelException(
-                  String.format("Expected binary (as string) value but got: %s", valueNode.toString()));
+              String.format("Expected binary (as string) value but got: %s", valueNode.toString()));
         }
         // Binary data was stored as UTF-8 string during serialization
         return Literal.ofBinary(valueNode.asText().getBytes(StandardCharsets.UTF_8));
@@ -646,7 +646,7 @@ public class DataFileStatistics {
       } else if (dataType instanceof DecimalType) {
         if (!valueNode.isNumber()) {
           throw new KernelException(
-                  String.format("Expected decimal value but got: %s", valueNode.toString()));
+              String.format("Expected decimal value but got: %s", valueNode.toString()));
         }
         DecimalType decimalType = (DecimalType) dataType;
         BigDecimal decimal = valueNode.decimalValue();
@@ -655,7 +655,7 @@ public class DataFileStatistics {
       } else if (dataType instanceof DateType) {
         if (!valueNode.isTextual()) {
           throw new KernelException(
-                  String.format("Expected date (as string) value but got: %s", valueNode.toString()));
+              String.format("Expected date (as string) value but got: %s", valueNode.toString()));
         }
         String textValue = valueNode.asText();
         LocalDate date = LocalDate.parse(textValue, ISO_LOCAL_DATE);
@@ -664,26 +664,26 @@ public class DataFileStatistics {
       } else if (dataType instanceof TimestampType) {
         if (!valueNode.isTextual()) {
           throw new KernelException(
-                  String.format(
-                          "Expected timestamp (as string) value but got: %s", valueNode.toString()));
+              String.format(
+                  "Expected timestamp (as string) value but got: %s", valueNode.toString()));
         }
         String textValue = valueNode.asText();
         OffsetDateTime offsetDateTime =
-                OffsetDateTime.parse(textValue, DataFileStatistics.TIMESTAMP_FORMATTER);
+            OffsetDateTime.parse(textValue, DataFileStatistics.TIMESTAMP_FORMATTER);
         long epochMicros = ChronoUnit.MICROS.between(DataFileStatistics.EPOCH, offsetDateTime);
         return Literal.ofTimestamp(epochMicros);
 
       } else if (dataType instanceof TimestampNTZType) {
         if (!valueNode.isTextual()) {
           throw new KernelException(
-                  String.format(
-                          "Expected timestamp NTZ (as string) value but got: %s", valueNode.toString()));
+              String.format(
+                  "Expected timestamp NTZ (as string) value but got: %s", valueNode.toString()));
         }
         String textValue = valueNode.asText();
         LocalDateTime localDateTime =
-                LocalDateTime.parse(textValue, DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+            LocalDateTime.parse(textValue, DateTimeFormatter.ISO_LOCAL_DATE_TIME);
         long epochMicros =
-                ChronoUnit.MICROS.between(DataFileStatistics.EPOCH.toLocalDateTime(), localDateTime);
+            ChronoUnit.MICROS.between(DataFileStatistics.EPOCH.toLocalDateTime(), localDateTime);
         return Literal.ofTimestampNtz(epochMicros);
 
       } else {
@@ -694,9 +694,9 @@ public class DataFileStatistics {
         throw (KernelException) e;
       }
       throw new KernelException(
-              String.format(
-                      "Failed to parse value '%s' as %s", valueNode.toString(), dataType.toString()),
-              e);
+          String.format(
+              "Failed to parse value '%s' as %s", valueNode.toString(), dataType.toString()),
+          e);
     }
   }
 }
