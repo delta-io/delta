@@ -458,6 +458,21 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
   }
 
   test("deserializeFromJson handles all data types correctly") {
+    val schema = new StructType()
+      .add("ByteType", ByteType.BYTE)
+      .add("ShortType", ShortType.SHORT)
+      .add("IntegerType", IntegerType.INTEGER)
+      .add("LongType", LongType.LONG)
+      .add("FloatType", FloatType.FLOAT)
+      .add("DoubleType", DoubleType.DOUBLE)
+      .add("DecimalType", new DecimalType(10, 2))
+      .add("StringType", StringType.STRING)
+      .add("DateType", DateType.DATE)
+      .add("TimestampType", TimestampType.TIMESTAMP)
+      .add("TimestampNTZType", TimestampNTZType.TIMESTAMP_NTZ)
+      .add("BinaryType", BinaryType.BINARY)
+      .add("BooleanType", BooleanType.BOOLEAN)
+
     val json =
       """{
         |  "numRecords": 100,
@@ -499,17 +514,16 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
         |  }
         |}""".stripMargin
 
-    val result = StatsUtils.deserializeFromJson(json)
+    val result = StatsUtils.deserializeFromJson(json, schema)
     assert(result.isPresent)
 
     val stats = result.get()
     assert(stats.getNumRecords == 100)
 
-    // Verify specific data types are parsed correctly
     val minValues = stats.getMinValues
     assert(minValues.get(new Column("ByteType")).getValue == 1.toByte)
     assert(minValues.get(new Column("IntegerType")).getValue == 1)
-    assert(minValues.get(new Column("FloatType")).getValue == 0.1)
+    assert(minValues.get(new Column("FloatType")).getValue == 0.1f)
     assert(minValues.get(new Column("StringType")).getValue == "a")
     assert(minValues.get(new Column("BooleanType")).getValue == true)
 
@@ -525,6 +539,21 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
   }
 
   test("deserializeFromJson handles nested structures correctly") {
+    val schema = new StructType()
+      .add("simple", StringType.STRING)
+      .add(
+        "nested",
+        new StructType()
+          .add("field1", IntegerType.INTEGER)
+          .add(
+            "deep",
+            new StructType()
+              .add("field2", StringType.STRING)
+              .add(
+                "deeper",
+                new StructType()
+                  .add("field3", IntegerType.INTEGER))))
+
     val json =
       """{
         |  "numRecords": 50,
@@ -563,7 +592,7 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
         |  }
         |}""".stripMargin
 
-    val result = StatsUtils.deserializeFromJson(json)
+    val result = StatsUtils.deserializeFromJson(json, schema)
     assert(result.isPresent)
 
     val stats = result.get()
@@ -625,7 +654,7 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
 
     // Serialize then deserialize
     val json = originalStats.serializeAsJson(schema)
-    val deserializedOpt = StatsUtils.deserializeFromJson(json)
+    val deserializedOpt = StatsUtils.deserializeFromJson(json, schema) // Added schema parameter
 
     assert(deserializedOpt.isPresent)
     val deserializedStats = deserializedOpt.get()
@@ -646,6 +675,10 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
   }
 
   test("deserializeFromJson handles NaN and Infinity correctly") {
+    val schema = new StructType()
+      .add("FloatType", FloatType.FLOAT)
+      .add("DoubleType", DoubleType.DOUBLE)
+
     val json =
       """{
         |  "numRecords": 10,
@@ -663,7 +696,7 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
         |  }
         |}""".stripMargin
 
-    val result = StatsUtils.deserializeFromJson(json)
+    val result = StatsUtils.deserializeFromJson(json, schema) // Added schema parameter
     assert(result.isPresent)
 
     val stats = result.get()
@@ -672,11 +705,11 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
     val minValues = stats.getMinValues
     val maxValues = stats.getMaxValues
 
-    // Test NaN and Infinity values
+    // Test NaN and Infinity values - Note: Float values will be stored as Float, not Double
     assert(
-      java.lang.Double.isNaN(minValues.get(new Column("FloatType")).getValue.asInstanceOf[Double]))
+      java.lang.Float.isNaN(minValues.get(new Column("FloatType")).getValue.asInstanceOf[Float]))
     assert(minValues.get(new Column("DoubleType")).getValue == Double.NegativeInfinity)
-    assert(maxValues.get(new Column("FloatType")).getValue == Double.PositiveInfinity)
+    assert(maxValues.get(new Column("FloatType")).getValue == Float.PositiveInfinity)
     assert(
       java.lang.Double.isNaN(maxValues.get(new Column("DoubleType")).getValue.asInstanceOf[Double]))
 
@@ -686,6 +719,8 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
   }
 
   test("deserializeFromJson handles empty stats correctly") {
+    val schema = new StructType() // Empty schema for empty stats
+
     val json =
       """{
         |  "numRecords": 42,
@@ -694,7 +729,7 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
         |  "nullCount": {}
         |}""".stripMargin
 
-    val result = StatsUtils.deserializeFromJson(json)
+    val result = StatsUtils.deserializeFromJson(json, schema)
     assert(result.isPresent)
 
     val stats = result.get()
@@ -705,6 +740,16 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
   }
 
   test("deserializeFromJson handles partial nested objects correctly") {
+    // Schema should include all possible fields that appear in the JSON
+    val schema = new StructType()
+      .add("simple", StringType.STRING)
+      .add(
+        "nested",
+        new StructType()
+          .add("field1", IntegerType.INTEGER)
+          .add("field2", StringType.STRING))
+      .add("other", IntegerType.INTEGER)
+
     val json =
       """{
         |  "numRecords": 25,
@@ -729,7 +774,7 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
         |  }
         |}""".stripMargin
 
-    val result = StatsUtils.deserializeFromJson(json)
+    val result = StatsUtils.deserializeFromJson(json, schema)
     assert(result.isPresent)
 
     val stats = result.get()

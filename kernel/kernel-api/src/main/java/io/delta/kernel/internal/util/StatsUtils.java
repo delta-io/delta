@@ -15,7 +15,7 @@
  */
 package io.delta.kernel.internal.util;
 
-import static io.delta.kernel.statistics.DataFileStatistics.EPOCH;
+import static io.delta.kernel.internal.DeltaErrors.unsupportedStatsDataType;
 import static java.time.format.DateTimeFormatter.ISO_LOCAL_DATE;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -24,8 +24,10 @@ import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.skipping.StatsSchemaHelper;
 import io.delta.kernel.statistics.DataFileStatistics;
+import io.delta.kernel.types.*;
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
@@ -39,13 +41,46 @@ public class StatsUtils {
   private StatsUtils() {}
 
   /**
-   * Utility method to deserialize statistics from a JSON string.
+   * Utility method to deserialize statistics from a JSON string. NOTE: Currently, this method only
+   * deserializes the numRecords field and ignores other statistics (minValues, maxValues,
+   * nullCount). Full deserialization support for all statistics will be added in a future update.
    *
    * @param json Data statistics JSON string to deserialize.
    * @return An {@link Optional} containing the deserialized {@link DataFileStatistics} if present.
    * @throws KernelException if JSON parsing fails
    */
   public static Optional<DataFileStatistics> deserializeFromJson(String json) {
+    JsonNode root;
+    try {
+      root = JsonUtils.mapper().readTree(json);
+    } catch (IOException e) {
+      throw new KernelException(String.format("Failed to parse JSON string: %s", json), e);
+    }
+
+    JsonNode numRecordsNode = root.get("numRecords");
+    if (numRecordsNode == null || !numRecordsNode.isNumber()) {
+      return Optional.empty();
+    }
+
+    long numRecords = numRecordsNode.asLong();
+    return Optional.of(
+        new DataFileStatistics(
+            numRecords, Collections.emptyMap(), Collections.emptyMap(), Collections.emptyMap()));
+  }
+
+  /**
+   * Utility method to deserialize statistics from a JSON string with full type information. This
+   * overloaded version uses the provided schema to correctly parse min/max values and null counts
+   * with their appropriate data types.
+   *
+   * @param json Data statistics JSON string to deserialize.
+   * @param physicalSchema The physical schema providing type information for columns. Must match
+   *     the schema used during serialization.
+   * @return An {@link Optional} containing the deserialized {@link DataFileStatistics} if present.
+   * @throws KernelException if JSON parsing fails or if values don't match expected types
+   */
+  public static Optional<DataFileStatistics> deserializeFromJson(
+      String json, StructType physicalSchema) {
     JsonNode root;
     try {
       root = JsonUtils.mapper().readTree(json);
@@ -63,157 +98,318 @@ public class StatsUtils {
     // Parse minValues
     Map<Column, Literal> minValues = new HashMap<>();
     JsonNode minNode = root.get(StatsSchemaHelper.MIN);
-    if (minNode != null && minNode.isObject()) {
-      parseNestedJsonValues(minNode, minValues, new String[0], true);
+    if (minNode != null && minNode.isObject() && physicalSchema != null) {
+      parseMinMaxValues(minNode, minValues, new Column(new String[0]), physicalSchema);
     }
 
     // Parse maxValues
     Map<Column, Literal> maxValues = new HashMap<>();
     JsonNode maxNode = root.get(StatsSchemaHelper.MAX);
-    if (maxNode != null && maxNode.isObject()) {
-      parseNestedJsonValues(maxNode, maxValues, new String[0], true);
+    if (maxNode != null && maxNode.isObject() && physicalSchema != null) {
+      parseMinMaxValues(maxNode, maxValues, new Column(new String[0]), physicalSchema);
     }
 
     // Parse nullCount
     Map<Column, Long> nullCount = new HashMap<>();
     JsonNode nullCountNode = root.get(StatsSchemaHelper.NULL_COUNT);
-    if (nullCountNode != null && nullCountNode.isObject()) {
-      parseNestedJsonValues(nullCountNode, nullCount, new String[0], false);
+    if (nullCountNode != null && nullCountNode.isObject() && physicalSchema != null) {
+      parseNullCounts(nullCountNode, nullCount, new Column(new String[0]), physicalSchema);
     }
 
     return Optional.of(new DataFileStatistics(numRecords, minValues, maxValues, nullCount));
   }
 
   /**
-   * Helper method to recursively parse nested JSON values back into Column->Value maps. This is the
-   * inverse of the writeJsonValues method in DataFileStatistics.serializeAsJson.
+   * Helper method to recursively parse nested JSON values back into Column->Literal maps for
+   * min/max values using the schema for type information. This is the inverse of the
+   * writeJsonValues method in DataFileStatistics.serializeAsJson.
+   *
+   * <p>Example JSON structure being parsed:
+   *
+   * <pre>
+   * {
+   *   "simpleColumn": 42,
+   *   "nestedColumn": {
+   *     "field1": "value1",
+   *     "field2": {
+   *       "subfield": 10.5
+   *     }
+   *   }
+   * }
+   * </pre>
+   *
+   * <p>This would create Column entries:
+   *
+   * <ul>
+   *   <li>Column(["simpleColumn"]) → Literal.ofInt(42)
+   *   <li>Column(["nestedColumn", "field1"]) → Literal.ofString("value1")
+   *   <li>Column(["nestedColumn", "field2", "subfield"]) → Literal.ofDouble(10.5)
+   * </ul>
    *
    * @param node The JSON node to parse
-   * @param resultMap The map to populate (either Map<Column, Literal> or Map<Column, Long>)
-   * @param currentPath The current column path being built
-   * @param isLiteralMap True if parsing into Literal values, false if parsing into Long values
+   * @param resultMap The map to populate with Column->Literal mappings
+   * @param currentColumn The current column path being built
+   * @param schema The schema for the current level
    */
-  private static void parseNestedJsonValues(
-      JsonNode node, Map<Column, ?> resultMap, String[] currentPath, boolean isLiteralMap) {
-    if (node == null || !node.isObject()) {
+  private static void parseMinMaxValues(
+      JsonNode node, Map<Column, Literal> resultMap, Column currentColumn, StructType schema) {
+    if (node == null || !node.isObject() || schema == null) {
       return;
     }
 
-    Iterator<Map.Entry<String, JsonNode>> fields = node.fields();
-    while (fields.hasNext()) {
-      Map.Entry<String, JsonNode> entry = fields.next();
-      String fieldName = entry.getKey();
-      JsonNode valueNode = entry.getValue();
+    for (StructField field : schema.fields()) {
+      String fieldName = field.getName();
+      JsonNode valueNode = node.get(fieldName);
 
-      // Build the new path by appending this field name
-      String[] newPath = new String[currentPath.length + 1];
-      System.arraycopy(currentPath, 0, newPath, 0, currentPath.length);
-      newPath[currentPath.length] = fieldName;
+      if (valueNode == null) {
+        // Field not present in JSON, skip
+        continue;
+      }
 
-      if (valueNode.isObject()) {
+      Column newColumn = currentColumn.appendNestedField(fieldName);
+      DataType fieldType = field.getDataType();
+
+      if (fieldType instanceof StructType) {
         // This is a nested structure, recurse deeper
-        parseNestedJsonValues(valueNode, resultMap, newPath, isLiteralMap);
+        if (valueNode.isObject()) {
+          parseMinMaxValues(valueNode, resultMap, newColumn, (StructType) fieldType);
+        }
       } else {
-        // This is a leaf value, create the Column and add to map
-        Column column = new Column(newPath);
-
-        if (isLiteralMap) {
-          Literal literal = parseJsonValueToLiteral(valueNode);
-          if (literal != null) {
-            // Safe unchecked cast: when isLiteralMap=true, caller guarantees resultMap is
-            // Map<Column, Literal>
-            @SuppressWarnings("unchecked")
-            Map<Column, Literal> literalMap = (Map<Column, Literal>) resultMap;
-            literalMap.put(column, literal);
-          }
-        } else {
-          if (valueNode.isNumber()) {
-            @SuppressWarnings("unchecked")
-            // Safe unchecked cast: when isLiteralMap=false, caller guarantees resultMap is
-            // Map<Column, Long>
-            Map<Column, Long> longMap = (Map<Column, Long>) resultMap;
-            longMap.put(column, valueNode.asLong());
-          }
+        // This is a leaf value
+        Literal literal = parseJsonValueToLiteral(valueNode, fieldType);
+        if (literal != null) {
+          resultMap.put(newColumn, literal);
         }
       }
     }
   }
 
   /**
-   * Helper method to convert JSON node value to Literal based on the node type. This mirrors the
-   * type handling in writeJsonValue method.
+   * Helper method to recursively parse nested JSON null count values back into Column->Long maps
+   * using the schema for type information.
+   *
+   * <p>Example JSON structure being parsed:
+   *
+   * <pre>
+   * {
+   *   "simpleColumn": 5,
+   *   "nestedColumn": {
+   *     "field1": 0,
+   *     "field2": {
+   *       "subfield": 10
+   *     }
+   *   }
+   * }
+   * </pre>
+   *
+   * <p>This would create Column entries:
+   *
+   * <ul>
+   *   <li>Column(["simpleColumn"]) → 5L
+   *   <li>Column(["nestedColumn", "field1"]) → 0L
+   *   <li>Column(["nestedColumn", "field2", "subfield"]) → 10L
+   * </ul>
+   *
+   * @param node The JSON node to parse
+   * @param resultMap The map to populate with Column->Long mappings
+   * @param currentColumn The current column path being built
+   * @param schema The schema for the current level
    */
-  private static Literal parseJsonValueToLiteral(JsonNode valueNode) {
+  private static void parseNullCounts(
+      JsonNode node, Map<Column, Long> resultMap, Column currentColumn, StructType schema) {
+    if (node == null || !node.isObject() || schema == null) {
+      return;
+    }
+
+    for (StructField field : schema.fields()) {
+      String fieldName = field.getName();
+      JsonNode valueNode = node.get(fieldName);
+
+      if (valueNode == null) {
+        // Field not present in JSON, skip
+        continue;
+      }
+
+      Column newColumn = currentColumn.appendNestedField(fieldName);
+      DataType fieldType = field.getDataType();
+
+      if (fieldType instanceof StructType) {
+        // This is a nested structure, recurse deeper
+        if (valueNode.isObject()) {
+          parseNullCounts(valueNode, resultMap, newColumn, (StructType) fieldType);
+        }
+      } else {
+        // This is a leaf value - parse as long for null count
+        if (valueNode.isNumber()) {
+          resultMap.put(newColumn, valueNode.asLong());
+        }
+      }
+    }
+  }
+
+  /**
+   * Helper method to convert JSON node value to Literal based on the expected data type from
+   * schema. Uses the schema type information to eliminate ambiguity when parsing JSON values.
+   *
+   * @param valueNode The JSON node containing the value
+   * @param dataType The expected data type from the schema
+   * @return The corresponding Literal, or null if the value is null
+   * @throws KernelException if the JSON value cannot be parsed as the expected type
+   */
+  private static Literal parseJsonValueToLiteral(JsonNode valueNode, DataType dataType) {
     if (valueNode == null || valueNode.isNull()) {
       return null;
     }
 
-    if (valueNode.isBoolean()) {
-      return Literal.ofBoolean(valueNode.asBoolean());
-    } else if (valueNode.isInt()) {
-      return Literal.ofInt(valueNode.asInt());
-    } else if (valueNode.isLong()) {
-      return Literal.ofLong(valueNode.asLong());
-    } else if (valueNode.isNumber()) {
-      // All decimal numbers are parsed as Double since JSON doesn't distinguish float vs double
-      return Literal.ofDouble(valueNode.asDouble());
-    } else if (valueNode.isTextual()) {
-      String textValue = valueNode.asText();
+    try {
+      if (dataType instanceof BooleanType) {
+        if (!valueNode.isBoolean()) {
+          throw new KernelException(
+              String.format("Expected boolean value but got: %s", valueNode.toString()));
+        }
+        return Literal.ofBoolean(valueNode.asBoolean());
 
-      // Handle special float/double values that are stored as strings
-      if ("NaN".equals(textValue)) {
-        return Literal.ofDouble(Double.NaN);
-      } else if ("Infinity".equals(textValue)) {
-        return Literal.ofDouble(Double.POSITIVE_INFINITY);
-      } else if ("-Infinity".equals(textValue)) {
-        return Literal.ofDouble(Double.NEGATIVE_INFINITY);
-      }
+      } else if (dataType instanceof ByteType) {
+        if (!valueNode.isNumber()) {
+          throw new KernelException(
+              String.format("Expected byte value but got: %s", valueNode.toString()));
+        }
+        return Literal.ofByte((byte) valueNode.asInt());
 
-      // Try to parse as date (YYYY-MM-DD format)
-      try {
-        LocalDate date = LocalDate.parse(textValue, ISO_LOCAL_DATE);
-        return Literal.ofDate((int) date.toEpochDay());
-      } catch (Exception e) {
-        // Not a date, continue
-      }
+      } else if (dataType instanceof ShortType) {
+        if (!valueNode.isNumber()) {
+          throw new KernelException(
+              String.format("Expected short value but got: %s", valueNode.toString()));
+        }
+        return Literal.ofShort(valueNode.shortValue());
 
-      // Try to parse as timestamp
-      try {
-        if (textValue.contains("T") && textValue.contains(":")) {
-          if (textValue.endsWith("Z")
-              || textValue.contains("+")
-              || textValue.matches(".*-\\d{2}:\\d{2}$")) {
-            // Has timezone info - TimestampType
-            OffsetDateTime offsetDateTime =
-                OffsetDateTime.parse(textValue, DataFileStatistics.TIMESTAMP_FORMATTER);
-            long epochMicros = ChronoUnit.MICROS.between(EPOCH, offsetDateTime);
-            return Literal.ofTimestamp(epochMicros);
-          } else {
-            // No timezone info - TimestampNTZType
-            LocalDateTime localDateTime =
-                LocalDateTime.parse(textValue, DateTimeFormatter.ISO_LOCAL_DATE_TIME);
-            long epochMicros = ChronoUnit.MICROS.between(EPOCH.toLocalDateTime(), localDateTime);
-            return Literal.ofTimestampNtz(epochMicros);
+      } else if (dataType instanceof IntegerType) {
+        if (!valueNode.isNumber()) {
+          throw new KernelException(
+              String.format("Expected integer value but got: %s", valueNode.toString()));
+        }
+        return Literal.ofInt(valueNode.asInt());
+
+      } else if (dataType instanceof LongType) {
+        if (!valueNode.isNumber()) {
+          throw new KernelException(
+              String.format("Expected long value but got: %s", valueNode.toString()));
+        }
+        return Literal.ofLong(valueNode.asLong());
+
+      } else if (dataType instanceof FloatType) {
+        if (valueNode.isTextual()) {
+          // Special float values are stored as strings during serialization
+          String textValue = valueNode.asText();
+          switch (textValue) {
+            case "NaN":
+              return Literal.ofFloat(Float.NaN);
+            case "Infinity":
+              return Literal.ofFloat(Float.POSITIVE_INFINITY);
+            case "-Infinity":
+              return Literal.ofFloat(Float.NEGATIVE_INFINITY);
+            default:
+              throw new KernelException(
+                  String.format("Expected float value but got unexpected string: %s", textValue));
           }
         }
-      } catch (Exception e) {
-        // Not a timestamp, continue
-      }
+        if (!valueNode.isNumber()) {
+          throw new KernelException(
+              String.format("Expected float value but got: %s", valueNode.toString()));
+        }
+        return Literal.ofFloat(valueNode.floatValue());
 
-      // Handle binary data stored as UTF-8 string (inverse of BinaryType serialization)
-      try {
-        // This is tricky - we can't easily distinguish between actual strings
-        // and binary data that was converted to string. For now, default to string.
-        return Literal.ofString(textValue);
-      } catch (Exception e) {
-        return Literal.ofString(textValue);
+      } else if (dataType instanceof DoubleType) {
+        if (valueNode.isTextual()) {
+          // Special double values are stored as strings during serialization
+          String textValue = valueNode.asText();
+          switch (textValue) {
+            case "NaN":
+              return Literal.ofDouble(Double.NaN);
+            case "Infinity":
+              return Literal.ofDouble(Double.POSITIVE_INFINITY);
+            case "-Infinity":
+              return Literal.ofDouble(Double.NEGATIVE_INFINITY);
+            default:
+              throw new KernelException(
+                  String.format("Expected double value but got unexpected string: %s", textValue));
+          }
+        }
+        if (!valueNode.isNumber()) {
+          throw new KernelException(
+              String.format("Expected double value but got: %s", valueNode.toString()));
+        }
+        return Literal.ofDouble(valueNode.asDouble());
+
+      } else if (dataType instanceof StringType) {
+        if (!valueNode.isTextual()) {
+          throw new KernelException(
+              String.format("Expected string value but got: %s", valueNode.toString()));
+        }
+        return Literal.ofString(valueNode.asText());
+
+      } else if (dataType instanceof BinaryType) {
+        if (!valueNode.isTextual()) {
+          throw new KernelException(
+              String.format("Expected binary (as string) value but got: %s", valueNode.toString()));
+        }
+        // Binary data was stored as UTF-8 string during serialization
+        return Literal.ofBinary(valueNode.asText().getBytes(StandardCharsets.UTF_8));
+
+      } else if (dataType instanceof DecimalType) {
+        if (!valueNode.isNumber()) {
+          throw new KernelException(
+              String.format("Expected decimal value but got: %s", valueNode.toString()));
+        }
+        DecimalType decimalType = (DecimalType) dataType;
+        BigDecimal decimal = valueNode.decimalValue();
+        return Literal.ofDecimal(decimal, decimalType.getPrecision(), decimalType.getScale());
+
+      } else if (dataType instanceof DateType) {
+        if (!valueNode.isTextual()) {
+          throw new KernelException(
+              String.format("Expected date (as string) value but got: %s", valueNode.toString()));
+        }
+        String textValue = valueNode.asText();
+        LocalDate date = LocalDate.parse(textValue, ISO_LOCAL_DATE);
+        return Literal.ofDate((int) date.toEpochDay());
+
+      } else if (dataType instanceof TimestampType) {
+        if (!valueNode.isTextual()) {
+          throw new KernelException(
+              String.format(
+                  "Expected timestamp (as string) value but got: %s", valueNode.toString()));
+        }
+        String textValue = valueNode.asText();
+        OffsetDateTime offsetDateTime =
+            OffsetDateTime.parse(textValue, DataFileStatistics.TIMESTAMP_FORMATTER);
+        long epochMicros = ChronoUnit.MICROS.between(DataFileStatistics.EPOCH, offsetDateTime);
+        return Literal.ofTimestamp(epochMicros);
+
+      } else if (dataType instanceof TimestampNTZType) {
+        if (!valueNode.isTextual()) {
+          throw new KernelException(
+              String.format(
+                  "Expected timestamp NTZ (as string) value but got: %s", valueNode.toString()));
+        }
+        String textValue = valueNode.asText();
+        LocalDateTime localDateTime =
+            LocalDateTime.parse(textValue, DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+        long epochMicros =
+            ChronoUnit.MICROS.between(DataFileStatistics.EPOCH.toLocalDateTime(), localDateTime);
+        return Literal.ofTimestampNtz(epochMicros);
+
+      } else {
+        throw unsupportedStatsDataType(dataType);
       }
-    } else if (valueNode.isBigDecimal()) {
-      BigDecimal decimal = valueNode.decimalValue();
-      return Literal.ofDecimal(decimal, decimal.precision(), decimal.scale());
+    } catch (Exception e) {
+      if (e instanceof KernelException) {
+        throw (KernelException) e;
+      }
+      throw new KernelException(
+          String.format(
+              "Failed to parse value '%s' as %s", valueNode.toString(), dataType.toString()),
+          e);
     }
-
-    // Fallback - try to convert to string
-    return Literal.ofString(valueNode.asText());
   }
 }
