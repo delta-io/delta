@@ -17,9 +17,7 @@ package io.delta.spark.dsv2.table;
 
 import static java.util.Objects.requireNonNull;
 
-import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.internal.SnapshotImpl;
-import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.spark.dsv2.utils.SchemaUtils;
 import java.util.*;
 import org.apache.spark.sql.connector.catalog.CatalogV2Util;
@@ -35,6 +33,7 @@ import org.apache.spark.sql.types.StructType;
 public class DeltaDsv2Table implements Table {
 
   private final Identifier identifier;
+  // TODO: add getProperties() in snapshot to avoid using Impl class.
   private final SnapshotImpl snapshot;
 
   /**
@@ -67,9 +66,10 @@ public class DeltaDsv2Table implements Table {
 
   @Override
   public Transform[] partitioning() {
-    ArrayValue partitionColArrayValue = snapshot.getMetadata().getPartitionColumns();
-    List<String> partitionColumns = VectorUtils.toJavaList(partitionColArrayValue);
-    return partitionColumns.stream().map(Expressions::identity).toArray(Transform[]::new);
+    // Delta currently just support identity partition
+    return snapshot.getPartitionColumnNames().stream()
+        .map(Expressions::identity)
+        .toArray(Transform[]::new);
   }
 
   @Override
@@ -79,6 +79,7 @@ public class DeltaDsv2Table implements Table {
 
   @Override
   public Set<TableCapability> capabilities() {
+    // TODO: fill in when implementing mix-in interface
     return Collections.unmodifiableSet(new HashSet<>());
   }
 }
