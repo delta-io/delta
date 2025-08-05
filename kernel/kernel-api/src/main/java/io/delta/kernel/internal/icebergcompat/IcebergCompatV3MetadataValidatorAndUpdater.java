@@ -114,7 +114,8 @@ public class IcebergCompatV3MetadataValidatorAndUpdater
             CHECK_ONLY_ICEBERG_COMPAT_V3_ENABLED,
             CHECK_HAS_ALLOWED_PARTITION_TYPES,
             CHECK_HAS_NO_PARTITION_EVOLUTION,
-            CHECK_HAS_SUPPORTED_TYPE_WIDENING)
+            CHECK_HAS_SUPPORTED_TYPE_WIDENING,
+            CHECK_LITERAL_DEFAULT_VALUE)
         .collect(toList());
   }
 }

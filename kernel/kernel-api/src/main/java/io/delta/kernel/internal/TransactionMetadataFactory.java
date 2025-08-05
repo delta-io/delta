@@ -29,6 +29,7 @@ import static java.util.stream.Collectors.toSet;
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.actions.*;
+import io.delta.kernel.internal.columndefaults.ColumnDefaults;
 import io.delta.kernel.internal.icebergcompat.*;
 import io.delta.kernel.internal.rowtracking.MaterializedRowTrackingColumn;
 import io.delta.kernel.internal.rowtracking.RowTracking;
@@ -619,6 +620,7 @@ public class TransactionMetadataFactory {
                 SchemaUtils.validateUpdatedSchemaAndGetUpdatedSchema(
                     oldMetadata,
                     getEffectiveMetadata(),
+                    getEffectiveProtocol(),
                     clusteringColumnPhysicalNames,
                     false /* allowNewRequiredFields */);
 
@@ -651,6 +653,7 @@ public class TransactionMetadataFactory {
             SchemaUtils.validateUpdatedSchemaAndGetUpdatedSchema(
                 latestSnapshotOpt.get().getMetadata(),
                 getEffectiveMetadata(),
+                getEffectiveProtocol(),
                 // We already validate clustering columns elsewhere for isCreateOrReplace no
                 // need to
                 // duplicate this check here
@@ -692,7 +695,8 @@ public class TransactionMetadataFactory {
     // New table verify the given schema and partition columns
     ColumnMappingMode mappingMode = ColumnMapping.getColumnMappingMode(tableProperties);
 
-    SchemaUtils.validateSchema(schema, isColumnMappingModeEnabled(mappingMode));
+    SchemaUtils.validateSchema(
+        schema, isColumnMappingModeEnabled(mappingMode), ColumnDefaults.isEnabled(tableProperties));
     SchemaUtils.validatePartitionColumns(schema, partitionColumns);
   }
 
