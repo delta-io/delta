@@ -22,7 +22,7 @@ import io.delta.kernel.{Operation, Table, Transaction, TransactionBuilder, Trans
 import io.delta.kernel.data.FilteredColumnarBatch
 import io.delta.kernel.defaults.utils.TestRow
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.exceptions.{ConcurrentTransactionException, ConcurrentWriteException, KernelException, TableNotFoundException}
+import io.delta.kernel.exceptions.{ConcurrentTransactionException, ConcurrentWriteException, KernelException, MaxCommitRetriesReachedException, TableNotFoundException}
 import io.delta.kernel.expressions.{Column, Literal}
 import io.delta.kernel.expressions.Literal.{ofInt, ofString}
 import io.delta.kernel.internal.{SnapshotImpl, TableConfig, TableImpl}
@@ -318,7 +318,7 @@ class DeltaReplaceTableSuite extends DeltaReplaceTableSuiteBase {
         tablePath,
         data = Seq(Map.empty[String, Literal] -> (dataBatches2)))
       // Try to commit replace table and intercept conflicting txn (no conflict resolution)
-      intercept[ConcurrentWriteException] {
+      intercept[MaxCommitRetriesReachedException] {
         commitTransaction(txn, engine, emptyIterable())
       }
     }

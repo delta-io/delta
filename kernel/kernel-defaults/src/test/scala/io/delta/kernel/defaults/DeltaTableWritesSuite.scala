@@ -285,7 +285,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       assertMetadataProp(ver1Snapshot, TableConfig.CHECKPOINT_INTERVAL, 10)
 
       // Try to commit txn1 but expect failure
-      val ex1 = intercept[ConcurrentWriteException] {
+      val ex1 = intercept[MaxCommitRetriesReachedException] {
         txn1.commit(engine, emptyIterable())
       }
       assert(
@@ -1312,11 +1312,11 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
 
       val transientErrorEngine = new TransientErrorEngine()
 
-      val txn = createWriteTxnBuilder(table).withMaxRetries(maxRetries).build(transientErrorEngine)
+      val txn = createWriteTxnBuilder(table).build(transientErrorEngine)
 
       val result = commitTransaction(txn, transientErrorEngine, emptyIterable())
 
-      assert(result.getVersion > 0)
+      assert(result.getVersion == 1)
       assert(attemptCount == 4)
       assert(attemptedFilePaths.size == 1) // we should only be attempting to write 001.json
       assert(result.getTransactionReport.getTransactionMetrics.getNumCommitAttempts == 4)

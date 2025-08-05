@@ -106,7 +106,6 @@ public class TransactionImpl implements Transaction {
   private Metadata metadata;
   private boolean shouldUpdateMetadata;
   private int maxRetries;
-  private int maxCommitAttempts;
   private int logCompactionInterval;
   private Optional<CRCInfo> currentCrcInfo;
   private Optional<Long> providedRowIdHighWatermark = Optional.empty();
@@ -143,7 +142,6 @@ public class TransactionImpl implements Transaction {
     this.shouldUpdateMetadata = shouldUpdateMetadata;
     this.shouldUpdateProtocol = shouldUpdateProtocol;
     this.maxRetries = maxRetries;
-    this.maxCommitAttempts = maxRetries + 1; // +1 because the first attempt is not a retry
     this.logCompactionInterval = logCompactionInterval;
     this.clock = clock;
     this.currentCrcInfo = readSnapshotOpt.flatMap(SnapshotImpl::getCurrentCrcInfo);
@@ -323,7 +321,7 @@ public class TransactionImpl implements Transaction {
             "Attempting to commit transaction at version {}. Attempt {}/{}",
             commitAsVersion,
             attempt,
-            maxCommitAttempts);
+            getMaxCommitAttempts());
         try {
           transactionMetrics.commitAttemptsCounter.increment();
           return doCommit(
@@ -337,7 +335,7 @@ public class TransactionImpl implements Transaction {
                     "Commit attempt for version %d failed with a non-retryable exception.",
                     commitAsVersion),
                 cfe);
-          } else if (attempt >= maxCommitAttempts) {
+          } else if (attempt >= getMaxCommitAttempts()) {
             // Case 2: Despite the error being retryable, we have exhausted the maximum number of
             //         retries. We must throw here, too.
             throw new MaxCommitRetriesReachedException(commitAsVersion, maxRetries, cfe);
@@ -387,7 +385,7 @@ public class TransactionImpl implements Transaction {
         "Table {}, trying to resolve conflicts and retry commit. Attempt {}/{}.",
         dataPath,
         attempt,
-        maxCommitAttempts);
+        getMaxCommitAttempts());
     TransactionRebaseState rebaseState =
         ConflictChecker.resolveConflicts(
             engine,
@@ -920,5 +918,15 @@ public class TransactionImpl implements Transaction {
 
   private boolean isReplaceTable() {
     return isCreateOrReplace && readSnapshotOpt.isPresent();
+  }
+
+  /**
+   * Returns the maximum number of commit attempts, including the first attempt.
+   *
+   * <p>This is explicitly a method instead of a constant as the maxRetries variable is itself
+   * mutable, and can for example be set to 0 when the rowIdHighWatermark is explicitly provided.
+   */
+  private int getMaxCommitAttempts() {
+    return maxRetries + 1; // +1 because the first attempt is a try, not a retry.
   }
 }
