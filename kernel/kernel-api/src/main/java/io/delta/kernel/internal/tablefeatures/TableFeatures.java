@@ -449,6 +449,24 @@ public class TableFeatures {
     }
   }
 
+  /**
+   * Support reading / metadata writes on tables with the feature. Don't support writing new data
+   * rows with default values. Don't allow updating the types of columns with default values.
+   */
+  public static final TableFeature ALLOW_COLUMN_DEFAULTS_W_FEATURE =
+      new AllowColumnDefaultsTableFeature();
+
+  private static class AllowColumnDefaultsTableFeature extends TableFeature.WriterFeature {
+    AllowColumnDefaultsTableFeature() {
+      super("allowColumnDefaults", /* minWriterVersion = */ 7);
+    }
+
+    @Override
+    public Set<TableFeature> requiredFeatures() {
+      return Collections.singleton(ICEBERG_WRITER_COMPAT_V3);
+    }
+  }
+
   public static final TableFeature ICEBERG_WRITER_COMPAT_V1 = new IcebergWriterCompatV1();
 
   private static class IcebergWriterCompatV1 extends TableFeature.WriterFeature
@@ -501,6 +519,7 @@ public class TableFeatures {
   public static final List<TableFeature> TABLE_FEATURES =
       Collections.unmodifiableList(
           Arrays.asList(
+              ALLOW_COLUMN_DEFAULTS_W_FEATURE,
               APPEND_ONLY_W_FEATURE,
               CATALOG_MANAGED_R_W_FEATURE_PREVIEW,
               CHECKPOINT_V2_RW_FEATURE,
@@ -605,6 +624,17 @@ public class TableFeatures {
     } else {
       return Optional.empty();
     }
+  }
+
+  /**
+   * Check if a table feature support is overridden in the provided user input properties
+   *
+   * @return true if the table feature is supported
+   */
+  public static boolean isFeaturePropertyOverridden(
+      Map<String, String> properties, TableFeature feature) {
+    String propertyKey = SET_TABLE_FEATURE_SUPPORTED_PREFIX + feature.featureName();
+    return properties.getOrDefault(propertyKey, "").equals("supported");
   }
 
   /**
