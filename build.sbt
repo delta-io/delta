@@ -739,6 +739,7 @@ lazy val sparkKernelDsv2 = (project in file("spark-kernel-dsv2"))
 
       "org.junit.jupiter" % "junit-jupiter-api" % "5.8.2" % "test",
       "org.junit.jupiter" % "junit-jupiter-engine" % "5.8.2" % "test",
+      "org.junit.jupiter" % "junit-jupiter-params" % "5.8.2" % "test",
       "net.aichler" % "jupiter-interface" % "0.11.1" % "test"
     ),
     Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")
