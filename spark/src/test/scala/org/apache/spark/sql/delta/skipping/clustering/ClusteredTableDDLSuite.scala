@@ -20,10 +20,10 @@ import java.io.File
 
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions}
 import org.apache.spark.sql.delta.skipping.ClusteredTableTestUtils
-import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, DeltaAnalysisException, DeltaColumnMappingEnableIdMode, DeltaColumnMappingEnableNameMode, DeltaConfigs, DeltaExcludedBySparkVersionTestMixinShims, DeltaLog, DeltaUnsupportedOperationException, NoMapping}
+import org.apache.spark.sql.delta.{CatalogManagedTableFeature, DeltaAnalysisException, DeltaColumnMappingEnableIdMode, DeltaColumnMappingEnableNameMode, DeltaConfigs, DeltaExcludedBySparkVersionTestMixinShims, DeltaLog, DeltaUnsupportedOperationException, NoMapping}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
 import org.apache.spark.sql.delta.clustering.ClusteringMetadataDomain
-import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogManagedTestBaseSuite
 import org.apache.spark.sql.delta.hooks.UpdateCatalog
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.SkippingEligibleDataType
@@ -1016,7 +1016,7 @@ trait ClusteredTableDDLSuiteBase
 
 trait ClusteredTableDDLSuite
   extends ClusteredTableDDLSuiteBase
-  with CatalogOwnedTestBaseSuite
+  with CatalogManagedTestBaseSuite
 
 trait ClusteredTableDDLWithNameColumnMapping
   extends ClusteredTableCreateOrReplaceDDLSuite with DeltaColumnMappingEnableNameMode
@@ -1227,8 +1227,8 @@ trait ClusteredTableDDLDataSourceV2SuiteBase
 
   test("create external clustered table: location has clustered table, schema specified, " +
     "cluster by specified with same clustering column") {
-    if (catalogOwnedDefaultCreationEnabledInTests) {
-      cancel("CatalogOwned does not support external table creation.")
+    if (catalogManagedDefaultCreationEnabledInTests) {
+      cancel("CatalogManaged does not support external table creation.")
     }
     val tableName = "clustered_table"
     withTempDir { dir =>
@@ -1247,8 +1247,8 @@ trait ClusteredTableDDLDataSourceV2SuiteBase
 
   test("create external clustered table: location has non-clustered table, schema specified, " +
     "cluster by specified") {
-    if (catalogOwnedDefaultCreationEnabledInTests) {
-      cancel("CatalogOwned does not support external table creation.")
+    if (catalogManagedDefaultCreationEnabledInTests) {
+      cancel("CatalogManaged does not support external table creation.")
     }
     val tableName = "clustered_table"
     withTempDir { dir =>
@@ -1288,7 +1288,7 @@ class ClusteredTableDDLDataSourceV2NameColumnMappingSuite
     with ClusteredTableDDLWithColumnMappingV2
     with ClusteredTableDDLSuite
 
-class ClusteredTableDDLDataSourceV2WithCatalogOwnedBatch100Suite
+class ClusteredTableDDLDataSourceV2WithCatalogManagedBatch100Suite
     extends ClusteredTableDDLDataSourceV2Suite {
-  override val catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
+  override val catalogManagedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }

@@ -40,7 +40,7 @@ import org.apache.spark.sql.SparkSession
  * It caches the UCCommitCoordinatorClient instance for a given metastore ID upon its first access.
  */
 object UCCommitCoordinatorBuilder
-    extends CatalogOwnedCommitCoordinatorBuilder with DeltaLogging {
+    extends CatalogManagedCommitCoordinatorBuilder with DeltaLogging {
 
   /** Prefix for Spark SQL catalog configurations. */
   final private val SPARK_SQL_CATALOG_PREFIX = "spark.sql.catalog."

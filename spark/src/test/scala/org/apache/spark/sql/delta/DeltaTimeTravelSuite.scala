@@ -28,7 +28,7 @@ import scala.language.implicitConversions
 import org.apache.spark.sql.delta.DeltaHistoryManager.BufferingLogDeletionIterator
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{Action, CommitInfo, SingleAction}
-import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogManagedTestBaseSuite
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -44,7 +44,7 @@ class DeltaTimeTravelSuite extends QueryTest
   with SharedSparkSession
   with DeltaSQLTestUtils
   with DeltaSQLCommandTest
-  with CatalogOwnedTestBaseSuite {
+  with CatalogManagedTestBaseSuite {
 
   import testImplicits._
 
@@ -102,7 +102,7 @@ class DeltaTimeTravelSuite extends QueryTest
       val filePath = DeltaCommitFileProvider
         .apply(snapshot = deltaLog.unsafeVolatileSnapshot)
         .deltaFile(version = startVersion)
-      if (isICTEnabledForNewTablesCatalogOwned) {
+      if (isICTEnabledForNewTablesCatalogManaged) {
         InCommitTimestampTestUtils.overwriteICTInDeltaFile(deltaLog, filePath, Some(ts))
       } else {
         val file = new File(filePath.toUri)
@@ -139,7 +139,7 @@ class DeltaTimeTravelSuite extends QueryTest
   }
 
   historyTest("getCommits should monotonize timestamps") { (deltaLog, clock) =>
-    if (catalogOwnedDefaultCreationEnabledInTests) {
+    if (catalogManagedDefaultCreationEnabledInTests) {
       // This is fine for CC tables since ICT should've been enabled from the beginning.
       // Hence, we should *never* call [[DeltaHistoryManager.getCommitsWithNonIctTimestamps]].
       cancel("This test is not compatible with CC since ICT should've been enabled from the " +
@@ -171,7 +171,7 @@ class DeltaTimeTravelSuite extends QueryTest
 
   historyTest("describe history timestamps are adjusted according to file timestamp") {
       (deltaLog, clock) =>
-    if (isICTEnabledForNewTablesCatalogOwned) {
+    if (isICTEnabledForNewTablesCatalogManaged) {
       // File timestamp adjustment is not needed when ICT is enabled.
       cancel("This test is not compatible with InCommitTimestamps.")
     }
@@ -207,11 +207,11 @@ class DeltaTimeTravelSuite extends QueryTest
     val e = intercept[AnalysisException] {
       history.getActiveCommitAtTime(start + 15.seconds, false).version
     }
-    if (catalogOwnedDefaultCreationEnabledInTests &&
+    if (catalogManagedDefaultCreationEnabledInTests &&
         // Since we are creating a table w/ three initial commits, the table would have
         // unbackfilled commits if the backfill batch size is greater or equal to three.
         // See [[generateCommitsCheap]] for details.
-        catalogOwnedCoordinatorBackfillBatchSize.exists(_ >= 3)) {
+        catalogManagedCoordinatorBackfillBatchSize.exists(_ >= 3)) {
       // We throw an "incorrect" exception for CC tables if there exist any unbackfilled commits
       // and the backfilled commits have been manually deleted. E.g., the 0.json we are deleting
       // in this UT.
@@ -624,11 +624,11 @@ class DeltaTimeTravelSuite extends QueryTest
       val e2 = intercept[AnalysisException] {
         spark.read.format("delta").option("versionAsOf", 0).load(tblLoc).collect()
       }
-      if (catalogOwnedDefaultCreationEnabledInTests &&
+      if (catalogManagedDefaultCreationEnabledInTests &&
           // Since we are creating a table w/ three initial commits, the table would have
           // unbackfilled commits if the backfill batch size is greater or equal to three.
           // See [[generateCommits]] for details.
-          catalogOwnedCoordinatorBackfillBatchSize.exists(_ >= 3)) {
+          catalogManagedCoordinatorBackfillBatchSize.exists(_ >= 3)) {
         // We throw an "incorrect" exception for CC tables if there exist any unbackfilled commits
         // and the backfilled commits have been manually deleted. E.g., the 0.json we are deleting
         // in this UT.
@@ -643,7 +643,7 @@ class DeltaTimeTravelSuite extends QueryTest
   }
 
   test("time travelling with adjusted timestamps") {
-    if (isICTEnabledForNewTablesCatalogOwned) {
+    if (isICTEnabledForNewTablesCatalogManaged) {
       // ICT Timestamps are always monotonically increasing. Therefore,
       // this test is not needed when ICT is enabled.
       cancel("This test is not compatible with InCommitTimestamps.")
@@ -894,14 +894,14 @@ class DeltaTimeTravelSuite extends QueryTest
   }
 }
 
-class DeltaTimeTravelWithCatalogOwnedBatch1Suite extends DeltaTimeTravelSuite {
-  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
+class DeltaTimeTravelWithCatalogManagedBatch1Suite extends DeltaTimeTravelSuite {
+  override def catalogManagedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
 }
 
-class DeltaTimeTravelWithCatalogOwnedBatch2Suite extends DeltaTimeTravelSuite {
-  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
+class DeltaTimeTravelWithCatalogManagedBatch2Suite extends DeltaTimeTravelSuite {
+  override def catalogManagedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
 }
 
-class DeltaTimeTravelWithCatalogOwnedBatch100Suite extends DeltaTimeTravelSuite {
-  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
+class DeltaTimeTravelWithCatalogManagedBatch100Suite extends DeltaTimeTravelSuite {
+  override def catalogManagedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }

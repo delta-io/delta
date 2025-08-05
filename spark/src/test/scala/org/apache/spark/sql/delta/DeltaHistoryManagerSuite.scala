@@ -31,7 +31,7 @@ import org.apache.spark.sql.delta.DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED
 import org.apache.spark.sql.delta.DeltaHistoryManagerSuiteShims._
 import org.apache.spark.sql.delta.DeltaTestUtils.{createTestAddFile, modifyCommitTimestamp}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
-import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogManagedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.StatsUtils
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -55,7 +55,7 @@ trait DeltaTimeTravelTests extends QueryTest
     with GivenWhenThen
     with DeltaSQLCommandTest
     with StatsUtils
-    with CatalogOwnedTestBaseSuite {
+    with CatalogManagedTestBaseSuite {
   protected implicit def durationToLong(duration: FiniteDuration): Long = {
     duration.toMillis
   }
@@ -348,7 +348,7 @@ trait DeltaTimeTravelTests extends QueryTest
         val e2 = intercept[AnalysisException] {
           sql(s"select count(*) from ${versionAsOf(tblName, 0)}").collect()
         }
-        if (catalogOwnedCoordinatorBackfillBatchSize.exists(_ > 2)) {
+        if (catalogManagedCoordinatorBackfillBatchSize.exists(_ > 2)) {
           assert(e2.getMessage.contains("No commits found at"))
         } else {
           assert(e2.getMessage.contains("No recreatable commits found at"))
@@ -410,7 +410,7 @@ trait DeltaTimeTravelTests extends QueryTest
   }
 
   test("time travelling with adjusted timestamps") {
-    if (isICTEnabledForNewTablesCatalogOwned) {
+    if (isICTEnabledForNewTablesCatalogManaged) {
       // ICT Timestamps are always monotonically increasing. Therefore,
       // this test is not needed when ICT is enabled.
       cancel("This test is not compatible with InCommitTimestamps.")
@@ -573,8 +573,8 @@ abstract class DeltaHistoryManagerBase extends DeltaTimeTravelTests
   }
 
   test("vacuumed version") {
-    if (catalogOwnedDefaultCreationEnabledInTests) {
-      cancel("VACUUM is not supported on catalog owned managed tables.")
+    if (catalogManagedDefaultCreationEnabledInTests) {
+      cancel("VACUUM is not supported on catalog managed tables.")
     }
 
     quietly {
@@ -675,7 +675,7 @@ abstract class DeltaHistoryManagerBase extends DeltaTimeTravelTests
   }
 
   test("parallel search handles empty commits in a partition correctly") {
-    if (catalogOwnedDefaultCreationEnabledInTests) {
+    if (catalogManagedDefaultCreationEnabledInTests) {
       cancel("This test is not compatible with coordinated commits backfill timestamps.")
     }
     val tblName = "delta_table"
@@ -711,14 +711,14 @@ class DeltaHistoryManagerSuite extends DeltaHistoryManagerBase {
   }
 }
 
-class DeltaHistoryManagerWithCatalogOwnedBatch1Suite extends DeltaHistoryManagerSuite {
-  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
+class DeltaHistoryManagerWithCatalogManagedBatch1Suite extends DeltaHistoryManagerSuite {
+  override def catalogManagedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
 }
 
-class DeltaHistoryManagerWithCatalogOwnedBatch2Suite extends DeltaHistoryManagerSuite {
-  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
+class DeltaHistoryManagerWithCatalogManagedBatch2Suite extends DeltaHistoryManagerSuite {
+  override def catalogManagedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
 }
 
-class DeltaHistoryManagerWithCatalogOwnedBatch100Suite extends DeltaHistoryManagerSuite {
-  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
+class DeltaHistoryManagerWithCatalogManagedBatch100Suite extends DeltaHistoryManagerSuite {
+  override def catalogManagedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }

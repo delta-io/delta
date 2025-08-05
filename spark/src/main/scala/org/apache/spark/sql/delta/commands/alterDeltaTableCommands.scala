@@ -31,7 +31,7 @@ import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.backfill.RowTrackingBackfillCommand
 import org.apache.spark.sql.delta.commands.columnmapping.RemoveColumnMappingCommand
 import org.apache.spark.sql.delta.constraints.{CharVarcharConstraint, Constraints}
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedTableUtils, CoordinatedCommitsUtils}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.redirect.RedirectFeature
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
@@ -157,8 +157,8 @@ case class AlterTableSetPropertiesDeltaCommand(
       // For Coordinated Commits table validation
       CoordinatedCommitsUtils.validateConfigurationsForAlterTableSetPropertiesDeltaCommand(
         existingConfs = metadata.configuration, propertyOverrides = filteredConfs)
-      // For Catalog Owned table validation
-      CatalogOwnedTableUtils.validatePropertiesForAlterTableSetPropertiesDeltaCommand(
+      // For Catalog Managed table validation
+      CatalogManagedTableUtils.validatePropertiesForAlterTableSetPropertiesDeltaCommand(
         txn.snapshot, propertyOverrides = filteredConfs)
 
       // If table redirect feature is updated, validates its property.
@@ -241,7 +241,7 @@ case class AlterTableUnsetPropertiesDeltaCommand(
       if (!fromDropFeatureCommand) {
         CoordinatedCommitsUtils.validateConfigurationsForAlterTableUnsetPropertiesDeltaCommand(
           existingConfs = metadata.configuration, propKeysToUnset = normalizedKeys)
-        CatalogOwnedTableUtils.validatePropertiesForAlterTableUnsetPropertiesDeltaCommand(
+        CatalogManagedTableUtils.validatePropertiesForAlterTableUnsetPropertiesDeltaCommand(
           txn.snapshot, propKeysToUnset = normalizedKeys)
       }
       val newConfiguration = metadata.configuration.filterNot {

@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions._
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CatalogOwnedTestBaseSuite}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogManagedTableUtils, CatalogManagedTestBaseSuite}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
@@ -36,7 +36,7 @@ class DeltaLogMinorCompactionSuite extends QueryTest
   with SharedSparkSession
   with DeltaSQLCommandTest
   with DeltaSQLTestUtils
-  with CatalogOwnedTestBaseSuite {
+  with CatalogManagedTestBaseSuite {
 
   /** Helper method to do minor compaction of [[DeltaLog]] from [startVersion, endVersion] */
   private def minorCompactDeltaLog(
@@ -204,7 +204,7 @@ class DeltaLogMinorCompactionSuite extends QueryTest
 
         val (deltaLog, snapshot) = DeltaLog.forTableWithSnapshot(spark, tableDir)
         // Ensure all commits are backfilled after data generation.
-        CatalogOwnedTableUtils.populateTableCommitCoordinatorFromCatalog(
+        CatalogManagedTableUtils.populateTableCommitCoordinatorFromCatalog(
             spark,
             catalogTableOpt = None,
             snapshot = snapshot).foreach { tcc =>
@@ -497,25 +497,25 @@ class DeltaLogMinorCompactionSuite extends QueryTest
   }
 }
 
-class DeltaLogMinorCompactionWithCatalogOwnedBatch1Suite
+class DeltaLogMinorCompactionWithCatalogManagedBatch1Suite
   extends DeltaLogMinorCompactionSuite {
-  override val catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
+  override val catalogManagedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
 
   override protected def sparkConf: SparkConf = super.sparkConf
     .set(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey, "false")
 }
 
-class DeltaLogMinorCompactionWithCatalogOwnedBatch2Suite
+class DeltaLogMinorCompactionWithCatalogManagedBatch2Suite
   extends DeltaLogMinorCompactionSuite {
-  override val catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
+  override val catalogManagedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
 
   override protected def sparkConf: SparkConf = super.sparkConf
     .set(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey, "false")
 }
 
-class DeltaLogMinorCompactionWithCatalogOwnedBatch100Suite
+class DeltaLogMinorCompactionWithCatalogManagedBatch100Suite
     extends DeltaLogMinorCompactionSuite {
-  override val catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
+  override val catalogManagedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 
   override protected def sparkConf: SparkConf = super.sparkConf
     .set(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey, "false")

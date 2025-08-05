@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.test
 import java.io.File
 import java.sql.Timestamp
 
-import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, DeltaHistoryManager, DeltaLog, OptimisticTransaction, Snapshot}
+import org.apache.spark.sql.delta.{CatalogManagedTableFeature, DeltaHistoryManager, DeltaLog, OptimisticTransaction, Snapshot}
 import org.apache.spark.sql.delta.DeltaOperations.{ManualUpdate, Operation, Write}
 import org.apache.spark.sql.delta.actions.{Action, AddFile, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
@@ -67,16 +67,16 @@ object DeltaTestImplicits {
             // If neither metadata nor protocol is explicitly passed, then use default Metadata and
             // with the maximum protocol.
             txn.updateMetadataForNewTable(Metadata())
-            val enableCatalogOwnedByDefault = SparkSession.active.conf.getOption(
-              TableFeatureProtocolUtils.defaultPropertyKey(CatalogOwnedTableFeature))
+            val enableCatalogManagedByDefault = SparkSession.active.conf.getOption(
+              TableFeatureProtocolUtils.defaultPropertyKey(CatalogManagedTableFeature))
                 .contains("supported")
-            if (enableCatalogOwnedByDefault) {
+            if (enableCatalogManagedByDefault) {
               txn.updateProtocol(Action.supportedProtocolVersion())
             } else {
               txn.updateProtocol(Action.supportedProtocolVersion(
-                // CatalogOwnedTableFeature is enabled by protocol only without metadata, and should
-                // not be enabled by default.
-                featuresToExclude = Seq(CatalogOwnedTableFeature)))
+                // CatalogManagedTableFeature is enabled by protocol only without metadata, and
+                // should not be enabled by default.
+                featuresToExclude = Seq(CatalogManagedTableFeature)))
             }
         }
         txn.commit(otherActions, op)

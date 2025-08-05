@@ -429,7 +429,7 @@ class DeltaHistoryManager(
     } else if (smallestDeltaVersion < Long.MaxValue) {
       throw DeltaErrors.noRecreatableHistoryFound(deltaLog.logPath)
     } else {
-      // For Catalog Owned tables, there are two cases in which a DELTA_NO_COMMITS_FOUND
+      // For Catalog Managed tables, there are two cases in which a DELTA_NO_COMMITS_FOUND
       // exception could be thrown:
       //
       // 1. If there is no checkpoint or commit 0, and there are only unbackfilled commits
