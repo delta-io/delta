@@ -250,13 +250,25 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     // to the table properties which we already handle.
     Map<String, String> tablePropertiesWithFeatureEnablement =
         new HashMap<>(tableProperties.orElse(emptyMap()));
-    if (needDomainMetadataSupport) {
+    boolean domainMetadataEnabled =
+        !isCreateOrReplace
+            && latestSnapshot
+                .get()
+                .getProtocol()
+                .supportsFeature(TableFeatures.DOMAIN_METADATA_W_FEATURE);
+    if (needDomainMetadataSupport && !domainMetadataEnabled) {
       tablePropertiesWithFeatureEnablement.put(
           TableFeatures.SET_TABLE_FEATURE_SUPPORTED_PREFIX
               + TableFeatures.DOMAIN_METADATA_W_FEATURE.featureName(),
           "supported");
     }
-    if (inputLogicalClusteringColumns.isPresent()) {
+    boolean clusteringEnabled =
+        !isCreateOrReplace
+            && latestSnapshot
+                .get()
+                .getProtocol()
+                .supportsFeature(TableFeatures.CLUSTERING_W_FEATURE);
+    if (inputLogicalClusteringColumns.isPresent() && !clusteringEnabled) {
       tablePropertiesWithFeatureEnablement.put(
           TableFeatures.SET_TABLE_FEATURE_SUPPORTED_PREFIX
               + TableFeatures.CLUSTERING_W_FEATURE.featureName(),
