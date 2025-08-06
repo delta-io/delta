@@ -110,11 +110,30 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
       new Column(Array("NestedStruct", "aa")) -> 1L,
       new Column(Array("NestedStruct", "ac", "aca")) -> 1L)
 
+    val tightBounds = Map(
+      new Column("ByteType") -> true,
+      new Column("ShortType") -> true,
+      new Column("IntegerType") -> false,
+      new Column("LongType") -> true,
+      new Column("FloatType") -> false,
+      new Column("DoubleType") -> true,
+      new Column("DecimalType") -> true,
+      new Column("StringType") -> false,
+      new Column("DateType") -> true,
+      new Column("TimestampType") -> false,
+      new Column("TimestampNTZType") -> true,
+      new Column("BinaryType") -> false,
+      new Column(Array("NestedStruct", "aa")) -> true,
+      new Column(Array("NestedStruct", "ac", "aca")) -> false).map { case (k, v) =>
+      (k, java.lang.Boolean.valueOf(v))
+    }.asJava
+
     val stats = new DataFileStatistics(
       100,
       minValues,
       maxValues,
-      nullCount.map { case (k, v) => (k, java.lang.Long.valueOf(v)) }.asJava)
+      nullCount.map { case (k, v) => (k, java.lang.Long.valueOf(v)) }.asJava,
+      tightBounds)
 
     val expectedJson =
       """{
@@ -178,6 +197,26 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
         |        "aca": 1
         |      }
         |    }
+        |},
+        |"tightBounds": {
+        |  "ByteType": true,
+        |  "ShortType": true,
+        |  "IntegerType": false,
+        |  "LongType": true,
+        |  "FloatType": false,
+        |  "DoubleType": true,
+        |  "DecimalType": true,
+        |  "StringType": false,
+        |  "DateType": true,
+        |  "TimestampType": false,
+        |  "TimestampNTZType": true,
+        |  "BinaryType": false,
+        |  "NestedStruct": {
+        |    "aa": true,
+        |    "ac": {
+        |      "aca": false
+        |    }
+        |  }
         |}
         |}""".stripMargin
 
@@ -217,7 +256,8 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
         |    "FloatType": "Infinity",
         |    "DoubleType": "NaN"
         |  },
-        |  "nullCount": {}
+        |  "nullCount": {},
+        |  "tightBounds": {}
         |}""".stripMargin
 
     assert(areJsonNodesEqual(json, expectedJson))
@@ -254,11 +294,20 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
       (k, java.lang.Long.valueOf(v))
     }.asJava
 
+    val tightBounds = Map(
+      new Column("col1") -> true,
+      new Column("col2") -> false,
+      new Column(Array("nested", "nestedCol1")) -> true,
+      new Column(Array("nested", "nestedCol2")) -> false).map { case (k, v) =>
+      (k, java.lang.Boolean.valueOf(v))
+    }.asJava
+
     val stats = new DataFileStatistics(
       100,
       minValues,
       maxValues,
-      nullCount)
+      nullCount,
+      tightBounds)
 
     val expectedJson =
       """{
@@ -283,6 +332,14 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
         |    "nested": {
         |      "nestedCol1": 2
         |    }
+        |  },
+        |"tightBounds": {
+        |   "col1": true,
+        |    "col2": false,
+        |    "nested": {
+        |      "nestedCol1": true,
+        |      "nestedCol2": false
+        |    }
         |  }
         |}""".stripMargin
 
@@ -305,7 +362,8 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
         |  "numRecords": 50,
         |  "minValues": {"nested": {}},
         |  "maxValues": {"nested": {}},
-        |  "nullCount": {"nested": {}}
+        |  "nullCount": {"nested": {}},
+        |  "tightBounds": {"nested": {}}
         |}""".stripMargin
     val json = stats.serializeAsJson(schema)
     assert(areJsonNodesEqual(json, expectedJson))
@@ -322,6 +380,7 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
       75L,
       minValues,
       Collections.emptyMap(),
+      Collections.emptyMap(),
       Collections.emptyMap())
     val expectedJson =
       """{
@@ -332,7 +391,8 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
         |    }
         |  },
         |  "maxValues": {"nested":{}},
-        |  "nullCount": {"nested":{}}
+        |  "nullCount": {"nested":{}},
+        |  "tightBounds": {"nested":{}}
         |}""".stripMargin
     val json = stats.serializeAsJson(schema)
     assert(areJsonNodesEqual(json, expectedJson))
