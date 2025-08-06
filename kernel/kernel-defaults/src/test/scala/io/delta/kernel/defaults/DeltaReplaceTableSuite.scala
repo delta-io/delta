@@ -495,7 +495,10 @@ class DeltaReplaceTableSuite extends DeltaReplaceTableSuiteBase {
       )
       assert(
         intercept[UnsupportedOperationException] {
-          commitReplaceTable(engine, tablePath)
+          commitReplaceTable(
+            engine,
+            tablePath,
+            tableProperties = Map(TableConfig.ICEBERG_COMPAT_V3_ENABLED.getKey -> "true"))
         }.getMessage.contains("REPLACE TABLE is not yet supported on IcebergCompatV3 tables"))
     }
   }

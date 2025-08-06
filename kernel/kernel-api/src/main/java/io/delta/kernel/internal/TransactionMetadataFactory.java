@@ -57,9 +57,9 @@ public class TransactionMetadataFactory {
 
   /**
    * Expectations with respect to the given operation: - Create table: both protocol and metadata
-   * will be present - Replace table: metadata will be present; protocol will be present if a
-   * protocol upgrade is necessary - Update table: metadata and protocol may or may not be present
-   * depending on whether there should be a metadata or protocol update
+   * will be present - Replace table: both protoocl and metadata will be present - Update table:
+   * metadata and protocol may or may not be present depending on whether there should be a metadata
+   * or protocol update
    */
   public static class Output {
     /* New metadata, present if the transaction should commit a new metadata action */
@@ -124,12 +124,16 @@ public class TransactionMetadataFactory {
         new TransactionMetadataFactory(
                 Optional.of(readSnapshot),
                 Optional.of(metadata),
-                Optional.empty(), // We will use the previous protocol to decide whether to upgrade
+                Optional.of(readSnapshot.getProtocol()),
                 true /* isCreateOrReplace */,
                 clusteringColumns,
                 false /* isSchemaEvolultion */)
             .finalOutput;
-    checkState(output.newMetadata.isPresent(), "Expected non-null metadata for replace table");
+    // TODO: reconsider whether we should always commit a new Protocol action regardless of whether
+    //   there is a protocol upgrade
+    checkState(
+        output.newMetadata.isPresent() && output.newProtocol.isPresent(),
+        "Expected non-null metadata and protocol for replace table");
     if (output
         .newProtocol
         .orElse(readSnapshot.getProtocol())

@@ -24,7 +24,7 @@ import scala.reflect.ClassTag
 
 import io.delta.kernel.TransactionSuite.testSchema
 import io.delta.kernel.exceptions.TableNotFoundException
-import io.delta.kernel.internal.actions.{Format, Metadata}
+import io.delta.kernel.internal.actions.{Format, Metadata, Protocol}
 import io.delta.kernel.internal.commit.DefaultFileSystemManagedTableOnlyCommitter
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.lang.Lazy
@@ -1035,7 +1035,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
           Optional.empty(),
           0L)),
       null, /* logReplay */
-      null, /* protocol */
+      new Protocol(1, 2),
       malformedMetadata,
       DefaultFileSystemManagedTableOnlyCommitter.INSTANCE,
       SnapshotQueryContext.forLatestSnapshot(dataPath.toString))

@@ -230,7 +230,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
             || enablesDomainMetadataSupport; // domain metadata support added
 
     if (!needsMetadataOrProtocolUpdate) {
-      return new TransactionImpl(
+      new TransactionImpl(
           false, // isCreateOrReplace
           table.getDataPath(),
           table.getLogPath(),
