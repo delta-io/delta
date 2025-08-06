@@ -33,11 +33,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Optional;
+import java.util.*;
 
 /**
  * Encapsulates statistics for a data file in a Delta Lake table and provides methods to serialize
@@ -46,9 +42,9 @@ import java.util.Optional;
  * truncation, prior to constructing this class.
  */
 public class DataFileStatistics {
-  public static final DateTimeFormatter TIMESTAMP_FORMATTER =
+  private static final DateTimeFormatter TIMESTAMP_FORMATTER =
       DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSX");
-  public static final OffsetDateTime EPOCH = Instant.ofEpochSecond(0).atOffset(ZoneOffset.UTC);
+  private static final OffsetDateTime EPOCH = Instant.ofEpochSecond(0).atOffset(ZoneOffset.UTC);
 
   private final long numRecords;
   private final Map<Column, Literal> minValues;
@@ -249,6 +245,37 @@ public class DataFileStatistics {
   public Map<Column, Boolean> getTightBounds() {
     return tightBounds;
   }
+
+  /**
+   * Returns a new DataFileStatistics instance with all tightBounds set to false. This is useful
+   * when the statistics bounds are no longer guaranteed to be tight, such as after applying
+   * deletion vectors.
+   *
+   * @return A new DataFileStatistics with tightBounds set to false for all columns
+   */
+  public DataFileStatistics withoutTightBounds() {
+    Map<Column, Boolean> newTightBounds = new HashMap<>();
+    // Set all existing tightBounds keys to false
+    for (Column column : tightBounds.keySet()) {
+      newTightBounds.put(column, false);
+    }
+
+    // Also add false entries for any columns in min/max/nullCount that don't have tightBounds
+    Set<Column> allColumns = new HashSet<>();
+    allColumns.addAll(minValues.keySet());
+    allColumns.addAll(maxValues.keySet());
+    allColumns.addAll(nullCount.keySet());
+
+    for (Column column : allColumns) {
+      if (!newTightBounds.containsKey(column)) {
+        newTightBounds.put(column, false);
+      }
+    }
+
+    return new DataFileStatistics(
+        this.numRecords, this.minValues, this.maxValues, this.nullCount, newTightBounds);
+  }
+
   /**
    * Serializes the statistics as a JSON string.
    *

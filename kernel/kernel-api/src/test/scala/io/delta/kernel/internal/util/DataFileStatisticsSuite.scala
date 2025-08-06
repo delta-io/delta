@@ -946,4 +946,142 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
     assert(tightBounds.get(new Column(Array("nested", "field2"))) == true)
     assert(tightBounds.get(new Column("other")) == true)
   }
+
+  test("withoutTightBounds removes tight bounds from DataFileStatistics") {
+    val schema = new StructType()
+      .add("col1", IntegerType.INTEGER)
+      .add("col2", StringType.STRING)
+      .add(
+        "nested",
+        new StructType()
+          .add("field1", IntegerType.INTEGER)
+          .add("field2", StringType.STRING))
+
+    // stats with a mix of true and false tight bounds
+    val minValues = Map(
+      new Column("col1") -> Literal.ofInt(1),
+      new Column("col2") -> Literal.ofString("a"),
+      new Column(Array("nested", "field1")) -> Literal.ofInt(10),
+      new Column(Array("nested", "field2")) -> Literal.ofString("nested_a")).asJava
+
+    val maxValues = Map(
+      new Column("col1") -> Literal.ofInt(100),
+      new Column("col2") -> Literal.ofString("z"),
+      new Column(Array("nested", "field1")) -> Literal.ofInt(200),
+      new Column(Array("nested", "field2")) -> Literal.ofString("nested_z")).asJava
+
+    val nullCount = Map(
+      new Column("col1") -> 5L,
+      new Column("col2") -> 0L,
+      new Column(Array("nested", "field1")) -> 2L,
+      new Column(Array("nested", "field2")) -> 3L).map { case (k, v) =>
+      (k, java.lang.Long.valueOf(v))
+    }.asJava
+
+    val originalTightBounds = Map(
+      new Column("col1") -> true,
+      new Column("col2") -> false,
+      new Column(Array("nested", "field1")) -> true,
+      new Column(Array("nested", "field2")) -> false).map { case (k, v) =>
+      (k, java.lang.Boolean.valueOf(v))
+    }.asJava
+
+    val originalStats = new DataFileStatistics(
+      100L,
+      minValues,
+      maxValues,
+      nullCount,
+      originalTightBounds)
+
+    // Test that original stats have mixed tight bounds
+    assert(originalStats.getTightBounds.get(new Column("col1")) == true)
+    assert(originalStats.getTightBounds.get(new Column("col2")) == false)
+    assert(originalStats.getTightBounds.get(new Column(Array("nested", "field1"))) == true)
+    assert(originalStats.getTightBounds.get(new Column(Array("nested", "field2"))) == false)
+
+    // Apply withoutTightBounds
+    val statsWithoutTightBounds = originalStats.withoutTightBounds()
+
+    // Verify all other fields remain unchanged
+    assert(statsWithoutTightBounds.getNumRecords == originalStats.getNumRecords)
+    assert(statsWithoutTightBounds.getMinValues == originalStats.getMinValues)
+    assert(statsWithoutTightBounds.getMaxValues == originalStats.getMaxValues)
+    assert(statsWithoutTightBounds.getNullCount == originalStats.getNullCount)
+
+    // Verify tight bounds are now all false
+    assert(statsWithoutTightBounds.getTightBounds.get(new Column("col1")) == false)
+    assert(statsWithoutTightBounds.getTightBounds.get(new Column("col2")) == false)
+    assert(statsWithoutTightBounds.getTightBounds.get(new Column(Array(
+      "nested",
+      "field1"))) == false)
+    assert(statsWithoutTightBounds.getTightBounds.get(new Column(Array(
+      "nested",
+      "field2"))) == false)
+
+    // Verify serialization reflects the change
+    val jsonAfter = statsWithoutTightBounds.serializeAsJson(schema)
+    val expectedJsonWithFalseTightBounds =
+      """{
+        |  "numRecords": 100,
+        |  "minValues": {
+        |    "col1": 1,
+        |    "col2": "a",
+        |    "nested": {
+        |      "field1": 10,
+        |      "field2": "nested_a"
+        |    }
+        |  },
+        |  "maxValues": {
+        |    "col1": 100,
+        |    "col2": "z",
+        |    "nested": {
+        |      "field1": 200,
+        |      "field2": "nested_z"
+        |    }
+        |  },
+        |  "nullCount": {
+        |    "col1": 5,
+        |    "col2": 0,
+        |    "nested": {
+        |      "field1": 2,
+        |      "field2": 3
+        |    }
+        |  },
+        |  "tightBounds": {
+        |    "col1": false,
+        |    "col2": false,
+        |    "nested": {
+        |      "field1": false,
+        |      "field2": false
+        |    }
+        |  }
+        |}""".stripMargin
+
+    assert(areJsonNodesEqual(jsonAfter, expectedJsonWithFalseTightBounds))
+
+    // Test edge case: stats with already all false tight bounds
+    val allFalseTightBounds = Map(
+      new Column("col1") -> false,
+      new Column("col2") -> false).map { case (k, v) => (k, java.lang.Boolean.valueOf(v)) }.asJava
+
+    val statsAlreadyFalse = new DataFileStatistics(
+      50L,
+      Map(new Column("col1") -> Literal.ofInt(1)).asJava,
+      Map(new Column("col1") -> Literal.ofInt(10)).asJava,
+      Map(new Column("col1") -> java.lang.Long.valueOf(0L)).asJava,
+      allFalseTightBounds)
+
+    val resultAlreadyFalse = statsAlreadyFalse.withoutTightBounds()
+    assert(resultAlreadyFalse.getTightBounds.get(new Column("col1")) == false)
+
+    // Test edge case: stats with empty tight bounds
+    val emptyTightBoundsStats = new DataFileStatistics(
+      25L,
+      minValues,
+      maxValues,
+      nullCount)
+
+    val resultFromEmpty = emptyTightBoundsStats.withoutTightBounds()
+    assert(resultFromEmpty.getTightBounds.get(new Column("col1")) == false)
+  }
 }
