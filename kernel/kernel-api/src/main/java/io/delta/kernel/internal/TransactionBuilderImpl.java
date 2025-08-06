@@ -179,7 +179,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     }
     SnapshotImpl snapshot;
     try {
-      snapshot = (SnapshotImpl) table.getLatestSnapshot(engine);
+      snapshot = table.getLatestSnapshot(engine);
       if (operation == Operation.CREATE_TABLE) {
         throw new TableAlreadyExistsException(table.getPath(engine), "Operation = CREATE_TABLE");
       }

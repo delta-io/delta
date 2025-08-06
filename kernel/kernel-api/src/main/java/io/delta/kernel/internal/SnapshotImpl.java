@@ -18,6 +18,7 @@ package io.delta.kernel.internal;
 import static io.delta.kernel.internal.TableConfig.*;
 import static io.delta.kernel.internal.TableConfig.TOMBSTONE_RETENTION;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.ScanBuilder;
 import io.delta.kernel.Snapshot;
@@ -74,8 +75,8 @@ public class SnapshotImpl implements Snapshot {
     this.version = version;
     this.lazyLogSegment = lazyLogSegment;
     this.logReplay = logReplay;
-    this.protocol = protocol;
-    this.metadata = metadata;
+    this.protocol = requireNonNull(protocol);
+    this.metadata = requireNonNull(metadata);
     this.committer = committer;
     this.inCommitTimestampOpt = Optional.empty();
 

@@ -129,9 +129,9 @@ public class TransactionImpl implements Transaction {
     checkArgument(
         (newProtocol.isPresent() && newMetadata.isPresent()) || readSnapshotOpt.isPresent());
     // TODO: look into migrating entire class into just (newMetadata, newProtocol, readSnapshotOpt)
-    this.protocol = newProtocol.orElse(readSnapshotOpt.get().getProtocol());
+    this.protocol = newProtocol.orElseGet(() -> readSnapshotOpt.get().getProtocol());
     this.shouldUpdateProtocol = newProtocol.isPresent();
-    this.metadata = newMetadata.orElse(readSnapshotOpt.get().getMetadata());
+    this.metadata = newMetadata.orElseGet(() -> readSnapshotOpt.get().getMetadata());
     this.shouldUpdateMetadata = newMetadata.isPresent();
 
     this.isCreateOrReplace = isCreateOrReplace;

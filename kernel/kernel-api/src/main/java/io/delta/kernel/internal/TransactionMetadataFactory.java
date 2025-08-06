@@ -236,12 +236,12 @@ public class TransactionMetadataFactory {
 
   private Metadata getEffectiveMetadata() {
     // Fact: either newMetadata is defined upon initiation or latestSnapshotOpt is present
-    return newMetadata.orElse(latestSnapshotOpt.get().getMetadata());
+    return newMetadata.orElseGet(() -> latestSnapshotOpt.get().getMetadata());
   }
 
   private Protocol getEffectiveProtocol() {
     // Fact: either newProtocol is defined upon initiation or latestSnapshotOpt is present
-    return newProtocol.orElse(latestSnapshotOpt.get().getProtocol());
+    return newProtocol.orElseGet(() -> latestSnapshotOpt.get().getProtocol());
   }
 
   private void validateForUpdateTableUsingOldMetadata(Consumer<Metadata> validateFx) {
