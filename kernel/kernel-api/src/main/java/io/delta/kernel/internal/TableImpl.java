@@ -102,8 +102,7 @@ public class TableImpl implements Table {
     return loadSnapshotWithMetrics(
         engine,
         () -> snapshotManager.buildLatestSnapshot(engine, snapshotContext),
-        snapshotContext,
-        "AT LATEST");
+        snapshotContext);
   }
 
   @Override
@@ -114,8 +113,7 @@ public class TableImpl implements Table {
     return loadSnapshotWithMetrics(
         engine,
         () -> snapshotManager.getSnapshotAt(engine, versionId, snapshotContext),
-        snapshotContext,
-        String.format("AS OF VERSION %d", versionId));
+        snapshotContext);
   }
 
   @Override
@@ -123,21 +121,19 @@ public class TableImpl implements Table {
       throws TableNotFoundException {
     SnapshotQueryContext snapshotContext =
         SnapshotQueryContext.forTimestampSnapshot(tablePath, millisSinceEpochUTC);
-    SnapshotImpl latestSnapshot = (SnapshotImpl) getLatestSnapshot(engine);
+    SnapshotImpl latestSnapshot = getLatestSnapshot(engine);
     return loadSnapshotWithMetrics(
         engine,
         () ->
             snapshotManager.getSnapshotForTimestamp(
                 engine, latestSnapshot, millisSinceEpochUTC, snapshotContext),
-        snapshotContext,
-        String.format("AS OF TIMESTAMP %d", millisSinceEpochUTC));
+        snapshotContext);
   }
 
   @Override
   public void checkpoint(Engine engine, long version)
       throws TableNotFoundException, CheckpointAlreadyExistsException, IOException {
-    final SnapshotImpl snapshotToCheckpoint =
-        (SnapshotImpl) getSnapshotAsOfVersion(engine, version);
+    final SnapshotImpl snapshotToCheckpoint = getSnapshotAsOfVersion(engine, version);
     checkpointer.checkpoint(engine, clock, snapshotToCheckpoint);
   }
 
@@ -326,10 +322,7 @@ public class TableImpl implements Table {
 
   /** Helper method that loads a snapshot with proper metrics recording, logging, and reporting. */
   private SnapshotImpl loadSnapshotWithMetrics(
-      Engine engine,
-      Supplier<SnapshotImpl> loadSnapshot,
-      SnapshotQueryContext snapshotContext,
-      String queryString)
+      Engine engine, Supplier<SnapshotImpl> loadSnapshot, SnapshotQueryContext snapshotContext)
       throws TableNotFoundException {
     try {
       final SnapshotImpl snapshot =
@@ -340,7 +333,7 @@ public class TableImpl implements Table {
           tablePath,
           snapshotContext.getSnapshotMetrics().loadSnapshotTotalTimer.totalDurationMs(),
           snapshot.getVersion(),
-          queryString);
+          snapshotContext.getQueryDisplayStr());
 
       engine
           .getMetricsReporters()

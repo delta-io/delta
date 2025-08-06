@@ -26,7 +26,6 @@ import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.commit.DefaultFileSystemManagedTableOnlyCommitter;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
-import io.delta.kernel.internal.metrics.SnapshotMetrics;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
@@ -34,6 +33,8 @@ import io.delta.kernel.internal.snapshot.SnapshotManager;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.Optional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Factory class responsible for creating {@link Snapshot} instances.
@@ -48,33 +49,50 @@ import java.util.Optional;
  */
 class SnapshotFactory {
 
+  private static final Logger logger = LoggerFactory.getLogger(SnapshotFactory.class);
+
   private final SnapshotBuilderImpl.Context ctx;
-  private final String resolvedPath;
-  private final Path wrappedTablePath;
+  private final Path tablePath;
 
   SnapshotFactory(Engine engine, SnapshotBuilderImpl.Context ctx) {
     this.ctx = ctx;
-    this.resolvedPath = resolvePath(engine);
-    this.wrappedTablePath = new Path(resolvedPath);
+    this.tablePath = new Path(resolvePath(engine));
   }
 
   SnapshotImpl create(Engine engine) {
     final SnapshotQueryContext snapshotCtx = getSnapshotQueryContext();
 
     try {
-      return createImpl(engine, snapshotCtx);
+      final SnapshotImpl snapshot =
+          snapshotCtx
+              .getSnapshotMetrics()
+              .loadSnapshotTotalTimer
+              .time(() -> createSnapshot(engine, snapshotCtx));
+
+      logger.info(
+          "[{}] Took {}ms to load snapshot (version = {}) for snapshot query {}",
+          tablePath.toString(),
+          snapshotCtx.getSnapshotMetrics().loadSnapshotTotalTimer.totalDurationMs(),
+          snapshot.getVersion(),
+          snapshotCtx.getQueryDisplayStr());
+
+      engine
+          .getMetricsReporters()
+          .forEach(reporter -> reporter.report(snapshot.getSnapshotReport()));
+
+      return snapshot;
     } catch (Exception e) {
       snapshotCtx.recordSnapshotErrorReport(engine, e);
       throw e;
     }
   }
 
-  private SnapshotImpl createImpl(Engine engine, SnapshotQueryContext snapshotCtx) {
+  private SnapshotImpl createSnapshot(Engine engine, SnapshotQueryContext snapshotCtx) {
     final Lazy<LogSegment> lazyLogSegment = getLazyLogSegment(engine, snapshotCtx);
-    final LogReplay logReplay = getLogReplay(engine, lazyLogSegment);
+    final LogReplay logReplay = getLogReplay(engine, lazyLogSegment, snapshotCtx);
 
     return new SnapshotImpl(
-        wrappedTablePath,
+        tablePath,
         ctx.versionOpt.orElseGet(() -> lazyLogSegment.get().getVersion()),
         lazyLogSegment,
         logReplay,
@@ -86,9 +104,12 @@ class SnapshotFactory {
 
   private SnapshotQueryContext getSnapshotQueryContext() {
     if (ctx.versionOpt.isPresent()) {
-      return SnapshotQueryContext.forVersionSnapshot(resolvedPath, ctx.versionOpt.get());
+      return SnapshotQueryContext.forVersionSnapshot(tablePath.toString(), ctx.versionOpt.get());
     }
-    return SnapshotQueryContext.forLatestSnapshot(resolvedPath);
+
+    // TODO: if ctx.timestampOpt.isPresent() -> SnapshotQueryContext.forTimestampSnapshot
+
+    return SnapshotQueryContext.forLatestSnapshot(tablePath.toString());
   }
 
   private String resolvePath(Engine engine) {
@@ -105,16 +126,22 @@ class SnapshotFactory {
   private Lazy<LogSegment> getLazyLogSegment(Engine engine, SnapshotQueryContext snapshotCtx) {
     return new Lazy<>(
         () -> {
-          final LogSegment result =
-              new SnapshotManager(wrappedTablePath)
-                  .getLogSegmentForVersion(
-                      engine, getTargetVersionToLoad(engine, snapshotCtx), ctx.logDatas);
+          final LogSegment logSegment =
+              snapshotCtx
+                  .getSnapshotMetrics()
+                  .loadLogSegmentTotalDurationTimer
+                  .time(
+                      () ->
+                          new SnapshotManager(tablePath)
+                              .getLogSegmentForVersion(
+                                  engine,
+                                  getTargetVersionToLoad(engine, snapshotCtx),
+                                  ctx.logDatas));
 
-          if (!ctx.versionOpt.isPresent()) {
-            snapshotCtx.setVersion(result.getVersion());
-          }
+          snapshotCtx.setVersion(logSegment.getVersion());
+          snapshotCtx.setCheckpointVersion(logSegment.getCheckpointVersionOpt());
 
-          return result;
+          return logSegment;
         });
   }
 
@@ -123,14 +150,14 @@ class SnapshotFactory {
     return ctx.versionOpt;
   }
 
-  private LogReplay getLogReplay(Engine engine, Lazy<LogSegment> lazyLogSegment) {
+  private LogReplay getLogReplay(
+      Engine engine, Lazy<LogSegment> lazyLogSegment, SnapshotQueryContext snapshotCtx) {
     return new LogReplay(
-        wrappedTablePath,
+        tablePath,
         engine,
         lazyLogSegment,
         Optional.empty() /* snapshotHint */,
-        // TODO: Proper metrics
-        new SnapshotMetrics());
+        snapshotCtx.getSnapshotMetrics());
   }
 
   private Protocol getProtocol(LogReplay logReplay) {

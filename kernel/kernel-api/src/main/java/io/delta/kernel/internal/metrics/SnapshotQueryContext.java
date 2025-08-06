@@ -98,6 +98,16 @@ public class SnapshotQueryContext {
     return snapshotMetrics;
   }
 
+  public String getQueryDisplayStr() {
+    if (version.isPresent()) {
+      return "AS OF VERSION " + version.get();
+    } else if (providedTimestamp.isPresent()) {
+      return "AS OF TIMESTAMP " + providedTimestamp.get();
+    } else {
+      return "LATEST SNAPSHOT";
+    }
+  }
+
   /**
    * Updates the {@code version} stored in this snapshot context. This version should be updated
    * upon version resolution for non time-travel-by-version queries. For latest snapshot queries
