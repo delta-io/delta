@@ -540,6 +540,13 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_VACUUM_RETENTION_WINDOW_IGNORE_ENABLED =
+    buildConf("vacuum.retentionWindowIgnore.enabled")
+      .internal()
+      .doc("When set, retention window as part of Vacuum will be ignored unless the value is 0")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_HISTORY_MANAGER_THREAD_POOL_SIZE =
     buildConf("history.threadPoolSize")
       .internal()
