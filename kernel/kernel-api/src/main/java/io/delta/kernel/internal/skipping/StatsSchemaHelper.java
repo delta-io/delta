@@ -98,10 +98,7 @@ public class StatsSchemaHelper {
    * |  |  |-- a: struct (nullable = false)
    * |  |  |  |-- b: struct (nullable = false)
    * |  |  |  |  |-- c: long (nullable = true)
-   * |  |-- tightBounds: struct (nullable = false)
-   * |  |  |-- a: struct (nullable = false)
-   * |  |  |  |-- b: struct (nullable = false)
-   * |  |  |  |  |-- c: boolean (nullable = true)
+   * |  |-- tightBounds: boolean (nullable = false)
    * </pre>
    */
   public static StructType getStatsSchema(StructType dataSchema) {
@@ -117,10 +114,7 @@ public class StatsSchemaHelper {
       statsSchema = statsSchema.add(NULL_COUNT, nullCountSchema, true);
     }
 
-    StructType tightBoundsSchema = getTightBoundsSchema(dataSchema);
-    if (tightBoundsSchema.length() > 0) {
-      statsSchema = statsSchema.add(TIGHT_BOUNDS, tightBoundsSchema, true);
-    }
+    statsSchema = statsSchema.add(TIGHT_BOUNDS, BooleanType.BOOLEAN, true);
 
     return statsSchema;
   }
@@ -215,24 +209,6 @@ public class StatsSchemaHelper {
     return getStatsColumn(column, NULL_COUNT);
   }
 
-  /**
-   * Given a logical column in the data schema provided when creating {@code this}, return the
-   * corresponding TIGHT_BOUNDS column in the statistic schema that stores the tight bounds boolean
-   * value for the provided logical column.
-   *
-   * @param column the logical column name
-   * @return the tight bounds column in the statistics schema
-   */
-  public Column getTightBoundsColumn(Column column) {
-    checkArgument(
-        isSkippingEligibleMinMaxColumn(column),
-        "%s is not a valid tight bounds column for "
-            + "data schema %s (only skipping-eligible columns have tight bounds)",
-        column,
-        dataSchema);
-    return getStatsColumn(column, TIGHT_BOUNDS);
-  }
-
   /** Returns the NUM_RECORDS column in the statistic schema */
   public Column getNumRecordsColumn() {
     return new Column(NUM_RECORDS);
@@ -312,27 +288,6 @@ public class StatsSchemaHelper {
                 true));
       } else {
         fields.add(new StructField(getPhysicalName(field), LongType.LONG, true));
-      }
-    }
-    return new StructType(fields);
-  }
-
-  /**
-   * Given a data schema returns the expected schema for a tight bounds statistics column. This
-   * means: 1) replace logical names with physical names 2) set nullable=true 3) use BooleanType for
-   * all leaf fields 4) only include fields that have min/max statistics (skipping eligible types)
-   */
-  private static StructType getTightBoundsSchema(StructType dataSchema) {
-    List<StructField> fields = new ArrayList<>();
-    for (StructField field : dataSchema.fields()) {
-      if (isSkippingEligibleDataType(field.getDataType())) {
-        // Only skipping-eligible fields have tight bounds
-        fields.add(new StructField(getPhysicalName(field), BooleanType.BOOLEAN, true));
-      } else if (field.getDataType() instanceof StructType) {
-        StructType nestedSchema = getTightBoundsSchema((StructType) field.getDataType());
-        if (nestedSchema.length() > 0) {
-          fields.add(new StructField(getPhysicalName(field), nestedSchema, true));
-        }
       }
     }
     return new StructType(fields);
