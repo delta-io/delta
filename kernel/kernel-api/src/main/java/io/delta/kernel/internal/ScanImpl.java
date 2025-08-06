@@ -268,7 +268,7 @@ public class ScanImpl implements Scan {
     if (protocol.getReaderFeatures().contains("deletionVectors")
         && physicalFields.stream()
             .map(StructField::getMetadataColumnType)
-            .noneMatch(type -> type.equals(MetadataColumnType.ROW_INDEX))) {
+            .noneMatch(MetadataColumnType.ROW_INDEX::equals)) {
       // If the row index column is not already present, add it to the physical read schema
       physicalFields.add(
           createInternalColumn(
