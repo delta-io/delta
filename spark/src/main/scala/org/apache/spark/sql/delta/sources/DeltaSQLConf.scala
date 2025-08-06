@@ -586,6 +586,13 @@ trait DeltaSQLConfBase {
       .checkValue(_ > 0, "parallelDelete.parallelism must be positive")
       .createOptional
 
+  val ENFORCE_DELETED_FILE_AND_LOG_RETENTION_DURATION_COMPATIBILITY =
+    buildConf("vacuum.enforceDeletedFileAndLogRetentionDurationCompatibility")
+      .internal()
+      .doc("Throws an error if log retention duration is less than deletedFileRetentionDuration")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_SCHEMA_AUTO_MIGRATE =
     buildConf("schema.autoMerge.enabled")
       .doc("If true, enables schema merging on appends and on overwrites.")
