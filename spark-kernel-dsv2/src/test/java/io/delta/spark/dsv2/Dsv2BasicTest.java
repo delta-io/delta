@@ -33,7 +33,7 @@ public class Dsv2BasicTest {
   private String nameSpace;
 
   @BeforeAll
-  void setUp(@TempDir File tempDir) {
+  public void setUp(@TempDir File tempDir) {
     // Spark doesn't allow '-'
     nameSpace = "ns_" + UUID.randomUUID().toString().replace('-', '_');
     SparkConf conf =
@@ -46,14 +46,14 @@ public class Dsv2BasicTest {
   }
 
   @AfterAll
-  void tearDown() {
+  public void tearDown() {
     if (spark != null) {
       spark.stop();
     }
   }
 
   @Test
-  void testCreateTable() {
+  public void testCreateTable() {
     spark.sql(
         String.format(
             "CREATE TABLE dsv2.%s.create_table_test (id INT, name STRING, value DOUBLE)",
@@ -71,7 +71,7 @@ public class Dsv2BasicTest {
   }
 
   @Test
-  void testQueryTable() {
+  public void testQueryTable() {
     spark.sql(
         String.format(
             "CREATE TABLE dsv2.%s.query_test (id INT, name STRING, value DOUBLE)", nameSpace));
@@ -84,7 +84,7 @@ public class Dsv2BasicTest {
   }
 
   @Test
-  void testQueryTableNotExist() {
+  public void testQueryTableNotExist() {
     AnalysisException e =
         assertThrows(
             AnalysisException.class,
