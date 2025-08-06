@@ -15,27 +15,26 @@
  */
 package io.delta.spark.dsv2;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.*;
 
 import java.io.File;
+import java.util.Arrays;
+import java.util.List;
+import java.util.UUID;
 import org.apache.spark.SparkConf;
-import org.apache.spark.sql.AnalysisException;
-import org.apache.spark.sql.Dataset;
-import org.apache.spark.sql.Row;
-import org.apache.spark.sql.SparkSession;
-import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Test;
+import org.apache.spark.sql.*;
+import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.io.TempDir;
 
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public class Dsv2BasicTest {
 
-  private static SparkSession spark;
+  private SparkSession spark;
+  private String nameSpace;
 
   @BeforeAll
-  public static void setUp(@TempDir File tempDir) {
+  void setUp(@TempDir File tempDir) {
+    nameSpace = "ns_" + UUID.randomUUID().toString().replace('-', '_');
     SparkConf conf =
         new SparkConf()
             .set("spark.sql.catalog.dsv2", "io.delta.spark.dsv2.catalog.TestCatalog")
@@ -46,51 +45,61 @@ public class Dsv2BasicTest {
   }
 
   @AfterAll
-  public static void tearDown() {
+  void tearDown() {
     if (spark != null) {
       spark.stop();
-      spark = null;
     }
   }
 
   @Test
-  public void testCreateTable() {
+  void testCreateTable() {
     spark.sql(
-        "CREATE TABLE dsv2.test_namespace.create_table_test (id INT, name STRING, value DOUBLE)");
+        "CREATE TABLE dsv2."
+            + nameSpace
+            + ".create_table_test (id INT, name STRING, value DOUBLE)");
 
-    Dataset<Row> actualTableInfo =
-        spark.sql("DESCRIBE TABLE dsv2.test_namespace.create_table_test");
+    Dataset<Row> actual = spark.sql("DESCRIBE TABLE dsv2." + nameSpace + ".create_table_test");
 
-    java.util.List<Row> expectedRows =
-        java.util.Arrays.asList(
-            org.apache.spark.sql.RowFactory.create("id", "int", null),
-            org.apache.spark.sql.RowFactory.create("name", "string", null),
-            org.apache.spark.sql.RowFactory.create("value", "double", null));
-    assertDatasetEquals(
-        actualTableInfo, spark.createDataFrame(expectedRows, actualTableInfo.schema()));
+    List<Row> expectedRows =
+        Arrays.asList(
+            RowFactory.create("id", "int", null),
+            RowFactory.create("name", "string", null),
+            RowFactory.create("value", "double", null));
+    assertDatasetEquals(actual, expectedRows);
   }
 
   @Test
-  public void testQueryTable() {
-    spark.sql("CREATE TABLE dsv2.test_namespace.query_test (id INT, name STRING, value DOUBLE)");
-    AnalysisException exception =
+  void testQueryTable() {
+    spark.sql("CREATE TABLE dsv2." + nameSpace + ".query_test (id INT, name STRING, value DOUBLE)");
+    AnalysisException e =
         assertThrows(
             AnalysisException.class,
-            () -> spark.sql("select * from dsv2.test_namespace.query_test"));
-    assertTrue(exception.getMessage().contains("does not support batch scan"));
+            () -> spark.sql("SELECT * FROM dsv2." + nameSpace + ".query_test"));
+    // TODO: update when implementing SupportReads
+    assertTrue(e.getMessage().contains("does not support batch scan"));
   }
 
   @Test
-  public void testQueryTableNotExist() {
-    AnalysisException exception =
+  void testQueryTableNotExist() {
+    AnalysisException e =
         assertThrows(
             AnalysisException.class,
-            () -> spark.sql("select * from dsv2.test_namespace.not_found_test"));
-    assertTrue(exception.getMessage().contains("TABLE_OR_VIEW_NOT_FOUND"));
+            () -> spark.sql("SELECT * FROM dsv2." + nameSpace + ".not_found_test"));
+    assertEquals(
+        "TABLE_OR_VIEW_NOT_FOUND",
+        e.getErrorClass(),
+        "Missing table should raise TABLE_OR_VIEW_NOT_FOUND");
   }
 
-  private void assertDatasetEquals(Dataset<Row> actual, Dataset<Row> expected) {
-    assertEquals(expected.count(), actual.count());
-    assertTrue(expected.except(actual).collectAsList().isEmpty());
+  //////////////////////
+  // Private helpers //
+  /////////////////////
+  private void assertDatasetEquals(Dataset<Row> actual, List<Row> expectedRows) {
+    List<Row> actualRows = actual.collectAsList();
+    ;
+    assertEquals(
+        expectedRows,
+        actualRows,
+        () -> "Datasets differ: expected=" + expectedRows + "\nactual=" + actualRows);
   }
 }
