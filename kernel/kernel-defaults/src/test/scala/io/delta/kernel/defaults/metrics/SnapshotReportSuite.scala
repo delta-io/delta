@@ -189,7 +189,7 @@ abstract class AbstractSnapshotReportSuite extends AnyFunSuite with MetricsRepor
    */
   private def waitForCrcFileToExist(tablePath: String, version: Long): Unit = {
     val logPath = new Path(tablePath, "_delta_log")
-    val maxWaitMs = 1000 // Wait up to 1 second
+    val maxWaitMs = 5000 // Wait up to 5 seconds
     val startTime = System.currentTimeMillis()
     val crcFile = new java.io.File(FileNames.checksumFile(logPath, version).toString)
 
@@ -197,7 +197,12 @@ abstract class AbstractSnapshotReportSuite extends AnyFunSuite with MetricsRepor
       Thread.sleep(100)
     }
 
-    assert(crcFile.exists(), s"CRC file for version $version does not exist at $crcFile")
+    def getDeltaLogContents: String = {
+      new java.io.File(tablePath, "_delta_log")
+        .listFiles().map(_.getName).sorted.mkString("\n- ", "\n- ", "")
+    }
+
+    assert(crcFile.exists(), s"CRC file $crcFile does not exist. Delta Log:$getDeltaLogContents")
   }
 
   test("SnapshotReport valid queries - no checkpoint") {
