@@ -54,13 +54,14 @@ public class DataFileStatistics {
   private final Map<Column, Literal> minValues;
   private final Map<Column, Literal> maxValues;
   private final Map<Column, Long> nullCount;
+  private final Map<Column, Boolean> tightBounds;
 
   /**
-   * Create a new instance of {@link DataFileStatistics}. The minValues, maxValues, and nullCount
-   * are all required fields. This class is primarily used to serialize stats to JSON with type
-   * checking when constructing file actions and NOT used during data skipping. As such the column
-   * names in minValues, maxValues and nullCount should be that of the physical data schema that's
-   * reflected in the parquet files and NOT logical schema.
+   * Create a new instance of {@link DataFileStatistics}. The minValues, maxValues, nullCount and
+   * tightBounds are all required fields. This class is primarily used to serialize stats to JSON
+   * with type checking when constructing file actions and NOT used during data skipping. As such
+   * the column names in minValues, maxValues and nullCount should be that of the physical data
+   * schema that's reflected in the parquet files and NOT logical schema.
    *
    * @param numRecords Number of records in the data file.
    * @param minValues Map of column to minimum value of it in the data file. If the data file has
@@ -68,20 +69,42 @@ public class DataFileStatistics {
    * @param maxValues Map of column to maximum value of it in the data file. If the data file has
    *     all nulls for the column, the value will be null or not present in the map.
    * @param nullCount Map of column to number of nulls in the data file.
+   * @param tightBounds Map of column to boolean indicating if min/max bounds are tight (accurate).
+   */
+  public DataFileStatistics(
+      long numRecords,
+      Map<Column, Literal> minValues,
+      Map<Column, Literal> maxValues,
+      Map<Column, Long> nullCount,
+      Map<Column, Boolean> tightBounds) {
+    Objects.requireNonNull(minValues, "minValues must not be null to serialize stats.");
+    Objects.requireNonNull(maxValues, "maxValues must not be null to serialize stats.");
+    Objects.requireNonNull(nullCount, "nullCount must not be null to serialize stats.");
+    Objects.requireNonNull(tightBounds, "tightBounds must not be null to serialize stats.");
+
+    this.numRecords = numRecords;
+    this.minValues = Collections.unmodifiableMap(minValues);
+    this.maxValues = Collections.unmodifiableMap(maxValues);
+    this.nullCount = Collections.unmodifiableMap(nullCount);
+    this.tightBounds = Collections.unmodifiableMap(tightBounds);
+    ;
+  }
+
+  /**
+   * Create a new instance of {@link DataFileStatistics} without tight bounds. This constructor is
+   * for backward compatibility. Tight bounds will be empty.
+   *
+   * @param numRecords Number of records in the data file.
+   * @param minValues Map of column to minimum value of it in the data file.
+   * @param maxValues Map of column to maximum value of it in the data file.
+   * @param nullCount Map of column to number of nulls in the data file.
    */
   public DataFileStatistics(
       long numRecords,
       Map<Column, Literal> minValues,
       Map<Column, Literal> maxValues,
       Map<Column, Long> nullCount) {
-    Objects.requireNonNull(minValues, "minValues must not be null to serialize stats.");
-    Objects.requireNonNull(maxValues, "maxValues must not be null to serialize stats.");
-    Objects.requireNonNull(nullCount, "nullCount must not be null to serialize stats.");
-
-    this.numRecords = numRecords;
-    this.minValues = Collections.unmodifiableMap(minValues);
-    this.maxValues = Collections.unmodifiableMap(maxValues);
-    this.nullCount = Collections.unmodifiableMap(nullCount);
+    this(numRecords, minValues, maxValues, nullCount, Collections.emptyMap());
   }
 
   /**
@@ -101,7 +124,7 @@ public class DataFileStatistics {
       throw new KernelException(String.format("Failed to parse JSON string: %s", json), e);
     }
 
-    JsonNode numRecordsNode = root.get("numRecords");
+    JsonNode numRecordsNode = root.get(StatsSchemaHelper.NUM_RECORDS);
     if (numRecordsNode == null || !numRecordsNode.isNumber()) {
       return Optional.empty();
     }
@@ -109,7 +132,11 @@ public class DataFileStatistics {
     long numRecords = numRecordsNode.asLong();
     return Optional.of(
         new DataFileStatistics(
-            numRecords, Collections.emptyMap(), Collections.emptyMap(), Collections.emptyMap()));
+            numRecords,
+            Collections.emptyMap(),
+            Collections.emptyMap(),
+            Collections.emptyMap(),
+            Collections.emptyMap()));
   }
 
   /**
@@ -160,7 +187,15 @@ public class DataFileStatistics {
       parseNullCounts(nullCountNode, nullCount, new Column(new String[0]), physicalSchema);
     }
 
-    return Optional.of(new DataFileStatistics(numRecords, minValues, maxValues, nullCount));
+    // Parse tightBounds
+    Map<Column, Boolean> tightBounds = new HashMap<>();
+    JsonNode tightBoundsNode = root.get(StatsSchemaHelper.TIGHT_BOUNDS);
+    if (tightBoundsNode != null && tightBoundsNode.isObject() && physicalSchema != null) {
+      parseTightBounds(tightBoundsNode, tightBounds, new Column(new String[0]), physicalSchema);
+    }
+
+    return Optional.of(
+        new DataFileStatistics(numRecords, minValues, maxValues, nullCount, tightBounds));
   }
 
   /**
@@ -202,6 +237,16 @@ public class DataFileStatistics {
     return nullCount;
   }
 
+  /**
+   * Get the tight bounds information for columns in the data file. Tight bounds indicate whether
+   * the min/max values for each column are guaranteed to be accurate bounds for the data.
+   *
+   * @return An unmodifiable map of column to tight bounds boolean value. Returns an empty map if no
+   *     tight bounds information is available.
+   */
+  public Map<Column, Boolean> getTightBounds() {
+    return tightBounds;
+  }
   /**
    * Serializes the statistics as a JSON string.
    *
@@ -268,6 +313,15 @@ public class DataFileStatistics {
                 new Column(new String[0]),
                 (g, v) -> g.writeNumber(v));
             gen.writeEndObject();
+
+            gen.writeObjectFieldStart(StatsSchemaHelper.TIGHT_BOUNDS);
+            writeJsonValues(
+                gen,
+                physicalSchema,
+                tightBounds,
+                new Column(new String[0]),
+                (g, v) -> g.writeBoolean(v));
+            gen.writeEndObject();
           }
 
           gen.writeEndObject();
@@ -286,7 +340,8 @@ public class DataFileStatistics {
     return numRecords == that.numRecords
         && Objects.equals(minValues, that.minValues)
         && Objects.equals(maxValues, that.maxValues)
-        && Objects.equals(nullCount, that.nullCount);
+        && Objects.equals(nullCount, that.nullCount)
+        && Objects.equals(tightBounds, that.tightBounds);
   }
 
   @Override
@@ -295,14 +350,16 @@ public class DataFileStatistics {
     result = 31 * result + Objects.hash(minValues.keySet());
     result = 31 * result + Objects.hash(maxValues.keySet());
     result = 31 * result + Objects.hash(nullCount.keySet());
+    result = 31 * result + Objects.hash(tightBounds.keySet());
     return result;
   }
 
   @Override
   public String toString() {
     return String.format(
-        "DataFileStatistics(numRecords=%s, minValues=%s, maxValues=%s, nullCount=%s)",
-        numRecords, minValues, maxValues, nullCount);
+        "DataFileStatistics(numRecords=%s, minValues=%s, maxValues=%s," +
+                "nullCount=%s, tightBounds=%s)",
+        numRecords, minValues, maxValues, nullCount, tightBounds);
   }
 
   /////////////////////////////////////////////////////////////////////////////////
@@ -697,6 +754,71 @@ public class DataFileStatistics {
           String.format(
               "Failed to parse value '%s' as %s", valueNode.toString(), dataType.toString()),
           e);
+    }
+  }
+
+  /**
+   * Helper method to recursively parse nested JSON tight bounds values back into Column->Boolean
+   * maps using the schema for type information. Tight bounds indicate whether the min/max values
+   * are guaranteed to be accurate bounds. A value of true means the bounds are tight (accurate),
+   * false means they may not be accurate (e.g., due to deletions that haven't been compacted yet).
+   *
+   * <p>Example JSON structure being parsed:
+   *
+   * <pre>
+   * {
+   *   "simpleColumn": true,
+   *   "nestedColumn": {
+   *     "field1": false,
+   *     "field2": {
+   *       "subfield": true
+   *     }
+   *   }
+   * }
+   * </pre>
+   *
+   * <p>This would create Column entries:
+   *
+   * <ul>
+   *   <li>Column(["simpleColumn"]) → true
+   *   <li>Column(["nestedColumn", "field1"]) → false
+   *   <li>Column(["nestedColumn", "field2", "subfield"]) → true
+   * </ul>
+   *
+   * @param node The JSON node to parse
+   * @param resultMap The map to populate with Column->Boolean mappings
+   * @param currentColumn The current column path being built
+   * @param schema The schema for the current level
+   */
+  private static void parseTightBounds(
+      JsonNode node, Map<Column, Boolean> resultMap, Column currentColumn, StructType schema) {
+    if (node == null || !node.isObject() || schema == null) {
+      return;
+    }
+
+    for (StructField field : schema.fields()) {
+      String fieldName = field.getName();
+      JsonNode valueNode = node.get(fieldName);
+
+      if (valueNode == null) {
+        // Field not present in JSON, skip
+        continue;
+      }
+
+      Column newColumn = currentColumn.appendNestedField(fieldName);
+      DataType fieldType = field.getDataType();
+
+      if (fieldType instanceof StructType) {
+        // This is a nested structure, recurse deeper
+        if (valueNode.isObject()) {
+          parseTightBounds(valueNode, resultMap, newColumn, (StructType) fieldType);
+        }
+      } else {
+        // This is a leaf value - parse as boolean for tight bounds
+        if (valueNode.isBoolean()) {
+          resultMap.put(newColumn, valueNode.asBoolean());
+        }
+      }
     }
   }
 }
