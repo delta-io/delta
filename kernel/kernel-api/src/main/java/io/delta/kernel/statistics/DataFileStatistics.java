@@ -50,7 +50,7 @@ public class DataFileStatistics {
   private final Map<Column, Literal> minValues;
   private final Map<Column, Literal> maxValues;
   private final Map<Column, Long> nullCount;
-  private final Map<Column, Boolean> tightBounds;
+  private final boolean tightBounds;
 
   /**
    * Create a new instance of {@link DataFileStatistics}. The minValues, maxValues, nullCount and
@@ -65,24 +65,23 @@ public class DataFileStatistics {
    * @param maxValues Map of column to maximum value of it in the data file. If the data file has
    *     all nulls for the column, the value will be null or not present in the map.
    * @param nullCount Map of column to number of nulls in the data file.
-   * @param tightBounds Map of column to boolean indicating if min/max bounds are tight (accurate).
+   * @param tightBounds boolean indicating if bounds are tight (accurate).
    */
   public DataFileStatistics(
       long numRecords,
       Map<Column, Literal> minValues,
       Map<Column, Literal> maxValues,
       Map<Column, Long> nullCount,
-      Map<Column, Boolean> tightBounds) {
+      boolean tightBounds) {
     Objects.requireNonNull(minValues, "minValues must not be null to serialize stats.");
     Objects.requireNonNull(maxValues, "maxValues must not be null to serialize stats.");
     Objects.requireNonNull(nullCount, "nullCount must not be null to serialize stats.");
-    Objects.requireNonNull(tightBounds, "tightBounds must not be null to serialize stats.");
 
     this.numRecords = numRecords;
     this.minValues = Collections.unmodifiableMap(minValues);
     this.maxValues = Collections.unmodifiableMap(maxValues);
     this.nullCount = Collections.unmodifiableMap(nullCount);
-    this.tightBounds = Collections.unmodifiableMap(tightBounds);
+    this.tightBounds = tightBounds;
     ;
   }
 
@@ -100,7 +99,12 @@ public class DataFileStatistics {
       Map<Column, Literal> minValues,
       Map<Column, Literal> maxValues,
       Map<Column, Long> nullCount) {
-    this(numRecords, minValues, maxValues, nullCount, Collections.emptyMap());
+    this(
+        numRecords,
+        minValues,
+        maxValues,
+        nullCount,
+        true); // Delta defaults to true when tightBounds is unspecified.
   }
 
   /**
@@ -128,11 +132,7 @@ public class DataFileStatistics {
     long numRecords = numRecordsNode.asLong();
     return Optional.of(
         new DataFileStatistics(
-            numRecords,
-            Collections.emptyMap(),
-            Collections.emptyMap(),
-            Collections.emptyMap(),
-            Collections.emptyMap()));
+            numRecords, Collections.emptyMap(), Collections.emptyMap(), Collections.emptyMap()));
   }
 
   /**
@@ -186,10 +186,10 @@ public class DataFileStatistics {
     }
 
     // Parse tightBounds
-    Map<Column, Boolean> tightBounds = new HashMap<>();
+    boolean tightBounds = true; // default value
     JsonNode tightBoundsNode = root.get(StatsSchemaHelper.TIGHT_BOUNDS);
-    if (tightBoundsNode != null && tightBoundsNode.isObject()) {
-      parseTightBounds(tightBoundsNode, tightBounds, new Column(new String[0]), physicalSchema);
+    if (tightBoundsNode != null && tightBoundsNode.isBoolean()) {
+      tightBounds = tightBoundsNode.asBoolean();
     }
 
     return Optional.of(
@@ -236,44 +236,25 @@ public class DataFileStatistics {
   }
 
   /**
-   * Get the tight bounds information for columns in the data file. Tight bounds indicate whether
-   * the min/max values for each column are guaranteed to be accurate bounds for the data.
+   * Get the tight bounds information for the data file. Tight bounds indicate whether the values
+   * are guaranteed to be accurate bounds for the data.
    *
-   * @return An unmodifiable map of column to tight bounds boolean value. Returns an empty map if no
-   *     tight bounds information is available.
+   * @return The tight bounds boolean value.
    */
-  public Map<Column, Boolean> getTightBounds() {
+  public boolean getTightBounds() {
     return tightBounds;
   }
 
   /**
-   * Returns a new DataFileStatistics instance with all tightBounds set to false. This is useful
-   * when the statistics bounds are no longer guaranteed to be tight, such as after applying
-   * deletion vectors.
+   * Returns a new DataFileStatistics instance with tightBounds set to false. This is useful when
+   * the statistics bounds are no longer guaranteed to be tight, such as after applying deletion
+   * vectors.
    *
-   * @return A new DataFileStatistics with tightBounds set to false for all columns
+   * @return A new DataFileStatistics with tightBounds set to false
    */
   public DataFileStatistics withoutTightBounds() {
-    Map<Column, Boolean> newTightBounds = new HashMap<>();
-    // Set all existing tightBounds keys to false
-    for (Column column : tightBounds.keySet()) {
-      newTightBounds.put(column, false);
-    }
-
-    // Also add false entries for any columns in min/max/nullCount that don't have tightBounds
-    Set<Column> allColumns = new HashSet<>();
-    allColumns.addAll(minValues.keySet());
-    allColumns.addAll(maxValues.keySet());
-    allColumns.addAll(nullCount.keySet());
-
-    for (Column column : allColumns) {
-      if (!newTightBounds.containsKey(column)) {
-        newTightBounds.put(column, false);
-      }
-    }
-
     return new DataFileStatistics(
-        this.numRecords, this.minValues, this.maxValues, this.nullCount, newTightBounds);
+        this.numRecords, this.minValues, this.maxValues, this.nullCount, false);
   }
 
   /**
@@ -343,14 +324,7 @@ public class DataFileStatistics {
                 (g, v) -> g.writeNumber(v));
             gen.writeEndObject();
 
-            gen.writeObjectFieldStart(StatsSchemaHelper.TIGHT_BOUNDS);
-            writeJsonValues(
-                gen,
-                physicalSchema,
-                tightBounds,
-                new Column(new String[0]),
-                (g, v) -> g.writeBoolean(v));
-            gen.writeEndObject();
+            gen.writeBooleanField(StatsSchemaHelper.TIGHT_BOUNDS, tightBounds);
           }
 
           gen.writeEndObject();
@@ -370,7 +344,7 @@ public class DataFileStatistics {
         && Objects.equals(minValues, that.minValues)
         && Objects.equals(maxValues, that.maxValues)
         && Objects.equals(nullCount, that.nullCount)
-        && Objects.equals(tightBounds, that.tightBounds);
+        && tightBounds == that.tightBounds;
   }
 
   @Override
@@ -379,7 +353,7 @@ public class DataFileStatistics {
     result = 31 * result + Objects.hash(minValues.keySet());
     result = 31 * result + Objects.hash(maxValues.keySet());
     result = 31 * result + Objects.hash(nullCount.keySet());
-    result = 31 * result + Objects.hash(tightBounds.keySet());
+    result = 31 * result + Boolean.hashCode(tightBounds);
     return result;
   }
 
@@ -783,71 +757,6 @@ public class DataFileStatistics {
           String.format(
               "Failed to parse value '%s' as %s", valueNode.toString(), dataType.toString()),
           e);
-    }
-  }
-
-  /**
-   * Helper method to recursively parse nested JSON tight bounds values back into Column->Boolean
-   * maps using the schema for type information. Tight bounds indicate whether the min/max values
-   * are guaranteed to be accurate bounds. A value of true means the bounds are tight (accurate),
-   * false means they may not be accurate (e.g., due to deletions that haven't been compacted yet).
-   *
-   * <p>Example JSON structure being parsed:
-   *
-   * <pre>
-   * {
-   *   "simpleColumn": true,
-   *   "nestedColumn": {
-   *     "field1": false,
-   *     "field2": {
-   *       "subfield": true
-   *     }
-   *   }
-   * }
-   * </pre>
-   *
-   * <p>This would create Column entries:
-   *
-   * <ul>
-   *   <li>Column(["simpleColumn"]) → true
-   *   <li>Column(["nestedColumn", "field1"]) → false
-   *   <li>Column(["nestedColumn", "field2", "subfield"]) → true
-   * </ul>
-   *
-   * @param node The JSON node to parse
-   * @param resultMap The map to populate with Column->Boolean mappings
-   * @param currentColumn The current column path being built
-   * @param schema The schema for the current level
-   */
-  private static void parseTightBounds(
-      JsonNode node, Map<Column, Boolean> resultMap, Column currentColumn, StructType schema) {
-    if (node == null || !node.isObject() || schema == null) {
-      return;
-    }
-
-    for (StructField field : schema.fields()) {
-      String fieldName = field.getName();
-      JsonNode valueNode = node.get(fieldName);
-
-      if (valueNode == null) {
-        // Field not present in JSON, skip
-        continue;
-      }
-
-      Column newColumn = currentColumn.appendNestedField(fieldName);
-      DataType fieldType = field.getDataType();
-
-      if (fieldType instanceof StructType) {
-        // This is a nested structure, recurse deeper
-        if (valueNode.isObject()) {
-          parseTightBounds(valueNode, resultMap, newColumn, (StructType) fieldType);
-        }
-      } else {
-        // This is a leaf value - parse as boolean for tight bounds
-        if (valueNode.isBoolean()) {
-          resultMap.put(newColumn, valueNode.asBoolean());
-        }
-      }
     }
   }
 }

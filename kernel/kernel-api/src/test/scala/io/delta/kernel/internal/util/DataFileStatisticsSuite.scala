@@ -110,23 +110,7 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
       new Column(Array("NestedStruct", "aa")) -> 1L,
       new Column(Array("NestedStruct", "ac", "aca")) -> 1L)
 
-    val tightBounds = Map(
-      new Column("ByteType") -> true,
-      new Column("ShortType") -> true,
-      new Column("IntegerType") -> false,
-      new Column("LongType") -> true,
-      new Column("FloatType") -> false,
-      new Column("DoubleType") -> true,
-      new Column("DecimalType") -> true,
-      new Column("StringType") -> false,
-      new Column("DateType") -> true,
-      new Column("TimestampType") -> false,
-      new Column("TimestampNTZType") -> true,
-      new Column("BinaryType") -> false,
-      new Column(Array("NestedStruct", "aa")) -> true,
-      new Column(Array("NestedStruct", "ac", "aca")) -> false).map { case (k, v) =>
-      (k, java.lang.Boolean.valueOf(v))
-    }.asJava
+    val tightBounds = false
 
     val stats = new DataFileStatistics(
       100,
@@ -198,26 +182,7 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
         |      }
         |    }
         |},
-        |"tightBounds": {
-        |  "ByteType": true,
-        |  "ShortType": true,
-        |  "IntegerType": false,
-        |  "LongType": true,
-        |  "FloatType": false,
-        |  "DoubleType": true,
-        |  "DecimalType": true,
-        |  "StringType": false,
-        |  "DateType": true,
-        |  "TimestampType": false,
-        |  "TimestampNTZType": true,
-        |  "BinaryType": false,
-        |  "NestedStruct": {
-        |    "aa": true,
-        |    "ac": {
-        |      "aca": false
-        |    }
-        |  }
-        |}
+        |"tightBounds": false
         |}""".stripMargin
 
     val json = stats.serializeAsJson(schema)
@@ -257,7 +222,7 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
         |    "DoubleType": "NaN"
         |  },
         |  "nullCount": {},
-        |  "tightBounds": {}
+        |  "tightBounds": true
         |}""".stripMargin
 
     assert(areJsonNodesEqual(json, expectedJson))
@@ -294,13 +259,7 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
       (k, java.lang.Long.valueOf(v))
     }.asJava
 
-    val tightBounds = Map(
-      new Column("col1") -> true,
-      new Column("col2") -> false,
-      new Column(Array("nested", "nestedCol1")) -> true,
-      new Column(Array("nested", "nestedCol2")) -> false).map { case (k, v) =>
-      (k, java.lang.Boolean.valueOf(v))
-    }.asJava
+    val tightBounds = true
 
     val stats = new DataFileStatistics(
       100,
@@ -333,14 +292,7 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
         |      "nestedCol1": 2
         |    }
         |  },
-        |"tightBounds": {
-        |   "col1": true,
-        |    "col2": false,
-        |    "nested": {
-        |      "nestedCol1": true,
-        |      "nestedCol2": false
-        |    }
-        |  }
+        |"tightBounds": true
         |}""".stripMargin
 
     val json = stats.serializeAsJson(schema)
@@ -363,7 +315,7 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
         |  "minValues": {"nested": {}},
         |  "maxValues": {"nested": {}},
         |  "nullCount": {"nested": {}},
-        |  "tightBounds": {"nested": {}}
+        |  "tightBounds": true
         |}""".stripMargin
     val json = stats.serializeAsJson(schema)
     assert(areJsonNodesEqual(json, expectedJson))
@@ -380,7 +332,6 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
       75L,
       minValues,
       Collections.emptyMap(),
-      Collections.emptyMap(),
       Collections.emptyMap())
     val expectedJson =
       """{
@@ -392,7 +343,7 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
         |  },
         |  "maxValues": {"nested":{}},
         |  "nullCount": {"nested":{}},
-        |  "tightBounds": {"nested":{}}
+        |  "tightBounds": true
         |}""".stripMargin
     val json = stats.serializeAsJson(schema)
     assert(areJsonNodesEqual(json, expectedJson))
@@ -572,21 +523,7 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
         |    "DecimalType": 0,
         |    "BooleanType": 5
         |  },
-        |  "tightBounds": {
-        |  "ByteType": true,
-        |  "ShortType": false,
-        |  "IntegerType": true,
-        |  "LongType": false,
-        |  "FloatType": true,
-        |  "DoubleType": false,
-        |  "DecimalType": true,
-        |  "StringType": false,
-        |  "DateType": true,
-        |  "TimestampType": false,
-        |  "TimestampNTZType": true,
-        |  "BinaryType": false,
-        |  "BooleanType": true
-        |}
+        |  "tightBounds": true
         |}""".stripMargin
 
     val result = DataFileStatistics.deserializeFromJson(json, schema)
@@ -613,11 +550,7 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
     assert(nullCount.get(new Column("DecimalType")) == 0L)
 
     val tightBounds = stats.getTightBounds
-    assert(tightBounds.get(new Column("ByteType")) == true)
-    assert(tightBounds.get(new Column("ShortType")) == false)
-    assert(tightBounds.get(new Column("IntegerType")) == true)
-    assert(tightBounds.get(new Column("StringType")) == false)
-    assert(tightBounds.get(new Column("BooleanType")) == true)
+    assert(tightBounds)
   }
 
   test("deserializeFromJson handles nested structures correctly") {
@@ -672,18 +605,7 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
         |      }
         |    }
         |  },
-        |  "tightBounds": {
-        |   "simple": true,
-        |   "nested": {
-        |     "field1": false,
-        |     "deep": {
-        |       "field2": true,
-        |       "deeper": {
-        |         "field3": false
-        |       }
-        |     }
-        |   }
-        | }
+        |  "tightBounds": true
         |}""".stripMargin
 
     val result = DataFileStatistics.deserializeFromJson(json, schema)
@@ -713,10 +635,8 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
 
     // Test tight bounds for nested columns
     val tightBounds = stats.getTightBounds
-    assert(tightBounds.get(new Column("simple")) == true)
-    assert(tightBounds.get(new Column(Array("nested", "field1"))) == false)
-    assert(tightBounds.get(new Column(Array("nested", "deep", "field2"))) == true)
-    assert(tightBounds.get(new Column(Array("nested", "deep", "deeper", "field3"))) == false)
+    assert(tightBounds)
+
   }
 
   test("round-trip serialization and deserialization consistency") {
@@ -751,14 +671,7 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
       (k, java.lang.Long.valueOf(v))
     }.asJava
 
-    val tightBounds = Map(
-      new Column("IntegerType") -> true,
-      new Column("StringType") -> false,
-      new Column("DoubleType") -> true,
-      new Column(Array("NestedStruct", "aa")) -> false,
-      new Column(Array("NestedStruct", "ac", "aca")) -> true).map { case (k, v) =>
-      (k, java.lang.Boolean.valueOf(v))
-    }.asJava
+    val tightBounds = false
 
     val originalStats = new DataFileStatistics(123L, minValues, maxValues, nullCount, tightBounds)
 
@@ -783,16 +696,8 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
       "aca"))).getValue == 50)
     assert(deserializedStats.getNullCount.get(new Column("StringType")) == 0L)
 
-    assert(deserializedStats.getTightBounds.size() == originalStats.getTightBounds.size())
+    assert(deserializedStats.getTightBounds == originalStats.getTightBounds)
 
-    // Verify specific tight bounds values match
-    assert(deserializedStats.getTightBounds.get(new Column("IntegerType")) == true)
-    assert(deserializedStats.getTightBounds.get(new Column("StringType")) == false)
-    assert(deserializedStats.getTightBounds.get(new Column(Array("NestedStruct", "aa"))) == false)
-    assert(deserializedStats.getTightBounds.get(new Column(Array(
-      "NestedStruct",
-      "ac",
-      "aca"))) == true)
   }
 
   test("deserializeFromJson handles NaN and Infinity correctly") {
@@ -815,10 +720,7 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
         |    "FloatType": 1,
         |    "DoubleType": 2
         |  },
-        |  "tightBounds": {
-        |   "FloatType": true,
-        |   "DoubleType": false
-        | }
+        |  "tightBounds": true
         |}""".stripMargin
 
     val result = DataFileStatistics.deserializeFromJson(json, schema)
@@ -843,8 +745,7 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
     assert(nullCount.get(new Column("DoubleType")) == 2L)
 
     val tightBounds = stats.getTightBounds
-    assert(tightBounds.get(new Column("FloatType")) == true)
-    assert(tightBounds.get(new Column("DoubleType")) == false)
+    assert(tightBounds == true)
   }
 
   test("deserializeFromJson handles empty stats correctly") {
@@ -867,7 +768,7 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
     assert(stats.getMinValues.isEmpty)
     assert(stats.getMaxValues.isEmpty)
     assert(stats.getNullCount.isEmpty)
-    assert(stats.getTightBounds.isEmpty)
+    assert(stats.getTightBounds)
   }
 
   test("deserializeFromJson handles partial nested objects correctly") {
@@ -903,13 +804,7 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
         |      "field2": 5
         |    }
         |  },
-        |"tightBounds": {
-        |  "simple": false,
-        |  "nested": {
-        |    "field2": true
-        |  },
-        |  "other": true
-        |}
+        |"tightBounds": true
         |}""".stripMargin
 
     val result = DataFileStatistics.deserializeFromJson(json, schema)
@@ -939,12 +834,8 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
 
     // tightBounds has simple + nested.field2 + other
     val tightBounds = stats.getTightBounds
-    assert(tightBounds.get(new Column("simple")) == false)
-    assert(tightBounds.get(new Column(Array(
-      "nested",
-      "field1"))) == null) // not present in tightBounds
-    assert(tightBounds.get(new Column(Array("nested", "field2"))) == true)
-    assert(tightBounds.get(new Column("other")) == true)
+    assert(tightBounds)
+
   }
 
   test("withoutTightBounds removes tight bounds from DataFileStatistics") {
@@ -978,13 +869,7 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
       (k, java.lang.Long.valueOf(v))
     }.asJava
 
-    val originalTightBounds = Map(
-      new Column("col1") -> true,
-      new Column("col2") -> false,
-      new Column(Array("nested", "field1")) -> true,
-      new Column(Array("nested", "field2")) -> false).map { case (k, v) =>
-      (k, java.lang.Boolean.valueOf(v))
-    }.asJava
+    val originalTightBounds = true
 
     val originalStats = new DataFileStatistics(
       100L,
@@ -993,12 +878,8 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
       nullCount,
       originalTightBounds)
 
-    // Test that original stats have mixed tight bounds
-    assert(originalStats.getTightBounds.get(new Column("col1")) == true)
-    assert(originalStats.getTightBounds.get(new Column("col2")) == false)
-    assert(originalStats.getTightBounds.get(new Column(Array("nested", "field1"))) == true)
-    assert(originalStats.getTightBounds.get(new Column(Array("nested", "field2"))) == false)
-
+    // Test that original stats has tight bounds
+    assert(originalStats.getTightBounds)
     // Apply withoutTightBounds
     val statsWithoutTightBounds = originalStats.withoutTightBounds()
 
@@ -1008,15 +889,8 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
     assert(statsWithoutTightBounds.getMaxValues == originalStats.getMaxValues)
     assert(statsWithoutTightBounds.getNullCount == originalStats.getNullCount)
 
-    // Verify tight bounds are now all false
-    assert(statsWithoutTightBounds.getTightBounds.get(new Column("col1")) == false)
-    assert(statsWithoutTightBounds.getTightBounds.get(new Column("col2")) == false)
-    assert(statsWithoutTightBounds.getTightBounds.get(new Column(Array(
-      "nested",
-      "field1"))) == false)
-    assert(statsWithoutTightBounds.getTightBounds.get(new Column(Array(
-      "nested",
-      "field2"))) == false)
+    // Verify tight bounds is now false
+    assert(!statsWithoutTightBounds.getTightBounds)
 
     // Verify serialization reflects the change
     val jsonAfter = statsWithoutTightBounds.serializeAsJson(schema)
@@ -1047,32 +921,22 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
         |      "field2": 3
         |    }
         |  },
-        |  "tightBounds": {
-        |    "col1": false,
-        |    "col2": false,
-        |    "nested": {
-        |      "field1": false,
-        |      "field2": false
-        |    }
-        |  }
+        |  "tightBounds": false
         |}""".stripMargin
 
     assert(areJsonNodesEqual(jsonAfter, expectedJsonWithFalseTightBounds))
 
-    // Test edge case: stats with already all false tight bounds
-    val allFalseTightBounds = Map(
-      new Column("col1") -> false,
-      new Column("col2") -> false).map { case (k, v) => (k, java.lang.Boolean.valueOf(v)) }.asJava
+    // Test edge case: stats with already false tight bounds
 
     val statsAlreadyFalse = new DataFileStatistics(
       50L,
       Map(new Column("col1") -> Literal.ofInt(1)).asJava,
       Map(new Column("col1") -> Literal.ofInt(10)).asJava,
       Map(new Column("col1") -> java.lang.Long.valueOf(0L)).asJava,
-      allFalseTightBounds)
+      false)
 
     val resultAlreadyFalse = statsAlreadyFalse.withoutTightBounds()
-    assert(resultAlreadyFalse.getTightBounds.get(new Column("col1")) == false)
+    assert(!resultAlreadyFalse.getTightBounds)
 
     // Test edge case: stats with empty tight bounds
     val emptyTightBoundsStats = new DataFileStatistics(
@@ -1082,6 +946,6 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
       nullCount)
 
     val resultFromEmpty = emptyTightBoundsStats.withoutTightBounds()
-    assert(resultFromEmpty.getTightBounds.get(new Column("col1")) == false)
+    assert(!resultFromEmpty.getTightBounds)
   }
 }
