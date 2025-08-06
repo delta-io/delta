@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta
 
+import java.time.LocalDate
+
 import org.apache.spark.sql.delta.util.AnalysisHelper
 import org.apache.hadoop.fs.Path
 
@@ -80,8 +82,7 @@ class CloneTableScalaSuite extends CloneTableSuiteBase
     val sourceTbl = io.delta.tables.DeltaTable.forPath(source)
     assert(spark.read.format("delta").load(source).count() === 15)
 
-    val desiredTime = "1996-01-12"
-
+    val desiredTime = LocalDate.now().minusDays(5).toString // Date as of 5 days old
     val format = new java.text.SimpleDateFormat("yyyy-MM-dd")
     val time = format.parse(desiredTime).getTime
 

@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 import java.io.File
 
+import scala.concurrent.duration._
 import scala.language.postfixOps
 
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
@@ -537,10 +538,15 @@ class DeltaRetentionSuite extends QueryTest
       val logPath = new File(log.logPath.toUri)
       val minChksCount = if (chkConfigName == "Multipart") { 2 } else { 1 }
 
+      // Set the deletedFileRetentionDuration to a large value so that older versions
+      // can be accessed
+      val largeRetentionHours = 2 * System.currentTimeMillis().millis.toHours
+
       // commit 0
       spark.sql(
-        s"""CREATE TABLE $tableReference (id Int) USING delta
-           | TBLPROPERTIES('delta.enableChangeDataFeed' = true)
+        s"""CREATE TABLE $tableReference (id Int) USING delta TBLPROPERTIES(
+           | 'delta.enableChangeDataFeed' = true,
+           | 'delta.deletedFileRetentionDuration' = 'interval $largeRetentionHours HOURS')
         """.stripMargin)
       // Set time for commit 0 to ensure that the commits don't need timestamp adjustment.
       val commit0Time = clock.getTimeMillis()

@@ -16,6 +16,11 @@
 
 package io.delta.sharing.spark
 
+
+// scalastyle:off import.ordering.noEmptyLine
+
+import scala.concurrent.duration._
+
 import org.apache.spark.sql.delta.DeltaExcludedBySparkVersionTestMixinShims
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -862,10 +867,15 @@ trait DeltaSharingDataSourceDeltaSuiteBase
   test("DeltaSharingDataSource able to read data for simple cdf query") {
     withTempDir { tempDir =>
       val deltaTableName = "delta_table_cdf"
+      // Set the deletedFileRetentionDuration to a large value so that older versions
+      // can be accessed
+      val largeRetentionHours = 2 * System.currentTimeMillis().millis.toHours
       withTable(deltaTableName) {
         sql(s"""
                |CREATE TABLE $deltaTableName (c1 INT, c2 STRING) USING DELTA PARTITIONED BY (c2)
-               |TBLPROPERTIES (delta.enableChangeDataFeed = true)
+               |TBLPROPERTIES (delta.enableChangeDataFeed = true,
+               | 'delta.deletedFileRetentionDuration' =
+               | '$largeRetentionHours hours')
                |""".stripMargin)
         // 2 inserts in version 1, 1 with c1=2
         sql(s"""INSERT INTO $deltaTableName VALUES (1, "one"), (2, "two")""")
@@ -1142,12 +1152,18 @@ trait DeltaSharingDataSourceDeltaSuiteBase
   test("DeltaSharingDataSource able to read cdf with special chars") {
     withTempDir { tempDir =>
       val deltaTableName = "delta_table_cdf_special"
+      // Set the deletedFileRetentionDuration to a large value so that older versions
+      // can be accessed
+      val largeRetentionHours = 2 * System.currentTimeMillis().millis.toHours
       withTable(deltaTableName) {
         // scalastyle:off nonascii
         sql(s"""CREATE TABLE $deltaTableName (`第一列` INT, c2 STRING)
                |USING DELTA PARTITIONED BY (c2)
-               |TBLPROPERTIES (delta.enableChangeDataFeed = true)
-               |""".stripMargin)
+               |TBLPROPERTIES(
+               |delta.enableChangeDataFeed = true,
+               |'delta.deletedFileRetentionDuration' =
+               |'$largeRetentionHours hours'
+               |)""".stripMargin)
         // The table operations take about 20~30 seconds.
         for (i <- 0 to 9) {
           val iteration = s"iteration $i"

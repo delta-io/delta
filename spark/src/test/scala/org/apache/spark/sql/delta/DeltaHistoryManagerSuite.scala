@@ -242,7 +242,7 @@ trait DeltaTimeTravelTests extends QueryTest
     // scalastyle:off line.size.limit
     val tblName = "delta_table"
     withTable(tblName) {
-      val start = 1540415658000L
+      val start = System.currentTimeMillis() - 5.days.toMillis
       generateCommits(tblName, start, start + 20.minutes, start + 40.minutes)
 
       verifyLogging(2L, 0L, "timestamp", "sql") {
@@ -272,7 +272,7 @@ trait DeltaTimeTravelTests extends QueryTest
   test("as of timestamp on exact timestamp") {
     val tblName = "delta_table"
     withTable(tblName) {
-      val start = 1540415658000L
+      val start = System.currentTimeMillis() - 5.days.toMillis
       generateCommits(tblName, start, start + 20.minutes)
 
       // Simulate getting the timestamp directly from Spark SQL
@@ -306,7 +306,7 @@ trait DeltaTimeTravelTests extends QueryTest
     val tblName = s"delta_table"
     withTempDir { dir =>
       withTable(tblName, dir.toString) {
-        val start = 1540415658000L
+        val start = System.currentTimeMillis() - 5.days.toMillis
         generateCommitsAtPath(tblName, dir.toString, start, start + 20.minutes, start + 40.minutes)
         verifyLogging(2L, 0L, "version", "sql") {
           checkAnswer(
@@ -417,7 +417,7 @@ trait DeltaTimeTravelTests extends QueryTest
     }
     val tblName = "delta_table"
     withTable(tblName) {
-      val start = 1540415658000L
+      val start = System.currentTimeMillis() - 5.days.toMillis
       generateCommits(tblName, start, start - 5.seconds, start + 3.minutes)
 
       checkAnswer(
@@ -469,7 +469,7 @@ trait DeltaTimeTravelTests extends QueryTest
   test("data skipping still works with time travel") {
     val tblName = "delta_table"
     withTable(tblName) {
-      val start = 1540415658000L
+      val start = System.currentTimeMillis() - 5.days.toMillis
       generateCommits(tblName, start, start + 20.minutes)
 
       def testScan(df: DataFrame): Unit = {
@@ -580,7 +580,7 @@ abstract class DeltaHistoryManagerBase extends DeltaTimeTravelTests
     quietly {
       val tblName = "delta_table"
       withTable(tblName) {
-        val start = 1540415658000L
+        val start = System.currentTimeMillis() - 5.days.toMillis
         generateCommits(tblName, start, start + 20.minutes)
         sql(s"optimize $tblName")
 
@@ -604,7 +604,7 @@ abstract class DeltaHistoryManagerBase extends DeltaTimeTravelTests
   test("as of with table API") {
     val tblName = "delta_table"
     withTable(tblName) {
-      val start = 1540415658000L
+      val start = System.currentTimeMillis() - 5.days.toMillis
       generateCommits(tblName, start, start + 20.minutes, start + 40.minutes)
 
       assert(spark.read.format("delta").option("versionAsOf", "0").table(tblName).count() == 10)

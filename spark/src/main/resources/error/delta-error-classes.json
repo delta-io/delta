@@ -3030,6 +3030,12 @@
     ],
     "sqlState" : "0AKDC"
   },
+  "DELTA_UNSUPPORTED_TIME_TRAVEL_BEYOND_DELETED_FILE_RETENTION_DURATION" : {
+    "message" : [
+      "Cannot time travel beyond delta.deletedFileRetentionDuration (<deletedFileRetention> HOURS) set on the table."
+    ],
+    "sqlState" : "0AKDC"
+  },
   "DELTA_UNSUPPORTED_TIME_TRAVEL_MULTIPLE_FORMATS" : {
     "message" : [
       "Cannot specify time travel in multiple formats."

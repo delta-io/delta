@@ -98,12 +98,14 @@ class DeltaTimeTravelSuite extends QueryTest
       // backfilled them. This leads to the failure in certain UT where we manually modify/overwrite
       // the commit timestamps.
       // To correctly update the deltas in [[LogSegment]], we construct a fresh delta log.
+      DeltaLog.clearCache()
       deltaLog = DeltaLog.forTable(spark, dataPath = location)
       val filePath = DeltaCommitFileProvider
         .apply(snapshot = deltaLog.unsafeVolatileSnapshot)
         .deltaFile(version = startVersion)
       if (isICTEnabledForNewTablesCatalogOwned) {
         InCommitTimestampTestUtils.overwriteICTInDeltaFile(deltaLog, filePath, Some(ts))
+        InCommitTimestampTestUtils.overwriteICTInCrc(deltaLog, startVersion, Some(ts))
       } else {
         val file = new File(filePath.toUri)
         file.setLastModified(ts)
@@ -487,7 +489,7 @@ class DeltaTimeTravelSuite extends QueryTest
   test("as of timestamp in between commits should use commit before timestamp") {
     withTempDir { dir =>
       val tblLoc = dir.getCanonicalPath
-      val start = 1540415658000L
+      val start = System.currentTimeMillis() - 5.days.toMillis
       generateCommits(tblLoc, start, start + 20.minutes, start + 40.minutes)
 
       val tablePathUri = identifierWithTimestamp(tblLoc, start + 10.minutes)
@@ -496,8 +498,9 @@ class DeltaTimeTravelSuite extends QueryTest
       checkAnswer(df1.groupBy().count(), Row(10L))
 
       // 2 minutes after start
-      val df2 = spark.read.format("delta").option("timestampAsOf", "2018-10-24 14:16:18")
-        .load(tblLoc)
+      val timeTwoMinutesAfterStart = new Timestamp(start + 2.minutes)
+      val df2 = spark.read.format("delta")
+        .option("timestampAsOf", timeTwoMinutesAfterStart.toString).load(tblLoc)
 
       checkAnswer(df2.groupBy().count(), Row(10L))
     }
@@ -506,7 +509,7 @@ class DeltaTimeTravelSuite extends QueryTest
   test("as of timestamp on exact timestamp") {
     withTempDir { dir =>
       val tblLoc = dir.getCanonicalPath
-      val start = 1540415658000L
+      val start = System.currentTimeMillis() - 5.days.toMillis
       generateCommits(tblLoc, start, start + 20.minutes)
 
       // Simulate getting the timestamp directly from Spark SQL
@@ -598,7 +601,7 @@ class DeltaTimeTravelSuite extends QueryTest
   test("as of with versions") {
     withTempDir { dir =>
       val tblLoc = dir.getCanonicalPath
-      val start = 1540415658000L
+      val start = System.currentTimeMillis() - 5.days.toMillis
       generateCommits(tblLoc, start, start + 20.minutes, start + 40.minutes)
 
       val df = spark.read.format("delta").load(identifierWithVersion(tblLoc, 0))
@@ -650,7 +653,7 @@ class DeltaTimeTravelSuite extends QueryTest
     }
     withTempDir { dir =>
       val tblLoc = dir.getCanonicalPath
-      val start = 1540415658000L
+      val start = System.currentTimeMillis() - 5.days.toMillis
       generateCommits(tblLoc, start, start - 5.seconds, start + 3.minutes)
 
       val ts = getSparkFormattedTimestamps(
@@ -805,7 +808,7 @@ class DeltaTimeTravelSuite extends QueryTest
   test("time travel support in SQL") {
     withTempDir { dir =>
       val tblLoc = dir.getCanonicalPath
-      val start = 1540415658000L
+      val start = System.currentTimeMillis() - 5.days.toMillis
       generateCommits(tblLoc, start, start + 20.minutes)
       val tableName = "testTable"
 
@@ -826,16 +829,20 @@ class DeltaTimeTravelSuite extends QueryTest
         assert(ex.getMessage contains
           "Cannot time travel Delta table to version 2. Available versions: [0, 1]")
 
+        val timeAtVersion0 = new Timestamp(start).toString
+        val timeAtVersion1 = new Timestamp(start + 20.minutes).toString
+        val timeAfterVersion2 = new Timestamp(start + 6.hours).toString
+
         checkAnswer(
-          spark.sql(s"SELECT * from $tableName FOR TIMESTAMP AS OF '2018-10-24 14:14:18'"),
+          spark.sql(s"SELECT * from $tableName FOR TIMESTAMP AS OF '$timeAtVersion0'"),
           spark.read.option("versionAsOf", 0).format("delta").load(tblLoc))
 
         checkAnswer(
-          spark.sql(s"SELECT * from $tableName TIMESTAMP AS OF '2018-10-24 14:34:18'"),
+          spark.sql(s"SELECT * from $tableName TIMESTAMP AS OF '$timeAtVersion1'"),
           spark.read.option("versionAsOf", 1).format("delta").load(tblLoc))
 
         val ex2 = intercept[DeltaErrors.TemporallyUnstableInputException] {
-          spark.sql(s"SELECT * from $tableName FOR TIMESTAMP AS OF '2018-10-24 20:14:18'")
+          spark.sql(s"SELECT * from $tableName FOR TIMESTAMP AS OF '$timeAfterVersion2'")
         }
 
         checkError(
@@ -843,9 +850,9 @@ class DeltaTimeTravelSuite extends QueryTest
           "DELTA_TIMESTAMP_GREATER_THAN_COMMIT",
           sqlState = "42816",
           parameters = Map(
-            "providedTimestamp" -> "2018-10-24 20:14:18.0",
-            "tableName" -> "2018-10-24 14:34:18.0",
-            "maximumTimestamp" -> "2018-10-24 14:34:18")
+            "providedTimestamp" -> s"$timeAfterVersion2",
+            "tableName" -> s"$timeAtVersion1",
+            "maximumTimestamp" -> s"${timeAtVersion1.replaceFirst("\\.\\d+$", "")}") // exclude ms
         )
       }
     }
@@ -890,6 +897,133 @@ class DeltaTimeTravelSuite extends QueryTest
         .table(s"spark_catalog.default.$tblName"), Seq.empty)
       checkAnswer(spark.read.option("timestampAsOf", current_time_seconds)
         .table(s"spark_catalog.default.$tblName"), Seq.empty)
+    }
+  }
+
+  // Helper to generate a unique test table, commits, and timestamps for time travel blocking tests
+  def withTestTable(testBody: (String, String, String) => Unit): Unit = {
+    withTempDir { dir =>
+      val tblLoc = dir.getCanonicalPath
+      val tableName = "testTable"
+      withTable(tableName) {
+        // create six versions spaced 1 day apart
+        val start = System.currentTimeMillis() - 10.days.toMillis
+        generateCommits(
+          tblLoc,
+          start, // v0
+          start + 0.5.days, // v1
+          start + 1.days, // v2
+          start + 2.days, // v3
+          start + 2.5.days, // v4
+          start + 4.days, // v5
+          start + 5.days  // v6
+        )
+        // timestamps for v4 and v6
+        val t4 = new Timestamp(start + 2.5.days.toMillis).toString
+        val t6 = new Timestamp(start + 5.days.toMillis).toString
+
+        spark.sql(s"CREATE TABLE $tableName(id LONG) USING delta LOCATION '$tblLoc'")
+        spark.sql(s"ALTER TABLE $tableName" +
+          s" SET TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')")
+
+        testBody(tableName, t4, t6)
+      }
+    }
+  }
+
+  // Helper to assert whether a given SQL should or should not throw the retention exception
+  def assertBlocked(sql: String, shouldThrow: Boolean): Unit = {
+    val msg = "Cannot time travel beyond delta.deletedFileRetentionDuration"
+    if (shouldThrow) {
+      val ex = intercept[Exception]( spark.sql(sql) )
+      assert(ex.getMessage.contains(msg))
+    } else {
+      spark.sql(sql)  // must succeed
+    }
+  }
+
+  // 1) SELECT ... AS OF
+  test("Block time travel beyond deletedFileRetention") {
+    withTestTable { (tbl, t4, t6) =>
+      Seq(
+        s"SELECT * FROM $tbl VERSION AS OF 2" -> true,
+        s"SELECT * FROM $tbl TIMESTAMP AS OF '$t4'" -> true,
+        s"SELECT * FROM $tbl VERSION AS OF 5" -> false,
+        s"SELECT * FROM $tbl TIMESTAMP AS OF '$t6'" -> false
+      ).foreach { case (sql, fail) => assertBlocked(sql, fail) }
+
+      spark.sql(s"ALTER TABLE $tbl " +
+        s"SET TBLPROPERTIES ('delta.deletedFileRetentionDuration' = 'interval 0 HOURS')")
+      // Even after lowering retention to zero, a simple select * should still work
+      // which references the latest version
+      assertBlocked(s"SELECT * FROM $tbl", false)
+      // After setting it to zero, any time travel will fail
+      Seq(
+        s"SELECT * FROM $tbl VERSION AS OF 5" -> true,
+        s"SELECT * FROM $tbl TIMESTAMP AS OF '$t6'" -> true
+      ).foreach { case (sql, fail) => assertBlocked(sql, fail) }
+    }
+  }
+
+  // 2) SELECT ... CHANGES AS OF
+  test("Block CDC beyond deletedFileRetention") {
+    withTestTable { (tbl, t4, t6) =>
+      Seq(
+        s"SELECT * FROM table_changes('$tbl', 2)" -> true,
+        s"SELECT * FROM table_changes('$tbl', '$t4')" -> true,
+        s"SELECT * FROM table_changes('$tbl', 5)" -> false,
+        s"SELECT * FROM table_changes('$tbl', '$t6')" -> false
+      ).foreach { case (sql, fail) => assertBlocked(sql, fail) }
+
+      spark.sql(s"ALTER TABLE $tbl " +
+        s"SET TBLPROPERTIES ('delta.deletedFileRetentionDuration' = 'interval 0 HOURS')")
+      // After setting it to zero, any previous version will fail
+      Seq(
+        s"SELECT * FROM table_changes('$tbl', 5)" -> true,
+        s"SELECT * FROM table_changes('$tbl', '$t6')" -> true
+      ).foreach { case (sql, fail) => assertBlocked(sql, fail) }
+    }
+  }
+
+  // 3) RESTORE ... AS OF
+  test("Block restore table beyond deletedFileRetention") {
+    withTestTable { (tbl, t4, t6) =>
+      Seq(
+        s"RESTORE TABLE $tbl TO VERSION AS OF 2" -> true,
+        s"RESTORE TABLE $tbl TO TIMESTAMP AS OF '$t4'" -> true,
+        s"RESTORE TABLE $tbl TO VERSION AS OF 5" -> false,
+        s"RESTORE TABLE $tbl TO TIMESTAMP AS OF '$t6'" -> false
+      ).foreach { case (sql, fail) => assertBlocked(sql, fail) }
+
+      spark.sql(s"ALTER TABLE $tbl" +
+        s" SET TBLPROPERTIES ('delta.deletedFileRetentionDuration' = 'interval 0 HOURS')")
+      // After setting it to zero, any previous version will fail
+      Seq(
+        s"RESTORE TABLE $tbl TO VERSION AS OF 5" -> true,
+        s"RESTORE TABLE $tbl TO TIMESTAMP AS OF '$t6'" -> true
+      ).foreach { case (sql, fail) => assertBlocked(sql, fail) }
+    }
+  }
+
+  // 4) CLONE ... AS OF
+  test("Block clone table beyond deletedFileRetention") {
+    withTestTable { (tbl, t4, t6) =>
+      val targets = Seq("targetTable1", "targetTable2", "targetTable3")
+
+      Seq(
+        s"CREATE TABLE ${targets(0)} SHALLOW CLONE $tbl VERSION AS OF 2" -> true,
+        s"CREATE TABLE ${targets(0)} SHALLOW CLONE $tbl TIMESTAMP AS OF '$t4'" -> true,
+        s"CREATE TABLE ${targets(0)} SHALLOW CLONE $tbl VERSION AS OF 5" -> false,
+        s"CREATE TABLE ${targets(1)} SHALLOW CLONE $tbl TIMESTAMP AS OF '$t6'" -> false
+      ).foreach { case (sql, fail) => assertBlocked(sql, fail) }
+
+      spark.sql(s"ALTER TABLE $tbl" +
+        s" SET TBLPROPERTIES ('delta.deletedFileRetentionDuration' = 'interval 0 HOURS')")
+      // After setting it to zero, any previous version will fail
+      Seq(
+        s"CREATE TABLE ${targets(0)} SHALLOW CLONE $tbl VERSION AS OF 5" -> true,
+        s"CREATE TABLE ${targets(0)} SHALLOW CLONE $tbl TIMESTAMP AS OF '$t6'" -> true
+      ).foreach { case (sql, fail) => assertBlocked(sql, fail) }
     }
   }
 }

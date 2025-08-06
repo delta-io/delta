@@ -18,6 +18,8 @@ package org.apache.spark.sql.delta.sharing
 
 import java.io.File
 
+import scala.concurrent.duration._
+
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.conf.Configuration
@@ -84,10 +86,15 @@ trait DeltaSharingTestSparkUtils extends DeltaSQLTestUtils {
   }
 
   protected def createSimpleTable(tableName: String, enableCdf: Boolean): Unit = {
+    // Set the deletedFileRetentionDuration to a large value so that older versions
+    // can be accessed
+    val largeRetentionHours = 2 * System.currentTimeMillis().millis.toHours
     val tablePropertiesStr = if (enableCdf) {
-      """TBLPROPERTIES (
+      s"""TBLPROPERTIES (
         |delta.minReaderVersion=1,
         |delta.minWriterVersion=4,
+        |'delta.deletedFileRetentionDuration' =
+        |'$largeRetentionHours hours',
         |delta.enableChangeDataFeed = true)""".stripMargin
     } else {
       ""
@@ -99,14 +106,26 @@ trait DeltaSharingTestSparkUtils extends DeltaSQLTestUtils {
   }
 
   protected def createCMIdTableWithCdf(tableName: String): Unit = {
+    // Set the deletedFileRetentionDuration to a large value so that older versions
+    // can be accessed
+    val largeRetentionHours = 2 * System.currentTimeMillis().millis.toHours
     sql(s"""CREATE TABLE $tableName (c1 INT, c2 STRING) USING DELTA PARTITIONED BY (c2)
-           |TBLPROPERTIES ('delta.columnMapping.mode' = 'id', delta.enableChangeDataFeed = true)
+           |TBLPROPERTIES ('delta.columnMapping.mode' = 'id',
+           | 'delta.deletedFileRetentionDuration' =
+           | '$largeRetentionHours hours',
+           |  delta.enableChangeDataFeed = true)
            |""".stripMargin)
   }
 
   protected def createDVTableWithCdf(tableName: String): Unit = {
+    // Set the deletedFileRetentionDuration to a large value so that older versions
+    // can be accessed
+    val largeRetentionHours = 2 * System.currentTimeMillis().millis.toHours
     sql(s"""CREATE TABLE $tableName (c1 INT, partition INT) USING DELTA PARTITIONED BY (partition)
-           |TBLPROPERTIES (delta.enableDeletionVectors = true, delta.enableChangeDataFeed = true)
+           |TBLPROPERTIES (delta.enableDeletionVectors = true,
+           | 'delta.deletedFileRetentionDuration' =
+           | '$largeRetentionHours hours',
+           |  delta.enableChangeDataFeed = true)
            |""".stripMargin)
   }
 

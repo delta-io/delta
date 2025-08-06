@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta
 
 import java.io.File
+import java.time.LocalDate
 
 import org.apache.spark.sql.delta.actions.{AddFile, FileAction, Metadata, Protocol, RemoveFile, SetTransaction, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION
@@ -394,7 +395,7 @@ trait CloneTableSuiteBase extends QueryTest
     assert(spark.read.format("delta").load(source).count() === 15)
 
     // Get time corresponding to date
-    val desiredTime = "1996-01-12"
+    val desiredTime = LocalDate.now().minusDays(5).toString // Date as of 5 days old
     val format = new java.text.SimpleDateFormat("yyyy-MM-dd")
     val time = format.parse(desiredTime).getTime
 

@@ -16,6 +16,10 @@
 
 package org.apache.spark.sql.delta
 
+import java.sql.Date
+
+import scala.concurrent.duration._
+
 // scalastyle:off import.ordering.noEmptyLine
 import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
@@ -121,14 +125,14 @@ class RestoreTableScalaDeletionVectorSuite
               restoreTableToVersion(path, args.versionToRestore, isTable = false)
             } else {
               // Set a custom timestamp for the commit
-              val desiredDateS = "1996-01-12"
+              val desiredDateS = new Date(System.currentTimeMillis() - 3.days.toMillis).toString
               setTimestampToCommitFileAtVersion(
                 deltaLog,
                 version = args.versionToRestore,
                 date = desiredDateS)
               // Set all previous versions to something lower, so we don't error out.
               for (version <- 0 until args.versionToRestore) {
-                val previousDateS = "1996-01-11"
+                val previousDateS = new Date(System.currentTimeMillis() - 5.days.toMillis).toString
                 setTimestampToCommitFileAtVersion(
                   deltaLog,
                   version = version,
