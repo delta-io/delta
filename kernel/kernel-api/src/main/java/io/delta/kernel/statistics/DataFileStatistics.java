@@ -153,7 +153,8 @@ public class DataFileStatistics {
   public static Optional<DataFileStatistics> deserializeFromJson(
       String json, StructType physicalSchema) {
     JsonNode root;
-    Objects.requireNonNull(physicalSchema, "physicalSchema must not be null for full deserialization");
+    Objects.requireNonNull(
+        physicalSchema, "physicalSchema must not be null for full deserialization");
     try {
       root = JsonUtils.mapper().readTree(json);
     } catch (IOException e) {
@@ -358,8 +359,8 @@ public class DataFileStatistics {
   @Override
   public String toString() {
     return String.format(
-        "DataFileStatistics(numRecords=%s, minValues=%s, maxValues=%s," +
-                "nullCount=%s, tightBounds=%s)",
+        "DataFileStatistics(numRecords=%s, minValues=%s, maxValues=%s,"
+            + "nullCount=%s, tightBounds=%s)",
         numRecords, minValues, maxValues, nullCount, tightBounds);
   }
 

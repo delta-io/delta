@@ -226,8 +226,8 @@ public class StatsSchemaHelper {
   public Column getTightBoundsColumn(Column column) {
     checkArgument(
         isSkippingEligibleMinMaxColumn(column),
-        "%s is not a valid tight bounds column for " +
-                "data schema %s (only skipping-eligible columns have tight bounds)",
+        "%s is not a valid tight bounds column for "
+            + "data schema %s (only skipping-eligible columns have tight bounds)",
         column,
         dataSchema);
     return getStatsColumn(column, TIGHT_BOUNDS);
