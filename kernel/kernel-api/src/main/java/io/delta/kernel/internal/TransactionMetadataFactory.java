@@ -80,6 +80,7 @@ public class TransactionMetadataFactory {
   }
 
   static Output buildCreateTableMetadata(
+      String tablePath,
       StructType schema,
       Map<String, String> tableProperties,
       Optional<List<String>> partitionColumns,
@@ -87,6 +88,7 @@ public class TransactionMetadataFactory {
     checkArgument(!partitionColumns.isPresent() || !clusteringColumns.isPresent());
     Output output =
         new TransactionMetadataFactory(
+                tablePath,
                 Optional.empty() /* readSnapshot */,
                 Optional.of(
                     getInitialMetadata(
@@ -103,6 +105,7 @@ public class TransactionMetadataFactory {
   }
 
   static Output buildReplaceTableMetadata(
+      String tablePath,
       SnapshotImpl readSnapshot,
       StructType schema,
       Map<String, String> tableProperties,
@@ -122,6 +125,7 @@ public class TransactionMetadataFactory {
         getInitialMetadata(schema, properties, partitionColumns.orElse(emptyList()));
     Output output =
         new TransactionMetadataFactory(
+                tablePath,
                 Optional.of(readSnapshot),
                 Optional.of(metadata),
                 Optional.of(readSnapshot.getProtocol()),
@@ -147,6 +151,7 @@ public class TransactionMetadataFactory {
   }
 
   static Output buildUpdateTableMetadata(
+      String tablePath,
       SnapshotImpl readSnapshot,
       Optional<Map<String, String>> propertiesAdded,
       Optional<Set<String>> propertyKeysRemoved,
@@ -187,6 +192,7 @@ public class TransactionMetadataFactory {
     }
 
     return new TransactionMetadataFactory(
+            tablePath,
             Optional.of(readSnapshot),
             newMetadata,
             Optional.empty(),
@@ -211,6 +217,7 @@ public class TransactionMetadataFactory {
   private final Output finalOutput;
 
   private TransactionMetadataFactory(
+      String tablePath,
       Optional<SnapshotImpl> latestSnapshotOpt,
       Optional<Metadata> initialNewMetadata,
       Optional<Protocol> initialNewProtocol,
@@ -223,7 +230,7 @@ public class TransactionMetadataFactory {
     // isSchemaEvolution can only be true for update table
     checkArgument(!isSchemaEvolution || !isCreateOrReplace);
     checkArgument(isCreateOrReplace || latestSnapshotOpt.isPresent());
-    this.tablePath = ""; // TODO populate
+    this.tablePath = tablePath;
     this.latestSnapshotOpt = latestSnapshotOpt;
     this.isCreateOrReplace = isCreateOrReplace;
     this.isSchemaEvolution = isSchemaEvolution;

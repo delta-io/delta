@@ -282,6 +282,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     if (!isCreateOrReplace) {
       outputMetadata =
           TransactionMetadataFactory.buildUpdateTableMetadata(
+              table.getPath(engine),
               latestSnapshot.get(),
               tableProperties,
               unsetTablePropertiesKeys,
@@ -290,6 +291,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     } else if (latestSnapshot.isPresent()) { // is REPLACE
       outputMetadata =
           TransactionMetadataFactory.buildReplaceTableMetadata(
+              table.getPath(engine),
               latestSnapshot.get(),
               // when isCreateOrReplace we know schema is present
               schema.get(),
@@ -299,6 +301,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     } else {
       outputMetadata =
           TransactionMetadataFactory.buildCreateTableMetadata(
+              table.getPath(engine),
               // when isCreateOrReplace we know schema is present
               schema.get(),
               tableProperties.orElse(emptyMap()),
