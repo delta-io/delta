@@ -15,11 +15,21 @@
  */
 package io.delta.spark.dsv2.catalog;
 
+import io.delta.kernel.Operation;
+import io.delta.kernel.TableManager;
+import io.delta.kernel.defaults.engine.DefaultEngine;
+import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.SnapshotImpl;
+import io.delta.kernel.utils.CloseableIterable;
+import io.delta.spark.dsv2.table.DeltaKernelTable;
+import io.delta.spark.dsv2.utils.SchemaUtils;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-
-import io.delta.kernel.defaults.engine.DefaultEngine;
+import org.apache.hadoop.conf.Configuration;
+import org.apache.spark.sql.catalyst.analysis.NoSuchTableException;
 import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.catalog.Table;
 import org.apache.spark.sql.connector.catalog.TableCatalog;
@@ -27,15 +37,10 @@ import org.apache.spark.sql.connector.catalog.TableChange;
 import org.apache.spark.sql.connector.expressions.Transform;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
-import io.delta.kernel.TableManager;
-import io.delta.kernel.engine.Engine;
-import io.delta.spark.dsv2.table.DeltaKernelTable;
-import io.delta.kernel.internal.SnapshotImpl;
-import org.apache.hadoop.conf.Configuration;
 
 /**
- * A {@link TableCatalog} implementation that uses Delta Kernel for table operations.
- * This catalog is used for facilitating testing for spark-dsv2 code path.
+ * A {@link TableCatalog} implementation that uses Delta Kernel for table operations. This catalog
+ * is used for facilitating testing for spark-dsv2 code path.
  */
 public class TestCatalog implements TableCatalog {
 
@@ -47,33 +52,16 @@ public class TestCatalog implements TableCatalog {
 
   @Override
   public Identifier[] listTables(String[] namespace) {
-    // Return all registered tables for the given namespace
-    return tablePaths.entrySet().stream()
-        .filter(entry -> {
-          String tableName = entry.getKey();
-          // Simple namespace matching - in a real implementation, you'd want more sophisticated logic
-          return namespace.length == 0 || tableName.startsWith(String.join(".", namespace) + ".");
-        })
-        .map(entry -> {
-          String tableName = entry.getKey();
-          String[] nameParts = tableName.split("\\.");
-          String[] tableNamespace = nameParts.length > 1 ? 
-              java.util.Arrays.copyOf(nameParts, nameParts.length - 1) : new String[0];
-          String tableIdentifier = nameParts[nameParts.length - 1];
-          return Identifier.of(tableNamespace, tableIdentifier);
-        })
-        .toArray(Identifier[]::new);
+    throw new UnsupportedOperationException("listTables method is not implemented");
   }
 
   @Override
-  public Table loadTable(Identifier ident) {
+  public Table loadTable(Identifier ident) throws NoSuchTableException {
     String tableKey = getTableKey(ident);
-    String tablePath = tablePaths.get(tableKey);
-    
-    if (tablePath == null) {
-      throw new RuntimeException("Table not found: " + ident);
+    if (!tablePaths.containsKey(tableKey)) {
+      throw new NoSuchTableException(ident);
     }
-    
+    String tablePath = tablePaths.get(tableKey);
     try {
       // Use TableManager.loadTable to load the table
       SnapshotImpl snapshot = (SnapshotImpl) TableManager.loadSnapshot(tablePath).build(engine);
@@ -89,7 +77,35 @@ public class TestCatalog implements TableCatalog {
     String tableKey = getTableKey(ident);
     String tablePath = basePath + UUID.randomUUID() + "/";
     tablePaths.put(tableKey, tablePath);
-    
+    try {
+      // TODO: migrate to use CCv2 table
+      io.delta.kernel.Table kernelTable = io.delta.kernel.Table.forPath(engine, tablePath);
+      List<String> partitionColumns = new ArrayList<>();
+      for (Transform partition : partitions) {
+        // Extract column name from partition transform
+        String columnName = partition.references()[0].describe();
+        partitionColumns.add(columnName);
+      }
+
+      // TODO: migrate to use CCv2‘s committer API
+      io.delta.kernel.Table.forPath(engine, tablePath)
+          .createTransactionBuilder(
+              engine, "kernel-spark-dsv2-test-catalog", Operation.CREATE_TABLE)
+          .withSchema(engine, SchemaUtils.convertSparkSchemaToKernelSchema(schema))
+          .withPartitionColumns(engine, partitionColumns)
+          .withTableProperties(engine, properties)
+          .build(engine)
+          .commit(engine, CloseableIterable.emptyIterable());
+
+      // Load the created table and return DeltaKernelTable
+      SnapshotImpl snapshot = (SnapshotImpl) kernelTable.getLatestSnapshot(engine);
+      return new DeltaKernelTable(ident, snapshot);
+
+    } catch (Exception e) {
+      // Remove the table entry if creation fails
+      tablePaths.remove(tableKey);
+      throw new RuntimeException("Failed to create table: " + ident, e);
+    }
   }
 
   @Override
@@ -119,9 +135,7 @@ public class TestCatalog implements TableCatalog {
     return catalogName;
   }
 
-  /**
-   * Helper method to get the table key from identifier.
-   */
+  /** Helper method to get the table key from identifier. */
   private String getTableKey(Identifier ident) {
     if (ident.namespace().length == 0) {
       return ident.name();
