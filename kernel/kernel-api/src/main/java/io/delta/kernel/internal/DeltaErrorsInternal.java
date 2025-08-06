@@ -48,11 +48,11 @@ public class DeltaErrorsInternal {
   }
 
   public static IllegalStateException logicalPhysicalSchemaMismatch(
-      int logical_size, int num_partition_cols, int physical_size) {
+      int num_partition_cols, int physical_size, int logical_size) {
     return new IllegalStateException(
         String.format(
-            "Logical schema (%s) size minus number of partition columns (%s) does not equal "
-                + "physical schema size (%s).",
-            logical_size, physical_size, num_partition_cols));
+            "The number of partition columns (%s) plus the physical schema size (%s) does not "
+                + "equal the logical schema size (%s).",
+            num_partition_cols, physical_size, logical_size));
   }
 }

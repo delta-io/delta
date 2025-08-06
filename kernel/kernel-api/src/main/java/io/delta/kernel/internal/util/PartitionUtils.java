@@ -70,15 +70,19 @@ public class PartitionUtils {
       return dataBatch;
     }
 
+    // We verify that the number of partition columns in the logical schema plus the number of
+    // columns in the data batch schema is equal to the length of the logical schema.
+    // `partitionValues` contains all partition columns of the table (not just the requested ones),
+    // so we first need to count the number of partition columns in the logical schema.
     int numPartitionColumnsInSchema =
         (int)
             logicalSchema.fields().stream()
                 .map(ColumnMapping::getPhysicalName)
                 .filter(partitionValues::containsKey)
                 .count();
-    if (logicalSchema.length() - numPartitionColumnsInSchema != dataBatch.getSchema().length()) {
+    if (numPartitionColumnsInSchema + dataBatch.getSchema().length() != logicalSchema.length()) {
       throw DeltaErrorsInternal.logicalPhysicalSchemaMismatch(
-          logicalSchema.length(), partitionValues.size(), dataBatch.getSchema().length());
+          numPartitionColumnsInSchema, dataBatch.getSchema().length(), logicalSchema.length());
     }
 
     for (int colIdx = 0; colIdx < logicalSchema.length(); colIdx++) {
