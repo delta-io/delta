@@ -1589,6 +1589,14 @@ trait DeltaErrorsBase
     )
   }
 
+  def timeTravelBeyondDeletedFileRetentionDurationException(
+    deletedFileRetentionDurationHours: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNSUPPORTED_TIME_TRAVEL_BEYOND_DELETED_FILE_RETENTION_DURATION",
+      messageParameters = Array(deletedFileRetentionDurationHours)
+    )
+  }
+
   def nonExistentDeltaTable(tableId: DeltaTableIdentifier): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_TABLE_NOT_FOUND",

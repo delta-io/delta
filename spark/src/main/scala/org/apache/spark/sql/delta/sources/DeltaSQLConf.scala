@@ -556,6 +556,13 @@ trait DeltaSQLConfBase {
       .checkValue(_ > 0, "history.threadPoolSize must be positive")
       .createWithDefault(10)
 
+  val ENFORCE_TIME_TRAVEL_WITHIN_DELETED_FILE_RETENTION_DURATION =
+    buildConf("vacuum.enforceTimeTravelWithinDeletedFileRetentionDuration")
+      .internal()
+      .doc("Enforces time travel within delta.deletedFileRetentionDuration.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_VACUUM_LOGGING_ENABLED =
     buildConf("vacuum.logging.enabled")
       .doc("Whether to log vacuum information into the Delta transaction log." +

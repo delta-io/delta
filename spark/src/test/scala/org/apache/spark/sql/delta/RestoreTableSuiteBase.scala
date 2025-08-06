@@ -17,7 +17,11 @@
 package org.apache.spark.sql.delta
 
 import java.io.File
+import java.sql.Date
+import java.sql.Timestamp
 import java.text.SimpleDateFormat
+
+import scala.concurrent.duration._
 
 import org.apache.spark.sql.delta.actions.{Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.{TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
@@ -101,7 +105,6 @@ trait RestoreTableSuiteBase
   test("path based table") {
     withTempDir { tempDir =>
       val path = tempDir.getAbsolutePath
-
       val df1 = Seq(1, 2, 3, 4, 5).toDF("id")
       val df2 = Seq(6, 7).toDF("id")
       val df3 = Seq(8, 9, 10).toDF("id")
@@ -126,15 +129,15 @@ trait RestoreTableSuiteBase
       checkAnswer(spark.read.format("delta").load(path), df1.union(df2))
 
       // Set a custom timestamp for the commit
-      val desiredDate = "1996-01-12"
+      val desiredDate = new Date(System.currentTimeMillis() - 5.days.toMillis)
       overrideTimestampOfCommitFile(
         deltaLog,
         version = 0,
-        timestamp = dateStringToTimestamp(date = desiredDate)
+        timestamp = dateStringToTimestamp(date = desiredDate.toString)
       )
 
       // restore by timestamp to version 0
-      restoreTableToTimestamp(path, desiredDate, false)
+      restoreTableToTimestamp(path, desiredDate.toString, false)
       checkAnswer(spark.read.format("delta").load(path), df1)
     }
   }
