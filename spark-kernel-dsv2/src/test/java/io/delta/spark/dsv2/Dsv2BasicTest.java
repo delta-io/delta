@@ -54,11 +54,12 @@ public class Dsv2BasicTest {
   @Test
   void testCreateTable() {
     spark.sql(
-        "CREATE TABLE dsv2."
-            + nameSpace
-            + ".create_table_test (id INT, name STRING, value DOUBLE)");
+        String.format(
+            "CREATE TABLE dsv2.%s.create_table_test (id INT, name STRING, value DOUBLE)",
+            nameSpace));
 
-    Dataset<Row> actual = spark.sql("DESCRIBE TABLE dsv2." + nameSpace + ".create_table_test");
+    Dataset<Row> actual =
+        spark.sql(String.format("DESCRIBE TABLE dsv2.%s.create_table_test", nameSpace));
 
     List<Row> expectedRows =
         Arrays.asList(
@@ -70,11 +71,13 @@ public class Dsv2BasicTest {
 
   @Test
   void testQueryTable() {
-    spark.sql("CREATE TABLE dsv2." + nameSpace + ".query_test (id INT, name STRING, value DOUBLE)");
+    spark.sql(
+        String.format(
+            "CREATE TABLE dsv2.%s.query_test (id INT, name STRING, value DOUBLE)", nameSpace));
     AnalysisException e =
         assertThrows(
             AnalysisException.class,
-            () -> spark.sql("SELECT * FROM dsv2." + nameSpace + ".query_test"));
+            () -> spark.sql(String.format("SELECT * FROM dsv2.%s.query_test", nameSpace)));
     // TODO: update when implementing SupportReads
     assertTrue(e.getMessage().contains("does not support batch scan"));
   }
@@ -84,7 +87,7 @@ public class Dsv2BasicTest {
     AnalysisException e =
         assertThrows(
             AnalysisException.class,
-            () -> spark.sql("SELECT * FROM dsv2." + nameSpace + ".not_found_test"));
+            () -> spark.sql(String.format("SELECT * FROM dsv2.%s.not_found_test", nameSpace)));
     assertEquals(
         "TABLE_OR_VIEW_NOT_FOUND",
         e.getErrorClass(),
@@ -96,7 +99,6 @@ public class Dsv2BasicTest {
   /////////////////////
   private void assertDatasetEquals(Dataset<Row> actual, List<Row> expectedRows) {
     List<Row> actualRows = actual.collectAsList();
-    ;
     assertEquals(
         expectedRows,
         actualRows,
