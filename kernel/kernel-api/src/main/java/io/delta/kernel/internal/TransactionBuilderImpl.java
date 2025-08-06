@@ -248,23 +248,22 @@ public class TransactionBuilderImpl implements TransactionBuilder {
 
     // Instead of special casing enabling clustering or domain metadata, we should just add them
     // to the table properties which we already handle.
-    Map<String, String> featureTableProperties = new HashMap<>();
+    Map<String, String> tablePropertiesWithFeatureEnablement =
+        new HashMap<>(tableProperties.orElse(emptyMap()));
     if (needDomainMetadataSupport) {
-      featureTableProperties.put(
+      tablePropertiesWithFeatureEnablement.put(
           TableFeatures.SET_TABLE_FEATURE_SUPPORTED_PREFIX
               + TableFeatures.DOMAIN_METADATA_W_FEATURE.featureName(),
           "supported");
     }
     if (inputLogicalClusteringColumns.isPresent()) {
-      featureTableProperties.put(
+      tablePropertiesWithFeatureEnablement.put(
           TableFeatures.SET_TABLE_FEATURE_SUPPORTED_PREFIX
               + TableFeatures.CLUSTERING_W_FEATURE.featureName(),
           "supported");
     }
-    if (tableProperties.isPresent()) {
-      tableProperties.get().putAll(featureTableProperties);
-    } else {
-      tableProperties = Optional.of(featureTableProperties);
+    if (tablePropertiesWithFeatureEnablement.size() > 0) {
+      tableProperties = Optional.of(tablePropertiesWithFeatureEnablement);
     }
 
     TransactionMetadataFactory.Output outputMetadata;
