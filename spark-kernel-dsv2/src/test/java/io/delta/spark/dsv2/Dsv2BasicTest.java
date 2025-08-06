@@ -34,6 +34,7 @@ public class Dsv2BasicTest {
 
   @BeforeAll
   void setUp(@TempDir File tempDir) {
+    // Spark doesn't allow '-'
     nameSpace = "ns_" + UUID.randomUUID().toString().replace('-', '_');
     SparkConf conf =
         new SparkConf()
