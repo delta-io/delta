@@ -150,6 +150,11 @@ public class SnapshotImpl implements Snapshot {
   }
 
   @Override
+  public Map<String, String> getTableProperties() {
+    return metadata.getConfiguration();
+  }
+
+  @Override
   public ScanBuilder getScanBuilder() {
     return new ScanBuilderImpl(
         dataPath, version, protocol, metadata, getSchema(), logReplay, getSnapshotReport());
