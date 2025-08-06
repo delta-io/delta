@@ -153,6 +153,7 @@ public class DataFileStatistics {
   public static Optional<DataFileStatistics> deserializeFromJson(
       String json, StructType physicalSchema) {
     JsonNode root;
+    Objects.requireNonNull(physicalSchema, "physicalSchema must not be null for full deserialization");
     try {
       root = JsonUtils.mapper().readTree(json);
     } catch (IOException e) {
@@ -169,28 +170,28 @@ public class DataFileStatistics {
     // Parse minValues
     Map<Column, Literal> minValues = new HashMap<>();
     JsonNode minNode = root.get(StatsSchemaHelper.MIN);
-    if (minNode != null && minNode.isObject() && physicalSchema != null) {
+    if (minNode != null && minNode.isObject()) {
       parseMinMaxValues(minNode, minValues, new Column(new String[0]), physicalSchema);
     }
 
     // Parse maxValues
     Map<Column, Literal> maxValues = new HashMap<>();
     JsonNode maxNode = root.get(StatsSchemaHelper.MAX);
-    if (maxNode != null && maxNode.isObject() && physicalSchema != null) {
+    if (maxNode != null && maxNode.isObject()) {
       parseMinMaxValues(maxNode, maxValues, new Column(new String[0]), physicalSchema);
     }
 
     // Parse nullCount
     Map<Column, Long> nullCount = new HashMap<>();
     JsonNode nullCountNode = root.get(StatsSchemaHelper.NULL_COUNT);
-    if (nullCountNode != null && nullCountNode.isObject() && physicalSchema != null) {
+    if (nullCountNode != null && nullCountNode.isObject()) {
       parseNullCounts(nullCountNode, nullCount, new Column(new String[0]), physicalSchema);
     }
 
     // Parse tightBounds
     Map<Column, Boolean> tightBounds = new HashMap<>();
     JsonNode tightBoundsNode = root.get(StatsSchemaHelper.TIGHT_BOUNDS);
-    if (tightBoundsNode != null && tightBoundsNode.isObject() && physicalSchema != null) {
+    if (tightBoundsNode != null && tightBoundsNode.isObject()) {
       parseTightBounds(tightBoundsNode, tightBounds, new Column(new String[0]), physicalSchema);
     }
 
