@@ -27,6 +27,8 @@ import io.delta.kernel.internal.metrics.Timer
 import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.metrics.SnapshotReport
 
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
+
 import org.scalatest.funsuite.AnyFunSuite
 
 // Concrete implementation for legacy Table API
@@ -187,9 +189,9 @@ abstract class AbstractSnapshotReportSuite extends AnyFunSuite with MetricsRepor
    * Wait for the CRC file to exist for the given version. This helps ensure that Delta-Spark's
    * [[ChecksumHook]] has finished writing the checksum file before running tests.
    */
-  private def waitForCrcFileToExist(tablePath: String, version: Long): Unit = {
+  private def waitForCrcFileToExistElseThrow(tablePath: String, version: Long): Unit = {
     val logPath = new Path(tablePath, "_delta_log")
-    val maxWaitMs = 5000 // Wait up to 5 seconds
+    val maxWaitMs = 1000 // Wait up to 1 second
     val startTime = System.currentTimeMillis()
     val crcFile = new java.io.File(FileNames.checksumFile(logPath, version).toString)
 
@@ -207,113 +209,116 @@ abstract class AbstractSnapshotReportSuite extends AnyFunSuite with MetricsRepor
 
   test("SnapshotReport valid queries - no checkpoint") {
     withTempDir { tempDir =>
-      val path = tempDir.getCanonicalPath
+      withSQLConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true") {
+        val path = tempDir.getCanonicalPath
+        // Set up delta table with version 0, 1
+        spark.range(10).write.format("delta").mode("append").save(path)
+        val version0timestamp = System.currentTimeMillis
+        // Since filesystem modification time might be truncated to the second, we sleep to make
+        // sure the next commit is after this timestamp
+        Thread.sleep(1000)
+        spark.range(10).write.format("delta").mode("append").save(path)
 
-      // Set up delta table with version 0, 1
-      spark.range(10).write.format("delta").mode("append").save(path)
-      val version0timestamp = System.currentTimeMillis
-      // Since filesystem modification time might be truncated to the second, we sleep to make sure
-      // the next commit is after this timestamp
-      Thread.sleep(1000)
-      spark.range(10).write.format("delta").mode("append").save(path)
+        waitForCrcFileToExistElseThrow(path, 0L)
+        waitForCrcFileToExistElseThrow(path, 1L)
 
-      waitForCrcFileToExist(path, 0L)
-      waitForCrcFileToExist(path, 1L)
-
-      // Test getLatestSnapshot
-      checkSnapshotReport(
-        (engine, path) => tableManager.getSnapshotAtLatest(engine, path),
-        path,
-        SnapshotReportExpectations(
-          expectedReportCount = 1,
-          expectException = false,
-          expectedVersion = Optional.of(1),
-          expectedCheckpointVersion = Optional.empty(),
-          expectedProvidedTimestamp = Optional.empty() // No time travel by timestamp
-        ))
-
-      // Test getSnapshotAsOfVersion
-      checkSnapshotReport(
-        (engine, path) => tableManager.getSnapshotAtVersion(engine, path, 0),
-        path,
-        SnapshotReportExpectations(
-          expectedReportCount = 1,
-          expectException = false,
-          expectedVersion = Optional.of(0),
-          expectedCheckpointVersion = Optional.empty(),
-          expectedProvidedTimestamp = Optional.empty() // No time travel by timestamp
-        ))
-
-      // Test getSnapshotAsOfTimestamp - only if adapter supports it
-      if (tableManager.supportsTimestampResolution) {
+        // Test getLatestSnapshot
         checkSnapshotReport(
-          (engine, path) => tableManager.getSnapshotAtTimestamp(engine, path, version0timestamp),
+          (engine, path) => tableManager.getSnapshotAtLatest(engine, path),
           path,
           SnapshotReportExpectations(
-            expectedReportCount = 2,
+            expectedReportCount = 1,
+            expectException = false,
+            expectedVersion = Optional.of(1),
+            expectedCheckpointVersion = Optional.empty(),
+            expectedProvidedTimestamp = Optional.empty() // No time travel by timestamp
+          ))
+
+        // Test getSnapshotAsOfVersion
+        checkSnapshotReport(
+          (engine, path) => tableManager.getSnapshotAtVersion(engine, path, 0),
+          path,
+          SnapshotReportExpectations(
+            expectedReportCount = 1,
             expectException = false,
             expectedVersion = Optional.of(0),
             expectedCheckpointVersion = Optional.empty(),
-            expectedProvidedTimestamp = Optional.of(version0timestamp),
-            expectNonEmptyTimestampToVersionResolutionDuration = true))
+            expectedProvidedTimestamp = Optional.empty() // No time travel by timestamp
+          ))
+
+        // Test getSnapshotAsOfTimestamp - only if adapter supports it
+        if (tableManager.supportsTimestampResolution) {
+          checkSnapshotReport(
+            (engine, path) => tableManager.getSnapshotAtTimestamp(engine, path, version0timestamp),
+            path,
+            SnapshotReportExpectations(
+              expectedReportCount = 2,
+              expectException = false,
+              expectedVersion = Optional.of(0),
+              expectedCheckpointVersion = Optional.empty(),
+              expectedProvidedTimestamp = Optional.of(version0timestamp),
+              expectNonEmptyTimestampToVersionResolutionDuration = true))
+        }
       }
     }
   }
 
   test("SnapshotReport valid queries - with checkpoint") {
     withTempDir { tempDir =>
-      val path = tempDir.getCanonicalPath
+      withSQLConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true") {
+        val path = tempDir.getCanonicalPath
 
-      // Set up delta table with version 0 to 11 with checkpoint at version 10
-      (0 until 11).foreach(_ =>
-        spark.range(10).write.format("delta").mode("append").save(path))
+        // Set up delta table with version 0 to 11 with checkpoint at version 10
+        (0 until 11).foreach(_ =>
+          spark.range(10).write.format("delta").mode("append").save(path))
 
-      val version11timestamp = System.currentTimeMillis
-      // Since filesystem modification time might be truncated to the second, we sleep to make sure
-      // the next commit is after this timestamp
-      Thread.sleep(1000)
-      // create version 11
-      spark.range(10).write.format("delta").mode("append").save(path)
+        val version11timestamp = System.currentTimeMillis
+        // Since filesystem modification time might be truncated to the second, we sleep to make
+        // sure the next commit is after this timestamp
+        Thread.sleep(1000)
+        // create version 11
+        spark.range(10).write.format("delta").mode("append").save(path)
 
-      waitForCrcFileToExist(path, 10L)
-      waitForCrcFileToExist(path, 11L)
+        waitForCrcFileToExistElseThrow(path, 10L)
+        waitForCrcFileToExistElseThrow(path, 11L)
 
-      // Test getLatestSnapshot
-      checkSnapshotReport(
-        (engine, path) => tableManager.getSnapshotAtLatest(engine, path),
-        path,
-        SnapshotReportExpectations(
-          expectedReportCount = 1,
-          expectException = false,
-          expectedVersion = Optional.of(11),
-          expectedCheckpointVersion = Optional.of(10),
-          expectedProvidedTimestamp = Optional.empty() // No time travel by timestamp
-        ))
-
-      // Test getSnapshotAsOfVersion
-      checkSnapshotReport(
-        (engine, path) => tableManager.getSnapshotAtVersion(engine, path, 11),
-        path,
-        SnapshotReportExpectations(
-          expectedReportCount = 1,
-          expectException = false,
-          expectedVersion = Optional.of(11),
-          expectedCheckpointVersion = Optional.of(10),
-          expectedProvidedTimestamp = Optional.empty() // No time travel by timestamp
-        ))
-
-      // Test getSnapshotAsOfTimestamp - only if adapter supports it
-      if (tableManager.supportsTimestampResolution) {
+        // Test getLatestSnapshot
         checkSnapshotReport(
-          (engine, path) => tableManager.getSnapshotAtTimestamp(engine, path, version11timestamp),
+          (engine, path) => tableManager.getSnapshotAtLatest(engine, path),
           path,
           SnapshotReportExpectations(
-            expectedReportCount = 2,
+            expectedReportCount = 1,
             expectException = false,
-            expectedVersion = Optional.of(10),
+            expectedVersion = Optional.of(11),
             expectedCheckpointVersion = Optional.of(10),
-            expectedProvidedTimestamp = Optional.of(version11timestamp),
-            expectNonEmptyTimestampToVersionResolutionDuration = true))
+            expectedProvidedTimestamp = Optional.empty() // No time travel by timestamp
+          ))
+
+        // Test getSnapshotAsOfVersion
+        checkSnapshotReport(
+          (engine, path) => tableManager.getSnapshotAtVersion(engine, path, 11),
+          path,
+          SnapshotReportExpectations(
+            expectedReportCount = 1,
+            expectException = false,
+            expectedVersion = Optional.of(11),
+            expectedCheckpointVersion = Optional.of(10),
+            expectedProvidedTimestamp = Optional.empty() // No time travel by timestamp
+          ))
+
+        // Test getSnapshotAsOfTimestamp - only if adapter supports it
+        if (tableManager.supportsTimestampResolution) {
+          checkSnapshotReport(
+            (engine, path) => tableManager.getSnapshotAtTimestamp(engine, path, version11timestamp),
+            path,
+            SnapshotReportExpectations(
+              expectedReportCount = 2,
+              expectException = false,
+              expectedVersion = Optional.of(10),
+              expectedCheckpointVersion = Optional.of(10),
+              expectedProvidedTimestamp = Optional.of(version11timestamp),
+              expectNonEmptyTimestampToVersionResolutionDuration = true))
+        }
       }
     }
   }
