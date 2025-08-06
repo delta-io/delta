@@ -117,28 +117,31 @@ public class TransactionImpl implements Transaction {
       Optional<SnapshotImpl> readSnapshotOpt,
       String engineInfo,
       Operation operation,
-      Protocol protocol,
-      Metadata metadata,
+      Optional<Protocol> newProtocol,
+      Optional<Metadata> newMetadata,
       Optional<SetTransaction> setTxnOpt,
       Optional<List<Column>> newClusteringColumnsOpt,
-      boolean shouldUpdateMetadata,
-      boolean shouldUpdateProtocol,
       int maxRetries,
       int logCompactionInterval,
       Clock clock) {
     checkArgument(isCreateOrReplace || readSnapshotOpt.isPresent());
+    // For a new table, a protocol and metadata must be provided
+    checkArgument(
+        (newProtocol.isPresent() && newMetadata.isPresent()) || readSnapshotOpt.isPresent());
+    // TODO: look into migrating entire class into just (newMetadata, newProtocol, readSnapshotOpt)
+    this.protocol = newProtocol.orElse(readSnapshotOpt.get().getProtocol());
+    this.shouldUpdateProtocol = newProtocol.isPresent();
+    this.metadata = newMetadata.orElse(readSnapshotOpt.get().getMetadata());
+    this.shouldUpdateMetadata = newMetadata.isPresent();
+
     this.isCreateOrReplace = isCreateOrReplace;
     this.dataPath = dataPath;
     this.logPath = logPath;
     this.readSnapshotOpt = readSnapshotOpt;
     this.engineInfo = engineInfo;
     this.operation = operation;
-    this.protocol = protocol;
-    this.metadata = metadata;
     this.setTxnOpt = setTxnOpt;
     this.newClusteringColumnsOpt = newClusteringColumnsOpt;
-    this.shouldUpdateMetadata = shouldUpdateMetadata;
-    this.shouldUpdateProtocol = shouldUpdateProtocol;
     this.maxRetries = maxRetries;
     this.logCompactionInterval = logCompactionInterval;
     this.clock = clock;
