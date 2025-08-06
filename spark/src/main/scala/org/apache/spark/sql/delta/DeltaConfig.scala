@@ -196,7 +196,14 @@ trait DeltaConfigsBase extends DeltaLogging {
           lKey -> value
         case lKey if lKey.startsWith("delta.") =>
           Option(entries.get(lKey.stripPrefix("delta."))) match {
-            case Some(deltaConfig) => deltaConfig(value) // validate the value
+            case Some(deltaConfig) if (
+              lKey == DeltaConfigs.TOMBSTONE_RETENTION.key.toLowerCase(Locale.ROOT) ||
+              lKey == DeltaConfigs.LOG_RETENTION.key.toLowerCase(Locale.ROOT)) =>
+              val ret = deltaConfig(value) // validate the value
+              validateTombstoneAndLogRetentionDurationCompatibility(configurations)
+              ret
+            case Some(deltaConfig) =>
+              deltaConfig(value) // validate the value
             case None if lKey.startsWith(DELTA_UNIVERSAL_FORMAT_CONFIG_PREFIX) =>
               // always allow any delta universal format config with key converted to lower case
               lKey -> value
@@ -322,6 +329,41 @@ trait DeltaConfigsBase extends DeltaLogging {
   private def getMicroSeconds(i: CalendarInterval): Long = {
     assert(i.months == 0)
     i.days * DateTimeConstants.MICROS_PER_DAY + i.microseconds
+  }
+
+  private def validateTombstoneAndLogRetentionDurationCompatibility(
+    configs: Map[String, String]): Unit = {
+    if (!SparkSession.active.sessionState.conf
+      .getConf(DeltaSQLConf.ENFORCE_DELETED_FILE_AND_LOG_RETENTION_DURATION_COMPATIBILITY)) {
+      return
+    }
+    val lowerCaseConfigs = configs.iterator.map {
+      case (k, v) => k.toLowerCase(Locale.ROOT) -> v
+    }.toMap
+    val logRetention = DeltaConfigs.LOG_RETENTION
+    val tombstoneRetention = DeltaConfigs.TOMBSTONE_RETENTION
+    val logRetentionDuration: CalendarInterval = logRetention.fromString(
+      lowerCaseConfigs.get(logRetention.key.toLowerCase(Locale.ROOT))
+        .getOrElse(logRetention.defaultValue))
+    val tombstoneRetentionDuration: CalendarInterval = tombstoneRetention.fromString(
+      lowerCaseConfigs.get(tombstoneRetention.key.toLowerCase(Locale.ROOT))
+        .getOrElse(tombstoneRetention.defaultValue))
+
+    val logRetentionFound = lowerCaseConfigs.get(
+      logRetention.key.toLowerCase(Locale.ROOT)).isDefined
+
+    val errorMessage = if (logRetentionFound) {
+      s"The table property ${DeltaConfigs.LOG_RETENTION.key}(${logRetentionDuration.toString}) " +
+        s"needs to be greater than or equal to ${DeltaConfigs.TOMBSTONE_RETENTION.key}" +
+        s"(${tombstoneRetentionDuration.toString})."
+    } else {
+      s"The table property ${DeltaConfigs.TOMBSTONE_RETENTION.key}" +
+        s"(${tombstoneRetentionDuration.toString}) needs to be less than or equal to " +
+        s"${DeltaConfigs.LOG_RETENTION.key}(${logRetentionDuration.toString})."
+    }
+
+    require(getMilliSeconds(logRetentionDuration) >= getMilliSeconds(tombstoneRetentionDuration),
+      errorMessage)
   }
 
   /**

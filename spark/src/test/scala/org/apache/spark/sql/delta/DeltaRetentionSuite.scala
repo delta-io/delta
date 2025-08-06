@@ -363,6 +363,7 @@ class DeltaRetentionSuite extends QueryTest
                    |'${DeltaConfigs.CHECKPOINT_POLICY.key}' = '$checkpointPolicy',
                    |'${DeltaConfigs.CHECKPOINT_WRITE_STATS_AS_STRUCT.key}' = 'false',
                    |'delta.checkpointInterval' = '100000',
+                   |'delta.deletedFileRetentionDuration' = 'interval 1 days',
                    |'delta.logRetentionDuration' = 'interval 6 days')
                     """.stripMargin)
 
@@ -473,6 +474,7 @@ class DeltaRetentionSuite extends QueryTest
                      |'${DeltaConfigs.CHECKPOINT_POLICY.key}' = '$checkpointPolicy',
                      |'${DeltaConfigs.CHECKPOINT_WRITE_STATS_AS_STRUCT.key}' = 'false',
                      |'delta.checkpointInterval' = '100000',
+                     |'delta.deletedFileRetentionDuration' = 'interval 1 days',
                      |'delta.logRetentionDuration' = 'interval 6 days')
         """.stripMargin)
 
