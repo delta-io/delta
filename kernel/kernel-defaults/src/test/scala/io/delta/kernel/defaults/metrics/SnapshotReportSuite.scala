@@ -183,6 +183,23 @@ abstract class AbstractSnapshotReportSuite extends AnyFunSuite with MetricsRepor
     }
   }
 
+  /**
+   * Wait for the CRC file to exist for the given version. This helps ensure that Delta-Spark's
+   * [[ChecksumHook]] has finished writing the checksum file before running tests.
+   */
+  private def waitForCrcFileToExist(tablePath: String, version: Long): Unit = {
+    val logPath = new Path(tablePath, "_delta_log")
+    val maxWaitMs = 1000 // Wait up to 1 second
+    val startTime = System.currentTimeMillis()
+    val crcFile = new java.io.File(FileNames.checksumFile(logPath, version).toString)
+
+    while (!crcFile.exists() && (System.currentTimeMillis() - startTime) < maxWaitMs) {
+      Thread.sleep(100)
+    }
+
+    assert(crcFile.exists(), s"CRC file for version $version does not exist at $crcFile")
+  }
+
   test("SnapshotReport valid queries - no checkpoint") {
     withTempDir { tempDir =>
       val path = tempDir.getCanonicalPath
@@ -194,6 +211,9 @@ abstract class AbstractSnapshotReportSuite extends AnyFunSuite with MetricsRepor
       // the next commit is after this timestamp
       Thread.sleep(1000)
       spark.range(10).write.format("delta").mode("append").save(path)
+
+      waitForCrcFileToExist(path, 0L)
+      waitForCrcFileToExist(path, 1L)
 
       // Test getLatestSnapshot
       checkSnapshotReport(
@@ -249,6 +269,9 @@ abstract class AbstractSnapshotReportSuite extends AnyFunSuite with MetricsRepor
       Thread.sleep(1000)
       // create version 11
       spark.range(10).write.format("delta").mode("append").save(path)
+
+      waitForCrcFileToExist(path, 10L)
+      waitForCrcFileToExist(path, 11L)
 
       // Test getLatestSnapshot
       checkSnapshotReport(
