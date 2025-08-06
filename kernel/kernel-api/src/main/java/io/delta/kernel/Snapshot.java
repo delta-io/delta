@@ -88,6 +88,7 @@ public interface Snapshot {
 
   /**
    * Get all table properties for the Delta table at this snapshot.
+   *
    * @return a {@link Map} of table properties.
    */
   Map<String, String> getTableProperties();
