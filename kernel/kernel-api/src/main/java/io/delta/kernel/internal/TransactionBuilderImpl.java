@@ -713,7 +713,6 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         Optional.empty(), /* name */
         Optional.empty(), /* description */
         new Format(), /* format */
-        schema.get().toJson(), /* schemaString */
         schema.get(), /* schema */
         buildArrayValue(partitionColumnsCasePreserving, StringType.STRING), /* partitionColumns */
         Optional.of(currentTimeMillis), /* createdTime */

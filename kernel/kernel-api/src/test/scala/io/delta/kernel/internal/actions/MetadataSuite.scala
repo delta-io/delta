@@ -53,7 +53,6 @@ class MetadataSuite extends AnyFunSuite {
       Optional.of("name"),
       Optional.of("description"),
       new Format("parquet", Collections.emptyMap()),
-      testSchema.toJson,
       testSchema,
       new ArrayValue() { // partitionColumns
         override def getSize = 1
