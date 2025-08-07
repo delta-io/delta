@@ -16,7 +16,7 @@
 package io.delta.kernel.defaults.internal.parquet;
 
 import static io.delta.kernel.defaults.internal.parquet.ParquetColumnReaders.createConverter;
-import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+import static io.delta.kernel.defaults.internal.parquet.ParquetSchemaUtils.validateAndGetThreeLevelParquetArrayElementType;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.defaults.internal.data.vector.DefaultArrayVector;
@@ -65,18 +65,8 @@ class ArrayColumnReader extends RepeatedValueConverter {
   private static Converter createElementConverter(
       int initialBatchSize, ArrayType typeFromClient, GroupType typeFromFile) {
 
-    checkArgument(
-        typeFromFile.getFieldCount() == 1,
-        "Expected exactly one field in the array type, but got: %s",
-        typeFromFile);
-    GroupType repeatedGroup = typeFromFile.getType(0).asGroupType();
+    Type elementType = validateAndGetThreeLevelParquetArrayElementType(typeFromFile);
 
-    // TODO: handle the legacy 2-level list physical format
-    checkArgument(
-        repeatedGroup.getFieldCount() == 1, "Expected exactly one field in the repeated group");
-
-    Type elmentType = repeatedGroup.getType(0);
-
-    return createConverter(initialBatchSize, typeFromClient.getElementType(), elmentType);
+    return createConverter(initialBatchSize, typeFromClient.getElementType(), elementType);
   }
 }
