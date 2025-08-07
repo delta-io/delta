@@ -495,7 +495,10 @@ class DeltaReplaceTableSuite extends DeltaReplaceTableSuiteBase {
       )
       assert(
         intercept[UnsupportedOperationException] {
-          commitReplaceTable(engine, tablePath)
+          commitReplaceTable(
+            engine,
+            tablePath,
+            tableProperties = Map(TableConfig.ICEBERG_COMPAT_V3_ENABLED.getKey -> "true"))
         }.getMessage.contains("REPLACE TABLE is not yet supported on IcebergCompatV3 tables"))
     }
   }
@@ -668,7 +671,11 @@ class DeltaReplaceTableSuite extends DeltaReplaceTableSuiteBase {
     }
   }
 
-  test("Column mapping maxFieldId is preserved during REPLACE TABLE") {
+  test("Column mapping maxFieldId is preserved during REPLACE TABLE " +
+    "- turning off column mapping mode") {
+    // Note: DeltaReplaceTableColumnMappingSuite already tests that we preserve it correctly for the
+    // column mapping case
+    // TODO: once we support Id -> None mode during replace update this test
     // We should preserve maxFieldId regardless of column mapping mode (if a future replace
     // operation re-enables id mode we should not start our fieldIds from 0)
     withTempDirAndEngine { (tablePath, engine) =>
@@ -679,10 +686,13 @@ class DeltaReplaceTableSuite extends DeltaReplaceTableSuiteBase {
           TableConfig.COLUMN_MAPPING_MODE.getKey -> "id"),
         includeData = false // To avoid writing data with correct CM schema
       )
-      checkReplaceTable(
-        engine,
-        tablePath,
-        expectedTableProperties = Some(Map(TableConfig.COLUMN_MAPPING_MAX_COLUMN_ID.getKey -> "1")))
+      intercept[UnsupportedOperationException] {
+        checkReplaceTable(
+          engine,
+          tablePath,
+          expectedTableProperties =
+            Some(Map(TableConfig.COLUMN_MAPPING_MAX_COLUMN_ID.getKey -> "1")))
+      }
     }
   }
 

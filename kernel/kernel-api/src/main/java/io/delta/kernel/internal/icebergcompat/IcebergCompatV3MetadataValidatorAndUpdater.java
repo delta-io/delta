@@ -39,7 +39,6 @@ public class IcebergCompatV3MetadataValidatorAndUpdater
    *
    * <ul>
    *   <li>No change in enablement (true to true or false to false)
-   *   <li>Enabling but only on a new table (false to true)
    * </ul>
    *
    * The changes that we do not support and for which we throw an {@link KernelException} are
@@ -50,9 +49,8 @@ public class IcebergCompatV3MetadataValidatorAndUpdater
    * </ul>
    */
   public static void validateIcebergCompatV3Change(
-      Map<String, String> oldConfig, Map<String, String> newConfig, boolean isNewTable) {
-    blockConfigChangeOnExistingTable(
-        TableConfig.ICEBERG_COMPAT_V3_ENABLED, oldConfig, newConfig, isNewTable);
+      Map<String, String> oldConfig, Map<String, String> newConfig) {
+    blockConfigChangeOnExistingTable(TableConfig.ICEBERG_COMPAT_V3_ENABLED, oldConfig, newConfig);
   }
 
   /**

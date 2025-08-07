@@ -441,17 +441,14 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
   protected static void blockConfigChangeOnExistingTable(
       TableConfig<Boolean> tableConfig,
       Map<String, String> oldConfig,
-      Map<String, String> newConfig,
-      boolean isNewTable) {
-    if (!isNewTable) {
-      boolean wasEnabled = tableConfig.fromMetadata(oldConfig);
-      boolean isEnabled = tableConfig.fromMetadata(newConfig);
-      if (!wasEnabled && isEnabled) {
-        throw DeltaErrors.enablingIcebergCompatFeatureOnExistingTable(tableConfig.getKey());
-      }
-      if (wasEnabled && !isEnabled) {
-        throw DeltaErrors.disablingIcebergCompatFeatureOnExistingTable(tableConfig.getKey());
-      }
+      Map<String, String> newConfig) {
+    boolean wasEnabled = tableConfig.fromMetadata(oldConfig);
+    boolean isEnabled = tableConfig.fromMetadata(newConfig);
+    if (!wasEnabled && isEnabled) {
+      throw DeltaErrors.enablingIcebergCompatFeatureOnExistingTable(tableConfig.getKey());
+    }
+    if (wasEnabled && !isEnabled) {
+      throw DeltaErrors.disablingIcebergCompatFeatureOnExistingTable(tableConfig.getKey());
     }
   }
 }
