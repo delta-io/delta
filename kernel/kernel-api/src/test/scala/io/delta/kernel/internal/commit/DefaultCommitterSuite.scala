@@ -44,8 +44,9 @@ class DefaultCommitterSuite extends AnyFunSuite
     testCommitInfo,
     Optional.of(protocol12),
     Optional.of(basicPartitionedMetadata),
-    Optional.empty(),
-    Optional.empty())
+    Optional.empty(), // newProtocolOpt
+    Optional.empty() // newMetadataOpt
+  )
 
   Seq(
     (protocol12, protocolWithCatalogManagedSupport, "Upgrade"),
