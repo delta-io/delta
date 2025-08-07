@@ -21,7 +21,7 @@ import java.nio.file.{Files, Paths}
 import scala.meta._
 import scala.util.hashing.MurmurHash3
 
-import org.apache.commons.cli.{DefaultParser, Option, Options}
+import org.apache.commons.cli.{CommandLine, DefaultParser, HelpFormatter, Option, Options}
 import org.apache.commons.codec.binary.Base32
 
 /**
@@ -40,9 +40,36 @@ object ModularSuiteGenerator {
 
   private val CODE_LINE_LENGTH_CHAR_LIMIT = 100
 
+  private lazy val OPT_REPO_PATH = new Option(
+    /* option = */ "p",
+    /* longOption = */ "repo-path",
+    /* hasArg = */ true,
+    /* description = */ s"Path to the repository root. Defaults to $DEFAULT_REPO_PATH")
+  private lazy val OPT_HELP = new Option(
+    /* option = */ "h",
+    /* longOption = */ "help",
+    /* hasArg = */ false,
+    /* description = */ "Print help")
+  private lazy val OPTIONS = new Options().addOption(OPT_REPO_PATH).addOption(OPT_HELP)
+
   def main(args: Array[String]): Unit = {
-    val suitesWriter = parseArgsAndGetWriter(args)
+    val cmd = new DefaultParser().parse(OPTIONS, args)
+
+    if (cmd.hasOption(OPT_HELP)) {
+      val formatter = new HelpFormatter()
+      formatter.printHelp(
+        "bazel run //sql/core/delta_suite_generator:generate -- <options>",
+        OPTIONS)
+      System.exit(0)
+    }
+
+    val suitesWriter = getWriter(cmd)
+
+    // scalastyle:off println
+    print("Generating suites...")
     generateSuites(suitesWriter)
+    println("done")
+    // scalastyle:on println
   }
 
   def generateSuites(suitesWriter: SuitesWriter): Unit = {
@@ -69,15 +96,7 @@ object ModularSuiteGenerator {
     suitesWriter.conclude()
   }
 
-  private lazy val OPT_REPO_PATH = new Option(
-    /* option = */ "p",
-    /* longOption = */ "repo-path",
-    /* hasArg = */ true,
-    /* description = */ s"Path to the repository root. Defaults to $DEFAULT_REPO_PATH")
-  private lazy val OPTIONS = new Options().addOption(OPT_REPO_PATH)
-
-  private def parseArgsAndGetWriter(args: Array[String]): SuitesWriter = {
-    val cmd = new DefaultParser().parse(OPTIONS, args)
+  private def getWriter(cmd: CommandLine): SuitesWriter = {
     var repoPath = cmd.getOptionValue(OPT_REPO_PATH, DEFAULT_REPO_PATH)
 
     // Expand `~` prefix to the user's home directory
@@ -90,6 +109,30 @@ object ModularSuiteGenerator {
       Files.exists(outputPath.getParent),
       s"Repository could not be detected at $repoPath. Make sure to provide the " +
         s"repository path using the --${OPT_REPO_PATH.getLongOpt} option.")
+
+    // Prevent people with multiple repository copies/worktrees accidentally generating into
+    // the wrong one.
+    // We assume if it's specified explicitly, it's specified correctly, and we don't need to
+    // double-check.
+    if (!cmd.hasOption(OPT_REPO_PATH)) {
+      // scalastyle:off println
+      if (System.console() == null) {
+        // This is not an interactive shell, we can't ask for input.
+        println(
+          s"""Verified that a runtime repo exists at target.
+             |Generation target path is: '${outputPath}'
+             |The path can be customised with the --${OPT_REPO_PATH.getLongOpt} option."""
+             .stripMargin)
+      } else {
+        println(
+          s"""Verified that a runtime repo exists at target.
+             |Please double check the path: '${outputPath}'
+             |The path can be customised with the --${OPT_REPO_PATH.getLongOpt} option.
+             |If correct, press <enter> to generate or <ctrl>+c to abort.""".stripMargin)
+        scala.io.StdIn.readLine()
+      }
+      // scalastyle:on println
+    }
 
     new SuitesWriter(outputPath)
   }
