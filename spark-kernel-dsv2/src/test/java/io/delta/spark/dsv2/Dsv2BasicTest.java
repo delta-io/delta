@@ -75,12 +75,30 @@ public class Dsv2BasicTest {
     spark.sql(
         String.format(
             "CREATE TABLE dsv2.%s.query_test (id INT, name STRING, value DOUBLE)", nameSpace));
-    AnalysisException e =
-        assertThrows(
-            AnalysisException.class,
-            () -> spark.sql(String.format("SELECT * FROM dsv2.%s.query_test", nameSpace)));
-    // TODO: update when implementing SupportReads
-    assertTrue(e.getMessage().contains("does not support batch scan"));
+    
+    // Insert some test data
+    spark.sql(String.format(
+        "INSERT INTO dsv2.%s.query_test VALUES (1, 'test1', 1.1), (2, 'test2', 2.2)", nameSpace));
+    
+    // Test that we can query the table
+    Dataset<Row> result = spark.sql(String.format("SELECT * FROM dsv2.%s.query_test", nameSpace));
+    result.show();
+    
+    // Verify the result
+    List<Row> rows = result.collectAsList();
+    assertEquals(2, rows.size(), "Should have 2 rows");
+    
+    // Check first row
+    Row firstRow = rows.get(0);
+    assertEquals(1, firstRow.getInt(0), "First row id should be 1");
+    assertEquals("test1", firstRow.getString(1), "First row name should be 'test1'");
+    assertEquals(1.1, firstRow.getDouble(2), 0.001, "First row value should be 1.1");
+    
+    // Check second row
+    Row secondRow = rows.get(1);
+    assertEquals(2, secondRow.getInt(0), "Second row id should be 2");
+    assertEquals("test2", secondRow.getString(1), "Second row name should be 'test2'");
+    assertEquals(2.2, secondRow.getDouble(2), 0.001, "Second row value should be 2.2");
   }
 
   @Test
