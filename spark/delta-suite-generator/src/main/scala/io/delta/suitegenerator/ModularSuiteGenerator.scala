@@ -119,13 +119,13 @@ object ModularSuiteGenerator {
       if (System.console() == null) {
         // This is not an interactive shell, we can't ask for input.
         println(
-          s"""Verified that a runtime repo exists at target.
+          s"""Verified that a matching repository exists at target.
              |Generation target path is: '${outputPath}'
              |The path can be customised with the --${OPT_REPO_PATH.getLongOpt} option."""
              .stripMargin)
       } else {
         println(
-          s"""Verified that a runtime repo exists at target.
+          s"""Verified that a matching repository exists at target.
              |Please double check the path: '${outputPath}'
              |The path can be customised with the --${OPT_REPO_PATH.getLongOpt} option.
              |If correct, press <enter> to generate or <ctrl>+c to abort.""".stripMargin)
