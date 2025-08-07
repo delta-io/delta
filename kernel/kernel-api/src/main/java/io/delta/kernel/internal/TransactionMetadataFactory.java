@@ -56,10 +56,14 @@ public class TransactionMetadataFactory {
   private static final Logger logger = LoggerFactory.getLogger(TransactionMetadataFactory.class);
 
   /**
-   * Expectations with respect to the given operation: - Create table: both protocol and metadata
-   * will be present - Replace table: both protoocl and metadata will be present - Update table:
-   * metadata and protocol may or may not be present depending on whether there should be a metadata
-   * or protocol update
+   * Expectations with respect to the given operation:
+   *
+   * <ul>
+   *   <li>Create table: both protocol and metadata will be present
+   *   <li>Replace table: both protocol and metadata will be present
+   *   <li>Update table: metadata and protocol may or may not be present depending on whether there
+   *       should be a metadata or protocol update
+   * </ul>
    */
   public static class Output {
     /* New metadata, present if the transaction should commit a new metadata action */
@@ -79,12 +83,17 @@ public class TransactionMetadataFactory {
     }
   }
 
+  ////////////////////////////
+  // Static factory methods //
+  ////////////////////////////
+
   static Output buildCreateTableMetadata(
       String tablePath,
       StructType schema,
       Map<String, String> tableProperties,
       Optional<List<String>> partitionColumns,
       Optional<List<Column>> clusteringColumns) {
+    // You cannot set both the partition and clustering columns
     checkArgument(!partitionColumns.isPresent() || !clusteringColumns.isPresent());
     Output output =
         new TransactionMetadataFactory(
@@ -108,26 +117,27 @@ public class TransactionMetadataFactory {
       String tablePath,
       SnapshotImpl readSnapshot,
       StructType schema,
-      Map<String, String> tableProperties,
+      Map<String, String> userInputTableProperties,
       Optional<List<String>> partitionColumns,
       Optional<List<Column>> clusteringColumns) {
+    // You cannot set both the partition and clustering columns
     checkArgument(!partitionColumns.isPresent() || !clusteringColumns.isPresent());
     // In the case of Replace table there are a few delta-specific properties we want to preserve
-    Map<String, String> properties =
+    Map<String, String> replaceTableProperties =
         readSnapshot.getMetadata().getConfiguration().entrySet().stream()
             .filter(
                 e ->
                     ReplaceTableTransactionBuilderImpl.TABLE_PROPERTY_KEYS_TO_PRESERVE.contains(
                         e.getKey()))
             .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
-    properties.putAll(tableProperties);
-    Metadata metadata =
-        getInitialMetadata(schema, properties, partitionColumns.orElse(emptyList()));
+    replaceTableProperties.putAll(userInputTableProperties);
     Output output =
         new TransactionMetadataFactory(
                 tablePath,
                 Optional.of(readSnapshot),
-                Optional.of(metadata),
+                Optional.of(
+                    getInitialMetadata(
+                        schema, replaceTableProperties, partitionColumns.orElse(emptyList()))),
                 Optional.of(readSnapshot.getProtocol()),
                 true /* isCreateOrReplace */,
                 clusteringColumns,
@@ -158,12 +168,12 @@ public class TransactionMetadataFactory {
       Optional<StructType> newSchema,
       Optional<List<Column>> userProvidedClusteringColumns) {
     if (propertiesAdded.isPresent() && propertyKeysRemoved.isPresent()) {
-      Set<String> invalidPropertyKeys =
+      Set<String> overlappingPropertyKeys =
           propertyKeysRemoved.get().stream()
               .filter(key -> propertiesAdded.get().containsKey(key))
               .collect(toSet());
-      if (!invalidPropertyKeys.isEmpty()) {
-        throw DeltaErrors.overlappingTablePropertiesSetAndUnset(invalidPropertyKeys);
+      if (!overlappingPropertyKeys.isEmpty()) {
+        throw DeltaErrors.overlappingTablePropertiesSetAndUnset(overlappingPropertyKeys);
       }
     }
     Optional<Metadata> newMetadata = Optional.empty();
@@ -202,6 +212,10 @@ public class TransactionMetadataFactory {
         .finalOutput;
   }
 
+  ///////////////////////////////
+  // Instance Fields / Methods //
+  ///////////////////////////////
+
   /* Fields that set by input */
   private final String tablePath;
   private final Optional<SnapshotImpl> latestSnapshotOpt;
@@ -216,6 +230,12 @@ public class TransactionMetadataFactory {
   /* Fields that are fixed after validation and updates are finished */
   private final Output finalOutput;
 
+  /**
+   * @param initialNewMetadata the initial metadata that has all _user provided_ updates applied to
+   *     it. this class may apply additional updates to transform to the final output (ex: auto
+   *     enabling column mapping for iceberg compat, adding column mapping metadata to the schema,
+   *     etc)
+   */
   private TransactionMetadataFactory(
       String tablePath,
       Optional<SnapshotImpl> latestSnapshotOpt,
@@ -226,10 +246,14 @@ public class TransactionMetadataFactory {
       boolean isSchemaEvolution) {
     checkArgument(
         (initialNewMetadata.isPresent() && initialNewProtocol.isPresent())
-            || latestSnapshotOpt.isPresent());
-    // isSchemaEvolution can only be true for update table
-    checkArgument(!isSchemaEvolution || !isCreateOrReplace);
-    checkArgument(isCreateOrReplace || latestSnapshotOpt.isPresent());
+            || latestSnapshotOpt.isPresent(),
+        "initialNewMetadata and initialNewProtocol must be present for a new table");
+    checkArgument(
+        !isSchemaEvolution || !isCreateOrReplace,
+        "isSchemaEvolution can only be true for update table");
+    checkArgument(
+        isCreateOrReplace || latestSnapshotOpt.isPresent(),
+        "update table must provide a latest snapshot");
     this.tablePath = tablePath;
     this.latestSnapshotOpt = latestSnapshotOpt;
     this.isCreateOrReplace = isCreateOrReplace;
@@ -237,7 +261,7 @@ public class TransactionMetadataFactory {
     this.newMetadata = initialNewMetadata;
     this.newProtocol = initialNewProtocol;
 
-    performProtocolUpgrades();
+    performProtocolUpgrades(userProvidedClusteringColumns.isPresent());
     performIcebergCompatUpgradesAndValidation();
     updateColumnMappingMetadataAndResolveClusteringColumns(userProvidedClusteringColumns);
     updateRowTrackingMetadata();
@@ -255,11 +279,11 @@ public class TransactionMetadataFactory {
     return newProtocol.orElseGet(() -> latestSnapshotOpt.get().getProtocol());
   }
 
-  private void validateForUpdateTableUsingOldMetadata(Consumer<Metadata> validateFx) {
+  private void validateForUpdateTableUsingOldMetadata(Consumer<Metadata> validateFn) {
     if (!isCreateOrReplace) {
       // For update table we know latestSnapshotOpt is present
       Metadata oldMetadata = latestSnapshotOpt.get().getMetadata();
-      validateFx.accept(oldMetadata);
+      validateFn.accept(oldMetadata);
     }
   }
 
@@ -267,7 +291,7 @@ public class TransactionMetadataFactory {
   // TODO: if you only update the feature properties we currently write a new Metadata even though
   //  this should just be a protocol upgrade (this could be an issue if for example you use
   //  .withDomainMetadata supported in every txn --- we always write a new Metadata action)
-  private void performProtocolUpgrades() {
+  private void performProtocolUpgrades(boolean clusteringRequired) {
     // This is the only place we update the protocol action; takes care of any dependent features
     // Ex: We enable feature `icebergCompatV2` plus dependent features `columnMapping`
 
@@ -278,6 +302,13 @@ public class TransactionMetadataFactory {
         TableFeatures.extractFeaturePropertyOverrides(getEffectiveMetadata());
     if (newFeaturesAndMetadata._2.isPresent()) {
       newMetadata = newFeaturesAndMetadata._2;
+    }
+
+    // Enable clustering if not already enabled and clustering columns are set. This isn't handled
+    // in autoUpgradeProtocolBasedOnMetadata since clustering is stored in the domain metadata
+    if (clusteringRequired
+        && !getEffectiveProtocol().supportsFeature(TableFeatures.CLUSTERING_W_FEATURE)) {
+      newFeaturesAndMetadata._1.add(TableFeatures.CLUSTERING_W_FEATURE);
     }
 
     Optional<Tuple2<Protocol, Set<TableFeature>>> newProtocolAndFeatures =
@@ -524,8 +555,6 @@ public class TransactionMetadataFactory {
 
   private static Metadata getInitialMetadata(
       StructType schema, Map<String, String> tableProperties, List<String> partitionColumns) {
-    List<String> partitionColumnsCasePreserving =
-        casePreservingPartitionColNames(schema, partitionColumns);
     return new Metadata(
         java.util.UUID.randomUUID().toString(), /* id */
         Optional.empty(), /* name */
@@ -533,7 +562,9 @@ public class TransactionMetadataFactory {
         new Format(), /* format */
         schema.toJson(), /* schemaString */
         schema, /* schema */
-        buildArrayValue(partitionColumnsCasePreserving, StringType.STRING), /* partitionColumns */
+        buildArrayValue(
+            casePreservingPartitionColNames(schema, partitionColumns),
+            StringType.STRING), /* partitionColumns */
         Optional.of(System.currentTimeMillis()), /* createdTime */
         stringStringMapValue(tableProperties) /* configuration */);
   }

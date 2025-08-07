@@ -248,10 +248,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
           table.getClock());
     }
 
-    // Instead of special casing enabling clustering or domain metadata, we should just add them
+    // Instead of special casing enabling domain metadata, we should just add them
     // to the table properties which we already handle.
-    Map<String, String> tablePropertiesWithFeatureEnablement =
-        new HashMap<>(tableProperties.orElse(emptyMap()));
     boolean domainMetadataEnabled =
         !isCreateOrReplace
             && latestSnapshot
@@ -259,7 +257,9 @@ public class TransactionBuilderImpl implements TransactionBuilder {
                 .getProtocol()
                 .supportsFeature(TableFeatures.DOMAIN_METADATA_W_FEATURE);
     if (needDomainMetadataSupport && !domainMetadataEnabled) {
-      tablePropertiesWithFeatureEnablement.put(
+      Map<String, String> tablePropertiesWithDomainMetadataEnabled =
+          new HashMap<>(tableProperties.orElse(emptyMap()));
+      tablePropertiesWithDomainMetadataEnabled.put(
           TableFeatures.SET_TABLE_FEATURE_SUPPORTED_PREFIX
               + TableFeatures.DOMAIN_METADATA_W_FEATURE.featureName(),
           "supported");
