@@ -93,7 +93,8 @@ public class TransactionMetadataFactory {
       Map<String, String> tableProperties,
       Optional<List<String>> partitionColumns,
       Optional<List<Column>> clusteringColumns) {
-    checkArgument(!partitionColumns.isPresent() || !clusteringColumns.isPresent(),
+    checkArgument(
+        !partitionColumns.isPresent() || !clusteringColumns.isPresent(),
         "Cannot provide both partition columns and clustering columns");
     Output output =
         new TransactionMetadataFactory(
@@ -120,7 +121,8 @@ public class TransactionMetadataFactory {
       Map<String, String> userInputTableProperties,
       Optional<List<String>> partitionColumns,
       Optional<List<Column>> clusteringColumns) {
-    checkArgument(!partitionColumns.isPresent() || !clusteringColumns.isPresent(),
+    checkArgument(
+        !partitionColumns.isPresent() || !clusteringColumns.isPresent(),
         "Cannot provide both partition columns and clustering columns");
     // In the case of Replace table there are a few delta-specific properties we want to preserve
     Map<String, String> replaceTableProperties =
