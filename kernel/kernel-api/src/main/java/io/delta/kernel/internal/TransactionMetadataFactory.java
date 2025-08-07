@@ -168,7 +168,7 @@ public class TransactionMetadataFactory {
       Optional<Map<String, String>> propertiesAdded,
       Optional<Set<String>> propertyKeysRemoved,
       Optional<StructType> newSchema,
-      Optional<List<Column>> userProvidedClusteringColumns) {
+      Optional<List<Column>> clusteringColumns) {
     if (propertiesAdded.isPresent() && propertyKeysRemoved.isPresent()) {
       Set<String> overlappingPropertyKeys =
           propertyKeysRemoved.get().stream()
@@ -209,7 +209,7 @@ public class TransactionMetadataFactory {
             newMetadata,
             Optional.empty(),
             false /* isCreateOrReplace */,
-            userProvidedClusteringColumns,
+            clusteringColumns,
             newSchema.isPresent() /* isSchemaEvolultion */)
         .finalOutput;
   }
