@@ -46,6 +46,11 @@ abstract class Dimension(val name: String, val values: List[String]) {
     override val isOptional: Boolean = true
     override def asOptional: Dimension = this
   }
+
+  // A bit of DSL for better readability of the test configs.
+  def and(other: Dimension): List[Dimension] = this :: other :: Nil
+  def and(others: List[Dimension]): List[Dimension] = this :: others
+  def alone: List[Dimension] = this :: Nil
 }
 
 /**
@@ -101,6 +106,10 @@ case class TestGroup(
 
 object SuiteGeneratorConfig {
   private object Dims {
+    // Just to improve readability of the test configurations a bit.
+    // `Dims.NONE` is clearer than just `Nil`.
+    val NONE: List[Dimension] = Nil
+
     val PATH_BASED = DimensionMixin("DeltaDMLTestUtils", suffix = "PathBased")
     val NAME_BASED = DimensionMixin("DeltaDMLTestUtils", suffix = "NameBased")
     val MERGE_SQL = DimensionMixin("MergeIntoSQL")
@@ -108,6 +117,7 @@ object SuiteGeneratorConfig {
     val MERGE_DVS = DimensionMixin("MergeIntoDVs")
     val PREDPUSH = DimensionWithMultipleValues("PredicatePushdown", List("Disabled", "Enabled"))
     val CDC = DimensionMixin("CDC", suffix = "Enabled")
+    // These enables/disable DVs on new tables, but leave DML command configs untouched.
     val PERSISTENT_DV = DimensionWithMultipleValues("PersistentDV", List("Disabled", "Enabled"))
     val PERSISTENT_DV_OFF = PERSISTENT_DV.withValueAsDimension(_.head)
     val PERSISTENT_DV_ON = PERSISTENT_DV.withValueAsDimension(_.last)
@@ -157,14 +167,19 @@ object SuiteGeneratorConfig {
     )
   }
 
-  implicit class DimensionListExt(val commonDims: List[Dimension]) extends AnyVal {
+  implicit class DimensionListExt(val dims: List[Dimension]) {
     /**
      * @return a new list of dimension combinations where each combination has the
      * [[commonDims]] prepended to it.
      */
     def prependToAll(dimensionCombinations: List[Dimension]*): List[List[Dimension]] = {
-      dimensionCombinations.toList.map(commonDims ::: _)
+      dimensionCombinations.toList.map(dims ::: _)
     }
+
+    // Continued DSL from the Dimension class above to work around the different
+    // operator precedence between :: and `and`.
+    def and(other: Dimension): List[Dimension] = dims ::: other :: Nil
+    def and(others: List[Dimension]): List[Dimension] = dims ::: others
   }
 
   /**
