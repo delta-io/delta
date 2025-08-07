@@ -327,7 +327,11 @@ public class TransactionImpl implements Transaction {
       boolean seenRetryableNonConflictException = false;
       while (true) {
         // This loop exits upon either (a) commit success (return statement) or (b) commit failure.
-        logger.info("Committing transaction as version = {}.", commitAsVersion);
+        logger.info(
+            "Attempting to commit transaction at table version {}. Attempt {}/{}",
+            commitAsVersion,
+            attempt,
+            getMaxCommitAttempts());
         try {
           transactionMetrics.commitAttemptsCounter.increment();
           return doCommit(
@@ -391,6 +395,12 @@ public class TransactionImpl implements Transaction {
             currentCrcInfo = rebaseState.getUpdatedCrcInfo();
           }
         }
+        // We will be retrying the commit.
+        //
+        // Action counters may be partially incremented from previous tries, reset the counters
+        // to 0 and drop fileSizeHistogram
+        // TODO: reconcile fileSizeHistogram.
+        transactionMetrics.resetActionMetricsForRetry();
         attempt++;
       }
     } finally {
