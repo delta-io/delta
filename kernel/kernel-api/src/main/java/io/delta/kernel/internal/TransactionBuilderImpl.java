@@ -263,21 +263,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
           TableFeatures.SET_TABLE_FEATURE_SUPPORTED_PREFIX
               + TableFeatures.DOMAIN_METADATA_W_FEATURE.featureName(),
           "supported");
-    }
-    boolean clusteringEnabled =
-        !isCreateOrReplace
-            && latestSnapshot
-                .get()
-                .getProtocol()
-                .supportsFeature(TableFeatures.CLUSTERING_W_FEATURE);
-    if (inputLogicalClusteringColumns.isPresent() && !clusteringEnabled) {
-      tablePropertiesWithFeatureEnablement.put(
-          TableFeatures.SET_TABLE_FEATURE_SUPPORTED_PREFIX
-              + TableFeatures.CLUSTERING_W_FEATURE.featureName(),
-          "supported");
-    }
-    if (tablePropertiesWithFeatureEnablement.size() > 0) {
-      tableProperties = Optional.of(tablePropertiesWithFeatureEnablement);
+      tableProperties = Optional.of(tablePropertiesWithDomainMetadataEnabled);
     }
 
     TransactionMetadataFactory.Output outputMetadata;
