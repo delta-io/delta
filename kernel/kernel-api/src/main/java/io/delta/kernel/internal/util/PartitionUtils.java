@@ -53,16 +53,16 @@ public class PartitionUtils {
    * Utility method to attach partition columns to the given data batch.
    *
    * @param dataBatch Data batch to which the partition columns will be added.
-   * @param logicalSchema Logical schema of the table scan. Used to insert partition columns at the
-   *     right positions in the data batch. This logical schema must contain column mapping metadata
-   *     if column mapping is enabled.
+   * @param logicalReadSchema Logical schema of the table scan. Used to insert partition columns at
+   *     the right positions in the data batch. This logical schema must contain column mapping
+   *     metadata if column mapping is enabled.
    * @param partitionValues Map of partition column name to value.
    * @param expressionHandler Expression handler used to evaluate the partition values.
    * @return A new {@link ColumnarBatch} with the partition columns added.
    */
   public static ColumnarBatch withPartitionColumns(
       ColumnarBatch dataBatch,
-      StructType logicalSchema,
+      StructType logicalReadSchema,
       Map<String, String> partitionValues,
       ExpressionHandler expressionHandler) {
     if (partitionValues == null || partitionValues.isEmpty()) {
@@ -76,19 +76,20 @@ public class PartitionUtils {
     // so we first need to count the number of partition columns in the logical schema.
     int numPartitionColumnsInSchema =
         (int)
-            logicalSchema.fields().stream()
+            logicalReadSchema.fields().stream()
                 .map(ColumnMapping::getPhysicalName)
                 .filter(partitionValues::containsKey)
                 .count();
-    if (numPartitionColumnsInSchema + dataBatch.getSchema().length() != logicalSchema.length()) {
+    if (numPartitionColumnsInSchema + dataBatch.getSchema().length()
+        != logicalReadSchema.length()) {
       throw DeltaErrorsInternal.logicalPhysicalSchemaMismatch(
-          numPartitionColumnsInSchema, dataBatch.getSchema().length(), logicalSchema.length());
+          numPartitionColumnsInSchema, dataBatch.getSchema().length(), logicalReadSchema.length());
     }
 
-    for (int colIdx = 0; colIdx < logicalSchema.length(); colIdx++) {
+    for (int colIdx = 0; colIdx < logicalReadSchema.length(); colIdx++) {
       // We must iterate the logical schema in order since we insert partition columns into the data
       // batch according to their ordinal in the logical schema.
-      StructField structField = logicalSchema.at(colIdx);
+      StructField structField = logicalReadSchema.at(colIdx);
       String physicalName = ColumnMapping.getPhysicalName(structField);
       if (partitionValues.containsKey(physicalName)) {
         // Create a partition column vector
