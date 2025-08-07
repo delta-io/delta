@@ -399,8 +399,10 @@ case class AlterTableDropFeatureDeltaCommand(
       // isSnapshotClean.
       val requiresHistoryValidation = removableFeature.requiresHistoryProtection
       val startTimeNs = table.deltaLog.clock.nanoTime()
-      val preDowngradeMadeChanges =
-        removableFeature.preDowngradeCommand(table).removeFeatureTracesIfNeeded(sparkSession)
+      val status = removableFeature
+        .preDowngradeCommand(table)
+        .removeFeatureTracesIfNeeded(sparkSession)
+      val preDowngradeMadeChanges = status.performedChanges
       if (requiresHistoryValidation) {
         // Generate a checkpoint after the cleanup that is based on commits that do not use
         // the feature. This intends to help slow-moving tables to qualify for history truncation
@@ -418,7 +420,8 @@ case class AlterTableDropFeatureDeltaCommand(
         }
       }
 
-      val txn = table.startTransaction()
+      val startSnapshotOpt = status.lastCommitVersionOpt.map(deltaLog.getSnapshotAt(_))
+      val txn = table.startTransaction(snapshotOpt = startSnapshotOpt)
       val snapshot = txn.snapshot
 
       // Verify whether all requirements hold before performing the protocol downgrade.
@@ -505,7 +508,9 @@ case class AlterTableDropFeatureDeltaCommand(
     val deltaLog = table.deltaLog
     recordDeltaOperation(deltaLog, "delta.ddl.alter.dropFeatureWithCheckpointProtection") {
       var startTimeNs = System.nanoTime()
-      removableFeature.preDowngradeCommand(table).removeFeatureTracesIfNeeded(sparkSession)
+      val status = removableFeature
+        .preDowngradeCommand(table)
+        .removeFeatureTracesIfNeeded(sparkSession)
 
       // Create and validate the barrier checkpoints. The checkpoint are created on top of
       // empty commits. However, this is not guaranteed. Other txns might interleave the empty
@@ -527,7 +532,8 @@ case class AlterTableDropFeatureDeltaCommand(
         }
       }
 
-      val txn = table.startTransaction()
+      val startSnapshotOpt = status.lastCommitVersionOpt.map(deltaLog.getSnapshotAt(_))
+      val txn = table.startTransaction(snapshotOpt = startSnapshotOpt)
       val snapshot = txn.snapshot
 
       // Verify whether all requirements hold before performing the protocol downgrade.

@@ -28,7 +28,7 @@ case class RowTrackingUnBackfillBatch(filesInBatch: Seq[AddFile]) extends Backfi
   override protected def prepareFilesAndCommit(
       spark: SparkSession,
       txn: OptimisticTransaction,
-      batchId: Int): Unit = {
+      batchId: Int): Long = {
     val metadata = txn.snapshot.metadata
     val isEnabled = DeltaConfigs.ROW_TRACKING_ENABLED.fromMetaData(metadata)
     val suspendIdGeneration = DeltaConfigs.ROW_TRACKING_SUSPENDED.fromMetaData(metadata)
