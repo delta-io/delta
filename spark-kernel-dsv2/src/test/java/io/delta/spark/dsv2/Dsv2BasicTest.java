@@ -71,14 +71,14 @@ public class Dsv2BasicTest {
   }
 
   @Test
-  public void testQueryTable() {
+  public void testBatchRead() {
     spark.sql(
         String.format(
-            "CREATE TABLE dsv2.%s.query_test (id INT, name STRING, value DOUBLE)", nameSpace));
+            "CREATE TABLE dsv2.%s.batch_read_test (id INT, name STRING, value DOUBLE)", nameSpace));
     AnalysisException e =
         assertThrows(
             AnalysisException.class,
-            () -> spark.sql(String.format("SELECT * FROM dsv2.%s.query_test", nameSpace)));
+            () -> spark.sql(String.format("SELECT * FROM dsv2.%s.batch_read_test", nameSpace)));
     // TODO: update when implementing SupportReads
     assertTrue(e.getMessage().contains("does not support batch scan"));
   }

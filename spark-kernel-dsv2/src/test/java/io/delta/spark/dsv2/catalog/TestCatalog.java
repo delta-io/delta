@@ -41,11 +41,22 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 /**
  * A {@link TableCatalog} implementation that uses Delta Kernel for table operations. This catalog
  * is used for facilitating testing for spark-dsv2 code path.
+ *
+ * <p>This catalog is initialized with a base path where all tables will be created. The catalog
+ * maintains a mapping of table identifiers to their physical paths on the filesystem. When a table
+ * is created, it gets a unique subdirectory under the base path to store its data.
  */
 public class TestCatalog implements TableCatalog {
 
+  /** The name of this catalog instance, set during initialization. */
   private String catalogName;
+
+  /**
+   * The base directory path where all tables created by this catalog will be stored. Each table
+   * gets a unique subdirectory under this path.
+   */
   private String basePath;
+
   // TODO: Support catalog owned commit.
   private final Map<String, String> tablePaths = new ConcurrentHashMap<>();
   private final Engine engine = DefaultEngine.create(new Configuration());
@@ -58,10 +69,10 @@ public class TestCatalog implements TableCatalog {
   @Override
   public Table loadTable(Identifier ident) throws NoSuchTableException {
     String tableKey = getTableKey(ident);
-    if (!tablePaths.containsKey(tableKey)) {
+    String tablePath = tablePaths.get(tableKey);
+    if (tablePath == null) {
       throw new NoSuchTableException(ident);
     }
-    String tablePath = tablePaths.get(tableKey);
     try {
       // Use TableManager.loadTable to load the table
       SnapshotImpl snapshot = (SnapshotImpl) TableManager.loadSnapshot(tablePath).build(engine);
@@ -87,7 +98,7 @@ public class TestCatalog implements TableCatalog {
         partitionColumns.add(columnName);
       }
 
-      // TODO: migrate to use CCv2‘s committer API
+      // TODO: migrate to use CCv2's committer API
       io.delta.kernel.Table.forPath(engine, tablePath)
           .createTransactionBuilder(
               engine, "kernel-spark-dsv2-test-catalog", Operation.CREATE_TABLE)
@@ -126,8 +137,9 @@ public class TestCatalog implements TableCatalog {
 
   @Override
   public void initialize(String name, CaseInsensitiveStringMap options) {
-    this.basePath = options.get("base_path");
     this.catalogName = name;
+    // Use a default path if base_path is not provided
+    this.basePath = options.getOrDefault("base_path", "/tmp/dsv2_test/");
   }
 
   @Override
