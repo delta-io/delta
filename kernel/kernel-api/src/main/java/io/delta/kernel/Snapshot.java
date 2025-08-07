@@ -21,6 +21,7 @@ import io.delta.kernel.commit.Committer;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.types.StructType;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -84,6 +85,13 @@ public interface Snapshot {
    * @return the domain configuration or empty
    */
   Optional<String> getDomainMetadata(String domain);
+
+  /**
+   * Get all table properties for the Delta table at this snapshot.
+   *
+   * @return a {@link Map} of table properties.
+   */
+  Map<String, String> getTableProperties();
 
   /** @return a scan builder to construct a {@link Scan} to read data from this snapshot */
   ScanBuilder getScanBuilder();
