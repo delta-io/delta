@@ -71,15 +71,15 @@ public class TransactionMetadataFactory {
     /* New protocol, present if the transaction should commit a new protocol action */
     public final Optional<Metadata> newMetadata;
     /* Resolved _new_ clustering columns if the transaction should update the clustering columns */
-    public final Optional<List<Column>> resolvedNewClusteringColumns;
+    public final Optional<List<Column>> physicalNewClusteringColumns;
 
     public Output(
         Optional<Protocol> newProtocol,
         Optional<Metadata> newMetadata,
-        Optional<List<Column>> resolvedNewClusteringColumns) {
+        Optional<List<Column>> physicalNewClusteringColumns) {
       this.newProtocol = newProtocol;
       this.newMetadata = newMetadata;
-      this.resolvedNewClusteringColumns = resolvedNewClusteringColumns;
+      this.physicalNewClusteringColumns = physicalNewClusteringColumns;
     }
   }
 
@@ -93,8 +93,8 @@ public class TransactionMetadataFactory {
       Map<String, String> tableProperties,
       Optional<List<String>> partitionColumns,
       Optional<List<Column>> clusteringColumns) {
-    // You cannot set both the partition and clustering columns
-    checkArgument(!partitionColumns.isPresent() || !clusteringColumns.isPresent());
+    checkArgument(!partitionColumns.isPresent() || !clusteringColumns.isPresent(),
+        "Cannot provide both partition columns and clustering columns");
     Output output =
         new TransactionMetadataFactory(
                 tablePath,
@@ -120,8 +120,8 @@ public class TransactionMetadataFactory {
       Map<String, String> userInputTableProperties,
       Optional<List<String>> partitionColumns,
       Optional<List<Column>> clusteringColumns) {
-    // You cannot set both the partition and clustering columns
-    checkArgument(!partitionColumns.isPresent() || !clusteringColumns.isPresent());
+    checkArgument(!partitionColumns.isPresent() || !clusteringColumns.isPresent(),
+        "Cannot provide both partition columns and clustering columns");
     // In the case of Replace table there are a few delta-specific properties we want to preserve
     Map<String, String> replaceTableProperties =
         readSnapshot.getMetadata().getConfiguration().entrySet().stream()
@@ -225,7 +225,7 @@ public class TransactionMetadataFactory {
   /* Fields that are updated by helper methods when updating and validating the metadata */
   private Optional<Metadata> newMetadata;
   private Optional<Protocol> newProtocol;
-  private Optional<List<Column>> resolvedNewClusteringColumns;
+  private Optional<List<Column>> physicalNewClusteringColumns;
 
   /* Fields that are fixed after validation and updates are finished */
   private final Output finalOutput;
@@ -242,12 +242,12 @@ public class TransactionMetadataFactory {
       Optional<Metadata> initialNewMetadata,
       Optional<Protocol> initialNewProtocol,
       boolean isCreateOrReplace,
-      Optional<List<Column>> userProvidedClusteringColumns,
+      Optional<List<Column>> userProvidedLogicalClusteringColumns,
       boolean isSchemaEvolution) {
     checkArgument(
         (initialNewMetadata.isPresent() && initialNewProtocol.isPresent())
             || latestSnapshotOpt.isPresent(),
-        "initialNewMetadata and initialNewProtocol must be present for a new table");
+        "initial protocol and metadata must be present for create table");
     checkArgument(
         !isSchemaEvolution || !isCreateOrReplace,
         "isSchemaEvolution can only be true for update table");
@@ -261,12 +261,12 @@ public class TransactionMetadataFactory {
     this.newMetadata = initialNewMetadata;
     this.newProtocol = initialNewProtocol;
 
-    performProtocolUpgrades(userProvidedClusteringColumns.isPresent());
+    performProtocolUpgrades(userProvidedLogicalClusteringColumns.isPresent());
     performIcebergCompatUpgradesAndValidation();
-    updateColumnMappingMetadataAndResolveClusteringColumns(userProvidedClusteringColumns);
+    updateColumnMappingMetadataAndResolveClusteringColumns(userProvidedLogicalClusteringColumns);
     updateRowTrackingMetadata();
     validateMetadataChangeAndApplyTypeWidening();
-    this.finalOutput = new Output(newProtocol, newMetadata, resolvedNewClusteringColumns);
+    this.finalOutput = new Output(newProtocol, newMetadata, physicalNewClusteringColumns);
   }
 
   private Metadata getEffectiveMetadata() {
@@ -397,7 +397,7 @@ public class TransactionMetadataFactory {
     }
     // We also resolve the user provided clustering columns here using the updated schema
     StructType updatedSchema = getEffectiveMetadata().getSchema();
-    this.resolvedNewClusteringColumns =
+    this.physicalNewClusteringColumns =
         userProvidedClusteringColumns.map(
             cols -> SchemaUtils.casePreservingEligibleClusterColumns(updatedSchema, cols));
   }
@@ -493,8 +493,8 @@ public class TransactionMetadataFactory {
             // E.g. getClusteringColumns returns <physical_name_of_struct>.<physical_name_inner>,
             // Only physical_name_inner is required for validation
             Optional<List<Column>> effectiveClusteringCols =
-                resolvedNewClusteringColumns.isPresent()
-                    ? resolvedNewClusteringColumns
+                physicalNewClusteringColumns.isPresent()
+                    ? physicalNewClusteringColumns
                     : latestSnapshotOpt.get().getPhysicalClusteringColumns();
             Set<String> clusteringColumnPhysicalNames =
                 effectiveClusteringCols.orElse(Collections.emptyList()).stream()

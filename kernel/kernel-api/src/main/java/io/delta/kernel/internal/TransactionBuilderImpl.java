@@ -307,7 +307,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         outputMetadata.newProtocol,
         outputMetadata.newMetadata,
         setTxnOpt,
-        outputMetadata.resolvedNewClusteringColumns,
+        outputMetadata.physicalNewClusteringColumns,
         maxRetries,
         logCompactionInterval,
         table.getClock());
