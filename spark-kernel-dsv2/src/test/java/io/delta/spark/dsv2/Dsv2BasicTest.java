@@ -40,6 +40,11 @@ public class Dsv2BasicTest {
         new SparkConf()
             .set("spark.sql.catalog.dsv2", "io.delta.spark.dsv2.catalog.TestCatalog")
             .set("spark.sql.catalog.dsv2.base_path", tempDir.getAbsolutePath())
+            // Enable Delta for path-based writes like delta.`path`
+            .set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+            .set(
+                "spark.sql.catalog.spark_catalog",
+                "org.apache.spark.sql.delta.catalog.DeltaCatalog")
             .setMaster("local[*]")
             .setAppName("Dsv2BasicTest");
     spark = SparkSession.builder().config(conf).getOrCreate();
@@ -75,25 +80,39 @@ public class Dsv2BasicTest {
     spark.sql(
         String.format(
             "CREATE TABLE dsv2.%s.query_test (id INT, name STRING, value DOUBLE)", nameSpace));
-    
-    // Insert some test data
-    spark.sql(String.format(
-        "INSERT INTO dsv2.%s.query_test VALUES (1, 'test1', 1.1), (2, 'test2', 2.2)", nameSpace));
-    
-    // Test that we can query the table
-    Dataset<Row> result = spark.sql(String.format("SELECT * FROM dsv2.%s.query_test", nameSpace));
-    result.show();
-    
+
+    // Lookup the physical path stored by TestCatalog as a table property
+    Dataset<Row> props =
+        spark.sql(String.format("SHOW TBLPROPERTIES dsv2.%s.query_test", nameSpace));
+    List<Row> propRows = props.collectAsList();
+    String tablePath = null;
+    for (Row r : propRows) {
+      if ("_test_table_location".equals(r.getString(0))) {
+        tablePath = r.getString(1);
+        break;
+      }
+    }
+    assertNotNull(tablePath, "_test_table_location should exist in table properties");
+
+    // Insert some test data via delta.`path`
+    spark.sql(
+        String.format(
+            "INSERT INTO delta.`%s` VALUES (1, 'test1', 1.1), (2, 'test2', 2.2)", tablePath));
+
+    // Test that we can query the table via catalog
+    Dataset<Row> result =
+        spark.sql(String.format("SELECT * FROM dsv2.%s.query_test ORDER BY id", nameSpace));
+
     // Verify the result
     List<Row> rows = result.collectAsList();
     assertEquals(2, rows.size(), "Should have 2 rows");
-    
+
     // Check first row
     Row firstRow = rows.get(0);
     assertEquals(1, firstRow.getInt(0), "First row id should be 1");
     assertEquals("test1", firstRow.getString(1), "First row name should be 'test1'");
     assertEquals(1.1, firstRow.getDouble(2), 0.001, "First row value should be 1.1");
-    
+
     // Check second row
     Row secondRow = rows.get(1);
     assertEquals(2, secondRow.getInt(0), "Second row id should be 2");

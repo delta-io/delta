@@ -23,10 +23,7 @@ import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.utils.CloseableIterable;
 import io.delta.spark.dsv2.table.DeltaKernelTable;
 import io.delta.spark.dsv2.utils.SchemaUtils;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.catalyst.analysis.NoSuchTableException;
@@ -77,6 +74,8 @@ public class TestCatalog implements TableCatalog {
     String tableKey = getTableKey(ident);
     String tablePath = basePath + UUID.randomUUID() + "/";
     tablePaths.put(tableKey, tablePath);
+    HashMap<String, String> propertiesWithLocation = new HashMap<>(properties);
+    propertiesWithLocation.put("_test_table_location", tablePath);
     try {
       // TODO: migrate to use CCv2 table
       io.delta.kernel.Table kernelTable = io.delta.kernel.Table.forPath(engine, tablePath);
@@ -93,7 +92,7 @@ public class TestCatalog implements TableCatalog {
               engine, "kernel-spark-dsv2-test-catalog", Operation.CREATE_TABLE)
           .withSchema(engine, SchemaUtils.convertSparkSchemaToKernelSchema(schema))
           .withPartitionColumns(engine, partitionColumns)
-          .withTableProperties(engine, properties)
+          .withTableProperties(engine, propertiesWithLocation)
           .build(engine)
           .commit(engine, CloseableIterable.emptyIterable());
 

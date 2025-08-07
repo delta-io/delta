@@ -21,7 +21,6 @@ import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.spark.dsv2.scan.DeltaKernelScanBuilder;
 import io.delta.spark.dsv2.utils.SchemaUtils;
 import java.util.*;
-
 import org.apache.spark.sql.connector.catalog.*;
 import org.apache.spark.sql.connector.expressions.Expressions;
 import org.apache.spark.sql.connector.expressions.Transform;
