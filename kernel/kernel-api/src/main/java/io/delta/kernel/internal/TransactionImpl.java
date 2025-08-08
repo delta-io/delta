@@ -348,7 +348,7 @@ public class TransactionImpl implements Transaction {
             throw new MaxCommitRetryLimitReachedException(commitAsVersion, maxRetries, cfe);
           } else if (!cfe.isConflict()) {
             // Case 3: No conflict => No conflict resolution needed. Just retry with same version.
-            printLogForRetryableNonConflict(attempt, commitAsVersion, cfe);
+            printLogForRetryableNonConflictException(attempt, commitAsVersion, cfe);
             seenRetryableNonConflictException = true;
           } else if (seenRetryableNonConflictException) {
             assert cfe.isRetryable() && cfe.isConflict();
@@ -948,7 +948,7 @@ public class TransactionImpl implements Transaction {
     return maxRetries + 1; // +1 because the first attempt is a try, not a retry.
   }
 
-  private void printLogForRetryableNonConflict(
+  private void printLogForRetryableNonConflictException(
       int attempt, long commitAsVersion, CommitFailedException cfe) {
     logger.warn(
         "Commit attempt {} for table version {} failed with a retryable exception and without "
