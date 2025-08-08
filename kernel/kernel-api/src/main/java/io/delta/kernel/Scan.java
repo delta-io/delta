@@ -126,6 +126,11 @@ public interface Scan {
   // TODO: return list of checkpoint log segment files (in ScanFileRow format)
   List<FileStatus> getLogSegmentCheckpointFiles();
 
+  CloseableIterator<FilteredColumnarBatch> applyFilter(
+      CloseableIterator<FilteredColumnarBatch> iter, Predicate predicate);
+
+  Optional<Predicate> getFilter();
+
   /**
    * Transform the physical data read from the table data file into the logical data that expected
    * out of the Delta table.

@@ -7,6 +7,7 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 import org.apache.spark.sql.SparkSession;
@@ -50,7 +51,13 @@ public class DeltaCcv2Table implements Table, SupportsRead {
   @Override
   public ScanBuilder newScanBuilder(CaseInsensitiveStringMap options) {
     return new DeltaScanBuilder(
-        resolvedTable, kernelEngine, accessKey, secretKey, sessionToken, sparkSession());
+        resolvedTable,
+        kernelEngine,
+        Optional.empty(),
+        accessKey,
+        secretKey,
+        sessionToken,
+        sparkSession());
   }
 
   private SparkSession sparkSession() {

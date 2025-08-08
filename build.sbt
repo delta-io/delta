@@ -148,7 +148,8 @@ lazy val commonSettings = Seq(
     "-Ddelta.log.cacheSize=3",
     "-Dspark.databricks.delta.delta.log.cacheSize=3",
     "-Dspark.sql.sources.parallelPartitionDiscovery.parallelism=5",
-    "-Xmx1024m"
+    "-Xmx1024m",
+    "-Dspark.test.home=/home/ada.ma/spark"
   ) ++ {
     if (javaVersionInt >= 17) {
       Seq(  // For Java 17 +
@@ -740,9 +741,13 @@ lazy val sparkDsv2 = (project in file("dsv2"))
     name := "delta-spark-dsv2",
     commonSettings,
 
+    // Required so that -Dspark.test.home is seen by the forked test JVM
+    Test / fork := true,
+
     Test / javaOptions ++= Seq(
       "-ea",
-      s"-Dlog4j.configuration=file:${baseDirectory.value}/src/test/resources/log4j.properties"
+      s"-Dlog4j.configuration=file:${baseDirectory.value}/src/test/resources/log4j.properties",
+      "-Dspark.test.home=/home/ada.ma/spark"
     ),
     libraryDependencies ++= Seq(
       "org.apache.spark" %% "spark-core" % "3.5.6" % "provided",

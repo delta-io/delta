@@ -15,7 +15,7 @@ public class DeltaReaderFactory implements PartitionReaderFactory {
 
   @Override
   public PartitionReader<InternalRow> createReader(InputPartition partition) {
-    logger.info("createReader");
+  //  logger.info("createReader");
 
     if (!(partition instanceof DeltaInputPartition)) {
       throw new IllegalArgumentException(
@@ -32,7 +32,7 @@ public class DeltaReaderFactory implements PartitionReaderFactory {
   @Override
   public PartitionReader<org.apache.spark.sql.vectorized.ColumnarBatch> createColumnarReader(
       InputPartition partition) {
-    logger.info("createColumnarReader");
+  //  logger.info("createColumnarReader");
 
     if (!(partition instanceof DeltaInputPartition)) {
       throw new IllegalArgumentException(
@@ -48,7 +48,7 @@ public class DeltaReaderFactory implements PartitionReaderFactory {
 
   @Override
   public boolean supportColumnarReads(InputPartition partition) {
-    logger.info("supportColumnarReads");
+  //  logger.info("supportColumnarReads");
     return SparkSession.active()
         .sparkContext()
         .conf()

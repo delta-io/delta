@@ -3,6 +3,8 @@ package io.delta.dsv2.read;
 import io.delta.dsv2.utils.SchemaUtils;
 import io.delta.kernel.ResolvedTable;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.expressions.Predicate;
+import java.util.Optional;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.connector.read.Scan;
 import org.apache.spark.sql.connector.read.ScanBuilder;
@@ -22,6 +24,7 @@ public class DeltaScanBuilder implements ScanBuilder {
   public DeltaScanBuilder(
       ResolvedTable resolvedTable,
       Engine tableEngine,
+      Optional<Predicate> predicate,
       String accessKey,
       String secretKey,
       String sessionToken,
@@ -32,6 +35,7 @@ public class DeltaScanBuilder implements ScanBuilder {
     this.secretKey = secretKey;
     this.sessionToken = sessionToken;
     this.scanBuilder = resolvedTable.getScanBuilder();
+    predicate.ifPresent(value -> this.scanBuilder = this.scanBuilder.withFilter(value));
     this.sparkSchema = SchemaUtils.convertKernelSchemaToSparkSchema(resolvedTable.getSchema());
     this.spark = spark;
   }

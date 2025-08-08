@@ -184,32 +184,25 @@ public class JsonUtils {
     return sb.toString();
   }
 
-    // todo: this is better; performance; columnar batch pruning reduce overhead
-    // todo: maybe just a list of rows
-    public static String filteredColumnarBatchToJson2(FilteredColumnarBatch filteredBatch) {
-      ColumnarBatch batch = filteredBatch.getData();
-      Optional<ColumnVector> selectionVectorOpt = filteredBatch.getSelectionVector();
-
-      List<String> includedJsonRows = new ArrayList<>();
-      try (CloseableIterator<Row> rowIterator = batch.getRows()) {
-        int rowIndex = 0;
-        while (rowIterator.hasNext()) {
-          Row row = rowIterator.next();
-          boolean include = selectionVectorOpt
-              .map(selectionVector -> selectionVector.getBoolean(rowIndex))
-              .orElse(true); // If selectionVector is empty, include all rows
-
-          if (include) {
-            includedJsonRows.add(JsonUtils.rowToJson(row));
-          }
-          rowIndex++;
-        }
-
-        return "[" + String.join(",", includedJsonRows) + "]";
-      } catch (Exception e) {
-        throw new RuntimeException("Could not serialize FilteredColumnarBatch to JSON", e);
+  // todo: this is better; performance; columnar batch pruning reduce overhead
+  // todo: maybe just a list of rows
+  public static String filteredColumnarBatchToJson2(FilteredColumnarBatch filteredBatch) {
+    List<String> includedJsonRows = new ArrayList<>();
+    try (CloseableIterator<Row> rowIterator = filteredBatch.getRows()) {
+      while (rowIterator.hasNext()) {
+        Row row = rowIterator.next();
+        includedJsonRows.add(rowToJson(row));
       }
+      String selectionJson = "null"; // all rows should be selected
+
+      return String.format(
+          "{\"columnarBatch\":%s,\"selectionVector\":%s}", includedJsonRows, selectionJson);
+    } catch (Exception e) {
+      throw new RuntimeException("Could not serialize FilteredColumnarBatch to JSON", e);
     }
+  }
+
+  // todo: hard code method 3: only select one row
 
   public static class RowSerializer extends StdSerializer<Row> {
     public RowSerializer() {

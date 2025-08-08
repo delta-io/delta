@@ -236,6 +236,13 @@ public class ScanImpl implements Scan {
   }
 
   @Override
+  public CloseableIterator<FilteredColumnarBatch> applyFilter(
+      CloseableIterator<FilteredColumnarBatch> iter, Predicate predicate) {
+
+    return null;
+  }
+
+  @Override
   public Optional<Predicate> getRemainingFilter() {
     return getDataFilters();
   }
@@ -253,6 +260,11 @@ public class ScanImpl implements Scan {
 
   private Optional<Predicate> getPartitionsFilters() {
     return removeAlwaysTrue(partitionAndDataFilters.map(filters -> filters._1));
+  }
+
+  @Override
+  public Optional<Predicate> getFilter() {
+    return filter;
   }
 
   /** Consider `ALWAYS_TRUE` as no predicate. */
