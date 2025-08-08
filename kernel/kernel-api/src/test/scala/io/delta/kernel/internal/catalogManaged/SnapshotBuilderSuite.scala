@@ -81,7 +81,7 @@ class SnapshotBuilderSuite extends AnyFunSuite
       .atVersion(1)
       .withProtocolAndMetadata(protocol, metadata) // avoid trying to use engine to load log segment
       .build(emptyMockEngine)
-      .getCommitter // Currently, the only `getCommitter` public API is on Transaction
+      .getCommitter
 
     assert(committer.isInstanceOf[DefaultFileSystemManagedTableOnlyCommitter])
   }
@@ -102,7 +102,7 @@ class SnapshotBuilderSuite extends AnyFunSuite
       .withCommitter(new CustomCommitter())
       .withProtocolAndMetadata(protocol, metadata) // avoid trying to use engine to load log segment
       .build(emptyMockEngine)
-      .getCommitter // Currently, the only `getCommitter` public API is on Transaction
+      .getCommitter
 
     assert(committer.isInstanceOf[CustomCommitter])
   }

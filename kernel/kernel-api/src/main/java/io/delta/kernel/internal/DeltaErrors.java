@@ -17,6 +17,7 @@ package io.delta.kernel.internal;
 
 import static java.lang.String.format;
 
+import io.delta.kernel.commit.CommitFailedException;
 import io.delta.kernel.exceptions.*;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.actions.DomainMetadata;
@@ -365,6 +366,15 @@ public final class DeltaErrors {
             "Cannot enable clustering on a partitioned table '%s'. "
                 + "Existing partition columns: '%s', Clustering columns: '%s'.",
             tablePath, partitionColNames, clusteringCols));
+  }
+
+  public static RuntimeException nonRetryableCommitException(
+      int attempt, long commitAsVersion, CommitFailedException cause) {
+    throw new RuntimeException(
+        String.format(
+            "Commit attempt %d for version %d failed with a non-retryable exception.",
+            attempt, commitAsVersion),
+        cause);
   }
 
   public static KernelException concurrentTransaction(

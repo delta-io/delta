@@ -65,7 +65,7 @@ class DefaultCommitterSuite extends AnyFunSuite
         .withProtocolAndMetadata(readProtocol, metadata)
         .atVersion(1)
         .build(emptyMockEngine)
-        .getCommitter // Currently, the only `getCommitter` public API is on Transaction
+        .getCommitter
 
       assert(committer.isInstanceOf[DefaultFileSystemManagedTableOnlyCommitter])
 

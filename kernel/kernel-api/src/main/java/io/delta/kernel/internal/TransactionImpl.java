@@ -341,26 +341,18 @@ public class TransactionImpl implements Transaction {
           if (!cfe.isRetryable()) {
             // Case 1: Non-retryable exception. We must throw this. We don't expect connectors to
             //         be able to recover from this.
-            throw new RuntimeException(
-                String.format(
-                    "Commit attempt %d for version %d failed with a non-retryable exception.",
-                    attempt, commitAsVersion),
-                cfe);
+            throw DeltaErrors.nonRetryableCommitException(attempt, commitAsVersion, cfe);
           } else if (attempt >= getMaxCommitAttempts()) {
             // Case 2: Despite the error being retryable, we have exhausted the maximum number of
             //         retries. We must throw here, too.
             throw new MaxCommitRetryLimitReachedException(commitAsVersion, maxRetries, cfe);
           } else if (!cfe.isConflict()) {
             // Case 3: No conflict => No conflict resolution needed. Just retry with same version.
-            logger.warn(
-                "Commit attempt {} for table version {} failed with a retryable exception and "
-                    + "without conflict. Skipping conflict resolution and trying again. "
-                    + "Exception: {}",
-                attempt,
-                commitAsVersion,
-                cfe);
+            printLogForRetryableNonConflict(attempt, commitAsVersion, cfe);
             seenRetryableNonConflictException = true;
           } else if (seenRetryableNonConflictException) {
+            assert cfe.isRetryable() && cfe.isConflict();
+
             // Case 4: There is a conflict, and we have previously seen a retryable exception
             //         without conflict and then retried. This means that something like the
             //         following has happened:
@@ -377,15 +369,10 @@ public class TransactionImpl implements Transaction {
             //         other contents of the delta files).
             throw new CommitStateUnknownException(commitAsVersion, attempt, cfe);
           } else {
+            assert cfe.isRetryable() && cfe.isConflict();
             // Case 5: There is a conflict, and we have not previously seen a retryable and
             //         non-conflict exception. We will resolve the conflict and retry.
-            logger.warn(
-                "Commit attempt {} for version {} failed with a retryable exception due to a "
-                    + "physical conflict. Performing conflict resolution and trying again. "
-                    + "Exception: {}",
-                attempt,
-                commitAsVersion,
-                cfe);
+            printLogForRetryableWithConflictException(attempt, commitAsVersion, cfe);
 
             TransactionRebaseState rebaseState =
                 resolveConflicts(engine, commitAsVersion, attemptCommitInfo, attempt, dataActions);
@@ -959,5 +946,25 @@ public class TransactionImpl implements Transaction {
    */
   private int getMaxCommitAttempts() {
     return maxRetries + 1; // +1 because the first attempt is a try, not a retry.
+  }
+
+  private void printLogForRetryableNonConflict(
+      int attempt, long commitAsVersion, CommitFailedException cfe) {
+    logger.warn(
+        "Commit attempt {} for table version {} failed with a retryable exception and without "
+            + "conflict. Skipping conflict resolution and trying again. Exception: {}",
+        attempt,
+        commitAsVersion,
+        cfe);
+  }
+
+  private void printLogForRetryableWithConflictException(
+      int attempt, long commitAsVersion, CommitFailedException cfe) {
+    logger.warn(
+        "Commit attempt {} for version {} failed with a retryable exception due to a physical "
+            + "conflict. Performing conflict resolution and trying again. Exception: {}",
+        attempt,
+        commitAsVersion,
+        cfe);
   }
 }

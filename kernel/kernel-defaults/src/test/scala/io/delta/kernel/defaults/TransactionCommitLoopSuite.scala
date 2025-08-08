@@ -18,12 +18,15 @@ package io.delta.kernel.defaults
 
 import java.nio.file.FileAlreadyExistsException
 
+import scala.collection.immutable.Seq
+
 import io.delta.kernel.Table
 import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.engine.{DefaultEngine, DefaultJsonHandler}
 import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO
 import io.delta.kernel.engine.JsonHandler
 import io.delta.kernel.exceptions.{CommitStateUnknownException, MaxCommitRetryLimitReachedException}
+import io.delta.kernel.expressions.Literal
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
 import io.delta.kernel.utils.CloseableIterator
 
@@ -37,7 +40,6 @@ class TransactionCommitLoopSuite extends DeltaTableWriteSuiteBase {
   private val fileIO = new HadoopFileIO(new Configuration())
 
   test("Txn attempts to commit *next* version on CFE(isRetryable=true, isConflict=true)") {
-    import org.apache.spark.sql.functions.col
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
       val initialTxn = createWriteTxnBuilder(table).withSchema(engine, testSchema).build(engine)
@@ -48,10 +50,7 @@ class TransactionCommitLoopSuite extends DeltaTableWriteSuiteBase {
       // Create 001.json. This will make the engine throw a FileAlreadyExistsException when trying
       // to write 001.json. The default committer will turn this into a
       // CFE(isRetryable=true, isConflict=true).
-
-      spark.range(0, 10)
-        .select(col("id").cast("int"))
-        .write.format("delta").mode("append").save(tablePath)
+      appendData(engine, tablePath, data = Seq(Map.empty[String, Literal] -> dataBatches1))
 
       val result = commitTransaction(kernelTxn, engine, emptyIterable())
 
