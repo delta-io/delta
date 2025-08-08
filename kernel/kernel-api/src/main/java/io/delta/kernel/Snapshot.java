@@ -19,6 +19,7 @@ package io.delta.kernel;
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.commit.Committer;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.transaction.UpdateTableTransactionBuilder;
 import io.delta.kernel.types.StructType;
 import java.util.List;
 import java.util.Map;
@@ -98,4 +99,10 @@ public interface Snapshot {
 
   /** @return a committer that owns and controls commits to this table */
   Committer getCommitter();
+
+  /**
+   * @return a {@link UpdateTableTransactionBuilder} to build an update table transaction
+   * @since 3.4.0
+   */
+  UpdateTableTransactionBuilder buildUpdateTableTransaction(String engineInfo, Operation operation);
 }
