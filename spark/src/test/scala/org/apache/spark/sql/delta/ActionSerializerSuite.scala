@@ -26,6 +26,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
+import com.fasterxml.jackson.databind.annotation.JsonSerialize
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.QueryTest
@@ -594,7 +595,8 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
           """"operationMetrics":{"m1":"v1","m2":"v2"},"userMetadata":"123",""" +
           """"tags":{"k1":"v1"},"txnId":"123"}}""".stripMargin)
 
-    test("CommitInfo (with operationParameters) - json serialization/deserialization") {
+    // Test with operation parameters
+    {
       val operation = DeltaOperations.Convert(
         numFiles = 23L,
         partitionBy = Seq("a", "b"),
@@ -602,7 +604,9 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
         catalogTable = Some("t1"),
         sourceFormat = Some("parquet"))
       val commitInfo1 = commitInfo.copy(operationParameters = operation.jsonEncodedValues)
-      val expectedCommitInfoJson1 = // TODO JSON ordering differs between 2.12 and 2.13
+
+      // Handle JSON ordering differences between Scala 2.12 and 2.13
+      val expectedCommitInfoJson1 =
         if (scala.util.Properties.versionNumberString.startsWith("2.13")) {
           """{"commitInfo":{"inCommitTimestamp":123,""" +
             """"timestamp":123,"operation":"CONVERT","operationParameters"""" +
@@ -620,12 +624,11 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
             """"operationMetrics":{"m1":"v1","m2":"v2"},""" +
             """"userMetadata":"123","tags":{"k1":"v1"},"txnId":"123"}}"""
         }
-      assert(commitInfo1.json == expectedCommitInfoJson1)
-      val newCommitInfo1 = Action.fromJson(expectedCommitInfoJson1).asInstanceOf[CommitInfo]
-      // TODO: operationParameters serialization/deserialization is broken as it uses a custom
-      //  serializer but a default deserializer and needs to be fixed.
-      assert(newCommitInfo1.copy(operationParameters = Map.empty) ==
-        commitInfo.copy(operationParameters = Map.empty))
+
+      testActionSerDe(
+        "CommitInfo (with operationParameters) - json serialization/deserialization",
+        commitInfo1,
+        expectedJson = expectedCommitInfoJson1)
     }
 
     testActionSerDe(
@@ -638,6 +641,112 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
           """"operationMetrics":{"m1":"v1","m2":"v2"},"userMetadata":"123",""" +
           """"tags":{"k1":"v1"},"engineInfo":"Apache-Spark/3.1.1 Delta-Lake/10.1.0",""" +
           """"txnId":"123"}}""".stripMargin)
+  }
+
+  test("prettyOperationParameters returns unescaped string values") {
+    case class TestObject(field1: String, field2: Int, field3: Option[Seq[String]])
+    val rawOperationParameters: Map[String, Any] = Map(
+      "catalogTable" -> "t1",
+      "numFiles" -> 23L,
+      "partitionedBy" -> JsonUtils.toJson(Seq("a", false)),
+      "sourceFormat" -> "parquet",
+      "collectStats" -> false,
+      "k1" -> Seq(1, 2),
+      "k2" -> Map("a" -> "x", "b" -> 1, "c" -> TestObject("f1", -1, None), "d" -> Seq(3, "e")),
+      "k3" -> null,
+      "k4" -> Seq.empty,
+      "k5" -> TestObject("field1", 99, Some(Seq("v1", "v2"))),
+      "" -> null)
+    val operationParameters = rawOperationParameters.mapValues(JsonUtils.toJson(_)).toMap
+
+    // Use valid JSON for each parameter value:
+    val expectedOperationParameters = Map(
+      "catalogTable" -> "\"t1\"",
+      "numFiles" -> "23",
+      "partitionedBy" -> "\"[\\\"a\\\",false]\"",
+      "sourceFormat" -> "\"parquet\"",
+      "collectStats" -> "false",
+      "k1" -> "[1,2]",
+      "k2" -> "{\"a\":\"x\",\"b\":1,\"c\":{\"field1\":\"f1\",\"field2\":-1},\"d\":[3,\"e\"]}",
+      "k3" -> "null",
+      "k4" -> "[]",
+      "k5" -> "{\"field1\":\"field1\",\"field2\":99,\"field3\":[\"v1\",\"v2\"]}",
+      "" -> "null")
+
+    assert(operationParameters === expectedOperationParameters)
+
+    // Expected output is the unescaped version of each JSON string value.
+    val expectedPrettyOperationParameters = Map(
+      "catalogTable" -> "t1",
+      "numFiles" -> "23",
+      "partitionedBy" -> "[\"a\",false]",
+      "sourceFormat" -> "parquet",
+      "collectStats" -> "false",
+      "k1" -> "[1,2]",
+      "k2" -> "{\"a\":\"x\",\"b\":1,\"c\":{\"field1\":\"f1\",\"field2\":-1},\"d\":[3,\"e\"]}",
+      "k3" -> null,
+      "k4" -> "[]",
+      "k5" -> "{\"field1\":\"field1\",\"field2\":99,\"field3\":[\"v1\",\"v2\"]}",
+      "" -> null)
+
+    val commitInfo = CommitInfo.empty().withTimestamp(1)
+      .copy(operationParameters = operationParameters)
+
+    // Try a couple rounds of round tripping.
+    val roundTrippedCommitInfo1 = JsonUtils.fromJson[CommitInfo](JsonUtils.toJson(commitInfo))
+    // NOTE: We are explicitly acknowledging that string "null" values are deserialized as
+    // actual null references during round-tripping. This is the expected behavior and
+    // we're maintaining it for backward compatibility with the world where there was no
+    // JsonMapDeserializer. It is serialized back as "null" via JsonMapSerializer regardless.
+    val expectedRoundTrippedParams = operationParameters.map {
+      case (k, "null") => (k, null)  // String "null" becomes actual null during deserialization
+      case pair => pair
+    }
+    assert(roundTrippedCommitInfo1.operationParameters === expectedRoundTrippedParams)
+    assert(
+      roundTrippedCommitInfo1.prettyOperationParameters ===
+        expectedPrettyOperationParameters)
+
+    val roundTrippedCommitInfo2 =
+      JsonUtils.fromJson[CommitInfo](JsonUtils.toJson(roundTrippedCommitInfo1))
+    assert(roundTrippedCommitInfo2.operationParameters === expectedRoundTrippedParams)
+    assert(
+      roundTrippedCommitInfo2.prettyOperationParameters ===
+        expectedPrettyOperationParameters)
+  }
+
+  test("prettyOperationParameters is same as reading operation parameters without custom " +
+      "deserialize") {
+    val rawOperationParameters: Map[String, Any] = Map(
+      "catalogTable" -> "t1",
+      "numFiles" -> 23L,
+      "partitionedBy" -> "[\"a\",\"b\"]",
+      "sourceFormat" -> "parquet",
+      "collectStats" -> false,
+      "k1" -> JsonUtils.toJson(Seq(1, 2)),
+      "k2" -> JsonUtils.toJson(Map("a" -> "x", "b" -> 1, "c" -> Seq(3, "e"))),
+      "k3" -> null,
+      "k4" -> JsonUtils.toJson(Seq.empty),
+      "" -> null)
+    val operationParameters = rawOperationParameters.mapValues(JsonUtils.toJson(_)).toMap
+
+    val commitInfo = CommitInfo
+      .empty()
+      .withTimestamp(1)
+      .copy(operationParameters = operationParameters)
+
+    val testRawDeserialization = TestRawDeserialization(
+      operationParameters = commitInfo.operationParameters)
+    val expectedPrettyOperationParameters = JsonUtils.fromJson[TestRawDeserialization](
+      JsonUtils.toJson(testRawDeserialization)).operationParameters
+
+    // Try a couple rounds of round tripping.
+    val roundTrippedCommitInfo1 = JsonUtils.fromJson[CommitInfo](JsonUtils.toJson(commitInfo))
+    assert(roundTrippedCommitInfo1.prettyOperationParameters === expectedPrettyOperationParameters)
+
+    val roundTrippedCommitInfo2 =
+      JsonUtils.fromJson[CommitInfo](JsonUtils.toJson(roundTrippedCommitInfo1))
+    assert(roundTrippedCommitInfo2.prettyOperationParameters === expectedPrettyOperationParameters)
   }
 
   private def roundTripCompare(name: String, actions: Action*) = {
@@ -691,3 +800,8 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
     }
   }
 }
+
+/** Test class to deserialize operation parameters without using custom JsonMapDeserializer. */
+private final case class TestRawDeserialization(
+    @JsonSerialize(using = classOf[JsonMapSerializer])
+    operationParameters: Map[String, String])
