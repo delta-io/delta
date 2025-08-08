@@ -36,25 +36,30 @@ trait BackfillExecutor extends DeltaLogging {
   def filesToBackfill(snapshot: Snapshot): Dataset[AddFile]
   def constructBatch(files: Seq[AddFile]): BackfillBatch
 
-  /** Execute the command by consuming an iterator of [[BackfillBatch]]. */
-  def run(maxNumFilesPerCommit: Int): Unit = {
+  /**
+   * Execute the command by consuming a sequence of [[BackfillBatch]].
+   * Returns an option with the last commit version when available. Otherwise, it returns None.
+   */
+  def run(maxNumFilesPerCommit: Int): Option[Long] = {
     executeBackfillBatches(maxNumFilesPerCommit)
   }
 
   /**
    * Execute all [[BackfillBatch]] objects inside the [[Iterator]].
+   * Returns an option with the last commit version when available. Otherwise, it returns None.
    */
-  private def executeBackfillBatches(maxNumFilesPerCommit: Int): Unit = {
+  private def executeBackfillBatches(maxNumFilesPerCommit: Int): Option[Long] = {
     val observer = BackfillExecutionObserver.getObserver
     val numSuccessfulBatch = new AtomicInteger(0)
     val numFailedBatch = new AtomicInteger(0)
     var batchId = 0
+    var lastCommitOpt: Option[Long] = None
     try {
       while (true) {
         val snapshot = deltaLog.update(catalogTableOpt = catalogTableOpt)
         val filesInBatch = filesToBackfill(snapshot).limit(maxNumFilesPerCommit).collect()
         if (filesInBatch.isEmpty) {
-          return
+          return lastCommitOpt
         }
 
         val batch = constructBatch(filesInBatch)
@@ -62,12 +67,14 @@ trait BackfillExecutor extends DeltaLogging {
           val txn = deltaLog.startTransaction(catalogTableOpt, Some(snapshot))
           txn.trackFilesRead(filesInBatch)
           recordDeltaOperation(deltaLog, backFillBatchOpType) {
-            batch.execute(spark, backfillTxnId, batchId, txn, numSuccessfulBatch, numFailedBatch)
+            lastCommitOpt = Some(batch.execute(
+              spark, backfillTxnId, batchId, txn, numSuccessfulBatch, numFailedBatch))
           }
         }
 
         batchId += 1
       }
+      lastCommitOpt
     } finally {
       backfillStats.numSuccessfulBatches = numSuccessfulBatch.get()
       backfillStats.numFailedBatches = numFailedBatch.get()
