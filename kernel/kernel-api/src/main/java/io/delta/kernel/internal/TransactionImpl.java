@@ -399,7 +399,7 @@ public class TransactionImpl implements Transaction {
         //
         // Action counters may be partially incremented from previous tries, reset the counters
         // to 0 and drop fileSizeHistogram
-        // TODO: reconcile fileSizeHistogram.
+        // TODO: [delta-io/delta#5047] reconcile fileSizeHistogram
         transactionMetrics.resetActionMetricsForRetry();
         attempt++;
       }
