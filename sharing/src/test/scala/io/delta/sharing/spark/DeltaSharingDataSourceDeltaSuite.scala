@@ -867,15 +867,15 @@ trait DeltaSharingDataSourceDeltaSuiteBase
   test("DeltaSharingDataSource able to read data for simple cdf query") {
     withTempDir { tempDir =>
       val deltaTableName = "delta_table_cdf"
-      // Set the deletedFileRetentionDuration to a large value so that older versions
-      // can be accessed
+      // Set the deletedFileRetentionDuration and logRetentionDuration to a large value so that
+      // older versions can be accessed
       val largeRetentionHours = 2 * System.currentTimeMillis().millis.toHours
       withTable(deltaTableName) {
         sql(s"""
                |CREATE TABLE $deltaTableName (c1 INT, c2 STRING) USING DELTA PARTITIONED BY (c2)
                |TBLPROPERTIES (delta.enableChangeDataFeed = true,
-               | 'delta.deletedFileRetentionDuration' =
-               | '$largeRetentionHours hours')
+               |'delta.deletedFileRetentionDuration' = '$largeRetentionHours hours',
+               |'delta.logRetentionDuration' = '$largeRetentionHours hours')
                |""".stripMargin)
         // 2 inserts in version 1, 1 with c1=2
         sql(s"""INSERT INTO $deltaTableName VALUES (1, "one"), (2, "two")""")
@@ -1152,8 +1152,8 @@ trait DeltaSharingDataSourceDeltaSuiteBase
   test("DeltaSharingDataSource able to read cdf with special chars") {
     withTempDir { tempDir =>
       val deltaTableName = "delta_table_cdf_special"
-      // Set the deletedFileRetentionDuration to a large value so that older versions
-      // can be accessed
+      // Set the deletedFileRetentionDuration and logRetentionDuration to a large value so that
+      // older versions can be accessed
       val largeRetentionHours = 2 * System.currentTimeMillis().millis.toHours
       withTable(deltaTableName) {
         // scalastyle:off nonascii
@@ -1161,8 +1161,8 @@ trait DeltaSharingDataSourceDeltaSuiteBase
                |USING DELTA PARTITIONED BY (c2)
                |TBLPROPERTIES(
                |delta.enableChangeDataFeed = true,
-               |'delta.deletedFileRetentionDuration' =
-               |'$largeRetentionHours hours'
+               |'delta.deletedFileRetentionDuration' = '$largeRetentionHours hours',
+               |'delta.logRetentionDuration' = '$largeRetentionHours hours'
                |)""".stripMargin)
         // The table operations take about 20~30 seconds.
         for (i <- 0 to 9) {
