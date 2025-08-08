@@ -131,9 +131,7 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
 
     val deletedColsForUnmatchedTarget =
       if (cdcEnabled) targetWriteCols
-      else targetWriteCols.map(e =>
-        RaiseError(Literal(s"Unexpected evaluation of deleted column ${e.prettyName}")))
-
+      else targetWriteCols.map(e => Cast(Literal(null), e.dataType))
 
     val deleteSourceRowExprs =
       (deletedColsForUnmatchedTarget ++
@@ -302,8 +300,7 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
             if (cdcEnabled) {
               targetWriteCols
             } else {
-              targetWriteCols.map(e =>
-                RaiseError(Literal(s"Unexpected evaluation of deleted column ${e.prettyName}")))
+              targetWriteCols.map(e => Cast(Literal(null), e.dataType))
             }
 
           deletedDataExprs ++
@@ -325,8 +322,7 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
           // Only read full target columns if CDC is enabled
           val deletedColsForUnmatchedTarget =
             if (cdcEnabled) targetWriteCols
-            else targetWriteCols.map(e =>
-              RaiseError(Literal(s"Unexpected evaluation of deleted column ${e.prettyName}")))
+            else targetWriteCols.map(e => Cast(Literal(null), e.dataType))
 
           deletedColsForUnmatchedTarget ++
             rowIdColumnExpressionOpt ++
