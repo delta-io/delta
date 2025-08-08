@@ -843,7 +843,8 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
     ) /* Last Row index in Batch D is 0 in sidecar 2 */
   ).foreach { testCase =>
     test(
-      s"v2 parquet checkpoints (and sidecars) with json delta commit files - page size ${testCase.pageSize}") {
+      s"v2 parquet checkpoints (and sidecars) " +
+        s"with json delta commit files - page size ${testCase.pageSize}") {
       runCompletePaginationTest(
         testCase = testCase,
         tableVersionOpt = Optional.of(3L),
