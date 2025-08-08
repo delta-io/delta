@@ -46,7 +46,7 @@ import io.delta.kernel.commit.CommitFailedException;
  * </ul>
  */
 @Evolving
-public class CommitStateUnknownException extends ConcurrentWriteException {
+public class CommitStateUnknownException extends RuntimeException {
   public CommitStateUnknownException(
       long commitVersion, int commitAttempt, CommitFailedException cfe) {
     super(

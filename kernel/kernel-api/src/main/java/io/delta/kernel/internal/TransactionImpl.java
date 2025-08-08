@@ -351,7 +351,7 @@ public class TransactionImpl implements Transaction {
             printLogForRetryableNonConflictException(attempt, commitAsVersion, cfe);
             seenRetryableNonConflictException = true;
           } else if (seenRetryableNonConflictException) {
-            assert cfe.isRetryable() && cfe.isConflict();
+            checkState(cfe.isRetryable() && cfe.isConflict(), "expect retryable and conflict");
 
             // Case 4: There is a conflict, and we have previously seen a retryable exception
             //         without conflict and then retried. This means that something like the
@@ -369,7 +369,7 @@ public class TransactionImpl implements Transaction {
             //         other contents of the delta files).
             throw new CommitStateUnknownException(commitAsVersion, attempt, cfe);
           } else {
-            assert cfe.isRetryable() && cfe.isConflict();
+            checkState(cfe.isRetryable() && cfe.isConflict(), "expect retryable and conflict");
             // Case 5: There is a conflict, and we have not previously seen a retryable and
             //         non-conflict exception. We will resolve the conflict and retry.
             printLogForRetryableWithConflictException(attempt, commitAsVersion, cfe);
