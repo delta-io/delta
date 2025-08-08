@@ -1132,7 +1132,10 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
     val tableName = "testTable"
     withDeletionVectorsEnabled() {
       withSQLConf(
-          DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false") {
+          DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false",
+          // Disable the following check since the test relies on time travel beyond
+          // deletedFileRetentionDuration.
+          DeltaSQLConf.ENFORCE_TIME_TRAVEL_WITHIN_DELETED_FILE_RETENTION_DURATION.key -> "false") {
         withTable(tableName) {
           // Create Delta table with 5 files of 10 rows.
           spark.range(0, 50, step = 1, numPartitions = 5)
