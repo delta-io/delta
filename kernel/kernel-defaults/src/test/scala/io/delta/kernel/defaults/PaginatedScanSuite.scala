@@ -79,7 +79,7 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
       pageTokenOpt: Optional[Row] = Optional.empty()): PaginatedScan = {
     getScanBuilder(tablePath, tableVersionOpt).buildPaginated(pageSize, pageTokenOpt)
   }
-  
+
   case class FirstPageRequestTestContext(
       pageSize: Int,
       expScanFilesCnt: Int,
@@ -749,9 +749,11 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
    */
 
   val PARQUET_MANIFEST_SIDECAR_1 =
-    "00000000000000000002.checkpoint.0000000001.0000000002.055454d8-329c-4e0e-864d-7f867075af33.parquet"
+    "00000000000000000002.checkpoint.0000000001.0000000002." +
+      "055454d8-329c-4e0e-864d-7f867075af33.parquet"
   val PARQUET_MANIFEST_SIDECAR_2 =
-    "00000000000000000002.checkpoint.0000000002.0000000002.33321cc1-9c55-4d1f-8511-fafe6d2e1133.parquet"
+    "00000000000000000002.checkpoint.0000000002.0000000002." +
+      "33321cc1-9c55-4d1f-8511-fafe6d2e1133.parquet"
 
   Seq(
     FirstPageRequestTestContext(
@@ -858,11 +860,14 @@ class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
    * sidecar 2:
    *  - Batch C: 3 row, 3 selected AddFiles
    */
-  val JSON_MANIFEST = "00000000000000000002.checkpoint.6374b053-df23-479b-b2cf-c9c550132b49.json"
+  val JSON_MANIFEST = "00000000000000000002.checkpoint." +
+    "6374b053-df23-479b-b2cf-c9c550132b49.json"
   val JSON_MANIFEST_SIDECAR_1 =
-    "00000000000000000002.checkpoint.0000000001.0000000002.bd1885fd-6ec0-4370-b0f5-43b5162fd4de.parquet"
+    "00000000000000000002.checkpoint.0000000001.0000000002." +
+      "bd1885fd-6ec0-4370-b0f5-43b5162fd4de.parquet"
   val JSON_MANIFEST_SIDECAR_2 =
-    "00000000000000000002.checkpoint.0000000002.0000000002.0a8d73ee-aa83-49d0-9583-c99db75b89b2.parquet"
+    "00000000000000000002.checkpoint.0000000002.0000000002." +
+      "0a8d73ee-aa83-49d0-9583-c99db75b89b2.parquet"
 
   Seq(
     FirstPageRequestTestContext(
