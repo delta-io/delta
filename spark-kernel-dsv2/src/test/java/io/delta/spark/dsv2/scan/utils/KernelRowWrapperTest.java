@@ -1,4 +1,4 @@
-package io.delta.spark.dsv2.scan.internal;
+package io.delta.spark.dsv2.scan.utils;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -9,6 +9,7 @@ import io.delta.kernel.types.*;
 import java.math.BigDecimal;
 import java.util.Arrays;
 import java.util.List;
+
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.unsafe.types.UTF8String;
 import org.junit.jupiter.api.Test;

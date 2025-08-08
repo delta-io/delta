@@ -1,4 +1,4 @@
-package io.delta.spark.dsv2.scan.internal;
+package io.delta.spark.dsv2.scan.utils;
 
 import io.delta.kernel.data.Row;
 import org.apache.spark.sql.catalyst.InternalRow;
@@ -22,7 +22,7 @@ import org.apache.spark.sql.types.TimestampType;
 import org.apache.spark.unsafe.types.CalendarInterval;
 import org.apache.spark.unsafe.types.UTF8String;
 
-/** Minimal wrapper for Delta Kernel Row to Spark InternalRow (primitive types only). */
+/** Wrapper for Delta Kernel Row to Spark InternalRow. */
 public class KernelRowWrapper extends InternalRow {
   private final Row row;
 
