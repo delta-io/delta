@@ -9,7 +9,6 @@ import io.delta.kernel.types.*;
 import java.math.BigDecimal;
 import java.util.Arrays;
 import java.util.List;
-
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.unsafe.types.UTF8String;
 import org.junit.jupiter.api.Test;
@@ -86,7 +85,7 @@ public class KernelRowWrapperTest {
   @Test
   public void testNestedType_unsupported() {
     StructType schema =
-        new StructType(Arrays.asList(new StructField("i", IntegerType.INTEGER, true/*nullable*/)));
+        new StructType(Arrays.asList(new StructField("i", IntegerType.INTEGER, true /*nullable*/)));
 
     Row kernelRow = makePrimitiveRow(schema, Arrays.asList(1));
     InternalRow row = new KernelRowWrapper(kernelRow);
