@@ -17,7 +17,6 @@ package io.delta.kernel.internal;
 
 import static java.lang.String.format;
 
-import io.delta.kernel.commit.CommitFailedException;
 import io.delta.kernel.exceptions.*;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.actions.DomainMetadata;
@@ -366,21 +365,6 @@ public final class DeltaErrors {
             "Cannot enable clustering on a partitioned table '%s'. "
                 + "Existing partition columns: '%s', Clustering columns: '%s'.",
             tablePath, partitionColNames, clusteringCols));
-  }
-
-  public static ConcurrentWriteException unknownIfSafeRetryConcurrentWriteException(
-      long commitVersion, int commitAttempt, CommitFailedException cfe) {
-    final String msg =
-        String.format(
-            "Commit attempt %d for table version %d failed due to a concurrent write conflict. "
-                + "However, a previous commit attempt, call it C, also failed without conflict, "
-                + "and was then retried. This means, right now, Kernel isn't sure if it is "
-                + "conflicting with the commit file written by C, which was actually successfully "
-                + "written despite some error causing Kernel to not be informed of that success, "
-                + "or some other conflict C' written by another writer. For now, Kernel will fail "
-                + "the transaction",
-            commitAttempt, commitVersion);
-    return new ConcurrentWriteException(msg, cfe);
   }
 
   public static KernelException concurrentTransaction(

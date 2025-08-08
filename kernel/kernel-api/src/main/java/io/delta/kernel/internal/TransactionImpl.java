@@ -29,6 +29,7 @@ import io.delta.kernel.commit.CommitMetadata;
 import io.delta.kernel.commit.Committer;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.exceptions.CommitStateUnknownException;
 import io.delta.kernel.exceptions.ConcurrentWriteException;
 import io.delta.kernel.exceptions.DomainDoesNotExistException;
 import io.delta.kernel.exceptions.MaxCommitRetryLimitReachedException;
@@ -374,8 +375,7 @@ public class TransactionImpl implements Transaction {
             //         the future we can add detection capabilities between these two cases (e.g.
             //         check if the CommitInfo action is present and has a txnId, else compare the
             //         other contents of the delta files).
-            throw DeltaErrors.unknownIfSafeRetryConcurrentWriteException(
-                commitAsVersion, attempt, cfe);
+            throw new CommitStateUnknownException(commitAsVersion, attempt, cfe);
           } else {
             // Case 5: There is a conflict, and we have not previously seen a retryable and
             //         non-conflict exception. We will resolve the conflict and retry.

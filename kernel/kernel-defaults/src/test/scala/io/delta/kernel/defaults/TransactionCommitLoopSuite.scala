@@ -23,7 +23,7 @@ import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.engine.{DefaultEngine, DefaultJsonHandler}
 import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO
 import io.delta.kernel.engine.JsonHandler
-import io.delta.kernel.exceptions.MaxCommitRetryLimitReachedException
+import io.delta.kernel.exceptions.{CommitStateUnknownException, MaxCommitRetryLimitReachedException}
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
 import io.delta.kernel.utils.CloseableIterator
 
@@ -36,7 +36,7 @@ class TransactionCommitLoopSuite extends DeltaTableWriteSuiteBase {
 
   private val fileIO = new HadoopFileIO(new Configuration())
 
-  test("Txn will attempt to re-commit *next* version on CFE(isRetryable=true, isConflict=true)") {
+  test("Txn attempts to commit *next* version on CFE(isRetryable=true, isConflict=true)") {
     import org.apache.spark.sql.functions.col
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
@@ -60,7 +60,7 @@ class TransactionCommitLoopSuite extends DeltaTableWriteSuiteBase {
     }
   }
 
-  test("Txn will attempt to re-commit *same* version on CFE(isRetryable=true, isConflict=false)") {
+  test("Txn attempts to commit *same* version on CFE(isRetryable=true, isConflict=false)") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
       val initialTxn = createWriteTxnBuilder(table).withSchema(engine, testSchema).build(engine)
@@ -102,7 +102,7 @@ class TransactionCommitLoopSuite extends DeltaTableWriteSuiteBase {
     }
   }
 
-  test("Txn will throw MaxCommitRetryLimitReachedException on too many retries") {
+  test("Txn throws MaxCommitRetryLimitReachedException on too many retries") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
       val initialTxn = createWriteTxnBuilder(table).withSchema(engine, testSchema).build(engine)
@@ -135,7 +135,7 @@ class TransactionCommitLoopSuite extends DeltaTableWriteSuiteBase {
     }
   }
 
-  test("Txn will throw if it sees a CFE(true, false) followed by a CFE(true, true)") {
+  test("Txn throws CommitStateUnknownException if it sees CFE(true,false) then CFE(true,true)") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
       val initialTxn = createWriteTxnBuilder(table).withSchema(engine, testSchema).build(engine)
@@ -175,12 +175,11 @@ class TransactionCommitLoopSuite extends DeltaTableWriteSuiteBase {
       val transientErrorEngine = new CustomEngine()
       val txn = createWriteTxnBuilder(table).build(transientErrorEngine)
 
-      val ex = intercept[Exception] {
+      val exMsg = intercept[CommitStateUnknownException] {
         commitTransaction(txn, transientErrorEngine, emptyIterable())
-      }
-      assert(ex.getMessage.contains("Commit attempt 2 for table version 1 failed due to a " +
-        "concurrent write conflict. However, a previous commit attempt, call it C, also failed " +
-        "without conflict, and was then retried."))
+      }.getMessage
+      assert(exMsg.contains("Commit attempt 2 for version 1 failed due to a concurrent write " +
+        "conflict after a previous retry."))
     }
   }
 
@@ -217,7 +216,7 @@ class TransactionCommitLoopSuite extends DeltaTableWriteSuiteBase {
       val ex = intercept[RuntimeException] {
         commitTransaction(txn, alwaysFailingEngine, emptyIterable())
       }
-      assert(ex.getMessage.contains("non-retryable error"))
+      assert(ex.getMessage.contains("Non-retryable error"))
     }
   }
 
