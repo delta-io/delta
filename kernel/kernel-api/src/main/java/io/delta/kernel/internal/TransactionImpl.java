@@ -412,13 +412,13 @@ public class TransactionImpl implements Transaction {
       Engine engine,
       long commitAsVersion,
       CommitInfo attemptCommitInfo,
-      int numTries,
+      int attempt,
       CloseableIterable<Row> dataActions) {
     logger.info(
-        "Table {}, trying to resolve conflicts and retry commit. (tries/maxRetries: {}/{})",
+        "[{}] Trying to resolve conflicts and retry commit. Attempt {}/{}.",
         dataPath,
-        numTries,
-        maxRetries);
+        attempt,
+        getMaxCommitAttempts());
     TransactionRebaseState rebaseState =
         ConflictChecker.resolveConflicts(
             engine,

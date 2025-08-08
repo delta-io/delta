@@ -40,9 +40,7 @@ class TransactionCommitLoopSuite extends DeltaTableWriteSuiteBase {
     import org.apache.spark.sql.functions.col
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
-      val initialTxn = createWriteTxnBuilder(table)
-        .withSchema(engine, testSchema)
-        .build(engine)
+      val initialTxn = createWriteTxnBuilder(table).withSchema(engine, testSchema).build(engine)
       commitTransaction(initialTxn, engine, emptyIterable()) // 000.json
 
       val kernelTxn = createWriteTxnBuilder(table).withMaxRetries(5).build(engine)
@@ -80,7 +78,7 @@ class TransactionCommitLoopSuite extends DeltaTableWriteSuiteBase {
           attemptCount += 1
           attemptedFilePaths += filePath
           if (attemptCount < attemptNumberToSucceedAt) {
-            // The default committer will turn this into a CFE(isRetryable=true, isConflict=true)
+            // The default committer will turn this into a CFE(isRetryable=true, isConflict=false)
             throw new java.io.IOException("Transient network error")
           }
           super.writeJsonFileAtomically(filePath, data, overwrite)
@@ -88,7 +86,8 @@ class TransactionCommitLoopSuite extends DeltaTableWriteSuiteBase {
       }
 
       class CustomEngine extends DefaultEngine(fileIO) {
-        override def getJsonHandler: JsonHandler = new CustomJsonHandler()
+        val jsonHandler = new CustomJsonHandler()
+        override def getJsonHandler: JsonHandler = jsonHandler
       }
 
       val transientErrorEngine = new CustomEngine()
@@ -103,28 +102,25 @@ class TransactionCommitLoopSuite extends DeltaTableWriteSuiteBase {
     }
   }
 
-  // TODO: Transaction will fail on CFE(isRetryable=false, isConflict=true/false). The default
-  //       committer doesn't throw this error type. We could test this with a custom committer, but
-  //       currently our API to create transactions just use Table::getLatestSnapshot(), and is not
-  //       yet properly connected to the SnapshotBuilder.withCommitter code.
-
   test("Txn will throw MaxCommitRetryLimitReachedException on too many retries") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
       val initialTxn = createWriteTxnBuilder(table).withSchema(engine, testSchema).build(engine)
       commitTransaction(initialTxn, engine, emptyIterable()) // 000.json
 
-      class AlwaysFailingJsonHandler extends DefaultJsonHandler(fileIO) {
+      class CustomJsonHandler extends DefaultJsonHandler(fileIO) {
         override def writeJsonFileAtomically(
             filePath: String,
             data: CloseableIterator[Row],
             overwrite: Boolean): Unit = {
+          // The default committer will turn this into a CFE(isRetryable=true, isConflict=false)
           throw new java.io.IOException("Transient network error")
         }
       }
 
       class AlwaysFailingEngine extends DefaultEngine(fileIO) {
-        override def getJsonHandler: JsonHandler = new AlwaysFailingJsonHandler()
+        val jsonHandler = new CustomJsonHandler()
+        override def getJsonHandler: JsonHandler = jsonHandler
       }
 
       val alwaysFailingEngine = new AlwaysFailingEngine()
@@ -162,16 +158,18 @@ class TransactionCommitLoopSuite extends DeltaTableWriteSuiteBase {
           attemptCount += 1
 
           if (attemptCount == 1) {
-            // The default committer will turn this into a CFE(isRetryable=true, isConflict=true)
+            // The default committer will turn this into a CFE(isRetryable=true, isConflict=false)
             throw new java.io.IOException("Transient network error")
           } else {
+            // The default committer will turn this into a CFE(isRetryable=true, isConflict=true)
             throw new FileAlreadyExistsException("001.json already exists")
           }
         }
       }
 
       class CustomEngine extends DefaultEngine(fileIO) {
-        override def getJsonHandler: JsonHandler = new CustomJsonHandler()
+        private val jsonHandler = new CustomJsonHandler()
+        override def getJsonHandler: JsonHandler = jsonHandler
       }
 
       val transientErrorEngine = new CustomEngine()
@@ -183,6 +181,43 @@ class TransactionCommitLoopSuite extends DeltaTableWriteSuiteBase {
       assert(ex.getMessage.contains("Commit attempt 2 for table version 1 failed due to a " +
         "concurrent write conflict. However, a previous commit attempt, call it C, also failed " +
         "without conflict, and was then retried."))
+    }
+  }
+
+  // TODO: Transaction will fail on CFE(isRetryable=false, isConflict=true/false). The default
+  //       committer doesn't throw this error type. We could test this with a custom committer, but
+  //       currently our API to create transactions just use Table::getLatestSnapshot(), and is not
+  //       yet properly connected to the SnapshotBuilder.withCommitter code.
+
+  test("Txn will *not* retry on non-IOException RuntimeException") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val initialTxn = createWriteTxnBuilder(table).withSchema(engine, testSchema).build(engine)
+      commitTransaction(initialTxn, engine, emptyIterable()) // 000.json
+
+      class CustomJsonHandler extends DefaultJsonHandler(fileIO) {
+        override def writeJsonFileAtomically(
+            filePath: String,
+            data: CloseableIterator[Row],
+            overwrite: Boolean): Unit = {
+          // The default committer doesn't explicitly turn this into a CFE
+          throw new RuntimeException("Non-retryable error")
+        }
+      }
+
+      class CustomEngine extends DefaultEngine(fileIO) {
+        val jsonHandler = new CustomJsonHandler()
+        override def getJsonHandler: JsonHandler = jsonHandler
+      }
+
+      val alwaysFailingEngine = new CustomEngine()
+
+      val txn = createWriteTxnBuilder(table).build(alwaysFailingEngine)
+
+      val ex = intercept[RuntimeException] {
+        commitTransaction(txn, alwaysFailingEngine, emptyIterable())
+      }
+      assert(ex.getMessage.contains("non-retryable error"))
     }
   }
 
