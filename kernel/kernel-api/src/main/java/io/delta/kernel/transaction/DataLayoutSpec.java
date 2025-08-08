@@ -88,7 +88,7 @@ public class DataLayoutSpec {
     if (partitionColumns != null && partitionColumns.isEmpty()) {
       throw new IllegalArgumentException("Partition columns cannot be empty");
     }
-    this.partitionColumns = Collections.unmodifiableList(partitionColumns);
+    this.partitionColumns = partitionColumns;
     this.clusteringColumns = Collections.unmodifiableList(clusteringColumns);
   }
 
@@ -132,7 +132,7 @@ public class DataLayoutSpec {
       throw new IllegalStateException(
           "Cannot get partition columns: partitioning is not enabled on this layout");
     }
-    return partitionColumns;
+    return Collections.unmodifiableList(partitionColumns);
   }
 
   /**
@@ -148,6 +148,6 @@ public class DataLayoutSpec {
       throw new IllegalStateException(
           "Cannot get clustering columns: clustering is not enabled on this layout");
     }
-    return clusteringColumns;
+    return Collections.unmodifiableList(clusteringColumns);
   }
 }
