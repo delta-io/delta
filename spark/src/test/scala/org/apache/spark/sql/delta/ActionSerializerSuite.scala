@@ -236,7 +236,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
 
     assert(operationParameters === expectedOperationParameters)
 
-    val expectedPrettyOperationParameters = Map(
+    val expectedLegacyOperationParameters = Map(
       "catalogTable" -> "t1",
       "numFiles" -> "23",
       "partitionedBy" -> "[\"a\",false]",
@@ -253,14 +253,14 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
     assert(roundTrippedCommitInfo1.operationParameters === expectedOperationParameters)
     assert(
       roundTrippedCommitInfo1.getLegacyPostDeserializationOperationParameters ===
-        expectedPrettyOperationParameters)
+        expectedLegacyOperationParameters)
 
     val roundTrippedCommitInfo2 =
       JsonUtils.fromJson[CommitInfo](JsonUtils.toJson(roundTrippedCommitInfo1))
     assert(roundTrippedCommitInfo2.operationParameters === expectedOperationParameters)
     assert(
       roundTrippedCommitInfo2.getLegacyPostDeserializationOperationParameters ===
-        expectedPrettyOperationParameters)
+        expectedLegacyOperationParameters)
   }
 
   test("round trip of operation parameters: non-primitive types in operation parameters") {
@@ -279,7 +279,7 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
 
     assert(operationParameters === expectedOperationParameters)
 
-    val expectedPrettyOperationParameters = Map(
+    val expectedLegacyOperationParameters = Map(
       "k1" -> "[1,2]",
       "k2" -> "{\"a\":\"x\",\"b\":1,\"c\":{\"field1\":\"f1\",\"field2\":-1},\"d\":[3,\"e\"]}",
       "k3" -> "[]",
