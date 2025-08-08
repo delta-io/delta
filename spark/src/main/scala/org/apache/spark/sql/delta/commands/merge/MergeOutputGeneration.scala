@@ -319,7 +319,12 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
             }
           }
           // Generate expressions to set the ROW_DROPPED_COL = true and mark as a DELETE
-          targetWriteCols ++
+          // Only read full target columns if CDC is enabled
+          val deletedColsForUnmatchedTarget =
+            if (cdcEnabled) targetWriteCols
+            else targetWriteCols.map(e => Cast(Literal(null), e.dataType))
+
+          deletedColsForUnmatchedTarget ++
             rowIdColumnExpressionOpt ++
             rowCommitVersionColumnExpressionOpt ++
             Seq(incrCountExpr) ++
