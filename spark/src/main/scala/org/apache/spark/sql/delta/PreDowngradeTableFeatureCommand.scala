@@ -209,6 +209,7 @@ case class DeletionVectorsPreDowngradeCommand(table: DeltaTableV2)
 
     val startTimeNs = System.nanoTime()
     val snapshotToUse = table.deltaLog.update(
+      catalogTableOpt = table.catalogTable,
       checkIfUpdatedSinceTs = Some(checkIfSnapshotUpdatedSinceTs))
 
     val deletionVectorPath =
@@ -675,6 +676,7 @@ case class CheckpointProtectionPreDowngradeCommand(table: DeltaTableV2)
 
       table.deltaLog.cleanUpExpiredLogs(
         snapshot,
+        table.catalogTable,
         deltaRetentionMillisOpt = Some(truncateHistoryLogRetentionMillis(snapshot.metadata)),
         cutoffTruncationGranularity = TruncationGranularity.MINUTE)
 
