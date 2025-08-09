@@ -146,7 +146,7 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
     if (isBaseScanExhausted) {
       return Optional.empty();
     }
-    // TODO: replace hash value of log segment
+
     Row pageTokenRow =
         new PageToken(
                 lastReadLogFilePath,
@@ -228,6 +228,14 @@ public class PaginatedScanFilesIteratorImpl implements PaginatedScanFilesIterato
       else if (isBatchFromLastFileInToken(
           batchFilePath, tokenLastReadFilePathOpt, tokenLastReadSidecarFileIdxOpt)) {
         Optional<Long> tokenLastReturnedRowIndexOpt = paginationContext.getLastReturnedRowIndex();
+        // If a batch is partially consumed, this means batch size is changed between page requests, and this's not allowed.
+        long tokenLastIndex = tokenLastReturnedRowIndexOpt.get();
+        boolean isBatchPartiallyConsumed =
+            lastReturnedRowIndex < tokenLastIndex &&
+                lastReturnedRowIndex + numRowsInBatch > tokenLastIndex;
+        if (isBatchPartiallyConsumed) {
+          throw new IllegalStateException("Pagination: batch size appears to have changed between page requests");
+        }
         // Skip this batch if its last row index is smaller than or equal to last returned row index
         // in token.
         if (tokenLastReturnedRowIndexOpt.isPresent()
