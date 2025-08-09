@@ -19,6 +19,7 @@ import static io.delta.kernel.internal.DeltaErrors.unsupportedStatsDataType;
 import static java.time.format.DateTimeFormatter.ISO_LOCAL_DATE;
 
 import com.fasterxml.jackson.core.JsonGenerator;
+import com.fasterxml.jackson.databind.JsonNode;
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Literal;
@@ -32,9 +33,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
-import java.util.Collections;
-import java.util.Map;
-import java.util.Objects;
+import java.util.*;
 
 /**
  * Encapsulates statistics for a data file in a Delta Lake table and provides methods to serialize
@@ -45,19 +44,20 @@ import java.util.Objects;
 public class DataFileStatistics {
   private static final DateTimeFormatter TIMESTAMP_FORMATTER =
       DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSX");
-  public static final OffsetDateTime EPOCH = Instant.ofEpochSecond(0).atOffset(ZoneOffset.UTC);
+  private static final OffsetDateTime EPOCH = Instant.ofEpochSecond(0).atOffset(ZoneOffset.UTC);
 
   private final long numRecords;
   private final Map<Column, Literal> minValues;
   private final Map<Column, Literal> maxValues;
   private final Map<Column, Long> nullCount;
+  private final boolean tightBounds;
 
   /**
-   * Create a new instance of {@link DataFileStatistics}. The minValues, maxValues, and nullCount
-   * are all required fields. This class is primarily used to serialize stats to JSON with type
-   * checking when constructing file actions and NOT used during data skipping. As such the column
-   * names in minValues, maxValues and nullCount should be that of the physical data schema that's
-   * reflected in the parquet files and NOT logical schema.
+   * Create a new instance of {@link DataFileStatistics}. The minValues, maxValues, nullCount and
+   * tightBounds are all required fields. This class is primarily used to serialize stats to JSON
+   * with type checking when constructing file actions and NOT used during data skipping. As such
+   * the column names in minValues, maxValues and nullCount should be that of the physical data
+   * schema that's reflected in the parquet files and NOT logical schema.
    *
    * @param numRecords Number of records in the data file.
    * @param minValues Map of column to minimum value of it in the data file. If the data file has
@@ -65,12 +65,14 @@ public class DataFileStatistics {
    * @param maxValues Map of column to maximum value of it in the data file. If the data file has
    *     all nulls for the column, the value will be null or not present in the map.
    * @param nullCount Map of column to number of nulls in the data file.
+   * @param tightBounds boolean indicating if bounds are tight (accurate).
    */
   public DataFileStatistics(
       long numRecords,
       Map<Column, Literal> minValues,
       Map<Column, Literal> maxValues,
-      Map<Column, Long> nullCount) {
+      Map<Column, Long> nullCount,
+      boolean tightBounds) {
     Objects.requireNonNull(minValues, "minValues must not be null to serialize stats.");
     Objects.requireNonNull(maxValues, "maxValues must not be null to serialize stats.");
     Objects.requireNonNull(nullCount, "nullCount must not be null to serialize stats.");
@@ -79,6 +81,119 @@ public class DataFileStatistics {
     this.minValues = Collections.unmodifiableMap(minValues);
     this.maxValues = Collections.unmodifiableMap(maxValues);
     this.nullCount = Collections.unmodifiableMap(nullCount);
+    this.tightBounds = tightBounds;
+    ;
+  }
+
+  /**
+   * Create a new instance of {@link DataFileStatistics} without tight bounds. This constructor is
+   * for backward compatibility. Tight bounds will be empty.
+   *
+   * @param numRecords Number of records in the data file.
+   * @param minValues Map of column to minimum value of it in the data file.
+   * @param maxValues Map of column to maximum value of it in the data file.
+   * @param nullCount Map of column to number of nulls in the data file.
+   */
+  public DataFileStatistics(
+      long numRecords,
+      Map<Column, Literal> minValues,
+      Map<Column, Literal> maxValues,
+      Map<Column, Long> nullCount) {
+    this(
+        numRecords,
+        minValues,
+        maxValues,
+        nullCount,
+        true); // Delta defaults to true when tightBounds is unspecified.
+  }
+
+  /**
+   * Utility method to deserialize statistics from a JSON string. NOTE: Currently, this method only
+   * deserializes the numRecords field and ignores other statistics (minValues, maxValues,
+   * nullCount). Full deserialization support for all statistics will be added in a future update.
+   *
+   * @param json Data statistics JSON string to deserialize.
+   * @return An {@link Optional} containing the deserialized {@link DataFileStatistics} if present.
+   * @throws KernelException if JSON parsing fails
+   */
+  public static Optional<DataFileStatistics> deserializeFromJson(String json) {
+    JsonNode root;
+    try {
+      root = JsonUtils.mapper().readTree(json);
+    } catch (IOException e) {
+      throw new KernelException(String.format("Failed to parse JSON string: %s", json), e);
+    }
+
+    JsonNode numRecordsNode = root.get(StatsSchemaHelper.NUM_RECORDS);
+    if (numRecordsNode == null || !numRecordsNode.isNumber()) {
+      return Optional.empty();
+    }
+
+    long numRecords = numRecordsNode.asLong();
+    return Optional.of(
+        new DataFileStatistics(
+            numRecords, Collections.emptyMap(), Collections.emptyMap(), Collections.emptyMap()));
+  }
+
+  /**
+   * Utility method to deserialize statistics from a JSON string with full type information. This
+   * overloaded version uses the provided schema to correctly parse min/max values and null counts
+   * with their appropriate data types.
+   *
+   * @param json Data statistics JSON string to deserialize.
+   * @param physicalSchema The physical schema providing type information for columns. Must match
+   *     the schema used during serialization.
+   * @return An {@link Optional} containing the deserialized {@link DataFileStatistics} if present.
+   * @throws KernelException if JSON parsing fails or if values don't match expected types
+   */
+  public static Optional<DataFileStatistics> deserializeFromJson(
+      String json, StructType physicalSchema) {
+    JsonNode root;
+    Objects.requireNonNull(
+        physicalSchema, "physicalSchema must not be null for full deserialization");
+    try {
+      root = JsonUtils.mapper().readTree(json);
+    } catch (IOException e) {
+      throw new KernelException(String.format("Failed to parse JSON string: %s", json), e);
+    }
+
+    // Parse numRecords
+    JsonNode numRecordsNode = root.get(StatsSchemaHelper.NUM_RECORDS);
+    if (numRecordsNode == null || !numRecordsNode.isNumber()) {
+      return Optional.empty();
+    }
+    long numRecords = numRecordsNode.asLong();
+
+    // Parse minValues
+    Map<Column, Literal> minValues = new HashMap<>();
+    JsonNode minNode = root.get(StatsSchemaHelper.MIN);
+    if (minNode != null && minNode.isObject()) {
+      parseMinMaxValues(minNode, minValues, new Column(new String[0]), physicalSchema);
+    }
+
+    // Parse maxValues
+    Map<Column, Literal> maxValues = new HashMap<>();
+    JsonNode maxNode = root.get(StatsSchemaHelper.MAX);
+    if (maxNode != null && maxNode.isObject()) {
+      parseMinMaxValues(maxNode, maxValues, new Column(new String[0]), physicalSchema);
+    }
+
+    // Parse nullCount
+    Map<Column, Long> nullCount = new HashMap<>();
+    JsonNode nullCountNode = root.get(StatsSchemaHelper.NULL_COUNT);
+    if (nullCountNode != null && nullCountNode.isObject()) {
+      parseNullCounts(nullCountNode, nullCount, new Column(new String[0]), physicalSchema);
+    }
+
+    // Parse tightBounds
+    boolean tightBounds = true; // default value
+    JsonNode tightBoundsNode = root.get(StatsSchemaHelper.TIGHT_BOUNDS);
+    if (tightBoundsNode != null && tightBoundsNode.isBoolean()) {
+      tightBounds = tightBoundsNode.asBoolean();
+    }
+
+    return Optional.of(
+        new DataFileStatistics(numRecords, minValues, maxValues, nullCount, tightBounds));
   }
 
   /**
@@ -118,6 +233,28 @@ public class DataFileStatistics {
    */
   public Map<Column, Long> getNullCount() {
     return nullCount;
+  }
+
+  /**
+   * Get the tight bounds information for the data file. Tight bounds indicate whether the values
+   * are guaranteed to be accurate bounds for the data.
+   *
+   * @return The tight bounds boolean value.
+   */
+  public boolean getTightBounds() {
+    return tightBounds;
+  }
+
+  /**
+   * Returns a new DataFileStatistics instance with tightBounds set to false. This is useful when
+   * the statistics bounds are no longer guaranteed to be tight, such as after applying deletion
+   * vectors.
+   *
+   * @return A new DataFileStatistics with tightBounds set to false
+   */
+  public DataFileStatistics withoutTightBounds() {
+    return new DataFileStatistics(
+        this.numRecords, this.minValues, this.maxValues, this.nullCount, false);
   }
 
   /**
@@ -186,6 +323,8 @@ public class DataFileStatistics {
                 new Column(new String[0]),
                 (g, v) -> g.writeNumber(v));
             gen.writeEndObject();
+
+            gen.writeBooleanField(StatsSchemaHelper.TIGHT_BOUNDS, tightBounds);
           }
 
           gen.writeEndObject();
@@ -204,7 +343,8 @@ public class DataFileStatistics {
     return numRecords == that.numRecords
         && Objects.equals(minValues, that.minValues)
         && Objects.equals(maxValues, that.maxValues)
-        && Objects.equals(nullCount, that.nullCount);
+        && Objects.equals(nullCount, that.nullCount)
+        && tightBounds == that.tightBounds;
   }
 
   @Override
@@ -213,14 +353,16 @@ public class DataFileStatistics {
     result = 31 * result + Objects.hash(minValues.keySet());
     result = 31 * result + Objects.hash(maxValues.keySet());
     result = 31 * result + Objects.hash(nullCount.keySet());
+    result = 31 * result + Boolean.hashCode(tightBounds);
     return result;
   }
 
   @Override
   public String toString() {
     return String.format(
-        "DataFileStatistics(numRecords=%s, minValues=%s, maxValues=%s, nullCount=%s)",
-        numRecords, minValues, maxValues, nullCount);
+        "DataFileStatistics(numRecords=%s, minValues=%s, maxValues=%s,"
+            + "nullCount=%s, tightBounds=%s)",
+        numRecords, minValues, maxValues, nullCount, tightBounds);
   }
 
   /////////////////////////////////////////////////////////////////////////////////
@@ -322,6 +464,299 @@ public class DataFileStatistics {
       generator.writeString(truncated.format(DateTimeFormatter.ISO_LOCAL_DATE_TIME));
     } else {
       throw unsupportedStatsDataType(type);
+    }
+  }
+  /**
+   * Helper method to recursively parse nested JSON values back into Column->Literal maps for
+   * min/max values using the schema for type information. This is the inverse of the
+   * writeJsonValues method in DataFileStatistics.serializeAsJson.
+   *
+   * <p>Example JSON structure being parsed:
+   *
+   * <pre>
+   * {
+   *   "simpleColumn": 42,
+   *   "nestedColumn": {
+   *     "field1": "value1",
+   *     "field2": {
+   *       "subfield": 10.5
+   *     }
+   *   }
+   * }
+   * </pre>
+   *
+   * <p>This would create Column entries:
+   *
+   * <ul>
+   *   <li>Column(["simpleColumn"]) → Literal.ofInt(42)
+   *   <li>Column(["nestedColumn", "field1"]) → Literal.ofString("value1")
+   *   <li>Column(["nestedColumn", "field2", "subfield"]) → Literal.ofDouble(10.5)
+   * </ul>
+   *
+   * @param node The JSON node to parse
+   * @param resultMap The map to populate with Column->Literal mappings
+   * @param currentColumn The current column path being built
+   * @param schema The schema for the current level
+   */
+  private static void parseMinMaxValues(
+      JsonNode node, Map<Column, Literal> resultMap, Column currentColumn, StructType schema) {
+    if (node == null || !node.isObject() || schema == null) {
+      return;
+    }
+
+    for (StructField field : schema.fields()) {
+      String fieldName = field.getName();
+      JsonNode valueNode = node.get(fieldName);
+
+      if (valueNode == null) {
+        // Field not present in JSON, skip
+        continue;
+      }
+
+      Column newColumn = currentColumn.appendNestedField(fieldName);
+      DataType fieldType = field.getDataType();
+
+      if (fieldType instanceof StructType) {
+        // This is a nested structure, recurse deeper
+        if (valueNode.isObject()) {
+          parseMinMaxValues(valueNode, resultMap, newColumn, (StructType) fieldType);
+        }
+      } else {
+        // This is a leaf value
+        Literal literal = parseJsonValueToLiteral(valueNode, fieldType);
+        if (literal != null) {
+          resultMap.put(newColumn, literal);
+        }
+      }
+    }
+  }
+
+  /**
+   * Helper method to recursively parse nested JSON null count values back into Column->Long maps
+   * using the schema for type information.
+   *
+   * <p>Example JSON structure being parsed:
+   *
+   * <pre>
+   * {
+   *   "simpleColumn": 5,
+   *   "nestedColumn": {
+   *     "field1": 0,
+   *     "field2": {
+   *       "subfield": 10
+   *     }
+   *   }
+   * }
+   * </pre>
+   *
+   * <p>This would create Column entries:
+   *
+   * <ul>
+   *   <li>Column(["simpleColumn"]) → 5L
+   *   <li>Column(["nestedColumn", "field1"]) → 0L
+   *   <li>Column(["nestedColumn", "field2", "subfield"]) → 10L
+   * </ul>
+   *
+   * @param node The JSON node to parse
+   * @param resultMap The map to populate with Column->Long mappings
+   * @param currentColumn The current column path being built
+   * @param schema The schema for the current level
+   */
+  private static void parseNullCounts(
+      JsonNode node, Map<Column, Long> resultMap, Column currentColumn, StructType schema) {
+    if (node == null || !node.isObject() || schema == null) {
+      return;
+    }
+
+    for (StructField field : schema.fields()) {
+      String fieldName = field.getName();
+      JsonNode valueNode = node.get(fieldName);
+
+      if (valueNode == null) {
+        // Field not present in JSON, skip
+        continue;
+      }
+
+      Column newColumn = currentColumn.appendNestedField(fieldName);
+      DataType fieldType = field.getDataType();
+
+      if (fieldType instanceof StructType) {
+        // This is a nested structure, recurse deeper
+        if (valueNode.isObject()) {
+          parseNullCounts(valueNode, resultMap, newColumn, (StructType) fieldType);
+        }
+      } else {
+        // This is a leaf value - parse as long for null count
+        if (valueNode.isNumber()) {
+          resultMap.put(newColumn, valueNode.asLong());
+        }
+      }
+    }
+  }
+
+  /**
+   * Helper method to convert JSON node value to Literal based on the expected data type from
+   * schema. Uses the schema type information to eliminate ambiguity when parsing JSON values.
+   *
+   * @param valueNode The JSON node containing the value
+   * @param dataType The expected data type from the schema
+   * @return The corresponding Literal, or null if the value is null
+   * @throws KernelException if the JSON value cannot be parsed as the expected type
+   */
+  private static Literal parseJsonValueToLiteral(JsonNode valueNode, DataType dataType) {
+    if (valueNode == null || valueNode.isNull()) {
+      return null;
+    }
+
+    try {
+      if (dataType instanceof BooleanType) {
+        if (!valueNode.isBoolean()) {
+          throw new KernelException(
+              String.format("Expected boolean value but got: %s", valueNode.toString()));
+        }
+        return Literal.ofBoolean(valueNode.asBoolean());
+
+      } else if (dataType instanceof ByteType) {
+        if (!valueNode.isNumber()) {
+          throw new KernelException(
+              String.format("Expected byte value but got: %s", valueNode.toString()));
+        }
+        return Literal.ofByte((byte) valueNode.asInt());
+
+      } else if (dataType instanceof ShortType) {
+        if (!valueNode.isNumber()) {
+          throw new KernelException(
+              String.format("Expected short value but got: %s", valueNode.toString()));
+        }
+        return Literal.ofShort(valueNode.shortValue());
+
+      } else if (dataType instanceof IntegerType) {
+        if (!valueNode.isNumber()) {
+          throw new KernelException(
+              String.format("Expected integer value but got: %s", valueNode.toString()));
+        }
+        return Literal.ofInt(valueNode.asInt());
+
+      } else if (dataType instanceof LongType) {
+        if (!valueNode.isNumber()) {
+          throw new KernelException(
+              String.format("Expected long value but got: %s", valueNode.toString()));
+        }
+        return Literal.ofLong(valueNode.asLong());
+
+      } else if (dataType instanceof FloatType) {
+        if (valueNode.isTextual()) {
+          // Special float values are stored as strings during serialization
+          String textValue = valueNode.asText();
+          switch (textValue) {
+            case "NaN":
+              return Literal.ofFloat(Float.NaN);
+            case "Infinity":
+              return Literal.ofFloat(Float.POSITIVE_INFINITY);
+            case "-Infinity":
+              return Literal.ofFloat(Float.NEGATIVE_INFINITY);
+            default:
+              throw new KernelException(
+                  String.format("Expected float value but got unexpected string: %s", textValue));
+          }
+        }
+        if (!valueNode.isNumber()) {
+          throw new KernelException(
+              String.format("Expected float value but got: %s", valueNode.toString()));
+        }
+        return Literal.ofFloat(valueNode.floatValue());
+
+      } else if (dataType instanceof DoubleType) {
+        if (valueNode.isTextual()) {
+          // Special double values are stored as strings during serialization
+          String textValue = valueNode.asText();
+          switch (textValue) {
+            case "NaN":
+              return Literal.ofDouble(Double.NaN);
+            case "Infinity":
+              return Literal.ofDouble(Double.POSITIVE_INFINITY);
+            case "-Infinity":
+              return Literal.ofDouble(Double.NEGATIVE_INFINITY);
+            default:
+              throw new KernelException(
+                  String.format("Expected double value but got unexpected string: %s", textValue));
+          }
+        }
+        if (!valueNode.isNumber()) {
+          throw new KernelException(
+              String.format("Expected double value but got: %s", valueNode.toString()));
+        }
+        return Literal.ofDouble(valueNode.asDouble());
+
+      } else if (dataType instanceof StringType) {
+        if (!valueNode.isTextual()) {
+          throw new KernelException(
+              String.format("Expected string value but got: %s", valueNode.toString()));
+        }
+        return Literal.ofString(valueNode.asText());
+
+      } else if (dataType instanceof BinaryType) {
+        if (!valueNode.isTextual()) {
+          throw new KernelException(
+              String.format("Expected binary (as string) value but got: %s", valueNode.toString()));
+        }
+        // Binary data was stored as UTF-8 string during serialization
+        return Literal.ofBinary(valueNode.asText().getBytes(StandardCharsets.UTF_8));
+
+      } else if (dataType instanceof DecimalType) {
+        if (!valueNode.isNumber()) {
+          throw new KernelException(
+              String.format("Expected decimal value but got: %s", valueNode.toString()));
+        }
+        DecimalType decimalType = (DecimalType) dataType;
+        BigDecimal decimal = valueNode.decimalValue();
+        return Literal.ofDecimal(decimal, decimalType.getPrecision(), decimalType.getScale());
+
+      } else if (dataType instanceof DateType) {
+        if (!valueNode.isTextual()) {
+          throw new KernelException(
+              String.format("Expected date (as string) value but got: %s", valueNode.toString()));
+        }
+        String textValue = valueNode.asText();
+        LocalDate date = LocalDate.parse(textValue, ISO_LOCAL_DATE);
+        return Literal.ofDate((int) date.toEpochDay());
+
+      } else if (dataType instanceof TimestampType) {
+        if (!valueNode.isTextual()) {
+          throw new KernelException(
+              String.format(
+                  "Expected timestamp (as string) value but got: %s", valueNode.toString()));
+        }
+        String textValue = valueNode.asText();
+        OffsetDateTime offsetDateTime =
+            OffsetDateTime.parse(textValue, DataFileStatistics.TIMESTAMP_FORMATTER);
+        long epochMicros = ChronoUnit.MICROS.between(DataFileStatistics.EPOCH, offsetDateTime);
+        return Literal.ofTimestamp(epochMicros);
+
+      } else if (dataType instanceof TimestampNTZType) {
+        if (!valueNode.isTextual()) {
+          throw new KernelException(
+              String.format(
+                  "Expected timestamp NTZ (as string) value but got: %s", valueNode.toString()));
+        }
+        String textValue = valueNode.asText();
+        LocalDateTime localDateTime =
+            LocalDateTime.parse(textValue, DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+        long epochMicros =
+            ChronoUnit.MICROS.between(DataFileStatistics.EPOCH.toLocalDateTime(), localDateTime);
+        return Literal.ofTimestampNtz(epochMicros);
+
+      } else {
+        throw unsupportedStatsDataType(dataType);
+      }
+    } catch (Exception e) {
+      if (e instanceof KernelException) {
+        throw (KernelException) e;
+      }
+      throw new KernelException(
+          String.format(
+              "Failed to parse value '%s' as %s", valueNode.toString(), dataType.toString()),
+          e);
     }
   }
 }

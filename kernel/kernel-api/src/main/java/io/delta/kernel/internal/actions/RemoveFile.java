@@ -17,7 +17,6 @@ package io.delta.kernel.internal.actions;
 
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
-import io.delta.kernel.internal.util.StatsUtils;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.statistics.DataFileStatistics;
 import io.delta.kernel.types.*;
@@ -91,7 +90,7 @@ public class RemoveFile extends RowBackedAction {
   }
 
   public Optional<DataFileStatistics> getStats() {
-    return getStatsJson().flatMap(StatsUtils::deserializeFromJson);
+    return getStatsJson().flatMap(DataFileStatistics::deserializeFromJson);
   }
 
   public Optional<MapValue> getTags() {

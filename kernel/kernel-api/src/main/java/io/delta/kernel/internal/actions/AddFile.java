@@ -25,7 +25,6 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.fs.Path;
-import io.delta.kernel.internal.util.StatsUtils;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.statistics.DataFileStatistics;
 import io.delta.kernel.types.*;
@@ -207,7 +206,33 @@ public class AddFile extends RowBackedAction {
             index ->
                 row.isNullAt(index)
                     ? Optional.empty()
-                    : StatsUtils.deserializeFromJson(row.getString(index)));
+                    : DataFileStatistics.deserializeFromJson(row.getString(index)));
+  }
+
+  /**
+   * Returns the file statistics parsed from the stats JSON string using the provided schema. This
+   * method deserializes the statistics JSON with full type information, ensuring that min/max
+   * values and null counts are correctly typed according to the physical schema. This is more
+   * accurate than the parameterless {@link #getStats()} method which only deserializes numRecords
+   * without type information.
+   *
+   * @param physicalSchema the physical schema of the table, used to correctly parse and type the
+   *     statistics values (min/max values, null counts, tight bounds)
+   * @return an {@link Optional} containing the deserialized {@link DataFileStatistics} if the stats
+   *     field is present and non-null, or {@link Optional#empty()} otherwise
+   * @throws io.delta.kernel.exceptions.KernelException if the stats JSON is malformed or if values
+   *     don't match the expected types from the schema
+   * @see #getStats() for a version that doesn't require schema information
+   * @see DataFileStatistics#deserializeFromJson(String, StructType) for details on the
+   *     deserialization process
+   */
+  public Optional<DataFileStatistics> getStats(StructType physicalSchema) {
+    return getFieldIndexOpt("stats")
+        .flatMap(
+            index ->
+                row.isNullAt(index)
+                    ? Optional.empty()
+                    : DataFileStatistics.deserializeFromJson(row.getString(index), physicalSchema));
   }
 
   public Optional<Long> getNumRecords() {
