@@ -39,7 +39,6 @@ trait CDCEnabled extends SharedSparkSession {
 
 trait MergeCDCMixin extends SharedSparkSession
   with MergeIntoSQLTestUtils
-  with DeltaDMLTestUtilsPathBased
   with DeltaColumnMappingTestUtils
   with DeltaSQLCommandTest
   with MergePersistentDVDisabled
@@ -95,7 +94,11 @@ trait MergeCDCTests extends QueryTest
     test(s"merge CDC - $name") {
       withSQLConf(confs: _*) {
         targetTableSchema.foreach { schema =>
-          io.delta.tables.DeltaTable.create(spark).location(tempPath).addColumns(schema).execute()
+          io.delta.tables.DeltaTable.create(spark)
+            .tableName(tableSQLIdentifier)
+            .location(deltaLog.dataPath.toUri.getPath)
+            .addColumns(schema)
+            .execute()
         }
         append(target)
         withTempView("source") {
@@ -103,26 +106,26 @@ trait MergeCDCTests extends QueryTest
 
           if (expectErrorContains != null) {
             val ex = intercept[Exception] {
-              executeMerge(s"delta.`$tempPath` t", "source s", mergeCondition,
+              executeMerge(s"$tableSQLIdentifier t", "source s", mergeCondition,
                 clauses.toSeq: _*)
             }
             assert(ex.getMessage.contains(expectErrorContains))
           } else {
-            executeMerge(s"delta.`$tempPath` t", "source s", mergeCondition,
+            executeMerge(s"$tableSQLIdentifier t", "source s", mergeCondition,
               clauses.toSeq: _*)
             checkAnswer(
-              spark.read.format("delta").load(tempPath),
+              readDeltaTableByIdentifier(),
               expectedTableData)
 
             // Craft expected CDC data
-            val latestVersion = DeltaLog.forTable(spark, tempPath).snapshot.version
+            val latestVersion = deltaLog.snapshot.version
             val expectedCdcData = expectedCdcDataWithoutVersion
               .withColumn(CDCReader.CDC_COMMIT_VERSION, lit(latestVersion))
 
             // The timestamp is nondeterministic so we drop it when comparing results.
             checkAnswer(
               CDCReader.changesToBatchDF(
-                DeltaLog.forTable(spark, tempPath), latestVersion, latestVersion, spark)
+                deltaLog, latestVersion, latestVersion, spark)
                 .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
               expectedCdcData)
           }

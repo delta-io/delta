@@ -222,11 +222,11 @@ object SuiteGeneratorConfig {
         ),
         TestConfig(
           List("RowTrackingMergeCommonTests"),
-          List(Dims.CDC.asOptional).prependToAll(
+          List(Dims.NAME_BASED, Dims.CDC.asOptional).prependToAll(
             List(Dims.MERGE_ROW_TRACKING_DV.asOptional),
             List(Dims.PERSISTENT_DV_OFF, Dims.MERGE_PERSISTENT_DV_OFF)
           ) :::
-          List(Dims.COLUMN_MAPPING).prependToAll(
+          List(Dims.NAME_BASED, Dims.COLUMN_MAPPING).prependToAll(
             List(),
             List(Dims.CDC, Dims.MERGE_ROW_TRACKING_DV)
           )

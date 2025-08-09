@@ -40,23 +40,17 @@ trait DeleteCDCMixin extends DeleteSQLMixin with CDCEnabled {
     test(s"CDC - $name") {
       withSQLConf(
           (DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "true")) {
-        withTempDir { dir =>
-          val path = dir.getAbsolutePath
-          initialData.write.format("delta").partitionBy(partitionColumns: _*)
-            .save(path)
+        append(initialData.toDF(), partitionColumns)
 
-          executeDelete(s"delta.`$path`", deleteCondition)
+        executeDelete(tableSQLIdentifier, deleteCondition)
 
-          checkAnswer(
-            spark.read.format("delta").load(path),
-            expectedData.toDF())
+        checkAnswer(
+          readDeltaTableByIdentifier(),
+          expectedData.toDF())
 
-          checkAnswer(
-            getCDCForLatestOperation(
-              deltaLog = DeltaLog.forTable(spark, dir),
-              operation = "DELETE"),
-            expectedChangeDataWithoutVersion.toDF())
-        }
+        checkAnswer(
+          getCDCForLatestOperation(deltaLog, operation = "DELETE"),
+          expectedChangeDataWithoutVersion.toDF())
       }
     }
   }
