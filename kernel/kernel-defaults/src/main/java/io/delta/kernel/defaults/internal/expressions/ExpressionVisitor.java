@@ -15,6 +15,8 @@
  */
 package io.delta.kernel.defaults.internal.expressions;
 
+import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.createPredicate;
+import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.getCollationIdentifier;
 import static io.delta.kernel.expressions.AlwaysFalse.ALWAYS_FALSE;
 import static io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE;
 import static java.util.stream.Collectors.joining;
@@ -104,15 +106,15 @@ abstract class ExpressionVisitor<R> {
       case ">":
       case ">=":
       case "IS NOT DISTINCT FROM":
-        return visitComparator(new Predicate(name, children));
+        return visitComparator(createPredicate(name, children, getCollationIdentifier(expression)));
       case "ELEMENT_AT":
         return visitElementAt(expression);
       case "NOT":
-        return visitNot(new Predicate(name, children));
+        return visitNot(createPredicate(name, children, getCollationIdentifier(expression)));
       case "IS_NOT_NULL":
-        return visitIsNotNull(new Predicate(name, children));
+        return visitIsNotNull(createPredicate(name, children, getCollationIdentifier(expression)));
       case "IS_NULL":
-        return visitIsNull(new Predicate(name, children));
+        return visitIsNull(createPredicate(name, children, getCollationIdentifier(expression)));
       case "COALESCE":
         return visitCoalesce(expression);
       case "ADD":
@@ -122,9 +124,9 @@ abstract class ExpressionVisitor<R> {
       case "SUBSTRING":
         return visitSubstring(expression);
       case "LIKE":
-        return visitLike(new Predicate(name, children));
+        return visitLike(createPredicate(name, children, getCollationIdentifier(expression)));
       case "STARTS_WITH":
-        return visitStartsWith(new Predicate(name, children));
+        return visitStartsWith(createPredicate(name, children, getCollationIdentifier(expression)));
       default:
         throw new UnsupportedOperationException(
             String.format("Scalar expression `%s` is not supported.", name));
