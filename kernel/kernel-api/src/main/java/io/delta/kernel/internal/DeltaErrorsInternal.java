@@ -46,4 +46,13 @@ public class DeltaErrorsInternal {
             + "not catalog-managed Delta tables. Since this table is catalog-managed, this "
             + "commit operation is unsupported.");
   }
+
+  public static IllegalStateException logicalPhysicalSchemaMismatch(
+      int num_partition_cols, int physical_size, int logical_size) {
+    return new IllegalStateException(
+        String.format(
+            "The number of partition columns (%s) plus the physical schema size (%s) does not "
+                + "equal the logical schema size (%s).",
+            num_partition_cols, physical_size, logical_size));
+  }
 }
