@@ -25,7 +25,7 @@ import io.delta.kernel.defaults.engine.fileio.InputFile;
 import io.delta.kernel.exceptions.KernelEngineException;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.util.Utils;
-import io.delta.kernel.types.StructField;
+import io.delta.kernel.types.MetadataColumnType;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
@@ -60,9 +60,7 @@ public class ParquetFileReader {
   public CloseableIterator<ColumnarBatch> read(
       FileStatus fileStatus, StructType schema, Optional<Predicate> predicate) {
 
-    final boolean hasRowIndexCol =
-        schema.indexOf(StructField.METADATA_ROW_INDEX_COLUMN_NAME) >= 0
-            && schema.get(StructField.METADATA_ROW_INDEX_COLUMN_NAME).isMetadataColumn();
+    final boolean hasRowIndexCol = schema.contains(MetadataColumnType.ROW_INDEX);
 
     return new CloseableIterator<ColumnarBatch>() {
       private final BatchReadSupport readSupport = new BatchReadSupport(maxBatchSize, schema);

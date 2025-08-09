@@ -24,10 +24,7 @@ import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch;
 import io.delta.kernel.defaults.internal.data.vector.DefaultStructVector;
-import io.delta.kernel.types.DataType;
-import io.delta.kernel.types.LongType;
-import io.delta.kernel.types.StructField;
-import io.delta.kernel.types.StructType;
+import io.delta.kernel.types.*;
 import java.util.*;
 import org.apache.parquet.io.api.Converter;
 import org.apache.parquet.io.api.GroupConverter;
@@ -82,8 +79,7 @@ class RowColumnReader extends GroupConverter implements ParquetColumnReaders.Bas
               ? findSubFieldType(fileSchema, field, parquetFieldIdToTypeMap)
               : null;
       if (typeFromFile == null) {
-        if (StructField.METADATA_ROW_INDEX_COLUMN_NAME.equalsIgnoreCase(field.getName())
-            && field.isMetadataColumn()) {
+        if (MetadataColumnType.ROW_INDEX.equals(field.getMetadataColumnType())) {
           checkArgument(
               field.getDataType() instanceof LongType,
               "row index metadata column must be type long");
