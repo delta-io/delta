@@ -33,6 +33,7 @@ import org.apache.commons.lang3.time.DateUtils
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
 
 import org.apache.spark.internal.MDC
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.functions.{col, isnull, lit, not, when}
 
 private[delta] object TruncationGranularity extends Enumeration {
@@ -62,20 +63,23 @@ trait MetadataCleanup extends DeltaLogging {
     DeltaConfigs.getMilliSeconds(interval)
   }
 
-  override def doLogCleanup(snapshotToCleanup: Snapshot): Unit = {
-    if (enableExpiredLogCleanup(snapshot.metadata)) {
-      cleanUpExpiredLogs(snapshotToCleanup)
+  override def doLogCleanup(
+      snapshotToCleanup: Snapshot,
+      catalogTableOpt: Option[CatalogTable]): Unit = {
+    if (enableExpiredLogCleanup(unsafeVolatileSnapshot.metadata)) {
+      cleanUpExpiredLogs(snapshotToCleanup, catalogTableOpt)
     }
   }
 
   /** Clean up expired delta and checkpoint logs. Exposed for testing. */
   private[delta] def cleanUpExpiredLogs(
       snapshotToCleanup: Snapshot,
+      catalogTableOpt: Option[CatalogTable] = None,
       deltaRetentionMillisOpt: Option[Long] = None,
       cutoffTruncationGranularity: TruncationGranularity = DAY): Unit = {
     recordDeltaOperation(this, "delta.log.cleanup") {
       val retentionMillis =
-        deltaRetentionMillisOpt.getOrElse(deltaRetentionMillis(snapshot.metadata))
+        deltaRetentionMillisOpt.getOrElse(deltaRetentionMillis(unsafeVolatileSnapshot.metadata))
       val fileCutOffTime =
         truncateDate(clock.getTimeMillis() - retentionMillis, cutoffTruncationGranularity).getTime
       val formattedDate = fileCutOffTime.toGMTString

@@ -254,7 +254,9 @@ trait Checkpoints extends DeltaLogging {
   protected def store: LogStore
 
   /** Used to clean up stale log files. */
-  protected def doLogCleanup(snapshotToCleanup: Snapshot): Unit
+  protected def doLogCleanup(
+    snapshotToCleanup: Snapshot,
+    catalogTableOpt: Option[CatalogTable]): Unit
 
   /** Returns the checkpoint interval for this log. Not transactional. */
   def checkpointInterval(metadata: Metadata): Int =
@@ -330,11 +332,11 @@ trait Checkpoints extends DeltaLogging {
 
   def checkpointAndCleanUpDeltaLog(
       snapshotToCheckpoint: Snapshot,
-      catalogTableOpt: Option[CatalogTable] = None): Unit = {
+      catalogTableOpt: Option[CatalogTable]): Unit = {
     val lastCheckpointInfo = writeCheckpointFiles(snapshotToCheckpoint, catalogTableOpt)
     writeLastCheckpointFile(
       snapshotToCheckpoint.deltaLog, lastCheckpointInfo, LastCheckpointInfo.checksumEnabled(spark))
-    doLogCleanup(snapshotToCheckpoint)
+    doLogCleanup(snapshotToCheckpoint, catalogTableOpt)
   }
 
   protected[delta] def writeLastCheckpointFile(

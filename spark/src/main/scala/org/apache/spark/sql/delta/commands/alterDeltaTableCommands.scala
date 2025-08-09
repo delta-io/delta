@@ -326,7 +326,7 @@ case class AlterTableDropFeatureDeltaCommand(
     // Check whether the protocol contains the feature in either the writer features list or
     // the reader+writer features list. Note, protocol needs to denormalized to allow dropping
     // features from legacy protocols.
-    val protocol = table.deltaLog.update(catalogTableOpt = table.catalogTable).protocol
+    val protocol = table.update().protocol
     val protocolContainsFeatureName =
       protocol.implicitlyAndExplicitlySupportedFeatures.map(_.name).contains(featureName)
     val featureInLowerCase = featureName.toLowerCase(Locale.ROOT)
@@ -443,6 +443,7 @@ case class AlterTableDropFeatureDeltaCommand(
         // cleanUpExpiredLogs call truncates the cutoff at a minute granularity.
         deltaLog.cleanUpExpiredLogs(
           snapshotToCleanup = snapshot,
+          catalogTableOpt = table.catalogTable,
           deltaRetentionMillisOpt =
             if (truncateHistory) Some(truncateHistoryLogRetentionMillis(txn.metadata)) else None,
           cutoffTruncationGranularity =
