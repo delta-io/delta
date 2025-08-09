@@ -17,7 +17,10 @@
 package io.delta.kernel;
 
 import io.delta.kernel.annotation.Experimental;
+import io.delta.kernel.internal.CreateTableTransactionBuilderImpl;
 import io.delta.kernel.internal.table.SnapshotBuilderImpl;
+import io.delta.kernel.transaction.CreateTableTransactionBuilder;
+import io.delta.kernel.types.StructType;
 
 /**
  * The entry point for loading and creating Delta tables.
@@ -43,5 +46,17 @@ public interface TableManager {
     return new SnapshotBuilderImpl(path);
   }
 
-  // TODO: static CreateTableTransactionBuilder buildCreateTableTransaction(...)
+  /**
+   * Creates a {@link CreateTableTransactionBuilder} to build a create table transaction.
+   *
+   * @param path the file system path for the delta table being created
+   * @param engineInfo information about the engine that is making the updates.
+   * @param schema the schema for the delta table being created
+   * @return create table builder instance to build the transaction
+   * @since 3.4.0
+   */
+  static CreateTableTransactionBuilder buildCreateTableTransaction(
+      String path, String engineInfo, StructType schema) {
+    return new CreateTableTransactionBuilderImpl(path, schema, engineInfo);
+  }
 }

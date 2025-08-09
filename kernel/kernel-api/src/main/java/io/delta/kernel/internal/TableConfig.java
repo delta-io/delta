@@ -411,7 +411,8 @@ public class TableConfig<T> {
    * @throws InvalidConfigurationValueException if any of the properties are invalid
    * @throws UnknownConfigurationException if any of the properties are unknown
    */
-  public static Map<String, String> validateDeltaProperties(Map<String, String> newProperties) {
+  public static Map<String, String> validateAndNormalizeDeltaProperties(
+      Map<String, String> newProperties) {
     Map<String, String> validatedProperties = new HashMap<>();
     for (Map.Entry<String, String> kv : newProperties.entrySet()) {
       String key = kv.getKey().toLowerCase(Locale.ROOT);

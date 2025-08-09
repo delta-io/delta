@@ -139,7 +139,9 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   @Override
   public TransactionBuilder withTableProperties(Engine engine, Map<String, String> properties) {
     this.tableProperties =
-        Optional.of(Collections.unmodifiableMap(TableConfig.validateDeltaProperties(properties)));
+        Optional.of(
+            Collections.unmodifiableMap(
+                TableConfig.validateAndNormalizeDeltaProperties(properties)));
     return this;
   }
 
