@@ -140,4 +140,8 @@ public class TransactionV2State {
   public boolean isMetadataUpdate() {
     return updatedMetadataForFirstCommitAttemptOpt.isPresent();
   }
+
+  public boolean isReplace() {
+    return isCreateOrReplace && readTableOpt.isPresent() && readTableOpt.get().getVersion() >= 0;
+  }
 }
