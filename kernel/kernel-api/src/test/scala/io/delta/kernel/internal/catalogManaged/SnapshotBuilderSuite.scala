@@ -77,6 +77,7 @@ class SnapshotBuilderSuite extends AnyFunSuite
 
   test("when no committer is provided, the default committer is created") {
     val committer = TableManager.loadSnapshot(dataPath.toString)
+      .asInstanceOf[SnapshotBuilderImpl]
       .atVersion(1)
       .withProtocolAndMetadata(protocol, metadata) // avoid trying to use engine to load log segment
       .build(emptyMockEngine)
@@ -96,6 +97,7 @@ class SnapshotBuilderSuite extends AnyFunSuite
     }
 
     val committer = TableManager.loadSnapshot(dataPath.toString)
+      .asInstanceOf[SnapshotBuilderImpl]
       .atVersion(1)
       .withCommitter(new CustomCommitter())
       .withProtocolAndMetadata(protocol, metadata) // avoid trying to use engine to load log segment

@@ -1,5 +1,5 @@
 /*
- * Copyright (2023) The Delta Lake Project Authors.
+ * Copyright (2025) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,28 +13,19 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package io.delta.kernel.exceptions;
 
 import io.delta.kernel.annotation.Evolving;
 
-/**
- * Thrown when a concurrent transaction has written data after the current transaction has started.
- *
- * @since 3.2.0
- */
 @Evolving
-public class ConcurrentWriteException extends KernelException {
-  public ConcurrentWriteException() {
+public class MaxCommitRetryLimitReachedException extends KernelException {
+  public MaxCommitRetryLimitReachedException(long commitVersion, int maxRetries, Exception cause) {
     super(
-        "Transaction has encountered a conflict and can not be committed. "
-            + "Query needs to be re-executed using the latest version of the table.");
-  }
-
-  public ConcurrentWriteException(String message) {
-    super(message);
-  }
-
-  public ConcurrentWriteException(String message, Throwable cause) {
-    super(message, cause);
+        String.format(
+            "Commit attempt for version %d failed with a retryable exception but will not be "
+                + "retried because the maximum number of retries (%d) has been reached.",
+            commitVersion, maxRetries),
+        cause);
   }
 }

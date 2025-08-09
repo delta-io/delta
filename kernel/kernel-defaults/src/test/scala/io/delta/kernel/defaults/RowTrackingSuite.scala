@@ -26,7 +26,7 @@ import io.delta.kernel.data.{FilteredColumnarBatch, Row}
 import io.delta.kernel.defaults.internal.parquet.ParquetSuiteBase
 import io.delta.kernel.defaults.utils.TestRow
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.exceptions.{ConcurrentWriteException, InvalidTableException, KernelException}
+import io.delta.kernel.exceptions.{ConcurrentWriteException, InvalidTableException, KernelException, MaxCommitRetryLimitReachedException}
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl, TableConfig, TableImpl}
 import io.delta.kernel.internal.actions.{AddFile, SingleAction}
@@ -730,11 +730,9 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
       verifyHighWatermark(engine, tablePath, 99)
 
       // Commit txn1 with a provided row ID high watermark would fail
-      val ex1 = intercept[ConcurrentWriteException] {
+      intercept[MaxCommitRetryLimitReachedException] {
         txn1.commit(engine, emptyIterable())
       }
-      assert(
-        ex1.getMessage.contains("Transaction has encountered a conflict and can not be committed"))
     }
   }
 

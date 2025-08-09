@@ -25,6 +25,7 @@ import io.delta.kernel.commit.{CommitFailedException, CommitMetadata}
 import io.delta.kernel.data.Row
 import io.delta.kernel.exceptions.KernelEngineException
 import io.delta.kernel.internal.actions.Protocol
+import io.delta.kernel.internal.table.SnapshotBuilderImpl
 import io.delta.kernel.test.{ActionUtils, BaseMockJsonHandler, MockFileSystemClientUtils, VectorTestUtils}
 import io.delta.kernel.types.{IntegerType, StructType}
 import io.delta.kernel.utils.CloseableIterator
@@ -60,6 +61,7 @@ class DefaultCommitterSuite extends AnyFunSuite
       val schema = new StructType().add("col1", IntegerType.INTEGER)
       val metadata = testMetadata(schema, Seq[String]())
       val committer = TableManager.loadSnapshot(dataPath.toString)
+        .asInstanceOf[SnapshotBuilderImpl]
         .withProtocolAndMetadata(readProtocol, metadata)
         .atVersion(1)
         .build(emptyMockEngine)

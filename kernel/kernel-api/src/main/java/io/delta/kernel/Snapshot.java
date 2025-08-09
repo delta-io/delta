@@ -17,7 +17,6 @@
 package io.delta.kernel;
 
 import io.delta.kernel.annotation.Evolving;
-import io.delta.kernel.commit.Committer;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.types.StructType;
 import java.util.List;
@@ -95,7 +94,4 @@ public interface Snapshot {
 
   /** @return a scan builder to construct a {@link Scan} to read data from this snapshot */
   ScanBuilder getScanBuilder();
-
-  /** @return a committer that owns and controls commits to this table */
-  Committer getCommitter();
 }
