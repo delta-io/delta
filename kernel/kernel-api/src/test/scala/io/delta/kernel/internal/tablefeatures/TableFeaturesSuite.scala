@@ -53,6 +53,7 @@ class TableFeaturesSuite extends AnyFunSuite {
     "variantShredding-preview")
 
   val writerOnlyFeatures = Seq(
+    "allowColumnDefaults",
     "appendOnly",
     "invariants",
     "checkConstraints",
@@ -196,12 +197,13 @@ class TableFeaturesSuite extends AnyFunSuite {
     }
   })
 
-  Seq("domainMetadata", "vacuumProtocolCheck", "clustering").foreach { feature =>
-    test(s"doesn't support auto enable by metadata: $feature") {
-      val tableFeature = TableFeatures.getTableFeature(feature)
-      assert(!tableFeature.isInstanceOf[FeatureAutoEnabledByMetadata])
+  Seq("domainMetadata", "vacuumProtocolCheck", "clustering", "allowColumnDefaults")
+    .foreach { feature =>
+      test(s"doesn't support auto enable by metadata: $feature") {
+        val tableFeature = TableFeatures.getTableFeature(feature)
+        assert(!tableFeature.isInstanceOf[FeatureAutoEnabledByMetadata])
+      }
     }
-  }
 
   Seq(
     ("variantType", testMetadata(includeVariantTypeCol = true)),
@@ -252,6 +254,7 @@ class TableFeaturesSuite extends AnyFunSuite {
     // these features are enabled
     val expected = Seq(
       "columnMapping",
+      "allowColumnDefaults",
       "v2Checkpoint",
       "deletionVectors",
       "vacuumProtocolCheck",
@@ -320,6 +323,7 @@ class TableFeaturesSuite extends AnyFunSuite {
     "timestampNtz",
     "v2Checkpoint",
     "vacuumProtocolCheck",
+    "allowColumnDefaults",
     "columnMapping").foreach { feature =>
     test(s"validateKernelCanReadTheTable: protocol 3 with $feature") {
       val protocol = new Protocol(3, 1, singleton(feature), Set().asJava)
@@ -499,6 +503,12 @@ class TableFeaturesSuite extends AnyFunSuite {
       "metadata contains columnMapping",
     new Protocol(2, 7, Set().asJava, singleton("columnMapping")),
     testMetadata(tblProps = Map("delta.columnMapping.mode" -> "id")))
+
+  checkWriteSupported(
+    "validateKernelCanWriteToTable: protocol 7 with allowColumnDefaults, " +
+      "metadata contains allowColumnDefaults",
+    new Protocol(2, 7, Set().asJava, singleton("allowColumnDefaults")),
+    testMetadata(tblProps = Map("delta.feature.allowColumnDefaults" -> "supported")))
 
   checkWriteSupported(
     "validateKernelCanWriteToTable: protocol 7 with identityColumns, " +

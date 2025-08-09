@@ -34,6 +34,7 @@ import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.DataWriteContextImpl;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.SingleAction;
+import io.delta.kernel.internal.columndefaults.ColumnDefaults;
 import io.delta.kernel.internal.data.TransactionStateRow;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.icebergcompat.IcebergCompatV2MetadataValidatorAndUpdater;
@@ -169,6 +170,9 @@ public interface Transaction {
     boolean isIcebergCompatEnabled =
         isIcebergCompatV2Enabled(transactionState) || isIcebergCompatV3Enabled(transactionState);
     blockIfColumnMappingEnabled(transactionState);
+    // We recognize the AllowColumnDefaults feature for Iceberg v3
+    // but do not support writing with it yet
+    ColumnDefaults.blockIfEnabled(transactionState);
 
     // TODO: set the correct schema once writing into column mapping enabled table is supported.
     String tablePath = getTablePath(transactionState);
