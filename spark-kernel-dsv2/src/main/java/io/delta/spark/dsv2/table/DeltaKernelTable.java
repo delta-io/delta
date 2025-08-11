@@ -18,19 +18,18 @@ package io.delta.spark.dsv2.table;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.internal.SnapshotImpl;
+import io.delta.spark.dsv2.scan.DeltaKernelScanBuilder;
 import io.delta.spark.dsv2.utils.SchemaUtils;
 import java.util.*;
-import org.apache.spark.sql.connector.catalog.CatalogV2Util;
-import org.apache.spark.sql.connector.catalog.Column;
-import org.apache.spark.sql.connector.catalog.Identifier;
-import org.apache.spark.sql.connector.catalog.Table;
-import org.apache.spark.sql.connector.catalog.TableCapability;
+import org.apache.spark.sql.connector.catalog.*;
 import org.apache.spark.sql.connector.expressions.Expressions;
 import org.apache.spark.sql.connector.expressions.Transform;
+import org.apache.spark.sql.connector.read.ScanBuilder;
 import org.apache.spark.sql.types.StructType;
+import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 
 /** A DataSource V2 Table implementation for Delta Lake tables using the Delta Kernel API. */
-public class DeltaKernelTable implements Table {
+public class DeltaKernelTable implements Table, SupportsRead {
 
   private final Identifier identifier;
   // TODO: [delta-io/delta#5029] Add getProperties() in snapshot to avoid using Impl class.
@@ -66,8 +65,8 @@ public class DeltaKernelTable implements Table {
   public Transform[] partitioning() {
     // Delta currently just support identity partition
     return snapshot.getPartitionColumnNames().stream()
-        .map(Expressions::identity)
-        .toArray(Transform[]::new);
+            .map(Expressions::identity)
+            .toArray(Transform[]::new);
   }
 
   @Override
@@ -77,7 +76,13 @@ public class DeltaKernelTable implements Table {
 
   @Override
   public Set<TableCapability> capabilities() {
-    // TODO: [delta-io/delta#5001] fill in when implementing mix-in interface
-    return Collections.unmodifiableSet(new HashSet<>());
+    Set<TableCapability> capabilities = new HashSet<>();
+    capabilities.add(TableCapability.BATCH_READ);
+    return Collections.unmodifiableSet(capabilities);
+  }
+
+  @Override
+  public ScanBuilder newScanBuilder(CaseInsensitiveStringMap options) {
+    return new DeltaKernelScanBuilder(options, snapshot);
   }
 }
