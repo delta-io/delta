@@ -65,8 +65,8 @@ public class DeltaKernelTable implements Table, SupportsRead {
   public Transform[] partitioning() {
     // Delta currently just support identity partition
     return snapshot.getPartitionColumnNames().stream()
-            .map(Expressions::identity)
-            .toArray(Transform[]::new);
+        .map(Expressions::identity)
+        .toArray(Transform[]::new);
   }
 
   @Override
@@ -83,6 +83,6 @@ public class DeltaKernelTable implements Table, SupportsRead {
 
   @Override
   public ScanBuilder newScanBuilder(CaseInsensitiveStringMap options) {
-    return new DeltaKernelScanBuilder(options, snapshot);
+    return new DeltaKernelScanBuilder(snapshot);
   }
 }

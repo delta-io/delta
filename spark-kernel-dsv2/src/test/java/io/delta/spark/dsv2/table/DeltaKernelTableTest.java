@@ -15,6 +15,7 @@
  */
 package io.delta.spark.dsv2.table;
 
+import static org.apache.spark.sql.connector.catalog.TableCapability.BATCH_READ;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -120,7 +121,7 @@ public class DeltaKernelTableTest {
         });
 
     // ===== Test capabilities =====
-    assertTrue(kernelTable.capabilities().isEmpty());
+    assertTrue(kernelTable.capabilities().contains(BATCH_READ));
   }
 
   /** Represents a test case configuration for Delta tables */

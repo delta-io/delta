@@ -15,24 +15,22 @@
  */
 package io.delta.spark.dsv2.scan;
 
-import io.delta.kernel.internal.SnapshotImpl;
-import io.delta.spark.dsv2.utils.SchemaUtils;
+import org.apache.spark.sql.types.StructType;
 
 /**
- * A Spark ScanBuilder implementation that wraps Delta Kernel's ScanBuilder. This allows Spark to
- * use Delta Kernel for reading Delta tables.
+ * A Spark Scan implementation that wraps Delta Kernel's Scan. This allows Spark to use Delta Kernel
+ * for reading Delta tables.
  */
-public class DeltaKernelScanBuilder implements org.apache.spark.sql.connector.read.ScanBuilder {
+public class DeltaKernelScan implements org.apache.spark.sql.connector.read.Scan {
 
-  private final SnapshotImpl snapshot;
+  private final StructType readSchema;
 
-  public DeltaKernelScanBuilder(SnapshotImpl snapshot) {
-    this.snapshot = snapshot;
+  public DeltaKernelScan(StructType readSchema) {
+    this.readSchema = readSchema;
   }
 
   @Override
-  public org.apache.spark.sql.connector.read.Scan build() {
-    // TODO: pass converted schema.
-    return new DeltaKernelScan(SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema()));
+  public StructType readSchema() {
+    return readSchema;
   }
 }
