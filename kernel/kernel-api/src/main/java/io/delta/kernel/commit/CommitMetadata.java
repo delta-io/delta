@@ -23,6 +23,8 @@ import io.delta.kernel.annotation.Experimental;
 import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.tablefeatures.TableFeatures;
+import io.delta.kernel.internal.util.FileNames;
 import java.util.Optional;
 
 /**
@@ -31,6 +33,25 @@ import java.util.Optional;
  */
 @Experimental
 public class CommitMetadata {
+
+  /**
+   * Represents the different types of commits based on filesystem-managed and catalog-managed state
+   * transitions.
+   */
+  public enum CommitType {
+    /** Creating a new filesystem-managed table */
+    FILESYSTEM_CREATE,
+    /** Creating a new catalog-managed table */
+    CATALOG_CREATE,
+    /** Writing to an existing filesystem-managed table */
+    FILESYSTEM_WRITE,
+    /** Writing to an existing catalog-managed table */
+    CATALOG_WRITE,
+    /** Upgrading a filesystem-managed table to a catalog-managed table */
+    FILESYSTEM_UPGRADE_TO_CATALOG,
+    /** Downgrading a catalog-managed table to a filesystem-managed table */
+    CATALOG_DOWNGRADE_TO_FILESYSTEM
+  }
 
   private final long version;
   private final String logPath;
@@ -49,9 +70,10 @@ public class CommitMetadata {
       Optional<Protocol> newProtocolOpt,
       Optional<Metadata> newMetadataOpt) {
     checkArgument(version >= 0, "version must be non-negative: %d", version);
+    checkICTPresentIfCatalogManaged(requireNonNull(commitInfo, "commitInfo is null"));
     this.version = version;
     this.logPath = requireNonNull(logPath, "logPath is null");
-    this.commitInfo = requireNonNull(commitInfo, "commitInfo is null");
+    this.commitInfo = commitInfo;
     this.readProtocolOpt = requireNonNull(readProtocolOpt, "readProtocolOpt is null");
     this.readMetadataOpt = requireNonNull(readMetadataOpt, "readMetadataOpt is null");
     this.newProtocolOpt = requireNonNull(newProtocolOpt, "newProtocolOpt is null");
@@ -103,5 +125,47 @@ public class CommitMetadata {
    */
   public Optional<Metadata> getNewMetadataOpt() {
     return newMetadataOpt;
+  }
+
+  public Protocol getEffectiveProtocol() {
+    return newProtocolOpt.orElseGet(() -> readProtocolOpt.get());
+  }
+
+  public Metadata getEffectiveMetadata() {
+    return newMetadataOpt.orElseGet(() -> readMetadataOpt.get());
+  }
+
+  public CommitType getCommitType() {
+    final boolean isCreate = !readProtocolOpt.isPresent() && !readMetadataOpt.isPresent();
+    final boolean lastVersionCatalogManaged =
+        readProtocolOpt.map(TableFeatures::isCatalogManagedSupported).orElse(false);
+    final boolean nextVersionCatalogManaged =
+        TableFeatures.isCatalogManagedSupported(getEffectiveProtocol());
+
+    if (isCreate && nextVersionCatalogManaged) {
+      return CommitType.CATALOG_CREATE;
+    } else if (isCreate && !nextVersionCatalogManaged) {
+      return CommitType.FILESYSTEM_CREATE;
+    } else if (lastVersionCatalogManaged && nextVersionCatalogManaged) {
+      return CommitType.CATALOG_WRITE;
+    } else if (lastVersionCatalogManaged && !nextVersionCatalogManaged) {
+      return CommitType.CATALOG_DOWNGRADE_TO_FILESYSTEM;
+    } else if (!lastVersionCatalogManaged && nextVersionCatalogManaged) {
+      return CommitType.FILESYSTEM_UPGRADE_TO_CATALOG;
+    } else {
+      return CommitType.FILESYSTEM_WRITE;
+    }
+  }
+
+  public String getNewStagedCommitFilePath() {
+    return FileNames.stagedCommitFile(logPath, version);
+  }
+
+  private void checkICTPresentIfCatalogManaged(CommitInfo commitInfo) {
+    if (TableFeatures.isCatalogManagedSupported(getEffectiveProtocol())) {
+      checkArgument(
+          commitInfo.getInCommitTimestamp().isPresent(),
+          "InCommitTimestamp must be present catalogManaged commits");
+    }
   }
 }
