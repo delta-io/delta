@@ -39,11 +39,10 @@ trait UpdateCDCTests  extends UpdateSQLMixin
       setClauses = "value = -1",
       expectedResults = Row(1, -1) :: Row(2, -1) :: Row(3, -1) :: Row(4, -1) :: Nil)
 
-    val log = DeltaLog.forTable(spark, tempPath)
-    val latestVersion = log.unsafeVolatileSnapshot.version
+    val latestVersion = deltaLog.update().version
     checkAnswer(
       CDCReader
-        .changesToBatchDF(log, latestVersion, latestVersion, spark)
+        .changesToBatchDF(deltaLog, latestVersion, latestVersion, spark)
         .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
       Row(1, 1, "update_preimage", latestVersion) ::
         Row(1, -1, "update_postimage", latestVersion) ::
@@ -64,11 +63,10 @@ trait UpdateCDCTests  extends UpdateSQLMixin
       setClauses = "value = -1",
       expectedResults = Row(1, -1) :: Row(2, -1) :: Row(3, -1) :: Row(4, -1) :: Nil)
 
-    val log = DeltaLog.forTable(spark, tempPath)
-    val latestVersion = log.unsafeVolatileSnapshot.version
+    val latestVersion = deltaLog.update().version
     checkAnswer(
       CDCReader
-        .changesToBatchDF(log, latestVersion, latestVersion, spark)
+        .changesToBatchDF(deltaLog, latestVersion, latestVersion, spark)
         .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
       Row(1, 1, "update_preimage", latestVersion) ::
         Row(1, -1, "update_postimage", latestVersion) ::
@@ -89,11 +87,10 @@ trait UpdateCDCTests  extends UpdateSQLMixin
       setClauses = "value = -1",
       expectedResults = Row(1, -1) :: Row(2, 2) :: Row(3, 3) :: Row(4, 4) :: Nil)
 
-    val log = DeltaLog.forTable(spark, tempPath)
-    val latestVersion = log.unsafeVolatileSnapshot.version
+    val latestVersion = deltaLog.update().version
     checkAnswer(
       CDCReader
-        .changesToBatchDF(log, latestVersion, latestVersion, spark)
+        .changesToBatchDF(deltaLog, latestVersion, latestVersion, spark)
         .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
       Row(1, 1, "update_preimage", latestVersion) ::
         Row(1, -1, "update_postimage", latestVersion) ::
@@ -108,11 +105,10 @@ trait UpdateCDCTests  extends UpdateSQLMixin
       setClauses = "value = -1",
       expectedResults = Row(1, -1) :: Row(2, 2) :: Row(3, 3) :: Row(4, 4) :: Nil)
 
-    val log = DeltaLog.forTable(spark, tempPath)
-    val latestVersion1 = log.unsafeVolatileSnapshot.version
+    val latestVersion1 = deltaLog.update().version
     checkAnswer(
       CDCReader
-        .changesToBatchDF(log, latestVersion1, latestVersion1, spark)
+        .changesToBatchDF(deltaLog, latestVersion1, latestVersion1, spark)
         .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
       Row(1, 1, "update_preimage", latestVersion1) ::
         Row(1, -1, "update_postimage", latestVersion1) ::
@@ -123,10 +119,10 @@ trait UpdateCDCTests  extends UpdateSQLMixin
       setClauses = "value = -3",
       expectedResults = Row(1, -1) :: Row(2, 2) :: Row(3, -3) :: Row(4, 4) :: Nil)
 
-    val latestVersion2 = log.unsafeVolatileSnapshot.version
+    val latestVersion2 = deltaLog.update().version
     checkAnswer(
       CDCReader
-        .changesToBatchDF(log, latestVersion1, latestVersion2, spark)
+        .changesToBatchDF(deltaLog, latestVersion1, latestVersion2, spark)
         .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
       Row(1, 1, "update_preimage", latestVersion1) ::
         Row(1, -1, "update_postimage", latestVersion1) ::
@@ -145,11 +141,10 @@ trait UpdateCDCTests  extends UpdateSQLMixin
       setClauses = "value = -1",
       expectedResults = Row(1, -1) :: Row(2, 2) :: Row(3, -1) :: Row(4, 4) :: Nil)
 
-    val log = DeltaLog.forTable(spark, tempPath)
-    val latestVersion = log.unsafeVolatileSnapshot.version
+    val latestVersion = deltaLog.update().version
     checkAnswer(
       CDCReader
-        .changesToBatchDF(log, latestVersion, latestVersion, spark)
+        .changesToBatchDF(deltaLog, latestVersion, latestVersion, spark)
         .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
       Row(1, 1, 1, "update_preimage", latestVersion) ::
         Row(1, -1, 1, "update_postimage", latestVersion) ::
@@ -186,33 +181,29 @@ trait UpdateCDCTests  extends UpdateSQLMixin
 
 trait UpdateCDCWithDeletionVectorsTests extends UpdateSQLWithDeletionVectorsMixin {
   test("UPDATE with DV write CDC files explicitly") {
-    withTempDir { dir =>
-      val path = dir.getCanonicalPath
-      val log = DeltaLog.forTable(spark, path)
-      spark.range(0, 10, 1, numPartitions = 2).write.format("delta").save(path)
-      executeUpdate(s"delta.`$path`", "id = -1", "id % 4 = 0")
+    append(spark.range(0, 10, 1, numPartitions = 2).toDF())
+    executeUpdate(tableSQLIdentifier, "id = -1", "id % 4 = 0")
 
-      val latestVersion = log.update().version
-      checkAnswer(
-        CDCReader
-          .changesToBatchDF(log, latestVersion, latestVersion, spark)
-          .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
-        Row(0, "update_preimage", latestVersion) ::
-          Row(-1, "update_postimage", latestVersion) ::
-          Row(4, "update_preimage", latestVersion) ::
-          Row(-1, "update_postimage", latestVersion) ::
-          Row(8, "update_preimage", latestVersion) ::
-          Row(-1, "update_postimage", latestVersion) ::
-          Nil)
+    val latestVersion = deltaLog.update().version
+    checkAnswer(
+      CDCReader
+        .changesToBatchDF(deltaLog, latestVersion, latestVersion, spark)
+        .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
+      Row(0, "update_preimage", latestVersion) ::
+        Row(-1, "update_postimage", latestVersion) ::
+        Row(4, "update_preimage", latestVersion) ::
+        Row(-1, "update_postimage", latestVersion) ::
+        Row(8, "update_preimage", latestVersion) ::
+        Row(-1, "update_postimage", latestVersion) ::
+        Nil)
 
-      val allActions = log.getChanges(latestVersion).flatMap(_._2).toSeq
-      val addActions = allActions.collect { case f: AddFile => f }
-      val removeActions = allActions.collect { case f: RemoveFile => f }
-      val cdcActions = allActions.collect { case f: AddCDCFile => f }
+    val allActions = deltaLog.getChanges(latestVersion).flatMap(_._2).toSeq
+    val addActions = allActions.collect { case f: AddFile => f }
+    val removeActions = allActions.collect { case f: RemoveFile => f }
+    val cdcActions = allActions.collect { case f: AddCDCFile => f }
 
-      assert(addActions.count(_.deletionVector != null) === 2)
-      assert(removeActions.size === 2)
-      assert(cdcActions.nonEmpty)
-    }
+    assert(addActions.count(_.deletionVector != null) === 2)
+    assert(removeActions.size === 2)
+    assert(cdcActions.nonEmpty)
   }
 }

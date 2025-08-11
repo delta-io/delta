@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta
 import java.io.{BufferedReader, File, InputStreamReader}
 import java.nio.charset.StandardCharsets.UTF_8
 import java.util.{Locale, TimeZone}
-import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.{ConcurrentHashMap, TimeUnit}
 
 import scala.collection.JavaConverters._
 import scala.collection.concurrent
@@ -52,7 +52,7 @@ import org.apache.spark.sql.execution.aggregate.HashAggregateExec
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.util.QueryExecutionListener
-import org.apache.spark.util.Utils
+import org.apache.spark.util.{ManualClock, SystemClock, Utils}
 
 object DeltaTestUtilsBase {
   final val BOOLEAN_DOMAIN: Seq[Boolean] = Seq(true, false)
@@ -574,11 +574,42 @@ trait DeltaDMLTestUtils
 
   import testImplicits._
 
-  protected var deltaLog: DeltaLog = _
-
   protected def tableSQLIdentifier: String
 
+  protected def tableIdentifier: TableIdentifier
+
   protected def dropTable(): Unit
+
+  /**
+   * Clock used for [[deltaLog]]. [[SystemClock]] is used if not set via [[setupManualClock]].
+   */
+  protected var clock: ManualClock = _
+
+  protected def setupManualClock(): Unit = {
+    clock = new ManualClock(System.currentTimeMillis())
+    // Override the (cached) delta log with one using our manual clock.
+    DeltaLog.clearCache()
+    deltaLog
+  }
+
+  /**
+   * Use this to artificially move the current time to after the table retention period.
+   */
+  protected def advancePastRetentionPeriod(): Unit = {
+    assert(clock != null, "Must call setupManualClock in tests that are using this method.")
+    clock.advance(
+      deltaLog.deltaRetentionMillis(deltaLog.update().metadata) +
+        TimeUnit.DAYS.toMillis(3))
+  }
+
+  // No need to cache deltaLog here as it is already cached
+  protected def deltaLog: DeltaLog = {
+    if (clock != null) {
+      DeltaLog.forTable(spark, tableIdentifier, clock)
+    } else {
+      DeltaLog.forTable(spark, tableIdentifier)
+    }
+  }
 
   override protected def afterEach(): Unit = {
     try {
@@ -687,11 +718,12 @@ trait DeltaDMLTestUtilsPathBased extends DeltaDMLTestUtils {
 
   protected def tempPath: String = tempDir.getCanonicalPath
 
+  override protected def tableIdentifier: TableIdentifier = TableIdentifier(tempPath, Some("delta"))
+
   override protected def beforeEach(): Unit = {
     super.beforeEach()
     // Using a space in path to provide coverage for special characters.
     tempDir = Utils.createTempDir(namePrefix = "spark test")
-    deltaLog = DeltaLog.forTable(spark, tempPath)
   }
 
   override protected def tableSQLIdentifier: String = s"delta.`$tempPath`"
@@ -702,7 +734,6 @@ trait DeltaDMLTestUtilsPathBased extends DeltaDMLTestUtils {
 
   override protected def dropTable(): Unit = {
     Utils.deleteRecursively(tempDir)
-    deltaLog = null
     DeltaLog.clearCache()
   }
 }
@@ -724,11 +755,10 @@ trait DeltaDMLTestUtilsNameBased extends DeltaDMLTestUtils {
     }
   }
 
+  override protected def tableIdentifier: TableIdentifier = TableIdentifier(tableSQLIdentifier)
+
   override protected def append(df: DataFrame, partitionBy: Seq[String] = Nil): Unit = {
     super.append(df, partitionBy)
-    if (deltaLog == null) {
-      deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableSQLIdentifier))
-    }
   }
 
   // Keep this all lowercase. Otherwise, for tests with spark.sql.caseSensitive set to
@@ -738,7 +768,6 @@ trait DeltaDMLTestUtilsNameBased extends DeltaDMLTestUtils {
 
   override protected def dropTable(): Unit = {
     spark.sql(s"DROP TABLE IF EXISTS $tableSQLIdentifier")
-    deltaLog = null
     DeltaLog.clearCache()
   }
 }
