@@ -562,7 +562,6 @@ public class TransactionMetadataFactory {
         Optional.empty(), /* name */
         Optional.empty(), /* description */
         new Format(), /* format */
-        schema.toJson(), /* schemaString */
         schema, /* schema */
         buildArrayValue(
             casePreservingPartitionColNames(schema, partitionColumns),
