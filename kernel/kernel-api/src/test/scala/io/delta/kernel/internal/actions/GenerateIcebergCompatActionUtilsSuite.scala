@@ -45,7 +45,6 @@ class GenerateIcebergCompatActionUtilsSuite extends AnyFunSuite {
       Optional.empty(), /* name */
       Optional.empty(), /* description */
       new Format(),
-      testSchema.toJson,
       testSchema,
       VectorUtils.buildArrayValue(partitionColumns.asJava, StringType.STRING),
       Optional.empty(), /* createdTime */

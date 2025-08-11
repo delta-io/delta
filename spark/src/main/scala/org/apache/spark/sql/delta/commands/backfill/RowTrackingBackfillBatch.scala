@@ -31,7 +31,7 @@ case class RowTrackingBackfillBatch(filesInBatch: Seq[AddFile]) extends Backfill
   override protected def prepareFilesAndCommit(
       spark: SparkSession,
       txn: OptimisticTransaction,
-      batchId: Int): Unit = {
+      batchId: Int): Long = {
     val protocol = txn.snapshot.protocol
     val metadata = txn.snapshot.metadata
     val isRowTrackingSupported = protocol.isFeatureSupported(RowTrackingFeature)
