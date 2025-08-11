@@ -342,11 +342,16 @@ public class TransactionImpl implements Transaction {
             // Case 1: Non-retryable exception. We must throw this. We don't expect connectors to
             //         be able to recover from this.
             throw DeltaErrors.nonRetryableCommitException(attempt, commitAsVersion, cfe);
-          } else if (attempt >= getMaxCommitAttempts()) {
+          }
+          if (attempt >= getMaxCommitAttempts()) {
             // Case 2: Despite the error being retryable, we have exhausted the maximum number of
             //         retries. We must throw here, too.
             throw new MaxCommitRetryLimitReachedException(commitAsVersion, maxRetries, cfe);
-          } else if (!cfe.isConflict()) {
+          }
+
+          // We know the commit is retryable.
+
+          if (!cfe.isConflict()) {
             // Case 3: No conflict => No conflict resolution needed. Just retry with same version.
             printLogForRetryableNonConflictException(attempt, commitAsVersion, cfe);
             seenRetryableNonConflictException = true;
@@ -382,7 +387,7 @@ public class TransactionImpl implements Transaction {
             currentCrcInfo = rebaseState.getUpdatedCrcInfo();
           }
         }
-        // We will be retrying the commit.
+        // We will be retrying the commit (either from case 3 or 5 above).
         //
         // Action counters may be partially incremented from previous tries, reset the counters
         // to 0 and drop fileSizeHistogram
