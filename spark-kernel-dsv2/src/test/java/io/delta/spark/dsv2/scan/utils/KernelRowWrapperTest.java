@@ -32,7 +32,7 @@ import org.junit.jupiter.api.Test;
 public class KernelRowWrapperTest {
 
   @Test
-  public void testPrimitiveGetters() {
+  public void testPrimitiveType() {
     StructType schema =
         new StructType(
             Arrays.asList(
