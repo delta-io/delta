@@ -107,8 +107,10 @@ public class KernelRowWrapper extends InternalRow {
 
   @Override
   public Decimal getDecimal(int ordinal, int precision, int scale) {
-    java.math.BigDecimal dec = row.getDecimal(ordinal);
-    return dec == null ? null : Decimal.apply(dec, precision, scale);
+    if (row.isNullAt(ordinal)) {
+      return null;
+    }
+    return Decimal.apply(row.getDecimal(ordinal), precision, scale);
   }
 
   @Override
@@ -118,8 +120,10 @@ public class KernelRowWrapper extends InternalRow {
 
   @Override
   public UTF8String getUTF8String(int ordinal) {
-    String s = row.getString(ordinal);
-    return s == null ? null : UTF8String.fromString(s);
+    if (row.isNullAt(ordinal)) {
+      return null;
+    }
+    return UTF8String.fromString(row.getString(ordinal));
   }
 
   // TODO: [delta-io/delta#5049] support arrays, maps, structs.
