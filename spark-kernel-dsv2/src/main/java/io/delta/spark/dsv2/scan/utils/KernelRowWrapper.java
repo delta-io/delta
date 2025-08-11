@@ -122,7 +122,7 @@ public class KernelRowWrapper extends InternalRow {
     return s == null ? null : UTF8String.fromString(s);
   }
 
-  // Nested types unsupported for now (TODO support arrays, maps, structs)
+  // TODO: [delta-io/delta#5049] support arrays, maps, structs.
   @Override
   public InternalRow getStruct(int ordinal, int numFields) {
     throw new UnsupportedOperationException("Struct type is not supported");
