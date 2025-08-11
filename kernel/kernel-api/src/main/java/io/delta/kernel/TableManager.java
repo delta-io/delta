@@ -56,7 +56,7 @@ public interface TableManager {
    * @since 3.4.0
    */
   static CreateTableTransactionBuilder buildCreateTableTransaction(
-      String path, String engineInfo, StructType schema) {
+      String path, StructType schema, String engineInfo) {
     return new CreateTableTransactionBuilderImpl(path, schema, engineInfo);
   }
 }

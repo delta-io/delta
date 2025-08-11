@@ -30,9 +30,10 @@ import java.util.Map;
 public interface CreateTableTransactionBuilder {
 
   /**
-   * Set table properties (configuration) for the new Delta table. Note, user-properties (those
-   * without a '.delta' prefix) are case-sensitive. Delta-properties are case-insensitive and are
-   * normalized to their expected case before writing to the log.
+   * Set table properties for the new Delta table.
+   *
+   * <p>Note, user-properties (those without a '.delta' prefix) are case-sensitive. Delta-properties
+   * are case-insensitive and are normalized to their expected case before writing to the log.
    *
    * @param properties A map of table property names to their values.
    */

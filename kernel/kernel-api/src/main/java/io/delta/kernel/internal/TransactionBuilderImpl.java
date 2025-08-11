@@ -237,7 +237,6 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       new TransactionImpl(
           false, // isCreateOrReplace
           table.getDataPath(),
-          table.getLogPath(),
           latestSnapshot,
           engineInfo,
           operation,
@@ -302,7 +301,6 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     return new TransactionImpl(
         isCreateOrReplace,
         table.getDataPath(),
-        table.getLogPath(),
         latestSnapshot,
         engineInfo,
         operation,

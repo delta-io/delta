@@ -29,7 +29,7 @@ import java.util.List;
  * <p>This class supports different layout strategies:
  *
  * <ul>
- *   <li><b>Unpartitioned:</b> No special data layout
+ *   <li><b>No data layout spec:</b> No special data layout
  *   <li><b>Partitioned:</b> Data is partitioned by specified columns.
  *   <li><b>Clustered:</b> Data is clustered by specified columns.
  * </ul>
@@ -89,7 +89,7 @@ public class DataLayoutSpec {
       throw new IllegalArgumentException("Partition columns cannot be empty");
     }
     this.partitionColumns = partitionColumns;
-    this.clusteringColumns = Collections.unmodifiableList(clusteringColumns);
+    this.clusteringColumns = clusteringColumns;
   }
 
   /**

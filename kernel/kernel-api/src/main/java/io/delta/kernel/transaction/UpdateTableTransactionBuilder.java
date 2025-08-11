@@ -94,7 +94,6 @@ public interface UpdateTableTransactionBuilder {
    * @param clusteringColumns The columns to cluster by. Cannot be null.
    * @throws IllegalArgumentException if the table is partitioned
    */
-  // TODO: should this be a DataLayoutSpec instead?
   UpdateTableTransactionBuilder withClusteringColumns(List<Column> clusteringColumns);
 
   /**

@@ -15,8 +15,8 @@
  */
 package io.delta.kernel.internal;
 
-import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+import static io.delta.kernel.internal.util.Utils.resolvePath;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.Operation;
@@ -27,8 +27,6 @@ import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.transaction.CreateTableTransactionBuilder;
 import io.delta.kernel.transaction.DataLayoutSpec;
 import io.delta.kernel.types.StructType;
-import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -81,7 +79,7 @@ public class CreateTableTransactionBuilderImpl implements CreateTableTransaction
   @Override
   public Transaction build(Engine engine) {
     requireNonNull(engine, "engine cannot be null");
-    String resolvedPath = resolveTablePath(engine, unresolvedPath);
+    String resolvedPath = resolvePath(engine, unresolvedPath);
 
     // Extract partition and clustering columns from the data layout spec
     Optional<List<String>> partitionColumns =
@@ -97,7 +95,6 @@ public class CreateTableTransactionBuilderImpl implements CreateTableTransaction
             .filter(DataLayoutSpec::hasClustering)
             .map(DataLayoutSpec::getClusteringColumns);
 
-    // Build the transaction metadata using TransactionMetadataFactory
     TransactionMetadataFactory.Output txnMetadata =
         TransactionMetadataFactory.buildCreateTableMetadata(
             resolvedPath,
@@ -107,11 +104,9 @@ public class CreateTableTransactionBuilderImpl implements CreateTableTransaction
             clusteringColumns);
 
     Path dataPath = new Path(resolvedPath);
-    Path logPath = new Path(dataPath, "_delta_log");
     return new TransactionImpl(
         true, // isCreateOrReplace
         dataPath,
-        logPath,
         Optional.empty(), // no existing snapshot for create table
         engineInfo,
         Operation.CREATE_TABLE,
@@ -122,16 +117,5 @@ public class CreateTableTransactionBuilderImpl implements CreateTableTransaction
         maxRetries,
         0, // logCompactionInterval - using default for create table
         System::currentTimeMillis);
-  }
-
-  private String resolveTablePath(Engine engine, String tablePath) {
-    try {
-      return wrapEngineExceptionThrowsIO(
-          () -> engine.getFileSystemClient().resolvePath(tablePath),
-          "Resolving path %s",
-          tablePath);
-    } catch (IOException io) {
-      throw new UncheckedIOException(io);
-    }
   }
 }

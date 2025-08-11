@@ -113,7 +113,6 @@ public class TransactionImpl implements Transaction {
   public TransactionImpl(
       boolean isCreateOrReplace,
       Path dataPath,
-      Path logPath,
       Optional<SnapshotImpl> readSnapshotOpt,
       String engineInfo,
       Operation operation,
@@ -132,7 +131,7 @@ public class TransactionImpl implements Transaction {
 
     this.isCreateOrReplace = isCreateOrReplace;
     this.dataPath = dataPath;
-    this.logPath = logPath;
+    this.logPath = new Path(dataPath, "_delta_log");
     this.readSnapshotOpt = readSnapshotOpt;
     this.engineInfo = engineInfo;
     this.operation = operation;

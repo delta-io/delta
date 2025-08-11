@@ -22,7 +22,6 @@ import static java.util.stream.Collectors.toSet;
 import io.delta.kernel.Operation;
 import io.delta.kernel.Transaction;
 import io.delta.kernel.engine.Engine;
-import io.delta.kernel.exceptions.TableAlreadyExistsException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.actions.SetTransaction;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
@@ -32,8 +31,8 @@ import java.util.*;
 
 public class UpdateTableTransactionBuilderImpl implements UpdateTableTransactionBuilder {
 
-  /** Timestamp when this builder was created, used for populating any {@link SetTransaction} set */
-  private final long currentTimeMillis = System.currentTimeMillis();
+  /** Timestamp when this builder was created, used for populating any {@link SetTransaction} */
+  private final long txnBuilderStartTime = System.currentTimeMillis();
 
   /* Class fields provided in the constructor */
   private final SnapshotImpl snapshot;
@@ -58,13 +57,7 @@ public class UpdateTableTransactionBuilderImpl implements UpdateTableTransaction
 
   public UpdateTableTransactionBuilderImpl(
       SnapshotImpl snapshot, String engineInfo, Operation operation) {
-    if (operation == Operation.CREATE_TABLE) {
-      throw new TableAlreadyExistsException(snapshot.getPath(), "Operation = CREATE_TABLE");
-    }
-    if (operation == Operation.REPLACE_TABLE) {
-      throw new IllegalArgumentException(
-          "Operation = REPLACE_TABLE is not compatible with UpdateTableTransactionBuilder");
-    }
+    validateOperationParam(operation);
     this.snapshot = snapshot;
     this.engineInfo = engineInfo;
     this.operation = operation;
@@ -84,7 +77,7 @@ public class UpdateTableTransactionBuilderImpl implements UpdateTableTransaction
         Optional.of(
             Collections.unmodifiableMap(
                 TableConfig.validateAndNormalizeDeltaProperties(properties)));
-    validateTablePropertiesAddedRemovedOverlap();
+    validateTablePropertiesAddedRemovedNoOverlap();
     return this;
   }
 
@@ -94,7 +87,7 @@ public class UpdateTableTransactionBuilderImpl implements UpdateTableTransaction
         propertyKeys.stream().noneMatch(key -> key.toLowerCase(Locale.ROOT).startsWith("delta.")),
         "Unsetting 'delta.' table properties is currently unsupported");
     this.tablePropertiesRemovedOpt = Optional.of(propertyKeys);
-    validateTablePropertiesAddedRemovedOverlap();
+    validateTablePropertiesAddedRemovedNoOverlap();
     return this;
   }
 
@@ -115,7 +108,7 @@ public class UpdateTableTransactionBuilderImpl implements UpdateTableTransaction
         new SetTransaction(
             requireNonNull(applicationId, "applicationId is null"),
             transactionVersion,
-            Optional.of(currentTimeMillis));
+            Optional.of(txnBuilderStartTime));
     this.setTxnOpt = Optional.of(txnId);
     return this;
   }
@@ -136,7 +129,6 @@ public class UpdateTableTransactionBuilderImpl implements UpdateTableTransaction
 
   @Override
   public Transaction build(Engine engine) {
-
     setTxnOpt.ifPresent(
         txnId -> {
           Optional<Long> lastTxnVersion =
@@ -146,30 +138,6 @@ public class UpdateTableTransactionBuilderImpl implements UpdateTableTransaction
                 txnId.getAppId(), txnId.getVersion(), lastTxnVersion.get());
           }
         });
-
-    boolean needsMetadataOrProtocolUpdate =
-        updatedSchemaOpt.isPresent() // schema evolution
-            || tablePropertiesAddedOpt.isPresent() // table properties updated
-            || tablePropertiesRemovedOpt.isPresent() // table properties unset
-            || inputLogicalClusteringColumnsOpt.isPresent(); // update clustering columns
-
-    if (!needsMetadataOrProtocolUpdate) {
-      return new TransactionImpl(
-          false, // isCreateOrReplace
-          snapshot.getDataPath(),
-          snapshot.getLogPath(),
-          Optional.of(snapshot),
-          engineInfo,
-          operation,
-          Optional.empty(), // newProtocol
-          Optional.empty(), // newMetadata
-          setTxnOpt,
-          Optional.empty(), /* clustering cols=empty */
-          maxRetries,
-          logCompactionInterval,
-          // TODO: support configuring clock if needed
-          System::currentTimeMillis);
-    }
 
     TransactionMetadataFactory.Output txnMetadata =
         TransactionMetadataFactory.buildUpdateTableMetadata(
@@ -183,7 +151,6 @@ public class UpdateTableTransactionBuilderImpl implements UpdateTableTransaction
     return new TransactionImpl(
         false /* isCreateOrReplace */,
         snapshot.getDataPath(),
-        snapshot.getLogPath(),
         Optional.of(snapshot),
         engineInfo,
         operation,
@@ -197,7 +164,7 @@ public class UpdateTableTransactionBuilderImpl implements UpdateTableTransaction
         System::currentTimeMillis);
   }
 
-  private void validateTablePropertiesAddedRemovedOverlap() {
+  private void validateTablePropertiesAddedRemovedNoOverlap() {
     if (tablePropertiesAddedOpt.isPresent() && tablePropertiesRemovedOpt.isPresent()) {
       Set<String> invalidPropertyKeys =
           tablePropertiesRemovedOpt.get().stream()
@@ -206,6 +173,15 @@ public class UpdateTableTransactionBuilderImpl implements UpdateTableTransaction
       if (!invalidPropertyKeys.isEmpty()) {
         throw DeltaErrors.overlappingTablePropertiesSetAndUnset(invalidPropertyKeys);
       }
+    }
+  }
+
+  private void validateOperationParam(Operation operation) {
+    if (operation == Operation.CREATE_TABLE || operation == Operation.REPLACE_TABLE) {
+      throw new IllegalArgumentException(
+          String.format(
+              "Operation %s is not compatible with Snapshot::buildUpdateTableTransaction",
+              operation));
     }
   }
 }
