@@ -22,6 +22,7 @@ import io.delta.kernel.Snapshot;
 import io.delta.kernel.SnapshotBuilder;
 import io.delta.kernel.TableManager;
 import io.delta.kernel.annotation.Experimental;
+import io.delta.kernel.commit.Committer;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.files.ParsedLogData;
@@ -91,7 +92,9 @@ public class UCCatalogManagedClient {
             snapshotBuilder = snapshotBuilder.atVersion(versionOpt.get());
           }
 
-          return snapshotBuilder.withLogData(logData).build(engine);
+          final Committer committer = new UCCatalogManagedCommitter(ucClient, ucTableId, tablePath);
+
+          return snapshotBuilder.withCommitter(committer).withLogData(logData).build(engine);
         });
   }
 

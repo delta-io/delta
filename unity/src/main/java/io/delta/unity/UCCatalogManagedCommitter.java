@@ -153,16 +153,10 @@ public class UCCatalogManagedCommitter implements Committer {
             throw storageCFEtoKernelCFE(cfe);
           } catch (IOException ex) {
             throw new CommitFailedException(
-                true /* retryable */,
-                false /* conflict */,
-                ex.getMessage(),
-                ex);
+                true /* retryable */, false /* conflict */, ex.getMessage(), ex);
           } catch (UCCommitCoordinatorException ucce) {
             throw new CommitFailedException(
-                false /* retryable */,
-                false /* conflict */,
-                ucce.getMessage(),
-                ucce);
+                false /* retryable */, false /* conflict */, ucce.getMessage(), ucce);
           }
         });
   }
