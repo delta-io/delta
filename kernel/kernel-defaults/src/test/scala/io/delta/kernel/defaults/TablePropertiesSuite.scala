@@ -25,7 +25,6 @@ import io.delta.kernel.utils.CloseableIterable.emptyIterable
 
 /**
  * Suite to set or get table properties.
- * TODO: for now we just have the support for `set`. API `get` will be added in the next PRs.
  */
 class TablePropertiesSuite extends DeltaTableWriteSuiteBase {
   test("create/update table - allow arbitrary properties") {
@@ -211,12 +210,11 @@ class TablePropertiesSuite extends DeltaTableWriteSuiteBase {
       .commit(defaultEngine, emptyIterable())
   }
 
-  // TODO: this will be replaced with get API in the next PRs.
   def assertHasProp(tablePath: String, expProps: Map[String, String]): Unit = {
     val snapshot = Table.forPath(defaultEngine, tablePath)
-      .getLatestSnapshot(defaultEngine).asInstanceOf[SnapshotImpl]
+      .getLatestSnapshot(defaultEngine)
     expProps.foreach { case (key, value) =>
-      assert(snapshot.getMetadata.getConfiguration.get(key) === value, key)
+      assert(snapshot.getTableProperties.get(key) === value, key)
     }
   }
 

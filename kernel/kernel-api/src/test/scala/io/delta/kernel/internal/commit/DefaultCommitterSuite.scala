@@ -16,13 +16,18 @@
 
 package io.delta.kernel.internal.commit
 
+import java.io.IOException
+import java.nio.file.FileAlreadyExistsException
 import java.util.Optional
 
 import io.delta.kernel.TableManager
-import io.delta.kernel.commit.CommitMetadata
+import io.delta.kernel.commit.{CommitFailedException, CommitMetadata}
+import io.delta.kernel.data.Row
+import io.delta.kernel.exceptions.KernelEngineException
 import io.delta.kernel.internal.actions.Protocol
-import io.delta.kernel.test.{ActionUtils, MockFileSystemClientUtils, VectorTestUtils}
+import io.delta.kernel.test.{ActionUtils, BaseMockJsonHandler, MockFileSystemClientUtils, VectorTestUtils}
 import io.delta.kernel.types.{IntegerType, StructType}
+import io.delta.kernel.utils.CloseableIterator
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -32,6 +37,16 @@ class DefaultCommitterSuite extends AnyFunSuite
     with VectorTestUtils {
 
   private val protocol12 = new Protocol(1, 2)
+
+  private val basicFileSystemCommitMetadataNoPMChange = new CommitMetadata(
+    1L,
+    "/fake/_delta_log",
+    testCommitInfo,
+    Optional.of(protocol12),
+    Optional.of(basicPartitionedMetadata),
+    Optional.empty(), // newProtocolOpt
+    Optional.empty() // newMetadataOpt
+  )
 
   Seq(
     (protocol12, protocolWithCatalogManagedSupport, "Upgrade"),
@@ -71,6 +86,102 @@ class DefaultCommitterSuite extends AnyFunSuite
         "filesystem-managed Delta tables, not catalog-managed Delta tables. Since this table " +
         "is catalog-managed, this commit operation is unsupported"))
     }
+  }
+
+  ////////////////////////////////////////////////////////
+  // DefaultCommitter exception handling tests -- START //
+  ////////////////////////////////////////////////////////
+
+  case class ExceptionTestCase(
+      description: String,
+      exceptionToThrow: Exception,
+      expectedRetryableOpt: Option[Boolean],
+      expectedConflictOpt: Option[Boolean],
+      expectedThrownType: Class[_],
+      expectedCauseType: Class[_])
+
+  private val exceptionTestCases = Seq(
+    ExceptionTestCase(
+      description = "FileAlreadyExistsException -> CFE(true, true)",
+      exceptionToThrow = new FileAlreadyExistsException("_delta_log/001.json"),
+      expectedRetryableOpt = Some(true),
+      expectedConflictOpt = Some(true),
+      expectedThrownType = classOf[CommitFailedException],
+      expectedCauseType = classOf[FileAlreadyExistsException]),
+    ExceptionTestCase(
+      description = "IOException -> CFE(true, false)",
+      exceptionToThrow = new IOException("Network timeout writing to _delta_log/001.json"),
+      expectedRetryableOpt = Some(true),
+      expectedConflictOpt = Some(false),
+      expectedThrownType = classOf[CommitFailedException],
+      expectedCauseType = classOf[IOException]),
+    ExceptionTestCase(
+      description = "RuntimeException wrapped and thrown as KernelEngineException",
+      exceptionToThrow = new RuntimeException("Some runtime error"),
+      expectedRetryableOpt = None,
+      expectedConflictOpt = None,
+      expectedThrownType = classOf[KernelEngineException],
+      expectedCauseType = classOf[RuntimeException]))
+
+  exceptionTestCases.foreach { testCase =>
+    test(s"default committer handles ${testCase.description} correctly") {
+
+      val throwingEngine = mockEngine(jsonHandler = new BaseMockJsonHandler {
+        override def writeJsonFileAtomically(
+            filePath: String,
+            data: CloseableIterator[Row],
+            overwrite: Boolean): Unit = {
+          throw testCase.exceptionToThrow
+        }
+      })
+
+      val ex = intercept[Exception] {
+        DefaultFileSystemManagedTableOnlyCommitter.INSTANCE.commit(
+          throwingEngine,
+          emptyActionsIterator,
+          basicFileSystemCommitMetadataNoPMChange)
+      }
+
+      assert(ex.getClass == testCase.expectedThrownType)
+      assert(ex.getCause.getClass == testCase.expectedCauseType)
+
+      testCase.expectedRetryableOpt.foreach { expectedRetryable =>
+        assert(ex.isInstanceOf[CommitFailedException])
+        val commitEx = ex.asInstanceOf[CommitFailedException]
+        assert(commitEx.isRetryable == expectedRetryable)
+      }
+
+      testCase.expectedConflictOpt.foreach { expectedConflict =>
+        assert(ex.isInstanceOf[CommitFailedException])
+        val commitEx = ex.asInstanceOf[CommitFailedException]
+        assert(commitEx.isConflict == expectedConflict)
+      }
+    }
+  }
+
+  //////////////////////////////////////////////////////
+  // DefaultCommitter exception handling tests -- END //
+  //////////////////////////////////////////////////////
+
+  test("success commit returns ParsedLogData containing FileStatus for that commit file") {
+    val noOpEngine = mockEngine(jsonHandler = new BaseMockJsonHandler {
+      override def writeJsonFileAtomically(
+          filePath: String,
+          data: CloseableIterator[Row],
+          overwrite: Boolean): Unit = {
+        // what's important is that we do *not* throw here
+      }
+    })
+
+    val commitResult = DefaultFileSystemManagedTableOnlyCommitter.INSTANCE.commit(
+      noOpEngine,
+      emptyActionsIterator,
+      basicFileSystemCommitMetadataNoPMChange)
+
+    val commitParsedLogData = commitResult.getCommitLogData
+
+    assert(commitParsedLogData.isMaterialized)
+    assert(commitParsedLogData.version == basicFileSystemCommitMetadataNoPMChange.getVersion)
   }
 
 }

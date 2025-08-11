@@ -427,10 +427,12 @@ abstract class DeltaCDCSuiteBase
 
       val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tblName))
       val largeRetentionHours = 2 * System.currentTimeMillis().millis.toHours
-      // Set the deletedFileRetentionDuration to a large value so that older versions
-      // can be accessed
+      // Set the deletedFileRetentionDuration and logRetentionDuration to a large value so that
+      // older versions can be accessed
       spark.sql(s"ALTER TABLE $tblName SET TBLPROPERTIES" +
-        s" ('delta.deletedFileRetentionDuration' = 'interval $largeRetentionHours HOURS')")
+        s" ('delta.deletedFileRetentionDuration' = 'interval $largeRetentionHours HOURS'," +
+        s"'delta.logRetentionDuration' = 'interval $largeRetentionHours HOURS')")
+
 
       // Set commit time during Daylight savings time change.
       val restoreDate = "2022-11-06 01:42:44"

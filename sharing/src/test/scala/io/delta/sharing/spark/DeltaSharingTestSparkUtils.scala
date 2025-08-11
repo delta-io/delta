@@ -86,14 +86,16 @@ trait DeltaSharingTestSparkUtils extends DeltaSQLTestUtils {
   }
 
   protected def createSimpleTable(tableName: String, enableCdf: Boolean): Unit = {
-    // Set the deletedFileRetentionDuration to a large value so that older versions
-    // can be accessed
+    // Set the deletedFileRetentionDuration and largeRetentionHours to a large value so that older
+    // versions can be accessed
     val largeRetentionHours = 2 * System.currentTimeMillis().millis.toHours
     val tablePropertiesStr = if (enableCdf) {
       s"""TBLPROPERTIES (
         |delta.minReaderVersion=1,
         |delta.minWriterVersion=4,
         |'delta.deletedFileRetentionDuration' =
+        |'$largeRetentionHours hours',
+        |'delta.logRetentionDuration' =
         |'$largeRetentionHours hours',
         |delta.enableChangeDataFeed = true)""".stripMargin
     } else {
@@ -106,26 +108,26 @@ trait DeltaSharingTestSparkUtils extends DeltaSQLTestUtils {
   }
 
   protected def createCMIdTableWithCdf(tableName: String): Unit = {
-    // Set the deletedFileRetentionDuration to a large value so that older versions
-    // can be accessed
+    // Set the deletedFileRetentionDuration and logRetentionDuration to a large value so that
+    // older versions can be accessed
     val largeRetentionHours = 2 * System.currentTimeMillis().millis.toHours
     sql(s"""CREATE TABLE $tableName (c1 INT, c2 STRING) USING DELTA PARTITIONED BY (c2)
            |TBLPROPERTIES ('delta.columnMapping.mode' = 'id',
-           | 'delta.deletedFileRetentionDuration' =
-           | '$largeRetentionHours hours',
-           |  delta.enableChangeDataFeed = true)
+           |'delta.deletedFileRetentionDuration' = '$largeRetentionHours hours',
+           |'delta.logRetentionDuration' = '$largeRetentionHours hours',
+           |delta.enableChangeDataFeed = true)
            |""".stripMargin)
   }
 
   protected def createDVTableWithCdf(tableName: String): Unit = {
-    // Set the deletedFileRetentionDuration to a large value so that older versions
-    // can be accessed
+    // Set the deletedFileRetentionDuration and logRetentionDuration to a large value so that
+    // older versions can be accessed
     val largeRetentionHours = 2 * System.currentTimeMillis().millis.toHours
     sql(s"""CREATE TABLE $tableName (c1 INT, partition INT) USING DELTA PARTITIONED BY (partition)
            |TBLPROPERTIES (delta.enableDeletionVectors = true,
-           | 'delta.deletedFileRetentionDuration' =
-           | '$largeRetentionHours hours',
-           |  delta.enableChangeDataFeed = true)
+           |'delta.deletedFileRetentionDuration' = '$largeRetentionHours hours',
+           |'delta.logRetentionDuration' = '$largeRetentionHours hours',
+           |delta.enableChangeDataFeed = true)
            |""".stripMargin)
   }
 

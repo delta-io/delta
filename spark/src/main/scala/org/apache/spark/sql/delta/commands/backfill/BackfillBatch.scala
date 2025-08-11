@@ -35,7 +35,7 @@ trait BackfillBatch extends DeltaLogging {
   protected def prepareFilesAndCommit(
       spark: SparkSession,
       txn: OptimisticTransaction,
-      batchId: Int): Unit
+      batchId: Int): Long
 
   /**
    * The main method of this trait. This method commits the backfill batch, records metrics and
@@ -56,7 +56,7 @@ trait BackfillBatch extends DeltaLogging {
       batchId: Int,
       txn: OptimisticTransaction,
       numSuccessfulBatch: AtomicInteger,
-      numFailedBatch: AtomicInteger): Unit = {
+      numFailedBatch: AtomicInteger): Long = {
     val startTimeNs = System.nanoTime()
 
     def recordBackfillBatchStats(txnId: String, wasSuccessful: Boolean): Unit = {
@@ -79,8 +79,9 @@ trait BackfillBatch extends DeltaLogging {
       log"${MDC(DeltaLogKeys.NUM_FILES, filesInBatch.size.toLong)} candidate files")
     val txnId = txn.txnId
     try {
-      prepareFilesAndCommit(spark, txn, batchId)
+      val commitVersion = prepareFilesAndCommit(spark, txn, batchId)
       recordBackfillBatchStats(txnId, wasSuccessful = true)
+      commitVersion
     } catch {
       case t: Throwable =>
         recordBackfillBatchStats(txnId, wasSuccessful = false)

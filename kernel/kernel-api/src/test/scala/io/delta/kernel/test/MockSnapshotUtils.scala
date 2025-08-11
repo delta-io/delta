@@ -20,7 +20,7 @@ import scala.collection.JavaConverters._
 
 import io.delta.kernel.TransactionSuite.testSchema
 import io.delta.kernel.internal.{SnapshotImpl, TableConfig}
-import io.delta.kernel.internal.actions.{Format, Metadata}
+import io.delta.kernel.internal.actions.{Format, Metadata, Protocol}
 import io.delta.kernel.internal.commit.DefaultFileSystemManagedTableOnlyCommitter
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.lang.Lazy
@@ -57,7 +57,6 @@ object MockSnapshotUtils {
       Optional.empty(), /* name */
       Optional.empty(), /* description */
       new Format(),
-      testSchema.toJson,
       testSchema,
       buildArrayValue(java.util.Arrays.asList("c3"), StringType.STRING),
       Optional.of(123),
@@ -83,7 +82,7 @@ object MockSnapshotUtils {
       logSegment.getVersion, /* version */
       new Lazy(() => logSegment), /* logSegment */
       null, /* logReplay */
-      null, /* protocol */
+      new Protocol(1, 2), /* protocol */
       metadata,
       DefaultFileSystemManagedTableOnlyCommitter.INSTANCE,
       snapshotQueryContext /* snapshotContext */

@@ -59,8 +59,9 @@ trait BackfillCommand extends LeafRunnableCommand with DeltaCommand {
       try {
         val backfillExecutor = getBackfillExecutor(
           spark, deltaLog, catalogTableOpt, backfillId, backfillStats)
-        backfillExecutor.run(maxNumFilesPerCommit)
+        val lastCommitOpt = backfillExecutor.run(maxNumFilesPerCommit)
         backfillStats.wasSuccessful = true
+        Array.empty[Row] ++ lastCommitOpt.map(Row(_))
       } finally {
         val totalExecutionTimeMs =
           TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTimeNs)
@@ -73,7 +74,5 @@ trait BackfillCommand extends LeafRunnableCommand with DeltaCommand {
         )
       }
     }
-
-    Seq.empty[Row]
   }
 }

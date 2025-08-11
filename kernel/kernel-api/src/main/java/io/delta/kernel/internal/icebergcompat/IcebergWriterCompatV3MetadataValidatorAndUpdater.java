@@ -39,7 +39,6 @@ public class IcebergWriterCompatV3MetadataValidatorAndUpdater
    *
    * <ul>
    *   <li>No change in enablement (true to true or false to false)
-   *   <li>Enabling but only on a new table (false to true)
    * </ul>
    *
    * The changes that we do not support and for which we throw an {@link KernelException} are
@@ -50,9 +49,9 @@ public class IcebergWriterCompatV3MetadataValidatorAndUpdater
    * </ul>
    */
   public static void validateIcebergWriterCompatV3Change(
-      Map<String, String> oldConfig, Map<String, String> newConfig, boolean isNewTable) {
+      Map<String, String> oldConfig, Map<String, String> newConfig) {
     blockConfigChangeOnExistingTable(
-        TableConfig.ICEBERG_WRITER_COMPAT_V3_ENABLED, oldConfig, newConfig, isNewTable);
+        TableConfig.ICEBERG_WRITER_COMPAT_V3_ENABLED, oldConfig, newConfig);
   }
 
   /**

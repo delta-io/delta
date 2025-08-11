@@ -185,6 +185,11 @@ public final class FileNames {
     return String.format("%s/%020d.json", path, version);
   }
 
+  /** Returns the delta (json format) path for a given delta file. */
+  public static String deltaFile(String path, long version) {
+    return deltaFile(new Path(path), version);
+  }
+
   public static String stagedCommitFile(Path logPath, long version) {
     final Path stagedCommitPath = new Path(logPath, STAGED_COMMIT_DIRECTORY);
     return String.format("%s/%020d.%s.json", stagedCommitPath, version, UUID.randomUUID());

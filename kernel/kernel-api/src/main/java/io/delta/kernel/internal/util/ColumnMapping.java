@@ -163,12 +163,12 @@ public class ColumnMapping {
   }
 
   public static void verifyColumnMappingChange(
-      Map<String, String> oldConfig, Map<String, String> newConfig, boolean isNewTable) {
+      Map<String, String> oldConfig, Map<String, String> newConfig) {
     ColumnMappingMode oldMappingMode = getColumnMappingMode(oldConfig);
     ColumnMappingMode newMappingMode = getColumnMappingMode(newConfig);
 
     checkArgument(
-        isNewTable || validModeChange(oldMappingMode, newMappingMode),
+        validModeChange(oldMappingMode, newMappingMode),
         "Changing column mapping mode from '%s' to '%s' is not supported",
         oldMappingMode,
         newMappingMode);

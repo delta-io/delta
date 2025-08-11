@@ -531,124 +531,132 @@ class DeltaRetentionSuite extends QueryTest
   test(s"cleanup does not delete the checkpoint if it is required by non-expired versions. " +
     s"Config: $chkConfigName.") {
     withSQLConf(chkConfig: _*) {
-    withTempDir { tempDir =>
-      val startTime = getStartTimeForRetentionTest
-      val clock = new ManualClock(startTime)
-      val actualTestStartTime = System.currentTimeMillis()
-      val tableReference = s"delta.`${tempDir.getCanonicalPath()}`"
-      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
-      val logPath = new File(log.logPath.toUri)
-      val minChksCount = if (chkConfigName == "Multipart") { 2 } else { 1 }
-
-      // Set the deletedFileRetentionDuration to a large value so that older versions
-      // can be accessed
-      val largeRetentionHours = 2 * System.currentTimeMillis().millis.toHours
-
-      // commit 0
-      spark.sql(
-        s"""CREATE TABLE $tableReference (id Int) USING delta TBLPROPERTIES(
-           | 'delta.enableChangeDataFeed' = true,
-           | 'delta.deletedFileRetentionDuration' = 'interval $largeRetentionHours HOURS')
-        """.stripMargin)
-      // Set time for commit 0 to ensure that the commits don't need timestamp adjustment.
-      val commit0Time = clock.getTimeMillis()
-      new File(FileNames.unsafeDeltaFile(log.logPath, 0).toUri).setLastModified(commit0Time)
-      new File(FileNames.checksumFile(log.logPath, 0).toUri).setLastModified(commit0Time)
-
-      def commitNewVersion(version: Long): Unit = {
-        spark.sql(s"INSERT INTO $tableReference VALUES (1)")
-
-        val deltaFile = new File(FileNames.unsafeDeltaFile(log.logPath, version).toUri)
-        val time = clock.getTimeMillis() + version * 1000
-        deltaFile.setLastModified(time)
-        val crcFile = new File(FileNames.checksumFile(log.logPath, version).toUri)
-        crcFile.setLastModified(time)
-        val chks = getCheckpointFiles(logPath)
-          .filter(f => FileNames.checkpointVersion(new Path(f.getCanonicalPath)) == version)
-
-        if (version % 10 == 0) {
-          assert(chks.length >= minChksCount)
-          chks.foreach { chk =>
-              assert(chk.exists())
-              chk.setLastModified(time)
-          }
-        } else { assert(chks.isEmpty) }
-      }
-
-      // Day 0: Add commits 1 to 15 --> creates 1 checkpoint at Day 0 for version 10
-      (1L to 15L).foreach(commitNewVersion)
-
-      // ensure that the checkpoint at version 10 exists
-      val checkpoint10Files = getCheckpointFiles(logPath)
-        .filter(f => FileNames.checkpointVersion(new Path(f.getCanonicalPath)) == 10)
-      assert(checkpoint10Files.length >= minChksCount)
-      assert(checkpoint10Files.forall(_.exists))
-      val deltaFiles = (0 to 15).map { i =>
-        new File(FileNames.unsafeDeltaFile(log.logPath, i).toUri)
-      }
-      deltaFiles.foreach { f =>
-        assert(f.exists())
-      }
-
-      // Day 35: Add commits 16 to 25 --> creates a checkpoint at Day 35 for version 20
-      clock.setTime(day(startTime, 35))
-      (16L to 25L).foreach(commitNewVersion)
-
-      assert(checkpoint10Files.forall(_.exists))
-      deltaFiles.foreach { f =>
-        assert(f.exists())
-      }
-
-      // auto cleanup is disabled in DeltaRetentionSuiteBase so tests have control when it happens
-      cleanUpExpiredLogs(log)
-
-      // assert that the checkpoint from day 0 (at version 10) and all the commits after
-      // that are still there
-      assert(checkpoint10Files.forall(_.exists))
-      deltaFiles.foreach { f =>
-        val version = FileNames.deltaVersion(new Path(f.toString()))
-        if (version < 10) {
-          assert(!f.exists, version)
-        } else {
-          assert(f.exists, version)
-        }
-      }
-
-      // Validate we can time travel to version >=10
-      val earliestExpectedChkVersion = 10
-      (0 to 25).map { version =>
-        val sqlCommand = s"SELECT * FROM $tableReference VERSION AS OF $version"
-        if (version < earliestExpectedChkVersion) {
-          val ex = intercept[org.apache.spark.sql.delta.VersionNotFoundException] {
-            spark.sql(sqlCommand).collect()
-          }
-          assert(ex.userVersion === version)
-          assert(ex.earliest === earliestExpectedChkVersion)
-          assert(ex.latest === 25)
-        } else {
-          spark.sql(sqlCommand).collect()
-        }
-      }
-
-      // Validate CDF - SELECT * FROM table_changes_by_path('table', X, Y)
-      (0 to 24).map { version =>
-        val sqlCommand = s"SELECT * FROM " +
-          s"table_changes_by_path('${tempDir.getCanonicalPath}', $version, 25)"
-        if (version < earliestExpectedChkVersion) {
-          if (catalogOwnedDefaultCreationEnabledInTests) {
-            intercept[IllegalStateException] {
-              spark.sql(sqlCommand).collect()
-            }
+      // Disable the following check as the test relies on time travel beyond
+      // deletedFileRetentionDuration
+      withSQLConf(
+        DeltaSQLConf.ENFORCE_TIME_TRAVEL_WITHIN_DELETED_FILE_RETENTION_DURATION.key -> "false"
+      ) {
+        withTempDir { tempDir =>
+          val startTime = getStartTimeForRetentionTest
+          val clock = new ManualClock(startTime)
+          val actualTestStartTime = System.currentTimeMillis()
+          val tableReference = s"delta.`${tempDir.getCanonicalPath()}`"
+          val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath), clock)
+          val logPath = new File(log.logPath.toUri)
+          val minChksCount = if (chkConfigName == "Multipart") {
+            2
           } else {
-            intercept[org.apache.spark.sql.delta.DeltaFileNotFoundException] {
+            1
+          }
+
+          // commit 0
+          spark.sql(
+            s"""CREATE TABLE $tableReference (id Int) USING delta TBLPROPERTIES(
+               | 'delta.enableChangeDataFeed' = true)
+            """.stripMargin)
+          // Set time for commit 0 to ensure that the commits don't need timestamp adjustment.
+          val commit0Time = clock.getTimeMillis()
+          new File(FileNames.unsafeDeltaFile(log.logPath, 0).toUri).setLastModified(commit0Time)
+          new File(FileNames.checksumFile(log.logPath, 0).toUri).setLastModified(commit0Time)
+
+          def commitNewVersion(version: Long): Unit = {
+            spark.sql(s"INSERT INTO $tableReference VALUES (1)")
+
+            val deltaFile = new File(FileNames.unsafeDeltaFile(log.logPath, version).toUri)
+            val time = clock.getTimeMillis() + version * 1000
+            deltaFile.setLastModified(time)
+            val crcFile = new File(FileNames.checksumFile(log.logPath, version).toUri)
+            crcFile.setLastModified(time)
+            val chks = getCheckpointFiles(logPath)
+              .filter(f => FileNames.checkpointVersion(new Path(f.getCanonicalPath)) == version)
+
+            if (version % 10 == 0) {
+              assert(chks.length >= minChksCount)
+              chks.foreach { chk =>
+                assert(chk.exists())
+                chk.setLastModified(time)
+              }
+            } else {
+              assert(chks.isEmpty)
+            }
+          }
+
+          // Day 0: Add commits 1 to 15 --> creates 1 checkpoint at Day 0 for version 10
+          (1L to 15L).foreach(commitNewVersion)
+
+          // ensure that the checkpoint at version 10 exists
+          val checkpoint10Files = getCheckpointFiles(logPath)
+            .filter(f => FileNames.checkpointVersion(new Path(f.getCanonicalPath)) == 10)
+          assert(checkpoint10Files.length >= minChksCount)
+          assert(checkpoint10Files.forall(_.exists))
+          val deltaFiles = (0 to 15).map { i =>
+            new File(FileNames.unsafeDeltaFile(log.logPath, i).toUri)
+          }
+          deltaFiles.foreach { f =>
+            assert(f.exists())
+          }
+
+          // Day 35: Add commits 16 to 25 --> creates a checkpoint at Day 35 for version 20
+          clock.setTime(day(startTime, 35))
+          (16L to 25L).foreach(commitNewVersion)
+
+          assert(checkpoint10Files.forall(_.exists))
+          deltaFiles.foreach { f =>
+            assert(f.exists())
+          }
+
+          // auto cleanup is disabled in DeltaRetentionSuiteBase so tests have control when it
+          // happens
+          cleanUpExpiredLogs(log)
+
+          // assert that the checkpoint from day 0 (at version 10) and all the commits after
+          // that are still there
+          assert(checkpoint10Files.forall(_.exists))
+          deltaFiles.foreach { f =>
+            val version = FileNames.deltaVersion(new Path(f.toString()))
+            if (version < 10) {
+              assert(!f.exists, version)
+            } else {
+              assert(f.exists, version)
+            }
+          }
+
+          // Validate we can time travel to version >=10
+          val earliestExpectedChkVersion = 10
+          (0 to 25).map { version =>
+            val sqlCommand = s"SELECT * FROM $tableReference VERSION AS OF $version"
+            if (version < earliestExpectedChkVersion) {
+              val ex = intercept[org.apache.spark.sql.delta.VersionNotFoundException] {
+                spark.sql(sqlCommand).collect()
+              }
+              assert(ex.userVersion === version)
+              assert(ex.earliest === earliestExpectedChkVersion)
+              assert(ex.latest === 25)
+            } else {
               spark.sql(sqlCommand).collect()
             }
           }
-        } else {
-          spark.sql(sqlCommand).collect()
+
+          // Validate CDF - SELECT * FROM table_changes_by_path('table', X, Y)
+          (0 to 24).map { version =>
+            val sqlCommand = s"SELECT * FROM " +
+              s"table_changes_by_path('${tempDir.getCanonicalPath}', $version, 25)"
+            if (version < earliestExpectedChkVersion) {
+              if (catalogOwnedDefaultCreationEnabledInTests) {
+                intercept[IllegalStateException] {
+                  spark.sql(sqlCommand).collect()
+                }
+              } else {
+                intercept[org.apache.spark.sql.delta.DeltaFileNotFoundException] {
+                  spark.sql(sqlCommand).collect()
+                }
+              }
+            } else {
+              spark.sql(sqlCommand).collect()
+            }
+          }
         }
       }
-    }
     }
   }
   }

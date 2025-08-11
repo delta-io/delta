@@ -64,11 +64,10 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
 
   /**
    * Validates that any change to property {@link TableConfig#ICEBERG_WRITER_COMPAT_V1_ENABLED} is
-   * valid. Currently, the changes we support are
+   * valid (for existing table). Currently, the changes we support are
    *
    * <ul>
    *   <li>No change in enablement (true to true or false to false)
-   *   <li>Enabling but only on a new table (false to true)
    * </ul>
    *
    * The changes that we do not support and for which we throw an {@link KernelException} are
@@ -79,9 +78,9 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
    * </ul>
    */
   public static void validateIcebergWriterCompatV1Change(
-      Map<String, String> oldConfig, Map<String, String> newConfig, boolean isNewTable) {
+      Map<String, String> oldConfig, Map<String, String> newConfig) {
     blockConfigChangeOnExistingTable(
-        TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED, oldConfig, newConfig, isNewTable);
+        TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED, oldConfig, newConfig);
   }
 
   /**
