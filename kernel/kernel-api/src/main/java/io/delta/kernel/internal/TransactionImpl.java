@@ -29,10 +29,7 @@ import io.delta.kernel.commit.CommitMetadata;
 import io.delta.kernel.commit.Committer;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
-import io.delta.kernel.exceptions.CommitStateUnknownException;
-import io.delta.kernel.exceptions.ConcurrentWriteException;
-import io.delta.kernel.exceptions.DomainDoesNotExistException;
-import io.delta.kernel.exceptions.MaxCommitRetryLimitReachedException;
+import io.delta.kernel.exceptions.*;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.hook.PostCommitHook;
 import io.delta.kernel.internal.actions.*;
@@ -353,6 +350,10 @@ public class TransactionImpl implements Transaction {
             // Case 1: Non-retryable exception. We must throw this. We don't expect connectors to
             //         be able to recover from this.
             throw DeltaErrors.nonRetryableCommitException(attempt, commitAsVersion, cfe);
+          }
+          if (cfe.isConflict() && commitAsVersion == 0) {
+            // TODO where to put this? Tests? is this how we should do it?
+            throw new TableAlreadyExistsException(dataPath.toString());
           }
           if (attempt >= getMaxCommitAttempts()) {
             // Case 2: Despite the error being retryable, we have exhausted the maximum number of
