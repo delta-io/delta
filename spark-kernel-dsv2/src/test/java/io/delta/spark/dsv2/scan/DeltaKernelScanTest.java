@@ -16,7 +16,11 @@
 package io.delta.spark.dsv2.scan;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
 
+import io.delta.kernel.Scan;
 import io.delta.kernel.TableManager;
 import io.delta.spark.dsv2.SparkKernelDsv2TestBase;
 import java.io.File;
@@ -48,5 +52,24 @@ public class DeltaKernelScanTest extends SparkKernelDsv2TestBase {
             expectedSparkSchema);
 
     assertEquals(expectedSparkSchema, scan.readSchema());
+  }
+
+  @Test
+  public void testScanWithNullParameters() {
+    // Test null kernel scan
+    NullPointerException ex1 =
+        assertThrows(
+            NullPointerException.class,
+            () ->
+                new DeltaKernelScan(
+                    null /*kernelScan*/, DataTypes.createStructType(new StructField[] {})));
+    assertTrue(ex1.getMessage().contains("kernel scan is null"));
+
+    // Test null schema
+    Scan mockScan = mock(Scan.class);
+    NullPointerException ex2 =
+        assertThrows(
+            NullPointerException.class, () -> new DeltaKernelScan(mockScan, null /*readSchema*/));
+    assertTrue(ex2.getMessage().contains("read schema is null"));
   }
 }
