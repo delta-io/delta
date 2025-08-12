@@ -223,7 +223,8 @@ class TransactionBuildersV2Suite extends DeltaTableWritesSuite with UseTransacti
       val e = intercept[KernelException] {
         TableManager.buildCreateTableTransaction(tablePath, testSchema, testEngineInfo)
           .withTableProperties(
-            Map(TableFeatures.SET_TABLE_FEATURE_SUPPORTED_PREFIX + TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW.featureName -> "supported").asJava)
+            Map(TableFeatures.SET_TABLE_FEATURE_SUPPORTED_PREFIX +
+              TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW.featureName -> "supported").asJava)
           .build(engine)
       }
       assert(e.getMessage.contains("Unsupported Delta writer feature"))
