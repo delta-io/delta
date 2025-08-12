@@ -611,7 +611,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
           engine,
           tblPath,
           isNewTable = i == 0,
-          if (i == 0) schema else null,
+          schema,
           partCols,
           dataPerVersion(i))
 

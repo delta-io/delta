@@ -338,8 +338,6 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       if (partCols != null) {
         txnBuilder = txnBuilder.withPartitionColumns(engine, partCols.asJava)
       }
-    } else if (schema != null) {
-      txnBuilder = txnBuilder.withSchema(engine, schema)
     }
 
     if (clusteringColsOpt.isDefined) {
@@ -523,7 +521,7 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       engine,
       tablePath,
       isNewTable,
-      if (isNewTable) testSchema else null,
+      testSchema,
       tableProperties = Map(key.getKey -> value),
       clock = clock)
       .commit(engine, emptyIterable())
