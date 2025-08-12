@@ -37,7 +37,7 @@ class CatalogOwnedEnablementSuite
   with DeltaTestUtilsBase
   with DeltaExceptionTestUtils {
 
-  override def beforeEach(): Unit = {
+  override protected def beforeEach(): Unit = {
     super.beforeEach()
     CatalogOwnedCommitCoordinatorProvider.clearBuilders()
     CatalogOwnedCommitCoordinatorProvider.registerBuilder(
@@ -59,7 +59,7 @@ class CatalogOwnedEnablementSuite
   private def validateCatalogOwnedCompleteEnablement(
       tableName: String,
       expectEnabled: Boolean): Unit = {
-    val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(tableName))
+    val (_, snapshot) = getDeltaLogWithSnapshot(TableIdentifier(tableName))
     assert(snapshot.isCatalogOwned == expectEnabled)
     Seq(
       CatalogOwnedTableFeature,
@@ -76,6 +76,20 @@ class CatalogOwnedEnablementSuite
     }
   }
 
+  protected def commitCoordinatorName: String =
+    CatalogOwnedTableUtils.DEFAULT_CATALOG_NAME_FOR_TESTING
+
+  protected def createTable(
+      tableName: String,
+      properties: Map[String, String] = Map.empty): Unit = {
+    var stmt = s"CREATE TABLE $tableName (id INT) USING delta "
+    if (properties.nonEmpty) {
+      val kv = properties.map { case (k, v) => s"'$k' = '$v'" }.mkString(", ")
+      stmt += s"TBLPROPERTIES ($kv)"
+    }
+    sql(stmt)
+  }
+
   /**
    * Helper function to set up and validate the initial table to be tested
    * for Catalog Owned enablement.
@@ -88,10 +102,10 @@ class CatalogOwnedEnablementSuite
       tableName: String,
       createCatalogOwnedTableAtInit: Boolean): Unit = {
     if (createCatalogOwnedTableAtInit) {
-      spark.sql(s"CREATE TABLE $tableName (id INT) USING delta TBLPROPERTIES " +
-        s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')")
+      createTable(tableName, properties = Map(
+        s"delta.feature.${CatalogOwnedTableFeature.name}" -> "supported"))
     } else {
-      spark.sql(s"CREATE TABLE $tableName (id INT) USING delta")
+      createTable(tableName)
     }
     // Insert initial data to the table
     spark.sql(s"INSERT INTO $tableName VALUES 1") // commit 1
@@ -249,7 +263,7 @@ class CatalogOwnedEnablementSuite
       assert(commitStats.coordinatedCommitsInfo ===
         CoordinatedCommitsStats(
           coordinatedCommitsType = CoordinatedCommitType.CO_COMMIT.toString,
-          commitCoordinatorName = "spark_catalog",
+          commitCoordinatorName = commitCoordinatorName,
           commitCoordinatorConf = Map.empty))
     }
   }
@@ -258,8 +272,8 @@ class CatalogOwnedEnablementSuite
        "CatalogOwned table") {
     withTable("t1") {
       val usageLog = Log4jUsageLogger.track {
-        sql(s"CREATE TABLE t1 (id INT) USING delta TBLPROPERTIES " +
-          s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')")
+        createTable("t1", properties = Map(
+          s"delta.feature.${CatalogOwnedTableFeature.name}" -> "supported"))
       }
       val commitStatsUsageLog = filterUsageRecords(usageLog, "delta.commit.stats")
       val commitStats = JsonUtils.fromJson[CommitStats](commitStatsUsageLog.head.blob)
@@ -280,8 +294,8 @@ class CatalogOwnedEnablementSuite
       val log = DeltaLog.forTable(spark, tempDir.getCanonicalPath)
       // Create a path-based table so that we can simulate the scenario
       // where catalog table is not available.
-      sql(s"CREATE TABLE delta.`$tempDir` (id INT) USING delta TBLPROPERTIES " +
-        s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')")
+      createTable(s"delta.`$tempDir`", properties = Map(
+        s"delta.feature.${CatalogOwnedTableFeature.name}" -> "supported"))
       val usageLog = Log4jUsageLogger.track {
         val error = intercept[IllegalStateException] {
           // Hence, we simply ignore the exception and focus on the usage log validation.

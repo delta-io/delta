@@ -283,7 +283,10 @@ trait CatalogOwnedTestBaseSuite
     }
   }
 
-
+  protected def getDeltaLogWithSnapshot(
+      tableIdentifier: CatalystTableIdentifier): (DeltaLog, Snapshot) = {
+    DeltaLog.forTableWithSnapshot(spark, tableIdentifier)
+  }
 
   protected def isICTEnabledForNewTablesCatalogOwned: Boolean = {
     catalogOwnedCoordinatorBackfillBatchSize.nonEmpty ||
