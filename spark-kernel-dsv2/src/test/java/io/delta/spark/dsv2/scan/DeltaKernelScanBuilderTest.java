@@ -16,6 +16,7 @@
 package io.delta.spark.dsv2.scan;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.kernel.Snapshot;
@@ -50,5 +51,12 @@ public class DeltaKernelScanBuilderTest extends SparkKernelDsv2TestBase {
     Scan scan = builder.build();
     assertTrue(scan instanceof DeltaKernelScan);
     assertEquals(expectedSparkSchema, scan.readSchema());
+  }
+
+  @Test
+  public void testScanBuilderWithNullSnapshot() {
+    NullPointerException ex =
+        assertThrows(NullPointerException.class, () -> new DeltaKernelScanBuilder(null));
+    assertTrue(ex.getMessage().contains("snapshot is null"));
   }
 }
