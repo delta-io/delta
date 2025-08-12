@@ -22,7 +22,7 @@ import io.delta.kernel.{Operation, TableManager, Transaction}
 import io.delta.kernel.commit.{CommitMetadata, CommitResponse, Committer}
 import io.delta.kernel.data.Row
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.exceptions.KernelException
+import io.delta.kernel.exceptions.{KernelException, TableAlreadyExistsException}
 import io.delta.kernel.expressions.Column
 import io.delta.kernel.internal.table.SnapshotBuilderImpl
 import io.delta.kernel.internal.tablefeatures.TableFeatures
@@ -84,9 +84,13 @@ trait UseTransactionBuilderV2 extends DeltaTableWriteSuiteBase {
       var txnBuilder = TableManager.loadSnapshot(tablePath)
         .asInstanceOf[SnapshotBuilderImpl].build(engine)
         .buildUpdateTableTransaction(testEngineInfo, Operation.WRITE)
+      /*
+      TODO: in a separate PR clean up usage of createTxn such that schema != null ONLY when it
+        should either be updated for schema evolution or for a new table
       if (schema != null) {
         txnBuilder = txnBuilder.withUpdatedSchema(schema)
       }
+       */
       if (clusteringColsOpt.nonEmpty) {
         txnBuilder = txnBuilder.withClusteringColumns(clusteringColsOpt.get.asJava)
       }
@@ -193,6 +197,36 @@ class TransactionBuildersV2Suite extends DeltaTableWritesSuite with UseTransacti
         txn.commit(engine, emptyIterable())
       }
       assert(e.getMessage.contains("This is a fake committer"))
+    }
+  }
+
+  test("create table fails when the table already exists (non-catalog-managed)") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createEmptyTable(engine, tablePath, testSchema)
+      intercept[TableAlreadyExistsException] {
+        TableManager.buildCreateTableTransaction(
+          tablePath,
+          testSchema,
+          testEngineInfo).build(engine)
+      }
+    }
+  }
+
+  test("create table does NOT fail when the table already exists for catalog managed") {
+    // Note - the catalog is responsible for determining that the table loc provided is empty,
+    // so technically this should not be a real-world scenario, but just checks that we correctly
+    // omit checking the location when the catalog managed feature is enabled in the table props
+    withTempDirAndEngine { (tablePath, engine) =>
+      createEmptyTable(engine, tablePath, testSchema)
+      // Instead of failing earlier (due to the table existing) we fail later due to the table
+      // feature being unsupported
+      val e = intercept[KernelException] {
+        TableManager.buildCreateTableTransaction(tablePath, testSchema, testEngineInfo)
+          .withTableProperties(
+            Map(TableFeatures.SET_TABLE_FEATURE_SUPPORTED_PREFIX + TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW.featureName -> "supported").asJava)
+          .build(engine)
+      }
+      assert(e.getMessage.contains("Unsupported Delta writer feature"))
     }
   }
 }

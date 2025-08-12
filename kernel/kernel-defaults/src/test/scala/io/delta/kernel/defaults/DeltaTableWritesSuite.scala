@@ -103,12 +103,10 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     }
   }
 
-  // TODO what should we throw (and when!) for CreateTableTransactionBuilder?
   test("create table - table already exists at the location") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
       val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
-
       val txn = txnBuilder.withSchema(engine, testSchema).build(engine)
       commitTransaction(txn, engine, emptyIterable())
 
@@ -140,15 +138,12 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     }
   }
 
-  // TODO same thing as above (potentially cannot differentiate?)
   test("create table - table is concurrently created before txn commits") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
-      val txn1 = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
-        .withSchema(engine, testSchema).build(engine)
+      val txn1 = createTxn(engine, tablePath, isNewTable = true, testSchema)
 
-      val txn2 = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
-        .withSchema(engine, testSchema).build(engine)
+      val txn2 = createTxn(engine, tablePath, isNewTable = true, testSchema)
       commitTransaction(txn2, engine, emptyIterable())
 
       intercept[ConcurrentWriteException] {

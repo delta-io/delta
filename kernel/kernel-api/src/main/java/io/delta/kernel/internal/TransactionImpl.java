@@ -351,10 +351,6 @@ public class TransactionImpl implements Transaction {
             //         be able to recover from this.
             throw DeltaErrors.nonRetryableCommitException(attempt, commitAsVersion, cfe);
           }
-          if (cfe.isConflict() && commitAsVersion == 0) {
-            // TODO where to put this? Tests? is this how we should do it?
-            throw new TableAlreadyExistsException(dataPath.toString());
-          }
           if (attempt >= getMaxCommitAttempts()) {
             // Case 2: Despite the error being retryable, we have exhausted the maximum number of
             //         retries. We must throw here, too.

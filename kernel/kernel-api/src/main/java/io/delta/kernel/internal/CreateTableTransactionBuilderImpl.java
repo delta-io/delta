@@ -17,14 +17,20 @@ package io.delta.kernel.internal;
 
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Utils.resolvePath;
+import static java.util.Collections.emptyMap;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.Operation;
+import io.delta.kernel.Snapshot;
+import io.delta.kernel.Table;
 import io.delta.kernel.Transaction;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.exceptions.TableAlreadyExistsException;
+import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.commit.DefaultFileSystemManagedTableOnlyCommitter;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.transaction.CreateTableTransactionBuilder;
 import io.delta.kernel.transaction.DataLayoutSpec;
 import io.delta.kernel.types.StructType;
@@ -74,6 +80,7 @@ public class CreateTableTransactionBuilderImpl implements CreateTableTransaction
   public Transaction build(Engine engine) {
     requireNonNull(engine, "engine cannot be null");
     String resolvedPath = resolvePath(engine, unresolvedPath);
+    throwIfTableAlreadyExists(engine, resolvedPath);
 
     // Extract partition and clustering columns from the data layout spec
     Optional<List<String>> partitionColumns =
@@ -89,7 +96,7 @@ public class CreateTableTransactionBuilderImpl implements CreateTableTransaction
         TransactionMetadataFactory.buildCreateTableMetadata(
             resolvedPath,
             schema,
-            tableProperties.orElse(Collections.emptyMap()),
+            tableProperties.orElse(emptyMap()),
             partitionColumns,
             clusteringColumns);
 
@@ -108,5 +115,29 @@ public class CreateTableTransactionBuilderImpl implements CreateTableTransaction
         userProvidedMaxRetries,
         0, // logCompactionInterval - no compaction for new table
         System::currentTimeMillis);
+  }
+
+  private void throwIfTableAlreadyExists(Engine engine, String tablePath) {
+    String catalogManagedFeaturePropKey =
+        TableFeatures.SET_TABLE_FEATURE_SUPPORTED_PREFIX
+            + TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW.featureName();
+    boolean isCatalogManaged =
+        tableProperties
+            .map(props -> props.get(catalogManagedFeaturePropKey))
+            .map("supported"::equals)
+            .orElse(false);
+    if (isCatalogManaged) {
+      // For catalog managed tables we assume the catalog has ensured the table loc is not already
+      // a Delta table; return early
+      return;
+    }
+    // Otherwise, try loading the latest snapshot to ensure the table does not exist
+    try {
+      Snapshot snapshot = Table.forPath(engine, tablePath).getLatestSnapshot(engine);
+      throw new TableAlreadyExistsException(
+          tablePath, "Found table with latest version " + snapshot.getVersion());
+    } catch (TableNotFoundException tblf) {
+      // This is the desired scenario as the table should not exist yet
+    }
   }
 }
