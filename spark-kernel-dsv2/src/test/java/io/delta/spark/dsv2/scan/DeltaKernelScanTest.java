@@ -17,23 +17,36 @@ package io.delta.spark.dsv2.scan;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+import io.delta.kernel.TableManager;
+import io.delta.spark.dsv2.SparkKernelDsv2TestBase;
+import java.io.File;
 import org.apache.spark.sql.types.DataTypes;
+import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
-public class DeltaKernelScanTest {
+public class DeltaKernelScanTest extends SparkKernelDsv2TestBase {
 
   @Test
-  public void testReadSchema() {
-    StructType schema =
+  public void testReadSchema(@TempDir File tempDir) {
+    String path = tempDir.getAbsolutePath();
+    String tableName = "scan_test";
+    spark.sql(
+        String.format(
+            "CREATE TABLE %s (id INT, name STRING) USING delta LOCATION '%s'", tableName, path));
+    StructType expectedSparkSchema =
         DataTypes.createStructType(
-            new org.apache.spark.sql.types.StructField[] {
-              DataTypes.createStructField("id", DataTypes.IntegerType, false),
-              DataTypes.createStructField("name", DataTypes.StringType, true)
+            new StructField[] {
+              DataTypes.createStructField("id", DataTypes.IntegerType, true/*nullable*/),
+              DataTypes.createStructField("name", DataTypes.StringType, true/*nullable*/)
             });
 
-    DeltaKernelScan scan = new DeltaKernelScan(schema);
+    DeltaKernelScan scan =
+        new DeltaKernelScan(
+            TableManager.loadSnapshot(path).build(defaultEngine).getScanBuilder().build(),
+            expectedSparkSchema);
 
-    assertEquals(schema, scan.readSchema());
+    assertEquals(expectedSparkSchema, scan.readSchema());
   }
 }

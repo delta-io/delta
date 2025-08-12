@@ -20,45 +20,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.TableManager;
-import io.delta.kernel.defaults.engine.DefaultEngine;
-import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.SnapshotImpl;
+import io.delta.spark.dsv2.SparkKernelDsv2TestBase;
 import java.io.File;
-import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.connector.read.Scan;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
-import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-public class DeltaKernelScanBuilderTest {
-
-  private static SparkSession spark;
-  private static Engine defaultEngine;
-
-  @BeforeAll
-  public static void setUp() {
-    spark =
-        SparkSession.builder()
-            .master("local[*]")
-            .appName("DeltaKernelScanBuilderTest")
-            .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-            .config(
-                "spark.sql.catalog.spark_catalog",
-                "org.apache.spark.sql.delta.catalog.DeltaCatalog")
-            .getOrCreate();
-    defaultEngine = DefaultEngine.create(spark.sessionState().newHadoopConf());
-  }
-
-  @AfterAll
-  public static void tearDown() {
-    if (spark != null) {
-      spark.stop();
-      spark = null;
-    }
-  }
+public class DeltaKernelScanBuilderTest extends SparkKernelDsv2TestBase {
 
   @Test
   public void testBuild_returnsScanWithExpectedSchema(@TempDir File tempDir) {
@@ -72,12 +43,11 @@ public class DeltaKernelScanBuilderTest {
     org.apache.spark.sql.types.StructType expectedSparkSchema =
         DataTypes.createStructType(
             new StructField[] {
-              DataTypes.createStructField("id", DataTypes.IntegerType, true),
-              DataTypes.createStructField("data", DataTypes.StringType, true)
+              DataTypes.createStructField("id", DataTypes.IntegerType, true /*nullable*/),
+              DataTypes.createStructField("data", DataTypes.StringType, true /*nullable*/)
             });
 
     Scan scan = builder.build();
-
     assertTrue(scan instanceof DeltaKernelScan);
     assertEquals(expectedSparkSchema, scan.readSchema());
   }

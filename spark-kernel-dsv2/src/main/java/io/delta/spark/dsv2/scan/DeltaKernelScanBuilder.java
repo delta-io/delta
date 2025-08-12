@@ -15,8 +15,10 @@
  */
 package io.delta.spark.dsv2.scan;
 
+import io.delta.kernel.ScanBuilder;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.spark.dsv2.utils.SchemaUtils;
+import org.apache.spark.sql.types.StructType;
 
 /**
  * A Spark ScanBuilder implementation that wraps Delta Kernel's ScanBuilder. This allows Spark to
@@ -24,15 +26,18 @@ import io.delta.spark.dsv2.utils.SchemaUtils;
  */
 public class DeltaKernelScanBuilder implements org.apache.spark.sql.connector.read.ScanBuilder {
 
-  private final SnapshotImpl snapshot;
+  private final ScanBuilder scanBuilder;
+  private final StructType readSchema;
 
   public DeltaKernelScanBuilder(SnapshotImpl snapshot) {
-    this.snapshot = snapshot;
+    // TODO: pass converted schema.
+    this.scanBuilder = snapshot.getScanBuilder();
+    this.readSchema = SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema());
   }
 
   @Override
   public org.apache.spark.sql.connector.read.Scan build() {
     // TODO: pass converted schema.
-    return new DeltaKernelScan(SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema()));
+    return new DeltaKernelScan(scanBuilder.build(), readSchema);
   }
 }

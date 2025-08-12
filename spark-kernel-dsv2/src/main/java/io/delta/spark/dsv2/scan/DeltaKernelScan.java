@@ -15,6 +15,7 @@
  */
 package io.delta.spark.dsv2.scan;
 
+import io.delta.kernel.Scan;
 import org.apache.spark.sql.types.StructType;
 
 /**
@@ -23,9 +24,11 @@ import org.apache.spark.sql.types.StructType;
  */
 public class DeltaKernelScan implements org.apache.spark.sql.connector.read.Scan {
 
+  private final Scan kernelScan;
   private final StructType readSchema;
 
-  public DeltaKernelScan(StructType readSchema) {
+  public DeltaKernelScan(Scan kernelScan, StructType readSchema) {
+    this.kernelScan = kernelScan;
     this.readSchema = readSchema;
   }
 
@@ -33,4 +36,6 @@ public class DeltaKernelScan implements org.apache.spark.sql.connector.read.Scan
   public StructType readSchema() {
     return readSchema;
   }
+
+  // TODO: implement toBatch
 }
