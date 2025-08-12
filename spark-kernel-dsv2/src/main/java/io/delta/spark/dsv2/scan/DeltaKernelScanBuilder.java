@@ -32,14 +32,16 @@ public class DeltaKernelScanBuilder implements org.apache.spark.sql.connector.re
   private final StructType readSchema;
 
   public DeltaKernelScanBuilder(SnapshotImpl snapshot) {
-    // TODO: pass converted schema.
     requireNonNull(snapshot, "snapshot is null");
+
     this.kernelScanBuilder =
-        requireNonNull(snapshot.getScanBuilder(), "snapshot returns null scam builder");
+        requireNonNull(snapshot.getScanBuilder(), "snapshot returns null scan builder");
+
     this.readSchema =
         requireNonNull(
+            // TODO: pass converted schema.
             SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema()),
-            "read schema is null");
+            "failed to convert schema");
   }
 
   @Override
