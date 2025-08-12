@@ -1,5 +1,5 @@
 /*
- * Copyright (2023) The Delta Lake Project Authors.
+ * Copyright (2025) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,10 +15,15 @@
  */
 package io.delta.kernel.internal.columndefaults;
 
+import static io.delta.kernel.internal.tablefeatures.TableFeatures.ALLOW_COLUMN_DEFAULTS_W_FEATURE;
+
 import io.delta.kernel.data.Row;
+import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.internal.actions.Metadata;
-import io.delta.kernel.internal.tablefeatures.TableFeatureSupport;
-import io.delta.kernel.internal.tablefeatures.TableFeatures;
+import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.data.TransactionStateRow;
+import io.delta.kernel.internal.icebergcompat.IcebergCompatV3MetadataValidatorAndUpdater;
+import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.SchemaIterable;
 import io.delta.kernel.types.*;
 import java.math.BigDecimal;
@@ -27,45 +32,70 @@ import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Objects;
+import java.util.*;
 
 /**
  * Utilities class for TableFeature "allowColumnDefaults". NOTE: As of Aug 2025, kernel only
- * supports reading Delta tables with the table feature, or make metadata change to the table.
- * Writing actual data to the table, or modify the default values is not allowed.
+ * supports reading Delta tables with the table feature, or modifying table metadata. Writing actual
+ * data to the table is not allowed.
  */
 public class ColumnDefaults {
 
   private static final String DEFAULT_VALUE_METADATA_KEY = "CURRENT_DEFAULT";
 
-  /** Don't allow data writes to tables with the feature enabled */
-  public static void blockIfEnabled(Row transactionState) {
-    if (TableFeatureSupport.supports(
-        transactionState, TableFeatures.ALLOW_COLUMN_DEFAULTS_W_FEATURE)) {
+  /** Don't allow data writes to tables with default values */
+  public static void blockWriteIfEnabled(Row transactionState) {
+    if (!extractFieldsWithDefaultValues(TransactionStateRow.getLogicalSchema(transactionState))
+        .isEmpty()) {
       throw new UnsupportedOperationException(
           "Writing with Column Default values is not supported yet.");
     }
   }
 
   /**
-   * Validate Column Default value changes in the provided metadata. 1. Only the added/changed
-   * default value is checked. 2. Kernel only supports literal default values. See
-   * {validateLiteral}.
+   * Validate Column Default value changes in the provided metadata.
+   *
+   * <ul>
+   *   <li>Only the added/changed default value is validated.
+   *   <li>Kernel only supports literal default values. See {validateLiteral}.
+   * </ul>
    */
-  public static void validateChange(Metadata oldMetadata, Metadata newMetadata) {
-    Map<String, StructField> oldDefaults = extractFieldsWithDefaultValues(oldMetadata.getSchema());
+  public static void validateChange(
+      Protocol newProtocol, Optional<Metadata> oldMetadataOpt, Metadata newMetadata) {
+    boolean featureEnabled = newProtocol.supportsFeature(ALLOW_COLUMN_DEFAULTS_W_FEATURE);
+    boolean v3Enabled =
+        IcebergCompatV3MetadataValidatorAndUpdater.isIcebergCompatEnabled(newMetadata);
+    // Default value changes relies on Schema evolution, which requires ColumnMapping.
+    // Thus if ColumnMapping is not present, we assume there's no schema evolution.
+    if (oldMetadataOpt.isPresent()
+        && !ColumnMapping.isColumnMappingModeEnabled(
+            ColumnMapping.getColumnMappingMode(newMetadata.getConfiguration()))) {
+      return;
+    }
+    Map<String, StructField> oldDefaults =
+        oldMetadataOpt
+            .map(metadata -> extractFieldsWithDefaultValues(metadata.getSchema()))
+            .orElse(Collections.emptyMap());
     Map<String, StructField> newDefaults = extractFieldsWithDefaultValues(newMetadata.getSchema());
 
     StructField defaultField = new StructField("default_field", IntegerType.INTEGER, false);
 
+    // Validate the default value if a column is newly added or the default value is changed.
     newDefaults.forEach(
         (path, field) -> {
-          String newDefaultValue = field.getMetadata().getString(DEFAULT_VALUE_METADATA_KEY);
+          String newDefaultValue = getRawDefaultValue(field);
           StructField existingField = oldDefaults.getOrDefault(path, defaultField);
-          if (!Objects.equals(
-              existingField.getMetadata().getString(DEFAULT_VALUE_METADATA_KEY), newDefaultValue)) {
+          if (!Objects.equals(getRawDefaultValue(existingField), newDefaultValue)) {
+            if (!featureEnabled) {
+              throw new KernelException(
+                  "This table does not enable table feature for setting column defaults");
+            }
+            // We don't allow this feature to be used without V3 in Kernel
+            if (!v3Enabled) {
+              throw new KernelException(
+                  "Kernel only supports changing Default Values on tables with "
+                      + "IcebergCompatV3 enabled");
+            }
             validateLiteral(field.getDataType(), newDefaultValue);
           }
         });
@@ -75,17 +105,38 @@ public class ColumnDefaults {
     Map<String, StructField> result = new HashMap<>();
     for (SchemaIterable.SchemaElement element : new SchemaIterable(schema)) {
       StructField field = element.getField();
-      if (field.getMetadata().get(DEFAULT_VALUE_METADATA_KEY) != null) {
-        result.put(element.getNamePath(), field);
+      if (getRawDefaultValue(field) != null) {
+        String fieldKey = null;
+        try {
+          fieldKey = String.valueOf(ColumnMapping.getColumnId(field));
+        } catch (IllegalArgumentException e) {
+          fieldKey = element.getNamePath();
+        }
+        result.put(fieldKey, field);
       }
     }
     return result;
   }
 
+  public static String getRawDefaultValue(StructField field) {
+    return field.getMetadata().getString(DEFAULT_VALUE_METADATA_KEY);
+  }
+
+  /**
+   * Validate that the provided default value is a literal (not an expression) and can be cast to
+   * the given data type. We only support a limited set of literals. Example:
+   *
+   * <ul>
+   *   <li>'CURRENT_VALUE()' is a valid String literal. CURRENT_VALUE (no quotes) is not.
+   *   <li>4.95 and '4.95' are both valid Double/Float literals.
+   *   <li>'2022-01-01' is a valid Date literal, '09/01/2022' is not.
+   * </ul>
+   */
   private static void validateLiteral(DataType type, String value) {
     try {
       String stripped = stripQuotes(value, false);
       if ((type instanceof StringType || type instanceof BinaryType)) {
+        // String literals are required to be enclosed in quotes
         stripQuotes(value, true);
       } else if (type instanceof LongType) {
         Long.parseLong(stripped);

@@ -558,8 +558,10 @@ public class TransactionMetadataFactory {
   }
 
   private void validateColumnDefaultsChanges() {
-    validateForUpdateTableUsingOldMetadata(
-        oldMetadata -> ColumnDefaults.validateChange(oldMetadata, getEffectiveMetadata()));
+    ColumnDefaults.validateChange(
+        getEffectiveProtocol(),
+        latestSnapshotOpt.map(SnapshotImpl::getMetadata),
+        getEffectiveMetadata());
   }
 
   private static Metadata getInitialMetadata(

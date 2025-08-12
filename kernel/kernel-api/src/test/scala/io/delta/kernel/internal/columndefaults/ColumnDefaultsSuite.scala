@@ -16,19 +16,29 @@
 
 package io.delta.kernel.internal.columndefaults
 
+import java.util.Optional
+
+import scala.collection.JavaConverters._
+
+import io.delta.kernel.internal.actions.{Metadata, Protocol}
+import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.test.ActionUtils
 import io.delta.kernel.types._
 
 import org.scalatest.funsuite.AnyFunSuite
 
 class ColumnDefaultsSuite extends AnyFunSuite with ActionUtils {
-
+  val validProtocol = new Protocol(
+    TableFeatures.TABLE_FEATURES_MIN_READER_VERSION,
+    TableFeatures.TABLE_FEATURES_MIN_WRITER_VERSION,
+    Set.empty[String].asJava,
+    Set(
+      TableFeatures.ALLOW_COLUMN_DEFAULTS_W_FEATURE.featureName(),
+      TableFeatures.ICEBERG_COMPAT_V3_W_FEATURE.featureName()).asJava)
   test("validate") {
     def metadataForDefault(value: String): FieldMetadata =
       FieldMetadata.builder().putString("CURRENT_DEFAULT", value).build()
-
-    val emptySchema = testMetadata(new StructType());
-
+    val tblProps = Map("delta.enableIcebergCompatV3" -> "true")
     val correctSchema = new StructType()
       .add("id", IntegerType.INTEGER)
       .add("int", IntegerType.INTEGER, metadataForDefault("\"123\""))
@@ -67,7 +77,10 @@ class ColumnDefaultsSuite extends AnyFunSuite with ActionUtils {
         new ArrayType(
           new StructType().add("clid", IntegerType.INTEGER, metadataForDefault("300")),
           false))
-    ColumnDefaults.validateChange(emptySchema, testMetadata(correctSchema))
+    ColumnDefaults.validateChange(
+      validProtocol,
+      Optional.empty[Metadata],
+      testMetadata(correctSchema, tblProps = tblProps))
 
     val unsupportedCases = Seq(
       new StructType().add("sub", IntegerType.INTEGER),
@@ -79,10 +92,14 @@ class ColumnDefaultsSuite extends AnyFunSuite with ActionUtils {
         .add("id", IntegerType.INTEGER)
         .add("col1", dataType, metadataForDefault("120"))
       ColumnDefaults.validateChange(
-        testMetadata(schemaWithUnsupportedType),
-        testMetadata(schemaWithUnsupportedType))
+        validProtocol,
+        Optional.of(testMetadata(schemaWithUnsupportedType)),
+        testMetadata(schemaWithUnsupportedType, tblProps = tblProps))
       intercept[UnsupportedOperationException] {
-        ColumnDefaults.validateChange(emptySchema, testMetadata(schemaWithUnsupportedType))
+        ColumnDefaults.validateChange(
+          validProtocol,
+          Optional.empty[Metadata],
+          testMetadata(schemaWithUnsupportedType, tblProps = tblProps))
       }
     }
 
@@ -140,9 +157,15 @@ class ColumnDefaultsSuite extends AnyFunSuite with ActionUtils {
             new StructType().add("mapValueId", dataType, metadataForDefault(defaultValue)),
             false))
       Seq(badSchema1, badSchema2, badSchema3, badSchema4).foreach(schema => {
-        ColumnDefaults.validateChange(testMetadata(schema), testMetadata(schema))
+        ColumnDefaults.validateChange(
+          validProtocol,
+          Optional.of(testMetadata(schema)),
+          testMetadata(schema, tblProps = tblProps))
         intercept[IllegalArgumentException] {
-          ColumnDefaults.validateChange(emptySchema, testMetadata(schema))
+          ColumnDefaults.validateChange(
+            validProtocol,
+            Optional.empty[Metadata],
+            testMetadata(schema, tblProps = tblProps))
         }
       })
     }

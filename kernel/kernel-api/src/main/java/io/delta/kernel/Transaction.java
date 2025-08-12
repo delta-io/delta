@@ -172,7 +172,7 @@ public interface Transaction {
     blockIfColumnMappingEnabled(transactionState);
     // We recognize the AllowColumnDefaults feature for Iceberg v3
     // but do not support writing with it yet
-    ColumnDefaults.blockIfEnabled(transactionState);
+    ColumnDefaults.blockWriteIfEnabled(transactionState);
 
     // TODO: set the correct schema once writing into column mapping enabled table is supported.
     String tablePath = getTablePath(transactionState);
