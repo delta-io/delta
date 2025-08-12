@@ -38,13 +38,7 @@ public class CreateTableTransactionBuilderImpl implements CreateTableTransaction
 
   private Optional<Map<String, String>> tableProperties = Optional.empty();
   private Optional<DataLayoutSpec> dataLayoutSpec = Optional.empty();
-
-  /**
-   * Number of retries for concurrent write exceptions to resolve conflicts and retry commit. In
-   * Delta-Spark, for historical reasons the number of retries is really high (10m). We are starting
-   * with a lower number by default for now. If this is not sufficient we can update it.
-   */
-  private int maxRetries = 200;
+  private Optional<Integer> userProvidedMaxRetries = Optional.empty();
 
   public CreateTableTransactionBuilderImpl(String tablePath, StructType schema, String engineInfo) {
     this.unresolvedPath = requireNonNull(tablePath, "tablePath is null");
@@ -72,7 +66,7 @@ public class CreateTableTransactionBuilderImpl implements CreateTableTransaction
   @Override
   public CreateTableTransactionBuilder withMaxRetries(int maxRetries) {
     checkArgument(maxRetries >= 0, "maxRetries must be >= 0");
-    this.maxRetries = maxRetries;
+    this.userProvidedMaxRetries = Optional.of(maxRetries);
     return this;
   }
 
@@ -114,7 +108,7 @@ public class CreateTableTransactionBuilderImpl implements CreateTableTransaction
         txnMetadata.newMetadata,
         Optional.empty(), // no setTransaction for create table
         txnMetadata.physicalNewClusteringColumns,
-        maxRetries,
+        userProvidedMaxRetries,
         0, // logCompactionInterval - using default for create table
         System::currentTimeMillis);
   }

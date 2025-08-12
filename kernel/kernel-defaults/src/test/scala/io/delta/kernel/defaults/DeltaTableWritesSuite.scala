@@ -181,7 +181,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
       val txn =
-        createTxn(engine, tablePath, isNewTable = true, testSchema, operation = CREATE_TABLE)
+        createTxn(engine, tablePath, isNewTable = true, testSchema)
 
       assert(txn.getSchema(engine) === testSchema)
       assert(txn.getPartitionColumns(engine) === Seq.empty.asJava)
@@ -191,7 +191,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       assert(txnResult.getVersion === 0)
       assertCheckpointReadiness(txnResult, isReadyForCheckpoint = false)
 
-      verifyCommitInfo(tablePath = tablePath, version = 0, operation = CREATE_TABLE)
+      verifyCommitInfo(tablePath = tablePath, version = 0)
       verifyWrittenContent(tablePath, testSchema, Seq.empty)
     }
   }
@@ -355,8 +355,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
           tablePath,
           isNewTable = true,
           schema = testPartitionSchema,
-          partCols = Seq("PART1", "part3"),
-          operation = CREATE_TABLE)
+          partCols = Seq("PART1", "part3"))
       }
       assert(ex.getMessage.contains("Partition column part3 not found in the schema"))
     }
@@ -370,13 +369,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         .add("c2", new DecimalType(14, 2))
 
       val ex = intercept[KernelException] {
-        createTxn(
-          engine,
-          tablePath,
-          isNewTable = true,
-          schema = schema,
-          partCols = Seq("p1", "c1"),
-          operation = CREATE_TABLE)
+        createTxn(engine, tablePath, isNewTable = true, schema = schema, partCols = Seq("p1", "c1"))
       }
       assert(ex.getMessage.contains(
         "Kernel doesn't support writing data with partition column (p1) of type: array[integer]"))
@@ -395,9 +388,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         tablePath,
         isNewTable = true,
         schema = schema,
-        // partition columns should preserve the same case the one in the schema
-        partCols = Seq("part1", "PART2"),
-        operation = CREATE_TABLE)
+        partCols = Seq("part1", "PART2"))
 
       assert(txn.getSchema(engine) === schema)
       // Expect the partition column name is exactly same as the one in the schema
@@ -407,7 +398,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       assert(txnResult.getVersion === 0)
       assertCheckpointReadiness(txnResult, isReadyForCheckpoint = false)
 
-      verifyCommitInfo(tablePath, version = 0, Seq("Part1", "part2"), operation = CREATE_TABLE)
+      verifyCommitInfo(tablePath, version = 0, Seq("Part1", "part2"))
       verifyWrittenContent(tablePath, schema, Seq.empty)
     }
   }
@@ -420,18 +411,13 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         val schema = if (includeTimestampNtz) goldenTableSchema
         else removeTimestampNtzTypeColumns(goldenTableSchema)
 
-        val txn = createTxn(
-          engine,
-          tablePath,
-          isNewTable = true,
-          schema = schema,
-          operation = CREATE_TABLE)
+        val txn = createTxn(engine, tablePath, isNewTable = true, schema = schema)
         val txnResult = commitTransaction(txn, engine, emptyIterable())
 
         assert(txnResult.getVersion === 0)
         assertCheckpointReadiness(txnResult, isReadyForCheckpoint = false)
 
-        verifyCommitInfo(tablePath, version = 0, operation = CREATE_TABLE)
+        verifyCommitInfo(tablePath, version = 0)
         verifyWrittenContent(tablePath, schema, Seq.empty)
       }
     }
@@ -468,7 +454,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       val expectedAnswer = dataBatches1.flatMap(_.toTestRows) ++ dataBatches2.flatMap(_.toTestRows)
 
       verifyCommitResult(commitResult0, expVersion = 0, expIsReadyForCheckpoint = false)
-      verifyCommitInfo(tblPath, version = 0, operation = WRITE)
+      verifyCommitInfo(tblPath, version = 0)
       verifyWrittenContent(tblPath, testSchema, expectedAnswer)
     }
   }
@@ -483,7 +469,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         data = Seq(Map.empty[String, Literal] -> dataBatches1))
 
       verifyCommitResult(commitResult0, expVersion = 0, expIsReadyForCheckpoint = false)
-      verifyCommitInfo(tblPath, version = 0, partitionCols = Seq.empty, operation = WRITE)
+      verifyCommitInfo(tblPath, version = 0, partitionCols = Seq.empty)
       verifyWrittenContent(tblPath, testSchema, dataBatches1.flatMap(_.toTestRows))
 
       val txn = createTxn(engine, tblPath)
@@ -494,7 +480,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       val expAnswer = dataBatches1.flatMap(_.toTestRows) ++ dataBatches2.flatMap(_.toTestRows)
 
       verifyCommitResult(commitResult1, expVersion = 1, expIsReadyForCheckpoint = false)
-      verifyCommitInfo(tblPath, version = 1, partitionCols = null, operation = WRITE)
+      verifyCommitInfo(tblPath, version = 1, partitionCols = null)
       verifyWrittenContent(tblPath, testSchema, expAnswer)
     }
   }
@@ -536,7 +522,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         dataPartitionBatches2.flatMap(_.toTestRows)
 
       verifyCommitResult(commitResult0, expVersion = 0, expIsReadyForCheckpoint = false)
-      verifyCommitInfo(tblPath, version = 0, testPartitionColumns, operation = WRITE)
+      verifyCommitInfo(tblPath, version = 0, testPartitionColumns)
       verifyWrittenContent(tblPath, testPartitionSchema, expData)
     }
   }
@@ -558,7 +544,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         val expData = dataPartitionBatches1.flatMap(_.toTestRows)
 
         verifyCommitResult(commitResult0, expVersion = 0, expIsReadyForCheckpoint = false)
-        verifyCommitInfo(tblPath, version = 0, partitionCols, operation = WRITE)
+        verifyCommitInfo(tblPath, version = 0, partitionCols)
         verifyWrittenContent(tblPath, testPartitionSchema, expData)
       }
       {
@@ -571,7 +557,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
           dataPartitionBatches2.flatMap(_.toTestRows)
 
         verifyCommitResult(commitResult1, expVersion = 1, expIsReadyForCheckpoint = false)
-        verifyCommitInfo(tblPath, version = 1, partitionCols = null, operation = WRITE)
+        verifyCommitInfo(tblPath, version = 1, partitionCols = null)
         verifyWrittenContent(tblPath, testPartitionSchema, expData)
       }
     }
@@ -634,7 +620,8 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         verifyCommitResult(commitResult, expVersion = i, expIsReadyForCheckpoint = false)
         // partition cols are not written in the commit info for inserts
         val partitionBy = if (i == 0) expPartCols else null
-        verifyCommitInfo(tblPath, version = i, partitionBy, operation = WRITE)
+        val expectedOperation = if (i == 0) CREATE_TABLE else WRITE
+        verifyCommitInfo(tblPath, version = i, partitionBy)
         verifyWrittenContent(
           tblPath,
           schema,
@@ -724,7 +711,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
           checkpointIfReady(engine, tblPath, commitResult, expSize = i /* one file per version */ )
 
           verifyCommitResult(commitResult, expVersion = i, i % checkpointInterval == 0)
-          verifyCommitInfo(tblPath, version = i, null, operation = WRITE)
+          verifyCommitInfo(tblPath, version = i, null)
           verifyWrittenContent(tblPath, schema, expData)
         }
         assertCheckpointExists(tblPath, atVersion = checkpointInterval)
@@ -808,7 +795,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
         }
 
         appendData(engine, tblPath, isNewTable = true, schema, partCols, dataWithPartInfo)
-        verifyCommitInfo(tblPath, version = 0, casePreservingPartCols, operation = WRITE)
+        verifyCommitInfo(tblPath, version = 0, casePreservingPartCols)
 
         var expData = dataWithPartInfo.flatMap(_._2).flatMap(_.toTestRows)
 
@@ -825,7 +812,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
           checkpointIfReady(engine, tblPath, commitResult, expSize = fileCount)
 
           verifyCommitResult(commitResult, expVersion = i, i % checkpointInterval == 0)
-          verifyCommitInfo(tblPath, version = i, partitionCols = null, operation = WRITE)
+          verifyCommitInfo(tblPath, version = i, partitionCols = null)
           verifyWrittenContent(tblPath, schema, expData)
         }
 
@@ -916,7 +903,8 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
 
         verifyCommitResult(commitResult, expVersion = expTblVer, expIsReadyForCheckpoint = false)
         val expPartCols = if (newTbl) testPartitionColumns else null
-        verifyCommitInfo(tblPath, version = expTblVer, expPartCols, operation = WRITE)
+        val expOperation = if (newTbl) CREATE_TABLE else WRITE
+        verifyCommitInfo(tblPath, version = expTblVer, expPartCols)
         verifyWrittenContent(tblPath, testPartitionSchema, expData)
       }
 
@@ -997,12 +985,8 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
             .add("humidity", FloatType.FLOAT))
 
       // Create the table with the given schema and table properties.
-      val txn = createTxn(
-        engine,
-        tblPath,
-        isNewTable = true,
-        schema,
-        tableProperties = tableProperties)
+      val txn =
+        createTxn(engine, tblPath, isNewTable = true, schema, tableProperties = tableProperties)
       commitTransaction(txn, engine, emptyIterable())
 
       val dataBatches1 = generateData(schema, Seq.empty, Map.empty, batchSize = 10, numBatches = 1)
@@ -1204,7 +1188,7 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
           txn1Result,
           expVersion = numWinningTxs + 1,
           expIsReadyForCheckpoint = false)
-        verifyCommitInfo(tablePath = tablePath, version = 0, operation = WRITE)
+        verifyCommitInfo(tablePath = tablePath, version = 0)
         verifyWrittenContent(tablePath, testSchema, expData)
       }
     }

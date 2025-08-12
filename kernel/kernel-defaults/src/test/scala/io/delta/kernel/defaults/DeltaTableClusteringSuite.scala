@@ -344,7 +344,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
         data = testData)
 
       verifyCommitResult(commitResult, expVersion = 0, expIsReadyForCheckpoint = false)
-      verifyCommitInfo(tablePath, version = 0, operation = WRITE)
+      verifyCommitInfo(tablePath, version = 0)
       verifyWrittenContent(
         tablePath,
         testPartitionSchema,
@@ -376,7 +376,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
         val expData = dataClusteringBatches1.flatMap(_.toTestRows)
 
         verifyCommitResult(commitResult0, expVersion = 0, expIsReadyForCheckpoint = false)
-        verifyCommitInfo(tablePath, version = 0, operation = WRITE)
+        verifyCommitInfo(tablePath, version = 0)
         verifyWrittenContent(tablePath, testPartitionSchema, expData)
         verifyClusteringDMAndCRC(
           table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl],
@@ -395,7 +395,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
           dataClusteringBatches2.flatMap(_.toTestRows)
 
         verifyCommitResult(commitResult1, expVersion = 1, expIsReadyForCheckpoint = false)
-        verifyCommitInfo(tablePath, version = 1, partitionCols = null, operation = WRITE)
+        verifyCommitInfo(tablePath, version = 1, partitionCols = null)
         verifyWrittenContent(tablePath, testPartitionSchema, expData)
         verifyClusteringDMAndCRC(
           table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl],
@@ -429,7 +429,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
         val expData = dataClusteringBatches1.flatMap(_.toTestRows)
 
         verifyCommitResult(commitResult0, expVersion = 0, expIsReadyForCheckpoint = false)
-        verifyCommitInfo(tablePath, version = 0, operation = WRITE)
+        verifyCommitInfo(tablePath, version = 0)
         verifyWrittenContent(tablePath, testPartitionSchema, expData)
         verifyClusteringDMAndCRC(
           table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl],
@@ -462,7 +462,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
           dataClusteringBatches2.flatMap(_.toTestRows)
 
         verifyCommitResult(commitResult2, expVersion = 2, expIsReadyForCheckpoint = false)
-        verifyCommitInfo(tablePath, version = 2, partitionCols = null, operation = WRITE)
+        verifyCommitInfo(tablePath, version = 2, partitionCols = null)
         verifyWrittenContent(tablePath, testPartitionSchema, expData)
         verifyClusteringDMAndCRC(
           table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl],

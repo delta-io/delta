@@ -325,10 +325,9 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       maxRetries: Int = -1,
       clusteringColsOpt: Option[List[Column]] = None,
       logCompactionInterval: Int = 10,
-      operation: Operation = Operation.WRITE,
       txnId: Option[(String, Long)] = None,
       tablePropertiesRemoved: Set[String] = null): Transaction = {
-    // scalastyle:on argcount
+    val operation = if (isNewTable) Operation.CREATE_TABLE else Operation.WRITE
 
     var txnBuilder = createWriteTxnBuilder(
       TableImpl.forPath(engine, tablePath, clock),
@@ -555,8 +554,8 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
   def verifyCommitInfo(
       tablePath: String,
       version: Long,
-      partitionCols: Seq[String] = Seq.empty,
-      operation: Operation = MANUAL_UPDATE): Unit = {
+      partitionCols: Seq[String] = Seq.empty): Unit = {
+    val expectedOperation = if (version == 0) Operation.CREATE_TABLE else Operation.WRITE
     val row = spark.sql(s"DESCRIBE HISTORY delta.`$tablePath`")
       .filter(s"version = $version")
       .select(
@@ -575,8 +574,7 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     assert(!row.getAs[Boolean]("isBlindAppend"))
     assert(row.getAs[Seq[String]]("engineInfo") ===
       "Kernel-" + Meta.KERNEL_VERSION + "/" + testEngineInfo)
-    // For now -- investigate failures later
-    // assert(row.getAs[String]("operation") === operation.getDescription)
+    assert(row.getAs[String]("operation") === expectedOperation.getDescription)
   }
 
   def verifyCommitResult(

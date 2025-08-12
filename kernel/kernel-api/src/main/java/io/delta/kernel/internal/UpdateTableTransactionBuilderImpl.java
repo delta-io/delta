@@ -45,12 +45,7 @@ public class UpdateTableTransactionBuilderImpl implements UpdateTableTransaction
   private Optional<Set<String>> tablePropertiesRemovedOpt = Optional.empty();
   private Optional<StructType> updatedSchemaOpt = Optional.empty();
   private Optional<List<Column>> inputLogicalClusteringColumnsOpt = Optional.empty();
-  /**
-   * Number of retries for concurrent write exceptions to resolve conflicts and retry commit. In
-   * Delta-Spark, for historical reasons the number of retries is really high (10m). We are starting
-   * with a lower number by default for now. If this is not sufficient we can update it.
-   */
-  private int maxRetries = 200;
+  private Optional<Integer> userProvidedMaxRetries = Optional.empty();
 
   /** Number of commits between producing a log compaction file. */
   private int logCompactionInterval = 0;
@@ -116,7 +111,7 @@ public class UpdateTableTransactionBuilderImpl implements UpdateTableTransaction
   @Override
   public UpdateTableTransactionBuilder withMaxRetries(int maxRetries) {
     checkArgument(maxRetries >= 0, "maxRetries must be >= 0");
-    this.maxRetries = maxRetries;
+    this.userProvidedMaxRetries = Optional.of(maxRetries);
     return this;
   }
 
@@ -158,7 +153,7 @@ public class UpdateTableTransactionBuilderImpl implements UpdateTableTransaction
         txnMetadata.newMetadata,
         setTxnOpt,
         txnMetadata.physicalNewClusteringColumns,
-        maxRetries,
+        userProvidedMaxRetries,
         logCompactionInterval,
         // TODO: support configuring clock if needed
         System::currentTimeMillis);

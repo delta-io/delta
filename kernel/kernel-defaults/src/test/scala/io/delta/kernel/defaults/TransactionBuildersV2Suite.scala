@@ -28,7 +28,6 @@ trait UseTransactionBuilderV2 extends DeltaTableWriteSuiteBase {
       maxRetries: Int = -1,
       clusteringColsOpt: Option[List[Column]] = None,
       logCompactionInterval: Int = 10,
-      operation: Operation = Operation.WRITE,
       txnId: Option[(String, Long)] = None,
       tablePropertiesRemoved: Set[String] = null): Transaction = {
     // scalastyle:on argcount
@@ -65,7 +64,7 @@ trait UseTransactionBuilderV2 extends DeltaTableWriteSuiteBase {
     } else {
       var txnBuilder = TableManager.loadSnapshot(tablePath)
         .asInstanceOf[SnapshotBuilderImpl].build(engine)
-        .buildUpdateTableTransaction(testEngineInfo, operation)
+        .buildUpdateTableTransaction(testEngineInfo, Operation.WRITE)
       if (schema != null) {
         txnBuilder = txnBuilder.withUpdatedSchema(schema)
       }

@@ -69,11 +69,23 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public class TransactionImpl implements Transaction {
+  /////////////////////////
+  ///// Static fields /////
+  /////////////////////////
   private static final Logger logger = LoggerFactory.getLogger(TransactionImpl.class);
 
   public static final int DEFAULT_READ_VERSION = 1;
   public static final int DEFAULT_WRITE_VERSION = 2;
+  /**
+   * Default retries for concurrent write exceptions to resolve conflicts and retry commit. In
+   * Delta-Spark, for historical reasons the number of retries is really high (10m). We are starting
+   * with a lower number by default for now. If this is not sufficient we can update it.
+   */
+  private static final int defaultMaxRetries = 200;
 
+  ///////////////////////////
+  ///// Instance fields /////
+  ///////////////////////////
   private final UUID txnId = UUID.randomUUID();
 
   /* If the transaction is defining a new table from scratch (i.e. create table, replace table) */
@@ -120,7 +132,7 @@ public class TransactionImpl implements Transaction {
       Optional<Metadata> newMetadata,
       Optional<SetTransaction> setTxnOpt,
       Optional<List<Column>> newClusteringColumnsOpt,
-      int maxRetries,
+      Optional<Integer> maxRetriesOpt,
       int logCompactionInterval,
       Clock clock) {
     checkArgument(isCreateOrReplace || readSnapshotOpt.isPresent());
@@ -141,7 +153,7 @@ public class TransactionImpl implements Transaction {
     this.shouldUpdateMetadata = newMetadata.isPresent();
     this.setTxnOpt = setTxnOpt;
     this.newClusteringColumnsOpt = newClusteringColumnsOpt;
-    this.maxRetries = maxRetries;
+    this.maxRetries = maxRetriesOpt.orElse(defaultMaxRetries);
     this.logCompactionInterval = logCompactionInterval;
     this.clock = clock;
     this.currentCrcInfo = readSnapshotOpt.flatMap(SnapshotImpl::getCurrentCrcInfo);

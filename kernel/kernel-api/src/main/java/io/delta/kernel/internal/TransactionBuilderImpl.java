@@ -57,13 +57,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
 
   protected final TableImpl table;
   protected Optional<StructType> schema = Optional.empty();
-
-  /**
-   * Number of retries for concurrent write exceptions to resolve conflicts and retry commit. In
-   * Delta-Spark, for historical reasons the number of retries is really high (10m). We are starting
-   * with a lower number by default for now. If this is not sufficient we can update it.
-   */
-  private int maxRetries = 200;
+  private Optional<Integer> userProvidedMaxRetries = Optional.empty();
 
   /** Number of commits between producing a log compaction file. */
   private int logCompactionInterval = 0;
@@ -152,7 +146,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   @Override
   public TransactionBuilder withMaxRetries(int maxRetries) {
     checkArgument(maxRetries >= 0, "maxRetries must be >= 0");
-    this.maxRetries = maxRetries;
+    this.userProvidedMaxRetries = Optional.of(maxRetries);
     return this;
   }
 
@@ -239,7 +233,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
           Optional.empty(), // newMetadata
           setTxnOpt,
           Optional.empty(), /* clustering cols=empty */
-          maxRetries,
+          userProvidedMaxRetries,
           logCompactionInterval,
           table.getClock());
     }
@@ -303,7 +297,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         outputMetadata.newMetadata,
         setTxnOpt,
         outputMetadata.physicalNewClusteringColumns,
-        maxRetries,
+        userProvidedMaxRetries,
         logCompactionInterval,
         table.getClock());
   }
