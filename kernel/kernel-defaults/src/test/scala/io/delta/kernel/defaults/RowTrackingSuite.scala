@@ -837,9 +837,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
 
               val newSchema = testSchema.add(colName, LongType.LONG)
               val e = intercept[KernelException] {
-                createWriteTxnBuilder(TableImpl.forPath(engine, tablePath))
-                  .withSchema(engine, newSchema)
-                  .build(engine)
+                createTxn(engine, tablePath, schema = newSchema)
                   .commit(engine, emptyIterable())
               }
 

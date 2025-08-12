@@ -47,10 +47,7 @@ class LogCompactionSuite extends AnyFunSuite with DeltaTableWriteSuiteBase with 
       updateTableMetadata(engine, tblPath, tableProperties = newTblProps)
 
       // commit 2 - add domain metadata
-      val dmTxn = createTxn(
-        engine,
-        tblPath,
-        withDomainMetadataSupported = true)
+      val dmTxn = createTxn(engine, tblPath, withDomainMetadataSupported = true)
       dmTxn.addDomainMetadata("testDomain", "testConfig")
       commitAppendData(engine, dmTxn, Seq.empty)
 

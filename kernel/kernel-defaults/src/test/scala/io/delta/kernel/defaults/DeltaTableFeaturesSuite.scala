@@ -240,9 +240,7 @@ class DeltaTableFeaturesSuite extends DeltaTableWriteSuiteBase {
       assert(latestSnapshot(table, engine).getMetadata.getConfiguration.isEmpty)
 
       // Update table with the same feature override set.
-      val updateTxnBuilder =
-        table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
-      val updateTxn = updateTxnBuilder.withTableProperties(engine, properties.asJava).build(engine)
+      val updateTxn = createTxn(engine, tablePath, tableProperties = properties)
 
       commitTransaction(updateTxn, engine, emptyIterable())
 
@@ -308,11 +306,10 @@ class DeltaTableFeaturesSuite extends DeltaTableWriteSuiteBase {
       val table = Table.forPath(engine, tablePath)
 
       intercept[InvalidConfigurationValueException] {
-        table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
-          .withTableProperties(
-            engine,
-            Map(TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey -> "iceberg").asJava)
-          .build(engine)
+        createTxn(
+          engine,
+          tablePath,
+          tableProperties = Map(TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey -> "iceberg"))
       }
     }
   }
