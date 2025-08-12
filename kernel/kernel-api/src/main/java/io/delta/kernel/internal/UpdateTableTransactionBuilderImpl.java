@@ -151,6 +151,7 @@ public class UpdateTableTransactionBuilderImpl implements UpdateTableTransaction
         operation,
         txnMetadata.newProtocol,
         txnMetadata.newMetadata,
+        snapshot.getCommitter(),
         setTxnOpt,
         txnMetadata.physicalNewClusteringColumns,
         userProvidedMaxRetries,

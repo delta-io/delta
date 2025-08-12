@@ -23,6 +23,7 @@ import io.delta.kernel.Operation;
 import io.delta.kernel.Transaction;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Column;
+import io.delta.kernel.internal.commit.DefaultFileSystemManagedTableOnlyCommitter;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.transaction.CreateTableTransactionBuilder;
 import io.delta.kernel.transaction.DataLayoutSpec;
@@ -106,6 +107,7 @@ public class CreateTableTransactionBuilderImpl implements CreateTableTransaction
         Operation.CREATE_TABLE,
         txnMetadata.newProtocol,
         txnMetadata.newMetadata,
+        DefaultFileSystemManagedTableOnlyCommitter.INSTANCE, // TODO: support setting committer
         Optional.empty(), // no setTransaction for create table
         txnMetadata.physicalNewClusteringColumns,
         userProvidedMaxRetries,

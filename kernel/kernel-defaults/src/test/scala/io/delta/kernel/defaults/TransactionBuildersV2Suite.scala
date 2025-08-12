@@ -4,6 +4,8 @@ import scala.collection.JavaConverters._
 import scala.collection.immutable.Seq
 
 import io.delta.kernel.{Operation, TableManager, Transaction}
+import io.delta.kernel.commit.{CommitMetadata, CommitResponse, Committer}
+import io.delta.kernel.data.Row
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.expressions.Column
@@ -12,6 +14,8 @@ import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.internal.util.Clock
 import io.delta.kernel.transaction.DataLayoutSpec
 import io.delta.kernel.types.StructType
+import io.delta.kernel.utils.CloseableIterable.emptyIterable
+import io.delta.kernel.utils.CloseableIterator
 
 trait UseTransactionBuilderV2 extends DeltaTableWriteSuiteBase {
 
@@ -136,12 +140,44 @@ class TransactionBuildersV2Suite extends DeltaTableWritesSuite with UseTransacti
           testSchema)
         val e = intercept[IllegalArgumentException] {
           TableManager.loadSnapshot(tablePath)
-            .asInstanceOf[SnapshotBuilderImpl].build(engine)
+            .build(engine)
             .buildUpdateTableTransaction(testEngineInfo, op)
         }
         assert(e.getMessage.contains(
           s"Operation $op is not compatible with Snapshot::buildUpdateTableTransaction"))
       }
+    }
+  }
+
+  test("UpdateTableTransactionBuilder uses the committer provided during snapshot building") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      class FakeCommitter extends Committer {
+        override def commit(
+            engine: Engine,
+            finalizedActions: CloseableIterator[Row],
+            commitMetadata: CommitMetadata): CommitResponse = {
+          throw new RuntimeException("This is a fake committer")
+        }
+      }
+      createEmptyTable(
+        engine,
+        tablePath,
+        testSchema)
+
+      // Build snapshot with committer and start txn
+      val txn = TableManager.loadSnapshot(tablePath)
+        .withCommitter(new FakeCommitter())
+        .build(engine)
+        .buildUpdateTableTransaction(testEngineInfo, Operation.WRITE)
+        .build(engine)
+
+      // Check the txn returns the correct committer
+      assert(txn.getCommitter.isInstanceOf[FakeCommitter])
+      // Check that the txn invokes the provided committer upon commit
+      val e = intercept[RuntimeException] {
+        txn.commit(engine, emptyIterable())
+      }
+      assert(e.getMessage.contains("This is a fake committer"))
     }
   }
 }
