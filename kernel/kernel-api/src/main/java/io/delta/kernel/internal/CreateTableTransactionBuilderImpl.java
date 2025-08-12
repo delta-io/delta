@@ -80,11 +80,7 @@ public class CreateTableTransactionBuilderImpl implements CreateTableTransaction
     Optional<List<String>> partitionColumns =
         dataLayoutSpec
             .filter(DataLayoutSpec::hasPartitioning)
-            .map(
-                spec ->
-                    spec.getPartitionColumns().stream()
-                        .map(col -> col.getNames()[0])
-                        .collect(Collectors.toList()));
+            .map(DataLayoutSpec::getPartitionColumnsAsStrings);
     Optional<List<Column>> clusteringColumns =
         dataLayoutSpec
             .filter(DataLayoutSpec::hasClustering)
@@ -111,7 +107,7 @@ public class CreateTableTransactionBuilderImpl implements CreateTableTransaction
         Optional.empty(), // no setTransaction for create table
         txnMetadata.physicalNewClusteringColumns,
         userProvidedMaxRetries,
-        0, // logCompactionInterval - using default for create table
+        0, // logCompactionInterval - no compaction for new table
         System::currentTimeMillis);
   }
 }

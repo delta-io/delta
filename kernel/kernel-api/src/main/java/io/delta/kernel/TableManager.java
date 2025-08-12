@@ -50,7 +50,7 @@ public interface TableManager {
    * Creates a {@link CreateTableTransactionBuilder} to build a create table transaction.
    *
    * @param path the file system path for the delta table being created
-   * @param engineInfo information about the engine that is making the updates.
+   * @param engineInfo information about the engine that is making the update.
    * @param schema the schema for the delta table being created
    * @return create table builder instance to build the transaction
    * @since 3.4.0

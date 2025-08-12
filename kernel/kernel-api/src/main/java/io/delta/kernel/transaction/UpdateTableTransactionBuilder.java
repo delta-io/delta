@@ -28,7 +28,7 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Builder for creating a {@link Transaction} to update an existing Delta table.
+ * Builds a {@link Transaction} to update an existing Delta table.
  *
  * @since 3.4.0
  */
