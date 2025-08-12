@@ -163,10 +163,6 @@ public class SnapshotImpl implements Snapshot {
         dataPath, version, protocol, metadata, getSchema(), logReplay, getSnapshotReport());
   }
 
-  public Committer getCommitter() {
-    return committer;
-  }
-
   @Override
   public UpdateTableTransactionBuilder buildUpdateTableTransaction(
       String engineInfo, Operation operation) {
@@ -176,6 +172,10 @@ public class SnapshotImpl implements Snapshot {
   ///////////////////
   // Internal APIs //
   ///////////////////
+
+  public Committer getCommitter() {
+    return committer;
+  }
 
   public Path getLogPath() {
     return logPath;

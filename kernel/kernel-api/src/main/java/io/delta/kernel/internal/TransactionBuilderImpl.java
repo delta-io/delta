@@ -22,11 +22,13 @@ import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.toSet;
 
 import io.delta.kernel.*;
+import io.delta.kernel.commit.Committer;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.TableAlreadyExistsException;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.actions.*;
+import io.delta.kernel.internal.commit.DefaultFileSystemManagedTableOnlyCommitter;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.types.StructType;
 import java.util.*;
@@ -204,6 +206,11 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         snapshot -> validateWriteToExistingTable(engine, snapshot, isCreateOrReplace));
     validateTransactionInputs(engine, isCreateOrReplace);
 
+    final Committer committer =
+        latestSnapshot
+            .map(SnapshotImpl::getCommitter)
+            .orElse(DefaultFileSystemManagedTableOnlyCommitter.INSTANCE);
+
     boolean enablesDomainMetadataSupport =
         needDomainMetadataSupport
             && latestSnapshot.isPresent()
@@ -231,6 +238,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
           operation,
           Optional.empty(), // newProtocol
           Optional.empty(), // newMetadata
+          committer,
           setTxnOpt,
           Optional.empty(), /* clustering cols=empty */
           userProvidedMaxRetries,
@@ -295,6 +303,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         operation,
         outputMetadata.newProtocol,
         outputMetadata.newMetadata,
+        committer,
         setTxnOpt,
         outputMetadata.physicalNewClusteringColumns,
         userProvidedMaxRetries,
