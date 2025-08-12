@@ -15,6 +15,8 @@
  */
 package io.delta.spark.dsv2.scan;
 
+import static java.util.Objects.requireNonNull;
+
 import io.delta.kernel.ScanBuilder;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.spark.dsv2.utils.SchemaUtils;
@@ -31,8 +33,13 @@ public class DeltaKernelScanBuilder implements org.apache.spark.sql.connector.re
 
   public DeltaKernelScanBuilder(SnapshotImpl snapshot) {
     // TODO: pass converted schema.
-    this.kernelScanBuilder = snapshot.getScanBuilder();
-    this.readSchema = SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema());
+    requireNonNull(snapshot, "snapshot is null");
+    this.kernelScanBuilder =
+        requireNonNull(snapshot.getScanBuilder(), "snapshot returns null scam builder");
+    this.readSchema =
+        requireNonNull(
+            SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema()),
+            "read schema is null");
   }
 
   @Override
