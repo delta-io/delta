@@ -29,7 +29,6 @@ import io.delta.kernel.transaction.CreateTableTransactionBuilder;
 import io.delta.kernel.transaction.DataLayoutSpec;
 import io.delta.kernel.types.StructType;
 import java.util.*;
-import java.util.stream.Collectors;
 
 public class CreateTableTransactionBuilderImpl implements CreateTableTransactionBuilder {
 
