@@ -16,9 +16,7 @@
 package io.delta.kernel.internal;
 
 import static io.delta.kernel.internal.DeltaErrors.*;
-import static io.delta.kernel.internal.util.ColumnMapping.isColumnMappingModeEnabled;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
-import static java.util.Collections.emptyList;
 import static java.util.Collections.emptyMap;
 import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.toSet;
@@ -30,9 +28,6 @@ import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
-import io.delta.kernel.internal.util.ColumnMapping;
-import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
-import io.delta.kernel.internal.util.SchemaUtils;
 import io.delta.kernel.types.StructType;
 import java.util.*;
 import org.slf4j.Logger;
@@ -367,13 +362,6 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       checkArgument(
           !(partitionColumns.isPresent() && inputLogicalClusteringColumns.isPresent()),
           "Partition Columns and Clustering Columns cannot be set at the same time");
-
-      // New table verify the given schema and partition columns
-      ColumnMappingMode mappingMode =
-          ColumnMapping.getColumnMappingMode(tableProperties.orElse(emptyMap()));
-
-      SchemaUtils.validateSchema(schema.get(), isColumnMappingModeEnabled(mappingMode));
-      SchemaUtils.validatePartitionColumns(schema.get(), partitionColumns.orElse(emptyList()));
     }
 
     if (unsetTablePropertiesKeys.isPresent() && tableProperties.isPresent()) {
