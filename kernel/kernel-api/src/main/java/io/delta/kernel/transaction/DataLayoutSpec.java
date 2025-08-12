@@ -21,6 +21,7 @@ import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.expressions.Column;
 import java.util.Collections;
 import java.util.List;
+import java.util.stream.Collectors;
 
 /**
  * Specification for the data layout of a Delta table, including partitioning and clustering
@@ -40,11 +41,11 @@ import java.util.List;
 public class DataLayoutSpec {
 
   /**
-   * Creates an unpartitioned data layout specification.
+   * Creates data layout spec with no special layout.
    *
-   * @return A new {@link DataLayoutSpec} for an unpartitioned table.
+   * @return A new {@link DataLayoutSpec} with no special layout.
    */
-  public static DataLayoutSpec unpartitioned() {
+  public static DataLayoutSpec noDataLayout() {
     return new DataLayoutSpec(null, null);
   }
 
@@ -113,11 +114,11 @@ public class DataLayoutSpec {
   }
 
   /**
-   * Returns true if this is an unpartitioned layout.
+   * Returns true if this is a data layout spec with no special layout.
    *
-   * <p>An unpartitioned layout has neither partitioning nor clustering enabled.
+   * <p>This means it has neither partitioning nor clustering enabled.
    */
-  public boolean isUnpartitioned() {
+  public boolean hasNoDataLayoutSpec() {
     return !hasPartitioning() && !hasClustering();
   }
 
@@ -133,6 +134,18 @@ public class DataLayoutSpec {
           "Cannot get partition columns: partitioning is not enabled on this layout");
     }
     return Collections.unmodifiableList(partitionColumns);
+  }
+
+  /**
+   * Returns the partition columns for this layout as strings.
+   *
+   * @throws IllegalStateException if partitioning is not enabled on this layout. Use {@link
+   *     #hasPartitioning()} to check first.
+   */
+  public List<String> getPartitionColumnsAsStrings() {
+    return getPartitionColumns().stream()
+        .map(col -> col.getNames()[0])
+        .collect(Collectors.toList());
   }
 
   /**
