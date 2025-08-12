@@ -38,8 +38,8 @@ public class DeltaKernelScanTest extends SparkKernelDsv2TestBase {
     StructType expectedSparkSchema =
         DataTypes.createStructType(
             new StructField[] {
-              DataTypes.createStructField("id", DataTypes.IntegerType, true/*nullable*/),
-              DataTypes.createStructField("name", DataTypes.StringType, true/*nullable*/)
+              DataTypes.createStructField("id", DataTypes.IntegerType, true /*nullable*/),
+              DataTypes.createStructField("name", DataTypes.StringType, true /*nullable*/)
             });
 
     DeltaKernelScan scan =

@@ -26,18 +26,17 @@ import org.apache.spark.sql.types.StructType;
  */
 public class DeltaKernelScanBuilder implements org.apache.spark.sql.connector.read.ScanBuilder {
 
-  private final ScanBuilder scanBuilder;
+  private final ScanBuilder kernelScanBuilder;
   private final StructType readSchema;
 
   public DeltaKernelScanBuilder(SnapshotImpl snapshot) {
     // TODO: pass converted schema.
-    this.scanBuilder = snapshot.getScanBuilder();
+    this.kernelScanBuilder = snapshot.getScanBuilder();
     this.readSchema = SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema());
   }
 
   @Override
   public org.apache.spark.sql.connector.read.Scan build() {
-    // TODO: pass converted schema.
-    return new DeltaKernelScan(scanBuilder.build(), readSchema);
+    return new DeltaKernelScan(kernelScanBuilder.build(), readSchema);
   }
 }
