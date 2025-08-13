@@ -281,11 +281,9 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       assertMetadataProp(ver1Snapshot, TableConfig.CHECKPOINT_INTERVAL, 10)
 
       // Try to commit txn1 but expect failure
-      val ex1 = intercept[ConcurrentWriteException] {
+      intercept[MaxCommitRetryLimitReachedException] {
         txn1.commit(engine, emptyIterable())
       }
-      assert(
-        ex1.getMessage.contains("Transaction has encountered a conflict and can not be committed"))
 
       // check that we're still set to 10
       val ver2Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]

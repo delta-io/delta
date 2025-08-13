@@ -289,6 +289,160 @@ trait DeltaAlterTableTests extends DeltaAlterTableTestBase {
     }
   }
 
+  private def setProps(table: String, kvs: (String, String)*): Unit = {
+    val props = kvs.map { case (k, v) => s"'$k'='$v'" }.mkString(", ")
+    val sqlString = s"ALTER TABLE $table SET TBLPROPERTIES ($props)"
+    spark.sql(sqlString)
+  }
+
+  private def expectValidationError(f: => Unit): Unit = {
+    val ex = intercept[Exception](f)
+    assert(
+      (ex.getMessage.contains("delta.logRetentionDuration") &&
+      ex.getMessage.contains("delta.deletedFileRetentionDuration")) &&
+      (ex.getMessage.contains("needs to be greater than or equal to") ||
+        ex.getMessage.contains("needs to be less than or equal to"))
+    )
+  }
+
+  ///////////////////////////////
+  // logRetentionDuration and deletedFileRetentionDuration table property
+  // compatibility tests
+  ///////////////////////////////
+
+  // cases where validation succeeds
+  test("log > deleted (same units) succeeds") {
+    withDeltaTable("v1 int, v2 string") { t =>
+      setProps(t,
+        "delta.deletedFileRetentionDuration" -> "interval 7 days",
+        "delta.logRetentionDuration"         -> "interval 30 days"
+      )
+    }
+  }
+
+  test("log > deleted (different units) succeeds") {
+    withDeltaTable("v1 int, v2 string") { t =>
+      setProps(t,
+        "delta.deletedFileRetentionDuration" -> "interval 4 days",
+        "delta.logRetentionDuration"         -> "interval 120 hours"
+      )
+    }
+  }
+
+  test("log > deleted one after the other succeeds") {
+    withDeltaTable("v1 int, v2 string") { t =>
+      setProps(t,
+        "delta.deletedFileRetentionDuration" -> "interval 6 days"
+      )
+      setProps(t,
+        "delta.logRetentionDuration" -> "interval 10 days"
+      )
+    }
+  }
+
+  test("key case-insensitivity still succeeds") {
+    withDeltaTable("v1 int, v2 string") { t =>
+      setProps(t,
+        "delta.deletedFileRETENTIONDuration" -> "  interval 7 days ",
+        "delta.logRetentionDURATION"         -> " INTERVAL 30 DAYS "
+      )
+    }
+  }
+
+  test("equal durations shouldn't fail") {
+    withDeltaTable("v1 int, v2 string") { t =>
+        setProps(t,
+          "delta.deletedFileRetentionDuration" -> "interval 7 days",
+          "delta.logRetentionDuration"         -> "interval 1 week"
+        )
+    }
+  }
+
+  // cases where validation fails
+  test("log < deleted should fail") {
+    withDeltaTable("v1 int, v2 string") { t =>
+      expectValidationError(
+        setProps(t,
+          "delta.deletedFileRetentionDuration" -> "interval 10 days",
+          "delta.logRetentionDuration"         -> "interval 6 days"
+        )
+      )
+    }
+  }
+
+  test("sequence that becomes invalid (raise deleted above log) should fail") {
+    withDeltaTable("v1 int, v2 string") { t =>
+      setProps(t,
+        "delta.deletedFileRetentionDuration" -> "interval 7 days",
+        "delta.logRetentionDuration"         -> "interval 30 days"
+      )
+      expectValidationError(
+        setProps(t, "delta.deletedFileRetentionDuration" -> "interval 60 days")
+      )
+    }
+  }
+
+  test("default log vs explicit deleted that exceeds default should fail") {
+    withDeltaTable("v1 int, v2 string") { t =>
+      // default log 30 days; setting deleted to 45 should fail
+      expectValidationError(
+        setProps(t, "delta.deletedFileRetentionDuration" -> "interval 45 days")
+      )
+    }
+  }
+
+  test("default deletedRetention vs explicit log retention that exceeds default should fail") {
+    withDeltaTable("v1 int, v2 string") { t =>
+      // default deletedFileRetention 7 days; setting log to 5 should fail
+      expectValidationError(
+        setProps(t, "delta.logRetentionDuration" -> "interval 5 days")
+      )
+    }
+  }
+
+  test("key case-insensitivity still fails") {
+    withDeltaTable("v1 int, v2 string") { t =>
+      expectValidationError(
+        setProps(t,
+          "DELTA.DELETEDFILERETENTIONDURATION" -> "interval 14 days",
+          "delta.logRetentionDurATION"         -> "interval 7 days"
+        )
+      )
+    }
+  }
+
+  test("reset to defaults becomes valid") {
+    withDeltaTable("v1 int, v2 string") { t =>
+      // Start invalid
+      expectValidationError(
+        setProps(t,
+          "delta.deletedFileRetentionDuration" -> "interval 40 days",
+          "delta.logRetentionDuration"         -> "interval 30 days"
+        )
+      )
+      // Reset deleted; expect success if defaults are valid
+      spark.sql(s"ALTER TABLE $t UNSET TBLPROPERTIES ('delta.deletedFileRetentionDuration')")
+      // Now set log to something valid relative to default deleted (7d)
+      setProps(t, "delta.logRetentionDuration" -> "interval 30 days")
+    }
+  }
+
+  test("property values are invalid before. Setting an unrelated property shouldn't error out") {
+    withDeltaTable("v1 int, v2 string") { t =>
+      // Start invalid
+      withSQLConf(
+        DeltaSQLConf.ENFORCE_DELETED_FILE_AND_LOG_RETENTION_DURATION_COMPATIBILITY.key ->
+          false.toString) {
+        setProps(t,
+          "delta.deletedFileRetentionDuration" -> "interval 40 days",
+          "delta.logRetentionDuration" -> "interval 30 days"
+        )
+      }
+      // Now set unrelated table property
+      setProps(t, "delta.checkpointInterval" -> "100")
+    }
+  }
+
   ///////////////////////////////
   // ADD COLUMNS
   ///////////////////////////////

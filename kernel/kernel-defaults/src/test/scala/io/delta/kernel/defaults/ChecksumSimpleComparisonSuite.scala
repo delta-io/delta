@@ -112,7 +112,6 @@ trait ChecksumComparisonSuiteBase extends DeltaTableWriteSuiteBase with TestUtil
         metadata.getName,
         metadata.getDescription,
         metadata.getFormat,
-        metadata.getSchemaString,
         metadata.getSchema,
         metadata.getPartitionColumns,
         Optional.empty(),

@@ -342,7 +342,9 @@ trait CDCReaderImpl extends DeltaLogging {
       log"endingVersion: ${MDC(DeltaLogKeys.END_VERSION, endingVersionOpt.map(_.version))}")
 
     val startingSnapshot = snapshotToUse.deltaLog.getSnapshotAt(
-      startingVersion.version, catalogTableOpt = catalogTableOpt)
+      startingVersion.version,
+      catalogTableOpt = catalogTableOpt,
+      enforceTimeTravelWithinDeletedFileRetention = true)
     val columnMappingEnabledAtStartingVersion =
       startingSnapshot.metadata.columnMappingMode != NoMapping
 

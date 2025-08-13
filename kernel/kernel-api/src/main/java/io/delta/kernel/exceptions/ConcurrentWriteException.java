@@ -33,4 +33,8 @@ public class ConcurrentWriteException extends KernelException {
   public ConcurrentWriteException(String message) {
     super(message);
   }
+
+  public ConcurrentWriteException(String message, Throwable cause) {
+    super(message, cause);
+  }
 }

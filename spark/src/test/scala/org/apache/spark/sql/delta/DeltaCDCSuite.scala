@@ -21,6 +21,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 
 import scala.collection.JavaConverters._
+import scala.concurrent.duration._
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.DeltaTestUtils.{modifyCommitTimestamp, BOOLEAN_DOMAIN}
@@ -242,14 +243,15 @@ abstract class DeltaCDCSuiteBase
 
       // modify timestamps
       // version 0
-      modifyCommitTimestamp(deltaLog, 0, 0)
-      val tsAfterV0 = dateFormat.format(new Date(1))
+      val currentTime = System.currentTimeMillis() - 5.days.toMillis
+      modifyCommitTimestamp(deltaLog, 0, currentTime + 0)
+      val tsAfterV0 = dateFormat.format(new Date(currentTime + 1))
 
       // version 1
-      modifyCommitTimestamp(deltaLog, 1, 1000)
-      val tsAfterV1 = dateFormat.format(new Date(1001))
+      modifyCommitTimestamp(deltaLog, 1, currentTime + 1000)
+      val tsAfterV1 = dateFormat.format(new Date(currentTime + 2000))
 
-      modifyCommitTimestamp(deltaLog, 2, 2000)
+      modifyCommitTimestamp(deltaLog, 2, currentTime + 3000)
 
       val readDf = cdcRead(
         new TableName(tableName), StartingTimestamp(tsAfterV0), EndingTimestamp(tsAfterV1))
@@ -267,11 +269,12 @@ abstract class DeltaCDCSuiteBase
       createTblWithThreeVersions(tblName = Some(tableName))
       val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
 
-      modifyCommitTimestamp(deltaLog, 0, 0)
-      modifyCommitTimestamp(deltaLog, 1, 10000)
-      modifyCommitTimestamp(deltaLog, 2, 20000)
+      val currentTime = System.currentTimeMillis() - 5.days.toMillis
+      modifyCommitTimestamp(deltaLog, 0, currentTime + 0)
+      modifyCommitTimestamp(deltaLog, 1, currentTime + 10000)
+      modifyCommitTimestamp(deltaLog, 2, currentTime + 20000)
 
-      val ts0 = dateFormat.format(new Date(2000))
+      val ts0 = dateFormat.format(new Date(currentTime + 2000))
       val readDf = cdcRead(new TableName(tableName), StartingTimestamp(ts0), EndingVersion("1"))
       checkCDCAnswer(
         DeltaLog.forTable(spark, TableIdentifier(tableName)),
@@ -287,11 +290,12 @@ abstract class DeltaCDCSuiteBase
       createTblWithThreeVersions(tblName = Some(tableName))
       val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
 
-      modifyCommitTimestamp(deltaLog, 0, 0)
-      modifyCommitTimestamp(deltaLog, 1, 1000)
-      modifyCommitTimestamp(deltaLog, 2, 2000)
+      val currentTime = System.currentTimeMillis() - 5.days.toMillis
+      modifyCommitTimestamp(deltaLog, 0, currentTime + 0)
+      modifyCommitTimestamp(deltaLog, 1, currentTime + 1000)
+      modifyCommitTimestamp(deltaLog, 2, currentTime + 2000)
 
-      val ts0 = dateFormat.format(new Date(0))
+      val ts0 = dateFormat.format(new Date(currentTime + 0))
       val readDf = cdcRead(new TableName(tableName), StartingTimestamp(ts0), EndingVersion("1"))
       checkCDCAnswer(
         DeltaLog.forTable(spark, TableIdentifier(tableName)),
@@ -345,12 +349,13 @@ abstract class DeltaCDCSuiteBase
       createTblWithThreeVersions(tblName = Some(tableName))
       val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
 
-      modifyCommitTimestamp(deltaLog, 0, 0)
-      modifyCommitTimestamp(deltaLog, 1, 4000)
-      modifyCommitTimestamp(deltaLog, 2, 8000)
+      val currentTime = System.currentTimeMillis() - 5.days.toMillis
+      modifyCommitTimestamp(deltaLog, 0, currentTime + 0)
+      modifyCommitTimestamp(deltaLog, 1, currentTime + 4000)
+      modifyCommitTimestamp(deltaLog, 2, currentTime + 8000)
 
-      val ts0 = dateFormat.format(new Date(3000))
-      val ts1 = dateFormat.format(new Date(5000))
+      val ts0 = dateFormat.format(new Date(currentTime + 3000))
+      val ts1 = dateFormat.format(new Date(currentTime + 5000))
       val readDf = cdcRead(new TableName(tableName), StartingTimestamp(ts0), EndingTimestamp(ts1))
       checkCDCAnswer(
         DeltaLog.forTable(spark, TableIdentifier(tableName)),
@@ -421,6 +426,13 @@ abstract class DeltaCDCSuiteBase
       createTblWithThreeVersions(tblName = Some(tblName))
 
       val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tblName))
+      val largeRetentionHours = 2 * System.currentTimeMillis().millis.toHours
+      // Set the deletedFileRetentionDuration and logRetentionDuration to a large value so that
+      // older versions can be accessed
+      spark.sql(s"ALTER TABLE $tblName SET TBLPROPERTIES" +
+        s" ('delta.deletedFileRetentionDuration' = 'interval $largeRetentionHours HOURS'," +
+        s"'delta.logRetentionDuration' = 'interval $largeRetentionHours HOURS')")
+
 
       // Set commit time during Daylight savings time change.
       val restoreDate = "2022-11-06 01:42:44"
@@ -791,18 +803,19 @@ abstract class DeltaCDCSuiteBase
         createTblWithThreeVersions(tblName = Some(tableName))
         val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
 
+        val currentTime = System.currentTimeMillis() - 5.days.toMillis
         // modify timestamps
         // version 0
-        modifyCommitTimestamp(deltaLog, 0, 0)
+        modifyCommitTimestamp(deltaLog, 0, currentTime + 0)
 
         // version 1
-        modifyCommitTimestamp(deltaLog, 1, 1000)
+        modifyCommitTimestamp(deltaLog, 1, currentTime + 1000)
 
         // version 2
-        modifyCommitTimestamp(deltaLog, 2, 2000)
+        modifyCommitTimestamp(deltaLog, 2, currentTime + 2000)
 
-        val tsStart = dateFormat.format(new Date(0))
-        val tsEnd = dateFormat.format(new Date(4000))
+        val tsStart = dateFormat.format(new Date(currentTime + 0))
+        val tsEnd = dateFormat.format(new Date(currentTime + 4000))
 
         val readDf = cdcRead(
           new TableName(tableName), StartingTimestamp(tsStart), EndingTimestamp(tsEnd))
@@ -1038,6 +1051,7 @@ class DeltaCDCScalaSuite extends DeltaCDCSuiteBase {
   test("non-monotonic timestamps") {
     withTempTable(createTable = false) { tableName =>
       var deltaLog: DeltaLog = null
+      val currentTime = System.currentTimeMillis() - 5.days.toMillis
       (0 to 3).foreach { i =>
         spark.range(i * 10, (i + 1) * 10).write.format("delta").mode("append")
           .saveAsTable(tableName)
@@ -1045,7 +1059,7 @@ class DeltaCDCScalaSuite extends DeltaCDCSuiteBase {
           deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
         }
         val file = new File(FileNames.unsafeDeltaFile(deltaLog.logPath, i).toUri)
-        file.setLastModified(300 - i)
+        file.setLastModified(currentTime + 300 - i)
       }
 
       checkCDCAnswer(

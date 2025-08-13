@@ -15,44 +15,94 @@
  */
 package io.delta.spark.dsv2;
 
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.*;
 
+import java.io.File;
+import java.util.Arrays;
+import java.util.List;
+import java.util.UUID;
 import org.apache.spark.SparkConf;
-import org.apache.spark.sql.SparkSession;
-import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Test;
+import org.apache.spark.sql.*;
+import org.junit.jupiter.api.*;
+import org.junit.jupiter.api.io.TempDir;
 
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public class Dsv2BasicTest {
 
-  private static SparkSession spark;
+  private SparkSession spark;
+  private String nameSpace;
 
   @BeforeAll
-  public static void setUp() {
+  public void setUp(@TempDir File tempDir) {
+    // Spark doesn't allow '-'
+    nameSpace = "ns_" + UUID.randomUUID().toString().replace('-', '_');
     SparkConf conf =
         new SparkConf()
             .set("spark.sql.catalog.dsv2", "io.delta.spark.dsv2.catalog.TestCatalog")
+            .set("spark.sql.catalog.dsv2.base_path", tempDir.getAbsolutePath())
             .setMaster("local[*]")
             .setAppName("Dsv2BasicTest");
     spark = SparkSession.builder().config(conf).getOrCreate();
   }
 
   @AfterAll
-  public static void tearDown() {
+  public void tearDown() {
     if (spark != null) {
       spark.stop();
-      spark = null;
     }
   }
 
   @Test
-  public void loadTableTest() {
-    Exception exception =
-        assertThrows(
-            Exception.class, () -> spark.sql("select * from dsv2.test_namespace.test_table"));
+  public void testCreateTable() {
+    spark.sql(
+        String.format(
+            "CREATE TABLE dsv2.%s.create_table_test (id INT, name STRING, value DOUBLE)",
+            nameSpace));
 
-    assertTrue(exception instanceof UnsupportedOperationException);
-    assertTrue(exception.getMessage().contains("loadTable method is not implemented"));
+    Dataset<Row> actual =
+        spark.sql(String.format("DESCRIBE TABLE dsv2.%s.create_table_test", nameSpace));
+
+    List<Row> expectedRows =
+        Arrays.asList(
+            RowFactory.create("id", "int", null),
+            RowFactory.create("name", "string", null),
+            RowFactory.create("value", "double", null));
+    assertDatasetEquals(actual, expectedRows);
+  }
+
+  @Test
+  public void testBatchRead() {
+    spark.sql(
+        String.format(
+            "CREATE TABLE dsv2.%s.batch_read_test (id INT, name STRING, value DOUBLE)", nameSpace));
+    AnalysisException e =
+        assertThrows(
+            AnalysisException.class,
+            () -> spark.sql(String.format("SELECT * FROM dsv2.%s.batch_read_test", nameSpace)));
+    // TODO: update when implementing SupportReads
+    assertTrue(e.getMessage().contains("does not support batch scan"));
+  }
+
+  @Test
+  public void testQueryTableNotExist() {
+    AnalysisException e =
+        assertThrows(
+            AnalysisException.class,
+            () -> spark.sql(String.format("SELECT * FROM dsv2.%s.not_found_test", nameSpace)));
+    assertEquals(
+        "TABLE_OR_VIEW_NOT_FOUND",
+        e.getErrorClass(),
+        "Missing table should raise TABLE_OR_VIEW_NOT_FOUND");
+  }
+
+  //////////////////////
+  // Private helpers //
+  /////////////////////
+  private void assertDatasetEquals(Dataset<Row> actual, List<Row> expectedRows) {
+    List<Row> actualRows = actual.collectAsList();
+    assertEquals(
+        expectedRows,
+        actualRows,
+        () -> "Datasets differ: expected=" + expectedRows + "\nactual=" + actualRows);
   }
 }

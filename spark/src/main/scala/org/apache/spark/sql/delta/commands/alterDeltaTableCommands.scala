@@ -326,7 +326,7 @@ case class AlterTableDropFeatureDeltaCommand(
     // Check whether the protocol contains the feature in either the writer features list or
     // the reader+writer features list. Note, protocol needs to denormalized to allow dropping
     // features from legacy protocols.
-    val protocol = table.deltaLog.update(catalogTableOpt = table.catalogTable).protocol
+    val protocol = table.update().protocol
     val protocolContainsFeatureName =
       protocol.implicitlyAndExplicitlySupportedFeatures.map(_.name).contains(featureName)
     val featureInLowerCase = featureName.toLowerCase(Locale.ROOT)
@@ -396,11 +396,13 @@ case class AlterTableDropFeatureDeltaCommand(
       // c) Undoing (b) should cause the preDowngrade command to fail.
       //
       // Note, for features that cannot be disabled we solely rely for correctness on
-      // validateRemoval.
+      // isSnapshotClean.
       val requiresHistoryValidation = removableFeature.requiresHistoryProtection
       val startTimeNs = table.deltaLog.clock.nanoTime()
-      val preDowngradeMadeChanges =
-        removableFeature.preDowngradeCommand(table).removeFeatureTracesIfNeeded(sparkSession)
+      val status = removableFeature
+        .preDowngradeCommand(table)
+        .removeFeatureTracesIfNeeded(sparkSession)
+      val preDowngradeMadeChanges = status.performedChanges
       if (requiresHistoryValidation) {
         // Generate a checkpoint after the cleanup that is based on commits that do not use
         // the feature. This intends to help slow-moving tables to qualify for history truncation
@@ -418,13 +420,14 @@ case class AlterTableDropFeatureDeltaCommand(
         }
       }
 
-      val txn = table.startTransaction()
+      val startSnapshotOpt = status.lastCommitVersionOpt.map(deltaLog.getSnapshotAt(_))
+      val txn = table.startTransaction(snapshotOpt = startSnapshotOpt)
       val snapshot = txn.snapshot
 
       // Verify whether all requirements hold before performing the protocol downgrade.
       // If any concurrent transactions interfere with the protocol downgrade txn we
       // revalidate the requirements against the snapshot of the winning txn.
-      if (!removableFeature.validateRemoval(snapshot)) {
+      if (!removableFeature.validateDropInvariants(table, snapshot)) {
         throw DeltaErrors.dropTableFeatureConflictRevalidationFailed()
       }
 
@@ -440,6 +443,7 @@ case class AlterTableDropFeatureDeltaCommand(
         // cleanUpExpiredLogs call truncates the cutoff at a minute granularity.
         deltaLog.cleanUpExpiredLogs(
           snapshotToCleanup = snapshot,
+          catalogTableOpt = table.catalogTable,
           deltaRetentionMillisOpt =
             if (truncateHistory) Some(truncateHistoryLogRetentionMillis(txn.metadata)) else None,
           cutoffTruncationGranularity =
@@ -447,6 +451,7 @@ case class AlterTableDropFeatureDeltaCommand(
 
         val historyContainsFeature = removableFeature.historyContainsFeature(
           spark = sparkSession,
+          table = table,
           downgradeTxnReadSnapshot = snapshot)
         if (historyContainsFeature) {
           throw DeltaErrors.dropTableFeatureHistoricalVersionsExist(featureName, snapshot.metadata)
@@ -504,7 +509,9 @@ case class AlterTableDropFeatureDeltaCommand(
     val deltaLog = table.deltaLog
     recordDeltaOperation(deltaLog, "delta.ddl.alter.dropFeatureWithCheckpointProtection") {
       var startTimeNs = System.nanoTime()
-      removableFeature.preDowngradeCommand(table).removeFeatureTracesIfNeeded(sparkSession)
+      val status = removableFeature
+        .preDowngradeCommand(table)
+        .removeFeatureTracesIfNeeded(sparkSession)
 
       // Create and validate the barrier checkpoints. The checkpoint are created on top of
       // empty commits. However, this is not guaranteed. Other txns might interleave the empty
@@ -526,13 +533,14 @@ case class AlterTableDropFeatureDeltaCommand(
         }
       }
 
-      val txn = table.startTransaction()
+      val startSnapshotOpt = status.lastCommitVersionOpt.map(deltaLog.getSnapshotAt(_))
+      val txn = table.startTransaction(snapshotOpt = startSnapshotOpt)
       val snapshot = txn.snapshot
 
       // Verify whether all requirements hold before performing the protocol downgrade.
       // If any concurrent transactions interfere with the protocol downgrade txn we
       // revalidate the requirements against the snapshot of the winning txn.
-      if (!removableFeature.validateRemoval(snapshot)) {
+      if (!removableFeature.validateDropInvariants(table, snapshot)) {
         throw DeltaErrors.dropTableFeatureConflictRevalidationFailed()
       }
       val metadataWithNewConfiguration = DropTableFeatureUtils

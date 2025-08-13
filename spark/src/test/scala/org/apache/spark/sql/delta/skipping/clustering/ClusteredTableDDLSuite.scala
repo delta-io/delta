@@ -1289,6 +1289,7 @@ class ClusteredTableDDLDataSourceV2NameColumnMappingSuite
     with ClusteredTableDDLSuite
 
 class ClusteredTableDDLDataSourceV2WithCatalogOwnedBatch100Suite
-    extends ClusteredTableDDLDataSourceV2Suite {
-  override val catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
+  extends ClusteredTableDDLDataSourceV2Suite {
+
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }

@@ -183,7 +183,10 @@ class DeltaTableV2 private[delta](
         "queriedVersion" -> version,
         "accessType" -> accessType
       ))
-      deltaLog.getSnapshotAt(version, catalogTableOpt = catalogTable)
+      deltaLog.getSnapshotAt(
+        version,
+        catalogTableOpt = catalogTable,
+        enforceTimeTravelWithinDeletedFileRetention = true)
     }.getOrElse(
       deltaLog.update(
         stalenessAcceptable = true,

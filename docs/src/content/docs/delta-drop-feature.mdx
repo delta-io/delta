@@ -8,7 +8,10 @@ import { Tabs, TabItem, Aside } from "@astrojs/starlight/components";
 This article describes how to drop Delta Lake table features and downgrade protocol versions.
 
 <Aside type="note">
-  This feature is available in Delta Lake 4.0.0 and above. A legacy implementation of the feature is available since Delta Lake 3.0.0. Not all Delta table features can be dropped. See [What Delta table features can be dropped?](#what-delta-table-features-can-be-dropped)
+  This feature is available in Delta Lake 4.0.0 and above. A legacy
+  implementation of the feature is available since Delta Lake 3.0.0. Not all
+  Delta table features can be dropped. See [What Delta table features can be
+  dropped?](#what-delta-table-features-can-be-dropped)
 </Aside>
 
 You should only use this functionality to support compatibility with earlier Delta Lake versions, Delta Sharing, or other Delta Lake reader or writer clients.
@@ -21,7 +24,7 @@ To remove a Delta table feature, you run an `ALTER TABLE <table-name> DROP FEATU
 
 You can drop the following Delta table features:
 
-- `deletionVectors`. See [What are deletion vectors?](/delta-deletion-vectors/).
+- `deletionVectors`. See [What are deletion vectors?](/delta-deletion-vectors/). Drop support for deletion vectors is available in Delta Lake 4.0.0 and above.
 - `typeWidening-preview`. See [Delta type widening](/delta-type-widening/). Type widening is available in preview in Delta Lake 3.2.0 and above.
 - `typeWidening`. See [Delta type widening](/delta-type-widening/). Type widening is available in preview in Delta Lake 4.0.0 and above.
 - `v2Checkpoint`. See [V2 Checkpoint Spec](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#v2-spec). Drop support for V2 Checkpoints is available in Delta Lake 3.1.0 and above.

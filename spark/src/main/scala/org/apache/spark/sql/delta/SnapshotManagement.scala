@@ -24,6 +24,7 @@ import java.util.concurrent.locks.ReentrantLock
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
+import scala.concurrent.duration._
 import scala.util.control.NonFatal
 
 // scalastyle:off import.ordering.noEmptyLine
@@ -1410,12 +1411,14 @@ trait SnapshotManagement { self: DeltaLog =>
   def getSnapshotAt(
       version: Long,
       lastCheckpointHint: Option[CheckpointInstance] = None,
-      catalogTableOpt: Option[CatalogTable] = None): Snapshot = {
+      catalogTableOpt: Option[CatalogTable] = None,
+      enforceTimeTravelWithinDeletedFileRetention: Boolean = false): Snapshot = {
     getSnapshotAt(
       version,
       lastCheckpointHint,
       lastCheckpointProvider = None,
-      catalogTableOpt)
+      catalogTableOpt,
+      enforceTimeTravelWithinDeletedFileRetention)
   }
 
   /**
@@ -1426,7 +1429,8 @@ trait SnapshotManagement { self: DeltaLog =>
       version: Long,
       lastCheckpointHint: Option[CheckpointInstance],
       lastCheckpointProvider: Option[CheckpointProvider],
-      catalogTableOpt: Option[CatalogTable]): Snapshot = {
+      catalogTableOpt: Option[CatalogTable],
+      enforceTimeTravelWithinDeletedFileRetention: Boolean): Snapshot = {
 
     // See if the version currently cached on the cluster satisfies the requirement
     val currentSnapshot = unsafeVolatileSnapshot
@@ -1471,11 +1475,42 @@ trait SnapshotManagement { self: DeltaLog =>
         Some(version),
         getCheckpointVersion(lastCheckpointInfoOpt, lastCheckpointProviderOpt))
     }
-    createSnapshot(
+    val ret = createSnapshot(
       initSegment = logSegment,
       tableCommitCoordinatorClientOpt = commitCoordinatorOpt,
       catalogTableOpt = catalogTableOpt,
       checksumOpt = None)
+
+    if (enforceTimeTravelWithinDeletedFileRetention) {
+      enforceTimeTravelWithinDeletedFileRetentionDuration(ret, currentSnapshot)
+    }
+    ret
+  }
+
+  private def enforceTimeTravelWithinDeletedFileRetentionDuration(
+    targetSnapshot: Snapshot, latestSnapshot: Snapshot): Unit = {
+    if (!SparkSession.active.sessionState.conf.getConf(
+      DeltaSQLConf.ENFORCE_TIME_TRAVEL_WITHIN_DELETED_FILE_RETENTION_DURATION)) {
+      return
+    }
+
+    // Time travel to the latest version is always allowed
+    if (targetSnapshot.version == latestSnapshot.version) return
+
+    val deletedFileRetentionDuration = DeltaLog.tombstoneRetentionMillis(latestSnapshot.metadata)
+    val currentTime = clock.getTimeMillis()
+    if (targetSnapshot.timestamp < (currentTime - deletedFileRetentionDuration)) {
+      recordDeltaEvent(this, s"delta.timeTravel.fail", data = Map(
+        // Log the cached version of the table on the cluster
+        "latestVersion" -> latestSnapshot.version,
+        "queriedVersion" -> targetSnapshot.version,
+        "currentTimestamp" -> currentTime,
+        "targetSnapshotTimestamp" -> targetSnapshot.timestamp,
+        "deletedFileRetentionDuration" -> deletedFileRetentionDuration
+      ))
+      throw DeltaErrors.timeTravelBeyondDeletedFileRetentionDurationException(
+        deletedFileRetentionDuration.millis.toHours.toString)
+    }
   }
 
   // Populate commit coordinator using catalogOpt if the snapshot is catalog owned.

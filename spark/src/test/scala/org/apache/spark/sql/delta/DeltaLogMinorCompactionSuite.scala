@@ -465,14 +465,6 @@ class DeltaLogMinorCompactionSuite extends QueryTest
               .map {
                 case r: RemoveFile if r.deletionTimestamp.isDefined =>
                   r.copy(deletionTimestamp = None)
-                case ci: CommitInfo =>
-                  // The operationParameters were serialized with JsonMapSerializer but there
-                  // were no corresponding JsonMapDeserializer when reading them back,
-                  // so need to do this step to ensure they can be serialized again.
-                  val parameters = Option(ci.operationParameters)
-                    .map(_.mapValues(JsonUtils.toJson(_)).toMap)
-                    .orNull
-                  ci.copy(operationParameters = parameters)
                 case other => other
               }
               .map(_.json)

@@ -76,7 +76,7 @@ public class SnapshotBuilderImpl implements SnapshotBuilder {
   }
 
   @Override
-  public SnapshotBuilder withCommitter(Committer committer) {
+  public SnapshotBuilderImpl withCommitter(Committer committer) {
     ctx.committerOpt = Optional.of(requireNonNull(committer, "committer is null"));
     return this;
   }

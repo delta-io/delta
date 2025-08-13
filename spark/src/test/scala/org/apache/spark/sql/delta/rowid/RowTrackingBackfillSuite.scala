@@ -43,7 +43,7 @@ case class FailingRowTrackingBackfillBatch(filesInBatch: Seq[AddFile])
   override def prepareFilesAndCommit(
       spark: SparkSession,
       txn: OptimisticTransaction,
-      batchId: Int): Unit = {
+      batchId: Int): Long = {
     throw new IllegalStateException("mock exception for test")
   }
 }

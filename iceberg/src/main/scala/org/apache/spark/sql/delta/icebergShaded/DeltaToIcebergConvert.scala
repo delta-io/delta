@@ -36,7 +36,10 @@ import org.apache.spark.sql.catalyst.util.ResolveDefaultColumns.CURRENT_DEFAULT_
 import org.apache.spark.sql.types._
 import org.apache.spark.unsafe.types.CalendarInterval
 
-class DeltaToIcebergConvert(val snapshot: SnapshotDescriptor, val catalogTable: CatalogTable) {
+/**
+ * Generate Iceberg table metadata (schema, partition, etc.) from a Delta [[Snapshot]]
+ */
+class DeltaToIcebergConverter(val snapshot: SnapshotDescriptor, val catalogTable: CatalogTable) {
 
   private val schemaUtils: IcebergSchemaUtils =
     IcebergSchemaUtils(snapshot.metadata.columnMappingMode == NoMapping)
@@ -52,6 +55,9 @@ class DeltaToIcebergConvert(val snapshot: SnapshotDescriptor, val catalogTable: 
 
   val partition: PartitionSpec = IcebergTransactionUtils
     .createPartitionSpec(schema, snapshot.metadata.partitionColumns)
+
+  val properties: Map[String, String] =
+    DeltaToIcebergConvert.TableProperties(snapshot.metadata.configuration)
 }
 /**
  * Utils for converting a Delta Table to Iceberg Table
@@ -162,7 +168,8 @@ object DeltaToIcebergConvert
     }
   }
 
-  object TableProperties {
+  object TableProperties
+  {
     /**
      * We generate Iceberg Table properties from Delta table properties
      * using two methods.
@@ -182,10 +189,9 @@ object DeltaToIcebergConvert
           .map { case (key, value) => key.stripPrefix(prefix) -> value }
           .toSeq
           .toMap
-
       val computers = Seq(FormatVersionComputer, RetentionPeriodComputer)
       val computed: Map[String, String] = computers
-        .map(_.apply(deltaProperties, copiedFromDelta))
+        .map(_.apply(deltaProperties ++ copiedFromDelta))
         .reduce((a, b) => a ++ b)
 
       copiedFromDelta ++ computed
@@ -194,21 +200,15 @@ object DeltaToIcebergConvert
     private trait IcebergPropertiesComputer {
       /**
        * Compute Iceberg properties from Delta properties.
-       * @param deltaProperties Delta properties
-       * @param provided User-provided Iceberg properties
-       * @return computed Iceberg properties
        */
-      def apply(
-          deltaProperties: Map[String, String],
-          provided: Map[String, String]): Map[String, String]
+      def apply(deltaProperties: Map[String, String]): Map[String, String]
     }
 
     /**
      * Compute Iceberg FORMAT_VERSION from IcebergCompat
      */
     private object FormatVersionComputer extends IcebergPropertiesComputer {
-      override def apply(deltaProperties: Map[String, String],
-                           provided: Map[String, String]): Map[String, String] =
+      override def apply(deltaProperties: Map[String, String]): Map[String, String] =
         IcebergCompat
           .anyEnabled(deltaProperties)
           .map(IcebergTableProperties.FORMAT_VERSION -> _.icebergFormatVersion.toString)
@@ -222,9 +222,7 @@ object DeltaToIcebergConvert
      * value is no larger than Delta's retention.
      */
     private object RetentionPeriodComputer extends IcebergPropertiesComputer {
-      override def apply(deltaProperties: Map[String, String],
-                           provided: Map[String, String]): Map[String, String] = {
-
+      override def apply(deltaProperties: Map[String, String]): Map[String, String] = {
         def getAsMilliSeconds(conf: DeltaConfig[CalendarInterval],
                               properties: Map[String, String],
                               useDefault: Boolean = false): Option[Long] =
@@ -247,16 +245,17 @@ object DeltaToIcebergConvert
           getAsMilliSeconds(LOG_RETENTION, deltaProperties, useDefault = true).get min
           getAsMilliSeconds(TOMBSTONE_RETENTION, deltaProperties, useDefault = true).get
 
-        provided.get(IcebergTableProperties.MAX_SNAPSHOT_AGE_MS).foreach { providedRetention =>
-          if (providedRetention.toLong > maxAllowedRetention) {
-            throw new IllegalArgumentException(
-              s"Uniform iceberg's ${IcebergTableProperties.MAX_SNAPSHOT_AGE_MS} should be set >= " +
-                s" min of delta's ${LOG_RETENTION.key} and" +
-                s" ${TOMBSTONE_RETENTION.key}." +
-                s" Current delta retention min in MS: $maxAllowedRetention," +
-                s" Proposed iceberg retention in Ms: $providedRetention")
+        deltaProperties.get(IcebergTableProperties.MAX_SNAPSHOT_AGE_MS)
+          .foreach { providedRetention =>
+            if (providedRetention.toLong > maxAllowedRetention) {
+              throw new IllegalArgumentException(
+                s"""Uniform iceberg's ${IcebergTableProperties.MAX_SNAPSHOT_AGE_MS} should be
+                    | no less than the min of delta's ${LOG_RETENTION.key} and
+                    | ${TOMBSTONE_RETENTION.key}.
+                    | Current delta retention min in MS: $maxAllowedRetention.
+                    | Proposed iceberg retention in Ms: $providedRetention""".stripMargin)
+            }
           }
-        }
 
         deltaRetention
           .filter(_ < IcebergTableProperties.MAX_SNAPSHOT_AGE_MS_DEFAULT)

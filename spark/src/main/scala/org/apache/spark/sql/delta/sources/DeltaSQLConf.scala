@@ -540,6 +540,13 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_VACUUM_RETENTION_WINDOW_IGNORE_ENABLED =
+    buildConf("vacuum.retentionWindowIgnore.enabled")
+      .internal()
+      .doc("When set, retention window as part of Vacuum will be ignored unless the value is 0")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_HISTORY_MANAGER_THREAD_POOL_SIZE =
     buildConf("history.threadPoolSize")
       .internal()
@@ -548,6 +555,13 @@ trait DeltaSQLConfBase {
       .intConf
       .checkValue(_ > 0, "history.threadPoolSize must be positive")
       .createWithDefault(10)
+
+  val ENFORCE_TIME_TRAVEL_WITHIN_DELETED_FILE_RETENTION_DURATION =
+    buildConf("vacuum.enforceTimeTravelWithinDeletedFileRetentionDuration")
+      .internal()
+      .doc("Enforces time travel within delta.deletedFileRetentionDuration.")
+      .booleanConf
+      .createWithDefault(true)
 
   val DELTA_VACUUM_LOGGING_ENABLED =
     buildConf("vacuum.logging.enabled")
@@ -585,6 +599,13 @@ trait DeltaSQLConfBase {
       .intConf
       .checkValue(_ > 0, "parallelDelete.parallelism must be positive")
       .createOptional
+
+  val ENFORCE_DELETED_FILE_AND_LOG_RETENTION_DURATION_COMPATIBILITY =
+    buildConf("vacuum.enforceDeletedFileAndLogRetentionDurationCompatibility")
+      .internal()
+      .doc("Throws an error if log retention duration is less than deletedFileRetentionDuration")
+      .booleanConf
+      .createWithDefault(true)
 
   val DELTA_SCHEMA_AUTO_MIGRATE =
     buildConf("schema.autoMerge.enabled")
@@ -1706,14 +1727,6 @@ trait DeltaSQLConfBase {
       .internal()
       .booleanConf
       .createWithDefault(true)
-
-  val DELTA_CONVERT_ICEBERG_UNSAFE_MOR_TABLE_ENABLE =
-    buildConf("convert.iceberg.unsafeConvertMorTable.enabled")
-      .doc("If enabled, iceberg merge-on-read tables can be unsafely converted by ignoring " +
-        "deletion files. This could cause data duplication and is strongly not recommended.")
-      .internal()
-      .booleanConf
-      .createWithDefault(false)
 
   val DELTA_CONVERT_ICEBERG_CAST_TIME_TYPE = {
     buildConf("convert.iceberg.castTimeType")

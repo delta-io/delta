@@ -819,7 +819,7 @@ object DeltaLog extends DeltaLogging {
   /** Helper for creating a log for the table. */
   def forTable(spark: SparkSession, tableName: TableIdentifier, clock: Clock): DeltaLog = {
     if (DeltaTableIdentifier.isDeltaPath(spark, tableName)) {
-      forTable(spark, new Path(tableName.table))
+      forTable(spark, new Path(tableName.table), clock)
     } else {
       forTable(spark, spark.sessionState.catalog.getTableMetadata(tableName), clock)
     }
