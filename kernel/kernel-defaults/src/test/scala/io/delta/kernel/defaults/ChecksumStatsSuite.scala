@@ -21,6 +21,7 @@ import scala.jdk.CollectionConverters.{asJavaIteratorConverter, mapAsJavaMapConv
 
 import io.delta.kernel.{Table, Transaction, TransactionCommitResult}
 import io.delta.kernel.data.Row
+import io.delta.kernel.defaults.utils.WriteUtils
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
 import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl, TableConfig, TableImpl}

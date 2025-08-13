@@ -24,7 +24,7 @@ import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.Table
 import io.delta.kernel.data.ColumnarBatch
 import io.delta.kernel.data.Row
-import io.delta.kernel.defaults.utils.TestUtils
+import io.delta.kernel.defaults.utils.{TestUtils, WriteUtils}
 import io.delta.kernel.exceptions.{KernelException, TableNotFoundException}
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction

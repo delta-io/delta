@@ -19,6 +19,7 @@ import scala.collection.JavaConverters._
 import scala.collection.immutable.Seq
 
 import io.delta.kernel.Table
+import io.delta.kernel.defaults.utils.{AbstractWriteUtils, WriteUtils}
 import io.delta.kernel.exceptions.{KernelException, UnknownConfigurationException}
 import io.delta.kernel.internal.{SnapshotImpl, TableConfig}
 import io.delta.kernel.utils.CloseableIterable.emptyIterable

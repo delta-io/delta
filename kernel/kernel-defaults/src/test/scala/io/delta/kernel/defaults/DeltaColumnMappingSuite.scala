@@ -19,6 +19,7 @@ import scala.collection.JavaConverters._
 import scala.collection.immutable.Seq
 
 import io.delta.kernel.Table
+import io.delta.kernel.defaults.utils.WriteUtils
 import io.delta.kernel.exceptions.InvalidConfigurationValueException
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.TableConfig

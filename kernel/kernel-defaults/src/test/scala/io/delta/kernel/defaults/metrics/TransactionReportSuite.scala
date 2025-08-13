@@ -22,7 +22,7 @@ import scala.collection.immutable.Seq
 
 import io.delta.kernel._
 import io.delta.kernel.data.Row
-import io.delta.kernel.defaults.WriteUtils
+import io.delta.kernel.defaults.utils.WriteUtils
 import io.delta.kernel.engine._
 import io.delta.kernel.expressions.{Column, Literal}
 import io.delta.kernel.internal.{TableConfig, TableImpl}

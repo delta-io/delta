@@ -22,6 +22,7 @@ import scala.jdk.CollectionConverters._
 
 import io.delta.kernel.{Operation, Table}
 import io.delta.kernel.Operation.CREATE_TABLE
+import io.delta.kernel.defaults.utils.WriteUtils
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.{InvalidConfigurationValueException, KernelException}
 import io.delta.kernel.expressions.Literal

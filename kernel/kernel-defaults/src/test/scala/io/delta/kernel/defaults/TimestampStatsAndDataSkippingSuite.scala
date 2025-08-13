@@ -25,6 +25,7 @@ import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
 import io.delta.kernel.defaults.internal.data.vector.DefaultGenericVector
 import io.delta.kernel.defaults.internal.parquet.ParquetSuiteBase
+import io.delta.kernel.defaults.utils.WriteUtils
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.util.JsonUtils
 import io.delta.kernel.types.{StructType, TimestampNTZType, TimestampType}

@@ -22,6 +22,7 @@ import scala.collection.immutable.Seq
 
 import io.delta.kernel.{Operation, Table, Transaction, TransactionCommitResult}
 import io.delta.kernel.data.Row
+import io.delta.kernel.defaults.utils.WriteUtils
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.expressions.Column

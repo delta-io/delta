@@ -25,7 +25,7 @@ import scala.jdk.CollectionConverters.setAsJavaSetConverter
 
 import io.delta.kernel.{Operation, Table}
 import io.delta.kernel.data.Row
-import io.delta.kernel.defaults.utils.TestUtils
+import io.delta.kernel.defaults.utils.{TestUtils, WriteUtils}
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
 import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction

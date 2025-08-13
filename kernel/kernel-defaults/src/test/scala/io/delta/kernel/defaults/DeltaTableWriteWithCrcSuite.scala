@@ -20,7 +20,7 @@ import scala.language.implicitConversions
 
 import io.delta.kernel.{Transaction, TransactionCommitResult}
 import io.delta.kernel.data.Row
-import io.delta.kernel.defaults.utils.TestRow
+import io.delta.kernel.defaults.utils.{TestRow, WriteUtils}
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
 import io.delta.kernel.internal.SnapshotImpl

@@ -23,11 +23,9 @@ import io.delta.kernel.PaginatedScanFilesIterator
 import io.delta.kernel.ScanBuilder
 import io.delta.kernel.data.FilteredColumnarBatch
 import io.delta.kernel.data.Row
-import io.delta.kernel.defaults.WriteUtils
 import io.delta.kernel.defaults.engine.{DefaultEngine, DefaultJsonHandler, DefaultParquetHandler}
 import io.delta.kernel.defaults.test.AbstractTableManagerAdapter
-import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestUtils}
-import io.delta.kernel.defaults.utils.TestUtilsWithTableManagerAPIs
+import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestUtils, TestUtilsWithTableManagerAPIs, WriteUtils}
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.hook.LogCompactionHook

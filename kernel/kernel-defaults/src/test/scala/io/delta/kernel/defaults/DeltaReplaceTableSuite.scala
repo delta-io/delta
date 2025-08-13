@@ -20,7 +20,7 @@ import scala.collection.immutable.Seq
 
 import io.delta.kernel.{Operation, Table, Transaction, TransactionBuilder, TransactionCommitResult}
 import io.delta.kernel.data.FilteredColumnarBatch
-import io.delta.kernel.defaults.utils.TestRow
+import io.delta.kernel.defaults.utils.{TestRow, WriteUtils}
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.{ConcurrentTransactionException, ConcurrentWriteException, KernelException, MaxCommitRetryLimitReachedException, TableNotFoundException}
 import io.delta.kernel.expressions.{Column, Literal}

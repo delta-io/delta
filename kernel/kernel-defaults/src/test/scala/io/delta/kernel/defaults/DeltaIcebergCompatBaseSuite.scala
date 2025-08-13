@@ -19,6 +19,7 @@ import scala.collection.JavaConverters._
 import scala.collection.immutable.Seq
 import scala.reflect.ClassTag
 
+import io.delta.kernel.defaults.utils.WriteUtils
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.TableConfig
 import io.delta.kernel.internal.tablefeatures.{TableFeature, TableFeatures}

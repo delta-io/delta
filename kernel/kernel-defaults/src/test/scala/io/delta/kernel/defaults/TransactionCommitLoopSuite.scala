@@ -24,6 +24,7 @@ import io.delta.kernel.Table
 import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.engine.{DefaultEngine, DefaultJsonHandler}
 import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO
+import io.delta.kernel.defaults.utils.WriteUtils
 import io.delta.kernel.engine.JsonHandler
 import io.delta.kernel.exceptions.{CommitStateUnknownException, MaxCommitRetryLimitReachedException}
 import io.delta.kernel.expressions.Literal

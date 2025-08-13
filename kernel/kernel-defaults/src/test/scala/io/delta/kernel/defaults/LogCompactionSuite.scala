@@ -20,7 +20,7 @@ import scala.collection.immutable.Seq
 
 import io.delta.kernel.Table
 import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO
-import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
+import io.delta.kernel.defaults.utils.{TestRow, TestUtils, WriteUtils}
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.SnapshotImpl
 import io.delta.kernel.internal.TableConfig
