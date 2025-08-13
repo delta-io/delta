@@ -19,6 +19,7 @@ import scala.jdk.CollectionConverters.seqAsJavaListConverter
 
 import io.delta.kernel.Table
 import io.delta.kernel.data.Row
+import io.delta.kernel.defaults.utils.WriteUtils
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.expressions.{Column, Literal}
 import io.delta.kernel.internal.{SnapshotImpl, TableImpl}
@@ -32,11 +33,12 @@ import org.apache.spark.sql.delta.actions.CommitInfo
 import org.apache.spark.sql.delta.test.DeltaTestImplicits.OptimisticTxnTestHelper
 
 import org.apache.hadoop.fs.Path
+import org.scalatest.funsuite.AnyFunSuite
 
 /**
  * Test suite for io.delta.kernel.internal.checksum.ChecksumUtils
  */
-class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase with LogReplayBaseSuite {
+class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseSuite {
 
   private def initialTestTable(tablePath: String, engine: Engine): Unit = {
     createEmptyTable(engine, tablePath, testSchema, clock = new ManualClock(0))

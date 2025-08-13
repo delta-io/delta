@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.defaults
+package io.delta.kernel.defaults.utils
 
 import java.io.File
 import java.nio.file.{Files, Paths}
@@ -24,22 +24,19 @@ import scala.collection.JavaConverters._
 import scala.collection.immutable.{ListMap, Seq}
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
-import io.delta.kernel.{Meta, Operation, Table, Transaction, TransactionBuilder, TransactionCommitResult}
-import io.delta.kernel.Operation.MANUAL_UPDATE
+import io.delta.kernel._
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector, FilteredColumnarBatch, Row}
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
-import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.expressions.{Column, Literal}
 import io.delta.kernel.expressions.Literal.ofInt
 import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
-import io.delta.kernel.internal.{ScanImpl, SnapshotImpl, TableConfig, TableImpl, TransactionImpl}
+import io.delta.kernel.internal._
 import io.delta.kernel.internal.actions.{DomainMetadata, Metadata, Protocol, SingleAction}
 import io.delta.kernel.internal.fs.{Path => DeltaPath}
-import io.delta.kernel.internal.util.{Clock, FileNames, VectorUtils}
+import io.delta.kernel.internal.util.{Clock, FileNames}
 import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
-import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
-import io.delta.kernel.internal.util.Utils.toCloseableIterator
+import io.delta.kernel.internal.util.Utils.{singletonCloseableIterator, toCloseableIterator}
 import io.delta.kernel.statistics.DataFileStatistics
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.StructType
@@ -52,12 +49,18 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
-import org.scalatest.funsuite.AnyFunSuite
+
+/** Default write utilities that use the V1 transaction builders. */
+trait WriteUtils extends AbstractWriteUtils with TransactionBuilderV1Support
 
 /**
- * Common utility methods for write test suites.
+ * Common utility methods for write test suites. For now, this includes mostly concrete
+ * implementations for the utilities. As we improve our test structure, we should move concrete
+ * implementations out of this class (like we have done for [[TransactionBuilderSupport]]). For
+ * example, `commitTransaction` could go into a [[TransactionCommitSupport]] trait since it is
+ * overridden in child suites.
  */
-trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
+trait AbstractWriteUtils extends TestUtils with TransactionBuilderSupport {
   val OBJ_MAPPER = new ObjectMapper()
   val testEngineInfo = "test-engine"
 
@@ -283,10 +286,6 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     batches.map(batch => new FilteredColumnarBatch(batch, Optional.empty()))
   }
 
-  def createWriteTxnBuilder(table: Table): TransactionBuilder = {
-    table.createTransactionBuilder(defaultEngine, testEngineInfo, Operation.WRITE)
-  }
-
   def stageData(
       state: Row,
       partitionValues: Map[String, Literal],
@@ -308,54 +307,6 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
         writeContext.getStatisticsColumns)
 
     Transaction.generateAppendActions(defaultEngine, state, writeResultIter, writeContext)
-  }
-
-  // scalastyle:off argcount
-  def createTxn(
-      engine: Engine = defaultEngine,
-      tablePath: String,
-      isNewTable: Boolean = false,
-      schema: StructType = null,
-      partCols: Seq[String] = null,
-      tableProperties: Map[String, String] = null,
-      clock: Clock = () => System.currentTimeMillis,
-      withDomainMetadataSupported: Boolean = false,
-      maxRetries: Int = -1,
-      clusteringColsOpt: Option[List[Column]] = None,
-      logCompactionInterval: Int = 10): Transaction = {
-    // scalastyle:on argcount
-
-    var txnBuilder = createWriteTxnBuilder(
-      TableImpl.forPath(engine, tablePath, clock))
-
-    if (isNewTable) {
-      txnBuilder = txnBuilder.withSchema(engine, schema)
-      if (partCols != null) {
-        txnBuilder = txnBuilder.withPartitionColumns(engine, partCols.asJava)
-      }
-    } else if (schema != null) {
-      txnBuilder = txnBuilder.withSchema(engine, schema)
-    }
-
-    if (clusteringColsOpt.isDefined) {
-      txnBuilder = txnBuilder.withClusteringColumns(engine, clusteringColsOpt.get.asJava)
-    }
-
-    if (tableProperties != null) {
-      txnBuilder = txnBuilder.withTableProperties(engine, tableProperties.asJava)
-    }
-
-    if (withDomainMetadataSupported) {
-      txnBuilder = txnBuilder.withDomainMetadataSupported()
-    }
-
-    if (maxRetries >= 0) {
-      txnBuilder = txnBuilder.withMaxRetries(maxRetries)
-    }
-
-    txnBuilder = txnBuilder.withLogCompactionInverval(logCompactionInterval)
-
-    txnBuilder.build(engine)
   }
 
   def createTxnWithDomainMetadatas(
@@ -418,7 +369,7 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       engine: Engine = defaultEngine,
       tablePath: String,
       schema: StructType,
-      partCols: Seq[String] = Seq.empty,
+      partCols: Seq[String] = null,
       clock: Clock = () => System.currentTimeMillis,
       tableProperties: Map[String, String] = null,
       clusteringColsOpt: Option[List[Column]] = None): TransactionCommitResult = {
@@ -543,8 +494,8 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
   def verifyCommitInfo(
       tablePath: String,
       version: Long,
-      partitionCols: Seq[String] = Seq.empty,
-      operation: Operation = MANUAL_UPDATE): Unit = {
+      partitionCols: Seq[String] = Seq.empty): Unit = {
+    val expectedOperation = if (version == 0) Operation.CREATE_TABLE else Operation.WRITE
     val row = spark.sql(s"DESCRIBE HISTORY delta.`$tablePath`")
       .filter(s"version = $version")
       .select(
@@ -563,7 +514,7 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     assert(!row.getAs[Boolean]("isBlindAppend"))
     assert(row.getAs[Seq[String]]("engineInfo") ===
       "Kernel-" + Meta.KERNEL_VERSION + "/" + testEngineInfo)
-    assert(row.getAs[String]("operation") === operation.getDescription)
+    assert(row.getAs[String]("operation") === expectedOperation.getDescription)
   }
 
   def verifyCommitResult(

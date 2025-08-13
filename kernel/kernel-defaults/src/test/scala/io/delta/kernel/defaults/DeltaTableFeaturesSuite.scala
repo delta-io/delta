@@ -22,6 +22,7 @@ import scala.jdk.CollectionConverters._
 
 import io.delta.kernel.{Operation, Table}
 import io.delta.kernel.Operation.CREATE_TABLE
+import io.delta.kernel.defaults.utils.WriteUtils
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.{InvalidConfigurationValueException, KernelException}
 import io.delta.kernel.expressions.Literal
@@ -36,10 +37,12 @@ import io.delta.kernel.utils.CloseableIterable.emptyIterable
 import org.apache.spark.sql.delta.{DeltaLog, DeltaTableFeatureException}
 import org.apache.spark.sql.delta.actions.Protocol
 
+import org.scalatest.funsuite.AnyFunSuite
+
 /**
  * Integration test suite for Delta table features.
  */
-class DeltaTableFeaturesSuite extends DeltaTableWriteSuiteBase {
+class DeltaTableFeaturesSuite extends AnyFunSuite with WriteUtils {
 
   ///////////////////////////////////////////////////////////////////////////
   // Tests for deletionVector, v2Checkpoint table features
