@@ -17,6 +17,7 @@ package io.delta.kernel.transaction;
 
 import io.delta.kernel.Transaction;
 import io.delta.kernel.annotation.Evolving;
+import io.delta.kernel.commit.Committer;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.utils.CloseableIterable;
 import java.util.Map;
@@ -60,6 +61,22 @@ public interface CreateTableTransactionBuilder {
   CreateTableTransactionBuilder withMaxRetries(int maxRetries);
 
   /**
+   * Provides a custom committer to use at transaction commit time.
+   *
+   * <p>Catalog implementations that wish to support the catalogManaged Delta table feature should
+   * provide to engines their own catalog-specific Committer implementation which may, for example,
+   * send a commit RPC to the catalog service to finalize the commit.
+   *
+   * <p>If no committer is provided, a default committer will be created that only supports writing
+   * into filesystem-managed Delta tables.
+   *
+   * @param committer the committer to use
+   * @return a new builder instance with the provided committer
+   * @see Committer
+   */
+  CreateTableTransactionBuilder withCommitter(Committer committer);
+
+  /**
    * Build the transaction for creating the Delta table.
    *
    * <p>This validates all the configuration and creates a {@link Transaction} that can be used to
@@ -70,6 +87,4 @@ public interface CreateTableTransactionBuilder {
    * @return A configured {@link Transaction} for creating the table.
    */
   Transaction build(Engine engine);
-
-  // TODO: add withCommitter(Committer committer) method to pass to the transaction
 }
