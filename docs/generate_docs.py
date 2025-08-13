@@ -27,12 +27,6 @@ def main():
 
     args = parser.parse_args()
     
-    # Assert that env var _DELTA_LAKE_RELEASE_VERSION_ (used by conf.py) is set
-    try:
-        os.environ["_DELTA_LAKE_RELEASE_VERSION_"]
-    except KeyError:
-        raise KeyError(f"Environment variable _DELTA_LAKE_RELEASE_VERSION_ not set.")
-
     docs_root_dir = os.path.dirname(os.path.realpath(__file__))
     api_docs_root_dir = os.path.join(docs_root_dir, "apis")
 
@@ -45,6 +39,11 @@ def main():
         if args.livehtml:
             build_docs_cmd = "pnpm dev"
         if args.api_docs:
+            # Assert that env var _DELTA_LAKE_RELEASE_VERSION_ (used by conf.py) is set
+            try:
+                os.environ["_DELTA_LAKE_RELEASE_VERSION_"]
+            except KeyError:
+                raise KeyError(f"Environment variable _DELTA_LAKE_RELEASE_VERSION_ not set.")
             generate_and_copy_api_docs(api_docs_root_dir, api_html_output)
         run_cmd(build_docs_cmd, shell=True, stream_output=True)
 
