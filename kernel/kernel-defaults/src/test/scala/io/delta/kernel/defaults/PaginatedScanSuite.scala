@@ -23,11 +23,9 @@ import io.delta.kernel.PaginatedScanFilesIterator
 import io.delta.kernel.ScanBuilder
 import io.delta.kernel.data.FilteredColumnarBatch
 import io.delta.kernel.data.Row
-import io.delta.kernel.defaults.DeltaTableWriteSuiteBase
 import io.delta.kernel.defaults.engine.{DefaultEngine, DefaultJsonHandler, DefaultParquetHandler}
 import io.delta.kernel.defaults.test.AbstractTableManagerAdapter
-import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestUtils}
-import io.delta.kernel.defaults.utils.TestUtilsWithTableManagerAPIs
+import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestUtils, TestUtilsWithTableManagerAPIs, WriteUtils}
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.hook.LogCompactionHook
@@ -41,7 +39,7 @@ import org.scalatest.funsuite.AnyFunSuite
 import org.slf4j.{Logger, LoggerFactory}
 
 class PaginatedScanSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs
-    with ExpressionTestUtils with SQLHelper with DeltaTableWriteSuiteBase {
+    with ExpressionTestUtils with SQLHelper with WriteUtils {
 
   private val logger = LoggerFactory.getLogger(classOf[PaginatedScanSuite])
   val tableManager: AbstractTableManagerAdapter = getTableManagerAdapter

@@ -47,7 +47,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 /**
  * Test suite for io.delta.kernel.internal.compaction.LogCompactionWriter
  */
-class LogCompactionWriterSuite extends CheckpointSuiteBase {
+class LogCompactionWriterSuite extends CheckpointBase {
   val COMPACTED_SCHEMA =
     new StructType()
       .add("txn", SetTransaction.FULL_SCHEMA)

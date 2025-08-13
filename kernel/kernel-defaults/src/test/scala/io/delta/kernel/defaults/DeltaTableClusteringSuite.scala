@@ -21,6 +21,7 @@ import scala.collection.immutable.Seq
 import io.delta.kernel.{Table, Transaction, TransactionCommitResult}
 import io.delta.kernel.Operation.{CREATE_TABLE, WRITE}
 import io.delta.kernel.data.Row
+import io.delta.kernel.defaults.utils.WriteUtils
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.{KernelException, TableAlreadyExistsException}
 import io.delta.kernel.expressions.{Column, Literal}
@@ -39,8 +40,9 @@ import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.clustering.{ClusteringMetadataDomain => SparkClusteringMetadataDomain}
 
 import org.apache.hadoop.fs.Path
+import org.scalatest.funsuite.AnyFunSuite
 
-class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
+class DeltaTableClusteringSuite extends AnyFunSuite with WriteUtils {
 
   private val testingDomainMetadata = new DomainMetadata(
     "delta.clustering",
@@ -344,7 +346,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
         data = testData)
 
       verifyCommitResult(commitResult, expVersion = 0, expIsReadyForCheckpoint = false)
-      verifyCommitInfo(tablePath, version = 0, operation = WRITE)
+      verifyCommitInfo(tablePath, version = 0)
       verifyWrittenContent(
         tablePath,
         testPartitionSchema,
@@ -376,7 +378,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
         val expData = dataClusteringBatches1.flatMap(_.toTestRows)
 
         verifyCommitResult(commitResult0, expVersion = 0, expIsReadyForCheckpoint = false)
-        verifyCommitInfo(tablePath, version = 0, operation = WRITE)
+        verifyCommitInfo(tablePath, version = 0)
         verifyWrittenContent(tablePath, testPartitionSchema, expData)
         verifyClusteringDMAndCRC(
           table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl],
@@ -395,7 +397,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
           dataClusteringBatches2.flatMap(_.toTestRows)
 
         verifyCommitResult(commitResult1, expVersion = 1, expIsReadyForCheckpoint = false)
-        verifyCommitInfo(tablePath, version = 1, partitionCols = null, operation = WRITE)
+        verifyCommitInfo(tablePath, version = 1, partitionCols = null)
         verifyWrittenContent(tablePath, testPartitionSchema, expData)
         verifyClusteringDMAndCRC(
           table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl],
@@ -429,7 +431,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
         val expData = dataClusteringBatches1.flatMap(_.toTestRows)
 
         verifyCommitResult(commitResult0, expVersion = 0, expIsReadyForCheckpoint = false)
-        verifyCommitInfo(tablePath, version = 0, operation = WRITE)
+        verifyCommitInfo(tablePath, version = 0)
         verifyWrittenContent(tablePath, testPartitionSchema, expData)
         verifyClusteringDMAndCRC(
           table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl],
@@ -462,7 +464,7 @@ class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
           dataClusteringBatches2.flatMap(_.toTestRows)
 
         verifyCommitResult(commitResult2, expVersion = 2, expIsReadyForCheckpoint = false)
-        verifyCommitInfo(tablePath, version = 2, partitionCols = null, operation = WRITE)
+        verifyCommitInfo(tablePath, version = 2, partitionCols = null)
         verifyWrittenContent(tablePath, testPartitionSchema, expData)
         verifyClusteringDMAndCRC(
           table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl],

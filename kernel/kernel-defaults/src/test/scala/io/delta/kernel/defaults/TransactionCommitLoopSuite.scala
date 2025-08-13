@@ -24,6 +24,7 @@ import io.delta.kernel.Table
 import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.engine.{DefaultEngine, DefaultJsonHandler}
 import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO
+import io.delta.kernel.defaults.utils.WriteUtils
 import io.delta.kernel.engine.JsonHandler
 import io.delta.kernel.exceptions.{CommitStateUnknownException, MaxCommitRetryLimitReachedException}
 import io.delta.kernel.expressions.Literal
@@ -31,8 +32,9 @@ import io.delta.kernel.utils.CloseableIterable.emptyIterable
 import io.delta.kernel.utils.CloseableIterator
 
 import org.apache.hadoop.conf.Configuration
+import org.scalatest.funsuite.AnyFunSuite
 
-class TransactionCommitLoopSuite extends DeltaTableWriteSuiteBase {
+class TransactionCommitLoopSuite extends AnyFunSuite with WriteUtils {
 
   // TODO: Refactor this test suite to use both Table.forPath().getLatestSnapshot() and
   //       TableManager.loadSnapshot()

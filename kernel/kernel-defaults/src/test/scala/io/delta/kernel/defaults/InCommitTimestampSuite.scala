@@ -23,6 +23,7 @@ import scala.collection.mutable
 
 import io.delta.kernel._
 import io.delta.kernel.Operation.{CREATE_TABLE, WRITE}
+import io.delta.kernel.defaults.utils.WriteUtils
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.{InvalidTableException, ProtocolChangedException}
 import io.delta.kernel.expressions.Literal
@@ -39,7 +40,9 @@ import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 import io.delta.kernel.utils.FileStatus
 
-class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
+import org.scalatest.funsuite.AnyFunSuite
+
+class InCommitTimestampSuite extends AnyFunSuite with WriteUtils {
 
   private def removeCommitInfoFromCommit(engine: Engine, version: Long, logPath: Path): Unit = {
     val file = FileStatus.of(FileNames.deltaFile(logPath, version), 0, 0)
@@ -412,7 +415,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
       val expData = dataBatches1.flatMap(_.toTestRows)
 
       verifyCommitResult(commitResult, expVersion = 1, expIsReadyForCheckpoint = false)
-      verifyCommitInfo(tablePath, version = 1, partitionCols = null, operation = WRITE)
+      verifyCommitInfo(tablePath, version = 1, partitionCols = null)
       verifyWrittenContent(tablePath, testSchema, expData)
       verifyTableProperties(
         tablePath,
