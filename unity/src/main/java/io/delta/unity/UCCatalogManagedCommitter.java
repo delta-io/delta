@@ -31,6 +31,10 @@ import org.apache.hadoop.fs.Path;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+/**
+ * An implementation of {@link Committer} that handles commits to Delta tables managed by Unity
+ * Catalog. That is, these Delta tables must have the catalogManaged table feature supported.
+ */
 public class UCCatalogManagedCommitter implements Committer {
   private static final Logger logger = LoggerFactory.getLogger(UCCatalogManagedCommitter.class);
 
@@ -38,6 +42,13 @@ public class UCCatalogManagedCommitter implements Committer {
   private final String ucTableId;
   private final Path tablePath;
 
+  /**
+   * Creates a new UCCatalogManagedCommitter for the specified Unity Catalog-managed Delta table.
+   *
+   * @param ucClient the Unity Catalog client to use for commit operations
+   * @param ucTableId the unique Unity Catalog table identifier
+   * @param tablePath the path to the Delta table in the underlying storage system
+   */
   public UCCatalogManagedCommitter(UCClient ucClient, String ucTableId, String tablePath) {
     this.ucClient = requireNonNull(ucClient, "ucClient is null");
     this.ucTableId = requireNonNull(ucTableId, "ucTableId is null");
@@ -51,7 +62,7 @@ public class UCCatalogManagedCommitter implements Committer {
     requireNonNull(engine, "engine is null");
     requireNonNull(finalizedActions, "finalizedActions is null");
     requireNonNull(commitMetadata, "commitMetadata is null");
-    validateCommitMetadataLogPath(commitMetadata);
+    validateLogPathBelongsToThisUcTable(commitMetadata);
 
     final CommitMetadata.CommitType commitType = commitMetadata.getCommitType();
 
@@ -83,7 +94,7 @@ public class UCCatalogManagedCommitter implements Committer {
     return path.toUri().normalize().toString();
   }
 
-  private void validateCommitMetadataLogPath(CommitMetadata cm) {
+  private void validateLogPathBelongsToThisUcTable(CommitMetadata cm) {
     final String expectedDeltaLogPathNormalized = normalize(new Path(tablePath, "_delta_log"));
     final String providedDeltaLogPathNormalized = normalize(new Path(cm.getDeltaLogDirPath()));
     checkArgument(

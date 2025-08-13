@@ -21,6 +21,8 @@ import java.util.Optional
 import scala.collection.JavaConverters._
 
 import io.delta.kernel.commit.CommitMetadata
+import io.delta.kernel.commit.CommitMetadata.CommitType
+import io.delta.kernel.internal.actions.{Metadata, Protocol}
 import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.test.VectorTestUtils
 
@@ -30,6 +32,29 @@ class UCCatalogManagedCommitterSuite
     extends AnyFunSuite
     with UCCatalogManagedTestUtils
     with VectorTestUtils {
+
+  private def createCommitMetadata(
+      version: Long,
+      logPath: String = baseTestLogPath,
+      readProtocolOpt: Optional[Protocol] = Optional.empty(),
+      readMetadataOpt: Optional[Metadata] = Optional.empty(),
+      newProtocolOpt: Optional[Protocol] = Optional.empty(),
+      newMetadataOpt: Optional[Metadata] = Optional.empty()): CommitMetadata = new CommitMetadata(
+    version,
+    logPath,
+    testCommitInfo(),
+    readProtocolOpt,
+    readMetadataOpt,
+    newProtocolOpt,
+    newMetadataOpt)
+
+  private def catalogManagedWriteCommitMetadata(
+      version: Long,
+      logPath: String = baseTestLogPath): CommitMetadata = createCommitMetadata(
+    version = version,
+    logPath = logPath,
+    readProtocolOpt = Optional.of(protocolWithCatalogManagedSupport),
+    readMetadataOpt = Optional.of(basicPartitionedMetadata))
 
   test("constructor throws on null inputs") {
     val ucClient = new InMemoryUCClient("ucMetastoreId")
@@ -51,12 +76,12 @@ class UCCatalogManagedCommitterSuite
 
     // Null engine
     assertThrows[NullPointerException] {
-      committer.commit(null, emptyActionsIterator, catalogManagedWriteCommitMetadata())
+      committer.commit(null, emptyActionsIterator, catalogManagedWriteCommitMetadata(version = 1))
     }
 
     // Null finalizedActions
     assertThrows[NullPointerException] {
-      committer.commit(defaultEngine, null, catalogManagedWriteCommitMetadata())
+      committer.commit(defaultEngine, null, catalogManagedWriteCommitMetadata(version = 1))
     }
 
     // Null commitMetadata
@@ -68,7 +93,9 @@ class UCCatalogManagedCommitterSuite
   test("commit throws if CommitMetadata is for a different table") {
     val ucClient = new InMemoryUCClient("ucMetastoreId")
     val committer = new UCCatalogManagedCommitter(ucClient, "ucTableId", baseTestTablePath)
-    val badCommitMetadata = catalogManagedWriteCommitMetadata("/path/to/different/table/_delta_log")
+    val badCommitMetadata = catalogManagedWriteCommitMetadata(
+      version = 1,
+      "/path/to/different/table/_delta_log")
 
     val exMsg = intercept[IllegalArgumentException] {
       committer.commit(defaultEngine, emptyActionsIterator, badCommitMetadata)
@@ -96,17 +123,22 @@ class UCCatalogManagedCommitterSuite
   }
 
   val unsupportedCommitTypes = Seq(
-    CommitMetadata.CommitType.FILESYSTEM_CREATE,
-    CommitMetadata.CommitType.CATALOG_CREATE,
-    CommitMetadata.CommitType.FILESYSTEM_WRITE,
-    CommitMetadata.CommitType.FILESYSTEM_UPGRADE_TO_CATALOG,
-    CommitMetadata.CommitType.CATALOG_DOWNGRADE_TO_FILESYSTEM)
+    CommitType.FILESYSTEM_CREATE,
+    CommitType.CATALOG_CREATE,
+    CommitType.FILESYSTEM_WRITE,
+    CommitType.FILESYSTEM_UPGRADE_TO_CATALOG,
+    CommitType.CATALOG_DOWNGRADE_TO_FILESYSTEM)
 
   unsupportedCommitTypes foreach { commitType =>
     test(s"commit throws UnsupportedOperationException for $commitType") {
       val ucClient = new InMemoryUCClient("ucMetastoreId")
       val committer = new UCCatalogManagedCommitter(ucClient, "ucTableId", baseTestTablePath)
-      val commitMetadata = catalogManagedWriteCommitMetadata().withCommitTypeOverride(commitType)
+      val version = commitType match {
+        case CommitType.FILESYSTEM_CREATE | CommitType.CATALOG_CREATE => 0
+        case _ => 1
+      }
+      val commitMetadata = catalogManagedWriteCommitMetadata(version = version)
+        .withCommitTypeOverride(commitType)
 
       assert(commitMetadata.getCommitType == commitType)
 
@@ -125,6 +157,7 @@ class UCCatalogManagedCommitterSuite
     val protocolUpgrade = protocolWithCatalogManagedSupport
       .withFeature(TableFeatures.DELETION_VECTORS_RW_FEATURE)
     val commitMetadata = createCommitMetadata(
+      version = 1,
       readProtocolOpt = Optional.of(protocolWithCatalogManagedSupport),
       readMetadataOpt = Optional.of(basicPartitionedMetadata),
       newProtocolOpt = Optional.of(protocolUpgrade))
@@ -141,6 +174,7 @@ class UCCatalogManagedCommitterSuite
     val metadataUpgrade = basicPartitionedMetadata
       .withMergedConfiguration(Map("foo" -> "bar").asJava)
     val commitMetadata = createCommitMetadata(
+      version = 1,
       readProtocolOpt = Optional.of(protocolWithCatalogManagedSupport),
       readMetadataOpt = Optional.of(basicPartitionedMetadata),
       newMetadataOpt = Optional.of(metadataUpgrade))
@@ -154,7 +188,7 @@ class UCCatalogManagedCommitterSuite
   test("the remaining commit logic is not yet implemented") {
     val ucClient = new InMemoryUCClient("ucMetastoreId")
     val committer = new UCCatalogManagedCommitter(ucClient, "ucTableId", baseTestTablePath)
-    val commitMetadata = catalogManagedWriteCommitMetadata()
+    val commitMetadata = catalogManagedWriteCommitMetadata(version = 1)
 
     val exMsg = intercept[UnsupportedOperationException] {
       committer.commit(defaultEngine, emptyActionsIterator, commitMetadata)
