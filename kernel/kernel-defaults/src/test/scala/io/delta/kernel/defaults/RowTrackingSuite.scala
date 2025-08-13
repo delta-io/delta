@@ -24,14 +24,14 @@ import scala.collection.immutable.Seq
 import io.delta.kernel.Table
 import io.delta.kernel.data.{FilteredColumnarBatch, Row}
 import io.delta.kernel.defaults.internal.parquet.ParquetSuiteBase
-import io.delta.kernel.defaults.utils.TestRow
+import io.delta.kernel.defaults.utils.{MetadataColumnTestUtils, TestRow}
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.{ConcurrentWriteException, InvalidTableException, KernelException, MaxCommitRetryLimitReachedException}
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl, TableConfig, TableImpl}
 import io.delta.kernel.internal.actions.{AddFile, SingleAction}
 import io.delta.kernel.internal.rowtracking.{RowTracking, RowTrackingMetadataDomain}
-import io.delta.kernel.internal.rowtracking.MaterializedRowTrackingColumn.{ROW_COMMIT_VERSION, ROW_ID}
+import io.delta.kernel.internal.rowtracking.MaterializedRowTrackingColumn.{MATERIALIZED_ROW_COMMIT_VERSION, MATERIALIZED_ROW_ID}
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.internal.util.VectorUtils
 import io.delta.kernel.types._
@@ -42,7 +42,8 @@ import org.apache.spark.sql.delta.DeltaLog
 
 import org.apache.hadoop.fs.Path
 
-class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
+class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
+    with MetadataColumnTestUtils {
   private def prepareActionsForCommit(actions: Row*): CloseableIterable[Row] = {
     inMemoryIterable(toCloseableIterator(actions.asJava.iterator()))
   }
@@ -443,7 +444,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
           expectedAnswer = Seq(),
           readCols = Seq("id", "_metadata.row_id"),
           metadataCols =
-            Seq(RowTracking.METADATA_ROW_ID_COLUMN, RowTracking.METADATA_ROW_COMMIT_VERSION_COLUMN),
+            Seq(ROW_ID, ROW_COMMIT_VERSION),
           engine = engine)
       }
       assert(e.getMessage.contains("Row tracking is not enabled, but row tracking column"))
@@ -477,7 +478,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
           path = tablePath,
           expectedAnswer,
           metadataCols =
-            Seq(RowTracking.METADATA_ROW_ID_COLUMN, RowTracking.METADATA_ROW_COMMIT_VERSION_COLUMN),
+            Seq(ROW_ID, ROW_COMMIT_VERSION),
           expectedSchema = expectedSchema)
       }
     }
@@ -499,7 +500,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
         path = tablePath,
         expectedAnswer,
         readCols = Seq("value"),
-        metadataCols = Seq(RowTracking.METADATA_ROW_ID_COLUMN))
+        metadataCols = Seq(ROW_ID))
     }
   }
 
@@ -521,7 +522,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
         expectedAnswer,
         readCols = Seq(),
         metadataCols =
-          Seq(RowTracking.METADATA_ROW_COMMIT_VERSION_COLUMN, RowTracking.METADATA_ROW_ID_COLUMN))
+          Seq(ROW_COMMIT_VERSION, ROW_ID))
     }
   }
 
@@ -809,7 +810,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
       createTableWithRowTracking(engine, tablePath)
       val config = getMetadata(engine, tablePath).getConfiguration
 
-      Seq(ROW_ID, ROW_COMMIT_VERSION).foreach { rowTrackingColumn =>
+      Seq(MATERIALIZED_ROW_ID, MATERIALIZED_ROW_COMMIT_VERSION).foreach { rowTrackingColumn =>
         assert(config.containsKey(rowTrackingColumn.getMaterializedColumnNameProperty))
         assert(
           config
@@ -830,7 +831,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
           createTableWithRowTracking(engine, tablePath, extraProps = columnMappingProp)
           val config = getMetadata(engine, tablePath).getConfiguration
 
-          Seq(ROW_ID, ROW_COMMIT_VERSION).foreach {
+          Seq(MATERIALIZED_ROW_ID, MATERIALIZED_ROW_COMMIT_VERSION).foreach {
             rowTrackingColumn =>
               val colName =
                 config.get(rowTrackingColumn.getMaterializedColumnNameProperty)
@@ -859,7 +860,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
 
   test("manually setting materialized row tracking column names is not allowed - new table") {
     withTempDirAndEngine { (tablePath, engine) =>
-      Seq(ROW_ID, ROW_COMMIT_VERSION).foreach { rowTrackingColumn =>
+      Seq(MATERIALIZED_ROW_ID, MATERIALIZED_ROW_COMMIT_VERSION).foreach { rowTrackingColumn =>
         val propName = rowTrackingColumn.getMaterializedColumnNameProperty
         val customTableProps = Map(propName -> "custom_name")
         val e = intercept[KernelException] {
@@ -875,7 +876,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
     withTempDirAndEngine { (tablePath, engine) =>
       createTableWithRowTracking(engine, tablePath)
 
-      Seq(ROW_ID, ROW_COMMIT_VERSION).foreach { rowTrackingColumn =>
+      Seq(MATERIALIZED_ROW_ID, MATERIALIZED_ROW_COMMIT_VERSION).foreach { rowTrackingColumn =>
         val propName = rowTrackingColumn.getMaterializedColumnNameProperty
         val customTableProps = Map(propName -> "custom_name")
         val e = intercept[KernelException] {
@@ -898,8 +899,8 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
       val configWithoutMaterializedCols = originalMetadata.getConfiguration.asScala.toMap
         .filterNot {
           case (key, _) =>
-            key == ROW_ID.getMaterializedColumnNameProperty ||
-            key == ROW_COMMIT_VERSION.getMaterializedColumnNameProperty
+            key == MATERIALIZED_ROW_ID.getMaterializedColumnNameProperty ||
+            key == MATERIALIZED_ROW_COMMIT_VERSION.getMaterializedColumnNameProperty
         }
 
       // Create new metadata with row tracking enabled but configs missing
@@ -917,10 +918,11 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
       // Verify that row tracking is enabled but configs are missing
       val metadata = getMetadata(engine, tablePath)
       assert(TableConfig.ROW_TRACKING_ENABLED.fromMetadata(metadata) == true)
-      assert(!metadata.getConfiguration.containsKey(ROW_ID.getMaterializedColumnNameProperty))
+      assert(!metadata.getConfiguration.containsKey(
+        MATERIALIZED_ROW_ID.getMaterializedColumnNameProperty))
       assert(
         !metadata.getConfiguration
-          .containsKey(ROW_COMMIT_VERSION.getMaterializedColumnNameProperty))
+          .containsKey(MATERIALIZED_ROW_COMMIT_VERSION.getMaterializedColumnNameProperty))
 
       // Now try to perform an append operation on this existing table with missing configs
       // This should trigger the validation and throw the expected exception
@@ -932,7 +934,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
       assert(
         e.getMessage.contains(
           s"Row tracking is enabled but the materialized column name " +
-            s"`${ROW_ID.getMaterializedColumnNameProperty}` is missing."))
+            s"`${MATERIALIZED_ROW_ID.getMaterializedColumnNameProperty}` is missing."))
     }
   }
 
@@ -1028,7 +1030,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
 
         // Assert that materialized row tracking columns are present when row tracking is enabled
         if (enableAfter) {
-          Seq(ROW_ID, ROW_COMMIT_VERSION).foreach { rowTrackingColumn =>
+          Seq(MATERIALIZED_ROW_ID, MATERIALIZED_ROW_COMMIT_VERSION).foreach { rowTrackingColumn =>
             assert(afterConfig.containsKey(rowTrackingColumn.getMaterializedColumnNameProperty))
             assert(
               afterConfig
