@@ -15,6 +15,8 @@ export default defineConfig({
     devFeatures: false,
   }),
   redirects: {
+    "/latest/api/*": "/api/latest/:splat",
+    "/:version/api/*": "/api/:version/:splat",
     "/latest/*": "/:splat",
     "/delta-intro.html": "/",
     "/delta-spark.html": "/",
