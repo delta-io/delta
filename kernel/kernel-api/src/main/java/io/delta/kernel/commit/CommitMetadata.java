@@ -87,7 +87,7 @@ public class CommitMetadata {
         readMetadataOpt.isPresent() || newMetadataOpt.isPresent(),
         "At least one of readMetadataOpt or newMetadataOpt must be present");
 
-    checkICTPresentIfCatalogManaged();
+    checkInCommitTimestampPresentIfCatalogManaged();
   }
 
   /** The version of the Delta table this commit is targeting. */
@@ -143,7 +143,7 @@ public class CommitMetadata {
    * the protocol that was read at the beginning of the commit.
    */
   public Protocol getEffectiveProtocol() {
-    return newProtocolOpt.orElseGet(() -> readProtocolOpt.get());
+    return newProtocolOpt.orElseGet(readProtocolOpt::get);
   }
 
   /**
@@ -152,7 +152,7 @@ public class CommitMetadata {
    * metadata that was read at the beginning of the commit.
    */
   public Metadata getEffectiveMetadata() {
-    return newMetadataOpt.orElseGet(() -> readMetadataOpt.get());
+    return newMetadataOpt.orElseGet(readMetadataOpt::get);
   }
 
   /**
@@ -181,7 +181,7 @@ public class CommitMetadata {
     }
   }
 
-  private void checkICTPresentIfCatalogManaged() {
+  private void checkInCommitTimestampPresentIfCatalogManaged() {
     if (TableFeatures.isCatalogManagedSupported(getEffectiveProtocol())) {
       checkArgument(
           commitInfo.getInCommitTimestamp().isPresent(),
