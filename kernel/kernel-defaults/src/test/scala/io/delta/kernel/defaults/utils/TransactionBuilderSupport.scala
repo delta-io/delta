@@ -83,6 +83,8 @@ trait TransactionBuilderV1Support extends TransactionBuilderSupport with TestUti
       if (partCols != null) {
         txnBuilder = txnBuilder.withPartitionColumns(engine, partCols.asJava)
       }
+    } else if (schema != null) {
+      txnBuilder = txnBuilder.withSchema(engine, schema)
     }
 
     if (clusteringColsOpt.isDefined) {
