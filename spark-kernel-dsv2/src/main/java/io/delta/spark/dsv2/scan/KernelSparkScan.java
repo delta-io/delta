@@ -25,16 +25,16 @@ import org.apache.spark.sql.types.StructType;
 public class KernelSparkScan implements org.apache.spark.sql.connector.read.Scan {
 
   private final Scan kernelScan;
-  private final StructType readSchema;
+  private final StructType sparkReadSchema;
 
-  public KernelSparkScan(Scan kernelScan, StructType readSchema) {
+  public KernelSparkScan(Scan kernelScan, StructType sparkReadSchema) {
     this.kernelScan = kernelScan;
-    this.readSchema = readSchema;
+    this.sparkReadSchema = sparkReadSchema;
   }
 
   @Override
   public StructType readSchema() {
-    return readSchema;
+    return sparkReadSchema;
   }
 
   // TODO: implement toBatch

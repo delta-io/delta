@@ -29,22 +29,18 @@ import org.apache.spark.sql.types.StructType;
 public class KernelSparkScanBuilder implements org.apache.spark.sql.connector.read.ScanBuilder {
 
   private final ScanBuilder kernelScanBuilder;
-  private final StructType readSchema;
+  private final StructType sparkReadSchema;
 
   public KernelSparkScanBuilder(SnapshotImpl snapshot) {
     requireNonNull(snapshot, "snapshot is null");
 
-    this.kernelScanBuilder =
-        requireNonNull(snapshot.getScanBuilder(), "snapshot returns null scan builder");
+    this.kernelScanBuilder = snapshot.getScanBuilder();
 
-    this.readSchema =
-        requireNonNull(
-            SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema()),
-            "failed to convert schema");
+    this.sparkReadSchema = SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema());
   }
 
   @Override
   public org.apache.spark.sql.connector.read.Scan build() {
-    return new KernelSparkScan(kernelScanBuilder.build(), readSchema);
+    return new KernelSparkScan(kernelScanBuilder.build(), sparkReadSchema);
   }
 }
