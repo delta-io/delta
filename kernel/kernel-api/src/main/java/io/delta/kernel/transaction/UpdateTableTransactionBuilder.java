@@ -124,7 +124,7 @@ public interface UpdateTableTransactionBuilder {
    * occur. This setting controls how many times the operation will be retried with conflict
    * resolution before giving up.
    *
-   * @param maxRetries The maximum number of retries. Must be >= 0. Default is 200.
+   * @param maxRetries The maximum number of retries. Must be at least 0. Default is 200.
    */
   UpdateTableTransactionBuilder withMaxRetries(int maxRetries);
 
@@ -138,8 +138,8 @@ public interface UpdateTableTransactionBuilder {
    * <p>A value of 0 disables automatic log compaction for this transaction. Positive values specify
    * how many commits should occur between compactions. Defaults to 0.
    *
-   * @param logCompactionInterval The number of commits between checkpoints. Must be >= 0. A value
-   *     of 0 disables log compaction.
+   * @param logCompactionInterval The number of commits between checkpoints. Must be at least 0. A
+   *     value of 0 disables log compaction.
    */
   UpdateTableTransactionBuilder withLogCompactionInterval(int logCompactionInterval);
 

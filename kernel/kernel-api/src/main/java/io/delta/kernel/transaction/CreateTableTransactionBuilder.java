@@ -55,7 +55,7 @@ public interface CreateTableTransactionBuilder {
   /**
    * Set the maximum number of retries to retry the commit in the case of a retryable error.
    *
-   * @param maxRetries The maximum number of retries. Must be >= 0. Default is 200.
+   * @param maxRetries The maximum number of retries. Must be at least 0. Default is 200.
    */
   CreateTableTransactionBuilder withMaxRetries(int maxRetries);
 
