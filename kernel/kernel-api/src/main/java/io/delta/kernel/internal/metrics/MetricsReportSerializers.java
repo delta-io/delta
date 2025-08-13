@@ -25,10 +25,7 @@ import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;
 import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Predicate;
-import io.delta.kernel.metrics.MetricsReport;
-import io.delta.kernel.metrics.ScanReport;
-import io.delta.kernel.metrics.SnapshotReport;
-import io.delta.kernel.metrics.TransactionReport;
+import io.delta.kernel.metrics.*;
 import io.delta.kernel.types.StructType;
 import java.io.IOException;
 
@@ -66,6 +63,16 @@ public final class MetricsReportSerializers {
   public static String serializeTransactionReport(TransactionReport transactionReport)
       throws JsonProcessingException {
     return OBJECT_MAPPER.writeValueAsString(transactionReport);
+  }
+
+  /**
+   * Serializes a {@link PostCommitHookMetricsReport} to a JSON string
+   *
+   * @throws JsonProcessingException
+   */
+  public static String serializePostCommitHookMetricsReport(PostCommitHookMetricsReport report)
+      throws JsonProcessingException {
+    return OBJECT_MAPPER.writeValueAsString(report);
   }
 
   /////////////////////////////////
