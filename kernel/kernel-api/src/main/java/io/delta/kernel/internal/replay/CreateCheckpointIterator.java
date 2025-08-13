@@ -24,6 +24,7 @@ import static io.delta.kernel.internal.util.Preconditions.checkState;
 import io.delta.kernel.data.*;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.actions.SetTransaction;
+import io.delta.kernel.internal.metrics.ScanMetrics;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.utils.CloseableIterator;
@@ -123,15 +124,21 @@ public class CreateCheckpointIterator implements CloseableIterator<FilteredColum
   // Metadata about the checkpoint to store in `_last_checkpoint` file
   private long numberOfAddActions = 0; // final number of add actions survived in the checkpoint
 
+  private final ScanMetrics scanMetrics;
+
   /////////////////
   // Public APIs //
   /////////////////
 
   public CreateCheckpointIterator(
-      Engine engine, LogSegment logSegment, long minFileRetentionTimestampMillis) {
+      Engine engine,
+      LogSegment logSegment,
+      long minFileRetentionTimestampMillis,
+      ScanMetrics scanMetrics) {
     this.engine = engine;
     this.logSegment = logSegment;
     this.minFileRetentionTimestampMillis = minFileRetentionTimestampMillis;
+    this.scanMetrics = scanMetrics;
   }
 
   @Override
@@ -181,7 +188,8 @@ public class CreateCheckpointIterator implements CloseableIterator<FilteredColum
               engine,
               logSegment.allLogFilesReversed(),
               CHECKPOINT_SCHEMA,
-              Optional.empty() /* checkpoint predicate */);
+              Optional.empty() /* checkpoint predicate */,
+              scanMetrics);
     }
   }
 

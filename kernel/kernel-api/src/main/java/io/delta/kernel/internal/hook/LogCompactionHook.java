@@ -22,6 +22,7 @@ import io.delta.kernel.hook.PostCommitHook;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.compaction.LogCompactionWriter;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.metrics.ScanMetrics;
 import java.io.IOException;
 
 /**
@@ -54,7 +55,9 @@ public class LogCompactionHook implements PostCommitHook {
     LogCompactionWriter compactionWriter =
         new LogCompactionWriter(
             dataPath, logPath, startVersion, commitVersion, minFileRetentionTimestampMillis);
-    compactionWriter.writeLogCompactionFile(engine);
+
+    ScanMetrics scanMetrics = new ScanMetrics();
+    compactionWriter.writeLogCompactionFile(engine, scanMetrics);
   }
 
   @Override
