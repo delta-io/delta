@@ -257,7 +257,7 @@ class CommitIcebergActionSuite extends AnyFunSuite with WriteUtils {
         }
 
         assert(!addFile.getDeletionVector.isPresent)
-        assert(addFile.getStats.isPresent)
+        assert(addFile.getStats(null).isPresent)
         Some(ExpectedAdd(
           addFile.getPath,
           addFile.getSize,
@@ -269,7 +269,7 @@ class CommitIcebergActionSuite extends AnyFunSuite with WriteUtils {
         assert(removeFile.getExtendedFileMetadata.toScala.contains(true))
         assert(removeFile.getPartitionValues.toScala.exists(_.getSize == 0))
         assert(removeFile.getSize.isPresent)
-        assert(removeFile.getStats.isPresent)
+        assert(removeFile.getStats(null).isPresent)
         assert(!removeFile.getTags.isPresent)
         assert(!removeFile.getDeletionVector.isPresent)
 

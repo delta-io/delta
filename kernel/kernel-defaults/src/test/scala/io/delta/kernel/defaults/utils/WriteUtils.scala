@@ -601,7 +601,8 @@ trait AbstractWriteUtils extends TestUtils with TransactionBuilderSupport {
           100,
           emptyMap(),
           emptyMap(),
-          emptyMap()))
+          emptyMap(),
+          Optional.empty()))
       } else Optional.empty())
   }
 
