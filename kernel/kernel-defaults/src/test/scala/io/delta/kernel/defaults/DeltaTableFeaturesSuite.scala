@@ -69,8 +69,7 @@ class DeltaTableFeaturesSuite extends AnyFunSuite with WriteUtils {
           appendData(
             engine,
             tablePath,
-            isNewTable = false,
-            testData)
+            data = testData)
 
           // Check the data using Kernel and Delta-Spark readers
           verifyWrittenContent(tablePath, testSchema, dataBatches1.flatMap(_.toTestRows))
@@ -87,7 +86,7 @@ class DeltaTableFeaturesSuite extends AnyFunSuite with WriteUtils {
             tablePath,
             isNewTable = true,
             testSchema,
-            testData,
+            data = testData,
             tableProperties = Map(tblProp -> propValue))
 
           checkReaderWriterFeaturesSupported(tablePath, feature)
@@ -96,9 +95,7 @@ class DeltaTableFeaturesSuite extends AnyFunSuite with WriteUtils {
           appendData(
             engine,
             tablePath,
-            isNewTable = false,
-            testSchema,
-            testData)
+            data = testData)
 
           // Check the data using Kernel and Delta-Spark readers
           verifyWrittenContent(
@@ -118,7 +115,7 @@ class DeltaTableFeaturesSuite extends AnyFunSuite with WriteUtils {
             tablePath,
             isNewTable = true,
             testSchema,
-            testData)
+            data = testData)
 
           checkNoReaderWriterFeaturesSupported(tablePath, feature)
 
@@ -126,9 +123,7 @@ class DeltaTableFeaturesSuite extends AnyFunSuite with WriteUtils {
           appendData(
             engine,
             tablePath,
-            isNewTable = false,
-            testSchema,
-            testData,
+            data = testData,
             tableProperties = Map(tblProp -> propValue))
 
           checkReaderWriterFeaturesSupported(tablePath, feature)
@@ -300,8 +295,6 @@ class DeltaTableFeaturesSuite extends AnyFunSuite with WriteUtils {
     withTempDirAndEngine { (tablePath, engine) =>
       createEmptyTable(engine, tablePath, testSchema)
 
-      val table = Table.forPath(engine, tablePath)
-
       intercept[InvalidConfigurationValueException] {
         createTxn(
           engine,
@@ -318,7 +311,7 @@ class DeltaTableFeaturesSuite extends AnyFunSuite with WriteUtils {
         engine,
         tablePath,
         isNewTable = false,
-        Seq(Map.empty[String, Literal] -> dataBatches1))
+        data = Seq(Map.empty[String, Literal] -> dataBatches1))
 
       checkTable(tablePath, expectedAnswer = dataBatches1.flatMap(_.toTestRows))
 

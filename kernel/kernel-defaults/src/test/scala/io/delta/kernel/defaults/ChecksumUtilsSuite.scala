@@ -46,7 +46,7 @@ class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseS
       engine,
       tablePath,
       isNewTable = false,
-      Seq(Map.empty[String, Literal] -> dataBatches1))
+      data = Seq(Map.empty[String, Literal] -> dataBatches1))
   }
 
   test("Create checksum for different version") {

@@ -644,7 +644,6 @@ class DomainMetadataSuite extends AnyFunSuite with WriteUtils with ParquetSuiteB
       createTableWithDomainMetadataSupported(engine, tablePath)
 
       // Cannot remove system-controlled domain metadata
-      // Cannot remove system-controlled domain metadata
       Seq("delta.foo", "DELTA.foo").foreach { domain =>
         val e = intercept[IllegalArgumentException] {
           val txn = createWriteTxnBuilder(Table.forPath(engine, tablePath))
