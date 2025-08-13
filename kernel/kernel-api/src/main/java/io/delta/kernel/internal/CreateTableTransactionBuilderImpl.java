@@ -20,10 +20,7 @@ import static io.delta.kernel.internal.util.Utils.resolvePath;
 import static java.util.Collections.emptyMap;
 import static java.util.Objects.requireNonNull;
 
-import io.delta.kernel.Operation;
-import io.delta.kernel.Snapshot;
-import io.delta.kernel.Table;
-import io.delta.kernel.Transaction;
+import io.delta.kernel.*;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.TableAlreadyExistsException;
 import io.delta.kernel.exceptions.TableNotFoundException;
@@ -133,7 +130,7 @@ public class CreateTableTransactionBuilderImpl implements CreateTableTransaction
     }
     // Otherwise, try loading the latest snapshot to ensure the table does not exist
     try {
-      Snapshot snapshot = Table.forPath(engine, tablePath).getLatestSnapshot(engine);
+      Snapshot snapshot = TableManager.loadSnapshot(tablePath).build(engine);
       throw new TableAlreadyExistsException(
           tablePath, "Found table with latest version " + snapshot.getVersion());
     } catch (TableNotFoundException tblf) {

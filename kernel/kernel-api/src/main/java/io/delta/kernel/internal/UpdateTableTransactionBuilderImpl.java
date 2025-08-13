@@ -52,7 +52,7 @@ public class UpdateTableTransactionBuilderImpl implements UpdateTableTransaction
 
   public UpdateTableTransactionBuilderImpl(
       SnapshotImpl snapshot, String engineInfo, Operation operation) {
-    validateOperationParam(operation);
+    validateIsUpdateOperation(operation);
     this.snapshot = snapshot;
     this.engineInfo = engineInfo;
     this.operation = operation;
@@ -172,7 +172,7 @@ public class UpdateTableTransactionBuilderImpl implements UpdateTableTransaction
     }
   }
 
-  private void validateOperationParam(Operation operation) {
+  private void validateIsUpdateOperation(Operation operation) {
     if (operation == Operation.CREATE_TABLE || operation == Operation.REPLACE_TABLE) {
       throw new IllegalArgumentException(
           String.format(

@@ -81,7 +81,7 @@ public class TransactionImpl implements Transaction {
    * Delta-Spark, for historical reasons the number of retries is really high (10m). We are starting
    * with a lower number by default for now. If this is not sufficient we can update it.
    */
-  private static final int defaultMaxRetries = 200;
+  private static final int DEFAULT_MAX_RETRIES = 200;
 
   ///////////////////////////
   ///// Instance fields /////
@@ -156,7 +156,7 @@ public class TransactionImpl implements Transaction {
     this.committer = committer;
     this.setTxnOpt = setTxnOpt;
     this.newClusteringColumnsOpt = newClusteringColumnsOpt;
-    this.maxRetries = maxRetriesOpt.orElse(defaultMaxRetries);
+    this.maxRetries = maxRetriesOpt.orElse(DEFAULT_MAX_RETRIES);
     this.logCompactionInterval = logCompactionInterval;
     this.clock = clock;
     this.currentCrcInfo = readSnapshotOpt.flatMap(SnapshotImpl::getCurrentCrcInfo);
