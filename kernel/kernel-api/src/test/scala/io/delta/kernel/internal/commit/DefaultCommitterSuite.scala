@@ -42,7 +42,7 @@ class DefaultCommitterSuite extends AnyFunSuite
   private val basicFileSystemCommitMetadataNoPMChange = new CommitMetadata(
     1L,
     "/fake/_delta_log",
-    testCommitInfo,
+    testCommitInfo(ictEnabled = false),
     Optional.of(protocol12),
     Optional.of(basicPartitionedMetadata),
     Optional.empty(), // newProtocolOpt
@@ -76,7 +76,7 @@ class DefaultCommitterSuite extends AnyFunSuite
           new CommitMetadata(
             3L,
             "/fake/_delta_log",
-            testCommitInfo,
+            testCommitInfo(),
             Optional.of(readProtocol),
             Optional.of(metadata),
             Optional.of(newProtocol),

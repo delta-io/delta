@@ -23,8 +23,7 @@ import static io.delta.kernel.internal.util.Preconditions.checkState;
 import static io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames;
 import static io.delta.kernel.internal.util.VectorUtils.buildArrayValue;
 import static io.delta.kernel.internal.util.VectorUtils.stringStringMapValue;
-import static java.util.Collections.emptyList;
-import static java.util.Collections.emptySet;
+import static java.util.Collections.*;
 import static java.util.stream.Collectors.toSet;
 
 import io.delta.kernel.exceptions.KernelException;
@@ -96,6 +95,8 @@ public class TransactionMetadataFactory {
     checkArgument(
         !partitionColumns.isPresent() || !clusteringColumns.isPresent(),
         "Cannot provide both partition columns and clustering columns");
+    validateSchemaAndPartColsCreateOrReplace(
+        tableProperties, schema, partitionColumns.orElse(emptyList()));
     Output output =
         new TransactionMetadataFactory(
                 tablePath,
@@ -124,6 +125,8 @@ public class TransactionMetadataFactory {
     checkArgument(
         !partitionColumns.isPresent() || !clusteringColumns.isPresent(),
         "Cannot provide both partition columns and clustering columns");
+    validateSchemaAndPartColsCreateOrReplace(
+        userInputTableProperties, schema, partitionColumns.orElse(emptyList()));
     // In the case of Replace table there are a few delta-specific properties we want to preserve
     Map<String, String> replaceTableProperties =
         readSnapshot.getMetadata().getConfiguration().entrySet().stream()
@@ -572,5 +575,14 @@ public class TransactionMetadataFactory {
 
   private static Protocol getInitialProtocol() {
     return new Protocol(DEFAULT_READ_VERSION, DEFAULT_WRITE_VERSION);
+  }
+
+  private static void validateSchemaAndPartColsCreateOrReplace(
+      Map<String, String> tableProperties, StructType schema, List<String> partitionColumns) {
+    // New table verify the given schema and partition columns
+    ColumnMappingMode mappingMode = ColumnMapping.getColumnMappingMode(tableProperties);
+
+    SchemaUtils.validateSchema(schema, isColumnMappingModeEnabled(mappingMode));
+    SchemaUtils.validatePartitionColumns(schema, partitionColumns);
   }
 }

@@ -351,6 +351,7 @@ public final class DeltaErrors {
     return new KernelException(
         String.format("Disabling %s on an existing table is not allowed.", key));
   }
+
   // End: icebergCompat exceptions
 
   public static KernelException partitionColumnMissingInData(
