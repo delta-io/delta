@@ -134,7 +134,7 @@ public class CommitContextImpl implements CommitContext {
 
   private CommitInfo getCommitInfo() {
     return new CommitInfo(
-        Optional.empty(), /* inCommitTimestampOpt */ // TODO: support ICT
+        Optional.of(commitAttemptTimestampMs), /* inCommitTimestampOpt */ // TODO: support ICT
         commitAttemptTimestampMs,
         "Kernel-" + Meta.KERNEL_VERSION + "/" + txnState.engineInfo, /* engineInfo */
         txnState.operation.getDescription(), /* description */

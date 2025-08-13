@@ -41,10 +41,10 @@ trait ActionUtils extends VectorTestUtils {
       .add("part1", IntegerType.INTEGER).add("col1", IntegerType.INTEGER),
     partitionCols = Seq("part1"))
 
-  def testCommitInfo: CommitInfo = {
+  def testCommitInfo(ictEnabled: Boolean = true): CommitInfo = {
     new CommitInfo(
-      Optional.empty(),
-      -1,
+      if (ictEnabled) Optional.of(1L) else Optional.empty(), // ICT
+      1L, // timestamp
       "engineInfo",
       "operation",
       Collections.emptyMap(), // operationParameters

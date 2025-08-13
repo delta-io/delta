@@ -23,6 +23,7 @@ import io.delta.kernel.annotation.Experimental;
 import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import java.util.Optional;
 
 /**
@@ -31,6 +32,25 @@ import java.util.Optional;
  */
 @Experimental
 public class CommitMetadata {
+
+  /**
+   * Represents the different types of commits based on filesystem-managed and catalog-managed state
+   * transitions.
+   */
+  public enum CommitType {
+    /** Creating a new filesystem-managed table */
+    FILESYSTEM_CREATE,
+    /** Creating a new catalog-managed table */
+    CATALOG_CREATE,
+    /** Writing to an existing filesystem-managed table */
+    FILESYSTEM_WRITE,
+    /** Writing to an existing catalog-managed table */
+    CATALOG_WRITE,
+    /** Upgrading a filesystem-managed table to a catalog-managed table */
+    FILESYSTEM_UPGRADE_TO_CATALOG,
+    /** Downgrading a catalog-managed table to a filesystem-managed table */
+    CATALOG_DOWNGRADE_TO_FILESYSTEM
+  }
 
   private final long version;
   private final String logPath;
@@ -56,6 +76,18 @@ public class CommitMetadata {
     this.readMetadataOpt = requireNonNull(readMetadataOpt, "readMetadataOpt is null");
     this.newProtocolOpt = requireNonNull(newProtocolOpt, "newProtocolOpt is null");
     this.newMetadataOpt = requireNonNull(newMetadataOpt, "newMetadataOpt is null");
+
+    checkArgument(
+        readProtocolOpt.isPresent() == readMetadataOpt.isPresent(),
+        "readProtocolOpt and readMetadataOpt must either both be present or both be absent");
+    checkArgument(
+        readProtocolOpt.isPresent() || newProtocolOpt.isPresent(),
+        "At least one of readProtocolOpt or newProtocolOpt must be present");
+    checkArgument(
+        readMetadataOpt.isPresent() || newMetadataOpt.isPresent(),
+        "At least one of readMetadataOpt or newMetadataOpt must be present");
+
+    checkInCommitTimestampPresentIfCatalogManaged();
   }
 
   /** The version of the Delta table this commit is targeting. */
@@ -103,5 +135,57 @@ public class CommitMetadata {
    */
   public Optional<Metadata> getNewMetadataOpt() {
     return newMetadataOpt;
+  }
+
+  /**
+   * Returns the effective {@link Protocol} that will be in place after this commit. If a new
+   * protocol is being written as part of this commit, returns the new protocol. Otherwise, returns
+   * the protocol that was read at the beginning of the commit.
+   */
+  public Protocol getEffectiveProtocol() {
+    return newProtocolOpt.orElseGet(readProtocolOpt::get);
+  }
+
+  /**
+   * Returns the effective {@link Metadata} that will be in place after this commit. If new metadata
+   * is being written as part of this commit, returns the new metadata. Otherwise, returns the
+   * metadata that was read at the beginning of the commit.
+   */
+  public Metadata getEffectiveMetadata() {
+    return newMetadataOpt.orElseGet(readMetadataOpt::get);
+  }
+
+  /**
+   * Determines the type of commit based on whether this is a table creation and the catalog-managed
+   * status of the table before and after the commit.
+   */
+  public CommitType getCommitType() {
+    final boolean isCreate = !readProtocolOpt.isPresent() && !readMetadataOpt.isPresent();
+    final boolean readVersionCatalogManaged =
+        readProtocolOpt.map(TableFeatures::isCatalogManagedSupported).orElse(false);
+    final boolean writeVersionCatalogManaged =
+        TableFeatures.isCatalogManagedSupported(getEffectiveProtocol());
+
+    if (isCreate && writeVersionCatalogManaged) {
+      return CommitType.CATALOG_CREATE;
+    } else if (isCreate && !writeVersionCatalogManaged) {
+      return CommitType.FILESYSTEM_CREATE;
+    } else if (readVersionCatalogManaged && writeVersionCatalogManaged) {
+      return CommitType.CATALOG_WRITE;
+    } else if (readVersionCatalogManaged && !writeVersionCatalogManaged) {
+      return CommitType.CATALOG_DOWNGRADE_TO_FILESYSTEM;
+    } else if (!readVersionCatalogManaged && writeVersionCatalogManaged) {
+      return CommitType.FILESYSTEM_UPGRADE_TO_CATALOG;
+    } else {
+      return CommitType.FILESYSTEM_WRITE;
+    }
+  }
+
+  private void checkInCommitTimestampPresentIfCatalogManaged() {
+    if (TableFeatures.isCatalogManagedSupported(getEffectiveProtocol())) {
+      checkArgument(
+          commitInfo.getInCommitTimestamp().isPresent(),
+          "InCommitTimestamp must be present for commits to catalogManaged tables");
+    }
   }
 }
