@@ -30,12 +30,14 @@ import io.delta.kernel.defaults.internal.parquet.ParquetSuiteBase
 import io.delta.kernel.defaults.utils.TestRow
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions._
-import io.delta.kernel.expressions.Literal
+import io.delta.kernel.expressions.{Column, Literal}
 import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.internal.{ScanImpl, SnapshotImpl, TableConfig}
 import io.delta.kernel.internal.checkpoints.CheckpointerSuite.selectSingleElement
-import io.delta.kernel.internal.util.JsonUtils
+import io.delta.kernel.internal.table.SnapshotBuilderImpl
+import io.delta.kernel.internal.util.{Clock, JsonUtils}
 import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
+import io.delta.kernel.transaction.DataLayoutSpec
 import io.delta.kernel.types._
 import io.delta.kernel.types.ByteType.BYTE
 import io.delta.kernel.types.DateType.DATE
@@ -50,6 +52,7 @@ import io.delta.kernel.types.StructType
 import io.delta.kernel.types.TimestampType.TIMESTAMP
 import io.delta.kernel.utils.CloseableIterable
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
+import io.delta.tables.DeltaTable
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -91,14 +94,17 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
 
   test("create table - provide unsupported column types - expect failure") {
     withTempDirAndEngine { (tablePath, engine) =>
-      val table = Table.forPath(engine, tablePath)
-      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
       val ex = intercept[KernelException] {
-        txnBuilder
-          .withSchema(engine, new StructType().add("variant_type", VariantType.VARIANT))
-          .build(engine)
+        createTxn(
+          engine,
+          tablePath,
+          isNewTable = true,
+          schema = new StructType().add("variant_type", VariantType.VARIANT))
       }
-      assert(ex.getMessage.contains("Kernel doesn't support writing data of type: variant"))
+      assert(ex.getMessage.contains("Kernel doesn't support writing data of type: variant") ||
+        ex.getMessage.contains(
+          "requires writer table feature \"[variantType]\" which is unsupported by " +
+            "this version of Delta Kernel"))
     }
   }
 
@@ -106,7 +112,6 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
       val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
-
       val txn = txnBuilder.withSchema(engine, testSchema).build(engine)
       commitTransaction(txn, engine, emptyIterable())
 
@@ -141,11 +146,9 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
   test("create table - table is concurrently created before txn commits") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
-      val txn1 = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
-        .withSchema(engine, testSchema).build(engine)
+      val txn1 = createTxn(engine, tablePath, isNewTable = true, testSchema)
 
-      val txn2 = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
-        .withSchema(engine, testSchema).build(engine)
+      val txn2 = createTxn(engine, tablePath, isNewTable = true, testSchema)
       commitTransaction(txn2, engine, emptyIterable())
 
       intercept[ConcurrentWriteException] {
@@ -177,11 +180,8 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
   test("create un-partitioned table") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
-      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
-
-      val txn = txnBuilder
-        .withSchema(engine, testSchema)
-        .build(engine)
+      val txn =
+        createTxn(engine, tablePath, isNewTable = true, testSchema)
 
       assert(txn.getSchema(engine) === testSchema)
       assert(txn.getPartitionColumns(engine) === Seq.empty.asJava)
@@ -191,7 +191,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
       assert(txnResult.getVersion === 0)
       assertCheckpointReadiness(txnResult, isReadyForCheckpoint = false)
 
-      verifyCommitInfo(tablePath = tablePath, version = 0, operation = CREATE_TABLE)
+      verifyCommitInfo(tablePath = tablePath, version = 0)
       verifyWrittenContent(tablePath, testSchema, Seq.empty)
     }
   }
@@ -199,7 +199,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
   test("create table and set properties") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
-      val txn1 = createTxn(engine, tablePath, isNewTable = true, testSchema, Seq.empty)
+      val txn1 = createTxn(engine, tablePath, isNewTable = true, testSchema)
 
       txn1.commit(engine, emptyIterable())
 
@@ -239,7 +239,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
     withTempDirAndEngine { (tablePath, engine) =>
       // Create table
       val table = Table.forPath(engine, tablePath)
-      createTxn(engine, tablePath, isNewTable = true, testSchema, Seq.empty)
+      createTxn(engine, tablePath, isNewTable = true, testSchema)
         .commit(engine, emptyIterable())
       // Create txn1 with config changes
       val txn1 = createTxn(
@@ -267,14 +267,15 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
     withTempDirAndEngine { (tablePath, engine) =>
       // Create table
       val table = Table.forPath(engine, tablePath)
-      createTxn(engine, tablePath, isNewTable = true, testSchema, Seq.empty)
+      createTxn(engine, tablePath, isNewTable = true, testSchema)
         .commit(engine, emptyIterable())
 
       // Create txn1 with config changes
-      val txn1 = createWriteTxnBuilder(table)
-        .withTableProperties(engine, Map(TableConfig.CHECKPOINT_INTERVAL.getKey -> "2").asJava)
-        .withMaxRetries(0)
-        .build(engine)
+      val txn1 = createTxn(
+        engine,
+        tablePath,
+        tableProperties = Map(TableConfig.CHECKPOINT_INTERVAL.getKey -> "2"),
+        maxRetries = 0)
 
       // Create and commit txn2
       appendData(
@@ -329,7 +330,6 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
         tablePath,
         isNewTable = true,
         testSchema,
-        Seq.empty,
         data = Seq(Map.empty[String, Literal] -> dataBatches1),
         tableProperties =
           Map(TableConfig.CHECKPOINT_INTERVAL.getKey.toLowerCase(Locale.ROOT) -> "2"))
@@ -347,14 +347,13 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
 
   test("create partitioned table - partition column is not part of the schema") {
     withTempDirAndEngine { (tablePath, engine) =>
-      val table = Table.forPath(engine, tablePath)
-      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
-
       val ex = intercept[IllegalArgumentException] {
-        txnBuilder
-          .withSchema(engine, testPartitionSchema)
-          .withPartitionColumns(engine, Seq("PART1", "part3").asJava)
-          .build(engine)
+        createTxn(
+          engine,
+          tablePath,
+          isNewTable = true,
+          schema = testPartitionSchema,
+          partCols = Seq("PART1", "part3"))
       }
       assert(ex.getMessage.contains("Partition column part3 not found in the schema"))
     }
@@ -362,19 +361,13 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
 
   test("create partitioned table - partition column type is not supported") {
     withTempDirAndEngine { (tablePath, engine) =>
-      val table = Table.forPath(engine, tablePath)
-      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
-
       val schema = new StructType()
         .add("p1", new ArrayType(INTEGER, true))
         .add("c1", DATE)
         .add("c2", new DecimalType(14, 2))
 
       val ex = intercept[KernelException] {
-        txnBuilder
-          .withSchema(engine, schema)
-          .withPartitionColumns(engine, Seq("p1", "c1").asJava)
-          .build(engine)
+        createTxn(engine, tablePath, isNewTable = true, schema = schema, partCols = Seq("p1", "c1"))
       }
       assert(ex.getMessage.contains(
         "Kernel doesn't support writing data with partition column (p1) of type: array[integer]"))
@@ -383,19 +376,17 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
 
   test("create a partitioned table") {
     withTempDirAndEngine { (tablePath, engine) =>
-      val table = Table.forPath(engine, tablePath)
-      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
-
       val schema = new StructType()
         .add("id", INTEGER)
         .add("Part1", INTEGER) // partition column
         .add("part2", INTEGER) // partition column
 
-      val txn = txnBuilder
-        .withSchema(engine, schema)
-        // partition columns should preserve the same case the one in the schema
-        .withPartitionColumns(engine, Seq("part1", "PART2").asJava)
-        .build(engine)
+      val txn = createTxn(
+        engine,
+        tablePath,
+        isNewTable = true,
+        schema = schema,
+        partCols = Seq("part1", "PART2"))
 
       assert(txn.getSchema(engine) === schema)
       // Expect the partition column name is exactly same as the one in the schema
@@ -405,7 +396,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
       assert(txnResult.getVersion === 0)
       assertCheckpointReadiness(txnResult, isReadyForCheckpoint = false)
 
-      verifyCommitInfo(tablePath, version = 0, Seq("Part1", "part2"), operation = CREATE_TABLE)
+      verifyCommitInfo(tablePath, version = 0, Seq("Part1", "part2"))
       verifyWrittenContent(tablePath, schema, Seq.empty)
     }
   }
@@ -418,15 +409,13 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
         val schema = if (includeTimestampNtz) goldenTableSchema
         else removeTimestampNtzTypeColumns(goldenTableSchema)
 
-        val table = Table.forPath(engine, tablePath)
-        val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
-        val txn = txnBuilder.withSchema(engine, schema).build(engine)
+        val txn = createTxn(engine, tablePath, isNewTable = true, schema = schema)
         val txnResult = commitTransaction(txn, engine, emptyIterable())
 
         assert(txnResult.getVersion === 0)
         assertCheckpointReadiness(txnResult, isReadyForCheckpoint = false)
 
-        verifyCommitInfo(tablePath, version = 0, operation = CREATE_TABLE)
+        verifyCommitInfo(tablePath, version = 0)
         verifyWrittenContent(tablePath, schema, Seq.empty)
       }
     }
@@ -435,6 +424,22 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
   ///////////////////////////////////////////////////////////////////////////
   // Create table and insert data tests (CTAS & INSERT)
   ///////////////////////////////////////////////////////////////////////////
+
+  test("cannot write to a table with an unsupported writer feature") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createEmptyTable(
+        engine,
+        tablePath,
+        testSchema)
+      DeltaTable.forPath(spark, tablePath)
+        .addFeatureSupport("testUnsupportedWriter")
+      val e = intercept[KernelException] {
+        createTxn(engine, tablePath)
+      }
+      assert(e.getMessage.contains("Unsupported Delta table feature"))
+    }
+  }
+
   test("insert into table - table created from scratch") {
     withTempDirAndEngine { (tblPath, engine) =>
       val commitResult0 = appendData(
@@ -442,13 +447,12 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
         tblPath,
         isNewTable = true,
         testSchema,
-        partCols = Seq.empty,
         data = Seq(Map.empty[String, Literal] -> (dataBatches1 ++ dataBatches2)))
 
       val expectedAnswer = dataBatches1.flatMap(_.toTestRows) ++ dataBatches2.flatMap(_.toTestRows)
 
       verifyCommitResult(commitResult0, expVersion = 0, expIsReadyForCheckpoint = false)
-      verifyCommitInfo(tblPath, version = 0, partitionCols = Seq.empty, operation = WRITE)
+      verifyCommitInfo(tblPath, version = 0)
       verifyWrittenContent(tblPath, testSchema, expectedAnswer)
     }
   }
@@ -460,11 +464,10 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
         tblPath,
         isNewTable = true,
         testSchema,
-        partCols = Seq.empty,
         data = Seq(Map.empty[String, Literal] -> dataBatches1))
 
       verifyCommitResult(commitResult0, expVersion = 0, expIsReadyForCheckpoint = false)
-      verifyCommitInfo(tblPath, version = 0, partitionCols = Seq.empty, operation = WRITE)
+      verifyCommitInfo(tblPath, version = 0, partitionCols = Seq.empty)
       verifyWrittenContent(tblPath, testSchema, dataBatches1.flatMap(_.toTestRows))
 
       val txn = createTxn(engine, tblPath)
@@ -475,7 +478,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
       val expAnswer = dataBatches1.flatMap(_.toTestRows) ++ dataBatches2.flatMap(_.toTestRows)
 
       verifyCommitResult(commitResult1, expVersion = 1, expIsReadyForCheckpoint = false)
-      verifyCommitInfo(tblPath, version = 1, partitionCols = null, operation = WRITE)
+      verifyCommitInfo(tblPath, version = 1, partitionCols = null)
       verifyWrittenContent(tblPath, testSchema, expAnswer)
     }
   }
@@ -483,10 +486,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
   test("insert into table - fails when committing the same txn twice") {
     withTempDirAndEngine { (tblPath, engine) =>
       val table = Table.forPath(engine, tblPath)
-
-      val txn = createWriteTxnBuilder(table)
-        .withSchema(engine, testSchema)
-        .build(engine)
+      val txn = createTxn(engine, tblPath, isNewTable = true, schema = testSchema)
 
       val txnState = txn.getTransactionState(engine)
       val stagedFiles = stageData(txnState, Map.empty, dataBatches1)
@@ -520,7 +520,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
         dataPartitionBatches2.flatMap(_.toTestRows)
 
       verifyCommitResult(commitResult0, expVersion = 0, expIsReadyForCheckpoint = false)
-      verifyCommitInfo(tblPath, version = 0, testPartitionColumns, operation = WRITE)
+      verifyCommitInfo(tblPath, version = 0, testPartitionColumns)
       verifyWrittenContent(tblPath, testPartitionSchema, expData)
     }
   }
@@ -542,7 +542,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
         val expData = dataPartitionBatches1.flatMap(_.toTestRows)
 
         verifyCommitResult(commitResult0, expVersion = 0, expIsReadyForCheckpoint = false)
-        verifyCommitInfo(tblPath, version = 0, partitionCols, operation = WRITE)
+        verifyCommitInfo(tblPath, version = 0, partitionCols)
         verifyWrittenContent(tblPath, testPartitionSchema, expData)
       }
       {
@@ -555,7 +555,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
           dataPartitionBatches2.flatMap(_.toTestRows)
 
         verifyCommitResult(commitResult1, expVersion = 1, expIsReadyForCheckpoint = false)
-        verifyCommitInfo(tblPath, version = 1, partitionCols = null, operation = WRITE)
+        verifyCommitInfo(tblPath, version = 1, partitionCols = null)
         verifyWrittenContent(tblPath, testPartitionSchema, expData)
       }
     }
@@ -618,7 +618,8 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
         verifyCommitResult(commitResult, expVersion = i, expIsReadyForCheckpoint = false)
         // partition cols are not written in the commit info for inserts
         val partitionBy = if (i == 0) expPartCols else null
-        verifyCommitInfo(tblPath, version = i, partitionBy, operation = WRITE)
+        val expectedOperation = if (i == 0) CREATE_TABLE else WRITE
+        verifyCommitInfo(tblPath, version = i, partitionBy)
         verifyWrittenContent(
           tblPath,
           schema,
@@ -694,7 +695,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
         val data = readTableUsingKernel(engine, parquetAllTypes, schema).to[Seq]
         val dataWithPartInfo = Seq(Map.empty[String, Literal] -> data)
 
-        appendData(engine, tblPath, isNewTable = true, schema, Seq.empty, dataWithPartInfo)
+        appendData(engine, tblPath, isNewTable = true, schema, data = dataWithPartInfo)
         var expData = dataWithPartInfo.flatMap(_._2).flatMap(_.toTestRows)
 
         val checkpointInterval = 4
@@ -708,7 +709,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
           checkpointIfReady(engine, tblPath, commitResult, expSize = i /* one file per version */ )
 
           verifyCommitResult(commitResult, expVersion = i, i % checkpointInterval == 0)
-          verifyCommitInfo(tblPath, version = i, null, operation = WRITE)
+          verifyCommitInfo(tblPath, version = i, null)
           verifyWrittenContent(tblPath, schema, expData)
         }
         assertCheckpointExists(tblPath, atVersion = checkpointInterval)
@@ -792,7 +793,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
         }
 
         appendData(engine, tblPath, isNewTable = true, schema, partCols, dataWithPartInfo)
-        verifyCommitInfo(tblPath, version = 0, casePreservingPartCols, operation = WRITE)
+        verifyCommitInfo(tblPath, version = 0, casePreservingPartCols)
 
         var expData = dataWithPartInfo.flatMap(_._2).flatMap(_.toTestRows)
 
@@ -809,7 +810,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
           checkpointIfReady(engine, tblPath, commitResult, expSize = fileCount)
 
           verifyCommitResult(commitResult, expVersion = i, i % checkpointInterval == 0)
-          verifyCommitInfo(tblPath, version = i, partitionCols = null, operation = WRITE)
+          verifyCommitInfo(tblPath, version = i, partitionCols = null)
           verifyWrittenContent(tblPath, schema, expData)
         }
 
@@ -822,7 +823,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
     withTempDirAndEngine { (tblPath, engine) =>
       val ex = intercept[KernelException] {
         val data = Seq(Map.empty[String, Literal] -> dataPartitionBatches1) // data schema mismatch
-        appendData(engine, tblPath, isNewTable = true, testSchema, partCols = Seq.empty, data)
+        appendData(engine, tblPath, isNewTable = true, testSchema, data = data)
       }
       assert(ex.getMessage.contains("The schema of the data to be written to " +
         "the table doesn't match the table schema"))
@@ -872,15 +873,14 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
 
       def prepTxnAndActions(newTbl: Boolean, appId: String, txnVer: Long)
           : (Transaction, CloseableIterable[Row]) = {
-        var txnBuilder = createWriteTxnBuilder(Table.forPath(engine, tblPath))
 
-        if (appId != null) txnBuilder = txnBuilder.withTransactionId(engine, appId, txnVer)
-
-        if (newTbl) {
-          txnBuilder = txnBuilder.withSchema(engine, testPartitionSchema)
-            .withPartitionColumns(engine, testPartitionColumns.asJava)
-        }
-        val txn = txnBuilder.build(engine)
+        val txn = createTxn(
+          engine,
+          tblPath,
+          isNewTable = newTbl,
+          schema = if (newTbl) testPartitionSchema else null,
+          partCols = if (newTbl) testPartitionColumns else null,
+          txnId = if (appId != null) Some((appId, txnVer)) else None)
 
         val combinedActions = inMemoryIterable(
           data.map { case (partValues, partData) =>
@@ -901,7 +901,8 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
 
         verifyCommitResult(commitResult, expVersion = expTblVer, expIsReadyForCheckpoint = false)
         val expPartCols = if (newTbl) testPartitionColumns else null
-        verifyCommitInfo(tblPath, version = expTblVer, expPartCols, operation = WRITE)
+        val expOperation = if (newTbl) CREATE_TABLE else WRITE
+        verifyCommitInfo(tblPath, version = expTblVer, expPartCols)
         verifyWrittenContent(tblPath, testPartitionSchema, expData)
       }
 
@@ -982,13 +983,8 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
             .add("humidity", FloatType.FLOAT))
 
       // Create the table with the given schema and table properties.
-      val txn = createTxn(
-        engine,
-        tblPath,
-        isNewTable = true,
-        schema,
-        partCols = Seq.empty,
-        tableProperties = tableProperties)
+      val txn =
+        createTxn(engine, tblPath, isNewTable = true, schema, tableProperties = tableProperties)
       commitTransaction(txn, engine, emptyIterable())
 
       val dataBatches1 = generateData(schema, Seq.empty, Map.empty, batchSize = 10, numBatches = 1)
@@ -1028,7 +1024,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
             .add("timestamp", TimestampType.TIMESTAMP))
 
       // Create table with stats collection enabled.
-      val txn = createTxn(engine, tblPath, isNewTable = true, schema, Seq.empty, tableProps)
+      val txn = createTxn(engine, tblPath, isNewTable = true, schema, tableProperties = tableProps)
       txn.commit(engine, emptyIterable())
 
       // Write one batch of data.
@@ -1063,10 +1059,10 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
 
   test("conflicts - creating new table - table created by other txn after current txn start") {
     withTempDirAndEngine { (tablePath, engine) =>
-      val losingTx = createTestTxn(engine, tablePath, Some(testSchema))
+      val losingTx = createTxn(engine, tablePath, isNewTable = true, schema = testSchema)
 
       // don't commit losingTxn, instead create a new txn and commit it
-      val winningTx = createTestTxn(engine, tablePath, Some(testSchema))
+      val winningTx = createTxn(engine, tablePath, isNewTable = true, schema = testSchema)
       val winningTxResult = commitTransaction(winningTx, engine, emptyIterable())
 
       // now attempt to commit the losingTxn
@@ -1118,7 +1114,6 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
         kernelPath,
         isNewTable = true,
         schema,
-        partCols = Seq.empty,
         data = Seq(Map.empty[String, Literal] -> batch))
 
       spark.read.format("delta").load(kernelPath)
@@ -1143,10 +1138,10 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
       val testData = Seq(Map.empty[String, Literal] -> dataBatches1)
 
       // create a new table and commit it
-      appendData(engine, tablePath, isNewTable = true, testSchema, partCols = Seq.empty, testData)
+      appendData(engine, tablePath, isNewTable = true, testSchema, data = testData)
 
       // start the losing transaction
-      val losingTx = createTestTxn(engine, tablePath)
+      val losingTx = createTxn(engine, tablePath)
 
       // don't commit losingTxn, instead create a new txn (that changes metadata) and commit it
       spark.sql("ALTER TABLE delta.`" + tablePath + "` ADD COLUMN newCol INT")
@@ -1168,11 +1163,11 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
         var expData = Seq.empty[TestRow]
 
         // create a new table and commit it
-        appendData(engine, tablePath, isNewTable = true, testSchema, partCols = Seq.empty, testData)
+        appendData(engine, tablePath, isNewTable = true, testSchema, data = testData)
         expData ++= testData.flatMap(_._2).flatMap(_.toTestRows)
 
         // start the losing transaction
-        val txn1 = createTestTxn(engine, tablePath)
+        val txn1 = createTxn(engine, tablePath)
 
         // don't commit txn1 yet, instead commit nex txns (that appends data) and commit it
         Seq.range(0, numWinningTxs).foreach { i =>
@@ -1191,7 +1186,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
           txn1Result,
           expVersion = numWinningTxs + 1,
           expIsReadyForCheckpoint = false)
-        verifyCommitInfo(tablePath = tablePath, version = 0, operation = WRITE)
+        verifyCommitInfo(tablePath = tablePath, version = 0)
         verifyWrittenContent(tablePath, testSchema, expData)
       }
     }
@@ -1229,15 +1224,5 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
       }
     }
     newStructType
-  }
-
-  def createTestTxn(
-      engine: Engine,
-      tablePath: String,
-      schema: Option[StructType] = None): Transaction = {
-    val table = Table.forPath(engine, tablePath)
-    var txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, MANUAL_UPDATE)
-    schema.foreach(s => txnBuilder = txnBuilder.withSchema(engine, s))
-    txnBuilder.build(engine)
   }
 }

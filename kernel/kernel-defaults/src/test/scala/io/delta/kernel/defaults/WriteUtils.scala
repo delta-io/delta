@@ -56,7 +56,9 @@ import org.scalatest.funsuite.AnyFunSuite
 
 trait TransactionBuilderSupport {
 
-  def createWriteTxnBuilder(table: Table): TransactionBuilder
+  def createWriteTxnBuilder(
+      table: Table,
+      operation: Operation = Operation.WRITE): TransactionBuilder
 
   // scalastyle:off argcount
   def createTxn(
@@ -70,7 +72,9 @@ trait TransactionBuilderSupport {
       withDomainMetadataSupported: Boolean = false,
       maxRetries: Int = -1,
       clusteringColsOpt: Option[List[Column]] = None,
-      logCompactionInterval: Int = 10): Transaction
+      logCompactionInterval: Int = 10,
+      txnId: Option[(String, Long)] = None,
+      tablePropertiesRemoved: Set[String] = null): Transaction
   // scalastyle:on argcount
 }
 
@@ -88,11 +92,15 @@ trait TransactionBuilderV1Support extends TransactionBuilderSupport with TestUti
       withDomainMetadataSupported: Boolean = false,
       maxRetries: Int = -1,
       clusteringColsOpt: Option[List[Column]] = None,
-      logCompactionInterval: Int = 10): Transaction = {
+      logCompactionInterval: Int = 10,
+      txnId: Option[(String, Long)] = None,
+      tablePropertiesRemoved: Set[String] = null): Transaction = {
     // scalastyle:on argcount
+    val operation = if (isNewTable) Operation.CREATE_TABLE else Operation.WRITE
 
     var txnBuilder = createWriteTxnBuilder(
-      TableImpl.forPath(engine, tablePath, clock))
+      TableImpl.forPath(engine, tablePath, clock),
+      operation)
 
     if (isNewTable) {
       txnBuilder = txnBuilder.withSchema(engine, schema)
@@ -119,11 +127,19 @@ trait TransactionBuilderV1Support extends TransactionBuilderSupport with TestUti
 
     txnBuilder = txnBuilder.withLogCompactionInverval(logCompactionInterval)
 
+    txnId.foreach { case (appId, txnVer) =>
+      txnBuilder = txnBuilder.withTransactionId(engine, appId, txnVer)
+    }
+    if (tablePropertiesRemoved != null) {
+      txnBuilder = txnBuilder.withTablePropertiesRemoved(tablePropertiesRemoved.asJava)
+    }
     txnBuilder.build(engine)
   }
 
-  override def createWriteTxnBuilder(table: Table): TransactionBuilder = {
-    table.createTransactionBuilder(defaultEngine, "test-engine", Operation.WRITE)
+  override def createWriteTxnBuilder(
+      table: Table,
+      operation: Operation = Operation.WRITE): TransactionBuilder = {
+    table.createTransactionBuilder(defaultEngine, "test-engine", operation)
   }
 }
 
@@ -441,7 +457,7 @@ trait AbstractWriteUtils extends TestUtils with TransactionBuilderSupport {
       engine: Engine = defaultEngine,
       tablePath: String,
       schema: StructType,
-      partCols: Seq[String] = Seq.empty,
+      partCols: Seq[String] = null,
       clock: Clock = () => System.currentTimeMillis,
       tableProperties: Map[String, String] = null,
       clusteringColsOpt: Option[List[Column]] = None): TransactionCommitResult = {
@@ -538,7 +554,7 @@ trait AbstractWriteUtils extends TestUtils with TransactionBuilderSupport {
       testSchema,
       Seq.empty,
       tableProperties = Map(key.getKey -> value),
-      clock)
+      clock = clock)
       .commit(engine, emptyIterable())
 
     val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
@@ -567,8 +583,8 @@ trait AbstractWriteUtils extends TestUtils with TransactionBuilderSupport {
   def verifyCommitInfo(
       tablePath: String,
       version: Long,
-      partitionCols: Seq[String] = Seq.empty,
-      operation: Operation = MANUAL_UPDATE): Unit = {
+      partitionCols: Seq[String] = Seq.empty): Unit = {
+    val expectedOperation = if (version == 0) Operation.CREATE_TABLE else Operation.WRITE
     val row = spark.sql(s"DESCRIBE HISTORY delta.`$tablePath`")
       .filter(s"version = $version")
       .select(
@@ -587,7 +603,7 @@ trait AbstractWriteUtils extends TestUtils with TransactionBuilderSupport {
     assert(!row.getAs[Boolean]("isBlindAppend"))
     assert(row.getAs[Seq[String]]("engineInfo") ===
       "Kernel-" + Meta.KERNEL_VERSION + "/" + testEngineInfo)
-    assert(row.getAs[String]("operation") === operation.getDescription)
+    assert(row.getAs[String]("operation") === expectedOperation.getDescription)
   }
 
   def verifyCommitResult(

@@ -25,10 +25,12 @@ import io.delta.kernel.utils.CloseableIterable.emptyIterable
 
 import org.scalatest.funsuite.AnyFunSuite
 
+class TablePropertiesTransactionBuilderV1Suite extends TablePropertiesSuiteBase with WriteUtils {}
+
 /**
  * Suite to set or get table properties.
  */
-class TablePropertiesSuite extends AnyFunSuite with WriteUtils {
+trait TablePropertiesSuiteBase extends AnyFunSuite with AbstractWriteUtils {
   test("create/update table - allow arbitrary properties") {
     withTempDir { tempFile =>
       val tablePath = tempFile.getAbsolutePath
@@ -37,11 +39,11 @@ class TablePropertiesSuite extends AnyFunSuite with WriteUtils {
       createUpdateTableWithProps(
         tablePath,
         createTable = true,
-        props = Map("my key" -> "10", "my key2" -> "20"))
+        propsAdded = Map("my key" -> "10", "my key2" -> "20"))
       assertHasProp(tablePath, expProps = Map("my key" -> "10", "my key2" -> "20"))
 
       // update table by modifying the arbitrary properties and check if they are updated
-      createUpdateTableWithProps(tablePath, props = Map("my key" -> "30"))
+      createUpdateTableWithProps(tablePath, propsAdded = Map("my key" -> "30"))
       assertHasProp(tablePath, expProps = Map("my key" -> "30", "my key2" -> "20"))
 
       // update table without any new properties and check if the existing properties are retained
@@ -49,7 +51,7 @@ class TablePropertiesSuite extends AnyFunSuite with WriteUtils {
       assertHasProp(tablePath, expProps = Map("my key" -> "30", "my key2" -> "20"))
 
       // update table by adding new arbitrary properties and check if they are set
-      createUpdateTableWithProps(tablePath, props = Map("new key3" -> "str"))
+      createUpdateTableWithProps(tablePath, propsAdded = Map("new key3" -> "str"))
       assertHasProp(
         tablePath,
         expProps = Map("my key" -> "30", "my key2" -> "20", "new key3" -> "str"))
@@ -67,7 +69,7 @@ class TablePropertiesSuite extends AnyFunSuite with WriteUtils {
       // Try updating in an existing table
       createUpdateTableWithProps(tablePath, createTable = true)
       val ex2 = intercept[UnknownConfigurationException] {
-        createUpdateTableWithProps(tablePath, props = Map("Delta.unknown" -> "str"))
+        createUpdateTableWithProps(tablePath, propsAdded = Map("Delta.unknown" -> "str"))
       }
       assert(ex2.getMessage.contains("Unknown configuration was specified: Delta.unknown"))
     }
@@ -85,7 +87,7 @@ class TablePropertiesSuite extends AnyFunSuite with WriteUtils {
       // Try updating in an existing table
       createUpdateTableWithProps(
         tablePath,
-        props = Map("DELTA.CHECKPOINTINTERVAL" -> "30"))
+        propsAdded = Map("DELTA.CHECKPOINTINTERVAL" -> "30"))
       assertHasProp(tablePath, expProps = Map("delta.checkpointInterval" -> "30"))
     }
   }
@@ -103,7 +105,7 @@ class TablePropertiesSuite extends AnyFunSuite with WriteUtils {
       // Try updating in an existing table
       createUpdateTableWithProps(
         tablePath,
-        props = Map("user.facing.prop" -> "30"))
+        propsAdded = Map("user.facing.prop" -> "30"))
       assertHasProp(
         tablePath,
         expProps = Map("user.facing.PROP" -> "20", "user.facing.prop" -> "30"))
@@ -112,10 +114,16 @@ class TablePropertiesSuite extends AnyFunSuite with WriteUtils {
 
   test("Cannot unset delta table properties") {
     withTempDir { tablePath =>
+      // Create empty table with delta props
+      createUpdateTableWithProps(
+        tablePath.getAbsolutePath,
+        createTable = true,
+        propsAdded = Map("delta.checkpointInterval" -> "10"))
       Seq("delta.checkpointInterval", "DELTA.checkpointInterval").foreach { key =>
         val e = intercept[IllegalArgumentException] {
-          createWriteTxnBuilder(Table.forPath(defaultEngine, tablePath.getAbsolutePath))
-            .withTablePropertiesRemoved(Set(key).asJava)
+          createUpdateTableWithProps(
+            tablePath.getAbsolutePath,
+            propsRemoved = Set(key))
         }
         assert(
           e.getMessage.contains("Unsetting 'delta.' table properties is currently unsupported"))
@@ -129,10 +137,10 @@ class TablePropertiesSuite extends AnyFunSuite with WriteUtils {
       createEmptyTable(tablePath = tablePath, schema = testSchema)
 
       val e = intercept[KernelException] {
-        createWriteTxnBuilder(Table.forPath(defaultEngine, tablePath))
-          .withTablePropertiesRemoved(Set("foo.key").asJava)
-          .withTableProperties(defaultEngine, Map("foo.key" -> "value").asJava)
-          .build(defaultEngine)
+        createUpdateTableWithProps(
+          tablePath,
+          propsAdded = Map("foo.key" -> "value"),
+          propsRemoved = Set("foo.key"))
       }
       assert(e.getMessage.contains(
         "Cannot set and unset the same table property in the same transaction. "
@@ -152,10 +160,10 @@ class TablePropertiesSuite extends AnyFunSuite with WriteUtils {
 
       // Try to set and unset the existing property
       val e = intercept[KernelException] {
-        createWriteTxnBuilder(Table.forPath(defaultEngine, tablePath))
-          .withTablePropertiesRemoved(Set("foo.key").asJava)
-          .withTableProperties(defaultEngine, Map("foo.key" -> "value").asJava)
-          .build(defaultEngine)
+        createUpdateTableWithProps(
+          tablePath,
+          propsAdded = Map("foo.key" -> "value"),
+          propsRemoved = Set("foo.key"))
       }
       assert(e.getMessage.contains(
         "Cannot set and unset the same table property in the same transaction. "
@@ -175,29 +183,26 @@ class TablePropertiesSuite extends AnyFunSuite with WriteUtils {
       assertHasProp(tablePath, Map("foo.key" -> "value", "FOO.KEY" -> "VALUE"))
 
       // Remove 1 of the properties set
-      createWriteTxnBuilder(Table.forPath(defaultEngine, tablePath))
-        .withTablePropertiesRemoved(Set("foo.key").asJava)
-        .build(defaultEngine)
-        .commit(defaultEngine, emptyIterable())
+      createUpdateTableWithProps(
+        tablePath,
+        propsRemoved = Set("foo.key"))
       assertPropsDNE(tablePath, Set("foo.key"))
       // Check that the other property is not touched
       assertHasProp(tablePath, Map("FOO.KEY" -> "VALUE"))
 
       // Can unset a property that DNE
-      createWriteTxnBuilder(Table.forPath(defaultEngine, tablePath))
-        .withTablePropertiesRemoved(Set("not.a.key").asJava)
-        .build(defaultEngine)
-        .commit(defaultEngine, emptyIterable())
+      createUpdateTableWithProps(
+        tablePath,
+        propsRemoved = Set("not.a.key"))
       assertPropsDNE(tablePath, Set("not.a.key"))
       // Check that the other property is not touched
       assertHasProp(tablePath, Map("FOO.KEY" -> "VALUE"))
 
       // Can be simultaneous with setTblProps as long as no overlap
-      createWriteTxnBuilder(Table.forPath(defaultEngine, tablePath))
-        .withTablePropertiesRemoved(Set("FOO.KEY").asJava)
-        .withTableProperties(defaultEngine, Map("foo.key" -> "value-new").asJava)
-        .build(defaultEngine)
-        .commit(defaultEngine, emptyIterable())
+      createUpdateTableWithProps(
+        tablePath,
+        propsAdded = Map("foo.key" -> "value-new"),
+        propsRemoved = Set("FOO.KEY"))
       assertPropsDNE(tablePath, Set("FOO.KEY"))
       // Check that the other property is added successfully
       assertHasProp(tablePath, Map("foo.key" -> "value-new"))
@@ -207,8 +212,15 @@ class TablePropertiesSuite extends AnyFunSuite with WriteUtils {
   def createUpdateTableWithProps(
       tablePath: String,
       createTable: Boolean = false,
-      props: Map[String, String] = null): Unit = {
-    createTxn(defaultEngine, tablePath, createTable, testSchema, Seq.empty, props)
+      propsAdded: Map[String, String] = null,
+      propsRemoved: Set[String] = null): Unit = {
+    createTxn(
+      defaultEngine,
+      tablePath,
+      createTable,
+      if (createTable) testSchema else null,
+      tableProperties = propsAdded,
+      tablePropertiesRemoved = propsRemoved)
       .commit(defaultEngine, emptyIterable())
   }
 

@@ -414,7 +414,7 @@ class InCommitTimestampSuite extends AnyFunSuite with WriteUtils {
       val expData = dataBatches1.flatMap(_.toTestRows)
 
       verifyCommitResult(commitResult, expVersion = 1, expIsReadyForCheckpoint = false)
-      verifyCommitInfo(tablePath, version = 1, partitionCols = null, operation = WRITE)
+      verifyCommitInfo(tablePath, version = 1, partitionCols = null)
       verifyWrittenContent(tablePath, testSchema, expData)
       verifyTableProperties(
         tablePath,
