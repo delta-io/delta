@@ -18,7 +18,7 @@ package io.delta.spark.dsv2.scan;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import io.delta.kernel.TableManager;
-import io.delta.spark.dsv2.SparkKernelDsv2TestBase;
+import io.delta.spark.dsv2.KernelSparkDsv2TestBase;
 import java.io.File;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
@@ -26,7 +26,7 @@ import org.apache.spark.sql.types.StructType;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-public class KernelSparkScanTest extends SparkKernelDsv2TestBase {
+public class KernelSparkScanTest extends KernelSparkDsv2TestBase {
 
   @Test
   public void testReadSchema(@TempDir File tempDir) {

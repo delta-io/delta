@@ -22,7 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.TableManager;
 import io.delta.kernel.internal.SnapshotImpl;
-import io.delta.spark.dsv2.SparkKernelDsv2TestBase;
+import io.delta.spark.dsv2.KernelSparkDsv2TestBase;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -39,7 +39,7 @@ import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
-public class DeltaKernelTableTest extends SparkKernelDsv2TestBase {
+public class DeltaKernelTableTest extends KernelSparkDsv2TestBase {
 
   @ParameterizedTest(name = "{0}")
   @MethodSource("tableTestCases")
