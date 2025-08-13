@@ -39,6 +39,10 @@ public class ScanMetrics {
 
   public final Counter removeFilesFromDeltaFilesCounter = new Counter();
 
+  public final FileCounter parquetActionSourceFilesCounter = new FileCounter();
+  public final FileCounter jsonActionSourceFilesCounter = new FileCounter();
+  public final FileCounter crcFilesCounter = new FileCounter();
+
   public ScanMetricsResult captureScanMetricsResult() {
     return new ScanMetricsResult() {
 
@@ -48,6 +52,13 @@ public class ScanMetrics {
       final long numActiveAddFiles = activeAddFilesCounter.value();
       final long numDuplicateAddFiles = duplicateAddFilesCounter.value();
       final long numRemoveFilesSeenFromDeltaFiles = removeFilesFromDeltaFilesCounter.value();
+      final long numParquetActionSourceFiles = parquetActionSourceFilesCounter.fileCount();
+      final long parquetActionSourceFilesTotalSizeBytes =
+          parquetActionSourceFilesCounter.sizeInBytes();
+      final long numJsonActionSourceFiles = jsonActionSourceFilesCounter.fileCount();
+      final long jsonActionSourceFilesTotalSizeBytes = jsonActionSourceFilesCounter.sizeInBytes();
+      final long numCrcFiles = crcFilesCounter.fileCount();
+      final long crcFilesTotalSizeBytes = crcFilesCounter.sizeInBytes();
 
       @Override
       public long getTotalPlanningDurationNs() {
@@ -78,6 +89,36 @@ public class ScanMetrics {
       public long getNumRemoveFilesSeenFromDeltaFiles() {
         return numRemoveFilesSeenFromDeltaFiles;
       }
+
+      @Override
+      public long getNumParquetActionSourceFiles() {
+        return numParquetActionSourceFiles;
+      }
+
+      @Override
+      public long getParquetActionSourceFilesTotalSizeBytes() {
+        return parquetActionSourceFilesTotalSizeBytes;
+      }
+
+      @Override
+      public long getNumJsonActionSourceFiles() {
+        return numJsonActionSourceFiles;
+      }
+
+      @Override
+      public long getJsonActionSourceFilesTotalSizeBytes() {
+        return jsonActionSourceFilesTotalSizeBytes;
+      }
+
+      @Override
+      public long getNumCrcFiles() {
+        return numCrcFiles;
+      }
+
+      @Override
+      public long getCrcFilesTotalSizeBytes() {
+        return crcFilesTotalSizeBytes;
+      }
     };
   }
 
@@ -86,12 +127,16 @@ public class ScanMetrics {
     return String.format(
         "ScanMetrics(totalPlanningTimer=%s, addFilesCounter=%s, addFilesFromDeltaFilesCounter=%s,"
             + " activeAddFilesCounter=%s, duplicateAddFilesCounter=%s, "
-            + "removeFilesFromDeltaFilesCounter=%s",
+            + "removeFilesFromDeltaFilesCounter=%s, parquetActionSourceFiles=%s, "
+            + "jsonActionSourceFiles=%s, crcFiles=%s)",
         totalPlanningTimer,
         addFilesCounter,
         addFilesFromDeltaFilesCounter,
         activeAddFilesCounter,
         duplicateAddFilesCounter,
-        removeFilesFromDeltaFilesCounter);
+        removeFilesFromDeltaFilesCounter,
+        parquetActionSourceFilesCounter,
+        jsonActionSourceFilesCounter,
+        crcFilesCounter);
   }
 }

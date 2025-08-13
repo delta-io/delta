@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.internal.metrics;
 
+import io.delta.kernel.metrics.ScanMetricsResult;
 import io.delta.kernel.metrics.SnapshotMetricsResult;
 import java.util.Optional;
 
@@ -38,6 +39,8 @@ public class SnapshotMetrics {
 
   public final Timer loadCrcTotalDurationTimer = new Timer();
 
+  public final ScanMetrics scanMetrics = new ScanMetrics();
+
   public SnapshotMetricsResult captureSnapshotMetricsResult() {
     return new SnapshotMetricsResult() {
       final Optional<Long> computeTimestampToVersionTotalDurationResult =
@@ -48,6 +51,7 @@ public class SnapshotMetrics {
       final long loadLogSegmentTotalDurationResult =
           loadLogSegmentTotalDurationTimer.totalDurationNs();
       final long loadCrcTotalDurationResult = loadCrcTotalDurationTimer.totalDurationNs();
+      final ScanMetricsResult scanMetricsResult = scanMetrics.captureScanMetricsResult();
 
       @Override
       public Optional<Long> getComputeTimestampToVersionTotalDurationNs() {
@@ -72,6 +76,11 @@ public class SnapshotMetrics {
       @Override
       public long getLoadCrcTotalDurationNs() {
         return loadCrcTotalDurationResult;
+      }
+
+      @Override
+      public ScanMetricsResult getScanMetricsResult() {
+        return scanMetricsResult;
       }
     };
   }
