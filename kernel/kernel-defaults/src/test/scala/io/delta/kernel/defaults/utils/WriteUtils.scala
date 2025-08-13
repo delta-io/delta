@@ -466,7 +466,7 @@ trait AbstractWriteUtils extends TestUtils with TransactionBuilderSupport {
       engine,
       tablePath,
       isNewTable,
-      testSchema,
+      schema = if (isNewTable) testSchema else null,
       tableProperties = Map(key.getKey -> value),
       clock = clock)
       .commit(engine, emptyIterable())

@@ -72,9 +72,7 @@ class DeltaTableSchemaEvolutionSuite extends AnyFunSuite with WriteUtils
           fieldMetadataForColumn(3, "b"))
         .add("c", IntegerType.INTEGER, true, currentSchema.get("c").getMetadata)
 
-      table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
-        .withSchema(engine, newSchema)
-        .build(engine).commit(engine, emptyIterable())
+      updateTableMetadata(engine, tablePath, newSchema)
 
       val structType = table.getLatestSnapshot(engine).getSchema
       assertColumnMapping(structType.get("a"), 1)
@@ -107,9 +105,7 @@ class DeltaTableSchemaEvolutionSuite extends AnyFunSuite with WriteUtils
       val newSchema = new StructType()
         .add("a", StringType.STRING, true, currentSchema.get("a").getMetadata)
 
-      table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
-        .withSchema(engine, newSchema)
-        .build(engine).commit(engine, emptyIterable())
+      updateTableMetadata(engine, tablePath, newSchema)
 
       val structType = table.getLatestSnapshot(engine).getSchema
       assertColumnMapping(structType.get("a"), 1)
@@ -152,9 +148,7 @@ class DeltaTableSchemaEvolutionSuite extends AnyFunSuite with WriteUtils
           currentSchema.get("b").getMetadata)
         .add("renamed-c", IntegerType.INTEGER, true, currentSchema.get("c").getMetadata)
 
-      table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
-        .withSchema(engine, newSchema)
-        .build(engine).commit(engine, emptyIterable())
+      updateTableMetadata(engine, tablePath, newSchema)
 
       val updatedSchema = table.getLatestSnapshot(engine).getSchema
       assertColumnMapping(updatedSchema.get("a"), 1)
@@ -201,9 +195,7 @@ class DeltaTableSchemaEvolutionSuite extends AnyFunSuite with WriteUtils
           true,
           currentSchema.get("b").getMetadata)
 
-      table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
-        .withSchema(engine, newSchema)
-        .build(engine).commit(engine, emptyIterable())
+      updateTableMetadata(engine, tablePath, newSchema)
 
       val updatedSchema = table.getLatestSnapshot(engine).getSchema
       assertColumnMapping(updatedSchema.get("a"), 1)
@@ -249,9 +241,7 @@ class DeltaTableSchemaEvolutionSuite extends AnyFunSuite with WriteUtils
           true,
           fieldMetadataForMapColumn(4, "map", "map", 5, 6))
 
-      table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
-        .withSchema(engine, newSchema)
-        .build(engine).commit(engine, emptyIterable())
+      updateTableMetadata(engine, tablePath, newSchema)
 
       val structType = table.getLatestSnapshot(engine).getSchema
       assertColumnMapping(structType.get("a"), 1)
@@ -295,9 +285,7 @@ class DeltaTableSchemaEvolutionSuite extends AnyFunSuite with WriteUtils
           true,
           fieldMetadataForMapColumn(4, "map", "map", 5, 6))
 
-      table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
-        .withSchema(engine, newSchema)
-        .build(engine).commit(engine, emptyIterable())
+      updateTableMetadata(engine, tablePath, newSchema)
 
       val latestSnapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
       val structType = latestSnapshot.getSchema
@@ -357,9 +345,7 @@ class DeltaTableSchemaEvolutionSuite extends AnyFunSuite with WriteUtils
           true,
           currentSchema.get("map").getMetadata)
 
-      table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
-        .withSchema(engine, newSchema)
-        .build(engine).commit(engine, emptyIterable())
+      updateTableMetadata(engine, tablePath, newSchema)
 
       val structType = table.getLatestSnapshot(engine).getSchema
       assertColumnMapping(structType.get("a"), 1)
@@ -413,9 +399,7 @@ class DeltaTableSchemaEvolutionSuite extends AnyFunSuite with WriteUtils
           true,
           currentSchema.get("map").getMetadata)
 
-      table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
-        .withSchema(engine, newSchema)
-        .build(engine).commit(engine, emptyIterable())
+      updateTableMetadata(engine, tablePath, newSchema)
 
       val structType = table.getLatestSnapshot(engine).getSchema
       assertColumnMapping(structType.get("a"), 1)
@@ -453,10 +437,7 @@ class DeltaTableSchemaEvolutionSuite extends AnyFunSuite with WriteUtils
           true,
           currentSchema.get("clustering-col").getMetadata)
 
-      table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
-        .withSchema(engine, expectedSchema)
-        .build(engine)
-        .commit(engine, emptyIterable())
+      updateTableMetadata(engine, tablePath, expectedSchema)
 
       val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
       val actualSchema = snapshot.getSchema
@@ -512,9 +493,7 @@ class DeltaTableSchemaEvolutionSuite extends AnyFunSuite with WriteUtils
           true,
           currentSchema.get("map").getMetadata)
 
-      table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
-        .withSchema(engine, newSchema)
-        .build(engine).commit(engine, emptyIterable())
+      updateTableMetadata(engine, tablePath, newSchema)
 
       val structType = table.getLatestSnapshot(engine).getSchema
       assertColumnMapping(structType.get("a"), 1)
@@ -566,9 +545,7 @@ class DeltaTableSchemaEvolutionSuite extends AnyFunSuite with WriteUtils
           currentSchema.get("map").getMetadata)
         .add("a", IntegerType.INTEGER, true, currentSchema.get("a").getMetadata)
 
-      table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
-        .withSchema(engine, newSchema)
-        .build(engine).commit(engine, emptyIterable())
+      updateTableMetadata(engine, tablePath, newSchema)
 
       val structType = table.getLatestSnapshot(engine).getSchema
       assertColumnMapping(structType.get("a"), 1)
@@ -618,9 +595,7 @@ class DeltaTableSchemaEvolutionSuite extends AnyFunSuite with WriteUtils
           true,
           currentSchema.get("map").getMetadata)
 
-      table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
-        .withSchema(engine, newSchema)
-        .build(engine).commit(engine, emptyIterable())
+      updateTableMetadata(engine, tablePath, newSchema)
 
       val structType = table.getLatestSnapshot(engine).getSchema
       assertColumnMapping(structType.get("a"), 1)
@@ -674,9 +649,7 @@ class DeltaTableSchemaEvolutionSuite extends AnyFunSuite with WriteUtils
           true,
           currentSchema.get("map").getMetadata)
 
-      table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
-        .withSchema(engine, newSchema)
-        .build(engine).commit(engine, emptyIterable())
+      updateTableMetadata(engine, tablePath, newSchema)
 
       val structType = table.getLatestSnapshot(engine).getSchema
       assertColumnMapping(structType.get("a"), 1)
@@ -721,9 +694,7 @@ class DeltaTableSchemaEvolutionSuite extends AnyFunSuite with WriteUtils
           fieldMetadataForColumn(3, "b"))
         .add("c", IntegerType.INTEGER, true, currentSchema.get("c").getMetadata)
 
-      table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
-        .withSchema(engine, newSchema)
-        .build(engine).commit(engine, emptyIterable())
+      updateTableMetadata(engine, tablePath, newSchema)
 
       val structType = table.getLatestSnapshot(engine).getSchema
       assertColumnMapping(structType.get("a"), 1)
@@ -765,9 +736,7 @@ class DeltaTableSchemaEvolutionSuite extends AnyFunSuite with WriteUtils
               FieldMetadata.builder().putLong("array_of_arrays.element", 2L)
                 .putLong("array_of_arrays.element.element", 3L).build()).build())
 
-      table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
-        .withSchema(engine, newSchema)
-        .build(engine).commit(engine, emptyIterable())
+      updateTableMetadata(engine, tablePath, newSchema)
 
       val updatedSchema = table.getLatestSnapshot(engine).getSchema()
 
@@ -866,9 +835,7 @@ class DeltaTableSchemaEvolutionSuite extends AnyFunSuite with WriteUtils
         .add("partition1", StringType.STRING, true, currentSchema.get("partition1").getMetadata)
         .add("data", StringType.STRING, true, currentSchema.get("data").getMetadata)
 
-      table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
-        .withSchema(engine, newSchema)
-        .build(engine).commit(engine, emptyIterable())
+      updateTableMetadata(engine, tablePath, newSchema)
       val updatedSchema = table.getLatestSnapshot(engine).getSchema
 
       // Verify the ordering is expected
@@ -1338,14 +1305,11 @@ class DeltaTableSchemaEvolutionSuite extends AnyFunSuite with WriteUtils
       val newSchema = new StructType()
         .add("d", StringType.STRING, true)
 
-      val txn = table.createTransactionBuilder(
+      updateTableMetadata(
         engine,
-        testEngineInfo,
-        Operation.MANUAL_UPDATE)
-        .withSchema(engine, newSchema)
-        .withClusteringColumns(engine, List(new Column("d")).asJava)
-        .build(engine)
-      txn.commit(engine, emptyIterable())
+        tablePath,
+        newSchema,
+        clusteringColsOpt = Some(List(new Column("d"))))
 
       val snapshot = table.getLatestSnapshot(engine)
       val structType = snapshot.getSchema
@@ -1438,9 +1402,7 @@ class DeltaTableSchemaEvolutionSuite extends AnyFunSuite with WriteUtils
 
           if (shouldSucceed) {
             // This should succeed because conditions allow type widening
-            table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
-              .withSchema(engine, newSchema)
-              .build(engine).commit(engine, emptyIterable())
+            updateTableMetadata(engine, tablePath, newSchema)
 
             val updatedSchema = table.getLatestSnapshot(engine).getSchema
             assert(updatedSchema.get("id").getDataType == newType)
@@ -1449,9 +1411,10 @@ class DeltaTableSchemaEvolutionSuite extends AnyFunSuite with WriteUtils
 
             // Do an unrelated schema change. And ensure type change and type changes
             // are still present.
-            table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
-              .withSchema(engine, newSchema.add("newField", StringType.STRING, true))
-              .build(engine).commit(engine, emptyIterable())
+            updateTableMetadata(
+              engine,
+              tablePath,
+              newSchema.add("newField", StringType.STRING, true))
 
             val lastSchema = table.getLatestSnapshot(engine).getSchema
             assert(lastSchema.get("id").getDataType == newType)
@@ -1513,10 +1476,11 @@ class DeltaTableSchemaEvolutionSuite extends AnyFunSuite with WriteUtils
       expectedMessageContained: String,
       tableProperties: Map[String, String] = Map.empty): Unit = {
     val e = intercept[Exception] {
-      table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
-        .withSchema(engine, newSchema)
-        .withTableProperties(engine, tableProperties.asJava)
-        .build(engine).commit(engine, emptyIterable())
+      updateTableMetadata(
+        engine,
+        table.getPath(engine),
+        newSchema,
+        tableProperties = tableProperties)
     }
 
     assert(e.isInstanceOf[T])

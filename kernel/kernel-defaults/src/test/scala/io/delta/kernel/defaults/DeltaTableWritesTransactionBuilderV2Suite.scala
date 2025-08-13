@@ -207,15 +207,7 @@ class DeltaTableWritesTransactionBuilderV2Suite extends DeltaTableWritesSuite
       val currentSchema = getMetadata(engine, tablePath).getSchema
       assert(currentSchema.indexOf("newCol") == -1)
       val newSchema = currentSchema.add("newCol", IntegerType.INTEGER)
-      // For now use the builder directly as we need to merge
-      // https://github.com/delta-io/delta/pull/5057 before we can add schema evolution support to
-      // the test utilities that use createTxn
-      TableManager.loadSnapshot(tablePath).build(engine)
-        .buildUpdateTableTransaction(testEngineInfo, Operation.WRITE)
-        .withUpdatedSchema(newSchema)
-        .build(engine)
-        .commit(engine, emptyIterable())
-      // Replace in #5057: updateTableMetadata(engine, tablePath, schema = newSchema)
+      updateTableMetadata(engine, tablePath, schema = newSchema)
       // Validate that the new column exits
       assert(getMetadata(engine, tablePath).getSchema.indexOf("newCol") >= 0)
     }

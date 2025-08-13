@@ -69,10 +69,7 @@ class DeltaTableFeaturesSuite extends AnyFunSuite with WriteUtils {
           appendData(
             engine,
             tablePath,
-            isNewTable = false,
-            testSchema,
-            partCols = Seq.empty,
-            testData)
+            data = testData)
 
           // Check the data using Kernel and Delta-Spark readers
           verifyWrittenContent(tablePath, testSchema, dataBatches1.flatMap(_.toTestRows))
@@ -89,8 +86,7 @@ class DeltaTableFeaturesSuite extends AnyFunSuite with WriteUtils {
             tablePath,
             isNewTable = true,
             testSchema,
-            partCols = Seq.empty,
-            testData,
+            data = testData,
             tableProperties = Map(tblProp -> propValue))
 
           checkReaderWriterFeaturesSupported(tablePath, feature)
@@ -99,10 +95,7 @@ class DeltaTableFeaturesSuite extends AnyFunSuite with WriteUtils {
           appendData(
             engine,
             tablePath,
-            isNewTable = false,
-            testSchema,
-            partCols = Seq.empty,
-            testData)
+            data = testData)
 
           // Check the data using Kernel and Delta-Spark readers
           verifyWrittenContent(
@@ -122,8 +115,7 @@ class DeltaTableFeaturesSuite extends AnyFunSuite with WriteUtils {
             tablePath,
             isNewTable = true,
             testSchema,
-            partCols = Seq.empty,
-            testData)
+            data = testData)
 
           checkNoReaderWriterFeaturesSupported(tablePath, feature)
 
@@ -131,10 +123,7 @@ class DeltaTableFeaturesSuite extends AnyFunSuite with WriteUtils {
           appendData(
             engine,
             tablePath,
-            isNewTable = false,
-            testSchema,
-            partCols = Seq.empty,
-            testData,
+            data = testData,
             tableProperties = Map(tblProp -> propValue))
 
           checkReaderWriterFeaturesSupported(tablePath, feature)
@@ -243,9 +232,7 @@ class DeltaTableFeaturesSuite extends AnyFunSuite with WriteUtils {
       assert(latestSnapshot(table, engine).getMetadata.getConfiguration.isEmpty)
 
       // Update table with the same feature override set.
-      val updateTxnBuilder =
-        table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
-      val updateTxn = updateTxnBuilder.withTableProperties(engine, properties.asJava).build(engine)
+      val updateTxn = createTxn(engine, tablePath, tableProperties = properties)
 
       commitTransaction(updateTxn, engine, emptyIterable())
 
@@ -308,14 +295,11 @@ class DeltaTableFeaturesSuite extends AnyFunSuite with WriteUtils {
     withTempDirAndEngine { (tablePath, engine) =>
       createEmptyTable(engine, tablePath, testSchema)
 
-      val table = Table.forPath(engine, tablePath)
-
       intercept[InvalidConfigurationValueException] {
-        table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
-          .withTableProperties(
-            engine,
-            Map(TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey -> "iceberg").asJava)
-          .build(engine)
+        createTxn(
+          engine,
+          tablePath,
+          tableProperties = Map(TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey -> "iceberg"))
       }
     }
   }
@@ -327,9 +311,7 @@ class DeltaTableFeaturesSuite extends AnyFunSuite with WriteUtils {
         engine,
         tablePath,
         isNewTable = false,
-        testSchema,
-        partCols = Seq.empty,
-        Seq(Map.empty[String, Literal] -> dataBatches1))
+        data = Seq(Map.empty[String, Literal] -> dataBatches1))
 
       checkTable(tablePath, expectedAnswer = dataBatches1.flatMap(_.toTestRows))
 

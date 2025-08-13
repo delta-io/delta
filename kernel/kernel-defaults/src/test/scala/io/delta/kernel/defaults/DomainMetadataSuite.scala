@@ -189,12 +189,7 @@ class DomainMetadataSuite extends AnyFunSuite with WriteUtils with ParquetSuiteB
       // Create an empty table
       // Its minWriterVersion is 2 and doesn't have 'domainMetadata' in its writerFeatures
       commitTransaction(
-        createTxn(
-          engine,
-          tablePath,
-          isNewTable = true,
-          testSchema,
-          Seq.empty),
+        createTxn(engine, tablePath, isNewTable = true, testSchema, Seq.empty),
         engine,
         emptyIterable())
 
@@ -784,8 +779,7 @@ class DomainMetadataSuite extends AnyFunSuite with WriteUtils with ParquetSuiteB
           engine,
           tablePath = tablePath,
           isNewTable = true,
-          schema = testSchema,
-          partCols = Seq()),
+          schema = testSchema),
         engine,
         emptyIterable())
       intercept[IllegalStateException] {

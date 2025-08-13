@@ -22,7 +22,6 @@ import io.delta.kernel.{Operation, Table, TableManager, Transaction, Transaction
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.expressions.Column
 import io.delta.kernel.internal.TableImpl
-import io.delta.kernel.internal.table.SnapshotBuilderImpl
 import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.internal.util.Clock
 import io.delta.kernel.transaction.DataLayoutSpec
@@ -86,6 +85,8 @@ trait TransactionBuilderV1Support extends TransactionBuilderSupport with TestUti
       if (partCols != null) {
         txnBuilder = txnBuilder.withPartitionColumns(engine, partCols.asJava)
       }
+    } else if (schema != null) {
+      txnBuilder = txnBuilder.withSchema(engine, schema)
     }
 
     if (clusteringColsOpt.isDefined) {
@@ -175,13 +176,9 @@ trait TransactionBuilderV2Support extends TransactionBuilderSupport with TestUti
       var txnBuilder = TableManager.loadSnapshot(tablePath)
         .build(engine)
         .buildUpdateTableTransaction("test-engine", Operation.WRITE)
-      /*
-      TODO: in a separate PR clean up usage of createTxn such that schema != null ONLY when it
-        should either be updated for schema evolution or for a new table
       if (schema != null) {
         txnBuilder = txnBuilder.withUpdatedSchema(schema)
       }
-       */
       if (clusteringColsOpt.nonEmpty) {
         txnBuilder = txnBuilder.withClusteringColumns(clusteringColsOpt.get.asJava)
       }

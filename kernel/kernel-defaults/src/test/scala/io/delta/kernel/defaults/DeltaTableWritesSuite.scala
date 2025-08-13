@@ -611,7 +611,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
           engine,
           tblPath,
           isNewTable = i == 0,
-          schema,
+          if (i == 0) schema else null,
           partCols,
           dataPerVersion(i))
 
