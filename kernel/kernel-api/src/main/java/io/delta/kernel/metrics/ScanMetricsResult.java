@@ -24,7 +24,13 @@ import com.fasterxml.jackson.annotation.JsonPropertyOrder;
   "numAddFilesSeenFromDeltaFiles",
   "numActiveAddFiles",
   "numDuplicateAddFiles",
-  "numRemoveFilesSeenFromDeltaFiles"
+  "numRemoveFilesSeenFromDeltaFiles",
+  "numParquetActionSourceFiles",
+  "parquetActionSourceFilesTotalSizeBytes",
+  "numJsonActionSourceFiles",
+  "jsonActionSourceFilesTotalSizeBytes",
+  "numCrcFiles",
+  "crcFilesTotalSizeBytes"
 })
 public interface ScanMetricsResult {
 
@@ -71,4 +77,22 @@ public interface ScanMetricsResult {
    *     incomplete scan this metric may be incomplete.
    */
   long getNumRemoveFilesSeenFromDeltaFiles();
+
+  /** @return the number of parquet files read during log replay to obtain actions */
+  long getNumParquetActionSourceFiles();
+
+  /** @return the total size in bytes of parquet files read during log replay */
+  long getParquetActionSourceFilesTotalSizeBytes();
+
+  /** @return the number of JSON files read during log replay to obtain actions */
+  long getNumJsonActionSourceFiles();
+
+  /** @return the total size in bytes of JSON files read during log replay */
+  long getJsonActionSourceFilesTotalSizeBytes();
+
+  /** @return the number of CRC files read during log replay */
+  long getNumCrcFiles();
+
+  /** @return the total size in bytes of CRC files read during log replay */
+  long getCrcFilesTotalSizeBytes();
 }
