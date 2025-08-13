@@ -23,44 +23,45 @@ class FileCounterSuite extends AnyFunSuite {
     val fileCount = new FileCounter()
 
     // Verify initial values
-    assert(fileCount.count() === 0)
-    assert(fileCount.size() === 0)
+    assert(fileCount.fileCount() === 0)
+    assert(fileCount.sizeInBytes() === 0)
 
-    // Increment by one file with size
+    // Increment by one file with sizeInBytesInBytes
     fileCount.increment(1024)
-    assert(fileCount.count() === 1)
-    assert(fileCount.size() === 1024)
+    assert(fileCount.fileCount() === 1)
+    assert(fileCount.sizeInBytes() === 1024)
 
-    // Increment by one more file with different size
+    // Increment by one more file with different sizeInBytesInBytes
     fileCount.increment(2048)
-    assert(fileCount.count() === 2)
-    assert(fileCount.size() === 3072) // 1024 + 2048
+    assert(fileCount.fileCount() === 2)
+    assert(fileCount.sizeInBytes() === 3072) // 1024 + 2048
 
     // Reset and verify values are back to zero
     fileCount.reset()
-    assert(fileCount.count() === 0)
-    assert(fileCount.size() === 0)
+    assert(fileCount.fileCount() === 0)
+    assert(fileCount.sizeInBytes() === 0)
   }
 
-  test("FileCount increment with count and size") {
+  test("FileCount increment with fileCount and sizeInBytesInBytes") {
     val fileCount = new FileCounter()
 
-    // Increment with multiple files and size
-    fileCount.increment(5, 10240)
-    assert(fileCount.count() === 5)
-    assert(fileCount.size() === 10240)
+    // Increment with multiple files and sizeInBytesInBytes
+    fileCount.increment(10)
+    fileCount.increment(15)
+    assert(fileCount.fileCount() === 2)
+    assert(fileCount.sizeInBytes() === 25)
 
-    // Increment with more files and size
-    fileCount.increment(3, 6144)
-    assert(fileCount.count() === 8) // 5 + 3
-    assert(fileCount.size() === 16384) // 10240 + 6144
+    // Increment with more files and sizeInBytesInBytes
+    fileCount.increment(20)
+    assert(fileCount.fileCount() === 3)
+    assert(fileCount.sizeInBytes() === 45)
   }
 
   test("FileCount toString representation") {
     val fileCount = new FileCounter()
-    fileCount.increment(3, 5120)
+    fileCount.increment(5120)
 
     val stringRepresentation = fileCount.toString()
-    assert(stringRepresentation === "FileCount(count=3, size=5120)")
+    assert(stringRepresentation === "FileCount(fileCount=1, bytes=5120)")
   }
 }

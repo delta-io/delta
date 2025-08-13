@@ -41,7 +41,7 @@ public class FileCounter {
    *
    * @return The current file count.
    */
-  public long count() {
+  public long fileCount() {
     return fileCount.longValue();
   }
 
@@ -50,7 +50,7 @@ public class FileCounter {
    *
    * @return The current total size in bytes.
    */
-  public long size() {
+  public long sizeInBytes() {
     return totalSize.longValue();
   }
 
@@ -63,6 +63,6 @@ public class FileCounter {
   @Override
   public String toString() {
     return String.format(
-        "FileCount(count=%s, size=%s)", fileCount.longValue(), totalSize.longValue());
+        "FileCount(fileCount=%s, bytes=%s)", fileCount.longValue(), totalSize.longValue());
   }
 }
