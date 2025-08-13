@@ -366,7 +366,6 @@ class RowTrackingSuite extends AnyFunSuite with WriteUtils with ParquetSuiteBase
         appendData(
           engine,
           tablePath,
-          schema = schema,
           data = prepareDataForCommit(dataBatch1, dataBatch2, dataBatch3)
         ).getVersion // version 1
 
@@ -417,7 +416,6 @@ class RowTrackingSuite extends AnyFunSuite with WriteUtils with ParquetSuiteBase
         appendData(
           engine,
           tablePath,
-          schema = schema,
           data = prepareDataForCommit(dataBatch1, dataBatch2, dataBatch3)
         ) // version 3
 
