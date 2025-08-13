@@ -1,10 +1,24 @@
+/*
+ * Copyright (2025) The Delta Lake Project Authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package io.delta.kernel.internal.metrics
-
-import org.scalatest.funsuite.AnyFunSuite
 
 import java.util.concurrent.Callable
 import java.util.function.Supplier
 
+import org.scalatest.funsuite.AnyFunSuite
 
 class TimerSuite extends AnyFunSuite {
 
@@ -63,10 +77,10 @@ class TimerSuite extends AnyFunSuite {
     // Using Timer.time(supplier)
     def supplier(amount: Long): Supplier[Long] = {
       () =>
-      {
-        Thread.sleep(amount)
-        amount
-      }
+        {
+          Thread.sleep(amount)
+          amount
+        }
     }
     testTimer((amount, timer) => {
       timer.time(supplier(amount))
@@ -75,10 +89,10 @@ class TimerSuite extends AnyFunSuite {
     // Using Timer.timeCallable
     def callable(amount: Long): Callable[Long] = {
       () =>
-      {
-        Thread.sleep(amount)
-        amount
-      }
+        {
+          Thread.sleep(amount)
+          amount
+        }
     }
     testTimer((amount, timer) => {
       timer.timeCallable(callable(amount))
@@ -106,10 +120,10 @@ class TimerSuite extends AnyFunSuite {
     // Using Timer.time(supplier)
     def supplier(amount: Long): Supplier[Long] = {
       () =>
-      {
-        Thread.sleep(amount)
-        throw new RuntimeException()
-      }
+        {
+          Thread.sleep(amount)
+          throw new RuntimeException()
+        }
     }
     testTimer((amount, timer) => {
       catchException(() => timer.time(supplier(amount)))
@@ -118,10 +132,10 @@ class TimerSuite extends AnyFunSuite {
     // Using Timer.timeCallable
     def callable(amount: Long): Callable[Long] = {
       () =>
-      {
-        Thread.sleep(amount)
-        throw new RuntimeException()
-      }
+        {
+          Thread.sleep(amount)
+          throw new RuntimeException()
+        }
     }
     testTimer((amount, timer) => {
       catchException(() => timer.timeCallable(callable(amount)))
@@ -130,10 +144,10 @@ class TimerSuite extends AnyFunSuite {
     // Using Timer.time(runnable)
     def runnable(amount: Long): Runnable = {
       () =>
-      {
-        Thread.sleep(amount)
-        throw new RuntimeException()
-      }
+        {
+          Thread.sleep(amount)
+          throw new RuntimeException()
+        }
     }
     testTimer((amount, timer) => {
       catchException(() => timer.time(runnable(amount)))
