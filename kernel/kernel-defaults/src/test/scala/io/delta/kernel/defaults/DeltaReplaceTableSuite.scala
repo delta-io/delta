@@ -31,7 +31,9 @@ import io.delta.kernel.internal.tablefeatures.{TableFeature, TableFeatures}
 import io.delta.kernel.types.{IntegerType, StringType, StructType}
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
 
-trait DeltaReplaceTableSuiteBase extends DeltaTableWriteSuiteBase {
+import org.scalatest.funsuite.AnyFunSuite
+
+trait DeltaReplaceTableSuiteBase extends AnyFunSuite with WriteUtils {
 
   /* -------- Test values to use -------- */
 

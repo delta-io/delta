@@ -54,10 +54,85 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.scalatest.funsuite.AnyFunSuite
 
+trait TransactionBuilderSupport {
+
+  def createWriteTxnBuilder(table: Table): TransactionBuilder
+
+  // scalastyle:off argcount
+  def createTxn(
+      engine: Engine,
+      tablePath: String,
+      isNewTable: Boolean = false,
+      schema: StructType = null,
+      partCols: Seq[String] = null,
+      tableProperties: Map[String, String] = null,
+      clock: Clock = () => System.currentTimeMillis,
+      withDomainMetadataSupported: Boolean = false,
+      maxRetries: Int = -1,
+      clusteringColsOpt: Option[List[Column]] = None,
+      logCompactionInterval: Int = 10): Transaction
+  // scalastyle:on argcount
+}
+
+trait TransactionBuilderV1Support extends TransactionBuilderSupport with TestUtils {
+
+  // scalastyle:off argcount
+  override def createTxn(
+      engine: Engine,
+      tablePath: String,
+      isNewTable: Boolean = false,
+      schema: StructType = null,
+      partCols: Seq[String] = null,
+      tableProperties: Map[String, String] = null,
+      clock: Clock = () => System.currentTimeMillis,
+      withDomainMetadataSupported: Boolean = false,
+      maxRetries: Int = -1,
+      clusteringColsOpt: Option[List[Column]] = None,
+      logCompactionInterval: Int = 10): Transaction = {
+    // scalastyle:on argcount
+
+    var txnBuilder = createWriteTxnBuilder(
+      TableImpl.forPath(engine, tablePath, clock))
+
+    if (isNewTable) {
+      txnBuilder = txnBuilder.withSchema(engine, schema)
+      if (partCols != null) {
+        txnBuilder = txnBuilder.withPartitionColumns(engine, partCols.asJava)
+      }
+    }
+
+    if (clusteringColsOpt.isDefined) {
+      txnBuilder = txnBuilder.withClusteringColumns(engine, clusteringColsOpt.get.asJava)
+    }
+
+    if (tableProperties != null) {
+      txnBuilder = txnBuilder.withTableProperties(engine, tableProperties.asJava)
+    }
+
+    if (withDomainMetadataSupported) {
+      txnBuilder = txnBuilder.withDomainMetadataSupported()
+    }
+
+    if (maxRetries >= 0) {
+      txnBuilder = txnBuilder.withMaxRetries(maxRetries)
+    }
+
+    txnBuilder = txnBuilder.withLogCompactionInverval(logCompactionInterval)
+
+    txnBuilder.build(engine)
+  }
+
+  override def createWriteTxnBuilder(table: Table): TransactionBuilder = {
+    table.createTransactionBuilder(defaultEngine, "test-engine", Operation.WRITE)
+  }
+}
+
+trait WriteUtils extends AbstractWriteUtils with TransactionBuilderV1Support
+
 /**
  * Common utility methods for write test suites.
  */
-trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
+trait AbstractWriteUtils extends TestUtils with TransactionBuilderSupport {
   val OBJ_MAPPER = new ObjectMapper()
   val testEngineInfo = "test-engine"
 
@@ -283,10 +358,6 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
     batches.map(batch => new FilteredColumnarBatch(batch, Optional.empty()))
   }
 
-  def createWriteTxnBuilder(table: Table): TransactionBuilder = {
-    table.createTransactionBuilder(defaultEngine, testEngineInfo, Operation.WRITE)
-  }
-
   def stageData(
       state: Row,
       partitionValues: Map[String, Literal],
@@ -308,52 +379,6 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
         writeContext.getStatisticsColumns)
 
     Transaction.generateAppendActions(defaultEngine, state, writeResultIter, writeContext)
-  }
-
-  // scalastyle:off argcount
-  def createTxn(
-      engine: Engine = defaultEngine,
-      tablePath: String,
-      isNewTable: Boolean = false,
-      schema: StructType = null,
-      partCols: Seq[String] = null,
-      tableProperties: Map[String, String] = null,
-      clock: Clock = () => System.currentTimeMillis,
-      withDomainMetadataSupported: Boolean = false,
-      maxRetries: Int = -1,
-      clusteringColsOpt: Option[List[Column]] = None,
-      logCompactionInterval: Int = 10): Transaction = {
-    // scalastyle:on argcount
-
-    var txnBuilder = createWriteTxnBuilder(
-      TableImpl.forPath(engine, tablePath, clock))
-
-    if (isNewTable) {
-      txnBuilder = txnBuilder.withSchema(engine, schema)
-      if (partCols != null) {
-        txnBuilder = txnBuilder.withPartitionColumns(engine, partCols.asJava)
-      }
-    }
-
-    if (clusteringColsOpt.isDefined) {
-      txnBuilder = txnBuilder.withClusteringColumns(engine, clusteringColsOpt.get.asJava)
-    }
-
-    if (tableProperties != null) {
-      txnBuilder = txnBuilder.withTableProperties(engine, tableProperties.asJava)
-    }
-
-    if (withDomainMetadataSupported) {
-      txnBuilder = txnBuilder.withDomainMetadataSupported()
-    }
-
-    if (maxRetries >= 0) {
-      txnBuilder = txnBuilder.withMaxRetries(maxRetries)
-    }
-
-    txnBuilder = txnBuilder.withLogCompactionInverval(logCompactionInterval)
-
-    txnBuilder.build(engine)
   }
 
   def createTxnWithDomainMetadatas(

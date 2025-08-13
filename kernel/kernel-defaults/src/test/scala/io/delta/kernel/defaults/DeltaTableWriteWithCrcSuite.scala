@@ -30,12 +30,14 @@ import io.delta.kernel.internal.util.FileNames.checksumFile
 import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.{CloseableIterable, FileStatus}
 
+import org.scalatest.funsuite.AnyFunSuite
+
 /**
- * Trait to mixin into a test suite that extends [[DeltaTableWriteSuiteBase]] to run all the tests
+ * Trait to mixin into a test suite that extends [[WriteUtils]] to run all the tests
  * with CRC file written after each commit and verify the written CRC files are valid.
  * Note, this requires the test suite uses [[commitTransaction]] and [[verifyWrittenContent]].
  */
-trait DeltaTableWriteSuiteBaseWithCrc extends DeltaTableWriteSuiteBase {
+trait WriteUtilsWithCrc extends AnyFunSuite with WriteUtils {
   override def commitTransaction(
       txn: Transaction,
       engine: Engine,
@@ -53,7 +55,7 @@ trait DeltaTableWriteSuiteBaseWithCrc extends DeltaTableWriteSuiteBase {
 }
 
 class DeltaTableWriteWithCrcSuite extends DeltaTableWritesSuite
-    with DeltaTableWriteSuiteBaseWithCrc {}
+    with WriteUtilsWithCrc {}
 
 class DeltaReplaceTableWithCrcSuite extends DeltaReplaceTableSuite
-    with DeltaTableWriteSuiteBaseWithCrc {}
+    with WriteUtilsWithCrc {}

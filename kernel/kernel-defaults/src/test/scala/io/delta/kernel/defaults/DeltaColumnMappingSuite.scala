@@ -25,7 +25,10 @@ import io.delta.kernel.internal.TableConfig
 import io.delta.kernel.internal.util.{ColumnMapping, ColumnMappingSuiteBase}
 import io.delta.kernel.types.{FieldMetadata, IntegerType, StringType, StructField, StructType}
 
-class DeltaColumnMappingSuite extends DeltaTableWriteSuiteBase with ColumnMappingSuiteBase {
+import org.scalatest.funsuite.AnyFunSuite
+
+class DeltaColumnMappingSuite extends AnyFunSuite with WriteUtils
+    with ColumnMappingSuiteBase {
 
   val simpleTestSchema = new StructType()
     .add("a", StringType.STRING, true)

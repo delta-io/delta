@@ -23,10 +23,12 @@ import io.delta.kernel.exceptions.{KernelException, UnknownConfigurationExceptio
 import io.delta.kernel.internal.{SnapshotImpl, TableConfig}
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
 
+import org.scalatest.funsuite.AnyFunSuite
+
 /**
  * Suite to set or get table properties.
  */
-class TablePropertiesSuite extends DeltaTableWriteSuiteBase {
+class TablePropertiesSuite extends AnyFunSuite with WriteUtils {
   test("create/update table - allow arbitrary properties") {
     withTempDir { tempFile =>
       val tablePath = tempFile.getAbsolutePath

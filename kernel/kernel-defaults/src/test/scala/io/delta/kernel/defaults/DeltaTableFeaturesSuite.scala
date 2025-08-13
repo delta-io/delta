@@ -36,10 +36,12 @@ import io.delta.kernel.utils.CloseableIterable.emptyIterable
 import org.apache.spark.sql.delta.{DeltaLog, DeltaTableFeatureException}
 import org.apache.spark.sql.delta.actions.Protocol
 
+import org.scalatest.funsuite.AnyFunSuite
+
 /**
  * Integration test suite for Delta table features.
  */
-class DeltaTableFeaturesSuite extends DeltaTableWriteSuiteBase {
+class DeltaTableFeaturesSuite extends AnyFunSuite with WriteUtils {
 
   ///////////////////////////////////////////////////////////////////////////
   // Tests for deletionVector, v2Checkpoint table features

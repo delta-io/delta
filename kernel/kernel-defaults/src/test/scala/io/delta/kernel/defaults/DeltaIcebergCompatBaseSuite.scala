@@ -25,11 +25,14 @@ import io.delta.kernel.internal.tablefeatures.{TableFeature, TableFeatures}
 import io.delta.kernel.internal.util.ColumnMappingSuiteBase
 import io.delta.kernel.types.{DataType, DateType, IntegerType, LongType, StructField, StructType, TimestampNTZType, TypeChange}
 
+import org.scalatest.funsuite.AnyFunSuite
+
 /**
  * Base suite containing common test cases for Delta Iceberg compatibility features.
  * This includes tests that apply to both V2 and V3 compatibility modes.
  */
-trait DeltaIcebergCompatBaseSuite extends DeltaTableWriteSuiteBase with ColumnMappingSuiteBase {
+trait DeltaIcebergCompatBaseSuite extends AnyFunSuite with WriteUtils
+    with ColumnMappingSuiteBase {
 
   /** The name of the iceberg compatibility version for display in test names */
   def icebergCompatVersion: String

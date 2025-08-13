@@ -32,12 +32,13 @@ import io.delta.kernel.types.{StructType, TimestampNTZType, TimestampType}
 import org.apache.spark.sql.delta.DeltaLog
 
 import org.apache.hadoop.fs.Path
+import org.scalatest.funsuite.AnyFunSuite
 
 /**
  * Tests timestamp statistics serialization and data skipping behavior
  * for TIMESTAMP and TIMESTAMP_NTZ types.
  */
-class TimestampStatsAndDataSkippingSuite extends DeltaTableWriteSuiteBase
+class TimestampStatsAndDataSkippingSuite extends AnyFunSuite with WriteUtils
     with DataSkippingDeltaTestsUtils
     with ParquetSuiteBase {
 

@@ -52,7 +52,7 @@ import org.apache.spark.sql.types.{IntegerType => SparkIntegerType, StructField 
 import org.scalatest.funsuite.AnyFunSuite
 
 class ScanSuite extends AnyFunSuite with TestUtils
-    with ExpressionTestUtils with SQLHelper with DeltaTableWriteSuiteBase {
+    with ExpressionTestUtils with SQLHelper with WriteUtils {
 
   import io.delta.kernel.defaults.ScanSuite._
 

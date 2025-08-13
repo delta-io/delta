@@ -31,8 +31,9 @@ import io.delta.kernel.utils.CloseableIterable.emptyIterable
 import io.delta.kernel.utils.CloseableIterator
 
 import org.apache.hadoop.conf.Configuration
+import org.scalatest.funsuite.AnyFunSuite
 
-class TransactionCommitLoopSuite extends DeltaTableWriteSuiteBase {
+class TransactionCommitLoopSuite extends AnyFunSuite with WriteUtils {
 
   // TODO: Refactor this test suite to use both Table.forPath().getLatestSnapshot() and
   //       TableManager.loadSnapshot()

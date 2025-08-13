@@ -43,7 +43,7 @@ import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.types.{IntegerType, StructType}
 import org.scalatest.funsuite.AnyFunSuite
 
-class TableChangesSuite extends AnyFunSuite with TestUtils with DeltaTableWriteSuiteBase {
+class TableChangesSuite extends AnyFunSuite with TestUtils with WriteUtils {
 
   /* actionSet including all currently supported actions */
   val FULL_ACTION_SET: Set[DeltaAction] = DeltaAction.values().toSet

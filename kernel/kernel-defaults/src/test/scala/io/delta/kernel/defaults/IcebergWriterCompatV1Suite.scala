@@ -31,8 +31,10 @@ import io.delta.kernel.types.{ByteType, DataType, DateType, FieldMetadata, Integ
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
 
 import org.assertj.core.api.Assertions.assertThat
+import org.scalatest.funsuite.AnyFunSuite
 
-class IcebergWriterCompatV1Suite extends DeltaTableWriteSuiteBase with ColumnMappingSuiteBase {
+class IcebergWriterCompatV1Suite extends AnyFunSuite with WriteUtils
+    with ColumnMappingSuiteBase {
 
   private val tblPropertiesIcebergWriterCompatV1Enabled = Map(
     TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey -> "true")

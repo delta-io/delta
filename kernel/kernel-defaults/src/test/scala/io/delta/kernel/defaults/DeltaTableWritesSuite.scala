@@ -51,8 +51,13 @@ import io.delta.kernel.types.TimestampType.TIMESTAMP
 import io.delta.kernel.utils.CloseableIterable
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 
+import org.scalatest.funsuite.AnyFunSuite
+
+class DeltaTableWritesSuite extends AbstractDeltaTableWritesSuite with WriteUtils
+
 /** Transaction commit in this suite IS REQUIRED TO use commitTransaction than .commit */
-class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
+abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWriteUtils
+    with ParquetSuiteBase {
 
   ///////////////////////////////////////////////////////////////////////////
   // Create table tests

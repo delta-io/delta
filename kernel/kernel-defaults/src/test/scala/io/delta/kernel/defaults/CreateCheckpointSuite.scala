@@ -38,7 +38,7 @@ import org.scalatest.funsuite.AnyFunSuite
 /**
  * Test suite for `io.delta.kernel.Table.checkpoint(engine, version)`
  */
-class CreateCheckpointSuite extends CheckpointSuiteBase {
+class CreateCheckpointSuite extends CheckpointBase {
 
   ///////////
   // Tests //
@@ -395,7 +395,7 @@ class CreateCheckpointSuite extends CheckpointSuiteBase {
 /**
  *  Helper methods for suites that do checkpoint operations
  */
-trait CheckpointSuiteBase extends DeltaTableWriteSuiteBase {
+trait CheckpointBase extends AnyFunSuite with WriteUtils {
   def addData(path: String, alternateBetweenAddsAndRemoves: Boolean, numberIter: Int): Unit = {
     Seq.range(0, numberIter).foreach { version =>
       if (version % 2 == 1 && alternateBetweenAddsAndRemoves) {

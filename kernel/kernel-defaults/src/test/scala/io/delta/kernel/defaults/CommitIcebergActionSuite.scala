@@ -37,7 +37,9 @@ import io.delta.kernel.utils.DataFileStatus
 
 import org.apache.spark.sql.delta.DeltaLog
 
-class CommitIcebergActionSuite extends DeltaTableWriteSuiteBase {
+import org.scalatest.funsuite.AnyFunSuite
+
+class CommitIcebergActionSuite extends AnyFunSuite with WriteUtils {
 
   private val tblPropertiesIcebergWriterCompatV1Enabled = Map(
     TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey -> "true")

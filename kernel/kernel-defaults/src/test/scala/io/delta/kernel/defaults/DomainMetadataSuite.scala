@@ -37,8 +37,9 @@ import org.apache.spark.sql.delta.actions.{DomainMetadata => SparkDomainMetadata
 import org.apache.spark.sql.delta.test.DeltaTestImplicits.OptimisticTxnTestHelper
 
 import org.apache.hadoop.fs.Path
+import org.scalatest.funsuite.AnyFunSuite
 
-class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
+class DomainMetadataSuite extends AnyFunSuite with WriteUtils with ParquetSuiteBase {
 
   private def assertDomainMetadata(
       snapshot: SnapshotImpl,
@@ -779,6 +780,7 @@ class DomainMetadataSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase
       // Create table with legacy protocol
       commitTransaction(
         createTxn(
+          engine,
           tablePath = tablePath,
           isNewTable = true,
           schema = testSchema,

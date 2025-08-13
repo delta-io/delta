@@ -39,7 +39,9 @@ import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 import io.delta.kernel.utils.FileStatus
 
-class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
+import org.scalatest.funsuite.AnyFunSuite
+
+class InCommitTimestampSuite extends AnyFunSuite with WriteUtils {
 
   private def removeCommitInfoFromCommit(engine: Engine, version: Long, logPath: Path): Unit = {
     val file = FileStatus.of(FileNames.deltaFile(logPath, version), 0, 0)

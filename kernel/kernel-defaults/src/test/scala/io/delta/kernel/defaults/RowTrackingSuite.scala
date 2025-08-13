@@ -41,8 +41,9 @@ import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 import org.apache.spark.sql.delta.DeltaLog
 
 import org.apache.hadoop.fs.Path
+import org.scalatest.funsuite.AnyFunSuite
 
-class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
+class RowTrackingSuite extends AnyFunSuite with WriteUtils with ParquetSuiteBase {
   private def prepareActionsForCommit(actions: Row*): CloseableIterable[Row] = {
     inMemoryIterable(toCloseableIterator(actions.asJava.iterator()))
   }

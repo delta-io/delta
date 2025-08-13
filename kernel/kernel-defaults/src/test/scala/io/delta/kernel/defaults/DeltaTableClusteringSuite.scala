@@ -39,8 +39,9 @@ import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.clustering.{ClusteringMetadataDomain => SparkClusteringMetadataDomain}
 
 import org.apache.hadoop.fs.Path
+import org.scalatest.funsuite.AnyFunSuite
 
-class DeltaTableClusteringSuite extends DeltaTableWriteSuiteBase {
+class DeltaTableClusteringSuite extends AnyFunSuite with WriteUtils {
 
   private val testingDomainMetadata = new DomainMetadata(
     "delta.clustering",

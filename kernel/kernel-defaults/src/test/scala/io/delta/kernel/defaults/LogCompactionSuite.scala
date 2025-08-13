@@ -30,7 +30,7 @@ import io.delta.kernel.internal.hook.LogCompactionHook
 import org.apache.hadoop.conf.Configuration
 import org.scalatest.funsuite.AnyFunSuite
 
-class LogCompactionSuite extends AnyFunSuite with DeltaTableWriteSuiteBase with TestUtils {
+class LogCompactionSuite extends AnyFunSuite with WriteUtils with TestUtils {
 
   test("Compaction containing different action types") {
     withTempDirAndEngine { (tblPath, engine) =>

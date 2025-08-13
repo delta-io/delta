@@ -32,11 +32,12 @@ import org.apache.spark.sql.delta.actions.CommitInfo
 import org.apache.spark.sql.delta.test.DeltaTestImplicits.OptimisticTxnTestHelper
 
 import org.apache.hadoop.fs.Path
+import org.scalatest.funsuite.AnyFunSuite
 
 /**
  * Test suite for io.delta.kernel.internal.checksum.ChecksumUtils
  */
-class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase with LogReplayBaseSuite {
+class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseSuite {
 
   private def initialTestTable(tablePath: String, engine: Engine): Unit = {
     createEmptyTable(engine, tablePath, testSchema, clock = new ManualClock(0))
