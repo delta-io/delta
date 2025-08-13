@@ -26,12 +26,12 @@ import org.apache.spark.sql.types.StructType;
  * A Spark ScanBuilder implementation that wraps Delta Kernel's ScanBuilder. This allows Spark to
  * use Delta Kernel for reading Delta tables.
  */
-public class DeltaKernelScanBuilder implements org.apache.spark.sql.connector.read.ScanBuilder {
+public class KernelSparkScanBuilder implements org.apache.spark.sql.connector.read.ScanBuilder {
 
   private final ScanBuilder kernelScanBuilder;
   private final StructType readSchema;
 
-  public DeltaKernelScanBuilder(SnapshotImpl snapshot) {
+  public KernelSparkScanBuilder(SnapshotImpl snapshot) {
     requireNonNull(snapshot, "snapshot is null");
 
     this.kernelScanBuilder =
@@ -39,13 +39,12 @@ public class DeltaKernelScanBuilder implements org.apache.spark.sql.connector.re
 
     this.readSchema =
         requireNonNull(
-            // TODO: pass converted schema.
             SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema()),
             "failed to convert schema");
   }
 
   @Override
   public org.apache.spark.sql.connector.read.Scan build() {
-    return new DeltaKernelScan(kernelScanBuilder.build(), readSchema);
+    return new KernelSparkScan(kernelScanBuilder.build(), readSchema);
   }
 }

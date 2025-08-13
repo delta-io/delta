@@ -15,8 +15,6 @@
  */
 package io.delta.spark.dsv2.scan;
 
-import static java.util.Objects.requireNonNull;
-
 import io.delta.kernel.Scan;
 import org.apache.spark.sql.types.StructType;
 
@@ -24,14 +22,14 @@ import org.apache.spark.sql.types.StructType;
  * A Spark Scan implementation that wraps Delta Kernel's Scan. This allows Spark to use Delta Kernel
  * for reading Delta tables.
  */
-public class DeltaKernelScan implements org.apache.spark.sql.connector.read.Scan {
+public class KernelSparkScan implements org.apache.spark.sql.connector.read.Scan {
 
   private final Scan kernelScan;
   private final StructType readSchema;
 
-  public DeltaKernelScan(Scan kernelScan, StructType readSchema) {
-    this.kernelScan = requireNonNull(kernelScan, "kernel scan is null");
-    this.readSchema = requireNonNull(readSchema, "read schema is null");
+  public KernelSparkScan(Scan kernelScan, StructType readSchema) {
+    this.kernelScan = kernelScan;
+    this.readSchema = readSchema;
   }
 
   @Override

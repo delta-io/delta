@@ -16,47 +16,37 @@
 package io.delta.spark.dsv2.scan;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.delta.kernel.Snapshot;
 import io.delta.kernel.TableManager;
-import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.spark.dsv2.SparkKernelDsv2TestBase;
 import java.io.File;
-import org.apache.spark.sql.connector.read.Scan;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
+import org.apache.spark.sql.types.StructType;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-public class DeltaKernelScanBuilderTest extends SparkKernelDsv2TestBase {
+public class KernelSparkScanTest extends SparkKernelDsv2TestBase {
 
   @Test
-  public void testBuild_returnsScanWithExpectedSchema(@TempDir File tempDir) {
+  public void testReadSchema(@TempDir File tempDir) {
     String path = tempDir.getAbsolutePath();
-    String tableName = "scan_builder_test";
+    String tableName = "scan_test";
     spark.sql(
         String.format(
-            "CREATE TABLE %s (id INT, data STRING) USING delta LOCATION '%s'", tableName, path));
-    Snapshot snapshot = TableManager.loadSnapshot(path).build(defaultEngine);
-    DeltaKernelScanBuilder builder = new DeltaKernelScanBuilder((SnapshotImpl) snapshot);
-    org.apache.spark.sql.types.StructType expectedSparkSchema =
+            "CREATE TABLE %s (id INT, name STRING) USING delta LOCATION '%s'", tableName, path));
+    StructType expectedSparkSchema =
         DataTypes.createStructType(
             new StructField[] {
               DataTypes.createStructField("id", DataTypes.IntegerType, true /*nullable*/),
-              DataTypes.createStructField("data", DataTypes.StringType, true /*nullable*/)
+              DataTypes.createStructField("name", DataTypes.StringType, true /*nullable*/)
             });
 
-    Scan scan = builder.build();
-    assertTrue(scan instanceof DeltaKernelScan);
-    assertEquals(expectedSparkSchema, scan.readSchema());
-  }
+    KernelSparkScan scan =
+        new KernelSparkScan(
+            TableManager.loadSnapshot(path).build(defaultEngine).getScanBuilder().build(),
+            expectedSparkSchema);
 
-  @Test
-  public void testScanBuilderWithNullSnapshot() {
-    NullPointerException ex =
-        assertThrows(NullPointerException.class, () -> new DeltaKernelScanBuilder(null));
-    assertTrue(ex.getMessage().contains("snapshot is null"));
+    assertEquals(expectedSparkSchema, scan.readSchema());
   }
 }

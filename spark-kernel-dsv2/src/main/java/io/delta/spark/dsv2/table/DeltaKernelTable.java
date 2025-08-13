@@ -18,7 +18,7 @@ package io.delta.spark.dsv2.table;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.internal.SnapshotImpl;
-import io.delta.spark.dsv2.scan.DeltaKernelScanBuilder;
+import io.delta.spark.dsv2.scan.KernelSparkScanBuilder;
 import io.delta.spark.dsv2.utils.SchemaUtils;
 import java.util.*;
 import org.apache.spark.sql.connector.catalog.*;
@@ -83,6 +83,6 @@ public class DeltaKernelTable implements Table, SupportsRead {
 
   @Override
   public ScanBuilder newScanBuilder(CaseInsensitiveStringMap options) {
-    return new DeltaKernelScanBuilder(snapshot);
+    return new KernelSparkScanBuilder(snapshot);
   }
 }
