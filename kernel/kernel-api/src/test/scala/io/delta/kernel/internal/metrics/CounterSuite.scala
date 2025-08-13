@@ -34,6 +34,7 @@ class CounterSuite extends AnyFunSuite {
     assert(counter.value == 0)
     counter.increment()
     assert(counter.value == 1)
+  }
 
   test("Counter toString representation") {
     val counter = new Counter()
