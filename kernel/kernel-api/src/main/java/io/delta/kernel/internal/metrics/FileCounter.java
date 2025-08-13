@@ -27,13 +27,15 @@ public class FileCounter {
   private final LongAdder totalSize = new LongAdder();
 
   /**
-   * Increment the file count by 1 and add the file size.
+   * Increment the file count by 1 and add the file sizeInBytes.
    *
-   * @param size The size of the file in bytes.
+   * @param sizeInBytes The sizeInBytes of the file in bytes.
    */
-  public void increment(long size) {
+  public void increment(long sizeInBytes) {
     fileCount.increment();
-    totalSize.add(size);
+    if (sizeInBytes > 0) {
+      totalSize.add(sizeInBytes);
+    }
   }
 
   /**
