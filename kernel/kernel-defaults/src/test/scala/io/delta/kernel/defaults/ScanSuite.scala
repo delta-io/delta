@@ -30,7 +30,7 @@ import io.delta.kernel.defaults.engine.{DefaultEngine, DefaultJsonHandler, Defau
 import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
 import io.delta.kernel.defaults.internal.data.vector.{DefaultGenericVector, DefaultStructVector}
-import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestUtils}
+import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestUtils, WriteUtils}
 import io.delta.kernel.engine.{Engine, JsonHandler, ParquetHandler}
 import io.delta.kernel.engine.FileReadResult
 import io.delta.kernel.expressions._
@@ -52,7 +52,7 @@ import org.apache.spark.sql.types.{IntegerType => SparkIntegerType, StructField 
 import org.scalatest.funsuite.AnyFunSuite
 
 class ScanSuite extends AnyFunSuite with TestUtils
-    with ExpressionTestUtils with SQLHelper with DeltaTableWriteSuiteBase {
+    with ExpressionTestUtils with SQLHelper with WriteUtils {
 
   import io.delta.kernel.defaults.ScanSuite._
 

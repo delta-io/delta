@@ -23,6 +23,7 @@ import scala.collection.immutable.Seq
 
 import io.delta.kernel.{Table, Transaction}
 import io.delta.kernel.data.Row
+import io.delta.kernel.defaults.utils.WriteUtils
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.{TableConfig, TableImpl}
@@ -37,7 +38,9 @@ import io.delta.kernel.utils.DataFileStatus
 
 import org.apache.spark.sql.delta.DeltaLog
 
-class CommitIcebergActionSuite extends DeltaTableWriteSuiteBase {
+import org.scalatest.funsuite.AnyFunSuite
+
+class CommitIcebergActionSuite extends AnyFunSuite with WriteUtils {
 
   private val tblPropertiesIcebergWriterCompatV1Enabled = Map(
     TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey -> "true")

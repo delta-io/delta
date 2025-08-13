@@ -22,6 +22,7 @@ import scala.collection.immutable.Seq
 
 import io.delta.kernel.{Operation, Table, Transaction, TransactionCommitResult}
 import io.delta.kernel.data.Row
+import io.delta.kernel.defaults.utils.WriteUtils
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.expressions.Column
@@ -33,6 +34,7 @@ import io.delta.kernel.types.{ArrayType, DecimalType, FieldMetadata, IntegerType
 import io.delta.kernel.utils.CloseableIterable
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
 
+import org.scalatest.funsuite.AnyFunSuite
 import org.scalatest.prop.TableDrivenPropertyChecks.forAll
 import org.scalatest.prop.Tables
 
@@ -40,7 +42,8 @@ import org.scalatest.prop.Tables
  * ToDo: Clean this up by moving some common schemas to fixtures and abstracting
  * the setup/run schema evolution/assert loop
  */
-class DeltaTableSchemaEvolutionSuite extends DeltaTableWriteSuiteBase with ColumnMappingSuiteBase {
+class DeltaTableSchemaEvolutionSuite extends AnyFunSuite with WriteUtils
+    with ColumnMappingSuiteBase {
 
   test("Add nullable column succeeds and correctly updates maxFieldId") {
     withTempDirAndEngine { (tablePath, engine) =>

@@ -27,7 +27,7 @@ import io.delta.kernel._
 import io.delta.kernel.Operation.{CREATE_TABLE, MANUAL_UPDATE, WRITE}
 import io.delta.kernel.data.{ColumnarBatch, FilteredColumnarBatch, Row}
 import io.delta.kernel.defaults.internal.parquet.ParquetSuiteBase
-import io.delta.kernel.defaults.utils.TestRow
+import io.delta.kernel.defaults.utils.{AbstractWriteUtils, TestRow, WriteUtils}
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions._
 import io.delta.kernel.expressions.{Column, Literal}
@@ -54,8 +54,13 @@ import io.delta.kernel.utils.CloseableIterable
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 import io.delta.tables.DeltaTable
 
+import org.scalatest.funsuite.AnyFunSuite
+
+class DeltaTableWritesSuite extends AbstractDeltaTableWritesSuite with WriteUtils
+
 /** Transaction commit in this suite IS REQUIRED TO use commitTransaction than .commit */
-class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
+abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWriteUtils
+    with ParquetSuiteBase {
 
   ///////////////////////////////////////////////////////////////////////////
   // Create table tests

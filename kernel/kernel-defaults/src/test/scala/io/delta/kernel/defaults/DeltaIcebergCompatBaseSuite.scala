@@ -19,17 +19,21 @@ import scala.collection.JavaConverters._
 import scala.collection.immutable.Seq
 import scala.reflect.ClassTag
 
+import io.delta.kernel.defaults.utils.WriteUtils
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.TableConfig
 import io.delta.kernel.internal.tablefeatures.{TableFeature, TableFeatures}
 import io.delta.kernel.internal.util.ColumnMappingSuiteBase
 import io.delta.kernel.types.{DataType, DateType, IntegerType, LongType, StructField, StructType, TimestampNTZType, TypeChange}
 
+import org.scalatest.funsuite.AnyFunSuite
+
 /**
  * Base suite containing common test cases for Delta Iceberg compatibility features.
  * This includes tests that apply to both V2 and V3 compatibility modes.
  */
-trait DeltaIcebergCompatBaseSuite extends DeltaTableWriteSuiteBase with ColumnMappingSuiteBase {
+trait DeltaIcebergCompatBaseSuite extends AnyFunSuite with WriteUtils
+    with ColumnMappingSuiteBase {
 
   /** The name of the iceberg compatibility version for display in test names */
   def icebergCompatVersion: String

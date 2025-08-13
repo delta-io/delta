@@ -25,7 +25,7 @@ import scala.jdk.CollectionConverters.setAsJavaSetConverter
 
 import io.delta.kernel.{Operation, Table}
 import io.delta.kernel.data.Row
-import io.delta.kernel.defaults.utils.TestUtils
+import io.delta.kernel.defaults.utils.{TestUtils, WriteUtils}
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
 import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction
@@ -41,6 +41,7 @@ import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 import io.delta.kernel.utils.FileStatus
 
 import org.apache.spark.sql.functions.col
+import org.scalatest.funsuite.AnyFunSuite
 
 /**
  * Test suite to verify checksum file correctness by comparing
@@ -48,7 +49,7 @@ import org.apache.spark.sql.functions.col
  * This suite ensures that both implementations generate consistent checksums
  * for various table operations.
  */
-trait ChecksumComparisonSuiteBase extends DeltaTableWriteSuiteBase with TestUtils {
+trait ChecksumComparisonSuiteBase extends AnyFunSuite with WriteUtils with TestUtils {
 
   private val PARTITION_COLUMN = "part"
 
