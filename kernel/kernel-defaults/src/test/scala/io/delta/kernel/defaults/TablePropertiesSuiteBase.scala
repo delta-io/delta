@@ -15,18 +15,19 @@
  */
 package io.delta.kernel.defaults
 
-import scala.collection.JavaConverters._
 import scala.collection.immutable.Seq
 
 import io.delta.kernel.Table
-import io.delta.kernel.defaults.utils.{AbstractWriteUtils, WriteUtils}
+import io.delta.kernel.defaults.utils.{AbstractWriteUtils, WriteUtils, WriteUtilsWithV2Builders}
 import io.delta.kernel.exceptions.{KernelException, UnknownConfigurationException}
-import io.delta.kernel.internal.{SnapshotImpl, TableConfig}
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
 
 import org.scalatest.funsuite.AnyFunSuite
 
 class TablePropertiesTransactionBuilderV1Suite extends TablePropertiesSuiteBase with WriteUtils {}
+
+class TablePropertiesTransactionBuilderV2Suite extends TablePropertiesSuiteBase
+    with WriteUtilsWithV2Builders {}
 
 /**
  * Suite to set or get table properties.

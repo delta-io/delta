@@ -29,10 +29,7 @@ import io.delta.kernel.commit.CommitMetadata;
 import io.delta.kernel.commit.Committer;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
-import io.delta.kernel.exceptions.CommitStateUnknownException;
-import io.delta.kernel.exceptions.ConcurrentWriteException;
-import io.delta.kernel.exceptions.DomainDoesNotExistException;
-import io.delta.kernel.exceptions.MaxCommitRetryLimitReachedException;
+import io.delta.kernel.exceptions.*;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.hook.PostCommitHook;
 import io.delta.kernel.internal.actions.*;
@@ -72,11 +69,23 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public class TransactionImpl implements Transaction {
+  /////////////////////////
+  ///// Static fields /////
+  /////////////////////////
   private static final Logger logger = LoggerFactory.getLogger(TransactionImpl.class);
 
   public static final int DEFAULT_READ_VERSION = 1;
   public static final int DEFAULT_WRITE_VERSION = 2;
+  /**
+   * Default retries for concurrent write exceptions to resolve conflicts and retry commit. In
+   * Delta-Spark, for historical reasons the number of retries is really high (10m). We are starting
+   * with a lower number by default for now. If this is not sufficient we can update it.
+   */
+  private static final int DEFAULT_MAX_RETRIES = 200;
 
+  ///////////////////////////
+  ///// Instance fields /////
+  ///////////////////////////
   private final UUID txnId = UUID.randomUUID();
 
   /** If the transaction is defining a new table from scratch (i.e. create table, replace table) */
@@ -117,7 +126,6 @@ public class TransactionImpl implements Transaction {
   public TransactionImpl(
       boolean isCreateOrReplace,
       Path dataPath,
-      Path logPath,
       Optional<SnapshotImpl> readSnapshotOpt,
       String engineInfo,
       Operation operation,
@@ -126,7 +134,7 @@ public class TransactionImpl implements Transaction {
       Committer committer,
       Optional<SetTransaction> setTxnOpt,
       Optional<List<Column>> newClusteringColumnsOpt,
-      int maxRetries,
+      Optional<Integer> maxRetriesOpt,
       int logCompactionInterval,
       Clock clock) {
     checkArgument(isCreateOrReplace || readSnapshotOpt.isPresent());
@@ -137,7 +145,7 @@ public class TransactionImpl implements Transaction {
 
     this.isCreateOrReplace = isCreateOrReplace;
     this.dataPath = dataPath;
-    this.logPath = logPath;
+    this.logPath = new Path(dataPath, "_delta_log");
     this.readSnapshotOpt = readSnapshotOpt;
     this.engineInfo = engineInfo;
     this.operation = operation;
@@ -148,7 +156,7 @@ public class TransactionImpl implements Transaction {
     this.committer = committer;
     this.setTxnOpt = setTxnOpt;
     this.newClusteringColumnsOpt = newClusteringColumnsOpt;
-    this.maxRetries = maxRetries;
+    this.maxRetries = maxRetriesOpt.orElse(DEFAULT_MAX_RETRIES);
     this.logCompactionInterval = logCompactionInterval;
     this.clock = clock;
     this.currentCrcInfo = readSnapshotOpt.flatMap(SnapshotImpl::getCurrentCrcInfo);

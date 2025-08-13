@@ -53,6 +53,9 @@ import org.apache.hadoop.fs.Path
 /** Default write utilities that use the V1 transaction builders. */
 trait WriteUtils extends AbstractWriteUtils with TransactionBuilderV1Support
 
+/** Write utilities that use the V2 transaction builders to create transactions */
+trait WriteUtilsWithV2Builders extends AbstractWriteUtils with TransactionBuilderV2Support
+
 /**
  * Common utility methods for write test suites. For now, this includes mostly concrete
  * implementations for the utilities. As we improve our test structure, we should move concrete
@@ -464,7 +467,6 @@ trait AbstractWriteUtils extends TestUtils with TransactionBuilderSupport {
       tablePath,
       isNewTable,
       testSchema,
-      Seq.empty,
       tableProperties = Map(key.getKey -> value),
       clock = clock)
       .commit(engine, emptyIterable())
