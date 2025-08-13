@@ -67,7 +67,6 @@ class DeltaTableFeaturesSuite extends DeltaTableWriteSuiteBase {
             engine,
             tablePath,
             isNewTable = false,
-            testSchema,
             partCols = Seq.empty,
             testData)
 
@@ -321,7 +320,6 @@ class DeltaTableFeaturesSuite extends DeltaTableWriteSuiteBase {
         engine,
         tablePath,
         isNewTable = false,
-        testSchema,
         partCols = Seq.empty,
         Seq(Map.empty[String, Literal] -> dataBatches1))
 

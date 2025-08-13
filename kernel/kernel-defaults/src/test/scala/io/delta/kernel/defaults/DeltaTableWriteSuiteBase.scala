@@ -512,7 +512,7 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
       engine,
       tablePath,
       isNewTable,
-      if (isNewTable) testSchema else null,
+      schema = if (isNewTable) testSchema else null,
       tableProperties = Map(key.getKey -> value),
       clock = clock)
       .commit(engine, emptyIterable())

@@ -168,7 +168,7 @@ class TableChangesSuite extends AnyFunSuite with TestUtils with DeltaTableWriteS
               engine,
               tablePath,
               isNewTable = i == 0,
-              schema = testSchema,
+              schema = if (i == 0) testSchema else null,
               data = immutable.Seq(Map.empty[String, Literal] -> dataBatches2),
               clock = clock,
               tableProperties = tableProperties)
