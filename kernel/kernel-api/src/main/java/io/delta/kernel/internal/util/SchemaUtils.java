@@ -330,6 +330,16 @@ public class SchemaUtils {
     return columnPath.stream().map(SchemaUtils::escapeDots).collect(Collectors.joining("."));
   }
 
+  /** Helper method to create a copy of a column that is marked as an internal column. */
+  public static StructField createInternalColumn(StructField field) {
+    FieldMetadata metadata =
+        FieldMetadata.builder()
+            .fromMetadata(field.getMetadata())
+            .putBoolean(StructField.IS_INTERNAL_COLUMN_KEY, true)
+            .build();
+    return field.withNewMetadata(metadata);
+  }
+
   /////////////////////////////////////////////////////////////////////////////////////////////////
   /// Private methods                                                                           ///
   /////////////////////////////////////////////////////////////////////////////////////////////////
@@ -370,7 +380,7 @@ public class SchemaUtils {
         // <a (id=1) : map<int,struct<b (id=2) : Int, c (id=3) : Int>>> )
         // This would eventually probe the currentFieldIdToField map for <"", 3> and
         // find it is an addition.
-        SchemaElementId rootId = new SchemaElementId(/* nestedPath =*/ "", id.getId());
+        SchemaElementId rootId = new SchemaElementId(/* nestedPath= */ "", id.getId());
         if (!currentFieldIdToField.containsKey(rootId)) {
           addedFieldIds.add(id.getId());
           schemaDiff.withAddedField(newElement.getNearestStructFieldAncestor());

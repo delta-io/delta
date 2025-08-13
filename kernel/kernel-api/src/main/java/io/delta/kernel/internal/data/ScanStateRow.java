@@ -37,9 +37,8 @@ public class ScanStateRow extends GenericRow {
   private static final StructType SCHEMA =
       new StructType()
           .add("configuration", new MapType(StringType.STRING, StringType.STRING, false))
-          .add("logicalSchemaString", StringType.STRING)
-          .add("physicalSchemaString", StringType.STRING)
-          .add("physicalDataReadSchemaString", StringType.STRING)
+          .add("logicalSchemaJson", StringType.STRING)
+          .add("physicalSchemaJson", StringType.STRING)
           .add("partitionColumns", new ArrayType(StringType.STRING, false))
           .add("minReaderVersion", IntegerType.INTEGER)
           .add("minWriterVersion", IntegerType.INTEGER)
@@ -53,16 +52,13 @@ public class ScanStateRow extends GenericRow {
   public static ScanStateRow of(
       Metadata metadata,
       Protocol protocol,
-      String readSchemaLogicalJson,
-      String readSchemaPhysicalJson,
-      String readPhysicalDataSchemaJson,
+      String logicalSchemaJson,
+      String physicalSchemaJson,
       String tablePath) {
     HashMap<Integer, Object> valueMap = new HashMap<>();
     valueMap.put(COL_NAME_TO_ORDINAL.get("configuration"), metadata.getConfigurationMapValue());
-    valueMap.put(COL_NAME_TO_ORDINAL.get("logicalSchemaString"), readSchemaLogicalJson);
-    valueMap.put(COL_NAME_TO_ORDINAL.get("physicalSchemaString"), readSchemaPhysicalJson);
-    valueMap.put(
-        COL_NAME_TO_ORDINAL.get("physicalDataReadSchemaString"), readPhysicalDataSchemaJson);
+    valueMap.put(COL_NAME_TO_ORDINAL.get("logicalSchemaJson"), logicalSchemaJson);
+    valueMap.put(COL_NAME_TO_ORDINAL.get("physicalSchemaJson"), physicalSchemaJson);
     valueMap.put(COL_NAME_TO_ORDINAL.get("partitionColumns"), metadata.getPartitionColumns());
     valueMap.put(COL_NAME_TO_ORDINAL.get("minReaderVersion"), protocol.getMinReaderVersion());
     valueMap.put(COL_NAME_TO_ORDINAL.get("minWriterVersion"), protocol.getMinWriterVersion());
@@ -93,34 +89,20 @@ public class ScanStateRow extends GenericRow {
    * @return Logical schema to read from the data files.
    */
   public static StructType getLogicalSchema(Row scanState) {
-    String serializedSchema = scanState.getString(COL_NAME_TO_ORDINAL.get("logicalSchemaString"));
+    String serializedSchema = scanState.getString(COL_NAME_TO_ORDINAL.get("logicalSchemaJson"));
     return DataTypeJsonSerDe.deserializeStructType(serializedSchema);
   }
 
   /**
    * Utility method to get the physical schema from the scan state {@link Row} returned by {@link
-   * Scan#getScanState(Engine)}.
+   * Scan#getScanState(Engine)}. This schema is used to request data from the scan files for the
+   * query.
    *
    * @param scanState Scan state {@link Row}
    * @return Physical schema to read from the data files.
    */
-  public static StructType getPhysicalSchema(Row scanState) {
-    String serializedSchema = scanState.getString(COL_NAME_TO_ORDINAL.get("physicalSchemaString"));
-    return DataTypeJsonSerDe.deserializeStructType(serializedSchema);
-  }
-
-  /**
-   * Utility method to get the physical data read schema from the scan state {@link Row} returned by
-   * {@link Scan#getScanState(Engine)}. This schema is used to request data from the scan files for
-   * the query.
-   *
-   * @param engine instance of {@link Engine} to use.
-   * @param scanState Scan state {@link Row}
-   * @return Physical schema to read from the data files.
-   */
-  public static StructType getPhysicalDataReadSchema(Engine engine, Row scanState) {
-    String serializedSchema =
-        scanState.getString(COL_NAME_TO_ORDINAL.get("physicalDataReadSchemaString"));
+  public static StructType getPhysicalDataReadSchema(Row scanState) {
+    String serializedSchema = scanState.getString(COL_NAME_TO_ORDINAL.get("physicalSchemaJson"));
     return DataTypeJsonSerDe.deserializeStructType(serializedSchema);
   }
 

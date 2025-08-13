@@ -250,7 +250,7 @@ trait AbstractTestUtils extends Assertions with SQLHelper {
     val scanState = scan.getScanState(engine);
     val fileIter = scan.getScanFiles(engine)
 
-    val physicalDataReadSchema = ScanStateRow.getPhysicalDataReadSchema(engine, scanState)
+    val physicalDataReadSchema = ScanStateRow.getPhysicalDataReadSchema(scanState)
     fileIter.forEach { fileColumnarBatch =>
       fileColumnarBatch.getRows().forEach { scanFileRow =>
         val fileStatus = InternalScanFileUtils.getAddFileStatus(scanFileRow)
@@ -304,7 +304,7 @@ trait AbstractTestUtils extends Assertions with SQLHelper {
       .build()
     val scanState = scan.getScanState(engine)
 
-    val physicalDataReadSchema = ScanStateRow.getPhysicalDataReadSchema(engine, scanState)
+    val physicalDataReadSchema = ScanStateRow.getPhysicalDataReadSchema(scanState)
     var result: Seq[FilteredColumnarBatch] = Nil
     scan.getScanFiles(engine).forEach { fileColumnarBatch =>
       fileColumnarBatch.getRows.forEach { scanFile =>
