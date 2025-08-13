@@ -646,7 +646,8 @@ trait DeltaTableWriteSuiteBase extends AnyFunSuite with TestUtils {
           100,
           emptyMap(),
           emptyMap(),
-          emptyMap()))
+          emptyMap(),
+          Optional.empty()))
       } else Optional.empty())
   }
 

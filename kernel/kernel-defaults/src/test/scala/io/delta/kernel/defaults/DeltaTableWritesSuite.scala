@@ -1128,10 +1128,20 @@ class DeltaTableWritesSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBa
       require(
         kernelStats.nonEmpty && sparkStats.nonEmpty,
         "stats collected from AddFiles should be non-empty")
+      // Since Spark doesn't write tightBounds but Kernel now does,
+      // we need to compare stats after removing the tightBounds field from Kernel stats
+      val kernelStatsWithoutTightBounds = kernelStats.map { node =>
+        val objectNode =
+          node.deepCopy().asInstanceOf[com.fasterxml.jackson.databind.node.ObjectNode]
+        objectNode.remove("tightBounds")
+        objectNode
+      }
+
       assert(
-        kernelStats.toSet == sparkStats.toSet,
-        s"\nKernel stats:\n${kernelStats.mkString("\n")}\n" +
-          s"Spark  stats:\n${sparkStats.mkString("\n")}")
+        kernelStatsWithoutTightBounds.toSet == sparkStats.toSet,
+        s"\nKernel stats (without tightBounds):" +
+          s"\n${kernelStatsWithoutTightBounds.mkString("\n")}\n" +
+          s"Spark stats:\n${sparkStats.mkString("\n")}")
     }
   }
 
