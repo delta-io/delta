@@ -67,7 +67,6 @@ class DeltaTableFeaturesSuite extends DeltaTableWriteSuiteBase {
             engine,
             tablePath,
             isNewTable = false,
-            partCols = Seq.empty,
             testData)
 
           // Check the data using Kernel and Delta-Spark readers
@@ -85,7 +84,6 @@ class DeltaTableFeaturesSuite extends DeltaTableWriteSuiteBase {
             tablePath,
             isNewTable = true,
             testSchema,
-            partCols = Seq.empty,
             testData,
             tableProperties = Map(tblProp -> propValue))
 
@@ -97,7 +95,6 @@ class DeltaTableFeaturesSuite extends DeltaTableWriteSuiteBase {
             tablePath,
             isNewTable = false,
             testSchema,
-            partCols = Seq.empty,
             testData)
 
           // Check the data using Kernel and Delta-Spark readers
@@ -118,7 +115,6 @@ class DeltaTableFeaturesSuite extends DeltaTableWriteSuiteBase {
             tablePath,
             isNewTable = true,
             testSchema,
-            partCols = Seq.empty,
             testData)
 
           checkNoReaderWriterFeaturesSupported(tablePath, feature)
@@ -129,7 +125,6 @@ class DeltaTableFeaturesSuite extends DeltaTableWriteSuiteBase {
             tablePath,
             isNewTable = false,
             testSchema,
-            partCols = Seq.empty,
             testData,
             tableProperties = Map(tblProp -> propValue))
 
@@ -320,7 +315,6 @@ class DeltaTableFeaturesSuite extends DeltaTableWriteSuiteBase {
         engine,
         tablePath,
         isNewTable = false,
-        partCols = Seq.empty,
         Seq(Map.empty[String, Literal] -> dataBatches1))
 
       checkTable(tablePath, expectedAnswer = dataBatches1.flatMap(_.toTestRows))

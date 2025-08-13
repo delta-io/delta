@@ -44,7 +44,6 @@ class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase with LogReplayBaseSuit
       engine,
       tablePath,
       isNewTable = false,
-      partCols = Seq.empty,
       Seq(Map.empty[String, Literal] -> dataBatches1))
   }
 

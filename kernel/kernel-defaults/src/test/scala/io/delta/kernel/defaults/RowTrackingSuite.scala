@@ -318,7 +318,7 @@ class RowTrackingSuite extends DeltaTableWriteSuiteBase with ParquetSuiteBase {
         Optional.empty() // No stats
       )
       val action = SingleAction.createAddFileSingleAction(addFileRow)
-      val txn = createTxn(engine, tablePath, isNewTable = false, partCols = Seq.empty)
+      val txn = createTxn(engine, tablePath, isNewTable = false)
 
       // KernelException thrown inside a lambda is wrapped in a RuntimeException
       val e = intercept[RuntimeException] {

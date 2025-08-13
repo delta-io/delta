@@ -266,7 +266,6 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
       appendData(
         engine,
         tablePath,
-        partCols = Seq.empty,
         data = Seq(Map.empty[String, Literal] -> dataBatches1),
         tableProperties = Map(IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true"))
 
@@ -284,7 +283,6 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
       appendData(
         engine,
         tablePath,
-        partCols = Seq.empty,
         data = Seq(Map.empty[String, Literal] -> dataBatches2))
 
       val ver2Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
@@ -343,7 +341,6 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
       appendData(
         engine,
         tablePath,
-        partCols = Seq.empty,
         data = Seq(Map.empty[String, Literal] -> dataBatches1),
         tableProperties = Map(IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true"))
 
@@ -375,7 +372,6 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
       val commitResult = appendData(
         engine,
         tablePath,
-        partCols = Seq.empty,
         data = Seq(Map.empty[String, Literal] -> dataBatches1),
         tableProperties = Map(IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true"))
 
@@ -563,7 +559,6 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
       val txn1 = createTxn(
         engine,
         tablePath,
-        partCols = Seq.empty,
         tableProperties = Map(IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true"),
         clock = clock)
       clock.setTime(startTime)
