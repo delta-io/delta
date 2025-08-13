@@ -173,7 +173,7 @@ trait TransactionBuilderV2Support extends TransactionBuilderSupport with TestUti
       txnBuilder.build(engine)
     } else {
       var txnBuilder = TableManager.loadSnapshot(tablePath)
-        .asInstanceOf[SnapshotBuilderImpl].build(engine)
+        .build(engine)
         .buildUpdateTableTransaction("test-engine", Operation.WRITE)
       /*
       TODO: in a separate PR clean up usage of createTxn such that schema != null ONLY when it
