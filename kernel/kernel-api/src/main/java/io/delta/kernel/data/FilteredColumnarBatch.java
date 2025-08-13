@@ -38,8 +38,8 @@ import java.util.Optional;
 @Evolving
 public class FilteredColumnarBatch {
   private final ColumnarBatch data;
-  private final Optional<ColumnVector> selectionVector; // add 1
-  private final Optional<String> filePath; // 1.parquet.checkpoint
+  private final Optional<ColumnVector> selectionVector;
+  private final Optional<String> filePath;
   private final Optional<Integer> preComputedNumSelectedRows;
 
   // TODO: use static factory for constructors
