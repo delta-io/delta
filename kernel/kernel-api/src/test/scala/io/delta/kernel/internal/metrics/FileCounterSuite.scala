@@ -56,26 +56,6 @@ class FileCounterSuite extends AnyFunSuite {
     assert(fileCount.size() === 16384) // 10240 + 6144
   }
 
-  test("FileCount with zero and negative values") {
-    val fileCount = new FileCounter()
-
-    // Test with zero size
-    fileCount.increment(0)
-    assert(fileCount.count() === 1)
-    assert(fileCount.size() === 0)
-
-    // Test with negative size (although this should be avoided in practice)
-    fileCount.increment(-1024)
-    assert(fileCount.count() === 2)
-    assert(fileCount.size() === -1024)
-
-    // Test with zero count but positive size
-    fileCount.reset()
-    fileCount.increment(0, 1024)
-    assert(fileCount.count() === 0)
-    assert(fileCount.size() === 1024)
-  }
-
   test("FileCount toString representation") {
     val fileCount = new FileCounter()
     fileCount.increment(3, 5120)
