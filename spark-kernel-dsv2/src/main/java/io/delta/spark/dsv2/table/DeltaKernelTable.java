@@ -31,6 +31,9 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 /** A DataSource V2 Table implementation for Delta Lake tables using the Delta Kernel API. */
 public class DeltaKernelTable implements Table, SupportsRead {
 
+  private static final Set<TableCapability> CAPABILITIES =
+      Collections.unmodifiableSet(EnumSet.of(TableCapability.BATCH_READ));
+
   private final Identifier identifier;
   // TODO: [delta-io/delta#5029] Add getProperties() in snapshot to avoid using Impl class.
   private final SnapshotImpl snapshot;
@@ -76,9 +79,7 @@ public class DeltaKernelTable implements Table, SupportsRead {
 
   @Override
   public Set<TableCapability> capabilities() {
-    Set<TableCapability> capabilities = new HashSet<>();
-    capabilities.add(TableCapability.BATCH_READ);
-    return Collections.unmodifiableSet(capabilities);
+    return CAPABILITIES;
   }
 
   @Override

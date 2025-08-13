@@ -15,6 +15,8 @@
  */
 package io.delta.spark.dsv2.scan;
 
+import static java.util.Objects.requireNonNull;
+
 import io.delta.kernel.Scan;
 import org.apache.spark.sql.types.StructType;
 
@@ -28,8 +30,8 @@ public class KernelSparkScan implements org.apache.spark.sql.connector.read.Scan
   private final StructType sparkReadSchema;
 
   public KernelSparkScan(Scan kernelScan, StructType sparkReadSchema) {
-    this.kernelScan = kernelScan;
-    this.sparkReadSchema = sparkReadSchema;
+    this.kernelScan = requireNonNull(kernelScan, "kernelScan is null");
+    this.sparkReadSchema = requireNonNull(sparkReadSchema, "sparkReadSchema is null");
   }
 
   @Override
