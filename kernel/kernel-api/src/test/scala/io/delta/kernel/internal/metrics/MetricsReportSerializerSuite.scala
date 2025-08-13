@@ -50,6 +50,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
       snapshotReport.getSnapshotMetrics().getLoadLogSegmentTotalDurationNs()
     val loadCrcTotalDuration =
       snapshotReport.getSnapshotMetrics().getLoadCrcTotalDurationNs()
+    val scanMetricsResult = snapshotReport.getSnapshotMetrics().getScanMetricsResult()
     val exception: Optional[String] = snapshotReport.getException().map(_.toString)
     val expectedJson =
       s"""
@@ -65,7 +66,21 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |"loadSnapshotTotalDurationNs":${loadSnapshotTotalDuration},
          |"loadProtocolMetadataTotalDurationNs":${loadProtocolAndMetadataDuration},
          |"loadLogSegmentTotalDurationNs":${buildLogSegmentDuration},
-         |"loadCrcTotalDurationNs":${loadCrcTotalDuration}
+         |"loadCrcTotalDurationNs":${loadCrcTotalDuration},
+         |"scanMetricsResult":{
+         |"totalPlanningDurationNs":${scanMetricsResult.getTotalPlanningDurationNs()},
+         |"numAddFilesSeen":${scanMetricsResult.getNumAddFilesSeen()},
+         |"numAddFilesSeenFromDeltaFiles":${scanMetricsResult.getNumAddFilesSeenFromDeltaFiles()},
+         |"numActiveAddFiles":${scanMetricsResult.getNumActiveAddFiles()},
+         |"numDuplicateAddFiles":${scanMetricsResult.getNumDuplicateAddFiles()},
+         |"numRemoveFilesSeenFromDeltaFiles":${scanMetricsResult.getNumRemoveFilesSeenFromDeltaFiles()},
+         |"numParquetActionSourceFiles":${scanMetricsResult.getNumParquetActionSourceFiles()},
+         |"parquetActionSourceFilesTotalSizeBytes":${scanMetricsResult.getParquetActionSourceFilesTotalSizeBytes()},
+         |"numJsonActionSourceFiles":${scanMetricsResult.getNumJsonActionSourceFiles()},
+         |"jsonActionSourceFilesTotalSizeBytes":${scanMetricsResult.getJsonActionSourceFilesTotalSizeBytes()},
+         |"numCrcFiles":${scanMetricsResult.getNumCrcFiles()},
+         |"crcFilesTotalSizeBytes":${scanMetricsResult.getCrcFilesTotalSizeBytes()}
+         |}
          |}
          |}
          |""".stripMargin.replaceAll("\n", "")
@@ -102,7 +117,21 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
         |"loadSnapshotTotalDurationNs":2000,
         |"loadProtocolMetadataTotalDurationNs":1000,
         |"loadLogSegmentTotalDurationNs":500,
-        |"loadCrcTotalDurationNs":250
+        |"loadCrcTotalDurationNs":250,
+        |"scanMetricsResult":{
+        |"totalPlanningDurationNs":0,
+        |"numAddFilesSeen":0,
+        |"numAddFilesSeenFromDeltaFiles":0,
+        |"numActiveAddFiles":0,
+        |"numDuplicateAddFiles":0,
+        |"numRemoveFilesSeenFromDeltaFiles":0,
+        |"numParquetActionSourceFiles":0,
+        |"parquetActionSourceFilesTotalSizeBytes":0,
+        |"numJsonActionSourceFiles":0,
+        |"jsonActionSourceFilesTotalSizeBytes":0,
+        |"numCrcFiles":0,
+        |"crcFilesTotalSizeBytes":0
+        |}
         |}
         |}
         |""".stripMargin.replaceAll("\n", "")
@@ -253,7 +282,13 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |"numAddFilesSeenFromDeltaFiles":${scanMetrics.getNumAddFilesSeenFromDeltaFiles},
          |"numActiveAddFiles":${scanMetrics.getNumActiveAddFiles},
          |"numDuplicateAddFiles":${scanMetrics.getNumDuplicateAddFiles},
-         |"numRemoveFilesSeenFromDeltaFiles":${scanMetrics.getNumRemoveFilesSeenFromDeltaFiles}
+         |"numRemoveFilesSeenFromDeltaFiles":${scanMetrics.getNumRemoveFilesSeenFromDeltaFiles},
+         |"numParquetActionSourceFiles":${scanMetrics.getNumParquetActionSourceFiles},
+         |"parquetActionSourceFilesTotalSizeBytes":${scanMetrics.getParquetActionSourceFilesTotalSizeBytes},
+         |"numJsonActionSourceFiles":${scanMetrics.getNumJsonActionSourceFiles},
+         |"jsonActionSourceFilesTotalSizeBytes":${scanMetrics.getJsonActionSourceFilesTotalSizeBytes},
+         |"numCrcFiles":${scanMetrics.getNumCrcFiles},
+         |"crcFilesTotalSizeBytes":${scanMetrics.getCrcFilesTotalSizeBytes}
          |}
          |}
          |""".stripMargin.replaceAll("\n", "")
@@ -315,7 +350,13 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
          |"numAddFilesSeenFromDeltaFiles":90,
          |"numActiveAddFiles":10,
          |"numDuplicateAddFiles":0,
-         |"numRemoveFilesSeenFromDeltaFiles":10
+         |"numRemoveFilesSeenFromDeltaFiles":10,
+         |"numParquetActionSourceFiles":0,
+         |"parquetActionSourceFilesTotalSizeBytes":0,
+         |"numJsonActionSourceFiles":0,
+         |"jsonActionSourceFilesTotalSizeBytes":0,
+         |"numCrcFiles":0,
+         |"crcFilesTotalSizeBytes":0
          |}
          |}
          |""".stripMargin.replaceAll("\n", "")
