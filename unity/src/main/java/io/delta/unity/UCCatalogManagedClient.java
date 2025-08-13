@@ -91,7 +91,10 @@ public class UCCatalogManagedClient {
             snapshotBuilder = snapshotBuilder.atVersion(versionOpt.get());
           }
 
-          return snapshotBuilder.withLogData(logData).build(engine);
+          return snapshotBuilder
+              .withCommitter(new UCCatalogManagedCommitter(ucClient, ucTableId, tablePath))
+              .withLogData(logData)
+              .build(engine);
         });
   }
 
