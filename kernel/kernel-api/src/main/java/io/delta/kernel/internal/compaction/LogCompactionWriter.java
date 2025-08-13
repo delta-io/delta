@@ -23,6 +23,7 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaLogActionUtils;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.metrics.ScanMetrics;
 import io.delta.kernel.internal.replay.CreateCheckpointIterator;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.util.FileNames;
@@ -64,7 +65,7 @@ public class LogCompactionWriter {
     this.minFileRetentionTimestampMillis = minFileRetentionTimestampMillis;
   }
 
-  public void writeLogCompactionFile(Engine engine) throws IOException {
+  public void writeLogCompactionFile(Engine engine, ScanMetrics scanMetrics) throws IOException {
     Path compactedPath = FileNames.logCompactionPath(logPath, startVersion, endVersion);
 
     logger.info(
@@ -108,7 +109,7 @@ public class LogCompactionWriter {
             Optional.empty(),
             lastCommitTimestamp);
     CreateCheckpointIterator checkpointIterator =
-        new CreateCheckpointIterator(engine, segment, minFileRetentionTimestampMillis);
+        new CreateCheckpointIterator(engine, segment, minFileRetentionTimestampMillis, scanMetrics);
     wrapEngineExceptionThrowsIO(
         () -> {
           try (CloseableIterator<Row> rows = Utils.intoRows(checkpointIterator)) {

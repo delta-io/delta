@@ -36,11 +36,13 @@ import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.actions.SetTransaction;
 import io.delta.kernel.internal.checksum.CRCInfo;
 import io.delta.kernel.internal.checksum.ChecksumReader;
+import io.delta.kernel.internal.metrics.ScanMetrics;
 import io.delta.kernel.internal.rowtracking.RowTracking;
 import io.delta.kernel.internal.rowtracking.RowTrackingMetadataDomain;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.DomainMetadataUtils;
 import io.delta.kernel.internal.util.FileNames;
+import io.delta.kernel.metrics.ScanMetricsResult;
 import io.delta.kernel.utils.CloseableIterable;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
@@ -115,11 +117,13 @@ public class ConflictChecker {
     // We currently set isBlindAppend=false in our CommitInfo to avoid unsafe resolution by other
     // connectors. Here, we still can assume that conflict resolution is safe to perform in Kernel.
     // checkArgument(transaction.isBlindAppend(), "Current support is for blind appends only.");
+    ScanMetrics metrics = new ScanMetrics();
     return new ConflictChecker(snapshot, transaction, attemptVersion, domainMetadatas, dataActions)
-        .resolveConflicts(engine);
+        .resolveConflicts(engine, metrics);
   }
 
-  public TransactionRebaseState resolveConflicts(Engine engine) throws ConcurrentWriteException {
+  public TransactionRebaseState resolveConflicts(Engine engine, ScanMetrics scanMetrics)
+      throws ConcurrentWriteException {
     List<FileStatus> winningCommits = getWinningCommitFiles(engine);
     AtomicReference<Optional<CommitInfo>> winningCommitInfoOpt =
         new AtomicReference<>(Optional.empty());
@@ -131,7 +135,8 @@ public class ConflictChecker {
     long lastWinningVersion = FileNames.deltaVersion(lastWinningTxn.getPath());
     // Read the actions from the winning commits
     try (ActionsIterator actionsIterator =
-        new ActionsIterator(engine, winningCommits, CONFLICT_RESOLUTION_SCHEMA, Optional.empty())) {
+        new ActionsIterator(
+            engine, winningCommits, CONFLICT_RESOLUTION_SCHEMA, Optional.empty(), scanMetrics)) {
 
       actionsIterator.forEachRemaining(
           actionBatch -> {
@@ -187,7 +192,8 @@ public class ConflictChecker {
         getLastCommitTimestamp(lastWinningVersion, lastWinningTxn, winningCommitInfoOpt.get()),
         updatedDataActions,
         updatedDomainMetadatas,
-        updatedCrcInfo);
+        updatedCrcInfo,
+        scanMetrics.captureScanMetricsResult());
   }
 
   /**
@@ -206,18 +212,21 @@ public class ConflictChecker {
     private final CloseableIterable<Row> updatedDataActions;
     private final List<DomainMetadata> updatedDomainMetadatas;
     private final Optional<CRCInfo> updatedCrcInfo;
+    private final ScanMetricsResult scanMetricsResult;
 
     public TransactionRebaseState(
         long latestVersion,
         long latestCommitTimestamp,
         CloseableIterable<Row> updatedDataActions,
         List<DomainMetadata> updatedDomainMetadatas,
-        Optional<CRCInfo> updatedCrcInfo) {
+        Optional<CRCInfo> updatedCrcInfo,
+        ScanMetricsResult scanMetricsResult) {
       this.latestVersion = latestVersion;
       this.latestCommitTimestamp = latestCommitTimestamp;
       this.updatedDataActions = updatedDataActions;
       this.updatedDomainMetadatas = updatedDomainMetadatas;
       this.updatedCrcInfo = updatedCrcInfo;
+      this.scanMetricsResult = scanMetricsResult;
     }
 
     /**

@@ -26,6 +26,7 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaLogActionUtils;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.metrics.ScanMetrics;
 import io.delta.kernel.internal.replay.CreateCheckpointIterator;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.stats.FileSizeHistogram;
@@ -106,8 +107,8 @@ public class ChecksumUtils {
    * @param logSegmentAtVersion The LogSegment instance of the table at a specific version
    * @throws IOException If an I/O error occurs during checksum computation or writing
    */
-  public static void computeStateAndWriteChecksum(Engine engine, LogSegment logSegmentAtVersion)
-      throws IOException {
+  public static void computeStateAndWriteChecksum(
+      Engine engine, LogSegment logSegmentAtVersion, ScanMetrics scanMetrics) throws IOException {
     requireNonNull(engine);
     requireNonNull(logSegmentAtVersion);
 
@@ -130,7 +131,8 @@ public class ChecksumUtils {
     // Try to build CRC incrementally if possible
     Optional<CRCInfo> incrementallyBuiltCrc =
         lastSeenCrcInfo.isPresent()
-            ? buildCrcInfoIncrementally(lastSeenCrcInfo.get(), engine, logSegmentAtVersion)
+            ? buildCrcInfoIncrementally(
+                lastSeenCrcInfo.get(), engine, logSegmentAtVersion, scanMetrics)
             : Optional.empty();
 
     // Use incrementally built CRC if available, otherwise do full log replay
@@ -154,12 +156,15 @@ public class ChecksumUtils {
       Engine engine, LogSegment logSegmentAtVersion) throws IOException {
 
     StateTracker state = new StateTracker();
-
+    ScanMetrics metrics = new ScanMetrics();
     // Process logs and update state
     try (CreateCheckpointIterator checkpointIterator =
         new CreateCheckpointIterator(
             // Set minFileRetentionTimestampMillis to infinite future to skip all removed files
-            engine, logSegmentAtVersion, Instant.ofEpochMilli(Long.MAX_VALUE).toEpochMilli())) {
+            engine,
+            logSegmentAtVersion,
+            Instant.ofEpochMilli(Long.MAX_VALUE).toEpochMilli(),
+            metrics)) {
 
       // Process all checkpoint batches
       while (checkpointIterator.hasNext()) {
@@ -228,7 +233,8 @@ public class ChecksumUtils {
    * @return Optional containing the new CRC info, or empty if fallback is needed
    */
   private static Optional<CRCInfo> buildCrcInfoIncrementally(
-      CRCInfo lastSeenCrcInfo, Engine engine, LogSegment logSegment) throws IOException {
+      CRCInfo lastSeenCrcInfo, Engine engine, LogSegment logSegment, ScanMetrics scanMetrics)
+      throws IOException {
     long startTime = System.currentTimeMillis();
     // Can only build incrementally if we have domain metadata and file size histogram
     if (!lastSeenCrcInfo.getDomainMetadata().isPresent()) {
@@ -264,7 +270,10 @@ public class ChecksumUtils {
     // Create iterator for delta files newer than last CRC
     try (CloseableIterator<ColumnarBatch> iterator =
         DeltaLogActionUtils.readCommitFiles(
-            engine, deltaFiles, CHECKPOINT_SCHEMA.add("commitInfo", CommitInfo.FULL_SCHEMA))) {
+            engine,
+            deltaFiles,
+            CHECKPOINT_SCHEMA.add("commitInfo", CommitInfo.FULL_SCHEMA),
+            scanMetrics)) {
       Optional<Long> lastSeenVersion = Optional.empty();
 
       while (iterator.hasNext()) {

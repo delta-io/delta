@@ -31,6 +31,7 @@ import io.delta.kernel.expressions.*;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.checkpoints.SidecarFile;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.metrics.ScanMetrics;
 import io.delta.kernel.internal.util.*;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
@@ -92,18 +93,22 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
   private long numSidecarFilesSkipped = 0;
   private boolean closed;
 
+  private final ScanMetrics metrics;
+
   public ActionsIterator(
       Engine engine,
       List<FileStatus> files,
       StructType deltaReadSchema,
-      Optional<Predicate> checkpointPredicate) {
+      Optional<Predicate> checkpointPredicate,
+      ScanMetrics metrics) {
     this(
         engine,
         files,
         deltaReadSchema,
         deltaReadSchema,
         checkpointPredicate,
-        Optional.empty() /* paginationContextOpt */);
+        Optional.empty(), /* paginationContextOpt */
+        metrics);
   }
 
   public ActionsIterator(
@@ -112,7 +117,8 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
       StructType deltaReadSchema,
       StructType checkpointReadSchema,
       Optional<Predicate> checkpointPredicate,
-      Optional<PaginationContext> paginationContextOpt) {
+      Optional<PaginationContext> paginationContextOpt,
+      ScanMetrics metrics) {
     this.engine = engine;
     this.checkpointPredicate = checkpointPredicate;
     this.filesList = new LinkedList<>();
@@ -126,6 +132,7 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     this.checkpointReadSchema = checkpointReadSchema;
     this.actionsIter = Optional.empty();
     this.schemaContainsAddOrRemoveFiles = LogReplay.containsAddOrRemoveFileActions(deltaReadSchema);
+    this.metrics = metrics;
   }
 
   /**
@@ -315,6 +322,7 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     StructType finalReadSchema = modifiedReadSchema;
 
     if (fileName.endsWith(".parquet")) {
+      this.metrics.parquetActionSourceFilesCounter.increment(file.getSize());
       topLevelIter =
           wrapEngineExceptionThrowsIO(
               () ->
@@ -330,6 +338,7 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
               finalReadSchema,
               checkpointPredicateIncludingSidecars);
     } else if (fileName.endsWith(".json")) {
+      this.metrics.jsonActionSourceFilesCounter.increment(file.getSize());
       topLevelIter =
           wrapEngineExceptionThrowsIO(
               () ->
@@ -497,6 +506,7 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     // version with actions read from the JSON file for further optimizations later
     // on (faster metadata & protocol loading in subsequent runs by remembering
     // the version of the last version where the metadata and protocol are found).
+    this.metrics.jsonActionSourceFilesCounter.increment(nextFile.getSize());
     final CloseableIterator<FileReadResult> dataIter =
         wrapEngineExceptionThrowsIO(
             () ->
@@ -598,7 +608,10 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
         peek = filesList.peek();
       }
     }
-
+    // Increment the file counter for each checkpoint file
+    for (FileStatus file : checkpointFiles) {
+      this.metrics.parquetActionSourceFilesCounter.increment(file.getSize());
+    }
     return toCloseableIterator(checkpointFiles.iterator());
   }
 }

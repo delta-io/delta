@@ -34,6 +34,7 @@ import io.delta.kernel.internal.checksum.CRCInfo;
 import io.delta.kernel.internal.clustering.ClusteringMetadataDomain;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
+import io.delta.kernel.internal.metrics.SnapshotMetrics;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.metrics.SnapshotReportImpl;
 import io.delta.kernel.internal.replay.CreateCheckpointIterator;
@@ -56,6 +57,7 @@ public class SnapshotImpl implements Snapshot {
   private final Protocol protocol;
   private final Metadata metadata;
   private final Committer committer;
+  private final SnapshotMetrics snapshotMetrics;
   private Optional<Long> inCommitTimestampOpt;
   private Lazy<SnapshotReport> lazySnapshotReport;
   private Lazy<Optional<List<Column>>> lazyClusteringColumns;
@@ -79,6 +81,7 @@ public class SnapshotImpl implements Snapshot {
     this.metadata = requireNonNull(metadata);
     this.committer = committer;
     this.inCommitTimestampOpt = Optional.empty();
+    this.snapshotMetrics = snapshotContext.getSnapshotMetrics();
 
     // We create the actual Snapshot report lazily (on first access) instead of eagerly in this
     // constructor because some Snapshot metrics, like {@link
@@ -233,7 +236,8 @@ public class SnapshotImpl implements Snapshot {
   public CreateCheckpointIterator getCreateCheckpointIterator(Engine engine) {
     long minFileRetentionTimestampMillis =
         System.currentTimeMillis() - TOMBSTONE_RETENTION.fromMetadata(metadata);
-    return new CreateCheckpointIterator(engine, getLogSegment(), minFileRetentionTimestampMillis);
+    return new CreateCheckpointIterator(
+        engine, getLogSegment(), minFileRetentionTimestampMillis, snapshotMetrics.scanMetrics);
   }
 
   /**
