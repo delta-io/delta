@@ -24,6 +24,7 @@ import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
+import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.Tuple2;
 import java.util.Optional;
 
@@ -175,6 +176,32 @@ public class CommitMetadata {
     } else {
       return CommitType.FILESYSTEM_WRITE;
     }
+  }
+
+  /**
+   * Returns the corresponding published Delta log file path for this commit, which is in the form
+   * of {@code <table_path>/_delta_log/0000000000000000000<version>.json}.
+   *
+   * <p>Usages:
+   *
+   * <ul>
+   *   <li>Filesystem-managed committers must write to this file path.
+   *   <li>Catalog-managed committers must backfill to this file path, if/when they so choose.
+   * </ul>
+   */
+  public String getPublishedDeltaFilePath() {
+    return FileNames.deltaFile(logPath, version);
+  }
+
+  /**
+   * Returns a new staged commit file path with a unique UUID for this commit. Each invocation
+   * returns a new, unique value, in the form of {@code
+   * <table_path>/_delta_log/_staged_commits/0000000000000000000<version>.<uuid>.json}
+   *
+   * <p>Catalog-managed committers may use this path to write new staged commits.
+   */
+  public String generateNewStagedCommitFilePath() {
+    return FileNames.stagedCommitFile(logPath, version);
   }
 
   private void checkReadStateAbsentIfAndOnlyIfVersion0() {

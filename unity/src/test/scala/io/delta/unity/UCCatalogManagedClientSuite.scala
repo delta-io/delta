@@ -37,7 +37,11 @@ import org.scalatest.funsuite.AnyFunSuite
 /** Unit tests for [[UCCatalogManagedClient]]. */
 class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestUtils {
 
-  private def createUCCatalogManagedClientForTableWithNoRatifiedCommits(
+  /**
+   * When a new UC table is created, it will have Delta version 0 but the max ratified verison in
+   * UC is -1. This is a special edge case.
+   */
+  private def createUCCatalogManagedClientForTableWithMaxRatifiedVersionNegativeOne(
       ucTableId: String = "ucTableId"): UCCatalogManagedClient = {
     val ucClient = new InMemoryUCClient("ucMetastoreId")
     val tableData = new TableData(-1, ArrayBuffer[Commit]())
@@ -136,7 +140,8 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
     case (versionToLoad, description) =>
       test(s"table version 0 is loaded when UC maxRatifiedVersion is -1 -- $description") {
         val tablePath = getTestResourceFilePath("catalog-owned-preview")
-        val ucCatalogManagedClient = createUCCatalogManagedClientForTableWithNoRatifiedCommits()
+        val ucCatalogManagedClient =
+          createUCCatalogManagedClientForTableWithMaxRatifiedVersionNegativeOne()
         val snapshot = ucCatalogManagedClient
           .loadSnapshot(defaultEngine, "ucTableId", tablePath, versionToLoad)
 
@@ -198,7 +203,8 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
 
   test("creates snapshot with UCCatalogManagedCommitter") {
     val tablePath = getTestResourceFilePath("catalog-owned-preview")
-    val ucCatalogManagedClient = createUCCatalogManagedClientForTableWithNoRatifiedCommits()
+    val ucCatalogManagedClient =
+      createUCCatalogManagedClientForTableWithMaxRatifiedVersionNegativeOne()
     val snapshot = ucCatalogManagedClient
       .loadSnapshot(defaultEngine, "ucTableId", tablePath, Optional.of(0L))
       .asInstanceOf[SnapshotImpl]

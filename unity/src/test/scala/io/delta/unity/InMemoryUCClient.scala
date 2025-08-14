@@ -125,6 +125,8 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
       disown: Boolean,
       newMetadata: Optional[AbstractMetadata],
       newProtocol: Optional[AbstractProtocol]): Unit = {
+    forceThrowInCommitMethod()
+
     Seq(
       (lastKnownBackfilledVersion.isPresent, "lastKnownBackfilledVersion"),
       (disown, "disown"),
@@ -151,6 +153,9 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
   }
 
   override def close(): Unit = {}
+
+  /** Visible for testing. Can be overridden to force an exception in commit method. */
+  protected def forceThrowInCommitMethod(): Unit = {}
 
   private[unity] def createTableIfNotExistsOrThrow(
       ucTableId: String,
