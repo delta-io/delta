@@ -383,6 +383,7 @@ class DeltaReplaceTableSuite extends DeltaReplaceTableSuiteBase {
         getReplaceTxn(
           engine,
           tablePath,
+          schema = testSchema,
           partCols = Seq("foo"))
       }.getMessage.contains(
         "Partition column foo not found in the schema"))
@@ -396,6 +397,7 @@ class DeltaReplaceTableSuite extends DeltaReplaceTableSuiteBase {
         getReplaceTxn(
           engine,
           tablePath,
+          schema = testSchema,
           clusteringColsOpt = Some(Seq(new Column("foo"))))
       }.getMessage.contains(
         "Column 'column(`foo`)' was not found in the table schema"))
