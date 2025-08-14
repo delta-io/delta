@@ -75,12 +75,15 @@ public class Dsv2BasicTest {
     spark.sql(
         String.format(
             "CREATE TABLE dsv2.%s.batch_read_test (id INT, name STRING, value DOUBLE)", nameSpace));
-    AnalysisException e =
+    UnsupportedOperationException e =
         assertThrows(
-            AnalysisException.class,
-            () -> spark.sql(String.format("SELECT * FROM dsv2.%s.batch_read_test", nameSpace)));
-    // TODO: update when implementing SupportReads
-    assertTrue(e.getMessage().contains("does not support batch scan"));
+            UnsupportedOperationException.class,
+            () ->
+                spark
+                    .sql(String.format("SELECT * FROM dsv2.%s.batch_read_test", nameSpace))
+                    .show());
+    // TODO: update after implementing batch Scan
+    assertTrue(e.getMessage().contains("Batch scan are not supported"));
   }
 
   @Test

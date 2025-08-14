@@ -27,6 +27,7 @@ import io.delta.kernel.defaults.utils.WriteUtilsWithV2Builders
 import io.delta.kernel.engine.{Engine, JsonHandler}
 import io.delta.kernel.exceptions.{KernelException, MaxCommitRetryLimitReachedException, TableAlreadyExistsException}
 import io.delta.kernel.expressions.Column
+import io.delta.kernel.internal.commit.DefaultFileSystemManagedTableOnlyCommitter
 import io.delta.kernel.internal.table.SnapshotBuilderImpl
 import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.internal.util.ColumnMapping
@@ -207,15 +208,7 @@ class DeltaTableWritesTransactionBuilderV2Suite extends DeltaTableWritesSuite
       val currentSchema = getMetadata(engine, tablePath).getSchema
       assert(currentSchema.indexOf("newCol") == -1)
       val newSchema = currentSchema.add("newCol", IntegerType.INTEGER)
-      // For now use the builder directly as we need to merge
-      // https://github.com/delta-io/delta/pull/5057 before we can add schema evolution support to
-      // the test utilities that use createTxn
-      TableManager.loadSnapshot(tablePath).build(engine)
-        .buildUpdateTableTransaction(testEngineInfo, Operation.WRITE)
-        .withUpdatedSchema(newSchema)
-        .build(engine)
-        .commit(engine, emptyIterable())
-      // Replace in #5057: updateTableMetadata(engine, tablePath, schema = newSchema)
+      updateTableMetadata(engine, tablePath, schema = newSchema)
       // Validate that the new column exits
       assert(getMetadata(engine, tablePath).getSchema.indexOf("newCol") >= 0)
     }
@@ -265,6 +258,40 @@ class DeltaTableWritesTransactionBuilderV2Suite extends DeltaTableWritesSuite
           schema = testSchema,
           maxRetries = 10).commit(transientErrorEngine, emptyIterable())
       }
+    }
+  }
+
+  test("CreateTableTransactionBuilder uses the committer when provided") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      class FakeCommitter extends Committer {
+        override def commit(
+            engine: Engine,
+            finalizedActions: CloseableIterator[Row],
+            commitMetadata: CommitMetadata): CommitResponse = {
+          throw new RuntimeException("This is a fake committer")
+        }
+      }
+      val txn = TableManager.buildCreateTableTransaction(tablePath, testSchema, testEngineInfo)
+        .withCommitter(new FakeCommitter())
+        .build(engine)
+
+      // Check the txn returns the correct committer
+      assert(txn.getCommitter.isInstanceOf[FakeCommitter])
+
+      // Check that the txn invokes the provided committer upon commit
+      val e = intercept[RuntimeException] {
+        txn.commit(engine, emptyIterable())
+      }
+      assert(e.getMessage.contains("This is a fake committer"))
+    }
+  }
+
+  test("CreateTableTransactionBuilder uses the default file system committer if none is provided") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val txn = TableManager.buildCreateTableTransaction(tablePath, testSchema, testEngineInfo)
+        .build(engine)
+      // Check the txn returns the correct committer
+      assert(txn.getCommitter == DefaultFileSystemManagedTableOnlyCommitter.INSTANCE)
     }
   }
 }

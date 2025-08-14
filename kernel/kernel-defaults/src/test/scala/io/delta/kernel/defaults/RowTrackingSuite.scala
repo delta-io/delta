@@ -319,7 +319,7 @@ class RowTrackingSuite extends AnyFunSuite with WriteUtils with ParquetSuiteBase
         Optional.empty() // No stats
       )
       val action = SingleAction.createAddFileSingleAction(addFileRow)
-      val txn = getUpdateTxn(engine, tablePath, testSchema)
+      val txn = getUpdateTxn(engine, tablePath)
 
       // KernelException thrown inside a lambda is wrapped in a RuntimeException
       val e = intercept[RuntimeException] {
@@ -366,7 +366,6 @@ class RowTrackingSuite extends AnyFunSuite with WriteUtils with ParquetSuiteBase
         appendData(
           engine,
           tablePath,
-          schema = schema,
           data = prepareDataForCommit(dataBatch1, dataBatch2, dataBatch3)
         ).getVersion // version 1
 
@@ -417,7 +416,6 @@ class RowTrackingSuite extends AnyFunSuite with WriteUtils with ParquetSuiteBase
         appendData(
           engine,
           tablePath,
-          schema = schema,
           data = prepareDataForCommit(dataBatch1, dataBatch2, dataBatch3)
         ) // version 3
 

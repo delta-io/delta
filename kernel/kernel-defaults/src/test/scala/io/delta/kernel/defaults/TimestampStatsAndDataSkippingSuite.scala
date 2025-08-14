@@ -71,7 +71,7 @@ class TimestampStatsAndDataSkippingSuite extends AnyFunSuite with WriteUtils
           engine,
           kernelPath,
           isNewTable = fileIndex == 0,
-          schema,
+          schema = if (fileIndex == 0) schema else null,
           partCols = Seq.empty,
           data = Seq(Map.empty[String, Literal] -> Seq(batch.toFiltered(Option.empty))))
       }
@@ -129,7 +129,7 @@ class TimestampStatsAndDataSkippingSuite extends AnyFunSuite with WriteUtils
             engine,
             kernelPath,
             isNewTable = fileIndex == 0,
-            schema,
+            schema = if (fileIndex == 0) schema else null,
             partCols = Seq.empty,
             data = Seq(Map.empty[String, Literal] -> Seq(batch.toFiltered(Option.empty))))
         }
