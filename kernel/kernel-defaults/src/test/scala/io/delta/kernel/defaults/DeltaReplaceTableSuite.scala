@@ -160,65 +160,28 @@ trait DeltaReplaceTableSuiteBase extends AnyFunSuite with WriteUtils {
     checkTable(tablePath, dataToWrite.flatMap(_._2).flatMap(_.toTestRows))
   }
 
-  protected def getReplaceTxnBuilder(engine: Engine, tablePath: String): TransactionBuilder = {
-    Table.forPath(engine, tablePath).asInstanceOf[TableImpl]
-      .createReplaceTableTransactionBuilder(engine, testEngineInfo)
-  }
-
-  protected def getReplaceTransaction(
-      engine: Engine,
-      tablePath: String,
-      schema: StructType = testSchema,
-      partitionColumns: Seq[String] = Seq.empty,
-      clusteringColumns: Option[Seq[Column]] = None,
-      transactionId: Option[(String, Long)] = None,
-      tableProperties: Map[String, String] = Map.empty,
-      domainsToAdd: Seq[(String, String)] = Seq.empty): Transaction = {
-    var txnBuilder = getReplaceTxnBuilder(engine, tablePath)
-      .withSchema(engine, schema)
-      .withPartitionColumns(engine, partitionColumns.asJava)
-      .withTableProperties(engine, tableProperties.asJava)
-
-    clusteringColumns.foreach { cols =>
-      txnBuilder = txnBuilder.withClusteringColumns(engine, cols.asJava)
-    }
-
-    transactionId.foreach { case (id, version) =>
-      txnBuilder = txnBuilder.withTransactionId(engine, id, version)
-    }
-
-    if (domainsToAdd.nonEmpty) {
-      txnBuilder = txnBuilder.withDomainMetadataSupported()
-    }
-
-    val txn = txnBuilder.build(engine)
-    domainsToAdd.foreach { case (domainName, config) =>
-      txn.addDomainMetadata(domainName, config)
-    }
-    txn
-  }
-
   protected def commitReplaceTable(
       engine: Engine,
       tablePath: String,
       schema: StructType = testSchema,
       partitionColumns: Seq[String] = Seq.empty,
       clusteringColumns: Option[Seq[Column]] = None,
-      transactionId: Option[(String, Long)] = None,
       tableProperties: Map[String, String] = Map.empty,
       domainsToAdd: Seq[(String, String)] = Seq.empty,
       data: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])] = Seq.empty)
       : TransactionCommitResult = {
 
-    val txn = getReplaceTransaction(
+    val txn = getReplaceTxn(
       engine,
       tablePath,
       schema,
       partitionColumns,
       clusteringColumns,
-      transactionId,
       tableProperties,
-      domainsToAdd)
+      domainsToAdd.nonEmpty)
+    domainsToAdd.foreach { case (domainName, config) =>
+      txn.addDomainMetadata(domainName, config)
+    }
 
     commitTransaction(txn, engine, getAppendActions(txn, data))
   }
@@ -246,7 +209,6 @@ trait DeltaReplaceTableSuiteBase extends AnyFunSuite with WriteUtils {
       schema,
       partitionColumns,
       clusteringColumns,
-      transactionId,
       tableProperties,
       domainsToAdd,
       data)
@@ -313,7 +275,7 @@ class DeltaReplaceTableSuite extends DeltaReplaceTableSuiteBase {
     withTempDirAndEngine { (tablePath, engine) =>
       createInitialTable(engine, tablePath)
       // Start replace transaction
-      val txn = getReplaceTransaction(engine, tablePath)
+      val txn = getReplaceTxn(engine, tablePath, testSchema)
       // Commit a simple blind append as a conflicting txn
       appendData(
         engine,
@@ -359,22 +321,6 @@ class DeltaReplaceTableSuite extends DeltaReplaceTableSuiteBase {
     }
   }
 
-  test("Transaction identifier is used to preserve idempotent writes") {
-    withTempDirAndEngine { (tablePath, engine) =>
-      createInitialTable(engine, tablePath)
-      commitReplaceTable(
-        engine,
-        tablePath,
-        transactionId = Some(("foo", 0)))
-      intercept[ConcurrentTransactionException] {
-        commitReplaceTable(
-          engine,
-          tablePath,
-          transactionId = Some(("foo", 0)))
-      }
-    }
-  }
-
   test("Cannot replace a table with a protocol Kernel does not support") {
     withTempDirAndEngine { (tablePath, engine) =>
       spark.sql(
@@ -395,7 +341,8 @@ class DeltaReplaceTableSuite extends DeltaReplaceTableSuiteBase {
     withTempDirAndEngine { (tablePath, engine) =>
       createInitialTable(engine, tablePath)
       assert(intercept[KernelException] {
-        getReplaceTxnBuilder(engine, tablePath)
+        Table.forPath(engine, tablePath).asInstanceOf[TableImpl]
+          .createReplaceTableTransactionBuilder(engine, "test-engine")
           .build(engine)
       }.getMessage.contains("Must provide a new schema for REPLACE TABLE"))
     }
@@ -405,12 +352,12 @@ class DeltaReplaceTableSuite extends DeltaReplaceTableSuiteBase {
     withTempDirAndEngine { (tablePath, engine) =>
       createInitialTable(engine, tablePath)
       assert(intercept[IllegalArgumentException] {
-        getReplaceTransaction(
+        getReplaceTxn(
           engine,
           tablePath,
           schema = testPartitionSchema,
-          partitionColumns = testPartitionColumns,
-          clusteringColumns = Some(testClusteringColumns))
+          partCols = testPartitionColumns,
+          clusteringColsOpt = Some(testClusteringColumns))
       }.getMessage.contains(
         "Partition Columns and Clustering Columns cannot be set at the same time"))
     }
@@ -420,7 +367,7 @@ class DeltaReplaceTableSuite extends DeltaReplaceTableSuiteBase {
     withTempDirAndEngine { (tablePath, engine) =>
       createInitialTable(engine, tablePath)
       assert(intercept[KernelException] {
-        getReplaceTransaction(
+        getReplaceTxn(
           engine,
           tablePath,
           schema = new StructType().add("col", IntegerType.INTEGER).add("col", IntegerType.INTEGER))
@@ -433,10 +380,11 @@ class DeltaReplaceTableSuite extends DeltaReplaceTableSuiteBase {
     withTempDirAndEngine { (tablePath, engine) =>
       createInitialTable(engine, tablePath)
       assert(intercept[IllegalArgumentException] {
-        getReplaceTransaction(
+        getReplaceTxn(
           engine,
           tablePath,
-          partitionColumns = Seq("foo"))
+          schema = testSchema,
+          partCols = Seq("foo"))
       }.getMessage.contains(
         "Partition column foo not found in the schema"))
     }
@@ -446,10 +394,11 @@ class DeltaReplaceTableSuite extends DeltaReplaceTableSuiteBase {
     withTempDirAndEngine { (tablePath, engine) =>
       createInitialTable(engine, tablePath)
       assert(intercept[KernelException] {
-        getReplaceTransaction(
+        getReplaceTxn(
           engine,
           tablePath,
-          clusteringColumns = Some(Seq(new Column("foo"))))
+          schema = testSchema,
+          clusteringColsOpt = Some(Seq(new Column("foo"))))
       }.getMessage.contains(
         "Column 'column(`foo`)' was not found in the table schema"))
     }

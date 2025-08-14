@@ -978,11 +978,11 @@ class RowTrackingSuite extends AnyFunSuite with WriteUtils with ParquetSuiteBase
         // Create a REPLACE transaction and commit
         val replaceTableProps =
           Map(TableConfig.ROW_TRACKING_ENABLED.getKey -> enableAfter.toString)
-        val txnBuilder = Table.forPath(engine, tablePath).asInstanceOf[TableImpl]
-          .createReplaceTableTransactionBuilder(engine, testEngineInfo)
-          .withSchema(engine, testSchema)
-          .withTableProperties(engine, replaceTableProps.asJava)
-        val txn = txnBuilder.build(engine)
+        val txn = getReplaceTxn(
+          engine,
+          tablePath,
+          testSchema,
+          tableProperties = replaceTableProps)
 
         commitTransaction(txn, engine, getAppendActions(txn, replaceData))
 

@@ -32,8 +32,6 @@ import io.delta.kernel.types.StructType
  */
 trait TransactionBuilderSupport {
 
-  // TODO: address refactor usages of createTransactionBuilder
-
   // scalastyle:off argcount
   def getCreateTxn(
       engine: Engine,
@@ -59,6 +57,15 @@ trait TransactionBuilderSupport {
       txnId: Option[(String, Long)] = None,
       tablePropertiesRemoved: Set[String] = null): Transaction
   // scalastyle:on argcount
+
+  def getReplaceTxn(
+      engine: Engine,
+      tablePath: String,
+      schema: StructType,
+      partitionColumns: Seq[String] = null,
+      clusteringColumns: Option[Seq[Column]] = None,
+      tableProperties: Map[String, String] = null,
+      withDomainMetadataSupported: Boolean = false): Transaction
 }
 
 /** An implementation of [[TransactionBuilderSupport]] that uses the V1 transaction builder. */
@@ -134,6 +141,32 @@ trait TransactionBuilderV1Support extends TransactionBuilderSupport with TestUti
     }
     if (tablePropertiesRemoved != null) {
       txnBuilder = txnBuilder.withTablePropertiesRemoved(tablePropertiesRemoved.asJava)
+    }
+    txnBuilder.build(engine)
+  }
+
+  override def getReplaceTxn(
+      engine: Engine,
+      tablePath: String,
+      schema: StructType,
+      partCols: Seq[String] = null,
+      clusteringColsOpt: Option[Seq[Column]] = None,
+      tableProperties: Map[String, String] = null,
+      withDomainMetadataSupported: Boolean = false): Transaction = {
+    var txnBuilder = Table.forPath(engine, tablePath).asInstanceOf[TableImpl]
+      .createReplaceTableTransactionBuilder(engine, "test-engine")
+      .withSchema(engine, schema)
+    if (partCols != null) {
+      txnBuilder = txnBuilder.withPartitionColumns(engine, partCols.asJava)
+    }
+    if (tableProperties != null) {
+      txnBuilder = txnBuilder.withTableProperties(engine, tableProperties.asJava)
+    }
+    if (withDomainMetadataSupported) {
+      txnBuilder = txnBuilder.withDomainMetadataSupported()
+    }
+    clusteringColsOpt.foreach { cols =>
+      txnBuilder = txnBuilder.withClusteringColumns(engine, cols.asJava)
     }
     txnBuilder.build(engine)
   }
@@ -232,5 +265,16 @@ trait TransactionBuilderV2Support extends TransactionBuilderSupport with TestUti
       }
       origTblProps ++ dmTblProps
     }
+  }
+
+  override def getReplaceTxn(
+      engine: Engine,
+      tablePath: String,
+      schema: StructType,
+      partCols: Seq[String] = null,
+      clusteringColsOpt: Option[Seq[Column]] = None,
+      tableProperties: Map[String, String] = null,
+      withDomainMetadataSupported: Boolean = false): Transaction = {
+    throw new UnsupportedOperationException("Not yet supported")
   }
 }
