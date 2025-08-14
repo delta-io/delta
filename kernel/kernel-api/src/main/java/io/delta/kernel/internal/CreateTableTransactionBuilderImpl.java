@@ -21,6 +21,7 @@ import static java.util.Collections.emptyMap;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.*;
+import io.delta.kernel.commit.Committer;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.TableAlreadyExistsException;
 import io.delta.kernel.exceptions.TableNotFoundException;
@@ -42,6 +43,7 @@ public class CreateTableTransactionBuilderImpl implements CreateTableTransaction
   private Optional<Map<String, String>> tableProperties = Optional.empty();
   private Optional<DataLayoutSpec> dataLayoutSpec = Optional.empty();
   private Optional<Integer> userProvidedMaxRetries = Optional.empty();
+  private Optional<Committer> userProvidedCommitter = Optional.empty();
 
   public CreateTableTransactionBuilderImpl(String tablePath, StructType schema, String engineInfo) {
     this.unresolvedPath = requireNonNull(tablePath, "tablePath is null");
@@ -70,6 +72,12 @@ public class CreateTableTransactionBuilderImpl implements CreateTableTransaction
   public CreateTableTransactionBuilder withMaxRetries(int maxRetries) {
     checkArgument(maxRetries >= 0, "maxRetries must be >= 0");
     this.userProvidedMaxRetries = Optional.of(maxRetries);
+    return this;
+  }
+
+  @Override
+  public CreateTableTransactionBuilder withCommitter(Committer committer) {
+    userProvidedCommitter = Optional.of(requireNonNull(committer, "committer cannot be null"));
     return this;
   }
 
@@ -106,7 +114,7 @@ public class CreateTableTransactionBuilderImpl implements CreateTableTransaction
         Operation.CREATE_TABLE,
         txnMetadata.newProtocol,
         txnMetadata.newMetadata,
-        DefaultFileSystemManagedTableOnlyCommitter.INSTANCE, // TODO: support setting committer
+        userProvidedCommitter.orElse(DefaultFileSystemManagedTableOnlyCommitter.INSTANCE),
         Optional.empty(), // no setTransaction for create table
         txnMetadata.physicalNewClusteringColumns,
         userProvidedMaxRetries,
