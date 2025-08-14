@@ -55,13 +55,13 @@ trait TransactionBuilderSupport {
   // scalastyle:on argcount
 
   def getReplaceTxn(
-    engine: Engine,
-    tablePath: String,
-    schema: StructType,
-    partitionColumns: Seq[String] = null,
-    clusteringColumns: Option[Seq[Column]] = None,
-    tableProperties: Map[String, String] = null,
-    withDomainMetadataSupported: Boolean = false): Transaction
+      engine: Engine,
+      tablePath: String,
+      schema: StructType,
+      partitionColumns: Seq[String] = null,
+      clusteringColumns: Option[Seq[Column]] = None,
+      tableProperties: Map[String, String] = null,
+      withDomainMetadataSupported: Boolean = false): Transaction
 }
 
 /** An implementation of [[TransactionBuilderSupport]] that uses the V1 transaction builder. */
@@ -132,13 +132,13 @@ trait TransactionBuilderV1Support extends TransactionBuilderSupport with TestUti
   }
 
   override def getReplaceTxn(
-    engine: Engine,
-    tablePath: String,
-    schema: StructType,
-    partCols: Seq[String] = null,
-    clusteringColsOpt: Option[Seq[Column]] = None,
-    tableProperties: Map[String, String] = null,
-    withDomainMetadataSupported: Boolean = false): Transaction = {
+      engine: Engine,
+      tablePath: String,
+      schema: StructType,
+      partCols: Seq[String] = null,
+      clusteringColsOpt: Option[Seq[Column]] = None,
+      tableProperties: Map[String, String] = null,
+      withDomainMetadataSupported: Boolean = false): Transaction = {
     var txnBuilder = Table.forPath(engine, tablePath).asInstanceOf[TableImpl]
       .createReplaceTableTransactionBuilder(engine, "test-engine")
       .withSchema(engine, schema)
@@ -242,13 +242,13 @@ trait TransactionBuilderV2Support extends TransactionBuilderSupport with TestUti
   }
 
   override def getReplaceTxn(
-    engine: Engine,
-    tablePath: String,
-    schema: StructType,
-    partCols: Seq[String] = null,
-    clusteringColsOpt: Option[Seq[Column]] = None,
-    tableProperties: Map[String, String] = null,
-    withDomainMetadataSupported: Boolean = false): Transaction = {
+      engine: Engine,
+      tablePath: String,
+      schema: StructType,
+      partCols: Seq[String] = null,
+      clusteringColsOpt: Option[Seq[Column]] = None,
+      tableProperties: Map[String, String] = null,
+      withDomainMetadataSupported: Boolean = false): Transaction = {
     throw new UnsupportedOperationException("Not yet supported")
   }
 }
