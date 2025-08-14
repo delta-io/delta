@@ -65,8 +65,8 @@ This file is divided into 3 sections:
   <!-- ================================================================================ -->
 
   <check customId="KernelUseWriteUtils" level="error" class="org.scalastyle.file.RegexChecker" enabled="true">
-    <parameters><parameter name="regex">(?s)WriteUtils.*createTransactionBuilder\(</parameter></parameters>
-    <customMessage>Use utils in TransactionBuilderSupport to create transactions</customMessage>
+    <parameters><parameter name="regex">(?s)WriteUtils.*(createTransactionBuilder|createReplaceTableTransactionBuilder|buildCreateTableTransaction|buildUpdateTableTransaction|buildReplaceTableTransaction)\(</parameter></parameters>
+    <customMessage>Use the utils in TransactionBuilderSupport to create transactions</customMessage>
   </check>
 
   <check level="error" class="org.scalastyle.file.FileTabChecker" enabled="true"></check>
