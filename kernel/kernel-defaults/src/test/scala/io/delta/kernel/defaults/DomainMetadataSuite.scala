@@ -98,10 +98,9 @@ class DomainMetadataSuite extends AnyFunSuite with WriteUtils with ParquetSuiteB
   private def createTableWithDomainMetadataSupported(engine: Engine, tablePath: String): Unit = {
     // Create an empty table
     commitTransaction(
-      createTxn(
+      getCreateTxn(
         engine,
         tablePath,
-        isNewTable = true,
         testSchema,
         Seq.empty,
         withDomainMetadataSupported = true),
@@ -175,7 +174,7 @@ class DomainMetadataSuite extends AnyFunSuite with WriteUtils with ParquetSuiteB
 
       // Create an empty table
       commitTransaction(
-        createTxn(engine, tablePath, isNewTable = true, testSchema, Seq.empty),
+        getCreateTxn(engine, tablePath, testSchema, Seq.empty),
         engine,
         emptyIterable())
 
@@ -189,10 +188,9 @@ class DomainMetadataSuite extends AnyFunSuite with WriteUtils with ParquetSuiteB
       // Create an empty table
       // Its minWriterVersion is 2 and doesn't have 'domainMetadata' in its writerFeatures
       commitTransaction(
-        createTxn(
+        getCreateTxn(
           engine,
           tablePath,
-          isNewTable = true,
           testSchema,
           Seq.empty),
         engine,
@@ -629,7 +627,7 @@ class DomainMetadataSuite extends AnyFunSuite with WriteUtils with ParquetSuiteB
 
   test("updating domain metadata fails after transaction committed") {
     withTempDirAndEngine { (tablePath, engine) =>
-      val txn = createTxn(engine, tablePath, isNewTable = true, testSchema, Seq.empty)
+      val txn = getCreateTxn(engine, tablePath, testSchema, Seq.empty)
       commitTransaction(txn, engine, emptyIterable())
 
       intercept[IllegalStateException] {
@@ -780,10 +778,9 @@ class DomainMetadataSuite extends AnyFunSuite with WriteUtils with ParquetSuiteB
     withTempDirAndEngine { (tablePath, engine) =>
       // Create table with legacy protocol
       commitTransaction(
-        createTxn(
+        getCreateTxn(
           engine,
           tablePath = tablePath,
-          isNewTable = true,
           schema = testSchema,
           partCols = Seq()),
         engine,

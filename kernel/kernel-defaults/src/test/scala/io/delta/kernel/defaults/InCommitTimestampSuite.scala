@@ -462,11 +462,10 @@ class InCommitTimestampSuite extends AnyFunSuite with WriteUtils {
 
       val startTime = System.currentTimeMillis()
       val clock = new ManualClock(startTime)
-      val txn1 = createTxn(
+      val txn1 = getUpdateTxn(
         engine,
         tablePath,
         schema = testSchema,
-        partCols = Seq.empty,
         clock = clock)
       clock.setTime(startTime)
       appendData(
@@ -497,11 +496,10 @@ class InCommitTimestampSuite extends AnyFunSuite with WriteUtils {
         val startTime = System.currentTimeMillis()
         val clock = new ManualClock(startTime)
 
-        val txn1 = createTxn(
+        val txn1 = getUpdateTxn(
           engine,
           tablePath,
           schema = testSchema,
-          partCols = Seq.empty,
           tableProperties = Map(IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true"),
           clock = clock)
 
@@ -547,11 +545,10 @@ class InCommitTimestampSuite extends AnyFunSuite with WriteUtils {
 
       val startTime = System.currentTimeMillis()
       val clock = new ManualClock(startTime)
-      val txn1 = createTxn(
+      val txn1 = getUpdateTxn(
         engine,
         tablePath,
         schema = testSchema,
-        partCols = Seq.empty,
         clock = clock)
       clock.setTime(startTime)
       appendData(
@@ -596,11 +593,10 @@ class InCommitTimestampSuite extends AnyFunSuite with WriteUtils {
 
       val startTime = System.currentTimeMillis()
       val clock = new ManualClock(startTime)
-      val txn1 = createTxn(
+      val txn1 = getUpdateTxn(
         engine,
         tablePath,
         schema = testSchema,
-        partCols = Seq.empty,
         tableProperties = Map(IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true"),
         clock = clock)
       clock.setTime(startTime)

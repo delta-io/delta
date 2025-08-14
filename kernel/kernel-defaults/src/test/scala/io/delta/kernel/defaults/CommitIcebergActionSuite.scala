@@ -339,7 +339,7 @@ class CommitIcebergActionSuite extends AnyFunSuite with WriteUtils {
 
         // Append 1 add with dataChange = true
         {
-          val txn = createTxn(engine, tablePath, maxRetries = 0)
+          val txn = getUpdateTxn(engine, tablePath, maxRetries = 0)
           val actionsToCommit = Seq(
             createIcebergCompatAction(
               "ADD",
@@ -357,7 +357,7 @@ class CommitIcebergActionSuite extends AnyFunSuite with WriteUtils {
         // Append 1 add with dataChange = false (in theory this could involve updating stats but
         // once we support remove add a case that looks like optimize/compaction)
         {
-          val txn = createTxn(engine, tablePath, maxRetries = 0)
+          val txn = getUpdateTxn(engine, tablePath, maxRetries = 0)
           val actionsToCommit = Seq(
             createIcebergCompatAction(
               "ADD",
@@ -417,7 +417,7 @@ class CommitIcebergActionSuite extends AnyFunSuite with WriteUtils {
 
         // Append 1 add with dataChange = true
         {
-          val txn = createTxn(engine, tablePath, maxRetries = 0)
+          val txn = getUpdateTxn(engine, tablePath, maxRetries = 0)
           val actionsToCommit = Seq(
             createIcebergCompatAction(
               "ADD",
@@ -434,7 +434,7 @@ class CommitIcebergActionSuite extends AnyFunSuite with WriteUtils {
 
         // Re-arrange data by removing that Add and adding a new Add
         {
-          val txn = createTxn(engine, tablePath, maxRetries = 0)
+          val txn = getUpdateTxn(engine, tablePath, maxRetries = 0)
           val actionsToCommit = Seq(
             createIcebergCompatAction(
               "REMOVE",
@@ -458,7 +458,7 @@ class CommitIcebergActionSuite extends AnyFunSuite with WriteUtils {
 
         // Remove that add so that the table is empty
         {
-          val txn = createTxn(engine, tablePath, maxRetries = 0)
+          val txn = getUpdateTxn(engine, tablePath, maxRetries = 0)
           val actionsToCommit = Seq(
             createIcebergCompatAction(
               "REMOVE",
@@ -527,7 +527,7 @@ class CommitIcebergActionSuite extends AnyFunSuite with WriteUtils {
 
         // Append 1 add with dataChange = true
         {
-          val txn = createTxn(engine, tablePath, maxRetries = 0)
+          val txn = getUpdateTxn(engine, tablePath, maxRetries = 0)
           val actionsToCommit = Seq(
             createIcebergCompatAction(
               "ADD",
@@ -545,7 +545,7 @@ class CommitIcebergActionSuite extends AnyFunSuite with WriteUtils {
         // Re-arrange data by removing that Add and adding a new Add
         // (can commit remove with dataChange=false)
         {
-          val txn = createTxn(engine, tablePath, maxRetries = 0)
+          val txn = getUpdateTxn(engine, tablePath, maxRetries = 0)
           val actionsToCommit = Seq(
             createIcebergCompatAction(
               "REMOVE",
@@ -569,7 +569,7 @@ class CommitIcebergActionSuite extends AnyFunSuite with WriteUtils {
 
         // Cannot create remove with dataChange=true
         {
-          val txn = createTxn(engine, tablePath, maxRetries = 0)
+          val txn = getUpdateTxn(engine, tablePath, maxRetries = 0)
           intercept[KernelException] {
             createIcebergCompatAction(
               "REMOVE",
@@ -599,7 +599,7 @@ class CommitIcebergActionSuite extends AnyFunSuite with WriteUtils {
         val tags = Map("tag1" -> "abc", "tag2" -> "def")
 
         {
-          val txn = createTxn(engine, tablePath, maxRetries = 0)
+          val txn = getUpdateTxn(engine, tablePath, maxRetries = 0)
           val actionsToCommit = Seq(
             createIcebergCompatAction(
               "ADD",

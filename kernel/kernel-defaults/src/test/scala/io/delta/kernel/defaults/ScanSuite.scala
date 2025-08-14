@@ -1482,7 +1482,7 @@ class ScanSuite extends AnyFunSuite with TestUtils
             .add("decimalCol", new DecimalType(10, 2)))
 
       val tableProps = Map(TableConfig.DATA_SKIPPING_NUM_INDEXED_COLS.getKey -> "10")
-      val txn = createTxn(engine, tablePath, isNewTable = true, schema, List.empty, tableProps)
+      val txn = getCreateTxn(engine, tablePath, schema, List.empty, tableProps)
       txn.commit(engine, emptyIterable())
 
       // Build some rows with corner-case values

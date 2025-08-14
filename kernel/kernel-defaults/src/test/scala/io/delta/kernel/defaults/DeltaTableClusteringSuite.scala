@@ -67,10 +67,9 @@ class DeltaTableClusteringSuite extends AnyFunSuite with WriteUtils {
   test("build table txn: clustering column should be part of the schema") {
     withTempDirAndEngine { (tablePath, engine) =>
       val ex = intercept[KernelException] {
-        createTxn(
+        getCreateTxn(
           engine,
           tablePath,
-          isNewTable = true,
           testPartitionSchema,
           clusteringColsOpt = Some(List(new Column("PART1"), new Column("part3"))))
       }
@@ -82,10 +81,9 @@ class DeltaTableClusteringSuite extends AnyFunSuite with WriteUtils {
     "clustering column and partition column cannot be set at same time") {
     withTempDirAndEngine { (tablePath, engine) =>
       val ex = intercept[IllegalArgumentException] {
-        createTxn(
+        getCreateTxn(
           engine,
           tablePath,
-          isNewTable = true,
           testPartitionSchema,
           partCols = Seq("part1"),
           clusteringColsOpt = Some(List(new Column("PART1"), new Column("part2"))))
@@ -103,10 +101,9 @@ class DeltaTableClusteringSuite extends AnyFunSuite with WriteUtils {
         .add("part1", INTEGER) // partition column
         .add("mapType", new MapType(INTEGER, INTEGER, false));
       val ex = intercept[KernelException] {
-        createTxn(
+        getCreateTxn(
           engine,
           tablePath,
-          isNewTable = true,
           testPartitionSchema,
           clusteringColsOpt = Some(List(new Column("mapType"))))
       }

@@ -39,6 +39,62 @@ trait TransactionBuilderSupport {
       operation: Operation = Operation.WRITE): TransactionBuilder
 
   // scalastyle:off argcount
+  def getCreateTxn(
+      engine: Engine,
+      tablePath: String,
+      schema: StructType,
+      partCols: Seq[String] = null,
+      tableProperties: Map[String, String] = null,
+      clock: Clock = () => System.currentTimeMillis,
+      withDomainMetadataSupported: Boolean = false,
+      maxRetries: Int = -1,
+      clusteringColsOpt: Option[List[Column]] = None,
+      logCompactionInterval: Int = 10,
+      txnId: Option[(String, Long)] = None): Transaction = {
+    createTxn(
+      engine,
+      tablePath,
+      true,
+      schema,
+      partCols,
+      tableProperties,
+      clock,
+      withDomainMetadataSupported,
+      maxRetries,
+      clusteringColsOpt,
+      logCompactionInterval,
+      txnId,
+      null)
+  }
+
+  def getUpdateTxn(
+      engine: Engine,
+      tablePath: String,
+      schema: StructType = null,
+      tableProperties: Map[String, String] = null,
+      clock: Clock = () => System.currentTimeMillis,
+      withDomainMetadataSupported: Boolean = false,
+      maxRetries: Int = -1,
+      clusteringColsOpt: Option[List[Column]] = None,
+      logCompactionInterval: Int = 10,
+      txnId: Option[(String, Long)] = None,
+      tablePropertiesRemoved: Set[String] = null): Transaction = {
+    createTxn(
+      engine,
+      tablePath,
+      false,
+      schema,
+      null,
+      tableProperties,
+      clock,
+      withDomainMetadataSupported,
+      maxRetries,
+      clusteringColsOpt,
+      logCompactionInterval,
+      txnId,
+      tablePropertiesRemoved)
+  }
+
   def createTxn(
       engine: Engine,
       tablePath: String,

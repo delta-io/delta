@@ -420,15 +420,24 @@ trait AbstractWriteUtils extends TestUtils with TransactionBuilderSupport {
       tableProperties: Map[String, String] = null,
       clusteringColsOpt: Option[List[Column]] = None): TransactionCommitResult = {
 
-    val txn = createTxn(
-      engine,
-      tablePath,
-      isNewTable,
-      schema,
-      partCols,
-      tableProperties,
-      clock,
-      clusteringColsOpt = clusteringColsOpt)
+    val txn = if (isNewTable) {
+      getCreateTxn(
+        engine,
+        tablePath,
+        schema,
+        partCols,
+        tableProperties,
+        clock,
+        clusteringColsOpt = clusteringColsOpt)
+    } else {
+      getUpdateTxn(
+        engine,
+        tablePath,
+        schema,
+        tableProperties,
+        clock,
+        clusteringColsOpt = clusteringColsOpt)
+    }
     commitAppendData(engine, txn, data)
   }
 
@@ -462,14 +471,22 @@ trait AbstractWriteUtils extends TestUtils with TransactionBuilderSupport {
 
     val table = Table.forPath(engine, tablePath)
 
-    createTxn(
-      engine,
-      tablePath,
-      isNewTable,
-      testSchema,
-      tableProperties = Map(key.getKey -> value),
-      clock = clock)
-      .commit(engine, emptyIterable())
+    val txn = if (isNewTable) {
+      getCreateTxn(
+        engine,
+        tablePath,
+        testSchema,
+        tableProperties = Map(key.getKey -> value),
+        clock = clock)
+    } else {
+      getUpdateTxn(
+        engine,
+        tablePath,
+        testSchema,
+        tableProperties = Map(key.getKey -> value),
+        clock = clock)
+    }
+    txn.commit(engine, emptyIterable())
 
     val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
     assertMetadataProp(snapshot, key, expectedValue)

@@ -201,10 +201,7 @@ class IcebergWriterCompatV1Suite extends AnyFunSuite with WriteUtils
           initialMetadata.getSchema
             .add("c2", IntegerType.INTEGER)
         }
-        createWriteTxnBuilder(Table.forPath(engine, tablePath))
-          .withSchema(engine, updatedSchema)
-          .build(engine)
-          .commit(engine, emptyIterable())
+        updateTableMetadata(engine, tablePath, schema = updatedSchema)
         val updatedMetadata = getMetadata(engine, tablePath)
         assertThat(updatedMetadata.getConfiguration)
           .containsEntry(ColumnMapping.COLUMN_MAPPING_MAX_COLUMN_ID_KEY, "2")
@@ -246,11 +243,8 @@ class IcebergWriterCompatV1Suite extends AnyFunSuite with WriteUtils
                 .build())
         }
         val e = intercept[KernelException] {
-          createWriteTxnBuilder(Table.forPath(engine, tablePath))
-            .withTableProperties(engine, tblPropertiesIcebergWriterCompatV1Enabled.asJava)
-            .withSchema(engine, schemaToCommit)
-            .build(engine)
-            .commit(engine, emptyIterable())
+          updateTableMetadata(engine, tablePath, schema = schemaToCommit,
+            tableProperties = tblPropertiesIcebergWriterCompatV1Enabled)
         }
         val expectedInvalidColumnId = if (isNewTable) 1 else 2
         assert(e.getMessage.contains(
