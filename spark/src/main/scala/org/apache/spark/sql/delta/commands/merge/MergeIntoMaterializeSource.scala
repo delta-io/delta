@@ -180,7 +180,7 @@ trait MergeIntoMaterializeSource extends DeltaLogging with DeltaSparkPlanUtils {
           mergeMaterializedSourceRddBlockLostErrorRegex(materializedSourceRDD.get.id)) =>
       logWarning(log"Materialized ${MDC(DeltaLogKeys.OPERATION, operation)} source RDD block " +
         log"lost. ${MDC(DeltaLogKeys.OPERATION, operation)} needs to be restarted. " +
-        s"This was attempt number $attempt.")
+        log"This was attempt number ${MDC(DeltaLogKeys.ATTEMPT, attempt)}.")
       if (!isLastAttempt) {
         RetryHandling.Retry
       } else {
