@@ -38,7 +38,10 @@ object ModularSuiteGenerator {
 
   private val DEFAULT_REPO_PATH = "~/delta"
 
-  private val CODE_LINE_LENGTH_CHAR_LIMIT = 100
+  /**
+   * Controls when to start truncating and hashing the suite names to prevent extremely long names.
+   */
+  private val SUITE_NAME_CHAR_LIMIT = 255 - 136
 
   private lazy val OPT_REPO_PATH = new Option(
     /* option = */ "p",
@@ -66,9 +69,9 @@ object ModularSuiteGenerator {
     val suitesWriter = getWriter(cmd)
 
     // scalastyle:off println
-    print("Generating suites...")
+    println("Generating suites...")
     generateSuites(suitesWriter)
-    println("done")
+    println("Suite generation completed successfully.")
     // scalastyle:on println
   }
 
@@ -80,16 +83,16 @@ object ModularSuiteGenerator {
         dimensions <- testConfig.dimensionCombinations
       } yield dimensions
         // Generate all combinations of dimension traits
-        .foldLeft(List(List.empty[String])) {
+        .foldLeft(List(List.empty[(String, String)])) {
           (acc, dimension) =>
             (if (dimension.isOptional) acc else List.empty) :::
             (for {
               accValue <- acc
-              traitName <- dimension.traitNames
-            } yield accValue :+ traitName)
+              traitWithAlias <- dimension.traitsWithAliases
+            } yield accValue :+ traitWithAlias)
         }
-        .filterNot(dimensionTraits => SuiteGeneratorConfig.isExcluded(baseSuite, dimensionTraits))
-        .map(dimensionTraits => generateCode(baseSuite, dimensionTraits))
+        .filterNot(dimTraits => SuiteGeneratorConfig.isExcluded(baseSuite, dimTraits.map(_._1)))
+        .map(dimTraits => generateCode(baseSuite, dimTraits))
 
       suitesWriter.writeGeneratedSuitesOfGroup(suites.flatten, testGroup)
     }
@@ -141,21 +144,28 @@ object ModularSuiteGenerator {
 
   private def generateCode(
       baseSuite: String,
-      mixins: List[String]): TestSuite = {
-    val allMixins = SuiteGeneratorConfig.applyCustomRulesAndGetAllMixins(baseSuite, mixins)
+      mixinsAndAliases: List[(String, String)]): TestSuite = {
+    val allMixins = SuiteGeneratorConfig
+      .applyCustomRulesAndGetAllMixins(baseSuite, mixinsAndAliases.map(_._1))
     val suiteParents = (baseSuite :: allMixins).map(_.parse[Init].get)
 
-    // Generate suite name by combining the names of base suite, base mixins, and dimensions.
-    // Remove "Suite" / "Mixin" substrings for better readability
-    val baseSuitePrefix = baseSuite.stripSuffix("Suite")
-    val mixinSuffix = mixins
-      .map(_.replace("Mixin", ""))
+    // Generate suite name by combining the names of base suite and dimension aliases.
+    // Remove some redundant substrings for better readability
+    val baseSuitePrefix = baseSuite.stripSuffix("Suite").stripSuffix("Tests")
+    val mixinSuffix = mixinsAndAliases
+      .map(_._2.replace("Mixin", ""))
       .mkString("")
     var suiteName = baseSuitePrefix + mixinSuffix
 
     // Truncate the name and replace with a consistent hash if line becomes longer than the limit
-    val maxSuiteNameLength = CODE_LINE_LENGTH_CHAR_LIMIT - "class Suite".length
+    val maxSuiteNameLength = SUITE_NAME_CHAR_LIMIT - "Suite".length
     if (suiteName.length > maxSuiteNameLength) {
+      // scalastyle:off println
+      println(s"WARNING: Suite name is too long, truncating and hashing to fit within the limit. " +
+        s"Please consider renaming the base suite or defining shorter dimension aliases. " +
+        s"Suite: $suiteName (${suiteName.length} characters > $maxSuiteNameLength limit).")
+      // scalastyle:on println
+
       val hashBytes = BigInt(MurmurHash3.stringHash(suiteName)).toByteArray
       val hashEncoded = BASE32.encodeToString(hashBytes).replace("=", "")
       suiteName = suiteName.substring(0, maxSuiteNameLength - hashEncoded.length) + hashEncoded

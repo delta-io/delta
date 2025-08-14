@@ -95,10 +95,9 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
   test("create table - provide unsupported column types - expect failure") {
     withTempDirAndEngine { (tablePath, engine) =>
       val ex = intercept[KernelException] {
-        createTxn(
+        getCreateTxn(
           engine,
           tablePath,
-          isNewTable = true,
           schema = new StructType().add("variant_type", VariantType.VARIANT))
       }
       assert(ex.getMessage.contains("Kernel doesn't support writing data of type: variant") ||
@@ -111,8 +110,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
   test("create table - table already exists at the location") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
-      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
-      val txn = txnBuilder.withSchema(engine, testSchema).build(engine)
+      val txn = getCreateTxn(engine, tablePath, testSchema)
       commitTransaction(txn, engine, emptyIterable())
 
       {
@@ -146,9 +144,9 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
   test("create table - table is concurrently created before txn commits") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
-      val txn1 = createTxn(engine, tablePath, isNewTable = true, testSchema)
+      val txn1 = getCreateTxn(engine, tablePath, testSchema)
 
-      val txn2 = createTxn(engine, tablePath, isNewTable = true, testSchema)
+      val txn2 = getCreateTxn(engine, tablePath, testSchema)
       commitTransaction(txn2, engine, emptyIterable())
 
       intercept[ConcurrentWriteException] {
@@ -160,9 +158,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
   test("cannot provide partition columns for existing table") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
-      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
-
-      val txn = txnBuilder.withSchema(engine, testSchema).build(engine)
+      val txn = getCreateTxn(engine, tablePath, testSchema)
       commitTransaction(txn, engine, emptyIterable())
 
       val ex = intercept[TableAlreadyExistsException] {
@@ -181,7 +177,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
       val txn =
-        createTxn(engine, tablePath, isNewTable = true, testSchema)
+        getCreateTxn(engine, tablePath, testSchema)
 
       assert(txn.getSchema(engine) === testSchema)
       assert(txn.getPartitionColumns(engine) === Seq.empty.asJava)
@@ -199,7 +195,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
   test("create table and set properties") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
-      val txn1 = createTxn(engine, tablePath, isNewTable = true, testSchema)
+      val txn1 = getCreateTxn(engine, tablePath, testSchema)
 
       txn1.commit(engine, emptyIterable())
 
@@ -239,10 +235,10 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
     withTempDirAndEngine { (tablePath, engine) =>
       // Create table
       val table = Table.forPath(engine, tablePath)
-      createTxn(engine, tablePath, isNewTable = true, testSchema)
+      getCreateTxn(engine, tablePath, testSchema)
         .commit(engine, emptyIterable())
       // Create txn1 with config changes
-      val txn1 = createTxn(
+      val txn1 = getUpdateTxn(
         engine,
         tablePath,
         tableProperties = Map(TableConfig.CHECKPOINT_INTERVAL.getKey -> "2"))
@@ -267,11 +263,11 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
     withTempDirAndEngine { (tablePath, engine) =>
       // Create table
       val table = Table.forPath(engine, tablePath)
-      createTxn(engine, tablePath, isNewTable = true, testSchema)
+      getCreateTxn(engine, tablePath, testSchema)
         .commit(engine, emptyIterable())
 
       // Create txn1 with config changes
-      val txn1 = createTxn(
+      val txn1 = getUpdateTxn(
         engine,
         tablePath,
         tableProperties = Map(TableConfig.CHECKPOINT_INTERVAL.getKey -> "2"),
@@ -348,10 +344,9 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
   test("create partitioned table - partition column is not part of the schema") {
     withTempDirAndEngine { (tablePath, engine) =>
       val ex = intercept[IllegalArgumentException] {
-        createTxn(
+        getCreateTxn(
           engine,
           tablePath,
-          isNewTable = true,
           schema = testPartitionSchema,
           partCols = Seq("PART1", "part3"))
       }
@@ -367,7 +362,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
         .add("c2", new DecimalType(14, 2))
 
       val ex = intercept[KernelException] {
-        createTxn(engine, tablePath, isNewTable = true, schema = schema, partCols = Seq("p1", "c1"))
+        getCreateTxn(engine, tablePath, schema = schema, partCols = Seq("p1", "c1"))
       }
       assert(ex.getMessage.contains(
         "Kernel doesn't support writing data with partition column (p1) of type: array[integer]"))
@@ -381,10 +376,9 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
         .add("Part1", INTEGER) // partition column
         .add("part2", INTEGER) // partition column
 
-      val txn = createTxn(
+      val txn = getCreateTxn(
         engine,
         tablePath,
-        isNewTable = true,
         schema = schema,
         partCols = Seq("part1", "PART2"))
 
@@ -409,7 +403,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
         val schema = if (includeTimestampNtz) goldenTableSchema
         else removeTimestampNtzTypeColumns(goldenTableSchema)
 
-        val txn = createTxn(engine, tablePath, isNewTable = true, schema = schema)
+        val txn = getCreateTxn(engine, tablePath, schema = schema)
         val txnResult = commitTransaction(txn, engine, emptyIterable())
 
         assert(txnResult.getVersion === 0)
@@ -434,7 +428,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
       DeltaTable.forPath(spark, tablePath)
         .addFeatureSupport("testUnsupportedWriter")
       val e = intercept[KernelException] {
-        createTxn(engine, tablePath)
+        getUpdateTxn(engine, tablePath)
       }
       assert(e.getMessage.contains("Unsupported Delta table feature"))
     }
@@ -470,7 +464,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
       verifyCommitInfo(tblPath, version = 0, partitionCols = Seq.empty)
       verifyWrittenContent(tblPath, testSchema, dataBatches1.flatMap(_.toTestRows))
 
-      val txn = createTxn(engine, tblPath)
+      val txn = getUpdateTxn(engine, tblPath)
       assert(txn.getReadTableVersion == 0)
       val commitResult1 =
         commitAppendData(engine, txn, data = Seq(Map.empty[String, Literal] -> dataBatches2))
@@ -486,7 +480,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
   test("insert into table - fails when committing the same txn twice") {
     withTempDirAndEngine { (tblPath, engine) =>
       val table = Table.forPath(engine, tblPath)
-      val txn = createTxn(engine, tblPath, isNewTable = true, schema = testSchema)
+      val txn = getCreateTxn(engine, tblPath, schema = testSchema)
 
       val txnState = txn.getTransactionState(engine)
       val stagedFiles = stageData(txnState, Map.empty, dataBatches1)
@@ -874,13 +868,18 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
       def prepTxnAndActions(newTbl: Boolean, appId: String, txnVer: Long)
           : (Transaction, CloseableIterable[Row]) = {
 
-        val txn = createTxn(
-          engine,
-          tblPath,
-          isNewTable = newTbl,
-          schema = if (newTbl) testPartitionSchema else null,
-          partCols = if (newTbl) testPartitionColumns else null,
-          txnId = if (appId != null) Some((appId, txnVer)) else None)
+        val txn = if (newTbl) {
+          getCreateTxn(
+            engine,
+            tblPath,
+            schema = testPartitionSchema,
+            partCols = testPartitionColumns)
+        } else {
+          getUpdateTxn(
+            engine,
+            tblPath,
+            txnId = if (appId != null) Some((appId, txnVer)) else None)
+        }
 
         val combinedActions = inMemoryIterable(
           data.map { case (partValues, partData) =>
@@ -923,7 +922,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
       // Create a transaction with id (txnAppId1, 0) and commit it
       addDataWithTxnId(newTbl = true, appId = "txnAppId1", txnVer = 0, expTblVer = 0)
 
-      // Try to create a transaction with id (txnAppId1, 0) and commit it - should be valid
+      // Try to create a transaction with id (txnAppId1, 1) and commit it - should be valid
       addDataWithTxnId(newTbl = false, appId = "txnAppId1", txnVer = 1, expTblVer = 1)
 
       // Try to create a transaction with id (txnAppId1, 1) and try to commit it
@@ -984,7 +983,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
 
       // Create the table with the given schema and table properties.
       val txn =
-        createTxn(engine, tblPath, isNewTable = true, schema, tableProperties = tableProperties)
+        getCreateTxn(engine, tblPath, schema, tableProperties = tableProperties)
       commitTransaction(txn, engine, emptyIterable())
 
       val dataBatches1 = generateData(schema, Seq.empty, Map.empty, batchSize = 10, numBatches = 1)
@@ -1024,7 +1023,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
             .add("timestamp", TimestampType.TIMESTAMP))
 
       // Create table with stats collection enabled.
-      val txn = createTxn(engine, tblPath, isNewTable = true, schema, tableProperties = tableProps)
+      val txn = getCreateTxn(engine, tblPath, schema, tableProperties = tableProps)
       txn.commit(engine, emptyIterable())
 
       // Write one batch of data.
@@ -1059,10 +1058,10 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
 
   test("conflicts - creating new table - table created by other txn after current txn start") {
     withTempDirAndEngine { (tablePath, engine) =>
-      val losingTx = createTxn(engine, tablePath, isNewTable = true, schema = testSchema)
+      val losingTx = getCreateTxn(engine, tablePath, schema = testSchema)
 
       // don't commit losingTxn, instead create a new txn and commit it
-      val winningTx = createTxn(engine, tablePath, isNewTable = true, schema = testSchema)
+      val winningTx = getCreateTxn(engine, tablePath, schema = testSchema)
       val winningTxResult = commitTransaction(winningTx, engine, emptyIterable())
 
       // now attempt to commit the losingTxn
@@ -1151,7 +1150,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
       appendData(engine, tablePath, isNewTable = true, testSchema, data = testData)
 
       // start the losing transaction
-      val losingTx = createTxn(engine, tablePath)
+      val losingTx = getUpdateTxn(engine, tablePath)
 
       // don't commit losingTxn, instead create a new txn (that changes metadata) and commit it
       spark.sql("ALTER TABLE delta.`" + tablePath + "` ADD COLUMN newCol INT")
@@ -1177,7 +1176,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
         expData ++= testData.flatMap(_._2).flatMap(_.toTestRows)
 
         // start the losing transaction
-        val txn1 = createTxn(engine, tablePath)
+        val txn1 = getUpdateTxn(engine, tablePath)
 
         // don't commit txn1 yet, instead commit nex txns (that appends data) and commit it
         Seq.range(0, numWinningTxs).foreach { i =>
