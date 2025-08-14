@@ -241,10 +241,9 @@ class DeltaTableWritesTransactionBuilderV2Suite extends DeltaTableWritesSuite
       {
         val transientErrorEngine = new CustomEngine()
         intercept[MaxCommitRetryLimitReachedException] {
-          createTxn(
+          getCreateTxn(
             transientErrorEngine,
             tablePath,
-            isNewTable = true,
             schema = testSchema,
             maxRetries = 0).commit(transientErrorEngine, emptyIterable())
         }
@@ -253,10 +252,9 @@ class DeltaTableWritesTransactionBuilderV2Suite extends DeltaTableWritesSuite
       // Commit succeeds when maxRetries > 1
       {
         val transientErrorEngine = new CustomEngine()
-        createTxn(
+        getCreateTxn(
           transientErrorEngine,
           tablePath,
-          isNewTable = true,
           schema = testSchema,
           maxRetries = 10).commit(transientErrorEngine, emptyIterable())
       }

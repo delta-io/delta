@@ -98,10 +98,9 @@ class DomainMetadataSuite extends AnyFunSuite with WriteUtils with ParquetSuiteB
   private def createTableWithDomainMetadataSupported(engine: Engine, tablePath: String): Unit = {
     // Create an empty table
     commitTransaction(
-      createTxn(
+      getCreateTxn(
         engine,
         tablePath,
-        isNewTable = true,
         testSchema,
         Seq.empty,
         withDomainMetadataSupported = true),
@@ -175,7 +174,7 @@ class DomainMetadataSuite extends AnyFunSuite with WriteUtils with ParquetSuiteB
 
       // Create an empty table
       commitTransaction(
-        createTxn(engine, tablePath, isNewTable = true, testSchema, Seq.empty),
+        getCreateTxn(engine, tablePath, testSchema, Seq.empty),
         engine,
         emptyIterable())
 
@@ -189,7 +188,10 @@ class DomainMetadataSuite extends AnyFunSuite with WriteUtils with ParquetSuiteB
       // Create an empty table
       // Its minWriterVersion is 2 and doesn't have 'domainMetadata' in its writerFeatures
       commitTransaction(
-        createTxn(engine, tablePath, isNewTable = true, testSchema, Seq.empty),
+        getCreateTxn(
+          engine,
+          tablePath,
+          testSchema),
         engine,
         emptyIterable())
 
@@ -602,8 +604,7 @@ class DomainMetadataSuite extends AnyFunSuite with WriteUtils with ParquetSuiteB
       // Cannot set system-controlled domain metadata
       Seq("delta.foo", "DELTA.foo").foreach { domain =>
         val e = intercept[IllegalArgumentException] {
-          val txn = createWriteTxnBuilder(Table.forPath(engine, tablePath))
-            .build(engine)
+          val txn = getUpdateTxn(engine, tablePath)
           txn.addDomainMetadata(domain, "misc config")
         }
         assert(
@@ -624,7 +625,7 @@ class DomainMetadataSuite extends AnyFunSuite with WriteUtils with ParquetSuiteB
 
   test("updating domain metadata fails after transaction committed") {
     withTempDirAndEngine { (tablePath, engine) =>
-      val txn = createTxn(engine, tablePath, isNewTable = true, testSchema, Seq.empty)
+      val txn = getCreateTxn(engine, tablePath, testSchema, Seq.empty)
       commitTransaction(txn, engine, emptyIterable())
 
       intercept[IllegalStateException] {
@@ -646,8 +647,7 @@ class DomainMetadataSuite extends AnyFunSuite with WriteUtils with ParquetSuiteB
       // Cannot remove system-controlled domain metadata
       Seq("delta.foo", "DELTA.foo").foreach { domain =>
         val e = intercept[IllegalArgumentException] {
-          val txn = createWriteTxnBuilder(Table.forPath(engine, tablePath))
-            .build(defaultEngine)
+          val txn = getUpdateTxn(defaultEngine, tablePath)
           txn.removeDomainMetadata(domain)
         }
 
@@ -678,8 +678,7 @@ class DomainMetadataSuite extends AnyFunSuite with WriteUtils with ParquetSuiteB
       createTableWithDomainMetadataSupported(engine, tablePath)
 
       intercept[DomainDoesNotExistException] {
-        val txn = createWriteTxnBuilder(Table.forPath(defaultEngine, tablePath))
-          .build(defaultEngine)
+        val txn = getUpdateTxn(defaultEngine, tablePath)
         txn.removeDomainMetadata("foo")
         commitTransaction(txn, defaultEngine, emptyIterable());
       }
@@ -723,8 +722,7 @@ class DomainMetadataSuite extends AnyFunSuite with WriteUtils with ParquetSuiteB
       //    domain metadata
 
       {
-        val txn = createWriteTxnBuilder(Table.forPath(defaultEngine, tablePath))
-          .build(defaultEngine)
+        val txn = getUpdateTxn(defaultEngine, tablePath)
         txn.addDomainMetadata("foo", "fake config")
         val e = intercept[IllegalArgumentException] {
           txn.removeDomainMetadata("foo")
@@ -732,8 +730,7 @@ class DomainMetadataSuite extends AnyFunSuite with WriteUtils with ParquetSuiteB
         assert(e.getMessage.contains("Cannot remove a domain that is added in this transaction"))
       }
       {
-        val txn = createWriteTxnBuilder(Table.forPath(defaultEngine, tablePath))
-          .build(defaultEngine)
+        val txn = getUpdateTxn(defaultEngine, tablePath)
         txn.removeDomainMetadata("foo")
         val e = intercept[IllegalArgumentException] {
           txn.addDomainMetadata("foo", "fake config")
@@ -775,16 +772,14 @@ class DomainMetadataSuite extends AnyFunSuite with WriteUtils with ParquetSuiteB
     withTempDirAndEngine { (tablePath, engine) =>
       // Create table with legacy protocol
       commitTransaction(
-        createTxn(
+        getCreateTxn(
           engine,
           tablePath = tablePath,
-          isNewTable = true,
           schema = testSchema),
         engine,
         emptyIterable())
       intercept[IllegalStateException] {
-        val txn = createWriteTxnBuilder(Table.forPath(engine, tablePath))
-          .build(engine)
+        val txn = getUpdateTxn(engine, tablePath)
         txn.removeDomainMetadata("foo")
       }
     }

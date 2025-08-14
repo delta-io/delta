@@ -651,11 +651,7 @@ class DeltaReplaceTableSuite extends DeltaReplaceTableSuiteBase {
     // (2) checks we remove stale ones that are not set in the replace txn
     withTempDirAndEngine { (tablePath, engine) =>
       // Create initial table with 2 domains
-      val txn = Table.forPath(engine, tablePath).asInstanceOf[TableImpl]
-        .createTransactionBuilder(engine, "test-info", Operation.CREATE_TABLE)
-        .withSchema(engine, testSchema)
-        .withDomainMetadataSupported()
-        .build(engine)
+      val txn = getCreateTxn(engine, tablePath, testSchema, withDomainMetadataSupported = true)
       txn.addDomainMetadata("domainToOverride", "check1")
       txn.addDomainMetadata("domainToRemove", "check2")
       commitTransaction(txn, engine, emptyIterable())

@@ -216,14 +216,20 @@ trait TablePropertiesSuiteBase extends AnyFunSuite with AbstractWriteUtils {
       createTable: Boolean = false,
       propsAdded: Map[String, String] = null,
       propsRemoved: Set[String] = null): Unit = {
-    createTxn(
-      defaultEngine,
-      tablePath,
-      createTable,
-      if (createTable) testSchema else null,
-      tableProperties = propsAdded,
-      tablePropertiesRemoved = propsRemoved)
-      .commit(defaultEngine, emptyIterable())
+    val txn = if (createTable) {
+      getCreateTxn(
+        defaultEngine,
+        tablePath,
+        testSchema,
+        tableProperties = propsAdded)
+    } else {
+      getUpdateTxn(
+        defaultEngine,
+        tablePath,
+        tableProperties = propsAdded,
+        tablePropertiesRemoved = propsRemoved)
+    }
+    txn.commit(defaultEngine, emptyIterable())
   }
 
   def assertHasProp(tablePath: String, expProps: Map[String, String]): Unit = {

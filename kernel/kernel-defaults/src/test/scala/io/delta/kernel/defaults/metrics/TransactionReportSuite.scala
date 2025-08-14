@@ -474,11 +474,11 @@ class TransactionReportSuite extends AnyFunSuite with WriteUtils
       withTempDir { tempDir =>
         val path = tempDir.getCanonicalPath
         // Set up a non-empty table at version 0 with add file size that we know
-        val txn = Table.forPath(defaultEngine, path)
-          .createTransactionBuilder(defaultEngine, "testEngineInfo", Operation.CREATE_TABLE)
-          .withSchema(defaultEngine, new StructType().add("col1", IntegerType.INTEGER))
-          .withDomainMetadataSupported()
-          .build(defaultEngine)
+        val txn = getCreateTxn(
+          defaultEngine,
+          path,
+          new StructType().add("col1", IntegerType.INTEGER),
+          withDomainMetadataSupported = true)
         txn.addDomainMetadata("user-domain", "some config")
         val result = txn.commit(
           defaultEngine,
