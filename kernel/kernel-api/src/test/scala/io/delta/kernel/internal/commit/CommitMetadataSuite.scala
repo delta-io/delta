@@ -21,6 +21,7 @@ import java.util.Optional
 import io.delta.kernel.commit.CommitMetadata
 import io.delta.kernel.commit.CommitMetadata.CommitType
 import io.delta.kernel.internal.actions.{Metadata, Protocol}
+import io.delta.kernel.internal.util.{Tuple2 => KernelTuple2}
 import io.delta.kernel.test.{ActionUtils, VectorTestUtils}
 import io.delta.kernel.types.{IntegerType, StructType}
 
@@ -32,7 +33,8 @@ class CommitMetadataSuite extends AnyFunSuite
 
   private val protocol12 = new Protocol(1, 2)
   private val logPath = "/fake/_delta_log"
-  private val version = 5L
+  private val createVersion0 = 0
+  private val updateVersionNonZero = 1
 
   test("constructor validates non-negative version") {
     val ex = intercept[IllegalArgumentException] {
@@ -40,10 +42,10 @@ class CommitMetadataSuite extends AnyFunSuite
         -1L, // negative version
         logPath,
         testCommitInfo(),
-        Optional.of(protocol12),
-        Optional.of(basicPartitionedMetadata),
-        Optional.empty(),
-        Optional.empty())
+        Optional.empty(), // readPandMOpt
+        Optional.empty(), // newProtocolOpt
+        Optional.empty()
+      ) // newMetadataOpt
     }
     assert(ex.getMessage.contains("version must be non-negative"))
   }
@@ -51,69 +53,54 @@ class CommitMetadataSuite extends AnyFunSuite
   test("constructor validates null parameters") {
     intercept[NullPointerException] {
       new CommitMetadata(
-        version,
+        updateVersionNonZero,
         null, // null logPath
         testCommitInfo(),
-        Optional.of(protocol12),
-        Optional.of(basicPartitionedMetadata),
-        Optional.empty(),
-        Optional.empty())
+        Optional.of(new KernelTuple2(protocol12, basicPartitionedMetadata)),
+        Optional.empty(), // newProtocolOpt
+        Optional.empty()
+      ) // newMetadataOpt
     }
 
     intercept[NullPointerException] {
       new CommitMetadata(
-        version,
+        updateVersionNonZero,
         logPath,
         null, // null commitInfo
-        Optional.of(protocol12),
-        Optional.of(basicPartitionedMetadata),
-        Optional.empty(),
-        Optional.empty())
+        Optional.of(new KernelTuple2(protocol12, basicPartitionedMetadata)),
+        Optional.empty(), // newProtocolOpt
+        Optional.empty()
+      ) // newMetadataOpt
     }
   }
 
   test("constructor validates readProtocol and readMetadata consistency") {
     // Both present is valid
     new CommitMetadata(
-      version,
+      updateVersionNonZero,
       logPath,
       testCommitInfo(),
-      Optional.of(protocol12),
-      Optional.of(basicPartitionedMetadata),
+      Optional.of(new KernelTuple2(protocol12, basicPartitionedMetadata)),
       Optional.empty(),
       Optional.empty())
 
     // Both absent is valid if new ones are present
     new CommitMetadata(
-      version,
+      createVersion0,
       logPath,
       testCommitInfo(),
       Optional.empty(),
-      Optional.empty(),
       Optional.of(protocol12),
       Optional.of(basicPartitionedMetadata))
-
-    // One present, one absent should fail
-    intercept[IllegalArgumentException] {
-      new CommitMetadata(
-        version,
-        logPath,
-        testCommitInfo(),
-        Optional.of(protocol12),
-        Optional.empty(), // readMetadata absent but readProtocol present
-        Optional.empty(),
-        Optional.empty())
-    }
   }
 
   test("constructor validates at least one protocol must be present") {
     intercept[IllegalArgumentException] {
       new CommitMetadata(
-        version,
+        createVersion0,
         logPath,
         testCommitInfo(),
-        Optional.empty(), // no read protocol
-        Optional.empty(),
+        Optional.empty(), // no read protocol or metadata
         Optional.empty(), // no new protocol
         Optional.of(basicPartitionedMetadata))
     }
@@ -122,11 +109,10 @@ class CommitMetadataSuite extends AnyFunSuite
   test("constructor validates at least one metadata must be present") {
     intercept[IllegalArgumentException] {
       new CommitMetadata(
-        version,
+        createVersion0,
         logPath,
         testCommitInfo(),
-        Optional.empty(),
-        Optional.empty(), // no read metadata
+        Optional.empty(), // protocol or metadata
         Optional.of(protocol12),
         Optional.empty() // no new metadata
       )
@@ -136,10 +122,9 @@ class CommitMetadataSuite extends AnyFunSuite
   test("constructor validates ICT present if catalogManaged enabled") {
     val exMsg = intercept[IllegalArgumentException] {
       new CommitMetadata(
-        version,
+        createVersion0,
         logPath,
         testCommitInfo(ictEnabled = false), // ICT not enabled!
-        Optional.empty(),
         Optional.empty(),
         Optional.of(protocolWithCatalogManagedSupport),
         Optional.of(basicPartitionedMetadata))
@@ -151,11 +136,10 @@ class CommitMetadataSuite extends AnyFunSuite
   test("getEffectiveProtocol returns new protocol when present") {
     val newProtocol = new Protocol(2, 3)
     val commitMetadata = new CommitMetadata(
-      version,
+      updateVersionNonZero,
       logPath,
       testCommitInfo(),
-      Optional.of(protocol12),
-      Optional.of(basicPartitionedMetadata),
+      Optional.of(new KernelTuple2(protocol12, basicPartitionedMetadata)),
       Optional.of(newProtocol),
       Optional.empty())
 
@@ -164,11 +148,10 @@ class CommitMetadataSuite extends AnyFunSuite
 
   test("getEffectiveProtocol returns read protocol when new protocol absent") {
     val commitMetadata = new CommitMetadata(
-      version,
+      updateVersionNonZero,
       logPath,
       testCommitInfo(),
-      Optional.of(protocol12),
-      Optional.of(basicPartitionedMetadata),
+      Optional.of(new KernelTuple2(protocol12, basicPartitionedMetadata)),
       Optional.empty(),
       Optional.empty())
 
@@ -178,11 +161,10 @@ class CommitMetadataSuite extends AnyFunSuite
   test("getEffectiveMetadata returns new metadata when present") {
     val newMetadata = testMetadata(new StructType().add("newCol", IntegerType.INTEGER))
     val commitMetadata = new CommitMetadata(
-      version,
+      updateVersionNonZero,
       logPath,
       testCommitInfo(),
-      Optional.of(protocol12),
-      Optional.of(basicPartitionedMetadata),
+      Optional.of(new KernelTuple2(protocol12, basicPartitionedMetadata)),
       Optional.empty(),
       Optional.of(newMetadata))
 
@@ -191,11 +173,10 @@ class CommitMetadataSuite extends AnyFunSuite
 
   test("getEffectiveMetadata returns read metadata when new metadata absent") {
     val commitMetadata = new CommitMetadata(
-      version,
+      updateVersionNonZero,
       logPath,
       testCommitInfo(),
-      Optional.of(protocol12),
-      Optional.of(basicPartitionedMetadata),
+      Optional.of(new KernelTuple2(protocol12, basicPartitionedMetadata)),
       Optional.empty(),
       Optional.empty())
 
@@ -205,48 +186,49 @@ class CommitMetadataSuite extends AnyFunSuite
   // ========== CommitType Tests START ==========
 
   case class CommitTypeTestCase(
-      readProtocolOpt: Optional[Protocol] = Optional.empty(),
-      readMetadataOpt: Optional[Metadata] = Optional.empty(),
+      readPandMOpt: Optional[KernelTuple2[Protocol, Metadata]] = Optional.empty(),
       newProtocolOpt: Optional[Protocol] = Optional.empty(),
       newMetadataOpt: Optional[Metadata] = Optional.empty(),
       expectedCommitType: CommitType)
 
   private val commitTypeTestCases = Seq(
     CommitTypeTestCase(
+      readPandMOpt = Optional.empty(), // No read state for table creation
       newProtocolOpt = Optional.of(protocol12),
       newMetadataOpt = Optional.of(basicPartitionedMetadata),
       expectedCommitType = CommitType.FILESYSTEM_CREATE),
     CommitTypeTestCase(
+      readPandMOpt = Optional.empty(), // No read state for table creation
       newProtocolOpt = Optional.of(protocolWithCatalogManagedSupport),
       newMetadataOpt = Optional.of(basicPartitionedMetadata),
       expectedCommitType = CommitType.CATALOG_CREATE),
     CommitTypeTestCase(
-      readProtocolOpt = Optional.of(protocol12),
-      readMetadataOpt = Optional.of(basicPartitionedMetadata),
+      readPandMOpt = Optional.of(new KernelTuple2(protocol12, basicPartitionedMetadata)),
       expectedCommitType = CommitType.FILESYSTEM_WRITE),
     CommitTypeTestCase(
-      readProtocolOpt = Optional.of(protocolWithCatalogManagedSupport),
-      readMetadataOpt = Optional.of(basicPartitionedMetadata),
+      readPandMOpt = Optional.of(
+        new KernelTuple2(protocolWithCatalogManagedSupport, basicPartitionedMetadata)),
       expectedCommitType = CommitType.CATALOG_WRITE),
     CommitTypeTestCase(
-      readProtocolOpt = Optional.of(protocol12),
-      readMetadataOpt = Optional.of(basicPartitionedMetadata),
+      readPandMOpt = Optional.of(new KernelTuple2(protocol12, basicPartitionedMetadata)),
       newProtocolOpt = Optional.of(protocolWithCatalogManagedSupport),
       expectedCommitType = CommitType.FILESYSTEM_UPGRADE_TO_CATALOG),
     CommitTypeTestCase(
-      readProtocolOpt = Optional.of(protocolWithCatalogManagedSupport),
-      readMetadataOpt = Optional.of(basicPartitionedMetadata),
+      readPandMOpt = Optional.of(
+        new KernelTuple2(protocolWithCatalogManagedSupport, basicPartitionedMetadata)),
       newProtocolOpt = Optional.of(protocol12),
       expectedCommitType = CommitType.CATALOG_DOWNGRADE_TO_FILESYSTEM))
 
   commitTypeTestCases.foreach { testCase =>
     test(s"getCommitType returns ${testCase.expectedCommitType}") {
+      // version > 0 for writes, version 0 for create
+      val version = if (testCase.readPandMOpt.isPresent) 1L else 0L
+
       val commitMetadata = new CommitMetadata(
         version,
         logPath,
         testCommitInfo(),
-        testCase.readProtocolOpt,
-        testCase.readMetadataOpt,
+        testCase.readPandMOpt,
         testCase.newProtocolOpt,
         testCase.newMetadataOpt)
 
@@ -255,4 +237,54 @@ class CommitMetadataSuite extends AnyFunSuite
   }
 
   // ========== CommitType Tests END ==========
+
+  test("checkReadStateAbsentIfAndOnlyIfVersion0 - version 0 with absent readState should pass") {
+    // This should pass: version 0 (table creation) with absent readPandMOpt
+    new CommitMetadata(
+      createVersion0,
+      logPath,
+      testCommitInfo(),
+      Optional.empty(), // absent readPandMOpt
+      Optional.of(protocol12),
+      Optional.of(basicPartitionedMetadata))
+  }
+
+  test("checkReadStateAbsentIfAndOnlyIfVersion0 - version 0 with present readState should fail") {
+    // This should fail: version 0 (table creation) with present readPandMOpt
+    val exMsg = intercept[IllegalArgumentException] {
+      new CommitMetadata(
+        createVersion0,
+        logPath,
+        testCommitInfo(),
+        Optional.of(new KernelTuple2(protocol12, basicPartitionedMetadata)), // present readPandMOpt
+        Optional.empty(),
+        Optional.empty())
+    }.getMessage
+    assert(exMsg.contains("Table creation (version 0) requires absent readPandMOpt"))
+  }
+
+  test("checkReadStateAbsentIfAndOnlyIfVersion0 - version > 0 with present readState should pass") {
+    // This should pass: version > 0 (existing table) with present readPandMOpt
+    new CommitMetadata(
+      updateVersionNonZero,
+      logPath,
+      testCommitInfo(),
+      Optional.of(new KernelTuple2(protocol12, basicPartitionedMetadata)), // present readPandMOpt
+      Optional.empty(),
+      Optional.empty())
+  }
+
+  test("checkReadStateAbsentIfAndOnlyIfVersion0 - version > 0 with absent readState should fail") {
+    // This should fail: version > 0 (existing table) with absent readPandMOpt
+    val exMsg = intercept[IllegalArgumentException] {
+      new CommitMetadata(
+        updateVersionNonZero,
+        logPath,
+        testCommitInfo(),
+        Optional.empty(), // absent readPandMOpt
+        Optional.of(protocol12),
+        Optional.of(basicPartitionedMetadata))
+    }.getMessage
+    assert(exMsg.contains("existing table writes (version > 0) require present readPandMOpt"))
+  }
 }
