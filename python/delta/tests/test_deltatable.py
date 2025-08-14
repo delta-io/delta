@@ -49,9 +49,9 @@ class DeltaTableTestsMixin:
         self.__checkAnswer(dt, [('a', 1), ('b', 2), ('c', 3)])
 
     def test_forName(self) -> None:
-        with self.table("test"):
-            self.__writeAsTable([('a', 1), ('b', 2), ('c', 3)], "test")
-            df = DeltaTable.forName(self.spark, "test").toDF()
+        with self.tempTable() as tableName:
+            self.__writeAsTable([('a', 1), ('b', 2), ('c', 3)], tableName)
+            df = DeltaTable.forName(self.spark, tableName).toDF()
             self.__checkAnswer(df, [('a', 1), ('b', 2), ('c', 3)])
 
     def test_alias_and_toDF(self) -> None:
@@ -729,27 +729,27 @@ class DeltaTableTestsMixin:
 
     def test_create_table_with_existing_schema(self) -> None:
         df = self.spark.createDataFrame([('a', 1), ('b', 2), ('c', 3)], ["key", "value"])
-        with self.table("test"):
-            deltaTable = DeltaTable.create(self.spark).tableName("test") \
+        with self.tempTable() as tableName:
+            deltaTable = DeltaTable.create(self.spark).tableName(tableName) \
                 .addColumns(df.schema) \
                 .addColumn("value2", dataType="int")\
                 .partitionedBy(["value2", "value"])\
                 .execute()
-            self.__verify_table_schema("test",
+            self.__verify_table_schema(tableName,
                                        deltaTable.toDF().schema,
                                        ["key", "value", "value2"],
                                        [StringType(), LongType(), IntegerType()],
                                        nullables={"key", "value", "value2"},
                                        partitioningColumns=["value", "value2"])
 
-        with self.table("test2"):
+        with self.tempTable() as tableName:
             # verify creating table with list of structFields
-            deltaTable2 = DeltaTable.create(self.spark).tableName("test2").addColumns(
+            deltaTable2 = DeltaTable.create(self.spark).tableName(tableName).addColumns(
                 df.schema.fields) \
                 .addColumn("value2", dataType="int") \
                 .partitionedBy("value2", "value")\
                 .execute()
-            self.__verify_table_schema("test2",
+            self.__verify_table_schema(tableName,
                                        deltaTable2.toDF().schema,
                                        ["key", "value", "value2"],
                                        [StringType(), LongType(), IntegerType()],
@@ -758,14 +758,14 @@ class DeltaTableTestsMixin:
 
     def test_create_replace_table_with_cluster_by(self) -> None:
         df = self.spark.createDataFrame([('a', 1), ('b', 2), ('c', 3)], ["key", "value"])
-        with self.table("test"):
+        with self.tempTable() as tableName:
             # verify creating table with list of structFields
-            deltaTable = DeltaTable.create(self.spark).tableName("test").addColumns(
+            deltaTable = DeltaTable.create(self.spark).tableName(tableName).addColumns(
                 df.schema.fields) \
                 .addColumn("value2", dataType="int") \
                 .clusterBy("value2", "value")\
                 .execute()
-            self.__verify_table_schema("test",
+            self.__verify_table_schema(tableName,
                                        deltaTable.toDF().schema,
                                        ["key", "value", "value2"],
                                        [StringType(), LongType(), IntegerType()],
@@ -773,12 +773,12 @@ class DeltaTableTestsMixin:
                                        clusteringColumns=["value2", "value"],
                                        partitioningColumns=[])
 
-            deltaTable = DeltaTable.replace(self.spark).tableName("test").addColumns(
+            deltaTable = DeltaTable.replace(self.spark).tableName(tableName).addColumns(
                 df.schema.fields) \
                 .addColumn("value2", dataType="int") \
                 .clusterBy("value2", "value")\
                 .execute()
-            self.__verify_table_schema("test",
+            self.__verify_table_schema(tableName,
                                        deltaTable.toDF().schema,
                                        ["key", "value", "value2"],
                                        [StringType(), LongType(), IntegerType()],
@@ -787,39 +787,39 @@ class DeltaTableTestsMixin:
                                        partitioningColumns=[])
 
     def test_create_replace_table_with_no_spark_session_passed(self) -> None:
-        with self.table("test"):
+        with self.tempTable() as tableName:
             # create table.
-            deltaTable = DeltaTable.create().tableName("test")\
+            deltaTable = DeltaTable.create().tableName(tableName)\
                 .addColumn("value", dataType="int").execute()
-            self.__verify_table_schema("test",
+            self.__verify_table_schema(tableName,
                                        deltaTable.toDF().schema,
                                        ["value"],
                                        [IntegerType()],
                                        nullables={"value"})
 
             # ignore existence with createIfNotExists
-            deltaTable = DeltaTable.createIfNotExists().tableName("test") \
+            deltaTable = DeltaTable.createIfNotExists().tableName(tableName) \
                 .addColumn("value2", dataType="int").execute()
-            self.__verify_table_schema("test",
+            self.__verify_table_schema(tableName,
                                        deltaTable.toDF().schema,
                                        ["value"],
                                        [IntegerType()],
                                        nullables={"value"})
 
             # replace table with replace
-            deltaTable = DeltaTable.replace().tableName("test") \
+            deltaTable = DeltaTable.replace().tableName(tableName) \
                 .addColumn("key", dataType="int").execute()
-            self.__verify_table_schema("test",
+            self.__verify_table_schema(tableName,
                                        deltaTable.toDF().schema,
                                        ["key"],
                                        [IntegerType()],
                                        nullables={"key"})
 
             # replace with a new column again
-            deltaTable = DeltaTable.createOrReplace().tableName("test") \
+            deltaTable = DeltaTable.createOrReplace().tableName(tableName) \
                 .addColumn("col1", dataType="int").execute()
 
-            self.__verify_table_schema("test",
+            self.__verify_table_schema(tableName,
                                        deltaTable.toDF().schema,
                                        ["col1"],
                                        [IntegerType()],
@@ -827,8 +827,7 @@ class DeltaTableTestsMixin:
 
     def test_create_table_with_name_only(self) -> None:
         for ifNotExists in (False, True):
-            tableName = "testTable{}".format(ifNotExists)
-            with self.table(tableName):
+            with self.tempTable() as tableName:
                 deltaTable = self.__create_table(ifNotExists, tableName=tableName)
 
                 self.__verify_table_schema(tableName,
@@ -862,8 +861,7 @@ class DeltaTableTestsMixin:
     def test_create_table_with_name_and_location(self) -> None:
         for ifNotExists in (False, True):
             path = self.tempFile + str(ifNotExists)
-            tableName = "testTable{}".format(ifNotExists)
-            with self.table(tableName):
+            with self.tempTable() as tableName:
                 deltaTable = self.__create_table(
                     ifNotExists, tableName=tableName, location=path)
 
@@ -880,19 +878,19 @@ class DeltaTableTestsMixin:
                 self.__verify_generated_column(tableName, deltaTable)
 
     def test_create_table_behavior(self) -> None:
-        with self.table("testTable"):
-            self.spark.sql("CREATE TABLE testTable (c1 int) USING DELTA")
+        with self.tempTable() as tableName:
+            self.spark.sql(f"CREATE TABLE {tableName} (c1 int) USING DELTA")
 
             # Errors out if doesn't ignore.
             with self.assertRaises(AnalysisException) as error_ctx:
-                self.__create_table(False, tableName="testTable")
+                self.__create_table(False, tableName=tableName)
             msg = str(error_ctx.exception)
-            assert ("testTable" in msg and "already exists" in msg)
+            assert (tableName in msg and "already exists" in msg)
 
             # ignore table creation.
-            self.__create_table(True, tableName="testTable")
-            schema = self.spark.read.format("delta").table("testTable").schema
-            self.__verify_table_schema("testTable",
+            self.__create_table(True, tableName=tableName)
+            schema = self.spark.read.format("delta").table(tableName).schema
+            self.__verify_table_schema(tableName,
                                        schema,
                                        ["c1"],
                                        [IntegerType()],
@@ -900,8 +898,7 @@ class DeltaTableTestsMixin:
 
     def test_replace_table_with_name_only(self) -> None:
         for orCreate in (False, True):
-            tableName = "testTable{}".format(orCreate)
-            with self.table(tableName):
+            with self.tempTable() as tableName:
                 self.spark.sql("CREATE TABLE {} (c1 int) USING DELTA".format(tableName))
                 deltaTable = self.__replace_table(orCreate, tableName=tableName)
 
@@ -938,8 +935,7 @@ class DeltaTableTestsMixin:
     def test_replace_table_with_name_and_location(self) -> None:
         for orCreate in (False, True):
             path = self.tempFile + str(orCreate)
-            tableName = "testTable{}".format(orCreate)
-            with self.table(tableName):
+            with self.tempTable() as tableName:
                 self.spark.sql("CREATE TABLE {} (col int) USING DELTA LOCATION '{}'"
                                .format(tableName, path))
                 deltaTable = self.__replace_table(
@@ -958,14 +954,14 @@ class DeltaTableTestsMixin:
                 self.__verify_generated_column(tableName, deltaTable)
 
     def test_replace_table_behavior(self) -> None:
-        with self.table("testTable"):
+        with self.tempTable() as tableName:
             with self.assertRaises(AnalysisException) as error_ctx:
-                self.__replace_table(False, tableName="testTable")
+                self.__replace_table(False, tableName=tableName)
             msg = str(error_ctx.exception)
-            self.assertIn("testtable", msg.lower())
+            self.assertIn(tableName, msg.lower())
             self.assertTrue("did not exist" in msg or "cannot be found" in msg)
-            deltaTable = self.__replace_table(True, tableName="testTable")
-            self.__verify_table_schema("testTable",
+            deltaTable = self.__replace_table(True, tableName=tableName)
+            self.__verify_table_schema(tableName,
                                        deltaTable.toDF().schema,
                                        ["col1", "col2"],
                                        [IntegerType(), IntegerType()],
@@ -982,8 +978,8 @@ class DeltaTableTestsMixin:
             # Spark 4
             from pyspark.sql.classic.column import _to_seq  # type: ignore
 
-        with self.table("testTable"):
-            tableBuilder = DeltaTable.create(self.spark).tableName("testTable") \
+        with self.tempTable() as tableName:
+            tableBuilder = DeltaTable.create(self.spark).tableName(tableName) \
                 .addColumn("col1", "int", comment="foo", nullable=False) \
                 .addColumn("col2", IntegerType(), generatedAlwaysAs="col1 + 10") \
                 .property("foo", "bar") \
@@ -992,7 +988,7 @@ class DeltaTableTestsMixin:
                 _to_seq(self.spark._sc, ["col1"])  # type: ignore[attr-defined]
             )
             deltaTable = tableBuilder.execute()
-            self.__verify_table_schema("testTable",
+            self.__verify_table_schema(tableName,
                                        deltaTable.toDF().schema,
                                        ["col1", "col2"],
                                        [IntegerType(), IntegerType()],
@@ -1004,8 +1000,7 @@ class DeltaTableTestsMixin:
 
     def test_create_table_with_identity_column(self) -> None:
         for ifNotExists in (False, True):
-            tableName = "testTable{}".format(ifNotExists)
-            with self.table(tableName):
+            with self.tempTable() as tableName:
                 try:
                     self.spark.conf.set("spark.databricks.delta.identityColumn.enabled", "true")
                     builder = (
@@ -1575,7 +1570,7 @@ class DeltaTableTestsMixin:
             self.__intercept(incorrectTimestamp, "timestamp needs to be a string but got int")
 
     def test_create_table_with_cluster_by(self) -> None:
-        with self.table("test"):
+        with self.tempTable("test"):
             builder = DeltaTable.create(self.spark)
             self.__test_table_with_cluster_by(
                 builder,
@@ -1583,7 +1578,7 @@ class DeltaTableTestsMixin:
                 expected=["value", "value2"])
 
     def test_replace_table_with_cluster_by(self) -> None:
-        with self.table("test"):
+        with self.tempTable("test"):
             self.spark.sql("CREATE TABLE test (c1 int) USING DELTA")
             builder = DeltaTable.replace(self.spark)
             self.__test_table_with_cluster_by(
