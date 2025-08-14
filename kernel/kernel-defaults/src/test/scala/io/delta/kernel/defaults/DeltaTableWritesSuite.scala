@@ -66,6 +66,18 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
   // Create table tests
   ///////////////////////////////////////////////////////////////////////////
 
+  test("create table: _delta_log and _staged_commits directories are created") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val deltaLogPath = new File(tablePath, "_delta_log")
+      val stagedCommitsPath = new File(deltaLogPath, "_staged_commits")
+
+      createTxn(engine, tablePath, isNewTable = true, testSchema).commit(engine, emptyIterable())
+
+      assert(deltaLogPath.exists() && deltaLogPath.isDirectory())
+      assert(stagedCommitsPath.exists() && stagedCommitsPath.isDirectory())
+    }
+  }
+
   test("create table - provide no schema - expect failure") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)

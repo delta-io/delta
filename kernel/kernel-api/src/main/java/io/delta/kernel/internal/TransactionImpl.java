@@ -528,16 +528,6 @@ public class TransactionImpl implements Transaction {
                     return action;
                   });
 
-      if (commitAsVersion == 0) {
-        // New table, create a delta log directory
-        if (!wrapEngineExceptionThrowsIO(
-            () -> engine.getFileSystemClient().mkdirs(logPath.toString()),
-            "Creating directories for path %s",
-            logPath)) {
-          throw new RuntimeException("Failed to create delta log directory: " + logPath);
-        }
-      }
-
       final CommitMetadata commitMetadata =
           new CommitMetadata(
               commitAsVersion,
@@ -547,6 +537,9 @@ public class TransactionImpl implements Transaction {
               readSnapshotOpt.map(SnapshotImpl::getMetadata),
               shouldUpdateProtocol ? Optional.of(protocol) : Optional.empty(),
               shouldUpdateMetadata ? Optional.of(metadata) : Optional.empty());
+
+      createDeltaLogAndStagedCommitsDirectoriesIfNeeded(
+          engine, commitAsVersion, commitMetadata.getCommitType());
 
       committer.commit(engine, dataAndMetadataActions, commitMetadata);
 
@@ -979,5 +972,31 @@ public class TransactionImpl implements Transaction {
         attempt,
         commitAsVersion,
         cfe);
+  }
+
+  private void createDeltaLogAndStagedCommitsDirectoriesIfNeeded(
+      Engine engine, long commitAsVersion, CommitMetadata.CommitType commitType)
+      throws IOException {
+    final boolean shouldCreateDeltaLogDir = commitAsVersion == 0;
+    final boolean shouldCreateStagedCommitsDir =
+        shouldCreateDeltaLogDir
+            || commitType == CommitMetadata.CommitType.FILESYSTEM_UPGRADE_TO_CATALOG;
+
+    if (shouldCreateDeltaLogDir) {
+      createDirectoryOrThrow(engine, logPath.toString());
+    }
+    if (shouldCreateStagedCommitsDir) {
+      createDirectoryOrThrow(
+          engine, new Path(logPath, FileNames.STAGED_COMMIT_DIRECTORY).toString());
+    }
+  }
+
+  private void createDirectoryOrThrow(Engine engine, String directoryPath) throws IOException {
+    if (!wrapEngineExceptionThrowsIO(
+        () -> engine.getFileSystemClient().mkdirs(directoryPath),
+        "Creating directories for path %s",
+        logPath)) {
+      throw new RuntimeException("Failed to create directory: " + directoryPath);
+    }
   }
 }
