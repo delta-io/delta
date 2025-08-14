@@ -110,8 +110,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
   test("create table - table already exists at the location") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
-      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
-      val txn = txnBuilder.withSchema(engine, testSchema).build(engine)
+      val txn = getCreateTxn(engine, tablePath, testSchema)
       commitTransaction(txn, engine, emptyIterable())
 
       {
@@ -159,9 +158,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
   test("cannot provide partition columns for existing table") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
-      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
-
-      val txn = txnBuilder.withSchema(engine, testSchema).build(engine)
+      val txn = getCreateTxn(engine, tablePath, testSchema)
       commitTransaction(txn, engine, emptyIterable())
 
       val ex = intercept[TableAlreadyExistsException] {

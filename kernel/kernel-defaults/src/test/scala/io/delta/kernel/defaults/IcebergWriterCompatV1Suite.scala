@@ -594,13 +594,13 @@ class IcebergWriterCompatV1Suite extends AnyFunSuite with WriteUtils
 
     // New table with these features + icebergWriterCompatV1
     withTempDirAndEngine { (tablePath, engine) =>
-      createTxn(
+      getCreateTxn(
         engine,
         tablePath,
-        isNewTable = true,
-        schema = schema,
+        schema,
         tableProperties = tblProperties,
-        withDomainMetadataSupported = true).commit(engine, emptyIterable[Row])
+        withDomainMetadataSupported = true)
+        .commit(engine, emptyIterable[Row])
       verifyIcebergWriterCompatV1Enabled(tablePath, engine)
       // Check all the features are supported
       val protocol = getProtocol(engine, tablePath)
@@ -622,11 +622,12 @@ class IcebergWriterCompatV1Suite extends AnyFunSuite with WriteUtils
         tableProperties = tblPropertiesIcebergWriterCompatV1Enabled)
       verifyIcebergWriterCompatV1Enabled(tablePath, engine)
 
-      createTxn(
+      getUpdateTxn(
         engine,
         tablePath,
         tableProperties = tblProperties,
-        withDomainMetadataSupported = true).commit(engine, emptyIterable[Row])
+        withDomainMetadataSupported = true)
+        .commit(engine, emptyIterable[Row])
       // Check all the features are supported
       val protocol = getProtocol(engine, tablePath)
       assert(protocol.supportsFeature(TableFeatures.APPEND_ONLY_W_FEATURE))

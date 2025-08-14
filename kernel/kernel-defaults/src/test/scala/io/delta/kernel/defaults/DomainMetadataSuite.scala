@@ -775,7 +775,8 @@ class DomainMetadataSuite extends AnyFunSuite with WriteUtils with ParquetSuiteB
         getCreateTxn(
           engine,
           tablePath = tablePath,
-          schema = testSchema) engine,
+          schema = testSchema),
+        engine,
         emptyIterable())
       intercept[IllegalStateException] {
         val txn = getUpdateTxn(engine, tablePath)

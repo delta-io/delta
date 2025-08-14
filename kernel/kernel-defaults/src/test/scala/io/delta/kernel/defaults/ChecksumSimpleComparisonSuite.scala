@@ -167,10 +167,7 @@ trait ChecksumComparisonSuiteBase extends AnyFunSuite with WriteUtils with TestU
       sparkTablePath: String,
       versionToConvert: Long): Unit = {
 
-    val txn = Table.forPath(engine, path)
-      .createTransactionBuilder(engine, "test-engine", Operation.WRITE)
-      .withLogCompactionInverval(0) // disable compaction
-      .build(engine)
+    val txn = getUpdateTxn(engine, path, logCompactionInterval = 0) // disable compaction
 
     val tableChange = Table.forPath(engine, sparkTablePath).asInstanceOf[TableImpl].getChanges(
       engine,

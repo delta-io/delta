@@ -94,8 +94,7 @@ class InCommitTimestampSuite extends AnyFunSuite with WriteUtils {
   test("Create a non-inCommitTimestamp table and then enable ICT") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
-
-      val txn1 = createTxn(engine, tablePath, isNewTable = true, schema = testSchema)
+      val txn1 = getCreateTxn(engine, tablePath, testSchema)
 
       txn1.commit(engine, emptyIterable())
 
@@ -262,7 +261,7 @@ class InCommitTimestampSuite extends AnyFunSuite with WriteUtils {
   test("Enablement tracking works when ICT is enabled post commit 0") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = TableImpl.forPath(engine, tablePath)
-      val txn = createTxn(engine, tablePath, isNewTable = true, schema = testSchema)
+      val txn = getCreateTxn(engine, tablePath, testSchema)
 
       txn.commit(engine, emptyIterable())
 
@@ -337,7 +336,7 @@ class InCommitTimestampSuite extends AnyFunSuite with WriteUtils {
   test("Metadata toString should work with ICT enabled") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = TableImpl.forPath(engine, tablePath)
-      val txn = createTxn(engine, tablePath, isNewTable = true, schema = testSchema)
+      val txn = getCreateTxn(engine, tablePath, testSchema)
 
       txn.commit(engine, emptyIterable())
 
@@ -368,7 +367,7 @@ class InCommitTimestampSuite extends AnyFunSuite with WriteUtils {
   test("Table with ICT enabled is readable") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = TableImpl.forPath(engine, tablePath)
-      val txn = createTxn(engine, tablePath, isNewTable = true, schema = testSchema)
+      val txn = getCreateTxn(engine, tablePath, testSchema)
 
       txn.commit(engine, emptyIterable())
 
@@ -461,7 +460,7 @@ class InCommitTimestampSuite extends AnyFunSuite with WriteUtils {
     test(s"Conflict resolution of enablement version(Winning Commit Count=$winningCommitCount)") {
       withTempDirAndEngine { (tablePath, engine) =>
         val table = TableImpl.forPath(engine, tablePath, () => System.currentTimeMillis)
-        val txn = createTxn(engine, tablePath, isNewTable = true, schema = testSchema)
+        val txn = getCreateTxn(engine, tablePath, testSchema)
 
         txn.commit(engine, emptyIterable())
 
@@ -553,7 +552,7 @@ class InCommitTimestampSuite extends AnyFunSuite with WriteUtils {
     "ICT enabled") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = TableImpl.forPath(engine, tablePath, () => System.currentTimeMillis)
-      val txn = createTxn(engine, tablePath, isNewTable = true, schema = testSchema)
+      val txn = getCreateTxn(engine, tablePath, testSchema)
 
       txn.commit(engine, emptyIterable())
 
