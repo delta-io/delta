@@ -28,28 +28,29 @@ import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.unsafe.types.UTF8String;
 import org.junit.jupiter.api.Test;
 
-/** Tests for {@link KernelRowWrapper}. */
-public class KernelRowWrapperTest {
+/** Tests for {@link KernelToSparkRowAdapter}. */
+public class KernelToSparkRowAdapterTest {
 
   @Test
   public void testPrimitiveType() {
     StructType schema =
         new StructType(
             Arrays.asList(
-                new StructField("b", BooleanType.BOOLEAN, true /*nullable*/),
-                new StructField("y", ByteType.BYTE, true /*nullable*/),
-                new StructField("s", ShortType.SHORT, true /*nullable*/),
-                new StructField("i", IntegerType.INTEGER, true /*nullable*/),
-                new StructField("l", LongType.LONG, true /*nullable*/),
-                new StructField("f", FloatType.FLOAT, true /*nullable*/),
-                new StructField("d", DoubleType.DOUBLE, true /*nullable*/),
-                new StructField(
-                    "dec", new DecimalType(10 /*precision*/, 2 /*scale*/), true /*nullable*/),
-                new StructField("bin", BinaryType.BINARY, true /*nullable*/),
-                new StructField("str", StringType.STRING, true /*nullable*/),
-                new StructField(
-                    "decNull", new DecimalType(10 /*precision*/, 2 /*scale*/), true /*nullable*/),
-                new StructField("strNull", StringType.STRING, true /*nullable*/)));
+                new StructField("b", BooleanType.BOOLEAN, true),
+                new StructField("y", ByteType.BYTE, true),
+                new StructField("s", ShortType.SHORT, true),
+                new StructField("i", IntegerType.INTEGER, true),
+                new StructField("l", LongType.LONG, true),
+                new StructField("f", FloatType.FLOAT, true),
+                new StructField("d", DoubleType.DOUBLE, true),
+                new StructField("dec", new DecimalType(10, 2), true),
+                new StructField("bin", BinaryType.BINARY, true),
+                new StructField("str", StringType.STRING, true),
+                new StructField("dateCol", DateType.DATE, true),
+                new StructField("tsCol", TimestampType.TIMESTAMP, true),
+                new StructField("tsNtzCol", TimestampNTZType.TIMESTAMP_NTZ, true),
+                new StructField("decNull", new DecimalType(10, 2), true),
+                new StructField("strNull", StringType.STRING, true)));
 
     byte[] sampleBytes = new byte[] {1, 2, 3};
     BigDecimal sampleDecimal = new BigDecimal("1234.56");
@@ -66,55 +67,51 @@ public class KernelRowWrapperTest {
             sampleDecimal,
             sampleBytes,
             "hello",
+            10,
+            1_000_000L,
+            2_000_000L,
             null,
             null);
 
     Row kernelRow = makePrimitiveRow(schema, values);
-    InternalRow row = new KernelRowWrapper(kernelRow);
+    InternalRow row = new KernelToSparkRowAdapter(kernelRow);
 
-    assertEquals(12, row.numFields(), "field count");
+    assertEquals(15, row.numFields(), "field count");
     assertAll(
         "primitive getters",
-        () -> assertTrue(row.getBoolean(0 /*ordinal*/), "boolean"),
-        () -> assertEquals((byte) 7, row.getByte(1 /*ordinal*/), "byte"),
-        () -> assertEquals((short) 300, row.getShort(2 /*ordinal*/), "short"),
-        () -> assertEquals(42, row.getInt(3 /*ordinal*/), "int"),
-        () -> assertEquals(1234567890123L, row.getLong(4 /*ordinal*/), "long"),
-        () -> assertEquals(3.14f, row.getFloat(5 /*ordinal*/), "float"),
-        () -> assertEquals(6.28d, row.getDouble(6 /*ordinal*/), "double"),
-        () ->
-            assertEquals(
-                sampleDecimal, row.getDecimal(7 /*ordinal*/, 10, 2).toJavaBigDecimal(), "decimal"),
-        () -> assertArrayEquals(sampleBytes, row.getBinary(8 /*ordinal*/), "binary"),
-        () ->
-            assertEquals(
-                UTF8String.fromString("hello"), row.getUTF8String(9 /*ordinal*/), "string"));
+        () -> assertTrue(row.getBoolean(0), "boolean"),
+        () -> assertEquals((byte) 7, row.getByte(1), "byte"),
+        () -> assertEquals((short) 300, row.getShort(2), "short"),
+        () -> assertEquals(42, row.getInt(3), "int"),
+        () -> assertEquals(1234567890123L, row.getLong(4), "long"),
+        () -> assertEquals(3.14f, row.getFloat(5), "float"),
+        () -> assertEquals(6.28d, row.getDouble(6), "double"),
+        () -> assertEquals(sampleDecimal, row.getDecimal(7, 10, 2).toJavaBigDecimal(), "decimal"),
+        () -> assertArrayEquals(sampleBytes, row.getBinary(8), "binary"),
+        () -> assertEquals(UTF8String.fromString("hello"), row.getUTF8String(9), "string"),
+        () -> assertEquals(10, row.getInt(10), "date as days"),
+        () -> assertEquals(1_000_000L, row.getLong(11), "timestamp as micros"),
+        () -> assertEquals(2_000_000L, row.getLong(12), "timestamp_ntz as micros"));
     assertAll(
         "null value",
-        () -> assertTrue(row.isNullAt(10 /*ordinal*/), "decNull isNull"),
-        () -> assertNull(row.getDecimal(10 /*ordinal*/, 10, 2), "decNull value"),
-        () -> assertTrue(row.isNullAt(11 /*ordinal*/), "strNull isNull"),
-        () -> assertNull(row.getUTF8String(11 /*ordinal*/), "strNull value"));
+        () -> assertTrue(row.isNullAt(13), "decNull isNull"),
+        () -> assertNull(row.getDecimal(13, 10, 2), "decNull value"),
+        () -> assertTrue(row.isNullAt(14), "strNull isNull"),
+        () -> assertNull(row.getUTF8String(14), "strNull value"));
   }
 
   @Test
   public void testNestedType_unsupported() {
     StructType schema =
-        new StructType(Arrays.asList(new StructField("i", IntegerType.INTEGER, true /*nullable*/)));
+        new StructType(Arrays.asList(new StructField("i", IntegerType.INTEGER, true)));
 
     Row kernelRow = makePrimitiveRow(schema, Arrays.asList(1));
-    InternalRow row = new KernelRowWrapper(kernelRow);
+    InternalRow row = new KernelToSparkRowAdapter(kernelRow);
 
+    assertThrows(UnsupportedOperationException.class, () -> row.getArray(0), "array unsupported");
+    assertThrows(UnsupportedOperationException.class, () -> row.getMap(0), "map unsupported");
     assertThrows(
-        UnsupportedOperationException.class,
-        () -> row.getArray(0 /*ordinal*/),
-        "array unsupported");
-    assertThrows(
-        UnsupportedOperationException.class, () -> row.getMap(0 /*ordinal*/), "map unsupported");
-    assertThrows(
-        UnsupportedOperationException.class,
-        () -> row.getStruct(0 /*ordinal*/, 0),
-        "struct unsupported");
+        UnsupportedOperationException.class, () -> row.getStruct(0, 0), "struct unsupported");
   }
 
   //////////////////////
@@ -199,3 +196,4 @@ public class KernelRowWrapperTest {
     };
   }
 }
+
