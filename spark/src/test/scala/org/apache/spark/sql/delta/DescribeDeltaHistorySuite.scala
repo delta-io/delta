@@ -399,7 +399,7 @@ trait DescribeDeltaHistorySuiteBase
       sql("ALTER TABLE delta_test UNSET TBLPROPERTIES ('key')")
       checkLastOperation(
         spark.sessionState.catalog.getTableMetadata(TableIdentifier("delta_test")).location.getPath,
-        expectedOperationParameters = expectedCreateOperationParameters,
+        expectedOperationParameters = Seq("properties", "ifExists"),
         expectedColVals = Seq("UNSET TBLPROPERTIES", """["key"]""", "true"),
         columns =
           Seq($"operation", $"operationParameters.properties", $"operationParameters.ifExists"))
