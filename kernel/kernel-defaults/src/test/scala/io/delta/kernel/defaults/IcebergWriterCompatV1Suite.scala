@@ -243,7 +243,10 @@ class IcebergWriterCompatV1Suite extends AnyFunSuite with WriteUtils
                 .build())
         }
         val e = intercept[KernelException] {
-          updateTableMetadata(engine, tablePath, schema = schemaToCommit,
+          updateTableMetadata(
+            engine,
+            tablePath,
+            schema = schemaToCommit,
             tableProperties = tblPropertiesIcebergWriterCompatV1Enabled)
         }
         val expectedInvalidColumnId = if (isNewTable) 1 else 2

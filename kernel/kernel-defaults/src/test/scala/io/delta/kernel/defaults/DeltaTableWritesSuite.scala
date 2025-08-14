@@ -876,8 +876,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
             engine,
             tblPath,
             schema = testPartitionSchema,
-            partCols = testPartitionColumns,
-            txnId = if (appId != null) Some((appId, txnVer)) else None)
+            partCols = testPartitionColumns)
         } else {
           getUpdateTxn(
             engine,
@@ -926,7 +925,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
       // Create a transaction with id (txnAppId1, 0) and commit it
       addDataWithTxnId(newTbl = true, appId = "txnAppId1", txnVer = 0, expTblVer = 0)
 
-      // Try to create a transaction with id (txnAppId1, 0) and commit it - should be valid
+      // Try to create a transaction with id (txnAppId1, 1) and commit it - should be valid
       addDataWithTxnId(newTbl = false, appId = "txnAppId1", txnVer = 1, expTblVer = 1)
 
       // Try to create a transaction with id (txnAppId1, 1) and try to commit it

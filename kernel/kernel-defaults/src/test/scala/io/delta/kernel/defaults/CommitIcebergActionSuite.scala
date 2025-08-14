@@ -109,10 +109,7 @@ class CommitIcebergActionSuite extends AnyFunSuite with WriteUtils {
         val properties = if (version == "V1") tblPropertiesIcebergWriterCompatV1Enabled
         else tblPropertiesIcebergWriterCompatV3Enabled
 
-        val txn = createWriteTxnBuilder(Table.forPath(engine, tablePath))
-          .withSchema(engine, testSchema)
-          .withTableProperties(engine, properties.asJava)
-          .build(engine)
+        val txn = getCreateTxn(engine, tablePath, testSchema, tableProperties = properties)
         intercept[UnsupportedOperationException] {
           createIcebergCompatAction(
             "ADD",
@@ -136,10 +133,7 @@ class CommitIcebergActionSuite extends AnyFunSuite with WriteUtils {
 
     test(s"$version: requires that icebergWriterCompat${version} enabled") {
       withTempDirAndEngine { (tablePath, engine) =>
-        val txn = createWriteTxnBuilder(Table.forPath(engine, tablePath))
-          .withSchema(engine, testSchema)
-          .withMaxRetries(0)
-          .build(engine)
+        val txn = getCreateTxn(engine, tablePath, testSchema, maxRetries = 0)
         intercept[UnsupportedOperationException] {
           createIcebergCompatAction(
             "ADD",
@@ -166,12 +160,13 @@ class CommitIcebergActionSuite extends AnyFunSuite with WriteUtils {
         val properties = if (version == "V1") tblPropertiesIcebergWriterCompatV1Enabled
         else tblPropertiesIcebergWriterCompatV3Enabled
 
-        val txn = createWriteTxnBuilder(Table.forPath(engine, tablePath))
-          .withSchema(engine, testPartitionSchema)
-          .withTableProperties(engine, properties.asJava)
-          .withMaxRetries(0)
-          .withPartitionColumns(engine, testPartitionColumns.asJava)
-          .build(engine)
+        val txn = getCreateTxn(
+          engine,
+          tablePath,
+          testPartitionSchema,
+          testPartitionColumns,
+          properties,
+          maxRetries = 0)
         intercept[UnsupportedOperationException] {
           createIcebergCompatAction(
             "ADD",
@@ -198,11 +193,8 @@ class CommitIcebergActionSuite extends AnyFunSuite with WriteUtils {
         val properties = if (version == "V1") tblPropertiesIcebergWriterCompatV1Enabled
         else tblPropertiesIcebergWriterCompatV3Enabled
 
-        val txn = createWriteTxnBuilder(Table.forPath(engine, tablePath))
-          .withSchema(engine, testSchema)
-          .withTableProperties(engine, properties.asJava)
-          .withMaxRetries(0)
-          .build(engine)
+        val txn =
+          getCreateTxn(engine, tablePath, testSchema, tableProperties = properties, maxRetries = 0)
         intercept[KernelException] {
           createIcebergCompatAction(
             "ADD",

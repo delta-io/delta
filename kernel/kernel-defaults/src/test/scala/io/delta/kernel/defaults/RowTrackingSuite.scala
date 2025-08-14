@@ -592,7 +592,7 @@ class RowTrackingSuite extends AnyFunSuite with WriteUtils with ParquetSuiteBase
     verifyRowTrackingStates()
 
     // Create txn1 but don't commit it yet
-          val txn1 = getUpdateTxn(engine, tablePath)
+    val txn1 = getUpdateTxn(engine, tablePath)
 
     // Create and commit txn2
     if (dataSizeTxn2 > 0) {

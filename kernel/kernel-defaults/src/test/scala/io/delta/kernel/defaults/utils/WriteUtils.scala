@@ -318,11 +318,12 @@ trait AbstractWriteUtils extends TestUtils with TransactionBuilderSupport {
       domainMetadatas: Seq[DomainMetadata],
       useInternalApi: Boolean = false): Transaction = {
 
-    val txnBuilder = createWriteTxnBuilder(TableImpl.forPath(engine, tablePath))
-    if (domainMetadatas.nonEmpty && !useInternalApi) {
-      txnBuilder.withDomainMetadataSupported()
+    val txn = if (domainMetadatas.nonEmpty && !useInternalApi) {
+      getUpdateTxn(engine, tablePath, withDomainMetadataSupported = true)
+        .asInstanceOf[TransactionImpl]
+    } else {
+      getUpdateTxn(engine, tablePath).asInstanceOf[TransactionImpl]
     }
-    val txn = txnBuilder.build(engine).asInstanceOf[TransactionImpl]
 
     domainMetadatas.foreach { dm =>
       if (dm.isRemoved) {
