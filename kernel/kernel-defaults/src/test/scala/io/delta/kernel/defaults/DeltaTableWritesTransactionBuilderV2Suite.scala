@@ -287,6 +287,7 @@ class DeltaTableWritesTransactionBuilderV2Suite extends DeltaTableWritesSuite
 
       // Check the txn returns the correct committer
       assert(txn.getCommitter.isInstanceOf[FakeCommitter])
+
       // Check that the txn invokes the provided committer upon commit
       val e = intercept[RuntimeException] {
         txn.commit(engine, emptyIterable())
