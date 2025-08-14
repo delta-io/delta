@@ -21,15 +21,18 @@ import java.util.Optional
 
 import io.delta.kernel.defaults.utils.TestUtils
 import io.delta.kernel.internal.util.FileNames
+import io.delta.kernel.test.ActionUtils
 import io.delta.storage.commit.Commit
 
 import org.apache.hadoop.fs.{FileStatus => HadoopFileStatus, Path}
 
-trait UCCatalogManagedTestUtils extends TestUtils {
+trait UCCatalogManagedTestUtils extends TestUtils with ActionUtils {
   val fakeURI = new URI("s3://bucket/table")
+  val baseTestTablePath = "/path/to/table"
+  val baseTestLogPath = "/path/to/table/_delta_log"
 
   def hadoopCommitFileStatus(version: Long): HadoopFileStatus = {
-    val filePath = FileNames.stagedCommitFile("fake/logPath", version)
+    val filePath = FileNames.stagedCommitFile(baseTestLogPath, version)
 
     new HadoopFileStatus(
       version, /* length */
