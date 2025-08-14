@@ -2070,6 +2070,35 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_CDF_BATCH_STATIC_READER =
+    buildConf("changeDataFeed.batch.staticReader")
+      .doc(
+        s"""If enabled, Delta uses an explicit query plan to read CDC changes instead of RDD impl.
+           |This enables query plan optimizations via Spark Plan Optimizer when applicable.
+           |The original CDF reader implementation uses Spark PrunedFilteredScan API,
+           |which performs a slower RDD-based scan and does not show jobs in the Spark UI.
+           |This optimization is applied to CDF reads with start and end timestamps/versions
+           |specified.
+           |If changeDataFeed.batch.staticReader.startOnly.enabled is set to true, it will
+           |also apply the optimization to the CDF reads with start version only
+           |and the end version is decided at Spark Query Plan Analyzer, not the execution time.
+           """.stripMargin)
+      .internal()
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_CDF_BATCH_STATIC_READER_START_ONLY =
+    buildConf("changeDataFeed.batch.staticReader.startOnly.enabled")
+      .doc(
+        s"""If enabled, changeDataFeed.batch.staticReader optimization also applies
+           |CDF read queries with start version only, non streaming scenario.
+           |The main caveat with the optimization is that, if the end version is not specified,
+           |it might not use the latest version if the table is updated after analysis.
+           """.stripMargin)
+      .internal()
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_COLUMN_MAPPING_CHECK_MAX_COLUMN_ID =
     buildConf("columnMapping.checkMaxColumnId")
       .doc(

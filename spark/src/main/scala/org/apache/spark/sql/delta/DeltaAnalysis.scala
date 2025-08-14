@@ -31,6 +31,7 @@ import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.catalog.IcebergTablePlaceHolder
 import org.apache.spark.sql.delta.commands._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
+import org.apache.spark.sql.delta.commands.cdc.CDCReader.DeltaCDFRelationAtAnalysis
 import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils}
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
@@ -321,6 +322,8 @@ class DeltaAnalysis(session: SparkSession)
 
     case tc: TableChanges if tc.child.resolved => tc.toReadQuery
 
+    case LogicalRelationWithTable(cdc: DeltaCDFRelationAtAnalysis, _) =>
+      cdc.getScanDf.queryExecution.optimizedPlan
 
     // Here we take advantage of CreateDeltaTableCommand which takes a LogicalPlan for CTAS in order
     // to perform CLONE. We do this by passing the CloneTableCommand as the query in
