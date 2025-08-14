@@ -100,8 +100,8 @@ trait TablePropertiesSuiteBase extends AnyFunSuite with AbstractWriteUtils {
     }
   }
 
-  test(
-    "create/update/replace table - delta configs are stored with same case as defined in TableConfig") {
+  test("create/update/replace table - delta configs are stored with same case as " +
+    "defined in TableConfig") {
     withTempDir { tempFile =>
       val tablePath = tempFile.getAbsolutePath
       createUpdateTableWithProps(
