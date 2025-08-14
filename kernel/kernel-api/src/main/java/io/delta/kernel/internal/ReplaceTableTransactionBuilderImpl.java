@@ -36,10 +36,7 @@ public class ReplaceTableTransactionBuilderImpl extends TransactionBuilderImpl {
     try {
       withMaxRetries(0); // We don't support conflict resolution yet so disable retries for now
       schema.orElseThrow(() -> requireSchemaForReplaceTable());
-      // TODO we need to validate the schema:
-      //   When re-using fieldIds we need to check that type & nullability is the same, otherwise
-      //   do not allow fieldId re-use and throw an error
-      SnapshotImpl snapshot = (SnapshotImpl) table.getLatestSnapshot(engine);
+      SnapshotImpl snapshot = table.getLatestSnapshot(engine);
       return buildTransactionInternal(engine, true, Optional.of(snapshot));
     } catch (TableNotFoundException tblf) {
       throw new TableNotFoundException(
