@@ -23,7 +23,6 @@ import io.delta.kernel.Operation;
 import io.delta.kernel.Transaction;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Column;
-import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.transaction.DataLayoutSpec;
 import io.delta.kernel.transaction.ReplaceTableTransactionBuilder;
@@ -80,11 +79,13 @@ public class ReplaceTableTransactionBuilderV2Impl implements ReplaceTableTransac
     requireNonNull(engine, "engine cannot be null");
 
     Optional<List<String>> partitionColumns =
-        dataLayoutSpec.filter(DataLayoutSpec::hasPartitioning)
+        dataLayoutSpec
+            .filter(DataLayoutSpec::hasPartitioning)
             .map(DataLayoutSpec::getPartitionColumnsAsStrings);
 
     Optional<List<Column>> clusteringColumns =
-        dataLayoutSpec.filter(DataLayoutSpec::hasClustering)
+        dataLayoutSpec
+            .filter(DataLayoutSpec::hasClustering)
             .map(DataLayoutSpec::getClusteringColumns);
 
     TransactionMetadataFactory.Output txnMetadata =

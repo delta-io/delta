@@ -33,7 +33,7 @@ class TablePropertiesTransactionBuilderV2Suite extends TablePropertiesSuiteBase
  * Suite to set or get table properties.
  */
 trait TablePropertiesSuiteBase extends AnyFunSuite with AbstractWriteUtils {
-  test("create/update table - allow arbitrary properties") {
+  test("create/update/replace table - allow arbitrary properties") {
     withTempDir { tempFile =>
       val tablePath = tempFile.getAbsolutePath
 
@@ -57,10 +57,23 @@ trait TablePropertiesSuiteBase extends AnyFunSuite with AbstractWriteUtils {
       assertHasProp(
         tablePath,
         expProps = Map("my key" -> "30", "my key2" -> "20", "new key3" -> "str"))
+
+      // replace table and set new arbitrary properties and check if they are set (and old ones are
+      // removed)
+      getReplaceTxn(
+        defaultEngine,
+        tablePath,
+        testSchema,
+        tableProperties = Map("my key" -> "40", "my replace key" -> "0"))
+        .commit(defaultEngine, emptyIterable())
+      assertHasProp(
+        tablePath,
+        expProps = Map("my key" -> "40", "my replace key" -> "0"))
+      assertPropsDNE(tablePath, Set("my key2", "my key3"))
     }
   }
 
-  test("create/update table - disallow unknown delta.* properties to Kernel") {
+  test("create/update/replace table - disallow unknown delta.* properties to Kernel") {
     withTempDir { tempFile =>
       val tablePath = tempFile.getAbsolutePath
       val ex1 = intercept[UnknownConfigurationException] {
@@ -74,10 +87,21 @@ trait TablePropertiesSuiteBase extends AnyFunSuite with AbstractWriteUtils {
         createUpdateTableWithProps(tablePath, propsAdded = Map("Delta.unknown" -> "str"))
       }
       assert(ex2.getMessage.contains("Unknown configuration was specified: Delta.unknown"))
+
+      // Try replacing an existing table
+      val ex3 = intercept[UnknownConfigurationException] {
+        getReplaceTxn(
+          defaultEngine,
+          tablePath,
+          testSchema,
+          tableProperties = Map("Delta.unknown" -> "str"))
+      }
+      assert(ex3.getMessage.contains("Unknown configuration was specified: Delta.unknown"))
     }
   }
 
-  test("create/update table - delta configs are stored with same case as defined in TableConfig") {
+  test(
+    "create/update/replace table - delta configs are stored with same case as defined in TableConfig") {
     withTempDir { tempFile =>
       val tablePath = tempFile.getAbsolutePath
       createUpdateTableWithProps(
@@ -90,6 +114,15 @@ trait TablePropertiesSuiteBase extends AnyFunSuite with AbstractWriteUtils {
       createUpdateTableWithProps(
         tablePath,
         propsAdded = Map("DELTA.CHECKPOINTINTERVAL" -> "30"))
+      assertHasProp(tablePath, expProps = Map("delta.checkpointInterval" -> "30"))
+
+      // Try replacing an existing table
+      getReplaceTxn(
+        defaultEngine,
+        tablePath,
+        testSchema,
+        tableProperties = Map("DELTA.CHECKPOINTINTERVAL" -> "30"))
+        .commit(defaultEngine, emptyIterable())
       assertHasProp(tablePath, expProps = Map("delta.checkpointInterval" -> "30"))
     }
   }
@@ -108,6 +141,17 @@ trait TablePropertiesSuiteBase extends AnyFunSuite with AbstractWriteUtils {
       createUpdateTableWithProps(
         tablePath,
         propsAdded = Map("user.facing.prop" -> "30"))
+      assertHasProp(
+        tablePath,
+        expProps = Map("user.facing.PROP" -> "20", "user.facing.prop" -> "30"))
+
+      // Try replacing an existing table
+      getReplaceTxn(
+        defaultEngine,
+        tablePath,
+        testSchema,
+        tableProperties = Map("user.facing.prop" -> "30", "user.facing.PROP" -> "20"))
+        .commit(defaultEngine, emptyIterable())
       assertHasProp(
         tablePath,
         expProps = Map("user.facing.PROP" -> "20", "user.facing.prop" -> "30"))

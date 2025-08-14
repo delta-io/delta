@@ -18,19 +18,34 @@ package io.delta.kernel.defaults
 import scala.collection.immutable.Seq
 import scala.reflect.ClassTag
 
+import io.delta.kernel.defaults.utils.{WriteUtils, WriteUtilsWithV2Builders}
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.TableConfig
 import io.delta.kernel.internal.util.{ColumnMapping, ColumnMappingSuiteBase}
 import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode
 import io.delta.kernel.types.{ArrayType, DataType, FieldMetadata, IntegerType, LongType, MapType, StringType, StructField, StructType}
 
-class DeltaReplaceTableColumnMappingNameModeSuite extends DeltaReplaceTableColumnMappingSuiteBase {
+class DeltaReplaceTableColumnMappingNameModeTransactionBuilderV1Suite
+    extends DeltaReplaceTableColumnMappingNameModeSuite with WriteUtils
+
+class DeltaReplaceTableColumnMappingNameModeTransactionBuilderV2Suite
+    extends DeltaReplaceTableColumnMappingNameModeSuite with WriteUtilsWithV2Builders
+
+class DeltaReplaceTableColumnMappingIdModeTransactionBuilderV1Suite
+    extends DeltaReplaceTableColumnMappingIdModeSuite with WriteUtils
+
+class DeltaReplaceTableColumnMappingIdModeTransactionBuilderV2Suite
+    extends DeltaReplaceTableColumnMappingIdModeSuite with WriteUtilsWithV2Builders
+
+abstract class DeltaReplaceTableColumnMappingNameModeSuite
+    extends DeltaReplaceTableColumnMappingSuiteBase {
 
   override def tblPropertiesCmEnabled: Map[String, String] =
     Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "name")
 }
 
-class DeltaReplaceTableColumnMappingIdModeSuite extends DeltaReplaceTableColumnMappingSuiteBase {
+abstract class DeltaReplaceTableColumnMappingIdModeSuite
+    extends DeltaReplaceTableColumnMappingSuiteBase {
 
   override def tblPropertiesCmEnabled: Map[String, String] =
     Map(TableConfig.COLUMN_MAPPING_MODE.getKey -> "id")
