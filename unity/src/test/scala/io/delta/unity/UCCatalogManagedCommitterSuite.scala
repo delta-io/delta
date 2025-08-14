@@ -23,9 +23,12 @@ import scala.collection.mutable.ArrayBuffer
 
 import io.delta.kernel.commit.CommitMetadata
 import io.delta.kernel.commit.CommitMetadata.CommitType
+import io.delta.kernel.data.Row
 import io.delta.kernel.internal.actions.{Metadata, Protocol}
 import io.delta.kernel.internal.tablefeatures.TableFeatures
+import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.test.VectorTestUtils
+import io.delta.kernel.utils.CloseableIterator
 import io.delta.unity.InMemoryUCClient.TableData
 
 import org.scalatest.funsuite.AnyFunSuite
@@ -189,6 +192,7 @@ class UCCatalogManagedCommitterSuite
 
   test("commit writes staged commit file and invokes UC client commit API") {
     withTempDir { tempDir =>
+      // ===== GIVEN =====
       val tablePath = tempDir.getAbsolutePath
       val logPath = s"$tablePath/_delta_log"
 
@@ -201,16 +205,51 @@ class UCCatalogManagedCommitterSuite
       val tableData = new TableData(0, ArrayBuffer(initialCommit))
       ucClient.createTableIfNotExistsOrThrow("ucTableId", tableData)
 
-      // Create the committer
+      val testValue = "TEST_COMMIT_DATA_12345"
+      val actionsIterator = getSingleElementRowIter(testValue)
       val committer = new UCCatalogManagedCommitter(ucClient, "ucTableId", tablePath)
-
-      // Create commit metadata for version 1 (CATALOG_WRITE type)
       val commitMetadata = catalogManagedWriteCommitMetadata(version = 1, logPath = logPath)
 
-      val response = committer.commit(defaultEngine, emptyActionsIterator, commitMetadata)
+      // ===== WHEN =====
+      val response = committer.commit(defaultEngine, actionsIterator, commitMetadata)
 
-      println(response.getCommitLogData.getFileStatus)
+      // ===== THEN =====
+      val stagedCommitFilePath = response.getCommitLogData.getFileStatus.getPath
+
+      // Verify the staged commit file actually exists on disk
+      val file = new java.io.File(stagedCommitFilePath)
+      assert(file.exists())
+      assert(file.isFile())
+      assert(file.length() > 0)
+
+      // Read the file content and verify our test value was written
+      val fileContent = scala.io.Source.fromFile(file).getLines().mkString("\n")
+      assert(fileContent.contains(testValue))
+
+      // Verify the file is in the correct location
+      assert(stagedCommitFilePath.contains("_staged_commits"))
+      assert(file.getName.contains("00000000000000000001"))
+      assert(stagedCommitFilePath.startsWith(tablePath))
+
+      // Verify UC client was invoked and table was updated
+      val updatedTable = ucClient.getTablesCopy.get("ucTableId").get
+      assert(updatedTable.getMaxRatifiedVersion == 1, "Max ratified version should be 1")
+      assert(updatedTable.getCommits.size == 2, "Should have 2 commits (v0 and v1)")
+
+      // Verify the new commit in UC has correct version
+      val lastCommit = updatedTable.getCommits.last
+      assert(lastCommit.getVersion == 1)
+      assert(lastCommit.getFileStatus.getPath.toString == stagedCommitFilePath)
     }
 
+  }
+
+  private def getSingleElementRowIter(elem: String): CloseableIterator[Row] = {
+    import io.delta.kernel.defaults.integration.DataBuilderUtils
+    import io.delta.kernel.types.{StringType, StructField, StructType}
+
+    val schema = new StructType().add(new StructField("testColumn", StringType.STRING, true))
+    val simpleRow = DataBuilderUtils.row(schema, elem)
+    singletonCloseableIterator(simpleRow)
   }
 }
