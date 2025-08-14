@@ -44,8 +44,8 @@ class CommitMetadataSuite extends AnyFunSuite
         testCommitInfo(),
         Optional.empty(), // readPandMOpt
         Optional.empty(), // newProtocolOpt
-        Optional.empty()
-      ) // newMetadataOpt
+        Optional.empty() // newMetadataOpt
+      )
     }
     assert(ex.getMessage.contains("version must be non-negative"))
   }
@@ -58,8 +58,8 @@ class CommitMetadataSuite extends AnyFunSuite
         testCommitInfo(),
         Optional.of(new KernelTuple2(protocol12, basicPartitionedMetadata)),
         Optional.empty(), // newProtocolOpt
-        Optional.empty()
-      ) // newMetadataOpt
+        Optional.empty() // newMetadataOpt
+      )
     }
 
     intercept[NullPointerException] {
@@ -69,8 +69,8 @@ class CommitMetadataSuite extends AnyFunSuite
         null, // null commitInfo
         Optional.of(new KernelTuple2(protocol12, basicPartitionedMetadata)),
         Optional.empty(), // newProtocolOpt
-        Optional.empty()
-      ) // newMetadataOpt
+        Optional.empty() // newMetadataOpt
+      )
     }
   }
 
@@ -81,15 +81,16 @@ class CommitMetadataSuite extends AnyFunSuite
       logPath,
       testCommitInfo(),
       Optional.of(new KernelTuple2(protocol12, basicPartitionedMetadata)),
-      Optional.empty(),
-      Optional.empty())
+      Optional.empty(), // newProtocolOpt
+      Optional.empty() // newMetadataOpt
+    )
 
     // Both absent is valid if new ones are present
     new CommitMetadata(
       createVersion0,
       logPath,
       testCommitInfo(),
-      Optional.empty(),
+      Optional.empty(), // readPandMOpt
       Optional.of(protocol12),
       Optional.of(basicPartitionedMetadata))
   }
@@ -112,7 +113,7 @@ class CommitMetadataSuite extends AnyFunSuite
         createVersion0,
         logPath,
         testCommitInfo(),
-        Optional.empty(), // protocol or metadata
+        Optional.empty(), // no read protocol or metadata
         Optional.of(protocol12),
         Optional.empty() // no new metadata
       )
@@ -125,7 +126,7 @@ class CommitMetadataSuite extends AnyFunSuite
         createVersion0,
         logPath,
         testCommitInfo(ictEnabled = false), // ICT not enabled!
-        Optional.empty(),
+        Optional.empty(), // readPandMOpt
         Optional.of(protocolWithCatalogManagedSupport),
         Optional.of(basicPartitionedMetadata))
     }.getMessage
@@ -141,7 +142,8 @@ class CommitMetadataSuite extends AnyFunSuite
       testCommitInfo(),
       Optional.of(new KernelTuple2(protocol12, basicPartitionedMetadata)),
       Optional.of(newProtocol),
-      Optional.empty())
+      Optional.empty() // newMetadataOpt
+    )
 
     assert(commitMetadata.getEffectiveProtocol == newProtocol)
   }
@@ -152,8 +154,9 @@ class CommitMetadataSuite extends AnyFunSuite
       logPath,
       testCommitInfo(),
       Optional.of(new KernelTuple2(protocol12, basicPartitionedMetadata)),
-      Optional.empty(),
-      Optional.empty())
+      Optional.empty(), // newProtocolOpt
+      Optional.empty() // newMetadataOpt
+    )
 
     assert(commitMetadata.getEffectiveProtocol == protocol12)
   }
@@ -165,7 +168,7 @@ class CommitMetadataSuite extends AnyFunSuite
       logPath,
       testCommitInfo(),
       Optional.of(new KernelTuple2(protocol12, basicPartitionedMetadata)),
-      Optional.empty(),
+      Optional.empty(), // newProtocolOpt
       Optional.of(newMetadata))
 
     assert(commitMetadata.getEffectiveMetadata == newMetadata)
@@ -177,8 +180,9 @@ class CommitMetadataSuite extends AnyFunSuite
       logPath,
       testCommitInfo(),
       Optional.of(new KernelTuple2(protocol12, basicPartitionedMetadata)),
-      Optional.empty(),
-      Optional.empty())
+      Optional.empty(), // newProtocolOpt
+      Optional.empty() // newMetadataOpt
+    )
 
     assert(commitMetadata.getEffectiveMetadata == basicPartitionedMetadata)
   }
@@ -257,8 +261,9 @@ class CommitMetadataSuite extends AnyFunSuite
         logPath,
         testCommitInfo(),
         Optional.of(new KernelTuple2(protocol12, basicPartitionedMetadata)), // present readPandMOpt
-        Optional.empty(),
-        Optional.empty())
+        Optional.empty(), // newProtocolOpt
+        Optional.empty() // newMetadataOpt
+      )
     }.getMessage
     assert(exMsg.contains("Table creation (version 0) requires absent readPandMOpt"))
   }
@@ -270,8 +275,9 @@ class CommitMetadataSuite extends AnyFunSuite
       logPath,
       testCommitInfo(),
       Optional.of(new KernelTuple2(protocol12, basicPartitionedMetadata)), // present readPandMOpt
-      Optional.empty(),
-      Optional.empty())
+      Optional.empty(), // newProtocolOpt
+      Optional.empty() // newMetadataOpt
+    )
   }
 
   test("checkReadStateAbsentIfAndOnlyIfVersion0 - version > 0 with absent readState should fail") {
@@ -281,7 +287,7 @@ class CommitMetadataSuite extends AnyFunSuite
         updateVersionNonZero,
         logPath,
         testCommitInfo(),
-        Optional.empty(), // absent readPandMOpt
+        Optional.empty(), // readPandMOpt
         Optional.of(protocol12),
         Optional.of(basicPartitionedMetadata))
     }.getMessage
