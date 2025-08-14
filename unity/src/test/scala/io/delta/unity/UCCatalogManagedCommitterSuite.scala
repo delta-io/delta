@@ -30,7 +30,7 @@ import io.delta.kernel.internal.actions.{Metadata, Protocol}
 import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.test.{BaseMockJsonHandler, MockFileSystemClientUtils, VectorTestUtils}
-import io.delta.kernel.utils.CloseableIterator
+import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 import io.delta.storage.commit.Commit
 import io.delta.storage.commit.uccommitcoordinator.InvalidTargetTableException
 import io.delta.unity.InMemoryUCClient.TableData
@@ -255,6 +255,28 @@ class UCCatalogManagedCommitterSuite
     val schema = new StructType().add(new StructField("testColumn", StringType.STRING, true))
     val simpleRow = DataBuilderUtils.row(schema, elem)
     singletonCloseableIterator(simpleRow)
+  }
+
+  test("kernelFileStatusToHadoopFileStatus converts kernel FileStatus to Hadoop FileStatus") {
+    // ===== GIVEN =====
+    val kernelFileStatus = FileStatus.of("/path/to/file.json", 1024L, 1234567890L)
+
+    // ===== WHEN =====
+    val hadoopFileStatus =
+      UCCatalogManagedCommitter.kernelFileStatusToHadoopFileStatus(kernelFileStatus)
+
+    // ===== THEN =====
+    assert(hadoopFileStatus.getPath.toString == "/path/to/file.json")
+    assert(hadoopFileStatus.getLen == 1024L)
+    assert(hadoopFileStatus.getModificationTime == 1234567890L)
+    assert(hadoopFileStatus.getAccessTime == 1234567890L) // same as modification time
+    assert(!hadoopFileStatus.isDirectory)
+    assert(hadoopFileStatus.getReplication == 1)
+    assert(hadoopFileStatus.getBlockSize == 128 * 1024 * 1024) // 128MB
+    assert(hadoopFileStatus.getOwner == "user")
+    assert(hadoopFileStatus.getGroup == "group")
+    assert(hadoopFileStatus.getPermission ==
+      org.apache.hadoop.fs.permission.FsPermission.getFileDefault)
   }
 
   // ========== Exception Handling Tests START ==========

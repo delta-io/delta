@@ -28,6 +28,7 @@ import io.delta.kernel.commit.CommitResponse;
 import io.delta.kernel.commit.Committer;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.files.ParsedLogData;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
@@ -191,7 +192,8 @@ public class UCCatalogManagedCommitter implements Committer {
         commitMetadata.getCommitInfo().getInCommitTimestamp().get());
   }
 
-  private static org.apache.hadoop.fs.FileStatus kernelFileStatusToHadoopFileStatus(
+  @VisibleForTesting
+  public static org.apache.hadoop.fs.FileStatus kernelFileStatusToHadoopFileStatus(
       io.delta.kernel.utils.FileStatus kernelFileStatus) {
     return new org.apache.hadoop.fs.FileStatus(
         kernelFileStatus.getSize() /* length */,
