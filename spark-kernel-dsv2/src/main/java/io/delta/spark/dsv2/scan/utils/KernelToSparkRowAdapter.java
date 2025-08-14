@@ -37,9 +37,7 @@ import org.apache.spark.sql.types.TimestampType;
 import org.apache.spark.unsafe.types.CalendarInterval;
 import org.apache.spark.unsafe.types.UTF8String;
 
-/**
- * Adapter from Delta Kernel {@link Row} to Spark's {@link InternalRow}.
- */
+/** Adapter from Delta Kernel {@link Row} to Spark's {@link InternalRow}. */
 public class KernelToSparkRowAdapter extends InternalRow {
   private final Row row;
 
@@ -192,4 +190,3 @@ public class KernelToSparkRowAdapter extends InternalRow {
     throw new UnsupportedOperationException("KernelToSparkRowAdapter is read-only");
   }
 }
-
