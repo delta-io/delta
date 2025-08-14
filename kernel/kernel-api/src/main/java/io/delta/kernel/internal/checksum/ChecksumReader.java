@@ -21,6 +21,7 @@ import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.metrics.FileCounter;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
@@ -37,10 +38,12 @@ public class ChecksumReader {
    *
    * @param engine the engine to use for reading the checksum file
    * @param checkSumFile the file status of the checksum file to read
+   * @param crcFileCounter The file counter to record reads into.
    * @return Optional {@link CRCInfo} containing the information included in the checksum file, such
    *     as protocol, metadata.
    */
-  public static Optional<CRCInfo> getCRCInfo(Engine engine, FileStatus checkSumFile) {
+  public static Optional<CRCInfo> getCRCInfo(Engine engine, FileStatus checkSumFile, FileCounter crcFileCounter) {
+    crcFileCounter.increment(checkSumFile.getSize());
     try (CloseableIterator<ColumnarBatch> iter =
         engine
             .getJsonHandler()

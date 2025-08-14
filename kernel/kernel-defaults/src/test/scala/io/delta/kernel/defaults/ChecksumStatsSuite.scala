@@ -28,6 +28,7 @@ import io.delta.kernel.internal.actions.{AddFile, GenerateIcebergCompatActionUti
 import io.delta.kernel.internal.checksum.ChecksumReader
 import io.delta.kernel.internal.data.TransactionStateRow
 import io.delta.kernel.internal.fs.Path
+import io.delta.kernel.internal.metrics.FileCounter
 import io.delta.kernel.internal.stats.FileSizeHistogram
 import io.delta.kernel.internal.util.FileNames.checksumFile
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
@@ -95,7 +96,7 @@ trait ChecksumStatsSuiteBase extends DeltaTableWriteSuiteBase {
         engine,
         FileStatus.of(checksumFile(
           new Path(tablePath + "/_delta_log"),
-          version).toString))
+          version).toString), new FileCounter())
         .orElseThrow(() => new AssertionError("CRC information should be present"))
       assert(crcInfo.getNumFiles === expectedFileCount)
       assert(crcInfo.getTableSizeBytes === expectedTableSize)

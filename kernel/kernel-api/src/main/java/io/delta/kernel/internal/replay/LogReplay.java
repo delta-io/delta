@@ -162,7 +162,7 @@ public class LogReplay {
                     .filter(entry -> !entry.getValue().isRemoved())
                     .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue)));
 
-    this.crcInfoContext = new CrcInfoContext(engine);
+    this.crcInfoContext = new CrcInfoContext(engine, snapshotMetrics.scanMetrics);
     this.snapshotMetrics = snapshotMetrics;
   }
 
@@ -570,10 +570,12 @@ public class LogReplay {
   private class CrcInfoContext {
     private final Engine engine;
     private Optional<CRCInfo> cachedLastSeenCrcInfo;
+    private final ScanMetrics scanMetrics;
 
-    CrcInfoContext(Engine engine) {
+    CrcInfoContext(Engine engine, ScanMetrics scanMetrics) {
       this.engine = requireNonNull(engine);
       this.cachedLastSeenCrcInfo = Optional.empty();
+      this.scanMetrics = scanMetrics;
     }
 
     /** Returns the CRC info persisted in the logSegment's lastSeenChecksum File */
@@ -585,8 +587,7 @@ public class LogReplay {
                 .flatMap(
                     crcFile -> {
                       // Record metrics for the CRC file
-                      snapshotMetrics.scanMetrics.crcFilesCounter.increment(crcFile.getSize());
-                      return ChecksumReader.getCRCInfo(engine, crcFile);
+                      return ChecksumReader.getCRCInfo(engine, crcFile, scanMetrics.crcFilesCounter);
                     });
       }
       return cachedLastSeenCrcInfo;
@@ -628,7 +629,7 @@ public class LogReplay {
                     // Record metrics for the CRC file
                     snapshotMetrics.scanMetrics.crcFilesCounter.increment(checksum.getSize());
                     return snapshotMetrics.loadCrcTotalDurationTimer.time(
-                        () -> ChecksumReader.getCRCInfo(engine, checksum));
+                        () -> ChecksumReader.getCRCInfo(engine, checksum, snapshotMetrics.scanMetrics.crcFilesCounter));
                   });
 
       if (!crcInfoOpt.isPresent()) {

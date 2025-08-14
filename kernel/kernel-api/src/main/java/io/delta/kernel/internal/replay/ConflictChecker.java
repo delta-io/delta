@@ -183,7 +183,7 @@ public class ConflictChecker {
     Optional<CRCInfo> updatedCrcInfo =
         ChecksumReader.getCRCInfo(
             engine,
-            FileStatus.of(checksumFile(transaction.getLogPath(), lastWinningVersion).toString()));
+            FileStatus.of(checksumFile(transaction.getLogPath(), lastWinningVersion).toString()), scanMetrics.crcFilesCounter);
 
     // if we get here, we have successfully rebased (i.e no logical conflicts)
     // against the winning transactions

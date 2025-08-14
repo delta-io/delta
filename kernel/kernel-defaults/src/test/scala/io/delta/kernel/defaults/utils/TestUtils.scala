@@ -34,10 +34,11 @@ import io.delta.kernel.expressions.{Column, Predicate}
 import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
 import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl}
 import io.delta.kernel.internal.actions.DomainMetadata
-import io.delta.kernel.internal.checksum.{ChecksumReader, ChecksumWriter, CRCInfo}
+import io.delta.kernel.internal.checksum.{CRCInfo, ChecksumReader, ChecksumWriter}
 import io.delta.kernel.internal.clustering.ClusteringMetadataDomain
 import io.delta.kernel.internal.data.ScanStateRow
 import io.delta.kernel.internal.fs.{Path => KernelPath}
+import io.delta.kernel.internal.metrics.FileCounter
 import io.delta.kernel.internal.stats.FileSizeHistogram
 import io.delta.kernel.internal.util.FileNames.checksumFile
 import io.delta.kernel.internal.util.Utils
@@ -47,11 +48,11 @@ import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames
-
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.apache.hadoop.shaded.org.apache.commons.io.FileUtils
-import org.apache.spark.sql.{types => sparktypes, SparkSession}
+
+import org.apache.spark.sql.{SparkSession, types => sparktypes}
 import org.apache.spark.sql.catalyst.plans.SQLHelper
 import org.scalatest.Assertions
 
@@ -825,7 +826,7 @@ trait AbstractTestUtils extends Assertions with SQLHelper {
       engine,
       FileStatus.of(checksumFile(
         logPath,
-        version).toString)).get()
+        version).toString), new FileCounter()).get()
     // Delete it in hdfs.
     engine.getFileSystemClient.delete(FileNames.checksumFile(
       new Path(s"$tablePath/_delta_log"),
@@ -871,7 +872,7 @@ trait AbstractTestUtils extends Assertions with SQLHelper {
       defaultEngine,
       FileStatus.of(checksumFile(
         logPath,
-        snapshot.getVersion).toString))
+        snapshot.getVersion).toString), new FileCounter())
     assert(
       crcInfoOpt.isPresent,
       s"CRC information should be present for version ${snapshot.getVersion}")
