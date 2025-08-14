@@ -16,19 +16,23 @@
 
 package io.delta.unity
 
+import java.io.IOException
 import java.util.Optional
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 
-import io.delta.kernel.commit.CommitMetadata
+import io.delta.kernel.commit.{CommitFailedException, CommitMetadata}
+import io.delta.kernel.commit.CommitFailedException._
 import io.delta.kernel.commit.CommitMetadata.CommitType
 import io.delta.kernel.data.Row
 import io.delta.kernel.internal.actions.{Metadata, Protocol}
 import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
-import io.delta.kernel.test.VectorTestUtils
+import io.delta.kernel.test.{BaseMockJsonHandler, MockFileSystemClientUtils, VectorTestUtils}
 import io.delta.kernel.utils.CloseableIterator
+import io.delta.storage.commit.Commit
+import io.delta.storage.commit.uccommitcoordinator.InvalidTargetTableException
 import io.delta.unity.InMemoryUCClient.TableData
 
 import org.scalatest.funsuite.AnyFunSuite
@@ -36,7 +40,8 @@ import org.scalatest.funsuite.AnyFunSuite
 class UCCatalogManagedCommitterSuite
     extends AnyFunSuite
     with UCCatalogManagedTestUtils
-    with VectorTestUtils {
+    with VectorTestUtils
+    with MockFileSystemClientUtils {
 
   private def createCommitMetadata(
       version: Long,
@@ -241,7 +246,6 @@ class UCCatalogManagedCommitterSuite
       assert(lastCommit.getVersion == 1)
       assert(lastCommit.getFileStatus.getPath.toString == stagedCommitFilePath)
     }
-
   }
 
   private def getSingleElementRowIter(elem: String): CloseableIterator[Row] = {
@@ -252,4 +256,134 @@ class UCCatalogManagedCommitterSuite
     val simpleRow = DataBuilderUtils.row(schema, elem)
     singletonCloseableIterator(simpleRow)
   }
+
+  // ========== Exception Handling Tests START ==========
+
+  test("IOException while writing staged commit => CFE(retryable=true, conflict=false)") {
+    withTempDir { tempDir =>
+      // ===== GIVEN =====
+      val tablePath = tempDir.getAbsolutePath
+      val logPath = s"$tablePath/_delta_log"
+
+      // TODO do this in kernel
+      defaultEngine.getFileSystemClient.mkdirs(s"$logPath/_staged_commits")
+
+      val throwingEngine = mockEngine(jsonHandler = new BaseMockJsonHandler {
+        override def writeJsonFileAtomically(
+            path: String,
+            data: CloseableIterator[Row],
+            overwrite: Boolean): Unit =
+          throw new IOException("Network error")
+      })
+
+      val ucClient = new InMemoryUCClient("ucMetastoreId")
+      val tableData = new TableData(maxRatifiedVersion = 1, commits = ArrayBuffer.empty[Commit])
+      ucClient.createTableIfNotExistsOrThrow("ucTableId", tableData)
+      val committer = new UCCatalogManagedCommitter(ucClient, "ucTableId", tablePath)
+      val commitMetadata = catalogManagedWriteCommitMetadata(2, logPath = logPath)
+
+      // ===== WHEN =====
+      val ex = intercept[CommitFailedException] {
+        committer.commit(throwingEngine, emptyActionsIterator, commitMetadata)
+      }
+
+      // ===== THEN =====
+      assert(ex.isRetryable && !ex.isConflict)
+      assert(ex.getMessage.contains("Failed to write staged commit file due to: Network error"))
+    }
+  }
+
+  test("io.delta.storage.commit.CommitFailedException during UC commit => kernel CFE") {
+    withTempDir { tempDir =>
+      // ===== GIVEN =====
+      val tablePath = tempDir.getAbsolutePath
+      val logPath = s"$tablePath/_delta_log"
+
+      // TODO do this in kernel
+      defaultEngine.getFileSystemClient.mkdirs(s"$logPath/_staged_commits")
+
+      val ucClient = new InMemoryUCClient("ucMetastoreId") {
+        override def forceThrowInCommitMethod(): Unit =
+          throw new io.delta.storage.commit.CommitFailedException(
+            RETRYABLE,
+            CONFLICT,
+            "Storage conflict",
+            null)
+      }
+      val tableData = new TableData(maxRatifiedVersion = 1, commits = ArrayBuffer.empty[Commit])
+      ucClient.createTableIfNotExistsOrThrow("ucTableId", tableData)
+      val committer = new UCCatalogManagedCommitter(ucClient, "ucTableId", tablePath)
+      val commitMetadata = catalogManagedWriteCommitMetadata(2, logPath = logPath)
+      // ===== WHEN =====
+      val ex = intercept[CommitFailedException] {
+        committer.commit(defaultEngine, emptyActionsIterator, commitMetadata)
+      }
+
+      // ===== THEN =====
+      assert(ex.isRetryable && ex.isConflict)
+      assert(ex.getMessage.contains("Storage conflict"))
+    }
+  }
+
+  test("IOException during UC commit => CFE(retryable=true, conflict=false)") {
+    withTempDir { tempDir =>
+      // ===== GIVEN =====
+      val tablePath = tempDir.getAbsolutePath
+      val logPath = s"$tablePath/_delta_log"
+
+      // TODO do this in kernel
+      defaultEngine.getFileSystemClient.mkdirs(s"$logPath/_staged_commits")
+
+      val ucClient = new InMemoryUCClient("ucMetastoreId") {
+        override def forceThrowInCommitMethod(): Unit = throw new IOException("UC network error")
+      }
+      val tableData = new TableData(maxRatifiedVersion = 1, commits = ArrayBuffer.empty[Commit])
+      ucClient.createTableIfNotExistsOrThrow("ucTableId", tableData)
+      val committer = new UCCatalogManagedCommitter(ucClient, "ucTableId", tablePath)
+      val commitMetadata = catalogManagedWriteCommitMetadata(2, logPath = logPath)
+
+      // ===== WHEN =====
+      val ex = intercept[CommitFailedException] {
+        committer.commit(defaultEngine, emptyActionsIterator, commitMetadata)
+      }
+
+      // ===== THEN =====
+      assert(ex.isRetryable && !ex.isConflict)
+      assert(ex.getMessage.contains("UC network error"))
+    }
+  }
+
+  test("UCCommitCoordinatorException during UC commit => CFE(retryable=false, conflict=false)") {
+    withTempDir { tempDir =>
+      // ===== GIVEN =====
+      val tablePath = tempDir.getAbsolutePath
+      val logPath = s"$tablePath/_delta_log"
+
+      // TODO do this in kernel
+      defaultEngine.getFileSystemClient.mkdirs(s"$logPath/_staged_commits")
+
+      val ucClient = new InMemoryUCClient("ucMetastoreId") {
+        override def forceThrowInCommitMethod(): Unit = {
+          throw new InvalidTargetTableException("Target table does not exist")
+        }
+      }
+      val tableData = new TableData(maxRatifiedVersion = 1, commits = ArrayBuffer.empty[Commit])
+      ucClient.createTableIfNotExistsOrThrow("ucTableId", tableData)
+      val committer = new UCCatalogManagedCommitter(ucClient, "unknownTableId", tablePath)
+      val commitMetadata = catalogManagedWriteCommitMetadata(2, logPath = logPath)
+
+      // ===== WHEN =====
+      val ex = intercept[CommitFailedException] {
+        committer.commit(defaultEngine, emptyActionsIterator, commitMetadata)
+      }
+
+      // ===== THEN =====
+      assert(ex.getCause.isInstanceOf[InvalidTargetTableException])
+      assert(!ex.isRetryable && !ex.isConflict)
+      assert(ex.getMessage.contains("Target table does not exist"))
+    }
+  }
+
+  // ========== Exception Handling Tests END ==========
+
 }
