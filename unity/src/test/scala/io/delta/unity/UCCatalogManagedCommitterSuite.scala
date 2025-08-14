@@ -19,12 +19,14 @@ package io.delta.unity
 import java.util.Optional
 
 import scala.collection.JavaConverters._
+import scala.collection.mutable.ArrayBuffer
 
 import io.delta.kernel.commit.CommitMetadata
 import io.delta.kernel.commit.CommitMetadata.CommitType
 import io.delta.kernel.internal.actions.{Metadata, Protocol}
 import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.test.VectorTestUtils
+import io.delta.unity.InMemoryUCClient.TableData
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -185,15 +187,30 @@ class UCCatalogManagedCommitterSuite
     assert(exMsg.contains("Metadata change is not yet implemented"))
   }
 
-  test("the remaining commit logic is not yet implemented") {
-    val ucClient = new InMemoryUCClient("ucMetastoreId")
-    val committer = new UCCatalogManagedCommitter(ucClient, "ucTableId", baseTestTablePath)
-    val commitMetadata = catalogManagedWriteCommitMetadata(version = 1)
+  test("commit writes staged commit file and invokes UC client commit API") {
+    withTempDir { tempDir =>
+      val tablePath = tempDir.getAbsolutePath
+      val logPath = s"$tablePath/_delta_log"
 
-    val exMsg = intercept[UnsupportedOperationException] {
-      committer.commit(defaultEngine, emptyActionsIterator, commitMetadata)
-    }.getMessage
-    assert(exMsg.contains("Commit logic is not yet implemented"))
+      // TODO do this in kernel
+      defaultEngine.getFileSystemClient.mkdirs(s"$logPath/_staged_commits")
+
+      // Setup UC client with an initial table at version 0
+      val ucClient = new InMemoryUCClient("ucMetastoreId")
+      val initialCommit = createCommit(0)
+      val tableData = new TableData(0, ArrayBuffer(initialCommit))
+      ucClient.createTableIfNotExistsOrThrow("ucTableId", tableData)
+
+      // Create the committer
+      val committer = new UCCatalogManagedCommitter(ucClient, "ucTableId", tablePath)
+
+      // Create commit metadata for version 1 (CATALOG_WRITE type)
+      val commitMetadata = catalogManagedWriteCommitMetadata(version = 1, logPath = logPath)
+
+      val response = committer.commit(defaultEngine, emptyActionsIterator, commitMetadata)
+
+      println(response.getCommitLogData.getFileStatus)
+    }
+
   }
-
 }

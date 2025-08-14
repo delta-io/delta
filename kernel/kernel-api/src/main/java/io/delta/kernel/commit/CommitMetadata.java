@@ -24,6 +24,7 @@ import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
+import io.delta.kernel.internal.util.FileNames;
 import java.util.Optional;
 
 /**
@@ -179,6 +180,14 @@ public class CommitMetadata {
     } else {
       return CommitType.FILESYSTEM_WRITE;
     }
+  }
+
+  public String getPublishedDeltaFilePath() {
+    return FileNames.deltaFile(logPath, version);
+  }
+
+  public String getNewStagedCommitFilePath() {
+    return FileNames.stagedCommitFile(logPath, version);
   }
 
   private void checkInCommitTimestampPresentIfCatalogManaged() {

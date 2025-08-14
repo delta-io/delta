@@ -32,6 +32,11 @@ import io.delta.kernel.annotation.Experimental;
 @Experimental
 public class CommitFailedException extends Exception {
 
+  public static final boolean RETRYABLE = true;
+  public static final boolean NOT_RETRYABLE = false;
+  public static final boolean CONFLICT = true;
+  public static final boolean NOT_CONFLICT = false;
+
   private final boolean retryable;
   private final boolean conflict;
 

@@ -17,7 +17,7 @@
 package io.delta.unity;
 
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
-import static io.delta.unity.utils.OperationTimer.timeOperation;
+import static io.delta.unity.utils.OperationTimer.timeUncheckedOperation;
 
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.SnapshotBuilder;
@@ -81,9 +81,9 @@ public class UCCatalogManagedClient {
     final List<ParsedLogData> logData =
         getSortedKernelLogDataFromRatifiedCommits(ucTableId, response.getCommits());
 
-    return timeOperation(
+    return timeUncheckedOperation(
         logger,
-        "TableManager.loadTable",
+        "TableManager.loadSnapshot",
         ucTableId,
         () -> {
           SnapshotBuilder snapshotBuilder = TableManager.loadSnapshot(tablePath);
@@ -111,7 +111,7 @@ public class UCCatalogManagedClient {
         getVersionString(versionOpt));
 
     final GetCommitsResponse response =
-        timeOperation(
+        timeUncheckedOperation(
             logger,
             "UCClient.getCommits",
             ucTableId,
@@ -170,7 +170,7 @@ public class UCCatalogManagedClient {
   static List<ParsedLogData> getSortedKernelLogDataFromRatifiedCommits(
       String ucTableId, List<Commit> commits) {
     final List<ParsedLogData> result =
-        timeOperation(
+        timeUncheckedOperation(
             logger,
             "Sort and convert UC ratified commits into Kernel ParsedLogData",
             ucTableId,

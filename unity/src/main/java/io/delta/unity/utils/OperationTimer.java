@@ -23,9 +23,16 @@ import org.slf4j.Logger;
 public class OperationTimer {
   private OperationTimer() {}
 
-  /** Times an operation and logs the duration. */
-  public static <T> T timeOperation(
-      Logger logger, String operationName, String ucTableId, Supplier<T> operation) {
+  @FunctionalInterface
+  public interface ThrowingSupplier<T, E extends Exception> {
+    T get() throws E;
+  }
+
+  /** Times an operation that throws a checked exception of type E and logs the duration. */
+  @SuppressWarnings("unchecked")
+  public static <T, E extends Exception> T timeCheckedOperation(
+      Logger logger, String operationName, String ucTableId, ThrowingSupplier<T, E> operation)
+      throws E {
     final long startTime = System.nanoTime();
     try {
       final T result = operation.get();
@@ -36,8 +43,14 @@ public class OperationTimer {
       final long durationMs = nanoToMs(System.nanoTime() - startTime);
       logger.warn(
           "[{}] {} failed after {} ms: {}", ucTableId, operationName, durationMs, e.getMessage());
-      throw e;
+      throw (E) e; // Safe cast since operation can only throw E
     }
+  }
+
+  /** Times an operation and logs the duration. */
+  public static <T> T timeUncheckedOperation(
+      Logger logger, String operationName, String ucTableId, Supplier<T> operation) {
+    return timeCheckedOperation(logger, operationName, ucTableId, operation::get);
   }
 
   private static long nanoToMs(long nanoTime) {
