@@ -86,11 +86,6 @@ public class TableFeatures {
     }
 
     @Override
-    public boolean hasKernelWriteSupport(Metadata metadata) {
-      return false;
-    }
-
-    @Override
     public Set<TableFeature> requiredFeatures() {
       return Collections.singleton(IN_COMMIT_TIMESTAMP_W_FEATURE);
     }
