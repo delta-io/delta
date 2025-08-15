@@ -217,7 +217,8 @@ trait DeltaReplaceTableSuiteBase extends AnyFunSuite with AbstractWriteUtils {
       data.flatMap(_._2).flatMap(_.toTestRows))
 
     val snapshot = latestSnapshot(tablePath).asInstanceOf[SnapshotImpl]
-    assert(snapshot.getPartitionColumnNames.asScala == partitionColumns)
+    val expectedPartitionColumns = if (partitionColumns == null) Seq() else partitionColumns
+    assert(snapshot.getPartitionColumnNames.asScala == expectedPartitionColumns)
 
     clusteringColumns match {
       case Some(clusteringCols) =>
