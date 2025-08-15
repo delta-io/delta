@@ -23,5 +23,3 @@ public final class KernelSparkInputPartition implements InputPartition, Serializ
     return serializedScanFileRow;
   }
 }
-
-

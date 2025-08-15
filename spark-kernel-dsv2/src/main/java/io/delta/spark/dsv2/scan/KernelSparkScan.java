@@ -18,7 +18,6 @@ package io.delta.spark.dsv2.scan;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.Scan;
-import io.delta.kernel.ScanBuilder;
 import io.delta.spark.dsv2.scan.batch.KernelSparkBatchScan;
 import org.apache.spark.sql.connector.read.Batch;
 import org.apache.spark.sql.types.StructType;
@@ -44,7 +43,6 @@ public class KernelSparkScan implements org.apache.spark.sql.connector.read.Scan
 
   @Override
   public Batch toBatch() {
-    return new KernelSparkBatchScan(, sparkReadSchema);
+    return new KernelSparkBatchScan(kernelScan, sparkReadSchema);
   }
-
 }
