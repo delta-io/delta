@@ -44,11 +44,10 @@ class DirectoryCreationSuite extends AnyFunSuite with WriteUtils with ActionUtil
       val logPath = new File(tablePath, "_delta_log")
       val sidecarDir = new File(logPath.toString, "_sidecars")
 
-      createTxn(
+      getCreateTxn(
         engine,
         tablePath,
-        isNewTable = true,
-        schema = testSchema,
+        testSchema,
         tableProperties = Map("delta.checkpointPolicy" -> "v2")).commit(engine, emptyIterable())
 
       assert(logPath.exists() && logPath.isDirectory())
@@ -62,12 +61,12 @@ class DirectoryCreationSuite extends AnyFunSuite with WriteUtils with ActionUtil
       val logPath = new File(tablePath, "_delta_log")
       val sidecarDir = new File(logPath.toString, "_sidecars")
 
-      createTxn(engine, tablePath, isNewTable = true, testSchema).commit(engine, emptyIterable())
+      getCreateTxn(engine, tablePath, testSchema).commit(engine, emptyIterable())
 
       assert(logPath.exists() && logPath.isDirectory())
       assert(!sidecarDir.exists())
 
-      createTxn(
+      getUpdateTxn(
         engine,
         tablePath,
         tableProperties = Map("delta.checkpointPolicy" -> "v2")).commit(engine, emptyIterable())
