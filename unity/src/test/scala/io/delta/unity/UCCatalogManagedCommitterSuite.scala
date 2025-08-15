@@ -204,7 +204,7 @@ class UCCatalogManagedCommitterSuite
       // TODO do this in kernel
       defaultEngine.getFileSystemClient.mkdirs(s"$logPath/_staged_commits")
 
-      // Setup UC client with an initial table at version 0
+      // Setup UC client with initial table with maxRatifiedVersion = 0, numCommits = 1
       val ucClient = new InMemoryUCClient("ucMetastoreId")
       val initialCommit = createCommit(0)
       val tableData = new TableData(0, ArrayBuffer(initialCommit))
@@ -225,21 +225,21 @@ class UCCatalogManagedCommitterSuite
       val file = new java.io.File(stagedCommitFilePath)
       assert(file.exists())
       assert(file.isFile())
-      assert(file.length() > 0)
 
       // Read the file content and verify our test value was written
       val fileContent = scala.io.Source.fromFile(file).getLines().mkString("\n")
       assert(fileContent.contains(testValue))
 
       // Verify the file is in the correct location
-      assert(stagedCommitFilePath.contains("_staged_commits"))
-      assert(file.getName.contains("00000000000000000001"))
-      assert(stagedCommitFilePath.startsWith(tablePath))
+      val expectedPattern =
+        s"^$tablePath/_delta_log/_staged_commits/00000000000000000001\\.[^.]+\\.json$$"
+      assert(stagedCommitFilePath.matches(expectedPattern))
 
-      // Verify UC client was invoked and table was updated
+      // Verify UC client was invoked and table was updated.
+      // We expect: maxRatifiedVersion = 1, numCommits = 2.
       val updatedTable = ucClient.getTablesCopy.get("ucTableId").get
-      assert(updatedTable.getMaxRatifiedVersion == 1, "Max ratified version should be 1")
-      assert(updatedTable.getCommits.size == 2, "Should have 2 commits (v0 and v1)")
+      assert(updatedTable.getMaxRatifiedVersion == 1)
+      assert(updatedTable.getCommits.size == 2)
 
       // Verify the new commit in UC has correct version
       val lastCommit = updatedTable.getCommits.last
@@ -266,15 +266,18 @@ class UCCatalogManagedCommitterSuite
       UCCatalogManagedCommitter.kernelFileStatusToHadoopFileStatus(kernelFileStatus)
 
     // ===== THEN =====
+    // These are the fields that we care about, taken from the Kernel FileStatus
     assert(hadoopFileStatus.getPath.toString == "/path/to/file.json")
     assert(hadoopFileStatus.getLen == 1024L)
     assert(hadoopFileStatus.getModificationTime == 1234567890L)
+
+    // These are defaults that we set
     assert(hadoopFileStatus.getAccessTime == 1234567890L) // same as modification time
     assert(!hadoopFileStatus.isDirectory)
     assert(hadoopFileStatus.getReplication == 1)
     assert(hadoopFileStatus.getBlockSize == 128 * 1024 * 1024) // 128MB
-    assert(hadoopFileStatus.getOwner == "user")
-    assert(hadoopFileStatus.getGroup == "group")
+    assert(hadoopFileStatus.getOwner == "unknown")
+    assert(hadoopFileStatus.getGroup == "unknown")
     assert(hadoopFileStatus.getPermission ==
       org.apache.hadoop.fs.permission.FsPermission.getFileDefault)
   }
@@ -327,8 +330,8 @@ class UCCatalogManagedCommitterSuite
       val ucClient = new InMemoryUCClient("ucMetastoreId") {
         override def forceThrowInCommitMethod(): Unit =
           throw new io.delta.storage.commit.CommitFailedException(
-            RETRYABLE,
-            CONFLICT,
+            true, // retryable
+            true, // conflict
             "Storage conflict",
             null)
       }

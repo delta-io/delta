@@ -182,11 +182,29 @@ public class CommitMetadata {
     }
   }
 
+  /**
+   * Returns the corresponding published Delta log file path for this commit, which is in the form
+   * of {@code <table_path>/_delta_log/0000000000000000000<version>.json}.
+   *
+   * <p>Usages:
+   *
+   * <ul>
+   *   <li>Filesystem-managed committers must write to this file path.
+   *   <li>Catalog-managed committers must backfill to this file path, if/when they so choose.
+   * </ul>
+   */
   public String getPublishedDeltaFilePath() {
     return FileNames.deltaFile(logPath, version);
   }
 
-  public String getNewStagedCommitFilePath() {
+  /**
+   * Returns a new staged commit file path with a unique UUID for this commit. Each invocation
+   * returns a new, unique value, in the form of {@code
+   * <table_path>/_delta_log/_staged_commits/0000000000000000000<version>.<uuid>.json}
+   *
+   * <p>Catalog-managed committers may use this path to write new staged commits.
+   */
+  public String generateNewStagedCommitFilePath() {
     return FileNames.stagedCommitFile(logPath, version);
   }
 

@@ -16,7 +16,6 @@
 
 package io.delta.unity;
 
-import static io.delta.kernel.commit.CommitFailedException.*;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Preconditions.checkState;
 import static io.delta.unity.utils.OperationTimer.timeCheckedOperation;
@@ -81,8 +80,6 @@ public class UCCatalogManagedCommitter implements Committer {
       throw new UnsupportedOperationException("Unsupported commit type: " + commitType);
     }
 
-    // TODO: lastKnownBackfilledVersion? Take that in as a hint.
-
     if (commitMetadata.getNewProtocolOpt().isPresent()) {
       // TODO: support this
       throw new UnsupportedOperationException("Protocol change is not yet implemented");
@@ -121,7 +118,7 @@ public class UCCatalogManagedCommitter implements Committer {
   private FileStatus writeStagedCommitFile(
       Engine engine, CloseableIterator<Row> finalizedActions, CommitMetadata commitMetadata)
       throws CommitFailedException {
-    final String stagedCommitFilePath = commitMetadata.getNewStagedCommitFilePath();
+    final String stagedCommitFilePath = commitMetadata.generateNewStagedCommitFilePath();
 
     return timeCheckedOperation(
         logger,
@@ -142,8 +139,8 @@ public class UCCatalogManagedCommitter implements Committer {
             return FileStatus.of(stagedCommitFilePath);
           } catch (IOException ex) {
             throw new CommitFailedException(
-                RETRYABLE,
-                NOT_CONFLICT,
+                true /* retryable */,
+                false /* conflict */,
                 "Failed to write staged commit file due to: " + ex.getMessage(),
                 ex);
           }
@@ -167,8 +164,8 @@ public class UCCatalogManagedCommitter implements Committer {
             ucClient.commit(
                 ucTableId,
                 tablePath.toUri(),
-                Optional.of(getUCCommitPayload(commitMetadata, kernelStagedCommitFileStatus)),
-                Optional.empty() /* lastKnownBackfilledVersion */,
+                Optional.of(getUcCommitPayload(commitMetadata, kernelStagedCommitFileStatus)),
+                Optional.empty() /* lastKnownBackfilledVersion */, // TODO: take this in as a hint
                 false /* isDisown */,
                 Optional.empty() /* newMetadata */, // TODO: support sending newProtocol
                 Optional.empty()); // TODO: support sending newProtocol
@@ -176,14 +173,16 @@ public class UCCatalogManagedCommitter implements Committer {
           } catch (io.delta.storage.commit.CommitFailedException cfe) {
             throw storageCFEtoKernelCFE(cfe);
           } catch (IOException ex) {
-            throw new CommitFailedException(RETRYABLE, NOT_CONFLICT, ex.getMessage(), ex);
+            throw new CommitFailedException(
+                true /* retryable */, false /* conflict */, ex.getMessage(), ex);
           } catch (UCCommitCoordinatorException ucce) {
-            throw new CommitFailedException(NOT_RETRYABLE, NOT_CONFLICT, ucce.getMessage(), ucce);
+            throw new CommitFailedException(
+                false /* retryable */, false /* conflict */, ucce.getMessage(), ucce);
           }
         });
   }
 
-  private Commit getUCCommitPayload(
+  private Commit getUcCommitPayload(
       CommitMetadata commitMetadata, FileStatus kernelStagedCommitFileStatus) {
     return new Commit(
         commitMetadata.getVersion(),
@@ -203,8 +202,8 @@ public class UCCatalogManagedCommitter implements Committer {
         kernelFileStatus.getModificationTime() /* modificationTime */,
         kernelFileStatus.getModificationTime() /* accessTime */,
         org.apache.hadoop.fs.permission.FsPermission.getFileDefault() /* permission */,
-        "user" /* owner */,
-        "group" /* group */,
+        "unknown" /* owner */,
+        "unknown" /* group */,
         new org.apache.hadoop.fs.Path(kernelFileStatus.getPath()) /* path */);
   }
 
