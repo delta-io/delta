@@ -24,6 +24,7 @@ import io.delta.kernel.commit.CommitMetadata
 import io.delta.kernel.commit.CommitMetadata.CommitType
 import io.delta.kernel.internal.actions.{Metadata, Protocol}
 import io.delta.kernel.internal.tablefeatures.TableFeatures
+import io.delta.kernel.internal.util.{Tuple2 => KernelTuple2}
 import io.delta.kernel.test.VectorTestUtils
 
 import org.scalatest.funsuite.AnyFunSuite
@@ -36,15 +37,13 @@ class UCCatalogManagedCommitterSuite
   private def createCommitMetadata(
       version: Long,
       logPath: String = baseTestLogPath,
-      readProtocolOpt: Optional[Protocol] = Optional.empty(),
-      readMetadataOpt: Optional[Metadata] = Optional.empty(),
+      readPandMOpt: Optional[KernelTuple2[Protocol, Metadata]] = Optional.empty(),
       newProtocolOpt: Optional[Protocol] = Optional.empty(),
       newMetadataOpt: Optional[Metadata] = Optional.empty()): CommitMetadata = new CommitMetadata(
     version,
     logPath,
     testCommitInfo(),
-    readProtocolOpt,
-    readMetadataOpt,
+    readPandMOpt,
     newProtocolOpt,
     newMetadataOpt)
 
@@ -53,8 +52,10 @@ class UCCatalogManagedCommitterSuite
       logPath: String = baseTestLogPath): CommitMetadata = createCommitMetadata(
     version = version,
     logPath = logPath,
-    readProtocolOpt = Optional.of(protocolWithCatalogManagedSupport),
-    readMetadataOpt = Optional.of(basicPartitionedMetadata))
+    readPandMOpt = Optional.of(
+      new KernelTuple2[Protocol, Metadata](
+        protocolWithCatalogManagedSupport,
+        basicPartitionedMetadata)))
 
   test("constructor throws on null inputs") {
     val ucClient = new InMemoryUCClient("ucMetastoreId")
@@ -107,45 +108,60 @@ class UCCatalogManagedCommitterSuite
 
   // ========== CommitType Tests START ==========
 
-  implicit class CommitMetadataOps(base: CommitMetadata) {
-    def withCommitTypeOverride(commitType: CommitMetadata.CommitType): CommitMetadata = {
-      new CommitMetadata(
-        base.getVersion(),
-        base.getDeltaLogDirPath(),
-        base.getCommitInfo(),
-        base.getReadProtocolOpt(),
-        base.getReadMetadataOpt(),
-        base.getNewProtocolOpt(),
-        base.getNewMetadataOpt()) {
-        override def getCommitType() = commitType
-      }
-    }
-  }
+  case class CommitTypeTestCase(
+      readPandMOpt: Optional[KernelTuple2[Protocol, Metadata]] = Optional.empty(),
+      newProtocolOpt: Optional[Protocol] = Optional.empty(),
+      newMetadataOpt: Optional[Metadata] = Optional.empty(),
+      expectedCommitType: CommitType)
 
-  val unsupportedCommitTypes = Seq(
-    CommitType.FILESYSTEM_CREATE,
-    CommitType.CATALOG_CREATE,
-    CommitType.FILESYSTEM_WRITE,
-    CommitType.FILESYSTEM_UPGRADE_TO_CATALOG,
-    CommitType.CATALOG_DOWNGRADE_TO_FILESYSTEM)
+  private val protocol12 = new Protocol(1, 2)
 
-  unsupportedCommitTypes foreach { commitType =>
-    test(s"commit throws UnsupportedOperationException for $commitType") {
+  private val unsupportedCommitTypesTestCases = Seq(
+    CommitTypeTestCase(
+      readPandMOpt = Optional.empty(),
+      newProtocolOpt = Optional.of(protocol12),
+      newMetadataOpt = Optional.of(basicPartitionedMetadata),
+      expectedCommitType = CommitType.FILESYSTEM_CREATE),
+    CommitTypeTestCase(
+      readPandMOpt = Optional.empty(),
+      newProtocolOpt = Optional.of(protocolWithCatalogManagedSupport),
+      newMetadataOpt = Optional.of(basicPartitionedMetadata),
+      expectedCommitType = CommitType.CATALOG_CREATE),
+    CommitTypeTestCase(
+      readPandMOpt = Optional.of(new KernelTuple2(protocol12, basicPartitionedMetadata)),
+      expectedCommitType = CommitType.FILESYSTEM_WRITE),
+    CommitTypeTestCase(
+      readPandMOpt = Optional.of(new KernelTuple2(protocol12, basicPartitionedMetadata)),
+      newProtocolOpt = Optional.of(protocolWithCatalogManagedSupport),
+      expectedCommitType = CommitType.FILESYSTEM_UPGRADE_TO_CATALOG),
+    CommitTypeTestCase(
+      readPandMOpt = Optional.of(
+        new KernelTuple2(protocolWithCatalogManagedSupport, basicPartitionedMetadata)),
+      newProtocolOpt = Optional.of(protocol12),
+      expectedCommitType = CommitType.CATALOG_DOWNGRADE_TO_FILESYSTEM))
+
+  unsupportedCommitTypesTestCases.foreach { testCase =>
+    test(s"commit throws UnsupportedOperationException for ${testCase.expectedCommitType}") {
       val ucClient = new InMemoryUCClient("ucMetastoreId")
       val committer = new UCCatalogManagedCommitter(ucClient, "ucTableId", baseTestTablePath)
-      val version = commitType match {
-        case CommitType.FILESYSTEM_CREATE | CommitType.CATALOG_CREATE => 0
-        case _ => 1
-      }
-      val commitMetadata = catalogManagedWriteCommitMetadata(version = version)
-        .withCommitTypeOverride(commitType)
 
-      assert(commitMetadata.getCommitType == commitType)
+      // version > 0 for updates, version = 0 for creates
+      val version = if (testCase.readPandMOpt.isPresent) 1L else 0L
+
+      val commitMetadata = new CommitMetadata(
+        version,
+        baseTestLogPath,
+        testCommitInfo(),
+        testCase.readPandMOpt,
+        testCase.newProtocolOpt,
+        testCase.newMetadataOpt)
+
+      assert(commitMetadata.getCommitType == testCase.expectedCommitType)
 
       val exception = intercept[UnsupportedOperationException] {
         committer.commit(defaultEngine, emptyActionsIterator, commitMetadata)
       }
-      assert(exception.getMessage == s"Unsupported commit type: $commitType")
+      assert(exception.getMessage == s"Unsupported commit type: ${testCase.expectedCommitType}")
     }
   }
 
@@ -158,8 +174,10 @@ class UCCatalogManagedCommitterSuite
       .withFeature(TableFeatures.DELETION_VECTORS_RW_FEATURE)
     val commitMetadata = createCommitMetadata(
       version = 1,
-      readProtocolOpt = Optional.of(protocolWithCatalogManagedSupport),
-      readMetadataOpt = Optional.of(basicPartitionedMetadata),
+      readPandMOpt = Optional.of(
+        new KernelTuple2[Protocol, Metadata](
+          protocolWithCatalogManagedSupport,
+          basicPartitionedMetadata)),
       newProtocolOpt = Optional.of(protocolUpgrade))
 
     val exMsg = intercept[UnsupportedOperationException] {
@@ -175,8 +193,10 @@ class UCCatalogManagedCommitterSuite
       .withMergedConfiguration(Map("foo" -> "bar").asJava)
     val commitMetadata = createCommitMetadata(
       version = 1,
-      readProtocolOpt = Optional.of(protocolWithCatalogManagedSupport),
-      readMetadataOpt = Optional.of(basicPartitionedMetadata),
+      readPandMOpt = Optional.of(
+        new KernelTuple2[Protocol, Metadata](
+          protocolWithCatalogManagedSupport,
+          basicPartitionedMetadata)),
       newMetadataOpt = Optional.of(metadataUpgrade))
 
     val exMsg = intercept[UnsupportedOperationException] {

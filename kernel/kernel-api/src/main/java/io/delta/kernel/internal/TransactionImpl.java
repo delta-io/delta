@@ -543,8 +543,7 @@ public class TransactionImpl implements Transaction {
               commitAsVersion,
               logPath.toString(),
               attemptCommitInfo,
-              readSnapshotOpt.map(SnapshotImpl::getProtocol),
-              readSnapshotOpt.map(SnapshotImpl::getMetadata),
+              readSnapshotOpt.map(x -> new Tuple2<>(x.getProtocol(), x.getMetadata())),
               shouldUpdateProtocol ? Optional.of(protocol) : Optional.empty(),
               shouldUpdateMetadata ? Optional.of(metadata) : Optional.empty());
 

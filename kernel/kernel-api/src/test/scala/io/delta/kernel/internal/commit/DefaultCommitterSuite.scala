@@ -26,6 +26,7 @@ import io.delta.kernel.data.Row
 import io.delta.kernel.exceptions.KernelEngineException
 import io.delta.kernel.internal.actions.Protocol
 import io.delta.kernel.internal.table.SnapshotBuilderImpl
+import io.delta.kernel.internal.util.{Tuple2 => KernelTuple2}
 import io.delta.kernel.test.{ActionUtils, BaseMockJsonHandler, MockFileSystemClientUtils, VectorTestUtils}
 import io.delta.kernel.types.{IntegerType, StructType}
 import io.delta.kernel.utils.CloseableIterator
@@ -43,8 +44,7 @@ class DefaultCommitterSuite extends AnyFunSuite
     1L,
     "/fake/_delta_log",
     testCommitInfo(ictEnabled = false),
-    Optional.of(protocol12),
-    Optional.of(basicPartitionedMetadata),
+    Optional.of(new KernelTuple2(protocol12, basicPartitionedMetadata)),
     Optional.empty(), // newProtocolOpt
     Optional.empty() // newMetadataOpt
   )
@@ -77,8 +77,7 @@ class DefaultCommitterSuite extends AnyFunSuite
             3L,
             "/fake/_delta_log",
             testCommitInfo(),
-            Optional.of(readProtocol),
-            Optional.of(metadata),
+            Optional.of(new KernelTuple2(readProtocol, metadata)),
             Optional.of(newProtocol),
             Optional.of(metadata)))
       }.getMessage
