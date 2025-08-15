@@ -37,7 +37,7 @@ trait DeltaReplaceTableSuiteBase extends AnyFunSuite with AbstractWriteUtils {
 
   case class SchemaDef(
       schema: StructType,
-      partitionColumns: Seq[String] = Seq.empty,
+      partitionColumns: Seq[String] = null,
       clusteringColumns: Option[List[Column]] = None) {
     override def toString: String = {
       s"Schema=$schema, partCols=$partitionColumns, " +

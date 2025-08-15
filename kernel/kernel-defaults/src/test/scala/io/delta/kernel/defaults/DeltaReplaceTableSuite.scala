@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.defaults
 
+import scala.collection.JavaConverters._
 import scala.collection.immutable.Seq
 
 import io.delta.kernel.{Operation, Table, TableManager}
@@ -109,7 +110,11 @@ abstract class DeltaReplaceTableSuite extends DeltaReplaceTableSuiteBase {
     withTempDirAndEngine { (tablePath, engine) =>
       assert(
         intercept[TableNotFoundException] {
-          commitReplaceTable(engine, tablePath)
+          // This is not possible on an API level for V2 builders since building is from a Snapshot
+          Table.forPath(engine, tablePath).asInstanceOf[TableImpl]
+            .createReplaceTableTransactionBuilder(engine, "test-engine")
+            .withSchema(engine, testSchema)
+            .build(engine)
         }.getMessage.contains("Trying to replace a table that does not exist"))
     }
   }
@@ -158,12 +163,13 @@ abstract class DeltaReplaceTableSuite extends DeltaReplaceTableSuiteBase {
     withTempDirAndEngine { (tablePath, engine) =>
       createInitialTable(engine, tablePath)
       assert(intercept[IllegalArgumentException] {
-        getReplaceTxn(
-          engine,
-          tablePath,
-          schema = testPartitionSchema,
-          partCols = testPartitionColumns,
-          clusteringColsOpt = Some(testClusteringColumns))
+        // Setting both is not possible on an API level for v2 builders
+        Table.forPath(engine, tablePath).asInstanceOf[TableImpl]
+          .createReplaceTableTransactionBuilder(engine, "test-engine")
+          .withSchema(engine, testPartitionSchema)
+          .withPartitionColumns(engine, testPartitionColumns.asJava)
+          .withClusteringColumns(engine, testClusteringColumns.asJava)
+          .build(engine)
       }.getMessage.contains(
         "Partition Columns and Clustering Columns cannot be set at the same time"))
     }
