@@ -237,7 +237,16 @@ object CDCReader extends CDCReaderImpl
         snapshotWithSchemaMode.snapshot
     }
 
-    override val schema: StructType = cdcReadSchema(snapshotForBatchSchema.metadata.schema)
+    override val schema: StructType = {
+      cdcReadSchema(
+        DeltaTableUtils.removeInternalDeltaMetadata(
+          sqlContext.sparkSession,
+          DeltaTableUtils.removeInternalWriterMetadata(
+            sqlContext.sparkSession, snapshotForBatchSchema.metadata.schema
+          )
+        )
+      )
+    }
 
     def getScanDf: DataFrame = {
       startingVersion match {
@@ -834,7 +843,14 @@ trait CDCReaderImpl extends DeltaLogging {
       readSchemaSnapshot, isStreaming, spark)
     dfs.append(deletedAndAddedRows: _*)
 
-    val readSchema = cdcReadSchema(readSchemaSnapshot.metadata.schema)
+    val readSchema = cdcReadSchema(
+      DeltaTableUtils.removeInternalDeltaMetadata(
+        spark,
+        DeltaTableUtils.removeInternalWriterMetadata(
+          spark, readSchemaSnapshot.metadata.schema
+        )
+      )
+    )
     // build an empty DS. This DS retains the table schema and the isStreaming property
     // NOTE: We need to manually set the stats to 0 otherwise we will use default stats of INT_MAX,
     // which causes lots of optimizations to be applied wrong.
