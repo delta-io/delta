@@ -54,8 +54,12 @@ class MergeIntoNotMatchedBySourceScalaSuite
   extends MergeIntoNotMatchedBySourceSuite
   with MergeIntoScalaMixin
 
-class MergeIntoNotMatchedBySourceWithCDCScalaSuite
-  extends MergeIntoNotMatchedBySourceWithCDCSuite
+class MergeIntoNotMatchedBySourceCDCPart1ScalaSuite
+  extends MergeIntoNotMatchedBySourceCDCPart1Tests
+  with MergeIntoScalaMixin
+
+class MergeIntoNotMatchedBySourceCDCPart2ScalaSuite
+  extends MergeIntoNotMatchedBySourceCDCPart2Tests
   with MergeIntoScalaMixin
 
 class MergeIntoSchemaEvolutionCoreScalaSuite
@@ -793,53 +797,53 @@ class MergeIntoNotMatchedBySourceSQLPathBasedCDCOnDVsPredPushOnSuite
   with MergeCDCMixin
   with MergeCDCWithDVsMixin
 
-class MergeIntoNotMatchedBySourceWithCDCSQLNameBasedSuite
-  extends MergeIntoNotMatchedBySourceWithCDCSuite
+class MergeIntoNotMatchedBySourceCDCPart1SQLNameBasedSuite
+  extends MergeIntoNotMatchedBySourceCDCPart1Tests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsNameBased
 
-class MergeIntoNotMatchedBySourceWithCDCSQLPathBasedSuite
-  extends MergeIntoNotMatchedBySourceWithCDCSuite
+class MergeIntoNotMatchedBySourceCDCPart1SQLPathBasedSuite
+  extends MergeIntoNotMatchedBySourceCDCPart1Tests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
 
-class MergeIntoNotMatchedBySourceWithCDCSQLPathBasedColMapIdModeSuite
-  extends MergeIntoNotMatchedBySourceWithCDCSuite
+class MergeIntoNotMatchedBySourceCDCPart1SQLPathBasedColMapIdModeSuite
+  extends MergeIntoNotMatchedBySourceCDCPart1Tests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
   with DeltaColumnMappingEnableIdMode
   with MergeIntoSQLColumnMappingOverrides
 
-class MergeIntoNotMatchedBySourceWithCDCSQLPathBasedColMapNameModeSuite
-  extends MergeIntoNotMatchedBySourceWithCDCSuite
+class MergeIntoNotMatchedBySourceCDCPart1SQLPathBasedColMapNameModeSuite
+  extends MergeIntoNotMatchedBySourceCDCPart1Tests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
   with DeltaColumnMappingEnableNameMode
   with MergeIntoSQLColumnMappingOverrides
 
-class MergeIntoNotMatchedBySourceWithCDCSQLPathBasedDVsPredPushOffSuite
-  extends MergeIntoNotMatchedBySourceWithCDCSuite
+class MergeIntoNotMatchedBySourceCDCPart1SQLPathBasedDVsPredPushOffSuite
+  extends MergeIntoNotMatchedBySourceCDCPart1Tests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
   with MergeIntoDVsMixin
   with PredicatePushdownDisabled
 
-class MergeIntoNotMatchedBySourceWithCDCSQLPathBasedDVsPredPushOnSuite
-  extends MergeIntoNotMatchedBySourceWithCDCSuite
+class MergeIntoNotMatchedBySourceCDCPart1SQLPathBasedDVsPredPushOnSuite
+  extends MergeIntoNotMatchedBySourceCDCPart1Tests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
   with MergeIntoDVsMixin
   with PredicatePushdownEnabled
 
-class MergeIntoNotMatchedBySourceWithCDCSQLPathBasedCDCOnSuite
-  extends MergeIntoNotMatchedBySourceWithCDCSuite
+class MergeIntoNotMatchedBySourceCDCPart1SQLPathBasedCDCOnSuite
+  extends MergeIntoNotMatchedBySourceCDCPart1Tests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
   with CDCEnabled
   with MergeCDCMixin
 
-class MergeIntoNotMatchedBySourceWithCDCSQLPathBasedCDCOnDVsPredPushOffSuite
-  extends MergeIntoNotMatchedBySourceWithCDCSuite
+class MergeIntoNotMatchedBySourceCDCPart1SQLPathBasedCDCOnDVsPredPushOffSuite
+  extends MergeIntoNotMatchedBySourceCDCPart1Tests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
   with CDCEnabled
@@ -848,8 +852,73 @@ class MergeIntoNotMatchedBySourceWithCDCSQLPathBasedCDCOnDVsPredPushOffSuite
   with MergeCDCMixin
   with MergeCDCWithDVsMixin
 
-class MergeIntoNotMatchedBySourceWithCDCSQLPathBasedCDCOnDVsPredPushOnSuite
-  extends MergeIntoNotMatchedBySourceWithCDCSuite
+class MergeIntoNotMatchedBySourceCDCPart1SQLPathBasedCDCOnDVsPredPushOnSuite
+  extends MergeIntoNotMatchedBySourceCDCPart1Tests
+  with MergeIntoSQLMixin
+  with DeltaDMLTestUtilsPathBased
+  with CDCEnabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownEnabled
+  with MergeCDCMixin
+  with MergeCDCWithDVsMixin
+
+class MergeIntoNotMatchedBySourceCDCPart2SQLNameBasedSuite
+  extends MergeIntoNotMatchedBySourceCDCPart2Tests
+  with MergeIntoSQLMixin
+  with DeltaDMLTestUtilsNameBased
+
+class MergeIntoNotMatchedBySourceCDCPart2SQLPathBasedSuite
+  extends MergeIntoNotMatchedBySourceCDCPart2Tests
+  with MergeIntoSQLMixin
+  with DeltaDMLTestUtilsPathBased
+
+class MergeIntoNotMatchedBySourceCDCPart2SQLPathBasedColMapIdModeSuite
+  extends MergeIntoNotMatchedBySourceCDCPart2Tests
+  with MergeIntoSQLMixin
+  with DeltaDMLTestUtilsPathBased
+  with DeltaColumnMappingEnableIdMode
+  with MergeIntoSQLColumnMappingOverrides
+
+class MergeIntoNotMatchedBySourceCDCPart2SQLPathBasedColMapNameModeSuite
+  extends MergeIntoNotMatchedBySourceCDCPart2Tests
+  with MergeIntoSQLMixin
+  with DeltaDMLTestUtilsPathBased
+  with DeltaColumnMappingEnableNameMode
+  with MergeIntoSQLColumnMappingOverrides
+
+class MergeIntoNotMatchedBySourceCDCPart2SQLPathBasedDVsPredPushOffSuite
+  extends MergeIntoNotMatchedBySourceCDCPart2Tests
+  with MergeIntoSQLMixin
+  with DeltaDMLTestUtilsPathBased
+  with MergeIntoDVsMixin
+  with PredicatePushdownDisabled
+
+class MergeIntoNotMatchedBySourceCDCPart2SQLPathBasedDVsPredPushOnSuite
+  extends MergeIntoNotMatchedBySourceCDCPart2Tests
+  with MergeIntoSQLMixin
+  with DeltaDMLTestUtilsPathBased
+  with MergeIntoDVsMixin
+  with PredicatePushdownEnabled
+
+class MergeIntoNotMatchedBySourceCDCPart2SQLPathBasedCDCOnSuite
+  extends MergeIntoNotMatchedBySourceCDCPart2Tests
+  with MergeIntoSQLMixin
+  with DeltaDMLTestUtilsPathBased
+  with CDCEnabled
+  with MergeCDCMixin
+
+class MergeIntoNotMatchedBySourceCDCPart2SQLPathBasedCDCOnDVsPredPushOffSuite
+  extends MergeIntoNotMatchedBySourceCDCPart2Tests
+  with MergeIntoSQLMixin
+  with DeltaDMLTestUtilsPathBased
+  with CDCEnabled
+  with MergeIntoDVsMixin
+  with PredicatePushdownDisabled
+  with MergeCDCMixin
+  with MergeCDCWithDVsMixin
+
+class MergeIntoNotMatchedBySourceCDCPart2SQLPathBasedCDCOnDVsPredPushOnSuite
+  extends MergeIntoNotMatchedBySourceCDCPart2Tests
   with MergeIntoSQLMixin
   with DeltaDMLTestUtilsPathBased
   with CDCEnabled
@@ -1250,6 +1319,10 @@ class MergeIntoNestedStructEvolutionSQLPathBasedCDCOnDVsPredPushOnSuite
 
 class MergeIntoMaterializeSourceMergePersistentDVOffSuite
   extends MergeIntoMaterializeSourceTests
+  with MergePersistentDVDisabled
+
+class MergeIntoMaterializeSourceErrorMergePersistentDVOffSuite
+  extends MergeIntoMaterializeSourceErrorTests
   with MergePersistentDVDisabled
 
 class RowTrackingMergeCommonNameBasedSuite

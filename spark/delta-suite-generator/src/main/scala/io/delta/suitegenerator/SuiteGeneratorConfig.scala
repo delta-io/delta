@@ -159,7 +159,8 @@ object SuiteGeneratorConfig {
       "MergeIntoExtendedSyntaxTests",
       "MergeIntoSuiteBaseMiscTests",
       "MergeIntoNotMatchedBySourceSuite",
-      "MergeIntoNotMatchedBySourceWithCDCSuite",
+      "MergeIntoNotMatchedBySourceCDCPart1Tests",
+      "MergeIntoNotMatchedBySourceCDCPart2Tests",
       "MergeIntoSchemaEvolutionCoreTests",
       "MergeIntoSchemaEvolutionBaseTests",
       "MergeIntoSchemaEvolutionStoreAssignmentPolicyTests",
@@ -229,7 +230,7 @@ object SuiteGeneratorConfig {
           )
         ),
         TestConfig(
-          List("MergeIntoMaterializeSourceTests"),
+          List("MergeIntoMaterializeSourceTests", "MergeIntoMaterializeSourceErrorTests"),
           List(
             List(Dims.MERGE_PERSISTENT_DV_OFF)
           )
