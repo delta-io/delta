@@ -21,7 +21,7 @@ import scala.collection.immutable.Seq
 import io.delta.kernel.{Operation, Table, TableManager, Transaction, TransactionBuilder}
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.expressions.Column
-import io.delta.kernel.internal.TableImpl
+import io.delta.kernel.internal.{SnapshotImpl, TableImpl}
 import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.internal.util.Clock
 import io.delta.kernel.transaction.DataLayoutSpec
@@ -62,10 +62,11 @@ trait TransactionBuilderSupport {
       engine: Engine,
       tablePath: String,
       schema: StructType,
-      partitionColumns: Seq[String] = null,
-      clusteringColumns: Option[Seq[Column]] = None,
+      partCols: Seq[String] = null,
+      clusteringColsOpt: Option[Seq[Column]] = None,
       tableProperties: Map[String, String] = null,
-      withDomainMetadataSupported: Boolean = false): Transaction
+      withDomainMetadataSupported: Boolean = false,
+      maxRetries: Int = -1): Transaction
 }
 
 /** An implementation of [[TransactionBuilderSupport]] that uses the V1 transaction builder. */
@@ -152,7 +153,8 @@ trait TransactionBuilderV1Support extends TransactionBuilderSupport with TestUti
       partCols: Seq[String] = null,
       clusteringColsOpt: Option[Seq[Column]] = None,
       tableProperties: Map[String, String] = null,
-      withDomainMetadataSupported: Boolean = false): Transaction = {
+      withDomainMetadataSupported: Boolean = false,
+      maxRetries: Int = -1): Transaction = {
     var txnBuilder = Table.forPath(engine, tablePath).asInstanceOf[TableImpl]
       .createReplaceTableTransactionBuilder(engine, "test-engine")
       .withSchema(engine, schema)
@@ -167,6 +169,9 @@ trait TransactionBuilderV1Support extends TransactionBuilderSupport with TestUti
     }
     clusteringColsOpt.foreach { cols =>
       txnBuilder = txnBuilder.withClusteringColumns(engine, cols.asJava)
+    }
+    if (maxRetries >= 0) {
+      txnBuilder = txnBuilder.withMaxRetries(maxRetries)
     }
     txnBuilder.build(engine)
   }
@@ -251,6 +256,37 @@ trait TransactionBuilderV2Support extends TransactionBuilderSupport with TestUti
     txnBuilder.build(engine)
   }
 
+  override def getReplaceTxn(
+      engine: Engine,
+      tablePath: String,
+      schema: StructType,
+      partCols: Seq[String] = null,
+      clusteringColsOpt: Option[Seq[Column]] = None,
+      tableProperties: Map[String, String] = null,
+      withDomainMetadataSupported: Boolean = false,
+      maxRetries: Int = -1): Transaction = {
+    var txnBuilder = TableManager.loadSnapshot(tablePath)
+      .build(engine).asInstanceOf[SnapshotImpl]
+      .buildReplaceTableTransaction(schema, "test-engine")
+    if (partCols != null) {
+      txnBuilder = txnBuilder.withDataLayoutSpec(
+        DataLayoutSpec.partitioned(partCols.map(new Column(_)).asJava))
+    }
+    val completeTblProps =
+      tblPropertiesWithDomainMetadata(tableProperties, withDomainMetadataSupported)
+    if (completeTblProps != null) {
+      txnBuilder = txnBuilder.withTableProperties(completeTblProps.asJava)
+    }
+    if (clusteringColsOpt.nonEmpty) {
+      txnBuilder = txnBuilder.withDataLayoutSpec(
+        DataLayoutSpec.clustered(clusteringColsOpt.get.asJava))
+    }
+    if (maxRetries >= 0) {
+      txnBuilder = txnBuilder.withMaxRetries(maxRetries)
+    }
+    txnBuilder.build(engine)
+  }
+
   private def tblPropertiesWithDomainMetadata(
       tableProperties: Map[String, String],
       withDomainMetadataSupported: Boolean): Map[String, String] = {
@@ -265,16 +301,5 @@ trait TransactionBuilderV2Support extends TransactionBuilderSupport with TestUti
       }
       origTblProps ++ dmTblProps
     }
-  }
-
-  override def getReplaceTxn(
-      engine: Engine,
-      tablePath: String,
-      schema: StructType,
-      partCols: Seq[String] = null,
-      clusteringColsOpt: Option[Seq[Column]] = None,
-      tableProperties: Map[String, String] = null,
-      withDomainMetadataSupported: Boolean = false): Transaction = {
-    throw new UnsupportedOperationException("Not yet supported")
   }
 }
