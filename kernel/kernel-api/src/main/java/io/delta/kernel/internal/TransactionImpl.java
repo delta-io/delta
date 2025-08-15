@@ -15,7 +15,6 @@
  */
 package io.delta.kernel.internal;
 
-import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 import static io.delta.kernel.internal.TableConfig.*;
 import static io.delta.kernel.internal.actions.SingleAction.*;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
@@ -538,8 +537,8 @@ public class TransactionImpl implements Transaction {
               shouldUpdateProtocol ? Optional.of(protocol) : Optional.empty(),
               shouldUpdateMetadata ? Optional.of(metadata) : Optional.empty());
 
-      createDeltaLogAndStagedCommitsDirectoriesIfNeeded(
-          engine, commitAsVersion, commitMetadata.getCommitType());
+      DirectoryCreationUtils.createAllDeltaDirectoriesAsNeeded(
+          engine, logPath, commitAsVersion, commitMetadata.getReadProtocolOpt(), protocol);
 
       committer.commit(engine, dataAndMetadataActions, commitMetadata);
 
@@ -972,31 +971,5 @@ public class TransactionImpl implements Transaction {
         attempt,
         commitAsVersion,
         cfe);
-  }
-
-  private void createDeltaLogAndStagedCommitsDirectoriesIfNeeded(
-      Engine engine, long commitAsVersion, CommitMetadata.CommitType commitType)
-      throws IOException {
-    final boolean shouldCreateDeltaLogDir = commitAsVersion == 0;
-    final boolean shouldCreateStagedCommitsDir =
-        shouldCreateDeltaLogDir
-            || commitType == CommitMetadata.CommitType.FILESYSTEM_UPGRADE_TO_CATALOG;
-
-    if (shouldCreateDeltaLogDir) {
-      createDirectoryOrThrow(engine, logPath.toString());
-    }
-    if (shouldCreateStagedCommitsDir) {
-      createDirectoryOrThrow(
-          engine, new Path(logPath, FileNames.STAGED_COMMIT_DIRECTORY).toString());
-    }
-  }
-
-  private void createDirectoryOrThrow(Engine engine, String directoryPath) throws IOException {
-    if (!wrapEngineExceptionThrowsIO(
-        () -> engine.getFileSystemClient().mkdirs(directoryPath),
-        "Creating directories for path %s",
-        logPath)) {
-      throw new RuntimeException("Failed to create directory: " + directoryPath);
-    }
   }
 }
