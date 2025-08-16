@@ -362,6 +362,30 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
       ExpressionTransformResult rightResult = visit(getRight(predicate));
       Expression left = leftResult.expression;
       Expression right = rightResult.expression;
+
+      if (predicate instanceof CollatedPredicate) {
+        CollatedPredicate collatedPredicate = (CollatedPredicate) predicate;
+        if (!collatedPredicate.getCollationIdentifier().isSparkUTF8BinaryCollation()) {
+          String msg =
+              format(
+                  "Unsupported collation: \"%s\". Default Engine supports just"
+                      + " \"%s\" collation.",
+                  collatedPredicate.getCollationIdentifier(),
+                  CollationIdentifier.SPARK_UTF8_BINARY);
+          throw unsupportedExpressionException(predicate, msg);
+        }
+        for (DataType dataType : Arrays.asList(leftResult.outputType, rightResult.outputType)) {
+          checkIsStringType(
+              dataType,
+              predicate,
+              format(
+                  "`CollatedPredicate %s` expects STRING type inputs",
+                  collatedPredicate.getName()));
+        }
+        return new CollatedPredicate(
+            collatedPredicate.getName(), left, right, collatedPredicate.getCollationIdentifier());
+      }
+
       if (!leftResult.outputType.equivalent(rightResult.outputType)) {
         if (canCastTo(leftResult.outputType, rightResult.outputType)) {
           left = new ImplicitCastExpression(left, rightResult.outputType);
