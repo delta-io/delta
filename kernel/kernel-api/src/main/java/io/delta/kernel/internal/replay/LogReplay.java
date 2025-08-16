@@ -227,7 +227,8 @@ public class LogReplay {
             getAddRemoveReadSchema(shouldReadStats),
             getAddReadSchema(shouldReadStats),
             checkpointPredicate,
-            paginationContextOpt);
+            paginationContextOpt,
+            scanMetrics);
     return new ActiveAddFilesIterator(engine, addRemoveIter, dataPath, scanMetrics);
   }
 
@@ -324,7 +325,8 @@ public class LogReplay {
             engine,
             getLogReplayFiles(logSegment),
             PROTOCOL_METADATA_READ_SCHEMA,
-            Optional.empty())) {
+            Optional.empty(),
+            snapshotMetrics.scanMetrics)) {
       while (reverseIter.hasNext()) {
         final ActionWrapper nextElem = reverseIter.next();
         final long version = nextElem.getVersion();
@@ -410,7 +412,8 @@ public class LogReplay {
             engine,
             getLogReplayFiles(getLogSegment()),
             SET_TRANSACTION_READ_SCHEMA,
-            Optional.empty())) {
+            Optional.empty(),
+            snapshotMetrics.scanMetrics)) {
       while (reverseIter.hasNext()) {
         final ColumnarBatch columnarBatch = reverseIter.next().getColumnarBatch();
         assert (columnarBatch.getSchema().equals(SET_TRANSACTION_READ_SCHEMA));
@@ -514,7 +517,8 @@ public class LogReplay {
             engine,
             getLogReplayFiles(getLogSegment()),
             DOMAIN_METADATA_READ_SCHEMA,
-            Optional.empty() /* checkpointPredicate */)) {
+            Optional.empty() /* checkpointPredicate */,
+            snapshotMetrics.scanMetrics)) {
       Map<String, DomainMetadata> domainMetadataMap = new HashMap<>();
       while (reverseIter.hasNext()) {
         final ActionWrapper nextElem = reverseIter.next();
@@ -578,7 +582,12 @@ public class LogReplay {
         cachedLastSeenCrcInfo =
             getLogSegment()
                 .getLastSeenChecksum()
-                .flatMap(crcFile -> ChecksumReader.getCRCInfo(engine, crcFile));
+                .flatMap(
+                    crcFile -> {
+                      // Record metrics for the CRC file
+                      snapshotMetrics.scanMetrics.crcFilesCounter.increment(crcFile.getSize());
+                      return ChecksumReader.getCRCInfo(engine, crcFile);
+                    });
       }
       return cachedLastSeenCrcInfo;
     }
@@ -615,9 +624,12 @@ public class LogReplay {
                   checksum ->
                       FileNames.getFileVersion(new Path(checksum.getPath())) >= crcReadLowerBound)
               .flatMap(
-                  checksum ->
-                      snapshotMetrics.loadCrcTotalDurationTimer.time(
-                          () -> ChecksumReader.getCRCInfo(engine, checksum)));
+                  checksum -> {
+                    // Record metrics for the CRC file
+                    snapshotMetrics.scanMetrics.crcFilesCounter.increment(checksum.getSize());
+                    return snapshotMetrics.loadCrcTotalDurationTimer.time(
+                        () -> ChecksumReader.getCRCInfo(engine, checksum));
+                  });
 
       if (!crcInfoOpt.isPresent()) {
         return snapshotHint;

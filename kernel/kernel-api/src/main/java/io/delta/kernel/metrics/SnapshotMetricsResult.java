@@ -58,4 +58,7 @@ public interface SnapshotMetricsResult {
    *     construction fails before this step or if CRC is not read in loading snapshot.
    */
   long getLoadCrcTotalDurationNs();
+
+  /** @return the detailed metrics for constructing the snapshot. */
+  ScanMetricsResult getScanMetricsResult();
 }

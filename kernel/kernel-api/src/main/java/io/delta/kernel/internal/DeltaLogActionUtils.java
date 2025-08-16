@@ -30,6 +30,7 @@ import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.ListUtils;
+import io.delta.kernel.internal.metrics.ScanMetrics;
 import io.delta.kernel.internal.replay.ActionsIterator;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.FileNames.DeltaLogFileType;
@@ -140,9 +141,9 @@ public class DeltaLogActionUtils {
    * @return an iterator over the contents of the files in the same order as the provided files
    */
   public static CloseableIterator<ColumnarBatch> readCommitFiles(
-      Engine engine, List<FileStatus> commitFiles, StructType readSchema) {
+      Engine engine, List<FileStatus> commitFiles, StructType readSchema, ScanMetrics scanMetrics) {
 
-    return new ActionsIterator(engine, commitFiles, readSchema, Optional.empty())
+    return new ActionsIterator(engine, commitFiles, readSchema, Optional.empty(), scanMetrics)
         .map(
             actionWrapper -> {
               long timestamp =

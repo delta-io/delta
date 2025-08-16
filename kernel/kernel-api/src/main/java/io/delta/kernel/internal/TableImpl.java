@@ -28,6 +28,7 @@ import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.checkpoints.Checkpointer;
 import io.delta.kernel.internal.checksum.ChecksumUtils;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.metrics.ScanMetrics;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.snapshot.SnapshotManager;
@@ -141,7 +142,9 @@ public class TableImpl implements Table {
   public void checksum(Engine engine, long version) throws TableNotFoundException, IOException {
     final LogSegment logSegmentAtVersion =
         snapshotManager.getLogSegmentForVersion(engine, Optional.of(version));
-    ChecksumUtils.computeStateAndWriteChecksum(engine, logSegmentAtVersion);
+    ScanMetrics scanMetrics = new ScanMetrics();
+    ChecksumUtils.computeStateAndWriteChecksum(engine, logSegmentAtVersion, scanMetrics);
+    // TODO: Add a report for checksum
   }
 
   @Override
@@ -190,7 +193,8 @@ public class TableImpl implements Table {
       Engine engine,
       long startVersion,
       long endVersion,
-      Set<DeltaLogActionUtils.DeltaAction> actionSet) {
+      Set<DeltaLogActionUtils.DeltaAction> actionSet,
+      ScanMetrics scanMetrics) {
     // Create a new action set which is a super set of the requested actions.
     // The extra actions are needed either for checks or to extract
     // extra information. We will strip out the extra actions before
@@ -204,8 +208,7 @@ public class TableImpl implements Table {
         !actionSet.contains(DeltaLogActionUtils.DeltaAction.PROTOCOL);
     boolean shouldDropCommitInfoColumn =
         !actionSet.contains(DeltaLogActionUtils.DeltaAction.COMMITINFO);
-
-    return getRawChanges(engine, startVersion, endVersion, copySet)
+    return getRawChanges(engine, startVersion, endVersion, copySet, scanMetrics)
         .map(
             batch -> {
               int protocolIdx = batch.getSchema().indexOf("protocol"); // must exist
@@ -376,7 +379,8 @@ public class TableImpl implements Table {
       Engine engine,
       long startVersion,
       long endVersion,
-      Set<DeltaLogActionUtils.DeltaAction> actionSet) {
+      Set<DeltaLogActionUtils.DeltaAction> actionSet,
+      ScanMetrics scanMetrics) {
 
     logger.info(
         "{}: Getting the commit files for versions [{}, {}]", tablePath, startVersion, endVersion);
@@ -391,6 +395,6 @@ public class TableImpl implements Table {
                 .collect(Collectors.toList()));
 
     logger.info("{}: Reading the commit files with readSchema {}", tablePath, readSchema);
-    return DeltaLogActionUtils.readCommitFiles(engine, commitFiles, readSchema);
+    return DeltaLogActionUtils.readCommitFiles(engine, commitFiles, readSchema, scanMetrics);
   }
 }
