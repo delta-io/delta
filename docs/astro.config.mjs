@@ -11,9 +11,7 @@ export default defineConfig({
       entrypoint: "astro/assets/services/sharp",
     },
   },
-  adapter: netlify({
-    devFeatures: false,
-  }),
+  adapter: netlify(),
   redirects: {
     "/latest/api/*": "/api/latest/:splat",
     "/:version/api/*": "/api/:version/:splat",
