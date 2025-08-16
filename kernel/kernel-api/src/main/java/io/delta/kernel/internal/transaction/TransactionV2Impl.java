@@ -24,6 +24,7 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.commit.CommitContextImpl;
 import io.delta.kernel.internal.data.TransactionStateRow;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
+import io.delta.kernel.internal.transaction.domainmetadata.DomainMetadataManager;
 import io.delta.kernel.transaction.TransactionV2;
 import io.delta.kernel.utils.CloseableIterator;
 
@@ -31,9 +32,11 @@ import io.delta.kernel.utils.CloseableIterator;
 public class TransactionV2Impl implements TransactionV2 {
 
   private final TransactionV2State txnState;
+  private final DomainMetadataManager domainMetadataManager;
 
   public TransactionV2Impl(TransactionV2State txnState) {
     this.txnState = txnState;
+    this.domainMetadataManager = new DomainMetadataManager(txnState);
   }
 
   @Override
@@ -43,6 +46,16 @@ public class TransactionV2Impl implements TransactionV2 {
         txnState.getEffectiveMetadataForFirstCommitAttempt(),
         txnState.dataPath,
         0 /* maxRetries */);
+  }
+
+  @Override
+  public void addDomainMetadata(String domain, String config) {
+    domainMetadataManager.addDomainMetadata(domain, config);
+  }
+
+  @Override
+  public void removeDomainMetadata(String domain) {
+    domainMetadataManager.removeDomainMetadata(domain);
   }
 
   @Override
