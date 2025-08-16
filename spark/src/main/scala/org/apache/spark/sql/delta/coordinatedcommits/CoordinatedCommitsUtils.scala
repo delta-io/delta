@@ -57,7 +57,9 @@ object CatalogOwnedTableUtils extends DeltaLogging {
     }
     catalogTableOpt.map { catalogTable =>
       // Resolve commit coordinator name by contacting catalog.
-      val cc = getCommitCoordinator(spark, catalogTable.identifier).getOrElse {
+      val cc = getCommitCoordinator(
+          spark,
+          catalogTable.identifier).getOrElse {
         throw new IllegalStateException(
           "Couldn't locate commit coordinator for: " + catalogTable.identifier)
       }
@@ -109,7 +111,8 @@ object CatalogOwnedTableUtils extends DeltaLogging {
 
   // Directly returns the commit coordinator client for the given catalog table.
   def getCommitCoordinator(
-      spark: SparkSession, identifier: CatalystTableIdentifier): Option[CommitCoordinatorClient] = {
+      spark: SparkSession,
+      identifier: CatalystTableIdentifier): Option[CommitCoordinatorClient] = {
     identifier.nameParts match {
       case spark.sessionState.analyzer.CatalogAndIdentifier(catalog, _) =>
         CatalogOwnedCommitCoordinatorProvider.getBuilder(catalog.name)

@@ -33,6 +33,7 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.{SparkConf, SparkFunSuite}
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.{TableIdentifier => CatalystTableIdentifier}
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.test.SharedSparkSession
 
@@ -283,7 +284,10 @@ trait CatalogOwnedTestBaseSuite
     }
   }
 
-
+  protected def getDeltaLogWithSnapshot(
+      tableIdentifier: CatalystTableIdentifier): (DeltaLog, Snapshot) = {
+    DeltaLog.forTableWithSnapshot(spark, tableIdentifier)
+  }
 
   protected def isICTEnabledForNewTablesCatalogOwned: Boolean = {
     catalogOwnedCoordinatorBackfillBatchSize.nonEmpty ||
