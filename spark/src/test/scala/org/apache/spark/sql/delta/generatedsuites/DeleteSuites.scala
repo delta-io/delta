@@ -25,210 +25,209 @@
 // * DO NOT TOUCH ANYTHING IN THIS FILE!                                             *
 // ***********************************************************************************
 
+// scalastyle:off line.size.limit
 package org.apache.spark.sql.delta.generatedsuites
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.cdc._
 import org.apache.spark.sql.delta.rowid._
 
-class DeleteScalaTestsDeleteScalaSuite extends DeleteScalaTests with DeleteScalaMixin
-class DeleteBaseTestsDeleteScalaSuite extends DeleteBaseTests with DeleteScalaMixin
+class DeleteScalaScalaSuite extends DeleteScalaTests with DeleteScalaMixin
+class DeleteBaseScalaSuite extends DeleteBaseTests with DeleteScalaMixin
 
-class DeleteCDCTestsDeleteSQLDeltaDMLTestUtilsPathBasedCDCEnabledSuite
+class DeleteCDCSQLPathBasedCDCOnSuite
   extends DeleteCDCTests
   with DeleteSQLMixin
   with DeltaDMLTestUtilsPathBased
   with CDCEnabled
   with DeleteCDCMixin
 
-class DeleteSQLTestsDeleteSQLDeltaDMLTestUtilsNameBasedSuite
+class DeleteSQLSQLNameBasedSuite
   extends DeleteSQLTests
   with DeleteSQLMixin
   with DeltaDMLTestUtilsNameBased
 
-class DeleteSQLTestsDeleteSQLDeltaDMLTestUtilsPathBasedSuite
+class DeleteSQLSQLPathBasedSuite
   extends DeleteSQLTests
   with DeleteSQLMixin
   with DeltaDMLTestUtilsPathBased
 
-class DeleteSQLTestsDeleteSQLDeltaDMLTestUtilsPathBasedDeltaColumnMappingEnableIdModeSuite
+class DeleteSQLSQLPathBasedColMapIdModeSuite
   extends DeleteSQLTests
   with DeleteSQLMixin
   with DeltaDMLTestUtilsPathBased
   with DeltaColumnMappingEnableIdMode
 
-class DeleteSQLTestsDeleteSQLDeltaDMLTestUtilsPathBasedDeltaColumnMappingEnableNameModeSuite
+class DeleteSQLSQLPathBasedColMapNameModeSuite
   extends DeleteSQLTests
   with DeleteSQLMixin
   with DeltaDMLTestUtilsPathBased
   with DeltaColumnMappingEnableNameMode
   with DeleteSQLNameColumnMappingMixin
 
-class DeleteSQLTestsDeleteSQLDeltaDMLTestUtilsPathBasedDeleteSQLWithDeletionVectorsPrediSFURCIYSuite
+class DeleteSQLSQLPathBasedDVPredPushOffSuite
   extends DeleteSQLTests
   with DeleteSQLMixin
   with DeltaDMLTestUtilsPathBased
   with DeleteSQLWithDeletionVectorsMixin
   with PredicatePushdownDisabled
 
-class DeleteSQLTestsDeleteSQLDeltaDMLTestUtilsPathBasedDeleteSQLWithDeletionVectorsPrediNRMUHXQSuite
+class DeleteSQLSQLPathBasedDVPredPushOnSuite
   extends DeleteSQLTests
   with DeleteSQLMixin
   with DeltaDMLTestUtilsPathBased
   with DeleteSQLWithDeletionVectorsMixin
   with PredicatePushdownEnabled
 
-class DeleteSQLTestsDeleteSQLDeltaDMLTestUtilsPathBasedCDCEnabledSuite
+class DeleteSQLSQLPathBasedCDCOnSuite
   extends DeleteSQLTests
   with DeleteSQLMixin
   with DeltaDMLTestUtilsPathBased
   with CDCEnabled
   with DeleteCDCMixin
 
-class DeleteTempViewTestsDeleteSQLDeltaDMLTestUtilsNameBasedSuite
+class DeleteTempViewSQLNameBasedSuite
   extends DeleteTempViewTests
   with DeleteSQLMixin
   with DeltaDMLTestUtilsNameBased
 
-class DeleteTempViewTestsDeleteSQLDeltaDMLTestUtilsPathBasedSuite
+class DeleteTempViewSQLPathBasedSuite
   extends DeleteTempViewTests
   with DeleteSQLMixin
   with DeltaDMLTestUtilsPathBased
 
-class DeleteTempViewTestsDeleteSQLDeltaDMLTestUtilsPathBasedDeltaColumnMappingEnableIdModeSuite
+class DeleteTempViewSQLPathBasedColMapIdModeSuite
   extends DeleteTempViewTests
   with DeleteSQLMixin
   with DeltaDMLTestUtilsPathBased
   with DeltaColumnMappingEnableIdMode
 
-class DeleteTempViewTestsDeleteSQLDeltaDMLTestUtilsPathBasedDeltaColumnMappingEnableNameModeSuite
+class DeleteTempViewSQLPathBasedColMapNameModeSuite
   extends DeleteTempViewTests
   with DeleteSQLMixin
   with DeltaDMLTestUtilsPathBased
   with DeltaColumnMappingEnableNameMode
   with DeleteSQLNameColumnMappingMixin
 
-class DeleteTempViewTestsDeleteSQLDeltaDMLTestUtilsPathBasedDeleteSQLWithDeletionVectorsUF4SBZASuite
+class DeleteTempViewSQLPathBasedDVPredPushOffSuite
   extends DeleteTempViewTests
   with DeleteSQLMixin
   with DeltaDMLTestUtilsPathBased
   with DeleteSQLWithDeletionVectorsMixin
   with PredicatePushdownDisabled
 
-class DeleteTempViewTestsDeleteSQLDeltaDMLTestUtilsPathBasedDeleteSQLWithDeletionVectorsTHW2KHASuite
+class DeleteTempViewSQLPathBasedDVPredPushOnSuite
   extends DeleteTempViewTests
   with DeleteSQLMixin
   with DeltaDMLTestUtilsPathBased
   with DeleteSQLWithDeletionVectorsMixin
   with PredicatePushdownEnabled
 
-class DeleteTempViewTestsDeleteSQLDeltaDMLTestUtilsPathBasedCDCEnabledSuite
+class DeleteTempViewSQLPathBasedCDCOnSuite
   extends DeleteTempViewTests
   with DeleteSQLMixin
   with DeltaDMLTestUtilsPathBased
   with CDCEnabled
   with DeleteCDCMixin
 
-class DeleteBaseTestsDeleteSQLDeltaDMLTestUtilsNameBasedSuite
+class DeleteBaseSQLNameBasedSuite
   extends DeleteBaseTests
   with DeleteSQLMixin
   with DeltaDMLTestUtilsNameBased
 
-class DeleteBaseTestsDeleteSQLDeltaDMLTestUtilsPathBasedSuite
+class DeleteBaseSQLPathBasedSuite
   extends DeleteBaseTests
   with DeleteSQLMixin
   with DeltaDMLTestUtilsPathBased
 
-class DeleteBaseTestsDeleteSQLDeltaDMLTestUtilsPathBasedDeltaColumnMappingEnableIdModeSuite
+class DeleteBaseSQLPathBasedColMapIdModeSuite
   extends DeleteBaseTests
   with DeleteSQLMixin
   with DeltaDMLTestUtilsPathBased
   with DeltaColumnMappingEnableIdMode
 
-class DeleteBaseTestsDeleteSQLDeltaDMLTestUtilsPathBasedDeltaColumnMappingEnableNameModeSuite
+class DeleteBaseSQLPathBasedColMapNameModeSuite
   extends DeleteBaseTests
   with DeleteSQLMixin
   with DeltaDMLTestUtilsPathBased
   with DeltaColumnMappingEnableNameMode
   with DeleteSQLNameColumnMappingMixin
 
-class DeleteBaseTestsDeleteSQLDeltaDMLTestUtilsPathBasedDeleteSQLWithDeletionVectorsPredAPDVT7YSuite
+class DeleteBaseSQLPathBasedDVPredPushOffSuite
   extends DeleteBaseTests
   with DeleteSQLMixin
   with DeltaDMLTestUtilsPathBased
   with DeleteSQLWithDeletionVectorsMixin
   with PredicatePushdownDisabled
 
-class DeleteBaseTestsDeleteSQLDeltaDMLTestUtilsPathBasedDeleteSQLWithDeletionVectorsPredFAFSNSYSuite
+class DeleteBaseSQLPathBasedDVPredPushOnSuite
   extends DeleteBaseTests
   with DeleteSQLMixin
   with DeltaDMLTestUtilsPathBased
   with DeleteSQLWithDeletionVectorsMixin
   with PredicatePushdownEnabled
 
-class DeleteBaseTestsDeleteSQLDeltaDMLTestUtilsPathBasedCDCEnabledSuite
+class DeleteBaseSQLPathBasedCDCOnSuite
   extends DeleteBaseTests
   with DeleteSQLMixin
   with DeltaDMLTestUtilsPathBased
   with CDCEnabled
   with DeleteCDCMixin
 
-class RowTrackingDeleteSuiteBasePersistentDVDisabledSuite
+class RowTrackingDeleteSuiteBaseDVOffSuite
   extends RowTrackingDeleteSuiteBase
   with PersistentDVDisabled
 
-class RowTrackingDeleteSuiteBasePersistentDVEnabledSuite
+class RowTrackingDeleteSuiteBaseDVOnSuite
   extends RowTrackingDeleteSuiteBase
   with PersistentDVEnabled
 
-class RowTrackingDeleteSuiteBaseCDCEnabledPersistentDVDisabledSuite
+class RowTrackingDeleteSuiteBaseCDCOnDVOffSuite
   extends RowTrackingDeleteSuiteBase
   with CDCEnabled
   with PersistentDVDisabled
 
-class RowTrackingDeleteSuiteBaseCDCEnabledPersistentDVEnabledSuite
+class RowTrackingDeleteSuiteBaseCDCOnDVOnSuite
   extends RowTrackingDeleteSuiteBase
   with CDCEnabled
   with PersistentDVEnabled
 
-class RowTrackingDeleteSuiteBasePersistentDVDisabledDeltaColumnMappingEnableIdModeSuite
+class RowTrackingDeleteSuiteBaseDVOffColMapIdModeSuite
   extends RowTrackingDeleteSuiteBase
   with PersistentDVDisabled
   with DeltaColumnMappingEnableIdMode
 
-class RowTrackingDeleteSuiteBasePersistentDVDisabledDeltaColumnMappingEnableNameModeSuite
+class RowTrackingDeleteSuiteBaseDVOffColMapNameModeSuite
   extends RowTrackingDeleteSuiteBase
   with PersistentDVDisabled
   with DeltaColumnMappingEnableNameMode
 
-class RowTrackingDeleteSuiteBaseCDCEnabledPersistentDVEnabledDeltaColumnMappingEnableIdModeSuite
+class RowTrackingDeleteSuiteBaseCDCOnDVOnColMapIdModeSuite
   extends RowTrackingDeleteSuiteBase
   with CDCEnabled
   with PersistentDVEnabled
   with DeltaColumnMappingEnableIdMode
 
-class RowTrackingDeleteSuiteBaseCDCEnabledPersistentDVEnabledDeltaColumnMappingEnableNameModeSuite
+class RowTrackingDeleteSuiteBaseCDCOnDVOnColMapNameModeSuite
   extends RowTrackingDeleteSuiteBase
   with CDCEnabled
   with PersistentDVEnabled
   with DeltaColumnMappingEnableNameMode
 
-class RowTrackingDeleteDvBasePersistentDVEnabledSuite
-  extends RowTrackingDeleteDvBase
-  with PersistentDVEnabled
+class RowTrackingDeleteDvBaseDVOnSuite extends RowTrackingDeleteDvBase with PersistentDVEnabled
 
-class RowTrackingDeleteDvBaseCDCEnabledPersistentDVEnabledSuite
+class RowTrackingDeleteDvBaseCDCOnDVOnSuite
   extends RowTrackingDeleteDvBase
   with CDCEnabled
   with PersistentDVEnabled
 
-class RowTrackingDeleteDvBaseCDCEnabledPersistentDVEnabledDeltaColumnMappingEnableIdModeSuite
+class RowTrackingDeleteDvBaseCDCOnDVOnColMapIdModeSuite
   extends RowTrackingDeleteDvBase
   with CDCEnabled
   with PersistentDVEnabled
   with DeltaColumnMappingEnableIdMode
 
-class RowTrackingDeleteDvBaseCDCEnabledPersistentDVEnabledDeltaColumnMappingEnableNameModeSuite
+class RowTrackingDeleteDvBaseCDCOnDVOnColMapNameModeSuite
   extends RowTrackingDeleteDvBase
   with CDCEnabled
   with PersistentDVEnabled

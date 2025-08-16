@@ -256,16 +256,14 @@ class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseS
         table.getPath(engine).stripPrefix("file:"),
         Seq(11))
       table.checksum(engine, 11)
-      Table.forPath(engine, path).asInstanceOf[TableImpl]
-        .createReplaceTableTransactionBuilder(engine, "test")
-        .withDomainMetadataSupported()
-        .withClusteringColumns(engine, Seq(new Column("a")).asJava)
-        .withSchema(
-          engine,
-          new StructType().add(
-            "a",
-            StringType.STRING)).build(engine)
-        .commit(engine, emptyIterable[Row])
+      getReplaceTxn(
+        engine,
+        path,
+        new StructType().add(
+          "a",
+          StringType.STRING),
+        clusteringColsOpt = Some(Seq(new Column("a"))),
+        withDomainMetadataSupported = true).commit(engine, emptyIterable[Row])
       engine.resetMetrics()
       table.checksum(engine, 12)
       assertMetrics(

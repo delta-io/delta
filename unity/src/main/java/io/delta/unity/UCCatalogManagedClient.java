@@ -17,6 +17,7 @@
 package io.delta.unity;
 
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+import static io.delta.unity.utils.OperationTimer.timeOperation;
 
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.SnapshotBuilder;
@@ -32,7 +33,6 @@ import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorException;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.*;
-import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import org.apache.hadoop.fs.Path;
 import org.slf4j.Logger;
@@ -82,6 +82,7 @@ public class UCCatalogManagedClient {
         getSortedKernelLogDataFromRatifiedCommits(ucTableId, response.getCommits());
 
     return timeOperation(
+        logger,
         "TableManager.loadTable",
         ucTableId,
         () -> {
@@ -91,7 +92,10 @@ public class UCCatalogManagedClient {
             snapshotBuilder = snapshotBuilder.atVersion(versionOpt.get());
           }
 
-          return snapshotBuilder.withLogData(logData).build(engine);
+          return snapshotBuilder
+              .withCommitter(new UCCatalogManagedCommitter(ucClient, ucTableId, tablePath))
+              .withLogData(logData)
+              .build(engine);
         });
   }
 
@@ -108,6 +112,7 @@ public class UCCatalogManagedClient {
 
     final GetCommitsResponse response =
         timeOperation(
+            logger,
             "UCClient.getCommits",
             ucTableId,
             () -> {
@@ -166,6 +171,7 @@ public class UCCatalogManagedClient {
       String ucTableId, List<Commit> commits) {
     final List<ParsedLogData> result =
         timeOperation(
+            logger,
             "Sort and convert UC ratified commits into Kernel ParsedLogData",
             ucTableId,
             () ->
@@ -186,22 +192,5 @@ public class UCCatalogManagedClient {
       org.apache.hadoop.fs.FileStatus hadoopFS) {
     return io.delta.kernel.utils.FileStatus.of(
         hadoopFS.getPath().toString(), hadoopFS.getLen(), hadoopFS.getModificationTime());
-  }
-
-  /** Times an operation and logs the duration. */
-  private static <T> T timeOperation(
-      String operationName, String ucTableId, Supplier<T> operation) {
-    final long startTime = System.nanoTime();
-    try {
-      final T result = operation.get();
-      final long durationMs = (System.nanoTime() - startTime) / 1_000_000;
-      logger.info("[{}] {} completed in {} ms", ucTableId, operationName, durationMs);
-      return result;
-    } catch (Exception e) {
-      final long durationMs = (System.nanoTime() - startTime) / 1_000_000;
-      logger.warn(
-          "[{}] {} failed after {} ms: {}", ucTableId, operationName, durationMs, e.getMessage());
-      throw e;
-    }
   }
 }

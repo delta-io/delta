@@ -60,10 +60,9 @@ trait ChecksumComparisonSuiteBase extends AnyFunSuite with WriteUtils with TestU
       val sparkTablePath = tablePath + "spark"
       val kernelTablePath = tablePath + "kernel"
 
-      createTxn(
+      getCreateTxn(
         engine,
         kernelTablePath,
-        isNewTable = true,
         schema = new StructType().add("id", LONG),
         partCols = Seq.empty).commit(engine, emptyIterable())
         .getPostCommitHooks
@@ -84,10 +83,9 @@ trait ChecksumComparisonSuiteBase extends AnyFunSuite with WriteUtils with TestU
       val sparkTablePath = tablePath + "spark"
       val kernelTablePath = tablePath + "kernel"
 
-      createTxn(
+      getCreateTxn(
         engine,
         kernelTablePath,
-        isNewTable = true,
         schema = new StructType().add("id", LONG).add(PARTITION_COLUMN, LONG),
         partCols = Seq(PARTITION_COLUMN)).commit(engine, emptyIterable())
         .getPostCommitHooks
@@ -169,10 +167,7 @@ trait ChecksumComparisonSuiteBase extends AnyFunSuite with WriteUtils with TestU
       sparkTablePath: String,
       versionToConvert: Long): Unit = {
 
-    val txn = Table.forPath(engine, path)
-      .createTransactionBuilder(engine, "test-engine", Operation.WRITE)
-      .withLogCompactionInverval(0) // disable compaction
-      .build(engine)
+    val txn = getUpdateTxn(engine, path, logCompactionInterval = 0) // disable compaction
 
     val tableChange = Table.forPath(engine, sparkTablePath).asInstanceOf[TableImpl].getChanges(
       engine,

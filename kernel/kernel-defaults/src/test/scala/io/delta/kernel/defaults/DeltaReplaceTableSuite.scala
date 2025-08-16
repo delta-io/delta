@@ -18,302 +18,68 @@ package io.delta.kernel.defaults
 import scala.collection.JavaConverters._
 import scala.collection.immutable.Seq
 
-import io.delta.kernel.{Operation, Table, Transaction, TransactionBuilder, TransactionCommitResult}
-import io.delta.kernel.data.FilteredColumnarBatch
-import io.delta.kernel.defaults.utils.{TestRow, WriteUtils}
+import io.delta.kernel.{Operation, Table, TableManager}
+import io.delta.kernel.commit.{CommitMetadata, CommitResponse, Committer}
+import io.delta.kernel.data.Row
+import io.delta.kernel.defaults.utils.{TestRow, WriteUtils, WriteUtilsWithV2Builders}
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.exceptions.{ConcurrentTransactionException, ConcurrentWriteException, KernelException, MaxCommitRetryLimitReachedException, TableNotFoundException}
+import io.delta.kernel.exceptions.{KernelException, MaxCommitRetryLimitReachedException, TableNotFoundException}
 import io.delta.kernel.expressions.{Column, Literal}
-import io.delta.kernel.expressions.Literal.{ofInt, ofString}
 import io.delta.kernel.internal.{SnapshotImpl, TableConfig, TableImpl}
-import io.delta.kernel.internal.clustering.{ClusteringMetadataDomain, ClusteringUtils}
-import io.delta.kernel.internal.tablefeatures.{TableFeature, TableFeatures}
+import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.types.{IntegerType, StringType, StructType}
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
+import io.delta.kernel.utils.CloseableIterator
 
-import org.scalatest.funsuite.AnyFunSuite
+class DeltaReplaceTableTransactionBuilderV1Suite extends DeltaReplaceTableSuite with WriteUtils
 
-trait DeltaReplaceTableSuiteBase extends AnyFunSuite with WriteUtils {
+class DeltaReplaceTableTransactionBuilderV2Suite extends DeltaReplaceTableSuite
+    with WriteUtilsWithV2Builders {
 
-  /* -------- Test values to use -------- */
-
-  case class SchemaDef(
-      schema: StructType,
-      partitionColumns: Seq[String] = Seq.empty,
-      clusteringColumns: Option[List[Column]] = None) {
-    override def toString: String = {
-      s"Schema=$schema, partCols=$partitionColumns, " +
-        s"clusteringColumns=${clusteringColumns.map(_.toString).getOrElse(List.empty)}"
-    }
-  }
-
-  val schemaA = new StructType()
-    .add("col1", IntegerType.INTEGER)
-    .add("col2", IntegerType.INTEGER)
-
-  val schemaB = new StructType()
-    .add("col4", StringType.STRING)
-    .add("col5", StringType.STRING)
-
-  val unpartitionedSchemaDefA = SchemaDef(schemaA)
-  val unpartitionedSchemaDefB = SchemaDef(schemaB)
-  val unpartitionedSchemaDefA_dataBatches = generateData(schemaA, Seq.empty, Map.empty, 200, 3)
-  val unpartitionedSchemaDefB_dataBatches = generateData(schemaB, Seq.empty, Map.empty, 200, 3)
-
-  val partitionedSchemaDefA_1 = SchemaDef(schemaA, partitionColumns = Seq("col1"))
-  val partitionedSchemaDefA_2 = SchemaDef(schemaA, partitionColumns = Seq("col2"))
-  val partitionedSchemaDefA_1_dataBatches = generateData(
-    schemaA,
-    partitionedSchemaDefA_1.partitionColumns,
-    Map("col1" -> ofInt(1)),
-    batchSize = 237,
-    numBatches = 3)
-  val partitionedSchemaDefA_2_dataBatches = generateData(
-    schemaA,
-    partitionedSchemaDefA_2.partitionColumns,
-    Map("col2" -> ofInt(5)),
-    batchSize = 400,
-    numBatches = 1)
-
-  val partitionedSchemaDefB = SchemaDef(schemaB, partitionColumns = Seq("col4"))
-  val partitionedSchemaDefB_dataBatches = generateData(
-    schemaB,
-    partitionedSchemaDefB.partitionColumns,
-    Map("col4" -> ofString("foo")),
-    batchSize = 100,
-    numBatches = 1)
-
-  val clusteredSchemaDefA_1 = SchemaDef(
-    schemaA,
-    clusteringColumns = Some(List(new Column("col1"))))
-  val clusteredSchemaDefA_2 = SchemaDef(
-    schemaA,
-    clusteringColumns = Some(List(new Column("col2"))))
-  val clusteredSchemaDefA_1_dataBatches = generateData(
-    schemaA,
-    partitionCols = Seq.empty,
-    partitionValues = Map.empty,
-    batchSize = 237,
-    numBatches = 3)
-  val clusteredSchemaDefA_2_dataBatches = generateData(
-    schemaA,
-    partitionCols = Seq.empty,
-    partitionValues = Map.empty,
-    batchSize = 100,
-    numBatches = 3)
-
-  val clusteredSchemaDefB = SchemaDef(
-    schemaB,
-    clusteringColumns = Some(List(new Column("col4"))))
-  val clusteredSchemaDefB_dataBatches = generateData(
-    schemaB,
-    partitionCols = Seq.empty,
-    partitionValues = Map.empty,
-    batchSize = 2,
-    numBatches = 1)
-
-  val validSchemaDefs = Map(
-    unpartitionedSchemaDefA ->
-      Seq(Map.empty[String, Literal] -> unpartitionedSchemaDefA_dataBatches),
-    unpartitionedSchemaDefB ->
-      Seq(Map.empty[String, Literal] -> unpartitionedSchemaDefB_dataBatches),
-    partitionedSchemaDefA_1 ->
-      Seq(Map("col1" -> ofInt(1)) -> partitionedSchemaDefA_1_dataBatches),
-    partitionedSchemaDefA_2 ->
-      Seq(Map("col2" -> ofInt(5)) -> partitionedSchemaDefA_2_dataBatches),
-    partitionedSchemaDefB ->
-      Seq(Map("col4" -> ofString("foo")) -> partitionedSchemaDefB_dataBatches),
-    clusteredSchemaDefA_1 ->
-      Seq(Map.empty[String, Literal] -> clusteredSchemaDefA_1_dataBatches),
-    clusteredSchemaDefA_2 ->
-      Seq(Map.empty[String, Literal] -> clusteredSchemaDefA_2_dataBatches),
-    clusteredSchemaDefB ->
-      Seq(Map.empty[String, Literal] -> clusteredSchemaDefB_dataBatches))
-
-  /* -------- Test methods -------- */
-
-  protected def createInitialTable(
-      engine: Engine,
-      tablePath: String,
-      schema: StructType = testSchema,
-      partitionColumns: Seq[String] = Seq.empty,
-      clusteringColumns: Option[List[Column]] = None,
-      tableProperties: Map[String, String] = null,
-      includeData: Boolean = true,
-      data: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])] =
-        Seq(Map.empty[String, Literal] -> (dataBatches1))): Unit = {
-    val dataToWrite = if (includeData) {
-      data
-    } else {
-      Seq.empty
-    }
-
-    appendData(
-      engine,
-      tablePath,
-      isNewTable = true,
-      schema,
-      partCols = partitionColumns,
-      clusteringColsOpt = clusteringColumns,
-      tableProperties = tableProperties,
-      data = dataToWrite)
-    checkTable(tablePath, dataToWrite.flatMap(_._2).flatMap(_.toTestRows))
-  }
-
-  protected def getReplaceTxnBuilder(engine: Engine, tablePath: String): TransactionBuilder = {
-    Table.forPath(engine, tablePath).asInstanceOf[TableImpl]
-      .createReplaceTableTransactionBuilder(engine, testEngineInfo)
-  }
-
-  protected def getReplaceTransaction(
-      engine: Engine,
-      tablePath: String,
-      schema: StructType = testSchema,
-      partitionColumns: Seq[String] = Seq.empty,
-      clusteringColumns: Option[Seq[Column]] = None,
-      transactionId: Option[(String, Long)] = None,
-      tableProperties: Map[String, String] = Map.empty,
-      domainsToAdd: Seq[(String, String)] = Seq.empty): Transaction = {
-    var txnBuilder = getReplaceTxnBuilder(engine, tablePath)
-      .withSchema(engine, schema)
-      .withPartitionColumns(engine, partitionColumns.asJava)
-      .withTableProperties(engine, tableProperties.asJava)
-
-    clusteringColumns.foreach { cols =>
-      txnBuilder = txnBuilder.withClusteringColumns(engine, cols.asJava)
-    }
-
-    transactionId.foreach { case (id, version) =>
-      txnBuilder = txnBuilder.withTransactionId(engine, id, version)
-    }
-
-    if (domainsToAdd.nonEmpty) {
-      txnBuilder = txnBuilder.withDomainMetadataSupported()
-    }
-
-    val txn = txnBuilder.build(engine)
-    domainsToAdd.foreach { case (domainName, config) =>
-      txn.addDomainMetadata(domainName, config)
-    }
-    txn
-  }
-
-  protected def commitReplaceTable(
-      engine: Engine,
-      tablePath: String,
-      schema: StructType = testSchema,
-      partitionColumns: Seq[String] = Seq.empty,
-      clusteringColumns: Option[Seq[Column]] = None,
-      transactionId: Option[(String, Long)] = None,
-      tableProperties: Map[String, String] = Map.empty,
-      domainsToAdd: Seq[(String, String)] = Seq.empty,
-      data: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])] = Seq.empty)
-      : TransactionCommitResult = {
-
-    val txn = getReplaceTransaction(
-      engine,
-      tablePath,
-      schema,
-      partitionColumns,
-      clusteringColumns,
-      transactionId,
-      tableProperties,
-      domainsToAdd)
-
-    commitTransaction(txn, engine, getAppendActions(txn, data))
-  }
-
-  // scalastyle:off argcount
-  protected def checkReplaceTable(
-      engine: Engine,
-      tablePath: String,
-      schema: StructType = testSchema,
-      partitionColumns: Seq[String] = Seq.empty,
-      clusteringColumns: Option[Seq[Column]] = None,
-      transactionId: Option[(String, Long)] = None,
-      tableProperties: Map[String, String] = Map.empty,
-      domainsToAdd: Seq[(String, String)] = Seq.empty,
-      data: Seq[(Map[String, Literal], Seq[FilteredColumnarBatch])] = Seq.empty,
-      expectedTableProperties: Option[Map[String, String]] = None,
-      expectedTableFeaturesSupported: Seq[TableFeature] = Seq.empty): Unit = {
-    // scalastyle:on argcount
-    val oldProtocol = getProtocol(engine, tablePath)
-    val wasClusteredTable = oldProtocol.supportsFeature(TableFeatures.CLUSTERING_W_FEATURE)
-
-    val commitResult = commitReplaceTable(
-      engine,
-      tablePath,
-      schema,
-      partitionColumns,
-      clusteringColumns,
-      transactionId,
-      tableProperties,
-      domainsToAdd,
-      data)
-    assertCommitResultHasClusteringCols(commitResult, clusteringColumns.getOrElse(Seq.empty))
-
-    verifyWrittenContent(
-      tablePath,
-      schema,
-      data.flatMap(_._2).flatMap(_.toTestRows))
-
-    val snapshot = latestSnapshot(tablePath).asInstanceOf[SnapshotImpl]
-    assert(snapshot.getPartitionColumnNames.asScala == partitionColumns)
-
-    clusteringColumns match {
-      case Some(clusteringCols) =>
-        // Check clustering table feature is supported
-        assertHasWriterFeature(snapshot, "clustering")
-        assertHasWriterFeature(snapshot, "domainMetadata")
-        // Validate clustering columns are correct
-        // TODO when we support column mapping we will need to convert to physical-name here
-        assert(snapshot.getPhysicalClusteringColumns.toScala
-          .exists(_.asScala == clusteringCols))
-      case None =>
-        if (wasClusteredTable) {
-          // If the table was previously clustered we expect the table feature to remain and for
-          // there to be a clustering domain metadata with clusteringColumns=[]
-          assertHasWriterFeature(snapshot, "clustering")
-          assert(snapshot.getPhysicalClusteringColumns.toScala
-            .exists(_.isEmpty))
-        } else {
-          // Otherwise there should be no table feature and no clustering domain metadata
-          assertHasNoWriterFeature(snapshot, "clustering")
-          assert(!ClusteringMetadataDomain.fromSnapshot(snapshot).isPresent)
+  test("ReplaceTableTransactionBuilder uses the committer provided during snapshot building") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      class FakeCommitter extends Committer {
+        override def commit(
+            engine: Engine,
+            finalizedActions: CloseableIterator[Row],
+            commitMetadata: CommitMetadata): CommitResponse = {
+          throw new RuntimeException("This is a fake committer")
         }
+      }
+      createEmptyTable(
+        engine,
+        tablePath,
+        testSchema)
+
+      // Build snapshot with committer and start txn
+      val txn = TableManager.loadSnapshot(tablePath)
+        .withCommitter(new FakeCommitter())
+        .build(engine).asInstanceOf[SnapshotImpl]
+        .buildReplaceTableTransaction(testSchema, "test-engine")
+        .build(engine)
+
+      // Check the txn returns the correct committer
+      assert(txn.getCommitter.isInstanceOf[FakeCommitter])
+      // Check that the txn invokes the provided committer upon commit
+      val e = intercept[RuntimeException] {
+        txn.commit(engine, emptyIterable())
+      }
+      assert(e.getMessage.contains("This is a fake committer"))
     }
-
-    assert(snapshot.getMetadata.getConfiguration.asScala ==
-      expectedTableProperties.getOrElse(tableProperties))
-
-    val nonClusteringActiveDomains = snapshot.getActiveDomainMetadataMap.asScala
-      .filter { case (domainName, _) =>
-        domainName != ClusteringMetadataDomain.DOMAIN_NAME
-      }.map { case (domainName, domainMetadata) => (domainName, domainMetadata.getConfiguration) }
-    assert(nonClusteringActiveDomains.toSet == domainsToAdd.toSet)
-
-    val newProtocol = getProtocol(engine, tablePath)
-    // Check that we never downgrade the protocol
-    assert(oldProtocol.canUpgradeTo(newProtocol))
-    assert(expectedTableFeaturesSupported.forall(newProtocol.supportsFeature))
-
-    val row = spark.sql(s"DESCRIBE HISTORY delta.`$tablePath`")
-      .filter(s"version = ${snapshot.getVersion}")
-      .select("operation")
-      .collect().last
-    assert(row.getAs[String]("operation") == "REPLACE TABLE")
   }
 }
 
-class DeltaReplaceTableSuite extends DeltaReplaceTableSuiteBase {
+abstract class DeltaReplaceTableSuite extends DeltaReplaceTableSuiteBase {
 
   /* ----- ERROR CASES ------ */
 
   test("Conflict resolution is disabled for replace table") {
     withTempDirAndEngine { (tablePath, engine) =>
       createInitialTable(engine, tablePath)
-      // Start replace transaction
-      val txn = getReplaceTransaction(engine, tablePath)
+      // Start replace transaction - use default maxRetries
+      val txn1 = getReplaceTxn(engine, tablePath, testSchema)
+      // Start replace transaction - explicitly set maxRetries > 0
+      val txn2 = getReplaceTxn(engine, tablePath, testSchema, maxRetries = 100)
       // Commit a simple blind append as a conflicting txn
       appendData(
         engine,
@@ -321,7 +87,10 @@ class DeltaReplaceTableSuite extends DeltaReplaceTableSuiteBase {
         data = Seq(Map.empty[String, Literal] -> (dataBatches2)))
       // Try to commit replace table and intercept conflicting txn (no conflict resolution)
       intercept[MaxCommitRetryLimitReachedException] {
-        commitTransaction(txn, engine, emptyIterable())
+        commitTransaction(txn1, engine, emptyIterable())
+      }
+      intercept[MaxCommitRetryLimitReachedException] {
+        commitTransaction(txn2, engine, emptyIterable())
       }
     }
   }
@@ -341,7 +110,11 @@ class DeltaReplaceTableSuite extends DeltaReplaceTableSuiteBase {
     withTempDirAndEngine { (tablePath, engine) =>
       assert(
         intercept[TableNotFoundException] {
-          commitReplaceTable(engine, tablePath)
+          // This is not possible on an API level for V2 builders since building is from a Snapshot
+          Table.forPath(engine, tablePath).asInstanceOf[TableImpl]
+            .createReplaceTableTransactionBuilder(engine, "test-engine")
+            .withSchema(engine, testSchema)
+            .build(engine)
         }.getMessage.contains("Trying to replace a table that does not exist"))
     }
   }
@@ -356,22 +129,6 @@ class DeltaReplaceTableSuite extends DeltaReplaceTableSuiteBase {
             tablePath,
             tableProperties = Map(TableConfig.CHANGE_DATA_FEED_ENABLED.getKey -> "true"))
         }.getMessage.contains("Unsupported Delta writer feature"))
-    }
-  }
-
-  test("Transaction identifier is used to preserve idempotent writes") {
-    withTempDirAndEngine { (tablePath, engine) =>
-      createInitialTable(engine, tablePath)
-      commitReplaceTable(
-        engine,
-        tablePath,
-        transactionId = Some(("foo", 0)))
-      intercept[ConcurrentTransactionException] {
-        commitReplaceTable(
-          engine,
-          tablePath,
-          transactionId = Some(("foo", 0)))
-      }
     }
   }
 
@@ -395,7 +152,8 @@ class DeltaReplaceTableSuite extends DeltaReplaceTableSuiteBase {
     withTempDirAndEngine { (tablePath, engine) =>
       createInitialTable(engine, tablePath)
       assert(intercept[KernelException] {
-        getReplaceTxnBuilder(engine, tablePath)
+        Table.forPath(engine, tablePath).asInstanceOf[TableImpl]
+          .createReplaceTableTransactionBuilder(engine, "test-engine")
           .build(engine)
       }.getMessage.contains("Must provide a new schema for REPLACE TABLE"))
     }
@@ -405,12 +163,13 @@ class DeltaReplaceTableSuite extends DeltaReplaceTableSuiteBase {
     withTempDirAndEngine { (tablePath, engine) =>
       createInitialTable(engine, tablePath)
       assert(intercept[IllegalArgumentException] {
-        getReplaceTransaction(
-          engine,
-          tablePath,
-          schema = testPartitionSchema,
-          partitionColumns = testPartitionColumns,
-          clusteringColumns = Some(testClusteringColumns))
+        // Setting both is not possible on an API level for v2 builders
+        Table.forPath(engine, tablePath).asInstanceOf[TableImpl]
+          .createReplaceTableTransactionBuilder(engine, "test-engine")
+          .withSchema(engine, testPartitionSchema)
+          .withPartitionColumns(engine, testPartitionColumns.asJava)
+          .withClusteringColumns(engine, testClusteringColumns.asJava)
+          .build(engine)
       }.getMessage.contains(
         "Partition Columns and Clustering Columns cannot be set at the same time"))
     }
@@ -420,7 +179,7 @@ class DeltaReplaceTableSuite extends DeltaReplaceTableSuiteBase {
     withTempDirAndEngine { (tablePath, engine) =>
       createInitialTable(engine, tablePath)
       assert(intercept[KernelException] {
-        getReplaceTransaction(
+        getReplaceTxn(
           engine,
           tablePath,
           schema = new StructType().add("col", IntegerType.INTEGER).add("col", IntegerType.INTEGER))
@@ -433,10 +192,11 @@ class DeltaReplaceTableSuite extends DeltaReplaceTableSuiteBase {
     withTempDirAndEngine { (tablePath, engine) =>
       createInitialTable(engine, tablePath)
       assert(intercept[IllegalArgumentException] {
-        getReplaceTransaction(
+        getReplaceTxn(
           engine,
           tablePath,
-          partitionColumns = Seq("foo"))
+          schema = testSchema,
+          partCols = Seq("foo"))
       }.getMessage.contains(
         "Partition column foo not found in the schema"))
     }
@@ -446,10 +206,11 @@ class DeltaReplaceTableSuite extends DeltaReplaceTableSuiteBase {
     withTempDirAndEngine { (tablePath, engine) =>
       createInitialTable(engine, tablePath)
       assert(intercept[KernelException] {
-        getReplaceTransaction(
+        getReplaceTxn(
           engine,
           tablePath,
-          clusteringColumns = Some(Seq(new Column("foo"))))
+          schema = testSchema,
+          clusteringColsOpt = Some(Seq(new Column("foo"))))
       }.getMessage.contains(
         "Column 'column(`foo`)' was not found in the table schema"))
     }
@@ -651,11 +412,7 @@ class DeltaReplaceTableSuite extends DeltaReplaceTableSuiteBase {
     // (2) checks we remove stale ones that are not set in the replace txn
     withTempDirAndEngine { (tablePath, engine) =>
       // Create initial table with 2 domains
-      val txn = Table.forPath(engine, tablePath).asInstanceOf[TableImpl]
-        .createTransactionBuilder(engine, "test-info", Operation.CREATE_TABLE)
-        .withSchema(engine, testSchema)
-        .withDomainMetadataSupported()
-        .build(engine)
+      val txn = getCreateTxn(engine, tablePath, testSchema, withDomainMetadataSupported = true)
       txn.addDomainMetadata("domainToOverride", "check1")
       txn.addDomainMetadata("domainToRemove", "check2")
       commitTransaction(txn, engine, emptyIterable())

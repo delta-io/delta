@@ -319,7 +319,7 @@ class RowTrackingSuite extends AnyFunSuite with WriteUtils with ParquetSuiteBase
         Optional.empty() // No stats
       )
       val action = SingleAction.createAddFileSingleAction(addFileRow)
-      val txn = createTxn(engine, tablePath, isNewTable = false)
+      val txn = getUpdateTxn(engine, tablePath)
 
       // KernelException thrown inside a lambda is wrapped in a RuntimeException
       val e = intercept[RuntimeException] {
@@ -590,7 +590,7 @@ class RowTrackingSuite extends AnyFunSuite with WriteUtils with ParquetSuiteBase
     verifyRowTrackingStates()
 
     // Create txn1 but don't commit it yet
-    val txn1 = createTxn(engine, tablePath)
+    val txn1 = getUpdateTxn(engine, tablePath)
 
     // Create and commit txn2
     if (dataSizeTxn2 > 0) {
@@ -605,7 +605,7 @@ class RowTrackingSuite extends AnyFunSuite with WriteUtils with ParquetSuiteBase
       expectedDefaultRowCommitVersion = expectedDefaultRowCommitVersion ++ Seq(v)
       expectedHighWatermark = initDataSize + dataSizeTxn2 - 1
     } else {
-      createTxn(engine, tablePath).commit(engine, emptyIterable())
+      getUpdateTxn(engine, tablePath).commit(engine, emptyIterable())
     }
     verifyRowTrackingStates()
 
@@ -622,7 +622,7 @@ class RowTrackingSuite extends AnyFunSuite with WriteUtils with ParquetSuiteBase
       expectedDefaultRowCommitVersion = expectedDefaultRowCommitVersion ++ Seq(v)
       expectedHighWatermark = initDataSize + dataSizeTxn2 + dataSizeTxn3 - 1
     } else {
-      createTxn(engine, tablePath).commit(engine, emptyIterable())
+      getUpdateTxn(engine, tablePath).commit(engine, emptyIterable())
     }
     verifyRowTrackingStates()
 
@@ -740,10 +740,9 @@ class RowTrackingSuite extends AnyFunSuite with WriteUtils with ParquetSuiteBase
 
   test("row tracking can be enabled/disabled on new table") {
     withTempDirAndEngine { (tablePath, engine) =>
-      createTxn(
+      getCreateTxn(
         engine,
         tablePath,
-        isNewTable = true,
         schema = testSchema,
         tableProperties = ROW_TRACKING_ENABLED_PROP).commit(engine, emptyIterable())
       val snapshot =
@@ -752,10 +751,9 @@ class RowTrackingSuite extends AnyFunSuite with WriteUtils with ParquetSuiteBase
     }
 
     withTempDirAndEngine { (tablePath, engine) =>
-      createTxn(
+      getCreateTxn(
         engine,
         tablePath,
-        isNewTable = true,
         schema = testSchema,
         tableProperties = ROW_TRACKING_DISABLED_PROP).commit(engine, emptyIterable())
       val snapshot =
@@ -767,19 +765,19 @@ class RowTrackingSuite extends AnyFunSuite with WriteUtils with ParquetSuiteBase
   test("row tracking cannot be enabled on existing table") {
     withTempDirAndEngine { (tablePath, engine) =>
       // Create a new table with row tracking disabled (it is disabled by default)
-      createTxn(engine, tablePath, isNewTable = true, testSchema, tableProperties = Map.empty)
+      getCreateTxn(engine, tablePath, testSchema, tableProperties = Map.empty)
         .commit(engine, emptyIterable())
 
       // Fail if try to enable row tracking on an existing table
       val e = intercept[KernelException] {
-        createTxn(engine, tablePath, tableProperties = ROW_TRACKING_ENABLED_PROP)
+        getUpdateTxn(engine, tablePath, tableProperties = ROW_TRACKING_ENABLED_PROP)
           .commit(engine, emptyIterable())
       }
       assert(
         e.getMessage.contains("Row tracking support cannot be changed once the table is created"))
 
       // It's okay to continue setting it disabled on an existing table; it will be a no-op
-      createTxn(engine, tablePath, tableProperties = ROW_TRACKING_DISABLED_PROP)
+      getUpdateTxn(engine, tablePath, tableProperties = ROW_TRACKING_DISABLED_PROP)
         .commit(engine, emptyIterable())
     }
   }
@@ -791,14 +789,14 @@ class RowTrackingSuite extends AnyFunSuite with WriteUtils with ParquetSuiteBase
 
       // Fail if try to disable row tracking on an existing table
       val e = intercept[KernelException] {
-        createTxn(engine, tablePath, tableProperties = ROW_TRACKING_DISABLED_PROP)
+        getUpdateTxn(engine, tablePath, tableProperties = ROW_TRACKING_DISABLED_PROP)
           .commit(engine, emptyIterable())
       }
       assert(
         e.getMessage.contains("Row tracking support cannot be changed once the table is created"))
 
       // It's okay to continue setting it enabled on an existing table; it will be a no-op
-      createTxn(engine, tablePath, tableProperties = ROW_TRACKING_ENABLED_PROP)
+      getUpdateTxn(engine, tablePath, tableProperties = ROW_TRACKING_ENABLED_PROP)
         .commit(engine, emptyIterable())
     }
   }
@@ -836,8 +834,7 @@ class RowTrackingSuite extends AnyFunSuite with WriteUtils with ParquetSuiteBase
 
               val newSchema = testSchema.add(colName, LongType.LONG)
               val e = intercept[KernelException] {
-                createTxn(engine, tablePath, schema = newSchema)
-                  .commit(engine, emptyIterable())
+                updateTableMetadata(engine, tablePath, schema = newSchema)
               }
 
               if (mode == "none") {
@@ -876,7 +873,7 @@ class RowTrackingSuite extends AnyFunSuite with WriteUtils with ParquetSuiteBase
         val propName = rowTrackingColumn.getMaterializedColumnNameProperty
         val customTableProps = Map(propName -> "custom_name")
         val e = intercept[KernelException] {
-          createTxn(engine, tablePath, tableProperties = customTableProps)
+          getUpdateTxn(engine, tablePath, tableProperties = customTableProps)
             .commit(engine, emptyIterable())
         }
         assert(e.getMessage.contains(
@@ -904,7 +901,7 @@ class RowTrackingSuite extends AnyFunSuite with WriteUtils with ParquetSuiteBase
         originalMetadata.withReplacedConfiguration(configWithoutMaterializedCols.asJava)
 
       // Manually commit this problematic metadata
-      val txn = createTxn(engine, tablePath)
+      val txn = getUpdateTxn(engine, tablePath)
       val metadataAction = SingleAction.createMetadataSingleAction(newMetadata.toRow)
       commitTransaction(
         txn,
@@ -981,11 +978,11 @@ class RowTrackingSuite extends AnyFunSuite with WriteUtils with ParquetSuiteBase
         // Create a REPLACE transaction and commit
         val replaceTableProps =
           Map(TableConfig.ROW_TRACKING_ENABLED.getKey -> enableAfter.toString)
-        val txnBuilder = Table.forPath(engine, tablePath).asInstanceOf[TableImpl]
-          .createReplaceTableTransactionBuilder(engine, testEngineInfo)
-          .withSchema(engine, testSchema)
-          .withTableProperties(engine, replaceTableProps.asJava)
-        val txn = txnBuilder.build(engine)
+        val txn = getReplaceTxn(
+          engine,
+          tablePath,
+          testSchema,
+          tableProperties = replaceTableProps)
 
         commitTransaction(txn, engine, getAppendActions(txn, replaceData))
 
