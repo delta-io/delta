@@ -9,6 +9,13 @@
           # These Scala versions must match those in the build.sbt
           scala: [2.13.13, 2.12.18]
       steps:
+      - uses: technote-space/get-diff-action@v4
+        id: git-diff
+        with:
+          PATTERNS: |
+            **
+            .github/workflows/**
+            !docs/**
         - name: install java
           uses: actions/setup-java@v3
           with:
@@ -17,3 +24,4 @@
         - uses: actions/checkout@v3
         - name: generate unidoc
           run: build/sbt "++ ${{ matrix.scala }}" unidoc
+          if: steps.git-diff.outputs.diff
