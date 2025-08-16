@@ -39,7 +39,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Client for interacting with Unity Catalog (UC) catalog-managed Delta tables.
+ * Client 12345 for interacting with Unity Catalog (UC) catalog-managed Delta tables.
  *
  * @see UCClient
  * @see Snapshot
