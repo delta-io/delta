@@ -50,8 +50,6 @@ def main():
     spark_scaladoc_final_dir = all_scaladocs_final_dir + "/spark"
     spark_pythondoc_final_dir = all_pythondocs_final_dir + "/spark"
 
-    standalone_javadoc_final_dir = all_javadocs_final_dir + "/standalone"
-    flink_javadoc_final_dir = all_javadocs_final_dir + "/flink"
     kernel_javadoc_final_dir = all_javadocs_final_dir + "/kernel"
 
 
@@ -69,8 +67,6 @@ def main():
     jquery_path = spark_scaladoc_gen_dir + "/lib/jquery.min.js" # grab the JQuery library from Scaladocs
     all_javadoc_gen_dirs = [
         spark_javadoc_gen_dir,
-        standalone_javadoc_gen_dir,
-        flink_javadoc_gen_dir,
         kernel_javadoc_gen_dir,
     ]
     for javadoc_gen_dir in all_javadoc_gen_dirs:
@@ -87,8 +83,6 @@ def main():
         (spark_javadoc_gen_dir, spark_javadoc_final_dir),
         (spark_scaladoc_gen_dir, spark_scaladoc_final_dir),
         (spark_pythondoc_gen_dir, spark_pythondoc_final_dir),
-        (flink_javadoc_gen_dir, flink_javadoc_final_dir),
-        (standalone_javadoc_gen_dir, standalone_javadoc_final_dir),
         (kernel_javadoc_gen_dir, kernel_javadoc_final_dir),
     ]
 
