@@ -111,6 +111,7 @@ trait ChecksumComparisonSuiteBase extends AnyFunSuite with WriteUtils with TestU
         metadata.getName,
         metadata.getDescription,
         metadata.getFormat,
+        metadata.getSchemaString,
         metadata.getSchema,
         metadata.getPartitionColumns,
         Optional.empty(),

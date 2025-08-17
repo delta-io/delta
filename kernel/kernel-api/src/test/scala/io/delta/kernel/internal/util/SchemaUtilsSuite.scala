@@ -1202,6 +1202,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
       Optional.empty(), /* name */
       Optional.empty(), /* description */
       new Format(),
+      DataTypeJsonSerDe.serializeDataType(schema),
       schema,
       VectorUtils.buildArrayValue(util.Arrays.asList(), StringType.STRING), // partitionColumns
       Optional.empty(), // createdTime
