@@ -158,6 +158,7 @@ class ChecksumWriterSuite extends AnyFunSuite with MockEngineUtils {
       Optional.of("name"),
       Optional.of("description"),
       new Format("parquet", Collections.emptyMap()),
+      DataTypeJsonSerDe.serializeDataType(new StructType()),
       new StructType(),
       buildArrayValue(util.Arrays.asList("c3"), StringType.STRING),
       Optional.of(123),

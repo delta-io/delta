@@ -1016,6 +1016,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
       Optional.empty(),
       Optional.empty(),
       new Format(),
+      testSchema.toJson,
       testSchema,
       buildArrayValue(java.util.Arrays.asList("c3"), StringType.STRING),
       Optional.of(123),

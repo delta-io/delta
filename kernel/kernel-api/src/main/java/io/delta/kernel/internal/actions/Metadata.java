@@ -54,6 +54,7 @@ public class Metadata {
         Optional.ofNullable(
             vector.getChild(2).isNullAt(rowId) ? null : vector.getChild(2).getString(rowId)),
         Format.fromColumnVector(requireNonNull(vector.getChild(3), rowId, "format"), rowId),
+        schemaJson,
         schema,
         vector.getChild(5).getArray(rowId),
         Optional.ofNullable(
@@ -82,6 +83,7 @@ public class Metadata {
   private final Optional<String> name;
   private final Optional<String> description;
   private final Format format;
+  private final String schemaString;
   private final StructType schema;
   private final ArrayValue partitionColumns;
   private final Optional<Long> createdTime;
@@ -97,6 +99,7 @@ public class Metadata {
       Optional<String> name,
       Optional<String> description,
       Format format,
+      String schemaString,
       StructType schema,
       ArrayValue partitionColumns,
       Optional<Long> createdTime,
@@ -105,7 +108,8 @@ public class Metadata {
     this.name = name;
     this.description = requireNonNull(description, "description is null");
     this.format = requireNonNull(format, "format is null");
-    this.schema = requireNonNull(schema, "schema is null");
+    this.schemaString = requireNonNull(schemaString, "schemaString is null");
+    this.schema = schema;
     this.partitionColumns = requireNonNull(partitionColumns, "partitionColumns is null");
     this.createdTime = createdTime;
     this.configurationMapValue = requireNonNull(configurationMapValue, "configuration is null");
@@ -156,6 +160,7 @@ public class Metadata {
         this.name,
         this.description,
         this.format,
+        this.schemaString,
         this.schema,
         this.partitionColumns,
         this.createdTime,
@@ -168,6 +173,7 @@ public class Metadata {
         this.name,
         this.description,
         this.format,
+        schema.toJson(),
         schema,
         this.partitionColumns,
         this.createdTime,
@@ -197,7 +203,7 @@ public class Metadata {
         + ", format="
         + format
         + ", schemaString='"
-        + schema.toJson()
+        + schemaString
         + '\''
         + ", partitionColumns="
         + sb
@@ -206,6 +212,10 @@ public class Metadata {
         + ", configuration="
         + configuration.get()
         + '}';
+  }
+
+  public String getSchemaString() {
+    return schemaString;
   }
 
   public StructType getSchema() {
@@ -293,7 +303,7 @@ public class Metadata {
     metadataMap.put(1, name.orElse(null));
     metadataMap.put(2, description.orElse(null));
     metadataMap.put(3, format.toRow());
-    metadataMap.put(4, schema.toJson());
+    metadataMap.put(4, schemaString);
     metadataMap.put(5, partitionColumns);
     metadataMap.put(6, createdTime.orElse(null));
     metadataMap.put(7, configurationMapValue);

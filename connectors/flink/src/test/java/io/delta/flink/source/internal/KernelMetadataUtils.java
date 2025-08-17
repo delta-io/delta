@@ -55,8 +55,9 @@ public class KernelMetadataUtils {
             Optional.ofNullable("name"),
             Optional.ofNullable("description"),
             new io.delta.kernel.internal.actions.Format("parquet", new HashMap<String, String>()),
+            "schemaString",
             schema,
-            new ArrayValue() { // partitionColumns
+            new ArrayValue() { // paritionColumns
                 @Override
                 public int getSize() {
                     return 2;
