@@ -610,6 +610,17 @@ public class TableFeatures {
   }
 
   /**
+   * Checks if a table feature is being manually supported through user property {@code
+   * delta.feature.<featureName>=supported}.
+   */
+  public static boolean isPropertiesManuallySupportingTableFeature(
+      Map<String, String> userProperties, TableFeature tableFeature) {
+    final String featurePropKey = SET_TABLE_FEATURE_SUPPORTED_PREFIX + tableFeature.featureName();
+    final String propertyValue = userProperties.get(featurePropKey); // will be null if not found
+    return "supported".equals(propertyValue);
+  }
+
+  /**
    * Extracts features overrides from Metadata properties and returns an updated metadata if any
    * overrides are present.
    *
