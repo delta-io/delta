@@ -99,7 +99,7 @@ class CatalogManagedEnablementSuite extends AnyFunSuite with TestUtils {
       expectedIctEnabled = true,
       expectedCatalogManagedSupported = true),
     CatalogManagedEnablementTestCase(
-      testName = "No-op: catalogOwned not being enabled should not affect ICT",
+      testName = "No-op: catalogManaged not being enabled should not affect ICT",
       operationType = "UPDATE",
       initialTableProperties = Map.empty,
       transactionProperties = Map(),
@@ -113,7 +113,15 @@ class CatalogManagedEnablementSuite extends AnyFunSuite with TestUtils {
       transactionProperties = Map("delta.feature.catalogOwned-preview" -> "supported"),
       expectedSuccess = false,
       expectedExceptionMessage =
-        Some("Cannot enable the catalogManaged feature during a REPLACE operation.")))
+        Some("Cannot enable the catalogManaged feature during a REPLACE operation.")),
+    CatalogManagedEnablementTestCase(
+      testName = "REPLACE: should succeed on a catalogManaged table",
+      operationType = "REPLACE",
+      initialTableProperties = Map("delta.feature.catalogOwned-preview" -> "supported"),
+      transactionProperties = Map(),
+      expectedSuccess = true,
+      expectedIctEnabled = true,
+      expectedCatalogManagedSupported = true))
 
   catalogManagedTestCases.foreach { testCase =>
     test(testCase.testName) {
@@ -152,12 +160,14 @@ class CatalogManagedEnablementSuite extends AnyFunSuite with TestUtils {
               .withTablePropertiesAdded(testCase.transactionProperties.asJava)
 
           case "REPLACE" =>
+            val replaceSchema = schema.add("col2", IntegerType.INTEGER)
+
             TableManager
               .loadSnapshot(tablePath)
               .withCommitter(committer)
               .build(defaultEngine)
               .asInstanceOf[SnapshotImpl]
-              .buildReplaceTableTransaction(schema, "engineInfo")
+              .buildReplaceTableTransaction(replaceSchema, "engineInfo")
               .withTableProperties(testCase.transactionProperties.asJava)
         }
         // scalastyle:on
@@ -172,8 +182,10 @@ class CatalogManagedEnablementSuite extends AnyFunSuite with TestUtils {
             .build(defaultEngine)
             .asInstanceOf[SnapshotImpl]
 
+          val protocol = snapshot.getProtocol
+
           // Check if catalogManaged feature is supported
-          val catalogManagedSupported = snapshot.getProtocol
+          val catalogManagedSupported = protocol
             .supportsFeature(TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW)
           assert(catalogManagedSupported == testCase.expectedCatalogManagedSupported)
 
@@ -185,8 +197,7 @@ class CatalogManagedEnablementSuite extends AnyFunSuite with TestUtils {
 
           // If catalogManaged is supported, ICT feature should also be supported
           if (testCase.expectedCatalogManagedSupported) {
-            assert(
-              snapshot.getProtocol.supportsFeature(TableFeatures.IN_COMMIT_TIMESTAMP_W_FEATURE))
+            assert(protocol.supportsFeature(TableFeatures.IN_COMMIT_TIMESTAMP_W_FEATURE))
           }
 
         } else {
