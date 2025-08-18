@@ -224,26 +224,43 @@ public class TransactionMetadataFactory {
   // Instance Fields / Methods //
   ///////////////////////////////
 
-  /* Fields that set by input */
+  // ===== Fields that set by input =====
   private final String tablePath;
   private final Optional<SnapshotImpl> latestSnapshotOpt;
+
+  /**
+   * The table properties provided in this transaction. i.e. excludes any properties in the read
+   * snapshot.
+   */
   private final Map<String, String> originalUserInputProperties;
+
   private final boolean isCreateOrReplace;
   private final boolean isSchemaEvolution;
 
-  /* Fields that are updated by helper methods when updating and validating the metadata */
+  // ===== Fields that are updated by helper methods when updating and validating the metadata =====
   private Optional<Metadata> newMetadata;
   private Optional<Protocol> newProtocol;
   private Optional<List<Column>> physicalNewClusteringColumns;
 
-  /* Fields that are fixed after validation and updates are finished */
+  // ===== Fields that are fixed after validation and updates are finished =====
   private final Output finalOutput;
 
   /**
-   * @param initialNewMetadata the initial metadata that has all _user provided_ updates applied to
-   *     it. this class may apply additional updates to transform to the final output (ex: auto
-   *     enabling column mapping for iceberg compat, adding column mapping metadata to the schema,
-   *     etc)
+   * @param initialNewMetadata the initial metadata that we should validate and transform. It is a
+   *     function of the readSnapshot's metadata (if applicable) joined with any _user provided_
+   *     table property updates. Specifically:
+   *     <ul>
+   *       <li>CREATE: default empty metadata merged with schema, partCols, and user-specified table
+   *           properties
+   *       <li>UPDATE: readSnapshot's metadata merged wth user-specified added/removed table
+   *           properties
+   *       <li>REPLACE: readSnapshot's metadata, with all table properties removed except for those
+   *           that are included in TABLE_PROPERTY_KEYS_TO_PRESERVE, merged with schema, partCols,
+   *           and user-specified table properties
+   *     </ul>
+   *     <p>This class may apply additional updates to transform the {@code initialNewMetadata} the
+   *     final output (e.g. auto-enabling column mapping for iceberg compat, adding column mapping
+   *     metadata to the schema, etc.)
    */
   private TransactionMetadataFactory(
       String tablePath,
