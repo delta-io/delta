@@ -29,6 +29,7 @@ import static java.util.stream.Collectors.toSet;
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.actions.*;
+import io.delta.kernel.internal.columndefaults.ColumnDefaults;
 import io.delta.kernel.internal.icebergcompat.*;
 import io.delta.kernel.internal.rowtracking.MaterializedRowTrackingColumn;
 import io.delta.kernel.internal.rowtracking.RowTracking;
@@ -271,6 +272,7 @@ public class TransactionMetadataFactory {
     updateColumnMappingMetadataAndResolveClusteringColumns(userProvidedLogicalClusteringColumns);
     updateRowTrackingMetadata();
     validateMetadataChangeAndApplyTypeWidening();
+    validateColumnDefaultsChanges();
     this.finalOutput = new Output(newProtocol, newMetadata, physicalNewClusteringColumns);
   }
 
@@ -556,6 +558,13 @@ public class TransactionMetadataFactory {
     }
 
     MaterializedRowTrackingColumn.throwIfColumnNamesConflictWithSchema(getEffectiveMetadata());
+  }
+
+  private void validateColumnDefaultsChanges() {
+    ColumnDefaults.validateChange(
+        getEffectiveProtocol(),
+        latestSnapshotOpt.map(SnapshotImpl::getMetadata),
+        getEffectiveMetadata());
   }
 
   private static Metadata getInitialMetadata(
