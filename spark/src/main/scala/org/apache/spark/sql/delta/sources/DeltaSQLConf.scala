@@ -666,14 +666,14 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
-  val FORCE_ALTER_TABLE_DATA_SCHEMA =
-    buildConf("schema.forceAlterTableDataSchema")
+  val HMS_FORCE_ALTER_TABLE_DATA_SCHEMA =
+    buildConf("hms.schema.forceAlterTableDataSchema")
       .internal()
       .doc(
         """
-          | This conf fix the schema in tableCatalog object and force an alter table
+          | This conf fixes the schema in tableCatalog object and force an alter table
           | schema command after upload the schema. As in spark project the schema is removed
-          | because delta is not a valid serDe configuration.
+          | because delta is not a valid serDe configuration. This is a problem known only to HMS.
           |""".stripMargin)
       .booleanConf
       .createWithDefault(false)
