@@ -1203,26 +1203,30 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
 
   // Tests transaction conflict detection with the same app ID but different versions.
   private def testTransactionConflictWithSameAppId(
-      firstVersion: Long, secondVersion: Long): Unit = {
+      firstVersion: Long,
+      secondVersion: Long): Unit = {
     withTempDirAndEngine { (tablePath, engine) =>
-      // Commit a transaction with app ID "t1" and the specified version
-      val setupTxn = createWriteTxnBuilder(Table.forPath(engine, tablePath))
+      // Create the table (no set-txn here to avoid unrelated schema or idempotency checks)
+      val createTxn = createWriteTxnBuilder(Table.forPath(engine, tablePath))
         .withSchema(engine, testSchema)
+        .build(engine)
+      commitTransaction(createTxn, engine, emptyIterable())
+
+      // Start two transactions from the same snapshot with the same app ID but different
+      //    versions. Both builds must succeed; the conflict is detected on commit when they race
+      //    for the same next table version and ConflictChecker processes the winning commit.
+      val txn1 = createWriteTxnBuilder(Table.forPath(engine, tablePath))
         .withTransactionId(engine, "t1", firstVersion)
         .build(engine)
-      commitTransaction(setupTxn, engine, emptyIterable())
+      val txn2 = createWriteTxnBuilder(Table.forPath(engine, tablePath))
+        .withTransactionId(engine, "t1", secondVersion)
+        .build(engine)
 
-      // Attempt to create another transaction with the same app ID but different version
-      val ex = intercept[Exception] {
-        createWriteTxnBuilder(Table.forPath(engine, tablePath))
-          .withSchema(engine, testSchema)
-          .withTransactionId(engine, "t1", secondVersion)
-          .build(engine)
+      // Commit the first, then the second should fail with ConcurrentTransactionException
+      commitTransaction(txn1, engine, emptyIterable())
+      intercept[ConcurrentTransactionException] {
+        commitTransaction(txn2, engine, emptyIterable())
       }
-
-      // Verify that an appropriate exception is thrown
-      assert(ex.isInstanceOf[ConcurrentTransactionException] ||
-        (ex.isInstanceOf[KernelException] && ex.getMessage.contains("Cannot update schema")))
     }
   }
 
