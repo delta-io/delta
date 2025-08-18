@@ -2,10 +2,17 @@ name: "Delta Kernel"
 on: [push, pull_request]
 jobs:
   test:
-    name: "DK"
+    name: "DK: Shard ${{ matrix.shard }}"
     runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        shard: [0, 1, 2, 3]
     env:
       SCALA_VERSION: 2.12.18
+      NUM_SHARDS: 4
+      SHARD_ID: ${{ matrix.shard }}
+      # Set this to > 1 once we fix test isolation (e.g. withTempTable usages are breaking)
+      TEST_PARALLELISM_COUNT: 1
     steps:
       - uses: actions/checkout@v3
       - name: install java
@@ -15,7 +22,18 @@ jobs:
           java-version: "8"
       - name: Run tests
         run: |
-          python run-tests.py --group kernel --coverage
+          python run-tests.py --group kernel --coverage --shard ${{ matrix.shard }}
+
+  integration-test:
+    name: "DK: Integration"
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v3
+      - name: install java
+        uses: actions/setup-java@v3
+        with:
+          distribution: "zulu"
+          java-version: "8"
       - name: Run integration tests
         run: |
           cd kernel/examples && python run-kernel-examples.py --use-local
