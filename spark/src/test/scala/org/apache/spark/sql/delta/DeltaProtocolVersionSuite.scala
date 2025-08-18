@@ -2304,7 +2304,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
               "minReaderVersion" -> 1,
               "minWriterVersion" -> 2,
               "supportedFeatures" -> List("appendOnly", "invariants")
-            )))
+            ),
+            "operationName" -> "CREATE TABLE"))
       }
 
       // Upgrade protocol
@@ -2322,7 +2323,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           "minReaderVersion" -> 1,
           "minWriterVersion" -> 3,
           "supportedFeatures" -> List("appendOnly", "checkConstraints", "invariants")
-        )))
+        ),
+        "operationName" -> "SET TBLPROPERTIES"))
 
       // Add feature
       assert(captureProtocolChangeEventBlob {
@@ -2340,7 +2342,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
           "minWriterVersion" -> 7,
           "supportedFeatures" ->
             List("appendOnly", "checkConstraints", "deletionVectors", "invariants")
-        )))
+        ),
+        "operationName" -> "SET TBLPROPERTIES"))
     }
   }
 
@@ -2357,7 +2360,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
               "minReaderVersion" -> 1,
               "minWriterVersion" -> 2,
               "supportedFeatures" -> List("appendOnly", "invariants")
-            )))
+            ),
+            "operationName" -> "CREATE TABLE"))
       }
 
       // Clone table to invoke commitLarge
@@ -2372,7 +2376,8 @@ trait DeltaProtocolVersionSuiteBase extends QueryTest
               "minReaderVersion" -> 3,
               "minWriterVersion" -> 7,
               "supportedFeatures" -> List("appendOnly", "deletionVectors", "invariants")
-            )))
+            ),
+            "operationName" -> "CREATE TABLE"))
       }
     }
   }
