@@ -16,7 +16,7 @@
 
 package io.delta.kernel.internal.table;
 
-import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
+import static io.delta.kernel.internal.util.Utils.resolvePath;
 
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.engine.Engine;
@@ -30,8 +30,6 @@ import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.snapshot.SnapshotManager;
-import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -56,7 +54,7 @@ class SnapshotFactory {
 
   SnapshotFactory(Engine engine, SnapshotBuilderImpl.Context ctx) {
     this.ctx = ctx;
-    this.tablePath = new Path(resolvePath(engine));
+    this.tablePath = new Path(resolvePath(engine, ctx.unresolvedPath));
   }
 
   SnapshotImpl create(Engine engine) {
@@ -110,17 +108,6 @@ class SnapshotFactory {
     // TODO: if ctx.timestampOpt.isPresent() -> SnapshotQueryContext.forTimestampSnapshot
 
     return SnapshotQueryContext.forLatestSnapshot(tablePath.toString());
-  }
-
-  private String resolvePath(Engine engine) {
-    try {
-      return wrapEngineExceptionThrowsIO(
-          () -> engine.getFileSystemClient().resolvePath(ctx.unresolvedPath),
-          "Resolving path %s",
-          ctx.unresolvedPath);
-    } catch (IOException io) {
-      throw new UncheckedIOException(io);
-    }
   }
 
   private Lazy<LogSegment> getLazyLogSegment(Engine engine, SnapshotQueryContext snapshotCtx) {

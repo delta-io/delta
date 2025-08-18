@@ -25,6 +25,7 @@ import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
 import io.delta.kernel.defaults.internal.data.vector.DefaultGenericVector
 import io.delta.kernel.defaults.internal.parquet.ParquetSuiteBase
+import io.delta.kernel.defaults.utils.WriteUtils
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.util.JsonUtils
 import io.delta.kernel.types.{StructType, TimestampNTZType, TimestampType}
@@ -32,12 +33,13 @@ import io.delta.kernel.types.{StructType, TimestampNTZType, TimestampType}
 import org.apache.spark.sql.delta.DeltaLog
 
 import org.apache.hadoop.fs.Path
+import org.scalatest.funsuite.AnyFunSuite
 
 /**
  * Tests timestamp statistics serialization and data skipping behavior
  * for TIMESTAMP and TIMESTAMP_NTZ types.
  */
-class TimestampStatsAndDataSkippingSuite extends DeltaTableWriteSuiteBase
+class TimestampStatsAndDataSkippingSuite extends AnyFunSuite with WriteUtils
     with DataSkippingDeltaTestsUtils
     with ParquetSuiteBase {
 
@@ -69,7 +71,7 @@ class TimestampStatsAndDataSkippingSuite extends DeltaTableWriteSuiteBase
           engine,
           kernelPath,
           isNewTable = fileIndex == 0,
-          schema,
+          schema = if (fileIndex == 0) schema else null,
           partCols = Seq.empty,
           data = Seq(Map.empty[String, Literal] -> Seq(batch.toFiltered(Option.empty))))
       }
@@ -127,7 +129,7 @@ class TimestampStatsAndDataSkippingSuite extends DeltaTableWriteSuiteBase
             engine,
             kernelPath,
             isNewTable = fileIndex == 0,
-            schema,
+            schema = if (fileIndex == 0) schema else null,
             partCols = Seq.empty,
             data = Seq(Map.empty[String, Literal] -> Seq(batch.toFiltered(Option.empty))))
         }

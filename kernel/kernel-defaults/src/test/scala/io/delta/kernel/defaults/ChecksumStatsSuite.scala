@@ -21,6 +21,7 @@ import scala.jdk.CollectionConverters.{asJavaIteratorConverter, mapAsJavaMapConv
 
 import io.delta.kernel.{Table, Transaction, TransactionCommitResult}
 import io.delta.kernel.data.Row
+import io.delta.kernel.defaults.utils.WriteUtils
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
 import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl, TableConfig, TableImpl}
@@ -34,10 +35,12 @@ import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.utils.{CloseableIterable, DataFileStatus, FileStatus}
 import io.delta.kernel.utils.CloseableIterable.inMemoryIterable
 
+import org.scalatest.funsuite.AnyFunSuite
+
 /**
  * Functional e2e test suite for verifying file stats collection in CRC are correct.
  */
-trait ChecksumStatsSuiteBase extends DeltaTableWriteSuiteBase {
+trait ChecksumStatsSuiteBase extends AnyFunSuite with WriteUtils {
 
   test("Check stats in checksum are correct") {
     withTempDirAndEngine { (tablePath, engine) =>
@@ -122,7 +125,7 @@ trait ChecksumStatsSuiteBase extends DeltaTableWriteSuiteBase {
       filesToAdd: Map[String, Long],
       histogram: FileSizeHistogram): Unit = {
 
-    val txn = createTxn(engine, tablePath, maxRetries = 0)
+    val txn = getUpdateTxn(engine, tablePath, maxRetries = 0)
 
     val actionsToCommit = filesToAdd.map { case (path, size) =>
       histogram.insert(size)
@@ -154,7 +157,7 @@ trait ChecksumStatsSuiteBase extends DeltaTableWriteSuiteBase {
       filesToRemove: Map[String, Long],
       histogram: FileSizeHistogram): Unit = {
 
-    val txn = createTxn(engine, tablePath, maxRetries = 0)
+    val txn = getUpdateTxn(engine, tablePath, maxRetries = 0)
 
     val actionsToCommit = filesToRemove.map { case (path, size) =>
       histogram.remove(size)

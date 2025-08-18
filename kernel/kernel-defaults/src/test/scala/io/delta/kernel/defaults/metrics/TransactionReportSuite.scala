@@ -22,7 +22,7 @@ import scala.collection.immutable.Seq
 
 import io.delta.kernel._
 import io.delta.kernel.data.Row
-import io.delta.kernel.defaults.DeltaTableWriteSuiteBase
+import io.delta.kernel.defaults.utils.WriteUtils
 import io.delta.kernel.engine._
 import io.delta.kernel.expressions.{Column, Literal}
 import io.delta.kernel.internal.{TableConfig, TableImpl}
@@ -39,7 +39,8 @@ import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 
 import org.scalatest.funsuite.AnyFunSuite
 
-class TransactionReportSuite extends DeltaTableWriteSuiteBase with MetricsReportTestUtils {
+class TransactionReportSuite extends AnyFunSuite with WriteUtils
+    with MetricsReportTestUtils {
 
   /**
    * Creates a [[Transaction]] using `getTransaction`, requests actions to commit using
@@ -473,11 +474,11 @@ class TransactionReportSuite extends DeltaTableWriteSuiteBase with MetricsReport
       withTempDir { tempDir =>
         val path = tempDir.getCanonicalPath
         // Set up a non-empty table at version 0 with add file size that we know
-        val txn = Table.forPath(defaultEngine, path)
-          .createTransactionBuilder(defaultEngine, "testEngineInfo", Operation.CREATE_TABLE)
-          .withSchema(defaultEngine, new StructType().add("col1", IntegerType.INTEGER))
-          .withDomainMetadataSupported()
-          .build(defaultEngine)
+        val txn = getCreateTxn(
+          defaultEngine,
+          path,
+          new StructType().add("col1", IntegerType.INTEGER),
+          withDomainMetadataSupported = true)
         txn.addDomainMetadata("user-domain", "some config")
         val result = txn.commit(
           defaultEngine,

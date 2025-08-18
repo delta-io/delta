@@ -20,6 +20,7 @@ import static io.delta.kernel.internal.TableConfig.TOMBSTONE_RETENTION;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
+import io.delta.kernel.Operation;
 import io.delta.kernel.ScanBuilder;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.commit.Committer;
@@ -41,6 +42,8 @@ import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.metrics.SnapshotReport;
+import io.delta.kernel.transaction.ReplaceTableTransactionBuilder;
+import io.delta.kernel.transaction.UpdateTableTransactionBuilder;
 import io.delta.kernel.types.StructType;
 import java.util.List;
 import java.util.Map;
@@ -161,9 +164,21 @@ public class SnapshotImpl implements Snapshot {
         dataPath, version, protocol, metadata, getSchema(), logReplay, getSnapshotReport());
   }
 
+  @Override
+  public UpdateTableTransactionBuilder buildUpdateTableTransaction(
+      String engineInfo, Operation operation) {
+    return new UpdateTableTransactionBuilderImpl(this, engineInfo, operation);
+  }
+
   ///////////////////
   // Internal APIs //
   ///////////////////
+
+  // TODO: make this API public after closing open threads for Replace Table operation
+  public ReplaceTableTransactionBuilder buildReplaceTableTransaction(
+      StructType schema, String engineInfo) {
+    return new ReplaceTableTransactionBuilderV2Impl(this, schema, engineInfo);
+  }
 
   public Committer getCommitter() {
     return committer;

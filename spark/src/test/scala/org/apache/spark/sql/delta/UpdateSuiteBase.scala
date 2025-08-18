@@ -86,15 +86,14 @@ trait UpdateBaseMixin
       targetDF: DataFrame,
       set: Seq[String],
       where: String = null,
-      errMsgs: Seq[String] = Nil) = {
-    withTempDir { dir =>
-      targetDF.write.format("delta").save(dir.toString)
-      val e = intercept[AnalysisException] {
-        executeUpdate(target = s"delta.`$dir`", set, where)
-      }
-      errMsgs.foreach { msg =>
-        assert(e.getMessage.toLowerCase(Locale.ROOT).contains(msg.toLowerCase(Locale.ROOT)))
-      }
+      errMsgs: Seq[String] = Nil): Unit = {
+    dropTable()
+    append(targetDF)
+    val e = intercept[AnalysisException] {
+      executeUpdate(target = tableSQLIdentifier, set, where)
+    }
+    errMsgs.foreach { msg =>
+      assert(e.getMessage.toLowerCase(Locale.ROOT).contains(msg.toLowerCase(Locale.ROOT)))
     }
   }
 }

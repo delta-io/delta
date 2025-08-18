@@ -19,6 +19,7 @@ import scala.jdk.CollectionConverters.seqAsJavaListConverter
 
 import io.delta.kernel.Table
 import io.delta.kernel.data.Row
+import io.delta.kernel.defaults.utils.WriteUtils
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.expressions.{Column, Literal}
 import io.delta.kernel.internal.{SnapshotImpl, TableImpl}
@@ -32,11 +33,12 @@ import org.apache.spark.sql.delta.actions.CommitInfo
 import org.apache.spark.sql.delta.test.DeltaTestImplicits.OptimisticTxnTestHelper
 
 import org.apache.hadoop.fs.Path
+import org.scalatest.funsuite.AnyFunSuite
 
 /**
  * Test suite for io.delta.kernel.internal.checksum.ChecksumUtils
  */
-class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase with LogReplayBaseSuite {
+class ChecksumUtilsSuite extends AnyFunSuite with WriteUtils with LogReplayBaseSuite {
 
   private def initialTestTable(tablePath: String, engine: Engine): Unit = {
     createEmptyTable(engine, tablePath, testSchema, clock = new ManualClock(0))
@@ -44,9 +46,7 @@ class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase with LogReplayBaseSuit
       engine,
       tablePath,
       isNewTable = false,
-      testSchema,
-      partCols = Seq.empty,
-      Seq(Map.empty[String, Literal] -> dataBatches1))
+      data = Seq(Map.empty[String, Literal] -> dataBatches1))
   }
 
   test("Create checksum for different version") {
@@ -256,16 +256,14 @@ class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase with LogReplayBaseSuit
         table.getPath(engine).stripPrefix("file:"),
         Seq(11))
       table.checksum(engine, 11)
-      Table.forPath(engine, path).asInstanceOf[TableImpl]
-        .createReplaceTableTransactionBuilder(engine, "test")
-        .withDomainMetadataSupported()
-        .withClusteringColumns(engine, Seq(new Column("a")).asJava)
-        .withSchema(
-          engine,
-          new StructType().add(
-            "a",
-            StringType.STRING)).build(engine)
-        .commit(engine, emptyIterable[Row])
+      getReplaceTxn(
+        engine,
+        path,
+        new StructType().add(
+          "a",
+          StringType.STRING),
+        clusteringColsOpt = Some(Seq(new Column("a"))),
+        withDomainMetadataSupported = true).commit(engine, emptyIterable[Row])
       engine.resetMetrics()
       table.checksum(engine, 12)
       assertMetrics(

@@ -16,9 +16,7 @@
 package io.delta.kernel.internal;
 
 import static io.delta.kernel.internal.DeltaErrors.*;
-import static io.delta.kernel.internal.util.ColumnMapping.isColumnMappingModeEnabled;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
-import static java.util.Collections.emptyList;
 import static java.util.Collections.emptyMap;
 import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.toSet;
@@ -32,9 +30,6 @@ import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.commit.DefaultFileSystemManagedTableOnlyCommitter;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
-import io.delta.kernel.internal.util.ColumnMapping;
-import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
-import io.delta.kernel.internal.util.SchemaUtils;
 import io.delta.kernel.types.StructType;
 import java.util.*;
 import org.slf4j.Logger;
@@ -64,13 +59,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
 
   protected final TableImpl table;
   protected Optional<StructType> schema = Optional.empty();
-
-  /**
-   * Number of retries for concurrent write exceptions to resolve conflicts and retry commit. In
-   * Delta-Spark, for historical reasons the number of retries is really high (10m). We are starting
-   * with a lower number by default for now. If this is not sufficient we can update it.
-   */
-  private int maxRetries = 200;
+  private Optional<Integer> userProvidedMaxRetries = Optional.empty();
 
   /** Number of commits between producing a log compaction file. */
   private int logCompactionInterval = 0;
@@ -141,7 +130,9 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   @Override
   public TransactionBuilder withTableProperties(Engine engine, Map<String, String> properties) {
     this.tableProperties =
-        Optional.of(Collections.unmodifiableMap(TableConfig.validateDeltaProperties(properties)));
+        Optional.of(
+            Collections.unmodifiableMap(
+                TableConfig.validateAndNormalizeDeltaProperties(properties)));
     return this;
   }
 
@@ -157,7 +148,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
   @Override
   public TransactionBuilder withMaxRetries(int maxRetries) {
     checkArgument(maxRetries >= 0, "maxRetries must be >= 0");
-    this.maxRetries = maxRetries;
+    this.userProvidedMaxRetries = Optional.of(maxRetries);
     return this;
   }
 
@@ -242,7 +233,6 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       new TransactionImpl(
           false, // isCreateOrReplace
           table.getDataPath(),
-          table.getLogPath(),
           latestSnapshot,
           engineInfo,
           operation,
@@ -251,7 +241,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
           committer,
           setTxnOpt,
           Optional.empty(), /* clustering cols=empty */
-          maxRetries,
+          userProvidedMaxRetries,
           logCompactionInterval,
           table.getClock());
     }
@@ -308,7 +298,6 @@ public class TransactionBuilderImpl implements TransactionBuilder {
     return new TransactionImpl(
         isCreateOrReplace,
         table.getDataPath(),
-        table.getLogPath(),
         latestSnapshot,
         engineInfo,
         operation,
@@ -317,7 +306,7 @@ public class TransactionBuilderImpl implements TransactionBuilder {
         committer,
         setTxnOpt,
         outputMetadata.physicalNewClusteringColumns,
-        maxRetries,
+        userProvidedMaxRetries,
         logCompactionInterval,
         table.getClock());
   }
@@ -376,13 +365,6 @@ public class TransactionBuilderImpl implements TransactionBuilder {
       checkArgument(
           !(partitionColumns.isPresent() && inputLogicalClusteringColumns.isPresent()),
           "Partition Columns and Clustering Columns cannot be set at the same time");
-
-      // New table verify the given schema and partition columns
-      ColumnMappingMode mappingMode =
-          ColumnMapping.getColumnMappingMode(tableProperties.orElse(emptyMap()));
-
-      SchemaUtils.validateSchema(schema.get(), isColumnMappingModeEnabled(mappingMode));
-      SchemaUtils.validatePartitionColumns(schema.get(), partitionColumns.orElse(emptyList()));
     }
 
     if (unsetTablePropertiesKeys.isPresent() && tableProperties.isPresent()) {

@@ -20,6 +20,7 @@ import scala.collection.immutable.Seq
 
 import io.delta.kernel.{Operation, Table}
 import io.delta.kernel.data.Row
+import io.delta.kernel.defaults.utils.WriteUtils
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.TableConfig
@@ -31,8 +32,10 @@ import io.delta.kernel.types.{ByteType, DataType, DateType, FieldMetadata, Integ
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
 
 import org.assertj.core.api.Assertions.assertThat
+import org.scalatest.funsuite.AnyFunSuite
 
-class IcebergWriterCompatV1Suite extends DeltaTableWriteSuiteBase with ColumnMappingSuiteBase {
+class IcebergWriterCompatV1Suite extends AnyFunSuite with WriteUtils
+    with ColumnMappingSuiteBase {
 
   private val tblPropertiesIcebergWriterCompatV1Enabled = Map(
     TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey -> "true")
@@ -198,10 +201,7 @@ class IcebergWriterCompatV1Suite extends DeltaTableWriteSuiteBase with ColumnMap
           initialMetadata.getSchema
             .add("c2", IntegerType.INTEGER)
         }
-        createWriteTxnBuilder(Table.forPath(engine, tablePath))
-          .withSchema(engine, updatedSchema)
-          .build(engine)
-          .commit(engine, emptyIterable())
+        updateTableMetadata(engine, tablePath, schema = updatedSchema)
         val updatedMetadata = getMetadata(engine, tablePath)
         assertThat(updatedMetadata.getConfiguration)
           .containsEntry(ColumnMapping.COLUMN_MAPPING_MAX_COLUMN_ID_KEY, "2")
@@ -243,11 +243,11 @@ class IcebergWriterCompatV1Suite extends DeltaTableWriteSuiteBase with ColumnMap
                 .build())
         }
         val e = intercept[KernelException] {
-          createWriteTxnBuilder(Table.forPath(engine, tablePath))
-            .withTableProperties(engine, tblPropertiesIcebergWriterCompatV1Enabled.asJava)
-            .withSchema(engine, schemaToCommit)
-            .build(engine)
-            .commit(engine, emptyIterable())
+          updateTableMetadata(
+            engine,
+            tablePath,
+            schema = schemaToCommit,
+            tableProperties = tblPropertiesIcebergWriterCompatV1Enabled)
         }
         val expectedInvalidColumnId = if (isNewTable) 1 else 2
         assert(e.getMessage.contains(
@@ -594,12 +594,12 @@ class IcebergWriterCompatV1Suite extends DeltaTableWriteSuiteBase with ColumnMap
 
     // New table with these features + icebergWriterCompatV1
     withTempDirAndEngine { (tablePath, engine) =>
-      Table.forPath(engine, tablePath)
-        .createTransactionBuilder(engine, "engineInfo-test", Operation.WRITE)
-        .withSchema(engine, schema)
-        .withTableProperties(engine, tblProperties.asJava)
-        .withDomainMetadataSupported() // domainMetadata
-        .build(engine)
+      getCreateTxn(
+        engine,
+        tablePath,
+        schema,
+        tableProperties = tblProperties,
+        withDomainMetadataSupported = true)
         .commit(engine, emptyIterable[Row])
       verifyIcebergWriterCompatV1Enabled(tablePath, engine)
       // Check all the features are supported
@@ -622,12 +622,11 @@ class IcebergWriterCompatV1Suite extends DeltaTableWriteSuiteBase with ColumnMap
         tableProperties = tblPropertiesIcebergWriterCompatV1Enabled)
       verifyIcebergWriterCompatV1Enabled(tablePath, engine)
 
-      Table.forPath(engine, tablePath)
-        .createTransactionBuilder(engine, "engineInfo-test", Operation.WRITE)
-        //  .withSchema(engine, schema) - we don't support schema updates currently
-        .withTableProperties(engine, tblProperties.asJava)
-        .withDomainMetadataSupported()
-        .build(engine)
+      getUpdateTxn(
+        engine,
+        tablePath,
+        tableProperties = tblProperties,
+        withDomainMetadataSupported = true)
         .commit(engine, emptyIterable[Row])
       // Check all the features are supported
       val protocol = getProtocol(engine, tablePath)

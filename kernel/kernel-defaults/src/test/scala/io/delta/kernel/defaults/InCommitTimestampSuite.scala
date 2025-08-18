@@ -23,6 +23,7 @@ import scala.collection.mutable
 
 import io.delta.kernel._
 import io.delta.kernel.Operation.{CREATE_TABLE, WRITE}
+import io.delta.kernel.defaults.utils.WriteUtils
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.{InvalidTableException, ProtocolChangedException}
 import io.delta.kernel.expressions.Literal
@@ -39,7 +40,9 @@ import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 import io.delta.kernel.utils.FileStatus
 
-class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
+import org.scalatest.funsuite.AnyFunSuite
+
+class InCommitTimestampSuite extends AnyFunSuite with WriteUtils {
 
   private def removeCommitInfoFromCommit(engine: Engine, version: Long, logPath: Path): Unit = {
     val file = FileStatus.of(FileNames.deltaFile(logPath, version), 0, 0)
@@ -91,11 +94,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
   test("Create a non-inCommitTimestamp table and then enable ICT") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
-      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
-
-      val txn1 = txnBuilder
-        .withSchema(engine, testSchema)
-        .build(engine)
+      val txn1 = getCreateTxn(engine, tablePath, testSchema)
 
       txn1.commit(engine, emptyIterable())
 
@@ -262,19 +261,13 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
   test("Enablement tracking works when ICT is enabled post commit 0") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = TableImpl.forPath(engine, tablePath)
-      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
-
-      val txn = txnBuilder
-        .withSchema(engine, testSchema)
-        .build(engine)
+      val txn = getCreateTxn(engine, tablePath, testSchema)
 
       txn.commit(engine, emptyIterable())
 
       appendData(
         engine,
         tablePath,
-        schema = testSchema,
-        partCols = Seq.empty,
         data = Seq(Map.empty[String, Literal] -> dataBatches1),
         tableProperties = Map(IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true"))
 
@@ -292,8 +285,6 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
       appendData(
         engine,
         tablePath,
-        schema = testSchema,
-        partCols = Seq.empty,
         data = Seq(Map.empty[String, Literal] -> dataBatches2))
 
       val ver2Snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
@@ -345,19 +336,13 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
   test("Metadata toString should work with ICT enabled") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = TableImpl.forPath(engine, tablePath)
-      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
-
-      val txn = txnBuilder
-        .withSchema(engine, testSchema)
-        .build(engine)
+      val txn = getCreateTxn(engine, tablePath, testSchema)
 
       txn.commit(engine, emptyIterable())
 
       appendData(
         engine,
         tablePath,
-        schema = testSchema,
-        partCols = Seq.empty,
         data = Seq(Map.empty[String, Literal] -> dataBatches1),
         tableProperties = Map(IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true"))
 
@@ -382,19 +367,13 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
   test("Table with ICT enabled is readable") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = TableImpl.forPath(engine, tablePath)
-      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
-
-      val txn = txnBuilder
-        .withSchema(engine, testSchema)
-        .build(engine)
+      val txn = getCreateTxn(engine, tablePath, testSchema)
 
       txn.commit(engine, emptyIterable())
 
       val commitResult = appendData(
         engine,
         tablePath,
-        schema = testSchema,
-        partCols = Seq.empty,
         data = Seq(Map.empty[String, Literal] -> dataBatches1),
         tableProperties = Map(IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true"))
 
@@ -412,7 +391,7 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
       val expData = dataBatches1.flatMap(_.toTestRows)
 
       verifyCommitResult(commitResult, expVersion = 1, expIsReadyForCheckpoint = false)
-      verifyCommitInfo(tablePath, version = 1, partitionCols = null, operation = WRITE)
+      verifyCommitInfo(tablePath, version = 1, partitionCols = null)
       verifyWrittenContent(tablePath, testSchema, expData)
       verifyTableProperties(
         tablePath,
@@ -459,11 +438,9 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
 
       val startTime = System.currentTimeMillis()
       val clock = new ManualClock(startTime)
-      val txn1 = createTxn(
+      val txn1 = getUpdateTxn(
         engine,
         tablePath,
-        schema = testSchema,
-        partCols = Seq.empty,
         clock = clock)
       clock.setTime(startTime)
       appendData(
@@ -483,22 +460,16 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
     test(s"Conflict resolution of enablement version(Winning Commit Count=$winningCommitCount)") {
       withTempDirAndEngine { (tablePath, engine) =>
         val table = TableImpl.forPath(engine, tablePath, () => System.currentTimeMillis)
-        val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
-
-        val txn = txnBuilder
-          .withSchema(engine, testSchema)
-          .build(engine)
+        val txn = getCreateTxn(engine, tablePath, testSchema)
 
         txn.commit(engine, emptyIterable())
 
         val startTime = System.currentTimeMillis()
         val clock = new ManualClock(startTime)
 
-        val txn1 = createTxn(
+        val txn1 = getUpdateTxn(
           engine,
           tablePath,
-          schema = testSchema,
-          partCols = Seq.empty,
           tableProperties = Map(IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true"),
           clock = clock)
 
@@ -544,11 +515,9 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
 
       val startTime = System.currentTimeMillis()
       val clock = new ManualClock(startTime)
-      val txn1 = createTxn(
+      val txn1 = getUpdateTxn(
         engine,
         tablePath,
-        schema = testSchema,
-        partCols = Seq.empty,
         clock = clock)
       clock.setTime(startTime)
       appendData(
@@ -583,21 +552,15 @@ class InCommitTimestampSuite extends DeltaTableWriteSuiteBase {
     "ICT enabled") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = TableImpl.forPath(engine, tablePath, () => System.currentTimeMillis)
-      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
-
-      val txn = txnBuilder
-        .withSchema(engine, testSchema)
-        .build(engine)
+      val txn = getCreateTxn(engine, tablePath, testSchema)
 
       txn.commit(engine, emptyIterable())
 
       val startTime = System.currentTimeMillis()
       val clock = new ManualClock(startTime)
-      val txn1 = createTxn(
+      val txn1 = getUpdateTxn(
         engine,
         tablePath,
-        schema = testSchema,
-        partCols = Seq.empty,
         tableProperties = Map(IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true"),
         clock = clock)
       clock.setTime(startTime)

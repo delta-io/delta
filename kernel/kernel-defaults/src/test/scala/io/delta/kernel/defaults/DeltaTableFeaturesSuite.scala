@@ -22,6 +22,7 @@ import scala.jdk.CollectionConverters._
 
 import io.delta.kernel.{Operation, Table}
 import io.delta.kernel.Operation.CREATE_TABLE
+import io.delta.kernel.defaults.utils.WriteUtils
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.{InvalidConfigurationValueException, KernelException}
 import io.delta.kernel.expressions.Literal
@@ -36,10 +37,12 @@ import io.delta.kernel.utils.CloseableIterable.emptyIterable
 import org.apache.spark.sql.delta.{DeltaLog, DeltaTableFeatureException}
 import org.apache.spark.sql.delta.actions.Protocol
 
+import org.scalatest.funsuite.AnyFunSuite
+
 /**
  * Integration test suite for Delta table features.
  */
-class DeltaTableFeaturesSuite extends DeltaTableWriteSuiteBase {
+class DeltaTableFeaturesSuite extends AnyFunSuite with WriteUtils {
 
   ///////////////////////////////////////////////////////////////////////////
   // Tests for deletionVector, v2Checkpoint table features
@@ -66,10 +69,7 @@ class DeltaTableFeaturesSuite extends DeltaTableWriteSuiteBase {
           appendData(
             engine,
             tablePath,
-            isNewTable = false,
-            testSchema,
-            partCols = Seq.empty,
-            testData)
+            data = testData)
 
           // Check the data using Kernel and Delta-Spark readers
           verifyWrittenContent(tablePath, testSchema, dataBatches1.flatMap(_.toTestRows))
@@ -86,8 +86,7 @@ class DeltaTableFeaturesSuite extends DeltaTableWriteSuiteBase {
             tablePath,
             isNewTable = true,
             testSchema,
-            partCols = Seq.empty,
-            testData,
+            data = testData,
             tableProperties = Map(tblProp -> propValue))
 
           checkReaderWriterFeaturesSupported(tablePath, feature)
@@ -96,10 +95,7 @@ class DeltaTableFeaturesSuite extends DeltaTableWriteSuiteBase {
           appendData(
             engine,
             tablePath,
-            isNewTable = false,
-            testSchema,
-            partCols = Seq.empty,
-            testData)
+            data = testData)
 
           // Check the data using Kernel and Delta-Spark readers
           verifyWrittenContent(
@@ -119,8 +115,7 @@ class DeltaTableFeaturesSuite extends DeltaTableWriteSuiteBase {
             tablePath,
             isNewTable = true,
             testSchema,
-            partCols = Seq.empty,
-            testData)
+            data = testData)
 
           checkNoReaderWriterFeaturesSupported(tablePath, feature)
 
@@ -128,10 +123,7 @@ class DeltaTableFeaturesSuite extends DeltaTableWriteSuiteBase {
           appendData(
             engine,
             tablePath,
-            isNewTable = false,
-            testSchema,
-            partCols = Seq.empty,
-            testData,
+            data = testData,
             tableProperties = Map(tblProp -> propValue))
 
           checkReaderWriterFeaturesSupported(tablePath, feature)
@@ -154,16 +146,12 @@ class DeltaTableFeaturesSuite extends DeltaTableWriteSuiteBase {
         test(s"Create table with timestampNtz enabled: $isTimestampNtzEnabled") {
           withTempDirAndEngine { (tablePath, engine) =>
             val table = Table.forPath(engine, tablePath)
-            val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
-
             val schema = if (isTimestampNtzEnabled) {
               new StructType().add("tz", TimestampNTZType.TIMESTAMP_NTZ)
             } else {
               new StructType().add("id", INTEGER)
             }
-            val txn = txnBuilder
-              .withSchema(engine, schema)
-              .build(engine)
+            val txn = getCreateTxn(engine, tablePath, schema)
 
             assert(txn.getSchema(engine) === schema)
             assert(txn.getPartitionColumns(engine).isEmpty)
@@ -184,10 +172,7 @@ class DeltaTableFeaturesSuite extends DeltaTableWriteSuiteBase {
   test("schema evolution from Spark to add TIMESTAMP_NTZ type on a table created with kernel") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
-      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
-      val txn = txnBuilder
-        .withSchema(engine, testSchema)
-        .build(engine)
+      val txn = getCreateTxn(engine, tablePath, testSchema)
       val txnResult = commitTransaction(txn, engine, emptyIterable())
 
       assert(txnResult.getVersion === 0)
@@ -223,9 +208,7 @@ class DeltaTableFeaturesSuite extends DeltaTableWriteSuiteBase {
   test("withDomainMetadata adds corresponding feature option") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
-      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
-      val txn =
-        txnBuilder.withDomainMetadataSupported().withSchema(engine, testSchema).build(engine)
+      val txn = getCreateTxn(engine, tablePath, testSchema, withDomainMetadataSupported = true)
       commitTransaction(txn, engine, emptyIterable())
       assert(latestSnapshot(table, engine).getProtocol.getExplicitlySupportedFeatures.contains(
         TableFeatures.DOMAIN_METADATA_W_FEATURE))
@@ -240,9 +223,7 @@ class DeltaTableFeaturesSuite extends DeltaTableWriteSuiteBase {
       assert(latestSnapshot(table, engine).getMetadata.getConfiguration.isEmpty)
 
       // Update table with the same feature override set.
-      val updateTxnBuilder =
-        table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
-      val updateTxn = updateTxnBuilder.withTableProperties(engine, properties.asJava).build(engine)
+      val updateTxn = getUpdateTxn(engine, tablePath, tableProperties = properties)
 
       commitTransaction(updateTxn, engine, emptyIterable())
 
@@ -305,14 +286,11 @@ class DeltaTableFeaturesSuite extends DeltaTableWriteSuiteBase {
     withTempDirAndEngine { (tablePath, engine) =>
       createEmptyTable(engine, tablePath, testSchema)
 
-      val table = Table.forPath(engine, tablePath)
-
       intercept[InvalidConfigurationValueException] {
-        table.createTransactionBuilder(engine, testEngineInfo, Operation.MANUAL_UPDATE)
-          .withTableProperties(
-            engine,
-            Map(TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey -> "iceberg").asJava)
-          .build(engine)
+        getUpdateTxn(
+          engine,
+          tablePath,
+          tableProperties = Map(TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey -> "iceberg"))
       }
     }
   }
@@ -324,9 +302,7 @@ class DeltaTableFeaturesSuite extends DeltaTableWriteSuiteBase {
         engine,
         tablePath,
         isNewTable = false,
-        testSchema,
-        partCols = Seq.empty,
-        Seq(Map.empty[String, Literal] -> dataBatches1))
+        data = Seq(Map.empty[String, Literal] -> dataBatches1))
 
       checkTable(tablePath, expectedAnswer = dataBatches1.flatMap(_.toTestRows))
 

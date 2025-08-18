@@ -47,7 +47,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 /**
  * Test suite for io.delta.kernel.internal.compaction.LogCompactionWriter
  */
-class LogCompactionWriterSuite extends CheckpointSuiteBase {
+class LogCompactionWriterSuite extends CheckpointBase {
   val COMPACTED_SCHEMA =
     new StructType()
       .add("txn", SetTransaction.FULL_SCHEMA)
@@ -270,7 +270,7 @@ class LogCompactionWriterSuite extends CheckpointSuiteBase {
       // start at 1 since the create of the table is 0
       for (commitNum <- 1 to 5) {
         val txn =
-          createTxn(engine, tablePath, clock = clock, logCompactionInterval = compactionInterval)
+          getUpdateTxn(engine, tablePath, clock = clock, logCompactionInterval = compactionInterval)
         val data = generateData(
           schema,
           Seq.empty,

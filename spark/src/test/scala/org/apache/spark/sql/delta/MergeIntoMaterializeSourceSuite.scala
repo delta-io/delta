@@ -161,8 +161,7 @@ trait MergeIntoMaterializeSourceMixin
   }
 }
 
-trait MergeIntoMaterializeSourceTests extends MergeIntoMaterializeSourceMixin {
-
+trait MergeIntoMaterializeSourceErrorTests extends MergeIntoMaterializeSourceMixin {
   import testImplicits._
 
   // Test error message that we check if blocks of materialized source RDD were evicted.
@@ -307,6 +306,10 @@ trait MergeIntoMaterializeSourceTests extends MergeIntoMaterializeSourceMixin {
     }
   }
   testMergeMaterializeSourceUnpersistRetries
+}
+
+trait MergeIntoMaterializeSourceTests extends MergeIntoMaterializeSourceMixin {
+  import testImplicits._
 
   private def getHints(df: => DataFrame): Seq[(Seq[ResolvedHint], JoinHint)] = {
     val plans = withAllPlansCaptured(spark) {

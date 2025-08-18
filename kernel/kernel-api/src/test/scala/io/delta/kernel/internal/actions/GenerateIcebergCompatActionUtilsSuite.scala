@@ -45,6 +45,7 @@ class GenerateIcebergCompatActionUtilsSuite extends AnyFunSuite {
       Optional.empty(), /* name */
       Optional.empty(), /* description */
       new Format(),
+      testSchema.toJson,
       testSchema,
       VectorUtils.buildArrayValue(partitionColumns.asJava, StringType.STRING),
       Optional.empty(), /* createdTime */
@@ -288,7 +289,8 @@ object GenerateIcebergCompatActionUtilsSuite {
         100,
         Map(new Column("id") -> Literal.ofInt(0)).asJava,
         Map(new Column("id") -> Literal.ofInt(10)).asJava,
-        Map(new Column("id") -> java.lang.Long.valueOf(0)).asJava)))
+        Map(new Column("id") -> java.lang.Long.valueOf(0)).asJava,
+        Optional.empty())))
 
   private val testDataFileStatusWithoutStatistics = new DataFileStatus(
     "/test/table/path/file1.parquet",

@@ -162,6 +162,7 @@ class TransactionSuite extends AnyFunSuite with VectorTestUtils with MockEngineU
         Optional.empty(),
         Optional.empty(),
         new Format(),
+        DataTypeJsonSerDe.serializeDataType(schema),
         schema,
         VectorUtils.buildArrayValue(Seq.empty.asJava, StringType.STRING),
         Optional.empty(),
@@ -305,6 +306,7 @@ object TransactionSuite extends VectorTestUtils with MockEngineUtils {
       Optional.empty(), /* name */
       Optional.empty(), /* description */
       new Format(),
+      DataTypeJsonSerDe.serializeDataType(schema),
       schema,
       VectorUtils.buildArrayValue(partitionCols.asJava, StringType.STRING), // partitionColumns
       Optional.empty(), // createdTime
@@ -319,7 +321,8 @@ object TransactionSuite extends VectorTestUtils with MockEngineUtils {
         numRows,
         Map.empty[Column, Literal].asJava, // minValues - empty value as this is just for tests.
         Map.empty[Column, Literal].asJava, // maxValues - empty value as this is just for tests.
-        Map.empty[Column, JLong].asJava // nullCount - empty value as this is just for tests.
+        Map.empty[Column, JLong].asJava, // nullCount - empty value as this is just for tests.
+        Optional.empty() // tightBounds is unspecified
       )
     })
   }

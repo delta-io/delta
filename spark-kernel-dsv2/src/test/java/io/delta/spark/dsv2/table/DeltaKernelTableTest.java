@@ -15,14 +15,14 @@
  */
 package io.delta.spark.dsv2.table;
 
+import static org.apache.spark.sql.connector.catalog.TableCapability.BATCH_READ;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.TableManager;
-import io.delta.kernel.defaults.engine.DefaultEngine;
-import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.SnapshotImpl;
+import io.delta.spark.dsv2.KernelSparkDsv2TestBase;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -30,44 +30,16 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.BiFunction;
 import java.util.stream.Stream;
-import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.connector.catalog.Column;
 import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.expressions.Transform;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
-import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
-public class DeltaKernelTableTest {
-
-  private static SparkSession spark;
-  private static Engine defaultEngine;
-
-  @BeforeAll
-  public static void setUp() {
-    spark =
-        SparkSession.builder()
-            .master("local[*]")
-            .appName("DeltaKernelTableTest")
-            .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-            .config(
-                "spark.sql.catalog.spark_catalog",
-                "org.apache.spark.sql.delta.catalog.DeltaCatalog")
-            .getOrCreate();
-    defaultEngine = DefaultEngine.create(spark.sessionState().newHadoopConf());
-  }
-
-  @AfterAll
-  public static void tearDown() {
-    if (spark != null) {
-      spark.stop();
-      spark = null;
-    }
-  }
+public class DeltaKernelTableTest extends KernelSparkDsv2TestBase {
 
   @ParameterizedTest(name = "{0}")
   @MethodSource("tableTestCases")
@@ -120,7 +92,7 @@ public class DeltaKernelTableTest {
         });
 
     // ===== Test capabilities =====
-    assertTrue(kernelTable.capabilities().isEmpty());
+    assertTrue(kernelTable.capabilities().contains(BATCH_READ));
   }
 
   /** Represents a test case configuration for Delta tables */

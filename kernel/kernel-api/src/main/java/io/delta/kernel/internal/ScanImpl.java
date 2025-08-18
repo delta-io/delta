@@ -42,7 +42,6 @@ import io.delta.kernel.internal.skipping.DataSkippingUtils;
 import io.delta.kernel.internal.util.*;
 import io.delta.kernel.metrics.ScanReport;
 import io.delta.kernel.metrics.SnapshotReport;
-import io.delta.kernel.types.FieldMetadata;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
@@ -205,36 +204,17 @@ public class ScanImpl implements Scan {
   public Row getScanState(Engine engine) {
     StructType physicalSchema = createPhysicalSchema();
 
-    // Compute the physical data read schema (i.e., the columns to read from a Parquet data file).
-    // The only difference to the physical schema is that we exclude partition columns. All other
-    // logic (e.g., row tracking columns, row index for DVs) is already handled before.
-    List<String> partitionColumns = VectorUtils.toJavaList(metadata.getPartitionColumns());
-    StructType physicalDataReadSchema =
-        PartitionUtils.physicalSchemaWithoutPartitionColumns(
-            readSchema /* logical read schema */, physicalSchema, new HashSet<>(partitionColumns));
-
     return ScanStateRow.of(
         metadata,
         protocol,
-        readSchema.toJson(),
+        readSchema.toJson() /* logical schema */,
         physicalSchema.toJson(),
-        physicalDataReadSchema.toJson(),
         dataPath.toUri().toString());
   }
 
   @Override
   public Optional<Predicate> getRemainingFilter() {
     return getDataFilters();
-  }
-
-  /** Helper method to create a copy of a column that is marked as an internal column. */
-  public static StructField createInternalColumn(StructField field) {
-    FieldMetadata metadata =
-        FieldMetadata.builder()
-            .fromMetadata(field.getMetadata())
-            .putBoolean(StructField.IS_INTERNAL_COLUMN_KEY, true)
-            .build();
-    return field.withNewMetadata(metadata);
   }
 
   /**
@@ -248,6 +228,7 @@ public class ScanImpl implements Scan {
    * <p>The logical-to-physical conversion follows these high-level steps:
    *
    * <ul>
+   *   <li>Partition columns are excluded from the physical schema.
    *   <li>Regular columns are converted based on the column mapping mode.
    *   <li>Metadata columns are converted to their physical counterparts if applicable.
    *   <li>Additional columns (such as the row index) are requested if necessary.
@@ -261,7 +242,11 @@ public class ScanImpl implements Scan {
         ColumnMapping.getColumnMappingMode(metadata.getConfiguration());
 
     for (StructField logicalField : readSchema.fields()) {
-      physicalFields.addAll(convertField(logicalField, mode));
+      if (!metadata
+          .getPartitionColNames()
+          .contains(logicalField.getName().toLowerCase(Locale.ROOT))) {
+        physicalFields.addAll(convertField(logicalField, mode));
+      }
     }
 
     if (protocol.getReaderFeatures().contains("deletionVectors")
@@ -269,7 +254,7 @@ public class ScanImpl implements Scan {
             .map(StructField::getName)
             .noneMatch(name -> name.equals(StructField.METADATA_ROW_INDEX_COLUMN_NAME))) {
       // If the row index column is not already present, add it to the physical read schema
-      physicalFields.add(createInternalColumn(StructField.METADATA_ROW_INDEX_COLUMN));
+      physicalFields.add(SchemaUtils.createInternalColumn(StructField.METADATA_ROW_INDEX_COLUMN));
     }
 
     return new StructType(physicalFields);
