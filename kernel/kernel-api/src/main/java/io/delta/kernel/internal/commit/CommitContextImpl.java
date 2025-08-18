@@ -25,10 +25,10 @@ import io.delta.kernel.commit.CommitContext;
 import io.delta.kernel.commit.CommitMetadata;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
-import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.transaction.TransactionV2State;
+import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.utils.CloseableIterator;
 import java.util.*;
@@ -99,8 +99,7 @@ public class CommitContextImpl implements CommitContext {
         getCommitAsVersion(),
         txnState.logPath,
         commitInfo,
-        txnState.readTableOpt.map(SnapshotImpl::getProtocol),
-        txnState.readTableOpt.map(SnapshotImpl::getMetadata),
+        txnState.readTableOpt.map(x -> new Tuple2<>(x.getProtocol(), x.getMetadata())),
         txnState.updatedProtocolOpt,
         txnState.isMetadataUpdate() ? Optional.of(metadata) : Optional.empty());
   }
