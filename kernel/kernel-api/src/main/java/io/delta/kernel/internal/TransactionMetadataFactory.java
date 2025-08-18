@@ -134,7 +134,7 @@ public class TransactionMetadataFactory {
         readSnapshot.getMetadata().getConfiguration().entrySet().stream()
             .filter(
                 e ->
-                    ReplaceTableTransactionBuilderImpl.TABLE_PROPERTY_KEYS_TO_PRESERVE.contains(
+                    ReplaceTableTransactionBuilderV2Impl.TABLE_PROPERTY_KEYS_TO_PRESERVE.contains(
                         e.getKey()))
             .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
     replaceTableProperties.putAll(userInputTableProperties);
