@@ -17,7 +17,6 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
-import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
@@ -301,7 +300,7 @@ abstract class UniversalFormatConverter(spark: SparkSession) {
    */
   def enqueueSnapshotForConversion(
     snapshotToConvert: Snapshot,
-    txn: DeltaTransaction): Unit
+    txn: CommittedTransaction): Unit
 
   /**
    * Perform a blocking conversion when performing an OptimisticTransaction
@@ -314,7 +313,7 @@ abstract class UniversalFormatConverter(spark: SparkSession) {
    * @return Converted Delta version and commit timestamp
    */
   def convertSnapshot(
-    snapshotToConvert: Snapshot, txn: DeltaTransaction): Option[(Long, Long)]
+    snapshotToConvert: Snapshot, txn: CommittedTransaction): Option[(Long, Long)]
 
   /**
    * Perform a blocking conversion for the given catalogTable
@@ -339,6 +338,12 @@ object IcebergConstants {
   val ICEBERG_TBLPROP_METADATA_LOCATION = "metadata_location"
   val ICEBERG_PROVIDER = "iceberg"
   val ICEBERG_NAME_MAPPING_PROPERTY = "schema.name-mapping.default"
+
+  // Reserved field ID for the `_row_id` column
+  // Iceberg spec: https://iceberg.apache.org/spec/?h=row#reserved-field-ids
+  val ICEBERG_ROW_TRACKING_ROW_ID_FIELD_ID = 2147483540L
+  // Reserved field ID for the `_last_updated_sequence_number` column
+  val ICEBERG_ROW_TRACKING_LAST_UPDATED_SEQUENCE_NUMBER_FIELD_ID = 2147483539L
 }
 
 object HudiConstants {

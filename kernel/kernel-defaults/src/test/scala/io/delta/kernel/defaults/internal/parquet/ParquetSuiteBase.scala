@@ -289,7 +289,7 @@ trait ParquetSuiteBase extends TestUtils {
       readSchema,
       predicate)
 
-    data.asScala.toSeq
+    data.asScala.toSeq.map(_.getData)
   }
 
   def parquetFileCount(fileOrDir: String): Long = parquetFiles(fileOrDir).size

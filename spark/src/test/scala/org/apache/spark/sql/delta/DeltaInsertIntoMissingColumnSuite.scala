@@ -170,7 +170,7 @@ class DeltaInsertIntoMissingColumnSuite extends DeltaInsertIntoTest {
           ex,
           "DELTA_INSERT_COLUMN_ARITY_MISMATCH",
           parameters = Map(
-            "tableName" -> "spark_catalog.default.target",
+            "tableName" -> s"$catalogName.default.target",
             "columnName" -> "not enough data columns",
             "numColumns" -> "3",
             "insertColumns" -> "2"
@@ -191,7 +191,7 @@ class DeltaInsertIntoMissingColumnSuite extends DeltaInsertIntoTest {
           ex,
           "DELTA_INSERT_COLUMN_ARITY_MISMATCH",
           parameters = Map(
-            "tableName" -> "spark_catalog.default.target",
+            "tableName" -> s"$catalogName.default.target",
             "columnName" -> "not enough data columns",
             "numColumns" -> "3",
             "insertColumns" -> "2"
@@ -213,8 +213,8 @@ class DeltaInsertIntoMissingColumnSuite extends DeltaInsertIntoTest {
           ex,
           "DELTA_INSERT_COLUMN_ARITY_MISMATCH",
           parameters = Map(
-            "tableName" -> "spark_catalog\\.default\\.target",
-            "columnName" -> "not enough nested fields in (spark_catalog\\.default\\.source\\.)?s",
+            "tableName" -> s"$catalogName\\.default\\.target",
+            "columnName" -> s"not enough nested fields in ($catalogName\\.default\\.source\\.)?s",
             "numColumns" -> "2",
             "insertColumns" -> "1"
           ))
@@ -236,8 +236,8 @@ class DeltaInsertIntoMissingColumnSuite extends DeltaInsertIntoTest {
           ex,
           "DELTA_INSERT_COLUMN_ARITY_MISMATCH",
           parameters = Map(
-            "tableName" -> "spark_catalog\\.default\\.target",
-            "columnName" -> "not enough nested fields in (spark_catalog\\.default\\.source\\.)?s",
+            "tableName" -> s"$catalogName\\.default\\.target",
+            "columnName" -> s"not enough nested fields in ($catalogName\\.default\\.source\\.)?s",
             "numColumns" -> "2",
             "insertColumns" -> "1"
           ))

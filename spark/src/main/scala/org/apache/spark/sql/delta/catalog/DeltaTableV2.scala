@@ -183,7 +183,10 @@ class DeltaTableV2 private[delta](
         "queriedVersion" -> version,
         "accessType" -> accessType
       ))
-      deltaLog.getSnapshotAt(version, catalogTableOpt = catalogTable)
+      deltaLog.getSnapshotAt(
+        version,
+        catalogTableOpt = catalogTable,
+        enforceTimeTravelWithinDeletedFileRetention = true)
     }.getOrElse(
       deltaLog.update(
         stalenessAcceptable = true,
@@ -332,6 +335,7 @@ class DeltaTableV2 private[delta](
 
     // Spark 4.0 and 3.5 handle time travel options differently.
     DeltaTimeTravelSpecShims.validateTimeTravelSpec(
+      spark,
       currSpecOpt = timeTravelOpt,
       newSpecOpt = ttSpec)
 

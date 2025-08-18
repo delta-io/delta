@@ -3,7 +3,12 @@ mypy==1.8.0
 flake8==3.9.0
 
 # Code Formatter
-black==23.9.1
+black==23.12.1
+
+# Spark Connect (required)
+grpcio>=1.67.0
+grpcio-status>=1.67.0
+googleapis-common-protos>=1.65.0
 
 # Spark and Delta Connect python proto generation plugin (optional)
 mypy-protobuf==3.3.0

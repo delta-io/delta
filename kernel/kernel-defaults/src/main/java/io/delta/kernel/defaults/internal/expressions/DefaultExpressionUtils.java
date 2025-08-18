@@ -386,6 +386,92 @@ class DefaultExpressionUtils {
     };
   }
 
+  /** Represents an arithmetic operator that can be applied to two numeric values. */
+  public interface ArithmeticOperator {
+    byte apply(byte a, byte b);
+
+    short apply(short a, short b);
+
+    int apply(int a, int b);
+
+    long apply(long a, long b);
+
+    float apply(float a, float b);
+
+    double apply(double a, double b);
+  }
+
+  /**
+   * Creates a column vector that lazily evaluates an arithmetic operation between two column
+   * vectors.
+   *
+   * <p>Only numeric data types are supported.
+   *
+   * @param left the left operand column vector
+   * @param right the right operand column vector
+   * @param operator the arithmetic operator to apply
+   * @return a new column vector representing the result of the arithmetic operation
+   */
+  static ColumnVector arithmeticVector(
+      ColumnVector left, ColumnVector right, ArithmeticOperator operator) {
+    checkArgument(
+        left.getSize() == right.getSize(), "Left and right operand have different vector sizes.");
+    checkArgument(
+        left.getDataType().equals(right.getDataType()),
+        "Left and right operand have different data types.");
+    return new ColumnVector() {
+      @Override
+      public DataType getDataType() {
+        return left.getDataType();
+      }
+
+      @Override
+      public int getSize() {
+        return left.getSize();
+      }
+
+      @Override
+      public void close() {
+        Utils.closeCloseables(left, right);
+      }
+
+      @Override
+      public boolean isNullAt(int rowId) {
+        return left.isNullAt(rowId) || right.isNullAt(rowId);
+      }
+
+      @Override
+      public byte getByte(int rowId) {
+        return operator.apply(left.getByte(rowId), right.getByte(rowId));
+      }
+
+      @Override
+      public short getShort(int rowId) {
+        return operator.apply(left.getShort(rowId), right.getShort(rowId));
+      }
+
+      @Override
+      public int getInt(int rowId) {
+        return operator.apply(left.getInt(rowId), right.getInt(rowId));
+      }
+
+      @Override
+      public long getLong(int rowId) {
+        return operator.apply(left.getLong(rowId), right.getLong(rowId));
+      }
+
+      @Override
+      public float getFloat(int rowId) {
+        return operator.apply(left.getFloat(rowId), right.getFloat(rowId));
+      }
+
+      @Override
+      public double getDouble(int rowId) {
+        return operator.apply(left.getDouble(rowId), right.getDouble(rowId));
+      }
+    };
+  }
+
   /**
    * Checks if the specific expression is an integer literal, throws {@link
    * UnsupportedOperationException} if not.

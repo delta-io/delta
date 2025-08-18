@@ -16,11 +16,15 @@
 
 package io.delta.kernel.internal.util;
 
+import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
+
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
+import io.delta.kernel.engine.Engine;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.Iterator;
 
 /**
@@ -169,5 +173,14 @@ public class Utils {
   public static CloseableIterator<Row> intoRows(
       CloseableIterator<FilteredColumnarBatch> sourceBatches) {
     return new FilteredBatchToRowIter(sourceBatches);
+  }
+
+  public static String resolvePath(Engine engine, String path) {
+    try {
+      return wrapEngineExceptionThrowsIO(
+          () -> engine.getFileSystemClient().resolvePath(path), "Resolving path %s", path);
+    } catch (IOException io) {
+      throw new UncheckedIOException(io);
+    }
   }
 }

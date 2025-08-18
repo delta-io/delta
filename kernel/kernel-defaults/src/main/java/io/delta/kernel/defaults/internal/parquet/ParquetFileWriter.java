@@ -453,7 +453,8 @@ public class ParquetFileWriter {
                 numRows,
                 emptyMap() /* minValues */,
                 emptyMap() /* maxValues */,
-                emptyMap() /* nullCount */);
+                emptyMap() /* nullCount */,
+                Optional.empty() /* tightBounds */);
       } else {
         stats =
             readDataFileStatistics(

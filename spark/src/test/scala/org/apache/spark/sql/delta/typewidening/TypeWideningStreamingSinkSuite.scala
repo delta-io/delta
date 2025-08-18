@@ -30,7 +30,8 @@ import org.apache.spark.sql.types._
  */
 class TypeWideningStreamingSinkSuite
   extends DeltaSinkImplicitCastSuiteBase
-  with TypeWideningTestMixin {
+  with TypeWideningTestMixin
+  with DeltaExcludedBySparkVersionTestMixinShims {
 
   import testImplicits._
 
@@ -43,6 +44,34 @@ class TypeWideningStreamingSinkSuite
     spark.conf.set(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "true")
     // Ensure we don't silently cast test inputs to null on overflow.
     spark.conf.set(SQLConf.ANSI_ENABLED.key, "true")
+  }
+
+  testSparkMasterOnly("type is widened if automatic widening set to always") {
+    withDeltaStream[Int] { stream =>
+      stream.write(17)("CAST(value AS SHORT)")
+      assert(stream.currentSchema("value").dataType === ShortType)
+      checkAnswer(stream.read(), Row(17))
+
+      withSQLConf(DeltaSQLConf.DELTA_ALLOW_AUTOMATIC_WIDENING.key -> "always") {
+        stream.write(2)("CAST(value AS DOUBLE)")
+        assert(stream.currentSchema("value").dataType === DoubleType)
+        checkAnswer(stream.read(), Row(17.0) :: Row(2.0) :: Nil)
+      }
+    }
+  }
+
+  test("type isn't widened if automatic widening set to never") {
+    withDeltaStream[Int] { stream =>
+      stream.write(17)("CAST(value AS SHORT)")
+      assert(stream.currentSchema("value").dataType === ShortType)
+      checkAnswer(stream.read(), Row(17))
+
+      withSQLConf(DeltaSQLConf.DELTA_ALLOW_AUTOMATIC_WIDENING.key -> "never") {
+        stream.write(100)("CAST(value AS INT)")
+        assert(stream.currentSchema("value").dataType === ShortType)
+        checkAnswer(stream.read(), Row(17) :: Row(100) :: Nil)
+      }
+    }
   }
 
   test("type isn't widened if schema evolution is disabled") {

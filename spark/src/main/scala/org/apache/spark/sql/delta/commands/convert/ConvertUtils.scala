@@ -221,11 +221,18 @@ trait ConvertUtilsBase extends DeltaLogging {
         s"Fail to relativize path $path against base path $basePath.")
       relativePath.toUri.toString
     } else {
-      path.toUri.toString
+      fs.makeQualified(path).toUri.toString
     }
 
-    AddFile(pathStrForAddFile, partition, file.length, file.modificationTime, dataChange = true,
-      stats = targetFile.stats.orNull)
+
+    AddFile(
+      pathStrForAddFile,
+      partition,
+      file.length,
+      file.modificationTime,
+      dataChange = true,
+      stats = targetFile.stats.orNull
+    )
   }
 
   /**

@@ -42,6 +42,8 @@ import "google/protobuf/any.proto";
 import "spark/connect/common.proto";
 import "spark/connect/expressions.proto";
 import "spark/connect/relations.proto";
+import "spark/connect/ml.proto";
+import "spark/connect/pipelines.proto";
 
 package spark.connect;
 
@@ -68,6 +70,10 @@ message Command {
     CreateResourceProfileCommand create_resource_profile_command = 13;
     CheckpointCommand checkpoint_command = 14;
     RemoveCachedRemoteRelationCommand remove_cached_remote_relation_command = 15;
+    MergeIntoTableCommand merge_into_table_command = 16;
+    MlCommand ml_command = 17;
+    ExecuteExternalCommand execute_external_command = 18;
+    PipelineCommand pipeline_command = 19;
 
     // This field is used to mark extensions to the protocol. When plugins generate arbitrary
     // Commands they can add them here. During the planning the correct resolution is done.
@@ -260,6 +266,9 @@ message WriteStreamOperationStart {
 
   StreamingForeachFunction foreach_writer = 13;
   StreamingForeachFunction foreach_batch = 14;
+
+  // (Optional) Columns used for clustering the table.
+  repeated string clustering_column_names = 15;
 }
 
 message StreamingForeachFunction {
@@ -524,4 +533,42 @@ message CheckpointCommand {
 
   // (Required) Whether to checkpoint this dataframe immediately.
   bool eager = 3;
+
+  // (Optional) For local checkpoint, the storage level to use.
+  optional StorageLevel storage_level = 4;
+}
+
+message MergeIntoTableCommand {
+  // (Required) The name of the target table.
+  string target_table_name = 1;
+
+  // (Required) The relation of the source table.
+  Relation source_table_plan = 2;
+
+  // (Required) The condition to match the source and target.
+  Expression merge_condition = 3;
+
+  // (Optional) The actions to be taken when the condition is matched.
+  repeated Expression match_actions = 4;
+
+  // (Optional) The actions to be taken when the condition is not matched.
+  repeated Expression not_matched_actions = 5;
+
+  // (Optional) The actions to be taken when the condition is not matched by source.
+  repeated Expression not_matched_by_source_actions = 6;
+
+  // (Required) Whether to enable schema evolution.
+  bool with_schema_evolution = 7;
+}
+
+// Execute an arbitrary string command inside an external execution engine
+message ExecuteExternalCommand {
+  // (Required) The class name of the runner that implements `ExternalCommandRunner`
+  string runner = 1;
+
+  // (Required) The target command to be executed.
+  string command = 2;
+
+  // (Optional) The options for the runner.
+  map<string, string> options = 3;
 }

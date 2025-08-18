@@ -16,9 +16,11 @@
 package io.delta.kernel.internal.util;
 
 import io.delta.kernel.types.StructField;
+import io.delta.kernel.types.StructType;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * SchemaChanges encapsulates a list of added, removed, renamed, or updated fields in a schema
@@ -36,23 +38,59 @@ import java.util.List;
  * level schema
  */
 class SchemaChanges {
+  public static class SchemaUpdate {
+    private final StructField fieldBefore;
+    private final StructField fieldAfter;
+    // This is a "." concatenated path to the field. Names containing "." are wrapped in
+    // back-ticks (`).
+    // For example in the schema <a.b : array<StructType<c : Int>>> the path to "c" would be:
+    // "`a.b`.element.c". In general, though the format should not be relid upon since this
+    // is used for surfacing errors to users.
+    // Note this is a by name. If we want to be able to track changes
+    // at the where an element is moved to a different location in the
+    // schema we need to add more paths here.
+    private final String pathToAfterField;
+
+    SchemaUpdate(StructField fieldBefore, StructField fieldAfter, String pathToAfterField) {
+      this.fieldBefore = fieldBefore;
+      this.fieldAfter = fieldAfter;
+      this.pathToAfterField = pathToAfterField;
+    }
+
+    public StructField before() {
+      return fieldBefore;
+    }
+
+    public StructField after() {
+      return fieldAfter;
+    }
+
+    public String getPathToAfterField() {
+      return pathToAfterField;
+    }
+  }
+
   private List<StructField> addedFields;
   private List<StructField> removedFields;
-  private List<Tuple2<StructField, StructField>> updatedFields;
+  private List<SchemaUpdate> updatedFields;
+  private Optional<StructType> updatedSchema;
 
   private SchemaChanges(
       List<StructField> addedFields,
       List<StructField> removedFields,
-      List<Tuple2<StructField, StructField>> updatedFields) {
+      List<SchemaUpdate> updatedFields,
+      Optional<StructType> updatedSchema) {
     this.addedFields = Collections.unmodifiableList(addedFields);
     this.removedFields = Collections.unmodifiableList(removedFields);
     this.updatedFields = Collections.unmodifiableList(updatedFields);
+    this.updatedSchema = updatedSchema;
   }
 
   static class Builder {
     private List<StructField> addedFields = new ArrayList<>();
     private List<StructField> removedFields = new ArrayList<>();
-    private List<Tuple2<StructField, StructField>> updatedFields = new ArrayList<>();
+    private List<SchemaUpdate> updatedFields = new ArrayList<>();
+    private Optional<StructType> updatedSchema = Optional.empty();
 
     public Builder withAddedField(StructField addedField) {
       addedFields.add(addedField);
@@ -64,13 +102,19 @@ class SchemaChanges {
       return this;
     }
 
-    public Builder withUpdatedField(StructField existingField, StructField newField) {
-      updatedFields.add(new Tuple2<>(existingField, newField));
+    public Builder withUpdatedField(
+        StructField existingField, StructField newField, String pathToAfterField) {
+      updatedFields.add(new SchemaUpdate(existingField, newField, pathToAfterField));
+      return this;
+    }
+
+    public Builder withUpdatedSchema(StructType updatedSchema) {
+      this.updatedSchema = Optional.of(updatedSchema);
       return this;
     }
 
     public SchemaChanges build() {
-      return new SchemaChanges(addedFields, removedFields, updatedFields);
+      return new SchemaChanges(addedFields, removedFields, updatedFields, updatedSchema);
     }
   }
 
@@ -88,8 +132,12 @@ class SchemaChanges {
     return removedFields;
   }
 
-  /* Updated Fields (e.g. rename, type change) represented as a Tuple<FieldBefore, FieldAfter> */
-  public List<Tuple2<StructField, StructField>> updatedFields() {
+  /* Updated Fields (e.g. rename, type change) represented */
+  public List<SchemaUpdate> updatedFields() {
     return updatedFields;
+  }
+
+  public Optional<StructType> updatedSchema() {
+    return updatedSchema;
   }
 }

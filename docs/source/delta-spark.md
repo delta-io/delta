@@ -28,6 +28,7 @@ This is the documentation page for <Delta> Spark connector.
     delta-drop-feature
     delta-row-tracking
     delta-storage
+    delta-spark-connect
     delta-type-widening
     delta-uniform
     delta-sharing

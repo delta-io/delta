@@ -184,11 +184,11 @@ trait WriteIntoDeltaLike {
 
   protected def extractConstraints(
       sparkSession: SparkSession,
-      expr: Seq[Expression]): Seq[Constraint] = {
+      exprs: Seq[Expression]): Seq[Constraint] = {
     if (!sparkSession.conf.get(DeltaSQLConf.REPLACEWHERE_CONSTRAINT_CHECK_ENABLED)) {
       Seq.empty
     } else {
-      expr.flatMap { e =>
+      exprs.flatMap { e =>
         // While writing out the new data, we only want to enforce constraint on expressions
         // with UnresolvedAttribute, that is, containing column name. Because we parse a
         // predicate string without analyzing it, if there's a column name, it has to be

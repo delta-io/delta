@@ -19,7 +19,6 @@ from typing import (
     TYPE_CHECKING, cast, overload, Any, Dict, Iterable, Optional, Union, NoReturn, List, Tuple
 )
 
-import delta.exceptions  # noqa: F401; pylint: disable=unused-variable
 from delta._typing import (
     ColumnMapping, OptionalColumnMapping, ExpressionOrColumn, OptionalExpressionOrColumn
 )
@@ -27,6 +26,7 @@ from delta._typing import (
 from pyspark import since
 from pyspark.sql import Column, DataFrame, functions, SparkSession
 from pyspark.sql.types import DataType, StructType, StructField
+from pyspark.sql.utils import is_remote
 
 
 if TYPE_CHECKING:
@@ -332,6 +332,11 @@ class DeltaTable(object):
         :rtype: :py:class:`~delta.tables.DeltaTable`
         """
         assert sparkSession is not None
+        if is_remote():
+            from pyspark.sql.connect.session import SparkSession as RemoteSparkSession
+            if isinstance(sparkSession, RemoteSparkSession):
+                from delta.connect.tables import DeltaTable as RemoteDeltaTable
+                return RemoteDeltaTable.convertToDelta(sparkSession, identifier, partitionSchema)
 
         jvm: "JVMView" = sparkSession._sc._jvm  # type: ignore[attr-defined]
         jsparkSession: "JavaObject" = sparkSession._jsparkSession  # type: ignore[attr-defined]
@@ -380,6 +385,11 @@ class DeltaTable(object):
                            hadoopConf)
         """
         assert sparkSession is not None
+        if is_remote():
+            from pyspark.sql.connect.session import SparkSession as RemoteSparkSession
+            if isinstance(sparkSession, RemoteSparkSession):
+                from delta.connect.tables import DeltaTable as RemoteDeltaTable
+                return RemoteDeltaTable.forPath(sparkSession, path, hadoopConf)
 
         jvm: "JVMView" = sparkSession._sc._jvm  # type: ignore[attr-defined]
         jsparkSession: "JavaObject" = sparkSession._jsparkSession  # type: ignore[attr-defined]
@@ -412,6 +422,11 @@ class DeltaTable(object):
             deltaTable = DeltaTable.forName(spark, "tblName")
         """
         assert sparkSession is not None
+        if is_remote():
+            from pyspark.sql.connect.session import SparkSession as RemoteSparkSession
+            if isinstance(sparkSession, RemoteSparkSession):
+                from delta.connect.tables import DeltaTable as RemoteDeltaTable
+                return RemoteDeltaTable.forName(sparkSession, tableOrViewName)
 
         jvm: "JVMView" = sparkSession._sc._jvm  # type: ignore[attr-defined]
         jsparkSession: "JavaObject" = sparkSession._jsparkSession  # type: ignore[attr-defined]
@@ -442,6 +457,11 @@ class DeltaTable(object):
         if sparkSession is None:
             sparkSession = SparkSession.getActiveSession()
         assert sparkSession is not None
+        if is_remote():
+            from pyspark.sql.connect.session import SparkSession as RemoteSparkSession
+            if isinstance(sparkSession, RemoteSparkSession):
+                from delta.connect.tables import DeltaTable as RemoteDeltaTable
+                return RemoteDeltaTable.create(sparkSession)
 
         jvm: "JVMView" = sparkSession._sc._jvm  # type: ignore[attr-defined]
         jsparkSession: "JavaObject" = sparkSession._jsparkSession  # type: ignore[attr-defined]
@@ -472,6 +492,11 @@ class DeltaTable(object):
         if sparkSession is None:
             sparkSession = SparkSession.getActiveSession()
         assert sparkSession is not None
+        if is_remote():
+            from pyspark.sql.connect.session import SparkSession as RemoteSparkSession
+            if isinstance(sparkSession, RemoteSparkSession):
+                from delta.connect.tables import DeltaTable as RemoteDeltaTable
+                return RemoteDeltaTable.createIfNotExists(sparkSession)
 
         jvm: "JVMView" = sparkSession._sc._jvm  # type: ignore[attr-defined]
         jsparkSession: "JavaObject" = sparkSession._jsparkSession  # type: ignore[attr-defined]
@@ -502,6 +527,11 @@ class DeltaTable(object):
         if sparkSession is None:
             sparkSession = SparkSession.getActiveSession()
         assert sparkSession is not None
+        if is_remote():
+            from pyspark.sql.connect.session import SparkSession as RemoteSparkSession
+            if isinstance(sparkSession, RemoteSparkSession):
+                from delta.connect.tables import DeltaTable as RemoteDeltaTable
+                return RemoteDeltaTable.replace(sparkSession)
 
         jvm: "JVMView" = sparkSession._sc._jvm  # type: ignore[attr-defined]
         jsparkSession: "JavaObject" = sparkSession._jsparkSession  # type: ignore[attr-defined]
@@ -532,6 +562,11 @@ class DeltaTable(object):
         if sparkSession is None:
             sparkSession = SparkSession.getActiveSession()
         assert sparkSession is not None
+        if is_remote():
+            from pyspark.sql.connect.session import SparkSession as RemoteSparkSession
+            if isinstance(sparkSession, RemoteSparkSession):
+                from delta.connect.tables import DeltaTable as RemoteDeltaTable
+                return RemoteDeltaTable.createOrReplace(sparkSession)
 
         jvm: "JVMView" = sparkSession._sc._jvm  # type: ignore[attr-defined]
         jsparkSession: "JavaObject" = sparkSession._jsparkSession  # type: ignore[attr-defined]
@@ -556,6 +591,11 @@ class DeltaTable(object):
             DeltaTable.isDeltaTable(spark, "/path/to/table")
         """
         assert sparkSession is not None
+        if is_remote():
+            from pyspark.sql.connect.session import SparkSession as RemoteSparkSession
+            if isinstance(sparkSession, RemoteSparkSession):
+                from delta.connect.tables import DeltaTable as RemoteDeltaTable
+                return RemoteDeltaTable.isDeltaTable(sparkSession, identifier)
 
         jvm: "JVMView" = sparkSession._sc._jvm  # type: ignore[attr-defined]
         jsparkSession: "JavaObject" = sparkSession._jsparkSession  # type: ignore[attr-defined]
@@ -686,6 +726,128 @@ class DeltaTable(object):
         """
         jbuilder = self._jdt.optimize()
         return DeltaOptimizeBuilder(self._spark, jbuilder)
+
+    def clone(  # type: ignore[no-untyped-def]
+        self, target, isShallow=False, replace=False, properties=None
+    ) -> "DeltaTable":
+        """
+        Clone the latest state of a DeltaTable to a destination which mirrors the existing
+        table's data and metadata at that version.
+        Example::
+            # Shallow clone a table to path '/path/to/table'
+            deltaTable = DeltaTable.clone("/path/to/table", False, True)
+        :param self: The current instance
+        :type self: :py:class:`~delta.tables.DeltaTable`
+        :param target: Path where we should clone the Delta table
+        :type target: str
+        :param isShallow: True for shallow clones, false for deep clones
+        :type isShallow: bool
+        :param replace: True if the desired behavior is to overwrite the target table if one exists
+                        otherwise throw an error if table exists at the target
+        :type replace: bool
+        :param properties: user-defined table properties that should override any properties with
+                           the same key from the source table
+        :type properties: dict
+        :rtype: :py:class:`~delta.tables.DeltaTable`
+        """
+
+        DeltaTable._verify_clone_types(target, isShallow, replace, properties)
+        return self._jdt.clone(target, isShallow, replace, properties)
+
+    def cloneAtVersion(  # type: ignore[no-untyped-def]
+        self, version, target, isShallow=False, replace=False, properties=None
+    ) -> "DeltaTable":
+        """
+        Clone a DeltaTable at the given version to a destination which mirrors the existing
+        table's data and metadata at that version.
+        Example::
+            # Shallow clone a table to path '/path/to/table' at version 1
+            deltaTable = DeltaTable.cloneAtVersion(1, "/path/to/table", False)
+        :param self: The current instance
+        :type self: :py:class:`~delta.tables.DeltaTable`
+        :param version: Version at which to clone the source directory. Take the metadata at this
+                        version of the table as well.
+        :type version: number
+        :param target: Path where we should clone the Delta table
+        :type target: str
+        :param isShallow: True for shallow clones, false for deep clones
+        :type isShallow: bool
+        :param replace: True if the desired behavior is to overwrite the target table if one exists
+                        otherwise throw an error if table exists at the target
+        :type replace: bool
+        :param properties: user-defined table properties that should override any properties with
+                           the same key from the source table
+        :type properties: dict
+        :rtype: :py:class:`~delta.tables.DeltaTable`
+        """
+
+        DeltaTable._verify_clone_types(target, isShallow, replace, properties, version=version)
+        return self._jdt.cloneAtVersion(version, target, isShallow, replace, properties)
+
+    def cloneAtTimestamp(  # type: ignore[no-untyped-def]
+        self, timestamp, target, isShallow=False, replace=False, properties=None
+    ) -> "DeltaTable":
+        """
+        Clone a DeltaTable at the given timestamp to a destination which mirrors the existing
+        table's data and metadata at that timestamp.
+        Example::
+            # Shallow clone a table to path '/path/to/table' at time of format yyyy-MM-dd'T'HH:mm:ss
+            # or yyyy-MM-dd
+            deltaTable = DeltaTable.cloneAtTimestamp(
+                "2019-01-01",
+                "/path/to/table",
+                False)
+        :param self: The current instance
+        :type self: :py:class:`~delta.tables.DeltaTable`
+        :param timestamp: Timestamp at which to clone the source directory. Take the metadata at
+                          this timestamp as well.
+        :type timestamp: str
+        :param target: Path where we should clone the Delta table
+        :type target: str
+        :param isShallow: True for shallow clones, false for deep clones
+        :type isShallow: bool
+        :param replace: True if the desired behavior is to overwrite the target table if one exists
+                        otherwise throw an error if table exists at the target
+        :type replace: bool
+        :param properties: user-defined table properties that should override any properties with
+                           the same key from the source table
+        :type properties: dict
+        :rtype: :py:class:`~delta.tables.DeltaTable`
+        """
+
+        DeltaTable._verify_clone_types(target, isShallow, replace, properties, timestamp)
+        return self._jdt.cloneAtTimestamp(timestamp, target, isShallow, replace, properties)
+
+    @classmethod
+    def _verify_clone_types(
+        self,
+        target: str,
+        isShallow: bool,
+        replace: bool,
+        properties: dict,
+        timestamp: str = "",
+        version: int = 0
+    ) -> None:
+        """
+        Throw an error if any of the types passed in to Clone do not
+        adhere to the types that we expect
+        """
+        DeltaTable._verify_type_str(timestamp, "timestamp")
+        DeltaTable._verify_type_int(version, "version")
+        DeltaTable._verify_type_str(target, "target")
+        DeltaTable._verify_type_bool(isShallow, "isShallow")
+        DeltaTable._verify_type_bool(replace, "replace")
+
+        if properties is not None:
+            DeltaTable._verify_type_dict(properties, "properties")
+            for property, value in properties.items():
+                DeltaTable._verify_type_str(property, "All property keys including %s" % property)
+                DeltaTable._verify_type_str(value, "All property values including %s" % value)
+
+    @classmethod
+    def _verify_type_dict(cls, variable: dict, name: str) -> None:
+        if not isinstance(variable, dict):
+            raise ValueError("%s needs to be a dict but got '%s'." % (name, type(variable)))
 
     @classmethod  # type: ignore[arg-type]
     def _verify_type_bool(self, variable: bool, name: str) -> None:

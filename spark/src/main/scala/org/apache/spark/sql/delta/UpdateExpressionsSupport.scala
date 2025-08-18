@@ -176,7 +176,13 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
                   columnName
                 )
             }
-          case (from: MapType, to: MapType) if !Cast.canCast(from, to) =>
+          case (from: MapType, to: MapType) if !Cast.canCast(from, to) || (
+              // Structs can be nested into the MapType, so if we need to do by-name casts,
+              // we need to recurse into the children here.
+              castingBehavior.resolveStructsByName &&
+                containsNestedStruct(from) &&
+                containsNestedStruct(to) &&
+                !DataTypeUtils.equalsIgnoreCaseAndNullability(from, to)) =>
             // Manually convert map keys and values if the types are not compatible to allow schema
             // evolution. This is slower than direct cast so we only do it when required.
             def createMapConverter(convert: (Expression, Expression) => Expression): Expression = {
@@ -325,7 +331,15 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
         if (generatedColumns.find(f => resolver(f.name, targetCol.name)).nonEmpty) {
           None
         } else if (defaultExpr.nonEmpty) {
-          defaultExpr
+          if (conf.getConf(DeltaSQLConf.DELTA_MERGE_SCHEMA_EVOLUTION_FIX_NESTED_STRUCT_ALIGNMENT)) {
+            Some(castIfNeeded(
+              defaultExpr.get,
+              targetCol.dataType,
+              castingBehavior = MergeOrUpdateCastingBehavior(allowSchemaEvolution),
+              targetCol.name))
+          } else {
+            defaultExpr
+          }
         } else {
           // This is a new column or field added by schema evolution that doesn't have an assignment
           // in this MERGE clause. Set it to null.
@@ -522,6 +536,14 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
       case SQLConf.StoreAssignmentPolicy.STRICT =>
         UpCast(child, dataType)
     }
+  }
+  private def containsNestedStruct(dt: DataType): Boolean = dt match {
+    case _: StructType => true
+    case _: AtomicType => false
+    case a: ArrayType => containsNestedStruct(a.elementType)
+    case m: MapType => containsNestedStruct(m.keyType) || containsNestedStruct(m.valueType)
+    // Let's defensively pretend it might have a nested struct if we don't recognise something.
+    case _ => true
   }
 
   private def containsIntegralOrDecimalType(dt: DataType): Boolean = dt match {

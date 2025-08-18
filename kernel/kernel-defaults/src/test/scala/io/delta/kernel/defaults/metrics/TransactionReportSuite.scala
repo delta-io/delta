@@ -22,9 +22,9 @@ import scala.collection.immutable.Seq
 
 import io.delta.kernel._
 import io.delta.kernel.data.Row
-import io.delta.kernel.defaults.DeltaTableWriteSuiteBase
+import io.delta.kernel.defaults.utils.WriteUtils
 import io.delta.kernel.engine._
-import io.delta.kernel.expressions.Literal
+import io.delta.kernel.expressions.{Column, Literal}
 import io.delta.kernel.internal.{TableConfig, TableImpl}
 import io.delta.kernel.internal.actions.{GenerateIcebergCompatActionUtils, SingleAction}
 import io.delta.kernel.internal.data.TransactionStateRow
@@ -39,7 +39,8 @@ import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 
 import org.scalatest.funsuite.AnyFunSuite
 
-class TransactionReportSuite extends DeltaTableWriteSuiteBase with MetricsReportTestUtils {
+class TransactionReportSuite extends AnyFunSuite with WriteUtils
+    with MetricsReportTestUtils {
 
   /**
    * Creates a [[Transaction]] using `getTransaction`, requests actions to commit using
@@ -69,7 +70,9 @@ class TransactionReportSuite extends DeltaTableWriteSuiteBase with MetricsReport
         val txnCommitResult = timer.time(() =>
           transaction.commit(engine, actionsToCommit)) // Time the actual operation
         // Validate the txn metrics returned in txnCommitResult
-        validateTransactionMetrics(txnCommitResult.getTransactionMetrics, timer.totalDurationNs())
+        validateTransactionMetrics(
+          txnCommitResult.getTransactionReport.getTransactionMetrics,
+          timer.totalDurationNs())
       },
       expectException)
 
@@ -93,6 +96,7 @@ class TransactionReportSuite extends DeltaTableWriteSuiteBase with MetricsReport
    * @param path table path to commit to
    * @param expectException whether we expect committing to throw an exception
    * @param expectedBaseSnapshotVersion expected snapshot version for the transaction
+   * @param expectedClusteringColumns expected clustering columns for the transaction
    * @param expectedNumAddFiles expected number of add files recorded in the metrics
    * @param expectedNumRemoveFiles expected number of remove files recorded in the metrics
    * @param expectedNumTotalActions expected number of total actions recorded in the metrics
@@ -108,6 +112,7 @@ class TransactionReportSuite extends DeltaTableWriteSuiteBase with MetricsReport
       path: String,
       expectException: Boolean,
       expectedBaseSnapshotVersion: Long,
+      expectedClusteringColumns: Seq[Column] = Seq.empty,
       expectedNumAddFiles: Long = 0,
       expectedNumRemoveFiles: Long = 0,
       expectedNumTotalActions: Long = 0,
@@ -188,6 +193,7 @@ class TransactionReportSuite extends DeltaTableWriteSuiteBase with MetricsReport
         transactionReport.getSnapshotReportUUID.toScala.contains(snapshotReport.getReportUUID)
       })
     }
+    assert(transactionReport.getClusteringColumns.asScala == expectedClusteringColumns)
     assert(transactionReport.getCommittedVersion.toScala == expectedCommitVersion)
     validateTransactionMetrics(transactionReport.getTransactionMetrics, duration)
   }
@@ -217,7 +223,10 @@ class TransactionReportSuite extends DeltaTableWriteSuiteBase with MetricsReport
           new Path(TransactionStateRow.getTablePath(trans.getTransactionState(engine))).toUri,
           fileStatus,
           Collections.emptyMap(), // partitionValues
-          true // dataChange
+          true, // dataChange,
+          Optional.empty(), // baseRowId
+          Optional.empty(), // defaultRowCommitVersion
+          Optional.empty() // deletionVectorDescriptor
         ))
     })
   }
@@ -465,11 +474,11 @@ class TransactionReportSuite extends DeltaTableWriteSuiteBase with MetricsReport
       withTempDir { tempDir =>
         val path = tempDir.getCanonicalPath
         // Set up a non-empty table at version 0 with add file size that we know
-        val txn = Table.forPath(defaultEngine, path)
-          .createTransactionBuilder(defaultEngine, "testEngineInfo", Operation.CREATE_TABLE)
-          .withSchema(defaultEngine, new StructType().add("col1", IntegerType.INTEGER))
-          .withDomainMetadataSupported()
-          .build(defaultEngine)
+        val txn = getCreateTxn(
+          defaultEngine,
+          path,
+          new StructType().add("col1", IntegerType.INTEGER),
+          withDomainMetadataSupported = true)
         txn.addDomainMetadata("user-domain", "some config")
         val result = txn.commit(
           defaultEngine,
@@ -514,6 +523,124 @@ class TransactionReportSuite extends DeltaTableWriteSuiteBase with MetricsReport
           },
           operation = Operation.REPLACE_TABLE)
       }
+    }
+  }
+
+  test("TransactionReport: clustering columns are in transaction report") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val testSchema = new StructType()
+        .add("id", IntegerType.INTEGER)
+        .add("name", IntegerType.INTEGER)
+        .add(
+          "nested",
+          new StructType()
+            .add("nestedId", IntegerType.INTEGER)
+            .add("nestedName", IntegerType.INTEGER))
+
+      // create table
+      checkTransactionReport(
+        generateCommitActions = (_, _) => CloseableIterable.emptyIterable(),
+        tablePath,
+        expectException = false,
+        expectedBaseSnapshotVersion = -1,
+        expectedCommitVersion = Some(0),
+        expectedNumTotalActions = 4, // protocol, metadata, commitInfo, domainMetadata
+        expectedClusteringColumns = Seq(
+          new Column("id"),
+          new Column(Array[String]("nested", "nestedId"))),
+        expectedFileSizeHistogramResult = Some(
+          FileSizeHistogram.createDefaultHistogram().captureFileSizeHistogramResult()),
+        buildTransaction = (builder, engine) =>
+          builder
+            .withSchema(engine, testSchema)
+            .withClusteringColumns(
+              engine,
+              Seq(
+                new Column("id"),
+                new Column(Array[String]("nested", "nestedId"))).asJava)
+            .build(engine))
+
+      // update table (no clustering column change)
+      checkTransactionReport(
+        generateCommitActions = generateAppendActions(fileStatusIter1),
+        tablePath,
+        expectException = false,
+        expectedBaseSnapshotVersion = 0,
+        expectedCommitVersion = Some(1),
+        expectedNumTotalActions = 2, // commitInfo, one add file
+        expectedNumAddFiles = 1,
+        expectedTotalAddFilesSizeInBytes = 100,
+        expectedClusteringColumns = Seq(
+          new Column("id"),
+          new Column(Array[String]("nested", "nestedId"))))
+
+      // update clustering columns
+      checkTransactionReport(
+        generateCommitActions = (_, _) => CloseableIterable.emptyIterable(),
+        tablePath,
+        expectException = false,
+        expectedBaseSnapshotVersion = 1,
+        expectedCommitVersion = Some(2),
+        expectedNumTotalActions = 2, // commitInfo, domainMetadata
+        expectedClusteringColumns = Seq(
+          new Column("name"),
+          new Column(Array[String]("nested", "nestedName"))),
+        buildTransaction = (builder, engine) =>
+          builder
+            .withClusteringColumns(
+              engine,
+              Seq(
+                new Column("name"),
+                new Column(Array[String]("nested", "nestedName"))).asJava)
+            .build(engine))
+
+      // replace table (with no new clustering columns)
+      checkTransactionReport(
+        generateCommitActions = (_, _) => CloseableIterable.emptyIterable(),
+        tablePath,
+        expectException = false,
+        expectedBaseSnapshotVersion = 2,
+        expectedNumAddFiles = 0,
+        expectedNumRemoveFiles = 1,
+        // protocol, metadata, commitInfo, remove file, domainMetadata (tombstone)
+        expectedNumTotalActions = 5,
+        expectedCommitVersion = Some(3),
+        expectedTotalRemoveFilesSizeInBytes = 100,
+        expectedTotalAddFilesSizeInBytes = 0,
+        buildTransaction = (transBuilder, engine) => {
+          transBuilder
+            .withSchema(engine, testSchema.add("id2", IntegerType.INTEGER))
+            .build(engine)
+        },
+        operation = Operation.REPLACE_TABLE)
+
+      // replace the table with new clustering columns
+      checkTransactionReport(
+        generateCommitActions = (_, _) => CloseableIterable.emptyIterable(),
+        tablePath,
+        expectException = false,
+        expectedBaseSnapshotVersion = 3,
+        expectedClusteringColumns = Seq(
+          new Column("id3"),
+          new Column(Array[String]("nested", "nestedName"))),
+        expectedNumAddFiles = 0,
+        expectedNumRemoveFiles = 0,
+        // protocol, metadata, commitInfo, domainMetadata (new one for clustering cols)
+        expectedNumTotalActions = 4,
+        expectedCommitVersion = Some(4),
+        expectedTotalRemoveFilesSizeInBytes = 0,
+        expectedTotalAddFilesSizeInBytes = 0,
+        buildTransaction = (transBuilder, engine) => {
+          transBuilder
+            .withSchema(engine, testSchema.add("id3", IntegerType.INTEGER))
+            .withClusteringColumns(
+              engine,
+              Seq(
+                new Column("id3"),
+                new Column(Array[String]("nested", "nestedName"))).asJava)
+            .build(engine)
+        },
+        operation = Operation.REPLACE_TABLE)
     }
   }
 

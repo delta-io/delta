@@ -129,6 +129,26 @@ case class DeletionVectorDescriptor(
     SparkPath.fromPath(absolutePath(tablePath)).urlEncoded
 
   /**
+   * Returns the url encoded relative path of the deletion vector if possible.
+   * If the DV path is outside the table directory, returns None.
+   */
+  def urlEncodedRelativePathIfExists(tablePath: Path): Option[String] = {
+    if (isRelative) {
+      return Some(SparkPath.fromPath(absolutePath(new Path("."))).urlEncoded)
+    }
+
+    // DV path is not relative. Attempt to relativize it.
+    val basePathUri = tablePath.toUri
+    val absolutePathUri = absolutePath(tablePath).toUri
+    val relativePath = basePathUri.relativize(absolutePathUri)
+    if (!relativePath.isAbsolute) {
+      Some(SparkPath.fromUri(relativePath).urlEncoded)
+    } else {
+      None
+    }
+  }
+
+  /**
    * Parse the prefix and UUID of a relative DV. Returns None if the DV is not relative.
    */
   @JsonIgnore
@@ -300,11 +320,23 @@ object DeletionVectorDescriptor {
 
   /**
    * Returns a column with the url encoded deletion vector paths.
+   *
    * WARNING: It throws an exception if it encounters any inline DVs. The caller is responsible
    * for handling these separately.
    */
   def urlEncodedPath(deletionVectorCol: Column, tablePath: Path): Column =
     DeltaUDF.stringFromDeletionVectorDescriptor(_.urlEncodedPath(tablePath))(deletionVectorCol)
+
+  /**
+   * Returns a column with the url encoded deletion vector relative paths. For paths that cannot
+   * be relativized, it returns None.
+   *
+   * WARNING: It throws an exception if it encounters any inline DVs. The caller is responsible
+   * for handling these separately.
+   */
+  def urlEncodedRelativePathIfExists(deletionVectorCol: Column, tablePath: Path): Column =
+    DeltaUDF.stringOptionFromDeletionVectorDescriptor(
+      _.urlEncodedRelativePathIfExists(tablePath))(deletionVectorCol)
 
   /**
    * This produces the same output as [[DeletionVectorDescriptor.uniqueId]] but as a column

@@ -29,4 +29,30 @@ public class DeltaErrorsInternal {
         "Kernel APIs for creating remove file rows require that "
             + "file size be provided but found null file size");
   }
+
+  public static IllegalStateException invalidTimestampFormatForPartitionValue(
+      String partitionValue) {
+    return new IllegalStateException(
+        String.format(
+            "Invalid timestamp format for value: %s. Expected formats: "
+                + "'yyyy-MM-dd HH:mm:ss[.SSSSSS]' or ISO-8601 (e.g. 2020-01-01T00:00:00Z)'",
+            partitionValue));
+  }
+
+  public static UnsupportedOperationException defaultCommitterDoesNotSupportCatalogManagedTables() {
+    return new UnsupportedOperationException(
+        "No io.delta.kernel.commit.Committer has been provided to Kernel, so Kernel is using a "
+            + "default Committer that only supports committing to filesystem-managed Delta tables, "
+            + "not catalog-managed Delta tables. Since this table is catalog-managed, this "
+            + "commit operation is unsupported.");
+  }
+
+  public static IllegalStateException logicalPhysicalSchemaMismatch(
+      int num_partition_cols, int physical_size, int logical_size) {
+    return new IllegalStateException(
+        String.format(
+            "The number of partition columns (%s) plus the physical schema size (%s) does not "
+                + "equal the logical schema size (%s).",
+            num_partition_cols, physical_size, logical_size));
+  }
 }

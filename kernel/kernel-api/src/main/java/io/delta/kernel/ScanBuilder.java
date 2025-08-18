@@ -17,9 +17,11 @@
 package io.delta.kernel;
 
 import io.delta.kernel.annotation.Evolving;
+import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StructType;
+import java.util.Optional;
 
 /**
  * Builder to construct {@link Scan} object.
@@ -65,4 +67,14 @@ public interface ScanBuilder {
 
   /** @return Build the {@link Scan instance} */
   Scan build();
+
+  /**
+   * Build a Paginated Scan with a required page size and an optional page token.
+   *
+   * @param pageSize Maximum number of Scan Files to return in this page.
+   * @param pageToken Optional page token representing the current scan position; empty to start
+   *     from the beginning.
+   * @return A {@link PaginatedScan} configured for pagination.
+   */
+  PaginatedScan buildPaginated(long pageSize, Optional<Row> pageToken);
 }

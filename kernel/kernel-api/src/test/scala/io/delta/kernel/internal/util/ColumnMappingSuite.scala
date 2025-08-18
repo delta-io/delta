@@ -42,60 +42,28 @@ class ColumnMappingSuite extends AnyFunSuite with ColumnMappingSuiteBase {
     assertThatNoException.isThrownBy(() =>
       ColumnMapping.verifyColumnMappingChange(
         new util.HashMap(),
-        new util.HashMap(),
-        true /* isNewTable */ ))
-  }
-
-  test("column mapping mode change is allowed") {
-    val isNewTable = true
-    assertThatNoException.isThrownBy(() =>
-      ColumnMapping.verifyColumnMappingChange(
-        new util.HashMap(),
-        Maps.newHashMap(COLUMN_MAPPING_MODE_KEY, NAME.toString),
-        isNewTable))
-
-    assertThatNoException.isThrownBy(() =>
-      ColumnMapping.verifyColumnMappingChange(
-        Maps.newHashMap(COLUMN_MAPPING_MODE_KEY, NONE.toString),
-        Maps.newHashMap(COLUMN_MAPPING_MODE_KEY, NAME.toString),
-        isNewTable))
-
-    assertThatNoException.isThrownBy(() =>
-      ColumnMapping.verifyColumnMappingChange(
-        Maps.newHashMap(COLUMN_MAPPING_MODE_KEY, ID.toString),
-        Maps.newHashMap(COLUMN_MAPPING_MODE_KEY, ID.toString),
-        isNewTable))
-
-    assertThatNoException.isThrownBy(() =>
-      ColumnMapping.verifyColumnMappingChange(
-        Maps.newHashMap(COLUMN_MAPPING_MODE_KEY, NAME.toString),
-        Maps.newHashMap(COLUMN_MAPPING_MODE_KEY, NAME.toString),
-        isNewTable))
+        new util.HashMap()))
   }
 
   test("column mapping mode change not allowed on existing table") {
-    val isNewTable = false
     assertThatThrownBy(() =>
       ColumnMapping.verifyColumnMappingChange(
         Maps.newHashMap(COLUMN_MAPPING_MODE_KEY, NAME.toString),
-        Maps.newHashMap(COLUMN_MAPPING_MODE_KEY, ID.toString),
-        isNewTable))
+        Maps.newHashMap(COLUMN_MAPPING_MODE_KEY, ID.toString)))
       .isInstanceOf(classOf[IllegalArgumentException])
       .hasMessage("Changing column mapping mode from 'name' to 'id' is not supported")
 
     assertThatThrownBy(() =>
       ColumnMapping.verifyColumnMappingChange(
         Maps.newHashMap(COLUMN_MAPPING_MODE_KEY, ID.toString),
-        Maps.newHashMap(COLUMN_MAPPING_MODE_KEY, NAME.toString),
-        isNewTable))
+        Maps.newHashMap(COLUMN_MAPPING_MODE_KEY, NAME.toString)))
       .isInstanceOf(classOf[IllegalArgumentException])
       .hasMessage("Changing column mapping mode from 'id' to 'name' is not supported")
 
     assertThatThrownBy(() =>
       ColumnMapping.verifyColumnMappingChange(
         new util.HashMap(),
-        Maps.newHashMap(COLUMN_MAPPING_MODE_KEY, ID.toString),
-        isNewTable))
+        Maps.newHashMap(COLUMN_MAPPING_MODE_KEY, ID.toString)))
       .isInstanceOf(classOf[IllegalArgumentException])
       .hasMessage("Changing column mapping mode from 'none' to 'id' is not supported")
   }

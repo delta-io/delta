@@ -30,8 +30,9 @@ import io.delta.kernel.defaults.engine.{DefaultEngine, DefaultJsonHandler, Defau
 import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
 import io.delta.kernel.defaults.internal.data.vector.{DefaultGenericVector, DefaultStructVector}
-import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestUtils}
+import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestUtils, WriteUtils}
 import io.delta.kernel.engine.{Engine, JsonHandler, ParquetHandler}
+import io.delta.kernel.engine.FileReadResult
 import io.delta.kernel.expressions._
 import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.internal.{InternalScanFileUtils, ScanImpl, TableConfig}
@@ -51,7 +52,7 @@ import org.apache.spark.sql.types.{IntegerType => SparkIntegerType, StructField 
 import org.scalatest.funsuite.AnyFunSuite
 
 class ScanSuite extends AnyFunSuite with TestUtils
-    with ExpressionTestUtils with SQLHelper with DeltaTableWriteSuiteBase {
+    with ExpressionTestUtils with SQLHelper with WriteUtils {
 
   import io.delta.kernel.defaults.ScanSuite._
 
@@ -888,9 +889,7 @@ class ScanSuite extends AnyFunSuite with TestUtils
            |) USING delta
            |TBLPROPERTIES(
            |'delta.dataSkippingStatsColumns' = 'c1,c2,c3,c4,c5,c6,c9,c10',
-           |'delta.columnMapping.mode' = 'name',
-           |'delta.minReaderVersion' = '2',
-           |'delta.minWriterVersion' = '5'
+           |'delta.columnMapping.mode' = 'name'
            |)
            |""".stripMargin)
       spark.sql(s"alter table delta.`$tablePath` drop COLUMN c2")
@@ -1483,7 +1482,7 @@ class ScanSuite extends AnyFunSuite with TestUtils
             .add("decimalCol", new DecimalType(10, 2)))
 
       val tableProps = Map(TableConfig.DATA_SKIPPING_NUM_INDEXED_COLS.getKey -> "10")
-      val txn = createTxn(engine, tablePath, isNewTable = true, schema, List.empty, tableProps)
+      val txn = getCreateTxn(engine, tablePath, schema, List.empty, tableProps)
       txn.commit(engine, emptyIterable())
 
       // Build some rows with corner-case values
@@ -1590,7 +1589,8 @@ class ScanSuite extends AnyFunSuite with TestUtils
 
   Seq(
     "spark-variant-checkpoint",
-    "spark-variant-stable-feature-checkpoint").foreach { tableName =>
+    "spark-variant-stable-feature-checkpoint",
+    "spark-shredded-variant-preview-delta").foreach { tableName =>
     Seq(
       ("version 0 no predicate", None, Some(0), 2),
       ("latest version (has checkpoint) no predicate", None, None, 4),
@@ -1660,7 +1660,7 @@ object ScanSuite {
           override def readParquetFiles(
               fileIter: CloseableIterator[FileStatus],
               physicalSchema: StructType,
-              predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] = {
+              predicate: Optional[Predicate]): CloseableIterator[FileReadResult] = {
             throwErrorIfAddStatsInSchema(physicalSchema)
             super.readParquetFiles(fileIter, physicalSchema, predicate)
           }

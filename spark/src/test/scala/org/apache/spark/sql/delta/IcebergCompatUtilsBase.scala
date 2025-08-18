@@ -35,12 +35,7 @@ trait IcebergCompatUtilsBase extends QueryTest {
 
   protected val compatColumnMappingMode: String = "name"
 
-  protected val allCompatTFs = Map(
-    IcebergCompatV1 -> IcebergCompatV1TableFeature,
-    IcebergCompatV2 -> IcebergCompatV2TableFeature
-  )
-
-  protected def compatTableFeature: TableFeature = allCompatTFs(compatObject)
+  protected def compatTableFeature: TableFeature = compatObject.tableFeature
 
   protected val allReaderWriterVersions: Seq[(Int, Int)] = (1 to 3)
     .flatMap { r => (1 to 7).map(w => (r, w)) }
@@ -76,7 +71,7 @@ trait IcebergCompatUtilsBase extends QueryTest {
     val snapshot = DeltaLog.forTable(spark, TableIdentifier(tableId)).update()
     val protocol = snapshot.protocol
     val tblProperties = snapshot.getProperties
-    val tableFeature = allCompatTFs(compatObj)
+    val tableFeature = compatObj.tableFeature
 
     val expectedMinReaderVersion = Math.max(
       ColumnMappingTableFeature.minReaderVersion,

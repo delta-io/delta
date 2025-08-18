@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import java.io.{FileNotFoundException, IOException}
 import java.nio.file.FileAlreadyExistsException
-import java.util.ConcurrentModificationException
+import java.util.{ConcurrentModificationException, UUID}
 
 import scala.collection.JavaConverters._
 
@@ -668,6 +668,13 @@ trait DeltaErrorsBase
     )
   }
 
+  def cloneWithRowTrackingWithoutStats(): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_CLONE_WITH_ROW_TRACKING_WITHOUT_STATS",
+      messageParameters = Array.empty
+    )
+  }
+
   def incorrectArrayAccess(): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_INCORRECT_ARRAY_ACCESS",
@@ -933,7 +940,7 @@ trait DeltaErrorsBase
     )
   }
 
-  def logFileNotFoundException(
+  def truncatedTransactionLogException(
       path: Path,
       version: Long,
       metadata: Metadata): Throwable = {
@@ -948,6 +955,19 @@ trait DeltaErrorsBase
         logRetention.toString,
         DeltaConfigs.CHECKPOINT_RETENTION_DURATION.key,
         checkpointRetention.toString)
+    )
+  }
+
+  def logFileNotFoundException(
+      path: Path,
+      version: Option[Long],
+      checkpointVersion: Long): Throwable = {
+    new DeltaFileNotFoundException(
+      errorClass = "DELTA_LOG_FILE_NOT_FOUND",
+      messageParameters = Array(
+        version.map(_.toString).getOrElse("LATEST"),
+        checkpointVersion.toString,
+        path.toString)
     )
   }
 
@@ -1325,6 +1345,9 @@ trait DeltaErrorsBase
     )
   }
 
+  def mergeConcurrentOperationCachedSourceException(): Throwable =
+    new DeltaRuntimeException(errorClass = "DELTA_MERGE_SOURCE_CACHED_DURING_EXECUTION")
+
   def columnOfTargetTableNotFoundInMergeException(targetCol: String,
       colNames: String): Throwable = {
     new DeltaAnalysisException(
@@ -1563,6 +1586,14 @@ trait DeltaErrorsBase
     new DeltaAnalysisException(
       errorClass = "DELTA_UNSUPPORTED_TIME_TRAVEL_MULTIPLE_FORMATS",
       messageParameters = Array.empty
+    )
+  }
+
+  def timeTravelBeyondDeletedFileRetentionDurationException(
+    deletedFileRetentionDurationHours: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNSUPPORTED_TIME_TRAVEL_BEYOND_DELETED_FILE_RETENTION_DURATION",
+      messageParameters = Array(deletedFileRetentionDurationHours)
     )
   }
 
@@ -2524,6 +2555,12 @@ trait DeltaErrorsBase
       messageParameters = Array(feature))
   }
 
+  def dropTableFeatureFeatureIsADeltaProperty(feature: String): DeltaTableFeatureException = {
+    new DeltaTableFeatureException(
+      errorClass = "DELTA_FEATURE_DROP_FEATURE_IS_DELTA_PROPERTY",
+      messageParameters = Array(feature))
+  }
+
   def dropTableFeatureNotDeltaTableException(): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_ONLY_OPERATION",
@@ -2720,6 +2757,19 @@ trait DeltaErrorsBase
         rowTrackingDefaultPropertyKey))
   }
 
+  def rowTrackingBackfillRunningConcurrentlyWithUnbackfill(): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_ROW_TRACKING_BACKFILL_RUNNING_CONCURRENTLY_WITH_UNBACKFILL")
+  }
+
+  def rowTrackingIllegalPropertyCombination(): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_ROW_TRACKING_ILLEGAL_PROPERTY_COMBINATION",
+      messageParameters = Array(
+        DeltaConfigs.ROW_TRACKING_ENABLED.key,
+        DeltaConfigs.ROW_TRACKING_SUSPENDED.key))
+  }
+
   /** This is a method only used for testing Py4J exception handling. */
   def throwDeltaIllegalArgumentException(): Throwable = {
     new DeltaIllegalArgumentException(errorClass = "DELTA_UNRECOGNIZED_INVARIANT")
@@ -2823,6 +2873,13 @@ trait DeltaErrorsBase
   def deltaTableFoundInExecutor(): Throwable = {
     new DeltaIllegalStateException(
       errorClass = "DELTA_TABLE_FOUND_IN_EXECUTOR",
+      messageParameters = Array.empty
+    )
+  }
+
+  def variantShreddingUnsupported(): Throwable = {
+    new DeltaSparkException(
+      errorClass = "DELTA_SHREDDING_TABLE_PROPERTY_DISABLED",
       messageParameters = Array.empty
     )
   }
@@ -3457,6 +3514,15 @@ trait DeltaErrorsBase
     )
   }
 
+  def icebergCompatUnsupportedFieldException(
+      version: Int, field: StructField, schema: StructType): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.UNSUPPORTED_DATA_TYPE",
+      messageParameters = Array(version.toString, version.toString,
+        s"${field.dataType.typeName}:${field.name}", schema.treeString)
+    )
+  }
+
   def icebergCompatUnsupportedPartitionDataTypeException(
       version: Int, dataType: DataType, schema: StructType): Throwable = {
     new DeltaUnsupportedOperationException(
@@ -3727,6 +3793,25 @@ trait DeltaErrorsBase
     new DeltaUnsupportedOperationException(
       errorClass = "DELTA_UNSUPPORTED_CATALOG_OWNED_TABLE_CREATION",
       messageParameters = Array.empty)
+  }
+
+  def numRecordsMismatch(
+      operation: String,
+      numAddedRecords: Long,
+      numRemovedRecords: Long): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_NUM_RECORDS_MISMATCH",
+      messageParameters = Array(operation, numAddedRecords.toString, numRemovedRecords.toString)
+    )
+  }
+
+  def commandInvariantViolationException(
+      operation: String,
+      id: UUID): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_COMMAND_INVARIANT_VIOLATION",
+      messageParameters = Array(operation, id.toString)
+    )
   }
 }
 

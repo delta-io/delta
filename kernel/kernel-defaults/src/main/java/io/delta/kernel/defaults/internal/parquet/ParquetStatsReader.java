@@ -117,7 +117,7 @@ public class ParquetStatsReader {
       maxValues.put(statsColumn, maxValue);
     }
 
-    return new DataFileStatistics(rowCount, minValues, maxValues, nullCounts);
+    return new DataFileStatistics(rowCount, minValues, maxValues, nullCounts, Optional.empty());
   }
 
   private static Literal decodeMinMaxStat(

@@ -94,6 +94,10 @@ case class IcebergStatsConverter(statsRow: InternalRow, statsSchema: StructType)
   private def generateIcebergByteBufferMetricMap(
       stats: InternalRow,
       statsSchema: StructType): Map[Integer, ByteBuffer] = {
+    // If the entire Delta stats struct is missing (for example, min or max values are missing for
+    // all columns), then the stats row may be null.
+    if (stats == null) return Map.empty
+
     statsSchema.fields.zipWithIndex.flatMap { case (field, idx) =>
       field.dataType match {
         // Iceberg statistics cannot be null.

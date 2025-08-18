@@ -22,6 +22,7 @@ import java.time.LocalDateTime
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.DeltaColumnMapping
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.StatisticsCollection.{ASCII_MAX_CHARACTER, UTF8_MAX_CHARACTER}
@@ -37,7 +38,8 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.expressions.{GenericRow, GenericRowWithSchema}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.sql.types.{IntegerType, StringType, StructType}
+import org.apache.spark.sql.types._
+import org.apache.spark.sql.types.{IntegerType, MetadataBuilder, StringType, StructType}
 
 class StatsCollectionSuite
     extends QueryTest
@@ -526,32 +528,6 @@ class StatsCollectionSuite
         )
       }
     }
-
-    test(s"Delta statistic column: invalid data type $invalidType in nested column") {
-      withTable(tableName1, tableName2) {
-        val columnName = "c2.c21"
-        val exceptOne = intercept[DeltaIllegalArgumentException] {
-          sql(
-            s"create table $tableName1 (c1 long, c2 STRUCT<c20:INT, c21:$invalidType>) " +
-              s"using delta TBLPROPERTIES('delta.dataSkippingStatsColumns' = 'c2.c21')"
-          )
-        }
-        assert(
-          exceptOne.getErrorClass == "DELTA_COLUMN_DATA_SKIPPING_NOT_SUPPORTED_TYPE" &&
-            exceptOne.getMessageParametersArray.toSeq == Seq(columnName, typename)
-        )
-        sql(s"create table $tableName2 (c1 long, c2 STRUCT<c20:INT, c21:$invalidType>) using delta")
-        val exceptThree = interceptWithUnwrapping[DeltaIllegalArgumentException] {
-          sql(
-            s"ALTER TABLE $tableName2 SET TBLPROPERTIES('delta.dataSkippingStatsColumns'='c2.c21')"
-          )
-        }
-        assert(
-          exceptThree.getErrorClass == "DELTA_COLUMN_DATA_SKIPPING_NOT_SUPPORTED_TYPE" &&
-          exceptThree.getMessageParametersArray.toSeq == Seq(columnName, typename)
-        )
-      }
-    }
   }
 
   test(s"Delta statistic column: mix case column name") {
@@ -855,6 +831,69 @@ class StatsCollectionSuite
         exception.getErrorClass == "DELTA_DUPLICATE_DATA_SKIPPING_COLUMNS" &&
         exception.getMessageParametersArray.toSeq == Seq(duplicatedColumns)
       )
+    }
+  }
+
+  test("handle special nested characters in column name") {
+    withTable("t") {
+      sql(
+        s"create table t (`|` long, c struct<s struct<a int, b INT>, `s.a` int>) using delta " +
+          s"TBLPROPERTIES('delta.columnMapping.mode' = 'name')")
+      // Have this test to make sure there are no collisions with c.`s.a` and c.s.a.
+      sql(
+        s"ALTER TABLE t SET TBLPROPERTIES('delta.dataSkippingStatsColumns' = 'c')")
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier("t"))
+      val tblProperty = DeltaConfigs.DATA_SKIPPING_STATS_COLUMNS
+        .fromMetaData(deltaLog.update().metadata)
+      assert(tblProperty.get == "c")
+    }
+  }
+
+  Seq("name", "id").foreach { mappingModeName =>
+    val mappingMode = if (mappingModeName == "name") NameMapping else IdMapping
+    test(s"Throw ColumnMappingException when missing physical name" +
+        s" - mappingModeName: $mappingModeName") {
+      val fieldWithPhysicalName = StructField(
+        name = "testColumn",
+        dataType = StringType,
+        nullable = true,
+        metadata = new MetadataBuilder()
+          .putString(DeltaColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, "col_12345_physical")
+          .build())
+
+      val fieldWithoutPhysicalName = StructField(
+        name = "testColumn",
+        dataType = StringType,
+        nullable = true,
+        metadata = new MetadataBuilder().build())
+
+      // Use empty schemaNames so that schemaNames.contains(fullPath) returns false.
+      // This forces the function to proceed to the physical name check.
+      val emptySchemaNames = Seq.empty[String]
+      val fullPath = "testColumn"
+
+      val goodResult = StatisticsCollection.convertToPhysicalName(
+        fullPath = fullPath,
+        field = fieldWithPhysicalName,
+        schemaNames = emptySchemaNames,
+        mappingMode = mappingMode)
+
+      assert(goodResult.name == "col_12345_physical")
+      assert(goodResult.dataType == StringType)
+
+      // Test with a field that does not have a physical name, expect ColumnMappingException.
+      val exception = intercept[ColumnMappingException] {
+        StatisticsCollection.convertToPhysicalName(
+          fullPath = fullPath,
+          field = fieldWithoutPhysicalName,
+          schemaNames = emptySchemaNames,
+          mappingMode = mappingMode)
+      }
+
+      // Verify the exception contains the expected message and correct mapping mode
+      assert(exception.msg.contains(s"Missing physical name in column mapping mode " +
+        s"`$mappingModeName`"))
+      assert(exception.mode == mappingMode)
     }
   }
 

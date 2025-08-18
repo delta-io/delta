@@ -20,7 +20,7 @@ import scala.collection.immutable.Seq
 
 import io.delta.kernel.Table
 import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO
-import io.delta.kernel.defaults.utils.{TestRow, TestUtils}
+import io.delta.kernel.defaults.utils.{TestRow, TestUtils, WriteUtils}
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.SnapshotImpl
 import io.delta.kernel.internal.TableConfig
@@ -30,7 +30,7 @@ import io.delta.kernel.internal.hook.LogCompactionHook
 import org.apache.hadoop.conf.Configuration
 import org.scalatest.funsuite.AnyFunSuite
 
-class LogCompactionSuite extends AnyFunSuite with DeltaTableWriteSuiteBase with TestUtils {
+class LogCompactionSuite extends AnyFunSuite with WriteUtils with TestUtils {
 
   test("Compaction containing different action types") {
     withTempDirAndEngine { (tblPath, engine) =>
@@ -47,7 +47,7 @@ class LogCompactionSuite extends AnyFunSuite with DeltaTableWriteSuiteBase with 
       updateTableMetadata(engine, tblPath, tableProperties = newTblProps)
 
       // commit 2 - add domain metadata
-      val dmTxn = createTxn(
+      val dmTxn = getUpdateTxn(
         engine,
         tblPath,
         withDomainMetadataSupported = true)

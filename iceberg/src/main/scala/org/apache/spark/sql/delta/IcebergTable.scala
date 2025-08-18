@@ -197,12 +197,16 @@ class IcebergTable(
 
   lazy val numFiles: Long =
     Option(icebergTable.currentSnapshot())
-      .flatMap(_.summary().asScala.get("total-data-files").map(_.toLong))
+      .flatMap { snapshot =>
+        Option(snapshot.summary()).flatMap(_.asScala.get("total-data-files").map(_.toLong))
+      }
       .getOrElse(fileManifest.numFiles)
 
   lazy val sizeInBytes: Long =
     Option(icebergTable.currentSnapshot())
-      .flatMap(_.summary().asScala.get("total-files-size").map(_.toLong))
+      .flatMap { snapshot =>
+        Option(snapshot.summary()).flatMap(_.asScala.get("total-files-size").map(_.toLong))
+      }
       .getOrElse(fileManifest.sizeInBytes)
 
   override val format: String = "iceberg"

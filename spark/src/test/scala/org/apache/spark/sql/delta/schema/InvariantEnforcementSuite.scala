@@ -415,18 +415,20 @@ class InvariantEnforcementSuite extends QueryTest
         val e = intercept[InvariantViolationException] {
           spark.sql("INSERT INTO constraint VALUES (100, 50, null)")
         }
-        checkConstraintException(e,
-          s"""CHECK constraint mychk (valueA < valueB) violated by row with values:
-             | - valueA : 100
-             | - valueB : 50""".stripMargin)
+        checkConstraintException(
+          e,
+          "CHECK constraint mychk (valueA < valueB) violated by row with values:",
+          " - valueA : 100",
+          " - valueB : 50")
 
         val e2 = intercept[InvariantViolationException] {
           spark.sql("INSERT INTO constraint VALUES (100, null, null)")
         }
-        checkConstraintException(e2,
-          s"""CHECK constraint mychk (valueA < valueB) violated by row with values:
-             | - valueA : 100
-             | - valueB : null""".stripMargin)
+        checkConstraintException(
+          e2,
+          "CHECK constraint mychk (valueA < valueB) violated by row with values:",
+          " - valueA : 100",
+          " - valueB : null")
       }
     }
   }

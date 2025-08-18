@@ -81,6 +81,18 @@ trait ExpressionSuiteBase extends TestUtils with DefaultVectorTestUtils {
     }
   }
 
+  protected def checkLongVectors(actual: ColumnVector, expected: ColumnVector): Unit = {
+    assert(actual.getDataType === expected.getDataType)
+    assert(actual.getSize === expected.getSize)
+    Seq.range(0, actual.getSize).foreach { rowId =>
+      if (expected.isNullAt(rowId)) {
+        assert(actual.isNullAt(rowId), s"Expected null at row $rowId")
+      } else {
+        assert(actual.getLong(rowId) === expected.getLong(rowId), s"Unexpected value at row $rowId")
+      }
+    }
+  }
+
   protected def checkTimestampVectors(actual: ColumnVector, expected: ColumnVector): Unit = {
     assert(actual.getSize === expected.getSize)
     for (rowId <- 0 until actual.getSize) {

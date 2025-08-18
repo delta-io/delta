@@ -15,15 +15,28 @@
  */
 package io.delta.kernel.test
 
-import java.lang.{Boolean => BooleanJ, Double => DoubleJ, Float => FloatJ}
+import java.lang.{Boolean => BooleanJ, Double => DoubleJ, Float => FloatJ, Long => LongJ}
 
 import scala.collection.JavaConverters._
 
-import io.delta.kernel.data.{ColumnVector, MapValue}
+import io.delta.kernel.data.{ColumnarBatch, ColumnVector, MapValue, Row}
 import io.delta.kernel.internal.util.VectorUtils
 import io.delta.kernel.types._
+import io.delta.kernel.utils.CloseableIterator
 
 trait VectorTestUtils {
+
+  protected def emptyActionsIterator = new CloseableIterator[Row] {
+    override def hasNext: Boolean = false
+    override def next(): Row = throw new NoSuchElementException("No more elements")
+    override def close(): Unit = {}
+  }
+
+  protected def emptyColumnarBatch = new ColumnarBatch {
+    override def getSchema: StructType = null
+    override def getColumnVector(ordinal: Int): ColumnVector = null
+    override def getSize: Int = 0
+  }
 
   protected def booleanVector(values: Seq[BooleanJ]): ColumnVector = {
     new ColumnVector {
@@ -39,7 +52,7 @@ trait VectorTestUtils {
     }
   }
 
-  protected def timestampVector(values: Seq[Long]): ColumnVector = {
+  protected def timestampVector(values: Seq[LongJ]): ColumnVector = {
     new ColumnVector {
       override def getDataType: DataType = TimestampType.TIMESTAMP
 
@@ -47,7 +60,7 @@ trait VectorTestUtils {
 
       override def close(): Unit = {}
 
-      override def isNullAt(rowId: Int): Boolean = values(rowId) == -1
+      override def isNullAt(rowId: Int): Boolean = values(rowId) == null || values(rowId) == -1
 
       // Values are stored as Longs representing milliseconds since epoch
       override def getLong(rowId: Int): Long = values(rowId)
@@ -91,7 +104,7 @@ trait VectorTestUtils {
 
       override def close(): Unit = {}
 
-      override def isNullAt(rowId: Int): Boolean = (values(rowId) == null)
+      override def isNullAt(rowId: Int): Boolean = values(rowId) == null
 
       override def getFloat(rowId: Int): Float = values(rowId)
     }
@@ -105,20 +118,20 @@ trait VectorTestUtils {
 
       override def close(): Unit = {}
 
-      override def isNullAt(rowId: Int): Boolean = (values(rowId) == null)
+      override def isNullAt(rowId: Int): Boolean = values(rowId) == null
 
       override def getDouble(rowId: Int): Double = values(rowId)
     }
   }
 
-  def longVector(values: Long*): ColumnVector = new ColumnVector {
+  def longVector(values: Seq[LongJ]): ColumnVector = new ColumnVector {
     override def getDataType: DataType = LongType.LONG
 
-    override def getSize: Int = values.size
+    override def getSize: Int = values.length
 
     override def close(): Unit = {}
 
-    override def isNullAt(rowId: Int): Boolean = false
+    override def isNullAt(rowId: Int): Boolean = values(rowId) == null
 
     override def getLong(rowId: Int): Long = values(rowId)
   }

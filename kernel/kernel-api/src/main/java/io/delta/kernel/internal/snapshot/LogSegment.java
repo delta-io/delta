@@ -19,18 +19,14 @@ package io.delta.kernel.internal.snapshot;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
+import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.lang.ListUtils;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.utils.FileStatus;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Comparator;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Optional;
+import java.util.*;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.slf4j.Logger;
@@ -67,10 +63,10 @@ public class LogSegment {
   private final Optional<Long> checkpointVersionOpt;
   private final Optional<FileStatus> lastSeenChecksum;
   private final long lastCommitTimestamp;
-  private final Lazy<List<FileStatus>> allFiles;
-  private final Lazy<List<FileStatus>> allFilesReversed;
+  private final List<FileStatus> deltasAndCheckpoints;
+  private final Lazy<List<FileStatus>> deltasAndCheckpointsReversed;
   private final Lazy<List<FileStatus>> compactionsReversed;
-  private final Lazy<List<FileStatus>> allFilesWithCompactionsReversed;
+  private final Lazy<List<FileStatus>> deltasCheckpointsCompactionsReversed;
 
   /**
    * Provides information around which files in the transaction log need to be read to create the
@@ -126,6 +122,7 @@ public class LogSegment {
     checkArgument(
         checkpoints.stream().allMatch(fs -> FileNames.isCheckpointFile(fs.getPath())),
         "checkpoints must all be actual checkpoint files");
+
     checkArgument(
         compactions.stream()
             .allMatch(
@@ -218,6 +215,12 @@ public class LogSegment {
       checkArgument(deltas.isEmpty() && checkpoints.isEmpty(), "Version -1 should have no files");
     }
 
+    // Make sure input delta commits (JSON file), checkpoints and log compactions are valid.
+    assertLogFilesBelongToTable(
+        logPath,
+        Stream.concat(checkpoints.stream(), Stream.concat(deltas.stream(), compactions.stream()))
+            .collect(Collectors.toList()));
+
     ////////////////////////////////
     // Member variable assignment //
     ////////////////////////////////
@@ -229,16 +232,12 @@ public class LogSegment {
     this.checkpoints = checkpoints;
     this.lastSeenChecksum = lastSeenChecksum;
     this.lastCommitTimestamp = lastCommitTimestamp;
-
-    this.allFiles =
+    this.deltasAndCheckpoints =
+        Stream.concat(checkpoints.stream(), deltas.stream()).collect(Collectors.toList());
+    this.deltasAndCheckpointsReversed =
         new Lazy<>(
             () ->
-                Stream.concat(checkpoints.stream(), deltas.stream()).collect(Collectors.toList()));
-
-    this.allFilesReversed =
-        new Lazy<>(
-            () ->
-                allFiles.get().stream()
+                deltasAndCheckpoints.stream()
                     .sorted(
                         Comparator.comparing((FileStatus a) -> new Path(a.getPath()).getName())
                             .reversed())
@@ -257,14 +256,15 @@ public class LogSegment {
                             .reversed())
                     .collect(Collectors.toList()));
 
-    this.allFilesWithCompactionsReversed =
+    this.deltasCheckpointsCompactionsReversed =
         new Lazy<>(
             () -> {
               if (compactions.isEmpty()) {
-                return allFilesReversed.get();
+                return deltasAndCheckpointsReversed.get();
               } else {
                 LogCompactionResolver resolver =
-                    new LogCompactionResolver(allFilesReversed.get(), compactionsReversed.get());
+                    new LogCompactionResolver(
+                        deltasAndCheckpointsReversed.get(), compactionsReversed.get());
                 return resolver.resolveFiles();
               }
             });
@@ -342,7 +342,7 @@ public class LogSegment {
    *     no ordering guarantees.
    */
   public List<FileStatus> allLogFilesUnsorted() {
-    return allFiles.get();
+    return deltasAndCheckpoints;
   }
 
   /**
@@ -350,7 +350,7 @@ public class LogSegment {
    *     sorted in reverse (00012.json, 00011.json, 00010.checkpoint.parquet) order.
    */
   public List<FileStatus> allLogFilesReversed() {
-    return allFilesReversed.get();
+    return deltasAndCheckpointsReversed.get();
   }
 
   /**
@@ -360,7 +360,7 @@ public class LogSegment {
    *     (.checkpoint.parquet).
    */
   public List<FileStatus> allFilesWithCompactionsReversed() {
-    return allFilesWithCompactionsReversed.get();
+    return deltasCheckpointsCompactionsReversed.get();
   }
 
   @Override
@@ -384,12 +384,35 @@ public class LogSegment {
         lastCommitTimestamp);
   }
 
+  @Override
+  public int hashCode() {
+    // TODO: support staged commits #4927
+    return Objects.hash(deltas, checkpoints, compactions);
+  }
+
   private String formatList(List<FileStatus> list) {
     if (list.isEmpty()) {
       return "";
     }
     return "\n    "
         + list.stream().map(FileStatus::toString).collect(Collectors.joining(",\n    "));
+  }
+
+  /**
+   * Verifies that a set of delta or checkpoint files to be read actually belongs to this table.
+   * Visible only for testing.
+   */
+  @VisibleForTesting
+  static void assertLogFilesBelongToTable(Path logPath, List<FileStatus> allFiles) {
+    String logPathStr = logPath.toString(); // fully qualified path
+    for (FileStatus fileStatus : allFiles) {
+      String filePath = fileStatus.getPath();
+      if (!filePath.startsWith(logPathStr)) {
+        throw new RuntimeException(
+            String.format(
+                "File (%s) doesn't belong in the transaction log at %s.", filePath, logPathStr));
+      }
+    }
   }
 
   // Class to resolve the final list of deltas + log compactions to return

@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.functions.col
+import org.scalatest.BeforeAndAfterAll
 
 /**
  * Suite to test the engine metrics while replaying logs for getting the table protocol and
@@ -34,7 +35,7 @@ import org.apache.spark.sql.functions.col
  * The goal is to test the behavior of calls to `readJsonFiles` and `readParquetFiles` that
  * Kernel makes. This calls determine the performance.
  */
-class LogReplayEngineMetricsSuite extends LogReplayBaseSuite {
+class LogReplayEngineMetricsSuite extends LogReplayBaseSuite with BeforeAndAfterAll {
 
   // Disable writing checksums for this test suite
   // This test suite checks the files read when loading the P&M, however, with the crc optimization
@@ -42,7 +43,18 @@ class LogReplayEngineMetricsSuite extends LogReplayBaseSuite {
   // We want to test the P&M loading when CRC are not available in the tests.
   // Tests for tables with available CRC are included using resource test tables (and thus are
   // unaffected by changing our confs for writes).
-  spark.conf.set(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key, false)
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    spark.conf.set(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key, false)
+  }
+
+  override def afterAll(): Unit = {
+    try {
+      spark.conf.set(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key, true)
+    } finally {
+      super.afterAll()
+    }
+  }
 
   /////////////////////////
   // Test Helper Methods //

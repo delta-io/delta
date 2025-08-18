@@ -135,6 +135,11 @@ public final class StructType extends DataType {
   }
 
   @Override
+  public boolean isNested() {
+    return true;
+  }
+
+  @Override
   public String toString() {
     return String.format(
         "struct(%s)", fields.stream().map(StructField::toString).collect(Collectors.joining(", ")));

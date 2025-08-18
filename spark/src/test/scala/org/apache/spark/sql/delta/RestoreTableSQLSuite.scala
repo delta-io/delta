@@ -80,6 +80,18 @@ class RestoreTableSQLSuite extends RestoreTableSuiteBase {
   }
 }
 
+class RestoreTableSQLWithCatalogOwnedBatch1Suite extends RestoreTableSQLSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
+}
+
+class RestoreTableSQLWithCatalogOwnedBatch2Suite extends RestoreTableSQLSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
+}
+
+class RestoreTableSQLWithCatalogOwnedBatch100Suite extends RestoreTableSQLSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
+}
+
 
 class RestoreTableSQLNameColumnMappingSuite extends RestoreTableSQLSuite
   with DeltaColumnMappingEnableNameMode {

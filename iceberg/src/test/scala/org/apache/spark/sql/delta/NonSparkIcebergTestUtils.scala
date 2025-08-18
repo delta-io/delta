@@ -66,11 +66,13 @@ object NonSparkIcebergTestUtils {
    * @param table Iceberg table
    * @param rows  Data rows we write into the table
    * @param dataFileIdx index of the parquet file going to be written in the data folder
+   * @param dataPath Optional path to write the data file
    */
   def writeIntoIcebergTable(
       table: Table,
       rows: Seq[Map[String, Any]],
-      dataFileIdx: Int): Unit = {
+      dataFileIdx: Int,
+      dataPath: Option[String] = None): Unit = {
     val schema = table.schema()
     val records = rows.map { row =>
       val record = GenericRecord.create(schema)
@@ -80,7 +82,7 @@ object NonSparkIcebergTestUtils {
       record
     }
 
-    val parquetLocation = table.location() + s"/data/$dataFileIdx.parquet"
+    val parquetLocation = dataPath.getOrElse(table.location() + s"/data/$dataFileIdx.parquet")
 
     val fileAppender: FileAppender[GenericRecord] = Parquet
       .write(table.io().newOutputFile(parquetLocation))

@@ -179,7 +179,7 @@ case class WriteIntoDelta(
       finalClusterBySpecOpt
     )
 
-    val replaceOnDataColsEnabled =
+    val replaceWhereOnDataColsEnabled =
       sparkSession.conf.get(DeltaSQLConf.REPLACEWHERE_DATACOLUMNS_ENABLED)
 
     val useDynamicPartitionOverwriteMode = {
@@ -215,7 +215,7 @@ case class WriteIntoDelta(
     var containsDataFilters = false
     val replaceWhere = options.replaceWhere.flatMap { replace =>
       val parsed = parsePredicates(sparkSession, replace)
-      if (replaceOnDataColsEnabled) {
+      if (replaceWhereOnDataColsEnabled) {
         // Helps split the predicate into separate expressions
         val (metadataPredicates, dataFilters) = DeltaTableUtils.splitMetadataAndDataPredicates(
           parsed.head, txn.metadata.partitionColumns, sparkSession)
@@ -238,7 +238,7 @@ case class WriteIntoDelta(
     }
 
     val (newFiles, addFiles, deletedFiles) = (mode, replaceWhere) match {
-      case (SaveMode.Overwrite, Some(predicates)) if !replaceOnDataColsEnabled =>
+      case (SaveMode.Overwrite, Some(predicates)) if !replaceWhereOnDataColsEnabled =>
         // fall back to match on partition cols only when replaceArbitrary is disabled.
         val newFiles = txn.writeFiles(data, Some(options))
         val addFiles = newFiles.collect { case a: AddFile => a }
@@ -255,10 +255,10 @@ case class WriteIntoDelta(
           throw DeltaErrors.replaceWhereMismatchException(options.replaceWhere.get, badPartitions)
         }
         (newFiles, addFiles, txn.filterFiles(predicates).map(_.remove))
-      case (SaveMode.Overwrite, Some(condition)) if txn.snapshot.version >= 0 =>
-        val constraints = extractConstraints(sparkSession, condition)
+      case (SaveMode.Overwrite, Some(conditions)) if txn.snapshot.version >= 0 =>
+        val constraints = extractConstraints(sparkSession, conditions)
 
-        val removedFileActions = removeFiles(sparkSession, txn, condition)
+        val removedFileActions = removeFiles(sparkSession, txn, conditions)
         val cdcExistsInRemoveOp = removedFileActions.exists(_.isInstanceOf[AddCDCFile])
 
         // The above REMOVE will not produce explicit CDF data when persistent DV is enabled.
@@ -344,7 +344,7 @@ case class WriteIntoDelta(
     }
 
     // Need to handle replace where metrics separately.
-    if (replaceWhere.nonEmpty && replaceOnDataColsEnabled &&
+    if (replaceWhere.nonEmpty && replaceWhereOnDataColsEnabled &&
         sparkSession.conf.get(DeltaSQLConf.REPLACEWHERE_METRICS_ENABLED)) {
       registerReplaceWhereMetrics(sparkSession, txn, newFiles, deletedFiles)
     } else if (mode == SaveMode.Overwrite &&
@@ -384,11 +384,11 @@ case class WriteIntoDelta(
   private def removeFiles(
       spark: SparkSession,
       txn: OptimisticTransaction,
-      condition: Seq[Expression]): Seq[Action] = {
+      conditions: Seq[Expression]): Seq[Action] = {
     val relation = LogicalRelation(
         txn.deltaLog.createRelation(snapshotToUseOpt = Some(txn.snapshot),
           catalogTableOpt = txn.catalogTable))
-    val processedCondition = condition.reduceOption(And)
+    val processedCondition = conditions.reduceOption(And)
     val command = spark.sessionState.analyzer.execute(
       DeleteFromTable(relation, processedCondition.getOrElse(Literal.TrueLiteral)))
     spark.sessionState.analyzer.checkAnalysis(command)

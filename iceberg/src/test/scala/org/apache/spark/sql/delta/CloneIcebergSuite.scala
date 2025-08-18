@@ -947,6 +947,39 @@ class CloneNonSparkIcebergByPathSuite extends QueryTest
       }
     }
   }
+
+  test("block data path not under table path") {
+    withTable(table, cloneTable) {
+      val schema = new Schema(
+        Seq[NestedField](
+          NestedField.required(1, "id", Types.IntegerType.get),
+          NestedField.required(2, "name", Types.StringType.get)
+        ).asJava
+      )
+      val rows = Seq(
+        Map(
+          "id" -> 1,
+          "name" -> "alice"
+        )
+      )
+      val table = NonSparkIcebergTestUtils.createIcebergTable(spark, tablePath, schema, rows)
+
+      // Create a new data file not under the table path
+      withTempDir { dir =>
+        val dataPath = dir.toPath.resolve("out_of_table.parquet").toAbsolutePath.toString
+        NonSparkIcebergTestUtils.writeIntoIcebergTable(
+          table,
+          Seq(Map("id" -> 2, "name" -> "bob")),
+          2,
+          Some(dataPath)
+        )
+        val e = intercept[org.apache.spark.SparkException] {
+          runCreateOrReplace(mode, sourceIdentifier)
+        }
+        assert(e.getMessage.contains("assertion failed: Fail to relativize path"))
+      }
+    }
+  }
 }
 
 class CloneIcebergByNameSuite extends CloneIcebergSuiteBase

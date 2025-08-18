@@ -24,6 +24,7 @@ import java.util.concurrent.locks.ReentrantLock
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
+import scala.concurrent.duration._
 import scala.util.control.NonFatal
 
 // scalastyle:off import.ordering.noEmptyLine
@@ -283,9 +284,10 @@ trait SnapshotManagement { self: DeltaLog =>
       if (DeltaUtils.isTesting) {
         throw new IllegalStateException(
           s"Delta table at $dataPath unexpectedly still requires additional file-system listing " +
-            s"after an additional file-system listing was already performed to reconcile the gap " +
-            s"between concurrent file-system and commit-owner calls. Details: $eventData")
-        }
+          s"after an additional file-system listing was already performed to reconcile the gap " +
+          s"between concurrent file-system and commit-owner calls. Details: $eventData"
+        )
+      }
     }
 
     val finalLogTuplesFromFsListingOpt: Option[Array[(FileStatus, FileType.Value, Long)]] =
@@ -449,7 +451,7 @@ trait SnapshotManagement { self: DeltaLog =>
       }
 
       if (headDeltaVersion != checkpointVersion + 1) {
-        throw DeltaErrors.logFileNotFoundException(
+        throw DeltaErrors.truncatedTransactionLogException(
           unsafeDeltaFile(logPath, checkpointVersion + 1),
           lastDeltaVersion,
           unsafeVolatileMetadata) // metadata is best-effort only
@@ -500,7 +502,7 @@ trait SnapshotManagement { self: DeltaLog =>
       if (newFiles.isEmpty && lastCheckpointVersion < 0) {
         // We can't construct a snapshot because the directory contained no usable commit
         // files... but we can't return None either, because it was not truly empty.
-        throw DeltaErrors.emptyDirectoryException(logPath.toString)
+        throw DeltaErrors.logFileNotFoundException(logPath, versionToLoad, lastCheckpointVersion)
       } else if (newFiles.isEmpty) {
         // The directory may be deleted and recreated and we may have stale state in our DeltaLog
         // singleton, so try listing from the first version
@@ -911,7 +913,10 @@ trait SnapshotManagement { self: DeltaLog =>
     ).getOrElse {
       // This shouldn't be possible right after a commit
       logError(log"No delta log found for the Delta table at ${MDC(DeltaLogKeys.PATH, logPath)}")
-      throw DeltaErrors.emptyDirectoryException(logPath.toString)
+      throw DeltaErrors.logFileNotFoundException(
+        logPath,
+        version = None,
+        checkpointVersion = getCheckpointVersion(None, Some(oldCheckpointProvider)))
     }
   }
 
@@ -1406,12 +1411,14 @@ trait SnapshotManagement { self: DeltaLog =>
   def getSnapshotAt(
       version: Long,
       lastCheckpointHint: Option[CheckpointInstance] = None,
-      catalogTableOpt: Option[CatalogTable] = None): Snapshot = {
+      catalogTableOpt: Option[CatalogTable] = None,
+      enforceTimeTravelWithinDeletedFileRetention: Boolean = false): Snapshot = {
     getSnapshotAt(
       version,
       lastCheckpointHint,
       lastCheckpointProvider = None,
-      catalogTableOpt)
+      catalogTableOpt,
+      enforceTimeTravelWithinDeletedFileRetention)
   }
 
   /**
@@ -1422,7 +1429,8 @@ trait SnapshotManagement { self: DeltaLog =>
       version: Long,
       lastCheckpointHint: Option[CheckpointInstance],
       lastCheckpointProvider: Option[CheckpointProvider],
-      catalogTableOpt: Option[CatalogTable]): Snapshot = {
+      catalogTableOpt: Option[CatalogTable],
+      enforceTimeTravelWithinDeletedFileRetention: Boolean): Snapshot = {
 
     // See if the version currently cached on the cluster satisfies the requirement
     val currentSnapshot = unsafeVolatileSnapshot
@@ -1462,13 +1470,47 @@ trait SnapshotManagement { self: DeltaLog =>
       lastCheckpointInfo = lastCheckpointInfoOpt)
     val logSegment = logSegmentOpt.getOrElse {
       // We can't return InitialSnapshot because our caller asked for a specific snapshot version.
-      throw DeltaErrors.emptyDirectoryException(logPath.toString)
+      throw DeltaErrors.logFileNotFoundException(
+        logPath,
+        Some(version),
+        getCheckpointVersion(lastCheckpointInfoOpt, lastCheckpointProviderOpt))
     }
-    createSnapshot(
+    val ret = createSnapshot(
       initSegment = logSegment,
       tableCommitCoordinatorClientOpt = commitCoordinatorOpt,
       catalogTableOpt = catalogTableOpt,
       checksumOpt = None)
+
+    if (enforceTimeTravelWithinDeletedFileRetention) {
+      enforceTimeTravelWithinDeletedFileRetentionDuration(ret, currentSnapshot)
+    }
+    ret
+  }
+
+  private def enforceTimeTravelWithinDeletedFileRetentionDuration(
+    targetSnapshot: Snapshot, latestSnapshot: Snapshot): Unit = {
+    if (!SparkSession.active.sessionState.conf.getConf(
+      DeltaSQLConf.ENFORCE_TIME_TRAVEL_WITHIN_DELETED_FILE_RETENTION_DURATION)) {
+      return
+    }
+
+    // Time travel to the latest version is always allowed
+    if (targetSnapshot.version == latestSnapshot.version) return
+
+    val deletedFileRetentionDuration = DeltaLog.tombstoneRetentionMillis(latestSnapshot.metadata)
+    val currentTime = clock.getTimeMillis()
+    if (targetSnapshot.timestamp < (currentTime - deletedFileRetentionDuration)) {
+      recordDeltaEvent(this, s"delta.timeTravel.fail", data = Map(
+        // Log the cached version of the table on the cluster
+        "latestVersion" -> latestSnapshot.version,
+        "queriedVersion" -> targetSnapshot.version,
+        "currentTimestamp" -> currentTime,
+        "targetSnapshotTimestamp" -> targetSnapshot.timestamp,
+        "deletedFileRetentionDuration" -> deletedFileRetentionDuration
+      ))
+      throw DeltaErrors.timeTravelBeyondDeletedFileRetentionDurationException(
+        deletedFileRetentionDuration.millis.toHours.toString)
+    }
   }
 
   // Populate commit coordinator using catalogOpt if the snapshot is catalog owned.

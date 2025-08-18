@@ -20,36 +20,43 @@ import org.apache.spark.sql.delta.test.{DeltaExcludedTestMixin, DeltaSQLCommandT
 
 import org.apache.spark.sql.{functions, Row}
 
-class UpdateScalaSuite extends UpdateSuiteBase
+trait UpdateScalaMixin extends UpdateBaseMixin
   with DeltaSQLCommandTest
-  with DeltaExcludedTestMixin {
+  with DeltaExcludedTestMixin
+  with DeltaDMLTestUtilsPathBased {
 
+  override protected def executeUpdate(
+      target: String,
+      set: String,
+      where: String = null): Unit = {
+    executeUpdate(target, set.split(","), where)
+  }
+
+  override protected def executeUpdate(
+      target: String,
+      set: Seq[String],
+      where: String): Unit = {
+
+    val deltaTable = DeltaTestUtils.getDeltaTableForIdentifierOrPath(
+      spark,
+      DeltaTestUtils.getTableIdentifierOrPath(target))
+
+    val setColumns = set.map { assign =>
+      val kv = assign.split("=")
+      require(kv.size == 2)
+      kv(0).trim -> kv(1).trim
+    }.toMap
+
+    if (where == null) {
+      deltaTable.updateExpr(setColumns)
+    } else {
+      deltaTable.updateExpr(where, setColumns)
+    }
+  }
+}
+
+trait UpdateScalaTests extends UpdateScalaMixin {
   import testImplicits._
-
-  override def excluded: Seq[String] = super.excluded ++ Seq(
-    // Exclude tempViews, because DeltaTable.forName does not resolve them correctly, so no one can
-    // use them anyway with the Scala API.
-    // scalastyle:off line.size.limit
-    "different variations of column references - TempView",
-    "test update on temp view - basic - Partition=true - SQL TempView",
-    "test update on temp view - basic - Partition=true - Dataset TempView",
-    "test update on temp view - basic - Partition=false - SQL TempView",
-    "test update on temp view - basic - Partition=false - Dataset TempView",
-    "test update on temp view - subset cols - SQL TempView",
-    "test update on temp view - subset cols - Dataset TempView",
-    "test update on temp view - superset cols - SQL TempView",
-    "test update on temp view - superset cols - Dataset TempView",
-    "test update on temp view - nontrivial projection - SQL TempView",
-    "test update on temp view - nontrivial projection - Dataset TempView",
-    "test update on temp view - view with too many internal aliases - SQL TempView",
-    "test update on temp view - view with too many internal aliases - Dataset TempView",
-    "test update on temp view - nontrivial projection with write amplification reduction - SQL TempView",
-    "test update on temp view - nontrivial projection with write amplification reduction - Dataset TempView",
-    "test update on temp view - view with too many internal aliases with write amplification reduction - SQL TempView",
-    "test update on temp view - view with too many internal aliases with write amplification reduction - Dataset TempView",
-    "test update on temp view - view with too many internal aliases with write amplification reduction - Dataset TempView"
-    // scalastyle:on line.size.limit
-  )
 
   test("update usage test - without condition") {
     append(Seq((1, 10), (2, 20), (3, 30), (4, 40)).toDF("key", "value"))
@@ -82,34 +89,5 @@ class UpdateScalaSuite extends UpdateSuiteBase
       Map("key" -> functions.expr("100"), "value" -> functions.expr("101")))
     checkAnswer(readDeltaTable(tempPath),
       Row(100, 101) :: Row(100, 101) :: Row(3, 30) :: Row(4, 40) :: Nil)
-  }
-
-  override protected def executeUpdate(
-      target: String,
-      set: String,
-      where: String = null): Unit = {
-    executeUpdate(target, set.split(","), where)
-  }
-
-  override protected def executeUpdate(
-      target: String,
-      set: Seq[String],
-      where: String): Unit = {
-
-    val deltaTable = DeltaTestUtils.getDeltaTableForIdentifierOrPath(
-      spark,
-      DeltaTestUtils.getTableIdentifierOrPath(target))
-
-    val setColumns = set.map { assign =>
-      val kv = assign.split("=")
-      require(kv.size == 2)
-      kv(0).trim -> kv(1).trim
-    }.toMap
-
-    if (where == null) {
-      deltaTable.updateExpr(setColumns)
-    } else {
-      deltaTable.updateExpr(where, setColumns)
-    }
   }
 }

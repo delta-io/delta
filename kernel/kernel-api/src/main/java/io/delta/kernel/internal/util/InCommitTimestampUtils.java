@@ -27,6 +27,7 @@ import io.delta.kernel.internal.actions.Metadata;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Function;
 
 public class InCommitTimestampUtils {
 
@@ -40,10 +41,11 @@ public class InCommitTimestampUtils {
   public static Optional<Metadata> getUpdatedMetadataWithICTEnablementInfo(
       Engine engine,
       long inCommitTimestamp,
-      SnapshotImpl readSnapshot,
+      Optional<SnapshotImpl> readSnapshotOpt,
       Metadata metadata,
       long commitVersion) {
-    if (didCurrentTransactionEnableICT(engine, metadata, readSnapshot) && commitVersion != 0) {
+    if (readSnapshotOpt.isPresent()
+        && didCurrentTransactionEnableICT(engine, metadata, readSnapshotOpt.get())) {
       Map<String, String> enablementTrackingProperties = new HashMap<>();
       enablementTrackingProperties.put(
           TableConfig.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.getKey(),
@@ -97,8 +99,55 @@ public class InCommitTimestampUtils {
     boolean isICTCurrentlyEnabled =
         IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(currentTransactionMetadata);
     boolean wasICTEnabledInReadSnapshot =
-        readSnapshot.getVersion() != -1
-            && IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(readSnapshot.getMetadata());
+        IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(readSnapshot.getMetadata());
     return isICTCurrentlyEnabled && !wasICTEnabledInReadSnapshot;
+  }
+
+  /**
+   * Finds the greatest lower bound of the target value in the range [lowerBoundInclusive,
+   * upperBoundInclusive] using binary search. The indexToValueMapper function is used to map the
+   * index to the corresponding value. Note that this function assumes that the values are sorted in
+   * ascending order.
+   *
+   * @param target The target value to find the greatest lower bound for.
+   * @param lowerBoundInclusive The lower bound of the search range (inclusive).
+   * @param upperBoundInclusive The upper bound of the search range (inclusive).
+   * @param indexToValueMapper A function that maps an index to its corresponding value.
+   * @return An optional which contains a tuple containing the index and the value of the greatest
+   *     lower bound when found, or an empty optional if not found.
+   */
+  public static Optional<Tuple2<Long, Long>> greatestLowerBound(
+      long target,
+      long lowerBoundInclusive,
+      long upperBoundInclusive,
+      Function<Long, Long> indexToValueMapper) {
+    if (lowerBoundInclusive > upperBoundInclusive) {
+      return Optional.empty();
+    }
+
+    long start = lowerBoundInclusive;
+    long end = upperBoundInclusive;
+    long resultIndex = -1;
+    long resultValue = 0;
+
+    while (start <= end) {
+      long mid = start + (end - start) / 2;
+      long midValue = indexToValueMapper.apply(mid);
+      if (midValue == target) {
+        return Optional.of(new Tuple2<>(mid, midValue));
+      } else if (midValue < target) {
+        resultIndex = mid;
+        resultValue = midValue;
+        start = mid + 1;
+      } else {
+        end = mid - 1;
+      }
+    }
+
+    if (resultIndex == -1) {
+      return Optional.empty();
+    } else {
+      return Optional.of(new Tuple2<>(resultIndex, resultValue));
+    }
   }
 }

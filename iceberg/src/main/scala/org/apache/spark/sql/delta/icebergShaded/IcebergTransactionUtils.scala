@@ -72,23 +72,8 @@ object IcebergTransactionUtils
     // Recall that FileActions can have either relative paths or absolute paths (i.e. from shallow-
     // cloned files).
     // Iceberg spec requires path be fully qualified path, suitable for constructing a Hadoop Path
-    if (f.pathAsUri.isAbsolute) f.path else new Path(tablePath, f.toPath.toString).toString
-  }
-
-  /** Returns the (deletions, additions) iceberg table property changes. */
-  def detectPropertiesChange(
-      newProperties: Map[String, String],
-      prevProperties: Map[String, String]): (Set[String], Map[String, String]) = {
-    val newPropertiesIcebergOnly = DeltaToIcebergConvert.TableProperties(newProperties)
-    val prevPropertiesOptIcebergOnly =
-      DeltaToIcebergConvert.TableProperties(prevProperties)
-
-    if (prevPropertiesOptIcebergOnly == newPropertiesIcebergOnly) return (Set.empty, Map.empty)
-
-    (
-      prevPropertiesOptIcebergOnly.keySet.diff(newPropertiesIcebergOnly.keySet),
-      newPropertiesIcebergOnly
-    )
+    if (f.pathAsUri.isAbsolute) new Path(f.pathAsUri).toString
+    else new Path(tablePath, f.toPath.toString).toString
   }
 
   /** Returns the mapping of logicalPartitionColName -> physicalPartitionColName */
@@ -116,10 +101,6 @@ object IcebergTransactionUtils
       logicalToPhysicalPartitionNames: Map[String, String],
       statsParser: String => InternalRow,
       snapshot: Snapshot): DataFile = {
-    if (add.deletionVector != null) {
-      throw new UnsupportedOperationException("No support yet for DVs")
-    }
-
     var dataFileBuilder =
       convertFileAction(
         add, tablePath, partitionSpec, logicalToPhysicalPartitionNames, snapshot)

@@ -16,13 +16,17 @@
 package io.delta.kernel.internal.util;
 
 import static io.delta.kernel.internal.DeltaErrors.columnNotFoundInSchema;
+import static io.delta.kernel.internal.data.TransactionStateRow.getColumnMappingMode;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Collections.singletonMap;
 
+import io.delta.kernel.data.Row;
 import io.delta.kernel.exceptions.InvalidConfigurationValueException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
+import io.delta.kernel.internal.data.TransactionStateRow;
+import io.delta.kernel.internal.icebergcompat.IcebergCompatMetadataValidatorAndUpdater;
 import io.delta.kernel.types.*;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -114,6 +118,33 @@ public class ColumnMapping {
     }
   }
 
+  /**
+   * Converts a logical column to a physical column based on the table's column mapping mode. The
+   * field-id metadata is preserved when cmMode = ID, all column metadata is otherwise removed.
+   *
+   * <p>We require {@code fullSchema} in addition to the logical field we want to convert since we
+   * need the complete field metadata as it is stored in the schema in the _delta_log. We cannot be
+   * sure (and do not enforce) that this metadata is preserved by the connector.
+   *
+   * @param logicalField the logical read column requested by the connector
+   * @param fullSchema the full delta schema (with complete metadata) as read from the _delta_log
+   * @param columnMappingMode Column mapping mode
+   */
+  public static StructField convertToPhysicalColumn(
+      StructField logicalField, StructType fullSchema, ColumnMappingMode columnMappingMode) {
+    switch (columnMappingMode) {
+      case NONE:
+        return logicalField;
+      case ID: // fall through
+      case NAME:
+        boolean includeFieldIds = columnMappingMode == ColumnMappingMode.ID;
+        return convertToPhysicalColumn(logicalField, fullSchema, includeFieldIds);
+      default:
+        throw new UnsupportedOperationException(
+            "Unsupported column mapping mode: " + columnMappingMode);
+    }
+  }
+
   /** Returns the physical name for a given {@link StructField} */
   public static String getPhysicalName(StructField field) {
     if (hasPhysicalName(field)) {
@@ -132,12 +163,12 @@ public class ColumnMapping {
   }
 
   public static void verifyColumnMappingChange(
-      Map<String, String> oldConfig, Map<String, String> newConfig, boolean isNewTable) {
+      Map<String, String> oldConfig, Map<String, String> newConfig) {
     ColumnMappingMode oldMappingMode = getColumnMappingMode(oldConfig);
     ColumnMappingMode newMappingMode = getColumnMappingMode(newConfig);
 
     checkArgument(
-        isNewTable || validModeChange(oldMappingMode, newMappingMode),
+        validModeChange(oldMappingMode, newMappingMode),
         "Changing column mapping mode from '%s' to '%s' is not supported",
         oldMappingMode,
         newMappingMode);
@@ -197,17 +228,37 @@ public class ColumnMapping {
     return new Tuple2<>(new Column(physicalNameParts.toArray(new String[0])), currentType);
   }
 
+  /**
+   * Utility method to block writing into a table with column mapping enabled. Currently Kernel only
+   * supports the metadata updates on tables with column mapping enabled. Data writes into such
+   * tables using the data transformation APIs provided by the Kernel are not supported yet.
+   */
+  public static void blockIfColumnMappingEnabled(Row transactionState) {
+    ColumnMapping.ColumnMappingMode columnMappingMode =
+        TransactionStateRow.getColumnMappingMode(transactionState);
+    if (columnMappingMode != ColumnMapping.ColumnMappingMode.NONE) {
+      throw new UnsupportedOperationException(
+          "Writing into column mapping enabled table is not supported yet.");
+    }
+  }
+
   ////////////////////////////
   // Private Helper Methods //
   ////////////////////////////
 
   /** Visible for testing */
   static int findMaxColumnId(StructType schema) {
-    int maxColumnId = 0;
-    for (StructField field : schema.fields()) {
-      maxColumnId = findMaxColumnId(field, maxColumnId);
-    }
-    return maxColumnId;
+    return new SchemaIterable(schema)
+        .stream()
+            .mapToInt(
+                e -> {
+                  int columnId = hasColumnId(e.getField()) ? getColumnId(e.getField()) : 0;
+                  int nestedMaxId =
+                      hasNestedColumnIds(e.getField()) ? getMaxNestedColumnId(e.getField()) : 0;
+                  return Math.max(columnId, nestedMaxId);
+                })
+            .max()
+            .orElse(0);
   }
 
   static boolean hasColumnId(StructField field) {
@@ -216,33 +267,6 @@ public class ColumnMapping {
 
   static boolean hasPhysicalName(StructField field) {
     return field.getMetadata().contains(COLUMN_MAPPING_PHYSICAL_NAME_KEY);
-  }
-
-  private static int findMaxColumnId(StructField field, int maxColumnId) {
-    if (hasColumnId(field)) {
-      maxColumnId = Math.max(maxColumnId, getColumnId(field));
-
-      if (hasNestedColumnIds(field)) {
-        maxColumnId = Math.max(maxColumnId, getMaxNestedColumnId(field));
-      }
-    }
-
-    if (field.getDataType() instanceof StructType) {
-      StructType structType = (StructType) field.getDataType();
-      for (StructField structField : structType.fields()) {
-        maxColumnId = findMaxColumnId(structField, maxColumnId);
-      }
-      return maxColumnId;
-    } else if (field.getDataType() instanceof ArrayType) {
-      ArrayType arrayType = (ArrayType) field.getDataType();
-      return findMaxColumnId(arrayType.getElementField(), maxColumnId);
-    } else if (field.getDataType() instanceof MapType) {
-      MapType mapType = (MapType) field.getDataType();
-      return Math.max(
-          findMaxColumnId(mapType.getKeyField(), maxColumnId),
-          findMaxColumnId(mapType.getValueField(), maxColumnId));
-    }
-    return maxColumnId;
   }
 
   /**
@@ -254,34 +278,42 @@ public class ColumnMapping {
       StructType prunedSchema, StructType fullSchema, boolean includeFieldId) {
     StructType newSchema = new StructType();
     for (StructField prunedField : prunedSchema.fields()) {
-      StructField completeField = fullSchema.get(prunedField.getName());
-      DataType physicalType =
-          convertToPhysicalType(
-              prunedField.getDataType(), completeField.getDataType(), includeFieldId);
-      String physicalName = completeField.getMetadata().getString(COLUMN_MAPPING_PHYSICAL_NAME_KEY);
-
-      if (includeFieldId) {
-        Long fieldId = completeField.getMetadata().getLong(COLUMN_MAPPING_ID_KEY);
-        FieldMetadata.Builder builder =
-            FieldMetadata.builder().putLong(PARQUET_FIELD_ID_KEY, fieldId);
-
-        // convertToPhysicalSchema(..) gets called when trying to find the read schema
-        // for the Parquet reader. This currently assumes that if the nested field IDs for
-        // the 'element' and 'key'/'value' fields of Arrays/Maps haven been written,
-        // then IcebergCompatV2 is enabled because the schema we are looking at is from
-        // the DeltaLog and has nested field IDs setup
-        if (hasNestedColumnIds(completeField)) {
-          builder.putFieldMetadata(
-              PARQUET_FIELD_NESTED_IDS_METADATA_KEY, getNestedColumnIds(completeField));
-        }
-
-        newSchema =
-            newSchema.add(physicalName, physicalType, prunedField.isNullable(), builder.build());
-      } else {
-        newSchema = newSchema.add(physicalName, physicalType, prunedField.isNullable());
-      }
+      newSchema = newSchema.add(convertToPhysicalColumn(prunedField, fullSchema, includeFieldId));
     }
     return newSchema;
+  }
+
+  /**
+   * Utility method to convert the given logical field to a physical field, recursively converting
+   * sub-types in case of complex types. When {@code includeFieldId} is true, converted physical
+   * schema will have field ids in the metadata. Column metadata is otherwise removed.
+   */
+  private static StructField convertToPhysicalColumn(
+      StructField logicalField, StructType fullSchema, boolean includeFieldId) {
+    StructField completeField = fullSchema.get(logicalField.getName());
+    DataType physicalType =
+        convertToPhysicalType(
+            logicalField.getDataType(), completeField.getDataType(), includeFieldId);
+    String physicalName = completeField.getMetadata().getString(COLUMN_MAPPING_PHYSICAL_NAME_KEY);
+
+    if (!includeFieldId) {
+      return new StructField(physicalName, physicalType, logicalField.isNullable());
+    }
+
+    Long fieldId = completeField.getMetadata().getLong(COLUMN_MAPPING_ID_KEY);
+    FieldMetadata.Builder builder = FieldMetadata.builder().putLong(PARQUET_FIELD_ID_KEY, fieldId);
+
+    // convertToPhysicalSchema(..) gets called when trying to find the read schema
+    // for the Parquet reader. This currently assumes that if the nested field IDs for
+    // the 'element' and 'key'/'value' fields of Arrays/Maps haven been written,
+    // then IcebergCompatV2 is enabled because the schema we are looking at is from
+    // the DeltaLog and has nested field IDs setup
+    if (hasNestedColumnIds(completeField)) {
+      builder.putFieldMetadata(
+          PARQUET_FIELD_NESTED_IDS_METADATA_KEY, getNestedColumnIds(completeField));
+    }
+
+    return new StructField(physicalName, physicalType, logicalField.isNullable(), builder.build());
   }
 
   private static DataType convertToPhysicalType(
@@ -331,9 +363,11 @@ public class ColumnMapping {
       Metadata metadata, boolean isNewTable) {
     StructType oldSchema = metadata.getSchema();
 
-    // When icebergWriterCompatV1 is enabled we require physicalName='col-[columnId]'
+    // When icebergWriterCompatV1 or icebergWriterCompatV3 is enabled we require
+    // physicalName='col-[columnId]'
     boolean useColumnIdForPhysicalName =
-        TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.fromMetadata(metadata);
+        TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.fromMetadata(metadata)
+            || TableConfig.ICEBERG_WRITER_COMPAT_V3_ENABLED.fromMetadata(metadata);
 
     // This is the maxColumnId to use when assigning any new field-ids; we update this as we
     // traverse the schema and after traversal this is the value that should be stored in the
@@ -360,15 +394,12 @@ public class ColumnMapping {
                   useColumnIdForPhysicalName));
     }
 
-    if (Boolean.parseBoolean(
-        metadata
-            .getConfiguration()
-            .getOrDefault(TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey(), "false"))) {
+    if (IcebergCompatMetadataValidatorAndUpdater.isIcebergCompatEnabled(metadata)) {
       newSchema = rewriteFieldIdsForIceberg(newSchema, maxColumnId);
     }
 
     // The maxColumnId in the metadata may be out-of-date either due to field-id assignment
-    // performed in this fx, or due to connector adding new fields
+    // performed in this function, or due to connector adding new fields
     boolean shouldUpdateMaxId =
         TableConfig.COLUMN_MAPPING_MAX_COLUMN_ID.fromMetadata(metadata) != maxColumnId.get();
 

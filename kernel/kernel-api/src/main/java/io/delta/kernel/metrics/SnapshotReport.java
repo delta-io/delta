@@ -27,6 +27,7 @@ import java.util.Optional;
   "reportUUID",
   "exception",
   "version",
+  "checkpointVersion",
   "providedTimestamp",
   "snapshotMetrics"
 })
@@ -49,6 +50,12 @@ public interface SnapshotReport extends DeltaOperationReport {
    *     time-travel query
    */
   Optional<Long> getProvidedTimestamp();
+
+  /**
+   * @return the version of the checkpoint used for this snapshot, empty if no checkpoint was used
+   *     or if this is a failed snapshot construction
+   */
+  Optional<Long> getCheckpointVersion();
 
   /** @return the metrics for this snapshot construction */
   SnapshotMetricsResult getSnapshotMetrics();

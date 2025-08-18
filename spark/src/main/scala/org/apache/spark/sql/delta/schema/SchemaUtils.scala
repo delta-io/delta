@@ -165,12 +165,11 @@ object SchemaUtils extends DeltaLogging {
   /**
    * A char(x)/varchar(x) related types are internally stored as string type with the constraint
    * information stored in the metadata. For example:
-   *  + char(10) -> (string, char_varchar_metadata = "char(10)")
-   *  + array[varchar(10)]
-   *    -> (array[string], char_varchar_metadata = "array[varchar(10)]")
+   *  + char(10) is (string, char_varchar_metadata = "char(10)")
+   *  + array[varchar(10)] is (array[string], char_varchar_metadata = "array[varchar(10)]")
    * This method converts the string + metadata representation to the actual type.
-   *  + (string, metadata = "char(10)") -> (char(10), char_varchar_metadata = "")
-   *  + (array[string], metadata = "array[varchar(10)]")
+   *  + (string, char_varchar_metadata = "char(10)") -> (char(10), char_varchar_metadata = "")
+   *  + (array[string], char_varchar_metadata = "array[varchar(10)]")
    *    -> (array[varchar(10)], char_varchar_metadata = "")
    */
   private def getRawFieldWithoutCharVarcharMetadata(field: StructField): StructField = {
@@ -189,20 +188,21 @@ object SchemaUtils extends DeltaLogging {
   /**
    * Sets a data type to a field in a char/varchar-safe manner. A char(x)/varchar(x) related types
    * consists of two parts: a string-based type and the constraint information stored in the
-   * metadata. Simply setting the data type will lead to unexpected results.
+   * metadata. Simply changing the data type will lead to unexpected results.
    *
    * For example, an array[varchar(10)] type is internally represented as
-   * (array[string], char_varchar_metadata = "array[varchar(10)]"). If we convert it into a string
-   * simply by setting the data type part, the metadata part will still be there, and the type will
-   * still stay as varchar(10).
+   * (array[string], char_varchar_metadata = "array[varchar(10)]"). If we convert it into an
+   * array[string] simply by setting the data type part, the metadata part will still be there, and
+   * the type will still stay as array[varchar(10)].
    *
    * This method first converts the field into its raw type without the metadata part, then sets the
-   * data type to the new data type, and finally converts it back to the original representation.
+   * data type part to the new data type, and finally converts the whole thing back to the original
+   * representation.
    *
    * In the above example, this methods will convert the array[varchar(10)] representation into
-   * (array[varchar(10)], char_varchar_metadata = ""), set the data type to string
-   * (string, char_varchar_metadata = ""), and finally convert it back to
-   * (string, char_varchar_metadata = ""), which happens to be the same.
+   * (array[varchar(10)], char_varchar_metadata = ""), set the data type to array[string]
+   * (array[string], char_varchar_metadata = ""), and finally convert it back to
+   * (array[string], char_varchar_metadata = ""), which happens to be the same.
    */
   def setFieldDataTypeCharVarcharSafe(field: StructField, newDataType: DataType): StructField = {
     val byPassCharVarcharToStringFix =
@@ -1126,10 +1126,10 @@ def normalizeColumnNamesInDataType(
    * Target: (string, char_varchar_metadata = "varchar(10)")
    *  -> (varchar(10), char_varchar_metadata = "")
    *
-   * Then, we change the data type of the target:
+   * Then, we change the data type of the target to that of the source:
    * (varchar(1), char_varchar_metadata = "") -> (varchar(10), char_varchar_metadata = "")
    *
-   * Finally, we set the metadata back to the target field:
+   * Finally, we set the metadata back to the target:
    * (varchar(10), char_varchar_metadata = "") -> (string, char_varchar_metadata = "varchar(10)")
    */
   def changeFieldDataTypeCharVarcharSafe(
@@ -1652,6 +1652,41 @@ def normalizeColumnNamesInDataType(
         StructType(newFields)
       case (_, other, _) => other
     }
+  }
+
+  /**
+   * Renames a column in the metadata, given the old column path, new column path, and an optional
+   * list of column names. If the column names are provided, they will be updated to reflect the
+   * new path.
+   *
+   * @param oldColumnPath The original physical name path of the column to be renamed.
+   * @param newColumnPath The new physical name path for the column.
+   * @param columnNameOpt An optional sequence of unresolved attributes representing the column
+   *                      logical name.
+   * @param deltaConfig   The configuration key for columns that need to be renamed from metadata.
+   * @return              A map containing the updated Delta configuration with new column paths.
+   */
+  def renameColumnForConfig(
+      oldColumnPath: Seq[String],
+      newColumnPath: Seq[String],
+      columnNameOpt: Option[Seq[UnresolvedAttribute]],
+      deltaConfig: String): Map[String, String] = {
+    columnNameOpt.map { deltaColumnsNames =>
+      val deltaColumnsPath = deltaColumnsNames
+        .map(_.nameParts)
+        .map { attributeNameParts =>
+          val commonPrefix = oldColumnPath.zip(attributeNameParts)
+            .takeWhile { case (left, right) => left == right }
+            .size
+          if (commonPrefix == oldColumnPath.size) {
+            newColumnPath ++ attributeNameParts.takeRight(attributeNameParts.size - commonPrefix)
+          } else {
+            attributeNameParts
+          }
+        }
+        .map(columnParts => UnresolvedAttribute(columnParts).name)
+      Map(deltaConfig -> deltaColumnsPath.mkString(","))
+    }.getOrElse(Map.empty[String, String])
   }
 }
 

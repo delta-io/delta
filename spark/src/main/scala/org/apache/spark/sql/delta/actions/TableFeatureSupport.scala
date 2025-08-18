@@ -535,6 +535,9 @@ object TableFeatureProtocolUtils {
 object DropTableFeatureUtils extends DeltaLogging {
   private val MAX_CHECKPOINT_RETRIES = 3
 
+  // The number of barrier checkpoints to create before the version requiring checkpoint protection.
+  val NUMBER_OF_BARRIER_CHECKPOINTS = 3
+
   /**
    * Helper function for creating checkpoints. If checkpoint creation fails we retry up
    * to [[MAX_CHECKPOINT_RETRIES]] times.
@@ -598,5 +601,19 @@ object DropTableFeatureUtils extends DeltaLogging {
       .fromMetaData(metadata)
 
     DeltaConfigs.getMilliSeconds(truncateHistoryLogRetention)
+  }
+
+  /**
+   * Returns new metadata without `tablePropertiesToRemoveAtDowngradeCommit` table properties.
+   */
+  def getDowngradedProtocolMetadata(
+      feature: RemovableFeature,
+      metadata: Metadata): Metadata = {
+    val propKeys = feature.tablePropertiesToRemoveAtDowngradeCommit
+    val normalizedKeys = DeltaConfigs.normalizeConfigKeys(propKeys)
+    val newConfiguration = metadata.configuration.filterNot {
+      case (key, _) => normalizedKeys.contains(key)
+    }
+    metadata.copy(configuration = newConfiguration)
   }
 }

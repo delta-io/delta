@@ -55,6 +55,10 @@ object DeltaUDF {
       f: DeletionVectorDescriptor => String): UserDefinedFunction =
     createUdfFromTemplateUnsafe(stringFromDeletionVectorDescriptorTemplate, f, udf(f))
 
+  def stringOptionFromDeletionVectorDescriptor(
+      f: DeletionVectorDescriptor => Option[String]): UserDefinedFunction =
+    createUdfFromTemplateUnsafe(stringOptionFromDeletionVectorDescriptorTemplate, f, udf(f))
+
   def booleanFromDeletionVectorDescriptor(
       f: DeletionVectorDescriptor => Boolean): UserDefinedFunction =
     createUdfFromTemplateUnsafe(booleanFromDeletionVectorDescriptorTemplate, f, udf(f))
@@ -91,6 +95,9 @@ object DeltaUDF {
 
   private lazy val stringFromDeletionVectorDescriptorTemplate =
     udf((_: DeletionVectorDescriptor) => "").asInstanceOf[SparkUserDefinedFunction]
+
+  private lazy val stringOptionFromDeletionVectorDescriptorTemplate =
+    udf((_: DeletionVectorDescriptor) => Some("")).asInstanceOf[SparkUserDefinedFunction]
 
   private lazy val booleanFromDeletionVectorDescriptorTemplate =
     udf((_: DeletionVectorDescriptor) => false).asInstanceOf[SparkUserDefinedFunction]

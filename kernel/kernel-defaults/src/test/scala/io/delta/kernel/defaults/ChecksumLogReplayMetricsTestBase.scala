@@ -37,27 +37,6 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite {
   // Test Helper Methods //
   /////////////////////////
 
-  /**
-   * Creates a temporary directory with a test engine and builds a table with CRC files.
-   * Returns the created table and engine for testing.
-   *
-   * @param f code to run with the table and engine
-   */
-  protected def withTableWithCrc(f: (Table, String, MetricsEngine) => Any): Unit = {
-    withTempDirAndMetricsEngine { (path, engine) =>
-      // Produce a test table with 0 to 11 .json, 0 to 11.crc, 10.checkpoint.parquet
-      withSQLConf(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "true") {
-        spark.sql(
-          s"CREATE TABLE delta.`$path` USING DELTA AS " +
-            s"SELECT 0L as id")
-        for (_ <- 0 to 10) { appendCommit(path) }
-        assert(checkpointFileExistsForTable(path, 10))
-      }
-      val table = Table.forPath(engine, path)
-      f(table, path, engine)
-    }
-  }
-
   // Abstract method to be implemented by concrete test classes
   protected def loadSnapshotFieldsCheckMetrics(
       table: Table,
@@ -110,6 +89,21 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite {
         expParquetReadSetSizes = getExpectedCheckpointReadSize(Seq(1)),
         expChecksumReadSet = Nil,
         readVersion = 10)
+    }
+  }
+
+  test(
+    "checksum not found at read version but before and after version => use previous version") {
+    withTableWithCrc { (table, tablePath, engine) =>
+      deleteChecksumFileForTable(tablePath, Seq(8))
+      loadSnapshotFieldsCheckMetrics(
+        table,
+        engine,
+        expJsonVersionsRead = Seq(8),
+        expParquetVersionsRead = Nil,
+        expParquetReadSetSizes = Nil,
+        expChecksumReadSet = Seq(7),
+        readVersion = 8)
     }
   }
 

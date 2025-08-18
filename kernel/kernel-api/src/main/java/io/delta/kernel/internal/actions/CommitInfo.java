@@ -261,4 +261,15 @@ public class CommitInfo {
     logger.info("No commit info found for commit of version {}", version);
     return Optional.empty();
   }
+
+  /**
+   * Returns the `inCommitTimestamp` of delta file at the requested version. Throws an exception if
+   * the delta file does not exist or does not have a commitInfo action or if the commitInfo action
+   * contains an empty `inCommitTimestamp`.
+   */
+  public static long getRequiredInCommitTimestampFromFile(
+      Engine engine, Path logPath, long version) {
+    return getRequiredInCommitTimestamp(
+        getCommitInfoOpt(engine, logPath, version), String.valueOf(version), logPath);
+  }
 }

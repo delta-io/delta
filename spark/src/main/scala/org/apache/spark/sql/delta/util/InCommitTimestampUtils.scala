@@ -17,9 +17,19 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.{Action, CommitInfo, Metadata}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.util.ScalaExtensions._
 
+import org.apache.spark.sql.SparkSession
+
 object InCommitTimestampUtils {
+
+  final val TABLE_PROPERTY_CONFS = Seq(
+    DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED,
+    DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION,
+    DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP)
+
+  final val TABLE_PROPERTY_KEYS: Seq[String] = TABLE_PROPERTY_CONFS.map(_.key)
 
   /** Returns true if the current transaction implicitly/explicitly enables ICT. */
   def didCurrentTransactionEnableICT(
@@ -45,22 +55,43 @@ object InCommitTimestampUtils {
   /**
    * Returns the updated [[Metadata]] with inCommitTimestamp enablement related info
    * (version and timestamp) correctly set.
-   * This is done only
+   * This enablement info will be set to the current commit's timestamp and version if:
    * 1. If this transaction enables inCommitTimestamp.
    * 2. If the commit version is not 0. This is because we only need to persist
    *  the enablement info if there are non-ICT commits in the Delta log.
+   * For cases where ICT is enabled in both the current transaction and the read snapshot,
+   * we will retain the enablement info from the read snapshot. Note that this can
+   * happen for commands like REPLACE or CLONE, where we can end up dropping the enablement
+   * info due to the belief that ICT was just enabled.
    * Note: This function must only be called after transaction conflicts have been resolved.
    */
   def getUpdatedMetadataWithICTEnablementInfo(
+      spark: SparkSession,
       inCommitTimestamp: Long,
       readSnapshot: Snapshot,
       metadata: Metadata,
       commitVersion: Long): Option[Metadata] = {
-    Option.when(didCurrentTransactionEnableICT(metadata, readSnapshot) && commitVersion != 0) {
+    if (didCurrentTransactionEnableICT(metadata, readSnapshot) && commitVersion != 0) {
       val enablementTrackingProperties = Map(
         DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.key -> commitVersion.toString,
         DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.key -> inCommitTimestamp.toString)
-      metadata.copy(configuration = metadata.configuration ++ enablementTrackingProperties)
+      Some(metadata.copy(configuration = metadata.configuration ++ enablementTrackingProperties))
+    } else if (DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.fromMetaData(metadata) &&
+        !didCurrentTransactionEnableICT(metadata, readSnapshot) &&
+        // This check ensures that we don't make an unnecessary metadata update
+        // even when ICT enablement properties are not being dropped.
+        getValidatedICTEnablementInfo(readSnapshot.metadata).isDefined &&
+        getValidatedICTEnablementInfo(metadata).isEmpty &&
+        spark.conf.get(DeltaSQLConf.IN_COMMIT_TIMESTAMP_RETAIN_ENABLEMENT_INFO_FIX_ENABLED)
+    ) {
+      // If ICT was enabled in the readSnapshot and is still enabled, we should
+      // retain the enablement info from the read snapshot.
+      // This prevents enablement info from being dropped during REPLACE/CLONE.
+      val existingICTConfigs = readSnapshot.metadata.configuration
+        .filter { case (k, _) => TABLE_PROPERTY_KEYS.contains(k) }
+      Some(metadata.copy(configuration = metadata.configuration ++ existingICTConfigs))
+    } else {
+      None
     }
   }
 

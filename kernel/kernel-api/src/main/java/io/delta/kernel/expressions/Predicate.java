@@ -134,6 +134,18 @@ public class Predicate extends ScalarExpression {
     return super.toString();
   }
 
+  @Override
+  public int hashCode() {
+    return toString().hashCode();
+  }
+
+  @Override
+  public boolean equals(Object o) {
+    if (this == o) return true;
+    if (!(o instanceof Predicate)) return false;
+    return this.hashCode() == o.hashCode();
+  }
+
   private static final Set<String> BINARY_OPERATORS =
       Stream.of("<", "<=", ">", ">=", "=", "AND", "OR").collect(Collectors.toSet());
 }

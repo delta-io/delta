@@ -295,13 +295,6 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
     }
   }
 
-  // Only absolute path (which is pre-signed url) need to be put in IdToUrl mapping.
-  // inline DV should be processed in place, and UUID should throw error.
-  private def requiresIdToUrlForDV(deletionVectorOpt: Option[DeletionVectorDescriptor]): Boolean = {
-    deletionVectorOpt.isDefined &&
-    deletionVectorOpt.get.storageType == DeletionVectorDescriptor.PATH_DV_MARKER
-  }
-
   /**
    * Convert DeltaSharingFileAction with delta sharing file path and serialize as json to store in
    * the delta log.
@@ -663,7 +656,7 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
 
           // 1. build it to url mapping
           idToUrl(fileAction.id) = fileAction.path
-          if (requiresIdToUrlForDV(fileAction.getDeletionVectorOpt)) {
+          if (DeltaSharingUtils.requiresIdToUrlForDV(fileAction.getDeletionVectorOpt)) {
             idToUrl(fileAction.deletionVectorFileId) =
               fileAction.getDeletionVectorOpt.get.pathOrInlineDv
           }
@@ -799,7 +792,7 @@ private[sharing] object DeltaSharingLogFileSystem extends Logging {
 
       // 1. build id to url mapping
       idToUrl(fileAction.id) = fileAction.path
-      if (requiresIdToUrlForDV(fileAction.getDeletionVectorOpt)) {
+      if (DeltaSharingUtils.requiresIdToUrlForDV(fileAction.getDeletionVectorOpt)) {
         idToUrl(fileAction.deletionVectorFileId) =
           fileAction.getDeletionVectorOpt.get.pathOrInlineDv
       }

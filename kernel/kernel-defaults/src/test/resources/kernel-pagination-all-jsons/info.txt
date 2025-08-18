@@ -1,0 +1,10 @@
+# Below are scala codes used to create the `kernel-pagination-all-jsons` table.
+
+// First commit: files 0-4 (5 files)
+spark.range(0, 50, 1, 5).write.format("delta").save(tablePath)
+
+// Second commit: files 5-9 (5 more files)
+spark.range(50, 100, 1, 5).write.format("delta").mode("append").save(tablePath)
+
+// Third commit: files 10-14 (5 more files)
+spark.range(100, 150, 1, 5).write.format("delta").mode("append").save(tablePath)

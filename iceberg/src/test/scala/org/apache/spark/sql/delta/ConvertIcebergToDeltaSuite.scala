@@ -862,15 +862,6 @@ trait ConvertIcebergToDeltaSuiteBase
       spark.sql(s"DELETE FROM $table WHERE id = 1")
       // By default, conversion should fail because it is unsafe.
       assertConversionFailed()
-      // Force escape should work
-      withSQLConf(DeltaSQLConf.DELTA_CONVERT_ICEBERG_UNSAFE_MOR_TABLE_ENABLE.key -> "true") {
-        convert(s"iceberg.`$tablePath`")
-        // ... but with data duplication
-        checkAnswer(
-          spark.read.format("delta").load(tablePath),
-          (0 until 100).map(i => Row(i.toLong, s"name_$i"))
-        )
-      }
     }
 
     // --- UPDATE

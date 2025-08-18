@@ -410,9 +410,5 @@ trait DeltaSourceDeletionVectorTests extends StreamTest
 
 class DeltaSourceDeletionVectorsSuite extends DeltaSourceSuiteBase
   with DeltaSQLCommandTest
-  with DeltaSourceDeletionVectorTests {
-  override def beforeAll(): Unit = {
-    super.beforeAll()
-    enableDeletionVectorsInNewTables(spark.conf)
-  }
-}
+  with DeltaSourceDeletionVectorTests
+  with PersistentDVEnabled

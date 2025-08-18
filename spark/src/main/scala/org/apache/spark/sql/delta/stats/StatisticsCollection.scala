@@ -39,6 +39,7 @@ import org.apache.spark.sql.delta.schema.SchemaUtils.transformSchema
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DeltaStatistics._
 import org.apache.spark.sql.delta.stats.StatisticsCollection.getIndexedColumns
+import org.apache.spark.sql.delta.util.DeltaSqlParserUtils
 import org.apache.spark.sql.util.ScalaExtensions._
 
 import org.apache.spark.sql._
@@ -47,6 +48,7 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.parser.{AbstractSqlParser, AstBuilder, ParseException, ParserUtils}
 import org.apache.spark.sql.catalyst.parser.SqlBaseParser.MultipartIdentifierListContext
+import org.apache.spark.sql.catalyst.util.quoteIfNeeded
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.functions.lit
 import org.apache.spark.sql.internal.SQLConf
@@ -413,37 +415,6 @@ object StatisticsCollection extends DeltaCommand {
   val UTF8_MAX_CHARACTER = new String(Character.toChars(Character.MAX_CODE_POINT))
 
   /**
-   * The SQL grammar already includes a `multipartIdentifierList` rule for parsing a string into a
-   * list of multi-part identifiers. We just expose it here, with a custom parser and AstBuilder.
-   */
-  private class SqlParser extends AbstractSqlParser {
-    override val astBuilder = new AstBuilder {
-      override def visitMultipartIdentifierList(ctx: MultipartIdentifierListContext)
-      : Seq[UnresolvedAttribute] = ParserUtils.withOrigin(ctx) {
-        ctx.multipartIdentifier.asScala.toSeq.map(typedVisit[Seq[String]])
-          .map(new UnresolvedAttribute(_))
-      }
-    }
-    def parseMultipartIdentifierList(sqlText: String): Seq[UnresolvedAttribute] = {
-      parse(sqlText) { parser =>
-        astBuilder.visitMultipartIdentifierList(parser.multipartIdentifierList())
-      }
-    }
-  }
-  private val parser = new SqlParser
-
-  /** Parses a comma-separated list of column names; returns None if parsing fails. */
-  def parseDeltaStatsColumnNames(deltaStatsColNames: String): Option[Seq[UnresolvedAttribute]] = {
-    // The parser rejects empty lists, so handle that specially here.
-    if (deltaStatsColNames.trim.isEmpty) return Some(Nil)
-    try {
-      Some(parser.parseMultipartIdentifierList(deltaStatsColNames))
-    } catch {
-      case _: ParseException => None
-    }
-  }
-
-  /**
    * This method is the wrapper method to validates the DATA_SKIPPING_STATS_COLUMNS value of
    * metadata.
    */
@@ -477,10 +448,18 @@ object StatisticsCollection extends DeltaCommand {
       insideStruct: Boolean = false): Unit = dataType match {
     case s: StructType =>
       s.foreach { field =>
-        validateDataSkippingType(name + "." + field.name, field.dataType, columnPaths,
-          insideStruct = true)
+        // we need to make sure we quote the field if needed otherwise we will not handle
+        // column names with special characters correctly.
+        validateDataSkippingType(name + "." +
+          quoteIfNeeded(field.name), field.dataType, columnPaths, insideStruct = true)
       }
-    case SkippingEligibleDataType(_) => columnPaths.append(name)
+    case SkippingEligibleDataType(_) =>
+      if (insideStruct) {
+        // If this is inside the struct we are already quoting the nested field name.
+        columnPaths.append(name)
+      } else {
+        columnPaths.append(quoteIfNeeded(name))
+      }
     case _ if insideStruct =>
       logWarning(s"Data skipping is not supported for column $name of type $dataType")
       columnPaths.append(name)
@@ -501,7 +480,7 @@ object StatisticsCollection extends DeltaCommand {
       schema: StructType, partitionColumns: Seq[String], deltaStatsColumnsConfigs: String): Unit = {
     val partitionColumnSet = partitionColumns.map(_.toLowerCase(Locale.ROOT)).toSet
     val visitedColumns = ArrayBuffer.empty[String]
-    parseDeltaStatsColumnNames(deltaStatsColumnsConfigs).foreach { columns =>
+    DeltaSqlParserUtils.parseMultipartColumnList(deltaStatsColumnsConfigs).foreach { columns =>
       columns.foreach { columnAttribute =>
         val columnFullPath = columnAttribute.nameParts
         // Delta statistics columns must not be partitioned column.
@@ -517,7 +496,15 @@ object StatisticsCollection extends DeltaCommand {
         transformSchema(schema, Some(columnName.head)) {
           case (`prefixPath`, struct @ StructType(_), _) =>
             val columnField = struct(columnName.head)
-            validateDataSkippingType(columnAttribute.name, columnField.dataType, visitedColumns)
+            // We need to figure out if the column is top-level column
+            // or a column inside a struct, we support collecting null count stats
+            // on nested columns part of a struct.
+            val fieldInsideStruct = prefixPath.size > 0
+            validateDataSkippingType(
+              columnAttribute.name,
+              columnField.dataType,
+              visitedColumns,
+              insideStruct = fieldInsideStruct)
             struct
           case (_, other, _) => other
         }
@@ -576,24 +563,11 @@ object StatisticsCollection extends DeltaCommand {
       newColumnPath: Seq[String]): Map[String, String] = {
     if (oldColumnPath == newColumnPath) return Map.empty[String, String]
     val deltaStatsColumnSpec = configuredDeltaStatsColumnSpec(metadata)
-    deltaStatsColumnSpec.deltaStatsColumnNamesOpt.map { deltaColumnsNames =>
-      val deltaStatsColumnsPath = deltaColumnsNames
-        .map(_.nameParts)
-        .map { attributeNameParts =>
-          val commonPrefix = oldColumnPath.zip(attributeNameParts)
-            .takeWhile { case (left, right) => left == right }
-            .size
-          if (commonPrefix == oldColumnPath.size) {
-            newColumnPath ++ attributeNameParts.takeRight(attributeNameParts.size - commonPrefix)
-          } else {
-            attributeNameParts
-          }
-        }
-        .map(columnParts => UnresolvedAttribute(columnParts).name)
-      Map(
-        DeltaConfigs.DATA_SKIPPING_STATS_COLUMNS.key -> deltaStatsColumnsPath.mkString(",")
-      )
-    }.getOrElse(Map.empty[String, String])
+    SchemaUtils.renameColumnForConfig(
+      oldColumnPath,
+      newColumnPath,
+      deltaStatsColumnSpec.deltaStatsColumnNamesOpt,
+      DeltaConfigs.DATA_SKIPPING_STATS_COLUMNS.key)
   }
 
   /** Returns the configured set of columns to be used for stats collection on a table */
@@ -601,7 +575,7 @@ object StatisticsCollection extends DeltaCommand {
     val indexedColNamesOpt = DeltaConfigs.DATA_SKIPPING_STATS_COLUMNS.fromMetaData(metadata)
     val numIndexedCols = DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.fromMetaData(metadata)
     indexedColNamesOpt.map { indexedColNames =>
-      DeltaStatsColumnSpec(parseDeltaStatsColumnNames(indexedColNames), None)
+      DeltaStatsColumnSpec(DeltaSqlParserUtils.parseMultipartColumnList(indexedColNames), None)
     }.getOrElse {
       DeltaStatsColumnSpec(None, Some(numIndexedCols))
     }
@@ -610,7 +584,7 @@ object StatisticsCollection extends DeltaCommand {
   /**
    * Convert the logical name of each field to physical name according to the column mapping mode.
    */
-  private def convertToPhysicalName(
+  private[sql] def convertToPhysicalName(
       fullPath: String,
       field: StructField,
       schemaNames: Seq[String],
@@ -618,7 +592,11 @@ object StatisticsCollection extends DeltaCommand {
     // If mapping mode is NoMapping or the dataSchemaName already contains the mapped
     // column name, the schema mapping can be skipped.
     if (mappingMode == NoMapping || schemaNames.contains(fullPath)) return field
-    // Get the physical co
+    // Check if the physical name exists.
+    if (!DeltaColumnMapping.hasPhysicalName(field)) {
+      throw DeltaErrors.missingPhysicalName(mappingMode, field.name)
+    }
+    // Get the physical column name from metadata.
     val physicalName = field.metadata.getString(COLUMN_MAPPING_PHYSICAL_NAME_KEY)
     field.dataType match {
       case structType: StructType =>

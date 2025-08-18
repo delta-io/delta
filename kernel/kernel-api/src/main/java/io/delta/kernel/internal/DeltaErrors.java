@@ -17,12 +17,14 @@ package io.delta.kernel.internal;
 
 import static java.lang.String.format;
 
+import io.delta.kernel.commit.CommitFailedException;
 import io.delta.kernel.exceptions.*;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.tablefeatures.TableFeature;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StructType;
+import io.delta.kernel.types.TypeChange;
 import io.delta.kernel.utils.DataFileStatus;
 import java.io.IOException;
 import java.sql.Timestamp;
@@ -221,6 +223,11 @@ public final class DeltaErrors {
     return new KernelException(msg);
   }
 
+  public static KernelException conflictWithReservedInternalColumnName(String columnName) {
+    return new KernelException(
+        format("Cannot use column name '%s' because it is reserved for internal use", columnName));
+  }
+
   public static KernelException invalidColumnName(String columnName, String unsupportedChars) {
     return new KernelException(
         format(
@@ -292,6 +299,13 @@ public final class DeltaErrors {
         format("%s does not support the data types: %s.", compatVersion, dataTypes));
   }
 
+  public static KernelException icebergCompatUnsupportedTypeWidening(
+      String compatVersion, TypeChange typeChange) {
+    throw new KernelException(
+        format(
+            "%s does not support type widening present in table: %s.", compatVersion, typeChange));
+  }
+
   public static KernelException icebergCompatUnsupportedTypePartitionColumn(
       String compatVersion, DataType dataType) {
     throw new KernelException(
@@ -317,7 +331,7 @@ public final class DeltaErrors {
         format("%s: requires the feature '%s' to be enabled.", compatVersion, feature));
   }
 
-  public static KernelException enablingIcebergWriterCompatV1OnExistingTable(String key) {
+  public static KernelException enablingIcebergCompatFeatureOnExistingTable(String key) {
     return new KernelException(
         String.format(
             "Cannot enable %s on an existing table. "
@@ -333,16 +347,35 @@ public final class DeltaErrors {
             invalidFields));
   }
 
-  public static KernelException disablingIcebergWriterCompatV1OnExistingTable(String key) {
+  public static KernelException disablingIcebergCompatFeatureOnExistingTable(String key) {
     return new KernelException(
         String.format("Disabling %s on an existing table is not allowed.", key));
   }
+
   // End: icebergCompat exceptions
 
   public static KernelException partitionColumnMissingInData(
       String tablePath, String partitionColumn) {
     String msgT = "Missing partition column '%s' in the data to be written to the table '%s'.";
     return new KernelException(format(msgT, partitionColumn, tablePath));
+  }
+
+  public static KernelException enablingClusteringOnPartitionedTableNotAllowed(
+      String tablePath, Set<String> partitionColNames, List<Column> clusteringCols) {
+    return new KernelException(
+        String.format(
+            "Cannot enable clustering on a partitioned table '%s'. "
+                + "Existing partition columns: '%s', Clustering columns: '%s'.",
+            tablePath, partitionColNames, clusteringCols));
+  }
+
+  public static RuntimeException nonRetryableCommitException(
+      int attempt, long commitAsVersion, CommitFailedException cause) {
+    throw new RuntimeException(
+        String.format(
+            "Commit attempt %d for version %d failed with a non-retryable exception.",
+            attempt, commitAsVersion),
+        cause);
   }
 
   public static KernelException concurrentTransaction(
@@ -409,11 +442,36 @@ public final class DeltaErrors {
             + " but 'domainMetadata' is unsupported");
   }
 
+  public static KernelException rowTrackingRequiredForRowIdHighWatermark(
+      String tablePath, String rowIdHighWatermark) {
+    return new KernelException(
+        String.format(
+            "Cannot assign a row id high water mark (`%s`) to a table `%s` that does not support "
+                + "`rowTracking` table feature. Please enable the `rowTracking` table feature.",
+            rowIdHighWatermark, tablePath));
+  }
+
+  public static KernelException cannotToggleRowTrackingOnExistingTable() {
+    return new KernelException("Row tracking support cannot be changed once the table is created.");
+  }
+
+  public static KernelException missingRowTrackingColumnRequested(String columnName) {
+    return new KernelException(
+        String.format(
+            "Row tracking is not enabled, but row tracking column '%s' was requested.",
+            columnName));
+  }
+
   public static KernelException cannotModifyAppendOnlyTable(String tablePath) {
     return new KernelException(
         String.format(
             "Cannot modify append-only table. Table `%s` has configuration %s=true.",
             tablePath, TableConfig.APPEND_ONLY_ENABLED.getKey()));
+  }
+
+  public static KernelException rowTrackingMetadataMissingInFile(String entry, String filePath) {
+    return new KernelException(
+        String.format("Required metadata key %s is not present in scan file %s.", entry, filePath));
   }
 
   /* ------------------------ HELPER METHODS ----------------------------- */

@@ -40,6 +40,7 @@ syntax = 'proto3';
 
 import "google/protobuf/any.proto";
 import "spark/connect/types.proto";
+import "spark/connect/common.proto";
 
 package spark.connect;
 
@@ -51,6 +52,7 @@ option go_package = "internal/generated";
 // expressions in SQL appear.
 message Expression {
 
+  ExpressionCommon common = 18;
   oneof expr_type {
     Literal literal = 1;
     UnresolvedAttribute unresolved_attribute = 2;
@@ -69,6 +71,9 @@ message Expression {
     CommonInlineUserDefinedFunction common_inline_user_defined_function = 15;
     CallFunction call_function = 16;
     NamedArgumentExpression named_argument_expression = 17;
+    MergeAction merge_action = 19;
+    TypedAggregateExpression typed_aggregate_expression = 20;
+    SubqueryExpression subquery_expression = 21;
 
     // This field is used to mark extensions to the protocol. When plugins generate arbitrary
     // relations they can add them here. During the planning the correct resolution is done.
@@ -209,6 +214,8 @@ message Expression {
       Array array = 22;
       Map map = 23;
       Struct struct = 24;
+
+      SpecializedArray specialized_array = 25;
     }
 
     message Decimal {
@@ -243,6 +250,17 @@ message Expression {
       DataType struct_type = 1;
       repeated Literal elements = 2;
     }
+
+    message SpecializedArray {
+      oneof value_type {
+        Bools bools = 1;
+        Ints ints = 2;
+        Longs longs = 3;
+        Floats floats = 4;
+        Doubles doubles = 5;
+        Strings strings = 6;
+      }
+    }
   }
 
   // An unresolved attribute that is not explicitly bound to a specific column, but the column
@@ -276,6 +294,11 @@ message Expression {
     // When it is not a user defined function, Connect will use the function name directly.
     // When it is a user defined function, Connect will parse the function name first.
     bool is_user_defined_function = 4;
+
+    // (Optional) Indicate if this function is defined in the internal function registry.
+    // If not set, the server will try to look up the function in the internal function registry
+    // and decide appropriately.
+    optional bool is_internal = 5;
   }
 
   // Expression as string.
@@ -363,6 +386,11 @@ message Expression {
   }
 }
 
+message ExpressionCommon {
+  // (Required) Keep the information of the origin for this expression such as stacktrace.
+  Origin origin = 1;
+}
+
 message CommonInlineUserDefinedFunction {
   // (Required) Name of the user-defined function.
   string function_name = 1;
@@ -376,6 +404,8 @@ message CommonInlineUserDefinedFunction {
     ScalarScalaUDF scalar_scala_udf = 5;
     JavaUDF java_udf = 6;
   }
+  // (Required) Indicate if this function should be applied on distinct values.
+  bool is_distinct = 7;
 }
 
 message PythonUDF {
@@ -387,6 +417,8 @@ message PythonUDF {
   bytes command = 3;
   // (Required) Python version being used in the client.
   string python_ver = 4;
+  // (Optional) Additional includes for the Python UDF.
+  repeated string additional_includes = 5;
 }
 
 message ScalarScalaUDF {
@@ -398,6 +430,8 @@ message ScalarScalaUDF {
   DataType outputType = 3;
   // (Required) True if the UDF can return null value
   bool nullable = 4;
+  // (Required) Indicate if the UDF is an aggregate function
+  bool aggregate = 5;
 }
 
 message JavaUDF {
@@ -409,6 +443,11 @@ message JavaUDF {
 
   // (Required) Indicate if the Java user-defined function is an aggregate function
   bool aggregate = 3;
+}
+
+message TypedAggregateExpression {
+  // (Required) The aggregate function object packed into bytes.
+  ScalarScalaUDF scalar_scala_udf = 1;
 }
 
 message CallFunction {
@@ -425,4 +464,66 @@ message NamedArgumentExpression {
 
   // (Required) The value expression of the named argument.
   Expression value = 2;
+}
+
+message MergeAction {
+  // (Required) The action type of the merge action.
+  ActionType action_type = 1;
+
+  // (Optional) The condition expression of the merge action.
+  optional Expression condition = 2;
+
+  // (Optional) The assignments of the merge action. Required for ActionTypes INSERT and UPDATE.
+  repeated Assignment assignments = 3;
+
+  enum ActionType {
+    ACTION_TYPE_INVALID = 0;
+    ACTION_TYPE_DELETE = 1;
+    ACTION_TYPE_INSERT = 2;
+    ACTION_TYPE_INSERT_STAR = 3;
+    ACTION_TYPE_UPDATE = 4;
+    ACTION_TYPE_UPDATE_STAR = 5;
+  }
+
+  message Assignment {
+    // (Required) The key of the assignment.
+    Expression key = 1;
+
+    // (Required) The value of the assignment.
+    Expression value = 2;
+  }
+}
+
+message SubqueryExpression {
+  // (Required) The ID of the corresponding connect plan.
+  int64 plan_id = 1;
+
+  // (Required) The type of the subquery.
+  SubqueryType subquery_type = 2;
+
+  // (Optional) Options specific to table arguments.
+  optional TableArgOptions table_arg_options = 3;
+
+  // (Optional) IN subquery values.
+  repeated Expression in_subquery_values = 4;
+
+  enum SubqueryType {
+    SUBQUERY_TYPE_UNKNOWN = 0;
+    SUBQUERY_TYPE_SCALAR = 1;
+    SUBQUERY_TYPE_EXISTS = 2;
+    SUBQUERY_TYPE_TABLE_ARG = 3;
+    SUBQUERY_TYPE_IN = 4;
+  }
+
+  // Nested message for table argument options.
+  message TableArgOptions {
+    // (Optional) The way that input rows are partitioned.
+    repeated Expression partition_spec = 1;
+
+    // (Optional) Ordering of rows in a partition.
+    repeated Expression.SortOrder order_spec = 2;
+
+    // (Optional) Whether this is a single partition.
+    optional bool with_single_partition = 3;
+  }
 }

@@ -240,9 +240,9 @@ class TableRedirectSuite extends QueryTest
             NoRedirectRule(
               appName = None,
               allowedOperations = Set(
-                DeltaOperations.Write(SaveMode.Append).name,
-                DeltaOperations.Delete(Seq.empty).name,
-                DeltaOperations.Update(None).name
+                DeltaOperations.OP_WRITE,
+                DeltaOperations.OP_DELETE,
+                DeltaOperations.OP_UPDATE
               )
             )
           )

@@ -1,0 +1,30 @@
+name: "Delta Unity"
+on: [push, pull_request]
+jobs:
+  test:
+    name: "Delta Unity Tests"
+    runs-on: ubuntu-24.04
+    env:
+      SCALA_VERSION: 2.12.18
+    steps:
+      - uses: actions/checkout@v3
+      - uses: technote-space/get-diff-action@v4
+        id: git-diff
+        with:
+          PATTERNS: |
+            build.sbt
+            version.sbt
+            unity/**
+            kernel/**
+            storage/**
+            .github/workflows/unity_test.yaml
+      - name: install java
+        uses: actions/setup-java@v3
+        with:
+          distribution: "zulu"
+          java-version: "8"
+        if: steps.git-diff.outputs.diff
+      - name: Run Unity tests with coverage
+        run: |
+          ./build/sbt "++ ${{ env.SCALA_VERSION }}" clean coverage unity/test coverageAggregate coverageOff -v
+        if: steps.git-diff.outputs.diff

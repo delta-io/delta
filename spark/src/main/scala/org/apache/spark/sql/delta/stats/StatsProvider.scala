@@ -41,21 +41,21 @@ private [stats] class StatsProvider(getStat: StatsColumn => Option[Column]) {
    * @return A [[DataSkippingPredicate]] with a data skipping expression, or None if the given
    *         stats column does not exist.
    */
-  def getPredicateWithStatsColumn(statCol: StatsColumn)
+  def getPredicateWithStatsColumnIfExists(statCol: StatsColumn)
     (f: Column => Column): Option[DataSkippingPredicate] = {
     for (stat <- getStat(statCol))
       yield DataSkippingPredicate(f(stat), statCol)
   }
 
-  /** A variant of [[getPredicateWithStatsColumn]] with two stats columns. */
-  def getPredicateWithStatsColumns(statCol1: StatsColumn, statCol2: StatsColumn)
+  /** A variant of [[getPredicateWithStatsColumnIfExists]] with two stats columns. */
+  def getPredicateWithStatsColumnsIfExists(statCol1: StatsColumn, statCol2: StatsColumn)
     (f: (Column, Column) => Column): Option[DataSkippingPredicate] = {
     for (stat1 <- getStat(statCol1); stat2 <- getStat(statCol2))
       yield DataSkippingPredicate(f(stat1, stat2), statCol1, statCol2)
   }
 
-  /** A variant of [[getPredicateWithStatsColumn]] with three stats columns. */
-  def getPredicateWithStatsColumns(
+  /** A variant of [[getPredicateWithStatsColumnIfExists]] with three stats columns. */
+  def getPredicateWithStatsColumnsIfExists(
       statCol1: StatsColumn,
       statCol2: StatsColumn,
       statCol3: StatsColumn)
@@ -77,30 +77,30 @@ private [stats] class StatsProvider(getStat: StatsColumn => Option[Column]) {
    * @return A [[DataSkippingPredicate]] with a data skipping expression, or None if the given
    *         stats column does not exist.
    */
-  def getPredicateWithStatType(
+  def getPredicateWithStatTypeIfExists(
       pathToColumn: Seq[String], columnDataType: DataType, statType: String)
     (f: Column => Column): Option[DataSkippingPredicate] = {
-    getPredicateWithStatsColumn(StatsColumn(statType, pathToColumn, columnDataType))(f)
+    getPredicateWithStatsColumnIfExists(StatsColumn(statType, pathToColumn, columnDataType))(f)
   }
 
-  /** A variant of [[getPredicateWithStatType]] with two stat types. */
-  def getPredicateWithStatTypes(
+  /** A variant of [[getPredicateWithStatTypeIfExists]] with two stat types. */
+  def getPredicateWithStatTypesIfExists(
       pathToColumn: Seq[String], columnDataType: DataType, statType1: String, statType2: String)
     (f: (Column, Column) => Column): Option[DataSkippingPredicate] = {
-    getPredicateWithStatsColumns(
+    getPredicateWithStatsColumnsIfExists(
       StatsColumn(statType1, pathToColumn, columnDataType),
       StatsColumn(statType2, pathToColumn, columnDataType))(f)
   }
 
-  /** A variant of [[getPredicateWithStatType]] with three stat types. */
-  def getPredicateWithStatTypes(
+  /** A variant of [[getPredicateWithStatTypeIfExists]] with three stat types. */
+  def getPredicateWithStatTypesIfExists(
       pathToColumn: Seq[String],
       columnDataType: DataType,
       statType1: String,
       statType2: String,
       statType3: String)
     (f: (Column, Column, Column) => Column): Option[DataSkippingPredicate] = {
-    getPredicateWithStatsColumns(
+    getPredicateWithStatsColumnsIfExists(
       StatsColumn(statType1, pathToColumn, columnDataType),
       StatsColumn(statType2, pathToColumn, columnDataType),
       StatsColumn(statType3, pathToColumn, columnDataType))(f)

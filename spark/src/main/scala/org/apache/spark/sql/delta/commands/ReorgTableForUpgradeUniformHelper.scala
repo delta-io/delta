@@ -142,6 +142,9 @@ trait ReorgTableForUpgradeUniformHelper extends DeltaLogging {
 
     val snapshot = target.update()
     val currIcebergCompatVersionOpt = getEnabledVersion(snapshot.metadata)
+    if (targetIcebergCompatVersion >= 3) {
+      throw DeltaErrors.icebergCompatVersionNotSupportedException(targetIcebergCompatVersion, 2)
+    }
     val targetIcebergCompatObject = getForVersion(targetIcebergCompatVersion)
     val mayNeedRewrite = shallCheckRewrite(
       currIcebergCompatVersionOpt.getOrElse(0), targetIcebergCompatVersion)

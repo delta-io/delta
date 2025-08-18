@@ -26,6 +26,17 @@ import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.execution.datasources.parquet.ParquetTest
 import org.apache.spark.sql.test.SharedSparkSession
 
+trait RowTrackingDisabled extends RowTrackingTestUtils {
+  override protected def sparkConf: SparkConf = super.sparkConf
+    .set(DeltaConfigs.ROW_TRACKING_ENABLED.defaultTablePropertyKey, "false")
+    .set(defaultRowTrackingFeatureProperty, "supported")
+}
+
+trait RowTrackingEnabled extends RowTrackingTestUtils {
+  override protected def sparkConf: SparkConf = super.sparkConf
+    .set(DeltaConfigs.ROW_TRACKING_ENABLED.defaultTablePropertyKey, "true")
+}
+
 trait RowTrackingTestUtils
   extends QueryTest
   with SharedSparkSession

@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import com.databricks.spark.util.DatabricksLogging
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.StatsUtils
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, ScanReportHelper}
@@ -26,6 +27,7 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{DataFrame, QueryTest, Row}
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.util.Utils
@@ -36,201 +38,216 @@ trait DeltaLimitPushDownTests extends QueryTest
     with ScanReportHelper
     with DeletionVectorsTestUtils
     with StatsUtils
-    with DeltaSQLCommandTest {
+    with DeltaSQLCommandTest
+    with CatalogOwnedTestBaseSuite {
 
   import testImplicits._
 
 
   test("no filter or projection") {
-    val dir = Utils.createTempDir()
-    val ds = Seq(1, 1, 2, 2, 3, 3).toDS().repartition(5, $"value")
-    ds.write.format("delta").save(dir.toString)
+    withTempTable(createTable = false) { tableName =>
+      val ds = Seq(1, 1, 2, 2, 3, 3).toDS().repartition(5, $"value")
+      ds.write.format("delta").saveAsTable(tableName)
 
-    val Seq(deltaScan, deltaScanWithLimit) = getScanReport {
-      spark.read.format("delta").load(dir.toString).collect()
-      val res = spark.read.format("delta").load(dir.toString).limit(3).collect()
-      assert(res.size == 3)
+      val Seq(deltaScan, deltaScanWithLimit) = getScanReport {
+        spark.read.format("delta").table(tableName).collect()
+        val res = spark.read.format("delta").table(tableName).limit(3).collect()
+        assert(res.size == 3)
+      }
+
+      assert(deltaScan.size("total").bytesCompressed ===
+        deltaScanWithLimit.size("total").bytesCompressed)
+
+      assert(deltaScan.size("scanned").bytesCompressed !=
+        deltaScanWithLimit.size("scanned").bytesCompressed)
+
+      assert(deltaScanWithLimit.size("scanned").rows === Some(4L))
     }
-
-    assert(deltaScan.size("total").bytesCompressed ===
-      deltaScanWithLimit.size("total").bytesCompressed)
-
-    assert(deltaScan.size("scanned").bytesCompressed !=
-      deltaScanWithLimit.size("scanned").bytesCompressed)
-
-    assert(deltaScanWithLimit.size("scanned").rows === Some(4L))
   }
 
   test("limit larger than total") {
-    val dir = Utils.createTempDir()
-    val data = Seq(1, 1, 2, 2)
-    val ds = data.toDS().repartition($"value")
-    ds.write.format("delta").save(dir.toString)
+    withTempTable(createTable = false) { tableName =>
+      val data = Seq(1, 1, 2, 2)
+      val ds = data.toDS().repartition($"value")
+      ds.write.format("delta").saveAsTable(tableName)
 
-    val Seq(deltaScan, deltaScanWithLimit) = getScanReport {
-      spark.read.format("delta").load(dir.toString).collect()
-      checkAnswer(spark.read.format("delta").load(dir.toString).limit(5), data.toDF())
+      val Seq(deltaScan, deltaScanWithLimit) = getScanReport {
+        spark.read.format("delta").table(tableName).collect()
+        checkAnswer(spark.read.format("delta").table(tableName).limit(5), data.toDF())
+      }
+
+      assert(deltaScan.size("total").bytesCompressed ===
+        deltaScanWithLimit.size("total").bytesCompressed)
+
+      assert(deltaScan.size("scanned").bytesCompressed ===
+        deltaScanWithLimit.size("scanned").bytesCompressed)
     }
-
-    assert(deltaScan.size("total").bytesCompressed ===
-      deltaScanWithLimit.size("total").bytesCompressed)
-
-    assert(deltaScan.size("scanned").bytesCompressed ===
-      deltaScanWithLimit.size("scanned").bytesCompressed)
   }
 
   test("limit 0") {
     val records = getScanReport {
-      val dir = Utils.createTempDir()
-      val ds = Seq(1, 1, 2, 2, 3, 3).toDS().repartition($"value")
-      ds.write.format("delta").save(dir.toString)
-      val res = spark.read.format("delta")
-        .load(dir.toString)
-        .limit(0)
+      withTempTable(createTable = false) { tableName =>
+        val ds = Seq(1, 1, 2, 2, 3, 3).toDS().repartition($"value")
+        ds.write.format("delta").saveAsTable(tableName)
+        val res = spark.read.format("delta")
+          .table(tableName)
+          .limit(0)
 
-      checkAnswer(res, Seq())
+        checkAnswer(res, Seq())
+      }
     }
   }
 
   test("insufficient rows have stats") {
-    val tempDir = Utils.createTempDir()
-    val deltaLog = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+    withSQLConf(DeltaConfigs.ROW_TRACKING_ENABLED.defaultTablePropertyKey -> "false") {
+      withTempTable(createTable = false) { tableName =>
+        val file = Seq(1, 2).toDS().coalesce(1)
 
-    val file = Seq(1, 2).toDS().coalesce(1)
+        withSQLConf(DeltaSQLConf.DELTA_COLLECT_STATS.key -> "false") {
+          file.write.format("delta").mode("append").saveAsTable(tableName)
+        }
+        withSQLConf(DeltaSQLConf.DELTA_COLLECT_STATS.key -> "false") {
+          file.write.format("delta").mode("append").saveAsTable(tableName)
+        }
+        withSQLConf(DeltaSQLConf.DELTA_COLLECT_STATS.key -> "true") {
+          file.write.format("delta").mode("append").saveAsTable(tableName)
+        }
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
 
-    withSQLConf(DeltaSQLConf.DELTA_COLLECT_STATS.key -> "false") {
-      file.write.format("delta").mode("append").save(deltaLog.dataPath.toString)
+        val deltaScan = deltaLog.snapshot.filesForScan(limit = 3, partitionFilters = Seq.empty)
+
+        assert(deltaScan.scanned.bytesCompressed === deltaScan.total.bytesCompressed)
+      }
     }
-    withSQLConf(DeltaSQLConf.DELTA_COLLECT_STATS.key -> "false") {
-      file.write.format("delta").mode("append").save(deltaLog.dataPath.toString)
-    }
-    withSQLConf(DeltaSQLConf.DELTA_COLLECT_STATS.key -> "true") {
-      file.write.format("delta").mode("append").save(deltaLog.dataPath.toString)
-    }
-
-    val deltaScan = deltaLog.snapshot.filesForScan(limit = 3, partitionFilters = Seq.empty)
-
-    assert(deltaScan.scanned.bytesCompressed === deltaScan.total.bytesCompressed)
   }
 
   test("sufficient rows have stats") {
-    val tempDir = Utils.createTempDir()
-    val deltaLog = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+    withSQLConf(DeltaConfigs.ROW_TRACKING_ENABLED.defaultTablePropertyKey -> "false") {
+      withTempTable(createTable = false) { tableName =>
+        val file = Seq(1, 2).toDS().coalesce(1)
 
-    val file = Seq(1, 2).toDS().coalesce(1)
+        withSQLConf(DeltaSQLConf.DELTA_COLLECT_STATS.key -> "false") {
+          file.write.format("delta").mode("append").saveAsTable(tableName)
+        }
+        withSQLConf(DeltaSQLConf.DELTA_COLLECT_STATS.key -> "true") {
+          file.write.format("delta").mode("append").saveAsTable(tableName)
+        }
+        withSQLConf(DeltaSQLConf.DELTA_COLLECT_STATS.key -> "true") {
+          file.write.format("delta").mode("append").saveAsTable(tableName)
+        }
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
 
-    withSQLConf(DeltaSQLConf.DELTA_COLLECT_STATS.key -> "false") {
-      file.write.format("delta").mode("append").save(deltaLog.dataPath.toString)
+        val deltaScan = deltaLog.snapshot.filesForScan(limit = 3, partitionFilters = Seq.empty)
+
+        assert(deltaScan.scanned.rows === Some(4))
+        assert(deltaScan.scanned.bytesCompressed != deltaScan.total.bytesCompressed)
+      }
     }
-    withSQLConf(DeltaSQLConf.DELTA_COLLECT_STATS.key -> "true") {
-      file.write.format("delta").mode("append").save(deltaLog.dataPath.toString)
-    }
-    withSQLConf(DeltaSQLConf.DELTA_COLLECT_STATS.key -> "true") {
-      file.write.format("delta").mode("append").save(deltaLog.dataPath.toString)
-    }
-
-    val deltaScan = deltaLog.snapshot.filesForScan(limit = 3, partitionFilters = Seq.empty)
-
-    assert(deltaScan.scanned.rows === Some(4))
-    assert(deltaScan.scanned.bytesCompressed != deltaScan.total.bytesCompressed)
   }
 
   test("with projection only") {
-    val dir = Utils.createTempDir()
-    val ds = Seq((1, 1), (2, 1), (3, 1)).toDF("key", "value").as[(Int, Int)]
-    ds.write.format("delta").partitionBy("key").save(dir.toString)
+    withTempTable(createTable = false) { tableName =>
+      val ds = Seq((1, 1), (2, 1), (3, 1)).toDF("key", "value").as[(Int, Int)]
+      ds.write.format("delta").partitionBy("key").saveAsTable(tableName)
 
-    val Seq(deltaScan) = getScanReport {
-      val res = spark.read.format("delta").load(dir.toString).select("value").limit(1).collect()
-      assert(res === Seq(Row(1)))
+      val Seq(deltaScan) = getScanReport {
+        val res = spark.read.format("delta").table(tableName).select("value").limit(1).collect()
+        assert(res === Seq(Row(1)))
+      }
+
+      assert(deltaScan.size("scanned").rows === Some(1L))
     }
-
-    assert(deltaScan.size("scanned").rows === Some(1L))
   }
 
   test("with partition filter only") {
-    val dir = Utils.createTempDir()
-    val ds = Seq((1, 4), (2, 5), (3, 6)).toDF("key", "value").as[(Int, Int)]
-    ds.write.format("delta").partitionBy("key").save(dir.toString)
+    withTempTable(createTable = false) { tableName =>
+      val ds = Seq((1, 4), (2, 5), (3, 6)).toDF("key", "value").as[(Int, Int)]
+      ds.write.format("delta").partitionBy("key").saveAsTable(tableName)
 
-    val Seq(deltaScan, deltaScanWithLimit, deltaScanWithLimit2) = getScanReport {
-      spark.read.format("delta").load(dir.toString).where("key > 1").collect()
-      val res1 = spark.read.format("delta").load(dir.toString).where("key > 1").limit(1).collect()
-      assert(res1 === Seq(Row(2, 5)) || res1 === Seq(Row(3, 6)))
-      val res2 = spark.read.format("delta").load(dir.toString).where("key == 1").limit(2).collect()
-      assert(res2 === Seq(Row(1, 4)))
+      val Seq(deltaScan, deltaScanWithLimit, deltaScanWithLimit2) = getScanReport {
+        spark.read.format("delta").table(tableName).where("key > 1").collect()
+        val res1 = spark.read.format("delta").table(tableName).where("key > 1").limit(1).collect()
+        assert(res1 === Seq(Row(2, 5)) || res1 === Seq(Row(3, 6)))
+        val res2 = spark.read.format("delta").table(tableName).where("key == 1").limit(2).collect()
+        assert(res2 === Seq(Row(1, 4)))
+      }
+
+      assert(deltaScan.size("total").bytesCompressed ===
+        deltaScanWithLimit.size("total").bytesCompressed)
+
+      assert(deltaScan.size("scanned").bytesCompressed !=
+        deltaScanWithLimit.size("scanned").bytesCompressed)
+
+      assert(deltaScan.size("scanned").bytesCompressed.get <
+        deltaScan.size("total").bytesCompressed.get)
+      assert(deltaScanWithLimit.size("scanned").rows === Some(1L))
+      assert(deltaScanWithLimit2.size("scanned").rows === Some(1L))
     }
-
-    assert(deltaScan.size("total").bytesCompressed ===
-      deltaScanWithLimit.size("total").bytesCompressed)
-
-    assert(deltaScan.size("scanned").bytesCompressed !=
-      deltaScanWithLimit.size("scanned").bytesCompressed)
-
-    assert(deltaScan.size("scanned").bytesCompressed.get <
-      deltaScan.size("total").bytesCompressed.get)
-    assert(deltaScanWithLimit.size("scanned").rows === Some(1L))
-    assert(deltaScanWithLimit2.size("scanned").rows === Some(1L))
   }
 
   test("with non-partition filter") {
-    val dir = Utils.createTempDir()
-    val ds = Seq((1, 4), (2, 5), (3, 6)).toDF("key", "value").as[(Int, Int)]
-    ds.write.format("delta").partitionBy("key").save(dir.toString)
+    withTempTable(createTable = false) { tableName =>
+      val ds = Seq((1, 4), (2, 5), (3, 6)).toDF("key", "value").as[(Int, Int)]
+      ds.write.format("delta").partitionBy("key").saveAsTable(tableName)
 
-    val Seq(deltaScan) = getScanReport { // this query should not trigger limit push-down
-      spark.read.format("delta").load(dir.toString)
-        .where("key > 1")
-        .where("value > 4")
-        .limit(1)
-        .collect()
+      val Seq(deltaScan) = getScanReport { // this query should not trigger limit push-down
+        spark.read.format("delta").table(tableName)
+          .where("key > 1")
+          .where("value > 4")
+          .limit(1)
+          .collect()
+      }
+      assert(deltaScan.size("scanned").rows === Some(2L))
     }
-    assert(deltaScan.size("scanned").rows === Some(2L))
   }
 
   test("limit push-down flag") {
-    val dir = Utils.createTempDir()
-    val ds = Seq((1, 4), (2, 5), (3, 6)).toDF("key", "value").as[(Int, Int)]
-    ds.write.format("delta").partitionBy("key").save(dir.toString)
+    withTempTable(createTable = false) { tableName =>
+      val ds = Seq((1, 4), (2, 5), (3, 6)).toDF("key", "value").as[(Int, Int)]
+      ds.write.format("delta").partitionBy("key").saveAsTable(tableName)
 
-    val Seq(baseline, scan, scan2) = getScanReport {
-      withSQLConf(DeltaSQLConf.DELTA_LIMIT_PUSHDOWN_ENABLED.key -> "true") {
-        spark.read.format("delta").load(dir.toString).where("key > 1").limit(1).collect()
+      val Seq(baseline, scan, scan2) = getScanReport {
+        withSQLConf(DeltaSQLConf.DELTA_LIMIT_PUSHDOWN_ENABLED.key -> "true") {
+          spark.read.format("delta").table(tableName).where("key > 1").limit(1).collect()
+        }
+        withSQLConf(DeltaSQLConf.DELTA_LIMIT_PUSHDOWN_ENABLED.key -> "false") {
+          spark.read.format("delta").table(tableName).where("key > 1").limit(1).collect()
+          spark.read.format("delta").table(tableName).limit(2).collect()
+        }
       }
-      withSQLConf(DeltaSQLConf.DELTA_LIMIT_PUSHDOWN_ENABLED.key -> "false") {
-        spark.read.format("delta").load(dir.toString).where("key > 1").limit(1).collect()
-        spark.read.format("delta").load(dir.toString).limit(2).collect()
-      }
+      assert(scan.size("scanned").bytesCompressed.get >
+        baseline.size("scanned").bytesCompressed.get)
+      assert(scan2.size("scanned").bytesCompressed === scan2.size("total").bytesCompressed)
     }
-    assert(scan.size("scanned").bytesCompressed.get > baseline.size("scanned").bytesCompressed.get)
-    assert(scan2.size("scanned").bytesCompressed === scan2.size("total").bytesCompressed)
   }
 
   test("GlobalLimit should be kept") {
-    val dir = Utils.createTempDir()
-    (1 to 10).toDF.repartition(5).write.format("delta").save(dir.toString)
-    assert(spark.read.format("delta").load(dir.toString).limit(5).collect().size == 5)
+    withTempTable(createTable = false) { tableName =>
+      (1 to 10).toDF.repartition(5).write.format("delta").saveAsTable(tableName)
+      assert(spark.read.format("delta").table(tableName).limit(5).collect().size == 5)
+    }
   }
 
   test("Works with union") {
-    val dir = Utils.createTempDir()
-    (1 to 10).toDF.repartition(5).write.format("delta").save(dir.toString)
-    val t1 = spark.read.format("delta").load(dir.toString)
-    val t2 = spark.read.format("delta").load(dir.toString)
-    val union = t1.union(t2)
+    withTempTable(createTable = false) { tableName =>
+      (1 to 10).toDF.repartition(5).write.format("delta").saveAsTable(tableName)
+      val t1 = spark.read.format("delta").table(tableName)
+      val t2 = spark.read.format("delta").table(tableName)
+      val union = t1.union(t2)
 
-    withSQLConf(DeltaSQLConf.DELTA_LIMIT_PUSHDOWN_ENABLED.key -> "true") {
-      val Seq(scanFull1, scanFull2) = getScanReport {
-        union.collect()
-      }
-      val Seq(scanLimit1, scanLimit2) = getScanReport {
-        union.limit(1).collect()
-      }
+      withSQLConf(DeltaSQLConf.DELTA_LIMIT_PUSHDOWN_ENABLED.key -> "true") {
+        val Seq(scanFull1, scanFull2) = getScanReport {
+          union.collect()
+        }
+        val Seq(scanLimit1, scanLimit2) = getScanReport {
+          union.limit(1).collect()
+        }
 
-      assert(scanFull1.size("scanned").bytesCompressed.get >
-        scanLimit1.size("scanned").bytesCompressed.get)
-      assert(scanFull2.size("scanned").bytesCompressed.get >
-        scanLimit2.size("scanned").bytesCompressed.get)
+        assert(scanFull1.size("scanned").bytesCompressed.get >
+          scanLimit1.size("scanned").bytesCompressed.get)
+        assert(scanFull2.size("scanned").bytesCompressed.get >
+          scanLimit2.size("scanned").bytesCompressed.get)
+      }
     }
   }
 
@@ -249,7 +266,7 @@ trait DeltaLimitPushDownTests extends QueryTest
       val targetDF = spark.range(start = 0, end = 100, step = 1, numPartitions = 2)
         .withColumn("value", col("id"))
 
-      withTempDeltaTable(targetDF) { (targetTable, targetLog) =>
+      withTempDeltaTable(targetDF, createNameBasedTable = true) { (targetTable, targetLog) =>
         removeRowsFromAllFilesInLog(targetLog, numRowsToRemovePerFile = 10)
         verifyDVsExist(targetLog, 2)
 
@@ -293,3 +310,14 @@ trait DeltaLimitPushDownTests extends QueryTest
 
 class DeltaLimitPushDownV1Suite extends DeltaLimitPushDownTests
 
+class DeltaLimitPushDownWithCatalogOwnedBatch1Suite extends DeltaLimitPushDownTests {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
+}
+
+class DeltaLimitPushDownWithCatalogOwnedBatch2Suite extends DeltaLimitPushDownTests {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
+}
+
+class DeltaLimitPushDownWithCatalogOwnedBatch100Suite extends DeltaLimitPushDownTests {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
+}

@@ -36,10 +36,13 @@ import collections.abc
 import delta.connect.proto.proto.base_pb2
 import google.protobuf.descriptor
 import google.protobuf.internal.containers
+import google.protobuf.internal.enum_type_wrapper
 import google.protobuf.message
+import pyspark.sql.connect.proto.types_pb2
 import sys
+import typing
 
-if sys.version_info >= (3, 8):
+if sys.version_info >= (3, 10):
     import typing as typing_extensions
 else:
     import typing_extensions
@@ -55,6 +58,9 @@ class DeltaCommand(google.protobuf.message.Message):
     VACUUM_TABLE_FIELD_NUMBER: builtins.int
     UPGRADE_TABLE_PROTOCOL_FIELD_NUMBER: builtins.int
     GENERATE_FIELD_NUMBER: builtins.int
+    CREATE_DELTA_TABLE_FIELD_NUMBER: builtins.int
+    ADD_FEATURE_SUPPORT_FIELD_NUMBER: builtins.int
+    DROP_FEATURE_SUPPORT_FIELD_NUMBER: builtins.int
     @property
     def clone_table(self) -> global___CloneTable: ...
     @property
@@ -63,6 +69,12 @@ class DeltaCommand(google.protobuf.message.Message):
     def upgrade_table_protocol(self) -> global___UpgradeTableProtocol: ...
     @property
     def generate(self) -> global___Generate: ...
+    @property
+    def create_delta_table(self) -> global___CreateDeltaTable: ...
+    @property
+    def add_feature_support(self) -> global___AddFeatureSupport: ...
+    @property
+    def drop_feature_support(self) -> global___DropFeatureSupport: ...
     def __init__(
         self,
         *,
@@ -70,14 +82,23 @@ class DeltaCommand(google.protobuf.message.Message):
         vacuum_table: global___VacuumTable | None = ...,
         upgrade_table_protocol: global___UpgradeTableProtocol | None = ...,
         generate: global___Generate | None = ...,
+        create_delta_table: global___CreateDeltaTable | None = ...,
+        add_feature_support: global___AddFeatureSupport | None = ...,
+        drop_feature_support: global___DropFeatureSupport | None = ...,
     ) -> None: ...
     def HasField(
         self,
         field_name: typing_extensions.Literal[
+            "add_feature_support",
+            b"add_feature_support",
             "clone_table",
             b"clone_table",
             "command_type",
             b"command_type",
+            "create_delta_table",
+            b"create_delta_table",
+            "drop_feature_support",
+            b"drop_feature_support",
             "generate",
             b"generate",
             "upgrade_table_protocol",
@@ -89,10 +110,16 @@ class DeltaCommand(google.protobuf.message.Message):
     def ClearField(
         self,
         field_name: typing_extensions.Literal[
+            "add_feature_support",
+            b"add_feature_support",
             "clone_table",
             b"clone_table",
             "command_type",
             b"command_type",
+            "create_delta_table",
+            b"create_delta_table",
+            "drop_feature_support",
+            b"drop_feature_support",
             "generate",
             b"generate",
             "upgrade_table_protocol",
@@ -105,7 +132,13 @@ class DeltaCommand(google.protobuf.message.Message):
         self, oneof_group: typing_extensions.Literal["command_type", b"command_type"]
     ) -> (
         typing_extensions.Literal[
-            "clone_table", "vacuum_table", "upgrade_table_protocol", "generate"
+            "clone_table",
+            "vacuum_table",
+            "upgrade_table_protocol",
+            "generate",
+            "create_delta_table",
+            "add_feature_support",
+            "drop_feature_support",
         ]
         | None
     ): ...
@@ -328,3 +361,370 @@ class Generate(google.protobuf.message.Message):
     ) -> None: ...
 
 global___Generate = Generate
+
+class CreateDeltaTable(google.protobuf.message.Message):
+    """Command that creates or replace a Delta table (depending on the mode)."""
+
+    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+
+    class _Mode:
+        ValueType = typing.NewType("ValueType", builtins.int)
+        V: typing_extensions.TypeAlias = ValueType
+
+    class _ModeEnumTypeWrapper(
+        google.protobuf.internal.enum_type_wrapper._EnumTypeWrapper[
+            CreateDeltaTable._Mode.ValueType
+        ],
+        builtins.type,
+    ):  # noqa: F821
+        DESCRIPTOR: google.protobuf.descriptor.EnumDescriptor
+        MODE_UNSPECIFIED: CreateDeltaTable._Mode.ValueType  # 0
+        MODE_CREATE: CreateDeltaTable._Mode.ValueType  # 1
+        """Create the table if it does not exist, and throw an error otherwise."""
+        MODE_CREATE_IF_NOT_EXISTS: CreateDeltaTable._Mode.ValueType  # 2
+        """Create the table if it does not exist, and do nothing otherwise."""
+        MODE_REPLACE: CreateDeltaTable._Mode.ValueType  # 3
+        """Replace the table if it already exists, and throw an error otherwise."""
+        MODE_CREATE_OR_REPLACE: CreateDeltaTable._Mode.ValueType  # 4
+        """Create the table if it does not exist, and replace it otherwise."""
+
+    class Mode(_Mode, metaclass=_ModeEnumTypeWrapper): ...
+    MODE_UNSPECIFIED: CreateDeltaTable.Mode.ValueType  # 0
+    MODE_CREATE: CreateDeltaTable.Mode.ValueType  # 1
+    """Create the table if it does not exist, and throw an error otherwise."""
+    MODE_CREATE_IF_NOT_EXISTS: CreateDeltaTable.Mode.ValueType  # 2
+    """Create the table if it does not exist, and do nothing otherwise."""
+    MODE_REPLACE: CreateDeltaTable.Mode.ValueType  # 3
+    """Replace the table if it already exists, and throw an error otherwise."""
+    MODE_CREATE_OR_REPLACE: CreateDeltaTable.Mode.ValueType  # 4
+    """Create the table if it does not exist, and replace it otherwise."""
+
+    class Column(google.protobuf.message.Message):
+        """Column in the schema of the table."""
+
+        DESCRIPTOR: google.protobuf.descriptor.Descriptor
+
+        class IdentityInfo(google.protobuf.message.Message):
+            DESCRIPTOR: google.protobuf.descriptor.Descriptor
+
+            START_FIELD_NUMBER: builtins.int
+            STEP_FIELD_NUMBER: builtins.int
+            ALLOW_EXPLICIT_INSERT_FIELD_NUMBER: builtins.int
+            start: builtins.int
+            """(Required) The start value of the identity column."""
+            step: builtins.int
+            """(Required) The increment value of the identity column."""
+            allow_explicit_insert: builtins.bool
+            """(Required) Whether the identity column is BY DEFAULT (true) or ALWAYS (false)."""
+            def __init__(
+                self,
+                *,
+                start: builtins.int = ...,
+                step: builtins.int = ...,
+                allow_explicit_insert: builtins.bool = ...,
+            ) -> None: ...
+            def ClearField(
+                self,
+                field_name: typing_extensions.Literal[
+                    "allow_explicit_insert",
+                    b"allow_explicit_insert",
+                    "start",
+                    b"start",
+                    "step",
+                    b"step",
+                ],
+            ) -> None: ...
+
+        NAME_FIELD_NUMBER: builtins.int
+        DATA_TYPE_FIELD_NUMBER: builtins.int
+        NULLABLE_FIELD_NUMBER: builtins.int
+        GENERATED_ALWAYS_AS_FIELD_NUMBER: builtins.int
+        COMMENT_FIELD_NUMBER: builtins.int
+        IDENTITY_INFO_FIELD_NUMBER: builtins.int
+        name: builtins.str
+        """(Required) Name of the column."""
+        @property
+        def data_type(self) -> pyspark.sql.connect.proto.types_pb2.DataType:
+            """(Required) Data type of the column."""
+        nullable: builtins.bool
+        """(Required) Whether the column is nullable."""
+        generated_always_as: builtins.str
+        """(Optional) SQL Expression that is used to generate the values in the column."""
+        comment: builtins.str
+        """(Optional) Comment to describe the column."""
+        @property
+        def identity_info(self) -> global___CreateDeltaTable.Column.IdentityInfo:
+            """(Optional) Identity information for the column."""
+        def __init__(
+            self,
+            *,
+            name: builtins.str = ...,
+            data_type: pyspark.sql.connect.proto.types_pb2.DataType | None = ...,
+            nullable: builtins.bool = ...,
+            generated_always_as: builtins.str | None = ...,
+            comment: builtins.str | None = ...,
+            identity_info: global___CreateDeltaTable.Column.IdentityInfo | None = ...,
+        ) -> None: ...
+        def HasField(
+            self,
+            field_name: typing_extensions.Literal[
+                "_comment",
+                b"_comment",
+                "_generated_always_as",
+                b"_generated_always_as",
+                "_identity_info",
+                b"_identity_info",
+                "comment",
+                b"comment",
+                "data_type",
+                b"data_type",
+                "generated_always_as",
+                b"generated_always_as",
+                "identity_info",
+                b"identity_info",
+            ],
+        ) -> builtins.bool: ...
+        def ClearField(
+            self,
+            field_name: typing_extensions.Literal[
+                "_comment",
+                b"_comment",
+                "_generated_always_as",
+                b"_generated_always_as",
+                "_identity_info",
+                b"_identity_info",
+                "comment",
+                b"comment",
+                "data_type",
+                b"data_type",
+                "generated_always_as",
+                b"generated_always_as",
+                "identity_info",
+                b"identity_info",
+                "name",
+                b"name",
+                "nullable",
+                b"nullable",
+            ],
+        ) -> None: ...
+        @typing.overload
+        def WhichOneof(
+            self, oneof_group: typing_extensions.Literal["_comment", b"_comment"]
+        ) -> typing_extensions.Literal["comment"] | None: ...
+        @typing.overload
+        def WhichOneof(
+            self,
+            oneof_group: typing_extensions.Literal["_generated_always_as", b"_generated_always_as"],
+        ) -> typing_extensions.Literal["generated_always_as"] | None: ...
+        @typing.overload
+        def WhichOneof(
+            self, oneof_group: typing_extensions.Literal["_identity_info", b"_identity_info"]
+        ) -> typing_extensions.Literal["identity_info"] | None: ...
+
+    class PropertiesEntry(google.protobuf.message.Message):
+        DESCRIPTOR: google.protobuf.descriptor.Descriptor
+
+        KEY_FIELD_NUMBER: builtins.int
+        VALUE_FIELD_NUMBER: builtins.int
+        key: builtins.str
+        value: builtins.str
+        def __init__(
+            self,
+            *,
+            key: builtins.str = ...,
+            value: builtins.str = ...,
+        ) -> None: ...
+        def ClearField(
+            self, field_name: typing_extensions.Literal["key", b"key", "value", b"value"]
+        ) -> None: ...
+
+    MODE_FIELD_NUMBER: builtins.int
+    TABLE_NAME_FIELD_NUMBER: builtins.int
+    LOCATION_FIELD_NUMBER: builtins.int
+    COMMENT_FIELD_NUMBER: builtins.int
+    COLUMNS_FIELD_NUMBER: builtins.int
+    PARTITIONING_COLUMNS_FIELD_NUMBER: builtins.int
+    PROPERTIES_FIELD_NUMBER: builtins.int
+    CLUSTERING_COLUMNS_FIELD_NUMBER: builtins.int
+    mode: global___CreateDeltaTable.Mode.ValueType
+    """(Required) Mode that determines what to do when a table with the given name or location
+    already exists.
+    """
+    table_name: builtins.str
+    """(Optional) Qualified name of the table."""
+    location: builtins.str
+    """(Optional) Path to the directory where the table date is stored."""
+    comment: builtins.str
+    """(Optional) Comment describing the table."""
+    @property
+    def columns(
+        self,
+    ) -> google.protobuf.internal.containers.RepeatedCompositeFieldContainer[
+        global___CreateDeltaTable.Column
+    ]:
+        """(Optional) Columns in the schema of the table."""
+    @property
+    def partitioning_columns(
+        self,
+    ) -> google.protobuf.internal.containers.RepeatedScalarFieldContainer[builtins.str]:
+        """(Optional) Columns used for partitioning the table."""
+    @property
+    def properties(
+        self,
+    ) -> google.protobuf.internal.containers.ScalarMap[builtins.str, builtins.str]:
+        """(Optional) Properties of the table."""
+    @property
+    def clustering_columns(
+        self,
+    ) -> google.protobuf.internal.containers.RepeatedScalarFieldContainer[builtins.str]:
+        """(Optional) Columns used for clustering the table."""
+    def __init__(
+        self,
+        *,
+        mode: global___CreateDeltaTable.Mode.ValueType = ...,
+        table_name: builtins.str | None = ...,
+        location: builtins.str | None = ...,
+        comment: builtins.str | None = ...,
+        columns: collections.abc.Iterable[global___CreateDeltaTable.Column] | None = ...,
+        partitioning_columns: collections.abc.Iterable[builtins.str] | None = ...,
+        properties: collections.abc.Mapping[builtins.str, builtins.str] | None = ...,
+        clustering_columns: collections.abc.Iterable[builtins.str] | None = ...,
+    ) -> None: ...
+    def HasField(
+        self,
+        field_name: typing_extensions.Literal[
+            "_comment",
+            b"_comment",
+            "_location",
+            b"_location",
+            "_table_name",
+            b"_table_name",
+            "comment",
+            b"comment",
+            "location",
+            b"location",
+            "table_name",
+            b"table_name",
+        ],
+    ) -> builtins.bool: ...
+    def ClearField(
+        self,
+        field_name: typing_extensions.Literal[
+            "_comment",
+            b"_comment",
+            "_location",
+            b"_location",
+            "_table_name",
+            b"_table_name",
+            "clustering_columns",
+            b"clustering_columns",
+            "columns",
+            b"columns",
+            "comment",
+            b"comment",
+            "location",
+            b"location",
+            "mode",
+            b"mode",
+            "partitioning_columns",
+            b"partitioning_columns",
+            "properties",
+            b"properties",
+            "table_name",
+            b"table_name",
+        ],
+    ) -> None: ...
+    @typing.overload
+    def WhichOneof(
+        self, oneof_group: typing_extensions.Literal["_comment", b"_comment"]
+    ) -> typing_extensions.Literal["comment"] | None: ...
+    @typing.overload
+    def WhichOneof(
+        self, oneof_group: typing_extensions.Literal["_location", b"_location"]
+    ) -> typing_extensions.Literal["location"] | None: ...
+    @typing.overload
+    def WhichOneof(
+        self, oneof_group: typing_extensions.Literal["_table_name", b"_table_name"]
+    ) -> typing_extensions.Literal["table_name"] | None: ...
+
+global___CreateDeltaTable = CreateDeltaTable
+
+class AddFeatureSupport(google.protobuf.message.Message):
+    """Command to add a supported feature to the table by modifying the protocol."""
+
+    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+
+    TABLE_FIELD_NUMBER: builtins.int
+    FEATURE_NAME_FIELD_NUMBER: builtins.int
+    @property
+    def table(self) -> delta.connect.proto.base_pb2.DeltaTable:
+        """(Required) The Delta table to add the supported feature to."""
+    feature_name: builtins.str
+    """(Required) The name of the supported feature to add."""
+    def __init__(
+        self,
+        *,
+        table: delta.connect.proto.base_pb2.DeltaTable | None = ...,
+        feature_name: builtins.str = ...,
+    ) -> None: ...
+    def HasField(
+        self, field_name: typing_extensions.Literal["table", b"table"]
+    ) -> builtins.bool: ...
+    def ClearField(
+        self,
+        field_name: typing_extensions.Literal["feature_name", b"feature_name", "table", b"table"],
+    ) -> None: ...
+
+global___AddFeatureSupport = AddFeatureSupport
+
+class DropFeatureSupport(google.protobuf.message.Message):
+    """Command to drop a supported feature from the table by modifying the protocol."""
+
+    DESCRIPTOR: google.protobuf.descriptor.Descriptor
+
+    TABLE_FIELD_NUMBER: builtins.int
+    FEATURE_NAME_FIELD_NUMBER: builtins.int
+    TRUNCATE_HISTORY_FIELD_NUMBER: builtins.int
+    @property
+    def table(self) -> delta.connect.proto.base_pb2.DeltaTable:
+        """(Required) The Delta table to drop the supported feature from."""
+    feature_name: builtins.str
+    """(Required) The name of the supported feature to drop."""
+    truncate_history: builtins.bool
+    """(optional) Whether to truncate history. When not specified, history is not truncated."""
+    def __init__(
+        self,
+        *,
+        table: delta.connect.proto.base_pb2.DeltaTable | None = ...,
+        feature_name: builtins.str = ...,
+        truncate_history: builtins.bool | None = ...,
+    ) -> None: ...
+    def HasField(
+        self,
+        field_name: typing_extensions.Literal[
+            "_truncate_history",
+            b"_truncate_history",
+            "table",
+            b"table",
+            "truncate_history",
+            b"truncate_history",
+        ],
+    ) -> builtins.bool: ...
+    def ClearField(
+        self,
+        field_name: typing_extensions.Literal[
+            "_truncate_history",
+            b"_truncate_history",
+            "feature_name",
+            b"feature_name",
+            "table",
+            b"table",
+            "truncate_history",
+            b"truncate_history",
+        ],
+    ) -> None: ...
+    def WhichOneof(
+        self, oneof_group: typing_extensions.Literal["_truncate_history", b"_truncate_history"]
+    ) -> typing_extensions.Literal["truncate_history"] | None: ...
+
+global___DropFeatureSupport = DropFeatureSupport

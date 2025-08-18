@@ -56,6 +56,7 @@ val LATEST_RELEASED_SPARK_VERSION = "3.5.3"
 val SPARK_MASTER_VERSION = "4.0.1-SNAPSHOT"
 val sparkVersion = settingKey[String]("Spark version")
 spark / sparkVersion := getSparkVersion()
+sparkKernelDsv2 / sparkVersion := getSparkVersion()
 connectCommon / sparkVersion := getSparkVersion()
 connectClient / sparkVersion := getSparkVersion()
 connectServer / sparkVersion := getSparkVersion()
@@ -356,6 +357,8 @@ lazy val connectClient = (project in file("spark-connect/client"))
       // Return the location of the distribution directory.
       "-Ddelta.spark.home=" + distributionDir
     },
+    // Required for testing addFeatureSupport/dropFeatureSupport.
+    Test / envVars += ("DELTA_TESTING", "1"),
   )
 
 lazy val connectServer = (project in file("spark-connect/server"))
@@ -408,6 +411,26 @@ lazy val connectServer = (project in file("spark-connect/server"))
       // needed for the client. Including it causes classpath problems.
       ExclusionRule("org.apache.spark", "spark-connect-shims_2.13")
     ),
+    // Required for testing addFeatureSupport/dropFeatureSupport.
+    Test / envVars += ("DELTA_TESTING", "1"),
+  )
+
+lazy val deltaSuiteGenerator = (project in file("spark/delta-suite-generator"))
+  .disablePlugins(ScalafmtPlugin)
+  .settings (
+    name := "delta-suite-generator",
+    commonSettings,
+    scalaStyleSettings,
+    libraryDependencies ++= Seq(
+      "org.scala-lang.modules" %% "scala-collection-compat" % "2.11.0",
+      "org.scalameta" %% "scalameta" % "4.13.5",
+      "org.scalameta" %% "scalafmt-core" % "3.9.6",
+      "commons-cli" % "commons-cli" % "1.9.0",
+      "commons-codec" % "commons-codec" % "1.17.2",
+      "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
+    ),
+    Compile / mainClass := Some("io.delta.suitegenerator.ModularSuiteGenerator"),
+    Test / baseDirectory := (ThisBuild / baseDirectory).value,
   )
 
 lazy val spark = (project in file("spark"))
@@ -589,7 +612,12 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
       "junit" % "junit" % "4.13.2" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
       "org.slf4j" % "slf4j-log4j12" % "1.7.36" % "test",
-      "org.assertj" % "assertj-core" % "3.26.3" % "test"
+      "org.assertj" % "assertj-core" % "3.26.3" % "test",
+      // JMH dependencies allow writing micro-benchmarks for testing performance of components.
+      // JMH has framework to define benchmarks and takes care of many common functionalities
+      // such as warm runs, cold runs, defining benchmark parameter variables etc.
+      "org.openjdk.jmh" % "jmh-core" % "1.37" % "test",
+      "org.openjdk.jmh" % "jmh-generator-annprocess" % "1.37" % "test"
     ),
     // Shade jackson libraries so that connector developers don't have to worry
     // about jackson version conflicts.
@@ -664,6 +692,8 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
     javafmtCheckSettings,
     scalafmtCheckSettings,
     Test / javaOptions ++= Seq("-ea"),
+    // This allows generating tables with unsupported test table features in delta-spark
+    Test / envVars += ("DELTA_TESTING", "1"),
     libraryDependencies ++= Seq(
       "org.apache.hadoop" % "hadoop-client-runtime" % hadoopVersion,
       "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5",
@@ -690,6 +720,51 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
       // Unidoc settings
     unidocSourceFilePatterns += SourceFilePattern("io/delta/kernel/"),
   ).configureUnidoc(docTitle = "Delta Kernel Defaults")
+
+
+lazy val sparkKernelDsv2 = (project in file("spark-kernel-dsv2"))
+  .dependsOn(kernelApi)
+  .dependsOn(kernelDefaults)
+  .dependsOn(spark % "test->test")
+  .settings(
+    name := "delta-spark-dsv2",
+    commonSettings,
+    javafmtCheckSettings,
+    skipReleaseSettings,
+    Test / javaOptions ++= Seq("-ea"),
+    libraryDependencies ++= Seq(
+      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
+      "org.apache.spark" %% "spark-core" % sparkVersion.value % "provided",
+      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
+
+      "org.junit.jupiter" % "junit-jupiter-api" % "5.8.2" % "test",
+      "org.junit.jupiter" % "junit-jupiter-engine" % "5.8.2" % "test",
+      "org.junit.jupiter" % "junit-jupiter-params" % "5.8.2" % "test",
+      "net.aichler" % "jupiter-interface" % "0.11.1" % "test"
+    ),
+    Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")
+  )
+  // TODO to enable unit doc for sparkKernelDsv2.
+
+lazy val unity = (project in file("unity"))
+  .enablePlugins(ScalafmtPlugin)
+  .dependsOn(kernelApi % "compile->compile;test->test")
+  .dependsOn(kernelDefaults % "test->test")
+  .dependsOn(storage)
+  .settings (
+    name := "delta-unity",
+    commonSettings,
+    javaOnlyReleaseSettings,
+    javafmtCheckSettings,
+    javaCheckstyleSettings("dev/kernel-checkstyle.xml"),
+    scalaStyleSettings,
+    scalafmtCheckSettings,
+    libraryDependencies ++= Seq(
+      "org.apache.hadoop" % "hadoop-common" % hadoopVersion % "provided",
+      "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
+    ),
+    unidocSourceFilePatterns += SourceFilePattern("src/main/java/io/delta/unity/"),
+  ).configureUnidoc()
 
 // TODO javastyle tests
 // TODO unidoc
@@ -1163,7 +1238,7 @@ lazy val hive2Tez = (project in file("connectors/hive2-tez"))
  *
  * So, we create an impostor, cosmetic project used only for publishing.
  *
- * build/sbt standaloneCosmetic/package
+ * build/sbt standalone/package
  * - creates connectors/standalone/target/scala-2.12/delta-standalone-original-shaded_2.12-0.2.1-SNAPSHOT.jar
  *   (this is the shaded JAR we want)
  *
@@ -1580,7 +1655,7 @@ val createTargetClassesDir = taskKey[Unit]("create target classes dir")
 
 // Don't use these groups for any other projects
 lazy val sparkGroup = project
-  .aggregate(spark, contribs, storage, storageS3DynamoDB, sharing, hudi)
+  .aggregate(spark, sparkKernelDsv2, contribs, storage, storageS3DynamoDB, sharing, hudi)
   .settings(
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,

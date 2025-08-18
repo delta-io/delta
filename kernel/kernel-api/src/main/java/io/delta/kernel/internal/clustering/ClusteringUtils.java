@@ -17,10 +17,8 @@
 package io.delta.kernel.internal.clustering;
 
 import io.delta.kernel.expressions.Column;
-import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.DomainMetadata;
 import java.util.List;
-import java.util.Optional;
 
 public class ClusteringUtils {
 
@@ -36,14 +34,5 @@ public class ClusteringUtils {
     ClusteringMetadataDomain clusteringMetadataDomain =
         ClusteringMetadataDomain.fromClusteringColumns(clusteringColumns);
     return clusteringMetadataDomain.toDomainMetadata();
-  }
-
-  /**
-   * Extract ClusteringColumns from a given snapshot. Return None if the clustering domain metadata
-   * is missing.
-   */
-  public static Optional<List<Column>> getClusteringColumnsOptional(SnapshotImpl snapshot) {
-    return ClusteringMetadataDomain.fromSnapshot(snapshot)
-        .map(ClusteringMetadataDomain::getClusteringColumns);
   }
 }
