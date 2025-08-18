@@ -35,21 +35,6 @@ import org.scalatest.funsuite.AnyFunSuite
 
 class CatalogManagedEnablementSuite extends AnyFunSuite with TestUtils {
 
-  // TODO: Refactor the DefaultCommitter to not only be for filesystem-managed tables.
-  private val committer = new Committer {
-    override def commit(
-        engine: Engine,
-        finalizedActions: CloseableIterator[Row],
-        commitMetadata: CommitMetadata): CommitResponse = {
-      val filePath =
-        FileNames.deltaFile(commitMetadata.getDeltaLogDirPath, commitMetadata.getVersion)
-      engine
-        .getJsonHandler
-        .writeJsonFileAtomically(filePath, finalizedActions, false)
-      new CommitResponse(ParsedLogData.forFileStatus(FileStatus.of(filePath)))
-    }
-  }
-
   case class CatalogManagedEnablementTestCase(
       testName: String,
       operationType: String, // "CREATE" or "UPDATE"
@@ -133,7 +118,7 @@ class CatalogManagedEnablementSuite extends AnyFunSuite with TestUtils {
           TableManager
             .buildCreateTableTransaction(tablePath, schema, "engineInfo")
             .withTableProperties(testCase.initialTableProperties.asJava)
-            .withCommitter(committer)
+            .withCommitter(committerUsingPutIfAbsent)
             .build(defaultEngine)
             .commit(defaultEngine, emptyIterable[Row])
         }
@@ -148,12 +133,12 @@ class CatalogManagedEnablementSuite extends AnyFunSuite with TestUtils {
             TableManager
               .buildCreateTableTransaction(tablePath, schema, "engineInfo")
               .withTableProperties(testCase.transactionProperties.asJava)
-              .withCommitter(committer)
+              .withCommitter(committerUsingPutIfAbsent)
 
           case "UPDATE" =>
             TableManager
               .loadSnapshot(tablePath)
-              .withCommitter(committer)
+              .withCommitter(committerUsingPutIfAbsent)
               .build(defaultEngine)
               .buildUpdateTableTransaction("engineInfo", Operation.MANUAL_UPDATE)
               .withTablePropertiesAdded(testCase.transactionProperties.asJava)

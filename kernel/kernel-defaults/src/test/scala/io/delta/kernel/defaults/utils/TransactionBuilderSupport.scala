@@ -16,9 +16,9 @@
 package io.delta.kernel.defaults.utils
 
 import scala.collection.JavaConverters._
-import scala.collection.immutable.Seq
 
-import io.delta.kernel.{Operation, Table, TableManager, Transaction, TransactionBuilder}
+import io.delta.kernel.{Operation, Table, TableManager, Transaction}
+import io.delta.kernel.commit.Committer
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.expressions.Column
 import io.delta.kernel.internal.{SnapshotImpl, TableImpl}
