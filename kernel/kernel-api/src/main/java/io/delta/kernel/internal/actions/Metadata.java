@@ -293,7 +293,7 @@ public class Metadata {
     metadataMap.put(1, name.orElse(null));
     metadataMap.put(2, description.orElse(null));
     metadataMap.put(3, format.toRow());
-    metadataMap.put(4, schema.toJson());
+    metadataMap.put(4, DataTypeJsonSerDe.serializeDataType(schema));
     metadataMap.put(5, partitionColumns);
     metadataMap.put(6, createdTime.orElse(null));
     metadataMap.put(7, configurationMapValue);
