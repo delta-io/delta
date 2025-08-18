@@ -178,6 +178,19 @@ case class Protocol private (
     }
   }
 
+  /**
+   * Return a map that contains the protocol versions and supported features of this Protocol.
+   */
+  @JsonIgnore
+  private[delta] lazy val fieldsForLogging: Map[String, Any] = {
+    Map(
+      "minReaderVersion" -> minReaderVersion, // Number
+      "minWriterVersion" -> minWriterVersion, // Number
+      "supportedFeatures" ->
+        implicitlyAndExplicitlySupportedFeatures.map(_.name).toSeq.sorted // Array[String]
+    )
+  }
+
   override def toString: String = s"Protocol($simpleString)"
 
   override def getMinReaderVersion: Int = minReaderVersion
