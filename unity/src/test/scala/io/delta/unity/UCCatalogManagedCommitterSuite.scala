@@ -17,7 +17,7 @@
 package io.delta.unity
 
 import java.io.{File, IOException}
-import java.nio.file.Files
+import java.nio.file.{FileAlreadyExistsException, Files}
 import java.util.{Optional, UUID}
 
 import scala.collection.JavaConverters._
@@ -91,6 +91,19 @@ class UCCatalogManagedCommitterSuite
         protocolWithCatalogManagedSupport,
         basicPartitionedMetadata)))
 
+  private def getSingleElementRowIter(elem: String): CloseableIterator[Row] = {
+    import io.delta.kernel.defaults.integration.DataBuilderUtils
+    import io.delta.kernel.types.{StringType, StructField, StructType}
+
+    val schema = new StructType().add(new StructField("testColumn", StringType.STRING, true))
+    val simpleRow = DataBuilderUtils.row(schema, elem)
+    singletonCloseableIterator(simpleRow)
+  }
+
+  // ============================================================
+  // ===================== Misc. Unit Tests =====================
+  // ============================================================
+
   test("constructor throws on null inputs") {
     val ucClient = new InMemoryUCClient("ucMetastoreId")
 
@@ -157,11 +170,6 @@ class UCCatalogManagedCommitterSuite
       newMetadataOpt = Optional.of(basicPartitionedMetadata),
       expectedCommitType = CommitType.FILESYSTEM_CREATE),
     CommitTypeTestCase(
-      readPandMOpt = Optional.empty(),
-      newProtocolOpt = Optional.of(protocolWithCatalogManagedSupport),
-      newMetadataOpt = Optional.of(basicPartitionedMetadata),
-      expectedCommitType = CommitType.CATALOG_CREATE),
-    CommitTypeTestCase(
       readPandMOpt = Optional.of(new KernelTuple2(protocol12, basicPartitionedMetadata)),
       expectedCommitType = CommitType.FILESYSTEM_WRITE),
     CommitTypeTestCase(
@@ -201,7 +209,36 @@ class UCCatalogManagedCommitterSuite
 
   // ========== CommitType Tests END ==========
 
-  test("commit protocol change is currently not implemented") {
+  test("kernelFileStatusToHadoopFileStatus converts kernel FileStatus to Hadoop FileStatus") {
+    // ===== GIVEN =====
+    val kernelFileStatus = FileStatus.of("/path/to/file.json", 1024L, 1234567890L)
+
+    // ===== WHEN =====
+    val hadoopFileStatus =
+      UCCatalogManagedCommitter.kernelFileStatusToHadoopFileStatus(kernelFileStatus)
+
+    // ===== THEN =====
+    // These are the fields that we care about, taken from the Kernel FileStatus
+    assert(hadoopFileStatus.getPath.toString == "/path/to/file.json")
+    assert(hadoopFileStatus.getLen == 1024L)
+    assert(hadoopFileStatus.getModificationTime == 1234567890L)
+
+    // These are defaults that we set
+    assert(hadoopFileStatus.getAccessTime == 1234567890L) // same as modification time
+    assert(!hadoopFileStatus.isDirectory)
+    assert(hadoopFileStatus.getReplication == 1)
+    assert(hadoopFileStatus.getBlockSize == 128 * 1024 * 1024) // 128MB
+    assert(hadoopFileStatus.getOwner == "unknown")
+    assert(hadoopFileStatus.getGroup == "unknown")
+    assert(hadoopFileStatus.getPermission ==
+      org.apache.hadoop.fs.permission.FsPermission.getFileDefault)
+  }
+
+  // ===============================================================
+  // ===================== CATALOG_WRITE Tests =====================
+  // ===============================================================
+
+  test("CATALOG_WRITE: protocol change is currently not implemented") {
     val ucClient = new InMemoryUCClient("ucMetastoreId")
     val committer = new UCCatalogManagedCommitter(ucClient, "ucTableId", baseTestTablePath)
     val protocolUpgrade = protocolWithCatalogManagedSupport
@@ -220,7 +257,7 @@ class UCCatalogManagedCommitterSuite
     assert(exMsg.contains("Protocol change is not yet implemented"))
   }
 
-  test("commit metadata change is currently not implemented") {
+  test("CATALOG_WRITE: metadata change is currently not implemented") {
     val ucClient = new InMemoryUCClient("ucMetastoreId")
     val committer = new UCCatalogManagedCommitter(ucClient, "ucTableId", baseTestTablePath)
     val metadataUpgrade = basicPartitionedMetadata
@@ -239,7 +276,7 @@ class UCCatalogManagedCommitterSuite
     assert(exMsg.contains("Metadata change is not yet implemented"))
   }
 
-  test("commit writes staged commit file and invokes UC client commit API") {
+  test("CATALOG_WRITE: writes staged commit file and invokes UC client commit API") {
     withTempTableAndLogPathAndStagedCommitFolderCreated { case (tablePath, logPath) =>
       // ===== GIVEN =====
       // Setup UC client with initial table with maxRatifiedVersion = 0, numCommits = 1
@@ -286,43 +323,7 @@ class UCCatalogManagedCommitterSuite
     }
   }
 
-  private def getSingleElementRowIter(elem: String): CloseableIterator[Row] = {
-    import io.delta.kernel.defaults.integration.DataBuilderUtils
-    import io.delta.kernel.types.{StringType, StructField, StructType}
-
-    val schema = new StructType().add(new StructField("testColumn", StringType.STRING, true))
-    val simpleRow = DataBuilderUtils.row(schema, elem)
-    singletonCloseableIterator(simpleRow)
-  }
-
-  test("kernelFileStatusToHadoopFileStatus converts kernel FileStatus to Hadoop FileStatus") {
-    // ===== GIVEN =====
-    val kernelFileStatus = FileStatus.of("/path/to/file.json", 1024L, 1234567890L)
-
-    // ===== WHEN =====
-    val hadoopFileStatus =
-      UCCatalogManagedCommitter.kernelFileStatusToHadoopFileStatus(kernelFileStatus)
-
-    // ===== THEN =====
-    // These are the fields that we care about, taken from the Kernel FileStatus
-    assert(hadoopFileStatus.getPath.toString == "/path/to/file.json")
-    assert(hadoopFileStatus.getLen == 1024L)
-    assert(hadoopFileStatus.getModificationTime == 1234567890L)
-
-    // These are defaults that we set
-    assert(hadoopFileStatus.getAccessTime == 1234567890L) // same as modification time
-    assert(!hadoopFileStatus.isDirectory)
-    assert(hadoopFileStatus.getReplication == 1)
-    assert(hadoopFileStatus.getBlockSize == 128 * 1024 * 1024) // 128MB
-    assert(hadoopFileStatus.getOwner == "unknown")
-    assert(hadoopFileStatus.getGroup == "unknown")
-    assert(hadoopFileStatus.getPermission ==
-      org.apache.hadoop.fs.permission.FsPermission.getFileDefault)
-  }
-
-  // ========== Exception Handling Tests START ==========
-
-  test("IOException while writing staged commit => CFE(retryable=true, conflict=false)") {
+  test("CATALOG_WRITE: IOException writing commit file => CFE(retryable=true, conflict=false)") {
     withTempTableAndLogPathAndStagedCommitFolderCreated { case (tablePath, logPath) =>
       // ===== GIVEN =====
       val throwingEngine = mockEngine(jsonHandler = new BaseMockJsonHandler {
@@ -350,7 +351,7 @@ class UCCatalogManagedCommitterSuite
     }
   }
 
-  test("io.delta.storage.commit.CommitFailedException during UC commit => kernel CFE") {
+  test("CATALOG_WRITE: i.d.s.c.CommitFailedException during UC commit => kernel CFE") {
     withTempTableAndLogPathAndStagedCommitFolderCreated { case (tablePath, logPath) =>
       // ===== GIVEN =====
       val ucClient = new InMemoryUCClient("ucMetastoreId") {
@@ -376,7 +377,7 @@ class UCCatalogManagedCommitterSuite
     }
   }
 
-  test("IOException during UC commit => CFE(retryable=true, conflict=false)") {
+  test("CATALOG_WRITE: IOException during UC commit => CFE(retryable=true, conflict=false)") {
     withTempTableAndLogPathAndStagedCommitFolderCreated { case (tablePath, logPath) =>
       // ===== GIVEN =====
       val ucClient = new InMemoryUCClient("ucMetastoreId") {
@@ -398,7 +399,7 @@ class UCCatalogManagedCommitterSuite
     }
   }
 
-  test("UCCommitCoordinatorException during UC commit => CFE(retryable=false, conflict=false)") {
+  test("CATALOG_WRITE: UCCCE during UC commit => CFE(retryable=false, conflict=false)") {
     withTempTableAndLogPathAndStagedCommitFolderCreated { case (tablePath, logPath) =>
       // ===== GIVEN =====
       val ucClient = new InMemoryUCClient("ucMetastoreId") {
@@ -423,6 +424,96 @@ class UCCatalogManagedCommitterSuite
     }
   }
 
-  // ========== Exception Handling Tests END ==========
+  // ================================================================
+  // ===================== CATALOG_CREATE Tests =====================
+  // ================================================================
+
+  test("CATALOG_CREATE: writes published delta file for version 0") {
+    withTempTableAndLogPathAndStagedCommitFolderCreated { case (tablePath, logPath) =>
+      // ===== GIVEN =====
+      val ucClient = new InMemoryUCClient("ucMetastoreId")
+      val testValue = "CREATE_TABLE_DATA_12345"
+      val actionsIterator = getSingleElementRowIter(testValue)
+      val committer = new UCCatalogManagedCommitter(ucClient, "ucTableId", tablePath)
+
+      val commitMetadata = createCommitMetadata(
+        version = 0,
+        logPath = logPath,
+        newProtocolOpt = Optional.of(protocolWithCatalogManagedSupport),
+        newMetadataOpt = Optional.of(basicPartitionedMetadata))
+
+      // ===== WHEN =====
+      val response = committer.commit(defaultEngine, actionsIterator, commitMetadata)
+
+      // ===== THEN =====
+      val publishedDeltaFilePath = response.getCommitLogData.getFileStatus.getPath
+
+      // Verify the published delta file exists and is version 0
+      val expectedFilePath = s"$logPath/00000000000000000000.json"
+      assert(publishedDeltaFilePath == expectedFilePath)
+
+      val file = new java.io.File(publishedDeltaFilePath)
+      assert(file.exists())
+      assert(file.isFile())
+
+      // Read the file content and verify our test value was written
+      val fileContent = scala.io.Source.fromFile(file).getLines().mkString("\n")
+      assert(fileContent.contains(testValue))
+    }
+  }
+
+  case class CatalogCreateExceptionTestCase(
+      testName: String,
+      mockException: Exception,
+      expectedRetryable: Boolean,
+      expectedConflict: Boolean,
+      expectedMessageContains: String)
+
+  private val catalogCreateExceptionTestCases = Seq(
+    CatalogCreateExceptionTestCase(
+      testName = "file already exists",
+      mockException = new FileAlreadyExistsException("File already exists"),
+      expectedRetryable = false,
+      expectedConflict = true,
+      expectedMessageContains = "Failed to write published delta file due to: File already exists"),
+    CatalogCreateExceptionTestCase(
+      testName = "IOException during write",
+      mockException = new IOException("Network hiccup"),
+      expectedRetryable = true,
+      expectedConflict = false,
+      expectedMessageContains = "Failed to write published delta file due to: Network hiccup"))
+
+  catalogCreateExceptionTestCases.foreach { testCase =>
+    test(s"CATALOG_CREATE: throws exception when ${testCase.testName}") {
+      withTempTableAndLogPathAndStagedCommitFolderCreated { case (tablePath, logPath) =>
+        // ===== GIVEN =====
+        val ucClient = new InMemoryUCClient("ucMetastoreId")
+        val throwingEngine = mockEngine(jsonHandler = new BaseMockJsonHandler {
+          override def writeJsonFileAtomically(
+              path: String,
+              data: CloseableIterator[Row],
+              overwrite: Boolean): Unit =
+            throw testCase.mockException
+        })
+        val committer = new UCCatalogManagedCommitter(ucClient, "ucTableId", tablePath)
+
+        val commitMetadata = createCommitMetadata(
+          version = 0,
+          logPath = logPath,
+          newProtocolOpt = Optional.of(protocolWithCatalogManagedSupport),
+          newMetadataOpt = Optional.of(basicPartitionedMetadata))
+
+        // ===== WHEN =====
+        val ex = intercept[CommitFailedException] {
+          committer.commit(throwingEngine, emptyActionsIterator, commitMetadata)
+        }
+
+        // ===== THEN =====
+        assert(ex.isRetryable == testCase.expectedRetryable)
+        assert(ex.isConflict == testCase.expectedConflict)
+        assert(ex.getMessage.contains(testCase.expectedMessageContains))
+      }
+    }
+  }
 
 }
