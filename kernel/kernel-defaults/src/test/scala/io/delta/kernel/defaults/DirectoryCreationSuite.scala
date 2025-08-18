@@ -21,6 +21,7 @@ import java.util.Optional
 
 import scala.collection.JavaConverters._
 
+import io.delta.kernel.{Operation, TableManager}
 import io.delta.kernel.defaults.utils.WriteUtils
 import io.delta.kernel.internal.actions.Protocol
 import io.delta.kernel.internal.fs.Path
@@ -37,40 +38,53 @@ class DirectoryCreationSuite extends AnyFunSuite with WriteUtils with ActionUtil
   // E2E Tests //
   ///////////////
 
-  // TODO: test _staged_commits directory when catalogManaged writes are supported
-  test("create table with v2Checkpoints supported: _delta_log and _sidecars directories are" +
-    "created") {
+  test("create table with catalogManaged & v2Checkpoints supported: _delta_log, _staged_commits, " +
+    "_sidecars directories are created") {
     withTempDirAndEngine { (tablePath, engine) =>
-      val logPath = new File(tablePath, "_delta_log")
-      val sidecarDir = new File(logPath.toString, "_sidecars")
+      val logDir = new File(tablePath, "_delta_log")
+      val stagedCommitsDir = new File(logDir.toString, "_staged_commits")
+      val sidecarDir = new File(logDir.toString, "_sidecars")
 
-      getCreateTxn(
-        engine,
-        tablePath,
-        testSchema,
-        tableProperties = Map("delta.checkpointPolicy" -> "v2")).commit(engine, emptyIterable())
+      TableManager
+        .buildCreateTableTransaction(tablePath, testSchema, "engineInfo")
+        .withTableProperties(Map(
+          "delta.feature.catalogOwned-preview" -> "supported",
+          "delta.checkpointPolicy" -> "v2").asJava)
+        .withCommitter(committerUsingPutIfAbsent)
+        .build(engine)
+        .commit(engine, emptyIterable())
 
-      assert(logPath.exists() && logPath.isDirectory())
+      assert(logDir.exists() && logDir.isDirectory())
+      assert(stagedCommitsDir.exists() && stagedCommitsDir.isDirectory())
       assert(sidecarDir.exists() && sidecarDir.isDirectory())
     }
   }
 
-  // TODO: test _staged_commits directory when catalogManaged writes are supported
-  test("enable v2Checkpoints on existing table: _sidecars directory is created") {
+  test("enable catalogManaged & v2Checkpoints on existing table: _staged_commits and _sidecars " +
+    "directories are created") {
     withTempDirAndEngine { (tablePath, engine) =>
-      val logPath = new File(tablePath, "_delta_log")
-      val sidecarDir = new File(logPath.toString, "_sidecars")
+      val logDir = new File(tablePath, "_delta_log")
+      val stagedCommitsDir = new File(logDir.toString, "_staged_commits")
+      val sidecarDir = new File(logDir.toString, "_sidecars")
 
       getCreateTxn(engine, tablePath, testSchema).commit(engine, emptyIterable())
 
-      assert(logPath.exists() && logPath.isDirectory())
+      assert(logDir.exists() && logDir.isDirectory())
       assert(!sidecarDir.exists())
+      assert(!stagedCommitsDir.exists())
 
-      getUpdateTxn(
-        engine,
-        tablePath,
-        tableProperties = Map("delta.checkpointPolicy" -> "v2")).commit(engine, emptyIterable())
+      TableManager
+        .loadSnapshot(tablePath)
+        .withCommitter(committerUsingPutIfAbsent)
+        .build(engine)
+        .buildUpdateTableTransaction("engineInfo", Operation.MANUAL_UPDATE)
+        .withTablePropertiesAdded(Map(
+          "delta.feature.catalogOwned-preview" -> "supported",
+          "delta.checkpointPolicy" -> "v2").asJava)
+        .build(engine)
+        .commit(engine, emptyIterable())
 
+      assert(stagedCommitsDir.exists() && stagedCommitsDir.isDirectory())
       assert(sidecarDir.exists() && sidecarDir.isDirectory())
     }
   }
