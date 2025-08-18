@@ -23,7 +23,6 @@ import io.delta.kernel.annotation.Experimental;
 import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
-import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.Tuple2;
 import java.util.Optional;
@@ -140,7 +139,7 @@ public class CommitMetadata {
    * the protocol that was read at the beginning of the commit.
    */
   public Protocol getEffectiveProtocol() {
-    return newProtocolOpt.orElseGet(() -> readPandMOpt.get()._1);
+    return newProtocolOpt.orElseGet(() -> getReadProtocolOpt().get());
   }
 
   /**
@@ -149,7 +148,7 @@ public class CommitMetadata {
    * metadata that was read at the beginning of the commit.
    */
   public Metadata getEffectiveMetadata() {
-    return newMetadataOpt.orElseGet(() -> readPandMOpt.get()._2);
+    return newMetadataOpt.orElseGet(() -> getReadMetadataOpt().get());
   }
 
   /**
@@ -191,10 +190,5 @@ public class CommitMetadata {
           commitInfo.getInCommitTimestamp().isPresent(),
           "InCommitTimestamp must be present for commits to catalogManaged tables");
     }
-  }
-
-  @VisibleForTesting
-  public Optional<Tuple2<Protocol, Metadata>> getReadProtocolAndMetadata() {
-    return readPandMOpt;
   }
 }
