@@ -16,7 +16,7 @@
 
 package io.delta.unity
 
-import java.io.{File, IOException}
+import java.io.IOException
 import java.nio.file.Files
 import java.util.{Optional, UUID}
 
@@ -90,6 +90,19 @@ class UCCatalogManagedCommitterSuite
       new KernelTuple2[Protocol, Metadata](
         protocolWithCatalogManagedSupport,
         basicPartitionedMetadata)))
+
+  private def getSingleElementRowIter(elem: String): CloseableIterator[Row] = {
+    import io.delta.kernel.defaults.integration.DataBuilderUtils
+    import io.delta.kernel.types.{StringType, StructField, StructType}
+
+    val schema = new StructType().add(new StructField("testColumn", StringType.STRING, true))
+    val simpleRow = DataBuilderUtils.row(schema, elem)
+    singletonCloseableIterator(simpleRow)
+  }
+
+  // ============================================================
+  // ===================== Misc. Unit Tests =====================
+  // ============================================================
 
   test("constructor throws on null inputs") {
     val ucClient = new InMemoryUCClient("ucMetastoreId")
@@ -201,7 +214,36 @@ class UCCatalogManagedCommitterSuite
 
   // ========== CommitType Tests END ==========
 
-  test("commit protocol change is currently not implemented") {
+  test("kernelFileStatusToHadoopFileStatus converts kernel FileStatus to Hadoop FileStatus") {
+    // ===== GIVEN =====
+    val kernelFileStatus = FileStatus.of("/path/to/file.json", 1024L, 1234567890L)
+
+    // ===== WHEN =====
+    val hadoopFileStatus =
+      UCCatalogManagedCommitter.kernelFileStatusToHadoopFileStatus(kernelFileStatus)
+
+    // ===== THEN =====
+    // These are the fields that we care about, taken from the Kernel FileStatus
+    assert(hadoopFileStatus.getPath.toString == "/path/to/file.json")
+    assert(hadoopFileStatus.getLen == 1024L)
+    assert(hadoopFileStatus.getModificationTime == 1234567890L)
+
+    // These are defaults that we set
+    assert(hadoopFileStatus.getAccessTime == 1234567890L) // same as modification time
+    assert(!hadoopFileStatus.isDirectory)
+    assert(hadoopFileStatus.getReplication == 1)
+    assert(hadoopFileStatus.getBlockSize == 128 * 1024 * 1024) // 128MB
+    assert(hadoopFileStatus.getOwner == "unknown")
+    assert(hadoopFileStatus.getGroup == "unknown")
+    assert(hadoopFileStatus.getPermission ==
+      org.apache.hadoop.fs.permission.FsPermission.getFileDefault)
+  }
+
+  // ===============================================================
+  // ===================== CATALOG_WRITE Tests =====================
+  // ===============================================================
+
+  test("CATALOG_WRITE: protocol change is currently not implemented") {
     val ucClient = new InMemoryUCClient("ucMetastoreId")
     val committer = new UCCatalogManagedCommitter(ucClient, "ucTableId", baseTestTablePath)
     val protocolUpgrade = protocolWithCatalogManagedSupport
@@ -220,7 +262,7 @@ class UCCatalogManagedCommitterSuite
     assert(exMsg.contains("Protocol change is not yet implemented"))
   }
 
-  test("commit metadata change is currently not implemented") {
+  test("CATALOG_WRITE: metadata change is currently not implemented") {
     val ucClient = new InMemoryUCClient("ucMetastoreId")
     val committer = new UCCatalogManagedCommitter(ucClient, "ucTableId", baseTestTablePath)
     val metadataUpgrade = basicPartitionedMetadata
@@ -239,7 +281,7 @@ class UCCatalogManagedCommitterSuite
     assert(exMsg.contains("Metadata change is not yet implemented"))
   }
 
-  test("commit writes staged commit file and invokes UC client commit API") {
+  test("CATALOG_WRITE: writes staged commit file and invokes UC client commit API") {
     withTempTableAndLogPathAndStagedCommitFolderCreated { case (tablePath, logPath) =>
       // ===== GIVEN =====
       // Setup UC client with initial table with maxRatifiedVersion = 0, numCommits = 1
@@ -286,43 +328,7 @@ class UCCatalogManagedCommitterSuite
     }
   }
 
-  private def getSingleElementRowIter(elem: String): CloseableIterator[Row] = {
-    import io.delta.kernel.defaults.integration.DataBuilderUtils
-    import io.delta.kernel.types.{StringType, StructField, StructType}
-
-    val schema = new StructType().add(new StructField("testColumn", StringType.STRING, true))
-    val simpleRow = DataBuilderUtils.row(schema, elem)
-    singletonCloseableIterator(simpleRow)
-  }
-
-  test("kernelFileStatusToHadoopFileStatus converts kernel FileStatus to Hadoop FileStatus") {
-    // ===== GIVEN =====
-    val kernelFileStatus = FileStatus.of("/path/to/file.json", 1024L, 1234567890L)
-
-    // ===== WHEN =====
-    val hadoopFileStatus =
-      UCCatalogManagedCommitter.kernelFileStatusToHadoopFileStatus(kernelFileStatus)
-
-    // ===== THEN =====
-    // These are the fields that we care about, taken from the Kernel FileStatus
-    assert(hadoopFileStatus.getPath.toString == "/path/to/file.json")
-    assert(hadoopFileStatus.getLen == 1024L)
-    assert(hadoopFileStatus.getModificationTime == 1234567890L)
-
-    // These are defaults that we set
-    assert(hadoopFileStatus.getAccessTime == 1234567890L) // same as modification time
-    assert(!hadoopFileStatus.isDirectory)
-    assert(hadoopFileStatus.getReplication == 1)
-    assert(hadoopFileStatus.getBlockSize == 128 * 1024 * 1024) // 128MB
-    assert(hadoopFileStatus.getOwner == "unknown")
-    assert(hadoopFileStatus.getGroup == "unknown")
-    assert(hadoopFileStatus.getPermission ==
-      org.apache.hadoop.fs.permission.FsPermission.getFileDefault)
-  }
-
-  // ========== Exception Handling Tests START ==========
-
-  test("IOException while writing staged commit => CFE(retryable=true, conflict=false)") {
+  test("CATALOG_WRITE: IOException writing staged commit => CFE(retryable=true, conflict=false)") {
     withTempTableAndLogPathAndStagedCommitFolderCreated { case (tablePath, logPath) =>
       // ===== GIVEN =====
       val throwingEngine = mockEngine(jsonHandler = new BaseMockJsonHandler {
@@ -350,7 +356,7 @@ class UCCatalogManagedCommitterSuite
     }
   }
 
-  test("io.delta.storage.commit.CommitFailedException during UC commit => kernel CFE") {
+  test("CATALOG_WRITE: i.d.s.c.CommitFailedException during UC commit => kernel CFE") {
     withTempTableAndLogPathAndStagedCommitFolderCreated { case (tablePath, logPath) =>
       // ===== GIVEN =====
       val ucClient = new InMemoryUCClient("ucMetastoreId") {
@@ -376,7 +382,7 @@ class UCCatalogManagedCommitterSuite
     }
   }
 
-  test("IOException during UC commit => CFE(retryable=true, conflict=false)") {
+  test("CATALOG_WRITE: IOException during UC commit => CFE(retryable=true, conflict=false)") {
     withTempTableAndLogPathAndStagedCommitFolderCreated { case (tablePath, logPath) =>
       // ===== GIVEN =====
       val ucClient = new InMemoryUCClient("ucMetastoreId") {
@@ -398,11 +404,12 @@ class UCCatalogManagedCommitterSuite
     }
   }
 
-  test("UCCommitCoordinatorException during UC commit => CFE(retryable=false, conflict=false)") {
+  test("CATALOG_WRITE: i.d.s.c.u.UCCCE during UC commit => CFE(retryable=false, conflict=false)") {
     withTempTableAndLogPathAndStagedCommitFolderCreated { case (tablePath, logPath) =>
       // ===== GIVEN =====
       val ucClient = new InMemoryUCClient("ucMetastoreId") {
         override def forceThrowInCommitMethod(): Unit = {
+          // A child type of UCCommitCoordinatorException
           throw new InvalidTargetTableException("Target table does not exist")
         }
       }
