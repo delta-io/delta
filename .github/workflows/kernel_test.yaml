@@ -5,14 +5,14 @@ jobs:
     name: "DK: Shard ${{ matrix.shard }}"
     runs-on: ubuntu-24.04
     strategy:
+      fail-fast: false # Allow all shards to run even if one fails
       matrix:
         shard: [0, 1, 2, 3]
     env:
       SCALA_VERSION: 2.12.18
       NUM_SHARDS: 4
       SHARD_ID: ${{ matrix.shard }}
-      # Set this to > 1 once we fix test isolation (e.g. withTempTable usages are breaking)
-      TEST_PARALLELISM_COUNT: 1
+      TEST_PARALLELISM_COUNT: 4
     steps:
       - uses: actions/checkout@v3
       - name: install java

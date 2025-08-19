@@ -543,14 +543,14 @@ trait AbstractTestUtils extends Assertions with SQLHelper {
   }
 
   /**
-   * Drops table `tableName` after calling `f`.
+   * Create a unique table name and drops it after completing `f`
    */
-  protected def withTable(tableNames: String*)(f: => Unit): Unit = {
-    try f
-    finally {
-      tableNames.foreach { name =>
-        spark.sql(s"DROP TABLE IF EXISTS $name")
-      }
+  protected def withTempTable[T](f: String => T): T = {
+    val tableName = s"temp_table_${UUID.randomUUID().toString.replace("-", "_")}"
+    try {
+      f(tableName)
+    } finally {
+      spark.sql(s"DROP TABLE IF EXISTS $tableName")
     }
   }
 

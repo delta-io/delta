@@ -112,8 +112,7 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils with ExpressionTe
   test("v2 checkpoint support") {
     supportedFileFormats.foreach { format =>
       withTempDir { path =>
-        val tbl = "tbl"
-        withTable(tbl) {
+        withTempTable { tbl =>
           // Create table.
           withSQLConf(
             DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> format,
@@ -151,8 +150,7 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils with ExpressionTe
   test("v2 checkpoint support with multiple sidecars") {
     supportedFileFormats.foreach { format =>
       withTempDir { path =>
-        val tbl = "tbl"
-        withTable(tbl) {
+        withTempTable { tbl =>
           // Create table.
           withSQLConf(
             DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> format,
@@ -222,8 +220,7 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils with ExpressionTe
 
   test("compatibility checkpoint with sidecar files") {
     withTempDir { path =>
-      val tbl = "tbl"
-      withTable(tbl) {
+      withTempTable { tbl =>
         // Create checkpoint with sidecars.
         withSQLConf(
           DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key -> "parquet",
@@ -254,8 +251,7 @@ class CheckpointV2ReadSuite extends AnyFunSuite with TestUtils with ExpressionTe
 
   test("read from table with partition predicates") {
     withTempDir { path =>
-      val tbl = "tbl"
-      withTable(tbl) {
+      withTempTable { tbl =>
         // Create source table with schema (a INT, b STRING) partitioned by a.
         createSourceTable(tbl, path.toString, "PARTITIONED")
 
