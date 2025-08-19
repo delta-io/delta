@@ -22,10 +22,12 @@ import scala.util.{Failure, Success, Try}
 
 // scalastyle:off import.ordering.noEmptyLine
 import com.databricks.spark.util.DatabricksLogging
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.PartitionUtils
 import org.apache.hadoop.fs.Path
@@ -148,9 +150,17 @@ class DeltaDataSource
         // Pass in the metadata path opt so we can use it for validation
         sourceMetadataPathOpt = Some(metadataPath))
 
-    val readSchema = schemaTrackingLogOpt
-      .flatMap(_.getCurrentTrackedMetadata.map(_.dataSchema))
-      .getOrElse(snapshot.schema)
+    val readSchema = schemaTrackingLogOpt.flatMap(_.getCurrentTrackedMetadata).map { metadata =>
+      logInfo(log"Delta source schema fetched from tracking log version " +
+        log"${MDC(DeltaLogKeys.VERSION2, schemaTrackingLogOpt.get.getCurrentTrackedSeqNum)}" +
+        log" with Delta commit version " +
+        log"${MDC(DeltaLogKeys.VERSION2, metadata.deltaCommitVersion)}")
+      metadata.dataSchema
+    }.getOrElse {
+      logInfo(log"Delta source schema fetched from Delta snapshot version " +
+        log"${MDC(DeltaLogKeys.VERSION2, snapshot.version)}")
+      snapshot.schema
+    }
 
     if (readSchema.isEmpty) {
       throw DeltaErrors.schemaNotSetException

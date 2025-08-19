@@ -69,7 +69,7 @@ trait TestUtilsWithTableManagerAPIs extends AbstractTestUtils {
   override def getTableManagerAdapter: AbstractTableManagerAdapter = new TableManagerAdapter()
 }
 
-trait AbstractTestUtils extends Assertions with SQLHelper {
+trait AbstractTestUtils extends Assertions with SQLHelper with TestCommitterUtils {
 
   def getTableManagerAdapter: AbstractTableManagerAdapter
 
