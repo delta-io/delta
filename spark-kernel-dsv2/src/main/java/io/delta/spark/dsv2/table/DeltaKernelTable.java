@@ -30,10 +30,7 @@ import org.apache.spark.sql.connector.read.ScanBuilder;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 
-/**
- * DataSource V2 Table implementation for Delta Lake tables using the Delta Kernel API. Provides
- * Hadoop configuration externalization for improved testability and dependency management.
- */
+/** A DataSource V2 Table implementation for Delta Lake tables using the Delta Kernel API. */
 public class DeltaKernelTable implements Table, SupportsRead {
 
   private static final Set<TableCapability> CAPABILITIES =
