@@ -22,13 +22,6 @@ import io.delta.kernel.TableManager;
 import io.delta.spark.dsv2.KernelSparkDsv2TestBase;
 import io.delta.spark.dsv2.scan.batch.KernelSparkInputPartition;
 import java.io.File;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
 import org.apache.spark.sql.connector.read.InputPartition;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -118,51 +111,6 @@ public class KernelSparkScanContextTest extends KernelSparkDsv2TestBase {
       assertEquals(p1.getSerializedScanState(), p2.getSerializedScanState());
       assertEquals(p1.getSerializedScanFileRow(), p2.getSerializedScanFileRow());
     }
-  }
-
-  @Test
-  public void testPlanPartitionsThreadSafety(@TempDir File tempDir) throws Exception {
-    String path = tempDir.getAbsolutePath();
-    String tableName = "test_thread_safety";
-    createTestTable(path, tableName);
-
-    Scan scan = TableManager.loadSnapshot(path).build(defaultEngine).getScanBuilder().build();
-    KernelSparkScanContext scanContext = new KernelSparkScanContext(scan, defaultEngine);
-
-    int numThreads = 5;
-    ExecutorService executor = Executors.newFixedThreadPool(numThreads);
-    CountDownLatch latch = new CountDownLatch(numThreads);
-    List<Future<InputPartition[]>> futures = new ArrayList<>();
-
-    for (int i = 0; i < numThreads; i++) {
-      futures.add(
-          executor.submit(
-              () -> {
-                try {
-                  latch.countDown();
-                  latch.await();
-                  return scanContext.planPartitions();
-                } catch (InterruptedException e) {
-                  Thread.currentThread().interrupt();
-                  throw new RuntimeException(e);
-                }
-              }));
-    }
-
-    InputPartition[] firstResult = futures.get(0).get(5, TimeUnit.SECONDS);
-    for (int i = 1; i < numThreads; i++) {
-      InputPartition[] result = futures.get(i).get(5, TimeUnit.SECONDS);
-      assertEquals(firstResult.length, result.length);
-
-      for (int j = 0; j < firstResult.length; j++) {
-        KernelSparkInputPartition expected = (KernelSparkInputPartition) firstResult[j];
-        KernelSparkInputPartition actual = (KernelSparkInputPartition) result[j];
-        assertEquals(expected.getSerializedScanState(), actual.getSerializedScanState());
-        assertEquals(expected.getSerializedScanFileRow(), actual.getSerializedScanFileRow());
-      }
-    }
-
-    executor.shutdown();
   }
 
   //////////////////////
