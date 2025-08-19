@@ -13,13 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.spark.dsv2.scan.batch;
+package io.delta.spark.dsv2.scan;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 import io.delta.kernel.Scan;
 import io.delta.kernel.TableManager;
 import io.delta.spark.dsv2.KernelSparkDsv2TestBase;
+import io.delta.spark.dsv2.scan.batch.KernelSparkInputPartition;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
@@ -139,7 +140,7 @@ public class KernelSparkScanContextTest extends KernelSparkDsv2TestBase {
               () -> {
                 try {
                   latch.countDown();
-                  latch.await(); // Wait for all threads to start together
+                  latch.await();
                   return scanContext.planPartitions();
                 } catch (InterruptedException e) {
                   Thread.currentThread().interrupt();

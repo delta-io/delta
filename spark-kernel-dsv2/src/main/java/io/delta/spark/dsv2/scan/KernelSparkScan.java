@@ -20,7 +20,6 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.Scan;
 import io.delta.kernel.engine.Engine;
 import io.delta.spark.dsv2.scan.batch.KernelSparkBatchScan;
-import io.delta.spark.dsv2.scan.batch.KernelSparkScanContext;
 import org.apache.spark.sql.connector.read.Batch;
 import org.apache.spark.sql.types.StructType;
 

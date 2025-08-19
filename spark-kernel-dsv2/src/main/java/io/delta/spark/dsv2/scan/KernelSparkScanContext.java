@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.spark.dsv2.scan.batch;
+package io.delta.spark.dsv2.scan;
 
 import static java.util.Objects.requireNonNull;
 
@@ -23,6 +23,7 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.internal.json.JsonUtils;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.utils.CloseableIterator;
+import io.delta.spark.dsv2.scan.batch.KernelSparkInputPartition;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.ArrayList;

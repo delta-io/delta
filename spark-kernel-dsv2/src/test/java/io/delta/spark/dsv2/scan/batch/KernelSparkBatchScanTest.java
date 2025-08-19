@@ -20,6 +20,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import io.delta.kernel.Scan;
 import io.delta.kernel.TableManager;
 import io.delta.spark.dsv2.KernelSparkDsv2TestBase;
+import io.delta.spark.dsv2.scan.KernelSparkScanContext;
 import java.io.File;
 import org.apache.spark.sql.connector.read.InputPartition;
 import org.junit.jupiter.api.Test;
