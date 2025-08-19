@@ -19,6 +19,7 @@ import io.delta.kernel.Operation;
 import io.delta.kernel.TableManager;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.utils.CloseableIterable;
 import io.delta.spark.dsv2.table.DeltaKernelTable;
@@ -68,8 +69,15 @@ public class TestCatalog implements TableCatalog {
 
   @Override
   public Table loadTable(Identifier ident) throws NoSuchTableException {
-    String tableKey = getTableKey(ident);
-    String tablePath = tablePaths.get(tableKey);
+    // Check if this is a path-based table identifier
+    String tablePath;
+    if (isPathIdentifier(ident)) {
+      tablePath = ident.name();
+    } else {
+      // Handle catalog-managed tables
+      String tableKey = getTableKey(ident);
+      tablePath = tablePaths.get(tableKey);
+    }
     if (tablePath == null) {
       throw new NoSuchTableException(ident);
     }
@@ -77,8 +85,10 @@ public class TestCatalog implements TableCatalog {
       // Use TableManager.loadTable to load the table
       SnapshotImpl snapshot = (SnapshotImpl) TableManager.loadSnapshot(tablePath).build(engine);
       return new DeltaKernelTable(ident, snapshot);
+    } catch (TableNotFoundException kernelException) {
+      throw new NoSuchTableException(ident);
     } catch (Exception e) {
-      throw new RuntimeException("Failed to load table: " + ident, e);
+      throw new RuntimeException("Failed to load catalog table: " + ident, e);
     }
   }
 
@@ -145,6 +155,32 @@ public class TestCatalog implements TableCatalog {
   @Override
   public String name() {
     return catalogName;
+  }
+
+  /**
+   * Check if the given identifier represents a path-based table. Path-based tables are identified
+   * by having a delta namespace (delta/tahoe) and an absolute path. This follows the same logic as
+   * DeltaCatalog's SupportsPathIdentifier.
+   *
+   * @param ident the table identifier to check
+   * @return true if this is a path-based table identifier, false otherwise
+   */
+  private boolean isPathIdentifier(Identifier ident) {
+    try {
+      // Check if it has a delta namespace (should be length 1 and named "delta")
+      boolean hasDeltaNamespace =
+          ident.namespace().length == 1 && ident.namespace()[0].toLowerCase().equals("delta");
+
+      if (!hasDeltaNamespace) {
+        return false;
+      }
+
+      // Use Hadoop Path to properly check if it's an absolute path
+      return new org.apache.hadoop.fs.Path(ident.name()).isAbsolute();
+    } catch (IllegalArgumentException e) {
+      // Handle malformed path strings gracefully
+      return false;
+    }
   }
 
   /** Helper method to get the table key from identifier. */
