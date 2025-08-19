@@ -22,11 +22,15 @@ import io.delta.kernel.TableManager;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.internal.json.JsonUtils;
 import io.delta.kernel.internal.InternalScanFileUtils;
+import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.internal.data.GenericRow;
+import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.types.StructType;
 import io.delta.spark.dsv2.KernelSparkDsv2TestBase;
 import java.io.File;
 import java.io.IOException;
-import org.apache.spark.sql.connector.read.InputPartition;
+import java.util.HashMap;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -40,32 +44,50 @@ public class KernelSparkInputPartitionTest extends KernelSparkDsv2TestBase {
 
     Scan scan = TableManager.loadSnapshot(path).build(defaultEngine).getScanBuilder().build();
 
-    // Get original scan state before creating scan context
+    // Get original scan state
     Row originalScanState = scan.getScanState(defaultEngine);
     StructType scanStateSchema = originalScanState.getSchema();
+    String serializedScanState = JsonUtils.rowToJson(originalScanState);
 
-    // Create scan context which will consume the scan files
-    KernelSparkScanContext scanContext = new KernelSparkScanContext(scan, defaultEngine);
-    InputPartition[] partitions = scanContext.planPartitions();
-    assertTrue(partitions.length > 0, "Should have at least one partition");
+    // Create a test file row using GenericRow
+    StructType addFileSchema = AddFile.SCHEMA_WITHOUT_STATS;
+    Map<Integer, Object> addFileData = new HashMap<>();
+    addFileData.put(0, "file://test/path/data.parquet"); // path
+    addFileData.put(
+        1, VectorUtils.stringStringMapValue(new HashMap<>())); // partitionValues (empty MapValue)
+    addFileData.put(2, 1024L); // size
+    addFileData.put(3, 1234567890L); // modificationTime
+    addFileData.put(4, true); // dataChange
+    addFileData.put(5, null); // deletionVector
+    Row addFileRow = new GenericRow(addFileSchema, addFileData);
+    StructType scanFileSchema = InternalScanFileUtils.SCAN_FILE_SCHEMA;
+    Map<Integer, Object> scanFileData = new HashMap<>();
+    scanFileData.put(0, addFileRow); // add
+    scanFileData.put(1, "/"); // tableRoot
+    Row testFileRow = new GenericRow(scanFileSchema, scanFileData);
 
-    KernelSparkInputPartition partition = (KernelSparkInputPartition) partitions[0];
+    String serializedFileRow = JsonUtils.rowToJson(testFileRow);
+
+    // Create partition with the serialized data
+    KernelSparkInputPartition partition =
+        new KernelSparkInputPartition(serializedScanState, serializedFileRow);
 
     // Test scan state round trip
-    String serializedScanState = partition.getSerializedScanState();
-    assertNotNull(serializedScanState);
-    Row deserializedScanState = JsonUtils.rowFromJson(serializedScanState, scanStateSchema);
+    String retrievedScanState = partition.getSerializedScanState();
+    assertEquals(serializedScanState, retrievedScanState);
+    Row deserializedScanState = JsonUtils.rowFromJson(retrievedScanState, scanStateSchema);
     assertNotNull(deserializedScanState);
     assertEquals(originalScanState.getSchema(), deserializedScanState.getSchema());
 
-    // Test file row round trip - use the predefined scan file schema
-    StructType fileRowSchema = InternalScanFileUtils.SCAN_FILE_SCHEMA;
-    String serializedFileRow = partition.getSerializedScanFileRow();
-    assertNotNull(serializedFileRow);
-    assertFalse(serializedFileRow.isEmpty());
-    Row deserializedFileRow = JsonUtils.rowFromJson(serializedFileRow, fileRowSchema);
+    // Test file row round trip
+    String retrievedFileRow = partition.getSerializedScanFileRow();
+    assertEquals(serializedFileRow, retrievedFileRow);
+    // Test that we can deserialize it back using Kernel schema
+    Row deserializedFileRow = JsonUtils.rowFromJson(retrievedFileRow, scanFileSchema);
     assertNotNull(deserializedFileRow);
-    assertEquals(fileRowSchema, deserializedFileRow.getSchema());
+    assertEquals(scanFileSchema, deserializedFileRow.getSchema());
+    // Verify the structure matches our original testFileRow
+    assertEquals(testFileRow.getSchema(), deserializedFileRow.getSchema());
   }
 
   @Test
@@ -104,7 +126,6 @@ public class KernelSparkInputPartitionTest extends KernelSparkDsv2TestBase {
         String.format(
             "CREATE TABLE %s (id INT, name STRING, value DOUBLE) USING delta LOCATION '%s'",
             tableName, path));
-    // Insert some test data
     spark.sql(
         String.format("INSERT INTO %s VALUES (1, 'Alice', 10.5), (2, 'Bob', 20.5)", tableName));
   }

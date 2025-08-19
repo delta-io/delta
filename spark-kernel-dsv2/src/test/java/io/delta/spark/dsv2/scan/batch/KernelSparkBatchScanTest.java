@@ -52,7 +52,6 @@ public class KernelSparkBatchScanTest extends KernelSparkDsv2TestBase {
 
     assertNotNull(partitions);
     assertTrue(partitions.length > 0, "Should have at least one partition");
-    // All partitions should be KernelSparkInputPartition
     for (InputPartition partition : partitions) {
       assertTrue(partition instanceof KernelSparkInputPartition);
     }

@@ -36,7 +36,6 @@ public class KernelSparkScanContextTest extends KernelSparkDsv2TestBase {
 
   @Test
   public void testConstructorWithNullScan() {
-    // Test construction with null scan should throw NullPointerException
     assertThrows(
         NullPointerException.class,
         () -> {
@@ -52,7 +51,6 @@ public class KernelSparkScanContextTest extends KernelSparkDsv2TestBase {
 
     Scan scan = TableManager.loadSnapshot(path).build(defaultEngine).getScanBuilder().build();
 
-    // Test construction with null engine
     assertThrows(
         NullPointerException.class,
         () -> {
@@ -69,14 +67,11 @@ public class KernelSparkScanContextTest extends KernelSparkDsv2TestBase {
     Scan scan = TableManager.loadSnapshot(path).build(defaultEngine).getScanBuilder().build();
     KernelSparkScanContext scanContext = new KernelSparkScanContext(scan, defaultEngine);
 
-    // Execute
     InputPartition[] partitions = scanContext.planPartitions();
 
-    // Verify
     assertNotNull(partitions);
     assertTrue(partitions.length > 0, "Should have at least one partition");
 
-    // All partitions should be KernelSparkInputPartition
     for (InputPartition partition : partitions) {
       assertTrue(partition instanceof KernelSparkInputPartition);
       KernelSparkInputPartition kernelPartition = (KernelSparkInputPartition) partition;
@@ -94,7 +89,6 @@ public class KernelSparkScanContextTest extends KernelSparkDsv2TestBase {
     Scan scan = TableManager.loadSnapshot(path).build(defaultEngine).getScanBuilder().build();
     KernelSparkScanContext scanContext = new KernelSparkScanContext(scan, defaultEngine);
 
-    // Execute
     InputPartition[] partitions = scanContext.planPartitions();
 
     assertNotNull(partitions);
@@ -110,16 +104,13 @@ public class KernelSparkScanContextTest extends KernelSparkDsv2TestBase {
     Scan scan = TableManager.loadSnapshot(path).build(defaultEngine).getScanBuilder().build();
     KernelSparkScanContext scanContext = new KernelSparkScanContext(scan, defaultEngine);
 
-    // Execute twice
     InputPartition[] partitions1 = scanContext.planPartitions();
     InputPartition[] partitions2 = scanContext.planPartitions();
 
-    // Verify
     assertNotNull(partitions1);
     assertNotNull(partitions2);
     assertEquals(partitions1.length, partitions2.length);
 
-    // Verify that the results are the same (caching works)
     for (int i = 0; i < partitions1.length; i++) {
       KernelSparkInputPartition p1 = (KernelSparkInputPartition) partitions1[i];
       KernelSparkInputPartition p2 = (KernelSparkInputPartition) partitions2[i];
@@ -137,7 +128,6 @@ public class KernelSparkScanContextTest extends KernelSparkDsv2TestBase {
     Scan scan = TableManager.loadSnapshot(path).build(defaultEngine).getScanBuilder().build();
     KernelSparkScanContext scanContext = new KernelSparkScanContext(scan, defaultEngine);
 
-    // Execute multiple threads concurrently
     int numThreads = 5;
     ExecutorService executor = Executors.newFixedThreadPool(numThreads);
     CountDownLatch latch = new CountDownLatch(numThreads);
@@ -158,13 +148,11 @@ public class KernelSparkScanContextTest extends KernelSparkDsv2TestBase {
               }));
     }
 
-    // Verify all threads get the same result
     InputPartition[] firstResult = futures.get(0).get(5, TimeUnit.SECONDS);
     for (int i = 1; i < numThreads; i++) {
       InputPartition[] result = futures.get(i).get(5, TimeUnit.SECONDS);
       assertEquals(firstResult.length, result.length);
 
-      // Verify content is the same
       for (int j = 0; j < firstResult.length; j++) {
         KernelSparkInputPartition expected = (KernelSparkInputPartition) firstResult[j];
         KernelSparkInputPartition actual = (KernelSparkInputPartition) result[j];
@@ -184,7 +172,6 @@ public class KernelSparkScanContextTest extends KernelSparkDsv2TestBase {
         String.format(
             "CREATE TABLE %s (id INT, name STRING, value DOUBLE) USING delta LOCATION '%s'",
             tableName, path));
-    // Insert some test data
     spark.sql(
         String.format(
             "INSERT INTO %s VALUES (1, 'Alice', 10.5), (2, 'Bob', 20.5), (3, 'Charlie', 30.5)",
