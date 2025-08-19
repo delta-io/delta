@@ -28,6 +28,7 @@ import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 import org.apache.spark.sql.connector.read.InputPartition;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -43,33 +44,42 @@ public class KernelSparkScanContext {
   private final Scan kernelScan;
   private final Engine engine;
   private final String serializedScanState;
-  private Optional<List<FilteredColumnarBatch>> cachedBatches;
+  private final AtomicReference<Optional<List<FilteredColumnarBatch>>> cachedBatches;
 
   public KernelSparkScanContext(Scan kernelScan, Engine engine) {
     this.kernelScan = requireNonNull(kernelScan, "kernelScan is null");
     this.engine = requireNonNull(engine, "engine is null");
     this.serializedScanState = JsonUtils.rowToJson(kernelScan.getScanState(engine));
-    this.cachedBatches = Optional.empty();
+    this.cachedBatches = new AtomicReference<>(Optional.empty());
   }
 
-  public synchronized InputPartition[] planPartitions() {
-    if (!cachedBatches.isPresent()) {
-      List<FilteredColumnarBatch> batches = new ArrayList<>();
-      try (CloseableIterator<FilteredColumnarBatch> scanFiles = kernelScan.getScanFiles(engine)) {
-        while (scanFiles.hasNext()) {
-          FilteredColumnarBatch batch = scanFiles.next();
-          batches.add(batch);
+  public InputPartition[] planPartitions() {
+    // Double-checked locking for better performance
+    Optional<List<FilteredColumnarBatch>> batches = cachedBatches.get();
+    if (!batches.isPresent()) {
+      synchronized (this) {
+        batches = cachedBatches.get();
+        if (!batches.isPresent()) {
+          List<FilteredColumnarBatch> batchList = new ArrayList<>();
+          try (CloseableIterator<FilteredColumnarBatch> scanFiles =
+              kernelScan.getScanFiles(engine)) {
+            while (scanFiles.hasNext()) {
+              FilteredColumnarBatch batch = scanFiles.next();
+              batchList.add(batch);
+            }
+          } catch (IOException e) {
+            LOG.warn("Failed to read from kernel scan", e);
+            throw new UncheckedIOException("Failed to read added files from kernel scan", e);
+          }
+          batches = Optional.of(batchList);
+          cachedBatches.set(batches);
         }
-      } catch (IOException e) {
-        LOG.warn("Failed to read from kernel scan", e);
-        throw new UncheckedIOException("Failed to read added files from kernel scan", e);
       }
-      cachedBatches = Optional.of(batches);
     }
 
     // Create InputPartitions from cached batches
     List<InputPartition> partitions = new ArrayList<>();
-    for (FilteredColumnarBatch batch : cachedBatches.get()) {
+    for (FilteredColumnarBatch batch : batches.get()) {
       try (CloseableIterator<Row> rows = batch.getRows()) {
         while (rows.hasNext()) {
           Row row = rows.next();
