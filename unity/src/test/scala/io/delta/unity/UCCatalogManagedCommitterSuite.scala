@@ -430,6 +430,4 @@ class UCCatalogManagedCommitterSuite
     }
   }
 
-  // ========== Exception Handling Tests END ==========
-
 }
