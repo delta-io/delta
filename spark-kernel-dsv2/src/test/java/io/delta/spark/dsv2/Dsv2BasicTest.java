@@ -122,7 +122,7 @@ public class Dsv2BasicTest {
 
     testData.write().format("delta").save(tablePath);
 
-    // Test path-based table using DESCRIBE TABLE
+    // TODO: [delta-io/delta#5001] change to select query after batch read is supported for dsv2 path.
     Dataset<Row> actual = spark.sql(String.format("DESCRIBE TABLE dsv2.delta.`%s`", tablePath));
 
     List<Row> expectedRows =
