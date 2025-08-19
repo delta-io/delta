@@ -27,17 +27,6 @@ import org.junit.jupiter.api.io.TempDir;
 
 public class KernelSparkBatchScanTest extends KernelSparkDsv2TestBase {
 
-  private void createTestTable(String path, String tableName) {
-    spark.sql(
-        String.format(
-            "CREATE TABLE %s (id INT, name STRING, value DOUBLE) USING delta LOCATION '%s'",
-            tableName, path));
-    spark.sql(
-        String.format(
-            "INSERT INTO %s VALUES (1, 'Alice', 10.5), (2, 'Bob', 20.5), (3, 'Charlie', 30.5)",
-            tableName));
-  }
-
   @Test
   public void testConstructorWithNullContext() {
     NullPointerException exception =
@@ -106,5 +95,19 @@ public class KernelSparkBatchScanTest extends KernelSparkDsv2TestBase {
         assertThrows(UnsupportedOperationException.class, batchScan::createReaderFactory);
 
     assertEquals("reader factory is not implemented", exception.getMessage());
+  }
+
+  //////////////////////
+  // Private helpers //
+  /////////////////////
+  private void createTestTable(String path, String tableName) {
+    spark.sql(
+        String.format(
+            "CREATE TABLE %s (id INT, name STRING, value DOUBLE) USING delta LOCATION '%s'",
+            tableName, path));
+    spark.sql(
+        String.format(
+            "INSERT INTO %s VALUES (1, 'Alice', 10.5), (2, 'Bob', 20.5), (3, 'Charlie', 30.5)",
+            tableName));
   }
 }

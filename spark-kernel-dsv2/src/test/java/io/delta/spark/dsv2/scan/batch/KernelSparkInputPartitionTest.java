@@ -32,16 +32,6 @@ import org.junit.jupiter.api.io.TempDir;
 
 public class KernelSparkInputPartitionTest extends KernelSparkDsv2TestBase {
 
-  private void createTestTable(String path, String tableName) {
-    spark.sql(
-        String.format(
-            "CREATE TABLE %s (id INT, name STRING, value DOUBLE) USING delta LOCATION '%s'",
-            tableName, path));
-    // Insert some test data
-    spark.sql(
-        String.format("INSERT INTO %s VALUES (1, 'Alice', 10.5), (2, 'Bob', 20.5)", tableName));
-  }
-
   @Test
   public void testSerializationRoundTrip(@TempDir File tempDir) throws IOException {
     String path = tempDir.getAbsolutePath();
@@ -104,5 +94,18 @@ public class KernelSparkInputPartitionTest extends KernelSparkDsv2TestBase {
             });
 
     assertEquals("serializedScanFileRow", exception.getMessage());
+  }
+
+  //////////////////////
+  // Private helpers //
+  /////////////////////
+  private void createTestTable(String path, String tableName) {
+    spark.sql(
+        String.format(
+            "CREATE TABLE %s (id INT, name STRING, value DOUBLE) USING delta LOCATION '%s'",
+            tableName, path));
+    // Insert some test data
+    spark.sql(
+        String.format("INSERT INTO %s VALUES (1, 'Alice', 10.5), (2, 'Bob', 20.5)", tableName));
   }
 }

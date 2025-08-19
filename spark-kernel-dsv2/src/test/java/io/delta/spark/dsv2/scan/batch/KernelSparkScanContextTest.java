@@ -34,24 +34,6 @@ import org.junit.jupiter.api.io.TempDir;
 
 public class KernelSparkScanContextTest extends KernelSparkDsv2TestBase {
 
-  private void createTestTable(String path, String tableName) {
-    spark.sql(
-        String.format(
-            "CREATE TABLE %s (id INT, name STRING, value DOUBLE) USING delta LOCATION '%s'",
-            tableName, path));
-    // Insert some test data
-    spark.sql(
-        String.format(
-            "INSERT INTO %s VALUES (1, 'Alice', 10.5), (2, 'Bob', 20.5), (3, 'Charlie', 30.5)",
-            tableName));
-  }
-
-  private void createEmptyTestTable(String path, String tableName) {
-    spark.sql(
-        String.format(
-            "CREATE TABLE %s (id INT, name STRING) USING delta LOCATION '%s'", tableName, path));
-  }
-
   @Test
   public void testConstructorWithNullScan() {
     // Test construction with null scan should throw NullPointerException
@@ -192,5 +174,26 @@ public class KernelSparkScanContextTest extends KernelSparkDsv2TestBase {
     }
 
     executor.shutdown();
+  }
+
+  //////////////////////
+  // Private helpers //
+  /////////////////////
+  private void createTestTable(String path, String tableName) {
+    spark.sql(
+        String.format(
+            "CREATE TABLE %s (id INT, name STRING, value DOUBLE) USING delta LOCATION '%s'",
+            tableName, path));
+    // Insert some test data
+    spark.sql(
+        String.format(
+            "INSERT INTO %s VALUES (1, 'Alice', 10.5), (2, 'Bob', 20.5), (3, 'Charlie', 30.5)",
+            tableName));
+  }
+
+  private void createEmptyTestTable(String path, String tableName) {
+    spark.sql(
+        String.format(
+            "CREATE TABLE %s (id INT, name STRING) USING delta LOCATION '%s'", tableName, path));
   }
 }
