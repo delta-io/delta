@@ -35,6 +35,17 @@ object MultiShardMultiJVMTestParallelization {
           Test / testGrouping := {
             val tests = (Test / definedTests).value
 
+            // Create default fork options that inherit all the project's settings
+            val defaultForkOptions = ForkOptions(
+              javaHome = javaHome.value,
+              outputStrategy = outputStrategy.value,
+              bootJars = Vector.empty,
+              workingDirectory = Some(baseDirectory.value),
+              runJVMOptions = (Test / javaOptions).value.toVector,
+              connectInput = connectInput.value,
+              envVars = (Test / envVars).value
+            )
+
             // Filter tests for this shard
             val testsForThisShard = tests.filter { testDef =>
               math.abs(MurmurHash3.stringHash(testDef.name) % numShards) == shardId
@@ -52,7 +63,7 @@ object MultiShardMultiJVMTestParallelization {
               Tests.Group(
                 name = s"Shard $shardId - Group $groupId",
                 tests = testsForThisGroup,
-                runPolicy = Tests.SubProcess(ForkOptions())
+                runPolicy = Tests.SubProcess(defaultForkOptions)
               )
             }
           },
