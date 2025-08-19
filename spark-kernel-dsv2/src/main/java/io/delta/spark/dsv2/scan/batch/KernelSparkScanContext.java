@@ -54,7 +54,6 @@ public class KernelSparkScanContext {
   }
 
   public InputPartition[] planPartitions() {
-    // Double-checked locking for better performance
     Optional<List<FilteredColumnarBatch>> batches = cachedBatches.get();
     if (!batches.isPresent()) {
       synchronized (this) {
