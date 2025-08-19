@@ -54,6 +54,19 @@ public class KernelSparkScanContext {
     this.cachedBatches = new AtomicReference<>(Optional.empty());
   }
 
+  /**
+   * Plans and creates input partitions for Spark execution.
+   * 
+   * <p>This method converts Delta Kernel scan files into Spark InputPartitions. Each file row
+   * from the kernel scan creates one input partition containing serialized scan state and file
+   * metadata.
+   * 
+   * <p>Results are cached on first invocation using thread-safe lazy initialization. Subsequent
+   * calls return the partitions calculated based on the same cached batches..
+   * 
+   * @return array of InputPartitions for Spark to process
+   * @throws UncheckedIOException if kernel scan fails or partition creation fails
+   */
   public InputPartition[] planPartitions() {
     Optional<List<FilteredColumnarBatch>> batches = cachedBatches.get();
     if (!batches.isPresent()) {
@@ -78,6 +91,8 @@ public class KernelSparkScanContext {
     }
 
     // Create InputPartitions from cached batches
+    // Implementation note: not caching partitions for the future extension of runtime filtering.
+    // where it is generated and push to scan after the first planInputPartition.
     List<InputPartition> partitions = new ArrayList<>();
     for (FilteredColumnarBatch batch : batches.get()) {
       try (CloseableIterator<Row> rows = batch.getRows()) {
