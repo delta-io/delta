@@ -46,8 +46,8 @@ public class KernelSparkScanContext {
           batches.add(batch);
         }
       } catch (IOException e) {
-        LOG.error("Failed to read scan files from kernel scan", e);
-        throw new UncheckedIOException("Failed to read scan files from kernel scan", e);
+        LOG.warn("Failed to added files from kernel scan", e);
+        throw new UncheckedIOException("Failed to read added files from kernel scan", e);
       }
       cachedBatches = Optional.of(batches);
     }
