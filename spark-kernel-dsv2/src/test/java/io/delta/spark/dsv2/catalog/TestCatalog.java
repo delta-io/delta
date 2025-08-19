@@ -88,7 +88,7 @@ public class TestCatalog implements TableCatalog {
     } catch (TableNotFoundException kernelException) {
       throw new NoSuchTableException(ident);
     } catch (Exception e) {
-      throw new RuntimeException("Failed to load catalog table: " + ident, e);
+      throw new RuntimeException("Failed to load table: " + ident, e);
     }
   }
 
