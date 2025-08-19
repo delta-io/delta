@@ -11,7 +11,8 @@ import org.apache.spark.sql.connector.read.InputPartition;
 public final class KernelSparkInputPartition implements InputPartition, Serializable {
 
   private final String serializedScanState;
-  // TODO: [delta-io/delta#5109] implement the logic to group files in to partition based on file size.
+  // TODO: [delta-io/delta#5109] implement the logic to group files in to partition based on file
+  // size.
   // Json representation of one add file in kernel
   private final String serializedScanFileRow;
 

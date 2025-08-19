@@ -46,7 +46,7 @@ public class KernelSparkScanContext {
           batches.add(batch);
         }
       } catch (IOException e) {
-        LOG.warn("Failed to added files from kernel scan", e);
+        LOG.warn("Failed to read from kernel scan", e);
         throw new UncheckedIOException("Failed to read added files from kernel scan", e);
       }
       cachedBatches = Optional.of(batches);
@@ -62,8 +62,8 @@ public class KernelSparkScanContext {
               new KernelSparkInputPartition(serializedScanState, JsonUtils.rowToJson(row)));
         }
       } catch (IOException e) {
-        LOG.error("Failed to read rows from filtered columnar batch", e);
-        throw new UncheckedIOException("Failed to read rows from filtered columnar batch", e);
+        LOG.warn("Failed to construct input partition", e);
+        throw new UncheckedIOException("Failed to construct input partition", e);
       }
     }
 
