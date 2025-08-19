@@ -25,8 +25,8 @@ import org.apache.spark.sql.connector.read.Batch;
 import org.apache.spark.sql.types.StructType;
 
 /**
- * Spark Scan implementation that uses Delta Kernel for data access. Creates and manages a shared
- * KernelSparkScanContext for all batch operations.
+ * A Spark Scan implementation that wraps Delta Kernel's Scan. This allows Spark to use Delta Kernel
+ * for reading Delta tables.
  */
 public class KernelSparkScan implements org.apache.spark.sql.connector.read.Scan {
 

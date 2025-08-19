@@ -6,11 +6,13 @@ import org.apache.spark.sql.connector.read.InputPartition;
 
 /**
  * Spark InputPartition implementation that holds serialized Delta Kernel scan information. Contains
- * both scan state and individual file metadata needed for distributed processing.
+ * both scan state and add files.
  */
 public final class KernelSparkInputPartition implements InputPartition, Serializable {
 
   private final String serializedScanState;
+  // TODO: [delta-io/delta#5109] implement the logic to group files in to partition based on file size.
+  // Json representation of one add file in kernel
   private final String serializedScanFileRow;
 
   public KernelSparkInputPartition(String serializedScanState, String serializedScanFileRow) {
