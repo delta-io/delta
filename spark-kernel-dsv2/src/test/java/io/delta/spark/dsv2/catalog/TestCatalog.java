@@ -159,28 +159,14 @@ public class TestCatalog implements TableCatalog {
 
   /**
    * Check if the given identifier represents a path-based table. Path-based tables are identified
-   * by having a delta namespace (delta/tahoe) and an absolute path. This follows the same logic as
-   * DeltaCatalog's SupportsPathIdentifier.
+   * by having a delta namespace. This follows the same logic as Delta Spark's SupportsPathIdentifier.
    *
    * @param ident the table identifier to check
    * @return true if this is a path-based table identifier, false otherwise
    */
   private boolean isPathIdentifier(Identifier ident) {
-    try {
-      // Check if it has a delta namespace (should be length 1 and named "delta")
-      boolean hasDeltaNamespace =
-          ident.namespace().length == 1 && ident.namespace()[0].toLowerCase().equals("delta");
-
-      if (!hasDeltaNamespace) {
-        return false;
-      }
-
-      // Use Hadoop Path to properly check if it's an absolute path
-      return new org.apache.hadoop.fs.Path(ident.name()).isAbsolute();
-    } catch (IllegalArgumentException e) {
-      // Handle malformed path strings gracefully
-      return false;
-    }
+    // For testing, simply check if it has a delta namespace
+    return ident.namespace().length == 1 && ident.namespace()[0].toLowerCase().equals("delta");
   }
 
   /** Helper method to get the table key from identifier. */
