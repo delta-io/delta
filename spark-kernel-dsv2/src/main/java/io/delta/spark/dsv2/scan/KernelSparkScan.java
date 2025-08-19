@@ -45,7 +45,7 @@ public class KernelSparkScan implements org.apache.spark.sql.connector.read.Scan
   }
 
   @Override
-  public synchronized Batch toBatch() {
+  public Batch toBatch() {
     return new KernelSparkBatchScan(kernelSparkScanContext);
   }
 }
