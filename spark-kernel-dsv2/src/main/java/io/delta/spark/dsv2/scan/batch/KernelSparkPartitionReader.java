@@ -44,71 +44,7 @@ import org.apache.spark.unsafe.types.UTF8String;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/**
- * Partition reader that reads data from a single Delta Lake file using the Delta Kernel API.
- *
- * <p>This class implements Spark's {@link PartitionReader} interface and provides the core data
- * reading functionality for the Delta Kernel DSv2 connector. It handles the complete data
- * processing pipeline from serialized partition information to Spark's {@link InternalRow} format.
- *
- * <p>The reader performs the following operations:
- *
- * <ol>
- *   <li><strong>Deserialization:</strong> Converts JSON-serialized scan state and file metadata
- *       back to Kernel Row objects using appropriate schemas
- *   <li><strong>Physical Data Reading:</strong> Uses Kernel's ParquetHandler to read raw data from
- *       Parquet files
- *   <li><strong>Data Transformation:</strong> Applies Kernel's transformation logic to convert
- *       physical data to logical data format
- *   <li><strong>Type Conversion:</strong> Converts Kernel's ColumnVector data to Spark's
- *       InternalRow format
- * </ol>
- *
- * <p>The reader supports all standard Delta Lake data types including:
- *
- * <ul>
- *   <li>Primitive types: Boolean, Byte, Short, Integer, Long, Float, Double
- *   <li>String types: String (converted to UTF8String)
- *   <li>Temporal types: Date, Timestamp
- *   <li>Complex types: Decimal, Binary
- * </ul>
- *
- * <p>Key features:
- *
- * <ul>
- *   <li><strong>Lazy initialization:</strong> Data reading is deferred until first {@code next()}
- *       call
- *   <li><strong>Resource management:</strong> Proper cleanup using try-with-resources pattern
- *   <li><strong>Error handling:</strong> Converts checked IOExceptions to UncheckedIOExceptions
- *   <li><strong>Selection vector support:</strong> Handles filtered data efficiently
- * </ul>
- *
- * <p>Example usage:
- *
- * <pre>{@code
- * // Create reader with serialized partition data
- * KernelSparkPartitionReader reader = new KernelSparkPartitionReader(
- *     serializedScanState,   // JSON scan configuration
- *     serializedScanFileRow  // JSON file metadata
- * );
- *
- * // Read all rows
- * List<InternalRow> rows = new ArrayList<>();
- * try {
- *     while (reader.next()) {
- *         rows.add(reader.get().copy());
- *     }
- * } finally {
- *     reader.close();
- * }
- * }</pre>
- *
- * <p><strong>Thread Safety:</strong> This class is not thread-safe and should not be used
- * concurrently from multiple threads.
- *
- * @see KernelSparkInputPartition
- * @see KernelSparkPartitionReaderFactory
- */
+/** Partition reader that reads data from Delta Lake files using the Delta Kernel API. */
 public class KernelSparkPartitionReader implements PartitionReader<InternalRow> {
 
   private static final Logger LOG = LoggerFactory.getLogger(KernelSparkPartitionReader.class);
