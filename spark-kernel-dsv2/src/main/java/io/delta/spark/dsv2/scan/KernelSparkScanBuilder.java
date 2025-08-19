@@ -18,6 +18,7 @@ package io.delta.spark.dsv2.scan;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.ScanBuilder;
+import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.spark.dsv2.utils.SchemaUtils;
 import org.apache.spark.sql.types.StructType;
@@ -30,9 +31,11 @@ public class KernelSparkScanBuilder implements org.apache.spark.sql.connector.re
 
   private final ScanBuilder kernelScanBuilder;
   private final StructType sparkReadSchema;
+  private final Engine engine;
 
-  public KernelSparkScanBuilder(SnapshotImpl snapshot) {
+  public KernelSparkScanBuilder(SnapshotImpl snapshot, Engine engine) {
     requireNonNull(snapshot, "snapshot is null");
+    this.engine = requireNonNull(engine, "engine is null");
 
     this.kernelScanBuilder = snapshot.getScanBuilder();
 
@@ -41,6 +44,6 @@ public class KernelSparkScanBuilder implements org.apache.spark.sql.connector.re
 
   @Override
   public org.apache.spark.sql.connector.read.Scan build() {
-    return new KernelSparkScan(kernelScanBuilder.build(), sparkReadSchema);
+    return new KernelSparkScan(kernelScanBuilder.build(), sparkReadSchema, engine);
   }
 }

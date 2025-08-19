@@ -18,22 +18,25 @@ package io.delta.spark.dsv2.scan;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.Scan;
+import io.delta.kernel.engine.Engine;
 import io.delta.spark.dsv2.scan.batch.KernelSparkBatchScan;
+import io.delta.spark.dsv2.scan.batch.KernelSparkScanContext;
 import org.apache.spark.sql.connector.read.Batch;
 import org.apache.spark.sql.types.StructType;
 
 /**
- * A Spark Scan implementation that wraps Delta Kernel's Scan. This allows Spark to use Delta Kernel
- * for reading Delta tables.
+ * Spark Scan implementation that uses Delta Kernel for data access. Creates and manages a shared
+ * KernelSparkScanContext for all batch operations.
  */
 public class KernelSparkScan implements org.apache.spark.sql.connector.read.Scan {
 
-  private final Scan kernelScan;
   private final StructType sparkReadSchema;
+  private final KernelSparkScanContext kernelSparkScanContext;
 
-  public KernelSparkScan(Scan kernelScan, StructType sparkReadSchema) {
-    this.kernelScan = requireNonNull(kernelScan, "kernelScanBuilder is null");
+  public KernelSparkScan(Scan kernelScan, StructType sparkReadSchema, Engine engine) {
     this.sparkReadSchema = requireNonNull(sparkReadSchema, "sparkReadSchema is null");
+    this.kernelSparkScanContext =
+        new KernelSparkScanContext(requireNonNull(kernelScan, "kernelScan is null"), engine);
   }
 
   @Override
@@ -42,7 +45,7 @@ public class KernelSparkScan implements org.apache.spark.sql.connector.read.Scan
   }
 
   @Override
-  public Batch toBatch() {
-    return new KernelSparkBatchScan(kernelScan, sparkReadSchema);
+  public synchronized Batch toBatch() {
+    return new KernelSparkBatchScan(kernelSparkScanContext);
   }
 }

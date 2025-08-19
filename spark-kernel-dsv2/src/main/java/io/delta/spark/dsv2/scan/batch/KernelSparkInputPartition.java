@@ -4,6 +4,10 @@ import java.io.Serializable;
 import java.util.Objects;
 import org.apache.spark.sql.connector.read.InputPartition;
 
+/**
+ * Spark InputPartition implementation that holds serialized Delta Kernel scan information. Contains
+ * both scan state and individual file metadata needed for distributed processing.
+ */
 public final class KernelSparkInputPartition implements InputPartition, Serializable {
 
   private final String serializedScanState;

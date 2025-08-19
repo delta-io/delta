@@ -76,7 +76,7 @@ public class TestCatalog implements TableCatalog {
     try {
       // Use TableManager.loadTable to load the table
       SnapshotImpl snapshot = (SnapshotImpl) TableManager.loadSnapshot(tablePath).build(engine);
-      return new DeltaKernelTable(ident, snapshot);
+      return new DeltaKernelTable(ident, snapshot, new Configuration());
     } catch (Exception e) {
       throw new RuntimeException("Failed to load table: " + ident, e);
     }
@@ -110,7 +110,7 @@ public class TestCatalog implements TableCatalog {
 
       // Load the created table and return DeltaKernelTable
       SnapshotImpl snapshot = (SnapshotImpl) kernelTable.getLatestSnapshot(engine);
-      return new DeltaKernelTable(ident, snapshot);
+      return new DeltaKernelTable(ident, snapshot, new Configuration());
 
     } catch (Exception e) {
       // Remove the table entry if creation fails

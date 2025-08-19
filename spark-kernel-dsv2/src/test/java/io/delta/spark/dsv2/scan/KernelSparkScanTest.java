@@ -45,7 +45,8 @@ public class KernelSparkScanTest extends KernelSparkDsv2TestBase {
     KernelSparkScan scan =
         new KernelSparkScan(
             TableManager.loadSnapshot(path).build(defaultEngine).getScanBuilder().build(),
-            expectedSparkSchema);
+            expectedSparkSchema,
+            defaultEngine);
 
     assertEquals(expectedSparkSchema, scan.readSchema());
   }

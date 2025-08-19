@@ -50,7 +50,9 @@ public class DeltaKernelTableTest extends KernelSparkDsv2TestBase {
     Snapshot snapshot = TableManager.loadSnapshot(path).build(defaultEngine);
     Identifier identifier = Identifier.of(new String[] {"test_namespace"}, tableName);
 
-    DeltaKernelTable kernelTable = new DeltaKernelTable(identifier, (SnapshotImpl) snapshot);
+    DeltaKernelTable kernelTable =
+        new DeltaKernelTable(
+            identifier, (SnapshotImpl) snapshot, spark.sessionState().newHadoopConf());
 
     // ===== Test table name =====
     assertEquals(tableName, kernelTable.name());
