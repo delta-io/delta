@@ -23,8 +23,7 @@ import org.apache.spark.sql.connector.read.InputPartition;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
 
 /**
- * Spark Batch implementation backed by Delta Kernel Scan. Uses a shared KernelSparkScanContext that
- * is created and managed by KernelSparkScan.
+ * Spark Batch implementation backed by Delta Kernel Scan.
  */
 public class KernelSparkBatchScan implements Batch, Serializable {
 
