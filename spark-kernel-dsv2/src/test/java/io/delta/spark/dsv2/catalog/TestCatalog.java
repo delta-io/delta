@@ -161,9 +161,6 @@ public class TestCatalog implements TableCatalog {
    * Check if the given identifier represents a path-based table. Path-based tables are identified
    * by having a delta namespace. This follows the same logic as Delta Spark's
    * SupportsPathIdentifier.
-   *
-   * @param ident the table identifier to check
-   * @return true if this is a path-based table identifier, false otherwise
    */
   private boolean isPathIdentifier(Identifier ident) {
     // For testing, simply check if it has a delta namespace
