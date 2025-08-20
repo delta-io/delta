@@ -1,5 +1,16 @@
 name: "Delta Kernel"
+
 on: [push, pull_request]
+
+# Cancel previous runs when new commits are pushed
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Point SBT to our cache directories for consistency
+  SBT_OPTS: "-Dsbt.coursier.home-dir=/home/runner/.cache/coursier -Dsbt.ivy.home=/home/runner/.ivy2"
+
 jobs:
   test:
     name: "DK: Shard ${{ matrix.shard }}"
@@ -11,16 +22,36 @@ jobs:
     env:
       SCALA_VERSION: 2.12.18
       NUM_SHARDS: 4
+      DISABLE_UNIDOC: true # Another unidoc workflow will test unidoc.
+      TEST_PARALLELISM_COUNT: 4
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v4
       - name: install java
-        uses: actions/setup-java@v3
+        uses: actions/setup-java@v4
         with:
           distribution: "zulu"
           java-version: "8"
+      - name: Cache SBT and dependencies
+        id: cache-sbt
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.sbt
+            ~/.ivy2/cache
+            ~/.coursier/cache
+            ~/.cache/coursier
+          key: sbt-kernel-${{ runner.os }}-scala${{ env.SCALA_VERSION }}
+      - name: Check cache status
+        run: |
+          if [ "${{ steps.cache-sbt.outputs.cache-hit }}" == "true" ]; then
+            echo "✅ Cache HIT - using cached dependencies"
+          else
+            echo "❌ Cache MISS - will download dependencies"
+          fi
       - name: Run tests
         run: |
-          TEST_PARALLELISM_COUNT=4 python run-tests.py --group kernel --coverage --shard ${{ matrix.shard }}
+          python run-tests.py --group kernel --coverage --shard ${{ matrix.shard }}
 
   integration-test:
     name: "DK: Integration"
