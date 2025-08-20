@@ -36,7 +36,13 @@ import org.apache.spark.sql.connector.read.PartitionReader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/** Reads Data files using the Kernel API and converts to Spark InternalRows. */
+/**
+ * Reads Delta Lake data files using the Kernel API and converts to Spark InternalRows.
+ *
+ * <p><strong>Thread Safety:</strong> This class is NOT thread-safe. Each instance should be used by
+ * a single thread only. Spark's partition readers are typically used in a single-threaded context
+ * per partition.
+ */
 public class KernelSparkPartitionReader implements PartitionReader<InternalRow> {
 
   private static final Logger LOG = LoggerFactory.getLogger(KernelSparkPartitionReader.class);
@@ -53,9 +59,9 @@ public class KernelSparkPartitionReader implements PartitionReader<InternalRow> 
    */
   private final Row scanFileRow;
 
+  private final Engine engine;
   private CloseableIterator<InternalRow> dataIterator;
   private boolean initialized = false;
-  private final Engine engine;
 
   public KernelSparkPartitionReader(Engine engine, Row scanState, Row scanFileRow) {
     this.scanState = requireNonNull(scanState, "scanState is null");
@@ -71,7 +77,7 @@ public class KernelSparkPartitionReader implements PartitionReader<InternalRow> 
   @Override
   public boolean next() {
     initialize();
-    return dataIterator.hasNext();
+    return dataIterator != null && dataIterator.hasNext();
   }
 
   /**
@@ -80,8 +86,11 @@ public class KernelSparkPartitionReader implements PartitionReader<InternalRow> 
    */
   @Override
   public InternalRow get() {
-    if (!initialized) {
+    if (!initialized || dataIterator == null) {
       throw new IllegalStateException("Reader not initialized. Call next() first.");
+    }
+    if (!dataIterator.hasNext()) {
+      throw new IllegalStateException("No more data available.");
     }
     return dataIterator.next();
   }
@@ -99,7 +108,7 @@ public class KernelSparkPartitionReader implements PartitionReader<InternalRow> 
                   Utils.singletonCloseableIterator(
                       InternalScanFileUtils.getAddFileStatus(scanFileRow)),
                   ScanStateRow.getPhysicalDataReadSchema(scanState),
-                  // TODO:parquet push down
+                  // TODO: parquet push down
                   Optional.empty())
               .map(FileReadResult::getData);
       CloseableIterator<FilteredColumnarBatch> logicalDataIter =
@@ -124,7 +133,7 @@ public class KernelSparkPartitionReader implements PartitionReader<InternalRow> 
     private CloseableIterator<Row> currentBatchRows;
 
     RowIteratorAdapter(CloseableIterator<FilteredColumnarBatch> batchIterator) {
-      this.batchIterator = batchIterator;
+      this.batchIterator = requireNonNull(batchIterator, "batchIterator is null");
     }
 
     @Override
@@ -136,6 +145,13 @@ public class KernelSparkPartitionReader implements PartitionReader<InternalRow> 
       // Try to get next batch
       while (batchIterator.hasNext()) {
         FilteredColumnarBatch batch = batchIterator.next();
+        if (currentBatchRows != null) {
+          try {
+            currentBatchRows.close();
+          } catch (IOException e) {
+            throw new UncheckedIOException(e);
+          }
+        }
         currentBatchRows = batch.getRows();
         if (currentBatchRows.hasNext()) {
           return true;
