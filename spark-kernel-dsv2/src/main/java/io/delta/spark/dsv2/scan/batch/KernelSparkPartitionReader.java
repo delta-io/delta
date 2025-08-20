@@ -145,13 +145,6 @@ public class KernelSparkPartitionReader implements PartitionReader<InternalRow> 
       // Try to get next batch
       while (batchIterator.hasNext()) {
         FilteredColumnarBatch batch = batchIterator.next();
-        if (currentBatchRows != null) {
-          try {
-            currentBatchRows.close();
-          } catch (IOException e) {
-            throw new UncheckedIOException(e);
-          }
-        }
         currentBatchRows = batch.getRows();
         if (currentBatchRows.hasNext()) {
           return true;
