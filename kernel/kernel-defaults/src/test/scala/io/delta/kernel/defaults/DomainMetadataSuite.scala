@@ -408,8 +408,7 @@ class DomainMetadataSuite extends AnyFunSuite with WriteUtils with ParquetSuiteB
 
   test("Integration test - create a table with Spark and read its domain metadata using Kernel") {
     withTempDir(dir => {
-      val tbl = "tbl"
-      withTable(tbl) {
+      withTempTable { tbl =>
         val tablePath = dir.getCanonicalPath
         // Create table with domain metadata enabled
         spark.sql(s"CREATE TABLE $tbl (id LONG) USING delta LOCATION '$tablePath'")
@@ -459,8 +458,7 @@ class DomainMetadataSuite extends AnyFunSuite with WriteUtils with ParquetSuiteB
 
   test("Integration test - create a table using Kernel and read its domain metadata using Spark") {
     withTempDirAndEngine { (tablePath, engine) =>
-      val tbl = "tbl"
-      withTable(tbl) {
+      withTempTable { tbl =>
         // Create table with domain metadata enabled
         createTableWithDomainMetadataSupported(engine, tablePath)
 
@@ -545,8 +543,7 @@ class DomainMetadataSuite extends AnyFunSuite with WriteUtils with ParquetSuiteB
 
   test("RowTrackingMetadataDomain Integration test - Write with Spark and read with Kernel") {
     withTempDirAndEngine((tablePath, engine) => {
-      val tbl = "tbl"
-      withTable(tbl) {
+      withTempTable { tbl =>
         // Create table with domain metadata enabled using Spark
         spark.sql(s"CREATE TABLE $tbl (id LONG) USING delta LOCATION '$tablePath'")
         spark.sql(
@@ -572,8 +569,7 @@ class DomainMetadataSuite extends AnyFunSuite with WriteUtils with ParquetSuiteB
 
   test("RowTrackingMetadataDomain Integration test - Write with Kernel and read with Spark") {
     withTempDirAndEngine { (tablePath, engine) =>
-      val tbl = "tbl"
-      withTable(tbl) {
+      withTempTable { tbl =>
         // Create table and manually make changes to the row tracking metadata domain using Kernel
         createTableWithDomainMetadataSupported(engine, tablePath)
         val dmAction = new RowTrackingMetadataDomain(10).toDomainMetadata
