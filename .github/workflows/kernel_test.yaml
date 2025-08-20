@@ -12,7 +12,7 @@ jobs:
       SCALA_VERSION: 2.12.18
       NUM_SHARDS: 4
       SHARD_ID: ${{ matrix.shard }}
-      TEST_PARALLELISM_COUNT: 4
+      TEST_PARALLELISM_COUNT: 3
     steps:
       - uses: actions/checkout@v3
       - name: install java
