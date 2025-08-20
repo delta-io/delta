@@ -42,29 +42,53 @@ class InMemoryUCClientSuite extends AnyFunSuite with UCCatalogManagedTestUtils {
     assert(actualVersions == expectedVersions)
   }
 
-  test("TableData::appendCommit throws if commit version is not maxRatifiedVersion + 1") {
+  // TODO: [delta-io/delta#5118] If UC changes CREATE semantics, update logic here.
+  test("TableData::appendCommit throws on commit v0 (since CREATE does not go through UC)") {
     val tableData = new InMemoryUCClient.TableData
-    val commit = createCommit(1L)
 
     val exMsg = intercept[CommitFailedException] {
-      tableData.appendCommit(commit)
+      tableData.appendCommit(createCommit(0L))
     }.getMessage
 
-    assert(exMsg.contains("Expected commit version 0 but got 1"))
+    assert(exMsg.contains("Expected commit version 1 but got 0"))
+  }
+
+  // TODO: [delta-io/delta#5118] If UC changes CREATE semantics, update logic here.
+  test("TableData::appendCommit handles commit version 1 (since CREATE does not go through UC)") {
+    val tableData = new InMemoryUCClient.TableData
+    assert(tableData.getMaxRatifiedVersion == -1L)
+
+    tableData.appendCommit(createCommit(1L))
+
+    assert(tableData.getMaxRatifiedVersion == 1L)
+    assert(tableData.getCommits.size == 1)
+    assert(tableData.getCommits.head.getVersion == 1L)
+  }
+
+  test("TableData::appendCommit throws if commit version is not maxRatifiedVersion + 1 " +
+    "(excluding v1 edge case)") {
+    val tableData = new InMemoryUCClient.TableData
+    tableData.appendCommit(createCommit(1L))
+
+    val exMsg = intercept[CommitFailedException] {
+      tableData.appendCommit(createCommit(99L))
+    }.getMessage
+
+    assert(exMsg.contains("Expected commit version 2 but got 99"))
   }
 
   test("TableData::appendCommit appends the commit and updates the maxRatifiedVersion") {
     val tableData = new InMemoryUCClient.TableData
-    tableData.appendCommit(createCommit(0L))
-
-    assert(tableData.getMaxRatifiedVersion == 0L)
-    assert(tableData.getCommits.size == 1)
-    assert(tableData.getCommits.head.getVersion == 0L)
-
     tableData.appendCommit(createCommit(1L))
+
     assert(tableData.getMaxRatifiedVersion == 1L)
+    assert(tableData.getCommits.size == 1)
+    assert(tableData.getCommits.head.getVersion == 1L)
+
+    tableData.appendCommit(createCommit(2L))
+    assert(tableData.getMaxRatifiedVersion == 2L)
     assert(tableData.getCommits.size == 2)
-    assert(tableData.getCommits.last.getVersion == 1L)
+    assert(tableData.getCommits.last.getVersion == 2L)
   }
 
   test("getCommits throws InvalidTargetTableException for non-existent table") {
@@ -77,15 +101,15 @@ class InMemoryUCClientSuite extends AnyFunSuite with UCCatalogManagedTestUtils {
 
   test("getCommits returns all commits if no startVersion or endVersion filter") {
     testGetCommitsFiltering(
-      allVersions = 0L to 5L,
+      allVersions = 1L to 5L,
       startVersionOpt = Optional.empty(),
       endVersionOpt = Optional.empty(),
-      expectedVersions = 0L to 5L)
+      expectedVersions = 1L to 5L)
   }
 
   test("getCommits filters by startVersion") {
     testGetCommitsFiltering(
-      allVersions = 0L to 5L,
+      allVersions = 1L to 5L,
       startVersionOpt = Optional.of(2L),
       endVersionOpt = Optional.empty(),
       expectedVersions = 2L to 5L)
@@ -93,37 +117,18 @@ class InMemoryUCClientSuite extends AnyFunSuite with UCCatalogManagedTestUtils {
 
   test("getCommits filters by endVersion") {
     testGetCommitsFiltering(
-      allVersions = 0L to 5L,
+      allVersions = 1L to 5L,
       startVersionOpt = Optional.empty(),
       endVersionOpt = Optional.of(3L),
-      expectedVersions = 0L to 3L)
+      expectedVersions = 1L to 3L)
   }
 
   test("getCommits filters by startVersion and endVersion") {
     testGetCommitsFiltering(
-      allVersions = 0L to 5L,
+      allVersions = 1L to 5L,
       startVersionOpt = Optional.of(2L),
       endVersionOpt = Optional.of(4L),
       expectedVersions = 2L to 4L)
-  }
-
-  test("concurrent table creation (via committing version 0) => only one commit succeeds") {
-    val client = new InMemoryUCClient("ucMetastoreId")
-    val tableId = "race-table"
-
-    val results = (0 until 10).par.map { _ =>
-      try {
-        client.commitWithDefaults(tableId, fakeURI, Optional.of(createCommit(0L)))
-        "success"
-      } catch {
-        case _: CommitFailedException => "failed"
-      }
-    }
-
-    assert(results.count(_ == "success") == 1) // Only one should succeed in committing version 0
-    assert(results.count(_ == "failed") == 9)
-    assert(client.getTablesCopy.size == 1)
-    assert(client.getTablesCopy(tableId).getMaxRatifiedVersion == 0L)
   }
 
 }
