@@ -671,6 +671,7 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
            |""".stripMargin)
       Seq(file)
     },
+    MultiShardMultiJVMTestParallelization.settings,
     javaCheckstyleSettings("dev/kernel-checkstyle.xml"),
     // Unidoc settings
     unidocSourceFilePatterns := Seq(SourceFilePattern("io/delta/kernel/")),
@@ -716,6 +717,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
       "org.apache.spark" %% "spark-core" % defaultSparkVersion % "test" classifier "tests",
       "org.apache.spark" %% "spark-catalyst" % defaultSparkVersion % "test" classifier "tests",
     ),
+    MultiShardMultiJVMTestParallelization.settings,
     javaCheckstyleSettings("dev/kernel-checkstyle.xml"),
       // Unidoc settings
     unidocSourceFilePatterns += SourceFilePattern("io/delta/kernel/"),

@@ -354,8 +354,7 @@ class RowTrackingSuite extends AnyFunSuite with WriteUtils with ParquetSuiteBase
 
   test("Integration test - Write table with Kernel then write with Spark") {
     withTempDirAndEngine((tablePath, engine) => {
-      val tbl = "tbl"
-      withTable(tbl) {
+      withTempTable { tbl =>
         val schema = new StructType().add("id", LongType.LONG)
         createTableWithRowTracking(engine, tablePath, schema)
 
@@ -388,8 +387,7 @@ class RowTrackingSuite extends AnyFunSuite with WriteUtils with ParquetSuiteBase
 
   test("Integration test - Write table with Spark then write with Kernel") {
     withTempDirAndEngine((tablePath, engine) => {
-      val tbl = "tbl"
-      withTable(tbl) {
+      withTempTable { tbl =>
         spark.sql(
           s"""CREATE TABLE $tbl (id LONG) USING delta
              |LOCATION '$tablePath'
