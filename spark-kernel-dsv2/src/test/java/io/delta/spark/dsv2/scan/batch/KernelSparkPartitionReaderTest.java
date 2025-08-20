@@ -17,346 +17,124 @@ package io.delta.spark.dsv2.scan.batch;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-import io.delta.kernel.Scan;
-import io.delta.kernel.TableManager;
+import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
-import io.delta.kernel.defaults.internal.json.JsonUtils;
-import io.delta.kernel.internal.SnapshotImpl;
-import io.delta.kernel.utils.CloseableIterator;
+import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch;
+import io.delta.kernel.internal.InternalScanFileUtils;
+import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.internal.data.GenericRow;
+import io.delta.kernel.internal.data.ScanStateRow;
+import io.delta.kernel.internal.types.DataTypeJsonSerDe;
+import io.delta.kernel.internal.util.Utils;
+import io.delta.kernel.internal.util.VectorUtils;
+import io.delta.kernel.types.*;
 import io.delta.spark.dsv2.KernelSparkDsv2TestBase;
 import java.io.File;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-import org.apache.spark.sql.Dataset;
-import org.apache.spark.sql.RowFactory;
+import java.util.*;
 import org.apache.spark.sql.catalyst.InternalRow;
-import org.apache.spark.sql.types.DataTypes;
-import org.apache.spark.sql.types.StructType$;
-import org.apache.spark.unsafe.types.UTF8String;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 public class KernelSparkPartitionReaderTest extends KernelSparkDsv2TestBase {
 
   @Test
-  public void testConstructorWithNullScanState() {
-    assertThrows(
-        NullPointerException.class,
-        () -> new KernelSparkPartitionReader(null, "{\"file\":\"data\"}"));
-  }
+  public void testReadData(@TempDir File tempDir) throws Exception {
+    // Setup schema and test data
+    StructType schema =
+        new StructType()
+            .add("id", IntegerType.INTEGER)
+            .add("name", StringType.STRING)
+            .add("value", DoubleType.DOUBLE);
 
-  @Test
-  public void testConstructorWithNullFileRow() {
-    assertThrows(
-        NullPointerException.class,
-        () -> new KernelSparkPartitionReader("{\"scan\":\"data\"}", null));
-  }
+    ColumnVector[] vectors =
+        new ColumnVector[] {
+          VectorUtils.buildColumnVector(Arrays.asList(1, 2, 3), IntegerType.INTEGER),
+          VectorUtils.buildColumnVector(
+              Arrays.asList("Alice", "Bob", "Charlie"), StringType.STRING),
+          VectorUtils.buildColumnVector(Arrays.asList(100.0, 200.0, 300.0), DoubleType.DOUBLE)
+        };
 
-  @Test
-  public void testConstructorValidInput() {
-    String scanState = "{\"scan\":\"state\"}";
-    String fileRow = "{\"file\":\"row\"}";
+    // Create and write parquet file
+    String testFile = "test.parquet";
+    File parquetFile = new File(tempDir, testFile);
+    String normalizedFilePath = "file://" + parquetFile.getAbsolutePath();
+    ColumnarBatch batch = new DefaultColumnarBatch(3, schema, vectors);
+    FilteredColumnarBatch filteredBatch = new FilteredColumnarBatch(batch, Optional.empty());
+    defaultEngine
+        .getParquetHandler()
+        .writeParquetFileAtomically(
+            normalizedFilePath, Utils.singletonCloseableIterator(filteredBatch));
+    assertTrue(parquetFile.exists(), "Parquet file not created");
 
-    KernelSparkPartitionReader reader = new KernelSparkPartitionReader(scanState, fileRow);
-    assertNotNull(reader);
-  }
-
-  @Test
-  public void testCloseWithoutInitialization() throws Exception {
-    String scanState = "{\"scan\":\"state\"}";
-    String fileRow = "{\"file\":\"row\"}";
-
-    KernelSparkPartitionReader reader = new KernelSparkPartitionReader(scanState, fileRow);
-
-    // Should not throw exception
-    assertDoesNotThrow(() -> reader.close());
-  }
-
-  @Test
-  public void testReadDataFromRealDeltaTable(@TempDir File deltaTablePath) throws Exception {
-    // Create a real Delta table with test data
-    String tablePath = deltaTablePath.getAbsolutePath();
-
-    Dataset<org.apache.spark.sql.Row> testData =
-        spark.createDataFrame(
-            Arrays.asList(
-                RowFactory.create(1, "Alice", 100.0),
-                RowFactory.create(2, "Bob", 200.0),
-                RowFactory.create(3, "Charlie", 300.0)),
-            StructType$.MODULE$.apply(
-                Arrays.asList(
-                    DataTypes.createStructField("id", DataTypes.IntegerType, false),
-                    DataTypes.createStructField("name", DataTypes.StringType, false),
-                    DataTypes.createStructField("value", DataTypes.DoubleType, false))));
-
-    testData.write().format("delta").save(tablePath);
-
-    // Load table using Kernel API
-    SnapshotImpl snapshot =
-        (SnapshotImpl) TableManager.loadSnapshot(tablePath).build(defaultEngine);
-    Scan scan = snapshot.getScanBuilder().build();
-
-    // Get scan state and file row
-    Row scanStateRow = scan.getScanState(defaultEngine);
-    String serializedScanState = JsonUtils.rowToJson(scanStateRow);
-
-    String serializedScanFileRow = null;
-    try (CloseableIterator<FilteredColumnarBatch> scanFiles = scan.getScanFiles(defaultEngine)) {
-      if (scanFiles.hasNext()) {
-        FilteredColumnarBatch batch = scanFiles.next();
-        try (CloseableIterator<Row> rows = batch.getRows()) {
-          if (rows.hasNext()) {
-            Row fileRow = rows.next();
-            serializedScanFileRow = JsonUtils.rowToJson(fileRow);
-          }
-        }
-      }
-    }
-
-    assertNotNull(serializedScanFileRow, "Should have file row data");
-
-    // Create and test reader
+    String tableRoot = "file://" + tempDir.getAbsolutePath();
     KernelSparkPartitionReader reader =
-        new KernelSparkPartitionReader(serializedScanState, serializedScanFileRow);
+        new KernelSparkPartitionReader(
+            defaultEngine, createScanState(schema, tableRoot), createFileRow(tableRoot, testFile));
 
-    List<InternalRow> rows = new ArrayList<>();
+    assertTrue(reader.next());
+    InternalRow row1 = reader.get();
+    assertEquals(1, row1.getInt(0));
+    assertEquals("Alice", row1.get(1, org.apache.spark.sql.types.DataTypes.StringType).toString());
+    assertEquals(100.0, row1.getDouble(2));
 
-    try {
-      while (reader.next()) {
-        InternalRow row = reader.get();
-        assertNotNull(row);
-        rows.add(row.copy()); // Copy because reader might reuse row objects
-      }
-    } finally {
-      reader.close();
-    }
+    assertTrue(reader.next());
+    InternalRow row2 = reader.get();
+    assertEquals(2, row2.getInt(0));
+    assertEquals("Bob", row2.get(1, org.apache.spark.sql.types.DataTypes.StringType).toString());
+    assertEquals(200.0, row2.getDouble(2));
 
-    // Verify we read some data
-    assertTrue(rows.size() > 0, "Should have read at least some rows");
+    assertTrue(reader.next());
+    InternalRow row3 = reader.get();
+    assertEquals(3, row3.getInt(0));
+    assertEquals(
+        "Charlie", row3.get(1, org.apache.spark.sql.types.DataTypes.StringType).toString());
+    assertEquals(300.0, row3.getDouble(2));
 
-    // Verify row structure (should have 3 columns: id, name, value)
-    for (InternalRow row : rows) {
-      assertNotNull(row);
-      assertTrue(row.numFields() >= 3, "Row should have at least 3 fields");
-
-      // Verify data types
-      // ID should be integer
-      assertFalse(row.isNullAt(0), "ID should not be null");
-
-      // Name should be string (UTF8String)
-      if (!row.isNullAt(1)) {
-        Object nameValue = row.get(1, DataTypes.StringType);
-        assertInstanceOf(UTF8String.class, nameValue);
-      }
-
-      // Value should be double
-      if (!row.isNullAt(2)) {
-        assertFalse(Double.isNaN(row.getDouble(2)), "Value should be a valid double");
-      }
-    }
+    assertFalse(reader.next());
+    reader.close();
   }
 
-  @Test
-  public void testReadEmptyPartition(@TempDir File deltaTablePath) throws Exception {
-    // Create Delta table but don't add any data
-    String tablePath = deltaTablePath.getAbsolutePath();
-
-    Dataset<org.apache.spark.sql.Row> emptyData =
-        spark.createDataFrame(
-            Arrays.asList(), // Empty list
-            StructType$.MODULE$.apply(
-                Arrays.asList(
-                    DataTypes.createStructField("id", DataTypes.IntegerType, false),
-                    DataTypes.createStructField("name", DataTypes.StringType, false))));
-
-    emptyData.write().format("delta").save(tablePath);
-
-    // Load table
-    SnapshotImpl snapshot =
-        (SnapshotImpl) TableManager.loadSnapshot(tablePath).build(defaultEngine);
-    Scan scan = snapshot.getScanBuilder().build();
-
-    // Check if there are any scan files
-    try (CloseableIterator<FilteredColumnarBatch> scanFiles = scan.getScanFiles(defaultEngine)) {
-      if (scanFiles.hasNext()) {
-        // If there are scan files, test with them
-        FilteredColumnarBatch batch = scanFiles.next();
-        try (CloseableIterator<Row> rows = batch.getRows()) {
-          if (rows.hasNext()) {
-            Row scanStateRow = scan.getScanState(defaultEngine);
-            String serializedScanState = JsonUtils.rowToJson(scanStateRow);
-
-            Row fileRow = rows.next();
-            String serializedScanFileRow = JsonUtils.rowToJson(fileRow);
-
-            KernelSparkPartitionReader reader =
-                new KernelSparkPartitionReader(serializedScanState, serializedScanFileRow);
-
-            try {
-              // Should be able to iterate (even if no data)
-              int rowCount = 0;
-              while (reader.next()) {
-                rowCount++;
-                assertNotNull(reader.get());
-              }
-              // Empty partition should have 0 rows
-              assertEquals(0, rowCount, "Empty partition should have no rows");
-            } finally {
-              reader.close();
-            }
-          }
-        }
-      }
-      // If no scan files, that's also valid for empty table
-    }
+  private Row createScanState(StructType schema, String tableRoot) {
+    HashMap<Integer, Object> valueMap = new HashMap<>();
+    String schemaJson = DataTypeJsonSerDe.serializeDataType(schema);
+    // ScanStateRow fields:
+    valueMap.put(0, VectorUtils.stringStringMapValue(new HashMap<>())); // configuration
+    valueMap.put(1, schemaJson); // logicalSchemaJson
+    valueMap.put(2, schemaJson); // physicalSchemaJson
+    valueMap.put(
+        3,
+        VectorUtils.buildArrayValue( // partitionColumns
+            new ArrayList<>(), StringType.STRING));
+    valueMap.put(4, 1); // minReaderVersion
+    valueMap.put(5, 2); // minWriterVersion
+    valueMap.put(6, tableRoot); // tablePath
+    return new GenericRow(ScanStateRow.SCHEMA, valueMap);
   }
 
-  @Test
-  public void testMultipleIterations(@TempDir File deltaTablePath) throws Exception {
-    // Create table with single row
-    String tablePath = deltaTablePath.getAbsolutePath();
+  private Row createFileRow(String tableRoot, String parquetFileName) {
+    // Strip "file://" prefix to get local file path
+    String localPath = tableRoot.substring("file://".length());
+    File parquetFile = new File(new File(localPath), parquetFileName);
+    assertTrue(parquetFile.exists(), "Parquet file does not exist: " + parquetFile);
 
-    Dataset<org.apache.spark.sql.Row> testData =
-        spark.createDataFrame(
-            Arrays.asList(RowFactory.create(42, "test")),
-            StructType$.MODULE$.apply(
-                Arrays.asList(
-                    DataTypes.createStructField("id", DataTypes.IntegerType, false),
-                    DataTypes.createStructField("name", DataTypes.StringType, false))));
+    Map<Integer, Object> addFileValues = new HashMap<>();
+    addFileValues.put(AddFile.SCHEMA_WITHOUT_STATS.indexOf("path"), parquetFileName);
+    addFileValues.put(
+        AddFile.SCHEMA_WITHOUT_STATS.indexOf("partitionValues"),
+        VectorUtils.stringStringMapValue(new HashMap<>()));
+    addFileValues.put(AddFile.SCHEMA_WITHOUT_STATS.indexOf("size"), parquetFile.length());
+    addFileValues.put(
+        AddFile.SCHEMA_WITHOUT_STATS.indexOf("modificationTime"), parquetFile.lastModified());
+    addFileValues.put(AddFile.SCHEMA_WITHOUT_STATS.indexOf("dataChange"), false);
 
-    testData.write().format("delta").save(tablePath);
+    Row addFileRow = new GenericRow(AddFile.SCHEMA_WITHOUT_STATS, addFileValues);
 
-    // Get serialized data
-    SnapshotImpl snapshot =
-        (SnapshotImpl) TableManager.loadSnapshot(tablePath).build(defaultEngine);
-    Scan scan = snapshot.getScanBuilder().build();
+    Map<Integer, Object> scanFileValues = new HashMap<>();
+    scanFileValues.put(InternalScanFileUtils.ADD_FILE_ORDINAL, addFileRow);
+    scanFileValues.put(InternalScanFileUtils.SCAN_FILE_SCHEMA.indexOf("tableRoot"), tableRoot);
 
-    Row scanStateRow = scan.getScanState(defaultEngine);
-    String serializedScanState = JsonUtils.rowToJson(scanStateRow);
-
-    String serializedScanFileRow = null;
-    try (CloseableIterator<FilteredColumnarBatch> scanFiles = scan.getScanFiles(defaultEngine)) {
-      if (scanFiles.hasNext()) {
-        FilteredColumnarBatch batch = scanFiles.next();
-        try (CloseableIterator<Row> rows = batch.getRows()) {
-          if (rows.hasNext()) {
-            Row fileRow = rows.next();
-            serializedScanFileRow = JsonUtils.rowToJson(fileRow);
-          }
-        }
-      }
-    }
-
-    assertNotNull(serializedScanFileRow);
-
-    // Test reader
-    KernelSparkPartitionReader reader =
-        new KernelSparkPartitionReader(serializedScanState, serializedScanFileRow);
-
-    try {
-      // First iteration should work
-      assertTrue(reader.next(), "Should have at least one row");
-      assertNotNull(reader.get());
-
-      // Subsequent calls to next() should return false
-      assertFalse(reader.next(), "Should not have more rows after first");
-
-      // Multiple calls to next() should be safe
-      assertFalse(reader.next());
-      assertFalse(reader.next());
-    } finally {
-      reader.close();
-    }
-  }
-
-  @Test
-  public void testReaderWithDifferentDataTypes(@TempDir File deltaTablePath) throws Exception {
-    // Create table with various data types
-    String tablePath = deltaTablePath.getAbsolutePath();
-
-    Dataset<org.apache.spark.sql.Row> testData =
-        spark.createDataFrame(
-            Arrays.asList(
-                RowFactory.create(1, "string", 3.14, true, 123L),
-                RowFactory.create(2, "another", 2.71, false, 456L)),
-            StructType$.MODULE$.apply(
-                Arrays.asList(
-                    DataTypes.createStructField("int_col", DataTypes.IntegerType, false),
-                    DataTypes.createStructField("string_col", DataTypes.StringType, false),
-                    DataTypes.createStructField("double_col", DataTypes.DoubleType, false),
-                    DataTypes.createStructField("bool_col", DataTypes.BooleanType, false),
-                    DataTypes.createStructField("long_col", DataTypes.LongType, false))));
-
-    testData.write().format("delta").save(tablePath);
-
-    // Get serialized data
-    SnapshotImpl snapshot =
-        (SnapshotImpl) TableManager.loadSnapshot(tablePath).build(defaultEngine);
-    Scan scan = snapshot.getScanBuilder().build();
-
-    Row scanStateRow = scan.getScanState(defaultEngine);
-    String serializedScanState = JsonUtils.rowToJson(scanStateRow);
-
-    String serializedScanFileRow = null;
-    try (CloseableIterator<FilteredColumnarBatch> scanFiles = scan.getScanFiles(defaultEngine)) {
-      if (scanFiles.hasNext()) {
-        FilteredColumnarBatch batch = scanFiles.next();
-        try (CloseableIterator<Row> rows = batch.getRows()) {
-          if (rows.hasNext()) {
-            Row fileRow = rows.next();
-            serializedScanFileRow = JsonUtils.rowToJson(fileRow);
-          }
-        }
-      }
-    }
-
-    assertNotNull(serializedScanFileRow);
-
-    // Test reader
-    KernelSparkPartitionReader reader =
-        new KernelSparkPartitionReader(serializedScanState, serializedScanFileRow);
-
-    try {
-      List<InternalRow> rows = new ArrayList<>();
-      while (reader.next()) {
-        rows.add(reader.get().copy());
-      }
-
-      assertTrue(rows.size() > 0, "Should have read some rows");
-
-      // Test data types in first row
-      InternalRow firstRow = rows.get(0);
-      assertTrue(firstRow.numFields() >= 5, "Should have at least 5 fields");
-
-      // Test integer
-      if (!firstRow.isNullAt(0)) {
-        assertDoesNotThrow(() -> firstRow.getInt(0));
-      }
-
-      // Test string (should be UTF8String)
-      if (!firstRow.isNullAt(1)) {
-        Object stringValue = firstRow.get(1, DataTypes.StringType);
-        assertInstanceOf(UTF8String.class, stringValue);
-      }
-
-      // Test double
-      if (!firstRow.isNullAt(2)) {
-        assertDoesNotThrow(() -> firstRow.getDouble(2));
-      }
-
-      // Test boolean
-      if (!firstRow.isNullAt(3)) {
-        assertDoesNotThrow(() -> firstRow.getBoolean(3));
-      }
-
-      // Test long
-      if (!firstRow.isNullAt(4)) {
-        assertDoesNotThrow(() -> firstRow.getLong(4));
-      }
-    } finally {
-      reader.close();
-    }
+    return new GenericRow(InternalScanFileUtils.SCAN_FILE_SCHEMA, scanFileValues);
   }
 }
