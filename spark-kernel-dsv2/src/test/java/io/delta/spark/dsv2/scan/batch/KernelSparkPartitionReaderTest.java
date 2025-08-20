@@ -25,7 +25,6 @@ import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch;
 import io.delta.kernel.internal.InternalScanFileUtils;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.data.GenericRow;
-import io.delta.kernel.internal.data.ScanStateRow;
 import io.delta.kernel.internal.types.DataTypeJsonSerDe;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.internal.util.VectorUtils;
@@ -39,8 +38,18 @@ import org.junit.jupiter.api.io.TempDir;
 
 public class KernelSparkPartitionReaderTest extends KernelSparkDsv2TestBase {
 
+  private final StructType SCAN_STATE_SCHEMA =
+      new StructType()
+          .add("configuration", new MapType(StringType.STRING, StringType.STRING, false))
+          .add("logicalSchemaJson", StringType.STRING)
+          .add("physicalSchemaJson", StringType.STRING)
+          .add("partitionColumns", new ArrayType(StringType.STRING, false))
+          .add("minReaderVersion", IntegerType.INTEGER)
+          .add("minWriterVersion", IntegerType.INTEGER)
+          .add("tablePath", StringType.STRING);
+
   @Test
-  public void testReadData(@TempDir File tempDir) throws Exception {
+  public void testReadParquetFile(@TempDir File tempDir) throws Exception {
     // Setup schema and test data
     StructType schema =
         new StructType()
@@ -96,6 +105,10 @@ public class KernelSparkPartitionReaderTest extends KernelSparkDsv2TestBase {
     reader.close();
   }
 
+  //////////////////////
+  // Private helpers //
+  /////////////////////
+
   private Row createScanState(StructType schema, String tableRoot) {
     HashMap<Integer, Object> valueMap = new HashMap<>();
     String schemaJson = DataTypeJsonSerDe.serializeDataType(schema);
@@ -110,7 +123,7 @@ public class KernelSparkPartitionReaderTest extends KernelSparkDsv2TestBase {
     valueMap.put(4, 1); // minReaderVersion
     valueMap.put(5, 2); // minWriterVersion
     valueMap.put(6, tableRoot); // tablePath
-    return new GenericRow(ScanStateRow.SCHEMA, valueMap);
+    return new GenericRow(SCAN_STATE_SCHEMA, valueMap);
   }
 
   private Row createFileRow(String tableRoot, String parquetFileName) {

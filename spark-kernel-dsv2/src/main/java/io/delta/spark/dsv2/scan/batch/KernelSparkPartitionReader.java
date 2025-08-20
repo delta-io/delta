@@ -36,24 +36,27 @@ import org.apache.spark.sql.connector.read.PartitionReader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/** Reads Delta Lake files using the Kernel API and converts to Spark InternalRows. */
+/** Reads Data files using the Kernel API and converts to Spark InternalRows. */
 public class KernelSparkPartitionReader implements PartitionReader<InternalRow> {
 
   private static final Logger LOG = LoggerFactory.getLogger(KernelSparkPartitionReader.class);
 
+  /**
+   * Scan state row with schema {@link ScanStateRow#SCHEMA} containing schema, configuration and
+   * table metadata for the read operation
+   */
   private final Row scanState;
+
+  /**
+   * Scan file row with schema {@link InternalScanFileUtils#SCAN_FILE_SCHEMA} containing file
+   * metadata (path, size, etc.) for the file being read.
+   */
   private final Row scanFileRow;
+
   private CloseableIterator<InternalRow> dataIterator;
   private boolean initialized = false;
   private final Engine engine;
 
-  /**
-   * Creates a reader with the given scan information.
-   *
-   * @param engine The engine to use for reading files
-   * @param scanState Contains scan state information like schema and filters
-   * @param scanFileRow Contains file metadata to be read
-   */
   public KernelSparkPartitionReader(Engine engine, Row scanState, Row scanFileRow) {
     this.scanState = requireNonNull(scanState, "scanState is null");
     this.scanFileRow = requireNonNull(scanFileRow, "scanFileRow is null");
@@ -103,17 +106,11 @@ public class KernelSparkPartitionReader implements PartitionReader<InternalRow> 
           Scan.transformPhysicalData(engine, scanState, scanFileRow, physicalDataIter);
       dataIterator = new RowIteratorAdapter(logicalDataIter);
       initialized = true;
-
     } catch (IOException e) {
-      LOG.error("Failed to initialize partition reader", e);
       throw new UncheckedIOException("Failed to initialize partition reader", e);
-    } catch (Exception e) {
-      LOG.error("Unexpected error during partition reader initialization", e);
-      throw new RuntimeException("Failed to initialize partition reader", e);
     }
   }
 
-  /** Releases all resources. */
   @Override
   public void close() throws IOException {
     if (dataIterator != null) {
