@@ -259,7 +259,7 @@ def print_configuration(args: argparse.Namespace) -> None:
         else:
             print(f"  {var:<22}: <not set>")
 
-    print(=" * 60)
+    print("=" * 60)
 
 
 if __name__ == "__main__":
