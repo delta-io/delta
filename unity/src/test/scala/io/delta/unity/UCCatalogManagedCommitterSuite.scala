@@ -284,10 +284,9 @@ class UCCatalogManagedCommitterSuite
   test("CATALOG_WRITE: writes staged commit file and invokes UC client commit API") {
     withTempTableAndLogPathAndStagedCommitFolderCreated { case (tablePath, logPath) =>
       // ===== GIVEN =====
-      // Setup UC client with initial table with maxRatifiedVersion = 0, numCommits = 1
+      // Setup UC client with initial table with maxRatifiedVersion = -1, numCommits = 0
       val ucClient = new InMemoryUCClient("ucMetastoreId")
-      val initialCommit = createCommit(0)
-      val tableData = new TableData(0, ArrayBuffer(initialCommit))
+      val tableData = new TableData(-1, ArrayBuffer[Commit]())
       ucClient.createTableIfNotExistsOrThrow("ucTableId", tableData)
 
       val testValue = "TEST_COMMIT_DATA_12345"
@@ -316,10 +315,9 @@ class UCCatalogManagedCommitterSuite
       assert(stagedCommitFilePath.matches(expectedPattern))
 
       // Verify UC client was invoked and table was updated.
-      // We expect: maxRatifiedVersion = 1, numCommits = 2.
       val updatedTable = ucClient.getTablesCopy.get("ucTableId").get
       assert(updatedTable.getMaxRatifiedVersion == 1)
-      assert(updatedTable.getCommits.size == 2)
+      assert(updatedTable.getCommits.size == 1)
 
       // Verify the new commit in UC has correct version
       val lastCommit = updatedTable.getCommits.last

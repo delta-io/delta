@@ -138,6 +138,7 @@ public class UCCatalogManagedClient {
     return response;
   }
 
+  // TODO: [delta-io/delta#5118] If UC changes CREATE semantics, update logic here.
   /**
    * As of this writing, UC catalog service is not informed when 0.json is successfully written
    * during table creation. Thus, when 0.json exists, the max ratified version returned by UC is -1.

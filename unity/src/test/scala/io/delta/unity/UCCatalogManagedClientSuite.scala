@@ -37,6 +37,7 @@ import org.scalatest.funsuite.AnyFunSuite
 /** Unit tests for [[UCCatalogManagedClient]]. */
 class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestUtils {
 
+  // TODO: [delta-io/delta#5118] If UC changes CREATE semantics, update logic here.
   /**
    * When a new UC table is created, it will have Delta version 0 but the max ratified verison in
    * UC is -1. This is a special edge case.

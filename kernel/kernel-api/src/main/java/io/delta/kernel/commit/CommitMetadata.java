@@ -186,7 +186,7 @@ public class CommitMetadata {
    *
    * <ul>
    *   <li>Filesystem-managed committers must write to this file path.
-   *   <li>Catalog-managed committers must backfill to this file path, if/when they so choose.
+   *   <li>Catalog-managed committers must publish to this file path, if/when they so choose.
    * </ul>
    */
   public String getPublishedDeltaFilePath() {

@@ -132,6 +132,8 @@ public class UCCatalogManagedCommitter implements Committer {
             // commit files are globally unique, and so we will never have concurrent writers
             // attempting to write the same commit file.
 
+            // Note: the engine is responsible for closing the actions iterator once it has been
+            //       fully consumed.
             engine
                 .getJsonHandler()
                 .writeJsonFileAtomically(
@@ -169,8 +171,8 @@ public class UCCatalogManagedCommitter implements Committer {
                 Optional.of(getUcCommitPayload(commitMetadata, kernelStagedCommitFileStatus)),
                 Optional.empty() /* lastKnownBackfilledVersion */, // TODO: take this in as a hint
                 false /* isDisown */,
-                Optional.empty() /* newMetadata */, // TODO: support sending newProtocol
-                Optional.empty()); // TODO: support sending newProtocol
+                Optional.empty() /* newMetadata */, // TODO: support sending newMetadata
+                Optional.empty()); /* newProtocol */ // TODO: support sending newProtocol
             return null;
           } catch (io.delta.storage.commit.CommitFailedException cfe) {
             throw storageCFEtoKernelCFE(cfe);
@@ -179,7 +181,7 @@ public class UCCatalogManagedCommitter implements Committer {
                 true /* retryable */, false /* conflict */, ex.getMessage(), ex);
           } catch (UCCommitCoordinatorException ucce) {
             // For now, this catches all UC exceptions such as:
-            // - CommitLimitReachedException -> TODO: backfill in this case
+            // - CommitLimitReachedException -> TODO: publish in this case
             // - InvalidTargetTableException
             // - UpgradeNotAllowedException
             // We can add specific catch statements for these exceptions if needed in the future.
