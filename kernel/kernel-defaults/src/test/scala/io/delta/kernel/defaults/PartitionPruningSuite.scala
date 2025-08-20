@@ -258,8 +258,7 @@ class PartitionPruningSuite extends AnyFunSuite with TestUtils with ExpressionTe
 
   test("partition pruning from checkpoint") {
     withTempDir { path =>
-      val tbl = "tbl"
-      withTable(tbl) {
+      withTempTable { tbl =>
         // Create partitioned table and insert some data, ensuring that a checkpoint is created
         // after the last insertion.
         spark.sql(s"CREATE TABLE $tbl (a INT, b STRING) USING delta " +
