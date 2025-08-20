@@ -2,6 +2,7 @@ import scala.util.hashing.MurmurHash3
 import sbt.Keys._
 import sbt._
 
+// scalastyle:off println
 /** Provides SBT test settings for sharding and parallelizing multi-JVM tests. */
 object MultiShardMultiJVMTestParallelization {
 
@@ -27,9 +28,14 @@ object MultiShardMultiJVMTestParallelization {
   lazy val testParallelismOpt = sys.env.get("TEST_PARALLELISM_COUNT").map(_.toInt)
 
   lazy val settings = {
+    println(s"numShardsOpt: $numShardsOpt")
+    println(s"shardIdOpt: $shardIdOpt")
+    println(s"testParallelismOpt: $testParallelismOpt")
+
     (numShardsOpt, shardIdOpt, testParallelismOpt) match {
       case (Some(numShards), Some(shardId), Some(testParallelism))
         if numShards >= 1 && shardId >= 0 && testParallelism >= 1 =>
+        println("Test parallelization enabled.")
 
         Seq(
           Test / testGrouping := {
@@ -51,6 +57,8 @@ object MultiShardMultiJVMTestParallelization {
               math.abs(MurmurHash3.stringHash(testDef.name) % numShards) == shardId
             }
 
+            println(s"[Shard $shardId] # tests: ${testsForThisShard.size}")
+
             // Distribute tests across groups (JVMs) within this shard
             (0 until testParallelism).map { groupId =>
               val testsForThisGroup = testsForThisShard.filter { testDef =>
@@ -59,6 +67,8 @@ object MultiShardMultiJVMTestParallelization {
                 val groupHash = MurmurHash3.stringHash(testDef.name + "group")
                 math.abs(groupHash % testParallelism) == groupId
               }
+
+              println(s"[Group $groupId] # tests: ${testsForThisGroup.size}")
 
               Tests.Group(
                 name = s"Shard $shardId - Group $groupId",
@@ -74,6 +84,7 @@ object MultiShardMultiJVMTestParallelization {
         )
 
       case _ =>
+        println("Test parallelization disabled.")
         Seq.empty[Setting[_]] // Run tests normally
     }
   }
