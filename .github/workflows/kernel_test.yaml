@@ -23,7 +23,7 @@ jobs:
       SCALA_VERSION: 2.12.18
       NUM_SHARDS: 4
       DISABLE_UNIDOC: true # Another unidoc workflow will test unidoc.
-      TEST_PARALLELISM_COUNT: 4
+      TEST_PARALLELISM_COUNT: 2
     steps:
       - name: Show runner specs
         run: |

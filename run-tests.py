@@ -249,7 +249,7 @@ def print_configuration(args: argparse.Namespace) -> None:
     env_vars = [
         "USE_DOCKER", "SCALA_VERSION", "DISABLE_UNIDOC", "DOCKER_REGISTRY",
         "NUM_SHARDS", "SHARD_ID", "TEST_PARALLELISM_COUNT", "JENKINS_URL",
-        "SBT_1_5_5_MIRROR_JAR_URL", "DELTA_TESTING"
+        "SBT_1_5_5_MIRROR_JAR_URL", "DELTA_TESTING", "SBT_OPTS"
     ]
 
     for var in env_vars:
