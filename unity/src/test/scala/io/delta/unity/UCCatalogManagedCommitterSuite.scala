@@ -17,7 +17,7 @@
 package io.delta.unity
 
 import java.io.IOException
-import java.nio.file.Files
+import java.nio.file.{FileAlreadyExistsException, Files}
 import java.util.{Optional, UUID}
 
 import scala.collection.JavaConverters._
@@ -169,11 +169,6 @@ class UCCatalogManagedCommitterSuite
       newProtocolOpt = Optional.of(protocol12),
       newMetadataOpt = Optional.of(basicPartitionedMetadata),
       expectedCommitType = CommitType.FILESYSTEM_CREATE),
-    CommitTypeTestCase(
-      readPandMOpt = Optional.empty(),
-      newProtocolOpt = Optional.of(protocolWithCatalogManagedSupport),
-      newMetadataOpt = Optional.of(basicPartitionedMetadata),
-      expectedCommitType = CommitType.CATALOG_CREATE),
     CommitTypeTestCase(
       readPandMOpt = Optional.of(new KernelTuple2(protocol12, basicPartitionedMetadata)),
       expectedCommitType = CommitType.FILESYSTEM_WRITE),
@@ -425,6 +420,102 @@ class UCCatalogManagedCommitterSuite
       assert(ex.getCause.isInstanceOf[InvalidTargetTableException])
       assert(!ex.isRetryable && !ex.isConflict)
       assert(ex.getMessage.contains("Target table does not exist"))
+    }
+  }
+
+  // ================================================================
+  // ===================== CATALOG_CREATE Tests =====================
+  // ================================================================
+
+  test("CATALOG_CREATE: writes published delta file for version 0") {
+    withTempTableAndLogPathAndStagedCommitFolderCreated { case (tablePath, logPath) =>
+      // ===== GIVEN =====
+      val ucClient = new InMemoryUCClient("ucMetastoreId")
+      val testValue = "CREATE_TABLE_DATA_12345"
+      val actionsIterator = getSingleElementRowIter(testValue)
+      val committer = new UCCatalogManagedCommitter(ucClient, "ucTableId", tablePath)
+
+      val commitMetadata = createCommitMetadata(
+        version = 0,
+        logPath = logPath,
+        newProtocolOpt = Optional.of(protocolWithCatalogManagedSupport),
+        newMetadataOpt = Optional.of(basicPartitionedMetadata))
+
+      // ===== WHEN =====
+      val response = committer.commit(defaultEngine, actionsIterator, commitMetadata)
+
+      // ===== THEN =====
+      val publishedDeltaFilePath = response.getCommitLogData.getFileStatus.getPath
+
+      // Verify the published delta file exists and is version 0
+      val expectedFilePath = s"$logPath/00000000000000000000.json"
+      assert(publishedDeltaFilePath == expectedFilePath)
+
+      val file = new java.io.File(publishedDeltaFilePath)
+      assert(file.exists())
+      assert(file.isFile())
+
+      // Read the file content and verify our test value was written
+      val fileContent = scala.io.Source.fromFile(file).getLines().mkString("\n")
+      assert(fileContent.contains(testValue))
+
+      // Validate that UC was not updated for v0
+      // TODO: [delta-io/delta#5118] If UC changes CREATE semantics, update logic here.
+      assert(!ucClient.getTablesCopy.contains("ucTableId"))
+    }
+  }
+
+  case class CatalogCreateExceptionTestCase(
+      testName: String,
+      mockException: Exception,
+      expectedRetryable: Boolean,
+      expectedConflict: Boolean,
+      expectedMessageContains: String)
+
+  private val catalogCreateExceptionTestCases = Seq(
+    CatalogCreateExceptionTestCase(
+      testName = "file already exists",
+      mockException = new FileAlreadyExistsException("File already exists"),
+      expectedRetryable = false,
+      expectedConflict = true,
+      expectedMessageContains = "Failed to write published delta file due to: File already exists"),
+    CatalogCreateExceptionTestCase(
+      testName = "IOException during write",
+      mockException = new IOException("Network hiccup"),
+      expectedRetryable = true,
+      expectedConflict = false,
+      expectedMessageContains = "Failed to write published delta file due to: Network hiccup"))
+
+  catalogCreateExceptionTestCases.foreach { testCase =>
+    test(s"CATALOG_CREATE: throws exception when ${testCase.testName}") {
+      withTempTableAndLogPathAndStagedCommitFolderCreated { case (tablePath, logPath) =>
+        // ===== GIVEN =====
+        val ucClient = new InMemoryUCClient("ucMetastoreId")
+        val throwingEngine = mockEngine(jsonHandler = new BaseMockJsonHandler {
+          override def writeJsonFileAtomically(
+              path: String,
+              data: CloseableIterator[Row],
+              overwrite: Boolean): Unit =
+            throw testCase.mockException
+        })
+        val committer = new UCCatalogManagedCommitter(ucClient, "ucTableId", tablePath)
+
+        val commitMetadata = createCommitMetadata(
+          version = 0,
+          logPath = logPath,
+          newProtocolOpt = Optional.of(protocolWithCatalogManagedSupport),
+          newMetadataOpt = Optional.of(basicPartitionedMetadata))
+
+        // ===== WHEN =====
+        val ex = intercept[CommitFailedException] {
+          committer.commit(throwingEngine, emptyActionsIterator, commitMetadata)
+        }
+
+        // ===== THEN =====
+        assert(ex.isRetryable == testCase.expectedRetryable)
+        assert(ex.isConflict == testCase.expectedConflict)
+        assert(ex.getMessage.contains(testCase.expectedMessageContains))
+      }
     }
   }
 

@@ -345,6 +345,13 @@ public class TransactionImpl implements Transaction {
           return doCommit(
               engine, commitAsVersion, attemptCommitInfo, dataActions, transactionMetrics);
         } catch (CommitFailedException cfe) {
+          // TODO: When catalog-managed CREATE conflicts on 00.json, yielding CFE(retryable=false,
+          //       conflict=true), we can't retry with 001.json since CREATE must be version 0.
+          //       However, we might be conflicting with our own previous attempt that succeeded but
+          //       the client didn't learn about it. Similar to Case 4 below, we need detection to
+          //       distinguish between genuine conflict and conflict with our own previous commit
+          //       attempt. For now, we just fail.
+
           if (!cfe.isRetryable()) {
             // Case 1: Non-retryable exception. We must throw this. We don't expect connectors to
             //         be able to recover from this.
