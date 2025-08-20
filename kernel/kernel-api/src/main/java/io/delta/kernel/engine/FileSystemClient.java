@@ -85,4 +85,13 @@ public interface FileSystemClient {
    * @throws IOException for any IO error.
    */
   boolean delete(String path) throws IOException;
+
+  /**
+   * Get the metadata of the file at the given path.
+   *
+   * @param path Fully qualified path to the file.
+   * @return Metadata of the file.
+   * @throws IOException for any IO error.
+   */
+  FileStatus getFileStatus(String path) throws IOException;
 }

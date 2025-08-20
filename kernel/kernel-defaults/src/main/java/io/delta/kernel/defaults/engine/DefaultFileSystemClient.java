@@ -91,6 +91,11 @@ public class DefaultFileSystemClient implements FileSystemClient {
     return fileIO.delete(path);
   }
 
+  @Override
+  public FileStatus getFileStatus(String path) throws IOException {
+    return fileIO.getFileStatus(path);
+  }
+
   private ByteArrayInputStream getStream(String filePath, int offset, int size) {
     InputFile inputFile = this.fileIO.newInputFile(filePath, /* fileSize */ -1);
     try (SeekableInputStream stream = inputFile.newStream()) {
