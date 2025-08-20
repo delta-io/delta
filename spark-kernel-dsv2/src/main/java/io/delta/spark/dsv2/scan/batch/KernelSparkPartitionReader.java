@@ -108,7 +108,7 @@ public class KernelSparkPartitionReader implements PartitionReader<InternalRow> 
                   Utils.singletonCloseableIterator(
                       InternalScanFileUtils.getAddFileStatus(scanFileRow)),
                   ScanStateRow.getPhysicalDataReadSchema(scanState),
-                  // TODO: parquet push down
+                  // TODO: [delta-io/delta#5119] push down filter to parquet.
                   Optional.empty())
               .map(FileReadResult::getData);
       CloseableIterator<FilteredColumnarBatch> logicalDataIter =
