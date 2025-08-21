@@ -428,6 +428,7 @@ case class AlterTableDropFeatureDeltaCommand(
       // If any concurrent transactions interfere with the protocol downgrade txn we
       // revalidate the requirements against the snapshot of the winning txn.
       if (!removableFeature.validateDropInvariants(table, snapshot)) {
+        TransactionExecutionObserver.getObserver.transactionAborted()
         throw DeltaErrors.dropTableFeatureConflictRevalidationFailed()
       }
 
@@ -541,6 +542,7 @@ case class AlterTableDropFeatureDeltaCommand(
       // If any concurrent transactions interfere with the protocol downgrade txn we
       // revalidate the requirements against the snapshot of the winning txn.
       if (!removableFeature.validateDropInvariants(table, snapshot)) {
+        TransactionExecutionObserver.getObserver.transactionAborted()
         throw DeltaErrors.dropTableFeatureConflictRevalidationFailed()
       }
       val metadataWithNewConfiguration = DropTableFeatureUtils
