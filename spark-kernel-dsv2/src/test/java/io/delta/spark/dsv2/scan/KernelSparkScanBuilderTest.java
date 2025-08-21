@@ -40,7 +40,7 @@ public class KernelSparkScanBuilderTest extends KernelSparkDsv2TestBase {
             "CREATE TABLE %s (id INT, data STRING) USING delta LOCATION '%s'", tableName, path));
     Snapshot snapshot = TableManager.loadSnapshot(path).build(defaultEngine);
     KernelSparkScanBuilder builder =
-        new KernelSparkScanBuilder((SnapshotImpl) snapshot, defaultEngine);
+        new KernelSparkScanBuilder((SnapshotImpl) snapshot, spark.sessionState().newHadoopConf());
 
     org.apache.spark.sql.types.StructType expectedSparkSchema =
         DataTypes.createStructType(

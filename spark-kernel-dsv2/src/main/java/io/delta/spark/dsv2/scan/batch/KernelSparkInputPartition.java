@@ -15,33 +15,40 @@
  */
 package io.delta.spark.dsv2.scan.batch;
 
+import io.delta.spark.dsv2.utils.SerializableKernelRowWrapper;
 import java.io.Serializable;
 import java.util.Objects;
 import org.apache.spark.sql.connector.read.InputPartition;
 
 /**
- * Spark InputPartition implementation that holds serialized Delta Kernel scan information. Contains
- * both scan state and add files.
+ * Spark InputPartition implementation that holds serialized Delta Kernel scan information.
+ *
+ * <p>This class is created on the Driver during partition planning and serialized to Executors
+ * where it's used to create PartitionReaders. Contains both scan state and scan file metadata
+ * needed to read a specific portion of files of the Delta table.
  */
 public final class KernelSparkInputPartition implements InputPartition, Serializable {
 
-  private final String serializedScanState;
-  // TODO: [delta-io/delta#5109] implement the logic to group files in to partition based on file
-  // size.
-  // Json representation of one add file in kernel
-  private final String serializedScanFileRow;
+  private final SerializableKernelRowWrapper serializedScanState;
 
-  public KernelSparkInputPartition(String serializedScanState, String serializedScanFileRow) {
+  // TODO: [delta-io/delta#5109] implement the logic to group files into partition based on file
+  //       size.
+  /** Serialized representation of one scan file row from kernel scan */
+  private final SerializableKernelRowWrapper serializedScanFileRow;
+
+  public KernelSparkInputPartition(
+      SerializableKernelRowWrapper serializedScanState,
+      SerializableKernelRowWrapper serializedScanFileRow) {
     this.serializedScanState = Objects.requireNonNull(serializedScanState, "serializedScanState");
     this.serializedScanFileRow =
         Objects.requireNonNull(serializedScanFileRow, "serializedScanFileRow");
   }
 
-  public String getSerializedScanState() {
+  public SerializableKernelRowWrapper getSerializedScanState() {
     return serializedScanState;
   }
 
-  public String getSerializedScanFileRow() {
+  public SerializableKernelRowWrapper getSerializedScanFileRow() {
     return serializedScanFileRow;
   }
 }

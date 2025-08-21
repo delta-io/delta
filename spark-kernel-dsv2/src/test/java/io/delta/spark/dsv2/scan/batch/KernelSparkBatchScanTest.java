@@ -46,7 +46,8 @@ public class KernelSparkBatchScanTest extends KernelSparkDsv2TestBase {
     String tableName = "test_plan_input_partitions";
     createTestTable(path, tableName);
     Scan scan = TableManager.loadSnapshot(path).build(defaultEngine).getScanBuilder().build();
-    KernelSparkScanContext scanContext = new KernelSparkScanContext(scan, defaultEngine);
+    KernelSparkScanContext scanContext =
+        new KernelSparkScanContext(scan, spark.sessionState().newHadoopConf());
     KernelSparkBatchScan batchScan = new KernelSparkBatchScan(scanContext);
 
     InputPartition[] partitions = batchScan.planInputPartitions();
@@ -65,7 +66,8 @@ public class KernelSparkBatchScanTest extends KernelSparkDsv2TestBase {
     createTestTable(path, tableName);
 
     Scan scan = TableManager.loadSnapshot(path).build(defaultEngine).getScanBuilder().build();
-    KernelSparkScanContext scanContext = new KernelSparkScanContext(scan, defaultEngine);
+    KernelSparkScanContext scanContext =
+        new KernelSparkScanContext(scan, spark.sessionState().newHadoopConf());
     KernelSparkBatchScan batchScan = new KernelSparkBatchScan(scanContext);
 
     InputPartition[] result1 = batchScan.planInputPartitions();
@@ -88,7 +90,8 @@ public class KernelSparkBatchScanTest extends KernelSparkDsv2TestBase {
     String tableName = "test_reader_factory";
     createTestTable(path, tableName);
     Scan scan = TableManager.loadSnapshot(path).build(defaultEngine).getScanBuilder().build();
-    KernelSparkScanContext scanContext = new KernelSparkScanContext(scan, defaultEngine);
+    KernelSparkScanContext scanContext =
+        new KernelSparkScanContext(scan, spark.sessionState().newHadoopConf());
     KernelSparkBatchScan batchScan = new KernelSparkBatchScan(scanContext);
 
     UnsupportedOperationException exception =

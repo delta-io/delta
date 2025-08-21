@@ -33,14 +33,14 @@ public class KernelSparkScanContextTest extends KernelSparkDsv2TestBase {
     assertThrows(
         NullPointerException.class,
         () -> {
-          new KernelSparkScanContext(null, defaultEngine);
+          new KernelSparkScanContext(null, spark.sessionState().newHadoopConf());
         });
   }
 
   @Test
-  public void testConstructorWithNullEngine(@TempDir File tempDir) {
+  public void testConstructorWithNullHadoopConf(@TempDir File tempDir) {
     String path = tempDir.getAbsolutePath();
-    String tableName = "test_null_engine";
+    String tableName = "test_null_hadoop_conf";
     createTestTable(path, tableName);
 
     Scan scan = TableManager.loadSnapshot(path).build(defaultEngine).getScanBuilder().build();
@@ -59,7 +59,8 @@ public class KernelSparkScanContextTest extends KernelSparkDsv2TestBase {
     createTestTable(path, tableName);
 
     Scan scan = TableManager.loadSnapshot(path).build(defaultEngine).getScanBuilder().build();
-    KernelSparkScanContext scanContext = new KernelSparkScanContext(scan, defaultEngine);
+    KernelSparkScanContext scanContext =
+        new KernelSparkScanContext(scan, spark.sessionState().newHadoopConf());
 
     InputPartition[] partitions = scanContext.planPartitions();
 
@@ -81,7 +82,8 @@ public class KernelSparkScanContextTest extends KernelSparkDsv2TestBase {
     createEmptyTestTable(path, tableName);
 
     Scan scan = TableManager.loadSnapshot(path).build(defaultEngine).getScanBuilder().build();
-    KernelSparkScanContext scanContext = new KernelSparkScanContext(scan, defaultEngine);
+    KernelSparkScanContext scanContext =
+        new KernelSparkScanContext(scan, spark.sessionState().newHadoopConf());
 
     InputPartition[] partitions = scanContext.planPartitions();
 
@@ -96,7 +98,8 @@ public class KernelSparkScanContextTest extends KernelSparkDsv2TestBase {
     createTestTable(path, tableName);
 
     Scan scan = TableManager.loadSnapshot(path).build(defaultEngine).getScanBuilder().build();
-    KernelSparkScanContext scanContext = new KernelSparkScanContext(scan, defaultEngine);
+    KernelSparkScanContext scanContext =
+        new KernelSparkScanContext(scan, spark.sessionState().newHadoopConf());
 
     InputPartition[] partitions1 = scanContext.planPartitions();
     InputPartition[] partitions2 = scanContext.planPartitions();

@@ -27,6 +27,7 @@ import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.types.StructType;
 import io.delta.spark.dsv2.KernelSparkDsv2TestBase;
+import io.delta.spark.dsv2.utils.SerializableKernelRowWrapper;
 import java.io.File;
 import java.io.IOException;
 import java.util.HashMap;
@@ -70,35 +71,31 @@ public class KernelSparkInputPartitionTest extends KernelSparkDsv2TestBase {
 
     // Create partition with the serialized data
     KernelSparkInputPartition partition =
-        new KernelSparkInputPartition(serializedScanState, serializedFileRow);
+        new KernelSparkInputPartition(
+            new SerializableKernelRowWrapper(originalScanState),
+            new SerializableKernelRowWrapper(testFileRow));
 
     // Test scan state round trip
-    String retrievedScanState = partition.getSerializedScanState();
-    assertEquals(serializedScanState, retrievedScanState);
-    Row deserializedScanState = JsonUtils.rowFromJson(retrievedScanState, scanStateSchema);
-    assertNotNull(deserializedScanState);
-    assertEquals(originalScanState.getSchema(), deserializedScanState.getSchema());
+    Row retrievedScanState = partition.getSerializedScanState().getRow();
+    assertEquals(originalScanState.getSchema(), retrievedScanState.getSchema());
 
     // Test file row round trip
-    String retrievedFileRow = partition.getSerializedScanFileRow();
-    assertEquals(serializedFileRow, retrievedFileRow);
-    // Test that we can deserialize it back using Kernel schema
-    Row deserializedFileRow = JsonUtils.rowFromJson(retrievedFileRow, scanFileSchema);
-    assertNotNull(deserializedFileRow);
-    assertEquals(scanFileSchema, deserializedFileRow.getSchema());
-    // Verify the structure matches our original testFileRow
-    assertEquals(testFileRow.getSchema(), deserializedFileRow.getSchema());
+    Row retrievedFileRow = partition.getSerializedScanFileRow().getRow();
+    assertNotNull(retrievedFileRow);
+    assertEquals(testFileRow.getSchema(), retrievedFileRow.getSchema());
   }
 
   @Test
   public void testConstructorWithNullScanState() {
-    String fileRow = "{\"file\":\"test.parquet\"}";
+    SerializableKernelRowWrapper mockFileRow =
+        new SerializableKernelRowWrapper(
+            new GenericRow(InternalScanFileUtils.SCAN_FILE_SCHEMA, new HashMap<>()));
 
     NullPointerException exception =
         assertThrows(
             NullPointerException.class,
             () -> {
-              new KernelSparkInputPartition(null, fileRow);
+              new KernelSparkInputPartition(null, mockFileRow);
             });
 
     assertEquals("serializedScanState", exception.getMessage());
@@ -106,13 +103,14 @@ public class KernelSparkInputPartitionTest extends KernelSparkDsv2TestBase {
 
   @Test
   public void testConstructorWithNullFileRow() {
-    String scanState = "{\"scanState\":\"test\"}";
+    Row mockScanState = new GenericRow(AddFile.SCHEMA_WITHOUT_STATS, new HashMap<>());
+    SerializableKernelRowWrapper scanStateWrapper = new SerializableKernelRowWrapper(mockScanState);
 
     NullPointerException exception =
         assertThrows(
             NullPointerException.class,
             () -> {
-              new KernelSparkInputPartition(scanState, null);
+              new KernelSparkInputPartition(scanStateWrapper, null);
             });
 
     assertEquals("serializedScanFileRow", exception.getMessage());
