@@ -52,7 +52,8 @@ public class KernelSparkScanContext {
   private final SerializableKernelRowWrapper serializedScanState;
 
   /**
-   * Cached scan file batches from kernel scan to avoid re-reading on multiple planPartitions calls
+   * Cached scan file batches from kernel scan to avoid re-reading log files for replay
+   * on multiple planPartitions calls
    */
   private final AtomicReference<Optional<List<FilteredColumnarBatch>>> cachedScanFileBatches;
 
@@ -69,11 +70,6 @@ public class KernelSparkScanContext {
    * <p>This method converts Delta Kernel scan files into Spark InputPartitions. Each file row from
    * the kernel scan creates one input partition containing serialized scan state and file metadata.
    * The InputPartitions are serialized and sent from Driver to Executors.
-   *
-   * <p>Results are cached on first invocation using thread-safe lazy initialization. Subsequent
-   * calls return partitions calculated based on the same cached batches. This enables runtime
-   * filtering extensions where filters can be generated and pushed to scan after the first
-   * planInputPartition call.
    *
    * @return array of InputPartitions for Spark to process
    * @throws UncheckedIOException if kernel scan fails or partition creation fails
