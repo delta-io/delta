@@ -85,7 +85,7 @@ public class TestCatalog implements TableCatalog {
       // Use TableManager.loadTable to load the table
       SnapshotImpl snapshot = (SnapshotImpl) TableManager.loadSnapshot(tablePath).build(engine);
       return new DeltaKernelTable(ident, snapshot);
-    } catch (TableNotFoundException kernelException) {
+    } catch (TableNotFoundException tableNotFoundException) {
       throw new NoSuchTableException(ident);
     } catch (Exception e) {
       throw new RuntimeException("Failed to load table: " + ident, e);
