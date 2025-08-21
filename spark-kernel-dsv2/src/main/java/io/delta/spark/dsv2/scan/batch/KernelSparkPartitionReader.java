@@ -88,9 +88,7 @@ public class KernelSparkPartitionReader implements PartitionReader<InternalRow> 
     return false;
   }
 
-  /**
-   * Returns the current row. Call only after {@link #next()} returns true.
-   */
+  /** Returns the current row. Call only after {@link #next()} returns true. */
   @Override
   public InternalRow get() {
     if (!initialized) {
@@ -107,17 +105,16 @@ public class KernelSparkPartitionReader implements PartitionReader<InternalRow> 
       return;
     }
 
-    try {
-      CloseableIterator<ColumnarBatch> physicalDataIter =
-          engine
-              .getParquetHandler()
-              .readParquetFiles(
-                  Utils.singletonCloseableIterator(
-                      InternalScanFileUtils.getAddFileStatus(scanFileRow)),
-                  ScanStateRow.getPhysicalDataReadSchema(scanState),
-                  // TODO: [delta-io/delta#5119] push down filter to parquet.
-                  Optional.empty())
-              .map(FileReadResult::getData);
+    try (CloseableIterator<ColumnarBatch> physicalDataIter =
+        engine
+            .getParquetHandler()
+            .readParquetFiles(
+                Utils.singletonCloseableIterator(
+                    InternalScanFileUtils.getAddFileStatus(scanFileRow)),
+                ScanStateRow.getPhysicalDataReadSchema(scanState),
+                // TODO: [delta-io/delta#5119] push down filter to parquet.
+                Optional.empty())
+            .map(FileReadResult::getData)) {
       CloseableIterator<FilteredColumnarBatch> logicalDataIter =
           Scan.transformPhysicalData(engine, scanState, scanFileRow, physicalDataIter);
       dataIterator = new RowIteratorAdapter(logicalDataIter);
