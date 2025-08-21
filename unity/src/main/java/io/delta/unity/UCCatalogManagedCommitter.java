@@ -86,7 +86,13 @@ public class UCCatalogManagedCommitter implements Committer {
     throw new UnsupportedOperationException("Unsupported commit type: " + commitType);
   }
 
-  /** Handles CATALOG_CREATE by writing the published delta file for version 0. */
+  /**
+   * Handles CATALOG_CREATE by writing the published delta file for version 0.
+   *
+   * <p>Note that this assumes that the table is being created within a staging location, and that
+   * the Connector will post-commit inform UC of this 000.json file.
+   */
+  // TODO: [delta-io/delta#5118] If UC changes CREATE semantics, update logic here.
   private CommitResponse createImpl(
       Engine engine, CloseableIterator<Row> finalizedActions, CommitMetadata commitMetadata)
       throws CommitFailedException {
@@ -175,15 +181,13 @@ public class UCCatalogManagedCommitter implements Committer {
           commitMetadata.getPublishedDeltaFilePath(),
           false /* overwrite */);
     } catch (FileAlreadyExistsException ex) {
-      // We are either conflicting with (a) another writer concurrently writing to the same staging
-      // table location (which should be impossible) or (b) a previous commit attempt from this
-      // writer that succeeded in writing 00.json but failed to notify the client (e.g. due to
-      // network issues).
-      throw new CommitFailedException(
-          false /* retryable */,
-          true /* conflict */,
-          "Failed to write published delta file due to: " + ex.getMessage(),
-          ex);
+      // This can happen if a previous commit attempt from this writer succeeded in writing 00.json,
+      // but the client was not successfully notified of that write (e.g. due to network
+      // issues).
+      //
+      // Since we know we are conflicting with our previous write, we can safely return a successful
+      // response.
+      return FileStatus.of(commitMetadata.getPublishedDeltaFilePath());
     } catch (IOException ex) {
       throw new CommitFailedException(
           true /* retryable */,
