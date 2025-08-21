@@ -114,6 +114,9 @@ trait CreateDeltaTableLike extends SQLConfHelper {
         ignoreIfExists = false,
         validateLocation = false)
     }
+    if (conf.getConf(DeltaSQLConf.HMS_FORCE_ALTER_TABLE_DATA_SCHEMA)) {
+      spark.sessionState.catalog.alterTableDataSchema(cleaned.identifier, cleaned.schema)
+    }
   }
 
   /** Clean up the information we pass on to store in the catalog. */

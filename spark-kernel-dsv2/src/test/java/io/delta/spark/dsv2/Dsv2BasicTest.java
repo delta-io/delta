@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.UUID;
 import org.apache.spark.SparkConf;
 import org.apache.spark.sql.*;
+import org.apache.spark.sql.types.DataTypes;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -40,6 +41,10 @@ public class Dsv2BasicTest {
         new SparkConf()
             .set("spark.sql.catalog.dsv2", "io.delta.spark.dsv2.catalog.TestCatalog")
             .set("spark.sql.catalog.dsv2.base_path", tempDir.getAbsolutePath())
+            .set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+            .set(
+                "spark.sql.catalog.spark_catalog",
+                "org.apache.spark.sql.delta.catalog.DeltaCatalog")
             .setMaster("local[*]")
             .setAppName("Dsv2BasicTest");
     spark = SparkSession.builder().config(conf).getOrCreate();
@@ -96,6 +101,38 @@ public class Dsv2BasicTest {
         "TABLE_OR_VIEW_NOT_FOUND",
         e.getErrorClass(),
         "Missing table should raise TABLE_OR_VIEW_NOT_FOUND");
+  }
+
+  @Test
+  public void testPathBasedTable(@TempDir File deltaTablePath) {
+    String tablePath = deltaTablePath.getAbsolutePath();
+
+    // Create test data and write as Delta table
+    Dataset<Row> testData =
+        spark.createDataFrame(
+            Arrays.asList(
+                RowFactory.create(1, "Alice", 100.0),
+                RowFactory.create(2, "Bob", 200.0),
+                RowFactory.create(3, "Charlie", 300.0)),
+            DataTypes.createStructType(
+                Arrays.asList(
+                    DataTypes.createStructField("id", DataTypes.IntegerType, false),
+                    DataTypes.createStructField("name", DataTypes.StringType, false),
+                    DataTypes.createStructField("value", DataTypes.DoubleType, false))));
+
+    testData.write().format("delta").save(tablePath);
+
+    // TODO: [delta-io/delta#5001] change to select query after batch read is supported for dsv2
+    // path.
+    Dataset<Row> actual = spark.sql(String.format("DESCRIBE TABLE dsv2.delta.`%s`", tablePath));
+
+    List<Row> expectedRows =
+        Arrays.asList(
+            RowFactory.create("id", "int", null),
+            RowFactory.create("name", "string", null),
+            RowFactory.create("value", "double", null));
+
+    assertDatasetEquals(actual, expectedRows);
   }
 
   //////////////////////

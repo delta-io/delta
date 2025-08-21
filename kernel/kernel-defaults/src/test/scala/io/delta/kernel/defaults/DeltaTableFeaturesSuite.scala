@@ -146,16 +146,12 @@ class DeltaTableFeaturesSuite extends AnyFunSuite with WriteUtils {
         test(s"Create table with timestampNtz enabled: $isTimestampNtzEnabled") {
           withTempDirAndEngine { (tablePath, engine) =>
             val table = Table.forPath(engine, tablePath)
-            val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
-
             val schema = if (isTimestampNtzEnabled) {
               new StructType().add("tz", TimestampNTZType.TIMESTAMP_NTZ)
             } else {
               new StructType().add("id", INTEGER)
             }
-            val txn = txnBuilder
-              .withSchema(engine, schema)
-              .build(engine)
+            val txn = getCreateTxn(engine, tablePath, schema)
 
             assert(txn.getSchema(engine) === schema)
             assert(txn.getPartitionColumns(engine).isEmpty)
@@ -176,10 +172,7 @@ class DeltaTableFeaturesSuite extends AnyFunSuite with WriteUtils {
   test("schema evolution from Spark to add TIMESTAMP_NTZ type on a table created with kernel") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
-      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
-      val txn = txnBuilder
-        .withSchema(engine, testSchema)
-        .build(engine)
+      val txn = getCreateTxn(engine, tablePath, testSchema)
       val txnResult = commitTransaction(txn, engine, emptyIterable())
 
       assert(txnResult.getVersion === 0)
@@ -215,9 +208,7 @@ class DeltaTableFeaturesSuite extends AnyFunSuite with WriteUtils {
   test("withDomainMetadata adds corresponding feature option") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
-      val txnBuilder = table.createTransactionBuilder(engine, testEngineInfo, CREATE_TABLE)
-      val txn =
-        txnBuilder.withDomainMetadataSupported().withSchema(engine, testSchema).build(engine)
+      val txn = getCreateTxn(engine, tablePath, testSchema, withDomainMetadataSupported = true)
       commitTransaction(txn, engine, emptyIterable())
       assert(latestSnapshot(table, engine).getProtocol.getExplicitlySupportedFeatures.contains(
         TableFeatures.DOMAIN_METADATA_W_FEATURE))
@@ -232,7 +223,7 @@ class DeltaTableFeaturesSuite extends AnyFunSuite with WriteUtils {
       assert(latestSnapshot(table, engine).getMetadata.getConfiguration.isEmpty)
 
       // Update table with the same feature override set.
-      val updateTxn = createTxn(engine, tablePath, tableProperties = properties)
+      val updateTxn = getUpdateTxn(engine, tablePath, tableProperties = properties)
 
       commitTransaction(updateTxn, engine, emptyIterable())
 
@@ -296,7 +287,7 @@ class DeltaTableFeaturesSuite extends AnyFunSuite with WriteUtils {
       createEmptyTable(engine, tablePath, testSchema)
 
       intercept[InvalidConfigurationValueException] {
-        createTxn(
+        getUpdateTxn(
           engine,
           tablePath,
           tableProperties = Map(TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.getKey -> "iceberg"))

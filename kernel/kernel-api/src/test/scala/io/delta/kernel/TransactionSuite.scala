@@ -162,6 +162,7 @@ class TransactionSuite extends AnyFunSuite with VectorTestUtils with MockEngineU
         Optional.empty(),
         Optional.empty(),
         new Format(),
+        DataTypeJsonSerDe.serializeDataType(schema),
         schema,
         VectorUtils.buildArrayValue(Seq.empty.asJava, StringType.STRING),
         Optional.empty(),
@@ -305,6 +306,7 @@ object TransactionSuite extends VectorTestUtils with MockEngineUtils {
       Optional.empty(), /* name */
       Optional.empty(), /* description */
       new Format(),
+      DataTypeJsonSerDe.serializeDataType(schema),
       schema,
       VectorUtils.buildArrayValue(partitionCols.asJava, StringType.STRING), // partitionColumns
       Optional.empty(), // createdTime

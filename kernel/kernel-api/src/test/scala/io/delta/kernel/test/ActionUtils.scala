@@ -63,6 +63,7 @@ trait ActionUtils extends VectorTestUtils {
       Optional.of("name"),
       Optional.of("description"),
       new Format("parquet", Collections.emptyMap()),
+      schema.toJson,
       schema,
       new ArrayValue() { // partitionColumns
         override def getSize: Int = partitionCols.size

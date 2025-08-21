@@ -21,14 +21,14 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.Row
 
-trait MergeIntoNotMatchedBySourceWithCDCSuite extends MergeIntoSuiteBaseMixin {
+trait MergeIntoNotMatchedBySourceWithCDCMixin extends MergeIntoSuiteBaseMixin {
   import testImplicits._
 
   /**
    * Variant of `testExtendedMerge` that runs a MERGE INTO command, checks the expected result and
    * additionally validate that the CDC produced is correct.
    */
-  private def testExtendedMergeWithCDC(
+  protected def testExtendedMergeWithCDC(
       name: String,
       namePrefix: String = "not matched by source")(
       source: Seq[(Int, Int)],
@@ -59,7 +59,9 @@ trait MergeIntoNotMatchedBySourceWithCDCSuite extends MergeIntoSuiteBaseMixin {
       }
     }
   }
+}
 
+trait MergeIntoNotMatchedBySourceCDCPart1Tests extends MergeIntoNotMatchedBySourceWithCDCMixin {
   // Test correctness with NOT MATCHED BY SOURCE clauses.
   testExtendedMergeWithCDC("all 3 types of match clauses without conditions")(
     source = (0, 0) :: (1, 1) :: (5, 5) :: Nil,
@@ -217,7 +219,9 @@ trait MergeIntoNotMatchedBySourceWithCDCSuite extends MergeIntoSuiteBaseMixin {
       (1, 10, "update_preimage"),
       (1, 11, "update_postimage"),
       (5, 50, "delete")))
+}
 
+trait MergeIntoNotMatchedBySourceCDCPart2Tests extends MergeIntoNotMatchedBySourceWithCDCMixin {
   testExtendedMergeWithCDC("not matched by source update + delete clauses")(
     source = (0, 0) :: (1, 1) :: (5, 5) :: Nil,
     target = (1, 10) :: (2, 20) :: (7, 70) :: Nil,

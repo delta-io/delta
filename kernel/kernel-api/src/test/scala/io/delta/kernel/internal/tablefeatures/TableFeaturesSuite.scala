@@ -196,11 +196,12 @@ class TableFeaturesSuite extends AnyFunSuite {
     }
   })
 
-  Seq("domainMetadata", "vacuumProtocolCheck", "clustering").foreach { feature =>
-    test(s"doesn't support auto enable by metadata: $feature") {
-      val tableFeature = TableFeatures.getTableFeature(feature)
-      assert(!tableFeature.isInstanceOf[FeatureAutoEnabledByMetadata])
-    }
+  Seq("domainMetadata", "vacuumProtocolCheck", "clustering", "catalogOwned-preview").foreach {
+    feature =>
+      test(s"doesn't support auto enable by metadata: $feature") {
+        val tableFeature = TableFeatures.getTableFeature(feature)
+        assert(!tableFeature.isInstanceOf[FeatureAutoEnabledByMetadata])
+      }
   }
 
   Seq(
@@ -251,6 +252,7 @@ class TableFeaturesSuite extends AnyFunSuite {
     // are writable because the metadata has not been set the info that
     // these features are enabled
     val expected = Seq(
+      "catalogOwned-preview",
       "columnMapping",
       "v2Checkpoint",
       "deletionVectors",
@@ -311,6 +313,7 @@ class TableFeaturesSuite extends AnyFunSuite {
 
   // Reads: Supported table features represented as readerFeatures in the protocol
   Seq(
+    "catalogOwned-preview",
     "variantType",
     "variantType-preview",
     "variantShredding-preview",
@@ -363,6 +366,12 @@ class TableFeaturesSuite extends AnyFunSuite {
   }
 
   // Writes
+
+  checkWriteSupported(
+    "validateKernelCanWriteToTable: protocol 7 with catalogOwned-preview",
+    new Protocol(3, 7, singleton("catalogOwned-preview"), singleton("catalogOwned-preview")),
+    testMetadata())
+
   checkWriteUnsupported(
     "validateKernelCanWriteToTable: protocol 8", // beyond the table feature writer version
     new Protocol(3, 8))
@@ -1212,6 +1221,7 @@ class TableFeaturesSuite extends AnyFunSuite {
       Optional.of("name"),
       Optional.of("description"),
       new Format("parquet", Collections.emptyMap()),
+      testSchema.toJson,
       testSchema,
       new ArrayValue() { // partitionColumns
         override def getSize = 1

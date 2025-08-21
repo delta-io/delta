@@ -16,12 +16,12 @@
 package io.delta.kernel.defaults.utils
 
 import scala.collection.JavaConverters._
-import scala.collection.immutable.Seq
 
-import io.delta.kernel.{Operation, Table, TableManager, Transaction, TransactionBuilder}
+import io.delta.kernel.{Operation, Table, TableManager, Transaction}
+import io.delta.kernel.commit.Committer
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.expressions.Column
-import io.delta.kernel.internal.TableImpl
+import io.delta.kernel.internal.{SnapshotImpl, TableImpl}
 import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.internal.util.Clock
 import io.delta.kernel.transaction.DataLayoutSpec
@@ -32,18 +32,22 @@ import io.delta.kernel.types.StructType
  */
 trait TransactionBuilderSupport {
 
-  // TODO: we should standardize on using ONLY `createTxn` and remove this eventually
-  def createWriteTxnBuilder(
-      table: Table,
-      operation: Operation = Operation.WRITE): TransactionBuilder
-
   // scalastyle:off argcount
-  def createTxn(
+  def getCreateTxn(
       engine: Engine,
       tablePath: String,
-      isNewTable: Boolean = false,
-      schema: StructType = null,
+      schema: StructType,
       partCols: Seq[String] = null,
+      tableProperties: Map[String, String] = null,
+      clock: Clock = () => System.currentTimeMillis,
+      withDomainMetadataSupported: Boolean = false,
+      maxRetries: Int = -1,
+      clusteringColsOpt: Option[List[Column]] = None): Transaction
+
+  def getUpdateTxn(
+      engine: Engine,
+      tablePath: String,
+      schema: StructType = null,
       tableProperties: Map[String, String] = null,
       clock: Clock = () => System.currentTimeMillis,
       withDomainMetadataSupported: Boolean = false,
@@ -53,18 +57,59 @@ trait TransactionBuilderSupport {
       txnId: Option[(String, Long)] = None,
       tablePropertiesRemoved: Set[String] = null): Transaction
   // scalastyle:on argcount
+
+  def getReplaceTxn(
+      engine: Engine,
+      tablePath: String,
+      schema: StructType,
+      partCols: Seq[String] = null,
+      clusteringColsOpt: Option[Seq[Column]] = None,
+      tableProperties: Map[String, String] = null,
+      withDomainMetadataSupported: Boolean = false,
+      maxRetries: Int = -1): Transaction
 }
 
 /** An implementation of [[TransactionBuilderSupport]] that uses the V1 transaction builder. */
 trait TransactionBuilderV1Support extends TransactionBuilderSupport with TestUtils {
 
   // scalastyle:off argcount
-  override def createTxn(
+  override def getCreateTxn(
       engine: Engine,
       tablePath: String,
-      isNewTable: Boolean = false,
-      schema: StructType = null,
+      schema: StructType,
       partCols: Seq[String] = null,
+      tableProperties: Map[String, String] = null,
+      clock: Clock = () => System.currentTimeMillis,
+      withDomainMetadataSupported: Boolean = false,
+      maxRetries: Int = -1,
+      clusteringColsOpt: Option[List[Column]] = None): Transaction = {
+    // scalastyle:on argcount
+    var txnBuilder = TableImpl.forPath(engine, tablePath, clock)
+      .createTransactionBuilder(engine, "test-engine", Operation.CREATE_TABLE)
+      .withSchema(engine, schema)
+    if (partCols != null) {
+      txnBuilder = txnBuilder.withPartitionColumns(engine, partCols.asJava)
+    }
+    if (tableProperties != null) {
+      txnBuilder = txnBuilder.withTableProperties(engine, tableProperties.asJava)
+    }
+    if (withDomainMetadataSupported) {
+      txnBuilder = txnBuilder.withDomainMetadataSupported()
+    }
+    if (maxRetries >= 0) {
+      txnBuilder = txnBuilder.withMaxRetries(maxRetries)
+    }
+    if (clusteringColsOpt.isDefined) {
+      txnBuilder = txnBuilder.withClusteringColumns(engine, clusteringColsOpt.get.asJava)
+    }
+    txnBuilder.build(engine)
+  }
+
+  // scalastyle:off argcount
+  override def getUpdateTxn(
+      engine: Engine,
+      tablePath: String,
+      schema: StructType = null,
       tableProperties: Map[String, String] = null,
       clock: Clock = () => System.currentTimeMillis,
       withDomainMetadataSupported: Boolean = false,
@@ -74,39 +119,24 @@ trait TransactionBuilderV1Support extends TransactionBuilderSupport with TestUti
       txnId: Option[(String, Long)] = None,
       tablePropertiesRemoved: Set[String] = null): Transaction = {
     // scalastyle:on argcount
-    val operation = if (isNewTable) Operation.CREATE_TABLE else Operation.WRITE
-
-    var txnBuilder = createWriteTxnBuilder(
-      TableImpl.forPath(engine, tablePath, clock),
-      operation)
-
-    if (isNewTable) {
-      txnBuilder = txnBuilder.withSchema(engine, schema)
-      if (partCols != null) {
-        txnBuilder = txnBuilder.withPartitionColumns(engine, partCols.asJava)
-      }
-    } else if (schema != null) {
+    var txnBuilder = TableImpl.forPath(engine, tablePath, clock)
+      .createTransactionBuilder(engine, "test-engine", Operation.WRITE)
+    if (schema != null) {
       txnBuilder = txnBuilder.withSchema(engine, schema)
     }
-
-    if (clusteringColsOpt.isDefined) {
-      txnBuilder = txnBuilder.withClusteringColumns(engine, clusteringColsOpt.get.asJava)
-    }
-
     if (tableProperties != null) {
       txnBuilder = txnBuilder.withTableProperties(engine, tableProperties.asJava)
     }
-
     if (withDomainMetadataSupported) {
       txnBuilder = txnBuilder.withDomainMetadataSupported()
     }
-
     if (maxRetries >= 0) {
       txnBuilder = txnBuilder.withMaxRetries(maxRetries)
     }
-
+    if (clusteringColsOpt.isDefined) {
+      txnBuilder = txnBuilder.withClusteringColumns(engine, clusteringColsOpt.get.asJava)
+    }
     txnBuilder = txnBuilder.withLogCompactionInverval(logCompactionInterval)
-
     txnId.foreach { case (appId, txnVer) =>
       txnBuilder = txnBuilder.withTransactionId(engine, appId, txnVer)
     }
@@ -116,10 +146,34 @@ trait TransactionBuilderV1Support extends TransactionBuilderSupport with TestUti
     txnBuilder.build(engine)
   }
 
-  override def createWriteTxnBuilder(
-      table: Table,
-      operation: Operation = Operation.WRITE): TransactionBuilder = {
-    table.createTransactionBuilder(defaultEngine, "test-engine", operation)
+  override def getReplaceTxn(
+      engine: Engine,
+      tablePath: String,
+      schema: StructType,
+      partCols: Seq[String] = null,
+      clusteringColsOpt: Option[Seq[Column]] = None,
+      tableProperties: Map[String, String] = null,
+      withDomainMetadataSupported: Boolean = false,
+      maxRetries: Int = -1): Transaction = {
+    var txnBuilder = Table.forPath(engine, tablePath).asInstanceOf[TableImpl]
+      .createReplaceTableTransactionBuilder(engine, "test-engine")
+      .withSchema(engine, schema)
+    if (partCols != null) {
+      txnBuilder = txnBuilder.withPartitionColumns(engine, partCols.asJava)
+    }
+    if (tableProperties != null) {
+      txnBuilder = txnBuilder.withTableProperties(engine, tableProperties.asJava)
+    }
+    if (withDomainMetadataSupported) {
+      txnBuilder = txnBuilder.withDomainMetadataSupported()
+    }
+    clusteringColsOpt.foreach { cols =>
+      txnBuilder = txnBuilder.withClusteringColumns(engine, cols.asJava)
+    }
+    if (maxRetries >= 0) {
+      txnBuilder = txnBuilder.withMaxRetries(maxRetries)
+    }
+    txnBuilder.build(engine)
   }
 }
 
@@ -127,12 +181,45 @@ trait TransactionBuilderV1Support extends TransactionBuilderSupport with TestUti
 trait TransactionBuilderV2Support extends TransactionBuilderSupport with TestUtils {
 
   // scalastyle:off argcount
-  override def createTxn(
+  override def getCreateTxn(
       engine: Engine,
       tablePath: String,
-      isNewTable: Boolean = false,
-      schema: StructType = null,
+      schema: StructType,
       partCols: Seq[String] = null,
+      tableProperties: Map[String, String] = null,
+      clock: Clock = () => System.currentTimeMillis,
+      withDomainMetadataSupported: Boolean = false,
+      maxRetries: Int = -1,
+      clusteringColsOpt: Option[List[Column]] = None): Transaction = {
+    // scalastyle:on argcount
+    var txnBuilder = TableManager.buildCreateTableTransaction(
+      tablePath,
+      schema,
+      "test-engine")
+    if (partCols != null) {
+      txnBuilder = txnBuilder.withDataLayoutSpec(
+        DataLayoutSpec.partitioned(partCols.map(new Column(_)).asJava))
+    }
+    val completeTblProps =
+      tblPropertiesWithDomainMetadata(tableProperties, withDomainMetadataSupported)
+    if (completeTblProps != null) {
+      txnBuilder = txnBuilder.withTableProperties(completeTblProps.asJava)
+    }
+    if (clusteringColsOpt.nonEmpty) {
+      txnBuilder = txnBuilder.withDataLayoutSpec(
+        DataLayoutSpec.clustered(clusteringColsOpt.get.asJava))
+    }
+    if (maxRetries >= 0) {
+      txnBuilder = txnBuilder.withMaxRetries(maxRetries)
+    }
+    txnBuilder.build(engine)
+  }
+
+  // scalastyle:off argcount
+  override def getUpdateTxn(
+      engine: Engine,
+      tablePath: String,
+      schema: StructType = null,
       tableProperties: Map[String, String] = null,
       clock: Clock = () => System.currentTimeMillis,
       withDomainMetadataSupported: Boolean = false,
@@ -142,7 +229,70 @@ trait TransactionBuilderV2Support extends TransactionBuilderSupport with TestUti
       txnId: Option[(String, Long)] = None,
       tablePropertiesRemoved: Set[String] = null): Transaction = {
     // scalastyle:on argcount
-    def tblPropertiesWithDomainMetadata = {
+    var txnBuilder = TableManager.loadSnapshot(tablePath)
+      .build(engine)
+      .buildUpdateTableTransaction("test-engine", Operation.WRITE)
+    if (schema != null) {
+      txnBuilder = txnBuilder.withUpdatedSchema(schema)
+    }
+    clusteringColsOpt.foreach { clusteringCols =>
+      txnBuilder = txnBuilder.withClusteringColumns(clusteringCols.asJava)
+    }
+    val completeTblProps =
+      tblPropertiesWithDomainMetadata(tableProperties, withDomainMetadataSupported)
+    if (completeTblProps != null) {
+      txnBuilder = txnBuilder.withTablePropertiesAdded(completeTblProps.asJava)
+    }
+    if (maxRetries >= 0) {
+      txnBuilder = txnBuilder.withMaxRetries(maxRetries)
+    }
+    txnBuilder = txnBuilder.withLogCompactionInterval(logCompactionInterval)
+    txnId.foreach { case (appId, txnVer) =>
+      txnBuilder = txnBuilder.withTransactionId(appId, txnVer)
+    }
+    if (tablePropertiesRemoved != null) {
+      txnBuilder = txnBuilder.withTablePropertiesRemoved(tablePropertiesRemoved.asJava)
+    }
+    txnBuilder.build(engine)
+  }
+
+  override def getReplaceTxn(
+      engine: Engine,
+      tablePath: String,
+      schema: StructType,
+      partCols: Seq[String] = null,
+      clusteringColsOpt: Option[Seq[Column]] = None,
+      tableProperties: Map[String, String] = null,
+      withDomainMetadataSupported: Boolean = false,
+      maxRetries: Int = -1): Transaction = {
+    var txnBuilder = TableManager.loadSnapshot(tablePath)
+      .build(engine).asInstanceOf[SnapshotImpl]
+      .buildReplaceTableTransaction(schema, "test-engine")
+    if (partCols != null) {
+      txnBuilder = txnBuilder.withDataLayoutSpec(
+        DataLayoutSpec.partitioned(partCols.map(new Column(_)).asJava))
+    }
+    val completeTblProps =
+      tblPropertiesWithDomainMetadata(tableProperties, withDomainMetadataSupported)
+    if (completeTblProps != null) {
+      txnBuilder = txnBuilder.withTableProperties(completeTblProps.asJava)
+    }
+    if (clusteringColsOpt.nonEmpty) {
+      txnBuilder = txnBuilder.withDataLayoutSpec(
+        DataLayoutSpec.clustered(clusteringColsOpt.get.asJava))
+    }
+    if (maxRetries >= 0) {
+      txnBuilder = txnBuilder.withMaxRetries(maxRetries)
+    }
+    txnBuilder.build(engine)
+  }
+
+  private def tblPropertiesWithDomainMetadata(
+      tableProperties: Map[String, String],
+      withDomainMetadataSupported: Boolean): Map[String, String] = {
+    if (tableProperties == null && !withDomainMetadataSupported) {
+      null
+    } else {
       val origTblProps = if (tableProperties != null) tableProperties else Map()
       val dmTblProps = if (withDomainMetadataSupported) {
         Map(TableFeatures.SET_TABLE_FEATURE_SUPPORTED_PREFIX + "domainMetadata" -> "supported")
@@ -151,58 +301,5 @@ trait TransactionBuilderV2Support extends TransactionBuilderSupport with TestUti
       }
       origTblProps ++ dmTblProps
     }
-
-    if (isNewTable) {
-      var txnBuilder = TableManager.buildCreateTableTransaction(
-        tablePath,
-        schema,
-        "test-engine")
-      if (partCols != null) {
-        txnBuilder = txnBuilder.withDataLayoutSpec(
-          DataLayoutSpec.partitioned(partCols.map(new Column(_)).asJava))
-      }
-      if (tableProperties != null || withDomainMetadataSupported) {
-        txnBuilder = txnBuilder.withTableProperties(tblPropertiesWithDomainMetadata.asJava)
-      }
-      if (clusteringColsOpt.nonEmpty) {
-        txnBuilder = txnBuilder.withDataLayoutSpec(
-          DataLayoutSpec.clustered(clusteringColsOpt.get.asJava))
-      }
-      if (maxRetries >= 0) {
-        txnBuilder = txnBuilder.withMaxRetries(maxRetries)
-      }
-      txnBuilder.build(engine)
-    } else {
-      var txnBuilder = TableManager.loadSnapshot(tablePath)
-        .build(engine)
-        .buildUpdateTableTransaction("test-engine", Operation.WRITE)
-      if (schema != null) {
-        txnBuilder = txnBuilder.withUpdatedSchema(schema)
-      }
-      if (clusteringColsOpt.nonEmpty) {
-        txnBuilder = txnBuilder.withClusteringColumns(clusteringColsOpt.get.asJava)
-      }
-      if (tableProperties != null || withDomainMetadataSupported) {
-        txnBuilder = txnBuilder.withTablePropertiesAdded(tblPropertiesWithDomainMetadata.asJava)
-      }
-      if (maxRetries >= 0) {
-        txnBuilder = txnBuilder.withMaxRetries(maxRetries)
-      }
-      txnBuilder = txnBuilder.withLogCompactionInterval(logCompactionInterval)
-      txnId.foreach { case (appId, txnVer) =>
-        txnBuilder = txnBuilder.withTransactionId(appId, txnVer)
-      }
-      if (tablePropertiesRemoved != null) {
-        txnBuilder = txnBuilder.withTablePropertiesRemoved(tablePropertiesRemoved.asJava)
-      }
-      txnBuilder.build(engine)
-    }
-  }
-
-  override def createWriteTxnBuilder(
-      table: Table,
-      operation: Operation = Operation.WRITE): TransactionBuilder = {
-    throw new UnsupportedOperationException(
-      "This is unsupported for V2 builders, instead use createTxn")
   }
 }

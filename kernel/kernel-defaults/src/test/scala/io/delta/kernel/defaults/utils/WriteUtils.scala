@@ -318,11 +318,12 @@ trait AbstractWriteUtils extends TestUtils with TransactionBuilderSupport {
       domainMetadatas: Seq[DomainMetadata],
       useInternalApi: Boolean = false): Transaction = {
 
-    val txnBuilder = createWriteTxnBuilder(TableImpl.forPath(engine, tablePath))
-    if (domainMetadatas.nonEmpty && !useInternalApi) {
-      txnBuilder.withDomainMetadataSupported()
+    val txn = if (domainMetadatas.nonEmpty && !useInternalApi) {
+      getUpdateTxn(engine, tablePath, withDomainMetadataSupported = true)
+        .asInstanceOf[TransactionImpl]
+    } else {
+      getUpdateTxn(engine, tablePath).asInstanceOf[TransactionImpl]
     }
-    val txn = txnBuilder.build(engine).asInstanceOf[TransactionImpl]
 
     domainMetadatas.foreach { dm =>
       if (dm.isRemoved) {
@@ -420,15 +421,24 @@ trait AbstractWriteUtils extends TestUtils with TransactionBuilderSupport {
       tableProperties: Map[String, String] = null,
       clusteringColsOpt: Option[List[Column]] = None): TransactionCommitResult = {
 
-    val txn = createTxn(
-      engine,
-      tablePath,
-      isNewTable,
-      schema,
-      partCols,
-      tableProperties,
-      clock,
-      clusteringColsOpt = clusteringColsOpt)
+    val txn = if (isNewTable) {
+      getCreateTxn(
+        engine,
+        tablePath,
+        schema,
+        partCols,
+        tableProperties,
+        clock,
+        clusteringColsOpt = clusteringColsOpt)
+    } else {
+      getUpdateTxn(
+        engine,
+        tablePath,
+        schema,
+        tableProperties,
+        clock,
+        clusteringColsOpt = clusteringColsOpt)
+    }
     commitAppendData(engine, txn, data)
   }
 
@@ -462,14 +472,22 @@ trait AbstractWriteUtils extends TestUtils with TransactionBuilderSupport {
 
     val table = Table.forPath(engine, tablePath)
 
-    createTxn(
-      engine,
-      tablePath,
-      isNewTable,
-      schema = if (isNewTable) testSchema else null,
-      tableProperties = Map(key.getKey -> value),
-      clock = clock)
-      .commit(engine, emptyIterable())
+    val txn = if (isNewTable) {
+      getCreateTxn(
+        engine,
+        tablePath,
+        testSchema,
+        tableProperties = Map(key.getKey -> value),
+        clock = clock)
+    } else {
+      getUpdateTxn(
+        engine,
+        tablePath,
+        schema = if (isNewTable) testSchema else null,
+        tableProperties = Map(key.getKey -> value),
+        clock = clock)
+    }
+    txn.commit(engine, emptyIterable())
 
     val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
     assertMetadataProp(snapshot, key, expectedValue)

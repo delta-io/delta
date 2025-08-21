@@ -27,6 +27,7 @@ import io.delta.kernel.defaults.utils.WriteUtilsWithV2Builders
 import io.delta.kernel.engine.{Engine, JsonHandler}
 import io.delta.kernel.exceptions.{KernelException, MaxCommitRetryLimitReachedException, TableAlreadyExistsException}
 import io.delta.kernel.expressions.Column
+import io.delta.kernel.internal.commit.DefaultFileSystemManagedTableOnlyCommitter
 import io.delta.kernel.internal.table.SnapshotBuilderImpl
 import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.internal.util.ColumnMapping
@@ -148,22 +149,23 @@ class DeltaTableWritesTransactionBuilderV2Suite extends DeltaTableWritesSuite
     }
   }
 
-  test("create table does NOT fail when the table already exists for catalog managed") {
-    // Note - the catalog is responsible for determining that the table loc provided is empty,
-    // so technically this should not be a real-world scenario, but just checks that we correctly
-    // omit checking the location when the catalog managed feature is enabled in the table props
+  test("CreateTableTransactionBuilderImpl::build does NOT check if the table already exists " +
+    "when creating a catalogManaged table") {
+    // The catalog is responsible for providing a valid, empty table location when creating
+    // catalogManaged tables. CreateTableTransactionBuilderImpl::build does NOT check if the table
+    // exists when creating a catalogManaged table.
+    //
+    // This test validates that the above logic is correct, by first creating a table at a given
+    // path P, and then trying to create a catalogManaged table at the same path P. We expect that
+    // CreateTableTransactionBuilderImpl::build should NOT throw.
     withTempDirAndEngine { (tablePath, engine) =>
+      // Create the table
       createEmptyTable(engine, tablePath, testSchema)
-      // Instead of failing earlier (due to the table existing) we fail later due to the table
-      // feature being unsupported
-      val e = intercept[KernelException] {
-        TableManager.buildCreateTableTransaction(tablePath, testSchema, testEngineInfo)
-          .withTableProperties(
-            Map(TableFeatures.SET_TABLE_FEATURE_SUPPORTED_PREFIX +
-              TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW.featureName -> "supported").asJava)
-          .build(engine)
-      }
-      assert(e.getMessage.contains("Unsupported Delta writer feature"))
+
+      // Now create it again but with catalogManaged supported. This should NOT throw.
+      TableManager.buildCreateTableTransaction(tablePath, testSchema, testEngineInfo)
+        .withTableProperties(Map("delta.feature.catalogOwned-preview" -> "supported").asJava)
+        .build(engine)
     }
   }
 
@@ -240,10 +242,9 @@ class DeltaTableWritesTransactionBuilderV2Suite extends DeltaTableWritesSuite
       {
         val transientErrorEngine = new CustomEngine()
         intercept[MaxCommitRetryLimitReachedException] {
-          createTxn(
+          getCreateTxn(
             transientErrorEngine,
             tablePath,
-            isNewTable = true,
             schema = testSchema,
             maxRetries = 0).commit(transientErrorEngine, emptyIterable())
         }
@@ -252,13 +253,46 @@ class DeltaTableWritesTransactionBuilderV2Suite extends DeltaTableWritesSuite
       // Commit succeeds when maxRetries > 1
       {
         val transientErrorEngine = new CustomEngine()
-        createTxn(
+        getCreateTxn(
           transientErrorEngine,
           tablePath,
-          isNewTable = true,
           schema = testSchema,
           maxRetries = 10).commit(transientErrorEngine, emptyIterable())
       }
+    }
+  }
+
+  test("CreateTableTransactionBuilder uses the committer when provided") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      class FakeCommitter extends Committer {
+        override def commit(
+            engine: Engine,
+            finalizedActions: CloseableIterator[Row],
+            commitMetadata: CommitMetadata): CommitResponse = {
+          throw new RuntimeException("This is a fake committer")
+        }
+      }
+      val txn = TableManager.buildCreateTableTransaction(tablePath, testSchema, testEngineInfo)
+        .withCommitter(new FakeCommitter())
+        .build(engine)
+
+      // Check the txn returns the correct committer
+      assert(txn.getCommitter.isInstanceOf[FakeCommitter])
+
+      // Check that the txn invokes the provided committer upon commit
+      val e = intercept[RuntimeException] {
+        txn.commit(engine, emptyIterable())
+      }
+      assert(e.getMessage.contains("This is a fake committer"))
+    }
+  }
+
+  test("CreateTableTransactionBuilder uses the default file system committer if none is provided") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val txn = TableManager.buildCreateTableTransaction(tablePath, testSchema, testEngineInfo)
+        .build(engine)
+      // Check the txn returns the correct committer
+      assert(txn.getCommitter == DefaultFileSystemManagedTableOnlyCommitter.INSTANCE)
     }
   }
 }

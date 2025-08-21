@@ -270,7 +270,7 @@ class LogCompactionWriterSuite extends CheckpointBase {
       // start at 1 since the create of the table is 0
       for (commitNum <- 1 to 5) {
         val txn =
-          createTxn(engine, tablePath, clock = clock, logCompactionInterval = compactionInterval)
+          getUpdateTxn(engine, tablePath, clock = clock, logCompactionInterval = compactionInterval)
         val data = generateData(
           schema,
           Seq.empty,

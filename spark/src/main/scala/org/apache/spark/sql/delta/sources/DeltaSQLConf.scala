@@ -687,6 +687,18 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val HMS_FORCE_ALTER_TABLE_DATA_SCHEMA =
+    buildConf("hms.schema.forceAlterTableDataSchema")
+      .internal()
+      .doc(
+        """
+          | This conf fixes the schema in tableCatalog object and force an alter table
+          | schema command after upload the schema. As in spark project the schema is removed
+          | because delta is not a valid serDe configuration. This is a problem known only to HMS.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
   //////////////////////////////////////////////
   // DynamoDB Commit Coordinator-specific configs
   /////////////////////////////////////////////
@@ -1625,6 +1637,14 @@ trait DeltaSQLConfBase {
         "partition-like data skipping can be safely applied.")
       .stringConf
       .createOptional
+
+  val DELTA_DATASKIPPING_ISNULL_PUSHDOWN_EXPRS_ENABLED =
+    buildConf("skipping.enhancedIsNullPushdownExprs.enabled")
+      .doc("If true, support pushing down IsNull on additional null-intolerant expressions for " +
+        "data skipping.")
+      .internal()
+      .booleanConf
+      .createWithDefault(true)
 
   /**
    * The below confs have a special prefix `spark.databricks.io` because this is the conf value

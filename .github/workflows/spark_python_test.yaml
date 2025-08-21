@@ -18,6 +18,7 @@ jobs:
           PATTERNS: |
             **
             .github/workflows/**
+            !unity/**
             !kernel/**
             !connectors/**
       - name: install java

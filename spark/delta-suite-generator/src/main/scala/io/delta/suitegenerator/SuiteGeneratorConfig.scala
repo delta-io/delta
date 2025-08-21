@@ -25,12 +25,19 @@ import scala.meta._
  * @param name the name of the dimension.
  * @param values the possible values for this dimension, which when prepended with the name should
  * equal to the desired trait name that needs to be mixed in to generated suites.
+ * @param alias an optional short alias to be used when naming suites instead of the [[name]].
  */
-abstract class Dimension(val name: String, val values: List[String]) {
+abstract class Dimension(val name: String, val values: List[String], val alias: Option[String]) {
   /**
    * All trait names for this dimension
    */
   lazy val traitNames: List[String] = values.map(value => name + value)
+
+  lazy val traitsWithAliases: List[(String, String)] = values
+    .map(value => (
+      name + value,
+      alias.getOrElse(name) + value.replace("Enabled", "On").replace("Disabled", "Off")
+    ))
 
   val isOptional: Boolean = false
 
@@ -42,7 +49,7 @@ abstract class Dimension(val name: String, val values: List[String]) {
   private class OptionalDimension(
       override val name: String,
       override val values: List[String]
-  ) extends Dimension(name, values) {
+  ) extends Dimension(name, values, alias) {
     override val isOptional: Boolean = true
     override def asOptional: Dimension = this
   }
@@ -59,14 +66,15 @@ abstract class Dimension(val name: String, val values: List[String]) {
  */
 case class DimensionWithMultipleValues(
     override val name: String,
-    override val values: List[String]
-) extends Dimension(name, values) {
+    override val values: List[String],
+    override val alias: Option[String] = None
+) extends Dimension(name, values, alias) {
   /**
    * Shortcut to create a [[DimensionMixin]] with the same name and one of the values as the suffix.
    * @param valueSelector a functions that selects a value from this dimension's values
    */
   def withValueAsDimension(valueSelector: List[String] => String): DimensionMixin = {
-    DimensionMixin(name, valueSelector(values))
+    DimensionMixin(name, valueSelector(values), alias)
   }
 }
 
@@ -75,8 +83,9 @@ case class DimensionWithMultipleValues(
  */
 case class DimensionMixin(
     override val name: String,
-    suffix: String = "Mixin"
-) extends Dimension(name, List(suffix)) {
+    suffix: String = "Mixin",
+    override val alias: Option[String] = None
+) extends Dimension(name, List(suffix), alias) {
   lazy val traitName: String = name + suffix
 }
 
@@ -102,7 +111,8 @@ case class TestConfig(
 case class TestGroup(
     name: String,
     imports: List[Importer],
-    testConfigs: List[TestConfig])
+    testConfigs: List[TestConfig]
+)
 
 object SuiteGeneratorConfig {
   private object Dims {
@@ -110,29 +120,33 @@ object SuiteGeneratorConfig {
     // `Dims.NONE` is clearer than just `Nil`.
     val NONE: List[Dimension] = Nil
 
-    val PATH_BASED = DimensionMixin("DeltaDMLTestUtils", suffix = "PathBased")
-    val NAME_BASED = DimensionMixin("DeltaDMLTestUtils", suffix = "NameBased")
-    val MERGE_SQL = DimensionMixin("MergeIntoSQL")
-    val MERGE_SCALA = DimensionMixin("MergeIntoScala")
-    val MERGE_DVS = DimensionMixin("MergeIntoDVs")
-    val PREDPUSH = DimensionWithMultipleValues("PredicatePushdown", List("Disabled", "Enabled"))
+    val TABLE_ACCESS = DimensionWithMultipleValues( // no alias needed, value is self-explanatory
+      "DeltaDMLTestUtils", List("NameBased", "PathBased"), alias = Some(""))
+    val PATH_BASED = TABLE_ACCESS.withValueAsDimension(_.last)
+    val NAME_BASED = TABLE_ACCESS.withValueAsDimension(_.head)
+    val MERGE_SQL = DimensionMixin("MergeIntoSQL", alias = Some("SQL"))
+    val MERGE_SCALA = DimensionMixin("MergeIntoScala", alias = Some("Scala"))
+    val MERGE_DVS = DimensionMixin("MergeIntoDVs", alias = Some("DVs"))
+    val PREDPUSH = DimensionWithMultipleValues(
+      "PredicatePushdown", List("Disabled", "Enabled"), alias = Some("PredPush"))
     val CDC = DimensionMixin("CDC", suffix = "Enabled")
     // These enables/disable DVs on new tables, but leave DML command configs untouched.
-    val PERSISTENT_DV = DimensionWithMultipleValues("PersistentDV", List("Disabled", "Enabled"))
+    val PERSISTENT_DV = DimensionWithMultipleValues(
+      "PersistentDV", List("Disabled", "Enabled"), alias = Some("DV"))
     val PERSISTENT_DV_OFF = PERSISTENT_DV.withValueAsDimension(_.head)
     val PERSISTENT_DV_ON = PERSISTENT_DV.withValueAsDimension(_.last)
     val ROW_TRACKING = DimensionWithMultipleValues("RowTracking", List("Disabled", "Enabled"))
     val MERGE_PERSISTENT_DV_OFF = DimensionMixin("MergePersistentDV", suffix = "Disabled")
     val MERGE_ROW_TRACKING_DV = DimensionMixin("RowTrackingMergeDV")
     val COLUMN_MAPPING = DimensionWithMultipleValues(
-      "DeltaColumnMapping", List("EnableIdMode", "EnableNameMode"))
-    val UPDATE_SCALA = DimensionMixin("UpdateScala")
-    val UPDATE_SQL = DimensionMixin("UpdateSQL")
-    val UPDATE_DVS = DimensionMixin("UpdateSQLWithDeletionVectors")
+      "DeltaColumnMappingEnable", List("IdMode", "NameMode"), alias = Some("ColMap"))
+    val UPDATE_SCALA = DimensionMixin("UpdateScala", alias = Some("Scala"))
+    val UPDATE_SQL = DimensionMixin("UpdateSQL", alias = Some("SQL"))
+    val UPDATE_DVS = DimensionMixin("UpdateSQLWithDeletionVectors", alias = Some("DV"))
     val UPDATE_ROW_TRACKING_DV = DimensionMixin("RowTrackingUpdateDV")
-    val DELETE_SCALA = DimensionMixin("DeleteScala")
-    val DELETE_SQL = DimensionMixin("DeleteSQL")
-    val DELETE_WITH_DVS = DimensionMixin("DeleteSQLWithDeletionVectors")
+    val DELETE_SCALA = DimensionMixin("DeleteScala", alias = Some("Scala"))
+    val DELETE_SQL = DimensionMixin("DeleteSQL", alias = Some("SQL"))
+    val DELETE_WITH_DVS = DimensionMixin("DeleteSQLWithDeletionVectors", alias = Some("DV"))
   }
 
   private object Tests {
@@ -145,7 +159,8 @@ object SuiteGeneratorConfig {
       "MergeIntoExtendedSyntaxTests",
       "MergeIntoSuiteBaseMiscTests",
       "MergeIntoNotMatchedBySourceSuite",
-      "MergeIntoNotMatchedBySourceWithCDCSuite",
+      "MergeIntoNotMatchedBySourceCDCPart1Tests",
+      "MergeIntoNotMatchedBySourceCDCPart2Tests",
       "MergeIntoSchemaEvolutionCoreTests",
       "MergeIntoSchemaEvolutionBaseTests",
       "MergeIntoSchemaEvolutionStoreAssignmentPolicyTests",
@@ -215,7 +230,7 @@ object SuiteGeneratorConfig {
           )
         ),
         TestConfig(
-          List("MergeIntoMaterializeSourceTests"),
+          List("MergeIntoMaterializeSourceTests", "MergeIntoMaterializeSourceErrorTests"),
           List(
             List(Dims.MERGE_PERSISTENT_DV_OFF)
           )

@@ -467,8 +467,7 @@ trait AbstractDeltaTableReadsSuite extends AnyFunSuite { self: AbstractTestUtils
 
   test("read subfield of array of struct") {
     withTempDir { path =>
-      val tbl = "tbl"
-      withTable(tbl) {
+      withTempTable { tbl =>
         spark.sql(s"""CREATE TABLE $tbl (
           id int,
           array_of_struct array<struct<x: int, y: int>>
@@ -506,8 +505,7 @@ trait AbstractDeltaTableReadsSuite extends AnyFunSuite { self: AbstractTestUtils
 
   test("read subfield of array of array of struct") {
     withTempDir { path =>
-      val tbl = "tbl"
-      withTable(tbl) {
+      withTempTable { tbl =>
         spark.sql(s"""CREATE TABLE $tbl (
           id int,
           array_of_array_of_struct array<array<struct<x: int, y: int>>>
@@ -546,8 +544,7 @@ trait AbstractDeltaTableReadsSuite extends AnyFunSuite { self: AbstractTestUtils
 
   test("read array of array of int") {
     withTempDir { path =>
-      val tbl = "tbl"
-      withTable(tbl) {
+      withTempTable { tbl =>
         spark.sql(s"""CREATE TABLE $tbl (
           id int,
           array_of_array_of_int array<array<int>>
@@ -574,8 +571,7 @@ trait AbstractDeltaTableReadsSuite extends AnyFunSuite { self: AbstractTestUtils
 
   test("read array of int") {
     withTempDir { path =>
-      val tbl = "tbl"
-      withTable(tbl) {
+      withTempTable { tbl =>
         spark.sql(s"""CREATE TABLE $tbl (
           id int,
           array_of_int array<int>

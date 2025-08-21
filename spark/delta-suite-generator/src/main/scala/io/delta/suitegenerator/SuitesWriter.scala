@@ -91,14 +91,24 @@ class SuitesWriter(val outputDir: Path) {
 
   protected val allFiles: ListBuffer[Path] = ListBuffer.empty[Path]
 
+  private val MAX_SUITES_PER_FILE = 100
+
   def writeGeneratedSuitesOfGroup(suites: List[TestSuite], testGroup: TestGroup): Unit = {
-    val src = SRC_HEADERS +
-      source"""package $PACKAGE_NAME
-               import ..${testGroup.imports}
-               ..${suites.map(_.classDefinition)}"""
-    val srcFile = outputDir.resolve(testGroup.name + ".scala")
-    val formattedSrc = Scalafmt.format(src, SCALAFMT_CONFIG).get
-    writeFile(srcFile, formattedSrc)
+    suites
+      .grouped(MAX_SUITES_PER_FILE)
+      .zipWithIndex
+      .foreach { case (batchSuites, batchIndex) =>
+        val src = SRC_HEADERS + "// scalastyle:off line.size.limit\n" +
+          source"""package $PACKAGE_NAME
+                   import ..${testGroup.imports}
+                   ..${batchSuites.map(_.classDefinition)}"""
+        val srcFile = outputDir.resolve(testGroup.name + s"${batchIndex + 1}.scala")
+        val formattedSrc = Scalafmt.format(src, SCALAFMT_CONFIG).get
+        writeFile(srcFile, formattedSrc)
+      }
+    // scalastyle:off println
+    println(s"Wrote ${suites.size} generated suites from ${testGroup.name} group.")
+    // scalastyle:on println
   }
 
   protected def writeFile(file: Path, content: String): Unit = {

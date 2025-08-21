@@ -125,7 +125,7 @@ trait ChecksumStatsSuiteBase extends AnyFunSuite with WriteUtils {
       filesToAdd: Map[String, Long],
       histogram: FileSizeHistogram): Unit = {
 
-    val txn = createTxn(engine, tablePath, maxRetries = 0)
+    val txn = getUpdateTxn(engine, tablePath, maxRetries = 0)
 
     val actionsToCommit = filesToAdd.map { case (path, size) =>
       histogram.insert(size)
@@ -157,7 +157,7 @@ trait ChecksumStatsSuiteBase extends AnyFunSuite with WriteUtils {
       filesToRemove: Map[String, Long],
       histogram: FileSizeHistogram): Unit = {
 
-    val txn = createTxn(engine, tablePath, maxRetries = 0)
+    val txn = getUpdateTxn(engine, tablePath, maxRetries = 0)
 
     val actionsToCommit = filesToRemove.map { case (path, size) =>
       histogram.remove(size)

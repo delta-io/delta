@@ -160,6 +160,9 @@ trait BaseMockFileSystemClient extends FileSystemClient {
 
   override def delete(path: String): Boolean =
     throw new UnsupportedOperationException("not supported in this test suite")
+
+  override def getFileStatus(path: String): FileStatus =
+    throw new UnsupportedOperationException("not supported in this test suite")
 }
 
 /**
