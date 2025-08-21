@@ -1112,6 +1112,17 @@ trait DeltaSQLConfBase {
         "delta log entry below 100mb.")
       .fallbackConf(DELTA_ROW_TRACKING_BACKFILL_MAX_NUM_FILES_PER_COMMIT)
 
+  val DELTA_BACKFILL_MAX_NUM_FILES_FACTOR =
+    buildConf("backfill.maxNumFilesFactor")
+      .internal()
+      .doc(
+        """The factor used to compute the maximum number of files to backfill.
+          |The maximum number of files to compute in backfill is computed as
+          |number of files in table * factor.""".stripMargin)
+      .doubleConf
+      .checkValue(_ > 0, "'backfill.maxNumFilesFactor' must be greater than zero.")
+      .createWithDefault(3)
+
   val DELTA_ROW_TRACKING_IGNORE_SUSPENSION =
     buildConf("rowTracking.ignoreSuspension")
       .internal()

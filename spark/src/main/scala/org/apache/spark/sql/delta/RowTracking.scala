@@ -203,7 +203,7 @@ object RowTracking {
     if (!snapshot.protocol.isFeatureSupported(RowTrackingFeature)) {
       throw new ProtocolChangedException(None)
     }
-    val filesRequiringBackfill = snapshot.allFiles.where(col("baseRowId").isNull)
+    val filesRequiringBackfill = snapshot.allFiles.where(col("baseRowId").isNull).collect()
     if (!filesRequiringBackfill.isEmpty) {
       throw new ProtocolChangedException(None)
     }
