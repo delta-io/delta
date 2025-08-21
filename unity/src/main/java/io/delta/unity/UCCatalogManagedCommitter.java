@@ -139,8 +139,7 @@ public class UCCatalogManagedCommitter implements Committer {
                 .writeJsonFileAtomically(
                     stagedCommitFilePath, finalizedActions, true /* overwrite */);
 
-            // TODO: [delta-io/delta#5021] Use FileSystemClient::getFileStatus API instead
-            return FileStatus.of(stagedCommitFilePath);
+            return engine.getFileSystemClient().getFileStatus(stagedCommitFilePath);
           } catch (IOException ex) {
             throw new CommitFailedException(
                 true /* retryable */,

@@ -26,7 +26,6 @@ import io.delta.kernel.Snapshot;
 import io.delta.kernel.commit.Committer;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Column;
-import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
@@ -128,18 +127,20 @@ public class SnapshotImpl implements Snapshot {
    */
   @Override
   public long getTimestamp(Engine engine) {
-    if (IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata)) {
-      if (!inCommitTimestampOpt.isPresent()) {
-        Optional<CommitInfo> commitInfoOpt = CommitInfo.getCommitInfoOpt(engine, logPath, version);
-        inCommitTimestampOpt =
-            Optional.of(
-                CommitInfo.getRequiredInCommitTimestamp(
-                    commitInfoOpt, String.valueOf(version), dataPath));
-      }
-      return inCommitTimestampOpt.get();
-    } else {
-      return getLogSegment().getLastCommitTimestamp();
-    }
+    return getLogSegment().getLastCommitTimestamp();
+    //    if (IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata)) {
+    //      if (!inCommitTimestampOpt.isPresent()) {
+    //        Optional<CommitInfo> commitInfoOpt = CommitInfo.getCommitInfoOpt(engine, logPath,
+    // version);
+    //        inCommitTimestampOpt =
+    //            Optional.of(
+    //                CommitInfo.getRequiredInCommitTimestamp(
+    //                    commitInfoOpt, String.valueOf(version), dataPath));
+    //      }
+    //      return inCommitTimestampOpt.get();
+    //    } else {
+    //      return getLogSegment().getLastCommitTimestamp();
+    //    }
   }
 
   @Override
