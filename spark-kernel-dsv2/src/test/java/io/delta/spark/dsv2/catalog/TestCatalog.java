@@ -19,6 +19,7 @@ import io.delta.kernel.Operation;
 import io.delta.kernel.TableManager;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.utils.CloseableIterable;
 import io.delta.spark.dsv2.table.DeltaKernelTable;
@@ -68,8 +69,15 @@ public class TestCatalog implements TableCatalog {
 
   @Override
   public Table loadTable(Identifier ident) throws NoSuchTableException {
-    String tableKey = getTableKey(ident);
-    String tablePath = tablePaths.get(tableKey);
+    // Check if this is a path-based table identifier
+    String tablePath;
+    if (isPathIdentifier(ident)) {
+      tablePath = ident.name();
+    } else {
+      // Handle catalog-managed tables
+      String tableKey = getTableKey(ident);
+      tablePath = tablePaths.get(tableKey);
+    }
     if (tablePath == null) {
       throw new NoSuchTableException(ident);
     }
@@ -77,6 +85,8 @@ public class TestCatalog implements TableCatalog {
       // Use TableManager.loadTable to load the table
       SnapshotImpl snapshot = (SnapshotImpl) TableManager.loadSnapshot(tablePath).build(engine);
       return new DeltaKernelTable(ident, snapshot);
+    } catch (TableNotFoundException tableNotFoundException) {
+      throw new NoSuchTableException(ident);
     } catch (Exception e) {
       throw new RuntimeException("Failed to load table: " + ident, e);
     }
@@ -145,6 +155,16 @@ public class TestCatalog implements TableCatalog {
   @Override
   public String name() {
     return catalogName;
+  }
+
+  /**
+   * Check if the given identifier represents a path-based table. Path-based tables are identified
+   * by having a delta namespace. This follows the same logic as Delta Spark's
+   * SupportsPathIdentifier.
+   */
+  private boolean isPathIdentifier(Identifier ident) {
+    // For testing, simply check if it has a delta namespace
+    return ident.namespace().length == 1 && ident.namespace()[0].toLowerCase().equals("delta");
   }
 
   /** Helper method to get the table key from identifier. */
