@@ -87,6 +87,11 @@ public class KernelSparkPartitionReaderTest extends KernelSparkDsv2TestBase {
     assertEquals(1, row1.getInt(0));
     assertEquals("Alice", row1.get(1, org.apache.spark.sql.types.DataTypes.StringType).toString());
     assertEquals(100.0, row1.getDouble(2));
+    // Test repeat get
+    row1 = reader.get();
+    assertEquals(1, row1.getInt(0));
+    assertEquals("Alice", row1.get(1, org.apache.spark.sql.types.DataTypes.StringType).toString());
+    assertEquals(100.0, row1.getDouble(2));
 
     assertTrue(reader.next());
     InternalRow row2 = reader.get();

@@ -62,6 +62,7 @@ public class KernelSparkPartitionReader implements PartitionReader<InternalRow> 
   private final Engine engine;
   private CloseableIterator<InternalRow> dataIterator;
   private boolean initialized = false;
+  private InternalRow currentRow;
 
   public KernelSparkPartitionReader(Engine engine, Row scanState, Row scanFileRow) {
     this.scanState = requireNonNull(scanState, "scanState is null");
@@ -77,22 +78,28 @@ public class KernelSparkPartitionReader implements PartitionReader<InternalRow> 
   @Override
   public boolean next() {
     initialize();
-    return dataIterator != null && dataIterator.hasNext();
+
+    if (dataIterator != null && dataIterator.hasNext()) {
+      currentRow = dataIterator.next();
+      return true;
+    }
+
+    currentRow = null;
+    return false;
   }
 
   /**
-   * Returns the current row. Call only after {@link #next()} returns true. Note: Returned row may
-   * be reused; use {@code row.copy()} if needed for later access.
+   * Returns the current row. Call only after {@link #next()} returns true.
    */
   @Override
   public InternalRow get() {
-    if (!initialized || dataIterator == null) {
+    if (!initialized) {
       throw new IllegalStateException("Reader not initialized. Call next() first.");
     }
-    if (!dataIterator.hasNext()) {
-      throw new IllegalStateException("No more data available.");
+    if (currentRow == null) {
+      throw new IllegalStateException("No current row available. Call next() first.");
     }
-    return dataIterator.next();
+    return currentRow;
   }
 
   private void initialize() {
@@ -145,6 +152,16 @@ public class KernelSparkPartitionReader implements PartitionReader<InternalRow> 
       // Try to get next batch
       while (batchIterator.hasNext()) {
         FilteredColumnarBatch batch = batchIterator.next();
+
+        // Close previous batch rows before replacing
+        if (currentBatchRows != null) {
+          try {
+            currentBatchRows.close();
+          } catch (IOException e) {
+            throw new UncheckedIOException("fail to advances to the next batch rows", e);
+          }
+        }
+
         currentBatchRows = batch.getRows();
         if (currentBatchRows.hasNext()) {
           return true;
