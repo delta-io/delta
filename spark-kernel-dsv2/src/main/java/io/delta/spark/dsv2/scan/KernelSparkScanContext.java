@@ -42,6 +42,11 @@ import org.slf4j.LoggerFactory;
  * <p>This class is created on the Driver and handles the conversion of Delta Kernel scan files into
  * Spark InputPartitions. It caches scan file batches to support multiple calls to planPartitions()
  * and ensures consistent partition planning.
+ *
+ * <p>This class serves as wrapper of kernel logic owned by {@link
+ * io.delta.spark.dsv2.scan.KernelSparkScan}  to handle the low-level operations of
+ * converting Kernel scan files into Spark InputPartitions used by {@link
+ * io.delta.spark.dsv2.scan.batch.KernelSparkBatchScan}.
  */
 public class KernelSparkScanContext {
 
@@ -52,8 +57,8 @@ public class KernelSparkScanContext {
   private final SerializableKernelRowWrapper serializedScanState;
 
   /**
-   * Cached scan file batches from kernel scan to avoid re-reading log files for replay
-   * on multiple planPartitions calls
+   * Cached scan file batches from kernel scan to avoid re-reading log files for replay on multiple
+   * planPartitions calls
    */
   private final AtomicReference<Optional<List<FilteredColumnarBatch>>> cachedScanFileBatches;
 

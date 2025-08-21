@@ -44,7 +44,7 @@ public class KernelSparkBatchScanTest extends KernelSparkDsv2TestBase {
   public void testPlanInputPartitions(@TempDir File tempDir) {
     String path = tempDir.getAbsolutePath();
     String tableName = "test_plan_input_partitions";
-    createTestTable(path, tableName);
+    createTestTableWithData(path, tableName);
     Scan scan = TableManager.loadSnapshot(path).build(defaultEngine).getScanBuilder().build();
     KernelSparkScanContext scanContext =
         new KernelSparkScanContext(scan, spark.sessionState().newHadoopConf());
@@ -63,7 +63,7 @@ public class KernelSparkBatchScanTest extends KernelSparkDsv2TestBase {
   public void testPlanInputPartitionsMultipleCalls(@TempDir File tempDir) {
     String path = tempDir.getAbsolutePath();
     String tableName = "test_multiple_calls";
-    createTestTable(path, tableName);
+    createTestTableWithData(path, tableName);
 
     Scan scan = TableManager.loadSnapshot(path).build(defaultEngine).getScanBuilder().build();
     KernelSparkScanContext scanContext =
@@ -88,7 +88,7 @@ public class KernelSparkBatchScanTest extends KernelSparkDsv2TestBase {
   public void testCreateReaderFactory(@TempDir File tempDir) {
     String path = tempDir.getAbsolutePath();
     String tableName = "test_reader_factory";
-    createTestTable(path, tableName);
+    createTestTableWithData(path, tableName);
     Scan scan = TableManager.loadSnapshot(path).build(defaultEngine).getScanBuilder().build();
     KernelSparkScanContext scanContext =
         new KernelSparkScanContext(scan, spark.sessionState().newHadoopConf());
@@ -98,19 +98,5 @@ public class KernelSparkBatchScanTest extends KernelSparkDsv2TestBase {
         assertThrows(UnsupportedOperationException.class, batchScan::createReaderFactory);
 
     assertEquals("reader factory is not implemented", exception.getMessage());
-  }
-
-  //////////////////////
-  // Private helpers //
-  /////////////////////
-  private void createTestTable(String path, String tableName) {
-    spark.sql(
-        String.format(
-            "CREATE TABLE %s (id INT, name STRING, value DOUBLE) USING delta LOCATION '%s'",
-            tableName, path));
-    spark.sql(
-        String.format(
-            "INSERT INTO %s VALUES (1, 'Alice', 10.5), (2, 'Bob', 20.5), (3, 'Charlie', 30.5)",
-            tableName));
   }
 }

@@ -18,7 +18,6 @@ package io.delta.spark.dsv2.scan.batch;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.spark.dsv2.scan.KernelSparkScanContext;
-import java.io.Serializable;
 import org.apache.spark.sql.connector.read.Batch;
 import org.apache.spark.sql.connector.read.InputPartition;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;

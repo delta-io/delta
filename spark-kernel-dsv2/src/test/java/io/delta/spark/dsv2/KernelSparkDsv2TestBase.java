@@ -47,4 +47,21 @@ public abstract class KernelSparkDsv2TestBase {
       spark = null;
     }
   }
+
+  protected void createTestTableWithData(String path, String tableName) {
+    spark.sql(
+        String.format(
+            "CREATE TABLE %s (id INT, name STRING, value DOUBLE) USING delta LOCATION '%s'",
+            tableName, path));
+    spark.sql(
+        String.format(
+            "INSERT INTO %s VALUES (1, 'Alice', 10.5), (2, 'Bob', 20.5), (3, 'Charlie', 30.5)",
+            tableName));
+  }
+
+  protected void createEmptyTestTable(String path, String tableName) {
+    spark.sql(
+        String.format(
+            "CREATE TABLE %s (id INT, name STRING) USING delta LOCATION '%s'", tableName, path));
+  }
 }

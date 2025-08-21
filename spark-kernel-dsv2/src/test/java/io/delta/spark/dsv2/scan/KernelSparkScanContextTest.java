@@ -41,7 +41,7 @@ public class KernelSparkScanContextTest extends KernelSparkDsv2TestBase {
   public void testConstructorWithNullHadoopConf(@TempDir File tempDir) {
     String path = tempDir.getAbsolutePath();
     String tableName = "test_null_hadoop_conf";
-    createTestTable(path, tableName);
+    createTestTableWithData(path, tableName);
 
     Scan scan = TableManager.loadSnapshot(path).build(defaultEngine).getScanBuilder().build();
 
@@ -56,7 +56,7 @@ public class KernelSparkScanContextTest extends KernelSparkDsv2TestBase {
   public void testPlanPartitionsSuccess(@TempDir File tempDir) {
     String path = tempDir.getAbsolutePath();
     String tableName = "test_plan_partitions";
-    createTestTable(path, tableName);
+    createTestTableWithData(path, tableName);
 
     Scan scan = TableManager.loadSnapshot(path).build(defaultEngine).getScanBuilder().build();
     KernelSparkScanContext scanContext =
@@ -95,7 +95,7 @@ public class KernelSparkScanContextTest extends KernelSparkDsv2TestBase {
   public void testPlanPartitionsMultipleTime(@TempDir File tempDir) {
     String path = tempDir.getAbsolutePath();
     String tableName = "test_call_plan_partition_mutiple_time";
-    createTestTable(path, tableName);
+    createTestTableWithData(path, tableName);
 
     Scan scan = TableManager.loadSnapshot(path).build(defaultEngine).getScanBuilder().build();
     KernelSparkScanContext scanContext =
@@ -116,23 +116,5 @@ public class KernelSparkScanContextTest extends KernelSparkDsv2TestBase {
     }
   }
 
-  //////////////////////
-  // Private helpers //
-  /////////////////////
-  private void createTestTable(String path, String tableName) {
-    spark.sql(
-        String.format(
-            "CREATE TABLE %s (id INT, name STRING, value DOUBLE) USING delta LOCATION '%s'",
-            tableName, path));
-    spark.sql(
-        String.format(
-            "INSERT INTO %s VALUES (1, 'Alice', 10.5), (2, 'Bob', 20.5), (3, 'Charlie', 30.5)",
-            tableName));
-  }
-
-  private void createEmptyTestTable(String path, String tableName) {
-    spark.sql(
-        String.format(
-            "CREATE TABLE %s (id INT, name STRING) USING delta LOCATION '%s'", tableName, path));
-  }
+  // Test helper methods have been moved to KernelSparkDsv2TestBase
 }
