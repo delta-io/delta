@@ -26,7 +26,7 @@ import org.apache.spark.sql.types.StructType;
 /**
  * Spark Scan implementation backed by Delta Kernel.
  *
- * <p>Created on Driver and provides access to batch scanning capabilities.
+ * <p>Created on Driver and provides access to batch and streaming scanning capabilities.
  */
 public class KernelSparkScan implements org.apache.spark.sql.connector.read.Scan {
 
