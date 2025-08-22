@@ -149,7 +149,7 @@ trait DeltaErrorsSuiteBase
     val lastResponse = (1 to MAX_URL_ACCESS_RETRIES).map { attempt =>
       if (attempt > 1) Thread.sleep(1000)
       val response = try {
-        Process("curl -I " + url).!!
+        Process("curl -I -L " + url).!!
       } catch {
         case e: RuntimeException =>
           val sw = new StringWriter
