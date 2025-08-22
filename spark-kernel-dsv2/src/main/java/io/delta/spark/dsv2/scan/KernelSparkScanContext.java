@@ -44,8 +44,8 @@ import org.slf4j.LoggerFactory;
  * and ensures consistent partition planning.
  *
  * <p>This class serves as wrapper of kernel logic owned by {@link
- * io.delta.spark.dsv2.scan.KernelSparkScan}  to handle the low-level operations of
- * converting Kernel scan files into Spark InputPartitions used by {@link
+ * io.delta.spark.dsv2.scan.KernelSparkScan} to handle the low-level operations of converting Kernel
+ * scan files into Spark InputPartitions used by {@link
  * io.delta.spark.dsv2.scan.batch.KernelSparkBatchScan}.
  */
 public class KernelSparkScanContext {
