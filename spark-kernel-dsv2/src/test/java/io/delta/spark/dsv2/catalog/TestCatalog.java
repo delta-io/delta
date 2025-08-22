@@ -60,7 +60,8 @@ public class TestCatalog implements TableCatalog {
 
   // TODO: Support catalog owned commit.
   private final Map<String, String> tablePaths = new ConcurrentHashMap<>();
-  private final Engine engine = DefaultEngine.create(new Configuration());
+  private final Configuration hadoopConf = new Configuration();
+  private final Engine engine = DefaultEngine.create(hadoopConf);
 
   @Override
   public Identifier[] listTables(String[] namespace) {
@@ -84,9 +85,7 @@ public class TestCatalog implements TableCatalog {
     try {
       // Use TableManager.loadTable to load the table
       SnapshotImpl snapshot = (SnapshotImpl) TableManager.loadSnapshot(tablePath).build(engine);
-      return new DeltaKernelTable(ident, snapshot);
-    } catch (TableNotFoundException tableNotFoundException) {
-      throw new NoSuchTableException(ident);
+      return new DeltaKernelTable(ident, snapshot, hadoopConf);
     } catch (Exception e) {
       throw new RuntimeException("Failed to load table: " + ident, e);
     }
@@ -120,7 +119,7 @@ public class TestCatalog implements TableCatalog {
 
       // Load the created table and return DeltaKernelTable
       SnapshotImpl snapshot = (SnapshotImpl) kernelTable.getLatestSnapshot(engine);
-      return new DeltaKernelTable(ident, snapshot);
+      return new DeltaKernelTable(ident, snapshot, hadoopConf);
 
     } catch (Exception e) {
       // Remove the table entry if creation fails
