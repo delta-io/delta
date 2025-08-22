@@ -1,5 +1,5 @@
 /*
- * Copyright (2024) The Delta Lake Project Authors.
+ * Copyright (2025) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,20 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.metrics
+package io.delta.kernel.internal.metrics
 
 import java.util.concurrent.Callable
 import java.util.function.Supplier
 
-import io.delta.kernel.internal.metrics.{Counter, Timer}
-
 import org.scalatest.funsuite.AnyFunSuite
 
-class MetricsUtilsSuite extends AnyFunSuite {
-
-  /////////////////
-  // Timer tests //
-  ////////////////
+class TimerSuite extends AnyFunSuite {
 
   val NANOSECONDS_PER_MILLISECOND = 1000000
 
@@ -158,26 +152,5 @@ class MetricsUtilsSuite extends AnyFunSuite {
     testTimer((amount, timer) => {
       catchException(() => timer.time(runnable(amount)))
     })
-  }
-
-  ///////////////////
-  // Counter tests //
-  ///////////////////
-
-  test("Counter class") {
-    val counter = new Counter()
-    assert(counter.value == 0)
-    counter.increment(0)
-    assert(counter.value == 0)
-    counter.increment()
-    assert(counter.value == 1)
-    counter.increment()
-    assert(counter.value == 2)
-    counter.increment(10)
-    assert(counter.value == 12)
-    counter.reset()
-    assert(counter.value == 0)
-    counter.increment()
-    assert(counter.value == 1)
   }
 }
