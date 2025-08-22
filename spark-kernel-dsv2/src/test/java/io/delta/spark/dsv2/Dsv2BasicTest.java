@@ -88,7 +88,7 @@ public class Dsv2BasicTest {
                     .sql(String.format("SELECT * FROM dsv2.%s.batch_read_test", nameSpace))
                     .show());
     // TODO: update after implementing batch Scan
-    assertTrue(e.getMessage().contains("Batch scan are not supported"));
+    assertTrue(e.getMessage().contains("reader factory is not implemented"));
   }
 
   @Test
