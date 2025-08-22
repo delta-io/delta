@@ -33,7 +33,7 @@ import io.delta.kernel.internal.TableImpl
 import io.delta.kernel.internal.actions.{AddFile, Metadata, SingleAction}
 import io.delta.kernel.internal.checksum.{CRCInfo, ChecksumReader}
 import io.delta.kernel.internal.fs.Path
-import io.delta.kernel.internal.metrics.FileCounter
+import io.delta.kernel.internal.metrics.{FileCounter, ScanMetrics}
 import io.delta.kernel.internal.util.FileNames.checksumFile
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.types.LongType.LONG
@@ -158,7 +158,8 @@ trait ChecksumComparisonSuiteBase extends DeltaTableWriteSuiteBase with TestUtil
     ChecksumReader
       .getCRCInfo(
         engine,
-        FileStatus.of(checksumFile(new Path(f"$path/_delta_log/"), version).toString), new FileCounter())
+        FileStatus.of(checksumFile(new Path(f"$path/_delta_log/"), version).toString),
+        new FileCounter())
       .orElseThrow(() => new IllegalStateException(s"CRC info not found for version $version"))
   }
 
@@ -179,7 +180,8 @@ trait ChecksumComparisonSuiteBase extends DeltaTableWriteSuiteBase with TestUtil
       versionToConvert,
       versionToConvert,
       // TODO include REMOVE action as well once we support it
-      Set(DeltaAction.ADD).asJava)
+      Set(DeltaAction.ADD).asJava,
+      new ScanMetrics())
 
     val addFilesRows = new util.ArrayList[Row]()
     tableChange.forEach(batch =>

@@ -72,6 +72,7 @@ class LogReplayEngineMetricsSuite extends LogReplayBaseSuite with BeforeAndAfter
     // get all scan files and iterate through them to trigger the metrics collection
     val scanFiles = scan.getScanFiles(engine)
     while (scanFiles.hasNext) scanFiles.next()
+    scanFiles.close()
 
     assertMetrics(
       engine,

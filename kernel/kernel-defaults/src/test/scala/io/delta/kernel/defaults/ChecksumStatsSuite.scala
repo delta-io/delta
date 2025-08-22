@@ -96,7 +96,8 @@ trait ChecksumStatsSuiteBase extends DeltaTableWriteSuiteBase {
         engine,
         FileStatus.of(checksumFile(
           new Path(tablePath + "/_delta_log"),
-          version).toString), new FileCounter())
+          version).toString),
+        new FileCounter())
         .orElseThrow(() => new AssertionError("CRC information should be present"))
       assert(crcInfo.getNumFiles === expectedFileCount)
       assert(crcInfo.getTableSizeBytes === expectedTableSize)

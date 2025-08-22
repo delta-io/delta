@@ -31,14 +31,15 @@ import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction
 import io.delta.kernel.internal.TableImpl
 import io.delta.kernel.internal.actions.{AddCDCFile, AddFile, CommitInfo, Metadata, Protocol, RemoveFile}
 import io.delta.kernel.internal.fs.Path
+import io.delta.kernel.internal.metrics.ScanMetrics
 import io.delta.kernel.internal.util.{FileNames, ManualClock, VectorUtils}
 import io.delta.kernel.utils.CloseableIterator
 
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.actions.{Action => SparkAction, AddCDCFile => SparkAddCDCFile, AddFile => SparkAddFile, CommitInfo => SparkCommitInfo, Metadata => SparkMetadata, Protocol => SparkProtocol, RemoveFile => SparkRemoveFile, SetTransaction => SparkSetTransaction}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits.OptimisticTxnTestHelper
-
 import org.apache.hadoop.fs.{Path => HadoopPath}
+
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.types.{IntegerType, StructType}
 import org.scalatest.funsuite.AnyFunSuite
@@ -68,7 +69,7 @@ class TableChangesSuite extends AnyFunSuite with TestUtils with DeltaTableWriteS
 
     val kernelChanges = Table.forPath(defaultEngine, tablePath)
       .asInstanceOf[TableImpl]
-      .getChanges(defaultEngine, startVersion, endVersion, actionSet.asJava)
+      .getChanges(defaultEngine, startVersion, endVersion, actionSet.asJava, new ScanMetrics())
       .toSeq
 
     // Check schema is as expected (version + timestamp column + the actions requested)
@@ -195,7 +196,7 @@ class TableChangesSuite extends AnyFunSuite with TestUtils with DeltaTableWriteS
         // Check the timestamps are returned correctly
         Table.forPath(defaultEngine, tempDir)
           .asInstanceOf[TableImpl]
-          .getChanges(defaultEngine, 0, 2, Set(DeltaAction.ADD).asJava)
+          .getChanges(defaultEngine, 0, 2, Set(DeltaAction.ADD).asJava, new ScanMetrics())
           .toSeq
           .flatMap(_.getRows.toSeq)
           .foreach { row =>
@@ -223,7 +224,7 @@ class TableChangesSuite extends AnyFunSuite with TestUtils with DeltaTableWriteS
       intercept[TableNotFoundException] {
         Table.forPath(defaultEngine, tempDir.getCanonicalPath)
           .asInstanceOf[TableImpl]
-          .getChanges(defaultEngine, 0, 2, FULL_ACTION_SET.asJava)
+          .getChanges(defaultEngine, 0, 2, FULL_ACTION_SET.asJava, new ScanMetrics())
       }
     }
   }
@@ -233,7 +234,7 @@ class TableChangesSuite extends AnyFunSuite with TestUtils with DeltaTableWriteS
       intercept[TableNotFoundException] {
         Table.forPath(defaultEngine, tempDir.getCanonicalPath)
           .asInstanceOf[TableImpl]
-          .getChanges(defaultEngine, 0, 2, FULL_ACTION_SET.asJava)
+          .getChanges(defaultEngine, 0, 2, FULL_ACTION_SET.asJava, new ScanMetrics())
       }
     }
   }
@@ -244,7 +245,7 @@ class TableChangesSuite extends AnyFunSuite with TestUtils with DeltaTableWriteS
       intercept[TableNotFoundException] {
         Table.forPath(defaultEngine, tempDir.getCanonicalPath)
           .asInstanceOf[TableImpl]
-          .getChanges(defaultEngine, 0, 2, FULL_ACTION_SET.asJava)
+          .getChanges(defaultEngine, 0, 2, FULL_ACTION_SET.asJava, new ScanMetrics())
       }
     }
   }
@@ -253,7 +254,7 @@ class TableChangesSuite extends AnyFunSuite with TestUtils with DeltaTableWriteS
     intercept[TableNotFoundException] {
       Table.forPath(defaultEngine, "/fake/table/path")
         .asInstanceOf[TableImpl]
-        .getChanges(defaultEngine, 0, 2, FULL_ACTION_SET.asJava)
+        .getChanges(defaultEngine, 0, 2, FULL_ACTION_SET.asJava, new ScanMetrics())
     }
   }
 
@@ -264,7 +265,7 @@ class TableChangesSuite extends AnyFunSuite with TestUtils with DeltaTableWriteS
           endVersion: Long): CloseableIterator[ColumnarBatch] = {
         Table.forPath(defaultEngine, tablePath)
           .asInstanceOf[TableImpl]
-          .getChanges(defaultEngine, startVersion, endVersion, FULL_ACTION_SET.asJava)
+          .getChanges(defaultEngine, startVersion, endVersion, FULL_ACTION_SET.asJava, new ScanMetrics())
       }
 
       // startVersion after latest available version
@@ -326,14 +327,14 @@ class TableChangesSuite extends AnyFunSuite with TestUtils with DeltaTableWriteS
       assert(intercept[KernelException] {
         Table.forPath(defaultEngine, tablePath)
           .asInstanceOf[TableImpl]
-          .getChanges(defaultEngine, 0, 9, FULL_ACTION_SET.asJava)
+          .getChanges(defaultEngine, 0, 9, FULL_ACTION_SET.asJava, new ScanMetrics())
       }.getMessage.contains("no log files found in the requested version range"))
 
       // startVersion less than the earliest available version
       assert(intercept[KernelException] {
         Table.forPath(defaultEngine, tablePath)
           .asInstanceOf[TableImpl]
-          .getChanges(defaultEngine, 5, 11, FULL_ACTION_SET.asJava)
+          .getChanges(defaultEngine, 5, 11, FULL_ACTION_SET.asJava, new ScanMetrics())
       }.getMessage.contains("no log file found for version 5"))
 
       // TEST VALID CASES
@@ -410,13 +411,13 @@ class TableChangesSuite extends AnyFunSuite with TestUtils with DeltaTableWriteS
       // Use toSeq because we need to consume the iterator to force the exception
       Table.forPath(defaultEngine, goldenTablePath("deltalog-invalid-protocol-version"))
         .asInstanceOf[TableImpl]
-        .getChanges(defaultEngine, 0, 0, FULL_ACTION_SET.asJava).toSeq
+        .getChanges(defaultEngine, 0, 0, FULL_ACTION_SET.asJava, new ScanMetrics()).toSeq
     }.getMessage.contains("Unsupported Delta protocol reader version"))
     // We still get an error if we don't request the protocol file action
     assert(intercept[KernelException] {
       Table.forPath(defaultEngine, goldenTablePath("deltalog-invalid-protocol-version"))
         .asInstanceOf[TableImpl]
-        .getChanges(defaultEngine, 0, 0, Set(DeltaAction.ADD).asJava).toSeq
+        .getChanges(defaultEngine, 0, 0, Set(DeltaAction.ADD).asJava, new ScanMetrics()).toSeq
     }.getMessage.contains("Unsupported Delta protocol reader version"))
   }
 

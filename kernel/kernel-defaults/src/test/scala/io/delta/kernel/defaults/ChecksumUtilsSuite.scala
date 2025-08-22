@@ -23,6 +23,7 @@ import io.delta.kernel.engine.Engine
 import io.delta.kernel.expressions.{Column, Literal}
 import io.delta.kernel.internal.{SnapshotImpl, TableImpl}
 import io.delta.kernel.internal.checksum.ChecksumUtils
+import io.delta.kernel.internal.metrics.ScanMetrics
 import io.delta.kernel.internal.util.ManualClock
 import io.delta.kernel.types.{StringType, StructType}
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
@@ -30,7 +31,6 @@ import io.delta.kernel.utils.CloseableIterable.emptyIterable
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.actions.CommitInfo
 import org.apache.spark.sql.delta.test.DeltaTestImplicits.OptimisticTxnTestHelper
-
 import org.apache.hadoop.fs.Path
 
 /**
@@ -56,13 +56,13 @@ class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase with LogReplayBaseSuit
       val snapshot0 = Table.forPath(
         engine,
         tablePath).getSnapshotAsOfVersion(engine, 0).asInstanceOf[SnapshotImpl]
-      ChecksumUtils.computeStateAndWriteChecksum(engine, snapshot0.getLogSegment)
+      ChecksumUtils.computeStateAndWriteChecksum(engine, snapshot0.getLogSegment, new ScanMetrics())
       verifyChecksumForSnapshot(snapshot0)
 
       val snapshot1 = Table.forPath(
         engine,
         tablePath).getSnapshotAsOfVersion(engine, 1).asInstanceOf[SnapshotImpl]
-      ChecksumUtils.computeStateAndWriteChecksum(engine, snapshot1.getLogSegment)
+      ChecksumUtils.computeStateAndWriteChecksum(engine, snapshot1.getLogSegment, new ScanMetrics())
       verifyChecksumForSnapshot(snapshot1)
     }
   }
@@ -76,11 +76,11 @@ class ChecksumUtilsSuite extends DeltaTableWriteSuiteBase with LogReplayBaseSuit
         tablePath).getSnapshotAsOfVersion(engine, 0).asInstanceOf[SnapshotImpl]
 
       // First call should create the checksum file
-      ChecksumUtils.computeStateAndWriteChecksum(engine, snapshot.getLogSegment)
+      ChecksumUtils.computeStateAndWriteChecksum(engine, snapshot.getLogSegment, new ScanMetrics())
       verifyChecksumForSnapshot(snapshot)
 
       // Second call should be a no-op (no exception thrown)
-      ChecksumUtils.computeStateAndWriteChecksum(engine, snapshot.getLogSegment)
+      ChecksumUtils.computeStateAndWriteChecksum(engine, snapshot.getLogSegment, new ScanMetrics())
       verifyChecksumForSnapshot(snapshot)
     }
   }

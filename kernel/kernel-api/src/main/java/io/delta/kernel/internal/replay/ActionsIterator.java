@@ -506,7 +506,7 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     // version with actions read from the JSON file for further optimizations later
     // on (faster metadata & protocol loading in subsequent runs by remembering
     // the version of the last version where the metadata and protocol are found).
-    this.metrics.jsonActionSourceFilesCounter.increment(nextFile.getSize());
+    metrics.jsonActionSourceFilesCounter.increment(nextFile.getSize());
     final CloseableIterator<FileReadResult> dataIter =
         wrapEngineExceptionThrowsIO(
             () ->
@@ -608,9 +608,8 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
         peek = filesList.peek();
       }
     }
-    // Increment the file counter for each checkpoint file
-    for (FileStatus file : checkpointFiles) {
-      this.metrics.parquetActionSourceFilesCounter.increment(file.getSize());
+    for (FileStatus checkpointFile : checkpointFiles) {
+      metrics.parquetActionSourceFilesCounter.increment(checkpointFile.getSize());
     }
     return toCloseableIterator(checkpointFiles.iterator());
   }

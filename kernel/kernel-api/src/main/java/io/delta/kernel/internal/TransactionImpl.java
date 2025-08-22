@@ -380,7 +380,7 @@ public class TransactionImpl implements Transaction {
             printLogForRetryableWithConflictException(attempt, commitAsVersion, cfe);
 
             TransactionRebaseState rebaseState =
-                resolveConflicts(engine, commitAsVersion, attemptCommitInfo, attempt, dataActions);
+                resolveConflicts(engine, commitAsVersion, attemptCommitInfo, attempt, dataActions, transactionMetrics);
             commitAsVersion = rebaseState.getLatestVersion() + 1;
             dataActions = rebaseState.getUpdatedDataActions();
             domainMetadataState.setComputedDomainMetadatas(rebaseState.getUpdatedDomainMetadatas());
@@ -405,7 +405,8 @@ public class TransactionImpl implements Transaction {
       long commitAsVersion,
       CommitInfo attemptCommitInfo,
       int attempt,
-      CloseableIterable<Row> dataActions) {
+      CloseableIterable<Row> dataActions,
+      TransactionMetrics metrics) {
     logger.info(
         "[{}] Trying to resolve conflicts and retry commit. Attempt {}/{}.",
         dataPath,
@@ -418,7 +419,7 @@ public class TransactionImpl implements Transaction {
             commitAsVersion,
             this,
             domainMetadataState.getComputedDomainMetadatasToCommit(),
-            dataActions);
+            dataActions, metrics.getConflictResolutionScanMetrics());
     long newCommitAsVersion = rebaseState.getLatestVersion() + 1;
     checkArgument(
         commitAsVersion < newCommitAsVersion,

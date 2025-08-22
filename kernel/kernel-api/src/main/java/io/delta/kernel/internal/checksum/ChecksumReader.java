@@ -42,7 +42,8 @@ public class ChecksumReader {
    * @return Optional {@link CRCInfo} containing the information included in the checksum file, such
    *     as protocol, metadata.
    */
-  public static Optional<CRCInfo> getCRCInfo(Engine engine, FileStatus checkSumFile, FileCounter crcFileCounter) {
+  public static Optional<CRCInfo> getCRCInfo(
+      Engine engine, FileStatus checkSumFile, FileCounter crcFileCounter) {
     crcFileCounter.increment(checkSumFile.getSize());
     try (CloseableIterator<ColumnarBatch> iter =
         engine

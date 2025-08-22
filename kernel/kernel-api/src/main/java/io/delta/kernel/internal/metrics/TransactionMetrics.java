@@ -63,6 +63,8 @@ public class TransactionMetrics {
 
   private Optional<FileSizeHistogram> tableFileSizeHistogram;
 
+  public final ScanMetrics conflictResolutionScanMetrics = new ScanMetrics();
+
   private TransactionMetrics(Optional<FileSizeHistogram> tableFileSizeHistogram) {
     this.tableFileSizeHistogram = tableFileSizeHistogram;
   }
@@ -93,6 +95,10 @@ public class TransactionMetrics {
     removeFilesCounter.increment();
     removeFilesSizeInBytesCounter.increment(removeFileSize);
     tableFileSizeHistogram.ifPresent(histogram -> histogram.remove(removeFileSize));
+  }
+
+  public ScanMetrics getConflictResolutionScanMetrics() {
+    return conflictResolutionScanMetrics;
   }
 
   /**

@@ -112,12 +112,12 @@ public class ConflictChecker {
       long attemptVersion,
       TransactionImpl transaction,
       List<DomainMetadata> domainMetadatas,
-      CloseableIterable<Row> dataActions)
+      CloseableIterable<Row> dataActions,
+      ScanMetrics metrics)
       throws ConcurrentWriteException {
     // We currently set isBlindAppend=false in our CommitInfo to avoid unsafe resolution by other
     // connectors. Here, we still can assume that conflict resolution is safe to perform in Kernel.
     // checkArgument(transaction.isBlindAppend(), "Current support is for blind appends only.");
-    ScanMetrics metrics = new ScanMetrics();
     return new ConflictChecker(snapshot, transaction, attemptVersion, domainMetadatas, dataActions)
         .resolveConflicts(engine, metrics);
   }
@@ -183,7 +183,8 @@ public class ConflictChecker {
     Optional<CRCInfo> updatedCrcInfo =
         ChecksumReader.getCRCInfo(
             engine,
-            FileStatus.of(checksumFile(transaction.getLogPath(), lastWinningVersion).toString()), scanMetrics.crcFilesCounter);
+            FileStatus.of(checksumFile(transaction.getLogPath(), lastWinningVersion).toString()),
+            scanMetrics.crcFilesCounter);
 
     // if we get here, we have successfully rebased (i.e no logical conflicts)
     // against the winning transactions

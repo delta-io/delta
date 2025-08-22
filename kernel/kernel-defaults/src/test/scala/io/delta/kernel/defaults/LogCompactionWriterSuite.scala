@@ -32,6 +32,7 @@ import io.delta.kernel.internal.actions._
 import io.delta.kernel.internal.compaction.LogCompactionWriter
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.hook.LogCompactionHook
+import io.delta.kernel.internal.metrics.ScanMetrics
 import io.delta.kernel.internal.replay.ActionsIterator
 import io.delta.kernel.internal.util.FileNames.DeltaLogFileType
 import io.delta.kernel.internal.util.ManualClock
@@ -41,7 +42,7 @@ import io.delta.kernel.utils.FileStatus
 
 import org.apache.spark.sql.delta.{DeltaLog, DomainMetadataTableFeature}
 import org.apache.spark.sql.delta.DeltaOperations.Truncate
-import org.apache.spark.sql.delta.actions.{DomainMetadata => DeltaSparkDomainMetadata, TableFeatureProtocolUtils}
+import org.apache.spark.sql.delta.actions.{TableFeatureProtocolUtils, DomainMetadata => DeltaSparkDomainMetadata}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 /**
@@ -96,7 +97,7 @@ class LogCompactionWriterSuite extends CheckpointSuiteBase {
       .toInMemoryList()
     Collections.reverse(files) // we want things in reverse order
     val actions =
-      new ActionsIterator(engine, files, COMPACTED_SCHEMA, Optional.empty())
+      new ActionsIterator(engine, files, COMPACTED_SCHEMA, Optional.empty(), new ScanMetrics())
     val removed = scala.collection.mutable.HashSet.empty[String]
     val seenDomains = scala.collection.mutable.HashSet.empty[String]
     var seenMetadata = false

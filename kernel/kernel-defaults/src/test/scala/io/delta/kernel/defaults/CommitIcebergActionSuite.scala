@@ -29,6 +29,7 @@ import io.delta.kernel.internal.{TableConfig, TableImpl}
 import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction
 import io.delta.kernel.internal.actions.{AddFile, DeletionVectorDescriptor, GenerateIcebergCompatActionUtils, RemoveFile}
 import io.delta.kernel.internal.data.TransactionStateRow
+import io.delta.kernel.internal.metrics.ScanMetrics
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.internal.util.VectorUtils
 import io.delta.kernel.statistics.DataFileStatistics
@@ -235,7 +236,7 @@ class CommitIcebergActionSuite extends DeltaTableWriteSuiteBase {
       expectedFileActions: Set[ExpectedFileAction],
       icebergCompatWriterVersion: String = "V1"): Unit = {
     val rows = Table.forPath(engine, tablePath).asInstanceOf[TableImpl]
-      .getChanges(engine, version, version, Set(DeltaAction.ADD, DeltaAction.REMOVE).asJava)
+      .getChanges(engine, version, version, Set(DeltaAction.ADD, DeltaAction.REMOVE).asJava, new ScanMetrics())
       .toSeq
       .flatMap(_.getRows.toSeq)
     val fileActions = rows.flatMap { row =>
@@ -615,7 +616,7 @@ class CommitIcebergActionSuite extends DeltaTableWriteSuiteBase {
         // Read back committed ADD actions
         val tableVersion = 1
         val rows = Table.forPath(engine, tablePath).asInstanceOf[TableImpl]
-          .getChanges(engine, tableVersion, tableVersion, Set(DeltaAction.ADD).asJava)
+          .getChanges(engine, tableVersion, tableVersion, Set(DeltaAction.ADD).asJava, new ScanMetrics())
           .toSeq
           .flatMap(_.getRows.toSeq)
           .filterNot(row => row.isNullAt(row.getSchema.indexOf("add")))

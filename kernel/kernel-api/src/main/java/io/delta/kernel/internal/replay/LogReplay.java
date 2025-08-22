@@ -587,7 +587,8 @@ public class LogReplay {
                 .flatMap(
                     crcFile -> {
                       // Record metrics for the CRC file
-                      return ChecksumReader.getCRCInfo(engine, crcFile, scanMetrics.crcFilesCounter);
+                      return ChecksumReader.getCRCInfo(
+                          engine, crcFile, scanMetrics.crcFilesCounter);
                     });
       }
       return cachedLastSeenCrcInfo;
@@ -629,7 +630,9 @@ public class LogReplay {
                     // Record metrics for the CRC file
                     snapshotMetrics.scanMetrics.crcFilesCounter.increment(checksum.getSize());
                     return snapshotMetrics.loadCrcTotalDurationTimer.time(
-                        () -> ChecksumReader.getCRCInfo(engine, checksum, snapshotMetrics.scanMetrics.crcFilesCounter));
+                        () ->
+                            ChecksumReader.getCRCInfo(
+                                engine, checksum, snapshotMetrics.scanMetrics.crcFilesCounter));
                   });
 
       if (!crcInfoOpt.isPresent()) {

@@ -15,9 +15,11 @@
  */
 
 package io.delta.kernel.defaults
+import java.util
 import java.util.Optional
 
 import scala.collection.convert.ImplicitConversions._
+import collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 
 import io.delta.kernel.Table
@@ -26,18 +28,17 @@ import io.delta.kernel.defaults.engine.{DefaultEngine, DefaultJsonHandler, Defau
 import io.delta.kernel.defaults.engine.fileio.FileIO
 import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO
 import io.delta.kernel.defaults.utils.TestUtils
-import io.delta.kernel.engine.{Engine, ExpressionHandler, FileSystemClient}
-import io.delta.kernel.engine.FileReadResult
+import io.delta.kernel.engine.{Engine, ExpressionHandler, FileReadResult, FileSystemClient, MetricsReporter}
 import io.delta.kernel.expressions.Predicate
 import io.delta.kernel.internal.checkpoints.Checkpointer
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
+import io.delta.kernel.metrics.{MetricsReport, ScanMetricsResult, ScanReport, SnapshotMetricsResult, SnapshotReport}
 import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-
 import org.apache.hadoop.conf.Configuration
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -98,6 +99,14 @@ trait LogReplayBaseSuite extends AnyFunSuite with TestUtils {
     val actualJsonVersionsRead = engine.getJsonHandler.getVersionsRead
     val actualParquetVersionsRead = engine.getParquetHandler.getVersionsRead
 
+    val scanMetrics = engine.reports
+    if (engine.getJsonHandler.getCommitFilesRead > 0) {
+      assert(scanMetrics.map(_.getJsonActionSourceFilesTotalSizeBytes).sum > 0)
+    }
+    val recordedCommitFilesRead = scanMetrics.map(_.getNumJsonActionSourceFiles).sum
+    val actualCommitsFilesRead = engine.getJsonHandler.getCommitFilesRead
+    assert(recordedCommitFilesRead == actualCommitsFilesRead,
+      s"recorded: $recordedCommitFilesRead != actual $actualCommitsFilesRead")
     assert(
       actualJsonVersionsRead === expJsonVersionsRead,
       s"Expected to read json versions " +
@@ -109,6 +118,8 @@ trait LogReplayBaseSuite extends AnyFunSuite with TestUtils {
 
     if (expParquetReadSetSizes != null) {
       val actualParquetReadSetSizes = engine.getParquetHandler.checkpointReadRequestSizes
+      assert(scanMetrics.map(_.getNumParquetActionSourceFiles).sum == actualParquetReadSetSizes.sum)
+      assert(scanMetrics.map(_.getParquetActionSourceFilesTotalSizeBytes).sum > 0)
       assert(
         actualParquetReadSetSizes === expParquetReadSetSizes,
         s"Expected parquet read set sizes " +
@@ -124,6 +135,8 @@ trait LogReplayBaseSuite extends AnyFunSuite with TestUtils {
 
     if (expChecksumReadSet != null) {
       val actualChecksumReadSet = engine.getJsonHandler.checksumsRead
+      assert(scanMetrics.map(_.getNumCrcFiles).sum == engine.getJsonHandler.getChecksumFilesRead)
+      assert(scanMetrics.map(_.getCrcFilesTotalSizeBytes).sum > 0)
       assert(
         actualChecksumReadSet === expChecksumReadSet,
         s"Expected checksum read set " +
@@ -169,7 +182,10 @@ class MetricsEngine(fileIO: FileIO) extends Engine {
   def resetMetrics(): Unit = {
     jsonHandler.resetMetrics()
     parquetHandler.resetMetrics()
+    reports = Seq.empty
   }
+
+  var reports: Seq[ScanMetricsResult] = Seq.empty
 
   override def getExpressionHandler: ExpressionHandler = impl.getExpressionHandler
 
@@ -178,6 +194,21 @@ class MetricsEngine(fileIO: FileIO) extends Engine {
   override def getFileSystemClient: FileSystemClient = impl.getFileSystemClient
 
   override def getParquetHandler: MetricsParquetHandler = parquetHandler
+
+  override def getMetricsReporters: util.List[MetricsReporter] = {
+    List(new MetricsReporter {
+      override def report(report: MetricsReport) = {
+        report match {
+          case snapshotReport: SnapshotReport =>
+            MetricsEngine.this.reports = MetricsEngine.this.reports ++ Seq(snapshotReport.getSnapshotMetrics.getScanMetricsResult)
+          case scanReport : ScanReport =>
+            MetricsEngine.this.reports = MetricsEngine.this.reports ++ Seq(scanReport.getScanMetrics)
+          case _ => throw new IllegalArgumentException(
+            s"Unexpected MetricsReport type: ${report}")
+        }
+      }
+    }).asJava
+  }
 }
 
 /**
@@ -191,6 +222,9 @@ trait FileReadMetrics { self: Object =>
   val checksumsRead = new ArrayBuffer[Long]() // versions of checksum files read
 
   private val versionsRead = ArrayBuffer[Long]()
+  private var commitsRead = 0
+  private var checksumsReadCount = 0
+  private var compactionFilesRead = 0
 
   private val compactionVersionsRead = ArrayBuffer[(Long, Long)]()
 
@@ -199,6 +233,9 @@ trait FileReadMetrics { self: Object =>
 
   private def updateVersionsRead(fileStatus: FileStatus): Unit = {
     val path = new Path(fileStatus.getPath)
+    if (FileNames.isCommitFile(path.getName)) {
+      commitsRead += 1
+    }
     if (FileNames.isCommitFile(path.getName) || FileNames.isCheckpointFile(path.getName)) {
       val version = FileNames.getFileVersion(path)
 
@@ -210,13 +247,18 @@ trait FileReadMetrics { self: Object =>
       lastCheckpointMetadataReadCalls += 1
     } else if (FileNames.isChecksumFile(path.getName)) {
       checksumsRead += FileNames.getFileVersion(path)
+      checksumsReadCount += 1
     } else if (FileNames.isLogCompactionFile(path.getName)) {
       val versions = FileNames.logCompactionVersions(path)
       compactionVersionsRead += ((versions._1, versions._2))
+      compactionFilesRead += 1
     }
   }
 
   def getVersionsRead: Seq[Long] = versionsRead
+  def getCommitFilesRead : Long = commitsRead
+  def getChecksumFilesRead: Long = checksumsReadCount
+  def getCompactionFilesRead: Long = compactionFilesRead
 
   def getCompactionsRead: Seq[(Long, Long)] = compactionVersionsRead
 
@@ -228,6 +270,9 @@ trait FileReadMetrics { self: Object =>
     compactionVersionsRead.clear()
     checkpointReadRequestSizes.clear()
     checksumsRead.clear()
+    commitsRead = 0
+    checksumsReadCount = 0
+    compactionFilesRead = 0
   }
 
   def collectReadFiles(fileIter: CloseableIterator[FileStatus]): CloseableIterator[FileStatus] = {
