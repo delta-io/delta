@@ -220,7 +220,7 @@ public class TableFeatures {
 
     @Override
     public boolean hasKernelWriteSupport(Metadata metadata) {
-      return false; // TODO: yet to be implemented in Kernel
+      return true; // TODO: yet to be implemented in Kernel
     }
   }
 
@@ -263,7 +263,14 @@ public class TableFeatures {
 
     @Override
     public boolean hasKernelWriteSupport(Metadata metadata) {
-      return false; // TODO: yet to be implemented in Kernel
+      // Return true for metadata writing support, data writing is already blocked in
+      // transformLogicalData
+      return true;
+    }
+
+    @Override
+    public Set<TableFeature> requiredFeatures() {
+      return Collections.singleton(VARIANT_RW_FEATURE);
     }
   }
   /* ---- End: variantShredding-preview ---- */

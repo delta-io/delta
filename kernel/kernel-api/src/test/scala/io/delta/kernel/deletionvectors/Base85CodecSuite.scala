@@ -137,4 +137,8 @@ class Base85CodecSuite extends AnyFunSuite {
       assert(decodedArray === inputArray, s"encodedString = $encodedString")
     }
   }
+
+  test("asdf") {
+    val content = "0S&u500J-Y-7*pjaoJw6tl+cd0000000000000000000000000"
+  }
 }

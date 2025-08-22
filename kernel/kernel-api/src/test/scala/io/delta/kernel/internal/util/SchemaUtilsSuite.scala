@@ -494,8 +494,8 @@ class SchemaUtilsSuite extends AnyFunSuite {
         metadata(current, properties = tblProperties),
         metadata(updated, properties = tblProperties),
         emptySet(),
-        false // allowNewRequiredFields
-      )
+        false, // allowNewRequiredFields
+        emptySet())
     }
 
     assert(e.getMessage == "Cannot validate updated schema when column mapping is disabled")
@@ -691,7 +691,8 @@ class SchemaUtilsSuite extends AnyFunSuite {
           metadata(schemaBefore),
           metadata(schemaAfter),
           emptySet(),
-          false /* allowNewRequiredFields */ )
+          false, /* allowNewRequiredFields */
+          emptySet())
       }
 
       assert(e.getMessage.matches("Field duplicate_id with id .* already exists"))
@@ -744,7 +745,8 @@ class SchemaUtilsSuite extends AnyFunSuite {
         metadata(schemaBefore),
         metadata(schemaAfter),
         emptySet(),
-        false /* allowNewRequiredFields */ )
+        false, /* allowNewRequiredFields */
+        emptySet())
     }
   }
 
@@ -804,7 +806,8 @@ class SchemaUtilsSuite extends AnyFunSuite {
         metadata(schemaBefore),
         metadata(schemaAfter),
         emptySet(),
-        true /* allowNewRequiredFields */ )
+        true, /* allowNewRequiredFields */
+        emptySet())
     }
   }
 
@@ -1041,7 +1044,8 @@ class SchemaUtilsSuite extends AnyFunSuite {
         metadata(schemaBefore),
         metadata(schemaAfter),
         emptySet(),
-        false /* allowNewRequiredFields */ )
+        false, /* allowNewRequiredFields */
+        emptySet())
     }
   }
 
@@ -1079,7 +1083,8 @@ class SchemaUtilsSuite extends AnyFunSuite {
         metadata(schemaBefore),
         metadata(schemaAfter),
         emptySet(),
-        false /* allowNewRequiredFields */ )
+        false, /* allowNewRequiredFields */
+        emptySet())
     }
   }
 
@@ -1183,7 +1188,8 @@ class SchemaUtilsSuite extends AnyFunSuite {
           metadata(schemaBefore, tableProperties),
           metadata(schemaAfter, tableProperties),
           emptySet(),
-          allowNewRequiredFields)
+          allowNewRequiredFields,
+          emptySet())
       }
 
       assert(e.getMessage.matches(expectedMessage), s"${e.getMessage} ~= $expectedMessage")
@@ -1443,8 +1449,8 @@ class SchemaUtilsSuite extends AnyFunSuite {
             metadata(schemaBefore, tblProperties),
             metadata(schemaAfter, tblProperties),
             emptySet(),
-            false /* allowNewRequiredFields */
-          )
+            false, /* allowNewRequiredFields */
+            emptySet())
         } else {
           // Should throw an exception
           val e = intercept[KernelException] {
@@ -1452,8 +1458,8 @@ class SchemaUtilsSuite extends AnyFunSuite {
               metadata(schemaBefore, tblProperties),
               metadata(schemaAfter, tblProperties),
               emptySet(),
-              false /* allowNewRequiredFields */
-            )
+              false, /* allowNewRequiredFields */
+              emptySet())
           }
           assert(e.getMessage.contains("Cannot change the type of existing field"))
         }

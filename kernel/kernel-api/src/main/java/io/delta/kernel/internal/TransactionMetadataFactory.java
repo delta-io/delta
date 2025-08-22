@@ -304,7 +304,9 @@ public class TransactionMetadataFactory {
       ColumnMappingMode mappingMode =
           ColumnMapping.getColumnMappingMode(getEffectiveMetadata().getConfiguration());
       SchemaUtils.validateSchema(
-          getEffectiveMetadata().getSchema(), isColumnMappingModeEnabled(mappingMode));
+          getEffectiveMetadata().getSchema(),
+          isColumnMappingModeEnabled(mappingMode),
+          getEffectiveProtocol().getImplicitlyAndExplicitlySupportedReaderWriterFeatures());
     }
 
     this.finalOutput = new Output(newProtocol, newMetadata, physicalNewClusteringColumns);
@@ -627,7 +629,8 @@ public class TransactionMetadataFactory {
                     oldMetadata,
                     getEffectiveMetadata(),
                     clusteringColumnPhysicalNames,
-                    false /* allowNewRequiredFields */);
+                    false /* allowNewRequiredFields */,
+                    getEffectiveProtocol().getImplicitlyAndExplicitlySupportedFeatures());
 
             schemaWithTypeWidening.ifPresent(
                 structType ->
@@ -664,7 +667,8 @@ public class TransactionMetadataFactory {
                 emptySet() /* clusteringCols */,
                 // We allow new non-null fields in REPLACE since we know all existing data is
                 // removed
-                true /* allowNewRequiredFields */);
+                true /* allowNewRequiredFields */,
+                getEffectiveProtocol().getImplicitlyAndExplicitlySupportedFeatures());
         schemaWithTypeWidening.ifPresent(
             structType ->
                 newMetadata = Optional.of(getEffectiveMetadata().withNewSchema(structType)));

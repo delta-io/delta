@@ -28,6 +28,8 @@ import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.skipping.StatsSchemaHelper;
+import io.delta.kernel.internal.tablefeatures.TableFeature;
+import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.types.TypeWideningChecker;
 import io.delta.kernel.types.*;
 import java.util.*;
@@ -52,9 +54,14 @@ public class SchemaUtils {
    * @throws IllegalArgumentException if the schema is invalid
    */
   public static void validateSchema(StructType schema, boolean isColumnMappingEnabled) {
+    validateSchema(schema, isColumnMappingEnabled, new HashSet<>());
+  }
+
+  public static void validateSchema(
+      StructType schema, boolean isColumnMappingEnabled, Set<TableFeature> features) {
     checkArgument(schema.length() > 0, "Schema should contain at least one column");
     validateColumnNames(schema, isColumnMappingEnabled);
-    validateSupportedType(schema);
+    validateSupportedType(schema, features);
   }
 
   /**
@@ -126,7 +133,8 @@ public class SchemaUtils {
       Metadata currentMetadata,
       Metadata newMetadata,
       Set<String> clusteringColumnPhysicalNames,
-      boolean allowNewRequiredFields) {
+      boolean allowNewRequiredFields,
+      Set<TableFeature> features) {
     checkArgument(
         isColumnMappingModeEnabled(
             ColumnMapping.getColumnMappingMode(newMetadata.getConfiguration())),
@@ -781,8 +789,26 @@ public class SchemaUtils {
    *
    * @param dataType the data type to validate
    */
-  protected static void validateSupportedType(DataType dataType) {
-    if (dataType instanceof BooleanType
+  protected static void validateSupportedType(DataType dataType, Set<TableFeature> features) {
+    if (isSupportedNonNestedType(dataType, features)) {
+      // supported types
+      return;
+    } else if (dataType instanceof StructType) {
+      ((StructType) dataType)
+          .fields()
+          .forEach(field -> validateSupportedType(field.getDataType(), features));
+    } else if (dataType instanceof ArrayType) {
+      validateSupportedType(((ArrayType) dataType).getElementType(), features);
+    } else if (dataType instanceof MapType) {
+      validateSupportedType(((MapType) dataType).getKeyType(), features);
+      validateSupportedType(((MapType) dataType).getValueType(), features);
+    } else {
+      throw unsupportedDataType(dataType);
+    }
+  }
+
+  private static boolean isSupportedNonNestedType(DataType dataType, Set<TableFeature> features) {
+    return dataType instanceof BooleanType
         || dataType instanceof ByteType
         || dataType instanceof ShortType
         || dataType instanceof IntegerType
@@ -794,18 +820,7 @@ public class SchemaUtils {
         || dataType instanceof BinaryType
         || dataType instanceof DateType
         || dataType instanceof TimestampType
-        || dataType instanceof TimestampNTZType) {
-      // supported types
-      return;
-    } else if (dataType instanceof StructType) {
-      ((StructType) dataType).fields().forEach(field -> validateSupportedType(field.getDataType()));
-    } else if (dataType instanceof ArrayType) {
-      validateSupportedType(((ArrayType) dataType).getElementType());
-    } else if (dataType instanceof MapType) {
-      validateSupportedType(((MapType) dataType).getKeyType());
-      validateSupportedType(((MapType) dataType).getValueType());
-    } else {
-      throw unsupportedDataType(dataType);
-    }
+        || dataType instanceof TimestampNTZType
+        || dataType instanceof VariantType && features.contains(TableFeatures.VARIANT_RW_FEATURE);
   }
 }

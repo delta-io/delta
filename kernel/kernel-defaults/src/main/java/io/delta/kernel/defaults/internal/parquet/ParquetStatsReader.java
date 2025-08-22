@@ -196,6 +196,8 @@ public class ParquetStatsReader {
       return Literal.ofString(new String(binaryStat, UTF_8));
     } else if (dataType instanceof BinaryType) {
       return Literal.ofBinary(getBinaryStat(statistics, decodeMin));
+    } else if (dataType instanceof VariantType) {
+      return Literal.ofBinary(getBinaryStat(statistics, decodeMin));
     }
 
     throw new IllegalArgumentException("Unsupported stats data type: " + statValue);

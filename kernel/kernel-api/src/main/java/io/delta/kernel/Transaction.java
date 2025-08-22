@@ -32,6 +32,7 @@ import io.delta.kernel.data.*;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.ConcurrentWriteException;
 import io.delta.kernel.exceptions.DomainDoesNotExistException;
+import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.DataWriteContextImpl;
 import io.delta.kernel.internal.actions.AddFile;
@@ -40,8 +41,10 @@ import io.delta.kernel.internal.data.TransactionStateRow;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.icebergcompat.IcebergCompatV2MetadataValidatorAndUpdater;
 import io.delta.kernel.internal.icebergcompat.IcebergCompatV3MetadataValidatorAndUpdater;
+import io.delta.kernel.internal.util.SchemaIterable;
 import io.delta.kernel.statistics.DataFileStatistics;
 import io.delta.kernel.types.StructType;
+import io.delta.kernel.types.VariantType;
 import io.delta.kernel.utils.*;
 import java.net.URI;
 import java.util.Collections;
@@ -166,6 +169,7 @@ public interface Transaction {
     StructType tableSchema = getLogicalSchema(transactionState);
     List<String> partitionColNames = getPartitionColumnsList(transactionState);
     validateAndSanitizePartitionValues(tableSchema, partitionColNames, partitionValues);
+    validateSchemaForTransform(tableSchema);
 
     // TODO: add support for:
     // - enforcing the constraints
@@ -198,6 +202,16 @@ public interface Transaction {
           }
           return new FilteredColumnarBatch(data, filteredBatch.getSelectionVector());
         });
+  }
+
+  static void validateSchemaForTransform(StructType tableSchema) {
+    boolean variantFieldExists =
+        new SchemaIterable(tableSchema)
+            .stream().anyMatch(field -> field.getField().getDataType() instanceof VariantType);
+    if (variantFieldExists) {
+      throw new KernelException(
+          "Transforming logical data with variant data is currently unsupported");
+    }
   }
 
   /**
