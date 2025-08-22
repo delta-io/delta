@@ -363,27 +363,23 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
       Expression left = leftResult.expression;
       Expression right = rightResult.expression;
 
-      if (predicate instanceof CollatedPredicate) {
-        CollatedPredicate collatedPredicate = (CollatedPredicate) predicate;
-        if (!collatedPredicate.getCollationIdentifier().isSparkUTF8BinaryCollation()) {
+      if (predicate.getCollationIdentifier().isPresent()) {
+        CollationIdentifier collationIdentifier = predicate.getCollationIdentifier().get();
+        if (!collationIdentifier.isSparkUTF8BinaryCollation()) {
           String msg =
               format(
                   "Unsupported collation: \"%s\". Default Engine supports just"
                       + " \"%s\" collation.",
-                  collatedPredicate.getCollationIdentifier(),
-                  CollationIdentifier.SPARK_UTF8_BINARY);
+                  collationIdentifier, CollationIdentifier.SPARK_UTF8_BINARY);
           throw unsupportedExpressionException(predicate, msg);
         }
         for (DataType dataType : Arrays.asList(leftResult.outputType, rightResult.outputType)) {
           checkIsStringType(
               dataType,
               predicate,
-              format(
-                  "`CollatedPredicate %s` expects STRING type inputs",
-                  collatedPredicate.getName()));
+              format("`CollatedPredicate %s` expects STRING type inputs", predicate.getName()));
         }
-        return new CollatedPredicate(
-            collatedPredicate.getName(), left, right, collatedPredicate.getCollationIdentifier());
+        return new Predicate(predicate.getName(), left, right, collationIdentifier);
       }
 
       if (!leftResult.outputType.equivalent(rightResult.outputType)) {

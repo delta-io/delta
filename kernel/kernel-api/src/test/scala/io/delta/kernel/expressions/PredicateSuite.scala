@@ -21,8 +21,8 @@ import io.delta.kernel.types.CollationIdentifier
 
 import org.scalatest.funsuite.AnyFunSuite
 
-class CollatedPredicateSuite extends AnyFunSuite {
-  test("Check invalid operation") {
+class PredicateSuite extends AnyFunSuite {
+  test("Check invalid collation operations") {
     Seq(
       "anD",
       "oR",
@@ -30,7 +30,7 @@ class CollatedPredicateSuite extends AnyFunSuite {
       "SUBstring").foreach {
       operationName =>
         val e = intercept[IllegalArgumentException] {
-          new CollatedPredicate(
+          new Predicate(
             operationName,
             new Column("c1"),
             new Column("c2"),
@@ -41,31 +41,31 @@ class CollatedPredicateSuite extends AnyFunSuite {
     }
   }
 
-  test("Check toString") {
+  test("Check toString with collation") {
     Seq(
       (
-        new CollatedPredicate(
+        new Predicate(
           "<",
           new Column("c1"),
           new Column("c2"),
           CollationIdentifier.fromString("SPARK.UTF8_LCASE")),
         "(column(`c1`) < column(`c2`) COLLATE SPARK.UTF8_LCASE)"),
       (
-        new CollatedPredicate(
+        new Predicate(
           ">=",
           Literal.ofString("a"),
           new Column("c1"),
           CollationIdentifier.fromString("ICU.sr_Cyrl_SRB.75.1")),
         "(a >= column(`c1`) COLLATE ICU.SR_CYRL_SRB.75.1)"),
       (
-        new CollatedPredicate(
+        new Predicate(
           "stARtS_wiTh",
           new Column("c1"),
           Literal.ofString("a"),
           CollationIdentifier.fromString("ICU.en_US")),
         "(column(`c1`) STARTS_WITH a COLLATE ICU.EN_US)")).foreach {
-      case (collatedPredicate, expectedToString) =>
-        assert(collatedPredicate.toString == expectedToString)
+      case (predicate, expectedToString) =>
+        assert(predicate.toString == expectedToString)
     }
   }
 }

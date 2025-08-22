@@ -20,7 +20,6 @@ import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUti
 import static java.lang.String.format;
 
 import io.delta.kernel.data.ColumnVector;
-import io.delta.kernel.expressions.CollatedPredicate;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.util.Utils;
@@ -51,19 +50,19 @@ public class StartsWithExpressionEvaluator {
         startsWith,
         "'STARTS_WITH' expects literal as the second input");
 
-    if (startsWith instanceof CollatedPredicate) {
-      CollatedPredicate collatedPredicate = (CollatedPredicate) startsWith;
-      if (!collatedPredicate.getCollationIdentifier().isSparkUTF8BinaryCollation()) {
+    if (startsWith.getCollationIdentifier().isPresent()) {
+      CollationIdentifier collationIdentifier = startsWith.getCollationIdentifier().get();
+      if (!collationIdentifier.isSparkUTF8BinaryCollation()) {
         String msg =
             format(
                 "Unsupported collation: \"%s\". Default Engine supports just"
                     + " \"%s\" collation.",
-                collatedPredicate.getCollationIdentifier(), CollationIdentifier.SPARK_UTF8_BINARY);
+                collationIdentifier, CollationIdentifier.SPARK_UTF8_BINARY);
         throw unsupportedExpressionException(startsWith, msg);
       }
     }
     return createPredicate(
-        startsWith.getName(), startsWith.getChildren(), getCollationIdentifier(startsWith));
+        startsWith.getName(), startsWith.getChildren(), startsWith.getCollationIdentifier());
   }
 
   static ColumnVector eval(List<ColumnVector> childrenVectors) {

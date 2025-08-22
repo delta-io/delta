@@ -19,6 +19,7 @@ import scala.collection.JavaConverters._
 
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
+import io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.createPredicate
 import io.delta.kernel.defaults.utils.{DefaultVectorTestUtils, TestUtils}
 import io.delta.kernel.defaults.utils.DefaultKernelTestUtils.getValueAsObject
 import io.delta.kernel.expressions._
@@ -64,11 +65,10 @@ trait ExpressionSuiteBase extends TestUtils with DefaultVectorTestUtils {
       left: Expression,
       right: Expression,
       collationIdentifier: Option[CollationIdentifier] = None): Predicate = {
-    if (collationIdentifier.isDefined && collationIdentifier.get != null) {
-      new CollatedPredicate("starts_with", left, right, collationIdentifier.get)
-    } else {
-      new Predicate("starts_with", left, right)
-    }
+    createPredicate(
+      "starts_with",
+      List(left, right).asJava,
+      optionToJava(collationIdentifier))
   }
 
   protected def comparator(
@@ -76,11 +76,7 @@ trait ExpressionSuiteBase extends TestUtils with DefaultVectorTestUtils {
       left: Expression,
       right: Expression,
       collationIdentifier: Option[CollationIdentifier] = None): Predicate = {
-    if (collationIdentifier.isDefined && collationIdentifier.get != null) {
-      new CollatedPredicate(symbol, left, right, collationIdentifier.get)
-    } else {
-      new Predicate(symbol, left, right)
-    }
+    createPredicate(symbol, List(left, right).asJava, optionToJava(collationIdentifier))
   }
 
   protected def checkBooleanVectors(actual: ColumnVector, expected: ColumnVector): Unit = {

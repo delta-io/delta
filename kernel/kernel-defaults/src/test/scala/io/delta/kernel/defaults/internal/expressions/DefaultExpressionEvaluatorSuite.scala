@@ -1133,7 +1133,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
               testComparator(comparator, left, right, expected)
             }
 
-            // CollatedPredicate is supported only for comparisons between StringTypes
+            // Predicate with collation is supported only for comparisons between StringTypes
             val allStringTypes = Seq(small1, big, small2, nullLit).forall {
               literal => literal.getDataType.isInstanceOf[StringType]
             }
@@ -1153,7 +1153,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     }
   }
 
-  test("check CollatedPredicate with invalid types") {
+  test("check Predicate with collation comparing invalid types") {
     Seq(
       // predicateName
       "=",
@@ -1767,11 +1767,11 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       assert(outputVector.getDataType === BooleanType.BOOLEAN)
       assert(
         outputVector.isNullAt(0) === (expResult == null),
-        s"Unexpected null value for CollatedPredicate: $collatedPredicate")
+        s"Unexpected null value for Predicate with collation: $collatedPredicate")
       if (expResult != null) {
         assert(
           outputVector.getBoolean(0) === expResult,
-          s"""Unexpected value for CollatedPredicate: $collatedPredicate,
+          s"""Unexpected value for Predicate with collation: $collatedPredicate,
              | expected: $expResult, actual: ${outputVector.getBoolean(0)}""".stripMargin)
       }
     } else {

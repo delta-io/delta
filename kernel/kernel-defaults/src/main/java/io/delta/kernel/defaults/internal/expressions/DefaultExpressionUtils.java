@@ -21,7 +21,6 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.MapValue;
-import io.delta.kernel.expressions.CollatedPredicate;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.expressions.Predicate;
@@ -515,23 +514,11 @@ class DefaultExpressionUtils {
     }
   }
 
-  /** Returns the collation identifier if the expression is a {@link CollatedPredicate}. */
-  static Optional<CollationIdentifier> getCollationIdentifier(Expression expression) {
-    if (expression instanceof CollatedPredicate) {
-      return Optional.of(((CollatedPredicate) expression).getCollationIdentifier());
-    }
-    return Optional.empty();
-  }
-
-  /**
-   * Creates a {@link Predicate} or a {@link CollatedPredicate} based on the presence of a collation
-   * identifier.
-   */
+  /** Creates a {@link Predicate} with name, children and optional collation. */
   static Predicate createPredicate(
       String name, List<Expression> children, Optional<CollationIdentifier> collationIdentifier) {
     if (collationIdentifier.isPresent()) {
-      return new CollatedPredicate(
-          name, children.get(0), children.get(1), collationIdentifier.get());
+      return new Predicate(name, children.get(0), children.get(1), collationIdentifier.get());
     } else {
       return new Predicate(name, children);
     }
