@@ -1078,6 +1078,34 @@ trait CDCReaderImpl extends DeltaLogging {
   }
 
   /**
+   * Check metadata changes in CDC enabled tables.
+   *
+   * - Check that CDC is not enabled in a table that contains columns reserved by CDC.
+   * - Check that columns reserved by CDC are not added to a table with CDC enabled.
+   */
+  def checkMetadataChange(
+      spark: SparkSession,
+      newMetadata: Metadata,
+      oldMetadata: Metadata): Unit = {
+    if (!isCDCEnabledOnTable(newMetadata, spark)) {
+      return
+    }
+
+    val newSchema = newMetadata.schema.fieldNames
+    val reservedColumnsUsed =
+      CDCReader.cdcReadSchema(new StructType()).fieldNames.intersect(newSchema)
+    if (reservedColumnsUsed.length > 0) {
+      if (!isCDCEnabledOnTable(oldMetadata, spark)) {
+        // cdc was not enabled previously but reserved columns are present in the new schema.
+        throw DeltaErrors.tableAlreadyContainsCDCColumns(reservedColumnsUsed)
+      } else {
+        // cdc was enabled but reserved columns are present in the new metadata.
+        throw DeltaErrors.cdcColumnsInData(reservedColumnsUsed)
+      }
+    }
+  }
+
+  /**
    * Given `add` and `remove` actions of the same file, manipulate DVs to get rows that are deleted
    * and re-added from `add` to `remove`.
    *

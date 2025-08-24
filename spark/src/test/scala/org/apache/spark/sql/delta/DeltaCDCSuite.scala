@@ -205,6 +205,38 @@ abstract class DeltaCDCSuiteBase
     }
   }
 
+  // Test that schema evolution on a table with CDC enabled cannot add reserved columns.
+  for (operation <- Seq("merge", "write")) {
+    test(s"schema evolution with CDC reserved column names - op = $operation") {
+      withTable("src", "dst") {
+        // Create target table with CDC enabled.
+        createTblWithThreeVersions(tblName = Some("dst"))
+        // Create the source table containing the CDC of the destination table.
+        ctas(srcTbl = "dst", dstTbl = "src", disableCDC = true)
+
+        // Write the source back to the target table.
+        val e = intercept[DeltaIllegalStateException] {
+          withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
+            operation match {
+              case "merge" =>
+                spark.sql(
+                  """
+                    |MERGE INTO dst USING src
+                    |ON dst.id = src.id
+                    |WHEN MATCHED THEN UPDATE SET *
+                    |WHEN NOT MATCHED THEN INSERT *
+                    |""".stripMargin)
+              case "write" =>
+                spark.table("src").write.format("delta")
+                  .option("mergeSchema", "true").mode("append").saveAsTable("dst")
+            }
+          }
+        }
+        assert(e.getErrorClass === "RESERVED_CDC_COLUMNS_ON_WRITE")
+      }
+    }
+  }
+
   test("changes from table by name") {
     withTable("tbl") {
       createTblWithThreeVersions(tblName = Some("tbl"))
