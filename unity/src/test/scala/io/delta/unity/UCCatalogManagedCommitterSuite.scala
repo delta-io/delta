@@ -279,7 +279,8 @@ class UCCatalogManagedCommitterSuite
   test("CATALOG_WRITE: writes staged commit file and invokes UC client commit API") {
     withTempTableAndLogPathAndStagedCommitFolderCreated { case (tablePath, logPath) =>
       // ===== GIVEN =====
-      // Setup UC client with initial table with maxRatifiedVersion = -1, numCommits = 0
+      // Set up UC client with initial table with maxRatifiedVersion = -1, numCommits = 0. This
+      // represents a table that was just created and at version 0. We will then commit version 1.
       val ucClient = new InMemoryUCClient("ucMetastoreId")
       val tableData = new TableData(-1, ArrayBuffer[Commit]())
       ucClient.createTableIfNotExistsOrThrow("ucTableId", tableData)
@@ -465,57 +466,62 @@ class UCCatalogManagedCommitterSuite
     }
   }
 
-  case class CatalogCreateExceptionTestCase(
-      testName: String,
-      mockException: Exception,
-      expectedRetryable: Boolean,
-      expectedConflict: Boolean,
-      expectedMessageContains: String)
+  test("CATALOG_CREATE: FileAlreadyExistsException returns success") {
+    withTempTableAndLogPathAndStagedCommitFolderCreated { case (tablePath, logPath) =>
+      // ===== GIVEN =====
+      val ucClient = new InMemoryUCClient("ucMetastoreId")
+      val throwingEngine = mockEngine(jsonHandler = new BaseMockJsonHandler {
+        override def writeJsonFileAtomically(
+            path: String,
+            data: CloseableIterator[Row],
+            overwrite: Boolean): Unit =
+          throw new FileAlreadyExistsException("File already exists")
+      })
+      val committer = new UCCatalogManagedCommitter(ucClient, "ucTableId", tablePath)
 
-  private val catalogCreateExceptionTestCases = Seq(
-    CatalogCreateExceptionTestCase(
-      testName = "file already exists",
-      mockException = new FileAlreadyExistsException("File already exists"),
-      expectedRetryable = false,
-      expectedConflict = true,
-      expectedMessageContains = "Failed to write published delta file due to: File already exists"),
-    CatalogCreateExceptionTestCase(
-      testName = "IOException during write",
-      mockException = new IOException("Network hiccup"),
-      expectedRetryable = true,
-      expectedConflict = false,
-      expectedMessageContains = "Failed to write published delta file due to: Network hiccup"))
+      val commitMetadata = createCommitMetadata(
+        version = 0,
+        logPath = logPath,
+        newProtocolOpt = Optional.of(protocolWithCatalogManagedSupport),
+        newMetadataOpt = Optional.of(basicPartitionedMetadata))
 
-  catalogCreateExceptionTestCases.foreach { testCase =>
-    test(s"CATALOG_CREATE: throws exception when ${testCase.testName}") {
-      withTempTableAndLogPathAndStagedCommitFolderCreated { case (tablePath, logPath) =>
-        // ===== GIVEN =====
-        val ucClient = new InMemoryUCClient("ucMetastoreId")
-        val throwingEngine = mockEngine(jsonHandler = new BaseMockJsonHandler {
-          override def writeJsonFileAtomically(
-              path: String,
-              data: CloseableIterator[Row],
-              overwrite: Boolean): Unit =
-            throw testCase.mockException
-        })
-        val committer = new UCCatalogManagedCommitter(ucClient, "ucTableId", tablePath)
+      // ===== WHEN =====
+      val response = committer.commit(throwingEngine, emptyActionsIterator, commitMetadata)
 
-        val commitMetadata = createCommitMetadata(
-          version = 0,
-          logPath = logPath,
-          newProtocolOpt = Optional.of(protocolWithCatalogManagedSupport),
-          newMetadataOpt = Optional.of(basicPartitionedMetadata))
+      // ===== THEN =====
+      val publishedDeltaFilePath = response.getCommitLogData.getFileStatus.getPath
+      val expectedFilePath = s"$logPath/00000000000000000000.json"
+      assert(publishedDeltaFilePath == expectedFilePath)
+    }
+  }
 
-        // ===== WHEN =====
-        val ex = intercept[CommitFailedException] {
-          committer.commit(throwingEngine, emptyActionsIterator, commitMetadata)
-        }
+  test("CATALOG_CREATE: IOException during write throws CFE(retryable=true, conflict=false)") {
+    withTempTableAndLogPathAndStagedCommitFolderCreated { case (tablePath, logPath) =>
+      // ===== GIVEN =====
+      val ucClient = new InMemoryUCClient("ucMetastoreId")
+      val throwingEngine = mockEngine(jsonHandler = new BaseMockJsonHandler {
+        override def writeJsonFileAtomically(
+            path: String,
+            data: CloseableIterator[Row],
+            overwrite: Boolean): Unit =
+          throw new IOException("Network hiccup")
+      })
+      val committer = new UCCatalogManagedCommitter(ucClient, "ucTableId", tablePath)
 
-        // ===== THEN =====
-        assert(ex.isRetryable == testCase.expectedRetryable)
-        assert(ex.isConflict == testCase.expectedConflict)
-        assert(ex.getMessage.contains(testCase.expectedMessageContains))
+      val commitMetadata = createCommitMetadata(
+        version = 0,
+        logPath = logPath,
+        newProtocolOpt = Optional.of(protocolWithCatalogManagedSupport),
+        newMetadataOpt = Optional.of(basicPartitionedMetadata))
+
+      // ===== WHEN =====
+      val ex = intercept[CommitFailedException] {
+        committer.commit(throwingEngine, emptyActionsIterator, commitMetadata)
       }
+
+      // ===== THEN =====
+      assert(ex.isRetryable && !ex.isConflict)
+      assert(ex.getMessage.contains("Failed to write published delta file due to: Network hiccup"))
     }
   }
 

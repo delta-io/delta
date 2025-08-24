@@ -181,6 +181,10 @@ public class UCCatalogManagedCommitter implements Committer {
           commitMetadata.getPublishedDeltaFilePath(),
           false /* overwrite */);
     } catch (FileAlreadyExistsException ex) {
+      logger.warn(
+          "[{}] File already exists for version 0, treating as successful commit: {}",
+          ucTableId,
+          commitMetadata.getPublishedDeltaFilePath());
       // This can happen if a previous commit attempt from this writer succeeded in writing 00.json,
       // but the client was not successfully notified of that write (e.g. due to network
       // issues).
