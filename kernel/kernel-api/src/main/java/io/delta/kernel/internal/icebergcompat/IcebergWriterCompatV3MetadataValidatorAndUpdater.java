@@ -99,7 +99,7 @@ public class IcebergWriterCompatV3MetadataValidatorAndUpdater
    */
   private static Set<TableFeature> ALLOWED_TABLE_FEATURES =
       Stream.concat(
-              COMMON_ALLOWED_FEATURES.stream(),
+              V1_ALLOWED_FEATURES.stream(),
               Stream.of(
                   ICEBERG_COMPAT_V3_W_FEATURE,
                   ICEBERG_WRITER_COMPAT_V3,
