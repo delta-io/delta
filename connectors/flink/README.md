@@ -42,7 +42,7 @@ Depending on the version of the connector you can use it with following Apache F
 |  0.4.x (Sink Only)  | 1.12.0 <= X <= 1.14.5 |
 |        0.5.0        | 1.13.0 <= X <= 1.13.6 |
 |        0.6.0        |      X >= 1.15.3      |
-|        3.0.0        |      X >= 1.16.1      |
+|        3.0.0        |  1.16.1 <= X < 2.X    |
 
 ### APIs
 
