@@ -775,6 +775,9 @@ trait OptimisticTransactionImpl extends TransactionHelper
       log"${MDC(DeltaLogKeys.METADATA_OLD, newMetadata.getOrElse("-"))} to " +
       log"${MDC(DeltaLogKeys.METADATA_NEW, newMetadataTmp)}")
     newMetadata = Some(newMetadataTmp)
+
+    // Check that the metadata change is valid for CDC enabled tables.
+    performCdcMetadataCheck()
   }
 
   /**
@@ -1231,20 +1234,10 @@ trait OptimisticTransactionImpl extends TransactionHelper
    */
   protected def performCdcMetadataCheck(): Unit = {
     if (newMetadata.nonEmpty) {
-      if (CDCReader.isCDCEnabledOnTable(newMetadata.get, spark)) {
-        val schema = newMetadata.get.schema.fieldNames
-        val reservedColumnsUsed = CDCReader.cdcReadSchema(new StructType()).fieldNames
-          .intersect(schema)
-        if (reservedColumnsUsed.length > 0) {
-          if (!CDCReader.isCDCEnabledOnTable(snapshot.metadata, spark)) {
-            // cdc was not enabled previously but reserved columns are present in the new schema.
-            throw DeltaErrors.tableAlreadyContainsCDCColumns(reservedColumnsUsed)
-          } else {
-            // cdc was enabled but reserved columns are present in the new metadata.
-            throw DeltaErrors.cdcColumnsInData(reservedColumnsUsed)
-          }
-        }
-      }
+      CDCReader.checkMetadataChange(
+        spark,
+        newMetadata = newMetadata.get,
+        oldMetadata = snapshot.metadata)
     }
   }
 
