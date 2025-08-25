@@ -17,7 +17,6 @@ package io.delta.kernel.internal.icebergcompat;
 
 import static io.delta.kernel.internal.tablefeatures.TableFeatures.*;
 import static java.util.stream.Collectors.toList;
-import static java.util.stream.Collectors.toSet;
 
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.internal.TableConfig;
@@ -125,11 +124,7 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
    * Current set of allowed table features for Iceberg writer compat V1. This combines the common
    * features with V1-specific features (ICEBERG_COMPAT_V2_W_FEATURE, ICEBERG_WRITER_COMPAT_V1).
    */
-  private static Set<TableFeature> ALLOWED_TABLE_FEATURES =
-      Stream.concat(
-              COMMON_ALLOWED_FEATURES.stream(),
-              Stream.of(ICEBERG_COMPAT_V2_W_FEATURE, ICEBERG_WRITER_COMPAT_V1))
-          .collect(toSet());
+  private static Set<TableFeature> ALLOWED_TABLE_FEATURES = V1_ALLOWED_FEATURES;
 
   @Override
   String compatFeatureName() {

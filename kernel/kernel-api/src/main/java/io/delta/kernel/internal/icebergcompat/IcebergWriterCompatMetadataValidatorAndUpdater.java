@@ -78,7 +78,7 @@ abstract class IcebergWriterCompatMetadataValidatorAndUpdater
    * they are not in use. In later checks we validate that these incompatible features are inactive
    * in the table. See the protocol spec for more details.
    */
-  protected static final Set<TableFeature> COMMON_ALLOWED_FEATURES =
+  protected static final Set<TableFeature> V1_ALLOWED_FEATURES =
       Stream.of(
               // Incompatible, but not active, legacy table features
               INVARIANTS_W_FEATURE,
@@ -96,7 +96,9 @@ abstract class IcebergWriterCompatMetadataValidatorAndUpdater
               CLUSTERING_W_FEATURE,
               TIMESTAMP_NTZ_RW_FEATURE,
               TYPE_WIDENING_RW_FEATURE,
-              TYPE_WIDENING_RW_PREVIEW_FEATURE)
+              TYPE_WIDENING_RW_PREVIEW_FEATURE,
+              ICEBERG_COMPAT_V2_W_FEATURE,
+              ICEBERG_WRITER_COMPAT_V1)
           .collect(toSet());
 
   protected static IcebergCompatCheck createUnsupportedFeaturesCheck(

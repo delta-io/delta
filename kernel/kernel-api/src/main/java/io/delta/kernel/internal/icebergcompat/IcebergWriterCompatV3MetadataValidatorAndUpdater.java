@@ -93,13 +93,13 @@ public class IcebergWriterCompatV3MetadataValidatorAndUpdater
                           inputContext.newProtocol));
 
   /**
-   * Current set of allowed table features for Iceberg writer compat V3. This combines the common
-   * features with V3-specific features including variant support, deletion vectors, and row
-   * tracking.
+   * Current set of allowed table features for Iceberg writer compat V3. This combines the all v1
+   * supported features with V3-specific features including variant support, deletion vectors, and
+   * row tracking.
    */
   private static Set<TableFeature> ALLOWED_TABLE_FEATURES =
       Stream.concat(
-              COMMON_ALLOWED_FEATURES.stream(),
+              V1_ALLOWED_FEATURES.stream(),
               Stream.of(
                   ICEBERG_COMPAT_V3_W_FEATURE,
                   ICEBERG_WRITER_COMPAT_V3,
