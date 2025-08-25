@@ -19,6 +19,7 @@ import scala.collection.JavaConverters._
 
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
+import io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.createPredicate
 import io.delta.kernel.defaults.utils.{DefaultVectorTestUtils, TestUtils}
 import io.delta.kernel.defaults.utils.DefaultKernelTestUtils.getValueAsObject
 import io.delta.kernel.expressions._
@@ -60,12 +61,22 @@ trait ExpressionSuiteBase extends TestUtils with DefaultVectorTestUtils {
     new Predicate("like", children.asJava)
   }
 
-  protected def startsWith(left: Expression, right: Expression): Predicate = {
-    new Predicate("starts_with", left, right)
+  protected def startsWith(
+      left: Expression,
+      right: Expression,
+      collationIdentifier: Option[CollationIdentifier] = None): Predicate = {
+    createPredicate(
+      "starts_with",
+      List(left, right).asJava,
+      optionToJava(collationIdentifier))
   }
 
-  protected def comparator(symbol: String, left: Expression, right: Expression): Predicate = {
-    new Predicate(symbol, left, right)
+  protected def comparator(
+      symbol: String,
+      left: Expression,
+      right: Expression,
+      collationIdentifier: Option[CollationIdentifier] = None): Predicate = {
+    createPredicate(symbol, List(left, right).asJava, optionToJava(collationIdentifier))
   }
 
   protected def checkBooleanVectors(actual: ColumnVector, expected: ColumnVector): Unit = {

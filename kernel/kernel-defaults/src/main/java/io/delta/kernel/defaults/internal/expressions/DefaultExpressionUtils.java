@@ -23,12 +23,14 @@ import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.Literal;
+import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.types.*;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 import java.util.function.Function;
 import java.util.function.IntPredicate;
 import java.util.stream.Collectors;
@@ -500,7 +502,7 @@ class DefaultExpressionUtils {
   }
 
   static void checkIsStringType(DataType dataType, Expression parentExpr, String errorMessage) {
-    if (StringType.STRING.equals(dataType)) {
+    if (dataType instanceof StringType) {
       return;
     }
     throw unsupportedExpressionException(parentExpr, errorMessage);
@@ -509,6 +511,16 @@ class DefaultExpressionUtils {
   static void checkIsLiteral(Expression expr, Expression parentExpr, String errorMessage) {
     if (!(expr instanceof Literal)) {
       throw unsupportedExpressionException(parentExpr, errorMessage);
+    }
+  }
+
+  /** Creates a {@link Predicate} with name, children and optional collation. */
+  static Predicate createPredicate(
+      String name, List<Expression> children, Optional<CollationIdentifier> collationIdentifier) {
+    if (collationIdentifier.isPresent()) {
+      return new Predicate(name, children.get(0), children.get(1), collationIdentifier.get());
+    } else {
+      return new Predicate(name, children);
     }
   }
 }
