@@ -17,7 +17,6 @@ package io.delta.kernel.internal.icebergcompat;
 
 import static io.delta.kernel.internal.tablefeatures.TableFeatures.*;
 import static java.util.stream.Collectors.toList;
-import static java.util.stream.Collectors.toSet;
 
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.internal.TableConfig;
