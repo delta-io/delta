@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
+import org.apache.spark.sql.SaveMode
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 
@@ -39,7 +40,11 @@ class DeltaInsertIntoImplicitCastSuite extends DeltaInsertIntoTest {
   }
 
   test("all test cases are implemented") {
-    checkAllTestCasesImplemented()
+    val ignoredTestCases = Map(
+      "null struct with different field order"
+       -> (insertsDataframe.intersect(insertsByName) - StreamingInsert)
+    )
+    checkAllTestCasesImplemented(ignoredTestCases)
   }
 
   for (schemaEvolution <- BOOLEAN_DOMAIN) {
@@ -163,4 +168,44 @@ class DeltaInsertIntoImplicitCastSuite extends DeltaInsertIntoTest {
       confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
     )
   }
+
+  for { (inserts: Set[Insert], expectedAnswer) <- Seq(
+    // Only few INSERT types correctly handle null structs and keep the whole struct null
+    // instead of expanding it to a struct of null fields.
+    Set(SQLInsertColList(SaveMode.Append)) ->
+      TestData("a long, s struct <x int, y: int>",
+        Seq("""{ "a": 1, "s": { "x": 2, "y": 3 } }""", """{ "a": 1, "s": null }""")),
+    Set(SQLInsertColList(SaveMode.Overwrite),
+        SQLInsertOverwritePartitionByPosition,
+        SQLInsertOverwritePartitionColList) ->
+      TestData("a long, s struct <x int, y: int>", Seq("""{ "a": 1, "s": null }""")),
+
+    // For all other INSERT types, the null struct gets incorrectly expanded to
+    // `struct<null, null>
+    insertsAppend - SQLInsertColList(SaveMode.Append) ->
+      TestData("a long, s struct <x int, y: int>",
+        Seq("""{ "a": 1, "s": { "x": 2, "y": 3 } }""",
+        """{ "a": 1, "s": { "x": null, "y": null } }""")),
+    insertsOverwrite
+      - SQLInsertColList(SaveMode.Overwrite)
+      - SQLInsertOverwritePartitionByPosition
+      - SQLInsertOverwritePartitionColList ->
+      TestData("a long, s struct <x int, y: int>",
+        Seq("""{ "a": 1, "s": { "x": null, "y": null } }"""))
+    )
+  } {
+   testInserts(s"null struct with different field order")(
+     initialData = TestData(
+       "a long, s struct <x: int, y int>",
+       Seq("""{ "a": 1, "s": { "x": 2, "y": 3 } }""")),
+     partitionBy = Seq("a"),
+     overwriteWhere = "a" -> 1,
+     insertData = TestData("a int, s struct <y int, x: int>", Seq("""{ "a": 1, "s": null }""")),
+     expectedResult = ExpectedResult.Success(expectedAnswer),
+     includeInserts = inserts,
+     // Dataframe INSERTs by name don't support implicit casting except for streaming
+     // writes, no point in testing them.
+     excludeInserts = insertsDataframe.intersect(insertsByName) - StreamingInsert
+   )
+ }
 }

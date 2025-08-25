@@ -2068,6 +2068,22 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_STREAMING_SINK_IMPLICIT_CAST_FOR_TYPE_MISMATCH_ONLY =
+    buildConf("streaming.sink.implicitCastForTypeMismatchOnly")
+      .internal()
+      .doc(
+        """Controls when an implicit cast is added when writing data to a Delta table using
+          |streaming.
+          |When true, a cast is added only when there is a type mismatch between a column or
+          |nested field in the data and table schema.
+          |When false, missing, extra or reordered columns or nested fields also trigger adding an
+          |implicit cast.
+          |Only takes effect when implicit casting is enabled in streaming writes to a Delta table
+          |via `spark.databricks.delta.streaming.sink.allowImplicitCasts`.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_CDF_UNSAFE_BATCH_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES =
     buildConf("changeDataFeed.unsafeBatchReadOnIncompatibleSchemaChanges.enabled")
       .doc(
