@@ -128,12 +128,13 @@ public class TransactionMetadataFactory {
         "Cannot provide both partition columns and clustering columns");
     validateSchemaAndPartColsCreateOrReplace(
         userInputTableProperties, schema, partitionColumns.orElse(emptyList()));
+    validateNotEnablingCatalogManagedOnReplace(userInputTableProperties);
     // In the case of Replace table there are a few delta-specific properties we want to preserve
     Map<String, String> replaceTableProperties =
         readSnapshot.getMetadata().getConfiguration().entrySet().stream()
             .filter(
                 e ->
-                    ReplaceTableTransactionBuilderImpl.TABLE_PROPERTY_KEYS_TO_PRESERVE.contains(
+                    ReplaceTableTransactionBuilderV2Impl.TABLE_PROPERTY_KEYS_TO_PRESERVE.contains(
                         e.getKey()))
             .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
     replaceTableProperties.putAll(userInputTableProperties);
@@ -657,5 +658,14 @@ public class TransactionMetadataFactory {
 
     SchemaUtils.validateSchema(schema, isColumnMappingModeEnabled(mappingMode));
     SchemaUtils.validatePartitionColumns(schema, partitionColumns);
+  }
+
+  private static void validateNotEnablingCatalogManagedOnReplace(
+      Map<String, String> tableProperties) {
+    if (TableFeatures.isPropertiesManuallySupportingTableFeature(
+        tableProperties, TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW)) {
+      throw new UnsupportedOperationException(
+          "Cannot enable the catalogManaged feature during a REPLACE operation.");
+    }
   }
 }

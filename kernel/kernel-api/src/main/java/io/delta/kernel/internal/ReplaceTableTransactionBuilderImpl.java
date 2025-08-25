@@ -21,9 +21,7 @@ import io.delta.kernel.Operation;
 import io.delta.kernel.Transaction;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.TableNotFoundException;
-import java.util.HashSet;
 import java.util.Optional;
-import java.util.Set;
 
 public class ReplaceTableTransactionBuilderImpl extends TransactionBuilderImpl {
 
@@ -43,16 +41,4 @@ public class ReplaceTableTransactionBuilderImpl extends TransactionBuilderImpl {
           tblf.getTablePath(), "Trying to replace a table that does not exist.");
     }
   }
-
-  /**
-   * Generally for replace table we want to reset all table state, however there are a few
-   * delta-specific properties that we should preserve
-   */
-  protected static final Set<String> TABLE_PROPERTY_KEYS_TO_PRESERVE =
-      new HashSet<String>() {
-        {
-          add(TableConfig.COLUMN_MAPPING_MAX_COLUMN_ID.getKey());
-          // TODO are there any other table properties we should preserve?
-        }
-      };
 }
