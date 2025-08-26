@@ -614,7 +614,7 @@ private[delta] class ConflictChecker(
   }
 
   /**
-   * Return type of [[validateConfigurationChanges]]. It indicates whether the
+   * Return type of [[checkConfigurationChangesForConflicts]]. It indicates whether the
    * configuration changes are valid and provides the details of the changes.
    */
   private[delta] case class ConfigurationChanges(
