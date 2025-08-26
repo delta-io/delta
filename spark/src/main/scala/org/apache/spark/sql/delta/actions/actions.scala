@@ -1036,9 +1036,9 @@ case class Metadata(
   /**
    * Compare this metadata with other.
    * Returns a sequence of field names that differ between the two metadata objects.
-   * Returns an empty sequence then there are no differences.
+   * Returns an empty sequence when there are no differences.
    */
-  def diff(other: Metadata): Seq[String] = {
+  def diffFieldNames(other: Metadata): Seq[String] = {
     import scala.reflect.runtime.universe._
 
     // In scala 2.13, we can directly use productElementName(n: Int) along with productArity.

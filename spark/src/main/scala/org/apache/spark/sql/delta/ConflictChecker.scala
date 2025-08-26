@@ -585,14 +585,15 @@ private[delta] class ConflictChecker(
 
     val currentMetadata = currentTransactionInfo.metadata
     val winningCommitMetadata = winningCommitSummary.metadataUpdates.head
-    val propertyNamesDiff = currentMetadata.diff(winningCommitMetadata)
+    val propertyNamesDiff = currentMetadata.diffFieldNames(winningCommitMetadata)
 
     // We only support the resolution of configuration changes at the moment.
     if (propertyNamesDiff != Seq("configuration")) {
       throwMetadataChangedException()
     }
 
-    val configurationChanges = validateConfigurationChanges(currentMetadata, winningCommitMetadata)
+    val configurationChanges =
+      checkConfigurationChangesForConflicts(currentMetadata, winningCommitMetadata)
     if (!configurationChanges.areValid) {
       throwMetadataChangedException()
     }
@@ -604,18 +605,17 @@ private[delta] class ConflictChecker(
       .toBoolean
     if (rowTrackingEnabled) {
       currentTransactionInfo = currentTransactionInfo.copy(
-        metadata = winningCommitMetadata,
         commitInfo = currentTransactionInfo
           .commitInfo
           .map(RowTracking.addRowTrackingNotPreservedTag))
-    } else {
-      currentTransactionInfo.copy(metadata = winningCommitMetadata)
     }
+
+    currentTransactionInfo = currentTransactionInfo.copy(metadata = winningCommitMetadata)
   }
 
   /**
-   * Return type of [[validateConfigurationChanges]]. It indicates whether the configuration
-   * changes are valid and provides the details of the changes.
+   * Return type of [[validateConfigurationChanges]]. It indicates whether the
+   * configuration changes are valid and provides the details of the changes.
    */
   private[delta] case class ConfigurationChanges(
       areValid: Boolean,
@@ -625,7 +625,7 @@ private[delta] class ConflictChecker(
     def addedAndChanged : Map[String, String] = added ++ changed
   }
 
-  /** Allow list for [[validateConfigurationChanges]]. */
+  /** Allow list for [[checkConfigurationChangesForConflicts]]. */
   private val metadataConfigurationChangeAllowList = Set(
     MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP,
     MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP,
@@ -635,7 +635,7 @@ private[delta] class ConflictChecker(
    * Validates configuration changes between the current metadata and the winning metadata.
    * Returns a [[ConfigurationChanges]] object that indicates whether the changes are valid.
    */
-  protected[delta] def validateConfigurationChanges(
+  protected[delta] def checkConfigurationChangesForConflicts(
       currentMetadata: Metadata,
       winningMetadata: Metadata,
       allowList: Set[String] = metadataConfigurationChangeAllowList): ConfigurationChanges = {
