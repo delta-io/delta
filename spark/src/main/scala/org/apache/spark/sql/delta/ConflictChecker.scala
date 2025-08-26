@@ -180,7 +180,7 @@ private[delta] class ConflictChecker(
     // Check early the protocol and metadata compatibility that is required for subsequent
     // file-level checks.
     checkProtocolCompatibility()
-    checkNoMetadataUpdates()
+    attemptToResolveMetadataConflicts()
     checkIfDomainMetadataConflict()
 
     // Perform cheap check for transaction dependencies before we start checks files.
