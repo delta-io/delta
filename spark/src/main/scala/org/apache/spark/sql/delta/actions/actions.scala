@@ -1034,6 +1034,24 @@ case class Metadata(
   // caused perf. problems here in the past:
 
   /**
+   * Compare this metadata with other.
+   * Returns a sequence of field names that differ between the two metadata objects.
+   * Returns an empty sequence then there are no differences.
+   */
+  def diff(other: Metadata): Seq[String] = {
+    import scala.reflect.runtime.universe._
+
+    // In scala 2.13, we can directly use productElementName(n: Int) along with productArity.
+    val fieldNames = typeOf[Metadata].members.sorted.collect {
+      case m: MethodSymbol if m.isCaseAccessor => m.name.toString
+    }
+    // It relies on the fact that members.sorted outputs fields in declaration order.
+    fieldNames.zipWithIndex.collect {
+      case (name, i) if this.productElement(i) != other.productElement(i) => name
+    }
+  }
+
+  /**
    * Column mapping mode for this table
    */
   @JsonIgnore

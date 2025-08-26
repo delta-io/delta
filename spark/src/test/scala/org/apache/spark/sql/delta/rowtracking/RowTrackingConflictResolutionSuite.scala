@@ -346,8 +346,7 @@ class RowTrackingConflictResolutionSuite extends QueryTest
     txn.commit(Nil, ManualUpdate, tags)
   }
 
-  test("RowTrackingEnablementOnly metadata update does not fail transactions "
-      + "that don't do metadata update") {
+  test("RowTrackingEnablementOnly metadata update does not fail txns that don't update metadata") {
     withTestTable {
       val txn = deltaLog.startTransaction()
       activateRowTracking()
@@ -358,7 +357,7 @@ class RowTrackingConflictResolutionSuite extends QueryTest
       }
 
       assert(!rowTrackingPreserved, "Commits conflicting with a metadata update " +
-          "that enables row tracking only should have row tracking marked as not preserved.")
+        "that enables row tracking only should have row tracking marked as not preserved.")
 
       assertRowIdsAreValid(deltaLog)
       assert(RowTracking.isEnabled(latestSnapshot.protocol, latestSnapshot.metadata))
