@@ -1,0 +1,5 @@
+{
+  "type": "read_metadata",
+  "table_root": "basic-with-checkpoint",
+  "snapshot_version": 10
+}
