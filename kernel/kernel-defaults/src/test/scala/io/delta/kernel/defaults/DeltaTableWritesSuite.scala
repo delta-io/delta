@@ -1201,6 +1201,43 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
     }
   }
 
+  // Tests transaction conflict detection with the same app ID but different versions.
+  private def testTransactionConflictWithSameAppId(
+      firstVersion: Long,
+      secondVersion: Long): Unit = {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // Create the table (no set-txn here to avoid unrelated schema or idempotency checks)
+      val createTxn = createWriteTxnBuilder(Table.forPath(engine, tablePath))
+        .withSchema(engine, testSchema)
+        .build(engine)
+      commitTransaction(createTxn, engine, emptyIterable())
+
+      // Start two transactions from the same snapshot with the same app ID but different
+      //    versions. Both builds must succeed; the conflict is detected on commit when they race
+      //    for the same next table version and ConflictChecker processes the winning commit.
+      val txn1 = createWriteTxnBuilder(Table.forPath(engine, tablePath))
+        .withTransactionId(engine, "t1", firstVersion)
+        .build(engine)
+      val txn2 = createWriteTxnBuilder(Table.forPath(engine, tablePath))
+        .withTransactionId(engine, "t1", secondVersion)
+        .build(engine)
+
+      // Commit the first, then the second should fail with ConcurrentTransactionException
+      commitTransaction(txn1, engine, emptyIterable())
+      intercept[ConcurrentTransactionException] {
+        commitTransaction(txn2, engine, emptyIterable())
+      }
+    }
+  }
+
+  test("block concurrent set-txns with the same app id but higher version") {
+    testTransactionConflictWithSameAppId(firstVersion = 3, secondVersion = 5)
+  }
+
+  test("block concurrent set-txns with the same app id but lower version") {
+    testTransactionConflictWithSameAppId(firstVersion = 5, secondVersion = 3)
+  }
+
   def removeTimestampNtzTypeColumns(structType: StructType): StructType = {
     def process(dataType: DataType): Option[DataType] = dataType match {
       case a: ArrayType =>
