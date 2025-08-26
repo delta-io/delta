@@ -35,6 +35,7 @@ import io.delta.storage.commit.Commit;
 import io.delta.storage.commit.uccommitcoordinator.UCClient;
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorException;
 import java.io.IOException;
+import java.nio.file.FileAlreadyExistsException;
 import java.util.Optional;
 import org.apache.hadoop.fs.Path;
 import org.slf4j.Logger;
@@ -75,11 +76,39 @@ public class UCCatalogManagedCommitter implements Committer {
 
     final CommitMetadata.CommitType commitType = commitMetadata.getCommitType();
 
-    if (commitType != CommitMetadata.CommitType.CATALOG_WRITE) {
-      // TODO: Support CATALOG_CREATE in the future, too
-      throw new UnsupportedOperationException("Unsupported commit type: " + commitType);
+    if (commitType == CommitMetadata.CommitType.CATALOG_CREATE) {
+      return createImpl(engine, finalizedActions, commitMetadata);
+    }
+    if (commitType == CommitMetadata.CommitType.CATALOG_WRITE) {
+      return writeImpl(engine, finalizedActions, commitMetadata);
     }
 
+    throw new UnsupportedOperationException("Unsupported commit type: " + commitType);
+  }
+
+  /**
+   * Handles CATALOG_CREATE by writing the published delta file for version 0.
+   *
+   * <p>Note that this assumes that the table is being created within a staging location, and that
+   * the Connector will post-commit inform UC of this 000.json file.
+   */
+  // TODO: [delta-io/delta#5118] If UC changes CREATE semantics, update logic here.
+  private CommitResponse createImpl(
+      Engine engine, CloseableIterator<Row> finalizedActions, CommitMetadata commitMetadata)
+      throws CommitFailedException {
+    final FileStatus kernelPublishedDeltaFileStatus =
+        writePublishedDeltaFileForVersion0(engine, finalizedActions, commitMetadata);
+
+    return new CommitResponse(ParsedLogData.forFileStatus(kernelPublishedDeltaFileStatus));
+  }
+
+  /**
+   * Handles CATALOG_WRITE by writing the staged commit file and then committing (e.g. REST or RPC
+   * call) to UC server.
+   */
+  private CommitResponse writeImpl(
+      Engine engine, CloseableIterator<Row> finalizedActions, CommitMetadata commitMetadata)
+      throws CommitFailedException {
     if (commitMetadata.getNewProtocolOpt().isPresent()) {
       // TODO: support this
       throw new UnsupportedOperationException("Protocol change is not yet implemented");
@@ -120,34 +149,72 @@ public class UCCatalogManagedCommitter implements Committer {
       throws CommitFailedException {
     checkArgument(
         commitMetadata.getVersion() > 0, "Can only write staged commit files for versions > 0");
-    final String stagedCommitFilePath = commitMetadata.generateNewStagedCommitFilePath();
+    try {
+      // Do not use Put-If-Absent for staged commit files since we assume that UUID-based
+      // commit files are globally unique, and so we will never have concurrent writers
+      // attempting to write the same commit file.
+      return writeDeltaFile(
+          engine,
+          finalizedActions,
+          commitMetadata.generateNewStagedCommitFilePath(),
+          true /* overwrite */);
+    } catch (IOException ex) {
+      throw new CommitFailedException(
+          true /* retryable */,
+          false /* conflict */,
+          "Failed to write staged commit file due to: " + ex.getMessage(),
+          ex);
+    }
+  }
 
+  private FileStatus writePublishedDeltaFileForVersion0(
+      Engine engine, CloseableIterator<Row> finalizedActions, CommitMetadata commitMetadata)
+      throws CommitFailedException {
+    checkArgument(
+        commitMetadata.getVersion() == 0,
+        "Expected version 0, but got %s",
+        commitMetadata.getVersion());
+    try {
+      return writeDeltaFile(
+          engine,
+          finalizedActions,
+          commitMetadata.getPublishedDeltaFilePath(),
+          false /* overwrite */);
+    } catch (FileAlreadyExistsException ex) {
+      logger.warn(
+          "[{}] File already exists for version 0, treating as successful commit: {}",
+          ucTableId,
+          commitMetadata.getPublishedDeltaFilePath());
+      // This can happen if a previous commit attempt from this writer succeeded in writing 00.json,
+      // but the client was not successfully notified of that write (e.g. due to network
+      // issues).
+      //
+      // Since we know we are conflicting with our previous write, we can safely return a successful
+      // response.
+      return FileStatus.of(commitMetadata.getPublishedDeltaFilePath());
+    } catch (IOException ex) {
+      throw new CommitFailedException(
+          true /* retryable */,
+          false /* conflict */,
+          "Failed to write published delta file due to: " + ex.getMessage(),
+          ex);
+    }
+  }
+
+  private FileStatus writeDeltaFile(
+      Engine engine, CloseableIterator<Row> finalizedActions, String filePath, boolean overwrite)
+      throws IOException {
     return timeCheckedOperation(
         logger,
-        "Write staged commit file: " + stagedCommitFilePath,
+        "Write file: " + filePath,
         ucTableId,
         () -> {
-          try {
-            // Do not use Put-If-Absent for staged commit files since we assume that UUID-based
-            // commit files are globally unique, and so we will never have concurrent writers
-            // attempting to write the same commit file.
+          // Note: the engine is responsible for closing the actions iterator once it has been
+          //       fully consumed.
+          engine.getJsonHandler().writeJsonFileAtomically(filePath, finalizedActions, overwrite);
 
-            // Note: the engine is responsible for closing the actions iterator once it has been
-            //       fully consumed.
-            engine
-                .getJsonHandler()
-                .writeJsonFileAtomically(
-                    stagedCommitFilePath, finalizedActions, true /* overwrite */);
-
-            // TODO: [delta-io/delta#5021] Use FileSystemClient::getFileStatus API instead
-            return FileStatus.of(stagedCommitFilePath);
-          } catch (IOException ex) {
-            throw new CommitFailedException(
-                true /* retryable */,
-                false /* conflict */,
-                "Failed to write staged commit file due to: " + ex.getMessage(),
-                ex);
-          }
+          // TODO: [delta-io/delta#5021] Use FileSystemClient::getFileStatus API instead
+          return FileStatus.of(filePath);
         });
   }
 
