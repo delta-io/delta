@@ -17,7 +17,6 @@ package io.delta.kernel.internal.icebergcompat;
 
 import static io.delta.kernel.internal.tablefeatures.TableFeatures.*;
 import static java.util.stream.Collectors.toList;
-import static java.util.stream.Collectors.toSet;
 
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.internal.TableConfig;
@@ -97,18 +96,7 @@ public class IcebergWriterCompatV3MetadataValidatorAndUpdater
    * supported features with V3-specific features including variant support, deletion vectors, and
    * row tracking.
    */
-  private static Set<TableFeature> ALLOWED_TABLE_FEATURES =
-      Stream.concat(
-              V1_ALLOWED_FEATURES.stream(),
-              Stream.of(
-                  ICEBERG_COMPAT_V3_W_FEATURE,
-                  ICEBERG_WRITER_COMPAT_V3,
-                  DELETION_VECTORS_RW_FEATURE,
-                  VARIANT_RW_FEATURE,
-                  VARIANT_SHREDDING_PREVIEW_RW_FEATURE,
-                  VARIANT_RW_PREVIEW_FEATURE,
-                  ROW_TRACKING_W_FEATURE))
-          .collect(toSet());
+  private static Set<TableFeature> ALLOWED_TABLE_FEATURES = V3_ALLOWED_FEATURES;
 
   @Override
   String compatFeatureName() {
