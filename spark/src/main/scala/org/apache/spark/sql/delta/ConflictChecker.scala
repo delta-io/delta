@@ -180,7 +180,11 @@ private[delta] class ConflictChecker(
     // Check early the protocol and metadata compatibility that is required for subsequent
     // file-level checks.
     checkProtocolCompatibility()
-    checkNoMetadataUpdates()
+    if (spark.conf.get(DeltaSQLConf.FEATURE_ENABLEMENT_CONFLICT_RESOLUTION_ENABLED)) {
+      attemptToResolveMetadataConflicts()
+    } else {
+      checkNoMetadataUpdates()
+    }
     checkIfDomainMetadataConflict()
 
     // Perform cheap check for transaction dependencies before we start checks files.
@@ -545,6 +549,169 @@ private[delta] class ConflictChecker(
       }
       throw DeltaErrors.metadataChangedException(winningCommitSummary.commitInfo)
     }
+  }
+
+  /**
+   * Attempts to resolve metadata conflicts between the current and winning transactions.
+   * Currently, we only support the resolution of configuration changes. This is achieved with
+   * the use of an allow-list that defines which configuration changes are allowed.
+   *
+   * We primarily focus on feature enablement. Features should be considered on a case-by-case
+   * basis whether they are eligible for white listing. The main consideration is whether
+   * transactions that produce the output before the feature enablement are safe to commit
+   * with the feature enabled. For some features the answer might be simply yes while some other
+   * features might require reconciliation logic at conflict resolution. Features that require
+   * data rewrite for reconciliation are not good candidates for white listing.
+   */
+  protected def attemptToResolveMetadataConflicts(): Unit = {
+    def throwMetadataChangedException(): Unit =
+      throw DeltaErrors.metadataChangedException(winningCommitSummary.commitInfo)
+
+    // If winning commit does not contain metadata update, no conflict.
+    if (winningCommitSummary.metadataUpdates.isEmpty) return
+
+    // Cannot resolve when both transactions have metadata updates.
+    if (currentTransactionInfo.metadataChanged) {
+      if (winningCommitSummary.identityOnlyMetadataUpdate) {
+        IdentityColumn.logTransactionAbort(deltaLog)
+      }
+      throwMetadataChangedException()
+    }
+
+    // Add all special cases here.
+    if (winningCommitSummary.identityOnlyMetadataUpdate) {
+      return
+    }
+
+    val currentMetadata = currentTransactionInfo.metadata
+    val winningCommitMetadata = winningCommitSummary.metadataUpdates.head
+    val propertyNamesDiff = currentMetadata.diffFieldNames(winningCommitMetadata)
+
+    // We only support the resolution of configuration changes at the moment.
+    if (propertyNamesDiff != Seq("configuration")) {
+      throwMetadataChangedException()
+    }
+
+    val configurationChanges =
+      checkConfigurationChangesForConflicts(currentMetadata, winningCommitMetadata)
+    if (!configurationChanges.areValid) {
+      throwMetadataChangedException()
+    }
+
+    // Metadata changes are accepted. Consolidate them.
+    val rowTrackingEnabled = configurationChanges
+      .addedAndChanged
+      .getOrElse(DeltaConfigs.ROW_TRACKING_ENABLED.key, "false")
+      .toBoolean
+    if (rowTrackingEnabled) {
+      currentTransactionInfo = currentTransactionInfo.copy(
+        commitInfo = currentTransactionInfo
+          .commitInfo
+          .map(RowTracking.addRowTrackingNotPreservedTag))
+    }
+
+    currentTransactionInfo = currentTransactionInfo.copy(metadata = winningCommitMetadata)
+  }
+
+  /**
+   * Return type of [[checkConfigurationChangesForConflicts]]. It indicates whether the
+   * configuration changes are valid and provides the details of the changes.
+   */
+  private[delta] case class ConfigurationChanges(
+      areValid: Boolean,
+      removed: Set[String] = Set.empty,
+      added: Map[String, String] = Map.empty,
+      changed: Map[String, String] = Map.empty) {
+    def addedAndChanged : Map[String, String] = added ++ changed
+  }
+
+  /** Allow list for [[checkConfigurationChangesForConflicts]]. */
+  private val metadataConfigurationChangeAllowList = Set(
+    MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP,
+    MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP,
+    DeltaConfigs.ROW_TRACKING_ENABLED.key)
+
+  /**
+   * Validates configuration changes between the current metadata and the winning metadata.
+   * Returns a [[ConfigurationChanges]] object that indicates whether the changes are valid.
+   */
+  protected[delta] def checkConfigurationChangesForConflicts(
+      currentMetadata: Metadata,
+      winningMetadata: Metadata,
+      allowList: Set[String] = metadataConfigurationChangeAllowList): ConfigurationChanges = {
+
+    val currentConf = currentMetadata.configuration
+    val winningConf = winningMetadata.configuration
+    val currentConfKeys = currentConf.keySet
+    val winningConfKeys = winningConf.keySet
+
+    val removedKeys = currentConfKeys -- winningConfKeys
+    val addedKeys = winningConfKeys -- currentConfKeys
+    val changedKeys = currentConfKeys.intersect(winningConfKeys).filter { key =>
+      currentConf(key) != winningConf(key)
+    }
+    val addedAndChangedKeys = addedKeys ++ changedKeys
+
+    def configurationChanges(areValid: Boolean): ConfigurationChanges = {
+      ConfigurationChanges(
+        areValid = areValid,
+        removed = removedKeys,
+        added = addedKeys.map(key => key -> winningConf(key)).toMap,
+        changed = changedKeys.map(key => key -> winningConf(key)).toMap)
+    }
+
+    def INVALID_CONFIGURATION_CHANGES = configurationChanges(areValid = false)
+    def VALID_CONFIGURATION_CHANGES = configurationChanges(areValid = true)
+
+    // Unsetting a configuration is not supported at the moment.
+    if (removedKeys.nonEmpty) {
+      return INVALID_CONFIGURATION_CHANGES
+    }
+
+    // Every added or changed configuration must be in the allow list.
+    if (!addedAndChangedKeys.subsetOf(allowList)) {
+      return INVALID_CONFIGURATION_CHANGES
+    }
+
+    // Schema: Key, value, isNew.
+    val allChanges =
+      addedKeys.map(key => (key, winningConf(key), true)) ++
+      changedKeys.map(key => (key, winningConf(key), false))
+
+    val validChanges = allChanges.map { case (key, value, isNew) =>
+      key match {
+        // Row tracking related configurations.
+        case DeltaConfigs.ROW_TRACKING_ENABLED.key =>
+          isRowTrackingConfigChangeValid(value.toBoolean)
+        case MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP =>
+          areRowTrackingPropertyChangesValid(winningMetadata)
+        case MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP =>
+          areRowTrackingPropertyChangesValid(winningMetadata)
+
+        case _ => true
+      }
+    }
+
+    if (validChanges.contains(false)) {
+      return INVALID_CONFIGURATION_CHANGES
+    }
+
+    VALID_CONFIGURATION_CHANGES
+  }
+
+  protected def isRowTrackingConfigChangeValid(value: Boolean): Boolean = {
+    if (!currentTransactionInfo.protocol.isFeatureSupported(RowTrackingFeature)) {
+      return false
+    }
+    // Currently, we only allow enabling row tracking.
+    value
+  }
+
+  protected def areRowTrackingPropertyChangesValid(winningMetadata: Metadata): Boolean = {
+    winningMetadata
+      .configuration
+      .getOrElse(DeltaConfigs.ROW_TRACKING_ENABLED.key, "false")
+      .toBoolean
   }
 
   /**
