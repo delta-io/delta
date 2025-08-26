@@ -115,7 +115,7 @@ import java.util.stream.Stream;
 @Evolving
 public class Predicate extends ScalarExpression {
   /** Optional collation to be used for string comparison in this predicate. */
-  protected Optional<CollationIdentifier> collationIdentifier;
+  private Optional<CollationIdentifier> collationIdentifier;
 
   public Predicate(String name, List<Expression> children) {
     super(name, children);

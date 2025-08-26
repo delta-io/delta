@@ -365,19 +365,13 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
 
       if (predicate.getCollationIdentifier().isPresent()) {
         CollationIdentifier collationIdentifier = predicate.getCollationIdentifier().get();
-        if (!collationIdentifier.isSparkUTF8BinaryCollation()) {
-          String msg =
-              format(
-                  "Unsupported collation: \"%s\". Default Engine supports just"
-                      + " \"%s\" collation.",
-                  collationIdentifier, CollationIdentifier.SPARK_UTF8_BINARY);
-          throw unsupportedExpressionException(predicate, msg);
-        }
+        checkIsUTF8BinaryCollation(predicate, collationIdentifier);
+
         for (DataType dataType : Arrays.asList(leftResult.outputType, rightResult.outputType)) {
           checkIsStringType(
               dataType,
               predicate,
-              format("`CollatedPredicate %s` expects STRING type inputs", predicate.getName()));
+              format("Predicate %s expects STRING type inputs", predicate.getName()));
         }
         return new Predicate(predicate.getName(), left, right, collationIdentifier);
       }

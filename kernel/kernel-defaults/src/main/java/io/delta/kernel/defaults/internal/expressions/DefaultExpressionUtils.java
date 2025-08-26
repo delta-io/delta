@@ -17,6 +17,7 @@ package io.delta.kernel.defaults.internal.expressions;
 
 import static io.delta.kernel.defaults.internal.DefaultEngineErrors.unsupportedExpressionException;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+import static java.lang.String.format;
 
 import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
@@ -521,6 +522,18 @@ class DefaultExpressionUtils {
       return new Predicate(name, children.get(0), children.get(1), collationIdentifier.get());
     } else {
       return new Predicate(name, children);
+    }
+  }
+
+  /** Checks if the collation is `UTF8_BINARY`, since this is the only collation the default engine can evaluate. */
+  static void checkIsUTF8BinaryCollation(Predicate predicate, CollationIdentifier collationIdentifier) {
+    if (!collationIdentifier.isSparkUTF8BinaryCollation()) {
+      String msg =
+          format(
+              "Unsupported collation: \"%s\". Default Engine supports just"
+                  + " \"%s\" collation.",
+              collationIdentifier, CollationIdentifier.SPARK_UTF8_BINARY);
+      throw unsupportedExpressionException(predicate, msg);
     }
   }
 }

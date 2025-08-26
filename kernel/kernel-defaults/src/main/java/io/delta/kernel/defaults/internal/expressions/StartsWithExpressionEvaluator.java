@@ -52,14 +52,7 @@ public class StartsWithExpressionEvaluator {
 
     if (startsWith.getCollationIdentifier().isPresent()) {
       CollationIdentifier collationIdentifier = startsWith.getCollationIdentifier().get();
-      if (!collationIdentifier.isSparkUTF8BinaryCollation()) {
-        String msg =
-            format(
-                "Unsupported collation: \"%s\". Default Engine supports just"
-                    + " \"%s\" collation.",
-                collationIdentifier, CollationIdentifier.SPARK_UTF8_BINARY);
-        throw unsupportedExpressionException(startsWith, msg);
-      }
+      checkIsUTF8BinaryCollation(startsWith, collationIdentifier);
     }
     return createPredicate(
         startsWith.getName(), startsWith.getChildren(), startsWith.getCollationIdentifier());
