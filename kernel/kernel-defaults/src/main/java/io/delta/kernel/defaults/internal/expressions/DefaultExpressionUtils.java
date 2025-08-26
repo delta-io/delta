@@ -525,13 +525,16 @@ class DefaultExpressionUtils {
     }
   }
 
-  /** Checks if the collation is `UTF8_BINARY`, since this is the only collation the default engine can evaluate. */
-  static void checkIsUTF8BinaryCollation(Predicate predicate, CollationIdentifier collationIdentifier) {
+  /**
+   * Checks if the collation is `UTF8_BINARY`, since this is the only collation the default engine
+   * can evaluate.
+   */
+  static void checkIsUTF8BinaryCollation(
+      Predicate predicate, CollationIdentifier collationIdentifier) {
     if (!collationIdentifier.isSparkUTF8BinaryCollation()) {
       String msg =
           format(
-              "Unsupported collation: \"%s\". Default Engine supports just"
-                  + " \"%s\" collation.",
+              "Unsupported collation: \"%s\". Default Engine supports just" + " \"%s\" collation.",
               collationIdentifier, CollationIdentifier.SPARK_UTF8_BINARY);
       throw unsupportedExpressionException(predicate, msg);
     }
