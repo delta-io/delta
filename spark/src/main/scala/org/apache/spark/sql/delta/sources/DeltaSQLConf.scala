@@ -407,6 +407,15 @@ trait DeltaSQLConfBase {
       .checkValue(_ >= 0, "maxNonConflictCommitAttempts has to be positive")
       .createWithDefault(10)
 
+  val FEATURE_ENABLEMENT_CONFLICT_RESOLUTION_ENABLED =
+    buildConf("featureEnablement.conflictResolution.enabled")
+      .internal()
+      .doc(
+        """Controls whether we attempt to resolve feature enablement with allowlist.
+          |This is only intended to be used as a kill switch.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_PROTOCOL_DEFAULT_WRITER_VERSION =
     buildConf("properties.defaults.minWriterVersion")
       .doc("The default writer protocol version to create new tables with, unless a feature " +
