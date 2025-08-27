@@ -21,6 +21,7 @@ import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.spark.dsv2.scan.KernelSparkScanBuilder;
 import io.delta.spark.dsv2.utils.SchemaUtils;
 import java.util.*;
+import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.connector.catalog.*;
 import org.apache.spark.sql.connector.expressions.Expressions;
 import org.apache.spark.sql.connector.expressions.Transform;
@@ -37,16 +38,19 @@ public class DeltaKernelTable implements Table, SupportsRead {
   private final Identifier identifier;
   // TODO: [delta-io/delta#5029] Add getProperties() in snapshot to avoid using Impl class.
   private final SnapshotImpl snapshot;
+  private final Configuration hadoopConf;
 
   /**
    * Creates a new DeltaKernelTable instance.
    *
    * @param identifier the table identifier
    * @param snapshot the Delta table snapshot
+   * @param hadoopConf the Hadoop configuration to use for creating the engine
    */
-  public DeltaKernelTable(Identifier identifier, SnapshotImpl snapshot) {
+  public DeltaKernelTable(Identifier identifier, SnapshotImpl snapshot, Configuration hadoopConf) {
     this.identifier = requireNonNull(identifier, "identifier is null");
     this.snapshot = requireNonNull(snapshot, "snapshot is null");
+    this.hadoopConf = requireNonNull(hadoopConf, "hadoop conf is null");
   }
 
   @Override
@@ -84,6 +88,6 @@ public class DeltaKernelTable implements Table, SupportsRead {
 
   @Override
   public ScanBuilder newScanBuilder(CaseInsensitiveStringMap options) {
-    return new KernelSparkScanBuilder(snapshot);
+    return new KernelSparkScanBuilder(snapshot, hadoopConf);
   }
 }

@@ -179,6 +179,19 @@ case class Protocol private (
     }
   }
 
+  /**
+   * Return a map that contains the protocol versions and supported features of this Protocol.
+   */
+  @JsonIgnore
+  private[delta] lazy val fieldsForLogging: Map[String, Any] = {
+    Map(
+      "minReaderVersion" -> minReaderVersion, // Number
+      "minWriterVersion" -> minWriterVersion, // Number
+      "supportedFeatures" ->
+        implicitlyAndExplicitlySupportedFeatures.map(_.name).toSeq.sorted // Array[String]
+    )
+  }
+
   override def toString: String = s"Protocol($simpleString)"
 
   override def getMinReaderVersion: Int = minReaderVersion
@@ -1019,6 +1032,24 @@ case class Metadata(
   // The `schema` and `partitionSchema` methods should be vals or lazy vals, NOT
   // defs, because parsing StructTypes from JSON is extremely expensive and has
   // caused perf. problems here in the past:
+
+  /**
+   * Compare this metadata with other.
+   * Returns a sequence of field names that differ between the two metadata objects.
+   * Returns an empty sequence when there are no differences.
+   */
+  def diffFieldNames(other: Metadata): Seq[String] = {
+    import scala.reflect.runtime.universe._
+
+    // In scala 2.13, we can directly use productElementName(n: Int) along with productArity.
+    val fieldNames = typeOf[Metadata].members.sorted.collect {
+      case m: MethodSymbol if m.isCaseAccessor => m.name.toString
+    }
+    // It relies on the fact that members.sorted outputs fields in declaration order.
+    fieldNames.zipWithIndex.collect {
+      case (name, i) if this.productElement(i) != other.productElement(i) => name
+    }
+  }
 
   /**
    * Column mapping mode for this table

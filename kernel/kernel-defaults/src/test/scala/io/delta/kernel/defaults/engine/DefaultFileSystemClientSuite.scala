@@ -80,4 +80,19 @@ class DefaultFileSystemClientSuite extends AnyFunSuite with TestUtils {
       assert(!fs.exists(new Path(dir3)))
     }
   }
+
+  test("getFileStatus") {
+    val filePath = getTestResourceFilePath("json-files/1.json")
+    val fileStatus = fsClient.getFileStatus(filePath)
+
+    assert(fileStatus.getPath == fsClient.resolvePath(filePath))
+    assert(fileStatus.getSize > 0)
+    assert(fileStatus.getModificationTime > 0)
+  }
+
+  test("getFileStatus on non-existent file") {
+    intercept[FileNotFoundException] {
+      fsClient.getFileStatus("/non-existent-file.json")
+    }
+  }
 }

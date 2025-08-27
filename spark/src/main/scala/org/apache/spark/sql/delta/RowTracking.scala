@@ -132,7 +132,7 @@ object RowTracking {
   /**
    * Returns a copy of the CommitInfo passed in with the PreservedRowTrackingTag tag set to false.
    */
-  private def addRowTrackingNotPreservedTag(commitInfo: CommitInfo): CommitInfo = {
+  private[delta] def addRowTrackingNotPreservedTag(commitInfo: CommitInfo): CommitInfo = {
     val tagsMap = commitInfo.tags.getOrElse(Map.empty[String, String])
     val newCommitInfoTags = addPreservedRowTrackingTag(tagsMap, preserved = false)
     commitInfo.copy(tags = Some(newCommitInfoTags))

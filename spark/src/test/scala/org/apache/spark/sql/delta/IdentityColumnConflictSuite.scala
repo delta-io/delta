@@ -83,6 +83,7 @@ trait IdentityColumnConflictSuiteBase
     with PhaseLockingTestMixin {
   override def sparkConf: SparkConf = super.sparkConf
     .set(DeltaSQLConf.DELTA_ROW_TRACKING_BACKFILL_ENABLED.key, "true")
+    .set(DeltaSQLConf.FEATURE_ENABLEMENT_CONFLICT_RESOLUTION_ENABLED.key, "true")
 
   val colName = "id"
 

@@ -50,7 +50,7 @@ public class TransactionStateRow extends GenericRow {
 
   public static TransactionStateRow of(Metadata metadata, String tablePath, int maxRetries) {
     HashMap<Integer, Object> valueMap = new HashMap<>();
-    valueMap.put(COL_NAME_TO_ORDINAL.get("logicalSchemaString"), metadata.getSchema().toJson());
+    valueMap.put(COL_NAME_TO_ORDINAL.get("logicalSchemaString"), metadata.getSchemaString());
     valueMap.put(
         COL_NAME_TO_ORDINAL.get("physicalSchemaString"), metadata.getPhysicalSchema().toJson());
     valueMap.put(COL_NAME_TO_ORDINAL.get("partitionColumns"), metadata.getPartitionColumns());

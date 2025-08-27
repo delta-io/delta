@@ -63,7 +63,9 @@ object InMemoryUCClient {
 
     /** Appends a new commit to this table. */
     def appendCommit(commit: Commit): Unit = synchronized {
-      val expectedCommitVersion = maxRatifiedVersion + 1
+      // TODO: [delta-io/delta#5118] If UC changes CREATE semantics, update logic here.
+      // For UC, commit 0 is expected to go through the filesystem
+      val expectedCommitVersion = if (maxRatifiedVersion == -1L) 1 else maxRatifiedVersion + 1
 
       if (commit.getVersion != expectedCommitVersion) {
         throw new CommitFailedException(
@@ -73,7 +75,7 @@ object InMemoryUCClient {
       }
 
       commits += commit
-      maxRatifiedVersion += 1
+      maxRatifiedVersion = commit.getVersion
     }
   }
 }
@@ -125,6 +127,8 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
       disown: Boolean,
       newMetadata: Optional[AbstractMetadata],
       newProtocol: Optional[AbstractProtocol]): Unit = {
+    forceThrowInCommitMethod()
+
     Seq(
       (lastKnownBackfilledVersion.isPresent, "lastKnownBackfilledVersion"),
       (disown, "disown"),
@@ -151,6 +155,9 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
   }
 
   override def close(): Unit = {}
+
+  /** Visible for testing. Can be overridden to force an exception in commit method. */
+  protected def forceThrowInCommitMethod(): Unit = {}
 
   private[unity] def createTableIfNotExistsOrThrow(
       ucTableId: String,

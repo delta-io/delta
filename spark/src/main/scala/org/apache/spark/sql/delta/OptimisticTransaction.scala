@@ -775,6 +775,9 @@ trait OptimisticTransactionImpl extends TransactionHelper
       log"${MDC(DeltaLogKeys.METADATA_OLD, newMetadata.getOrElse("-"))} to " +
       log"${MDC(DeltaLogKeys.METADATA_NEW, newMetadataTmp)}")
     newMetadata = Some(newMetadataTmp)
+
+    // Check that the metadata change is valid for CDC enabled tables.
+    performCdcMetadataCheck()
   }
 
   /**
@@ -1231,20 +1234,10 @@ trait OptimisticTransactionImpl extends TransactionHelper
    */
   protected def performCdcMetadataCheck(): Unit = {
     if (newMetadata.nonEmpty) {
-      if (CDCReader.isCDCEnabledOnTable(newMetadata.get, spark)) {
-        val schema = newMetadata.get.schema.fieldNames
-        val reservedColumnsUsed = CDCReader.cdcReadSchema(new StructType()).fieldNames
-          .intersect(schema)
-        if (reservedColumnsUsed.length > 0) {
-          if (!CDCReader.isCDCEnabledOnTable(snapshot.metadata, spark)) {
-            // cdc was not enabled previously but reserved columns are present in the new schema.
-            throw DeltaErrors.tableAlreadyContainsCDCColumns(reservedColumnsUsed)
-          } else {
-            // cdc was enabled but reserved columns are present in the new metadata.
-            throw DeltaErrors.cdcColumnsInData(reservedColumnsUsed)
-          }
-        }
-      }
+      CDCReader.checkMetadataChange(
+        spark,
+        newMetadata = newMetadata.get,
+        oldMetadata = snapshot.metadata)
     }
   }
 
@@ -2019,7 +2012,12 @@ trait OptimisticTransactionImpl extends TransactionHelper
     // NOTE: There is at most one protocol change at this point.
     protocolChanges.foreach { p =>
       newProtocol = Some(p)
-      recordProtocolChanges("delta.protocol.change", snapshot.protocol, p, isCreatingNewTable)
+      recordProtocolChanges(
+        "delta.protocol.change",
+        snapshot.protocol,
+        p,
+        isCreatingNewTable,
+        operationNameOpt = Some(op.name))
       DeltaTableV2.withEnrichedUnsupportedTableException(catalogTable) {
         deltaLog.protocolWrite(p)
       }
@@ -2211,18 +2209,16 @@ trait OptimisticTransactionImpl extends TransactionHelper
       opType: String,
       fromProtocol: Protocol,
       toProtocol: Protocol,
-      isCreatingNewTable: Boolean): Unit = {
-    def extract(p: Protocol): Map[String, Any] = Map(
-      "minReaderVersion" -> p.minReaderVersion, // Number
-      "minWriterVersion" -> p.minWriterVersion, // Number
-      "supportedFeatures" ->
-        p.implicitlyAndExplicitlySupportedFeatures.map(_.name).toSeq.sorted // Array[String]
-    )
-
-    val payload = if (isCreatingNewTable) {
-      Map("toProtocol" -> extract(toProtocol))
+      isCreatingNewTable: Boolean,
+      operationNameOpt: Option[String] = None): Unit = {
+    val payload: Map[String, Any] = if (isCreatingNewTable) {
+      Map("toProtocol" -> toProtocol.fieldsForLogging,
+        "operationName" -> "CREATE TABLE")
     } else {
-      Map("fromProtocol" -> extract(fromProtocol), "toProtocol" -> extract(toProtocol))
+      Map(
+        "fromProtocol" -> fromProtocol.fieldsForLogging,
+        "toProtocol" -> toProtocol.fieldsForLogging,
+        "operationName" -> operationNameOpt.orNull)
     }
     recordDeltaEvent(deltaLog, opType, data = payload)
   }

@@ -24,6 +24,8 @@ import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
+import io.delta.kernel.internal.util.FileNames;
+import io.delta.kernel.internal.util.Tuple2;
 import java.util.Optional;
 
 /**
@@ -55,8 +57,7 @@ public class CommitMetadata {
   private final long version;
   private final String logPath;
   private final CommitInfo commitInfo;
-  private final Optional<Protocol> readProtocolOpt;
-  private final Optional<Metadata> readMetadataOpt;
+  private final Optional<Tuple2<Protocol, Metadata>> readPandMOpt;
   private final Optional<Protocol> newProtocolOpt;
   private final Optional<Metadata> newMetadataOpt;
 
@@ -64,29 +65,25 @@ public class CommitMetadata {
       long version,
       String logPath,
       CommitInfo commitInfo,
-      Optional<Protocol> readProtocolOpt,
-      Optional<Metadata> readMetadataOpt,
+      Optional<Tuple2<Protocol, Metadata>> readPandMOpt,
       Optional<Protocol> newProtocolOpt,
       Optional<Metadata> newMetadataOpt) {
     checkArgument(version >= 0, "version must be non-negative: %d", version);
     this.version = version;
     this.logPath = requireNonNull(logPath, "logPath is null");
     this.commitInfo = requireNonNull(commitInfo, "commitInfo is null");
-    this.readProtocolOpt = requireNonNull(readProtocolOpt, "readProtocolOpt is null");
-    this.readMetadataOpt = requireNonNull(readMetadataOpt, "readMetadataOpt is null");
+    this.readPandMOpt = requireNonNull(readPandMOpt, "readPandMOpt is null");
     this.newProtocolOpt = requireNonNull(newProtocolOpt, "newProtocolOpt is null");
     this.newMetadataOpt = requireNonNull(newMetadataOpt, "newMetadataOpt is null");
 
     checkArgument(
-        readProtocolOpt.isPresent() == readMetadataOpt.isPresent(),
-        "readProtocolOpt and readMetadataOpt must either both be present or both be absent");
+        readPandMOpt.isPresent() || newProtocolOpt.isPresent(),
+        "At least one of readPandMOpt.protocol or newProtocolOpt must be present");
     checkArgument(
-        readProtocolOpt.isPresent() || newProtocolOpt.isPresent(),
-        "At least one of readProtocolOpt or newProtocolOpt must be present");
-    checkArgument(
-        readMetadataOpt.isPresent() || newMetadataOpt.isPresent(),
-        "At least one of readMetadataOpt or newMetadataOpt must be present");
+        readPandMOpt.isPresent() || newMetadataOpt.isPresent(),
+        "At least one of readPandMOpt.metadata or newMetadataOpt must be present");
 
+    checkReadStateAbsentIfAndOnlyIfVersion0();
     checkInCommitTimestampPresentIfCatalogManaged();
   }
 
@@ -110,7 +107,7 @@ public class CommitMetadata {
    * being created.
    */
   public Optional<Protocol> getReadProtocolOpt() {
-    return readProtocolOpt;
+    return readPandMOpt.map(x -> x._1);
   }
 
   /**
@@ -118,7 +115,7 @@ public class CommitMetadata {
    * being created.
    */
   public Optional<Metadata> getReadMetadataOpt() {
-    return readMetadataOpt;
+    return readPandMOpt.map(x -> x._2);
   }
 
   /**
@@ -143,7 +140,7 @@ public class CommitMetadata {
    * the protocol that was read at the beginning of the commit.
    */
   public Protocol getEffectiveProtocol() {
-    return newProtocolOpt.orElseGet(readProtocolOpt::get);
+    return newProtocolOpt.orElseGet(() -> getReadProtocolOpt().get());
   }
 
   /**
@@ -152,7 +149,7 @@ public class CommitMetadata {
    * metadata that was read at the beginning of the commit.
    */
   public Metadata getEffectiveMetadata() {
-    return newMetadataOpt.orElseGet(readMetadataOpt::get);
+    return newMetadataOpt.orElseGet(() -> getReadMetadataOpt().get());
   }
 
   /**
@@ -160,9 +157,9 @@ public class CommitMetadata {
    * status of the table before and after the commit.
    */
   public CommitType getCommitType() {
-    final boolean isCreate = !readProtocolOpt.isPresent() && !readMetadataOpt.isPresent();
+    final boolean isCreate = version == 0;
     final boolean readVersionCatalogManaged =
-        readProtocolOpt.map(TableFeatures::isCatalogManagedSupported).orElse(false);
+        readPandMOpt.map(x -> x._1).map(TableFeatures::isCatalogManagedSupported).orElse(false);
     final boolean writeVersionCatalogManaged =
         TableFeatures.isCatalogManagedSupported(getEffectiveProtocol());
 
@@ -179,6 +176,39 @@ public class CommitMetadata {
     } else {
       return CommitType.FILESYSTEM_WRITE;
     }
+  }
+
+  /**
+   * Returns the corresponding published Delta log file path for this commit, which is in the form
+   * of {@code <table_path>/_delta_log/0000000000000000000<version>.json}.
+   *
+   * <p>Usages:
+   *
+   * <ul>
+   *   <li>Filesystem-managed committers must write to this file path.
+   *   <li>Catalog-managed committers must publish to this file path, if/when they so choose.
+   * </ul>
+   */
+  public String getPublishedDeltaFilePath() {
+    return FileNames.deltaFile(logPath, version);
+  }
+
+  /**
+   * Returns a new staged commit file path with a unique UUID for this commit. Each invocation
+   * returns a new, unique value, in the form of {@code
+   * <table_path>/_delta_log/_staged_commits/0000000000000000000<version>.<uuid>.json}
+   *
+   * <p>Catalog-managed committers may use this path to write new staged commits.
+   */
+  public String generateNewStagedCommitFilePath() {
+    return FileNames.stagedCommitFile(logPath, version);
+  }
+
+  private void checkReadStateAbsentIfAndOnlyIfVersion0() {
+    checkArgument(
+        (version == 0) == (!readPandMOpt.isPresent()),
+        "Table creation (version 0) requires absent readPandMOpt, while existing table writes "
+            + "(version > 0) require present readPandMOpt");
   }
 
   private void checkInCommitTimestampPresentIfCatalogManaged() {

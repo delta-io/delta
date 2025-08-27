@@ -407,6 +407,15 @@ trait DeltaSQLConfBase {
       .checkValue(_ >= 0, "maxNonConflictCommitAttempts has to be positive")
       .createWithDefault(10)
 
+  val FEATURE_ENABLEMENT_CONFLICT_RESOLUTION_ENABLED =
+    buildConf("featureEnablement.conflictResolution.enabled")
+      .internal()
+      .doc(
+        """Controls whether we attempt to resolve feature enablement with allowlist.
+          |This is only intended to be used as a kill switch.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_PROTOCOL_DEFAULT_WRITER_VERSION =
     buildConf("properties.defaults.minWriterVersion")
       .doc("The default writer protocol version to create new tables with, unless a feature " +
@@ -686,6 +695,18 @@ trait DeltaSQLConfBase {
         "we convert a table to Delta that does actually require 'EXISTS_DEFAULT'.")
       .booleanConf
       .createWithDefault(true)
+
+  val HMS_FORCE_ALTER_TABLE_DATA_SCHEMA =
+    buildConf("hms.schema.forceAlterTableDataSchema")
+      .internal()
+      .doc(
+        """
+          | This conf fixes the schema in tableCatalog object and force an alter table
+          | schema command after upload the schema. As in spark project the schema is removed
+          | because delta is not a valid serDe configuration. This is a problem known only to HMS.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
 
   //////////////////////////////////////////////
   // DynamoDB Commit Coordinator-specific configs
@@ -1099,6 +1120,17 @@ trait DeltaSQLConfBase {
         "BackfillCommand. The default maximum aims to keep every " +
         "delta log entry below 100mb.")
       .fallbackConf(DELTA_ROW_TRACKING_BACKFILL_MAX_NUM_FILES_PER_COMMIT)
+
+  val DELTA_BACKFILL_MAX_NUM_FILES_FACTOR =
+    buildConf("backfill.maxNumFilesFactor")
+      .internal()
+      .doc(
+        """The factor used to compute the maximum number of files to backfill.
+          |The maximum number of files to compute in backfill is computed as
+          |number of files in table * factor.""".stripMargin)
+      .doubleConf
+      .checkValue(_ > 0, "'backfill.maxNumFilesFactor' must be greater than zero.")
+      .createWithDefault(3)
 
   val DELTA_ROW_TRACKING_IGNORE_SUSPENSION =
     buildConf("rowTracking.ignoreSuspension")

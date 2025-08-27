@@ -59,7 +59,8 @@ public class TestCatalog implements TableCatalog {
 
   // TODO: Support catalog owned commit.
   private final Map<String, String> tablePaths = new ConcurrentHashMap<>();
-  private final Engine engine = DefaultEngine.create(new Configuration());
+  private final Configuration hadoopConf = new Configuration();
+  private final Engine engine = DefaultEngine.create(hadoopConf);
 
   @Override
   public Identifier[] listTables(String[] namespace) {
@@ -68,15 +69,22 @@ public class TestCatalog implements TableCatalog {
 
   @Override
   public Table loadTable(Identifier ident) throws NoSuchTableException {
-    String tableKey = getTableKey(ident);
-    String tablePath = tablePaths.get(tableKey);
+    // Check if this is a path-based table identifier
+    String tablePath;
+    if (isPathIdentifier(ident)) {
+      tablePath = ident.name();
+    } else {
+      // Handle catalog-managed tables
+      String tableKey = getTableKey(ident);
+      tablePath = tablePaths.get(tableKey);
+    }
     if (tablePath == null) {
       throw new NoSuchTableException(ident);
     }
     try {
       // Use TableManager.loadTable to load the table
       SnapshotImpl snapshot = (SnapshotImpl) TableManager.loadSnapshot(tablePath).build(engine);
-      return new DeltaKernelTable(ident, snapshot);
+      return new DeltaKernelTable(ident, snapshot, hadoopConf);
     } catch (Exception e) {
       throw new RuntimeException("Failed to load table: " + ident, e);
     }
@@ -110,7 +118,7 @@ public class TestCatalog implements TableCatalog {
 
       // Load the created table and return DeltaKernelTable
       SnapshotImpl snapshot = (SnapshotImpl) kernelTable.getLatestSnapshot(engine);
-      return new DeltaKernelTable(ident, snapshot);
+      return new DeltaKernelTable(ident, snapshot, hadoopConf);
 
     } catch (Exception e) {
       // Remove the table entry if creation fails
@@ -145,6 +153,16 @@ public class TestCatalog implements TableCatalog {
   @Override
   public String name() {
     return catalogName;
+  }
+
+  /**
+   * Check if the given identifier represents a path-based table. Path-based tables are identified
+   * by having a delta namespace. This follows the same logic as Delta Spark's
+   * SupportsPathIdentifier.
+   */
+  private boolean isPathIdentifier(Identifier ident) {
+    // For testing, simply check if it has a delta namespace
+    return ident.namespace().length == 1 && ident.namespace()[0].toLowerCase().equals("delta");
   }
 
   /** Helper method to get the table key from identifier. */

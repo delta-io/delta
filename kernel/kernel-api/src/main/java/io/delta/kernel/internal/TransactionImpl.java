@@ -15,7 +15,6 @@
  */
 package io.delta.kernel.internal;
 
-import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 import static io.delta.kernel.internal.TableConfig.*;
 import static io.delta.kernel.internal.actions.SingleAction.*;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
@@ -528,25 +527,17 @@ public class TransactionImpl implements Transaction {
                     return action;
                   });
 
-      if (commitAsVersion == 0) {
-        // New table, create a delta log directory
-        if (!wrapEngineExceptionThrowsIO(
-            () -> engine.getFileSystemClient().mkdirs(logPath.toString()),
-            "Creating directories for path %s",
-            logPath)) {
-          throw new RuntimeException("Failed to create delta log directory: " + logPath);
-        }
-      }
-
       final CommitMetadata commitMetadata =
           new CommitMetadata(
               commitAsVersion,
               logPath.toString(),
               attemptCommitInfo,
-              readSnapshotOpt.map(SnapshotImpl::getProtocol),
-              readSnapshotOpt.map(SnapshotImpl::getMetadata),
+              readSnapshotOpt.map(x -> new Tuple2<>(x.getProtocol(), x.getMetadata())),
               shouldUpdateProtocol ? Optional.of(protocol) : Optional.empty(),
               shouldUpdateMetadata ? Optional.of(metadata) : Optional.empty());
+
+      DirectoryCreationUtils.createAllDeltaDirectoriesAsNeeded(
+          engine, logPath, commitAsVersion, commitMetadata.getReadProtocolOpt(), protocol);
 
       committer.commit(engine, dataAndMetadataActions, commitMetadata);
 
