@@ -45,6 +45,84 @@ public final class DeltaHistoryManager {
   private static final Logger logger = LoggerFactory.getLogger(DeltaHistoryManager.class);
 
   /**
+   * Returns the latest version that was committed at or after {@code millisSinceEpochUTC}. If no
+   * version exists, throws a {@link KernelException}
+   *
+   * <p>Specifically:
+   *
+   * <ul>
+   *   <li>if a commit version exactly matches the provided timestamp, we return it
+   *   <li>else, we return the earliest commit version with a timestamp greater than the provided
+   *       one
+   *   <li>If the provided timestamp is larger than the timestamp of any committed version, we throw
+   *       an error.
+   * </ul>
+   *
+   * @param millisSinceEpochUTC the number of milliseconds since midnight, January 1, 1970 UTC
+   * @return latest commit that happened at or before {@code timestamp}.
+   * @throws KernelException if the timestamp is more than the timestamp of any committed version
+   */
+  public static long getVersionAtOrAfterTimestamp(
+      Engine engine, Path logPath, long millisSinceEpochUTC, SnapshotImpl latestSnapshot) {
+    DeltaHistoryManager.Commit commit =
+        DeltaHistoryManager.getActiveCommitAtTimestamp(
+            engine,
+            latestSnapshot,
+            logPath,
+            millisSinceEpochUTC,
+            false, /* mustBeRecreatable */
+            // e.g. if we give time T+2 and last commit has time T, then we do NOT want that last
+            // commit
+            false, /* canReturnLastCommit */
+            // e.g. we give time T-1 and first commit has time T, then we DO want that earliest
+            // commit
+            true /* canReturnEarliestCommit */);
+
+    if (commit.getTimestamp() >= millisSinceEpochUTC) {
+      return commit.getVersion();
+    } else {
+      // this commit.timestamp is before the input timestamp. if this is the last commit, then
+      // the input timestamp is after the last commit and `getActiveCommitAtTimestamp` would have
+      // thrown an KernelException. So, clearly, this can't be the last commit, so we can safely
+      // return commit.version + 1 as the version that is at or after the input timestamp.
+      return commit.getVersion() + 1;
+    }
+  }
+
+  /**
+   * Returns the latest version that was committed before or at {@code millisSinceEpochUTC}. If no
+   * version exists, throws a {@link KernelException}
+   *
+   * <p>Specifically:
+   *
+   * <ul>
+   *   <li>if a commit version exactly matches the provided timestamp, we return it
+   *   <li>else, we return the latest commit version with a timestamp less than the provided one
+   *   <li>If the provided timestamp is less than the timestamp of any committed version, we throw
+   *       an error.
+   * </ul>
+   *
+   * @param millisSinceEpochUTC the number of milliseconds since midnight, January 1, 1970 UTC
+   * @return latest commit that happened before or at {@code timestamp}.
+   * @throws KernelException if the timestamp is less than the timestamp of any committed version
+   */
+  public static long getVersionBeforeOrAtTimestamp(
+      Engine engine, Path logPath, long millisSinceEpochUTC, SnapshotImpl latestSnapshot) {
+    return DeltaHistoryManager.getActiveCommitAtTimestamp(
+            engine,
+            latestSnapshot,
+            logPath,
+            millisSinceEpochUTC,
+            false, /* mustBeRecreatable */
+            // e.g. if we give time T+2 and last commit has time T, then we DO want that last commit
+            true, /* canReturnLastCommit */
+            // e.g. we give time T-1 and first commit has time T, then do NOT want that earliest
+            // commit
+            false /* canReturnEarliestCommit */)
+        .getVersion();
+  }
+
+  /**
    * Returns the latest commit that happened at or before {@code timestamp}.
    *
    * <p>If the timestamp is outside the range of [earliestCommit, latestCommit] then use parameters
