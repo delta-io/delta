@@ -16,10 +16,7 @@
 
 package io.delta.kernel.defaults.benchmarks;
 
-import io.delta.kernel.defaults.utils.ExpressionUtils;
-import io.delta.kernel.expressions.Expression;
 import java.io.IOException;
-import java.util.Optional;
 import org.openjdk.jmh.annotations.*;
 
 /** Dynamic benchmark state that holds the workload specification. */
@@ -35,18 +32,6 @@ public class WorkloadBenchmarkState {
   public void setup() throws IOException {
     workload = WorkloadReader.loadWorkloadFromFile(workloadPath);
     System.out.println("Setting up workload: " + workload);
-
-    System.out.println("about to check predicate");
-    if (workload instanceof ReadMetadata) {
-      ReadMetadata readMetadataWorkload = (ReadMetadata) workload;
-      if (readMetadataWorkload.getPredicate() == null) {
-        return;
-      }
-
-      Optional<Expression> p =
-          ExpressionUtils.parseSqlPredicate(readMetadataWorkload.getPredicate());
-      System.out.println("Parsing the predicate: " + p.get());
-    }
   }
 
   public WorkloadSpec getWorkload() {

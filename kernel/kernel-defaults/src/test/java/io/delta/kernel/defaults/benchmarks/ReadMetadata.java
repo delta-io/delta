@@ -17,6 +17,8 @@
 package io.delta.kernel.defaults.benchmarks;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
+import io.delta.kernel.expressions.Predicate;
 
 /**
  * Workload specification for read_metadata benchmarks. Contains fields specific to metadata reading
@@ -31,7 +33,8 @@ public class ReadMetadata extends WorkloadSpec {
   private Long snapshotVersion;
 
   @JsonProperty("predicate")
-  private String predicate;
+  @JsonDeserialize(using = PredicateDeserializer.class)
+  private Predicate predicate;
 
   @JsonProperty("expected_scan_metadata")
   private String expectedScanMetadata;
@@ -39,16 +42,6 @@ public class ReadMetadata extends WorkloadSpec {
   // Default constructor for Jackson
   public ReadMetadata() {
     super("read_metadata");
-  }
-
-  // Constructor with all fields
-  public ReadMetadata(
-      String tableRoot, Long snapshotVersion, String predicate, String expectedScanMetadata) {
-    super("read_metadata");
-    this.tableRoot = tableRoot;
-    this.snapshotVersion = snapshotVersion;
-    this.predicate = predicate;
-    this.expectedScanMetadata = expectedScanMetadata;
   }
 
   // Getters and setters
@@ -60,7 +53,7 @@ public class ReadMetadata extends WorkloadSpec {
     return snapshotVersion;
   }
 
-  public String getPredicate() {
+  public Predicate getPredicate() {
     return predicate;
   }
 

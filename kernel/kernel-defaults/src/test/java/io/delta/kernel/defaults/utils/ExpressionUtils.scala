@@ -25,14 +25,14 @@ object ExpressionUtils {
    * @return Delta Kernel predicate
    * @throws IllegalArgumentException if the SQL cannot be parsed or converted
    */
-  def parseSqlPredicate(sqlExpr: String): Optional[KernelExpression] = {
+  def parseSqlPredicate(sqlExpr: String): KernelPredicate = {
     // Parse SQL using Spark's CatalystSqlParser
     val parser = new CatalystSqlParser()
     val sparkExpr = parser.parseExpression(sqlExpr)
     println("Spark expression: " + sparkExpr)
 
     // Convert Spark expression to Kernel predicate
-    return convertStoKExprJava(sparkExpr)
+    convertStoKPredicate(sparkExpr)
   }
 
   //////////////////////
@@ -41,38 +41,32 @@ object ExpressionUtils {
 
   // TODO: perhaps this should NOT return an Option?
 
-  def convertStoKPredicate(sparkPredicate: SparkExpression): Option[KernelPredicate] = {
+  def convertStoKPredicate(sparkPredicate: SparkExpression): KernelPredicate = {
     convertStoKExpr(sparkPredicate) match {
-      case Some(pred: KernelPredicate) => Some(pred)
-      case Some(expr) =>
+      case pred: KernelPredicate => pred
+      case expr =>
         throw new IllegalArgumentException(
           s"Expected a KernelPredicate but got ${expr.getClass.getSimpleName}")
-      case _ => None
     }
   }
 
-  def convertStoKExprJava(sparkExpression: SparkExpression): Optional[KernelExpression] = {
-    convertStoKExpr(sparkExpression) match {
-      case Some(expr) => Optional.of(expr)
-      case None => Optional.empty()
-    }
+  def convertStoKExprJava(sparkExpression: SparkExpression): KernelExpression = {
+    convertStoKExpr(sparkExpression)
   }
 
   private val BINARY_OPERATORS = Set("<", "<=", ">", ">=", "=", "AND", "OR")
 
-  private def convertStoKExpr(sparkExpression: SparkExpression): Option[KernelExpression] = {
+  private def convertStoKExpr(sparkExpression: SparkExpression): KernelExpression = {
     sparkExpression match {
       case expr: SparkAnd =>
-        for {
-          left <- convertStoKPredicate(expr.left)
-          right <- convertStoKPredicate(expr.right)
-        } yield new KernelAnd(left, right)
+        val left = convertStoKPredicate(expr.left)
+        val right = convertStoKPredicate(expr.right)
+        new KernelAnd(left, right)
 
       case expr: SparkOr =>
-        for {
-          left <- convertStoKPredicate(expr.left)
-          right <- convertStoKPredicate(expr.right)
-        } yield new KernelOr(left, right)
+        val left = convertStoKPredicate(expr.left)
+        val right = convertStoKPredicate(expr.right)
+        new KernelOr(left, right)
 
       case expr: SparkBinaryExpression =>
         val name = expr match {
@@ -86,39 +80,36 @@ object ExpressionUtils {
             throw new IllegalArgumentException(
               s"Unsupported binary expression: ${expr.getClass.getSimpleName}")
         }
-        for {
-          left <- convertStoKExpr(expr.left)
-          right <- convertStoKExpr(expr.right)
-        } yield new KernelPredicate(name, left, right)
+        val left = convertStoKExpr(expr.left)
+        val right = convertStoKExpr(expr.right)
+        new KernelPredicate(name, left, right)
 
       case c: SparkNamedReference =>
-        Some(new KernelColumn(c.name))
+        new KernelColumn(c.name)
 
       case l: SparkLiteral if l.dataType.isInstanceOf[sparktypes.BooleanType] =>
-        Some(KernelLiteral.ofBoolean(l.value.asInstanceOf[Boolean]))
+        KernelLiteral.ofBoolean(l.value.asInstanceOf[Boolean])
 
       case l: SparkLiteral if l.dataType.isInstanceOf[sparktypes.IntegerType] =>
-        Some(KernelLiteral.ofInt(l.value.asInstanceOf[Int]))
+        KernelLiteral.ofInt(l.value.asInstanceOf[Int])
 
       case l: SparkLiteral if l.dataType.isInstanceOf[sparktypes.LongType] =>
-        Some(KernelLiteral.ofLong(l.value.asInstanceOf[Long]))
+        KernelLiteral.ofLong(l.value.asInstanceOf[Long])
 
       case l: SparkLiteral if l.dataType.isInstanceOf[sparktypes.StringType] =>
-        Some(KernelLiteral.ofString(l.value.toString))
+        KernelLiteral.ofString(l.value.toString)
 
       case l: SparkIsNull =>
-        for {
-          child <- convertStoKExpr(l.child)
-        } yield new KernelPredicate("IS NULL", child)
+        val child = convertStoKExpr(l.child)
+        new KernelPredicate("IS NULL", child)
 
       case l: SparkEqualTo =>
-        for {
-          left <- convertStoKExpr(l.left)
-          right <- convertStoKExpr(l.right)
-        } yield new KernelPredicate("=", left, right)
+        val left = convertStoKExpr(l.left)
+        val right = convertStoKExpr(l.right)
+        new KernelPredicate("=", left, right)
       case x =>
-        println("Unsupported Spark expression: " + x + " with type: " + x.getClass)
-        None
+        throw new RuntimeException(
+          "Unsupported Spark expression: " + x + " with type: " + x.getClass)
     }
   }
 

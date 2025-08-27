@@ -30,6 +30,7 @@ import java.util.stream.Collectors;
 public class WorkloadReader {
 
   private static final ObjectMapper objectMapper = new ObjectMapper();
+
   private static final String WORKLOADS_DIR =
       "/Users/oussama.saoudi/projects/code/delta-kernel-rs/kernel/benches/workloads";
 

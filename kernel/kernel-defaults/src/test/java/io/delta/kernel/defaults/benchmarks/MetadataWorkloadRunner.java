@@ -49,6 +49,9 @@ public class MetadataWorkloadRunner {
 
       // Build scan
       ScanBuilder scanBuilder = snapshot.getScanBuilder();
+      if (workload.getPredicate() != null) {
+        scanBuilder = scanBuilder.withFilter(workload.getPredicate());
+      }
       Scan scan = scanBuilder.build();
 
       // Get scan metadata (this is what we're actually benchmarking)
