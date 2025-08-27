@@ -208,13 +208,13 @@ public class StructField {
     return new StructField(name, newType, nullable, metadata, typeChanges);
   }
 
-    /**
-     * Creates a metadata column of the given {@code metadataType} with the given {@code name}.
-     *
-     * @param name Name of the metadata column
-     * @param metadataType Type of the metadata column
-     * @return A StructField representing the metadata column
-     */
+  /**
+   * Creates a metadata column of the given {@code metadataType} with the given {@code name}.
+   *
+   * @param name Name of the metadata column
+   * @param metadataType Type of the metadata column
+   * @return A StructField representing the metadata column
+   */
   public static StructField createMetadataColumn(String name, MetadataColumnType metadataType) {
     switch (metadataType) {
       case ROW_INDEX:
