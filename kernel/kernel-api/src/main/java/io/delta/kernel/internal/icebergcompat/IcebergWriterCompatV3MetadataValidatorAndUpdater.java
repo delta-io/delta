@@ -17,6 +17,7 @@ package io.delta.kernel.internal.icebergcompat;
 
 import static io.delta.kernel.internal.tablefeatures.TableFeatures.*;
 import static java.util.stream.Collectors.toList;
+import static java.util.stream.Collectors.toSet;
 
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.internal.TableConfig;
@@ -44,11 +45,12 @@ public class IcebergWriterCompatV3MetadataValidatorAndUpdater
    *
    * <ul>
    *   <li>Disabling on an existing table (true to false)
+   *   <li>Enabling on an existing table (false to true)
    * </ul>
    */
   public static void validateIcebergWriterCompatV3Change(
       Map<String, String> oldConfig, Map<String, String> newConfig) {
-    blockConfigDisableOnExistingTable(
+    blockConfigChangeOnExistingTable(
         TableConfig.ICEBERG_WRITER_COMPAT_V3_ENABLED, oldConfig, newConfig);
   }
 
@@ -91,11 +93,25 @@ public class IcebergWriterCompatV3MetadataValidatorAndUpdater
                           inputContext.newProtocol));
 
   /**
-   * Current set of allowed table features for Iceberg writer compat V3. This combines the all v1
-   * supported features with V3-specific features including variant support, deletion vectors, and
-   * row tracking.
+   * Current set of allowed table features for Iceberg writer compat V3. This combines the common
+   * features, v1-specific features with V3-specific features including variant support, deletion
+   * vectors, and row tracking.
    */
-  private static Set<TableFeature> ALLOWED_TABLE_FEATURES = V3_ALLOWED_FEATURES;
+  private static Set<TableFeature> ALLOWED_TABLE_FEATURES =
+      Stream.concat(
+              COMMON_ALLOWED_FEATURES.stream(),
+              Stream.of(
+                  ICEBERG_COMPAT_V3_W_FEATURE,
+                  ICEBERG_WRITER_COMPAT_V3,
+                  DELETION_VECTORS_RW_FEATURE,
+                  VARIANT_RW_FEATURE,
+                  VARIANT_SHREDDING_PREVIEW_RW_FEATURE,
+                  VARIANT_RW_PREVIEW_FEATURE,
+                  ROW_TRACKING_W_FEATURE,
+                  // also allow writerV1 features for backward compatibility
+                  ICEBERG_COMPAT_V2_W_FEATURE,
+                  ICEBERG_WRITER_COMPAT_V1))
+          .collect(toSet());;
 
   @Override
   String compatFeatureName() {

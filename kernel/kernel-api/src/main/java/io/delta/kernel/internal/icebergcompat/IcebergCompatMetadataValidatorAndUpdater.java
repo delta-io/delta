@@ -434,10 +434,11 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
    * an {@link KernelException},
    *
    * <ul>
+   *   <li>Disabling on an existing table (true to false)
    *   <li>Enabling on an existing table (false to true)
    * </ul>
    */
-  protected static void blockConfigEnableOnExistingTable(
+  protected static void blockConfigChangeOnExistingTable(
       TableConfig<Boolean> tableConfig,
       Map<String, String> oldConfig,
       Map<String, String> newConfig) {
@@ -446,22 +447,6 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
     if (!wasEnabled && isEnabled) {
       throw DeltaErrors.enablingIcebergCompatFeatureOnExistingTable(tableConfig.getKey());
     }
-  }
-
-  /**
-   * Block the Iceberg Compat config related changes that we do not support and for which we throw
-   * an {@link KernelException},
-   *
-   * <ul>
-   *   <li>Disabling on an existing table (true to false)
-   * </ul>
-   */
-  protected static void blockConfigDisableOnExistingTable(
-      TableConfig<Boolean> tableConfig,
-      Map<String, String> oldConfig,
-      Map<String, String> newConfig) {
-    boolean wasEnabled = tableConfig.fromMetadata(oldConfig);
-    boolean isEnabled = tableConfig.fromMetadata(newConfig);
     if (wasEnabled && !isEnabled) {
       throw DeltaErrors.disablingIcebergCompatFeatureOnExistingTable(tableConfig.getKey());
     }

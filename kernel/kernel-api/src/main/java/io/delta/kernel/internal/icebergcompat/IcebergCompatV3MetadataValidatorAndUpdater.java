@@ -50,7 +50,7 @@ public class IcebergCompatV3MetadataValidatorAndUpdater
    */
   public static void validateIcebergCompatV3Change(
       Map<String, String> oldConfig, Map<String, String> newConfig) {
-    blockConfigDisableOnExistingTable(TableConfig.ICEBERG_COMPAT_V3_ENABLED, oldConfig, newConfig);
+    blockConfigChangeOnExistingTable(TableConfig.ICEBERG_COMPAT_V3_ENABLED, oldConfig, newConfig);
   }
 
   /**

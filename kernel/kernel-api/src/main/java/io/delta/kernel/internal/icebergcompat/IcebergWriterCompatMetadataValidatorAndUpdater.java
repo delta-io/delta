@@ -72,13 +72,13 @@ abstract class IcebergWriterCompatMetadataValidatorAndUpdater
   }
 
   /**
-   * Allowed table features for IcebergWriterCompatV1. This includes the incompatible legacy
-   * features (invariants, changeDataFeed, checkConstraints, identityColumns, generatedColumns)
-   * because they may be present in the table protocol even when they are not in use. In later
-   * checks we validate that these incompatible features are inactive in the table. See the protocol
-   * spec for more details.
+   * Common set of allowed table features shared across all Iceberg writer compatibility versions.
+   * This includes the incompatible legacy features (invariants, changeDataFeed, checkConstraints,
+   * identityColumns, generatedColumns) because they may be present in the table protocol even when
+   * they are not in use. In later checks we validate that these incompatible features are inactive
+   * in the table. See the protocol spec for more details.
    */
-  protected static final Set<TableFeature> V1_ALLOWED_FEATURES =
+  protected static final Set<TableFeature> COMMON_ALLOWED_FEATURES =
       Stream.of(
               // Incompatible, but not active, legacy table features
               INVARIANTS_W_FEATURE,
@@ -96,30 +96,7 @@ abstract class IcebergWriterCompatMetadataValidatorAndUpdater
               CLUSTERING_W_FEATURE,
               TIMESTAMP_NTZ_RW_FEATURE,
               TYPE_WIDENING_RW_FEATURE,
-              TYPE_WIDENING_RW_PREVIEW_FEATURE,
-              ICEBERG_COMPAT_V2_W_FEATURE,
-              ICEBERG_WRITER_COMPAT_V1)
-          .collect(toSet());
-
-  /**
-   * Allowed table features for IcebergWriterCompatV3. This set builds on {@link
-   * #V1_ALLOWED_FEATURES}, ensuring that all features required for V1 compatibility are preserved.
-   * This is critical because tables may be upgraded directly from V1 to V3, and to unblock this,
-   * those legacy features must remain supported. V3-specific features are then appended on top of
-   * the V1 set. Note: validation to ensure that only one Iceberg compatibility version is enabled
-   * is performed at the IcebergCompat level.
-   */
-  protected static final Set<TableFeature> V3_ALLOWED_FEATURES =
-      Stream.concat(
-              V1_ALLOWED_FEATURES.stream(),
-              Stream.of(
-                  ICEBERG_COMPAT_V3_W_FEATURE,
-                  ICEBERG_WRITER_COMPAT_V3,
-                  DELETION_VECTORS_RW_FEATURE,
-                  VARIANT_RW_FEATURE,
-                  VARIANT_SHREDDING_PREVIEW_RW_FEATURE,
-                  VARIANT_RW_PREVIEW_FEATURE,
-                  ROW_TRACKING_W_FEATURE))
+              TYPE_WIDENING_RW_PREVIEW_FEATURE)
           .collect(toSet());
 
   protected static IcebergCompatCheck createUnsupportedFeaturesCheck(
