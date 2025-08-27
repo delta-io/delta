@@ -77,8 +77,7 @@ public interface CommitRange {
   Optional<CommitRangeBuilder.CommitBoundary> getQueryEndBoundary();
 
   /**
-   * Returns an iterator over the actions that occurred within this commit range. Only returns the
-   * actions requested in actionSet.
+   * Returns an iterator of the requested actions for the commits in this commit range.
    *
    * <p>For the returned columnar batches:
    *
