@@ -36,16 +36,16 @@ public class StructField {
   ////////////////////////////////////////////////////////////////////////////////
 
   /**
-   * The existing of this key indicates that a column is a metadata column and its values indicates
+   * The existence of this key indicates that a column is a metadata column and its values indicates
    * what kind of {@link MetadataColumnType} it is.
    */
-  public static final String METADATA_TYPE_KEY = "metadataType";
+  public static final String METADATA_TYPE_KEY = "delta.metadataType";
 
   /**
    * Indicates that a column was requested for internal computations and should not be returned to
    * the user.
    */
-  public static final String IS_INTERNAL_COLUMN_KEY = "isInternalColumn";
+  public static final String IS_INTERNAL_COLUMN_KEY = "delta.isInternalColumn";
 
   /**
    * The name of a row index metadata column. When present this column must be populated with row
@@ -208,6 +208,13 @@ public class StructField {
     return new StructField(name, newType, nullable, metadata, typeChanges);
   }
 
+    /**
+     * Creates a metadata column of the given {@code metadataType} with the given {@code name}.
+     *
+     * @param name Name of the metadata column
+     * @param metadataType Type of the metadata column
+     * @return A StructField representing the metadata column
+     */
   public static StructField createMetadataColumn(String name, MetadataColumnType metadataType) {
     switch (metadataType) {
       case ROW_INDEX:

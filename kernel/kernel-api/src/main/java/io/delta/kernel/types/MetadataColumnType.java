@@ -16,6 +16,11 @@
 
 package io.delta.kernel.types;
 
+/**
+ * Enumeration of metadata column types supported by Delta Kernel.
+ *
+ * <p>Metadata columns provide additional information about rows in a Delta table.
+ */
 public enum MetadataColumnType {
   ROW_INDEX("row_index"),
   ROW_ID("row_id"),

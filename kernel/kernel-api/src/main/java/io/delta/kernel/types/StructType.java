@@ -72,6 +72,7 @@ public final class StructType extends DataType {
     return add(new StructField(name, dataType, nullable, metadata));
   }
 
+  /** Add a predefined metadata column of {@link MetadataColumnType} to the struct type. */
   public StructType addMetadataColumn(String name, MetadataColumnType type) {
     if (contains(type)) {
       throw new IllegalArgumentException(
@@ -101,6 +102,7 @@ public final class StructType extends DataType {
     return fieldAndOrdinal != null ? fieldAndOrdinal._2 : -1;
   }
 
+  /** @return the index of the metadata column of the given type, or -1 if not found */
   public int indexOf(MetadataColumnType type) {
     // For now, we only allow each metadata column type to appear at most once in the schema.
     for (int i = 0; i < fields.size(); i++) {
@@ -111,6 +113,7 @@ public final class StructType extends DataType {
     return -1; // Not found
   }
 
+  /** @return true if the struct type contains a metadata column of the given type */
   public boolean contains(MetadataColumnType type) {
     return indexOf(type) >= 0;
   }
