@@ -95,7 +95,7 @@ public interface CommitRangeBuilder {
    * <p>Use the static factory methods {@link #atVersion(long)} and {@link #atTimestamp(long,
    * Snapshot)} to create instances.
    */
-  class CommitBoundary {
+  final class CommitBoundary {
 
     /**
      * Creates a commit boundary based on a specific version number.
