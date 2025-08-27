@@ -101,12 +101,12 @@ public final class DeltaErrors {
   }
 
   public static KernelException noCommitFilesFoundForVersionRange(
-      String tablePath, long startVersion, long endVersion) {
+      String tablePath, long startVersion, Optional<Long> endVersionOpt) {
     String message =
         String.format(
             "%s: Requested table changes between [%s, %s] but no log files found in the requested"
                 + " version range.",
-            tablePath, startVersion, endVersion);
+            tablePath, startVersion, endVersionOpt);
     return new KernelException(message);
   }
 

@@ -47,20 +47,26 @@ class DeltaLogActionUtilsSuite extends AnyFunSuite with MockFileSystemClientUtil
     verifyDeltaVersions(
       getCommitFiles(Seq(1, 2, 3)),
       1,
-      3,
+      Optional.of(3),
       dataPath)
     // Only one version provided
     verifyDeltaVersions(
       getCommitFiles(Seq(1)),
       1,
+      Optional.of(1),
+      dataPath)
+    // No end version provided
+    verifyDeltaVersions(
+      getCommitFiles(Seq(1, 2, 3, 4)),
       1,
+      Optional.empty(),
       dataPath)
     // Non-contiguous versions
     intercept[InvalidTableException] {
       verifyDeltaVersions(
         getCommitFiles(Seq(1, 3, 4)),
         1,
-        4,
+        Optional.of(4L),
         dataPath)
     }
     // End-version or start-version not right
@@ -68,14 +74,14 @@ class DeltaLogActionUtilsSuite extends AnyFunSuite with MockFileSystemClientUtil
       verifyDeltaVersions(
         getCommitFiles(Seq(1, 2, 3)),
         0,
-        3,
+        Optional.of(3L),
         dataPath)
     }
     intercept[KernelException] {
       verifyDeltaVersions(
         getCommitFiles(Seq(1, 2, 3)),
         1,
-        4,
+        Optional.of(4L),
         dataPath)
     }
     // Empty versions
@@ -83,7 +89,7 @@ class DeltaLogActionUtilsSuite extends AnyFunSuite with MockFileSystemClientUtil
       verifyDeltaVersions(
         getCommitFiles(Seq()),
         1,
-        4,
+        Optional.of(4L),
         dataPath)
     }
     // Unsorted or duplicates (shouldn't be possible)
@@ -91,14 +97,14 @@ class DeltaLogActionUtilsSuite extends AnyFunSuite with MockFileSystemClientUtil
       verifyDeltaVersions(
         getCommitFiles(Seq(1, 1, 2)),
         1,
-        4,
+        Optional.of(4L),
         dataPath)
     }
     intercept[InvalidTableException] {
       verifyDeltaVersions(
         getCommitFiles(Seq(1, 4, 3, 2)),
         1,
-        2,
+        Optional.of(2L),
         dataPath)
     }
   }
@@ -113,7 +119,7 @@ class DeltaLogActionUtilsSuite extends AnyFunSuite with MockFileSystemClientUtil
         createMockFSListFromEngine(_ => throw new FileNotFoundException()),
         dataPath,
         0,
-        1)
+        Optional.of(1L))
     }
   }
 
@@ -121,7 +127,7 @@ class DeltaLogActionUtilsSuite extends AnyFunSuite with MockFileSystemClientUtil
       testName: String,
       files: Seq[FileStatus],
       startVersion: Long = 1,
-      endVersion: Long = 3,
+      endVersion: Optional[java.lang.Long] = Optional.of(3L),
       expectedErrorMessageContains: String)(implicit classTag: ClassTag[T]): Unit = {
     test("getCommitFilesForVersionRange: " + testName) {
       val e = intercept[T] {
@@ -150,6 +156,12 @@ class DeltaLogActionUtilsSuite extends AnyFunSuite with MockFileSystemClientUtil
     files = deltaFileStatuses(Seq(4, 5, 6)),
     expectedErrorMessageContains = "no log files found in the requested version range")
 
+  testGetCommitFilesExpectedError[KernelException](
+    testName = "all versions less than startVersion no endVersion",
+    files = deltaFileStatuses(Seq(0)),
+    endVersion = Optional.empty(),
+    expectedErrorMessageContains = "no log files found in the requested version range")
+
   testGetCommitFilesExpectedError[InvalidTableException](
     testName = "missing log files",
     files = deltaFileStatuses(Seq(1, 3)),
@@ -175,14 +187,14 @@ class DeltaLogActionUtilsSuite extends AnyFunSuite with MockFileSystemClientUtil
     testName = "invalid end version",
     files = deltaFileStatuses(Seq(0, 1, 2)),
     startVersion = 3,
-    endVersion = 2,
+    endVersion = Optional.of(2L),
     expectedErrorMessageContains = "Invalid version range")
 
   def testGetCommitFiles(
       testName: String,
       files: Seq[FileStatus],
       startVersion: Long = 1,
-      endVersion: Long = 3,
+      endVersion: Optional[java.lang.Long] = Optional.of(3L),
       expectedCommitFiles: Seq[FileStatus]): Unit = {
     test("getCommitFilesForVersionRange: " + testName) {
       assert(
@@ -215,8 +227,21 @@ class DeltaLogActionUtilsSuite extends AnyFunSuite with MockFileSystemClientUtil
     testName = "version range size 1",
     files = deltaFileStatuses(Seq(0, 1, 2, 3, 4, 5)),
     startVersion = 0,
-    endVersion = 0,
+    endVersion = Optional.of(0L),
     expectedCommitFiles = deltaFileStatuses(Seq(0)))
+
+  testGetCommitFiles(
+    testName = "no end version provided - should read to latest available",
+    files = deltaFileStatuses(Seq(0, 1, 2, 3, 4, 5)),
+    endVersion = Optional.empty(),
+    expectedCommitFiles = deltaFileStatuses(Seq(1, 2, 3, 4, 5)))
+
+  testGetCommitFiles(
+    testName = "no end version provided - single version from start",
+    files = deltaFileStatuses(Seq(2)),
+    startVersion = 2,
+    endVersion = Optional.empty(),
+    expectedCommitFiles = deltaFileStatuses(Seq(2)))
 
   /////////////////////////////
   // listDeltaLogFiles tests //
