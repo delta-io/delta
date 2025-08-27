@@ -137,8 +137,6 @@ public interface CommitRangeBuilder {
     }
 
     /**
-     * Returns {@code true} if this boundary is based on a version number.
-     *
      * @return {@code true} if this is a version-based boundary, {@code false} otherwise
      */
     public boolean isVersion() {
@@ -146,8 +144,6 @@ public interface CommitRangeBuilder {
     }
 
     /**
-     * Returns {@code true} if this boundary is based on a timestamp.
-     *
      * @return {@code true} if this is a timestamp-based boundary, {@code false} otherwise
      */
     public boolean isTimestamp() {
@@ -155,7 +151,8 @@ public interface CommitRangeBuilder {
     }
 
     /**
-     * Returns the version number for version-based boundaries.
+     * Returns the version number for version-based boundaries. Callers should check
+     * {@link CommitBoundary#isVersion()} before access.
      *
      * @return the version number
      * @throws IllegalStateException if this boundary is timestamp-based
@@ -168,7 +165,8 @@ public interface CommitRangeBuilder {
     }
 
     /**
-     * Returns the timestamp for timestamp-based boundaries.
+     * Returns the timestamp for timestamp-based boundaries. Callers should check
+     * {@link CommitBoundary#isTimestamp()} before access.
      *
      * @return the timestamp in milliseconds since epoch
      * @throws IllegalStateException if this boundary is version-based
@@ -182,6 +180,7 @@ public interface CommitRangeBuilder {
 
     /**
      * Returns the latest snapshot used for timestamp resolution in timestamp-based boundaries.
+     * Callers should check {@link CommitBoundary#isTimestamp()} before access.
      *
      * @return the latest snapshot
      * @throws IllegalStateException if this boundary is version-based
