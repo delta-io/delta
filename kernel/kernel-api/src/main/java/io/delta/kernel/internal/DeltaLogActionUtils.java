@@ -91,7 +91,7 @@ public class DeltaLogActionUtils {
    *
    * @param tablePath path for the given table
    * @param startVersion start version of the range (inclusive)
-   * @param endVersion end version of the range (inclusive)
+   * @param endVersionOpt end version of the range (inclusive)
    * @return the list of commit files in increasing order between startVersion and endVersion
    * @throws TableNotFoundException if the table does not exist or if it is not a delta table
    * @throws KernelException if a commit file does not exist for any of the versions in the provided
