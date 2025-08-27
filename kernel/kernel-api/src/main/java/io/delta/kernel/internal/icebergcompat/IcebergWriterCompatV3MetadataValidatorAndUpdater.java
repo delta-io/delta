@@ -44,12 +44,11 @@ public class IcebergWriterCompatV3MetadataValidatorAndUpdater
    *
    * <ul>
    *   <li>Disabling on an existing table (true to false)
-   *   <li>Enabling on an existing table (false to true)
    * </ul>
    */
   public static void validateIcebergWriterCompatV3Change(
       Map<String, String> oldConfig, Map<String, String> newConfig) {
-    blockConfigChangeOnExistingTable(
+    blockConfigDisableOnExistingTable(
         TableConfig.ICEBERG_WRITER_COMPAT_V3_ENABLED, oldConfig, newConfig);
   }
 
