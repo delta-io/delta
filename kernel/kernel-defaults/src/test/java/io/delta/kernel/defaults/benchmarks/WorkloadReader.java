@@ -68,5 +68,4 @@ public class WorkloadReader {
   public static WorkloadSpec loadWorkloadFromFile(String filePath) throws IOException {
     return objectMapper.readValue(new File(filePath), WorkloadSpec.class);
   }
-
 }
