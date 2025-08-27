@@ -100,6 +100,12 @@ public class DeltaLogActionUtils {
    */
   public static List<FileStatus> getCommitFilesForVersionRange(
       Engine engine, Path tablePath, long startVersion, Optional<Long> endVersionOpt) {
+    logger.info(
+        "{}: Getting the commit files for versions [{}, {}]",
+        tablePath,
+        startVersion,
+        endVersionOpt);
+
     // Validate arguments
     endVersionOpt.ifPresent(
         endVersion -> {

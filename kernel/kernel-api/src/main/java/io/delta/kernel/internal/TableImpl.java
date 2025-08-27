@@ -185,8 +185,6 @@ public class TableImpl implements Table {
       long endVersion,
       Set<DeltaLogActionUtils.DeltaAction> actionSet) {
 
-    logger.info(
-        "{}: Getting the commit files for versions [{}, {}]", tablePath, startVersion, endVersion);
     List<FileStatus> commitFiles =
         DeltaLogActionUtils.getCommitFilesForVersionRange(
             engine, new Path(tablePath), startVersion, Optional.of(endVersion));
