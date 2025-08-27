@@ -359,7 +359,7 @@ public class DeltaLogActionUtils {
 
     StructType readSchema =
         new StructType(
-            actionSet.stream()
+            copySet.stream()
                 .map(action -> new StructField(action.colName, action.schema, true))
                 .collect(Collectors.toList()));
     logger.info("{}: Reading the commit files with readSchema {}", tablePath, readSchema);
