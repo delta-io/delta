@@ -63,7 +63,7 @@ public interface CommitRangeBuilder {
    * <p><strong>Note:</strong> If no end boundary is provided via {@link
    * #withEndBoundary(CommitBoundary)}, or a timestamp-based end boundary is provided, the provided
    * log data must include all available ratified commits. If a version-based end boundary is
-   * provided, the log data can omit commits with versions > endVersion.
+   * provided, the log data can omit commits with versions {@code >} endVersion.
    *
    * @param logData the list of pre-parsed log data, must not be null
    * @return this builder instance configured with the specified log data
@@ -80,8 +80,8 @@ public interface CommitRangeBuilder {
    * @param engine the {@link Engine} to use for file system operations and log parsing
    * @return a new {@link CommitRange} instance configured according to this builder's
    *     specifications
-   * @throws IllegalArgumentException if the builder configuration is invalid (e.g., start version >
-   *     end version)
+   * @throws IllegalArgumentException if the builder configuration is invalid (e.g., start version
+   *     {@code >} end version)
    */
   CommitRange build(Engine engine);
 
