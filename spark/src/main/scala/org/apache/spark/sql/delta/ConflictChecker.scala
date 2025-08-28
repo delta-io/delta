@@ -112,10 +112,16 @@ private[delta] case class CurrentTransactionInfo(
 /**
  * Summary of the Winning commit against which we want to check the conflict
  * @param actions - delta log actions committed by the winning commit
- * @param commitVersion - winning commit version
+ * @param fileStatus - descriptor for the commit file
+ * @param readTimeMs - time taken to read the commit file
  */
-private[delta] class WinningCommitSummary(val actions: Seq[Action], val commitVersion: Long) {
+private[delta] class WinningCommitSummary(
+      val actions: Seq[Action],
+      val fileStatus: FileStatus,
+      val readTimeMs: Long) {
 
+  val commitVersion: Long = FileNames.deltaVersion(fileStatus)
+  val commitFileTimestamp: Long = fileStatus.getModificationTime
   val metadataUpdates: Seq[Metadata] = actions.collect { case a: Metadata => a }
   val appLevelTransactions: Seq[SetTransaction] = actions.collect { case a: SetTransaction => a }
   val protocol: Option[Protocol] = actions.collectFirst { case a: Protocol => a }
@@ -153,21 +159,44 @@ private[delta] class WinningCommitSummary(val actions: Seq[Action], val commitVe
     .exists(_.toBoolean)
 }
 
+object WinningCommitSummary {
+
+  /**
+   * Read a commit file and create the [[WinningCommitSummary]].
+   */
+  def createFromFileStatus(
+      deltaLog: DeltaLog,
+      fileStatus: FileStatus): WinningCommitSummary = {
+    val startTimeNs = System.nanoTime()
+
+    val actions = deltaLog.store.read(
+      fileStatus,
+      deltaLog.newDeltaHadoopConf()
+    ).map(Action.fromJson)
+
+    val readTimeMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTimeNs)
+
+    new WinningCommitSummary(
+      actions = actions,
+      fileStatus = fileStatus,
+      readTimeMs = readTimeMs
+    )
+  }
+}
+
 private[delta] class ConflictChecker(
     spark: SparkSession,
     initialCurrentTransactionInfo: CurrentTransactionInfo,
-    winningCommitFileStatus: FileStatus,
+    winningCommitSummary: WinningCommitSummary,
     isolationLevel: IsolationLevel)
   extends DeltaLogging with ConflictCheckerPredicateElimination {
 
-  protected val winningCommitVersion = FileNames.deltaVersion(winningCommitFileStatus)
+  protected val winningCommitVersion = winningCommitSummary.commitVersion
   protected val startTimeMs = System.currentTimeMillis()
   protected val timingStats = mutable.HashMap[String, Long]()
   protected val deltaLog = initialCurrentTransactionInfo.readSnapshot.deltaLog
 
   protected var currentTransactionInfo: CurrentTransactionInfo = initialCurrentTransactionInfo
-
-  protected lazy val winningCommitSummary: WinningCommitSummary = createWinningCommitSummary()
 
   protected def recordSkippedPhase(phase: String): Unit = timingStats += phase -> 0
 
@@ -177,6 +206,9 @@ private[delta] class ConflictChecker(
    * the transaction as if it had started while reading the `winningCommitVersion`.
    */
   def checkConflicts(): CurrentTransactionInfo = {
+    // Add time to read commit in the metrics.
+    recordTime("initialize-old-commit", winningCommitSummary.readTimeMs)
+
     // Check early the protocol and metadata compatibility that is required for subsequent
     // file-level checks.
     checkProtocolCompatibility()
@@ -209,20 +241,6 @@ private[delta] class ConflictChecker(
 
     logMetrics()
     currentTransactionInfo
-  }
-
-  /**
-   * Initializes [[WinningCommitSummary]] for the already committed
-   * transaction (winning transaction).
-   */
-  protected def createWinningCommitSummary(): WinningCommitSummary = {
-    recordTime("initialize-old-commit") {
-      val winningCommitActions = deltaLog.store.read(
-        winningCommitFileStatus,
-        deltaLog.newDeltaHadoopConf()
-      ).map(Action.fromJson)
-      new WinningCommitSummary(winningCommitActions, winningCommitVersion)
-    }
   }
 
   /**
@@ -288,7 +306,7 @@ private[delta] class ConflictChecker(
       // So we need to update it after resolving conflicts with winning transactions.
       if (newProtocol.isFeatureSupported(CheckpointProtectionTableFeature) &&
           TableFeature.isProtocolRemovingFeatureWithHistoryProtection(newProtocol, readProtocol)) {
-        val newVersion = winningCommitSummary.commitVersion + 1L
+        val newVersion = winningCommitVersion + 1L
         val newMetadata = CheckpointProtectionTableFeature.metadataWithCheckpointProtection(
           currentTransactionInfo.metadata, newVersion)
         val newActions = currentTransactionInfo.actions.collect {
@@ -1246,7 +1264,7 @@ private[delta] class ConflictChecker(
               currentTransactionInfo.metadata, currentTransactionInfo.readSnapshot)) {
         // Since the current transaction enabled inCommitTimestamps, we should use the file
         // timestamp from the winning transaction as its commit timestamp.
-        winningCommitFileStatus.getModificationTime
+        winningCommitSummary.commitFileTimestamp
     } else {
       // Get the inCommitTimestamp from the winning transaction.
       CommitInfo.getRequiredInCommitTimestamp(
@@ -1298,6 +1316,10 @@ private[delta] class ConflictChecker(
     val timeTakenMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTimeNs)
     timingStats += phase -> timeTakenMs
     ret
+  }
+
+  protected def recordTime(phase: String, timeTakenMs: Long) = {
+    timingStats += phase -> timeTakenMs
   }
 
   protected def logMetrics(): Unit = {

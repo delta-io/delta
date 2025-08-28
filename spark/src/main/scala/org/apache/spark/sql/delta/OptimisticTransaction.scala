@@ -2589,19 +2589,20 @@ trait OptimisticTransactionImpl extends TransactionHelper
         log"${MDC(DeltaLogKeys.VERSION2, nextAttemptVersion)}) " +
         log"with current txn having " + txnDetailsLog)
 
-      var updatedCurrentTransactionInfo = currentTransactionInfo
-      (checkVersion until nextAttemptVersion)
-        .zip(fileStatuses)
-        .foreach { case (otherCommitVersion, otherCommitFileStatus) =>
-        updatedCurrentTransactionInfo = checkForConflictsAgainstVersion(
-          updatedCurrentTransactionInfo,
-          otherCommitFileStatus,
-          commitIsolationLevel)
-        logInfo(logPrefix +
-          log"No conflicts in version ${MDC(DeltaLogKeys.VERSION, otherCommitVersion)}, " +
-          log"${MDC(DeltaLogKeys.DURATION,
-            clock.getTimeMillis() - commitAttemptStartTimeMillis)} ms since start")
+      val updatedCurrentTransactionInfo = {
+        if (expected.isEmpty) {
+          currentTransactionInfo
+        }
+        else {
+          resolveConflicts(
+            currentTransactionInfo = currentTransactionInfo,
+            firstWinningVersion = expected.head,
+            lastWinningVersion = expected.last,
+            conflictingCommitFiles = fileStatuses,
+            commitIsolationLevel = commitIsolationLevel)
+        }
       }
+
 
       logInfo(logPrefix +
         log"No conflicts with versions " +
@@ -2614,17 +2615,45 @@ trait OptimisticTransactionImpl extends TransactionHelper
     }
   }
 
-  protected def checkForConflictsAgainstVersion(
+  /**
+   * Loads the summaries of the conflicting commits and uses [[ConflictChecker]] to
+   * resolve conflicts.
+   *
+   * @param currentTransactionInfo The current transaction information to check for conflicts
+   * @param firstWinningVersion The first version number for conflict checking (inclusive)
+   * @param lastWinningVersion The last version number for conflict checking (inclusive)
+   * @param conflictingCommitFiles The sequence of file statuses representing conflicting commits
+   * @param commitIsolationLevel The isolation level to use for conflict checking
+   * @return Updated transaction information after resolving all conflicts
+   */
+  protected def resolveConflicts(
       currentTransactionInfo: CurrentTransactionInfo,
-      otherCommitFileStatus: FileStatus,
-      commitIsolationLevel: IsolationLevel): CurrentTransactionInfo = {
+      firstWinningVersion: Long,
+      lastWinningVersion: Long,
+      conflictingCommitFiles: Seq[FileStatus],
+      commitIsolationLevel: IsolationLevel) : CurrentTransactionInfo = {
 
-    val conflictChecker = new ConflictChecker(
-      spark,
-      currentTransactionInfo,
-      otherCommitFileStatus,
-      commitIsolationLevel)
-    conflictChecker.checkConflicts()
+    var updatedCurrentTransactionInfo = currentTransactionInfo
+    (firstWinningVersion to lastWinningVersion)
+      .zip(conflictingCommitFiles)
+      .foreach { case (otherCommitVersion, otherCommitFileStatus) =>
+        val winningCommitSummary = WinningCommitSummary.createFromFileStatus(
+          deltaLog, otherCommitFileStatus)
+
+        val conflictChecker = new ConflictChecker(
+          spark,
+          currentTransactionInfo,
+          winningCommitSummary,
+          commitIsolationLevel)
+
+        updatedCurrentTransactionInfo = conflictChecker.checkConflicts()
+
+        logInfo(logPrefix +
+          log"No conflicts in version ${MDC(DeltaLogKeys.VERSION, otherCommitVersion)}, " +
+          log"${MDC(DeltaLogKeys.DURATION,
+            clock.getTimeMillis() - commitAttemptStartTimeMillis)} ms since start")
+      }
+    updatedCurrentTransactionInfo
   }
 
   /** Returns the version that the first attempt will try to commit at. */
