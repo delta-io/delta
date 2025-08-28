@@ -25,12 +25,13 @@ import io.delta.kernel.commit.{CommitMetadata, CommitResponse, Committer}
 import io.delta.kernel.data.Row
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.KernelException
+import io.delta.kernel.internal.SnapshotImpl
 import io.delta.kernel.internal.actions.Protocol
 import io.delta.kernel.internal.commit.DefaultFileSystemManagedTableOnlyCommitter
 import io.delta.kernel.internal.files.ParsedLogData
 import io.delta.kernel.internal.files.ParsedLogData.ParsedLogType
 import io.delta.kernel.internal.table.SnapshotBuilderImpl
-import io.delta.kernel.test.{ActionUtils, MockFileSystemClientUtils, VectorTestUtils}
+import io.delta.kernel.test.{ActionUtils, MockFileSystemClientUtils, MockSnapshotUtils, VectorTestUtils}
 import io.delta.kernel.types.{IntegerType, StructType}
 import io.delta.kernel.utils.CloseableIterator
 
@@ -39,11 +40,14 @@ import org.scalatest.funsuite.AnyFunSuite
 class SnapshotBuilderSuite extends AnyFunSuite
     with MockFileSystemClientUtils
     with ActionUtils
-    with VectorTestUtils {
+    with VectorTestUtils
+    with MockSnapshotUtils {
 
   private val emptyMockEngine = createMockFSListFromEngine(Nil)
   private val protocol = new Protocol(1, 2)
   private val metadata = testMetadata(new StructType().add("c1", IntegerType.INTEGER))
+  private val mockSnapshotAtTimestamp0 =
+    getMockSnapshot(dataPath, latestVersion = 0L, timestamp = 0L)
 
   ///////////////////////////////////////
   // Builder Validation Tests -- START //
@@ -65,6 +69,60 @@ class SnapshotBuilderSuite extends AnyFunSuite
     }.getMessage
 
     assert(exMsg === "version must be >= 0")
+  }
+
+  // ===== Timestamp Tests ===== //
+
+  test("atTimestamp: null latestSnapshot throws NullPointerException") {
+    assertThrows[NullPointerException] {
+      TableManager.loadSnapshot(dataPath.toString).atTimestamp(null, 1000L)
+    }
+  }
+
+  test("atTimestamp: negative timestamp throws IllegalArgumentException") {
+    val builder =
+      TableManager.loadSnapshot(dataPath.toString).atTimestamp(mockSnapshotAtTimestamp0, -1L)
+
+    val exMsg = intercept[IllegalArgumentException] {
+      builder.build(emptyMockEngine)
+    }.getMessage
+
+    assert(exMsg === "timestamp must be >= 0")
+  }
+
+  test("atTimestamp: timestamp greater than latest snapshot throws IllegalArgumentException") {
+    val builder =
+      TableManager.loadSnapshot(dataPath.toString).atTimestamp(mockSnapshotAtTimestamp0, 99)
+
+    val exMsg = intercept[IllegalArgumentException] {
+      builder.build(emptyMockEngine)
+    }.getMessage
+
+    assert(exMsg === "Requested load timestamp 99 is greater than the latest snapshot timestamp 0")
+  }
+
+  test("atTimestamp: timestamp and version both provided throws IllegalArgumentException") {
+    val builder = TableManager.loadSnapshot(dataPath.toString)
+      .atVersion(1)
+      .atTimestamp(mockSnapshotAtTimestamp0, 0L)
+
+    val exMsg = intercept[IllegalArgumentException] {
+      builder.build(emptyMockEngine)
+    }.getMessage
+
+    assert(exMsg === "timestamp and version cannot be provided together")
+  }
+
+  test("atTimestamp: protocol and metadata with timestamp throws IllegalArgumentException") {
+    val builder = TableManager.loadSnapshot(dataPath.toString)
+      .atTimestamp(mockSnapshotAtTimestamp0, 0L)
+      .withProtocolAndMetadata(protocol, metadata)
+
+    val exMsg = intercept[IllegalArgumentException] {
+      builder.build(emptyMockEngine)
+    }.getMessage
+
+    assert(exMsg === "protocol and metadata can only be provided if a version is provided")
   }
 
   // ===== Committer Tests ===== //

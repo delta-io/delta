@@ -20,6 +20,7 @@ import static io.delta.kernel.internal.util.Utils.resolvePath;
 
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
@@ -45,7 +46,7 @@ import org.slf4j.LoggerFactory;
  * parameters, and then passing that information to this factory to actually create the {@link
  * Snapshot}.
  */
-class SnapshotFactory {
+public class SnapshotFactory {
 
   private static final Logger logger = LoggerFactory.getLogger(SnapshotFactory.class);
 
@@ -104,9 +105,9 @@ class SnapshotFactory {
     if (ctx.versionOpt.isPresent()) {
       return SnapshotQueryContext.forVersionSnapshot(tablePath.toString(), ctx.versionOpt.get());
     }
-
-    // TODO: if ctx.timestampOpt.isPresent() -> SnapshotQueryContext.forTimestampSnapshot
-
+    if (ctx.timestampQueryContextOpt.isPresent()) {
+      return SnapshotQueryContext.forTimestampSnapshot(tablePath.toString(), ctx.versionOpt.get());
+    }
     return SnapshotQueryContext.forLatestSnapshot(tablePath.toString());
   }
 
@@ -133,8 +134,17 @@ class SnapshotFactory {
   }
 
   private Optional<Long> getTargetVersionToLoad(Engine engine, SnapshotQueryContext snapshotCtx) {
-    // TODO: if time travel by timestamp, call snapshotCtx.setVersion after resolving the version
-    return ctx.versionOpt;
+    if (ctx.timestampQueryContextOpt.isPresent()) {
+      return Optional.of(
+          resolveTimestampToSnapshotVersion(
+              engine,
+              snapshotCtx,
+              ctx.timestampQueryContextOpt.get()._1,
+              ctx.timestampQueryContextOpt.get()._2));
+    } else if (ctx.versionOpt.isPresent()) {
+      return ctx.versionOpt;
+    }
+    return Optional.empty();
   }
 
   private LogReplay getLogReplay(
@@ -153,5 +163,41 @@ class SnapshotFactory {
 
   private Metadata getMetadata(LogReplay logReplay) {
     return ctx.protocolAndMetadataOpt.map(x -> x._2).orElseGet(logReplay::getMetadata);
+  }
+
+  public static long resolveTimestampToSnapshotVersion(
+      Engine engine,
+      SnapshotQueryContext snapshotQueryCtx,
+      SnapshotImpl latestSnapshot,
+      long millisSinceEpochUTC) {
+    final long resolvedVersionToLoad =
+        snapshotQueryCtx
+            .getSnapshotMetrics()
+            .computeTimestampToVersionTotalDurationTimer
+            .time(
+                () ->
+                    DeltaHistoryManager.getActiveCommitAtTimestamp(
+                            engine,
+                            latestSnapshot,
+                            latestSnapshot.getLogPath(),
+                            millisSinceEpochUTC,
+                            true /* mustBeRecreatable */,
+                            false /* canReturnLastCommit */,
+                            false /* canReturnEarliestCommit */)
+                        .getVersion());
+
+    snapshotQueryCtx.setVersion(resolvedVersionToLoad);
+
+    logger.info(
+        "{}: Took {} ms to resolve timestamp {} to snapshot version {}",
+        latestSnapshot.getPath(),
+        snapshotQueryCtx
+            .getSnapshotMetrics()
+            .computeTimestampToVersionTotalDurationTimer
+            .totalDurationMs(),
+        millisSinceEpochUTC,
+        resolvedVersionToLoad);
+
+    return resolvedVersionToLoad;
   }
 }

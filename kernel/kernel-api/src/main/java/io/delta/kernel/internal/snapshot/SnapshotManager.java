@@ -35,6 +35,7 @@ import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.lang.ListUtils;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.replay.LogReplay;
+import io.delta.kernel.internal.table.SnapshotFactory;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.FileNames.DeltaLogFileType;
 import io.delta.kernel.internal.util.Tuple2;
@@ -132,31 +133,11 @@ public class SnapshotManager {
       long millisSinceEpochUTC,
       SnapshotQueryContext snapshotContext)
       throws TableNotFoundException {
-    long versionToRead =
-        snapshotContext
-            .getSnapshotMetrics()
-            .computeTimestampToVersionTotalDurationTimer
-            .time(
-                () ->
-                    DeltaHistoryManager.getActiveCommitAtTimestamp(
-                            engine,
-                            latestSnapshot,
-                            logPath,
-                            millisSinceEpochUTC,
-                            true /* mustBeRecreatable */,
-                            false /* canReturnLastCommit */,
-                            false /* canReturnEarliestCommit */)
-                        .getVersion());
-    logger.info(
-        "{}: Took {} ms to fetch version at timestamp {}",
-        tablePath,
-        snapshotContext
-            .getSnapshotMetrics()
-            .computeTimestampToVersionTotalDurationTimer
-            .totalDurationMs(),
-        millisSinceEpochUTC);
+    final long versionToLoad =
+        SnapshotFactory.resolveTimestampToSnapshotVersion(
+            engine, snapshotContext, latestSnapshot, millisSinceEpochUTC);
 
-    return getSnapshotAt(engine, versionToRead, snapshotContext);
+    return getSnapshotAt(engine, versionToLoad, snapshotContext);
   }
 
   ////////////////////

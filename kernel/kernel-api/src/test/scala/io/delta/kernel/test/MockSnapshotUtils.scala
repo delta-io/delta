@@ -31,7 +31,9 @@ import io.delta.kernel.internal.util.VectorUtils.{buildArrayValue, stringStringM
 import io.delta.kernel.types.StringType
 import io.delta.kernel.utils.FileStatus
 
-object MockSnapshotUtils {
+object MockSnapshotUtils extends MockSnapshotUtils
+
+trait MockSnapshotUtils {
 
   /**
    * Creates a mock snapshot with valid metadata at the given version.
@@ -40,7 +42,8 @@ object MockSnapshotUtils {
   def getMockSnapshot(
       dataPath: Path,
       latestVersion: Long,
-      ictEnablementInfoOpt: Option[(Long, Long)] = None): SnapshotImpl = {
+      ictEnablementInfoOpt: Option[(Long, Long)] = None,
+      timestamp: Long = 0L): SnapshotImpl = {
     val configuration = ictEnablementInfoOpt match {
       case Some((version, _)) if version == 0L =>
         Map(TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true")
@@ -75,7 +78,7 @@ object MockSnapshotUtils {
       Seq.empty.asJava, /* compactions */
       Seq.empty.asJava, /* checkpoints */
       Optional.empty(), /* lastSeenChecksum */
-      0L /* lastCommitTimestamp */
+      timestamp /* lastCommitTimestamp */
     )
     val snapshotQueryContext = SnapshotQueryContext.forLatestSnapshot(dataPath.toString)
     new SnapshotImpl(
