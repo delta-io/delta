@@ -136,7 +136,7 @@ public class StructField {
   }
 
   public boolean isMetadataColumn() {
-    return metadata.contains(METADATA_TYPE_KEY);
+    return metadata != null && metadata.contains(METADATA_TYPE_KEY);
   }
 
   public boolean isDataColumn() {
