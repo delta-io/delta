@@ -87,8 +87,8 @@ public final class FieldMetadata {
     return get(key, String.class);
   }
 
-  public MetadataColumnType getMetadataType(String key) {
-    return get(key, MetadataColumnType.class);
+  public MetadataColumn getMetadataColumnType(String key) {
+    return get(key, MetadataColumn.class);
   }
 
   public FieldMetadata getMetadata(String key) {
@@ -217,7 +217,7 @@ public final class FieldMetadata {
       return this;
     }
 
-    public Builder putMetadataType(String key, MetadataColumnType value) {
+    public Builder putMetadataColumnType(String key, MetadataColumn value) {
       metadata.put(key, value);
       return this;
     }

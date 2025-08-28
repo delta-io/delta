@@ -364,7 +364,7 @@ public class DataTypeJsonSerDe {
       String key = entry.getKey();
 
       if (key.equals(StructField.METADATA_TYPE_KEY)) {
-        builder.putMetadataType(key, MetadataColumnType.fromString(value.textValue()));
+        builder.putMetadataColumnType(key, MetadataColumn.fromString(value.textValue()));
       } else if (value.isNull()) {
         builder.putNull(key);
       } else if (value.isIntegralNumber()) { // covers both int and long
@@ -564,7 +564,7 @@ public class DataTypeJsonSerDe {
         gen.writeBoolean((Boolean) value);
       } else if (value instanceof String) {
         gen.writeString((String) value);
-      } else if (value instanceof MetadataColumnType) {
+      } else if (value instanceof MetadataColumn) {
         gen.writeString(value.toString());
       } else if (value instanceof FieldMetadata) {
         writeFieldMetadata(gen, (FieldMetadata) value);

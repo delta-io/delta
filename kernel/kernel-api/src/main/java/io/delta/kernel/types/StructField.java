@@ -16,7 +16,7 @@
 
 package io.delta.kernel.types;
 
-import static io.delta.kernel.types.MetadataColumnType.*;
+import static io.delta.kernel.types.MetadataColumn.*;
 
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.exceptions.KernelException;
@@ -37,7 +37,7 @@ public class StructField {
 
   /**
    * The existence of this key indicates that a column is a metadata column and its values indicates
-   * what kind of {@link MetadataColumnType} it is.
+   * what kind of {@link MetadataColumn} it is.
    */
   public static final String METADATA_TYPE_KEY = "delta.metadataType";
 
@@ -143,8 +143,9 @@ public class StructField {
     return !isMetadataColumn();
   }
 
-  public MetadataColumnType getMetadataColumnType() {
-    return metadata.getMetadataType(METADATA_TYPE_KEY);
+  /** Returns the type of metadata column if this is a metadata column, otherwise returns null. */
+  public MetadataColumn getMetadataColumnType() {
+    return metadata.getMetadataColumnType(METADATA_TYPE_KEY);
   }
 
   public boolean isInternalColumn() {
@@ -209,36 +210,38 @@ public class StructField {
   }
 
   /**
-   * Creates a metadata column of the given {@code metadataType} with the given {@code name}.
+   * Creates a metadata column of the given {@code colType} with the given {@code name}.
    *
    * @param name Name of the metadata column
-   * @param metadataType Type of the metadata column
+   * @param colType Type of the metadata column
    * @return A StructField representing the metadata column
    */
-  public static StructField createMetadataColumn(String name, MetadataColumnType metadataType) {
-    switch (metadataType) {
+  public static StructField createMetadataColumn(String name, MetadataColumn colType) {
+    switch (colType) {
       case ROW_INDEX:
         return new StructField(
             name,
             LongType.LONG,
             false /* nullable */,
-            new FieldMetadata.Builder().putMetadataType(METADATA_TYPE_KEY, ROW_INDEX).build());
+            new FieldMetadata.Builder()
+                .putMetadataColumnType(METADATA_TYPE_KEY, ROW_INDEX)
+                .build());
       case ROW_ID:
         return new StructField(
             name,
             LongType.LONG,
             false /* nullable */,
-            new FieldMetadata.Builder().putMetadataType(METADATA_TYPE_KEY, ROW_ID).build());
+            new FieldMetadata.Builder().putMetadataColumnType(METADATA_TYPE_KEY, ROW_ID).build());
       case ROW_COMMIT_VERSION:
         return new StructField(
             name,
             LongType.LONG,
             false /* nullable */,
             new FieldMetadata.Builder()
-                .putMetadataType(METADATA_TYPE_KEY, ROW_COMMIT_VERSION)
+                .putMetadataColumnType(METADATA_TYPE_KEY, ROW_COMMIT_VERSION)
                 .build());
       default:
-        throw new IllegalArgumentException("Unknown MetadataColumnType: " + metadataType);
+        throw new IllegalArgumentException("Unknown MetadataColumnType: " + colType);
     }
   }
 

@@ -23,7 +23,7 @@ import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
-import io.delta.kernel.types.MetadataColumnType;
+import io.delta.kernel.types.MetadataColumn;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.utils.CloseableIterable;
 import io.delta.kernel.utils.CloseableIterator;
@@ -48,8 +48,8 @@ public class RowTracking {
    */
   public static boolean isRowTrackingColumn(StructField field) {
     return field.isMetadataColumn()
-        && (field.getMetadataColumnType() == MetadataColumnType.ROW_ID
-            || field.getMetadataColumnType() == MetadataColumnType.ROW_COMMIT_VERSION);
+        && (field.getMetadataColumnType() == MetadataColumn.ROW_ID
+            || field.getMetadataColumnType() == MetadataColumn.ROW_COMMIT_VERSION);
   }
 
   /**

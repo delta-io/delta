@@ -15,8 +15,6 @@
  */
 package io.delta.kernel.internal.rowtracking;
 
-import static io.delta.kernel.internal.rowtracking.RowTracking.*;
-
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.Row;
@@ -175,21 +173,21 @@ public final class MaterializedRowTrackingColumn {
       throw DeltaErrors.missingRowTrackingColumnRequested(logicalField.getName());
     }
 
-    if (logicalField.getMetadataColumnType() == MetadataColumnType.ROW_ID) {
+    if (logicalField.getMetadataColumnType() == MetadataColumn.ROW_ID) {
       List<StructField> physicalFields = new ArrayList<>(2);
       physicalFields.add(
           new StructField(
               MATERIALIZED_ROW_ID.getPhysicalColumnName(metadata.getConfiguration()),
               LongType.LONG,
               true /* nullable */));
-      if (!logicalSchema.contains(MetadataColumnType.ROW_INDEX)) {
+      if (!logicalSchema.contains(MetadataColumn.ROW_INDEX)) {
         physicalFields.add(
             SchemaUtils.createInternalColumn(
                 StructField.createMetadataColumn(
-                    StructField.DEFAULT_ROW_INDEX_COLUMN_NAME, MetadataColumnType.ROW_INDEX)));
+                    StructField.DEFAULT_ROW_INDEX_COLUMN_NAME, MetadataColumn.ROW_INDEX)));
       }
       return physicalFields;
-    } else if (logicalField.getMetadataColumnType() == MetadataColumnType.ROW_COMMIT_VERSION) {
+    } else if (logicalField.getMetadataColumnType() == MetadataColumn.ROW_COMMIT_VERSION) {
       return Collections.singletonList(
           new StructField(
               MATERIALIZED_ROW_COMMIT_VERSION.getPhysicalColumnName(metadata.getConfiguration()),
@@ -284,7 +282,7 @@ public final class MaterializedRowTrackingColumn {
                         new Column(
                             dataBatch
                                 .getSchema()
-                                .at(dataBatch.getSchema().indexOf(MetadataColumnType.ROW_INDEX))
+                                .at(dataBatch.getSchema().indexOf(MetadataColumn.ROW_INDEX))
                                 .getName()),
                         Literal.ofLong(baseRowId)))));
     ColumnVector rowIdVector =
@@ -296,7 +294,7 @@ public final class MaterializedRowTrackingColumn {
             .withDeletedColumnAt(rowIdOrdinal)
             .withNewColumn(
                 rowIdOrdinal,
-                logicalSchema.at(logicalSchema.indexOf(MetadataColumnType.ROW_ID)),
+                logicalSchema.at(logicalSchema.indexOf(MetadataColumn.ROW_ID)),
                 rowIdVector);
     return dataBatch;
   }
@@ -333,7 +331,7 @@ public final class MaterializedRowTrackingColumn {
             .withDeletedColumnAt(commitVersionOrdinal)
             .withNewColumn(
                 commitVersionOrdinal,
-                logicalSchema.at(logicalSchema.indexOf(MetadataColumnType.ROW_COMMIT_VERSION)),
+                logicalSchema.at(logicalSchema.indexOf(MetadataColumn.ROW_COMMIT_VERSION)),
                 commitVersionVector);
     return dataBatch;
   }

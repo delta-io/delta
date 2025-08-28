@@ -21,14 +21,14 @@ package io.delta.kernel.types;
  *
  * <p>Metadata columns provide additional information about rows in a Delta table.
  */
-public enum MetadataColumnType {
+public enum MetadataColumn {
   ROW_INDEX("row_index"),
   ROW_ID("row_id"),
   ROW_COMMIT_VERSION("row_commit_version");
 
   private final String textValue;
 
-  MetadataColumnType(String textValue) {
+  MetadataColumn(String textValue) {
     this.textValue = textValue;
   }
 
@@ -36,8 +36,8 @@ public enum MetadataColumnType {
     return textValue;
   }
 
-  public static MetadataColumnType fromString(String text) {
-    for (MetadataColumnType type : MetadataColumnType.values()) {
+  public static MetadataColumn fromString(String text) {
+    for (MetadataColumn type : MetadataColumn.values()) {
       if (type.textValue.equalsIgnoreCase(text)) {
         return type;
       }

@@ -25,7 +25,7 @@ class MetadataColumnSuite extends AnyFunSuite with MetadataColumnTestUtils {
     val schema = new StructType()
       .add("number", IntegerType.INTEGER)
       .add("name", StringType.STRING)
-      .addMetadataColumn("_metadata.row_index", MetadataColumnType.ROW_INDEX)
+      .addMetadataColumn("_metadata.row_index", MetadataColumn.ROW_INDEX)
 
     // We compare using addMetadataColumn() against manually adding the expected metadata columns
     // as provided by MetadataColumnTestUtils
@@ -41,21 +41,69 @@ class MetadataColumnSuite extends AnyFunSuite with MetadataColumnTestUtils {
     val schema = new StructType()
       .add("number", IntegerType.INTEGER)
       .add("name", StringType.STRING)
-      .addMetadataColumn("_metadata.row_index", MetadataColumnType.ROW_INDEX)
+      .addMetadataColumn("_metadata.row_index", MetadataColumn.ROW_INDEX)
 
     // Adding the same metadata column should fail
     val e = intercept[IllegalArgumentException] {
-      schema.addMetadataColumn("some other name", MetadataColumnType.ROW_INDEX)
+      schema.addMetadataColumn("some other name", MetadataColumn.ROW_INDEX)
     }
     assert(e.getMessage.contains("Metadata column row_index already exists in the struct type"))
 
     // Adding a different metadata column should not fail
-    val updated = schema.addMetadataColumn("_metadata.row_id", MetadataColumnType.ROW_ID)
+    val updated = schema.addMetadataColumn("_metadata.row_id", MetadataColumn.ROW_ID)
     val expected = new StructType()
       .add("number", IntegerType.INTEGER)
       .add("name", StringType.STRING)
       .add(ROW_INDEX)
       .add(ROW_ID)
     assert(updated.equals(expected))
+  }
+
+  test("fail if metadata column is nested") {
+    val schema = new StructType()
+
+    // Adding a nested metadata column should fail
+    val e1 = intercept[IllegalArgumentException] {
+      schema.add(new StructField(
+        "struct",
+        new StructType().addMetadataColumn("row_index", MetadataColumn.ROW_INDEX),
+        false))
+    }
+    assert(e1.getMessage.contains("Metadata column 'row_index' cannot be nested"))
+
+    // Verify two-level nesting fails
+    val e2 = intercept[IllegalArgumentException] {
+      schema.add(new StructField(
+        "struct",
+        new StructType().add(new StructField(
+          "inner_struct",
+          new StructType().addMetadataColumn("row_index", MetadataColumn.ROW_INDEX),
+          false)),
+        false))
+    }
+    assert(e2.getMessage.contains("Metadata column 'row_index' cannot be nested"))
+
+    // Verify metadata in map type fails
+    val e3 = intercept[IllegalArgumentException] {
+      schema.add(new StructField(
+        "map",
+        new MapType(
+          StringType.STRING,
+          new StructType().addMetadataColumn("row_index", MetadataColumn.ROW_INDEX),
+          false),
+        false))
+    }
+    assert(e3.getMessage.contains("Metadata column 'row_index' cannot be nested"))
+
+    // Verify metadata in array type fails
+    val e4 = intercept[IllegalArgumentException] {
+      schema.add(new StructField(
+        "array",
+        new ArrayType(
+          new StructType().addMetadataColumn("row_index", MetadataColumn.ROW_INDEX),
+          false),
+        false))
+    }
+    assert(e4.getMessage.contains("Metadata column 'row_index' cannot be nested"))
   }
 }

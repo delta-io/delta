@@ -32,7 +32,7 @@ import io.delta.kernel.internal.rowtracking.MaterializedRowTrackingColumn;
 import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
 import io.delta.kernel.internal.util.PartitionUtils;
 import io.delta.kernel.internal.util.Tuple2;
-import io.delta.kernel.types.MetadataColumnType;
+import io.delta.kernel.types.MetadataColumn;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
@@ -149,6 +149,8 @@ public interface Scan {
 
       // initialized as part of init()
       StructType logicalSchema = null;
+      Map<String, String> configuration = null;
+      ColumnMappingMode columnMappingMode = null;
       String tablePath = null;
 
       RoaringBitmapArray currBitmap = null;
@@ -159,7 +161,8 @@ public interface Scan {
           return;
         }
         logicalSchema = ScanStateRow.getLogicalSchema(scanState);
-
+        configuration = ScanStateRow.getConfiguration(scanState);
+        columnMappingMode = ScanStateRow.getColumnMappingMode(scanState);
         tablePath = ScanStateRow.getTableRoot(scanState).toString();
         inited = true;
       }
@@ -182,8 +185,6 @@ public interface Scan {
 
         // Step 1: If row tracking is enabled, check for physical row tracking columns in the data
         // batch and transform them to logical row tracking columns as needed
-        Map<String, String> configuration = ScanStateRow.getConfiguration(scanState);
-        StructType logicalSchema = ScanStateRow.getLogicalSchema(scanState);
         if (TableConfig.ROW_TRACKING_ENABLED.fromMetadata(configuration)) {
           nextDataBatch =
               MaterializedRowTrackingColumn.transformPhysicalData(
@@ -197,7 +198,7 @@ public interface Scan {
         if (dv == null) {
           selectionVector = Optional.empty();
         } else {
-          int rowIndexOrdinal = nextDataBatch.getSchema().indexOf(MetadataColumnType.ROW_INDEX);
+          int rowIndexOrdinal = nextDataBatch.getSchema().indexOf(MetadataColumn.ROW_INDEX);
           if (rowIndexOrdinal == -1) {
             throw new IllegalArgumentException(
                 "Row index column is not present in the data read from the Parquet file.");
@@ -236,7 +237,6 @@ public interface Scan {
                 engine.getExpressionHandler());
 
         // Step 5: Transform column names back to logical names if column mapping is enabled
-        ColumnMappingMode columnMappingMode = ScanStateRow.getColumnMappingMode(scanState);
         switch (columnMappingMode) {
           case NAME: // fall through
           case ID:

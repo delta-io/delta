@@ -18,6 +18,7 @@ package io.delta.kernel.types;
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.types.DataTypeJsonSerDe;
+import io.delta.kernel.internal.util.SchemaIterable;
 import io.delta.kernel.internal.util.Tuple2;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -40,6 +41,22 @@ public final class StructType extends DataType {
   }
 
   public StructType(List<StructField> fields) {
+    validateNoNestedMetadataColumns(fields);
+
+    this.fields = fields;
+    this.fieldNames = fields.stream().map(f -> f.getName()).collect(Collectors.toList());
+
+    this.nameToFieldAndOrdinal = new HashMap<>();
+    for (int i = 0; i < fields.size(); i++) {
+      nameToFieldAndOrdinal.put(fields.get(i).getName(), new Tuple2<>(fields.get(i), i));
+    }
+  }
+
+  private StructType(List<StructField> fields, boolean validateColumns) {
+    if (validateColumns) {
+      validateNoNestedMetadataColumns(fields);
+    }
+
     this.fields = fields;
     this.fieldNames = fields.stream().map(f -> f.getName()).collect(Collectors.toList());
 
@@ -72,13 +89,13 @@ public final class StructType extends DataType {
     return add(new StructField(name, dataType, nullable, metadata));
   }
 
-  /** Add a predefined metadata column of {@link MetadataColumnType} to the struct type. */
-  public StructType addMetadataColumn(String name, MetadataColumnType type) {
-    if (contains(type)) {
+  /** Add a predefined metadata column of {@link MetadataColumn} to the struct type. */
+  public StructType addMetadataColumn(String name, MetadataColumn colType) {
+    if (contains(colType)) {
       throw new IllegalArgumentException(
-          String.format("Metadata column %s already exists in the struct type", type));
+          String.format("Metadata column %s already exists in the struct type", colType));
     }
-    return add(StructField.createMetadataColumn(name, type));
+    return add(StructField.createMetadataColumn(name, colType));
   }
 
   /** @return array of fields */
@@ -103,10 +120,11 @@ public final class StructType extends DataType {
   }
 
   /** @return the index of the metadata column of the given type, or -1 if not found */
-  public int indexOf(MetadataColumnType type) {
-    // For now, we only allow each metadata column type to appear at most once in the schema.
+  public int indexOf(MetadataColumn colType) {
+    // We only allow each metadata column type to appear at most once in the schema and only at top
+    // level (i.e., not nested).
     for (int i = 0; i < fields.size(); i++) {
-      if (type.equals(fields.get(i).getMetadataColumnType())) {
+      if (colType.equals(fields.get(i).getMetadataColumnType())) {
         return i;
       }
     }
@@ -114,8 +132,8 @@ public final class StructType extends DataType {
   }
 
   /** @return true if the struct type contains a metadata column of the given type */
-  public boolean contains(MetadataColumnType type) {
-    return indexOf(type) >= 0;
+  public boolean contains(MetadataColumn colType) {
+    return indexOf(colType) >= 0;
   }
 
   public StructField get(String fieldName) {
@@ -187,5 +205,41 @@ public final class StructType extends DataType {
   @Override
   public int hashCode() {
     return Objects.hash(nameToFieldAndOrdinal, fields, fieldNames);
+  }
+
+  /**
+   * Validates that there are no nested metadata columns in a list of StructFields.
+   *
+   * <p>A nested metadata column is any {@link StructField} for which {@code
+   * field.isMetadataColumn()} returns true and is found within a nested Struct, Map, or Array type.
+   *
+   * @param fields The list of fields to validate
+   * @throws IllegalArgumentException if any nested metadata columns are found
+   */
+  private static void validateNoNestedMetadataColumns(List<StructField> fields) {
+    for (StructField field : fields) {
+      DataType dataType = field.getDataType();
+      if ((dataType instanceof StructType)
+          || (dataType instanceof MapType)
+          || (dataType instanceof ArrayType)) {
+        // Create a temporary StructType to use SchemaIterable for recursive traversal
+        StructType tempSchema = new StructType(Arrays.asList(field), false /* skip validation */);
+
+        SchemaIterable schemaIterable = new SchemaIterable(tempSchema);
+        for (SchemaIterable.SchemaElement element : schemaIterable) {
+          StructField elementField = element.getField();
+
+          // Fail if we find a nested metadata column
+          if (elementField.isMetadataColumn()) {
+            throw new IllegalArgumentException(
+                String.format(
+                    "Metadata column '%s' cannot be nested within Struct, Array, or Map types. "
+                        + "Metadata columns are only allowed at the top level of the schema. "
+                        + "Found at path: %s",
+                    elementField.getName(), element.getNamePath()));
+          }
+        }
+      }
+    }
   }
 }
