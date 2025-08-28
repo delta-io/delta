@@ -69,7 +69,8 @@ class MetadataColumnSuite extends AnyFunSuite with MetadataColumnTestUtils {
         new StructType().addMetadataColumn("row_index", MetadataColumn.ROW_INDEX),
         false))
     }
-    assert(e1.getMessage.contains("Metadata column 'row_index' cannot be nested"))
+    assert(
+      e1.getMessage.contains("Metadata columns are only allowed at the top level of a schema."))
 
     // Verify two-level nesting fails
     val e2 = intercept[IllegalArgumentException] {
@@ -81,7 +82,8 @@ class MetadataColumnSuite extends AnyFunSuite with MetadataColumnTestUtils {
           false)),
         false))
     }
-    assert(e2.getMessage.contains("Metadata column 'row_index' cannot be nested"))
+    assert(
+      e2.getMessage.contains("Metadata columns are only allowed at the top level of a schema."))
 
     // Verify metadata in map type fails
     val e3 = intercept[IllegalArgumentException] {
@@ -93,7 +95,8 @@ class MetadataColumnSuite extends AnyFunSuite with MetadataColumnTestUtils {
           false),
         false))
     }
-    assert(e3.getMessage.contains("Metadata column 'row_index' cannot be nested"))
+    assert(
+      e3.getMessage.contains("Metadata columns are only allowed at the top level of a schema."))
 
     // Verify metadata in array type fails
     val e4 = intercept[IllegalArgumentException] {
@@ -104,6 +107,7 @@ class MetadataColumnSuite extends AnyFunSuite with MetadataColumnTestUtils {
           false),
         false))
     }
-    assert(e4.getMessage.contains("Metadata column 'row_index' cannot be nested"))
+    assert(
+      e4.getMessage.contains("Metadata columns are only allowed at the top level of a schema."))
   }
 }
