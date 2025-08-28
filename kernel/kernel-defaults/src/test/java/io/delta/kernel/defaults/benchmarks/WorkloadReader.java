@@ -31,8 +31,10 @@ public class WorkloadReader {
 
   private static final ObjectMapper objectMapper = new ObjectMapper();
 
-  private static final String WORKLOADS_DIR =
-      "/Users/oussama.saoudi/projects/code/delta-kernel-rs/kernel/benches/workloads";
+  private static final String CWD = System.getProperty("user.dir");
+  // Resources directory based on the project root path and the location of this class
+  public static final Path RESOURCES_DIR = Paths.get(CWD + "/src/test/resources");
+  private static final Path WORKLOADS_DIR = RESOURCES_DIR.resolve("workloads");
 
   /**
    * Scans the workloads directory and loads all JSON workload specifications.
@@ -43,16 +45,15 @@ public class WorkloadReader {
   public static List<String> loadAllWorkloads() {
     List<WorkloadSpec> workloads = new ArrayList<>();
 
-    Path workloadsPath = Paths.get(WORKLOADS_DIR);
-    if (!Files.exists(workloadsPath)) {
+    if (!Files.exists(WORKLOADS_DIR)) {
       throw new RuntimeException("Workloads directory does not exist: " + WORKLOADS_DIR);
     }
 
     try {
 
-      return Files.list(workloadsPath)
+      return Files.list(WORKLOADS_DIR)
           .filter(path -> path.toString().endsWith(".json"))
-          .map(path -> path.toString())
+          .map(path -> RESOURCES_DIR.resolve(path).toString())
           .collect(Collectors.toList());
     } catch (IOException e) {
       throw new RuntimeException("Failed to scan workloads directory", e);

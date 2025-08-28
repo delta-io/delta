@@ -16,11 +16,14 @@
 
 package io.delta.kernel.defaults.benchmarks;
 
+import static io.delta.kernel.defaults.benchmarks.WorkloadReader.RESOURCES_DIR;
+
 import io.delta.kernel.*;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.utils.CloseableIterator;
+import java.nio.file.Paths;
 import org.apache.hadoop.conf.Configuration;
 
 /** Runner for executing metadata reading workloads using Delta Kernel. */
@@ -36,8 +39,12 @@ public class MetadataWorkloadRunner {
     Engine engine = DefaultEngine.create(new Configuration());
 
     try {
+
+      // Resource path + workload root
+      String tablePath = RESOURCES_DIR.resolve(Paths.get(workload.getTableRoot())).toString();
       // Create table instance
-      Table table = Table.forPath(engine, workload.getTableRoot());
+
+      Table table = Table.forPath(engine, tablePath);
 
       // Get snapshot (use specified version or latest)
       Snapshot snapshot;
