@@ -40,7 +40,10 @@ public final class StructType extends DataType {
   }
 
   public StructType(List<StructField> fields) {
-    validateNoNestedMetadataColumns(fields, true /* top level */);
+    validateNoMetadataColumns(
+        fields.stream()
+            .filter(f -> !(f.getDataType() instanceof BasePrimitiveType))
+            .collect(Collectors.toList()));
 
     this.fields = fields;
     this.fieldNames = fields.stream().map(f -> f.getName()).collect(Collectors.toList());
@@ -193,36 +196,29 @@ public final class StructType extends DataType {
   }
 
   /**
-   * Validates that there are no nested metadata columns in a list of StructFields.
-   *
-   * <p>A nested metadata column is any {@link StructField} for which {@code
-   * field.isMetadataColumn()} returns true and is found within a nested Struct, Map, or Array type.
+   * Validates that there are no metadata columns in a list of StructFields.
    *
    * @param fields The list of fields to validate
-   * @param topLevel signals whether the function was called from the top-level of a schema
    * @throws IllegalArgumentException if any nested metadata columns are found
    */
-  private static void validateNoNestedMetadataColumns(List<StructField> fields, boolean topLevel) {
+  private static void validateNoMetadataColumns(List<StructField> fields) {
     for (StructField field : fields) {
       DataType dataType = field.getDataType();
 
       if (dataType instanceof StructType) {
         StructType structType = (StructType) dataType;
         // We filter out nested StructTypes since they have already been validated at their creation
-        validateNoNestedMetadataColumns(
+        validateNoMetadataColumns(
             structType.fields().stream()
                 .filter(f -> !(f.getDataType() instanceof StructType))
-                .collect(Collectors.toList()),
-            false);
+                .collect(Collectors.toList()));
       } else if (dataType instanceof MapType) {
         MapType mapType = (MapType) dataType;
-        validateNoNestedMetadataColumns(
-            Arrays.asList(mapType.getKeyField(), mapType.getValueField()), false);
+        validateNoMetadataColumns(Arrays.asList(mapType.getKeyField(), mapType.getValueField()));
       } else if (dataType instanceof ArrayType) {
         ArrayType arrayType = (ArrayType) dataType;
-        validateNoNestedMetadataColumns(
-            Collections.singletonList(arrayType.getElementField()), false);
-      } else if (!topLevel && field.isMetadataColumn()) {
+        validateNoMetadataColumns(Collections.singletonList(arrayType.getElementField()));
+      } else if (field.isMetadataColumn()) {
         throw new IllegalArgumentException(
             "Metadata columns are only allowed at the top level of a schema.");
       }

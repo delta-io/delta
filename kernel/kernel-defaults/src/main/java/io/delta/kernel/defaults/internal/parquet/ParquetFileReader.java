@@ -60,6 +60,12 @@ public class ParquetFileReader {
   public CloseableIterator<ColumnarBatch> read(
       FileStatus fileStatus, StructType schema, Optional<Predicate> predicate) {
 
+    if (Arrays.stream(MetadataColumn.values())
+        .filter(colType -> !colType.equals(MetadataColumn.ROW_INDEX))
+        .anyMatch(schema::contains)) {
+      throw new IllegalArgumentException(
+          "The parquet reader does not support metadata columns other than ROW_INDEX");
+    }
     final boolean hasRowIndexCol = schema.contains(MetadataColumn.ROW_INDEX);
 
     return new CloseableIterator<ColumnarBatch>() {
