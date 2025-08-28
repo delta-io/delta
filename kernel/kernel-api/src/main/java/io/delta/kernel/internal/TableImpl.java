@@ -18,33 +18,26 @@ package io.delta.kernel.internal;
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 
 import io.delta.kernel.*;
-import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.CheckpointAlreadyExistsException;
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.exceptions.TableNotFoundException;
-import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.checkpoints.Checkpointer;
 import io.delta.kernel.internal.checksum.ChecksumUtils;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.snapshot.SnapshotManager;
-import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.Clock;
-import io.delta.kernel.types.StructField;
-import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import java.io.IOException;
 import java.io.UncheckedIOException;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Supplier;
-import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -191,41 +184,13 @@ public class TableImpl implements Table {
       long startVersion,
       long endVersion,
       Set<DeltaLogActionUtils.DeltaAction> actionSet) {
-    // Create a new action set which is a super set of the requested actions.
-    // The extra actions are needed either for checks or to extract
-    // extra information. We will strip out the extra actions before
-    // returning the result.
-    Set<DeltaLogActionUtils.DeltaAction> copySet = new HashSet<>(actionSet);
-    copySet.add(DeltaLogActionUtils.DeltaAction.PROTOCOL);
-    // commitInfo is needed to extract the inCommitTimestamp of delta files
-    copySet.add(DeltaLogActionUtils.DeltaAction.COMMITINFO);
-    // Determine whether the additional actions were in the original set.
-    boolean shouldDropProtocolColumn =
-        !actionSet.contains(DeltaLogActionUtils.DeltaAction.PROTOCOL);
-    boolean shouldDropCommitInfoColumn =
-        !actionSet.contains(DeltaLogActionUtils.DeltaAction.COMMITINFO);
 
-    return getRawChanges(engine, startVersion, endVersion, copySet)
-        .map(
-            batch -> {
-              int protocolIdx = batch.getSchema().indexOf("protocol"); // must exist
-              ColumnVector protocolVector = batch.getColumnVector(protocolIdx);
-              for (int rowId = 0; rowId < protocolVector.getSize(); rowId++) {
-                if (!protocolVector.isNullAt(rowId)) {
-                  Protocol protocol = Protocol.fromColumnVector(protocolVector, rowId);
-                  TableFeatures.validateKernelCanReadTheTable(protocol, getDataPath().toString());
-                }
-              }
-              ColumnarBatch batchToReturn = batch;
-              if (shouldDropProtocolColumn) {
-                batchToReturn = batchToReturn.withDeletedColumnAt(protocolIdx);
-              }
-              int commitInfoIdx = batchToReturn.getSchema().indexOf("commitInfo");
-              if (shouldDropCommitInfoColumn) {
-                batchToReturn = batchToReturn.withDeletedColumnAt(commitInfoIdx);
-              }
-              return batchToReturn;
-            });
+    List<FileStatus> commitFiles =
+        DeltaLogActionUtils.getCommitFilesForVersionRange(
+            engine, new Path(tablePath), startVersion, Optional.of(endVersion));
+
+    return DeltaLogActionUtils.getActionsFromCommitFilesWithProtocolValidation(
+        engine, tablePath, commitFiles, actionSet);
   }
 
   protected Path getDataPath() {
@@ -258,18 +223,8 @@ public class TableImpl implements Table {
    */
   public long getVersionBeforeOrAtTimestamp(Engine engine, long millisSinceEpochUTC) {
     SnapshotImpl latestSnapshot = (SnapshotImpl) getLatestSnapshot(engine);
-    return DeltaHistoryManager.getActiveCommitAtTimestamp(
-            engine,
-            latestSnapshot,
-            getLogPath(),
-            millisSinceEpochUTC,
-            false, /* mustBeRecreatable */
-            // e.g. if we give time T+2 and last commit has time T, then we DO want that last commit
-            true, /* canReturnLastCommit */
-            // e.g. we give time T-1 and first commit has time T, then do NOT want that earliest
-            // commit
-            false /* canReturnEarliestCommit */)
-        .getVersion();
+    return DeltaHistoryManager.getVersionBeforeOrAtTimestamp(
+        engine, getLogPath(), millisSinceEpochUTC, latestSnapshot);
   }
 
   /**
@@ -295,29 +250,8 @@ public class TableImpl implements Table {
    */
   public long getVersionAtOrAfterTimestamp(Engine engine, long millisSinceEpochUTC) {
     SnapshotImpl latestSnapshot = (SnapshotImpl) getLatestSnapshot(engine);
-    DeltaHistoryManager.Commit commit =
-        DeltaHistoryManager.getActiveCommitAtTimestamp(
-            engine,
-            latestSnapshot,
-            getLogPath(),
-            millisSinceEpochUTC,
-            false, /* mustBeRecreatable */
-            // e.g. if we give time T+2 and last commit has time T, then we do NOT want that last
-            // commit
-            false, /* canReturnLastCommit */
-            // e.g. we give time T-1 and first commit has time T, then we DO want that earliest
-            // commit
-            true /* canReturnEarliestCommit */);
-
-    if (commit.getTimestamp() >= millisSinceEpochUTC) {
-      return commit.getVersion();
-    } else {
-      // this commit.timestamp is before the input timestamp. if this is the last commit, then
-      // the input timestamp is after the last commit and `getActiveCommitAtTimestamp` would have
-      // thrown an KernelException. So, clearly, this can't be the last commit, so we can safely
-      // return commit.version + 1 as the version that is at or after the input timestamp.
-      return commit.getVersion() + 1;
-    }
+    return DeltaHistoryManager.getVersionAtOrAfterTimestamp(
+        engine, getLogPath(), millisSinceEpochUTC, latestSnapshot);
   }
 
   /** Helper method that loads a snapshot with proper metrics recording, logging, and reporting. */
@@ -344,53 +278,5 @@ public class TableImpl implements Table {
       snapshotContext.recordSnapshotErrorReport(engine, e);
       throw e;
     }
-  }
-
-  /**
-   * Returns the raw delta actions for each version between startVersion and endVersion. Only reads
-   * the actions requested in actionSet from the JSON log files.
-   *
-   * <p>For the returned columnar batches:
-   *
-   * <ul>
-   *   <li>Each row within the same batch is guaranteed to have the same commit version
-   *   <li>The batch commit versions are monotonically increasing
-   *   <li>The top-level columns include "version", "timestamp", and the actions requested in
-   *       actionSet. "version" and "timestamp" are the first and second columns in the schema,
-   *       respectively. The remaining columns are based on the actions requested and each have the
-   *       schema found in {@code DeltaAction.schema}.
-   * </ul>
-   *
-   * @param engine {@link Engine} instance to use in Delta Kernel.
-   * @param startVersion start version (inclusive)
-   * @param endVersion end version (inclusive)
-   * @param actionSet the actions to read and return from the JSON log files
-   * @return an iterator of batches where each row in the batch has exactly one non-null action and
-   *     its commit version and timestamp
-   * @throws TableNotFoundException if the table does not exist or if it is not a delta table
-   * @throws KernelException if a commit file does not exist for any of the versions in the provided
-   *     range
-   * @throws KernelException if provided an invalid version range
-   */
-  private CloseableIterator<ColumnarBatch> getRawChanges(
-      Engine engine,
-      long startVersion,
-      long endVersion,
-      Set<DeltaLogActionUtils.DeltaAction> actionSet) {
-
-    logger.info(
-        "{}: Getting the commit files for versions [{}, {}]", tablePath, startVersion, endVersion);
-    List<FileStatus> commitFiles =
-        DeltaLogActionUtils.getCommitFilesForVersionRange(
-            engine, new Path(tablePath), startVersion, endVersion);
-
-    StructType readSchema =
-        new StructType(
-            actionSet.stream()
-                .map(action -> new StructField(action.colName, action.schema, true))
-                .collect(Collectors.toList()));
-
-    logger.info("{}: Reading the commit files with readSchema {}", tablePath, readSchema);
-    return DeltaLogActionUtils.readCommitFiles(engine, commitFiles, readSchema);
   }
 }

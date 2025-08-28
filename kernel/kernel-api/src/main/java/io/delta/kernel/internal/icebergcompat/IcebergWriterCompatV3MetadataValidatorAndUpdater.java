@@ -94,8 +94,8 @@ public class IcebergWriterCompatV3MetadataValidatorAndUpdater
 
   /**
    * Current set of allowed table features for Iceberg writer compat V3. This combines the common
-   * features with V3-specific features including variant support, deletion vectors, and row
-   * tracking.
+   * features, v1-specific features with V3-specific features including variant support, deletion
+   * vectors, and row tracking.
    */
   private static Set<TableFeature> ALLOWED_TABLE_FEATURES =
       Stream.concat(
@@ -107,8 +107,17 @@ public class IcebergWriterCompatV3MetadataValidatorAndUpdater
                   VARIANT_RW_FEATURE,
                   VARIANT_SHREDDING_PREVIEW_RW_FEATURE,
                   VARIANT_RW_PREVIEW_FEATURE,
-                  ROW_TRACKING_W_FEATURE))
-          .collect(toSet());
+                  ROW_TRACKING_W_FEATURE,
+                  // Also allow writerV1 features for backward compatibility.
+                  //
+                  // Note: We already enforce that these features cannot be enabled
+                  // through the CHECK_ONLY_ICEBERG_COMPAT_V3_ENABLED validation in
+                  // IcebergCompatV3MetadataValidatorAndUpdater. This ensures that
+                  // writerV1-related configs remain disabled even though the features
+                  // are listed here for protocol compatibility.
+                  ICEBERG_COMPAT_V2_W_FEATURE,
+                  ICEBERG_WRITER_COMPAT_V1))
+          .collect(toSet());;
 
   @Override
   String compatFeatureName() {
