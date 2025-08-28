@@ -439,9 +439,10 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
       rowCommitVersionColumnExpressionOpt,
       outputColNames,
       noopCopyExprs,
+      writeUnmodifiedRows,
       clausesWithPrecompConditions,
       cdcEnabled,
-      needSetRowTrackingFieldIdForUniform = needSetRowTrackingFieldIdForUniform
+      needSetRowTrackingFieldIdForUniform
     )
 
     val preOutputDF = if (cdcEnabled) {
