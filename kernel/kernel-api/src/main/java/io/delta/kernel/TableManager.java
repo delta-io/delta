@@ -17,6 +17,7 @@
 package io.delta.kernel;
 
 import io.delta.kernel.annotation.Experimental;
+import io.delta.kernel.internal.CommitRangeBuilderImpl;
 import io.delta.kernel.internal.CreateTableTransactionBuilderImpl;
 import io.delta.kernel.internal.table.SnapshotBuilderImpl;
 import io.delta.kernel.transaction.CreateTableTransactionBuilder;
@@ -71,6 +72,6 @@ public interface TableManager {
    *     given path
    */
   static CommitRangeBuilder loadCommitRange(String path) {
-    throw new UnsupportedOperationException("Not yet implemented");
+    return new CommitRangeBuilderImpl(path);
   }
 }
