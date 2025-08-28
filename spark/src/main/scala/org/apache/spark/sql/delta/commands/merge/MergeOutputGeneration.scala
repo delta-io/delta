@@ -131,8 +131,12 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
     // unmatched source row when it should not be inserted. `target.output` will produce NULLs
     // which will get deleted eventually.
 
+    val deletedColsForUnmatchedTarget =
+      if (cdcEnabled) targetWriteCols
+      else targetWriteCols.map(e => Cast(Literal(null), e.dataType))
+
     val deleteSourceRowExprs =
-      (targetWriteCols ++
+      (deletedColsForUnmatchedTarget ++
         rowIdColumnExpressionOpt.map(_ => Literal(null)) ++
         rowCommitVersionColumnExpressionOpt.map(_ => Literal(null)) ++
         Seq(Literal(true))) ++
@@ -297,7 +301,15 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
             }
           }
           // Generate expressions to set the ROW_DROPPED_COL = true and mark as a DELETE
-          targetWriteCols ++
+          // Only read full target columns if CDC is enabled
+          val deletedDataExprs =
+            if (cdcEnabled) {
+              targetWriteCols
+            } else {
+              targetWriteCols.map(e => Cast(Literal(null), e.dataType))
+            }
+
+          deletedDataExprs ++
             rowIdColumnExpressionOpt ++
             rowCommitVersionColumnExpressionOpt ++
             Seq(incrCountExpr) ++
@@ -313,7 +325,12 @@ trait MergeOutputGeneration { self: MergeIntoCommandBase =>
             }
           }
           // Generate expressions to set the ROW_DROPPED_COL = true and mark as a DELETE
-          targetWriteCols ++
+          // Only read full target columns if CDC is enabled
+          val deletedColsForUnmatchedTarget =
+            if (cdcEnabled) targetWriteCols
+            else targetWriteCols.map(e => Cast(Literal(null), e.dataType))
+
+          deletedColsForUnmatchedTarget ++
             rowIdColumnExpressionOpt ++
             rowCommitVersionColumnExpressionOpt ++
             Seq(incrCountExpr) ++
