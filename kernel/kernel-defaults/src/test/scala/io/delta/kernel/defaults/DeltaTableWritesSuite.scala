@@ -1207,20 +1207,14 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
       secondVersion: Long): Unit = {
     withTempDirAndEngine { (tablePath, engine) =>
       // Create the table (no set-txn here to avoid unrelated schema or idempotency checks)
-      val createTxn = createWriteTxnBuilder(Table.forPath(engine, tablePath))
-        .withSchema(engine, testSchema)
-        .build(engine)
+      val createTxn = getCreateTxn(engine, tablePath, testSchema)
       commitTransaction(createTxn, engine, emptyIterable())
 
       // Start two transactions from the same snapshot with the same app ID but different
       //    versions. Both builds must succeed; the conflict is detected on commit when they race
       //    for the same next table version and ConflictChecker processes the winning commit.
-      val txn1 = createWriteTxnBuilder(Table.forPath(engine, tablePath))
-        .withTransactionId(engine, "t1", firstVersion)
-        .build(engine)
-      val txn2 = createWriteTxnBuilder(Table.forPath(engine, tablePath))
-        .withTransactionId(engine, "t1", secondVersion)
-        .build(engine)
+      val txn1 = getUpdateTxn(engine, tablePath, txnId = Some(("t1", firstVersion)))
+      val txn2 = getUpdateTxn(engine, tablePath, txnId = Some(("t1", secondVersion)))
 
       // Commit the first, then the second should fail with ConcurrentTransactionException
       commitTransaction(txn1, engine, emptyIterable())
