@@ -46,8 +46,14 @@ class CommitRangeFactory {
   CommitRangeImpl create(Engine engine) {
     long startVersion = resolveStartVersion(engine);
     Optional<Long> endVersionOpt = tryResolveEndVersion(engine);
-    endVersionOpt.ifPresent(endVersion -> checkArgument(endVersion >= startVersion));
-    logger.info("{}: Resolved startVersion={} and endVersion={}", tablePath, startVersion, endVersionOpt);
+    endVersionOpt.ifPresent(
+        endVersion ->
+            checkArgument(
+                endVersion >= startVersion,
+                String.format(
+                    "Resolved startVersion=%d > endVersion=%d", startVersion, endVersion)));
+    logger.info(
+        "{}: Resolved startVersion={} and endVersion={}", tablePath, startVersion, endVersionOpt);
     // TODO: for now we just store a list of commit files, this will be updated when we add support
     //  for ccv2
     List<FileStatus> deltaFiles = getDeltaFiles(engine, startVersion, endVersionOpt);
@@ -78,8 +84,10 @@ class CommitRangeFactory {
                 return spec.getVersion();
               } else {
                 // TODO: support ccv2 tables
-                logger.info("{}: Trying to resolve start-boundary timestamp {} to version",
-                    tablePath, spec.getTimestamp());
+                logger.info(
+                    "{}: Trying to resolve start-boundary timestamp {} to version",
+                    tablePath,
+                    spec.getTimestamp());
                 return DeltaHistoryManager.getVersionAtOrAfterTimestamp(
                     engine, logPath, spec.getTimestamp(), asSnapshotImpl(spec.getLatestSnapshot()));
               }
@@ -93,8 +101,10 @@ class CommitRangeFactory {
           if (spec.isVersion()) {
             return spec.getVersion();
           } else {
-            logger.info("{}: Trying to resolve end-boundary timestamp {} to version",
-                tablePath, spec.getTimestamp());
+            logger.info(
+                "{}: Trying to resolve end-boundary timestamp {} to version",
+                tablePath,
+                spec.getTimestamp());
             // TODO: support ccv2 tables
             return DeltaHistoryManager.getVersionBeforeOrAtTimestamp(
                 engine, logPath, spec.getTimestamp(), asSnapshotImpl(spec.getLatestSnapshot()));

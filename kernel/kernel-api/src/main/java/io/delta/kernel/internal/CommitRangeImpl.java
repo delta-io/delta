@@ -24,6 +24,7 @@ import io.delta.kernel.CommitRangeBuilder;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
@@ -84,13 +85,20 @@ public class CommitRangeImpl implements CommitRange {
     return endBoundaryOpt;
   }
 
+  @VisibleForTesting
+  public List<FileStatus> getDeltaFiles() {
+    return deltaFiles;
+  }
+
   @Override
   public CloseableIterator<ColumnarBatch> getActions(
       Engine engine, Snapshot startSnapshot, Set<DeltaLogActionUtils.DeltaAction> actionSet) {
     requireNonNull(engine, "engine cannot be null");
     requireNonNull(startSnapshot, "startSnapshot cannot be null");
     requireNonNull(actionSet, "actionSet cannot be null");
-    checkArgument(startSnapshot.getVersion() == startVersion, "startSnapshot must have version = startVersion");
+    checkArgument(
+        startSnapshot.getVersion() == startVersion,
+        "startSnapshot must have version = startVersion");
     return DeltaLogActionUtils.getActionsFromCommitFilesWithProtocolValidation(
         engine, dataPath.toString(), deltaFiles, actionSet);
   }

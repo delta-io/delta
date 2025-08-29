@@ -121,7 +121,6 @@ public interface CommitRangeBuilder {
      * @throws IllegalArgumentException if {@code timestamp} is negative
      */
     public static CommitBoundary atTimestamp(long timestamp, Snapshot latestSnapshot) {
-      checkArgument(timestamp >= 0, "Timestamp must be >= 0, but got: %d", timestamp);
       return new CommitBoundary(false, timestamp, Optional.of(latestSnapshot));
     }
 

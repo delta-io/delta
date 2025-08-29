@@ -83,7 +83,7 @@ public class CommitRangeBuilderImpl implements CommitRangeBuilder {
       throw new UnsupportedOperationException("CommitRange does not support providing logData yet");
     }
     validateInputOnBuild();
-    return new CommitRangeFactory(engine, ctx).create(engine)
+    return new CommitRangeFactory(engine, ctx).create(engine);
   }
 
   ////////////////////////////
