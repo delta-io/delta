@@ -79,7 +79,7 @@ class MetricsReportSerializerSuite extends AnyFunSuite {
     snapshotContext1.getSnapshotMetrics.loadProtocolMetadataTotalDurationTimer.record(1000)
     snapshotContext1.getSnapshotMetrics.loadLogSegmentTotalDurationTimer.record(500)
     snapshotContext1.getSnapshotMetrics.loadCrcTotalDurationTimer.record(250)
-    snapshotContext1.setVersion(25)
+    snapshotContext1.setResolvedVersion(25)
     snapshotContext1.setCheckpointVersion(Optional.of(20))
     val exception = new RuntimeException("something something failed")
 

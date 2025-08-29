@@ -36,7 +36,14 @@ import io.delta.kernel.internal.table.SnapshotBuilderImpl
  */
 trait AbstractTableManagerAdapter {
 
-  /** Does this adapter support resolving a timestamp to a version? */
+  /**
+   * Does this adapter support resolving a timestamp to a version?
+   *
+   * e.g. getVersionBeforeOrAtTimestamp and getVersionAtOrAfterTimestamp
+   *
+   * This is different from loading a snapshot at a specific timestamp, which is supported by all
+   * adapter implementations.
+   */
   def supportsTimestampResolution: Boolean
 
   def getSnapshotAtLatest(engine: Engine, path: String): SnapshotImpl
@@ -97,6 +104,10 @@ class TableManagerAdapter extends AbstractTableManagerAdapter {
       engine: Engine,
       path: String,
       timestamp: Long): SnapshotImpl = {
-    throw new UnsupportedOperationException("not implemented")
+    TableManager
+      .loadSnapshot(path)
+      .asInstanceOf[SnapshotBuilderImpl]
+      .atTimestamp(timestamp, getSnapshotAtLatest(engine, path))
+      .build(engine)
   }
 }

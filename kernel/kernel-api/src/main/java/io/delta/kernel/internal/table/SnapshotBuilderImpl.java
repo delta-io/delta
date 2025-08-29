@@ -23,6 +23,7 @@ import io.delta.kernel.Snapshot;
 import io.delta.kernel.SnapshotBuilder;
 import io.delta.kernel.commit.Committer;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
@@ -45,17 +46,14 @@ public class SnapshotBuilderImpl implements SnapshotBuilder {
 
   public static class Context {
     public final String unresolvedPath;
-    public Optional<Long> versionOpt;
-    public Optional<Committer> committerOpt;
-    public List<ParsedLogData> logDatas;
-    public Optional<Tuple2<Protocol, Metadata>> protocolAndMetadataOpt;
+    public Optional<Long> versionOpt = Optional.empty();
+    public Optional<Tuple2<SnapshotImpl, Long>> timestampQueryContextOpt = Optional.empty();
+    public Optional<Committer> committerOpt = Optional.empty();
+    public List<ParsedLogData> logDatas = Collections.emptyList();
+    public Optional<Tuple2<Protocol, Metadata>> protocolAndMetadataOpt = Optional.empty();
 
     public Context(String unresolvedPath) {
       this.unresolvedPath = requireNonNull(unresolvedPath, "unresolvedPath is null");
-      this.versionOpt = Optional.empty();
-      this.committerOpt = Optional.empty();
-      this.logDatas = Collections.emptyList();
-      this.protocolAndMetadataOpt = Optional.empty();
     }
   }
 
@@ -72,6 +70,15 @@ public class SnapshotBuilderImpl implements SnapshotBuilder {
   @Override
   public SnapshotBuilderImpl atVersion(long version) {
     ctx.versionOpt = Optional.of(version);
+    return this;
+  }
+
+  @Override
+  public SnapshotBuilderImpl atTimestamp(long millisSinceEpochUTC, Snapshot latestSnapshot) {
+    requireNonNull(latestSnapshot, "latestSnapshot is null");
+    checkArgument(latestSnapshot instanceof SnapshotImpl, "latestSnapshot must be a SnapshotImpl");
+    ctx.timestampQueryContextOpt =
+        Optional.of(new Tuple2<>((SnapshotImpl) latestSnapshot, millisSinceEpochUTC));
     return this;
   }
 
@@ -99,7 +106,7 @@ public class SnapshotBuilderImpl implements SnapshotBuilder {
 
   @Override
   public SnapshotImpl build(Engine engine) {
-    validateInputOnBuild();
+    validateInputOnBuild(engine);
     return new SnapshotFactory(engine, ctx).create(engine);
   }
 
@@ -107,12 +114,58 @@ public class SnapshotBuilderImpl implements SnapshotBuilder {
   // Private Helper Methods //
   ////////////////////////////
 
-  private void validateInputOnBuild() {
-    checkArgument(ctx.versionOpt.orElse(0L) >= 0, "version must be >= 0");
+  private void validateInputOnBuild(Engine engine) {
+    validateVersionNonNegative();
+    validateTimestampNonNegative();
+    validateTimestampNotGreaterThanLatestSnapshot(engine);
+    validateLogDatasEmptyIfTimeTravelByTimestamp();
+    validateVersionAndTimestampMutuallyExclusive();
     validateProtocolAndMetadataOnlyIfVersionProvided();
     validateProtocolRead();
     validateLogDataContainsOnlyRatifiedCommits(); // TODO: delta-io/delta#4765 support other types
     validateLogDataIsSortedContiguous();
+  }
+
+  private void validateVersionNonNegative() {
+    ctx.versionOpt.ifPresent(x -> checkArgument(x >= 0, "version must be >= 0"));
+  }
+
+  private void validateTimestampNonNegative() {
+    ctx.timestampQueryContextOpt.ifPresent(x -> checkArgument(x._2 >= 0, "timestamp must be >= 0"));
+  }
+
+  /**
+   * Recall the semantics of time-travel by timestamp: "If the provided timestamp is after (strictly
+   * greater than) the timestamp of the latest version of the table, snapshot resolution will fail."
+   */
+  private void validateTimestampNotGreaterThanLatestSnapshot(Engine engine) {
+    ctx.timestampQueryContextOpt.ifPresent(
+        x -> {
+          final long latestSnapshotVersion = x._1.getVersion();
+          final long latestSnapshotTimestamp = x._1.getTimestamp(engine);
+          final long requestedTimestamp = x._2;
+
+          if (requestedTimestamp > latestSnapshotTimestamp) {
+            throw DeltaErrors.timestampAfterLatestCommit(
+                ctx.unresolvedPath,
+                requestedTimestamp,
+                latestSnapshotTimestamp,
+                latestSnapshotVersion);
+          }
+        });
+  }
+
+  private void validateLogDatasEmptyIfTimeTravelByTimestamp() {
+    if (ctx.timestampQueryContextOpt.isPresent() && !ctx.logDatas.isEmpty()) {
+      throw new UnsupportedOperationException(
+          "Time travel by timestamp with logDatas is not yet implemented");
+    }
+  }
+
+  private void validateVersionAndTimestampMutuallyExclusive() {
+    checkArgument(
+        !ctx.timestampQueryContextOpt.isPresent() || !ctx.versionOpt.isPresent(),
+        "timestamp and version cannot be provided together");
   }
 
   private void validateProtocolAndMetadataOnlyIfVersionProvided() {
