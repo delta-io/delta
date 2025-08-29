@@ -1,0 +1,126 @@
+name: Publish Docs
+
+on:
+  push:
+    branches:
+      - master
+      - cd-docs
+    # paths:
+    #   - docs/**
+  pull_request:
+    paths:
+      - docs/**
+  release:
+    types:
+      - published
+  workflow_dispatch:
+
+jobs:
+  build_api_docs:
+    name: Build API docs (${{ matrix.version.name }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        version:
+          - name: latest
+            ref: v4.0.0
+            java: 17
+            out_dir: docs/apis/_site/api
+          - name: 3.3.2
+            ref: v3.3.2
+            java: 8
+            out_dir: docs/apis/_site/api
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: delta-io/delta
+          ref: ${{ matrix.version.ref }}
+
+      - uses: actions/setup-java@v3
+        with:
+          distribution: "zulu"
+          java-version: ${{ matrix.version.java }}
+
+      - name: Setup python environment
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          activate-environment: delta_docs
+          environment-file: docs/environment.yml
+
+      - name: Fix generate_api_docs script
+        if: contains(matrix.version.ref, 'v4')
+        run: |
+          sed -i 's|scala-2\.12|scala-2.13|g' docs/apis/generate_api_docs.py
+          sed -i '/standalone_javadoc_gen_dir,/d' docs/apis/generate_api_docs.py
+          sed -i '/flink_javadoc_gen_dir,/d' docs/apis/generate_api_docs.py
+
+      - name: Generate API docs
+        shell: bash -el {0}
+        run: python3 docs/generate_docs.py --api-docs
+        env:
+          _DELTA_LAKE_RELEASE_VERSION_: ${{ matrix.version.name }}
+
+      - name: Move doc contents up one level
+        run: |
+          find docs/apis/_site/api -type d \( -name "unidoc" -o -name "javaunidoc" -o -name "html" \) | while read dir; do
+            echo "Processing $dir"
+            parent="$(dirname "$dir")"
+            # Move all files (including hidden ones) using find
+            find "$dir" -maxdepth 1 -type f -exec mv {} "$parent"/ \;
+            # Move all subdirectories
+            find "$dir" -maxdepth 1 -type d ! -path "$dir" -exec mv {} "$parent"/ \;
+            rmdir "$dir"
+          done
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.run_id }}-apidocs-${{ matrix.version.name }}
+          path: ${{ matrix.version.out_dir }}
+
+  publish_site:
+    needs: build_api_docs
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: docs/.nvmrc
+
+      - uses: pnpm/action-setup@v4
+        name: Install pnpm
+        with:
+          package_json_file: docs/package.json
+
+      - name: Install Node.js dependencies
+        run: pnpm install
+        working-directory: docs
+
+      - name: Download API docs artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ${{ github.run_id }}-apidocs-*
+          path: docs/public/api
+
+      - name: Rename API docs artifact folders
+        run: |
+          for d in docs/public/api/${{ github.run_id }}-apidocs-*; do
+            [ -d "$d" ] || continue
+            new_name="$(echo "$d" | sed "s|docs/public/api/${{ github.run_id }}-apidocs-||")"
+            mv "$d" "docs/public/api/$new_name"
+          done
+
+      - name: Generate docs site
+        run: python3 docs/generate_docs.py
+
+      - name: Upload final artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.run_id }}-docs
+          path: docs/dist
