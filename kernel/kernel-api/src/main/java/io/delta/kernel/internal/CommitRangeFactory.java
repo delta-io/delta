@@ -44,14 +44,17 @@ class CommitRangeFactory {
   }
 
   CommitRangeImpl create(Engine engine) {
-    // Resolve startVersion and try to resolve endVersion if possible
+    // Try to resolve startVersion and endVersion **when possible**:
+    // For startVersion: version -> version, timestamp -> version, empty (aka default) -> v0
+    // For endVersion: version -> version, timestamp -> version, empty (aka default) -> unresolved
+    // We cannot resolve endVersion=latest in the default case until AFTER we list. This listing
+    // takes resolved start + end version as inputs when they are available.
     long startVersion = resolveStartVersion(engine);
     Optional<Long> endVersionOpt = tryResolveEndVersion(engine);
-    // If we have resolved endVersion, validate that it is >= startVersion
     endVersionOpt.ifPresent(
         endVersion ->
             checkArgument(
-                endVersion >= startVersion,
+                startVersion <= endVersion,
                 String.format(
                     "Resolved startVersion=%d > endVersion=%d", startVersion, endVersion)));
     logger.info(
@@ -63,8 +66,10 @@ class CommitRangeFactory {
         ctx.endBoundaryOpt);
     // TODO: for now we just store a list of commit files, this will be updated when we add support
     //  for ccv2
-    List<FileStatus> deltaFiles = getDeltaFiles(engine, startVersion, endVersionOpt);
-    // Once we have listed files, we can resolve endVersion=latestVersion if it was not specified
+    List<FileStatus> deltaFiles =
+        DeltaLogActionUtils.getCommitFilesForVersionRange(
+            engine, tablePath, startVersion, endVersionOpt);
+    // Once we have listed files, we can resolve endVersion=latestVersion for the default case
     long endVersion =
         endVersionOpt.orElseGet(
             () -> FileNames.deltaVersion(ListUtils.getLast(deltaFiles).getPath()));
@@ -118,11 +123,5 @@ class CommitRangeFactory {
                 engine, logPath, spec.getTimestamp(), asSnapshotImpl(spec.getLatestSnapshot()));
           }
         });
-  }
-
-  private List<FileStatus> getDeltaFiles(
-      Engine engine, long startVersion, Optional<Long> endVersionOpt) {
-    return DeltaLogActionUtils.getCommitFilesForVersionRange(
-        engine, tablePath, startVersion, endVersionOpt);
   }
 }

@@ -209,7 +209,6 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
     startBoundaries = Seq(
       BoundaryDef(version = Some(0L), expectedVersion = 0L),
       BoundaryDef(version = Some(1L), expectedVersion = 1L),
-      BoundaryDef(timestamp = Some(-1), expectedVersion = 0L), // before v0
       BoundaryDef(timestamp = Some(0), expectedVersion = 0L), // at v0
       BoundaryDef(timestamp = Some(5), expectedVersion = 1), // btw v0, v1
       BoundaryDef(timestamp = Some(10), expectedVersion = 1), // at v1
@@ -225,7 +224,6 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
       BoundaryDef(timestamp = Some(10), expectedVersion = 1), // at v1
       BoundaryDef(timestamp = Some(11), expectedVersion = 1), // after v1
       BoundaryDef(expectedVersion = 1), // default to latest
-      BoundaryDef(timestamp = Some(-1), expectError = true), // before v1
       BoundaryDef(version = Some(2L), expectedVersion = 2L, expectError = true) // version DNE
     ))
 
@@ -266,22 +264,22 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
 
   // Check case with only 1 delta file
   testStartAndEndBoundaryCombinations(
-    description = "deltaFiles=(0)",
-    fileStatuses = deltaFileStatuses(Seq(0L)),
+    description = "deltaFiles=(10)",
+    fileStatuses = deltaFileStatuses(Seq(10L)) ++ singularCheckpointFileStatuses(Seq(10L)),
     startBoundaries = Seq(
-      BoundaryDef(version = Some(0L), expectedVersion = 0L),
-      BoundaryDef(timestamp = Some(-1), expectedVersion = 0L), // before v0
-      BoundaryDef(timestamp = Some(0), expectedVersion = 0L), // at v0
-      BoundaryDef(expectedVersion = 0), // default to 0
-      BoundaryDef(timestamp = Some(5), expectError = true), // after v1
+      BoundaryDef(version = Some(10L), expectedVersion = 10L),
+      BoundaryDef(timestamp = Some(99L), expectedVersion = 10L), // before v10
+      BoundaryDef(timestamp = Some(100L), expectedVersion = 10L), // at v10
+      BoundaryDef(expectedVersion = 0, expectError = true), // default to 0
+      BoundaryDef(timestamp = Some(101L), expectError = true), // after v10
       BoundaryDef(version = Some(1L), expectedVersion = 1L, expectError = true) // version DNE
     ),
     endBoundaries = Seq(
-      BoundaryDef(version = Some(0L), expectedVersion = 0L),
-      BoundaryDef(timestamp = Some(0), expectedVersion = 0L), // at v0
-      BoundaryDef(timestamp = Some(5), expectedVersion = 0L), // after V0
-      BoundaryDef(expectedVersion = 0), // default to latest
-      BoundaryDef(timestamp = Some(-1), expectError = true), // before v1
+      BoundaryDef(version = Some(10L), expectedVersion = 10L),
+      BoundaryDef(timestamp = Some(100L), expectedVersion = 10L), // at v10
+      BoundaryDef(timestamp = Some(101L), expectedVersion = 10L), // after v10
+      BoundaryDef(expectedVersion = 10L), // default to latest
+      BoundaryDef(timestamp = Some(99L), expectError = true), // before v10
       BoundaryDef(version = Some(1L), expectedVersion = 1L, expectError = true) // version DNE
     ))
 

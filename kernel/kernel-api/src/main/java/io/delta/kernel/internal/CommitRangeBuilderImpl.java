@@ -37,15 +37,12 @@ public class CommitRangeBuilderImpl implements CommitRangeBuilder {
 
   public static class Context {
     public final String unresolvedPath;
-    public Optional<CommitBoundary> startBoundaryOpt;
-    public Optional<CommitBoundary> endBoundaryOpt;
-    public List<ParsedLogData> logDatas;
+    public Optional<CommitBoundary> startBoundaryOpt = Optional.empty();
+    public Optional<CommitBoundary> endBoundaryOpt = Optional.empty();
+    public List<ParsedLogData> logDatas = Collections.emptyList();
 
     public Context(String unresolvedPath) {
       this.unresolvedPath = requireNonNull(unresolvedPath, "unresolvedPath is null");
-      this.startBoundaryOpt = Optional.empty();
-      this.endBoundaryOpt = Optional.empty();
-      this.logDatas = Collections.emptyList();
     }
   }
 
