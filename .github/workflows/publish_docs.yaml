@@ -80,9 +80,9 @@ jobs:
           name: ${{ github.run_id }}-apidocs-${{ matrix.version.name }}
           path: ${{ matrix.version.out_dir }}
 
-  publish_site:
+  build_site:
+    name: Build site
     needs: build_api_docs
-
     runs-on: ubuntu-latest
 
     steps:
@@ -119,8 +119,11 @@ jobs:
       - name: Generate docs site
         run: python3 docs/generate_docs.py
 
-      - name: Upload final artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ github.run_id }}-docs
-          path: docs/dist
+      - name: Install Netlify CLI
+        run: pnpm i -g netlify-cli
+
+      - name: Publish site to Netlify
+        run: netlify deploy --dir=docs/dist --prod
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ vars.NETLIFY_SITE_ID }}
