@@ -2642,7 +2642,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
         val conflictChecker = new ConflictChecker(
           spark,
-          currentTransactionInfo,
+          updatedCurrentTransactionInfo,
           winningCommitSummary,
           commitIsolationLevel)
 
