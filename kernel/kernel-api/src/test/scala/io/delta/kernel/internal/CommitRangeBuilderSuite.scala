@@ -151,7 +151,8 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
     ) {
       return Some(
         classOf[IllegalArgumentException],
-        s"Resolved startVersion=${startBoundary.expectedVersion} > endVersion=${endBoundary.expectedVersion}")
+        s"Resolved startVersion=${startBoundary.expectedVersion} > " +
+          s"endVersion=${endBoundary.expectedVersion}")
     }
     // Now we query the file list, this is where we fail if the provided versions do not exist
     if (startBoundary.expectError) {
