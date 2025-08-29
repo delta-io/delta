@@ -16,6 +16,7 @@
 package io.delta.kernel.internal;
 
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.*;
 import io.delta.kernel.data.ColumnarBatch;
@@ -184,6 +185,8 @@ public class TableImpl implements Table {
       long startVersion,
       long endVersion,
       Set<DeltaLogActionUtils.DeltaAction> actionSet) {
+    checkArgument(startVersion < 0, "startVersion must be >= 0");
+    checkArgument(startVersion > endVersion, "startVersion must be <= endVersion");
 
     List<FileStatus> commitFiles =
         DeltaLogActionUtils.getCommitFilesForVersionRange(

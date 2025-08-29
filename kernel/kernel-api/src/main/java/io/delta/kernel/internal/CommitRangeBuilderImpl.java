@@ -100,13 +100,13 @@ public class CommitRangeBuilderImpl implements CommitRangeBuilder {
       // If both are version-based, compare versions
       if (startSpec.isVersion() && endSpec.isVersion()) {
         checkArgument(
-            startSpec.getVersion() <= endSpec.getVersion(), "start version must be <= end version");
+            startSpec.getVersion() <= endSpec.getVersion(), "startVersion must be <= endVersion");
       }
       // If both are timestamp-based, compare timestamps
       else if (startSpec.isTimestamp() && endSpec.isTimestamp()) {
         checkArgument(
             startSpec.getTimestamp() <= endSpec.getTimestamp(),
-            "start timestamp must be <= end timestamp");
+            "startTimestamp must be <= endTimestamp");
       }
       // Mixed types are allowed but will need runtime resolution
     }
