@@ -4,10 +4,6 @@ on:
   push:
     branches:
       - master
-      - cd-docs
-    # paths:
-    #   - docs/**
-  pull_request:
     paths:
       - docs/**
   release:
