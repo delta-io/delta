@@ -61,13 +61,13 @@ public class CommitRangeBuilderImpl implements CommitRangeBuilder {
 
   @Override
   public CommitRangeBuilderImpl withStartBoundary(CommitBoundary startBoundary) {
-    ctx.startBoundaryOpt = Optional.of(requireNonNull(startBoundary, "startSpec is null"));
+    ctx.startBoundaryOpt = Optional.of(requireNonNull(startBoundary, "startBoundary is null"));
     return this;
   }
 
   @Override
   public CommitRangeBuilderImpl withEndBoundary(CommitBoundary endBoundary) {
-    ctx.endBoundaryOpt = Optional.of(requireNonNull(endBoundary, "endSpec is null"));
+    ctx.endBoundaryOpt = Optional.of(requireNonNull(endBoundary, "endBoundary is null"));
     return this;
   }
 
@@ -91,21 +91,21 @@ public class CommitRangeBuilderImpl implements CommitRangeBuilder {
   ////////////////////////////
 
   private void validateInputOnBuild() {
-    // Validate that start specification is less than or equal to end specification if both are
-    // specified
+    // Validate that start boundary is less than or equal to end boundary if both are provided
     if (ctx.startBoundaryOpt.isPresent() && ctx.endBoundaryOpt.isPresent()) {
-      CommitBoundary startSpec = ctx.startBoundaryOpt.get();
-      CommitBoundary endSpec = ctx.endBoundaryOpt.get();
+      CommitBoundary startBoundary = ctx.startBoundaryOpt.get();
+      CommitBoundary endBoundary = ctx.endBoundaryOpt.get();
 
       // If both are version-based, compare versions
-      if (startSpec.isVersion() && endSpec.isVersion()) {
+      if (startBoundary.isVersion() && endBoundary.isVersion()) {
         checkArgument(
-            startSpec.getVersion() <= endSpec.getVersion(), "startVersion must be <= endVersion");
+            startBoundary.getVersion() <= endBoundary.getVersion(),
+            "startVersion must be <= endVersion");
       }
       // If both are timestamp-based, compare timestamps
-      else if (startSpec.isTimestamp() && endSpec.isTimestamp()) {
+      else if (startBoundary.isTimestamp() && endBoundary.isTimestamp()) {
         checkArgument(
-            startSpec.getTimestamp() <= endSpec.getTimestamp(),
+            startBoundary.getTimestamp() <= endBoundary.getTimestamp(),
             "startTimestamp must be <= endTimestamp");
       }
       // Mixed types are allowed but will need runtime resolution

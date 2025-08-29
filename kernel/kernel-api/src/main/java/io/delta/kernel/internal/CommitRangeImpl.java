@@ -53,6 +53,9 @@ public class CommitRangeImpl implements CommitRange {
       long endVersion,
       List<FileStatus> deltaFiles) {
     checkArgument(startVersion <= endVersion, "must have startVersion <= endVersion");
+    checkArgument(
+        deltaFiles.size() == endVersion - startVersion + 1,
+        "deltaFiles size must match size of range");
     this.dataPath = requireNonNull(dataPath, "dataPath cannot be null");
     this.startBoundaryOpt = requireNonNull(startBoundaryOpt, "startSpecOpt cannot be null");
     this.endBoundaryOpt = requireNonNull(endBoundaryOpt, "endSpecOpt cannot be null");

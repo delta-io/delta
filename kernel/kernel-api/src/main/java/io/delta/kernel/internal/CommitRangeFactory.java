@@ -44,8 +44,10 @@ class CommitRangeFactory {
   }
 
   CommitRangeImpl create(Engine engine) {
+    // Resolve startVersion and try to resolve endVersion if possible
     long startVersion = resolveStartVersion(engine);
     Optional<Long> endVersionOpt = tryResolveEndVersion(engine);
+    // If we have resolved endVersion, validate that it is >= startVersion
     endVersionOpt.ifPresent(
         endVersion ->
             checkArgument(
@@ -53,10 +55,16 @@ class CommitRangeFactory {
                 String.format(
                     "Resolved startVersion=%d > endVersion=%d", startVersion, endVersion)));
     logger.info(
-        "{}: Resolved startVersion={} and endVersion={}", tablePath, startVersion, endVersionOpt);
+        "{}: Resolved startVersion={} and endVersion={} from startBoundary={} endBoundary={}",
+        tablePath,
+        startVersion,
+        endVersionOpt,
+        ctx.startBoundaryOpt,
+        ctx.endBoundaryOpt);
     // TODO: for now we just store a list of commit files, this will be updated when we add support
     //  for ccv2
     List<FileStatus> deltaFiles = getDeltaFiles(engine, startVersion, endVersionOpt);
+    // Once we have listed files, we can resolve endVersion=latestVersion if it was not specified
     long endVersion =
         endVersionOpt.orElseGet(
             () -> FileNames.deltaVersion(ListUtils.getLast(deltaFiles).getPath()));

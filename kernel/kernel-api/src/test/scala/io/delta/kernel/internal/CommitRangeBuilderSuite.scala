@@ -39,25 +39,24 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
       endVersion: Option[Long],
       startTimestamp: Option[Long],
       endTimestamp: Option[Long]): Unit = {
+    def assertBoundaryVersion(boundary: Optional[CommitBoundary], version: Long) = {
+      assert(boundary.isPresent && boundary.get.isVersion && boundary.get.getVersion == version)
+    }
+    def assertBoundaryTimestamp(boundary: Optional[CommitBoundary], timestamp: Long) = {
+      assert(
+        boundary.isPresent && boundary.get.isTimestamp && boundary.get.getTimestamp == timestamp)
+    }
     if (startVersion.nonEmpty) {
-      assert(commitRange.getQueryStartBoundary.isPresent &&
-        commitRange.getQueryStartBoundary.get.isVersion &&
-        commitRange.getQueryStartBoundary.get.getVersion == startVersion.get)
+      assertBoundaryVersion(commitRange.getQueryStartBoundary, startVersion.get)
     } else if (startTimestamp.nonEmpty) {
-      assert(commitRange.getQueryStartBoundary.isPresent &&
-        commitRange.getQueryStartBoundary.get.isTimestamp &&
-        commitRange.getQueryStartBoundary.get.getTimestamp == startTimestamp.get)
+      assertBoundaryTimestamp(commitRange.getQueryStartBoundary, startTimestamp.get)
     } else {
       assert(!commitRange.getQueryStartBoundary.isPresent)
     }
     if (endVersion.nonEmpty) {
-      assert(commitRange.getQueryEndBoundary.isPresent &&
-        commitRange.getQueryEndBoundary.get.isVersion &&
-        commitRange.getQueryEndBoundary.get.getVersion == endVersion.get)
+      assertBoundaryVersion(commitRange.getQueryEndBoundary, endVersion.get)
     } else if (endTimestamp.nonEmpty) {
-      assert(commitRange.getQueryEndBoundary.isPresent &&
-        commitRange.getQueryEndBoundary.get.isTimestamp &&
-        commitRange.getQueryEndBoundary.get.getTimestamp == endTimestamp.get)
+      assertBoundaryTimestamp(commitRange.getQueryEndBoundary, endTimestamp.get)
     } else {
       assert(!commitRange.getQueryEndBoundary.isPresent)
     }
@@ -90,7 +89,7 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
       new MockListFromFileSystemClient(listFromProvider(fileList))))
   }
 
-  private def checkCommitRangeBuild(
+  private def checkCommitRange(
       fileList: Seq[FileStatus],
       expectedStartVersion: Long,
       expectedEndVersion: Long,
@@ -186,13 +185,10 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
                 startTimestamp = startBound.timestamp,
                 endTimestamp = endBound.timestamp)
             }
-            // scalastyle:off
-            println(e)
-            println(expectedException)
             assert(expectedException.get._1.isInstance(e))
             assert(e.getMessage.contains(expectedException.get._2))
           } else {
-            checkCommitRangeBuild(
+            checkCommitRange(
               fileList = fileStatuses,
               expectedStartVersion = startBound.expectedVersion,
               expectedEndVersion = endBound.expectedVersion,
