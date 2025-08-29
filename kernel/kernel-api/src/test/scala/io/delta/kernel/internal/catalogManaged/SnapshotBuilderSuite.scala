@@ -75,13 +75,13 @@ class SnapshotBuilderSuite extends AnyFunSuite
 
   test("atTimestamp: null latestSnapshot throws NullPointerException") {
     assertThrows[NullPointerException] {
-      TableManager.loadSnapshot(dataPath.toString).atTimestamp(null, 1000L)
+      TableManager.loadSnapshot(dataPath.toString).atTimestamp(1000L, null)
     }
   }
 
   test("atTimestamp: negative timestamp throws IllegalArgumentException") {
     val builder =
-      TableManager.loadSnapshot(dataPath.toString).atTimestamp(mockSnapshotAtTimestamp0, -1L)
+      TableManager.loadSnapshot(dataPath.toString).atTimestamp(-1L, mockSnapshotAtTimestamp0)
 
     val exMsg = intercept[IllegalArgumentException] {
       builder.build(emptyMockEngine)
@@ -92,7 +92,7 @@ class SnapshotBuilderSuite extends AnyFunSuite
 
   test("atTimestamp: timestamp greater than latest snapshot throws IllegalArgumentException") {
     val builder =
-      TableManager.loadSnapshot(dataPath.toString).atTimestamp(mockSnapshotAtTimestamp0, 99)
+      TableManager.loadSnapshot(dataPath.toString).atTimestamp(99, mockSnapshotAtTimestamp0)
 
     val exMsg = intercept[KernelException] {
       builder.build(emptyMockEngine)
@@ -105,7 +105,7 @@ class SnapshotBuilderSuite extends AnyFunSuite
   test("atTimestamp: timestamp and version both provided throws IllegalArgumentException") {
     val builder = TableManager.loadSnapshot(dataPath.toString)
       .atVersion(1)
-      .atTimestamp(mockSnapshotAtTimestamp0, 0L)
+      .atTimestamp(0L, mockSnapshotAtTimestamp0)
 
     val exMsg = intercept[IllegalArgumentException] {
       builder.build(emptyMockEngine)
@@ -116,7 +116,7 @@ class SnapshotBuilderSuite extends AnyFunSuite
 
   test("atTimestamp: protocol and metadata with timestamp throws IllegalArgumentException") {
     val builder = TableManager.loadSnapshot(dataPath.toString)
-      .atTimestamp(mockSnapshotAtTimestamp0, 0L)
+      .atTimestamp(0L, mockSnapshotAtTimestamp0)
       .withProtocolAndMetadata(protocol, metadata)
 
     val exMsg = intercept[IllegalArgumentException] {
@@ -128,7 +128,7 @@ class SnapshotBuilderSuite extends AnyFunSuite
 
   test("atTimestamp: time travel by timestamp with logDatas throws UnsupportedOperationException") {
     val builder = TableManager.loadSnapshot(dataPath.toString)
-      .atTimestamp(mockSnapshotAtTimestamp0, 0L)
+      .atTimestamp(0L, mockSnapshotAtTimestamp0)
       .withLogData(parsedRatifiedStagedCommits(Seq(0)).toList.asJava)
 
     val exMsg = intercept[UnsupportedOperationException] {

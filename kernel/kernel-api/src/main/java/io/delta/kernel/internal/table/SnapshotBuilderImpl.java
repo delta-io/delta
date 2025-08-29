@@ -74,7 +74,7 @@ public class SnapshotBuilderImpl implements SnapshotBuilder {
   }
 
   @Override
-  public SnapshotBuilderImpl atTimestamp(Snapshot latestSnapshot, long millisSinceEpochUTC) {
+  public SnapshotBuilderImpl atTimestamp(long millisSinceEpochUTC, Snapshot latestSnapshot) {
     requireNonNull(latestSnapshot, "latestSnapshot is null");
     checkArgument(latestSnapshot instanceof SnapshotImpl, "latestSnapshot must be a SnapshotImpl");
     ctx.timestampQueryContextOpt =

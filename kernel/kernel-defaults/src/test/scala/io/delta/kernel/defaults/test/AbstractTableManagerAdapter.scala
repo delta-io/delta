@@ -107,7 +107,7 @@ class TableManagerAdapter extends AbstractTableManagerAdapter {
     TableManager
       .loadSnapshot(path)
       .asInstanceOf[SnapshotBuilderImpl]
-      .atTimestamp(getSnapshotAtLatest(engine, path), timestamp)
+      .atTimestamp(timestamp, getSnapshotAtLatest(engine, path))
       .build(engine)
   }
 }

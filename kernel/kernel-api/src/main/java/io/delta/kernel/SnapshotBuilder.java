@@ -42,7 +42,7 @@ public interface SnapshotBuilder {
   /**
    * Configures the builder to resolve the table at a specific version.
    *
-   * <p>This method is mutually exclusive with {@link #atTimestamp(Snapshot, long)}. If both are
+   * <p>This method is mutually exclusive with {@link #atTimestamp(long, Snapshot)}. If both are
    * called, an {@link IllegalArgumentException} will be thrown.
    *
    * @param version the version number to resolve to
@@ -74,7 +74,7 @@ public interface SnapshotBuilder {
    *     epoch
    * @return a new builder instance configured for the specified timestamp
    */
-  SnapshotBuilder atTimestamp(Snapshot latestSnapshot, long millisSinceEpochUTC);
+  SnapshotBuilder atTimestamp(long millisSinceEpochUTC, Snapshot latestSnapshot);
 
   /**
    * Provides a custom committer to use at transaction commit time.
