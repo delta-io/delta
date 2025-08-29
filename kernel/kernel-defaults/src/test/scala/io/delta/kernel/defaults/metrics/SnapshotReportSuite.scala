@@ -20,8 +20,10 @@ import java.util.{Objects, Optional}
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel._
-import io.delta.kernel.defaults.test.AbstractTableManagerAdapter
+import io.delta.kernel.defaults.test.{AbstractTableManagerAdapter, LegacyTableManagerAdapter}
+import io.delta.kernel.defaults.utils.WriteUtils
 import io.delta.kernel.engine._
+import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.metrics.Timer
 import io.delta.kernel.internal.util.FileNames
@@ -39,6 +41,35 @@ import org.scalatest.funsuite.AnyFunSuite
 class LegacySnapshotReportSuite extends AbstractSnapshotReportSuite {
   import io.delta.kernel.defaults.test.LegacyTableManagerAdapter
   override def tableManager: AbstractTableManagerAdapter = new LegacyTableManagerAdapter()
+
+  // This test is only applicable to the legacy API because the
+  // SnapshotBuilder::atTimestamp(latestSnapshot, timestamp) API takes in the latest snapshot
+  // directly (as opposed to generating it internally). This lets the builder validate eagerly if
+  // the provided timestamp is after the latest snapshot, which happens before any metrics are
+  // recorded.
+  test("Snapshot report - invalid timestamp (timestamp too late)") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      appendData(tablePath = path, isNewTable = true, schema = testSchema, data = Nil)
+
+      // Test getSnapshotAsOfTimestamp with timestamp=currentTime (does not exist)
+      // This fails during timestamp -> version resolution
+      val currentTimeMillis = System.currentTimeMillis
+      checkSnapshotReport(
+        (engine, path) => tableManager.getSnapshotAtTimestamp(engine, path, currentTimeMillis),
+        path,
+        SnapshotReportExpectations(
+          expectedReportCount = 2, // latestSnapshot + timeTravelToTimestampSnapshot
+          expectException = true,
+          expectedVersion = Optional.empty(),
+          expectedCheckpointVersion = Optional.empty(),
+          expectedProvidedTimestamp = Optional.of(currentTimeMillis),
+          expectNonEmptyTimestampToVersionResolutionDuration = true,
+          expectNonZeroLoadProtocolAndMetadataDuration = false,
+          expectNonZeroBuildLogSegmentDuration = false,
+          expectNonZeroDurationToGetCrcInfo = false))
+    }
+  }
 }
 
 /** Concrete implementation for [[TableManager.loadSnapshot]] API. */
@@ -50,6 +81,7 @@ class TableManagerSnapshotReportSuite extends AbstractSnapshotReportSuite {
 abstract class AbstractSnapshotReportSuite
     extends AnyFunSuite
     with MetricsReportTestUtils
+    with WriteUtils
     with BeforeAndAfterAll {
 
   override def beforeAll(): Unit = {
@@ -257,19 +289,17 @@ abstract class AbstractSnapshotReportSuite
           expectedProvidedTimestamp = Optional.empty() // No time travel by timestamp
         ))
 
-      // Test getSnapshotAsOfTimestamp - only if adapter supports it
-      if (tableManager.supportsTimestampResolution) {
-        checkSnapshotReport(
-          (engine, path) => tableManager.getSnapshotAtTimestamp(engine, path, version0timestamp),
-          path,
-          SnapshotReportExpectations(
-            expectedReportCount = 2,
-            expectException = false,
-            expectedVersion = Optional.of(0),
-            expectedCheckpointVersion = Optional.empty(),
-            expectedProvidedTimestamp = Optional.of(version0timestamp),
-            expectNonEmptyTimestampToVersionResolutionDuration = true))
-      }
+      // Test getSnapshotAsOfTimestamp
+      checkSnapshotReport(
+        (engine, path) => tableManager.getSnapshotAtTimestamp(engine, path, version0timestamp),
+        path,
+        SnapshotReportExpectations(
+          expectedReportCount = 2, // latestSnapshot + timeTravelToTimestampSnapshot
+          expectException = false,
+          expectedVersion = Optional.of(0),
+          expectedCheckpointVersion = Optional.empty(),
+          expectedProvidedTimestamp = Optional.of(version0timestamp),
+          expectNonEmptyTimestampToVersionResolutionDuration = true))
     }
   }
 
@@ -315,28 +345,24 @@ abstract class AbstractSnapshotReportSuite
           expectedProvidedTimestamp = Optional.empty() // No time travel by timestamp
         ))
 
-      // Test getSnapshotAsOfTimestamp - only if adapter supports it
-      if (tableManager.supportsTimestampResolution) {
-        checkSnapshotReport(
-          (engine, path) => tableManager.getSnapshotAtTimestamp(engine, path, version11timestamp),
-          path,
-          SnapshotReportExpectations(
-            expectedReportCount = 2,
-            expectException = false,
-            expectedVersion = Optional.of(10),
-            expectedCheckpointVersion = Optional.of(10),
-            expectedProvidedTimestamp = Optional.of(version11timestamp),
-            expectNonEmptyTimestampToVersionResolutionDuration = true))
-      }
+      // Test getSnapshotAsOfTimestamp
+      checkSnapshotReport(
+        (engine, path) => tableManager.getSnapshotAtTimestamp(engine, path, version11timestamp),
+        path,
+        SnapshotReportExpectations(
+          expectedReportCount = 2, // latestSnapshot + timeTravelToTimestampSnapshot
+          expectException = false,
+          expectedVersion = Optional.of(10),
+          expectedCheckpointVersion = Optional.of(10),
+          expectedProvidedTimestamp = Optional.of(version11timestamp),
+          expectNonEmptyTimestampToVersionResolutionDuration = true))
     }
   }
 
-  test("Snapshot report - invalid time travel parameters") {
+  test("Snapshot report - invalid version (version does not exist)") {
     withTempDir { tempDir =>
       val path = tempDir.getCanonicalPath
-
-      // Set up delta table with version 0
-      spark.range(10).write.format("delta").mode("append").save(path)
+      appendData(tablePath = path, isNewTable = true, schema = testSchema, data = Nil)
 
       // Test getSnapshotAsOfVersion with version 1 (does not exist)
       // This fails during log segment building
@@ -351,41 +377,29 @@ abstract class AbstractSnapshotReportSuite
           expectedProvidedTimestamp = Optional.empty(), // No time travel by timestamp
           expectNonZeroLoadProtocolAndMetadataDuration = false,
           expectNonZeroDurationToGetCrcInfo = false))
+    }
+  }
+
+  test("Snapshot report - invalid timestamp (timestamp too early)") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      appendData(tablePath = path, isNewTable = true, schema = testSchema, data = Nil)
 
       // Test getSnapshotAsOfTimestamp with timestamp=0 (does not exist)
-      if (tableManager.supportsTimestampResolution) {
-        // This fails during timestamp -> version resolution
-        checkSnapshotReport(
-          (engine, path) => tableManager.getSnapshotAtTimestamp(engine, path, 0),
-          path,
-          SnapshotReportExpectations(
-            expectedReportCount = 2,
-            expectException = true,
-            expectedVersion = Optional.empty(),
-            expectedCheckpointVersion = Optional.empty(),
-            expectedProvidedTimestamp = Optional.of(0),
-            expectNonEmptyTimestampToVersionResolutionDuration = true,
-            expectNonZeroLoadProtocolAndMetadataDuration = false,
-            expectNonZeroBuildLogSegmentDuration = false,
-            expectNonZeroDurationToGetCrcInfo = false))
-
-        // Test getSnapshotAsOfTimestamp with timestamp=currentTime (does not exist)
-        // This fails during timestamp -> version resolution
-        val currentTimeMillis = System.currentTimeMillis
-        checkSnapshotReport(
-          (engine, path) => tableManager.getSnapshotAtTimestamp(engine, path, currentTimeMillis),
-          path,
-          SnapshotReportExpectations(
-            expectedReportCount = 2,
-            expectException = true,
-            expectedVersion = Optional.empty(),
-            expectedCheckpointVersion = Optional.empty(),
-            expectedProvidedTimestamp = Optional.of(currentTimeMillis),
-            expectNonEmptyTimestampToVersionResolutionDuration = true,
-            expectNonZeroLoadProtocolAndMetadataDuration = false,
-            expectNonZeroBuildLogSegmentDuration = false,
-            expectNonZeroDurationToGetCrcInfo = false))
-      }
+      // This fails during timestamp -> version resolution
+      checkSnapshotReport(
+        (engine, path) => tableManager.getSnapshotAtTimestamp(engine, path, 0),
+        path,
+        SnapshotReportExpectations(
+          expectedReportCount = 2, // latestSnapshot + timeTravelToTimestampSnapshot
+          expectException = true,
+          expectedVersion = Optional.empty(),
+          expectedCheckpointVersion = Optional.empty(),
+          expectedProvidedTimestamp = Optional.of(0),
+          expectNonEmptyTimestampToVersionResolutionDuration = true,
+          expectNonZeroLoadProtocolAndMetadataDuration = false,
+          expectNonZeroBuildLogSegmentDuration = false,
+          expectNonZeroDurationToGetCrcInfo = false))
     }
   }
 
@@ -420,24 +434,22 @@ abstract class AbstractSnapshotReportSuite
           expectNonZeroLoadProtocolAndMetadataDuration = false,
           expectNonZeroDurationToGetCrcInfo = false))
 
-      // Test getSnapshotAsOfTimestamp - only if adapter supports it
-      if (tableManager.supportsTimestampResolution) {
-        checkSnapshotReport(
-          (engine, path) => tableManager.getSnapshotAtTimestamp(engine, path, 1000),
-          path,
-          SnapshotReportExpectations(
-            expectedReportCount = 1,
-            expectException = true,
-            expectedVersion = Optional.empty(),
-            expectedCheckpointVersion = Optional.empty(),
-            // Query will fail before timestamp -> version resolution. The failure
-            // will happen when `getLatestSnapshot` is called.
-            expectedProvidedTimestamp = Optional.empty(),
-            expectNonZeroLoadProtocolAndMetadataDuration = false,
-            // It will first build a lastest snapshot, and a logSegment is built there.
-            expectNonZeroBuildLogSegmentDuration = true,
-            expectNonZeroDurationToGetCrcInfo = false))
-      }
+      // Test getSnapshotAsOfTimestamp
+      checkSnapshotReport(
+        (engine, path) => tableManager.getSnapshotAtTimestamp(engine, path, 1000),
+        path,
+        SnapshotReportExpectations(
+          expectedReportCount = 1,
+          expectException = true,
+          expectedVersion = Optional.empty(),
+          expectedCheckpointVersion = Optional.empty(),
+          // Query will fail before timestamp -> version resolution. The failure
+          // will happen when `getLatestSnapshot` is called.
+          expectedProvidedTimestamp = Optional.empty(),
+          expectNonZeroLoadProtocolAndMetadataDuration = false,
+          // It will first build a lastest snapshot, and a logSegment is built there.
+          expectNonZeroBuildLogSegmentDuration = true,
+          expectNonZeroDurationToGetCrcInfo = false))
     }
   }
 
@@ -477,24 +489,22 @@ abstract class AbstractSnapshotReportSuite
           expectNonZeroLoadProtocolAndMetadataDuration = false,
           expectNonZeroDurationToGetCrcInfo = false))
 
-      // Test getSnapshotAsOfTimestamp - only if adapter supports it
-      if (tableManager.supportsTimestampResolution) {
-        val version2Timestamp = new File(
-          FileNames.deltaFile(new Path(tempDir.getCanonicalPath, "_delta_log"), 2)).lastModified()
-        checkSnapshotReport(
-          (engine, path) => tableManager.getSnapshotAtTimestamp(engine, path, version2Timestamp),
-          tempDir.getCanonicalPath,
-          SnapshotReportExpectations(
-            expectedReportCount = 1,
-            expectException = true,
-            // Query will fail before timestamp -> version resolution. The failure
-            // will happen when `getLatestSnapshot` is called.
-            expectedVersion = Optional.empty(),
-            expectedCheckpointVersion = Optional.empty(),
-            expectedProvidedTimestamp = Optional.empty(),
-            expectNonZeroLoadProtocolAndMetadataDuration = false,
-            expectNonZeroDurationToGetCrcInfo = false))
-      }
+      // Test getSnapshotAsOfTimestamp
+      val version2Timestamp = new File(
+        FileNames.deltaFile(new Path(tempDir.getCanonicalPath, "_delta_log"), 2)).lastModified()
+      checkSnapshotReport(
+        (engine, path) => tableManager.getSnapshotAtTimestamp(engine, path, version2Timestamp),
+        tempDir.getCanonicalPath,
+        SnapshotReportExpectations(
+          expectedReportCount = 1,
+          expectException = true,
+          // Query will fail before timestamp -> version resolution. The failure
+          // will happen when `getLatestSnapshot` is called.
+          expectedVersion = Optional.empty(),
+          expectedCheckpointVersion = Optional.empty(),
+          expectedProvidedTimestamp = Optional.empty(),
+          expectNonZeroLoadProtocolAndMetadataDuration = false,
+          expectNonZeroDurationToGetCrcInfo = false))
     }
   }
 
@@ -528,26 +538,24 @@ abstract class AbstractSnapshotReportSuite
         // No CRC for golden table
         expectNonZeroDurationToGetCrcInfo = false))
 
-    // Test getSnapshotAsOfTimestamp - only if adapter supports it
-    if (tableManager.supportsTimestampResolution) {
-      // We use the timestamp of version 0
-      val version0Timestamp = new File(FileNames.deltaFile(new Path(path, "_delta_log"), 0))
-        .lastModified()
-      checkSnapshotReport(
-        (engine, path) => tableManager.getSnapshotAtTimestamp(engine, path, version0Timestamp),
-        path,
-        SnapshotReportExpectations(
-          expectedReportCount = 1,
-          expectException = true,
-          // Query will fail before timestamp -> version resolution. The failure
-          // will happen when `getLatestSnapshot` is called.
-          expectedVersion = Optional.of(0),
-          expectedCheckpointVersion = Optional.empty(),
-          expectedProvidedTimestamp = Optional.empty(),
-          // This is due to the `getLatestSnapshot` call
-          expectNonZeroLoadProtocolAndMetadataDuration = true,
-          // No CRC for golden table
-          expectNonZeroDurationToGetCrcInfo = false))
-    }
+    // Test getSnapshotAsOfTimestamp
+    // We use the timestamp of version 0
+    val version0Timestamp = new File(FileNames.deltaFile(new Path(path, "_delta_log"), 0))
+      .lastModified()
+    checkSnapshotReport(
+      (engine, path) => tableManager.getSnapshotAtTimestamp(engine, path, version0Timestamp),
+      path,
+      SnapshotReportExpectations(
+        expectedReportCount = 1,
+        expectException = true,
+        // Query will fail before timestamp -> version resolution. The failure
+        // will happen when `getLatestSnapshot` is called.
+        expectedVersion = Optional.of(0),
+        expectedCheckpointVersion = Optional.empty(),
+        expectedProvidedTimestamp = Optional.empty(),
+        // This is due to the `getLatestSnapshot` call
+        expectNonZeroLoadProtocolAndMetadataDuration = true,
+        // No CRC for golden table
+        expectNonZeroDurationToGetCrcInfo = false))
   }
 }

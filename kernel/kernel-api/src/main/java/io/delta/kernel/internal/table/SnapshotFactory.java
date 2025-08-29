@@ -87,12 +87,13 @@ public class SnapshotFactory {
   }
 
   private SnapshotImpl createSnapshot(Engine engine, SnapshotQueryContext snapshotCtx) {
-    final Lazy<LogSegment> lazyLogSegment = getLazyLogSegment(engine, snapshotCtx);
+    final Optional<Long> versionToLoad = getTargetVersionToLoad(engine, snapshotCtx);
+    final Lazy<LogSegment> lazyLogSegment = getLazyLogSegment(engine, snapshotCtx, versionToLoad);
     final LogReplay logReplay = getLogReplay(engine, lazyLogSegment, snapshotCtx);
 
     return new SnapshotImpl(
         tablePath,
-        ctx.versionOpt.orElseGet(() -> lazyLogSegment.get().getVersion()),
+        versionToLoad.orElseGet(() -> lazyLogSegment.get().getVersion()),
         lazyLogSegment,
         logReplay,
         getProtocol(logReplay),
@@ -106,12 +107,14 @@ public class SnapshotFactory {
       return SnapshotQueryContext.forVersionSnapshot(tablePath.toString(), ctx.versionOpt.get());
     }
     if (ctx.timestampQueryContextOpt.isPresent()) {
-      return SnapshotQueryContext.forTimestampSnapshot(tablePath.toString(), ctx.versionOpt.get());
+      return SnapshotQueryContext.forTimestampSnapshot(
+          tablePath.toString(), ctx.timestampQueryContextOpt.get()._2);
     }
     return SnapshotQueryContext.forLatestSnapshot(tablePath.toString());
   }
 
-  private Lazy<LogSegment> getLazyLogSegment(Engine engine, SnapshotQueryContext snapshotCtx) {
+  private Lazy<LogSegment> getLazyLogSegment(
+      Engine engine, SnapshotQueryContext snapshotCtx, Optional<Long> versionToLoad) {
     return new Lazy<>(
         () -> {
           final LogSegment logSegment =
@@ -121,10 +124,7 @@ public class SnapshotFactory {
                   .time(
                       () ->
                           new SnapshotManager(tablePath)
-                              .getLogSegmentForVersion(
-                                  engine,
-                                  getTargetVersionToLoad(engine, snapshotCtx),
-                                  ctx.logDatas));
+                              .getLogSegmentForVersion(engine, versionToLoad, ctx.logDatas));
 
           snapshotCtx.setVersion(logSegment.getVersion());
           snapshotCtx.setCheckpointVersion(logSegment.getCheckpointVersionOpt());

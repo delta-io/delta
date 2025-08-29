@@ -23,6 +23,7 @@ import io.delta.kernel.Snapshot;
 import io.delta.kernel.SnapshotBuilder;
 import io.delta.kernel.commit.Committer;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
@@ -73,7 +74,7 @@ public class SnapshotBuilderImpl implements SnapshotBuilder {
   }
 
   @Override
-  public SnapshotBuilder atTimestamp(Snapshot latestSnapshot, long millisSinceEpochUTC) {
+  public SnapshotBuilderImpl atTimestamp(Snapshot latestSnapshot, long millisSinceEpochUTC) {
     requireNonNull(latestSnapshot, "latestSnapshot is null");
     checkArgument(latestSnapshot instanceof SnapshotImpl, "latestSnapshot must be a SnapshotImpl");
     ctx.timestampQueryContextOpt =
@@ -132,16 +133,24 @@ public class SnapshotBuilderImpl implements SnapshotBuilder {
     ctx.timestampQueryContextOpt.ifPresent(x -> checkArgument(x._2 >= 0, "timestamp must be >= 0"));
   }
 
+  /**
+   * Recall the semantics of time-travel by timestamp: "If the provided timestamp is after (strictly
+   * greater than) the timestamp of the latest version of the table, snapshot resolution will fail."
+   */
   private void validateTimestampNotGreaterThanLatestSnapshot(Engine engine) {
     ctx.timestampQueryContextOpt.ifPresent(
         x -> {
+          final long latestSnapshotVersion = x._1.getVersion();
           final long latestSnapshotTimestamp = x._1.getTimestamp(engine);
           final long requestedTimestamp = x._2;
-          checkArgument(
-              requestedTimestamp <= latestSnapshotTimestamp,
-              String.format(
-                  "Requested load timestamp %d is greater than the latest snapshot timestamp %d",
-                  requestedTimestamp, latestSnapshotTimestamp));
+
+          if (requestedTimestamp > latestSnapshotTimestamp) {
+            throw DeltaErrors.timestampAfterLatestCommit(
+                ctx.unresolvedPath,
+                requestedTimestamp,
+                latestSnapshotTimestamp,
+                latestSnapshotVersion);
+          }
         });
   }
 

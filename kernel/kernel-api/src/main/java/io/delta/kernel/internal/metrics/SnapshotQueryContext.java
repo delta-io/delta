@@ -52,10 +52,18 @@ public class SnapshotQueryContext {
   }
 
   private final String tablePath;
+
+  /** The version provided in a time-travel-by-version query, if any. */
+  private final Optional<Long> providedVersion;
+
+  /** The timestamp provided in a time-travel-by-timestamp query, if any. */
   private final Optional<Long> providedTimestamp;
+
   private final SnapshotMetrics snapshotMetrics = new SnapshotMetrics();
 
-  private Optional<Long> version;
+  /** The table version that this snapshot is actually resolved to. */
+  private Optional<Long> resolvedVersion;
+
   private Optional<Long> checkpointVersion;
 
   /**
@@ -73,7 +81,8 @@ public class SnapshotQueryContext {
       Optional<Long> checkpointVersion,
       Optional<Long> providedTimestamp) {
     this.tablePath = tablePath;
-    this.version = providedVersion;
+    this.providedVersion = providedVersion;
+    this.resolvedVersion = providedVersion;
     this.checkpointVersion = checkpointVersion;
     this.providedTimestamp = providedTimestamp;
   }
@@ -83,7 +92,7 @@ public class SnapshotQueryContext {
   }
 
   public Optional<Long> getVersion() {
-    return version;
+    return resolvedVersion;
   }
 
   public Optional<Long> getCheckpointVersion() {
@@ -99,12 +108,15 @@ public class SnapshotQueryContext {
   }
 
   public String getQueryDisplayStr() {
-    if (version.isPresent()) {
-      return "AS OF VERSION " + version.get();
+    final String resolvedVersionStr =
+        resolvedVersion.map(v -> String.format(" (RESOLVED TO VERSION %d)", v)).orElse("");
+
+    if (providedVersion.isPresent()) {
+      return "AS OF VERSION " + resolvedVersion.get();
     } else if (providedTimestamp.isPresent()) {
-      return "AS OF TIMESTAMP " + providedTimestamp.get();
+      return "AS OF TIMESTAMP " + providedTimestamp.get() + resolvedVersionStr;
     } else {
-      return "LATEST SNAPSHOT";
+      return "LATEST SNAPSHOT" + resolvedVersionStr;
     }
   }
 
@@ -115,7 +127,7 @@ public class SnapshotQueryContext {
    * timestamp to version resolution.
    */
   public void setVersion(long updatedVersion) {
-    version = Optional.of(updatedVersion);
+    resolvedVersion = Optional.of(updatedVersion);
   }
 
   /** Updates the {@code checkpointVersion} stored in this snapshot context. */
@@ -139,6 +151,6 @@ public class SnapshotQueryContext {
     return String.format(
         "SnapshotQueryContext(tablePath=%s, version=%s, providedTimestamp=%s, "
             + "checkpointVersion=%s, snapshotMetric=%s)",
-        tablePath, version, providedTimestamp, checkpointVersion, snapshotMetrics);
+        tablePath, resolvedVersion, providedTimestamp, checkpointVersion, snapshotMetrics);
   }
 }

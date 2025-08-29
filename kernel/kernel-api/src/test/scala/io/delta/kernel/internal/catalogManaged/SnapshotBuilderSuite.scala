@@ -94,11 +94,12 @@ class SnapshotBuilderSuite extends AnyFunSuite
     val builder =
       TableManager.loadSnapshot(dataPath.toString).atTimestamp(mockSnapshotAtTimestamp0, 99)
 
-    val exMsg = intercept[IllegalArgumentException] {
+    val exMsg = intercept[KernelException] {
       builder.build(emptyMockEngine)
     }.getMessage
 
-    assert(exMsg === "Requested load timestamp 99 is greater than the latest snapshot timestamp 0")
+    assert(exMsg.contains("The provided timestamp 99 ms"))
+    assert(exMsg.contains("is after the latest available version"))
   }
 
   test("atTimestamp: timestamp and version both provided throws IllegalArgumentException") {
