@@ -128,12 +128,12 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
     // These two cases fail on CommitRangeBuilderImpl.validateInputOnBuild
     if (startBoundary.version.isDefined && endBoundary.version.isDefined) {
       if (startBoundary.version.get > endBoundary.version.get) {
-        return Some(classOf[IllegalArgumentException], "start version must be <= end version")
+        return Some(classOf[IllegalArgumentException], "startVersion must be <= endVersion")
       }
     }
     if (startBoundary.timestamp.isDefined && endBoundary.timestamp.isDefined) {
       if (startBoundary.timestamp.get > endBoundary.timestamp.get) {
-        return Some(classOf[IllegalArgumentException], "start timestamp must be <= end timestamp")
+        return Some(classOf[IllegalArgumentException], "startTimestamp must be <= endTimestamp")
       }
     }
     // We try to resolve any timestamps, first startVersion then endVersion (CommitRangeFactory)
