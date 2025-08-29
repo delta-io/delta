@@ -48,6 +48,49 @@ import org.slf4j.LoggerFactory;
  */
 public class SnapshotFactory {
 
+  /**
+   * Resolves the latest table version that exists at or before the given {@code
+   * millisSinceEpochUTC}.
+   *
+   * <p>Updates the given {@code snapshotQueryCtx} with the resolved version and prints out useful
+   * log statements.
+   */
+  public static long resolveTimestampToSnapshotVersion(
+      Engine engine,
+      SnapshotQueryContext snapshotQueryCtx,
+      SnapshotImpl latestSnapshot,
+      long millisSinceEpochUTC) {
+    final long resolvedVersionToLoad =
+        snapshotQueryCtx
+            .getSnapshotMetrics()
+            .computeTimestampToVersionTotalDurationTimer
+            .time(
+                () ->
+                    DeltaHistoryManager.getActiveCommitAtTimestamp(
+                            engine,
+                            latestSnapshot,
+                            latestSnapshot.getLogPath(),
+                            millisSinceEpochUTC,
+                            true /* mustBeRecreatable */,
+                            false /* canReturnLastCommit */,
+                            false /* canReturnEarliestCommit */)
+                        .getVersion());
+
+    snapshotQueryCtx.setResolvedVersion(resolvedVersionToLoad);
+
+    logger.info(
+        "{}: Took {} ms to resolve timestamp {} to snapshot version {}",
+        latestSnapshot.getPath(),
+        snapshotQueryCtx
+            .getSnapshotMetrics()
+            .computeTimestampToVersionTotalDurationTimer
+            .totalDurationMs(),
+        millisSinceEpochUTC,
+        resolvedVersionToLoad);
+
+    return resolvedVersionToLoad;
+  }
+
   private static final Logger logger = LoggerFactory.getLogger(SnapshotFactory.class);
 
   private final SnapshotBuilderImpl.Context ctx;
@@ -126,7 +169,7 @@ public class SnapshotFactory {
                           new SnapshotManager(tablePath)
                               .getLogSegmentForVersion(engine, versionToLoad, ctx.logDatas));
 
-          snapshotCtx.setVersion(logSegment.getVersion());
+          snapshotCtx.setResolvedVersion(logSegment.getVersion());
           snapshotCtx.setCheckpointVersion(logSegment.getCheckpointVersionOpt());
 
           return logSegment;
@@ -163,41 +206,5 @@ public class SnapshotFactory {
 
   private Metadata getMetadata(LogReplay logReplay) {
     return ctx.protocolAndMetadataOpt.map(x -> x._2).orElseGet(logReplay::getMetadata);
-  }
-
-  public static long resolveTimestampToSnapshotVersion(
-      Engine engine,
-      SnapshotQueryContext snapshotQueryCtx,
-      SnapshotImpl latestSnapshot,
-      long millisSinceEpochUTC) {
-    final long resolvedVersionToLoad =
-        snapshotQueryCtx
-            .getSnapshotMetrics()
-            .computeTimestampToVersionTotalDurationTimer
-            .time(
-                () ->
-                    DeltaHistoryManager.getActiveCommitAtTimestamp(
-                            engine,
-                            latestSnapshot,
-                            latestSnapshot.getLogPath(),
-                            millisSinceEpochUTC,
-                            true /* mustBeRecreatable */,
-                            false /* canReturnLastCommit */,
-                            false /* canReturnEarliestCommit */)
-                        .getVersion());
-
-    snapshotQueryCtx.setVersion(resolvedVersionToLoad);
-
-    logger.info(
-        "{}: Took {} ms to resolve timestamp {} to snapshot version {}",
-        latestSnapshot.getPath(),
-        snapshotQueryCtx
-            .getSnapshotMetrics()
-            .computeTimestampToVersionTotalDurationTimer
-            .totalDurationMs(),
-        millisSinceEpochUTC,
-        resolvedVersionToLoad);
-
-    return resolvedVersionToLoad;
   }
 }

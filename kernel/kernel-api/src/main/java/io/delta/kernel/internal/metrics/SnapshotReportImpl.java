@@ -34,7 +34,7 @@ public class SnapshotReportImpl extends DeltaOperationReportImpl implements Snap
     return new SnapshotReportImpl(
         snapshotContext.getTablePath(),
         snapshotContext.getSnapshotMetrics(),
-        snapshotContext.getVersion(),
+        snapshotContext.getResolvedVersion(),
         snapshotContext.getCheckpointVersion(),
         snapshotContext.getProvidedTimestamp(),
         Optional.of(e));
@@ -49,7 +49,7 @@ public class SnapshotReportImpl extends DeltaOperationReportImpl implements Snap
     return new SnapshotReportImpl(
         snapshotContext.getTablePath(),
         snapshotContext.getSnapshotMetrics(),
-        snapshotContext.getVersion(),
+        snapshotContext.getResolvedVersion(),
         snapshotContext.getCheckpointVersion(),
         snapshotContext.getProvidedTimestamp(),
         Optional.empty() /* exception */);

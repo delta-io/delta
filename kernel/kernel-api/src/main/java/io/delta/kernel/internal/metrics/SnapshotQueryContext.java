@@ -91,7 +91,7 @@ public class SnapshotQueryContext {
     return tablePath;
   }
 
-  public Optional<Long> getVersion() {
+  public Optional<Long> getResolvedVersion() {
     return resolvedVersion;
   }
 
@@ -121,13 +121,15 @@ public class SnapshotQueryContext {
   }
 
   /**
-   * Updates the {@code version} stored in this snapshot context. This version should be updated
-   * upon version resolution for non time-travel-by-version queries. For latest snapshot queries
-   * this is after log segment construction. For time-travel by timestamp queries this is after
-   * timestamp to version resolution.
+   * Set the resolved version that was actually loaded for this snapshot query.
+   *
+   * <p>For AS OF TIMESTAMP queries, this should be set upon timestamp-to-version resolution.
+   *
+   * <p>For AS OF LATEST queries, this should be set after log segment construction, when we learn
+   * what the latest version of the table really is.
    */
-  public void setVersion(long updatedVersion) {
-    resolvedVersion = Optional.of(updatedVersion);
+  public void setResolvedVersion(long resolvedVersion) {
+    this.resolvedVersion = Optional.of(resolvedVersion);
   }
 
   /** Updates the {@code checkpointVersion} stored in this snapshot context. */
