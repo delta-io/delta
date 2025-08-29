@@ -185,8 +185,8 @@ public class TableImpl implements Table {
       long startVersion,
       long endVersion,
       Set<DeltaLogActionUtils.DeltaAction> actionSet) {
-    checkArgument(startVersion < 0, "startVersion must be >= 0");
-    checkArgument(startVersion > endVersion, "startVersion must be <= endVersion");
+    checkArgument(startVersion >= 0, "startVersion must be >= 0");
+    checkArgument(startVersion <= endVersion, "startVersion must be <= endVersion");
 
     List<FileStatus> commitFiles =
         DeltaLogActionUtils.getCommitFilesForVersionRange(

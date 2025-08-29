@@ -47,14 +47,13 @@ import org.scalatest.funsuite.AnyFunSuite
 class LegacyTableChangesSuite extends TableChangesSuite {
 
   override def getChanges(
-      engine: Engine,
       tablePath: String,
       startVersion: Long,
       endVersion: Long,
       actionSet: Set[DeltaAction]): Seq[ColumnarBatch] = {
-    Table.forPath(engine, tablePath)
+    Table.forPath(defaultEngine, tablePath)
       .asInstanceOf[TableImpl]
-      .getChanges(engine, startVersion, endVersion, actionSet.asJava)
+      .getChanges(defaultEngine, startVersion, endVersion, actionSet.asJava)
       .toSeq
   }
 }
@@ -62,7 +61,6 @@ class LegacyTableChangesSuite extends TableChangesSuite {
 class CommitRangeTableChangesSuite extends TableChangesSuite {
 
   override def getChanges(
-      engine: Engine,
       tablePath: String,
       startVersion: Long,
       endVersion: Long,
@@ -70,10 +68,10 @@ class CommitRangeTableChangesSuite extends TableChangesSuite {
     val commitRange = TableManager.loadCommitRange(tablePath)
       .withStartBoundary(CommitBoundary.atVersion(startVersion))
       .withEndBoundary(CommitBoundary.atVersion(endVersion))
-      .build(engine)
+      .build(defaultEngine)
     commitRange.getActions(
-      engine,
-      getTableManagerAdapter.getSnapshotAtVersion(engine, tablePath, startVersion),
+      defaultEngine,
+      getTableManagerAdapter.getSnapshotAtVersion(defaultEngine, tablePath, startVersion),
       actionSet.asJava).toSeq
   }
 
@@ -182,7 +180,6 @@ abstract class TableChangesSuite extends AnyFunSuite with TestUtils with WriteUt
   val FULL_ACTION_SET: Set[DeltaAction] = DeltaAction.values().toSet
 
   def getChanges(
-      engine: Engine,
       tablePath: String,
       startVersion: Long,
       endVersion: Long,
@@ -206,7 +203,7 @@ abstract class TableChangesSuite extends AnyFunSuite with TestUtils with WriteUt
       .getChanges(startVersion)
       .filter(_._1 <= endVersion) // Spark API does not have endVersion
 
-    val kernelChanges = getChanges(defaultEngine, tablePath, startVersion, endVersion, actionSet)
+    val kernelChanges = getChanges(tablePath, startVersion, endVersion, actionSet)
 
     // Check schema is as expected (version + timestamp column + the actions requested)
     kernelChanges.foreach { batch =>
@@ -330,7 +327,7 @@ abstract class TableChangesSuite extends AnyFunSuite with TestUtils with WriteUt
           2L -> (start + 40 * minuteInMilliseconds))
 
         // Check the timestamps are returned correctly
-        getChanges(defaultEngine, tempDir, 0, 2, Set(DeltaAction.ADD))
+        getChanges(tempDir, 0, 2, Set(DeltaAction.ADD))
           .flatMap(_.getRows.toSeq)
           .foreach { row =>
             val version = row.getLong(0)
@@ -355,7 +352,7 @@ abstract class TableChangesSuite extends AnyFunSuite with TestUtils with WriteUt
     withTempDir { tempDir =>
       new File(tempDir, "delta_log").mkdirs()
       intercept[TableNotFoundException] {
-        getChanges(defaultEngine, tempDir.getCanonicalPath, 0, 2, FULL_ACTION_SET)
+        getChanges(tempDir.getCanonicalPath, 0, 2, FULL_ACTION_SET)
       }
     }
   }
@@ -363,7 +360,7 @@ abstract class TableChangesSuite extends AnyFunSuite with TestUtils with WriteUt
   test("getChanges - empty folder no _delta_log dir") {
     withTempDir { tempDir =>
       intercept[TableNotFoundException] {
-        getChanges(defaultEngine, tempDir.getCanonicalPath, 0, 2, FULL_ACTION_SET)
+        getChanges(tempDir.getCanonicalPath, 0, 2, FULL_ACTION_SET)
       }
     }
   }
@@ -372,14 +369,14 @@ abstract class TableChangesSuite extends AnyFunSuite with TestUtils with WriteUt
     withTempDir { tempDir =>
       spark.range(20).write.format("parquet").mode("overwrite").save(tempDir.getCanonicalPath)
       intercept[TableNotFoundException] {
-        getChanges(defaultEngine, tempDir.getCanonicalPath, 0, 2, FULL_ACTION_SET)
+        getChanges(tempDir.getCanonicalPath, 0, 2, FULL_ACTION_SET)
       }
     }
   }
 
   test("getChanges - directory does not exist") {
     intercept[TableNotFoundException] {
-      getChanges(defaultEngine, "/fake/table/path", 0, 2, FULL_ACTION_SET)
+      getChanges("/fake/table/path", 0, 2, FULL_ACTION_SET)
     }
   }
 
@@ -388,7 +385,7 @@ abstract class TableChangesSuite extends AnyFunSuite with TestUtils with WriteUt
       def getChangesByVersion(
           startVersion: Long,
           endVersion: Long): Seq[ColumnarBatch] = {
-        getChanges(defaultEngine, tablePath, startVersion, endVersion, FULL_ACTION_SET)
+        getChanges(tablePath, startVersion, endVersion, FULL_ACTION_SET)
       }
 
       // startVersion after latest available version
@@ -448,12 +445,12 @@ abstract class TableChangesSuite extends AnyFunSuite with TestUtils with WriteUt
       // TEST ERRORS
       // endVersion before earliest available version
       assert(intercept[KernelException] {
-        getChanges(defaultEngine, tablePath, 0, 9, FULL_ACTION_SET)
+        getChanges(tablePath, 0, 9, FULL_ACTION_SET)
       }.getMessage.contains("no log files found in the requested version range"))
 
       // startVersion less than the earliest available version
       assert(intercept[KernelException] {
-        getChanges(defaultEngine, tablePath, 5, 11, FULL_ACTION_SET)
+        getChanges(tablePath, 5, 11, FULL_ACTION_SET)
       }.getMessage.contains("no log file found for version 5"))
 
       // TEST VALID CASES
@@ -528,21 +525,11 @@ abstract class TableChangesSuite extends AnyFunSuite with TestUtils with WriteUt
     // Min reader version is too high
     assert(intercept[KernelException] {
       // Use toSeq because we need to consume the iterator to force the exception
-      getChanges(
-        defaultEngine,
-        goldenTablePath("deltalog-invalid-protocol-version"),
-        0,
-        0,
-        FULL_ACTION_SET)
+      getChanges(goldenTablePath("deltalog-invalid-protocol-version"), 0, 0, FULL_ACTION_SET)
     }.getMessage.contains("Unsupported Delta protocol reader version"))
     // We still get an error if we don't request the protocol file action
     assert(intercept[KernelException] {
-      getChanges(
-        defaultEngine,
-        goldenTablePath("deltalog-invalid-protocol-version"),
-        0,
-        0,
-        Set(DeltaAction.ADD))
+      getChanges(goldenTablePath("deltalog-invalid-protocol-version"), 0, 0, Set(DeltaAction.ADD))
     }.getMessage.contains("Unsupported Delta protocol reader version"))
   }
 
