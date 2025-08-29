@@ -50,42 +50,20 @@ class CommitRangeFactory {
   CommitRangeImpl create(Engine engine) {
     long startVersion = resolveStartVersion(engine);
     Optional<Long> endVersionOpt = resolveEndVersionIfSpecified(engine);
-    endVersionOpt.ifPresent(
-        endVersion ->
-            checkArgument(
-                startVersion <= endVersion,
-                String.format(
-                    "Resolved startVersion=%d > endVersion=%d", startVersion, endVersion)));
-    logger.info(
-        "{}: Resolved startVersion={} and endVersion={} from startBoundary={} endBoundary={}",
-        tablePath,
-        startVersion,
-        endVersionOpt,
-        ctx.startBoundaryOpt,
-        ctx.endBoundaryOpt);
+    validateVersionRange(startVersion, endVersionOpt);
+    logResolvedVersions(startVersion, endVersionOpt);
     // TODO: for now we just store a list of commit files, this will be updated when we add support
     //  for ccv2
     List<FileStatus> deltaFiles =
         DeltaLogActionUtils.getCommitFilesForVersionRange(
             engine, tablePath, startVersion, endVersionOpt);
     // Once we have listed files, we can resolve endVersion=latestVersion for the default case
-    long endVersion =
-        endVersionOpt.orElseGet(
-            () -> FileNames.deltaVersion(ListUtils.getLast(deltaFiles).getPath()));
+    long endVersion = endVersionOpt.orElseGet(() -> extractLatestVersion(deltaFiles));
     if (!endVersionOpt.isPresent()) {
       logger.info("{}: Resolved endVersion={} to the latest version", tablePath, endVersion);
     }
     return new CommitRangeImpl(
         tablePath, ctx.startBoundaryOpt, ctx.endBoundaryOpt, startVersion, endVersion, deltaFiles);
-  }
-
-  private SnapshotImpl asSnapshotImpl(Snapshot snapshot) {
-    if (!(snapshot instanceof SnapshotImpl)) {
-      throw new IllegalArgumentException(
-          "latestSnapshot is not instanceof SnapshotImpl."
-              + "You must use SnapshotBuilder to get the latestSnapshot.");
-    }
-    return (SnapshotImpl) snapshot;
   }
 
   private long resolveStartVersion(Engine engine) {
@@ -107,7 +85,7 @@ class CommitRangeFactory {
           engine,
           logPath,
           startBoundary.getTimestamp(),
-          asSnapshotImpl(startBoundary.getLatestSnapshot()));
+          (SnapshotImpl) startBoundary.getLatestSnapshot());
     }
   }
 
@@ -138,8 +116,31 @@ class CommitRangeFactory {
               engine,
               logPath,
               endBoundary.getTimestamp(),
-              asSnapshotImpl(endBoundary.getLatestSnapshot()));
+              (SnapshotImpl) endBoundary.getLatestSnapshot());
       return Optional.of(resolvedVersion);
     }
+  }
+
+  private void validateVersionRange(long startVersion, Optional<Long> endVersionOpt) {
+    endVersionOpt.ifPresent(
+        endVersion ->
+            checkArgument(
+                startVersion <= endVersion,
+                String.format(
+                    "Resolved startVersion=%d > endVersion=%d", startVersion, endVersion)));
+  }
+
+  private void logResolvedVersions(long startVersion, Optional<Long> endVersionOpt) {
+    logger.info(
+        "{}: Resolved startVersion={} and endVersion={} from startBoundary={} endBoundary={}",
+        tablePath,
+        startVersion,
+        endVersionOpt,
+        ctx.startBoundaryOpt,
+        ctx.endBoundaryOpt);
+  }
+
+  private long extractLatestVersion(List<FileStatus> deltaFiles) {
+    return FileNames.deltaVersion(ListUtils.getLast(deltaFiles).getPath()))
   }
 }
