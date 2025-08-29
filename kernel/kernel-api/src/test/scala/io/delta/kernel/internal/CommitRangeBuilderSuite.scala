@@ -86,8 +86,9 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
       commitRangeBuilder = commitRangeBuilder.withEndBoundary(
         CommitBoundary.atTimestamp(v, getMockSnapshot(dataPath, latestVersion)))
     }
-    commitRangeBuilder.build(mockEngine(fileSystemClient =
-      new MockListFromFileSystemClient(listFromProvider(fileList))))
+    val mockedEngine = mockEngine(fileSystemClient =
+      new MockListFromFileSystemClient(listFromProvider(fileList)))
+    commitRangeBuilder.build(mockedEngine)
   }
 
   private def checkCommitRange(
@@ -116,6 +117,12 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
       commitRange.asInstanceOf[CommitRangeImpl].getDeltaFiles.asScala.toSet)
   }
 
+  /**
+   * Represents a boundary definition that is timestamp-based, version-based, or default (no def).
+   * At most one of (version, timestamp) should be defined.
+   * @param expectedVersion the expected version this def will be resolved to
+   * @param expectError whether we expect this def to inherently fail for the corresponding listing
+   */
   private case class BoundaryDef(
       version: Option[Long] = None,
       timestamp: Option[Long] = None,
@@ -205,13 +212,13 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
 
   // The below test cases mimic the cases in TableImplSuite for the timestamp-resolution
   testStartAndEndBoundaryCombinations(
-    description = "deltaFiles=(0, 1)",
+    description = "deltaFiles=(0, 1)", // (version -> timestamp) = v0 -> 0, v1 -> 10
     fileStatuses = deltaFileStatuses(Seq(0L, 1L)),
     startBoundaries = Seq(
       BoundaryDef(version = Some(0L), expectedVersion = 0L),
       BoundaryDef(version = Some(1L), expectedVersion = 1L),
       BoundaryDef(timestamp = Some(0), expectedVersion = 0L), // at v0
-      BoundaryDef(timestamp = Some(5), expectedVersion = 1), // btw v0, v1
+      BoundaryDef(timestamp = Some(5), expectedVersion = 1), // between v0, v1
       BoundaryDef(timestamp = Some(10), expectedVersion = 1), // at v1
       BoundaryDef(expectedVersion = 0), // default to 0
       BoundaryDef(timestamp = Some(11), expectError = true), // after v1
@@ -221,7 +228,7 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
       BoundaryDef(version = Some(0L), expectedVersion = 0L),
       BoundaryDef(version = Some(1L), expectedVersion = 1L),
       BoundaryDef(timestamp = Some(0), expectedVersion = 0L), // at v0
-      BoundaryDef(timestamp = Some(5), expectedVersion = 0), // btw v0, v1
+      BoundaryDef(timestamp = Some(5), expectedVersion = 0), // between v0, v1
       BoundaryDef(timestamp = Some(10), expectedVersion = 1), // at v1
       BoundaryDef(timestamp = Some(11), expectedVersion = 1), // after v1
       BoundaryDef(expectedVersion = 1), // default to latest
@@ -229,6 +236,7 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
     ))
 
   testStartAndEndBoundaryCombinations(
+    // (version -> timestamp) = v10 -> 100, v11 -> 110, v12 -> 120
     description = "deltaFiles=(10, 11, 12)",
     fileStatuses = deltaFileStatuses(Seq(10L, 11L, 12L)) ++
       singularCheckpointFileStatuses(Seq(10L)),
@@ -238,9 +246,9 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
       BoundaryDef(version = Some(12L), expectedVersion = 12L),
       BoundaryDef(timestamp = Some(99), expectedVersion = 10), // before v10
       BoundaryDef(timestamp = Some(100), expectedVersion = 10L), // at v10
-      BoundaryDef(timestamp = Some(105), expectedVersion = 11L), // btw v10, v11
+      BoundaryDef(timestamp = Some(105), expectedVersion = 11L), // between v10, v11
       BoundaryDef(timestamp = Some(110), expectedVersion = 11L), // at v11
-      BoundaryDef(timestamp = Some(115), expectedVersion = 12L), // btw v11, v12
+      BoundaryDef(timestamp = Some(115), expectedVersion = 12L), // between v11, v12
       BoundaryDef(timestamp = Some(120), expectedVersion = 12L), // at v12
       BoundaryDef(timestamp = Some(125), expectError = true), // after v12
       BoundaryDef(expectedVersion = 0, expectError = true), // default to 0
@@ -252,9 +260,9 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
       BoundaryDef(version = Some(11L), expectedVersion = 11L),
       BoundaryDef(version = Some(12L), expectedVersion = 12L),
       BoundaryDef(timestamp = Some(100), expectedVersion = 10), // at v10
-      BoundaryDef(timestamp = Some(105), expectedVersion = 10), // btw v10, v11
+      BoundaryDef(timestamp = Some(105), expectedVersion = 10), // between v10, v11
       BoundaryDef(timestamp = Some(110), expectedVersion = 11), // at v11
-      BoundaryDef(timestamp = Some(115), expectedVersion = 11), // btw v11, v12
+      BoundaryDef(timestamp = Some(115), expectedVersion = 11), // between v11, v12
       BoundaryDef(timestamp = Some(120), expectedVersion = 12), // at v12
       BoundaryDef(timestamp = Some(125), expectedVersion = 12), // after v12
       BoundaryDef(expectedVersion = 12), // default to latest
@@ -265,7 +273,7 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
 
   // Check case with only 1 delta file
   testStartAndEndBoundaryCombinations(
-    description = "deltaFiles=(10)",
+    description = "deltaFiles=(10)", // (version -> timestamp) = v10 -> 100
     fileStatuses = deltaFileStatuses(Seq(10L)) ++ singularCheckpointFileStatuses(Seq(10L)),
     startBoundaries = Seq(
       BoundaryDef(version = Some(10L), expectedVersion = 10L),

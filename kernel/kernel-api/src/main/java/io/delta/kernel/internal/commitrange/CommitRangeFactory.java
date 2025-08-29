@@ -18,6 +18,7 @@ package io.delta.kernel.internal.commitrange;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Utils.resolvePath;
 
+import io.delta.kernel.CommitRangeBuilder;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaHistoryManager;
@@ -47,13 +48,8 @@ class CommitRangeFactory {
   }
 
   CommitRangeImpl create(Engine engine) {
-    // Try to resolve startVersion and endVersion **when possible**:
-    // For startVersion: version -> version, timestamp -> version, empty (aka default) -> v0
-    // For endVersion: version -> version, timestamp -> version, empty (aka default) -> unresolved
-    // We cannot resolve endVersion=latest in the default case until AFTER we list. This listing
-    // takes resolved start + end version as inputs when they are available.
     long startVersion = resolveStartVersion(engine);
-    Optional<Long> endVersionOpt = tryResolveEndVersion(engine);
+    Optional<Long> endVersionOpt = resolveEndVersionIfSpecified(engine);
     endVersionOpt.ifPresent(
         endVersion ->
             checkArgument(
@@ -93,38 +89,57 @@ class CommitRangeFactory {
   }
 
   private long resolveStartVersion(Engine engine) {
-    return ctx.startBoundaryOpt
-        .map(
-            spec -> {
-              if (spec.isVersion()) {
-                return spec.getVersion();
-              } else {
-                // TODO: support ccv2 tables
-                logger.info(
-                    "{}: Trying to resolve start-boundary timestamp {} to version",
-                    tablePath,
-                    spec.getTimestamp());
-                return DeltaHistoryManager.getVersionAtOrAfterTimestamp(
-                    engine, logPath, spec.getTimestamp(), asSnapshotImpl(spec.getLatestSnapshot()));
-              }
-            })
-        .orElse(0L); // Default to version 0 if no start spec provided
+    if (!ctx.startBoundaryOpt.isPresent()) {
+      // Default to version 0 if no start boundary is provided
+      return 0L;
+    }
+    CommitRangeBuilder.CommitBoundary startBoundary = ctx.startBoundaryOpt.get();
+
+    if (startBoundary.isVersion()) {
+      return startBoundary.getVersion();
+    } else {
+      logger.info(
+          "{}: Trying to resolve start-boundary timestamp {} to version",
+          tablePath,
+          startBoundary.getTimestamp());
+      // TODO: support ccv2 tables
+      return DeltaHistoryManager.getVersionAtOrAfterTimestamp(
+          engine,
+          logPath,
+          startBoundary.getTimestamp(),
+          asSnapshotImpl(startBoundary.getLatestSnapshot()));
+    }
   }
 
-  private Optional<Long> tryResolveEndVersion(Engine engine) {
-    return ctx.endBoundaryOpt.map(
-        spec -> {
-          if (spec.isVersion()) {
-            return spec.getVersion();
-          } else {
-            logger.info(
-                "{}: Trying to resolve end-boundary timestamp {} to version",
-                tablePath,
-                spec.getTimestamp());
-            // TODO: support ccv2 tables
-            return DeltaHistoryManager.getVersionBeforeOrAtTimestamp(
-                engine, logPath, spec.getTimestamp(), asSnapshotImpl(spec.getLatestSnapshot()));
-          }
-        });
+  /**
+   * This method resolves the endBoundary to a version if it is specified. For a version-based
+   * boundary, this just returns the version. For a timestamp-based boundary, this resolves the
+   * timestamp to version. When the boundary is not specified, this returns empty, as the version
+   * cannot be resolved until later after we have performed any listing.
+   */
+  private Optional<Long> resolveEndVersionIfSpecified(Engine engine) {
+    if (!ctx.endBoundaryOpt.isPresent()) {
+      // When endBoundary is not provided, we default to the latest version. We cannot resolve the
+      // latest version until later after we have performed any listing.
+      return Optional.empty();
+    }
+    CommitRangeBuilder.CommitBoundary endBoundary = ctx.endBoundaryOpt.get();
+
+    if (endBoundary.isVersion()) {
+      return Optional.of(endBoundary.getVersion());
+    } else {
+      logger.info(
+          "{}: Trying to resolve end-boundary timestamp {} to version",
+          tablePath,
+          endBoundary.getTimestamp());
+      // TODO: support ccv2 tables
+      long resolvedVersion =
+          DeltaHistoryManager.getVersionBeforeOrAtTimestamp(
+              engine,
+              logPath,
+              endBoundary.getTimestamp(),
+              asSnapshotImpl(endBoundary.getLatestSnapshot()));
+      return Optional.of(resolvedVersion);
+    }
   }
 }
