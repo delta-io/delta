@@ -22,6 +22,7 @@ import scala.collection.JavaConverters._
 import io.delta.kernel.{CommitRange, TableManager}
 import io.delta.kernel.CommitRangeBuilder.CommitBoundary
 import io.delta.kernel.exceptions.KernelException
+import io.delta.kernel.internal.commitrange.{CommitRangeBuilderImpl, CommitRangeImpl}
 import io.delta.kernel.internal.files.ParsedLogData
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.FileNames

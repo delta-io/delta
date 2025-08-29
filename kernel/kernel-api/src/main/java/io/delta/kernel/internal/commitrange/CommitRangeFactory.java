@@ -13,13 +13,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.internal;
+package io.delta.kernel.internal.commitrange;
 
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Utils.resolvePath;
 
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.DeltaHistoryManager;
+import io.delta.kernel.internal.DeltaLogActionUtils;
+import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.ListUtils;
 import io.delta.kernel.internal.util.FileNames;

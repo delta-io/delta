@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.delta.kernel.internal;
+package io.delta.kernel.internal.commitrange;
 
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
@@ -24,6 +24,7 @@ import io.delta.kernel.CommitRangeBuilder;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.DeltaLogActionUtils;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.utils.CloseableIterator;
