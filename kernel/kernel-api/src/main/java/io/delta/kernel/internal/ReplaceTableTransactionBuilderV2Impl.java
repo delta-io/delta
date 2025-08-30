@@ -27,11 +27,22 @@ import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.transaction.DataLayoutSpec;
 import io.delta.kernel.transaction.ReplaceTableTransactionBuilder;
 import io.delta.kernel.types.StructType;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
 
 public class ReplaceTableTransactionBuilderV2Impl implements ReplaceTableTransactionBuilder {
+
+  /**
+   * Generally for replace table we want to reset all table state, however there are a few
+   * delta-specific properties that we should preserve
+   */
+  static final Set<String> TABLE_PROPERTY_KEYS_TO_PRESERVE =
+      new HashSet<String>() {
+        {
+          add(TableConfig.COLUMN_MAPPING_MAX_COLUMN_ID.getKey());
+          add(TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.getKey());
+          // TODO are there any other table properties we should preserve?
+        }
+      };
 
   private final SnapshotImpl snapshot;
   private final StructType schema;
