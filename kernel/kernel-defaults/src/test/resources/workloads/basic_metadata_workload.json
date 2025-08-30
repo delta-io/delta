@@ -1,0 +1,6 @@
+{
+  "type": "read_metadata",
+  "table_root": "test_150_commits_no_checkpoint",
+  "snapshot_version": 100,
+  "expected_scan_metadata": "path_to_metadata.parquet"
+}
