@@ -22,7 +22,7 @@ import java.util.Optional
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 
-import io.delta.kernel.internal.SnapshotImpl
+import io.delta.kernel.internal.{CreateTableTransactionBuilderImpl, SnapshotImpl}
 import io.delta.kernel.internal.files.ParsedLogData.ParsedLogType
 import io.delta.kernel.internal.tablefeatures.TableFeatures.{CATALOG_MANAGED_R_W_FEATURE_PREVIEW, TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
 import io.delta.kernel.internal.util.FileNames
@@ -210,6 +210,24 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
       .loadSnapshot(defaultEngine, "ucTableId", tablePath, Optional.of(0L))
       .asInstanceOf[SnapshotImpl]
     assert(snapshot.getCommitter.isInstanceOf[UCCatalogManagedCommitter])
+  }
+
+  test("buildCreateTableTransaction creates transaction and sets required properties") {
+    // ===== GIVEN =====
+    val ucClient = new InMemoryUCClient("ucMetastoreId")
+    val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
+
+    // ===== WHEN =====
+    val createTableTxnBuilder = ucCatalogManagedClient
+      .buildCreateTableTransaction("ucTableId", baseTestTablePath, testSchema, "test-engine")
+      .withTableProperties(Map("foo" -> "bar").asJava)
+      .asInstanceOf[CreateTableTransactionBuilderImpl]
+
+    // ===== THEN =====
+    val builderTableProperties = createTableTxnBuilder.getTablePropertiesOpt.get()
+    assert(builderTableProperties.get("delta.feature.catalogOwned-preview") == "supported")
+    assert(builderTableProperties.get("ucTableId") == "ucTableId")
+    assert(builderTableProperties.get("foo") == "bar")
   }
 
 }

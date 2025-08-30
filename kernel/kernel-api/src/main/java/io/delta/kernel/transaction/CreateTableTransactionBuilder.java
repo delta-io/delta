@@ -33,10 +33,16 @@ public interface CreateTableTransactionBuilder {
   /**
    * Set table properties for the new Delta table.
    *
+   * <p>This method can be called multiple times to add additional properties. If a property key
+   * already exists from a previous call to this method, an {@link IllegalArgumentException} will be
+   * thrown.
+   *
    * <p>Note, user-properties (those without a '.delta' prefix) are case-sensitive. Delta-properties
    * are case-insensitive and are normalized to their expected case before writing to the log.
    *
    * @param properties A map of table property names to their values.
+   * @throws IllegalArgumentException if any property key already exists from a previous call to
+   *     this method.
    */
   CreateTableTransactionBuilder withTableProperties(Map<String, String> properties);
 

@@ -26,6 +26,9 @@ import io.delta.kernel.annotation.Experimental;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.files.ParsedLogData;
+import io.delta.kernel.internal.tablefeatures.TableFeatures;
+import io.delta.kernel.transaction.CreateTableTransactionBuilder;
+import io.delta.kernel.types.StructType;
 import io.delta.storage.commit.Commit;
 import io.delta.storage.commit.GetCommitsResponse;
 import io.delta.storage.commit.uccommitcoordinator.UCClient;
@@ -48,6 +51,18 @@ import org.slf4j.LoggerFactory;
 public class UCCatalogManagedClient {
   private static final Logger logger = LoggerFactory.getLogger(UCCatalogManagedClient.class);
 
+  /**
+   * Table property key to enable the catalogManaged table feature. This is a signal to Kernel to
+   * add this table feature to Kernel's protocol. This property won't be written to the delta
+   * metadata.
+   */
+  private static final String CATALOG_MANAGED_ENABLEMENT_KEY =
+      TableFeatures.SET_TABLE_FEATURE_SUPPORTED_PREFIX
+          + TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW.featureName();
+
+  /** Key for identifying Unity Catalog table ID. */
+  private static final String UC_TABLE_ID_KEY = "ucTableId";
+
   private final UCClient ucClient;
 
   public UCCatalogManagedClient(UCClient ucClient) {
@@ -55,6 +70,10 @@ public class UCCatalogManagedClient {
   }
 
   // TODO: [delta-io/delta#4817] loadSnapshot API that takes in a UC TableInfo object
+
+  /////////////////
+  // Public APIs //
+  /////////////////
 
   /**
    * Loads a Kernel {@link Snapshot}. If no version is specified, the latest version of the table is
@@ -98,6 +117,38 @@ public class UCCatalogManagedClient {
               .build(engine);
         });
   }
+
+  /**
+   * Builds a create table transaction for a Unity Catalog managed Delta table.
+   *
+   * <p>Configures the transaction with a {@link UCCatalogManagedCommitter} and required table
+   * properties for catalog-managed table enablement.
+   *
+   * <p>This assumes the table is being created in a staging location as per UC semantics. Once this
+   * transaction is built and committed, creating 000.json, you must call {@code
+   * TablesApi::createTable} to inform Unity Catalog of the successful table creation.
+   *
+   * @param ucTableId The Unity Catalog table ID.
+   * @param tablePath The staging path to the Delta table.
+   * @param schema The table schema.
+   * @param engineInfo Information about the creating engine.
+   * @return A {@link CreateTableTransactionBuilder} configured for UC managed tables.
+   */
+  public CreateTableTransactionBuilder buildCreateTableTransaction(
+      String ucTableId, String tablePath, StructType schema, String engineInfo) {
+    Objects.requireNonNull(ucTableId, "ucTableId is null");
+    Objects.requireNonNull(tablePath, "tablePath is null");
+    Objects.requireNonNull(schema, "schema is null");
+    Objects.requireNonNull(engineInfo, "engineInfo is null");
+
+    return TableManager.buildCreateTableTransaction(tablePath, schema, engineInfo)
+        .withCommitter(new UCCatalogManagedCommitter(ucClient, ucTableId, tablePath))
+        .withTableProperties(getRequiredTablePropertiesForCreate(ucTableId));
+  }
+
+  ////////////////////
+  // Helper Methods //
+  ////////////////////
 
   private String getVersionString(Optional<Long> versionOpt) {
     return versionOpt.map(String::valueOf).orElse("latest");
@@ -161,6 +212,16 @@ public class UCCatalogManagedClient {
               "[%s] Cannot load table version %s as the latest version ratified by UC is %s",
               ucTableId, tableVersionToLoad, maxRatifiedVersion));
     }
+  }
+
+  private Map<String, String> getRequiredTablePropertiesForCreate(String ucTableId) {
+    final Map<String, String> requiredProperties = new HashMap<>();
+
+    requiredProperties.put(
+        CATALOG_MANAGED_ENABLEMENT_KEY, TableFeatures.SET_TABLE_FEATURE_SUPPORTED_VALUE);
+    requiredProperties.put(UC_TABLE_ID_KEY, ucTableId);
+
+    return requiredProperties;
   }
 
   /**

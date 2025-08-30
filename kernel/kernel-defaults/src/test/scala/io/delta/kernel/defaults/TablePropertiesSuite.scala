@@ -15,9 +15,9 @@
  */
 package io.delta.kernel.defaults
 
-import scala.collection.immutable.Seq
+import scala.collection.JavaConverters._
 
-import io.delta.kernel.Table
+import io.delta.kernel.{Table, TableManager}
 import io.delta.kernel.defaults.utils.{AbstractWriteUtils, WriteUtils, WriteUtilsWithV2Builders}
 import io.delta.kernel.exceptions.{KernelException, UnknownConfigurationException}
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
@@ -27,7 +27,37 @@ import org.scalatest.funsuite.AnyFunSuite
 class TablePropertiesTransactionBuilderV1Suite extends TablePropertiesSuiteBase with WriteUtils {}
 
 class TablePropertiesTransactionBuilderV2Suite extends TablePropertiesSuiteBase
-    with WriteUtilsWithV2Builders {}
+    with WriteUtilsWithV2Builders {
+  test("create table (V2 only) - withTableProperties can be called multiple times") {
+    withTempDir { tempFile =>
+      val tablePath = tempFile.getAbsolutePath
+
+      TableManager
+        .buildCreateTableTransaction(tablePath, testSchema, "engineInfo")
+        .withTableProperties(Map("key1" -> "value1").asJava)
+        .withTableProperties(Map("key2" -> "value2").asJava)
+        .build(defaultEngine)
+        .commit(defaultEngine, emptyIterable())
+
+      assertHasProp(tablePath, Map("key1" -> "value1", "key2" -> "value2"))
+    }
+  }
+
+  test("create table (V2 only) - withTableProperties throws on key collision") {
+    withTempDir { tempFile =>
+      val tablePath = tempFile.getAbsolutePath
+
+      val createBuilder = TableManager
+        .buildCreateTableTransaction(tablePath, testSchema, "engineInfo")
+        .withTableProperties(Map("key1" -> "value1", "key2" -> "value2").asJava)
+
+      val ex = intercept[IllegalArgumentException] {
+        createBuilder.withTableProperties(Map("key2" -> "different_value").asJava)
+      }
+      assert(ex.getMessage.contains("Table property 'key2' has already been set"))
+    }
+  }
+}
 
 /**
  * Suite to set or get table properties.
