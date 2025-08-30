@@ -37,7 +37,7 @@ import io.delta.standalone.expressions.Expression;
 
 
 /**
- * Wrap a {@link io.delta.kernel.Snapshot} such that it conforms to the the {@link
+ * Wrap a {@link io.delta.kernel.Snapshot} such that it conforms to the {@link
  * io.delta.standalone.Snapshot} interface.
  *
  * NB: Currently only supports the getMetadata and getVersion methods. All others throw exceptions.
