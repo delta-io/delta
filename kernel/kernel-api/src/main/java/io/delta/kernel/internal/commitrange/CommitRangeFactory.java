@@ -19,7 +19,6 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Utils.resolvePath;
 
 import io.delta.kernel.CommitRangeBuilder;
-import io.delta.kernel.Snapshot;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.DeltaLogActionUtils;
@@ -141,6 +140,6 @@ class CommitRangeFactory {
   }
 
   private long extractLatestVersion(List<FileStatus> deltaFiles) {
-    return FileNames.deltaVersion(ListUtils.getLast(deltaFiles).getPath()))
+    return FileNames.deltaVersion(ListUtils.getLast(deltaFiles).getPath());
   }
 }
