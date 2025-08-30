@@ -96,32 +96,6 @@ class DeltaSharingDataSourceCMSuite
       deltaTableName: String,
       sharedTablePath: String,
       startingVersion: Int): Unit = {
-    val schema = spark.read
-      .format("deltaSharing")
-      .option("responseFormat", "delta")
-      .option("readChangeFeed", "true")
-      .option("startingVersion", startingVersion)
-      .load(sharedTablePath)
-      .schema
-    val expectedSchema = spark.read
-      .format("delta")
-      .option("readChangeFeed", "true")
-      .option("startingVersion", startingVersion)
-      .table(deltaTableName)
-      .schema
-    assert(expectedSchema == schema)
-
-    val deltaDf = spark.read
-      .format("delta")
-      .option("readChangeFeed", "true")
-      .option("startingVersion", startingVersion)
-      .table(deltaTableName)
-    val sharingDf = spark.read
-      .format("deltaSharing")
-      .option("responseFormat", "delta")
-      .option("readChangeFeed", "true")
-      .option("startingVersion", startingVersion)
-      .load(sharedTablePath)
     if (startingVersion <= 2) {
       Seq(BatchCDFSchemaEndVersion, BatchCDFSchemaLatest, BatchCDFSchemaLegacy).foreach { m =>
         withSQLConf(
@@ -129,6 +103,11 @@ class DeltaSharingDataSourceCMSuite
           m.name
         ) {
           val deltaException = intercept[DeltaUnsupportedOperationException] {
+            val deltaDf = spark.read
+              .format("delta")
+              .option("readChangeFeed", "true")
+              .option("startingVersion", startingVersion)
+              .table(deltaTableName)
             deltaDf.collect()
           }
           assert(
@@ -136,6 +115,12 @@ class DeltaSharingDataSourceCMSuite
             deltaException.getMessage.contains("failed because of an incompatible")
           )
           val sharingException = intercept[DeltaUnsupportedOperationException] {
+            val sharingDf = spark.read
+              .format("deltaSharing")
+              .option("responseFormat", "delta")
+              .option("readChangeFeed", "true")
+              .option("startingVersion", startingVersion)
+              .load(sharedTablePath)
             sharingDf.collect()
           }
           assert(
@@ -145,6 +130,32 @@ class DeltaSharingDataSourceCMSuite
         }
       }
     } else {
+      val schema = spark.read
+        .format("deltaSharing")
+        .option("responseFormat", "delta")
+        .option("readChangeFeed", "true")
+        .option("startingVersion", startingVersion)
+        .load(sharedTablePath)
+        .schema
+      val expectedSchema = spark.read
+        .format("delta")
+        .option("readChangeFeed", "true")
+        .option("startingVersion", startingVersion)
+        .table(deltaTableName)
+        .schema
+      assert(expectedSchema == schema)
+
+      val deltaDf = spark.read
+        .format("delta")
+        .option("readChangeFeed", "true")
+        .option("startingVersion", startingVersion)
+        .table(deltaTableName)
+      val sharingDf = spark.read
+        .format("deltaSharing")
+        .option("responseFormat", "delta")
+        .option("readChangeFeed", "true")
+        .option("startingVersion", startingVersion)
+        .load(sharedTablePath)
       checkAnswer(sharingDf, deltaDf)
       assert(sharingDf.count() > 0)
     }

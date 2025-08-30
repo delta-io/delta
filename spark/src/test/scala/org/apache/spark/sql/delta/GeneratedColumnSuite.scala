@@ -2034,7 +2034,9 @@ trait GeneratedColumnSuiteBase
   test("generated column metadata is not exposed in schema") {
     val tableName = "table"
     withTable(tableName) {
-      createDefaultTestTable(tableName)
+      withSQLConf("spark.databricks.delta.properties.defaults.enableChangeDataFeed" -> "true") {
+        createDefaultTestTable(tableName)
+      }
       Seq((1L, "foo", Timestamp.valueOf("2020-10-11 12:30:30"), 100, Date.valueOf("2020-11-12")))
         .toDF("c1", "c3_p", "c5", "c6", "c8")
         .write.format("delta").mode("append").saveAsTable(tableName)
