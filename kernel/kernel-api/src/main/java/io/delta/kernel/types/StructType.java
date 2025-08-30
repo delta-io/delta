@@ -15,6 +15,8 @@
  */
 package io.delta.kernel.types;
 
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.types.DataTypeJsonSerDe;
@@ -93,7 +95,14 @@ public final class StructType extends DataType {
     return fieldAndOrdinal != null ? fieldAndOrdinal._2 : -1;
   }
 
+  /**
+   * @return the StructField with the given name
+   * @throws IllegalArgumentException if the field does not exist
+   */
   public StructField get(String fieldName) {
+    checkArgument(
+        nameToFieldAndOrdinal.containsKey(fieldName),
+        String.format("Field with name '%s' not found in schema %s", fieldName, this));
     return nameToFieldAndOrdinal.get(fieldName)._1;
   }
 
