@@ -255,7 +255,8 @@ trait CDCReaderImpl extends DeltaLogging {
       val resolvedVersion = if (timestampKey == DeltaDataSource.CDC_START_TIMESTAMP_KEY) {
         // For the starting timestamp we need to find a version after the provided timestamp
         // we can use the same semantics as streaming.
-        DeltaSource.getStartingVersionFromTimestamp(spark, deltaLog, timestamp, allowOutOfRange)
+        DeltaSource.getStartingVersionFromTimestamp(
+          spark, deltaLog, catalogTableOpt, timestamp, allowOutOfRange)
       } else {
         // For ending timestamp the version should be before the provided timestamp.
         DeltaTableUtils.resolveTimeTravelVersion(

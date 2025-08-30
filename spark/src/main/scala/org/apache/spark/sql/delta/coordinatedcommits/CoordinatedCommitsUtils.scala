@@ -410,6 +410,7 @@ object CoordinatedCommitsUtils extends DeltaLogging {
    */
   def commitFilesIterator(
       deltaLog: DeltaLog,
+      catalogTableOpt: Option[CatalogTable],
       startVersion: Long): Iterator[(FileStatus, Long)] = {
 
     def listDeltas(startVersion: Long, endVersion: Option[Long]): Iterator[(FileStatus, Long)] = {
@@ -438,7 +439,7 @@ object CoordinatedCommitsUtils extends DeltaLogging {
         return Iterator.empty
       }
 
-      val endSnapshot = deltaLog.update()
+      val endSnapshot = deltaLog.update(catalogTableOpt = catalogTableOpt)
       // No need to worry if we already reached the end
       if (maxVersionSeen >= endSnapshot.version) {
         return Iterator.empty

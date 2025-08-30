@@ -1798,8 +1798,12 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
 
     // Manually construct a Delta source since it's hard to test multiple (2+) latestOffset() calls
     // with the current streaming engine without incurring the schema evolution failure.
+    // TODO(LC-9908): Plumb catalog table to DeltaSource. Deferring this and passing None for now,
+    //                as the change requires a large refactor.
     def getSource: DeltaSource = DeltaSource(
-      spark, log,
+      spark,
+      log,
+      catalogTableOpt = None,
       new DeltaOptions(Map("startingVersion" -> "0"), spark.sessionState.conf),
       log.update(),
       metadataPath = "",
