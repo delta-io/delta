@@ -20,6 +20,7 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.annotation.Experimental;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.files.ParsedLogData;
 import java.util.List;
 import java.util.Optional;
@@ -122,6 +123,9 @@ public interface CommitRangeBuilder {
      */
     public static CommitBoundary atTimestamp(long timestamp, Snapshot latestSnapshot) {
       checkArgument(timestamp >= 0, "Timestamp must be >= 0, but got: %d", timestamp);
+      checkArgument(
+          latestSnapshot instanceof SnapshotImpl,
+          "latestSnapshot must be instance of SnapshotImpl");
       return new CommitBoundary(false, timestamp, Optional.of(latestSnapshot));
     }
 
