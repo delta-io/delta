@@ -526,4 +526,23 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils {
       s"doesn't belong in the transaction log at $tablePath"))
   }
 
+  test("getDeltaFileForVersion") {
+    val logSegment = new LogSegment(
+      logPath,
+      12,
+      deltasFs11To12List,
+      Collections.emptyList(),
+      checkpointFs10List,
+      Optional.empty(),
+      1)
+
+    // Positive Cases
+    assert(logSegment.getDeltaFileForVersion(11).get() === deltasFs11To12List.get(0)) // first
+    assert(logSegment.getDeltaFileForVersion(12).get() === deltasFs11To12List.get(1)) // last
+
+    // Negative Cases
+    assert(!logSegment.getDeltaFileForVersion(10).isPresent)
+    assert(!logSegment.getDeltaFileForVersion(13).isPresent)
+  }
+
 }
