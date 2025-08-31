@@ -155,7 +155,8 @@ public class SnapshotManager {
       if (versions.get(i) != versions.get(i - 1) + 1) {
         throw new InvalidTableException(
             tablePath.toString(),
-            String.format("Missing delta files: versions are not contiguous: (%s)", versions));
+            format("Delta versions are not contiguous in '%s'. Missing between %d and %d. Found: %s",
+                tablePath, versions.get(i - 1), versions.get(i), versions));
       }
     }
   }
@@ -307,12 +308,16 @@ public class SnapshotManager {
         // found the last complete checkpoint before our versionToLoad. In either case, we didn't
         // see the checkpoint file in the listing.
         // TODO: throw a more specific error based on case (a) or (b)
-        throw DeltaErrors.missingCheckpoint(tablePath.toString(), startCheckpointVersionOpt.get());
+        throw DeltaErrors.missingCheckpoint(
+            tablePath.toString(),
+            startCheckpointVersionOpt.get(),
+            format("Checkpoint file for version %d is missing in directory '%s'.", startCheckpointVersionOpt.get(), logPath));
       } else {
         // Either no files found OR no *delta* files found even when listing from 0. This means that
         // the delta table does not exist yet.
         throw new TableNotFoundException(
-            tablePath.toString(), format("No delta files found in the directory: %s", logPath));
+            tablePath.toString(),
+            format("Delta table not found at '%s'. No delta log files present in directory '%s'.", tablePath, logPath));
       }
     }
 
@@ -446,7 +451,7 @@ public class SnapshotManager {
         && !lazyDeltaAtCheckpointVersionOpt.get().isPresent()) {
       throw new InvalidTableException(
           tablePath.toString(),
-          String.format("Missing delta file for version %s", latestCompleteCheckpointVersion));
+          String.format("Checkpoint at version %d found, but corresponding delta file is missing in '%s'.", latestCompleteCheckpointVersion, logPath));
     }
 
     // Check that the $newVersion we actually loaded is the desired $versionToLoad
@@ -475,9 +480,8 @@ public class SnapshotManager {
       if (allDeltasAfterCheckpoint.get(0).version != latestCompleteCheckpointVersion + 1) {
         throw new InvalidTableException(
             tablePath.toString(),
-            String.format(
-                "Cannot compute snapshot. Missing delta file version %d.",
-                latestCompleteCheckpointVersion + 1));
+            format("Cannot compute snapshot for '%s': expected delta file for version %d after checkpoint, but not found in '%s'.",
+                tablePath, latestCompleteCheckpointVersion + 1, logPath));
       }
 
       // Note: We have already asserted above that $versionToLoad equals $newVersion.
@@ -519,7 +523,7 @@ public class SnapshotManager {
                             listedCheckpointFileStatuses.stream()
                                 .map(FileStatus::getPath)
                                 .collect(Collectors.joining("\n - ")));
-                    throw new IllegalStateException(msg);
+                    throw new IllegalStateException("Checkpoint corruption detected: " + msg);
                   }
 
                   return newCheckpointFileStatuses;
