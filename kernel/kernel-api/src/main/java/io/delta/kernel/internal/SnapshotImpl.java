@@ -45,6 +45,7 @@ import io.delta.kernel.metrics.SnapshotReport;
 import io.delta.kernel.transaction.ReplaceTableTransactionBuilder;
 import io.delta.kernel.transaction.UpdateTableTransactionBuilder;
 import io.delta.kernel.types.StructType;
+import io.delta.kernel.utils.FileStatus;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -130,11 +131,15 @@ public class SnapshotImpl implements Snapshot {
   public long getTimestamp(Engine engine) {
     if (IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata)) {
       if (!inCommitTimestampOpt.isPresent()) {
-        Optional<CommitInfo> commitInfoOpt = CommitInfo.getCommitInfoOpt(engine, logPath, version);
+        final FileStatus deltaFileAtSnapshotVersion =
+            getLogSegment()
+                .getDeltaFileForVersion(version)
+                .orElseThrow(
+                    () -> new IllegalStateException("No delta file found at version " + version));
+        final Optional<CommitInfo> commitInfoOpt =
+            CommitInfo.tryReadCommitInfoFromDeltaFile(engine, deltaFileAtSnapshotVersion);
         inCommitTimestampOpt =
-            Optional.of(
-                CommitInfo.getRequiredInCommitTimestamp(
-                    commitInfoOpt, String.valueOf(version), dataPath));
+            Optional.of(CommitInfo.getRequiredInCommitTimestamp(commitInfoOpt, version, dataPath));
       }
       return inCommitTimestampOpt.get();
     } else {

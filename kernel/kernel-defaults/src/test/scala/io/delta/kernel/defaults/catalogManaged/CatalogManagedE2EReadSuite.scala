@@ -22,7 +22,7 @@ import io.delta.kernel.{SnapshotBuilder, TableManager}
 import io.delta.kernel.defaults.utils.{TestRow, TestUtilsWithTableManagerAPIs}
 import io.delta.kernel.internal.files.ParsedLogData
 import io.delta.kernel.internal.table.SnapshotBuilderImpl
-import io.delta.kernel.internal.tablefeatures.TableFeatures.{CATALOG_MANAGED_R_W_FEATURE_PREVIEW, TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
+import io.delta.kernel.internal.tablefeatures.TableFeatures.{CATALOG_MANAGED_R_W_FEATURE_PREVIEW, IN_COMMIT_TIMESTAMP_W_FEATURE, TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
 import io.delta.kernel.utils.FileStatus
 
 import org.scalatest.funsuite.AnyFunSuite
@@ -43,6 +43,7 @@ import org.scalatest.funsuite.AnyFunSuite
 class CatalogManagedE2EReadSuite extends AnyFunSuite with TestUtilsWithTableManagerAPIs {
 
   test("simple e2e read of catalogOwned-preview table with staged ratified commits") {
+    // ===== GIVEN =====
     val tablePath = getTestResourceFilePath("catalog-owned-preview")
 
     // Note: We need to *resolve* each test resource file path, because the table root file path
@@ -61,6 +62,7 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite with TestUtilsWithTableMana
       .toList
       .asJava
 
+    // ===== WHEN =====
     val snapshot = TableManager
       .loadSnapshot(tablePath)
       .asInstanceOf[SnapshotBuilderImpl]
@@ -68,14 +70,17 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite with TestUtilsWithTableMana
       .withLogData(parsedLogData)
       .build(defaultEngine)
 
+    // ===== THEN =====
     assert(snapshot.getVersion === 2)
     assert(snapshot.getLogSegment.getDeltas.size() === 3)
+    assert(snapshot.getTimestamp(defaultEngine) === 1749830881799L)
 
     val protocol = snapshot.getProtocol
     assert(protocol.getMinReaderVersion == TABLE_FEATURES_MIN_READER_VERSION)
     assert(protocol.getMinWriterVersion == TABLE_FEATURES_MIN_WRITER_VERSION)
     assert(protocol.getReaderFeatures.contains(CATALOG_MANAGED_R_W_FEATURE_PREVIEW.featureName()))
     assert(protocol.getWriterFeatures.contains(CATALOG_MANAGED_R_W_FEATURE_PREVIEW.featureName()))
+    assert(protocol.getWriterFeatures.contains(IN_COMMIT_TIMESTAMP_W_FEATURE.featureName()))
 
     val actualResult = readSnapshot(snapshot)
     val expectedResult = (0 to 199).map { x => TestRow(x / 100, x) }

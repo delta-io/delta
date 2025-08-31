@@ -58,6 +58,7 @@ public class LogSegment {
   private final Path logPath;
   private final long version;
   private final List<FileStatus> deltas;
+  private final Map<Long, FileStatus> versionToDeltaMap;
   private final List<FileStatus> compactions;
   private final List<FileStatus> checkpoints;
   private final Optional<Long> checkpointVersionOpt;
@@ -115,6 +116,7 @@ public class LogSegment {
     requireNonNull(lastSeenChecksum, "lastSeenChecksum null");
 
     validateDeltasAreDeltas(deltas);
+    this.versionToDeltaMap = buildVersionToDeltaMap(deltas);
     validateCompactionsAreCompactions(compactions);
     validateCheckpointsAreCheckpoints(checkpoints);
     validateIndividualCompactionVersions(compactions);
@@ -132,11 +134,8 @@ public class LogSegment {
       checkArgument(!deltas.isEmpty() || !checkpoints.isEmpty(), "No files to read");
 
       if (!deltas.isEmpty()) {
-        final List<Long> deltaVersions =
-            deltas.stream()
-                .map(fs -> FileNames.deltaVersion(new Path(fs.getPath())))
-                .collect(Collectors.toList());
-
+        // Use the map's keySet - LinkedHashMap preserves the order from the original deltas list
+        final List<Long> deltaVersions = new ArrayList<>(versionToDeltaMap.keySet());
         validateFirstDeltaVersionIsCheckpointVersionPlusOne(deltaVersions, checkpointVersionOpt);
         validateLastDeltaVersionIsLogSegmentVersion(deltaVersions, version);
         validateDeltaVersionsAreContiguous(deltaVersions);
@@ -271,6 +270,16 @@ public class LogSegment {
    */
   public List<FileStatus> allFilesWithCompactionsReversed() {
     return deltasCheckpointsCompactionsReversed.get();
+  }
+
+  /**
+   * Returns the delta file for the given version, if it exists in this LogSegment.
+   *
+   * @param version the version to lookup
+   * @return Optional containing the delta file, or empty if not found
+   */
+  public Optional<FileStatus> getDeltaFileForVersion(long version) {
+    return Optional.ofNullable(versionToDeltaMap.get(version));
   }
 
   @Override
@@ -418,6 +427,15 @@ public class LogSegment {
   //////////////////////////
   // Other helper methods //
   //////////////////////////
+
+  private static Map<Long, FileStatus> buildVersionToDeltaMap(List<FileStatus> deltas) {
+    final Map<Long, FileStatus> map = new LinkedHashMap<>(); // Preserves insertion order
+    for (FileStatus delta : deltas) {
+      long version = FileNames.deltaVersion(new Path(delta.getPath()));
+      map.put(version, delta);
+    }
+    return Collections.unmodifiableMap(map);
+  }
 
   private Lazy<List<FileStatus>> lazyLoadDeltasAndCheckpointsReversed(
       List<FileStatus> deltasAndCheckpoints) {

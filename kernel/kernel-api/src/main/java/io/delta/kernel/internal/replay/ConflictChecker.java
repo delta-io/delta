@@ -414,7 +414,7 @@ public class ConflictChecker {
       return lastWinningTxn.getModificationTime();
     } else {
       return CommitInfo.getRequiredInCommitTimestamp(
-          winningCommitInfoOpt, String.valueOf(lastWinningVersion), transaction.getDataPath());
+          winningCommitInfoOpt, lastWinningVersion, transaction.getDataPath());
     }
   }
 
