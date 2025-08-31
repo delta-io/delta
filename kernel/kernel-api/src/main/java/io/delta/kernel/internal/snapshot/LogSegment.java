@@ -132,7 +132,14 @@ public class LogSegment {
       checkArgument(!deltas.isEmpty() || !checkpoints.isEmpty(), "No files to read");
 
       if (!deltas.isEmpty()) {
-        validateAllDeltas(deltas, version, checkpointVersionOpt);
+        final List<Long> deltaVersions =
+            deltas.stream()
+                .map(fs -> FileNames.deltaVersion(new Path(fs.getPath())))
+                .collect(Collectors.toList());
+
+        validateFirstDeltaVersionIsCheckpointVersionPlusOne(deltaVersions, checkpointVersionOpt);
+        validateLastDeltaVersionIsLogSegmentVersion(deltaVersions, version);
+        validateDeltaVersionsAreContiguous(deltaVersions);
         validateCompactionVersionsAreInRange(compactions, version, checkpointVersionOpt);
       } else {
         validateCheckpointVersionEqualsLogSegmentVersion(checkpointVersionOpt, version);
@@ -354,18 +361,6 @@ public class LogSegment {
                       checksumVersion,
                       checkpointVersion));
         });
-  }
-
-  private void validateAllDeltas(
-      List<FileStatus> deltas, long version, Optional<Long> checkpointVersionOpt) {
-    final List<Long> deltaVersions =
-        deltas.stream()
-            .map(fs -> FileNames.deltaVersion(new Path(fs.getPath())))
-            .collect(Collectors.toList());
-
-    validateFirstDeltaVersionIsCheckpointVersionPlusOne(deltaVersions, checkpointVersionOpt);
-    validateLastDeltaVersionIsLogSegmentVersion(deltaVersions, version);
-    validateDeltaVersionsAreContiguous(deltaVersions);
   }
 
   private void validateFirstDeltaVersionIsCheckpointVersionPlusOne(
