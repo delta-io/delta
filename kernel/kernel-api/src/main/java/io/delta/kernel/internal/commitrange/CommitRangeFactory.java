@@ -59,7 +59,7 @@ class CommitRangeFactory {
     // Once we have listed files, we can resolve endVersion=latestVersion for the default case
     long endVersion = endVersionOpt.orElseGet(() -> extractLatestVersion(deltaFiles));
     if (!endVersionOpt.isPresent()) {
-      logger.info("{}: Resolved endVersion={} to the latest version", tablePath, endVersion);
+      logger.info("{}: Resolved end-boundary to the latest version {}", tablePath, endVersion);
     }
     return new CommitRangeImpl(
         tablePath, ctx.startBoundaryOpt, ctx.endBoundaryOpt, startVersion, endVersion, deltaFiles);

@@ -52,9 +52,9 @@ public class CommitRangeBuilderImpl implements CommitRangeBuilder {
     ctx = new Context(unresolvedPath);
   }
 
-  ////////////////////////////////////////
+  ///////////////////////////////////////
   // Public CommitRangeBuilder Methods //
-  ////////////////////////////////////////
+  ///////////////////////////////////////
 
   @Override
   public CommitRangeBuilderImpl withStartBoundary(CommitBoundary startBoundary) {
