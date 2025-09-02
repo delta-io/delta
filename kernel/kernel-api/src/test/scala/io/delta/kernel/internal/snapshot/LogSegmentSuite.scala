@@ -540,9 +540,20 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils {
     assert(logSegment.getDeltaFileForVersion(11).get() === deltasFs11To12List.get(0)) // first
     assert(logSegment.getDeltaFileForVersion(12).get() === deltasFs11To12List.get(1)) // last
 
-    // Negative Cases
+    // Negative Case
+    assert(!logSegment.getDeltaFileForVersion(0).isPresent)
     assert(!logSegment.getDeltaFileForVersion(10).isPresent)
-    assert(!logSegment.getDeltaFileForVersion(13).isPresent)
+
+    // Illegal Cases
+    val exMsg1 = intercept[IllegalArgumentException] {
+      logSegment.getDeltaFileForVersion(-1)
+    }.getMessage
+    assert(exMsg1 === "deltaVersion must be non-negative")
+
+    val exMsg2 = intercept[IllegalArgumentException] {
+      logSegment.getDeltaFileForVersion(13)
+    }.getMessage
+    assert(exMsg2 === "deltaVersion must be <= logSegment version")
   }
 
 }

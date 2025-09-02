@@ -210,7 +210,8 @@ class InCommitTimestampSuite extends AnyFunSuite with WriteUtils {
           Optional.empty())
       assert(columnarBatches.hasNext)
       val rows = columnarBatches.next().getRows
-      val commitInfoOpt = CommitInfo.getCommitInfoOpt(engine, logPath, 0)
+      val commitInfoOpt =
+        CommitInfo.unsafeTryReadCommitInfoFromPublishedDeltaFile(engine, logPath, 0)
       assert(commitInfoOpt.isPresent)
       val commitInfo = commitInfoOpt.get
       commitInfo.setInCommitTimestamp(Optional.empty())
@@ -417,7 +418,8 @@ class InCommitTimestampSuite extends AnyFunSuite with WriteUtils {
    */
   private def getInCommitTimestamp(engine: Engine, table: Table, version: Long): Option[Long] = {
     val logPath = new Path(table.getPath(engine), "_delta_log")
-    val commitInfoOpt = CommitInfo.getCommitInfoOpt(engine, logPath, version)
+    val commitInfoOpt =
+      CommitInfo.unsafeTryReadCommitInfoFromPublishedDeltaFile(engine, logPath, version)
     if (commitInfoOpt.isPresent && commitInfoOpt.get.getInCommitTimestamp.isPresent) {
       Some(commitInfoOpt.get.getInCommitTimestamp.get)
     } else {

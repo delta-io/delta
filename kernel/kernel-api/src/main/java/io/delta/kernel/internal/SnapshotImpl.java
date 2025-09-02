@@ -139,7 +139,8 @@ public class SnapshotImpl implements Snapshot {
         final Optional<CommitInfo> commitInfoOpt =
             CommitInfo.tryReadCommitInfoFromDeltaFile(engine, deltaFileAtSnapshotVersion);
         inCommitTimestampOpt =
-            Optional.of(CommitInfo.getRequiredInCommitTimestamp(commitInfoOpt, version, dataPath));
+            Optional.of(
+                CommitInfo.extractRequiredIctFromCommitInfoOpt(commitInfoOpt, version, dataPath));
       }
       return inCommitTimestampOpt.get();
     } else {

@@ -121,10 +121,10 @@ public class CommitInfo {
    * contains an empty `inCommitTimestamp`.
    */
   // TODO: [delta-io/delta#5147] Can't just use the logPath & version on catalogManaged tables.
-  public static long getRequiredInCommitTimestampFromFile(
+  public static long unsafeGetRequiredIctFromPublishedDeltaFile(
       Engine engine, Path logPath, long version) {
-    return getRequiredInCommitTimestamp(
-        getCommitInfoOpt(engine, logPath, version), version, logPath);
+    return extractRequiredIctFromCommitInfoOpt(
+        unsafeTryReadCommitInfoFromPublishedDeltaFile(engine, logPath, version), version, logPath);
   }
 
   /**
@@ -132,7 +132,7 @@ public class CommitInfo {
    * exception if `commitInfoOpt` is empty or contains an empty `inCommitTimestamp`.
    */
   // TODO: [delta-io/delta#5147] Can't just use the logPath & version on catalogManaged tables.
-  public static long getRequiredInCommitTimestamp(
+  public static long extractRequiredIctFromCommitInfoOpt(
       Optional<CommitInfo> commitInfoOpt, long version, Path dataPath) {
     CommitInfo commitInfo =
         commitInfoOpt.orElseThrow(
@@ -145,7 +145,8 @@ public class CommitInfo {
    * Get the CommitInfo action (if available) from the delta file at the given logPath and version.
    */
   // TODO: [delta-io/delta#5147] Can't just use the logPath & version on catalogManaged tables.
-  public static Optional<CommitInfo> getCommitInfoOpt(Engine engine, Path logPath, long version) {
+  public static Optional<CommitInfo> unsafeTryReadCommitInfoFromPublishedDeltaFile(
+      Engine engine, Path logPath, long version) {
     final FileStatus file =
         FileStatus.of(
             FileNames.deltaFile(logPath, version), /* path */

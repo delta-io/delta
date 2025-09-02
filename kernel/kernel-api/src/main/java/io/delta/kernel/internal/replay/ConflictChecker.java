@@ -413,7 +413,7 @@ public class ConflictChecker {
         || !IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(snapshotOpt.get().getMetadata())) {
       return lastWinningTxn.getModificationTime();
     } else {
-      return CommitInfo.getRequiredInCommitTimestamp(
+      return CommitInfo.extractRequiredIctFromCommitInfoOpt(
           winningCommitInfoOpt, lastWinningVersion, transaction.getDataPath());
     }
   }

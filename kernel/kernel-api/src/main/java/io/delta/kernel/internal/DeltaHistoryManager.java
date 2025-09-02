@@ -204,7 +204,7 @@ public final class DeltaHistoryManager {
         // Else, when `canReturnEarliestCommit` is `true`, the earliest commit
         // is the desired result.
         long ict =
-            CommitInfo.getRequiredInCommitTimestampFromFile(
+            CommitInfo.unsafeGetRequiredIctFromPublishedDeltaFile(
                 engine, logPath, placeholderEarliestCommit.getVersion());
         searchResult = new Commit(placeholderEarliestCommit.getVersion(), ict);
       } else {
@@ -259,11 +259,12 @@ public final class DeltaHistoryManager {
             searchTimestamp,
             startCommitVersionInclusive,
             endCommitVersionInclusive,
-            version -> CommitInfo.getRequiredInCommitTimestampFromFile(engine, logPath, version));
+            version ->
+                CommitInfo.unsafeGetRequiredIctFromPublishedDeltaFile(engine, logPath, version));
     // This indicates that the search timestamp is less than the earliest commit.
     if (!greatestLowerBoundOpt.isPresent()) {
       long startIct =
-          CommitInfo.getRequiredInCommitTimestampFromFile(
+          CommitInfo.unsafeGetRequiredIctFromPublishedDeltaFile(
               engine, logPath, startCommitVersionInclusive);
       return new Commit(startCommitVersionInclusive, startIct);
     }

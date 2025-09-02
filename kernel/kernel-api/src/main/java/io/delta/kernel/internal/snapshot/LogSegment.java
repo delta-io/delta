@@ -275,11 +275,15 @@ public class LogSegment {
   /**
    * Returns the delta file for the given version, if it exists in this LogSegment.
    *
-   * @param version the version to lookup
+   * @param deltaVersion the version to lookup
    * @return Optional containing the delta file, or empty if not found
+   * @throws IllegalArgumentException if delta version is negative or greater than the version of
+   *     this LogSegment
    */
-  public Optional<FileStatus> getDeltaFileForVersion(long version) {
-    return Optional.ofNullable(versionToDeltaMap.get(version));
+  public Optional<FileStatus> getDeltaFileForVersion(long deltaVersion) {
+    checkArgument(deltaVersion >= 0, "deltaVersion must be non-negative");
+    checkArgument(deltaVersion <= version, "deltaVersion must be <= logSegment version");
+    return Optional.ofNullable(versionToDeltaMap.get(deltaVersion));
   }
 
   @Override
