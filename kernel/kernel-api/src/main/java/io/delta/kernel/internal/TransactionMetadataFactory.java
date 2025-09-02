@@ -690,11 +690,11 @@ public class TransactionMetadataFactory {
   }
 
   private static void validateNotEnablingCatalogManagedOnReplace(
-      Map<String, String> tableProperties) {
+      Map<String, String> userInputTableProperties) {
     if (TableFeatures.isPropertiesManuallySupportingTableFeature(
-        tableProperties, TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW)) {
+        userInputTableProperties, TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW)) {
       throw new UnsupportedOperationException(
-          "Cannot enable the catalogManaged feature during a REPLACE operation.");
+          "Cannot enable the catalogManaged feature during a REPLACE command.");
     }
   }
 }

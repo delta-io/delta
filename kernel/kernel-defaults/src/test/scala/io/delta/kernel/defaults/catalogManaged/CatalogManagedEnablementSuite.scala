@@ -19,16 +19,12 @@ package io.delta.kernel.defaults.catalogManaged
 import scala.collection.JavaConverters._
 
 import io.delta.kernel.{Operation, TableManager, Transaction}
-import io.delta.kernel.commit.{CommitMetadata, CommitResponse, Committer}
 import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.utils.TestUtils
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.internal.SnapshotImpl
-import io.delta.kernel.internal.files.ParsedLogData
 import io.delta.kernel.internal.tablefeatures.TableFeatures
-import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.types.{IntegerType, StructType}
-import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
 
 import org.scalatest.funsuite.AnyFunSuite
@@ -113,7 +109,7 @@ class CatalogManagedEnablementSuite extends AnyFunSuite with TestUtils {
       transactionProperties = Map("delta.feature.catalogOwned-preview" -> "supported"),
       expectedSuccess = false,
       expectedExceptionMessage =
-        Some("Cannot enable the catalogManaged feature during a REPLACE operation.")),
+        Some("Cannot enable the catalogManaged feature during a REPLACE command.")),
     CatalogManagedEnablementTestCase(
       testName = "REPLACE: should succeed on a catalogManaged table",
       operationType = "REPLACE",
@@ -139,9 +135,9 @@ class CatalogManagedEnablementSuite extends AnyFunSuite with TestUtils {
             .commit(defaultEngine, emptyIterable[Row])
         }
 
-        // CreateTableTransactionBuilder and UpdateTableTransactionBuilder don't share a common
-        // parent interface. So, we treat the `txnBuilder` as a trait that has a `build(engine)`
-        // method. Scalastyle doesn't like this, but it's valid.
+        // CREATE, UPDATE, and REPLACE txnBuilders don't share a common parent interface. So, we
+        // treat the `txnBuilder` as a trait that has a `build(engine)` method. Scalastyle doesn't
+        // like this, but it's valid.
         //
         // scalastyle:off
         val txnBuilder: { def build(engine: Engine): Transaction } = testCase.operationType match {
@@ -164,7 +160,7 @@ class CatalogManagedEnablementSuite extends AnyFunSuite with TestUtils {
 
             TableManager
               .loadSnapshot(tablePath)
-              .withCommitter(committer)
+              .withCommitter(committerUsingPutIfAbsent)
               .build(defaultEngine)
               .asInstanceOf[SnapshotImpl]
               .buildReplaceTableTransaction(replaceSchema, "engineInfo")
