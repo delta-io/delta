@@ -199,5 +199,6 @@ trait UpdateCDCWithDeletionVectorsTests extends UpdateSQLWithDeletionVectorsMixi
 
     assert(addActions.count(_.deletionVector != null) === 2)
     assert(removeActions.size === 2)
+    assert(cdcActions.nonEmpty)
   }
 }
