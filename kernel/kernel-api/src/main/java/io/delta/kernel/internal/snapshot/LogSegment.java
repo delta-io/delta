@@ -34,36 +34,16 @@ import org.slf4j.LoggerFactory;
 
 public class LogSegment {
 
-  //////////////////////////////////
-  // Static variables and methods //
-  //////////////////////////////////
-
-  public static LogSegment empty(Path logPath) {
-    return new LogSegment(
-        logPath,
-        -1,
-        Collections.emptyList(),
-        Collections.emptyList(),
-        Collections.emptyList(),
-        Optional.empty(),
-        -1);
-  }
-
   private static final Logger logger = LoggerFactory.getLogger(LogSegment.class);
-
-  //////////////////////////////////
-  // Member variables and methods //
-  //////////////////////////////////
 
   private final Path logPath;
   private final long version;
   private final List<FileStatus> deltas;
-  private final Map<Long, FileStatus> versionToDeltaMap;
   private final List<FileStatus> compactions;
   private final List<FileStatus> checkpoints;
+  private final FileStatus deltaAtEndVersion;
   private final Optional<Long> checkpointVersionOpt;
   private final Optional<FileStatus> lastSeenChecksum;
-  private final long lastCommitTimestamp;
   private final List<FileStatus> deltasAndCheckpoints;
   private final Lazy<List<FileStatus>> deltasAndCheckpointsReversed;
   private final Lazy<List<FileStatus>> compactionsReversed;
@@ -83,18 +63,12 @@ public class LogSegment {
    *   <li>If no deltas are present then {@link #checkpointVersionOpt} is equal to version
    * </ul>
    *
-   * <p>Notably, this constructor does not guarantee that this LogSegment is complete and fully
-   * describes a Snapshot version. You may use the {@link #isComplete()} method to check this.
-   *
    * @param logPath The path to the _delta_log directory
    * @param version The Snapshot version to generate
    * @param deltas The delta commit files (.json) to read
    * @param compactions Any found log compactions files that can be used in place of some or all of
    *     the deltas
    * @param checkpoints The checkpoint file(s) to read
-   * @param lastCommitTimestamp The "unadjusted" timestamp of the last commit within this segment.
-   *     By unadjusted, we mean that the commit timestamps may not necessarily be monotonically
-   *     increasing for the commits within this segment.
    */
   public LogSegment(
       Path logPath,
@@ -102,8 +76,8 @@ public class LogSegment {
       List<FileStatus> deltas,
       List<FileStatus> compactions,
       List<FileStatus> checkpoints,
-      Optional<FileStatus> lastSeenChecksum,
-      long lastCommitTimestamp) {
+      FileStatus deltaAtEndVersion,
+      Optional<FileStatus> lastSeenChecksum) {
 
     ///////////////////////
     // Input validations //
@@ -113,10 +87,11 @@ public class LogSegment {
     requireNonNull(deltas, "deltas is null");
     requireNonNull(compactions, "compactions is null");
     requireNonNull(checkpoints, "checkpoints is null");
+    requireNonNull(deltaAtEndVersion, "deltaAtEndVersion is null");
     requireNonNull(lastSeenChecksum, "lastSeenChecksum null");
 
+    checkArgument(version >= 0, "version must be non-negative");
     validateDeltasAreDeltas(deltas);
-    this.versionToDeltaMap = buildVersionToDeltaMap(deltas);
     validateCompactionsAreCompactions(compactions);
     validateCheckpointsAreCheckpoints(checkpoints);
     validateIndividualCompactionVersions(compactions);
@@ -130,22 +105,22 @@ public class LogSegment {
     validateLastSeenChecksumWithinLogSegmentStartEndVersionRange(
         lastSeenChecksum, version, checkpointVersionOpt);
 
-    if (version != -1) {
-      checkArgument(!deltas.isEmpty() || !checkpoints.isEmpty(), "No files to read");
+    checkArgument(!deltas.isEmpty() || !checkpoints.isEmpty(), "No files to read");
 
-      if (!deltas.isEmpty()) {
-        // Use the map's keySet - LinkedHashMap preserves the order from the original deltas list
-        final List<Long> deltaVersions = new ArrayList<>(versionToDeltaMap.keySet());
-        validateFirstDeltaVersionIsCheckpointVersionPlusOne(deltaVersions, checkpointVersionOpt);
-        validateLastDeltaVersionIsLogSegmentVersion(deltaVersions, version);
-        validateDeltaVersionsAreContiguous(deltaVersions);
-        validateCompactionVersionsAreInRange(compactions, version, checkpointVersionOpt);
-      } else {
-        validateCheckpointVersionEqualsLogSegmentVersion(checkpointVersionOpt, version);
-      }
+    if (!deltas.isEmpty()) {
+      final List<Long> deltaVersions =
+          deltas.stream()
+              .map(fs -> FileNames.deltaVersion(new Path(fs.getPath())))
+              .collect(Collectors.toList());
+      validateFirstDeltaVersionIsCheckpointVersionPlusOne(deltaVersions, checkpointVersionOpt);
+      validateLastDeltaVersionIsLogSegmentVersion(deltaVersions, version);
+      validateDeltaVersionsAreContiguous(deltaVersions);
+      validateCompactionVersionsAreInRange(compactions, version, checkpointVersionOpt);
     } else {
-      checkArgument(deltas.isEmpty() && checkpoints.isEmpty(), "Version -1 should have no files");
+      validateCheckpointVersionEqualsLogSegmentVersion(checkpointVersionOpt, version);
     }
+
+    validateDeltaAtEndVersion(version, deltaAtEndVersion);
 
     // Make sure input delta commits (JSON file), checkpoints and log compactions are valid.
     assertLogFilesBelongToTable(
@@ -162,8 +137,8 @@ public class LogSegment {
     this.deltas = deltas;
     this.compactions = compactions;
     this.checkpoints = checkpoints;
+    this.deltaAtEndVersion = deltaAtEndVersion;
     this.lastSeenChecksum = lastSeenChecksum;
-    this.lastCommitTimestamp = lastCommitTimestamp;
     this.deltasAndCheckpoints =
         Stream.concat(checkpoints.stream(), deltas.stream()).collect(Collectors.toList());
 
@@ -184,21 +159,6 @@ public class LogSegment {
   /////////////////
   // Public APIs //
   /////////////////
-
-  /**
-   * @return true if this LogSegment is complete and fully describes a Snapshot version. A partial
-   *     LogSegment is missing some information. We consider an empty LogSegment to be incomplete.
-   */
-  public boolean isComplete() {
-    // A LogSegment is complete if and only if either
-    // (a) It has a checkpoint and has delta versions from checkpointVersion + 1 to version, or
-    // (b) It has no checkpoint and has deltas from 0 to version
-    //
-    // Because we have already done extensive validation in the constructor, all that that remains
-    // to check is whether (1) We have a checkpoint, or (2) We have N + 1 deltas. All other
-    // requirements are taken care of.
-    return version >= 0 && (!checkpoints.isEmpty() || (deltas.size() == version + 1));
-  }
 
   public Path getLogPath() {
     return logPath;
@@ -242,16 +202,33 @@ public class LogSegment {
     return lastSeenChecksum;
   }
 
-  public long getLastCommitTimestamp() {
-    return lastCommitTimestamp;
+  /**
+   * Returns the Delta file at the end {@code version} of this LogSegment.
+   *
+   * <p>If this LogSegment has checkpoints and deltas, then this is the last delta.
+   *
+   * <p>If this LogSegment has only checkpoints (i.e. 10.checkpoint only) then this is the delta at
+   * that checkpoint version.
+   */
+  public FileStatus getDeltaFileAtEndVersion() {
+    return deltaAtEndVersion;
   }
 
   /**
-   * @return all deltas (.json) and checkpoint (.checkpoint.parquet) files in this LogSegment, with
-   *     no ordering guarantees.
+   * Returns the "unadjusted" timestamp of the Delta file at the end {@code version} of this
+   * LogSegment.
+   *
+   * <p>If this LogSegment has checkpoints and Deltas, then this is the filesystem timestamp of the
+   * last delta.
+   *
+   * <p>If this LogSegment has only checkpoints (i.e. 10.checkpoint only) then this is the
+   * filesystem timestamp of the delta at that checkpoint version.
+   *
+   * <p>By unadjusted, we mean that this commit timestamp may not necessarily be monotonically
+   * increasing for the commits within this segment.
    */
-  public List<FileStatus> allLogFilesUnsorted() {
-    return deltasAndCheckpoints;
+  public long getDeltaFileTimestampAtEndVersion() {
+    return getDeltaFileAtEndVersion().getModificationTime();
   }
 
   /**
@@ -272,20 +249,6 @@ public class LogSegment {
     return deltasCheckpointsCompactionsReversed.get();
   }
 
-  /**
-   * Returns the delta file for the given version, if it exists in this LogSegment.
-   *
-   * @param deltaVersion the version to lookup
-   * @return Optional containing the delta file, or empty if not found
-   * @throws IllegalArgumentException if delta version is negative or greater than the version of
-   *     this LogSegment
-   */
-  public Optional<FileStatus> getDeltaFileForVersion(long deltaVersion) {
-    checkArgument(deltaVersion >= 0, "deltaVersion must be non-negative");
-    checkArgument(deltaVersion <= version, "deltaVersion must be <= logSegment version");
-    return Optional.ofNullable(versionToDeltaMap.get(deltaVersion));
-  }
-
   @Override
   public String toString() {
     return String.format(
@@ -294,17 +257,17 @@ public class LogSegment {
             + "  version=%d,\n"
             + "  deltas=[%s\n  ],\n"
             + "  checkpoints=[%s\n  ],\n"
+            + "  deltaAtEndVersion=%s,\n"
             + "  lastSeenChecksum=%s,\n"
             + "  checkpointVersion=%s,\n"
-            + "  lastCommitTimestamp=%d\n"
             + "}",
         logPath,
         version,
         formatList(deltas),
         formatList(checkpoints),
+        deltaAtEndVersion,
         lastSeenChecksum.map(FileStatus::toString).orElse("None"),
-        checkpointVersionOpt.map(String::valueOf).orElse("None"),
-        lastCommitTimestamp);
+        checkpointVersionOpt.map(String::valueOf).orElse("None"));
   }
 
   @Override
@@ -428,18 +391,18 @@ public class LogSegment {
         });
   }
 
+  private void validateDeltaAtEndVersion(long version, FileStatus deltaAtEndVersion) {
+    checkArgument(
+        FileNames.isCommitFile(deltaAtEndVersion.getPath()),
+        "deltaAtEndVersion must be a delta file");
+    checkArgument(
+        FileNames.deltaVersion(deltaAtEndVersion.getPath()) == version,
+        "deltaAtEndVersion must have version equal to the version of this LogSegment");
+  }
+
   //////////////////////////
   // Other helper methods //
   //////////////////////////
-
-  private static Map<Long, FileStatus> buildVersionToDeltaMap(List<FileStatus> deltas) {
-    final Map<Long, FileStatus> map = new LinkedHashMap<>(); // Preserves insertion order
-    for (FileStatus delta : deltas) {
-      long version = FileNames.deltaVersion(new Path(delta.getPath()));
-      map.put(version, delta);
-    }
-    return Collections.unmodifiableMap(map);
-  }
 
   private Lazy<List<FileStatus>> lazyLoadDeltasAndCheckpointsReversed(
       List<FileStatus> deltasAndCheckpoints) {

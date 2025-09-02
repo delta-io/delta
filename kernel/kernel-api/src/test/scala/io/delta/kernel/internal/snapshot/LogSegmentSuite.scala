@@ -39,10 +39,6 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils {
     FileStatus.of(s"${logPath.toString}/gibberish.checkpoint.parquet", 1, 1))
   private val logPath2 = new Path("/another/fake/path/to/table/", "_delta_log")
 
-  test("constructor -- valid case (empty)") {
-    LogSegment.empty(logPath)
-  }
-
   test("constructor -- valid case (non-empty)") {
     new LogSegment(
       logPath,
@@ -309,63 +305,6 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils {
         1)
     }
     assert(ex.getMessage.contains("doesn't belong in the transaction log"))
-  }
-
-  test("isComplete") {
-    {
-      // case 1: checkpoint and deltas => complete
-      val logSegment = new LogSegment(
-        logPath,
-        12,
-        deltasFs11To12List,
-        Collections.emptyList(),
-        checkpointFs10List,
-        Optional.empty(),
-        1)
-      assert(logSegment.isComplete)
-    }
-    {
-      // case 2: checkpoint only => complete
-      val logSegment = new LogSegment(
-        logPath,
-        10,
-        Collections.emptyList(),
-        Collections.emptyList(),
-        checkpointFs10List,
-        Optional.empty(),
-        1)
-      assert(logSegment.isComplete)
-    }
-    {
-      // case 3: deltas from 0 to N with no checkpoint => complete
-      val deltaFiles = deltaFileStatuses((0L to 17L)).toList.asJava
-      val logSegment =
-        new LogSegment(
-          logPath,
-          17,
-          deltaFiles,
-          Collections.emptyList(),
-          Collections.emptyList(),
-          Optional.empty(),
-          1)
-      assert(logSegment.isComplete)
-    }
-    {
-      // case 4: just deltas from 11 to 12 with no checkpoint => incomplete
-      val logSegment = new LogSegment(
-        logPath,
-        12,
-        deltasFs11To12List,
-        Collections.emptyList(),
-        Collections.emptyList(),
-        Optional.empty(),
-        1)
-      assert(!logSegment.isComplete)
-    }
-    {
-      // case 5: empty log segment => incomplete
-      assert(!LogSegment.empty(logPath).isComplete)
-    }
   }
 
   test("toString") {
