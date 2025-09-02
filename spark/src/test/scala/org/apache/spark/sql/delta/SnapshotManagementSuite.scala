@@ -622,6 +622,24 @@ class SnapshotManagementSuite extends QueryTest with DeltaSQLTestUtils with Shar
       spark.read.format("delta").load(path).collect()
     }
   }
+
+  test("getUpdatedLogSegment without new files returns the original log segment") {
+    withTempDir { tempDir =>
+      // Create checkpoint 1 and 3
+      val path = tempDir.getCanonicalPath
+      spark.range(10).write.format("delta").save(path)
+      spark.range(10).write.format("delta").mode("append").save(path)
+      val deltaLog = DeltaLog.forTable(spark, path)
+      deltaLog.checkpoint()
+      val snapshot = deltaLog.update()
+      val (updatedLogSegment, _) = deltaLog.getUpdatedLogSegment(
+        snapshot.logSegment,
+        tableCommitCoordinatorClientOpt = None,
+        catalogTableOpt = None
+      )
+      assert(updatedLogSegment === snapshot.logSegment)
+    }
+  }
 }
 
 class SnapshotManagementWithCoordinatedCommitsBatch1Suite extends SnapshotManagementSuite {
