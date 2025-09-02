@@ -49,7 +49,8 @@ trait MergeCDCMixin extends SharedSparkSession
  */
 trait MergeCDCTests extends QueryTest
   with CDCEnabled
-  with MergeCDCMixin {
+  with MergeCDCMixin
+  with CDCTestMixin {
 
   import testImplicits._
 
@@ -124,8 +125,7 @@ trait MergeCDCTests extends QueryTest
 
             // The timestamp is nondeterministic so we drop it when comparing results.
             checkAnswer(
-              CDCReader.changesToBatchDF(
-                deltaLog, latestVersion, latestVersion, spark)
+              computeCDC(spark, deltaLog, latestVersion, latestVersion)
                 .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
               expectedCdcData)
           }

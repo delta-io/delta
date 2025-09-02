@@ -136,6 +136,7 @@ object SuiteGeneratorConfig {
     val PERSISTENT_DV_OFF = PERSISTENT_DV.withValueAsDimension(_.head)
     val PERSISTENT_DV_ON = PERSISTENT_DV.withValueAsDimension(_.last)
     val ROW_TRACKING = DimensionWithMultipleValues("RowTracking", List("Disabled", "Enabled"))
+    val ROW_TRACKING_ON = ROW_TRACKING.withValueAsDimension(_.last)
     val MERGE_PERSISTENT_DV_OFF = DimensionMixin("MergePersistentDV", suffix = "Disabled")
     val MERGE_ROW_TRACKING_DV = DimensionMixin("RowTrackingMergeDV")
     val COLUMN_MAPPING = DimensionWithMultipleValues(
@@ -323,6 +324,7 @@ object SuiteGeneratorConfig {
           )
         )
       )
+    ),
     )
     // scalastyle:on line.size.limit
   )
