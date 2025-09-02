@@ -324,7 +324,6 @@ object SuiteGeneratorConfig {
           )
         )
       )
-    ),
     )
     // scalastyle:on line.size.limit
   )
