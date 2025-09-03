@@ -36,6 +36,7 @@ import org.json4s.jackson.Serialization
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{EqualTo, Expression, Literal}
 import org.apache.spark.sql.catalyst.plans.logical.SubqueryAlias
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
@@ -58,6 +59,54 @@ class DeltaDataSource
   with DataSourceRegister
   with TableProvider
   with DeltaLogging {
+
+  /**
+   * WARNING: This field has complex initialization timing.
+   *
+   * This field is not initialized in the constructor because the DataSource V1 API does not allow
+   * for passing a catalog table. As a work around, we set this field immediately after the
+   * `DeltaDataSource` is constructed in `DataSource::providingInstance()`.
+   */
+  private var catalogTableOpt: Option[CatalogTable] = None
+
+  /**
+   * Internal method used only by `DataSource.providingInstance()` right after `DeltaDataSource`
+   * construction to plumb the catalog table. This is intended to be set once per instance;
+   * subsequent sets are ignored by a guard.
+   */
+  def setCatalogTableOpt(newCatalogTableOpt: Option[CatalogTable]): Unit = {
+    if (catalogTableOpt.isEmpty) {
+      catalogTableOpt = newCatalogTableOpt
+    }
+  }
+
+  /**
+   * Construct a snapshot from either the catalog table or a path.
+   *
+   * If catalogTableOpt is defined, use it to construct the snapshot; otherwise, fall back to use
+   * path-based snapshot construction.
+   */
+  private def getSnapshotFromTableOrPath(sparkSession: SparkSession, path: Path): Snapshot = {
+    catalogTableOpt
+      .map(catalogTable => DeltaLog.forTableWithSnapshot(
+        sparkSession, catalogTable, options = Map.empty[String, String]))
+      .getOrElse(DeltaLog.forTableWithSnapshot(sparkSession, path))._2
+  }
+
+  /**
+   * Construct a delta log from either the catalog table or a path.
+   *
+   * If catalogTableOpt is defined, use it to construct the delta log; otherwise, fall back to use
+   * path-based delta log construction.
+   */
+  private def getDeltaLogFromTableOrPath(
+      sparkSession: SparkSession,
+      path: Path,
+      options: Map[String, String]): DeltaLog = {
+    catalogTableOpt
+      .map(catalogTable => DeltaLog.forTable(sparkSession, catalogTable, options))
+      .getOrElse(DeltaLog.forTable(sparkSession, path, options))
+  }
 
   def inferSchema: StructType = new StructType() // empty
 
@@ -90,7 +139,7 @@ class DeltaDataSource
     }
 
     val snapshot =
-      DeltaLog.forTableWithSnapshot(sqlContext.sparkSession, new Path(path))._2
+      getSnapshotFromTableOrPath(sqlContext.sparkSession, new Path(path))
     // This is the analyzed schema for Delta streaming
     val readSchema = {
       // Check if we would like to merge consecutive schema changes, this would allow customers
@@ -143,7 +192,7 @@ class DeltaDataSource
     })
     val options = new DeltaOptions(parameters, sqlContext.sparkSession.sessionState.conf)
     val snapshot =
-      DeltaLog.forTableWithSnapshot(sqlContext.sparkSession, new Path(path))._2
+      getSnapshotFromTableOrPath(sqlContext.sparkSession, new Path(path))
     val schemaTrackingLogOpt =
       DeltaDataSource.getMetadataTrackingLogForDeltaSource(
         sqlContext.sparkSession, snapshot, parameters,
@@ -168,6 +217,7 @@ class DeltaDataSource
     DeltaSource(
       sqlContext.sparkSession,
       snapshot.deltaLog,
+      catalogTableOpt,
       options,
       snapshot,
       metadataPath,
@@ -204,7 +254,7 @@ class DeltaDataSource
       .map(DeltaDataSource.decodePartitioningColumns)
       .getOrElse(Nil)
 
-    val deltaLog = DeltaLog.forTable(sqlContext.sparkSession, new Path(path), parameters)
+    val deltaLog = getDeltaLogFromTableOrPath(sqlContext.sparkSession, new Path(path), parameters)
     WriteIntoDelta(
       deltaLog = deltaLog,
       mode = mode,
