@@ -985,13 +985,15 @@ case class DeltaHistory(
 object DeltaHistory {
   /** Create an instance of [[DeltaHistory]] from [[CommitInfo]] */
   def fromCommitInfo(ci: CommitInfo): DeltaHistory = {
+    val operationParameters =
+      CommitInfo.getLegacyPostDeserializationOperationParameters(ci.operationParameters)
     DeltaHistory(
       version = ci.version,
       timestamp = ci.timestamp,
       userId = ci.userId,
       userName = ci.userName,
       operation = ci.operation,
-      operationParameters = ci.getLegacyPostDeserializationOperationParameters,
+      operationParameters = operationParameters,
       job = ci.job,
       notebook = ci.notebook,
       clusterId = ci.clusterId,
