@@ -37,11 +37,10 @@ object IcebergSchemaUtils {
   def convertIcebergSchemaToSpark(icebergSchema: Schema,
       castTimeType: Boolean = false): StructType = {
     // Convert from Iceberg schema to Spark schema but without the column IDs
-    val baseConvertedSchema = if (castTimeType) {
-      TypeUtil.visit(icebergSchema, new TypeToSparkTypeWithCustomCast()).asInstanceOf[StructType]
-    } else {
-      SparkSchemaUtil.convert(icebergSchema)
-    }
+    val baseConvertedSchema =
+      TypeUtil.visit(
+        icebergSchema, new TypeToSparkTypeWithCustomCast(castTimeType)
+      ).asInstanceOf[StructType]
 
     // For each field, find the column ID (fieldId) and add to the StructField metadata
     SchemaMergingUtils.transformColumns(baseConvertedSchema) { (path, field, _) =>
