@@ -24,7 +24,7 @@ import scala.collection.immutable.Seq
 import io.delta.kernel.Table
 import io.delta.kernel.data.{FilteredColumnarBatch, Row}
 import io.delta.kernel.defaults.internal.parquet.ParquetSuiteBase
-import io.delta.kernel.defaults.utils.{MetadataColumnTestUtils, TestRow, WriteUtils}
+import io.delta.kernel.defaults.utils.{TestRow, WriteUtils}
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.{ConcurrentWriteException, InvalidTableException, KernelException, MaxCommitRetryLimitReachedException}
 import io.delta.kernel.expressions.Literal
@@ -35,7 +35,7 @@ import io.delta.kernel.internal.rowtracking.MaterializedRowTrackingColumn.{MATER
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.internal.util.VectorUtils
 import io.delta.kernel.types._
-import io.delta.kernel.utils.CloseableIterable
+import io.delta.kernel.utils.{CloseableIterable, MetadataColumnTestUtils}
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 
 import org.apache.spark.sql.delta.DeltaLog

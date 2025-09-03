@@ -55,6 +55,13 @@ public final class StructType extends DataType {
   }
 
   public StructType add(StructField field) {
+    if (field.isMetadataColumn() && contains(field.getMetadataColumnType())) {
+      throw new IllegalArgumentException(
+          String.format(
+              "Metadata column %s already exists in the struct type",
+              field.getMetadataColumnType()));
+    }
+
     final List<StructField> fieldsCopy = new ArrayList<>(fields);
     fieldsCopy.add(field);
 
@@ -201,7 +208,7 @@ public final class StructType extends DataType {
    * @param fields The list of fields to validate
    * @throws IllegalArgumentException if any nested metadata columns are found
    */
-  private static void validateNoMetadataColumns(List<StructField> fields) {
+  private void validateNoMetadataColumns(List<StructField> fields) {
     for (StructField field : fields) {
       DataType dataType = field.getDataType();
 

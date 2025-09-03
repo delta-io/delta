@@ -352,7 +352,7 @@ public class Metadata {
   }
 
   /** Helper method to ensure that a table schema never contains metadata columns. */
-  private static void ensureNoMetadataColumns(StructType schema) {
+  private void ensureNoMetadataColumns(StructType schema) {
     for (StructField field : schema.fields()) {
       if (field.isMetadataColumn()) {
         throw new IllegalArgumentException(

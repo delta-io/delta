@@ -47,17 +47,57 @@ public class StructField {
    */
   public static final String IS_INTERNAL_COLUMN_KEY = "delta.isInternalColumn";
 
+  /** The name of the default row index metadata column. */
+  private static final String DEFAULT_ROW_INDEX_COLUMN_NAME = "_metadata.row_index";
+
   /**
-   * The name of a row index metadata column. When present this column must be populated with row
-   * index of each row when reading from parquet.
+   * The default row index metadata column used by Kernel. When present, this column must be
+   * populated with row index of each row when reading from Parquet.
    */
-  public static String DEFAULT_ROW_INDEX_COLUMN_NAME = "_metadata.row_index";
+  public static StructField DEFAULT_ROW_INDEX_COLUMN =
+      createMetadataColumn(DEFAULT_ROW_INDEX_COLUMN_NAME, MetadataColumn.ROW_INDEX);
 
   public static final String COLLATIONS_METADATA_KEY = "__COLLATIONS";
   public static final String FROM_TYPE_KEY = "fromType";
   public static final String TO_TYPE_KEY = "toType";
   public static final String FIELD_PATH_KEY = "fieldPath";
   public static final String DELTA_TYPE_CHANGES_KEY = "delta.typeChanges";
+
+  /**
+   * Creates a metadata column of the given {@code colType} with the given {@code name}.
+   *
+   * @param name Name of the metadata column
+   * @param colType Type of the metadata column
+   * @return A StructField representing the metadata column
+   */
+  public static StructField createMetadataColumn(String name, MetadataColumn colType) {
+    switch (colType) {
+      case ROW_INDEX:
+        return new StructField(
+            name,
+            LongType.LONG,
+            false /* nullable */,
+            new FieldMetadata.Builder()
+                .putMetadataColumnType(METADATA_TYPE_KEY, ROW_INDEX)
+                .build());
+      case ROW_ID:
+        return new StructField(
+            name,
+            LongType.LONG,
+            false /* nullable */,
+            new FieldMetadata.Builder().putMetadataColumnType(METADATA_TYPE_KEY, ROW_ID).build());
+      case ROW_COMMIT_VERSION:
+        return new StructField(
+            name,
+            LongType.LONG,
+            false /* nullable */,
+            new FieldMetadata.Builder()
+                .putMetadataColumnType(METADATA_TYPE_KEY, ROW_COMMIT_VERSION)
+                .build());
+      default:
+        throw new IllegalArgumentException("Unknown MetadataColumnType: " + colType);
+    }
+  }
 
   ////////////////////////////////////////////////////////////////////////////////
   // Instance Fields / Methods
@@ -207,42 +247,6 @@ public class StructField {
    */
   public StructField withDataType(DataType newType) {
     return new StructField(name, newType, nullable, metadata, typeChanges);
-  }
-
-  /**
-   * Creates a metadata column of the given {@code colType} with the given {@code name}.
-   *
-   * @param name Name of the metadata column
-   * @param colType Type of the metadata column
-   * @return A StructField representing the metadata column
-   */
-  public static StructField createMetadataColumn(String name, MetadataColumn colType) {
-    switch (colType) {
-      case ROW_INDEX:
-        return new StructField(
-            name,
-            LongType.LONG,
-            false /* nullable */,
-            new FieldMetadata.Builder()
-                .putMetadataColumnType(METADATA_TYPE_KEY, ROW_INDEX)
-                .build());
-      case ROW_ID:
-        return new StructField(
-            name,
-            LongType.LONG,
-            false /* nullable */,
-            new FieldMetadata.Builder().putMetadataColumnType(METADATA_TYPE_KEY, ROW_ID).build());
-      case ROW_COMMIT_VERSION:
-        return new StructField(
-            name,
-            LongType.LONG,
-            false /* nullable */,
-            new FieldMetadata.Builder()
-                .putMetadataColumnType(METADATA_TYPE_KEY, ROW_COMMIT_VERSION)
-                .build());
-      default:
-        throw new IllegalArgumentException("Unknown MetadataColumnType: " + colType);
-    }
   }
 
   /** Fetches collation and type changes metadata from nested fields. */

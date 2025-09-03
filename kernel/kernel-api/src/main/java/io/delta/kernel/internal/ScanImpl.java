@@ -255,10 +255,7 @@ public class ScanImpl implements Scan {
             .map(StructField::getMetadataColumnType)
             .noneMatch(MetadataColumn.ROW_INDEX::equals)) {
       // If the row index column is not already present, add it to the physical read schema
-      physicalFields.add(
-          SchemaUtils.createInternalColumn(
-              StructField.createMetadataColumn(
-                  StructField.DEFAULT_ROW_INDEX_COLUMN_NAME, MetadataColumn.ROW_INDEX)));
+      physicalFields.add(SchemaUtils.asInternalColumn(StructField.DEFAULT_ROW_INDEX_COLUMN));
     }
 
     return new StructType(physicalFields);

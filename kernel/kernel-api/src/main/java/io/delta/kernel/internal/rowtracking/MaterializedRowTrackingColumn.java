@@ -181,10 +181,7 @@ public final class MaterializedRowTrackingColumn {
               LongType.LONG,
               true /* nullable */));
       if (!logicalSchema.contains(MetadataColumn.ROW_INDEX)) {
-        physicalFields.add(
-            SchemaUtils.createInternalColumn(
-                StructField.createMetadataColumn(
-                    StructField.DEFAULT_ROW_INDEX_COLUMN_NAME, MetadataColumn.ROW_INDEX)));
+        physicalFields.add(SchemaUtils.asInternalColumn(StructField.DEFAULT_ROW_INDEX_COLUMN));
       }
       return physicalFields;
     } else if (logicalField.getMetadataColumnType() == MetadataColumn.ROW_COMMIT_VERSION) {
@@ -233,7 +230,7 @@ public final class MaterializedRowTrackingColumn {
               scanFile,
               rowIdColumnName,
               exprHandler,
-              logicalSchema,
+              logicalSchema.at(logicalSchema.indexOf(MetadataColumn.ROW_ID)),
               physicalSchema,
               rowIdOrdinal);
     }
@@ -248,7 +245,7 @@ public final class MaterializedRowTrackingColumn {
               scanFile,
               rowCommitVersionColumnName,
               exprHandler,
-              logicalSchema,
+              logicalSchema.at(logicalSchema.indexOf(MetadataColumn.ROW_COMMIT_VERSION)),
               physicalSchema,
               commitVersionOrdinal);
     }
@@ -262,7 +259,7 @@ public final class MaterializedRowTrackingColumn {
       Row scanFile,
       String rowIdColumnName,
       ExpressionHandler exprHandler,
-      StructType logicalSchema,
+      StructField logicalRowIdColumn,
       StructType physicalSchema,
       int rowIdOrdinal) {
     long baseRowId =
@@ -271,6 +268,8 @@ public final class MaterializedRowTrackingColumn {
                 () ->
                     DeltaErrors.rowTrackingMetadataMissingInFile(
                         "baseRowId", InternalScanFileUtils.getFilePath(scanFile)));
+    String rowIndexMetadataColName =
+        dataBatch.getSchema().at(dataBatch.getSchema().indexOf(MetadataColumn.ROW_INDEX)).getName();
     Expression rowIdExpr =
         new ScalarExpression(
             "COALESCE",
@@ -279,12 +278,7 @@ public final class MaterializedRowTrackingColumn {
                 new ScalarExpression(
                     "ADD",
                     Arrays.asList(
-                        new Column(
-                            dataBatch
-                                .getSchema()
-                                .at(dataBatch.getSchema().indexOf(MetadataColumn.ROW_INDEX))
-                                .getName()),
-                        Literal.ofLong(baseRowId)))));
+                        new Column(rowIndexMetadataColName), Literal.ofLong(baseRowId)))));
     ColumnVector rowIdVector =
         exprHandler.getEvaluator(physicalSchema, rowIdExpr, LongType.LONG).eval(dataBatch);
 
@@ -292,10 +286,7 @@ public final class MaterializedRowTrackingColumn {
     dataBatch =
         dataBatch
             .withDeletedColumnAt(rowIdOrdinal)
-            .withNewColumn(
-                rowIdOrdinal,
-                logicalSchema.at(logicalSchema.indexOf(MetadataColumn.ROW_ID)),
-                rowIdVector);
+            .withNewColumn(rowIdOrdinal, logicalRowIdColumn, rowIdVector);
     return dataBatch;
   }
 
@@ -308,7 +299,7 @@ public final class MaterializedRowTrackingColumn {
       Row scanFile,
       String commitVersionColumnName,
       ExpressionHandler exprHandler,
-      StructType logicalSchema,
+      StructField logicalCommitVersionColumn,
       StructType physicalSchema,
       int commitVersionOrdinal) {
     long defaultRowCommitVersion =
@@ -329,10 +320,7 @@ public final class MaterializedRowTrackingColumn {
     dataBatch =
         dataBatch
             .withDeletedColumnAt(commitVersionOrdinal)
-            .withNewColumn(
-                commitVersionOrdinal,
-                logicalSchema.at(logicalSchema.indexOf(MetadataColumn.ROW_COMMIT_VERSION)),
-                commitVersionVector);
+            .withNewColumn(commitVersionOrdinal, logicalCommitVersionColumn, commitVersionVector);
     return dataBatch;
   }
 

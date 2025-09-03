@@ -26,6 +26,7 @@ import io.delta.kernel.exceptions.KernelEngineException;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.types.MetadataColumn;
+import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
@@ -60,9 +61,9 @@ public class ParquetFileReader {
   public CloseableIterator<ColumnarBatch> read(
       FileStatus fileStatus, StructType schema, Optional<Predicate> predicate) {
 
-    if (Arrays.stream(MetadataColumn.values())
-        .filter(colType -> !colType.equals(MetadataColumn.ROW_INDEX))
-        .anyMatch(schema::contains)) {
+    if (schema.fields().stream()
+        .filter(StructField::isMetadataColumn)
+        .anyMatch(col -> col.getMetadataColumnType() != MetadataColumn.ROW_INDEX)) {
       throw new IllegalArgumentException(
           "The parquet reader does not support metadata columns other than ROW_INDEX");
     }

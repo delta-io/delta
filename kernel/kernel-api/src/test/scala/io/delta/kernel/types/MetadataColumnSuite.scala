@@ -13,10 +13,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.defaults
+package io.delta.kernel.types
 
-import io.delta.kernel.defaults.utils.MetadataColumnTestUtils
-import io.delta.kernel.types._
+import io.delta.kernel.utils.MetadataColumnTestUtils
 
 import org.scalatest.funsuite.AnyFunSuite
 

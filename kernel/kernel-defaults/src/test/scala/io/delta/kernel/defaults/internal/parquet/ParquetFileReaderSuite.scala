@@ -19,9 +19,10 @@ import java.math.BigDecimal
 import java.util.TimeZone
 
 import io.delta.golden.GoldenTableUtils.{goldenTableFile, goldenTablePath}
-import io.delta.kernel.defaults.utils.{ExpressionTestUtils, MetadataColumnTestUtils, TestRow}
+import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestRow}
 import io.delta.kernel.test.VectorTestUtils
 import io.delta.kernel.types._
+import io.delta.kernel.utils.MetadataColumnTestUtils
 
 import org.apache.spark.sql.internal.SQLConf
 import org.scalatest.funsuite.AnyFunSuite
