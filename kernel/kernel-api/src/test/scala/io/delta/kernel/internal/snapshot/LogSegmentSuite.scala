@@ -39,128 +39,121 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils {
     FileStatus.of(s"${logPath.toString}/gibberish.checkpoint.parquet", 1, 1))
   private val logPath2 = new Path("/another/fake/path/to/table/", "_delta_log")
 
-  test("constructor -- valid case (non-empty)") {
+  private def createLogSegmentForTest(
+      logPath: Path = this.logPath,
+      version: Long,
+      deltas: JList[FileStatus] = Collections.emptyList(),
+      compactions: JList[FileStatus] = Collections.emptyList(),
+      checkpoints: JList[FileStatus] = Collections.emptyList(),
+      deltaAtEndVersion: Option[FileStatus] = None,
+      lastSeenChecksum: Optional[FileStatus] = Optional.empty()): LogSegment = {
+    val finalDeltaAtEndVersion = deltaAtEndVersion.getOrElse {
+      if (!deltas.isEmpty()) {
+        // If we have deltas, use the last delta
+        deltas.get(deltas.size() - 1)
+      } else if (!checkpoints.isEmpty()) {
+        // If we only have checkpoints, create a delta file for the checkpoint version
+        val checkpointVersion = io.delta.kernel.internal.util.FileNames.checkpointVersion(
+          new Path(checkpoints.get(0).getPath()))
+        deltaFileStatus(checkpointVersion)
+      } else {
+        // If neither deltas nor checkpoints are provided, create a delta for the target version
+        deltaFileStatus(version)
+      }
+    }
+
     new LogSegment(
       logPath,
-      12,
-      deltasFs11To12List,
-      compactionFs11To12List,
-      checkpointFs10List,
-      Optional.empty(),
-      1)
+      version,
+      deltas,
+      compactions,
+      checkpoints,
+      finalDeltaAtEndVersion,
+      lastSeenChecksum)
+  }
+
+  test("constructor -- valid case (non-empty)") {
+    createLogSegmentForTest(
+      version = 12,
+      deltas = deltasFs11To12List,
+      compactions = compactionFs11To12List,
+      checkpoints = checkpointFs10List)
   }
 
   test("constructor -- null arguments => throw") {
     // logPath is null
     intercept[NullPointerException] {
-      new LogSegment(
-        null,
-        1,
-        Collections.emptyList(),
-        Collections.emptyList(),
-        Collections.emptyList(),
-        Optional.empty(),
-        -1)
+      createLogSegmentForTest(
+        logPath = null,
+        version = 1)
     }
     // deltas is null
     intercept[NullPointerException] {
-      new LogSegment(
-        logPath,
-        1,
-        null,
-        Collections.emptyList(),
-        Collections.emptyList(),
-        Optional.empty(),
-        -1)
+      createLogSegmentForTest(
+        version = 1,
+        deltas = null)
     }
     // compactions is null
     intercept[NullPointerException] {
-      new LogSegment(
-        logPath,
-        1,
-        Collections.emptyList(),
-        null,
-        Collections.emptyList(),
-        Optional.empty(),
-        -1)
+      createLogSegmentForTest(
+        version = 1,
+        compactions = null)
     }
     // checkpoints is null
     intercept[NullPointerException] {
-      new LogSegment(
-        logPath,
-        1,
-        Collections.emptyList(),
-        Collections.emptyList(),
-        null,
-        Optional.empty(),
-        -1)
+      createLogSegmentForTest(
+        version = 1,
+        checkpoints = null)
+    }
+    // deltaAtEndVersion is null
+    intercept[NullPointerException] {
+      createLogSegmentForTest(
+        version = 1,
+        deltas = Collections.singletonList(deltaFileStatus(1)),
+        deltaAtEndVersion = null)
+    }
+    // lastSeenChecksum is null
+    intercept[NullPointerException] {
+      createLogSegmentForTest(
+        version = 1,
+        deltas = Collections.singletonList(deltaFileStatus(1)),
+        lastSeenChecksum = null)
     }
   }
 
-  test("constructor -- non-empty deltas or checkpoints with version -1 => throw") {
-    val exMsg1 = intercept[IllegalArgumentException] {
-      new LogSegment(
-        logPath,
-        -1,
-        deltasFs11To12List,
-        Collections.emptyList(),
-        Collections.emptyList(),
-        Optional.empty(),
-        1)
+  test("constructor -- version must be >= 0") {
+    val exMsg = intercept[IllegalArgumentException] {
+      createLogSegmentForTest(
+        version = -1,
+        deltaAtEndVersion = Some(deltaFileStatus(0))
+      ) // dummy value
     }.getMessage
-    assert(exMsg1 === "Version -1 should have no files")
-
-    val exMsg2 = intercept[IllegalArgumentException] {
-      new LogSegment(
-        logPath,
-        -1,
-        Collections.emptyList(),
-        Collections.emptyList(),
-        checkpointFs10List,
-        Optional.empty(),
-        1)
-    }.getMessage
-    assert(exMsg2 === "Version -1 should have no files")
+    assert(exMsg === "version must be >= 0")
   }
 
   test("constructor -- all deltas must be actual delta files") {
     val exMsg = intercept[IllegalArgumentException] {
-      new LogSegment(
-        logPath,
-        12,
-        badJsonsList,
-        Collections.emptyList(),
-        checkpointFs10List,
-        Optional.empty(),
-        1)
+      createLogSegmentForTest(
+        version = 12,
+        deltas = badJsonsList,
+        checkpoints = checkpointFs10List)
     }.getMessage
     assert(exMsg === "deltas must all be actual delta (commit) files")
   }
 
   test("constructor -- all checkpoints must be actual checkpoint files") {
     val exMsg = intercept[IllegalArgumentException] {
-      new LogSegment(
-        logPath,
-        12,
-        deltasFs11To12List,
-        Collections.emptyList(),
-        badCheckpointsList,
-        Optional.empty(),
-        1)
+      createLogSegmentForTest(
+        version = 12,
+        deltas = deltasFs11To12List,
+        checkpoints = badCheckpointsList)
     }.getMessage
     assert(exMsg === "checkpoints must all be actual checkpoint files")
   }
 
-  test("constructor -- if version >= 0 then both deltas and checkpoints cannot be empty") {
+  test("constructor -- deltas and checkpoints cannot be empty") {
     val exMsg = intercept[IllegalArgumentException] {
-      new LogSegment(
-        logPath,
-        12,
-        Collections.emptyList(),
-        Collections.emptyList(),
-        Collections.emptyList(),
-        Optional.empty(),
-        1)
+      createLogSegmentForTest(version = 12)
     }.getMessage
     assert(exMsg === "No files to read")
   }
@@ -169,32 +162,51 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils {
     val checksumAtVersion13 = checksumFileStatus(13)
 
     val exMsg = intercept[IllegalArgumentException] {
-      new LogSegment(
-        logPath,
-        12, // LogSegment version is 12
-        deltasFs11To12List,
-        Collections.emptyList(),
-        checkpointFs10List,
-        Optional.of(checksumAtVersion13), // Checksum version is 13
-        1)
+      createLogSegmentForTest(
+        version = 12, // LogSegment version is 12
+        deltas = deltasFs11To12List,
+        checkpoints = checkpointFs10List,
+        lastSeenChecksum = Optional.of(checksumAtVersion13)
+      ) // Checksum version is 13
     }.getMessage
 
     assert(exMsg.contains(
       "checksum file's version should be less than or equal to logSegment's version"))
   }
 
-  test("constructor -- checksum version must be <= checkpoint version") {
+  test("constructor -- deltaAtEndVersion must match version (checkpoint only)") {
+    val exMsg = intercept[IllegalArgumentException] {
+      createLogSegmentForTest(
+        version = 10,
+        checkpoints = checkpointFs10List,
+        deltaAtEndVersion = Some(deltaFileStatus(9)) // Wrong version - should be 10
+      )
+    }.getMessage
+    assert(exMsg === "deltaAtEndVersion must have version equal to the version of this LogSegment")
+  }
+
+  test("constructor -- deltaAtEndVersion must match version (checkpoint + deltas)") {
+    val exMsg = intercept[IllegalArgumentException] {
+      createLogSegmentForTest(
+        version = 12,
+        deltas = deltasFs11To12List,
+        checkpoints = checkpointFs10List,
+        deltaAtEndVersion = Some(deltaFileStatus(11)) // Wrong version - should be 12
+      )
+    }.getMessage
+    assert(exMsg === "deltaAtEndVersion must have version equal to the version of this LogSegment")
+  }
+
+  test("constructor -- checksum version must be >= checkpoint version") {
     val checksumAtVersion9 = checksumFileStatus(9)
 
     val exMsg = intercept[IllegalArgumentException] {
-      new LogSegment(
-        logPath,
-        12,
-        deltasFs11To12List,
-        Collections.emptyList(),
-        checkpointFs10List, // Checkpoint version is 10
-        Optional.of(checksumAtVersion9), // Checksum version is 9
-        1)
+      createLogSegmentForTest(
+        version = 12,
+        deltas = deltasFs11To12List,
+        checkpoints = checkpointFs10List, // Checkpoint version is 10
+        lastSeenChecksum = Optional.of(checksumAtVersion9)
+      ) // Checksum version is 9
     }.getMessage
 
     assert(exMsg.contains(
@@ -203,42 +215,29 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
   test("constructor -- if deltas non-empty then first delta must equal checkpointVersion + 1") {
     val exMsg = intercept[IllegalArgumentException] {
-      new LogSegment(
-        logPath,
-        12,
-        deltaFs12List,
-        Collections.emptyList(),
-        checkpointFs10List,
-        Optional.empty(),
-        1)
+      createLogSegmentForTest(
+        version = 12,
+        deltas = deltaFs12List,
+        checkpoints = checkpointFs10List)
     }.getMessage
     assert(exMsg === "First delta file version must equal checkpointVersion + 1")
   }
 
   test("constructor -- if deltas non-empty then last delta must equal version") {
     val exMsg = intercept[IllegalArgumentException] {
-      new LogSegment(
-        logPath,
-        12,
-        deltaFs11List,
-        Collections.emptyList(),
-        checkpointFs10List,
-        Optional.empty(),
-        1)
+      createLogSegmentForTest(
+        version = 12,
+        deltas = deltaFs11List,
+        checkpoints = checkpointFs10List)
     }.getMessage
     assert(exMsg === "Last delta file version must equal the version of this LogSegment")
   }
 
   test("constructor -- if no deltas then checkpointVersion must equal version") {
     val exMsg = intercept[IllegalArgumentException] {
-      new LogSegment(
-        logPath,
-        11,
-        Collections.emptyList(),
-        Collections.emptyList(),
-        checkpointFs10List,
-        Optional.empty(),
-        1)
+      createLogSegmentForTest(
+        version = 11,
+        checkpoints = checkpointFs10List)
     }.getMessage
     assert(exMsg ===
       "If there are no deltas, then checkpointVersion must equal the version of this LogSegment")
@@ -247,14 +246,10 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils {
   test("constructor -- deltas not contiguous") {
     val deltas = deltaFileStatuses(Seq(11, 13)).toList.asJava
     val exMsg = intercept[IllegalArgumentException] {
-      new LogSegment(
-        logPath,
-        13,
-        deltas,
-        Collections.emptyList(),
-        checkpointFs10List,
-        Optional.empty(),
-        1)
+      createLogSegmentForTest(
+        version = 13,
+        deltas = deltas,
+        checkpoints = checkpointFs10List)
     }.getMessage
     assert(exMsg === "Delta versions must be contiguous: [11, 13]")
   }
@@ -263,14 +258,10 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils {
     val deltasForDifferentTable =
       deltaFileStatuses(Seq(11, 12), logPath2).toList.asJava
     val ex = intercept[RuntimeException] {
-      new LogSegment(
-        logPath,
-        12,
-        deltasForDifferentTable,
-        Collections.emptyList(),
-        checkpointFs10List,
-        Optional.empty(),
-        1)
+      createLogSegmentForTest(
+        version = 12,
+        deltas = deltasForDifferentTable,
+        checkpoints = checkpointFs10List)
     }
     assert(ex.getMessage.contains("doesn't belong in the transaction log"))
   }
@@ -279,14 +270,11 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils {
     val compactionsForDifferentTable =
       compactedFileStatuses(Seq((11, 12)), logPath2).toList.asJava
     val ex = intercept[RuntimeException] {
-      new LogSegment(
-        logPath,
-        12,
-        deltasFs11To12List,
-        compactionsForDifferentTable,
-        checkpointFs10List,
-        Optional.empty(),
-        1)
+      createLogSegmentForTest(
+        version = 12,
+        deltas = deltasFs11To12List,
+        compactions = compactionsForDifferentTable,
+        checkpoints = checkpointFs10List)
     }
     assert(ex.getMessage.contains("doesn't belong in the transaction log"))
   }
@@ -295,27 +283,20 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils {
     val checkpointsForDifferentTable =
       singularCheckpointFileStatuses(Seq(10), logPath2).toList.asJava
     val ex = intercept[RuntimeException] {
-      new LogSegment(
-        logPath,
-        12,
-        deltasFs11To12List,
-        Collections.emptyList(),
-        checkpointsForDifferentTable,
-        Optional.empty(),
-        1)
+      createLogSegmentForTest(
+        version = 12,
+        deltas = deltasFs11To12List,
+        checkpoints = checkpointsForDifferentTable)
     }
     assert(ex.getMessage.contains("doesn't belong in the transaction log"))
   }
 
   test("toString") {
-    val logSegment = new LogSegment(
-      logPath,
-      12,
-      deltasFs11To12List,
-      Collections.emptyList(),
-      checkpointFs10List,
-      Optional.of(checksumAtVersion10),
-      1)
+    val logSegment = createLogSegmentForTest(
+      version = 12,
+      deltas = deltasFs11To12List,
+      checkpoints = checkpointFs10List,
+      lastSeenChecksum = Optional.of(checksumAtVersion10))
     // scalastyle:off line.size.limit
     val expectedToString =
       """LogSegment {
@@ -328,9 +309,9 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils {
         |  checkpoints=[
         |    FileStatus{path='/fake/path/to/table/_delta_log/00000000000000000010.checkpoint.parquet', size=10, modificationTime=100}
         |  ],
+        |  deltaAtEndVersion=FileStatus{path='/fake/path/to/table/_delta_log/00000000000000000012.json', size=12, modificationTime=120},
         |  lastSeenChecksum=FileStatus{path='/fake/path/to/table/_delta_log/00000000000000000010.crc', size=10, modificationTime=10},
-        |  checkpointVersion=10,
-        |  lastCommitTimestamp=1
+        |  checkpointVersion=10
         |}""".stripMargin
     // scalastyle:on line.size.limit
     assert(logSegment.toString === expectedToString)
@@ -356,14 +337,10 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils {
     val version = deltas.max
     val deltas_list = deltaFileStatuses(deltas).toList.asJava
     val compactions_list = compactedFileStatuses(compactions).toList.asJava
-    val segment = new LogSegment(
-      logPath,
-      version,
-      deltas_list,
-      compactions_list,
-      Collections.emptyList(),
-      Optional.empty(),
-      1)
+    val segment = createLogSegmentForTest(
+      version = version,
+      deltas = deltas_list,
+      compactions = compactions_list)
     val expectedFiles = parseExpectedString(expected)
     assert(segment.allFilesWithCompactionsReversed() === expectedFiles)
   }
@@ -463,36 +440,6 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils {
     }
     assert(ex.getMessage.contains("File (s3://bucket/invalidLogPath/deltafile2) " +
       s"doesn't belong in the transaction log at $tablePath"))
-  }
-
-  test("getDeltaFileForVersion") {
-    val logSegment = new LogSegment(
-      logPath,
-      12,
-      deltasFs11To12List,
-      Collections.emptyList(),
-      checkpointFs10List,
-      Optional.empty(),
-      1)
-
-    // Positive Cases
-    assert(logSegment.getDeltaFileForVersion(11).get() === deltasFs11To12List.get(0)) // first
-    assert(logSegment.getDeltaFileForVersion(12).get() === deltasFs11To12List.get(1)) // last
-
-    // Negative Case
-    assert(!logSegment.getDeltaFileForVersion(0).isPresent)
-    assert(!logSegment.getDeltaFileForVersion(10).isPresent)
-
-    // Illegal Cases
-    val exMsg1 = intercept[IllegalArgumentException] {
-      logSegment.getDeltaFileForVersion(-1)
-    }.getMessage
-    assert(exMsg1 === "deltaVersion must be non-negative")
-
-    val exMsg2 = intercept[IllegalArgumentException] {
-      logSegment.getDeltaFileForVersion(13)
-    }.getMessage
-    assert(exMsg2 === "deltaVersion must be <= logSegment version")
   }
 
 }

@@ -59,7 +59,7 @@ public class LogSegment {
    *   <li>All deltas are valid deltas files
    *   <li>All checkpoints are valid checkpoint files
    *   <li>All checkpoint files have the same version
-   *   <li>All deltas are contiguous and range from {@link #checkpointVersionOpt} to version
+   *   <li>All deltas are contiguous and range from {@link #checkpointVersionOpt} + 1 to version
    *   <li>If no deltas are present then {@link #checkpointVersionOpt} is equal to version
    * </ul>
    *
@@ -69,6 +69,11 @@ public class LogSegment {
    * @param compactions Any found log compactions files that can be used in place of some or all of
    *     the deltas
    * @param checkpoints The checkpoint file(s) to read
+   * @param deltaAtEndVersion The delta file at the end version of this LogSegment. If this
+   *     LogSegment contains only checkpoints (e.g. 10.checkpoint only) then this is the delta at
+   *     that checkpoint version.
+   * @param lastSeenChecksum The most recent checksum file encountered during log directory listing,
+   *     if available.
    */
   public LogSegment(
       Path logPath,
@@ -90,7 +95,7 @@ public class LogSegment {
     requireNonNull(deltaAtEndVersion, "deltaAtEndVersion is null");
     requireNonNull(lastSeenChecksum, "lastSeenChecksum null");
 
-    checkArgument(version >= 0, "version must be non-negative");
+    checkArgument(version >= 0, "version must be >= 0");
     validateDeltasAreDeltas(deltas);
     validateCompactionsAreCompactions(compactions);
     validateCheckpointsAreCheckpoints(checkpoints);
@@ -259,7 +264,7 @@ public class LogSegment {
             + "  checkpoints=[%s\n  ],\n"
             + "  deltaAtEndVersion=%s,\n"
             + "  lastSeenChecksum=%s,\n"
-            + "  checkpointVersion=%s,\n"
+            + "  checkpointVersion=%s\n"
             + "}",
         logPath,
         version,

@@ -1032,8 +1032,8 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
           Seq(deltaFileStatus(2L)).asJava,
           Seq.empty.asJava,
           Seq.empty.asJava,
-          Optional.empty(),
-          0L)),
+          deltaFileStatus(2L),
+          Optional.empty())),
       null, /* logReplay */
       new Protocol(1, 2),
       malformedMetadata,
