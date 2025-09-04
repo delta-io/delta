@@ -19,7 +19,6 @@ package org.apache.spark.sql.delta.commands.convert
 import org.apache.spark.sql.delta.DeltaColumnMapping
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.iceberg.Schema
-import org.apache.iceberg.spark.SparkSchemaUtil
 import org.apache.iceberg.types.TypeUtil
 
 import org.apache.spark.sql.types.{MetadataBuilder, StructType}

@@ -179,7 +179,10 @@ class IcebergTable(
     // Reuse physical names of existing columns.
     val mergedPartitionSchema = DeltaColumnMapping.setPhysicalNames(
       StructType(
-        IcebergPartitionUtil.getPartitionFields(tablePartitionSpec, icebergTable.schema())),
+        IcebergPartitionUtil.getPartitionFields(
+          tablePartitionSpec, icebergTable.schema(), castTimeType
+        )
+      ),
       fieldPathToPhysicalName)
 
     // Assign physical names to new partition columns.
