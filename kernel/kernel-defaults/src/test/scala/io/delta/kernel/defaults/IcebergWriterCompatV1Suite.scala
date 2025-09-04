@@ -504,12 +504,6 @@ class IcebergWriterCompatV1Suite extends AnyFunSuite with WriteUtils
     expectedErrorMessage =
       "Table features [deletionVectors] are incompatible with icebergCompatV2")
 
-  testIncompatibleTableFeature(
-    "rowTracking inactive",
-    tablePropertiesToEnable = Map("delta.feature.rowTracking" -> "supported"),
-    expectedErrorMessage =
-      "Table features [rowTracking] are incompatible with icebergWriterCompatV1")
-
   // defaultColumns is not added to Kernel yet --> throws an error on feature lookup
   testIncompatibleUnsupportedTableFeature(
     "defaultColumns inactive",
@@ -533,7 +527,8 @@ class IcebergWriterCompatV1Suite extends AnyFunSuite with WriteUtils
         "identityColumns",
         "generatedColumns",
         "typeWidening",
-        "typeWidening-preview")
+        "typeWidening-preview",
+        "rowTracking")
         .map(tableFeature => s"delta.feature.$tableFeature" -> "supported")
         .toMap
 

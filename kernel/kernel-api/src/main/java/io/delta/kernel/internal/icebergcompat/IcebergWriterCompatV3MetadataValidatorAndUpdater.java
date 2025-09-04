@@ -107,7 +107,6 @@ public class IcebergWriterCompatV3MetadataValidatorAndUpdater
                   VARIANT_RW_FEATURE,
                   VARIANT_SHREDDING_PREVIEW_RW_FEATURE,
                   VARIANT_RW_PREVIEW_FEATURE,
-                  ROW_TRACKING_W_FEATURE,
                   // Also allow writerV1 features for backward compatibility.
                   //
                   // Note: We already enforce that these features cannot be enabled
