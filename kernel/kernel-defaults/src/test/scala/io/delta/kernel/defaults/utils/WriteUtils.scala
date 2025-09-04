@@ -487,7 +487,7 @@ trait AbstractWriteUtils extends TestUtils with TransactionBuilderSupport {
         tableProperties = Map(key.getKey -> value),
         clock = clock)
     }
-    txn.commit(engine, emptyIterable())
+    commitTransaction(txn, engine, emptyIterable())
 
     val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
     assertMetadataProp(snapshot, key, expectedValue)
@@ -643,7 +643,7 @@ trait AbstractWriteUtils extends TestUtils with TransactionBuilderSupport {
       tablePath: String): SnapshotImpl = {
     // Create table without ICT. Note that this does not add ICT enablement tracking properties.
     val txn1 = getCreateTxn(engine, tablePath, testSchema)
-    txn1.commit(engine, emptyIterable())
+    commitTransaction(txn1, engine, emptyIterable())
 
     // Enable ICT. This should add enablement tracking properties.
     setTablePropAndVerify(
