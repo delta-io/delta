@@ -51,7 +51,7 @@ public class ReplaceTableTransactionBuilderV2Impl implements ReplaceTableTransac
         {
           add(TableConfig.COLUMN_MAPPING_MAX_COLUMN_ID.getKey());
 
-          // Must retail all ICT properties, else a client would not know when ICT was enabled,
+          // Must retain all ICT properties, else a client would not know when ICT was enabled,
           // which could result in a failed query or incorrect results.
           //
           // If ICT is explicitly disabled during REPLACE (or during any operation), we should then
