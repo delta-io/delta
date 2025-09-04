@@ -548,13 +548,13 @@ public class SnapshotManager {
         newVersion,
         System.currentTimeMillis() - logSegmentBuildingStartTimeMillis);
 
-    // If our LogSegment has deltas (allDeltasAfterCheckpoint), we use that timestamp.
+    // If our LogSegment has deltas (allDeltasAfterCheckpoint), we use the last delta.
     // Else, our LogSegment only has a checkpoint, and we have checked above that if there's a
     // checkpoint then the `lazyDeltaAtCheckpointVersionOpt` exists.
-    final long lastCommitTimestamp =
+    final FileStatus deltaAtEndVersion =
         allDeltasAfterCheckpoint.isEmpty()
-            ? lazyDeltaAtCheckpointVersionOpt.get().get().getFileStatus().getModificationTime()
-            : ListUtils.getLast(allDeltasAfterCheckpoint).getFileStatus().getModificationTime();
+            ? lazyDeltaAtCheckpointVersionOpt.get().get().getFileStatus()
+            : ListUtils.getLast(allDeltasAfterCheckpoint).getFileStatus();
 
     return new LogSegment(
         logPath,
@@ -564,8 +564,8 @@ public class SnapshotManager {
             .collect(Collectors.toList()),
         compactionsAfterCheckpoint,
         latestCompleteCheckpointFileStatuses,
-        lastSeenChecksumFile,
-        lastCommitTimestamp);
+        deltaAtEndVersion,
+        lastSeenChecksumFile);
   }
 
   /////////////////////////

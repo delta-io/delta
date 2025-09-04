@@ -97,7 +97,7 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
           logSegment.getCheckpointVersionOpt.get == v)
       case None => assert(!logSegment.getCheckpointVersionOpt.isPresent())
     }
-    assert(expectedLastCommitTimestamp == logSegment.getLastCommitTimestamp)
+    assert(expectedLastCommitTimestamp == logSegment.getDeltaFileAtEndVersion.getModificationTime)
   }
 
   /**

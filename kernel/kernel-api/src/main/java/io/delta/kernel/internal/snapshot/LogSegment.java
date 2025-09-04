@@ -34,35 +34,16 @@ import org.slf4j.LoggerFactory;
 
 public class LogSegment {
 
-  //////////////////////////////////
-  // Static variables and methods //
-  //////////////////////////////////
-
-  public static LogSegment empty(Path logPath) {
-    return new LogSegment(
-        logPath,
-        -1,
-        Collections.emptyList(),
-        Collections.emptyList(),
-        Collections.emptyList(),
-        Optional.empty(),
-        -1);
-  }
-
   private static final Logger logger = LoggerFactory.getLogger(LogSegment.class);
-
-  //////////////////////////////////
-  // Member variables and methods //
-  //////////////////////////////////
 
   private final Path logPath;
   private final long version;
   private final List<FileStatus> deltas;
   private final List<FileStatus> compactions;
   private final List<FileStatus> checkpoints;
+  private final FileStatus deltaAtEndVersion;
   private final Optional<Long> checkpointVersionOpt;
   private final Optional<FileStatus> lastSeenChecksum;
-  private final long lastCommitTimestamp;
   private final List<FileStatus> deltasAndCheckpoints;
   private final Lazy<List<FileStatus>> deltasAndCheckpointsReversed;
   private final Lazy<List<FileStatus>> compactionsReversed;
@@ -78,12 +59,9 @@ public class LogSegment {
    *   <li>All deltas are valid deltas files
    *   <li>All checkpoints are valid checkpoint files
    *   <li>All checkpoint files have the same version
-   *   <li>All deltas are contiguous and range from {@link #checkpointVersionOpt} to version
+   *   <li>All deltas are contiguous and range from {@link #checkpointVersionOpt} + 1 to version
    *   <li>If no deltas are present then {@link #checkpointVersionOpt} is equal to version
    * </ul>
-   *
-   * <p>Notably, this constructor does not guarantee that this LogSegment is complete and fully
-   * describes a Snapshot version. You may use the {@link #isComplete()} method to check this.
    *
    * @param logPath The path to the _delta_log directory
    * @param version The Snapshot version to generate
@@ -91,9 +69,11 @@ public class LogSegment {
    * @param compactions Any found log compactions files that can be used in place of some or all of
    *     the deltas
    * @param checkpoints The checkpoint file(s) to read
-   * @param lastCommitTimestamp The "unadjusted" timestamp of the last commit within this segment.
-   *     By unadjusted, we mean that the commit timestamps may not necessarily be monotonically
-   *     increasing for the commits within this segment.
+   * @param deltaAtEndVersion The delta file at the end version of this LogSegment. If this
+   *     LogSegment contains only checkpoints (e.g. 10.checkpoint only) then this is the delta at
+   *     that checkpoint version.
+   * @param lastSeenChecksum The most recent checksum file encountered during log directory listing,
+   *     if available.
    */
   public LogSegment(
       Path logPath,
@@ -101,8 +81,8 @@ public class LogSegment {
       List<FileStatus> deltas,
       List<FileStatus> compactions,
       List<FileStatus> checkpoints,
-      Optional<FileStatus> lastSeenChecksum,
-      long lastCommitTimestamp) {
+      FileStatus deltaAtEndVersion,
+      Optional<FileStatus> lastSeenChecksum) {
 
     ///////////////////////
     // Input validations //
@@ -112,8 +92,10 @@ public class LogSegment {
     requireNonNull(deltas, "deltas is null");
     requireNonNull(compactions, "compactions is null");
     requireNonNull(checkpoints, "checkpoints is null");
+    requireNonNull(deltaAtEndVersion, "deltaAtEndVersion is null");
     requireNonNull(lastSeenChecksum, "lastSeenChecksum null");
 
+    checkArgument(version >= 0, "version must be >= 0");
     validateDeltasAreDeltas(deltas);
     validateCompactionsAreCompactions(compactions);
     validateCheckpointsAreCheckpoints(checkpoints);
@@ -128,25 +110,22 @@ public class LogSegment {
     validateLastSeenChecksumWithinLogSegmentStartEndVersionRange(
         lastSeenChecksum, version, checkpointVersionOpt);
 
-    if (version != -1) {
-      checkArgument(!deltas.isEmpty() || !checkpoints.isEmpty(), "No files to read");
+    checkArgument(!deltas.isEmpty() || !checkpoints.isEmpty(), "No files to read");
 
-      if (!deltas.isEmpty()) {
-        final List<Long> deltaVersions =
-            deltas.stream()
-                .map(fs -> FileNames.deltaVersion(new Path(fs.getPath())))
-                .collect(Collectors.toList());
-
-        validateFirstDeltaVersionIsCheckpointVersionPlusOne(deltaVersions, checkpointVersionOpt);
-        validateLastDeltaVersionIsLogSegmentVersion(deltaVersions, version);
-        validateDeltaVersionsAreContiguous(deltaVersions);
-        validateCompactionVersionsAreInRange(compactions, version, checkpointVersionOpt);
-      } else {
-        validateCheckpointVersionEqualsLogSegmentVersion(checkpointVersionOpt, version);
-      }
+    if (!deltas.isEmpty()) {
+      final List<Long> deltaVersions =
+          deltas.stream()
+              .map(fs -> FileNames.deltaVersion(new Path(fs.getPath())))
+              .collect(Collectors.toList());
+      validateFirstDeltaVersionIsCheckpointVersionPlusOne(deltaVersions, checkpointVersionOpt);
+      validateLastDeltaVersionIsLogSegmentVersion(deltaVersions, version);
+      validateDeltaVersionsAreContiguous(deltaVersions);
+      validateCompactionVersionsAreInRange(compactions, version, checkpointVersionOpt);
     } else {
-      checkArgument(deltas.isEmpty() && checkpoints.isEmpty(), "Version -1 should have no files");
+      validateCheckpointVersionEqualsLogSegmentVersion(checkpointVersionOpt, version);
     }
+
+    validateDeltaAtEndVersion(version, deltaAtEndVersion);
 
     // Make sure input delta commits (JSON file), checkpoints and log compactions are valid.
     assertLogFilesBelongToTable(
@@ -163,8 +142,8 @@ public class LogSegment {
     this.deltas = deltas;
     this.compactions = compactions;
     this.checkpoints = checkpoints;
+    this.deltaAtEndVersion = deltaAtEndVersion;
     this.lastSeenChecksum = lastSeenChecksum;
-    this.lastCommitTimestamp = lastCommitTimestamp;
     this.deltasAndCheckpoints =
         Stream.concat(checkpoints.stream(), deltas.stream()).collect(Collectors.toList());
 
@@ -185,21 +164,6 @@ public class LogSegment {
   /////////////////
   // Public APIs //
   /////////////////
-
-  /**
-   * @return true if this LogSegment is complete and fully describes a Snapshot version. A partial
-   *     LogSegment is missing some information. We consider an empty LogSegment to be incomplete.
-   */
-  public boolean isComplete() {
-    // A LogSegment is complete if and only if either
-    // (a) It has a checkpoint and has delta versions from checkpointVersion + 1 to version, or
-    // (b) It has no checkpoint and has deltas from 0 to version
-    //
-    // Because we have already done extensive validation in the constructor, all that that remains
-    // to check is whether (1) We have a checkpoint, or (2) We have N + 1 deltas. All other
-    // requirements are taken care of.
-    return version >= 0 && (!checkpoints.isEmpty() || (deltas.size() == version + 1));
-  }
 
   public Path getLogPath() {
     return logPath;
@@ -243,16 +207,16 @@ public class LogSegment {
     return lastSeenChecksum;
   }
 
-  public long getLastCommitTimestamp() {
-    return lastCommitTimestamp;
-  }
-
   /**
-   * @return all deltas (.json) and checkpoint (.checkpoint.parquet) files in this LogSegment, with
-   *     no ordering guarantees.
+   * Returns the Delta file at the end {@code version} of this LogSegment.
+   *
+   * <p>If this LogSegment has checkpoints and deltas, then this is the last delta.
+   *
+   * <p>If this LogSegment has only checkpoints (i.e. 10.checkpoint only) then this is the delta at
+   * that checkpoint version.
    */
-  public List<FileStatus> allLogFilesUnsorted() {
-    return deltasAndCheckpoints;
+  public FileStatus getDeltaFileAtEndVersion() {
+    return deltaAtEndVersion;
   }
 
   /**
@@ -281,17 +245,17 @@ public class LogSegment {
             + "  version=%d,\n"
             + "  deltas=[%s\n  ],\n"
             + "  checkpoints=[%s\n  ],\n"
+            + "  deltaAtEndVersion=%s,\n"
             + "  lastSeenChecksum=%s,\n"
-            + "  checkpointVersion=%s,\n"
-            + "  lastCommitTimestamp=%d\n"
+            + "  checkpointVersion=%s\n"
             + "}",
         logPath,
         version,
         formatList(deltas),
         formatList(checkpoints),
+        deltaAtEndVersion,
         lastSeenChecksum.map(FileStatus::toString).orElse("None"),
-        checkpointVersionOpt.map(String::valueOf).orElse("None"),
-        lastCommitTimestamp);
+        checkpointVersionOpt.map(String::valueOf).orElse("None"));
   }
 
   @Override
@@ -413,6 +377,15 @@ public class LogSegment {
               "If there are no deltas, then checkpointVersion must equal the version "
                   + "of this LogSegment");
         });
+  }
+
+  private void validateDeltaAtEndVersion(long version, FileStatus deltaAtEndVersion) {
+    checkArgument(
+        FileNames.isCommitFile(deltaAtEndVersion.getPath()),
+        "deltaAtEndVersion must be a delta file");
+    checkArgument(
+        FileNames.deltaVersion(deltaAtEndVersion.getPath()) == version,
+        "deltaAtEndVersion must have version equal to the version of this LogSegment");
   }
 
   //////////////////////////

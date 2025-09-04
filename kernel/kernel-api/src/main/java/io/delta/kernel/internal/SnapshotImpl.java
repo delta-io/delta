@@ -130,15 +130,16 @@ public class SnapshotImpl implements Snapshot {
   public long getTimestamp(Engine engine) {
     if (IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata)) {
       if (!inCommitTimestampOpt.isPresent()) {
-        Optional<CommitInfo> commitInfoOpt = CommitInfo.getCommitInfoOpt(engine, logPath, version);
+        final Optional<CommitInfo> commitInfoOpt =
+            CommitInfo.tryReadCommitInfoFromDeltaFile(
+                engine, getLogSegment().getDeltaFileAtEndVersion());
         inCommitTimestampOpt =
             Optional.of(
-                CommitInfo.getRequiredInCommitTimestamp(
-                    commitInfoOpt, String.valueOf(version), dataPath));
+                CommitInfo.extractRequiredIctFromCommitInfoOpt(commitInfoOpt, version, dataPath));
       }
       return inCommitTimestampOpt.get();
     } else {
-      return getLogSegment().getLastCommitTimestamp();
+      return getLogSegment().getDeltaFileAtEndVersion().getModificationTime();
     }
   }
 

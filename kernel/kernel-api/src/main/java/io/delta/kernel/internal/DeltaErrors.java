@@ -474,6 +474,26 @@ public final class DeltaErrors {
         String.format("Required metadata key %s is not present in scan file %s.", entry, filePath));
   }
 
+  public static InvalidTableException tableWithIctMissingCommitInfo(String dataPath, long version) {
+    return new InvalidTableException(
+        dataPath,
+        String.format(
+            "This table has the feature inCommitTimestamp enabled which requires the presence of "
+                + "the CommitInfo action in every commit. However, the CommitInfo action is "
+                + "missing from commit version %d.",
+            version));
+  }
+
+  public static InvalidTableException tableWithIctMissingIct(String dataPath, long version) {
+    return new InvalidTableException(
+        dataPath,
+        String.format(
+            "This table has the feature inCommitTimestamp enabled which requires the presence of "
+                + "inCommitTimestamp in the CommitInfo action. However, this field has not been "
+                + "set in commit version %d.",
+            version));
+  }
+
   /* ------------------------ HELPER METHODS ----------------------------- */
   private static String formatTimestamp(long millisSinceEpochUTC) {
     return new Timestamp(millisSinceEpochUTC).toInstant().toString();
