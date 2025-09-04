@@ -42,6 +42,7 @@ import io.delta.kernel.utils.FileStatus
 
 import org.scalatest.funsuite.AnyFunSuite
 
+// TODO: Have this suite run using both the old and new Table APIs
 class InCommitTimestampSuite extends AnyFunSuite with WriteUtils {
 
   private def removeCommitInfoFromCommit(engine: Engine, version: Long, logPath: Path): Unit = {
@@ -577,6 +578,53 @@ class InCommitTimestampSuite extends AnyFunSuite with WriteUtils {
       assert(ex.getMessage.contains(String.format("Transaction has encountered a conflict and " +
         "can not be committed. Query needs to be re-executed using the latest version of the " +
         "table.")))
+    }
+  }
+
+  test("Disabling ICT removes enablement tracking properties") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // ===== GIVEN =====
+      // Create table without ICT. Note that this does not add ICT enablement tracking properties.
+      val txn1 = getCreateTxn(engine, tablePath, testSchema)
+      txn1.commit(engine, emptyIterable())
+
+      // Enable ICT. This should add enablement tracking properties.
+      setTablePropAndVerify(
+        engine = engine,
+        tablePath = tablePath,
+        isNewTable = false,
+        key = IN_COMMIT_TIMESTAMPS_ENABLED,
+        value = "true",
+        expectedValue = true)
+
+      val snapshotV1 = getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath)
+
+      // Verify enablement properties are present
+      assertMetadataProp(snapshotV1, IN_COMMIT_TIMESTAMPS_ENABLED, true)
+      assertMetadataProp(
+        snapshotV1,
+        IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP,
+        Optional.of(snapshotV1.getTimestamp(engine)))
+      assertMetadataProp(
+        snapshotV1,
+        IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION,
+        Optional.of(1L))
+
+      // ===== WHEN =====
+      // Disable ICT. This should remove enablement tracking properties.
+      setTablePropAndVerify(
+        engine = engine,
+        tablePath = tablePath,
+        isNewTable = false,
+        key = IN_COMMIT_TIMESTAMPS_ENABLED,
+        value = "false",
+        expectedValue = false)
+
+      // ===== THEN =====
+      val snapshotV2 = getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath)
+      assertMetadataProp(snapshotV2, IN_COMMIT_TIMESTAMPS_ENABLED, false)
+      assertHasNoMetadataProp(snapshotV2, IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP)
+      assertHasNoMetadataProp(snapshotV2, IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION)
     }
   }
 }
