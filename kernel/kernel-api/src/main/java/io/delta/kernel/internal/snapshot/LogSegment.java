@@ -220,23 +220,6 @@ public class LogSegment {
   }
 
   /**
-   * Returns the "unadjusted" timestamp of the Delta file at the end {@code version} of this
-   * LogSegment.
-   *
-   * <p>If this LogSegment has checkpoints and Deltas, then this is the filesystem timestamp of the
-   * last delta.
-   *
-   * <p>If this LogSegment has only checkpoints (i.e. 10.checkpoint only) then this is the
-   * filesystem timestamp of the delta at that checkpoint version.
-   *
-   * <p>By unadjusted, we mean that this commit timestamp may not necessarily be monotonically
-   * increasing for the commits within this segment.
-   */
-  public long getDeltaFileTimestampAtEndVersion() {
-    return getDeltaFileAtEndVersion().getModificationTime();
-  }
-
-  /**
    * @return all deltas (.json) and checkpoint (.checkpoint.parquet) files in this LogSegment,
    *     sorted in reverse (00012.json, 00011.json, 00010.checkpoint.parquet) order.
    */

@@ -119,6 +119,8 @@ public class CommitInfo {
    * Returns the `inCommitTimestamp` of delta file at the requested version. Throws an exception if
    * the delta file does not exist or does not have a commitInfo action or if the commitInfo action
    * contains an empty `inCommitTimestamp`.
+   *
+   * <p><strong>WARNING: UNSAFE METHOD</strong> because this assumes that 00N.json is published.
    */
   // TODO: [delta-io/delta#5147] Can't just use the logPath & version on catalogManaged tables.
   public static long unsafeGetRequiredIctFromPublishedDeltaFile(
@@ -143,6 +145,8 @@ public class CommitInfo {
 
   /**
    * Get the CommitInfo action (if available) from the delta file at the given logPath and version.
+   *
+   * <p><strong>WARNING: UNSAFE METHOD</strong> because this assumes that 00N.json is published.
    */
   // TODO: [delta-io/delta#5147] Can't just use the logPath & version on catalogManaged tables.
   public static Optional<CommitInfo> unsafeTryReadCommitInfoFromPublishedDeltaFile(

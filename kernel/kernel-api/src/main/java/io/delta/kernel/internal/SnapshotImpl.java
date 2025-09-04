@@ -139,7 +139,7 @@ public class SnapshotImpl implements Snapshot {
       }
       return inCommitTimestampOpt.get();
     } else {
-      return getLogSegment().getDeltaFileTimestampAtEndVersion();
+      return getLogSegment().getDeltaFileAtEndVersion().getModificationTime();
     }
   }
 
