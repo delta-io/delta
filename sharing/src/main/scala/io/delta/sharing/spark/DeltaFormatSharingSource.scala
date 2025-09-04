@@ -118,9 +118,12 @@ case class DeltaFormatSharingSource(
       throw DeltaErrors.schemaNotSetException
     }
 
+    // Catalog table represents the table's catalog metadata and it's managed by Unity Catalog.
+    // Delta sharing delta log doesn't have it and `localDeltaLog` is not bound to it.
     DeltaSource(
       spark = spark,
       deltaLog = localDeltaLog,
+      catalogTableOpt = None,
       options = new DeltaOptions(parameters, sqlConf),
       snapshotAtSourceInit = snapshotDescriptor,
       metadataPath = metadataPath,

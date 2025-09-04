@@ -351,8 +351,10 @@ class DeltaLog private(
    */
   def getChangeLogFiles(
       startVersion: Long,
-      failOnDataLoss: Boolean = false): Iterator[(Long, FileStatus)] = {
-    val deltasWithVersion = CoordinatedCommitsUtils.commitFilesIterator(this, startVersion)
+      failOnDataLoss: Boolean = false,
+      catalogTableOpt: Option[CatalogTable] = None): Iterator[(Long, FileStatus)] = {
+    val deltasWithVersion = CoordinatedCommitsUtils.commitFilesIterator(
+      this, catalogTableOpt, startVersion)
     // Subtract 1 to ensure that we have the same check for the inclusive startVersion
     var lastSeenVersion = startVersion - 1
     deltasWithVersion.map { case (status, version) =>

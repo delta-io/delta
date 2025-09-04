@@ -42,12 +42,39 @@ public interface SnapshotBuilder {
   /**
    * Configures the builder to resolve the table at a specific version.
    *
+   * <p>This method is mutually exclusive with {@link #atTimestamp(long, Snapshot)}. If both are
+   * called, an {@link IllegalArgumentException} will be thrown.
+   *
    * @param version the version number to resolve to
    * @return a new builder instance configured for the specified version
    */
   SnapshotBuilder atVersion(long version);
 
-  // TODO: atTimestamp
+  /**
+   * Configures the builder to resolve the table at a specific timestamp.
+   *
+   * <p>This returns a Snapshot for the latest version of the table that was committed before or at
+   * the given timestamp. Specifically:
+   *
+   * <ul>
+   *   <li>If a commit version exactly matches the provided timestamp, the snapshot at that version
+   *       is resolved.
+   *   <li>Otherwise, the latest commit version with a timestamp less than the provided one is
+   *       resolved.
+   *   <li>If the provided timestamp is less than the timestamp of any committed version, snapshot
+   *       resolution will fail.
+   *   <li>If the provided timestamp is after (strictly greater than) the timestamp of the latest
+   *       version of the table, snapshot resolution will fail.
+   * </ul>
+   *
+   * <p>This method is mutually exclusive with {@link #atVersion(long)}. If both are called, an
+   * {@link IllegalArgumentException} will be thrown.
+   *
+   * @param millisSinceEpochUTC timestamp to resolve the snapshot for in milliseconds since the unix
+   *     epoch
+   * @return a new builder instance configured for the specified timestamp
+   */
+  SnapshotBuilder atTimestamp(long millisSinceEpochUTC, Snapshot latestSnapshot);
 
   /**
    * Provides a custom committer to use at transaction commit time.

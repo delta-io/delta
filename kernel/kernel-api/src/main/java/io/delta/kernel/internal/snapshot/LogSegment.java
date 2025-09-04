@@ -113,51 +113,20 @@ public class LogSegment {
     requireNonNull(compactions, "compactions is null");
     requireNonNull(checkpoints, "checkpoints is null");
     requireNonNull(lastSeenChecksum, "lastSeenChecksum null");
-    checkArgument(
-        deltas.stream().allMatch(fs -> FileNames.isCommitFile(fs.getPath())),
-        "deltas must all be actual delta (commit) files");
-    checkArgument(
-        compactions.stream().allMatch(fs -> FileNames.isLogCompactionFile(fs.getPath())),
-        "compactions must all be actual log compaction files");
-    checkArgument(
-        checkpoints.stream().allMatch(fs -> FileNames.isCheckpointFile(fs.getPath())),
-        "checkpoints must all be actual checkpoint files");
 
-    checkArgument(
-        compactions.stream()
-            .allMatch(
-                fs -> {
-                  Tuple2<Long, Long> versions = FileNames.logCompactionVersions(fs.getPath());
-                  return versions._1 < versions._2;
-                }),
-        "compactions must have start version less than end version");
+    validateDeltasAreDeltas(deltas);
+    validateCompactionsAreCompactions(compactions);
+    validateCheckpointsAreCheckpoints(checkpoints);
+    validateIndividualCompactionVersions(compactions);
 
     this.checkpointVersionOpt =
         checkpoints.isEmpty()
             ? Optional.empty()
             : Optional.of(FileNames.checkpointVersion(new Path(checkpoints.get(0).getPath())));
 
-    checkArgument(
-        checkpoints.stream()
-            .map(fs -> FileNames.checkpointVersion(new Path(fs.getPath())))
-            .allMatch(v -> checkpointVersionOpt.get().equals(v)),
-        "All checkpoint files must have the same version");
-
-    lastSeenChecksum.ifPresent(
-        checksumFile -> {
-          long checksumVersion = FileNames.checksumVersion(new Path(checksumFile.getPath()));
-          checkArgument(
-              checksumVersion <= version,
-              "checksum file's version should be less than or equal to logSegment's version");
-          checkpointVersionOpt.ifPresent(
-              checkpointVersion ->
-                  checkArgument(
-                      checksumVersion >= checkpointVersion,
-                      "checksum file's version %s should be greater than or equal to "
-                          + "checkpoint version %s",
-                      checksumVersion,
-                      checkpointVersion));
-        });
+    validateCheckpointVersionsAreSame(checkpoints, checkpointVersionOpt);
+    validateLastSeenChecksumWithinLogSegmentStartEndVersionRange(
+        lastSeenChecksum, version, checkpointVersionOpt);
 
     if (version != -1) {
       checkArgument(!deltas.isEmpty() || !checkpoints.isEmpty(), "No files to read");
@@ -168,48 +137,12 @@ public class LogSegment {
                 .map(fs -> FileNames.deltaVersion(new Path(fs.getPath())))
                 .collect(Collectors.toList());
 
-        // Check the first delta version
-        this.checkpointVersionOpt.ifPresent(
-            checkpointVersion -> {
-              checkArgument(
-                  deltaVersions.get(0) == checkpointVersion + 1,
-                  "First delta file version must equal checkpointVersion + 1");
-            });
-
-        // Check the last delta version
-        checkArgument(
-            ListUtils.getLast(deltaVersions) == version,
-            "Last delta file version must equal the version of this LogSegment");
-
-        // Ensure the delta versions are contiguous
-        for (int i = 1; i < deltaVersions.size(); i++) {
-          if (deltaVersions.get(i) != deltaVersions.get(i - 1) + 1) {
-            throw new IllegalArgumentException(
-                String.format("Delta versions must be contiguous: %s", deltaVersions));
-          }
-        }
-
-        // Check that our compactions are in range
-        checkArgument(
-            compactions.stream()
-                .allMatch(
-                    fs -> {
-                      Tuple2<Long, Long> versions = FileNames.logCompactionVersions(fs.getPath());
-                      boolean checkpointVersionOkay =
-                          checkpointVersionOpt
-                              .map(checkpointVersion -> versions._1 > checkpointVersion)
-                              .orElse(true);
-                      return checkpointVersionOkay && versions._2 <= version;
-                    }),
-            "compactions must have start version > checkpointVersion AND end version <= version");
+        validateFirstDeltaVersionIsCheckpointVersionPlusOne(deltaVersions, checkpointVersionOpt);
+        validateLastDeltaVersionIsLogSegmentVersion(deltaVersions, version);
+        validateDeltaVersionsAreContiguous(deltaVersions);
+        validateCompactionVersionsAreInRange(compactions, version, checkpointVersionOpt);
       } else {
-        this.checkpointVersionOpt.ifPresent(
-            checkpointVersion -> {
-              checkArgument(
-                  checkpointVersion == version,
-                  "If there are no deltas, then checkpointVersion must equal the version "
-                      + "of this LogSegment");
-            });
+        validateCheckpointVersionEqualsLogSegmentVersion(checkpointVersionOpt, version);
       }
     } else {
       checkArgument(deltas.isEmpty() && checkpoints.isEmpty(), "Version -1 should have no files");
@@ -234,40 +167,17 @@ public class LogSegment {
     this.lastCommitTimestamp = lastCommitTimestamp;
     this.deltasAndCheckpoints =
         Stream.concat(checkpoints.stream(), deltas.stream()).collect(Collectors.toList());
-    this.deltasAndCheckpointsReversed =
-        new Lazy<>(
-            () ->
-                deltasAndCheckpoints.stream()
-                    .sorted(
-                        Comparator.comparing((FileStatus a) -> new Path(a.getPath()).getName())
-                            .reversed())
-                    .collect(Collectors.toList()));
 
-    // we sort by the end version. since we work backward through the list, so this is the same as
+    this.deltasAndCheckpointsReversed = lazyLoadDeltasAndCheckpointsReversed(deltasAndCheckpoints);
+
+    // We sort by the end version. since we work backward through the list, so this is the same as
     // lexicographic, except when a compaction has a bigger range, which makes it "better", so we
     // prefer it
-    this.compactionsReversed =
-        new Lazy<>(
-            () ->
-                compactions.stream()
-                    .sorted(
-                        Comparator.comparing(
-                                (FileStatus a) -> FileNames.logCompactionVersions(a.getPath())._2)
-                            .reversed())
-                    .collect(Collectors.toList()));
+    this.compactionsReversed = lazyLoadCompactionsReversed(compactions);
 
     this.deltasCheckpointsCompactionsReversed =
-        new Lazy<>(
-            () -> {
-              if (compactions.isEmpty()) {
-                return deltasAndCheckpointsReversed.get();
-              } else {
-                LogCompactionResolver resolver =
-                    new LogCompactionResolver(
-                        deltasAndCheckpointsReversed.get(), compactionsReversed.get());
-                return resolver.resolveFiles();
-              }
-            });
+        lazyLoadDeltasCheckpointsCompactionsReversed(
+            deltasAndCheckpointsReversed, compactionsReversed, compactions);
 
     logger.debug("Created LogSegment: {}", this);
   }
@@ -390,6 +300,164 @@ public class LogSegment {
     return Objects.hash(deltas, checkpoints, compactions);
   }
 
+  //////////////////////////////
+  // Input validation methods //
+  //////////////////////////////
+
+  private void validateDeltasAreDeltas(List<FileStatus> deltas) {
+    checkArgument(
+        deltas.stream().allMatch(fs -> FileNames.isCommitFile(fs.getPath())),
+        "deltas must all be actual delta (commit) files");
+  }
+
+  private void validateCompactionsAreCompactions(List<FileStatus> compactions) {
+    checkArgument(
+        compactions.stream().allMatch(fs -> FileNames.isLogCompactionFile(fs.getPath())),
+        "compactions must all be actual log compaction files");
+  }
+
+  private void validateCheckpointsAreCheckpoints(List<FileStatus> checkpoints) {
+    checkArgument(
+        checkpoints.stream().allMatch(fs -> FileNames.isCheckpointFile(fs.getPath())),
+        "checkpoints must all be actual checkpoint files");
+  }
+
+  private void validateIndividualCompactionVersions(List<FileStatus> compactions) {
+    checkArgument(
+        compactions.stream()
+            .allMatch(
+                fs -> {
+                  Tuple2<Long, Long> versions = FileNames.logCompactionVersions(fs.getPath());
+                  return versions._1 < versions._2;
+                }),
+        "compactions must have start version less than end version");
+  }
+
+  private void validateCheckpointVersionsAreSame(
+      List<FileStatus> checkpoints, Optional<Long> checkpointVersionOpt) {
+    if (!checkpoints.isEmpty()) {
+      checkArgument(
+          checkpoints.stream()
+              .map(fs -> FileNames.checkpointVersion(new Path(fs.getPath())))
+              .allMatch(v -> checkpointVersionOpt.get().equals(v)),
+          "All checkpoint files must have the same version");
+    }
+  }
+
+  private void validateLastSeenChecksumWithinLogSegmentStartEndVersionRange(
+      Optional<FileStatus> lastSeenChecksum, long version, Optional<Long> checkpointVersionOpt) {
+    lastSeenChecksum.ifPresent(
+        checksumFile -> {
+          long checksumVersion = FileNames.checksumVersion(new Path(checksumFile.getPath()));
+          checkArgument(
+              checksumVersion <= version,
+              "checksum file's version should be less than or equal to logSegment's version");
+          checkpointVersionOpt.ifPresent(
+              checkpointVersion ->
+                  checkArgument(
+                      checksumVersion >= checkpointVersion,
+                      "checksum file's version %s should be greater than or equal to "
+                          + "checkpoint version %s",
+                      checksumVersion,
+                      checkpointVersion));
+        });
+  }
+
+  private void validateFirstDeltaVersionIsCheckpointVersionPlusOne(
+      List<Long> deltaVersions, Optional<Long> checkpointVersionOpt) {
+    checkpointVersionOpt.ifPresent(
+        checkpointVersion -> {
+          checkArgument(
+              deltaVersions.get(0) == checkpointVersion + 1,
+              "First delta file version must equal checkpointVersion + 1");
+        });
+  }
+
+  private void validateLastDeltaVersionIsLogSegmentVersion(List<Long> deltaVersions, long version) {
+    checkArgument(
+        ListUtils.getLast(deltaVersions) == version,
+        "Last delta file version must equal the version of this LogSegment");
+  }
+
+  private void validateDeltaVersionsAreContiguous(List<Long> deltaVersions) {
+    for (int i = 1; i < deltaVersions.size(); i++) {
+      if (deltaVersions.get(i) != deltaVersions.get(i - 1) + 1) {
+        throw new IllegalArgumentException(
+            String.format("Delta versions must be contiguous: %s", deltaVersions));
+      }
+    }
+  }
+
+  private void validateCompactionVersionsAreInRange(
+      List<FileStatus> compactions, long version, Optional<Long> checkpointVersionOpt) {
+    checkArgument(
+        compactions.stream()
+            .allMatch(
+                fs -> {
+                  Tuple2<Long, Long> versions = FileNames.logCompactionVersions(fs.getPath());
+                  boolean checkpointVersionOkay =
+                      checkpointVersionOpt
+                          .map(checkpointVersion -> versions._1 > checkpointVersion)
+                          .orElse(true);
+                  return checkpointVersionOkay && versions._2 <= version;
+                }),
+        "compactions must have start version > checkpointVersion AND end version <= version");
+  }
+
+  private void validateCheckpointVersionEqualsLogSegmentVersion(
+      Optional<Long> checkpointVersionOpt, long version) {
+    checkpointVersionOpt.ifPresent(
+        checkpointVersion -> {
+          checkArgument(
+              checkpointVersion == version,
+              "If there are no deltas, then checkpointVersion must equal the version "
+                  + "of this LogSegment");
+        });
+  }
+
+  //////////////////////////
+  // Other helper methods //
+  //////////////////////////
+
+  private Lazy<List<FileStatus>> lazyLoadDeltasAndCheckpointsReversed(
+      List<FileStatus> deltasAndCheckpoints) {
+    return new Lazy<>(
+        () ->
+            deltasAndCheckpoints.stream()
+                .sorted(
+                    Comparator.comparing((FileStatus a) -> new Path(a.getPath()).getName())
+                        .reversed())
+                .collect(Collectors.toList()));
+  }
+
+  private Lazy<List<FileStatus>> lazyLoadCompactionsReversed(List<FileStatus> compactions) {
+    return new Lazy<>(
+        () ->
+            compactions.stream()
+                .sorted(
+                    Comparator.comparing(
+                            (FileStatus a) -> FileNames.logCompactionVersions(a.getPath())._2)
+                        .reversed())
+                .collect(Collectors.toList()));
+  }
+
+  private Lazy<List<FileStatus>> lazyLoadDeltasCheckpointsCompactionsReversed(
+      Lazy<List<FileStatus>> deltasAndCheckpointsReversed,
+      Lazy<List<FileStatus>> compactionsReversed,
+      List<FileStatus> compactions) {
+    return new Lazy<>(
+        () -> {
+          if (compactions.isEmpty()) {
+            return deltasAndCheckpointsReversed.get();
+          } else {
+            LogCompactionResolver resolver =
+                new LogCompactionResolver(
+                    deltasAndCheckpointsReversed.get(), compactionsReversed.get());
+            return resolver.resolveFiles();
+          }
+        });
+  }
+
   private String formatList(List<FileStatus> list) {
     if (list.isEmpty()) {
       return "";
@@ -414,6 +482,10 @@ public class LogSegment {
       }
     }
   }
+
+  ////////////////////
+  // Helper classes //
+  ////////////////////
 
   // Class to resolve the final list of deltas + log compactions to return
   private class LogCompactionResolver {
