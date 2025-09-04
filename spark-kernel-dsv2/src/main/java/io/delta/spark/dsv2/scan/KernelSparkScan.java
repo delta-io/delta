@@ -37,7 +37,9 @@ public class KernelSparkScan implements org.apache.spark.sql.connector.read.Scan
     this.sparkReadSchema = requireNonNull(sparkReadSchema, "sparkReadSchema is null");
     this.kernelSparkScanContext =
         new KernelSparkScanContext(
-            requireNonNull(kernelScan, "kernelScan is null"), requireNonNull(hadoopConf));
+            requireNonNull(kernelScan, "kernelScan is null"),
+            sparkReadSchema,
+            requireNonNull(hadoopConf));
   }
 
   @Override
