@@ -22,7 +22,7 @@ import java.util.UUID
 import org.apache.spark.sql.delta.DeltaOperations.Truncate
 import org.apache.spark.sql.delta.actions.{Action, AddFile, DeletionVectorDescriptor, RemoveFile}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
-import org.apache.spark.sql.delta.commands.AlterTableDropFeatureDeltaCommand
+import org.apache.spark.sql.delta.commands.{AlterTableDropFeatureDeltaCommand, DeletionVectorUtils}
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
@@ -32,6 +32,7 @@ import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkConf
+import org.apache.spark.internal.config.ConfigEntry
 import org.apache.spark.sql.{DataFrame, QueryTest, RuntimeConfig, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions.{col, lit}
@@ -93,6 +94,30 @@ trait DeletionVectorsTestUtils extends QueryTest with SharedSparkSession with De
 
   def enableDeletionVectorsForAllSupportedOperations(spark: SparkSession): Unit =
     enableDeletionVectors(spark, delete = true, update = true)
+
+  def deletionVectorsEnabledInCommand(
+      sparkSession: SparkSession,
+      deltaLog: DeltaLog,
+      dmlConfig: ConfigEntry[Boolean]): Boolean =
+    DeletionVectorUtils.deletionVectorsWritable(deltaLog.update()) &&
+      sparkSession.sessionState.conf.getConf(dmlConfig)
+
+  /** Whether persistent Deletion Vectors are enabled in MERGE command. */
+  def deletionVectorsEnabledInMerge(spark: SparkSession, deltaLog: DeltaLog): Boolean = {
+    deletionVectorsEnabledInCommand(spark, deltaLog,
+      DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS)
+  }
+
+  /** Whether persistent Deletion Vectors are enabled in UPDATE command. */
+  def deletionVectorsEnabledInUpdate(spark: SparkSession, deltaLog: DeltaLog): Boolean =
+    deletionVectorsEnabledInCommand(spark, deltaLog,
+      DeltaSQLConf.UPDATE_USE_PERSISTENT_DELETION_VECTORS)
+
+  /** Whether persistent Deletion Vectors are enabled in DELETE command. */
+  def deletionVectorsEnabledInDelete(spark: SparkSession, deltaLog: DeltaLog): Boolean = {
+    deletionVectorsEnabledInCommand(
+      spark, deltaLog, DeltaSQLConf.DELETE_USE_PERSISTENT_DELETION_VECTORS)
+  }
 
   def testWithDVs(testName: String, testTags: org.scalatest.Tag*)(thunk: => Unit): Unit = {
     test(testName, testTags : _*) {
