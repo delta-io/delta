@@ -26,6 +26,7 @@ import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.{KernelException, MaxCommitRetryLimitReachedException, TableNotFoundException}
 import io.delta.kernel.expressions.{Column, Literal}
 import io.delta.kernel.internal.{SnapshotImpl, TableConfig, TableImpl}
+import io.delta.kernel.internal.TableConfig._
 import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.types.{IntegerType, StringType, StructType}
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
@@ -511,6 +512,34 @@ abstract class DeltaReplaceTableSuite extends DeltaReplaceTableSuiteBase {
         tablePath,
         schema = new StructType()
           .add("col1", IntegerType.INTEGER))
+    }
+  }
+
+  test("REPLACE TABLE preserves ICT enablement tracking properties") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val snapshotV1 = createTableThenEnableIctAndVerify(engine, tablePath)
+      val ictEnablementTimestamp = snapshotV1.getTimestamp(engine)
+
+      checkReplaceTable(
+        engine,
+        tablePath,
+        expectedTableProperties = Some(Map(
+          IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true",
+          IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.getKey -> ictEnablementTimestamp.toString,
+          IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.getKey -> "1")))
+    }
+  }
+
+  test("REPLACE TABLE removes ICT enablement tracking properties when explicitly disabling ICT") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createTableThenEnableIctAndVerify(engine, tablePath)
+
+      checkReplaceTable(
+        engine,
+        tablePath,
+        tableProperties = Map(IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "false"),
+        expectedTableProperties = Some(Map(
+          IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "false")))
     }
   }
 }

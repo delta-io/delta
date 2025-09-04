@@ -633,4 +633,40 @@ trait AbstractWriteUtils extends TestUtils with TransactionBuilderSupport {
       actualClusteringCols === expectedClusteringCols,
       s"Expected clustering columns: $expectedClusteringCols, but got: $actualClusteringCols")
   }
+
+  /**
+   * A very particular utility that is used in both InCommitTimestampSuite and
+   * DeltaReplaceTableSuite.
+   */
+  protected def createTableThenEnableIctAndVerify(
+      engine: Engine,
+      tablePath: String): SnapshotImpl = {
+    // Create table without ICT. Note that this does not add ICT enablement tracking properties.
+    val txn1 = getCreateTxn(engine, tablePath, testSchema)
+    txn1.commit(engine, emptyIterable())
+
+    // Enable ICT. This should add enablement tracking properties.
+    setTablePropAndVerify(
+      engine = engine,
+      tablePath = tablePath,
+      isNewTable = false,
+      key = TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED,
+      value = "true",
+      expectedValue = true)
+
+    val snapshotV1 = getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath)
+
+    // Verify enablement properties are present
+    assertMetadataProp(snapshotV1, TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED, true)
+    assertMetadataProp(
+      snapshotV1,
+      TableConfig.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP,
+      Optional.of(snapshotV1.getTimestamp(engine)))
+    assertMetadataProp(
+      snapshotV1,
+      TableConfig.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION,
+      Optional.of(1L))
+
+    snapshotV1
+  }
 }
