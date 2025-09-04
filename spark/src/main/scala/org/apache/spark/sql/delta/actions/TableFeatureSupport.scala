@@ -555,9 +555,7 @@ object DropTableFeatureUtils extends DeltaLogging {
     def checkpointAndVerify(snapshot: Snapshot): Boolean = {
       try {
         log.checkpoint(snapshot)
-        val upperBoundVersion = Some(CheckpointInstance(version = snapshot.version + 1))
-        val lastVerifiedCheckpoint = log.findLastCompleteCheckpointBefore(upperBoundVersion)
-        lastVerifiedCheckpoint.exists(_.version == snapshot.version)
+        log.checkpointExistsAtVersion(snapshot.version)
       } catch {
         case NonFatal(e) =>
           recordDeltaEvent(
