@@ -27,26 +27,17 @@ import java.util.*;
 import java.util.stream.Collectors;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.paths.SparkPath;
-import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.connector.read.*;
 import org.apache.spark.sql.execution.datasources.*;
-import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat;
-import org.apache.spark.sql.execution.datasources.parquet.ParquetUtils;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
-import scala.Function1;
-import scala.Option;
 import scala.collection.JavaConverters;
 
-/**
- * Spark Scan implementation backed by Delta Kernel.
- *
- * <p>Created on Driver and provides access to batch and streaming scanning capabilities.
- */
-public class SparkScan implements Scan, Batch, SupportsReportStatistics {
+/** Spark DSV2 Scan implementation backed by Delta Kernel. */
+public class SparkScan implements Scan, SupportsReportStatistics {
 
   private final String tableName;
   private final StructType readDataSchema;
@@ -94,7 +85,16 @@ public class SparkScan implements Scan, Batch, SupportsReportStatistics {
 
   @Override
   public Batch toBatch() {
-    return this;
+    return new SparkBatch(
+        tableName,
+        dataSchema,
+        partitionSchema,
+        readDataSchema,
+        partitionedFiles,
+        pushedToKernelFilters,
+        dataFilters,
+        totalBytes,
+        hadoopConf);
   }
 
   @Override
@@ -121,64 +121,6 @@ public class SparkScan implements Scan, Batch, SupportsReportStatistics {
         return OptionalLong.empty();
       }
     };
-  }
-
-  @Override
-  public boolean equals(Object obj) {
-    if (this == obj) return true;
-    if (!(obj instanceof SparkScan)) return false;
-
-    SparkScan that = (SparkScan) obj;
-    return Objects.equals(this.tableName, that.tableName)
-        && Objects.equals(this.readSchema(), that.readSchema())
-        && Arrays.equals(this.pushedToKernelFilters, that.pushedToKernelFilters)
-        && Arrays.equals(this.dataFilters, that.dataFilters);
-  }
-
-  @Override
-  public int hashCode() {
-    int result = tableName.hashCode();
-    result = 31 * result + readSchema().hashCode();
-    result = 31 * result + Arrays.hashCode(pushedToKernelFilters);
-    result = 31 * result + Arrays.hashCode(dataFilters);
-    return result;
-  }
-
-  @Override
-  public InputPartition[] planInputPartitions() {
-    ensurePlanned();
-    SparkSession sparkSession = SparkSession.active();
-    Long maxSplitBytes = calculateMaxSplitBytes(sparkSession);
-
-    scala.collection.Seq<FilePartition> filePartitions =
-        FilePartition$.MODULE$.getFilePartitions(
-            sparkSession, JavaConverters.asScalaBuffer(partitionedFiles).toSeq(), maxSplitBytes);
-    return JavaConverters.seqAsJavaList(filePartitions).toArray(new InputPartition[0]);
-  }
-
-  @Override
-  public PartitionReaderFactory createReaderFactory() {
-    boolean enableVectorizedReader =
-        ParquetUtils.isBatchReadSupportedForSchema(sqlConf, readSchema());
-
-    scala.collection.immutable.Map<String, String> options =
-        scala.collection.immutable.Map$.MODULE$
-            .<String, String>empty()
-            .updated(
-                FileFormat$.MODULE$.OPTION_RETURNING_BATCH(),
-                String.valueOf(enableVectorizedReader));
-    Function1<PartitionedFile, scala.collection.Iterator<InternalRow>> readFunc =
-        new ParquetFileFormat()
-            .buildReaderWithPartitionValues(
-                SparkSession.active(),
-                dataSchema,
-                partitionSchema,
-                readDataSchema,
-                JavaConverters.asScalaBuffer(Arrays.asList(dataFilters)).toSeq(),
-                options,
-                hadoopConf);
-
-    return new SparkReaderFactory(readFunc, enableVectorizedReader);
   }
 
   private InternalRow getPartitionRow(MapValue partitionValues) {
@@ -208,22 +150,7 @@ public class SparkScan implements Scan, Batch, SupportsReportStatistics {
         JavaConverters.asScalaIterator(Arrays.asList(values).iterator()).toSeq());
   }
 
-  private Long calculateMaxSplitBytes(SparkSession sparkSession) {
-    long defaultMaxSplitBytes = sqlConf.filesMaxPartitionBytes();
-    long openCostInBytes = sqlConf.filesOpenCostInBytes();
-    Option<Object> minPartitionNumOption = sqlConf.filesMinPartitionNum();
-
-    int minPartitionNum =
-        minPartitionNumOption.isDefined()
-            ? (Integer) minPartitionNumOption.get()
-            : sparkSession.leafNodeDefaultParallelism();
-    long calculatedTotalBytes = totalBytes + partitionedFiles.size() * openCostInBytes;
-    long bytesPerCore = calculatedTotalBytes / minPartitionNum;
-
-    return Math.min(defaultMaxSplitBytes, Math.max(openCostInBytes, bytesPerCore));
-  }
-
-  private void planPartitions() {
+  private void getScanFiles() {
     Engine tableEngine = DefaultEngine.create(hadoopConf);
     Iterator<io.delta.kernel.data.FilteredColumnarBatch> addFiles =
         kernelScan.getScanFiles(tableEngine);
@@ -257,7 +184,7 @@ public class SparkScan implements Scan, Batch, SupportsReportStatistics {
 
   private synchronized void ensurePlanned() {
     if (!planned) {
-      planPartitions();
+      getScanFiles();
       planned = true;
     }
   }
