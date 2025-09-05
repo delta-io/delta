@@ -30,9 +30,7 @@ import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 
-/**
- * DataSource V2 Table implementation for Delta Lake using the Delta Kernel API.
- */
+/** DataSource V2 Table implementation for Delta Lake using the Delta Kernel API. */
 public class SparkTable implements Table, SupportsRead {
 
   private static final Set<TableCapability> CAPABILITIES =
@@ -63,7 +61,8 @@ public class SparkTable implements Table, SupportsRead {
     this.hadoopConf = requireNonNull(hadoopConf, "hadoop conf is null");
 
     this.schema = SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema());
-    this.partColNames = Collections.unmodifiableList(new ArrayList<>(snapshot.getPartitionColumnNames()));
+    this.partColNames =
+        Collections.unmodifiableList(new ArrayList<>(snapshot.getPartitionColumnNames()));
 
     final Set<String> partitionColumnSet = new HashSet<>(partColNames);
     final List<StructField> dataFields = new ArrayList<>();
