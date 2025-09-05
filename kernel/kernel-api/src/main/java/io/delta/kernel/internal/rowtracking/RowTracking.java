@@ -23,8 +23,7 @@ import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
-import io.delta.kernel.types.FieldMetadata;
-import io.delta.kernel.types.LongType;
+import io.delta.kernel.types.MetadataColumnSpec;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.utils.CloseableIterable;
 import io.delta.kernel.utils.CloseableIterator;
@@ -36,33 +35,6 @@ import java.util.stream.Collectors;
 
 /** A collection of helper methods for working with row tracking. */
 public class RowTracking {
-  // TODO: Migrate this API to the unified metadata column API once it is available.
-  /**
-   * The name of the row ID metadata column. When present this column must be populated with the
-   * unique ID of each row.
-   */
-  public static String METADATA_ROW_ID_COLUMN_NAME = "_metadata.row_id";
-
-  public static StructField METADATA_ROW_ID_COLUMN =
-      new StructField(
-          METADATA_ROW_ID_COLUMN_NAME,
-          LongType.LONG,
-          false,
-          FieldMetadata.builder().putBoolean(StructField.IS_METADATA_COLUMN_KEY, true).build());
-
-  /**
-   * The name of the row commit version metadata column. When present this column must be populated
-   * with the commit version of each row.
-   */
-  public static String METADATA_ROW_COMMIT_VERSION_COLUMN_NAME = "_metadata.row_commit_version";
-
-  public static StructField METADATA_ROW_COMMIT_VERSION_COLUMN =
-      new StructField(
-          METADATA_ROW_COMMIT_VERSION_COLUMN_NAME,
-          LongType.LONG,
-          false,
-          FieldMetadata.builder().putBoolean(StructField.IS_METADATA_COLUMN_KEY, true).build());
-
   private RowTracking() {
     // Empty constructor to prevent instantiation of this class
   }
@@ -75,8 +47,9 @@ public class RowTracking {
    * @return true if the field is a row tracking column, false otherwise
    */
   public static boolean isRowTrackingColumn(StructField field) {
-    return field.getName().equals(METADATA_ROW_ID_COLUMN_NAME)
-        || field.getName().equals(METADATA_ROW_COMMIT_VERSION_COLUMN_NAME);
+    return field.isMetadataColumn()
+        && (field.getMetadataColumnSpec() == MetadataColumnSpec.ROW_ID
+            || field.getMetadataColumnSpec() == MetadataColumnSpec.ROW_COMMIT_VERSION);
   }
 
   /**
