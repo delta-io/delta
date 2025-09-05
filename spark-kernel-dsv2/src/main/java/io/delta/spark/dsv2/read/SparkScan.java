@@ -22,6 +22,7 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.utils.CloseableIterator;
+import java.io.IOException;
 import java.time.ZoneId;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -49,7 +50,9 @@ public class SparkScan implements Scan, SupportsReportStatistics {
   private final Configuration hadoopConf;
   private final SQLConf sqlConf;
   private final ZoneId zoneId;
-  private List<PartitionedFile> partitionedFiles = new ArrayList<>();
+
+  // Planned input files and stats
+  private final List<PartitionedFile> partitionedFiles = new ArrayList<>();
   private long totalBytes = 0L;
   private volatile boolean planned = false;
 
@@ -63,28 +66,35 @@ public class SparkScan implements Scan, SupportsReportStatistics {
       io.delta.kernel.Scan kernelScan,
       Configuration hadoopConf) {
 
-    this.tableName = tableName;
-    this.dataSchema = dataSchema;
-    this.partitionSchema = partitionSchema;
-    this.readDataSchema = readDataSchema;
-    this.pushedToKernelFilters = pushedToKernelFilters;
-    this.dataFilters = dataFilters;
-    this.kernelScan = kernelScan;
-    this.hadoopConf = hadoopConf;
+    this.tableName = Objects.requireNonNull(tableName, "tableName");
+    this.dataSchema = Objects.requireNonNull(dataSchema, "dataSchema");
+    this.partitionSchema = Objects.requireNonNull(partitionSchema, "partitionSchema");
+    this.readDataSchema = Objects.requireNonNull(readDataSchema, "readDataSchema");
+    this.pushedToKernelFilters =
+        pushedToKernelFilters == null ? new Predicate[0] : pushedToKernelFilters.clone();
+    this.dataFilters = dataFilters == null ? new Filter[0] : dataFilters.clone();
+    this.kernelScan = Objects.requireNonNull(kernelScan, "kernelScan");
+    this.hadoopConf = Objects.requireNonNull(hadoopConf, "hadoopConf");
     this.sqlConf = SQLConf.get();
     this.zoneId = ZoneId.of(sqlConf.sessionLocalTimeZone());
   }
 
+  /**
+   * Read schema for the scan, which is the projection of data columns followed by partition
+   * columns.
+   */
   @Override
   public StructType readSchema() {
-    List<StructField> fields = new ArrayList<>();
-    fields.addAll(Arrays.asList(readDataSchema.fields()));
-    fields.addAll(Arrays.asList(partitionSchema.fields()));
+    final List<StructField> fields =
+        new ArrayList<>(readDataSchema.fields().length + partitionSchema.fields().length);
+    Collections.addAll(fields, readDataSchema.fields());
+    Collections.addAll(fields, partitionSchema.fields());
     return new StructType(fields.toArray(new StructField[0]));
   }
 
   @Override
   public Batch toBatch() {
+    ensurePlanned();
     return new SparkBatch(
         tableName,
         dataSchema,
@@ -99,12 +109,13 @@ public class SparkScan implements Scan, SupportsReportStatistics {
 
   @Override
   public String description() {
-    return String.format(
-        "PushedFilters: [%s], DataFilters: [%s]",
+    final String pushed =
         Arrays.stream(pushedToKernelFilters)
             .map(Object::toString)
-            .collect(Collectors.joining(", ")),
-        Arrays.stream(dataFilters).map(Object::toString).collect(Collectors.joining(", ")));
+            .collect(Collectors.joining(", "));
+    final String data =
+        Arrays.stream(dataFilters).map(Object::toString).collect(Collectors.joining(", "));
+    return String.format(Locale.ROOT, "PushedFilters: [%s], DataFilters: [%s]", pushed, data);
   }
 
   @Override
@@ -118,73 +129,96 @@ public class SparkScan implements Scan, SupportsReportStatistics {
 
       @Override
       public OptionalLong numRows() {
+        // Row count is unknown at planning time.
         return OptionalLong.empty();
       }
     };
   }
 
+  /**
+   * Build the partition {@link InternalRow} from kernel partition values by casting them to the
+   * desired Spark types using the session time zone for temporal types.
+   */
   private InternalRow getPartitionRow(MapValue partitionValues) {
-    assert partitionValues.getSize() == partitionSchema.fields().length
+    final int numPartCols = partitionSchema.fields().length;
+    assert partitionValues.getSize() == numPartCols
         : String.format(
+            Locale.ROOT,
             "Partition values size from add file %d != partition columns size %d",
-            partitionValues.getSize(), partitionSchema.fields().length);
+            partitionValues.getSize(),
+            numPartCols);
 
-    Map<String, String> partitionValueMap = new HashMap<>();
-    for (int idx = 0; idx < partitionValues.getSize(); idx++) {
-      String key = partitionValues.getKeys().getString(idx);
-      String value = partitionValues.getValues().getString(idx);
-      partitionValueMap.put(key, value);
+    final Object[] values = new Object[numPartCols];
+
+    // Build field name -> index map once
+    final Map<String, Integer> fieldIndex = new HashMap<>(numPartCols);
+    for (int i = 0; i < numPartCols; i++) {
+      fieldIndex.put(partitionSchema.fields()[i].name(), i);
+      values[i] = null;
     }
 
-    Object[] values = new Object[partitionSchema.fields().length];
-    for (int i = 0; i < partitionSchema.fields().length; i++) {
-      StructField field = partitionSchema.fields()[i];
-      String value = partitionValueMap.get(field.name());
-      if (value == null) {
-        values[i] = null;
-      } else {
-        values[i] = PartitioningUtils.castPartValueToDesiredType(field.dataType(), value, zoneId);
+    // Fill values in a single pass over partitionValues
+    for (int idx = 0; idx < partitionValues.getSize(); idx++) {
+      final String key = partitionValues.getKeys().getString(idx);
+      final String strVal = partitionValues.getValues().getString(idx);
+      final Integer pos = fieldIndex.get(key);
+      if (pos != null) {
+        final StructField field = partitionSchema.fields()[pos];
+        values[pos] =
+            (strVal == null)
+                ? null
+                : PartitioningUtils.castPartValueToDesiredType(field.dataType(), strVal, zoneId);
       }
     }
     return InternalRow.fromSeq(
         JavaConverters.asScalaIterator(Arrays.asList(values).iterator()).toSeq());
   }
 
-  private void getScanFiles() {
-    Engine tableEngine = DefaultEngine.create(hadoopConf);
-    Iterator<io.delta.kernel.data.FilteredColumnarBatch> addFiles =
+  /**
+   * Plan the files to scan by materializing {@link PartitionedFile}s and aggregating size stats.
+   * Ensures all iterators are closed to avoid resource leaks.
+   */
+  private void planScanFiles() {
+    final Engine tableEngine = DefaultEngine.create(hadoopConf);
+    final Iterator<io.delta.kernel.data.FilteredColumnarBatch> scanFileBatches =
         kernelScan.getScanFiles(tableEngine);
 
-    String[] locations = new String[0];
-    scala.collection.immutable.Map<String, Object> otherConstantMetadataColumnValues =
+    final String[] locations = new String[0];
+    final scala.collection.immutable.Map<String, Object> otherConstantMetadataColumnValues =
         scala.collection.immutable.Map$.MODULE$.empty();
 
-    while (addFiles.hasNext()) {
-      CloseableIterator<Row> addFileRowIter = addFiles.next().getRows();
-      while (addFileRowIter.hasNext()) {
-        Row parquetRow = addFileRowIter.next();
-        AddFile addFile = new AddFile(parquetRow.getStruct(0));
+    while (scanFileBatches.hasNext()) {
+      final io.delta.kernel.data.FilteredColumnarBatch batch = scanFileBatches.next();
 
-        PartitionedFile partitionedFile =
-            new PartitionedFile(
-                getPartitionRow(addFile.getPartitionValues()),
-                SparkPath.fromUrlString(addFile.getPath()),
-                0L,
-                addFile.getSize(),
-                locations,
-                addFile.getModificationTime(),
-                addFile.getSize(),
-                otherConstantMetadataColumnValues);
+      try (CloseableIterator<Row> addFileRowIter = batch.getRows()) {
+        while (addFileRowIter.hasNext()) {
+          final Row row = addFileRowIter.next();
+          final AddFile addFile = new AddFile(row.getStruct(0));
 
-        totalBytes += addFile.getSize();
-        partitionedFiles.add(partitionedFile);
+          final PartitionedFile partitionedFile =
+              new PartitionedFile(
+                  getPartitionRow(addFile.getPartitionValues()),
+                  SparkPath.fromUrlString(addFile.getPath()),
+                  0L,
+                  addFile.getSize(),
+                  locations,
+                  addFile.getModificationTime(),
+                  addFile.getSize(),
+                  otherConstantMetadataColumnValues);
+
+          totalBytes += addFile.getSize();
+          partitionedFiles.add(partitionedFile);
+        }
+      } catch (IOException e) {
+        throw new RuntimeException(e);
       }
     }
   }
 
+  /** Ensure the scan is planned exactly once in a thread\-safe manner. */
   private synchronized void ensurePlanned() {
     if (!planned) {
-      getScanFiles();
+      planScanFiles();
       planned = true;
     }
   }
