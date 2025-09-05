@@ -43,7 +43,7 @@ class TablePropertiesTransactionBuilderV2Suite extends TablePropertiesSuiteBase
     }
   }
 
-  test("create table (V2 only) - withTableProperties throws on key collision") {
+  test("create table (V2 only) - withTableProperties throws on same key with different value") {
     withTempDir { tempFile =>
       val tablePath = tempFile.getAbsolutePath
 
@@ -55,6 +55,21 @@ class TablePropertiesTransactionBuilderV2Suite extends TablePropertiesSuiteBase
         createBuilder.withTableProperties(Map("key2" -> "different_value").asJava)
       }
       assert(ex.getMessage.contains("Table property 'key2' has already been set"))
+    }
+  }
+
+  test("create table (V2 only) - withTableProperties allows setting same key with same value") {
+    withTempDir { tempFile =>
+      val tablePath = tempFile.getAbsolutePath
+
+      TableManager
+        .buildCreateTableTransaction(tablePath, testSchema, "engineInfo")
+        .withTableProperties(Map("key1" -> "value1", "key2" -> "value2").asJava)
+        .withTableProperties(Map("key2" -> "value2").asJava) // Same value, should not throw
+        .build(defaultEngine)
+        .commit(defaultEngine, emptyIterable())
+
+      assertHasProp(tablePath, Map("key1" -> "value1", "key2" -> "value2"))
     }
   }
 }

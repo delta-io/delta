@@ -65,14 +65,18 @@ public class CreateTableTransactionBuilderImpl implements CreateTableTransaction
       return this;
     }
 
-    // Case 2: Properties have already been set; ensure no duplicates
+    // Case 2: Properties have already been set; ensure no duplicates with different values
     final Map<String, String> existingProperties = this.tableProperties.get();
     for (String key : normalizedNewProperties.keySet()) {
-      if (existingProperties.containsKey(key)) {
-        throw new IllegalArgumentException(
-            String.format(
-                "Table property '%s' has already been set. Existing value: '%s', New value: '%s'",
-                key, existingProperties.get(key), normalizedNewProperties.get(key)));
+      final String existingValue = existingProperties.get(key);
+      if (existingValue != null) {
+        final String newValue = normalizedNewProperties.get(key);
+        if (!Objects.equals(existingValue, newValue)) {
+          throw new IllegalArgumentException(
+              String.format(
+                  "Table property '%s' has already been set. Existing value: '%s', New value: '%s'",
+                  key, existingValue, newValue));
+        }
       }
     }
 
@@ -147,6 +151,11 @@ public class CreateTableTransactionBuilderImpl implements CreateTableTransaction
   @VisibleForTesting
   public Optional<Map<String, String>> getTablePropertiesOpt() {
     return tableProperties;
+  }
+
+  @VisibleForTesting
+  public Optional<Committer> getCommitterOpt() {
+    return userProvidedCommitter;
   }
 
   private void throwIfTableAlreadyExists(Engine engine, String tablePath) {
