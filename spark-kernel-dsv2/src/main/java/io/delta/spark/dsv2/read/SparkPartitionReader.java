@@ -20,38 +20,66 @@ import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.connector.read.PartitionReader;
 import org.apache.spark.sql.execution.datasources.FilePartition;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
+import org.apache.spark.sql.execution.datasources.RecordReaderIterator;
 import scala.Function1;
 import scala.collection.Iterator;
-import scala.collection.Iterator$;
 
 public class SparkPartitionReader<T> implements PartitionReader<T> {
+  // Function that produces a Spark RecordReaderIterator for a given file.
   private final Function1<PartitionedFile, Iterator<InternalRow>> readFunc;
   private final FilePartition partition;
+
+  // Index of the next file to read within the partition.
   private int currentFileIndex = 0;
-  private Iterator<T> currentIterator = (Iterator<T>) Iterator$.MODULE$.empty();
+
+  // Spark's readers return RecordReaderIterator for both row and columnar modes.
+  // Keep a reference so it can be closed when advancing to the next file.
+  private RecordReaderIterator<T> currentIterator = null;
 
   public SparkPartitionReader(
       Function1<PartitionedFile, Iterator<InternalRow>> readFunc, FilePartition partition) {
-    this.readFunc = readFunc;
-    this.partition = partition;
-    ;
+    this.readFunc = java.util.Objects.requireNonNull(readFunc, "readFunc");
+    this.partition = java.util.Objects.requireNonNull(partition, "partition");
   }
 
   @Override
-  public boolean next() {
-    while (!currentIterator.hasNext() && currentFileIndex < partition.files().length) {
-      PartitionedFile file = partition.files()[currentFileIndex];
-      currentIterator = (Iterator<T>) readFunc.apply(file);
-      currentFileIndex++;
+  public boolean next() throws IOException {
+    // Advance to the next available record, opening readers as needed and closing exhausted ones.
+    while (true) {
+      if (currentIterator != null && currentIterator.hasNext()) {
+        return true;
+      }
+
+      if (currentIterator != null) {
+        currentIterator.close();
+        currentIterator = null;
+      }
+
+      if (currentFileIndex >= partition.files().length) {
+        return false;
+      }
+
+      final PartitionedFile file = partition.files()[currentFileIndex++];
+      @SuppressWarnings("unchecked")
+      RecordReaderIterator<T> it = (RecordReaderIterator<T>) readFunc.apply(file);
+      currentIterator = it;
     }
-    return currentIterator.hasNext();
   }
 
   @Override
   public T get() {
+    if (currentIterator == null) {
+      throw new IllegalStateException("No current record. Call next() before get().");
+    }
+    // RecordReaderIterator.next() returns the current record and advances the iterator.
     return currentIterator.next();
   }
 
   @Override
-  public void close() throws IOException {}
+  public void close() throws IOException {
+    if (currentIterator != null) {
+      currentIterator.close();
+      currentIterator = null;
+    }
+  }
 }
