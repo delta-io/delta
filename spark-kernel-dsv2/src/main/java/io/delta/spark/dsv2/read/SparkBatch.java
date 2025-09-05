@@ -50,7 +50,7 @@ public class SparkBatch implements Batch {
   private final Configuration hadoopConf;
   private final SQLConf sqlConf;
   private final long totalBytes;
-  private List<PartitionedFile> partitionedFiles = new ArrayList<>();
+  private final List<PartitionedFile> partitionedFiles;
 
   public SparkBatch(
       String tableName,
@@ -63,22 +63,28 @@ public class SparkBatch implements Batch {
       long totalBytes,
       Configuration hadoopConf) {
 
-    this.tableName = tableName;
-    this.dataSchema = dataSchema;
-    this.partitionSchema = partitionSchema;
-    this.readDataSchema = readDataSchema;
-    this.partitionedFiles = partitionedFiles;
-    this.pushedToKernelFilters = pushedToKernelFilters;
-    this.dataFilters = dataFilters;
+    this.tableName = Objects.requireNonNull(tableName, "tableName");
+    this.dataSchema = Objects.requireNonNull(dataSchema, "dataSchema");
+    this.partitionSchema = Objects.requireNonNull(partitionSchema, "partitionSchema");
+    this.readDataSchema = Objects.requireNonNull(readDataSchema, "readDataSchema");
+    this.partitionedFiles =
+        java.util.Collections.unmodifiableList(
+            new ArrayList<>(Objects.requireNonNull(partitionedFiles, "partitionedFiles")));
+    this.pushedToKernelFilters =
+        pushedToKernelFilters != null
+            ? Arrays.copyOf(pushedToKernelFilters, pushedToKernelFilters.length)
+            : new Predicate[0];
+    this.dataFilters =
+        dataFilters != null ? Arrays.copyOf(dataFilters, dataFilters.length) : new Filter[0];
     this.totalBytes = totalBytes;
-    this.hadoopConf = hadoopConf;
+    this.hadoopConf = Objects.requireNonNull(hadoopConf, "hadoopConf");
     this.sqlConf = SQLConf.get();
   }
 
   @Override
   public InputPartition[] planInputPartitions() {
     SparkSession sparkSession = SparkSession.active();
-    Long maxSplitBytes = calculateMaxSplitBytes(sparkSession);
+    long maxSplitBytes = calculateMaxSplitBytes(sparkSession);
 
     scala.collection.Seq<FilePartition> filePartitions =
         FilePartition$.MODULE$.getFilePartitions(
@@ -122,7 +128,7 @@ public class SparkBatch implements Batch {
         && Objects.equals(this.partitionSchema, that.partitionSchema)
         && Arrays.equals(this.pushedToKernelFilters, that.pushedToKernelFilters)
         && Arrays.equals(this.dataFilters, that.dataFilters)
-        && Objects.equals(partitionedFiles.size(), that.partitionedFiles.size());
+        && partitionedFiles.size() == that.partitionedFiles.size();
   }
 
   @Override
@@ -136,16 +142,19 @@ public class SparkBatch implements Batch {
     return result;
   }
 
-  private Long calculateMaxSplitBytes(SparkSession sparkSession) {
+  private long calculateMaxSplitBytes(SparkSession sparkSession) {
     long defaultMaxSplitBytes = sqlConf.filesMaxPartitionBytes();
     long openCostInBytes = sqlConf.filesOpenCostInBytes();
     Option<Object> minPartitionNumOption = sqlConf.filesMinPartitionNum();
 
     int minPartitionNum =
         minPartitionNumOption.isDefined()
-            ? (Integer) minPartitionNumOption.get()
+            ? ((Number) minPartitionNumOption.get()).intValue()
             : sparkSession.leafNodeDefaultParallelism();
-    long calculatedTotalBytes = totalBytes + partitionedFiles.size() * openCostInBytes;
+    if (minPartitionNum <= 0) {
+      minPartitionNum = 1;
+    }
+    long calculatedTotalBytes = totalBytes + (long) partitionedFiles.size() * openCostInBytes;
     long bytesPerCore = calculatedTotalBytes / minPartitionNum;
 
     return Math.min(defaultMaxSplitBytes, Math.max(openCostInBytes, bytesPerCore));
