@@ -542,4 +542,19 @@ abstract class DeltaReplaceTableSuite extends DeltaReplaceTableSuiteBase {
           IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "false")))
     }
   }
+
+  test("REPLACE TABLE can enable ICT") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createEmptyTable(engine, tablePath, testSchema)
+
+      checkReplaceTable(
+        engine,
+        tablePath,
+        tableProperties = Map(IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true"),
+        expectedTableProperties = Some(Map(
+          IN_COMMIT_TIMESTAMPS_ENABLED.getKey -> "true",
+          IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.getKey -> "__check_exists__",
+          IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.getKey -> "1")))
+    }
+  }
 }
