@@ -47,10 +47,10 @@ public final class StructType extends DataType {
             .collect(Collectors.toList()));
 
     // Ensure that there are no duplicate metadata columns at the top level
-    Set<MetadataColumn> seenMetadataCols = new HashSet<>();
+    Set<MetadataColumnSpec> seenMetadataCols = new HashSet<>();
     for (StructField field : fields) {
       if (field.isMetadataColumn()) {
-        MetadataColumn colType = field.getMetadataColumnType();
+        MetadataColumnSpec colType = field.getMetadataColumnSpec();
         if (seenMetadataCols.contains(colType)) {
           throw new IllegalArgumentException(
               String.format("Duplicate metadata column %s found in struct type", colType));
@@ -91,8 +91,8 @@ public final class StructType extends DataType {
     return add(new StructField(name, dataType, nullable, metadata));
   }
 
-  /** Add a predefined metadata column of {@link MetadataColumn} to the struct type. */
-  public StructType addMetadataColumn(String name, MetadataColumn colType) {
+  /** Add a predefined metadata column of {@link MetadataColumnSpec} to the struct type. */
+  public StructType addMetadataColumn(String name, MetadataColumnSpec colType) {
     return add(StructField.createMetadataColumn(name, colType));
   }
 
@@ -117,21 +117,21 @@ public final class StructType extends DataType {
     return fieldAndOrdinal != null ? fieldAndOrdinal._2 : -1;
   }
 
-  /** @return the index of the metadata column of the given type, or -1 if not found */
-  public int indexOf(MetadataColumn colType) {
+  /** @return the index of the metadata column of the given spec, or -1 if not found */
+  public int indexOf(MetadataColumnSpec spec) {
     // We only allow each metadata column type to appear at most once in the schema and only at top
     // level (i.e., not nested).
     for (int i = 0; i < fields.size(); i++) {
-      if (colType.equals(fields.get(i).getMetadataColumnType())) {
+      if (spec.equals(fields.get(i).getMetadataColumnSpec())) {
         return i;
       }
     }
     return -1; // Not found
   }
 
-  /** @return true if the struct type contains a metadata column of the given type */
-  public boolean contains(MetadataColumn colType) {
-    return indexOf(colType) >= 0;
+  /** @return true if the struct type contains a metadata column of the given spec */
+  public boolean contains(MetadataColumnSpec spec) {
+    return indexOf(spec) >= 0;
   }
 
   public StructField get(String fieldName) {

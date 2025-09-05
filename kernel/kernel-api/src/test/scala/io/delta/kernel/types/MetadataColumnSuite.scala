@@ -24,7 +24,7 @@ class MetadataColumnSuite extends AnyFunSuite with MetadataColumnTestUtils {
     val schema = new StructType()
       .add("number", IntegerType.INTEGER)
       .add("name", StringType.STRING)
-      .addMetadataColumn("_metadata.row_index", MetadataColumn.ROW_INDEX)
+      .addMetadataColumn("_metadata.row_index", MetadataColumnSpec.ROW_INDEX)
 
     // We compare using addMetadataColumn() against manually adding the expected metadata columns
     // as provided by MetadataColumnTestUtils
@@ -40,16 +40,16 @@ class MetadataColumnSuite extends AnyFunSuite with MetadataColumnTestUtils {
     val schema = new StructType()
       .add("number", IntegerType.INTEGER)
       .add("name", StringType.STRING)
-      .addMetadataColumn("_metadata.row_index", MetadataColumn.ROW_INDEX)
+      .addMetadataColumn("_metadata.row_index", MetadataColumnSpec.ROW_INDEX)
 
     // Adding the same metadata column should fail
     val e = intercept[IllegalArgumentException] {
-      schema.addMetadataColumn("some other name", MetadataColumn.ROW_INDEX)
+      schema.addMetadataColumn("some other name", MetadataColumnSpec.ROW_INDEX)
     }
     assert(e.getMessage.contains("Duplicate metadata column row_index found in struct type"))
 
     // Adding a different metadata column should not fail
-    val updated = schema.addMetadataColumn("_metadata.row_id", MetadataColumn.ROW_ID)
+    val updated = schema.addMetadataColumn("_metadata.row_id", MetadataColumnSpec.ROW_ID)
     val expected = new StructType()
       .add("number", IntegerType.INTEGER)
       .add("name", StringType.STRING)
@@ -65,7 +65,7 @@ class MetadataColumnSuite extends AnyFunSuite with MetadataColumnTestUtils {
     val e1 = intercept[IllegalArgumentException] {
       schema.add(new StructField(
         "struct",
-        new StructType().addMetadataColumn("row_index", MetadataColumn.ROW_INDEX),
+        new StructType().addMetadataColumn("row_index", MetadataColumnSpec.ROW_INDEX),
         false))
     }
     assert(
@@ -77,7 +77,7 @@ class MetadataColumnSuite extends AnyFunSuite with MetadataColumnTestUtils {
         "struct",
         new StructType().add(new StructField(
           "inner_struct",
-          new StructType().addMetadataColumn("row_index", MetadataColumn.ROW_INDEX),
+          new StructType().addMetadataColumn("row_index", MetadataColumnSpec.ROW_INDEX),
           false)),
         false))
     }
@@ -90,7 +90,7 @@ class MetadataColumnSuite extends AnyFunSuite with MetadataColumnTestUtils {
         "map",
         new MapType(
           StringType.STRING,
-          new StructType().addMetadataColumn("row_index", MetadataColumn.ROW_INDEX),
+          new StructType().addMetadataColumn("row_index", MetadataColumnSpec.ROW_INDEX),
           false),
         false))
     }
@@ -102,7 +102,7 @@ class MetadataColumnSuite extends AnyFunSuite with MetadataColumnTestUtils {
       schema.add(new StructField(
         "array",
         new ArrayType(
-          new StructType().addMetadataColumn("row_index", MetadataColumn.ROW_INDEX),
+          new StructType().addMetadataColumn("row_index", MetadataColumnSpec.ROW_INDEX),
           false),
         false))
     }

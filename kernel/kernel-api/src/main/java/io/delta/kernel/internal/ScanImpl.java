@@ -42,7 +42,7 @@ import io.delta.kernel.internal.skipping.DataSkippingUtils;
 import io.delta.kernel.internal.util.*;
 import io.delta.kernel.metrics.ScanReport;
 import io.delta.kernel.metrics.SnapshotReport;
-import io.delta.kernel.types.MetadataColumn;
+import io.delta.kernel.types.MetadataColumnSpec;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
@@ -252,8 +252,8 @@ public class ScanImpl implements Scan {
 
     if (protocol.getReaderFeatures().contains("deletionVectors")
         && physicalFields.stream()
-            .map(StructField::getMetadataColumnType)
-            .noneMatch(MetadataColumn.ROW_INDEX::equals)) {
+            .map(StructField::getMetadataColumnSpec)
+            .noneMatch(MetadataColumnSpec.ROW_INDEX::equals)) {
       // If the row index column is not already present, add it to the physical read schema
       physicalFields.add(SchemaUtils.asInternalColumn(StructField.DEFAULT_ROW_INDEX_COLUMN));
     }

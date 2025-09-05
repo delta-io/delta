@@ -177,7 +177,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
       val schemaWithMetadataCol =
-        testSchema.addMetadataColumn("_metadata.row_index", MetadataColumn.ROW_INDEX)
+        testSchema.addMetadataColumn("_metadata.row_index", MetadataColumnSpec.ROW_INDEX)
 
       val ex = intercept[IllegalArgumentException] {
         getCreateTxn(engine, tablePath, schemaWithMetadataCol)

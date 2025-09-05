@@ -173,18 +173,18 @@ public final class MaterializedRowTrackingColumn {
       throw DeltaErrors.missingRowTrackingColumnRequested(logicalField.getName());
     }
 
-    if (logicalField.getMetadataColumnType() == MetadataColumn.ROW_ID) {
+    if (logicalField.getMetadataColumnSpec() == MetadataColumnSpec.ROW_ID) {
       List<StructField> physicalFields = new ArrayList<>(2);
       physicalFields.add(
           new StructField(
               MATERIALIZED_ROW_ID.getPhysicalColumnName(metadata.getConfiguration()),
               LongType.LONG,
               true /* nullable */));
-      if (!logicalSchema.contains(MetadataColumn.ROW_INDEX)) {
+      if (!logicalSchema.contains(MetadataColumnSpec.ROW_INDEX)) {
         physicalFields.add(SchemaUtils.asInternalColumn(StructField.DEFAULT_ROW_INDEX_COLUMN));
       }
       return physicalFields;
-    } else if (logicalField.getMetadataColumnType() == MetadataColumn.ROW_COMMIT_VERSION) {
+    } else if (logicalField.getMetadataColumnSpec() == MetadataColumnSpec.ROW_COMMIT_VERSION) {
       return Collections.singletonList(
           new StructField(
               MATERIALIZED_ROW_COMMIT_VERSION.getPhysicalColumnName(metadata.getConfiguration()),
@@ -230,7 +230,7 @@ public final class MaterializedRowTrackingColumn {
               scanFile,
               rowIdColumnName,
               exprHandler,
-              logicalSchema.at(logicalSchema.indexOf(MetadataColumn.ROW_ID)),
+              logicalSchema.at(logicalSchema.indexOf(MetadataColumnSpec.ROW_ID)),
               physicalSchema,
               rowIdOrdinal);
     }
@@ -245,7 +245,7 @@ public final class MaterializedRowTrackingColumn {
               scanFile,
               rowCommitVersionColumnName,
               exprHandler,
-              logicalSchema.at(logicalSchema.indexOf(MetadataColumn.ROW_COMMIT_VERSION)),
+              logicalSchema.at(logicalSchema.indexOf(MetadataColumnSpec.ROW_COMMIT_VERSION)),
               physicalSchema,
               commitVersionOrdinal);
     }
@@ -269,7 +269,10 @@ public final class MaterializedRowTrackingColumn {
                     DeltaErrors.rowTrackingMetadataMissingInFile(
                         "baseRowId", InternalScanFileUtils.getFilePath(scanFile)));
     String rowIndexMetadataColName =
-        dataBatch.getSchema().at(dataBatch.getSchema().indexOf(MetadataColumn.ROW_INDEX)).getName();
+        dataBatch
+            .getSchema()
+            .at(dataBatch.getSchema().indexOf(MetadataColumnSpec.ROW_INDEX))
+            .getName();
     Expression rowIdExpr =
         new ScalarExpression(
             "COALESCE",

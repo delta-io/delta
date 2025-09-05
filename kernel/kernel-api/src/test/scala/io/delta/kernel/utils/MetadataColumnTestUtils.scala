@@ -15,13 +15,13 @@
  */
 package io.delta.kernel.utils
 
-import io.delta.kernel.types.{MetadataColumn, StructField}
+import io.delta.kernel.types.{MetadataColumnSpec, StructField}
 import io.delta.kernel.types.StructField.createMetadataColumn
 
 trait MetadataColumnTestUtils {
   val ROW_INDEX: StructField =
-    createMetadataColumn("_metadata.row_index", MetadataColumn.ROW_INDEX)
-  val ROW_ID: StructField = createMetadataColumn("_metadata.row_id", MetadataColumn.ROW_ID)
+    createMetadataColumn("_metadata.row_index", MetadataColumnSpec.ROW_INDEX)
+  val ROW_ID: StructField = createMetadataColumn("_metadata.row_id", MetadataColumnSpec.ROW_ID)
   val ROW_COMMIT_VERSION: StructField =
-    createMetadataColumn("_metadata.row_commit_version", MetadataColumn.ROW_COMMIT_VERSION)
+    createMetadataColumn("_metadata.row_commit_version", MetadataColumnSpec.ROW_COMMIT_VERSION)
 }

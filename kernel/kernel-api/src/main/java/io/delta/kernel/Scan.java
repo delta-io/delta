@@ -32,7 +32,7 @@ import io.delta.kernel.internal.rowtracking.MaterializedRowTrackingColumn;
 import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
 import io.delta.kernel.internal.util.PartitionUtils;
 import io.delta.kernel.internal.util.Tuple2;
-import io.delta.kernel.types.MetadataColumn;
+import io.delta.kernel.types.MetadataColumnSpec;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
@@ -198,7 +198,7 @@ public interface Scan {
         if (dv == null) {
           selectionVector = Optional.empty();
         } else {
-          int rowIndexOrdinal = nextDataBatch.getSchema().indexOf(MetadataColumn.ROW_INDEX);
+          int rowIndexOrdinal = nextDataBatch.getSchema().indexOf(MetadataColumnSpec.ROW_INDEX);
           if (rowIndexOrdinal == -1) {
             throw new IllegalArgumentException(
                 "Row index column is not present in the data read from the Parquet file.");

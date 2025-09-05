@@ -17,27 +17,31 @@
 package io.delta.kernel.types;
 
 /**
- * Enumeration of metadata column types supported by Delta Kernel.
+ * Enumeration of metadata columns recognized by Delta Kernel.
  *
  * <p>Metadata columns provide additional information about rows in a Delta table.
  */
-public enum MetadataColumn {
-  ROW_INDEX("row_index"),
-  ROW_ID("row_id"),
-  ROW_COMMIT_VERSION("row_commit_version");
+public enum MetadataColumnSpec {
+  ROW_INDEX("row_index", LongType.LONG, false),
+  ROW_ID("row_id", LongType.LONG, false),
+  ROW_COMMIT_VERSION("row_commit_version", LongType.LONG, false);
 
-  private final String textValue;
+  public final String textValue;
+  public final DataType dataType;
+  public final boolean nullable;
 
-  MetadataColumn(String textValue) {
+  MetadataColumnSpec(String textValue, DataType dataType, boolean nullable) {
     this.textValue = textValue;
+    this.dataType = dataType;
+    this.nullable = nullable;
   }
 
   public String toString() {
     return textValue;
   }
 
-  public static MetadataColumn fromString(String text) {
-    for (MetadataColumn type : MetadataColumn.values()) {
+  public static MetadataColumnSpec fromString(String text) {
+    for (MetadataColumnSpec type : MetadataColumnSpec.values()) {
       if (type.textValue.equalsIgnoreCase(text)) {
         return type;
       }

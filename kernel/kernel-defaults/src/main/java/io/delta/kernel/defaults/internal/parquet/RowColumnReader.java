@@ -79,7 +79,7 @@ class RowColumnReader extends GroupConverter implements ParquetColumnReaders.Bas
               ? findSubFieldType(fileSchema, field, parquetFieldIdToTypeMap)
               : null;
       if (typeFromFile == null) {
-        if (MetadataColumn.ROW_INDEX.equals(field.getMetadataColumnType())) {
+        if (MetadataColumnSpec.ROW_INDEX.equals(field.getMetadataColumnSpec())) {
           checkArgument(
               field.getDataType() instanceof LongType,
               "row index metadata column must be type long");

@@ -16,7 +16,7 @@
 
 package io.delta.kernel.types;
 
-import static io.delta.kernel.types.MetadataColumn.*;
+import static io.delta.kernel.types.MetadataColumnSpec.*;
 
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.exceptions.KernelException;
@@ -37,9 +37,9 @@ public class StructField {
 
   /**
    * The existence of this key indicates that a column is a metadata column and its values indicates
-   * what kind of {@link MetadataColumn} it is.
+   * what kind of {@link MetadataColumnSpec} it is.
    */
-  public static final String METADATA_TYPE_KEY = "delta.metadataType";
+  public static final String METADATA_SPEC_KEY = "delta.metadataSpec";
 
   /**
    * Indicates that a column was requested for internal computations and should not be returned to
@@ -55,7 +55,7 @@ public class StructField {
    * populated with row index of each row when reading from Parquet.
    */
   public static StructField DEFAULT_ROW_INDEX_COLUMN =
-      createMetadataColumn(DEFAULT_ROW_INDEX_COLUMN_NAME, MetadataColumn.ROW_INDEX);
+      createMetadataColumn(DEFAULT_ROW_INDEX_COLUMN_NAME, MetadataColumnSpec.ROW_INDEX);
 
   public static final String COLLATIONS_METADATA_KEY = "__COLLATIONS";
   public static final String FROM_TYPE_KEY = "fromType";
@@ -64,38 +64,38 @@ public class StructField {
   public static final String DELTA_TYPE_CHANGES_KEY = "delta.typeChanges";
 
   /**
-   * Creates a metadata column of the given {@code colType} with the given {@code name}.
+   * Creates a metadata column of the given {@code colSpec} with the given {@code name}.
    *
    * @param name Name of the metadata column
-   * @param colType Type of the metadata column
+   * @param colSpec Type of the metadata column
    * @return A StructField representing the metadata column
    */
-  public static StructField createMetadataColumn(String name, MetadataColumn colType) {
-    switch (colType) {
+  public static StructField createMetadataColumn(String name, MetadataColumnSpec colSpec) {
+    switch (colSpec) {
       case ROW_INDEX:
         return new StructField(
             name,
-            LongType.LONG,
-            false /* nullable */,
+            colSpec.dataType,
+            colSpec.nullable,
             new FieldMetadata.Builder()
-                .putMetadataColumnType(METADATA_TYPE_KEY, ROW_INDEX)
+                .putMetadataColumnSpec(METADATA_SPEC_KEY, ROW_INDEX)
                 .build());
       case ROW_ID:
         return new StructField(
             name,
-            LongType.LONG,
-            false /* nullable */,
-            new FieldMetadata.Builder().putMetadataColumnType(METADATA_TYPE_KEY, ROW_ID).build());
+            colSpec.dataType,
+            colSpec.nullable,
+            new FieldMetadata.Builder().putMetadataColumnSpec(METADATA_SPEC_KEY, ROW_ID).build());
       case ROW_COMMIT_VERSION:
         return new StructField(
             name,
-            LongType.LONG,
-            false /* nullable */,
+            colSpec.dataType,
+            colSpec.nullable,
             new FieldMetadata.Builder()
-                .putMetadataColumnType(METADATA_TYPE_KEY, ROW_COMMIT_VERSION)
+                .putMetadataColumnSpec(METADATA_SPEC_KEY, ROW_COMMIT_VERSION)
                 .build());
       default:
-        throw new IllegalArgumentException("Unknown MetadataColumnType: " + colType);
+        throw new IllegalArgumentException("Unknown MetadataColumnType: " + colSpec);
     }
   }
 
@@ -176,7 +176,7 @@ public class StructField {
   }
 
   public boolean isMetadataColumn() {
-    return metadata != null && metadata.contains(METADATA_TYPE_KEY);
+    return metadata != null && metadata.contains(METADATA_SPEC_KEY);
   }
 
   public boolean isDataColumn() {
@@ -184,8 +184,8 @@ public class StructField {
   }
 
   /** Returns the type of metadata column if this is a metadata column, otherwise returns null. */
-  public MetadataColumn getMetadataColumnType() {
-    return metadata.getMetadataColumnType(METADATA_TYPE_KEY);
+  public MetadataColumnSpec getMetadataColumnSpec() {
+    return metadata.getMetadataColumnSpec(METADATA_SPEC_KEY);
   }
 
   public boolean isInternalColumn() {
