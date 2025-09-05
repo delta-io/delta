@@ -159,13 +159,12 @@ public class CreateTableTransactionBuilderImpl implements CreateTableTransaction
   }
 
   private void throwIfTableAlreadyExists(Engine engine, String tablePath) {
-    String catalogManagedFeaturePropKey =
-        TableFeatures.SET_TABLE_FEATURE_SUPPORTED_PREFIX
-            + TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW.featureName();
-    boolean isCatalogManaged =
+    final boolean isCatalogManaged =
         tableProperties
-            .map(props -> props.get(catalogManagedFeaturePropKey))
-            .map("supported"::equals)
+            .map(
+                props ->
+                    TableFeatures.isPropertiesManuallySupportingTableFeature(
+                        props, TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW))
             .orElse(false);
     if (isCatalogManaged) {
       // For catalog managed tables we assume the catalog has ensured the table loc is not already
