@@ -315,15 +315,18 @@ public class LogSegment {
           long checksumVersion = FileNames.checksumVersion(new Path(checksumFile.getPath()));
           checkArgument(
               checksumVersion <= version,
-              "checksum file's version should be less than or equal to logSegment's version");
+              String.format(
+                  "Checksum file's version should be less than or equal to logSegment's version. "
+                      + "Expected: <= %d, Actual: %d",
+                  version, checksumVersion));
           checkpointVersionOpt.ifPresent(
               checkpointVersion ->
                   checkArgument(
                       checksumVersion >= checkpointVersion,
-                      "checksum file's version %s should be greater than or equal to "
-                          + "checkpoint version %s",
-                      checksumVersion,
-                      checkpointVersion));
+                      String.format(
+                          "Checksum file's version should be greater than or equal to "
+                              + "checkpoint version. Expected: >= %d, Actual: %d",
+                          checkpointVersion, checksumVersion)));
         });
   }
 
@@ -331,16 +334,25 @@ public class LogSegment {
       List<Long> deltaVersions, Optional<Long> checkpointVersionOpt) {
     checkpointVersionOpt.ifPresent(
         checkpointVersion -> {
+          final long expectedVersion = checkpointVersion + 1;
+          final long actualFirstDeltaVersion = deltaVersions.get(0);
           checkArgument(
-              deltaVersions.get(0) == checkpointVersion + 1,
-              "First delta file version must equal checkpointVersion + 1");
+              actualFirstDeltaVersion == expectedVersion,
+              String.format(
+                  "First delta file version must equal checkpointVersion + 1. "
+                      + "Expected: %d, Actual: %d",
+                  expectedVersion, actualFirstDeltaVersion));
         });
   }
 
   private void validateLastDeltaVersionIsLogSegmentVersion(List<Long> deltaVersions, long version) {
+    final long actualLastDeltaVersion = ListUtils.getLast(deltaVersions);
     checkArgument(
-        ListUtils.getLast(deltaVersions) == version,
-        "Last delta file version must equal the version of this LogSegment");
+        actualLastDeltaVersion == version,
+        String.format(
+            "Last delta file version must equal the version of this LogSegment. "
+                + "Expected: %d, Actual: %d",
+            version, actualLastDeltaVersion));
   }
 
   private void validateDeltaVersionsAreContiguous(List<Long> deltaVersions) {
@@ -374,8 +386,10 @@ public class LogSegment {
         checkpointVersion -> {
           checkArgument(
               checkpointVersion == version,
-              "If there are no deltas, then checkpointVersion must equal the version "
-                  + "of this LogSegment");
+              String.format(
+                  "If there are no deltas, then checkpointVersion must equal the version "
+                      + "of this LogSegment. Expected: %d, Actual: %d",
+                  version, checkpointVersion));
         });
   }
 
