@@ -234,6 +234,30 @@ class UCCatalogManagedCommitterSuite
       org.apache.hadoop.fs.permission.FsPermission.getFileDefault)
   }
 
+  test("writeDeltaFile returns real FileStatus") {
+    withTempTableAndLogPathAndStagedCommitFolderCreated { case (tablePath, logPath) =>
+      // ===== GIVEN =====
+      val ucClient = new InMemoryUCClient("ucMetastoreId")
+      val committer = new UCCatalogManagedCommitter(ucClient, "ucTableId", tablePath)
+      val testValue = "TEST_FILE_STATUS_DATA"
+      val actionsIterator = getSingleElementRowIter(testValue)
+
+      val commitMetadata = createCommitMetadata(
+        version = 0,
+        logPath = logPath,
+        newProtocolOpt = Optional.of(protocolWithCatalogManagedSupport),
+        newMetadataOpt = Optional.of(basicPartitionedMetadata))
+
+      // ===== WHEN =====
+      val response = committer.commit(defaultEngine, actionsIterator, commitMetadata)
+
+      // ===== THEN =====
+      val fileStatus = response.getCommitLogData.getFileStatus
+      assert(fileStatus.getSize > 0)
+      assert(fileStatus.getModificationTime > 0)
+    }
+  }
+
   // ===============================================================
   // ===================== CATALOG_WRITE Tests =====================
   // ===============================================================
