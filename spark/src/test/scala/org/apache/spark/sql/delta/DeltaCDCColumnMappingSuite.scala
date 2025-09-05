@@ -22,6 +22,7 @@ import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
+import org.apache.spark.sql.delta.cdc.CDCStaticReaderSuiteBase
 import org.apache.spark.sql.delta.commands.cdc.CDCReader._
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -668,8 +669,13 @@ trait DeltaCDCColumnMappingSuiteBase extends DeltaCDCSuiteBase
           spark.range(end = 5)
             .withColumn("_change_type", lit("insert")))
       }
-      assert(plans.map(_.executedPlan).toString
-        .contains("PushedFilters: [*IsNotNull(id with space), *LessThan(id with space,5)]"))
+      if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CDF_BATCH_STATIC_READER)) {
+        assert(plans.map(_.executedPlan).toString
+          .contains("PushedFilters: [IsNotNull(`id with space`), LessThan(`id with space`,5)]"))
+      } else {
+        assert(plans.map(_.executedPlan).toString
+          .contains("PushedFilters: [*IsNotNull(id with space), *LessThan(id with space,5)]"))
+      }
     }
   }
 }
@@ -816,3 +822,23 @@ class DeltaCDCSQLIdColumnMappingSuite extends DeltaCDCSQLSuite
 class DeltaCDCSQLNameColumnMappingSuite extends DeltaCDCSQLSuite
   with DeltaCDCColumnMappingSuiteBase
   with DeltaColumnMappingEnableNameMode
+
+class DeltaCDCIdColumnMappingWithStaticReaderSuite extends DeltaCDCScalaSuite
+  with DeltaCDCColumnMappingScalaSuiteBase
+  with DeltaColumnMappingEnableIdMode
+  with CDCStaticReaderSuiteBase
+
+class DeltaCDCNameColumnMappingWithStaticReaderSuite extends DeltaCDCScalaSuite
+  with DeltaCDCColumnMappingScalaSuiteBase
+  with DeltaColumnMappingEnableNameMode
+  with CDCStaticReaderSuiteBase
+
+class DeltaCDCSQLIdColumnMappingWithStaticReaderSuite extends DeltaCDCSQLSuite
+  with DeltaCDCColumnMappingSuiteBase
+  with DeltaColumnMappingEnableIdMode
+  with CDCStaticReaderSuiteBase
+
+class DeltaCDCSQLNameColumnMappingWithStaticReaderSuiteSuite extends DeltaCDCSQLSuite
+  with DeltaCDCColumnMappingSuiteBase
+  with DeltaColumnMappingEnableNameMode
+  with CDCStaticReaderSuiteBase
