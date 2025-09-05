@@ -37,6 +37,10 @@ public class KernelSparkScanBuilder implements org.apache.spark.sql.connector.re
     this.kernelScanBuilder = requireNonNull(snapshot, "snapshot is null").getScanBuilder();
     this.sparkReadSchema = SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema());
     this.hadoopConf = hadoopConf;
+
+    if (!snapshot.getPartitionColumnNames().isEmpty()) {
+      throw new UnsupportedOperationException("Reading partitioned table is not supported yet.");
+    }
   }
 
   @Override

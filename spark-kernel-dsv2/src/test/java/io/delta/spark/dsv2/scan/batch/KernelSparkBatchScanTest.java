@@ -23,6 +23,7 @@ import io.delta.spark.dsv2.KernelSparkDsv2TestBase;
 import io.delta.spark.dsv2.scan.KernelSparkScanContext;
 import java.io.File;
 import org.apache.spark.sql.connector.read.InputPartition;
+import org.apache.spark.sql.types.StructType;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -47,7 +48,7 @@ public class KernelSparkBatchScanTest extends KernelSparkDsv2TestBase {
     createTestTableWithData(path, tableName);
     Scan scan = TableManager.loadSnapshot(path).build(defaultEngine).getScanBuilder().build();
     KernelSparkScanContext scanContext =
-        new KernelSparkScanContext(scan, spark.sessionState().newHadoopConf());
+        new KernelSparkScanContext(scan, new StructType(), spark.sessionState().newHadoopConf());
     KernelSparkBatchScan batchScan = new KernelSparkBatchScan(scanContext);
 
     InputPartition[] partitions = batchScan.planInputPartitions();
@@ -67,7 +68,7 @@ public class KernelSparkBatchScanTest extends KernelSparkDsv2TestBase {
 
     Scan scan = TableManager.loadSnapshot(path).build(defaultEngine).getScanBuilder().build();
     KernelSparkScanContext scanContext =
-        new KernelSparkScanContext(scan, spark.sessionState().newHadoopConf());
+        new KernelSparkScanContext(scan, new StructType(), spark.sessionState().newHadoopConf());
     KernelSparkBatchScan batchScan = new KernelSparkBatchScan(scanContext);
 
     InputPartition[] result1 = batchScan.planInputPartitions();
@@ -91,7 +92,7 @@ public class KernelSparkBatchScanTest extends KernelSparkDsv2TestBase {
     createTestTableWithData(path, tableName);
     Scan scan = TableManager.loadSnapshot(path).build(defaultEngine).getScanBuilder().build();
     KernelSparkScanContext scanContext =
-        new KernelSparkScanContext(scan, spark.sessionState().newHadoopConf());
+        new KernelSparkScanContext(scan, new StructType(), spark.sessionState().newHadoopConf());
     KernelSparkBatchScan batchScan = new KernelSparkBatchScan(scanContext);
 
     UnsupportedOperationException exception =
