@@ -46,7 +46,7 @@ class MetadataColumnSuite extends AnyFunSuite with MetadataColumnTestUtils {
     val e = intercept[IllegalArgumentException] {
       schema.addMetadataColumn("some other name", MetadataColumn.ROW_INDEX)
     }
-    assert(e.getMessage.contains("Metadata column row_index already exists in the struct type"))
+    assert(e.getMessage.contains("Duplicate metadata column row_index found in struct type"))
 
     // Adding a different metadata column should not fail
     val updated = schema.addMetadataColumn("_metadata.row_id", MetadataColumn.ROW_ID)

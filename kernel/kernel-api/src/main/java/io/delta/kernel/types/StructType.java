@@ -40,10 +40,24 @@ public final class StructType extends DataType {
   }
 
   public StructType(List<StructField> fields) {
+    // Extract all nested fields and ensure that they do not contain metadata columns
     validateNoMetadataColumns(
         fields.stream()
             .filter(f -> !(f.getDataType() instanceof BasePrimitiveType))
             .collect(Collectors.toList()));
+
+    // Ensure that there are no duplicate metadata columns at the top level
+    Set<MetadataColumn> seenMetadataCols = new HashSet<>();
+    for (StructField field : fields) {
+      if (field.isMetadataColumn()) {
+        MetadataColumn colType = field.getMetadataColumnType();
+        if (seenMetadataCols.contains(colType)) {
+          throw new IllegalArgumentException(
+              String.format("Duplicate metadata column %s found in struct type", colType));
+        }
+        seenMetadataCols.add(colType);
+      }
+    }
 
     this.fields = fields;
     this.fieldNames = fields.stream().map(f -> f.getName()).collect(Collectors.toList());
@@ -55,13 +69,6 @@ public final class StructType extends DataType {
   }
 
   public StructType add(StructField field) {
-    if (field.isMetadataColumn() && contains(field.getMetadataColumnType())) {
-      throw new IllegalArgumentException(
-          String.format(
-              "Metadata column %s already exists in the struct type",
-              field.getMetadataColumnType()));
-    }
-
     final List<StructField> fieldsCopy = new ArrayList<>(fields);
     fieldsCopy.add(field);
 
@@ -86,10 +93,6 @@ public final class StructType extends DataType {
 
   /** Add a predefined metadata column of {@link MetadataColumn} to the struct type. */
   public StructType addMetadataColumn(String name, MetadataColumn colType) {
-    if (contains(colType)) {
-      throw new IllegalArgumentException(
-          String.format("Metadata column %s already exists in the struct type", colType));
-    }
     return add(StructField.createMetadataColumn(name, colType));
   }
 
