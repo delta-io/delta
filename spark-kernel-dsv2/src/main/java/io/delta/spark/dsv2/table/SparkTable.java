@@ -18,7 +18,7 @@ package io.delta.spark.dsv2.table;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.internal.SnapshotImpl;
-import io.delta.spark.dsv2.scan.KernelSparkScanBuilder;
+import io.delta.spark.dsv2.read.SparkScanBuilder;
 import io.delta.spark.dsv2.utils.SchemaUtils;
 import java.util.*;
 import org.apache.hadoop.conf.Configuration;
@@ -26,11 +26,12 @@ import org.apache.spark.sql.connector.catalog.*;
 import org.apache.spark.sql.connector.expressions.Expressions;
 import org.apache.spark.sql.connector.expressions.Transform;
 import org.apache.spark.sql.connector.read.ScanBuilder;
+import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 
 /** A DataSource V2 Table implementation for Delta Lake tables using the Delta Kernel API. */
-public class DeltaKernelTable implements Table, SupportsRead {
+public class SparkTable implements Table, SupportsRead {
 
   private static final Set<TableCapability> CAPABILITIES =
       Collections.unmodifiableSet(EnumSet.of(TableCapability.BATCH_READ));
@@ -39,6 +40,10 @@ public class DeltaKernelTable implements Table, SupportsRead {
   // TODO: [delta-io/delta#5029] Add getProperties() in snapshot to avoid using Impl class.
   private final SnapshotImpl snapshot;
   private final Configuration hadoopConf;
+  private StructType schema;
+  private List<String> partColNames;
+  private StructType dataSchema;
+  private StructType partitionSchema;
 
   /**
    * Creates a new DeltaKernelTable instance.
@@ -47,10 +52,26 @@ public class DeltaKernelTable implements Table, SupportsRead {
    * @param snapshot the Delta table snapshot
    * @param hadoopConf the Hadoop configuration to use for creating the engine
    */
-  public DeltaKernelTable(Identifier identifier, SnapshotImpl snapshot, Configuration hadoopConf) {
+  public SparkTable(Identifier identifier, SnapshotImpl snapshot, Configuration hadoopConf) {
     this.identifier = requireNonNull(identifier, "identifier is null");
     this.snapshot = requireNonNull(snapshot, "snapshot is null");
     this.hadoopConf = requireNonNull(hadoopConf, "hadoop conf is null");
+    this.schema = SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema());
+    this.partColNames = snapshot.getPartitionColumnNames();
+    Set<String> partitionColumnSet = new HashSet<>(this.partColNames);
+    List<StructField> dataFields = new java.util.ArrayList<>();
+    List<StructField> partitionFields = new java.util.ArrayList<>();
+
+    for (StructField field : schema().fields()) {
+      if (partitionColumnSet.contains(field.name())) {
+        partitionFields.add(field);
+      } else {
+        dataFields.add(field);
+      }
+    }
+
+    dataSchema = new StructType(dataFields.toArray(new StructField[0]));
+    partitionSchema = new StructType(partitionFields.toArray(new StructField[0]));
   }
 
   @Override
@@ -88,6 +109,6 @@ public class DeltaKernelTable implements Table, SupportsRead {
 
   @Override
   public ScanBuilder newScanBuilder(CaseInsensitiveStringMap options) {
-    return new KernelSparkScanBuilder(snapshot, hadoopConf);
+    return new SparkScanBuilder(name(), dataSchema, partitionSchema, snapshot, hadoopConf);
   }
 }

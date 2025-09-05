@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.spark.dsv2.scan.batch;
+package io.delta.spark.dsv2.read.batch;
 
 import io.delta.spark.dsv2.utils.SerializableKernelRowWrapper;
 import java.io.Serializable;

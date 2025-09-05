@@ -80,15 +80,14 @@ public class Dsv2BasicTest {
     spark.sql(
         String.format(
             "CREATE TABLE dsv2.%s.batch_read_test (id INT, name STRING, value DOUBLE)", nameSpace));
-    UnsupportedOperationException e =
-        assertThrows(
-            UnsupportedOperationException.class,
-            () ->
-                spark
-                    .sql(String.format("SELECT * FROM dsv2.%s.batch_read_test", nameSpace))
-                    .show());
-    // TODO: update after implementing batch Scan
-    assertTrue(e.getMessage().contains("reader factory is not implemented"));
+
+    // Select and validate the data
+    Dataset<Row> result =
+        spark.sql(String.format("SELECT * FROM dsv2.%s.batch_read_test", nameSpace));
+
+    List<Row> expectedRows = Arrays.asList();
+
+    assertDatasetEquals(result, expectedRows);
   }
 
   @Test

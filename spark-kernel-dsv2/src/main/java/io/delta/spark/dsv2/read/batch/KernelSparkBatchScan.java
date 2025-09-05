@@ -13,11 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.spark.dsv2.scan.batch;
+package io.delta.spark.dsv2.read.batch;
 
 import static java.util.Objects.requireNonNull;
 
-import io.delta.spark.dsv2.scan.KernelSparkScanContext;
+import io.delta.spark.dsv2.read.KernelSparkScanContext;
 import org.apache.spark.sql.connector.read.Batch;
 import org.apache.spark.sql.connector.read.InputPartition;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;

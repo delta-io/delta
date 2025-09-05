@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.spark.dsv2.scan;
+package io.delta.spark.dsv2.read;
 
 import static java.util.Objects.requireNonNull;
 
@@ -23,7 +23,7 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.utils.CloseableIterator;
-import io.delta.spark.dsv2.scan.batch.KernelSparkInputPartition;
+import io.delta.spark.dsv2.read.batch.KernelSparkInputPartition;
 import io.delta.spark.dsv2.utils.SerializableKernelRowWrapper;
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -44,9 +44,9 @@ import org.slf4j.LoggerFactory;
  * and ensures consistent partition planning.
  *
  * <p>This class serves as wrapper of kernel logic owned by {@link
- * io.delta.spark.dsv2.scan.KernelSparkScan} to handle the low-level operations of converting Kernel
+ * io.delta.spark.dsv2.read.KernelSparkScan} to handle the low-level operations of converting Kernel
  * scan files into Spark InputPartitions used by {@link
- * io.delta.spark.dsv2.scan.batch.KernelSparkBatchScan}.
+ * io.delta.spark.dsv2.read.batch.KernelSparkBatchScan}.
  */
 public class KernelSparkScanContext {
 

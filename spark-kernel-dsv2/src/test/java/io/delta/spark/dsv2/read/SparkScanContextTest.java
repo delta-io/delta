@@ -13,20 +13,20 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.spark.dsv2.scan;
+package io.delta.spark.dsv2.read;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 import io.delta.kernel.Scan;
 import io.delta.kernel.TableManager;
-import io.delta.spark.dsv2.KernelSparkDsv2TestBase;
-import io.delta.spark.dsv2.scan.batch.KernelSparkInputPartition;
+import io.delta.spark.dsv2.SparkDsv2TestBase;
+import io.delta.spark.dsv2.read.batch.KernelSparkInputPartition;
 import java.io.File;
 import org.apache.spark.sql.connector.read.InputPartition;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-public class KernelSparkScanContextTest extends KernelSparkDsv2TestBase {
+public class SparkScanContextTest extends SparkDsv2TestBase {
 
   @Test
   public void testConstructorWithNullScan() {

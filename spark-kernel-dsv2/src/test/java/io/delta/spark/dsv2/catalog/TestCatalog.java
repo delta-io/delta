@@ -21,7 +21,7 @@ import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.utils.CloseableIterable;
-import io.delta.spark.dsv2.table.DeltaKernelTable;
+import io.delta.spark.dsv2.table.SparkTable;
 import io.delta.spark.dsv2.utils.SchemaUtils;
 import java.util.ArrayList;
 import java.util.List;
@@ -84,7 +84,7 @@ public class TestCatalog implements TableCatalog {
     try {
       // Use TableManager.loadTable to load the table
       SnapshotImpl snapshot = (SnapshotImpl) TableManager.loadSnapshot(tablePath).build(engine);
-      return new DeltaKernelTable(ident, snapshot, hadoopConf);
+      return new SparkTable(ident, snapshot, hadoopConf);
     } catch (Exception e) {
       throw new RuntimeException("Failed to load table: " + ident, e);
     }
@@ -118,7 +118,7 @@ public class TestCatalog implements TableCatalog {
 
       // Load the created table and return DeltaKernelTable
       SnapshotImpl snapshot = (SnapshotImpl) kernelTable.getLatestSnapshot(engine);
-      return new DeltaKernelTable(ident, snapshot, hadoopConf);
+      return new SparkTable(ident, snapshot, hadoopConf);
 
     } catch (Exception e) {
       // Remove the table entry if creation fails

@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.spark.dsv2.scan.batch;
+package io.delta.spark.dsv2.read.batch;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -26,7 +26,7 @@ import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.types.StructType;
-import io.delta.spark.dsv2.KernelSparkDsv2TestBase;
+import io.delta.spark.dsv2.SparkDsv2TestBase;
 import io.delta.spark.dsv2.utils.SerializableKernelRowWrapper;
 import java.io.File;
 import java.io.IOException;
@@ -35,7 +35,7 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-public class KernelSparkInputPartitionTest extends KernelSparkDsv2TestBase {
+public class SparkInputPartitionTest extends SparkDsv2TestBase {
 
   @Test
   public void testSerializationRoundTrip(@TempDir File tempDir) throws IOException {
