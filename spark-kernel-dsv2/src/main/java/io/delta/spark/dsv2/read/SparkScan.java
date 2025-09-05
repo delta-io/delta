@@ -239,11 +239,11 @@ public class SparkScan implements Scan, Batch, SupportsReportStatistics {
         ParquetUtils.isBatchReadSupportedForSchema(sqlConf, readSchema());
 
     scala.collection.immutable.Map<String, String> options =
-        new scala.collection.immutable.HashMap<String, String>()
-            .$plus(
-                new scala.Tuple2<>(
-                    FileFormat$.MODULE$.OPTION_RETURNING_BATCH(),
-                    String.valueOf(enableVectorizedReader)));
+        scala.collection.immutable.Map$.MODULE$
+            .<String, String>empty()
+            .updated(
+                FileFormat$.MODULE$.OPTION_RETURNING_BATCH(),
+                String.valueOf(enableVectorizedReader));
     Function1<PartitionedFile, scala.collection.Iterator<InternalRow>> readFunc =
         new ParquetFileFormat()
             .buildReaderWithPartitionValues(
