@@ -212,7 +212,7 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
     assert(snapshot.getCommitter.isInstanceOf[UCCatalogManagedCommitter])
   }
 
-  test("buildCreateTableTransaction sets required properties") {
+  test("buildCreateTableTransaction sets required properties and uses UC committer") {
     // ===== GIVEN =====
     val ucClient = new InMemoryUCClient("ucMetastoreId")
     val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
@@ -228,19 +228,7 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
     assert(builderTableProperties.get("delta.feature.catalogOwned-preview") == "supported")
     assert(builderTableProperties.get("ucTableId") == "ucTableId")
     assert(builderTableProperties.get("foo") == "bar")
-  }
 
-  test("buildCreateTableTransaction uses UC committer") {
-    // ===== GIVEN =====
-    val ucClient = new InMemoryUCClient("ucMetastoreId")
-    val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
-
-    // ===== WHEN =====
-    val createTableTxnBuilder = ucCatalogManagedClient
-      .buildCreateTableTransaction("ucTableId", baseTestTablePath, testSchema, "test-engine")
-      .asInstanceOf[CreateTableTransactionBuilderImpl]
-
-    // ===== THEN =====
     val committerOpt = createTableTxnBuilder.getCommitterOpt
     assert(committerOpt.get().isInstanceOf[UCCatalogManagedCommitter])
   }
