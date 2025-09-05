@@ -56,12 +56,11 @@ public class SparkScan implements Scan, Batch, SupportsReportStatistics {
   private final Filter[] dataFilters;
   private final io.delta.kernel.Scan kernelScan;
   private final Configuration hadoopConf;
-  private long totalBytes = 0L;
-  private List<PartitionedFile> partitionedFiles = new ArrayList<>();
-
-  private Set<Predicate> allKernelFilters;
   private final SQLConf sqlConf;
   private final ZoneId zoneId;
+  private List<PartitionedFile> partitionedFiles = new ArrayList<>();
+  private long totalBytes = 0L;
+  private volatile boolean planned = false;
 
   public SparkScan(
       String tableName,
@@ -81,12 +80,8 @@ public class SparkScan implements Scan, Batch, SupportsReportStatistics {
     this.dataFilters = dataFilters;
     this.kernelScan = kernelScan;
     this.hadoopConf = hadoopConf;
-
-    this.allKernelFilters = new HashSet<>(Arrays.asList(pushedToKernelFilters));
     this.sqlConf = SQLConf.get();
     this.zoneId = ZoneId.of(sqlConf.sessionLocalTimeZone());
-    // Plan partitions and compute total size
-    planPartitions();
   }
 
   @Override
@@ -95,33 +90,6 @@ public class SparkScan implements Scan, Batch, SupportsReportStatistics {
     fields.addAll(Arrays.asList(readDataSchema.fields()));
     fields.addAll(Arrays.asList(partitionSchema.fields()));
     return new StructType(fields.toArray(new StructField[0]));
-  }
-
-  private InternalRow getPartitionRow(MapValue partitionValues) {
-    assert partitionValues.getSize() == partitionSchema.fields().length
-        : String.format(
-            "Partition values size from add file %d != partition columns size %d",
-            partitionValues.getSize(), partitionSchema.fields().length);
-
-    Map<String, String> partitionValueMap = new HashMap<>();
-    for (int idx = 0; idx < partitionValues.getSize(); idx++) {
-      String key = partitionValues.getKeys().getString(idx);
-      String value = partitionValues.getValues().getString(idx);
-      partitionValueMap.put(key, value);
-    }
-
-    Object[] values = new Object[partitionSchema.fields().length];
-    for (int i = 0; i < partitionSchema.fields().length; i++) {
-      StructField field = partitionSchema.fields()[i];
-      String value = partitionValueMap.get(field.name());
-      if (value == null) {
-        values[i] = null;
-      } else {
-        values[i] = PartitioningUtils.castPartValueToDesiredType(field.dataType(), value, zoneId);
-      }
-    }
-    return InternalRow.fromSeq(
-        JavaConverters.asScalaIterator(Arrays.asList(values).iterator()).toSeq());
   }
 
   @Override
@@ -141,6 +109,7 @@ public class SparkScan implements Scan, Batch, SupportsReportStatistics {
 
   @Override
   public Statistics estimateStatistics() {
+    ensurePlanned();
     return new Statistics() {
       @Override
       public OptionalLong sizeInBytes() {
@@ -175,6 +144,70 @@ public class SparkScan implements Scan, Batch, SupportsReportStatistics {
     return result;
   }
 
+  @Override
+  public InputPartition[] planInputPartitions() {
+    ensurePlanned();
+    SparkSession sparkSession = SparkSession.active();
+    Long maxSplitBytes = calculateMaxSplitBytes(sparkSession);
+
+    scala.collection.Seq<FilePartition> filePartitions =
+        FilePartition$.MODULE$.getFilePartitions(
+            sparkSession, JavaConverters.asScalaBuffer(partitionedFiles).toSeq(), maxSplitBytes);
+    return JavaConverters.seqAsJavaList(filePartitions).toArray(new InputPartition[0]);
+  }
+
+  @Override
+  public PartitionReaderFactory createReaderFactory() {
+    boolean enableVectorizedReader =
+        ParquetUtils.isBatchReadSupportedForSchema(sqlConf, readSchema());
+
+    scala.collection.immutable.Map<String, String> options =
+        scala.collection.immutable.Map$.MODULE$
+            .<String, String>empty()
+            .updated(
+                FileFormat$.MODULE$.OPTION_RETURNING_BATCH(),
+                String.valueOf(enableVectorizedReader));
+    Function1<PartitionedFile, scala.collection.Iterator<InternalRow>> readFunc =
+        new ParquetFileFormat()
+            .buildReaderWithPartitionValues(
+                SparkSession.active(),
+                dataSchema,
+                partitionSchema,
+                readDataSchema,
+                JavaConverters.asScalaBuffer(Arrays.asList(dataFilters)).toSeq(),
+                options,
+                hadoopConf);
+
+    return new SparkReaderFactory(readFunc, enableVectorizedReader);
+  }
+
+  private InternalRow getPartitionRow(MapValue partitionValues) {
+    assert partitionValues.getSize() == partitionSchema.fields().length
+        : String.format(
+            "Partition values size from add file %d != partition columns size %d",
+            partitionValues.getSize(), partitionSchema.fields().length);
+
+    Map<String, String> partitionValueMap = new HashMap<>();
+    for (int idx = 0; idx < partitionValues.getSize(); idx++) {
+      String key = partitionValues.getKeys().getString(idx);
+      String value = partitionValues.getValues().getString(idx);
+      partitionValueMap.put(key, value);
+    }
+
+    Object[] values = new Object[partitionSchema.fields().length];
+    for (int i = 0; i < partitionSchema.fields().length; i++) {
+      StructField field = partitionSchema.fields()[i];
+      String value = partitionValueMap.get(field.name());
+      if (value == null) {
+        values[i] = null;
+      } else {
+        values[i] = PartitioningUtils.castPartValueToDesiredType(field.dataType(), value, zoneId);
+      }
+    }
+    return InternalRow.fromSeq(
+        JavaConverters.asScalaIterator(Arrays.asList(values).iterator()).toSeq());
+  }
+
   private Long calculateMaxSplitBytes(SparkSession sparkSession) {
     long defaultMaxSplitBytes = sqlConf.filesMaxPartitionBytes();
     long openCostInBytes = sqlConf.filesOpenCostInBytes();
@@ -188,17 +221,6 @@ public class SparkScan implements Scan, Batch, SupportsReportStatistics {
     long bytesPerCore = calculatedTotalBytes / minPartitionNum;
 
     return Math.min(defaultMaxSplitBytes, Math.max(openCostInBytes, bytesPerCore));
-  }
-
-  @Override
-  public InputPartition[] planInputPartitions() {
-    SparkSession sparkSession = SparkSession.active();
-    Long maxSplitBytes = calculateMaxSplitBytes(sparkSession);
-
-    scala.collection.Seq<FilePartition> filePartitions =
-        FilePartition$.MODULE$.getFilePartitions(
-            sparkSession, JavaConverters.asScalaBuffer(partitionedFiles).toSeq(), maxSplitBytes);
-    return JavaConverters.seqAsJavaList(filePartitions).toArray(new InputPartition[0]);
   }
 
   private void planPartitions() {
@@ -233,28 +255,10 @@ public class SparkScan implements Scan, Batch, SupportsReportStatistics {
     }
   }
 
-  @Override
-  public PartitionReaderFactory createReaderFactory() {
-    boolean enableVectorizedReader =
-        ParquetUtils.isBatchReadSupportedForSchema(sqlConf, readSchema());
-
-    scala.collection.immutable.Map<String, String> options =
-        scala.collection.immutable.Map$.MODULE$
-            .<String, String>empty()
-            .updated(
-                FileFormat$.MODULE$.OPTION_RETURNING_BATCH(),
-                String.valueOf(enableVectorizedReader));
-    Function1<PartitionedFile, scala.collection.Iterator<InternalRow>> readFunc =
-        new ParquetFileFormat()
-            .buildReaderWithPartitionValues(
-                SparkSession.active(),
-                dataSchema,
-                partitionSchema,
-                readDataSchema,
-                JavaConverters.asScalaBuffer(Arrays.asList(dataFilters)).toSeq(),
-                options,
-                hadoopConf);
-
-    return new SparkReaderFactory(readFunc, enableVectorizedReader);
+  private synchronized void ensurePlanned() {
+    if (!planned) {
+      planPartitions();
+      planned = true;
+    }
   }
 }
