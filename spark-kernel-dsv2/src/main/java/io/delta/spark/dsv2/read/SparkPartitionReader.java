@@ -24,13 +24,13 @@ import scala.Function1;
 import scala.collection.Iterator;
 import scala.collection.Iterator$;
 
-public class DeltaKernelReader<T> implements PartitionReader<T> {
+public class SparkPartitionReader<T> implements PartitionReader<T> {
   private final Function1<PartitionedFile, Iterator<InternalRow>> readFunc;
   private final FilePartition partition;
   private int currentFileIndex = 0;
   private Iterator<T> currentIterator = (Iterator<T>) Iterator$.MODULE$.empty();
 
-  public DeltaKernelReader(
+  public SparkPartitionReader(
       Function1<PartitionedFile, Iterator<InternalRow>> readFunc, FilePartition partition) {
     this.readFunc = readFunc;
     this.partition = partition;

@@ -37,7 +37,7 @@ public class SparkReaderFactory implements PartitionReaderFactory {
 
   @Override
   public PartitionReader<ColumnarBatch> createColumnarReader(InputPartition partition) {
-    return new DeltaKernelReader<ColumnarBatch>(readFunc, (FilePartition) partition);
+    return new SparkPartitionReader<ColumnarBatch>(readFunc, (FilePartition) partition);
   }
 
   @Override
@@ -47,6 +47,6 @@ public class SparkReaderFactory implements PartitionReaderFactory {
 
   @Override
   public PartitionReader<InternalRow> createReader(InputPartition partition) {
-    return new DeltaKernelReader<InternalRow>(readFunc, (FilePartition) partition);
+    return new SparkPartitionReader<InternalRow>(readFunc, (FilePartition) partition);
   }
 }
