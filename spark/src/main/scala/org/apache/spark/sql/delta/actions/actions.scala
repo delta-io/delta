@@ -1035,10 +1035,10 @@ case class Metadata(
 
   /**
    * Compare this metadata with other.
-   * Returns a sequence of field names that differ between the two metadata objects.
-   * Returns an empty sequence when there are no differences.
+   * Returns a set of field names that differ between the two metadata objects.
+   * Returns an empty set when there are no differences.
    */
-  def diffFieldNames(other: Metadata): Seq[String] = {
+  def diffFieldNames(other: Metadata): Set[String] = {
     import scala.reflect.runtime.universe._
 
     // In scala 2.13, we can directly use productElementName(n: Int) along with productArity.
@@ -1048,7 +1048,7 @@ case class Metadata(
     // It relies on the fact that members.sorted outputs fields in declaration order.
     fieldNames.zipWithIndex.collect {
       case (name, i) if this.productElement(i) != other.productElement(i) => name
-    }
+    }.toSet
   }
 
   /**

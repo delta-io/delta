@@ -21,7 +21,7 @@ import java.util.concurrent.TimeUnit
 
 import scala.collection.mutable
 
-import org.apache.spark.sql.delta.DeltaOperations.{ROW_TRACKING_BACKFILL_OPERATION_NAME, ROW_TRACKING_UNBACKFILL_OPERATION_NAME}
+import org.apache.spark.sql.delta.DeltaOperations.{OP_SET_TBLPROPERTIES, ROW_TRACKING_BACKFILL_OPERATION_NAME, ROW_TRACKING_UNBACKFILL_OPERATION_NAME}
 import org.apache.spark.sql.delta.RowId.RowTrackingMetadataDomain
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
@@ -38,7 +38,7 @@ import org.apache.spark.internal.{MDC, MessageWithContext}
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{Expression, ExpressionSet, Or}
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.types.{Metadata => FieldMetadata, MetadataBuilder, StructType}
 
 /**
  * A class representing different attributes of current transaction needed for conflict detection.
@@ -587,15 +587,27 @@ private[delta] class ConflictChecker(
     val winningCommitMetadata = winningCommitSummary.metadataUpdates.head
     val propertyNamesDiff = currentMetadata.diffFieldNames(winningCommitMetadata)
 
-    // We only support the resolution of configuration changes at the moment.
-    if (propertyNamesDiff != Seq("configuration")) {
+    // We only support the resolution of configuration changes at the moment and metadata
+    // only schema changes.
+    if (!propertyNamesDiff.subsetOf(Set("configuration", "schemaString"))) {
       throwMetadataChangedException()
     }
 
-    val configurationChanges =
-      checkConfigurationChangesForConflicts(currentMetadata, winningCommitMetadata)
-    if (!configurationChanges.areValid) {
-      throwMetadataChangedException()
+    // Clear configuration changes.
+    var configurationChanges = ConfigurationChanges(areValid = false)
+    if (propertyNamesDiff.contains("configuration")) {
+      configurationChanges = checkConfigurationChangesForConflicts(
+        currentMetadata, winningCommitMetadata)
+      if (!configurationChanges.areValid) {
+        throwMetadataChangedException()
+      }
+    }
+
+    // Clear schema changes.
+    if (propertyNamesDiff.contains("schemaString")) {
+      if (!checkSchemaChangesForConflicts(currentMetadata, winningCommitMetadata)) {
+        throwMetadataChangedException()
+      }
     }
 
     // Metadata changes are accepted. Consolidate them.
@@ -626,10 +638,24 @@ private[delta] class ConflictChecker(
   }
 
   /** Allow list for [[checkConfigurationChangesForConflicts]]. */
-  private val metadataConfigurationChangeAllowList = Set(
-    MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP,
-    MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP,
-    DeltaConfigs.ROW_TRACKING_ENABLED.key)
+  private lazy val metadataConfigurationChangeAllowList: Set[String] = {
+    val rowTrackingAllowList =
+        Set(
+          MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP,
+          MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP,
+          DeltaConfigs.ROW_TRACKING_ENABLED.key)
+
+    // We can suppress column mapping enablement conflict error since we do not need any
+    // data rewrite to reconcile the txns. No metadata is pushed to the parquet
+    // footers. The new schema with all the necessary column metadata is copied over
+    // to the current transaction.
+    val columnMappingAllowList =
+        Set(
+          DeltaConfigs.COLUMN_MAPPING_MODE.key,
+          DeltaConfigs.COLUMN_MAPPING_MAX_ID.key)
+
+    rowTrackingAllowList ++ columnMappingAllowList
+  }
 
   /**
    * Validates configuration changes between the current metadata and the winning metadata.
@@ -682,12 +708,14 @@ private[delta] class ConflictChecker(
       key match {
         // Row tracking related configurations.
         case DeltaConfigs.ROW_TRACKING_ENABLED.key =>
-          isRowTrackingConfigChangeValid(value.toBoolean)
+          isRowTrackingConfigChangeConflictFree(value.toBoolean)
         case MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP =>
-          areRowTrackingPropertyChangesValid(winningMetadata)
+          areRowTrackingPropertyChangesConflictFree(winningMetadata)
         case MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP =>
-          areRowTrackingPropertyChangesValid(winningMetadata)
-
+          areRowTrackingPropertyChangesConflictFree(winningMetadata)
+        // Column mapping related configurations.
+        case DeltaConfigs.COLUMN_MAPPING_MODE.key =>
+          areColumnMappingChangesConflictFree(currentMetadata, winningMetadata)
         case _ => true
       }
     }
@@ -699,7 +727,7 @@ private[delta] class ConflictChecker(
     VALID_CONFIGURATION_CHANGES
   }
 
-  protected def isRowTrackingConfigChangeValid(value: Boolean): Boolean = {
+  protected def isRowTrackingConfigChangeConflictFree(value: Boolean): Boolean = {
     if (!currentTransactionInfo.protocol.isFeatureSupported(RowTrackingFeature)) {
       return false
     }
@@ -707,11 +735,113 @@ private[delta] class ConflictChecker(
     value
   }
 
-  protected def areRowTrackingPropertyChangesValid(winningMetadata: Metadata): Boolean = {
+  protected def areRowTrackingPropertyChangesConflictFree(winningMetadata: Metadata): Boolean = {
     winningMetadata
       .configuration
       .getOrElse(DeltaConfigs.ROW_TRACKING_ENABLED.key, "false")
       .toBoolean
+  }
+
+  protected def areColumnMappingChangesConflictFree(
+      currentMetadata: Metadata,
+      winningMetadata: Metadata): Boolean = {
+    // Enabling column mapping name mode is the only transition we allow.
+    // Enabling ID mapping on an existing table is generally not allowed.
+    // This should be already blocked by column mapping at an earlier stage.
+    // We add an extra check here for safety.
+    val columnMappingEnabled =
+      currentMetadata.columnMappingMode == NoMapping &&
+      winningMetadata.columnMappingMode == NameMapping
+    if (!columnMappingEnabled) {
+      return false
+    }
+
+    currentTransactionInfo.protocol.isFeatureSupported(ColumnMappingTableFeature)
+  }
+
+  /** Allows key comparison between two sql.types.Metadata objects. */
+  class DeltaFieldMetadataComparator(metadata: FieldMetadata) extends MetadataBuilder {
+    withMetadata(metadata)
+
+    /** Returns a set of added keys by `other`. */
+    def addedKeys(other: DeltaFieldMetadataComparator): Set[String] = {
+      other.getMap.keySet -- getMap.keySet
+    }
+
+    /** Returns a set of removed keys by `other`. */
+    def removedKeys(other: DeltaFieldMetadataComparator): Set[String] = {
+      getMap.keySet -- other.getMap.keySet
+    }
+
+    /** Returns a set of changed keys by `other`. */
+    def changedKeys(other: DeltaFieldMetadataComparator): Set[String] = {
+      getMap.keySet.intersect(other.getMap.keySet).filterNot { key =>
+        val ourValue = getMap(key)
+        val otherValue = other.getMap(key)
+        (ourValue, otherValue) match {
+          case (v0: Array[Long], v1: Array[Long]) => java.util.Arrays.equals(v0, v1)
+          case (v0: Array[Double], v1: Array[Double]) => java.util.Arrays.equals(v0, v1)
+          case (v0: Array[Boolean], v1: Array[Boolean]) => java.util.Arrays.equals(v0, v1)
+          case (v0: Array[AnyRef], v1: Array[AnyRef]) => java.util.Arrays.equals(v0, v1)
+          case (v0, v1) => v0 == v1
+        }
+      }
+    }
+
+    /** Returns a set of keys that were either added, removed or changed by `other`. */
+    def keysWithAnyChanges(other: DeltaFieldMetadataComparator): Set[String] = {
+      removedKeys(other)
+        .union(addedKeys(other))
+        .union(changedKeys(other))
+    }
+  }
+
+  /** Verifies whether any changes between currentMetadata and winningMetadata are valid. */
+  protected def checkSchemaChangesForConflicts(
+      currentMetadata: Metadata,
+      winningMetadata: Metadata): Boolean = {
+
+    val currentSchema = currentMetadata.schema
+    val winningSchema = winningMetadata.schema
+
+    if (currentSchema.fields.length != winningSchema.fields.length) {
+      return false
+    }
+
+    // Currently we only support column mapping metadata changes. If column mapping is not
+    // enabled fail (assumes the method was called because schema changes were detected).
+    val columnMappingEnabled =
+      currentMetadata.columnMappingMode == NoMapping &&
+      winningMetadata.columnMappingMode == NameMapping
+    if (!columnMappingEnabled) {
+      return false
+    }
+
+    val allowedMetadataFields = DeltaColumnMapping.COLUMN_MAPPING_METADATA_KEYS
+
+    currentSchema.fields.zipWithIndex.foreach { case (currentField, index) =>
+      val winningField = winningSchema.fields(index)
+      // Currently we only allow metadata changes.
+      if (currentField.name != winningField.name ||
+          currentField.dataType != winningField.dataType ||
+          currentField.nullable != winningField.nullable) {
+        return false
+      }
+
+      if (currentField.metadata != winningField.metadata) {
+        val currentFieldMetadataComparator = new DeltaFieldMetadataComparator(currentField.metadata)
+        val winningFieldMetadataComparator = new DeltaFieldMetadataComparator(winningField.metadata)
+        val keysWithAnyChanges = currentFieldMetadataComparator
+          .keysWithAnyChanges(winningFieldMetadataComparator)
+
+        // We allow all operations on white listed metadata fields.
+        if (!keysWithAnyChanges.subsetOf(allowedMetadataFields)) {
+          return false
+        }
+      }
+    }
+
+    true
   }
 
   /**
