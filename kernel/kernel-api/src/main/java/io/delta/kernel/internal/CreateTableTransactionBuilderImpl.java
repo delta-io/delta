@@ -26,6 +26,7 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.TableAlreadyExistsException;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.expressions.Column;
+import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.commit.DefaultFileSystemManagedTableOnlyCommitter;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
@@ -54,10 +55,35 @@ public class CreateTableTransactionBuilderImpl implements CreateTableTransaction
   @Override
   public CreateTableTransactionBuilder withTableProperties(Map<String, String> properties) {
     requireNonNull(properties, "properties cannot be null");
-    this.tableProperties =
-        Optional.of(
-            Collections.unmodifiableMap(
-                TableConfig.validateAndNormalizeDeltaProperties(properties)));
+
+    final Map<String, String> normalizedNewProperties =
+        TableConfig.validateAndNormalizeDeltaProperties(properties);
+
+    // Case 1: First time properties are being set
+    if (!this.tableProperties.isPresent()) {
+      this.tableProperties = Optional.of(Collections.unmodifiableMap(normalizedNewProperties));
+      return this;
+    }
+
+    // Case 2: Properties have already been set; ensure no duplicates with different values
+    final Map<String, String> existingProperties = this.tableProperties.get();
+    for (String key : normalizedNewProperties.keySet()) {
+      final String existingValue = existingProperties.get(key);
+      if (existingValue != null) {
+        final String newValue = normalizedNewProperties.get(key);
+        if (!Objects.equals(existingValue, newValue)) {
+          throw new IllegalArgumentException(
+              String.format(
+                  "Table property '%s' has already been set. Existing value: '%s', New value: '%s'",
+                  key, existingValue, newValue));
+        }
+      }
+    }
+
+    final Map<String, String> mergedProperties = new HashMap<>(existingProperties);
+    mergedProperties.putAll(normalizedNewProperties);
+    this.tableProperties = Optional.of(Collections.unmodifiableMap(mergedProperties));
+
     return this;
   }
 
@@ -120,6 +146,16 @@ public class CreateTableTransactionBuilderImpl implements CreateTableTransaction
         userProvidedMaxRetries,
         0, // logCompactionInterval - no compaction for new table
         System::currentTimeMillis);
+  }
+
+  @VisibleForTesting
+  public Optional<Map<String, String>> getTablePropertiesOpt() {
+    return tableProperties;
+  }
+
+  @VisibleForTesting
+  public Optional<Committer> getCommitterOpt() {
+    return userProvidedCommitter;
   }
 
   private void throwIfTableAlreadyExists(Engine engine, String tablePath) {

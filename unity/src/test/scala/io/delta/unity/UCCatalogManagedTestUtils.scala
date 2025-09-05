@@ -19,14 +19,14 @@ package io.delta.unity
 import java.net.URI
 import java.util.Optional
 
-import io.delta.kernel.defaults.utils.TestUtils
+import io.delta.kernel.defaults.utils.{TestUtils, WriteUtils}
 import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.test.ActionUtils
 import io.delta.storage.commit.Commit
 
 import org.apache.hadoop.fs.{FileStatus => HadoopFileStatus, Path}
 
-trait UCCatalogManagedTestUtils extends TestUtils with ActionUtils {
+trait UCCatalogManagedTestUtils extends TestUtils with ActionUtils with WriteUtils {
   val fakeURI = new URI("s3://bucket/table")
   val baseTestTablePath = "/path/to/table"
   val baseTestLogPath = "/path/to/table/_delta_log"

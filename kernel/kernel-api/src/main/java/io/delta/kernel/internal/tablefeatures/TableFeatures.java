@@ -50,6 +50,8 @@ public class TableFeatures {
    */
   public static String SET_TABLE_FEATURE_SUPPORTED_PREFIX = "delta.feature.";
 
+  public static String SET_TABLE_FEATURE_SUPPORTED_VALUE = "supported";
+
   /////////////////////////////////////////////////////////////////////////////////
   /// START: Define the {@link TableFeature}s                                   ///
   /// If feature instance variable ends with                                    ///
