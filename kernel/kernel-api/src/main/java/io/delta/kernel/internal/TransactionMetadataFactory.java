@@ -419,10 +419,17 @@ public class TransactionMetadataFactory {
     final boolean txnExplicitlyDisablesICT =
         txnIctEnabledValue != null && txnIctEnabledValue.equalsIgnoreCase("false");
 
+    // Case 1: Txn is not explicitly disabling ICT. Exit.
     if (!txnExplicitlyDisablesICT) {
       return;
     }
 
+    // Case 2: Txn is explicitly disabling ICT on a catalogManaged table. Throw.
+    if (getEffectiveProtocol().supportsFeature(TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW)) {
+      throw new KernelException("Cannot disable inCommitTimestamp on a catalogManaged table");
+    }
+
+    // Case 3 (normal case): Txn is explicitly disabling ICT. Remove the ICT enablement properties.
     final Set<String> ictKeysToRemove =
         new HashSet<>(
             Arrays.asList(
