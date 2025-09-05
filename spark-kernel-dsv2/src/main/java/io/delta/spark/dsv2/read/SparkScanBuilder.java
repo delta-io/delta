@@ -41,6 +41,7 @@ public class SparkScanBuilder implements ScanBuilder, SupportsPushDownRequiredCo
   private final StructType dataSchema;
   private final StructType partitionSchema;
   private final Configuration hadoopConf;
+  private final Set<String> partitionColumnSet;
   private StructType requiredDataSchema;
   private Predicate[] pushedPredicates;
 
@@ -52,20 +53,21 @@ public class SparkScanBuilder implements ScanBuilder, SupportsPushDownRequiredCo
       Configuration hadoopConf) {
     this.kernelScanBuilder = requireNonNull(snapshot, "snapshot is null").getScanBuilder();
     this.tableName = requireNonNull(tableName, "tableName is null");
-    this.requiredDataSchema = dataSchema;
-    this.dataSchema = dataSchema;
-    this.partitionSchema = partitionSchema;
-    this.hadoopConf = hadoopConf;
+    this.dataSchema = requireNonNull(dataSchema, "dataSchema is null");
+    this.partitionSchema = requireNonNull(partitionSchema, "partitionSchema is null");
+    this.hadoopConf = requireNonNull(hadoopConf, "hadoopConf is null");
+    this.requiredDataSchema = this.dataSchema;
+    this.partitionColumnSet =
+        Arrays.stream(this.partitionSchema.fields())
+            .map(f -> f.name().toLowerCase(Locale.ROOT))
+            .collect(Collectors.toSet());
     this.pushedPredicates = new Predicate[0];
   }
 
   @Override
   public void pruneColumns(StructType requiredSchema) {
-    Set<String> partitionColumnSet =
-        Arrays.stream(partitionSchema.fields())
-            .map(f -> f.name().toLowerCase(Locale.ROOT))
-            .collect(Collectors.toSet());
-    requiredDataSchema =
+    requireNonNull(requiredSchema, "requiredSchema is null");
+    this.requiredDataSchema =
         new StructType(
             Arrays.stream(requiredSchema.fields())
                 .filter(f -> !partitionColumnSet.contains(f.name().toLowerCase(Locale.ROOT)))
