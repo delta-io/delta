@@ -40,7 +40,7 @@ import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
 import org.apache.spark.sql.execution.streaming.{IncrementalExecution, Sink, StreamExecution}
 import org.apache.spark.sql.streaming.OutputMode
-import org.apache.spark.sql.types.{DataType, NullType, StructType}
+import org.apache.spark.sql.types.{ArrayType, DataType, MapType, NullType, StructType}
 import org.apache.spark.util.Utils
 
 /**
@@ -202,9 +202,37 @@ case class DeltaSink(
     val targetTypes =
       CaseInsensitiveMap[DataType](targetSchema.map(field => field.name -> field.dataType).toMap)
 
-    val needCast = data.schema.exists { field =>
-      !DataTypeUtils.equalsIgnoreCaseAndNullability(field.dataType, targetTypes(field.name))
-    }
+    val needCast =
+      if (sqlConf.getConf(DeltaSQLConf.DELTA_STREAMING_SINK_IMPLICIT_CAST_FOR_TYPE_MISMATCH_ONLY)) {
+        def hasTypeMismatch(from: DataType, to: DataType): Boolean = (from, to) match {
+          case (from: StructType, to: StructType) =>
+            val otherFields = SchemaMergingUtils.toFieldMap(to.fields, caseSensitive = false)
+            from.exists { field =>
+              otherFields.get(field.name) match {
+                case Some(other) => hasTypeMismatch(field.dataType, other.dataType)
+                // Ignore extra fields.
+                case None => false
+              }
+            }
+          case (from: MapType, to: MapType) =>
+            hasTypeMismatch(from.keyType, to.keyType) ||
+              hasTypeMismatch(from.valueType, to.valueType)
+          case (from: ArrayType, to: ArrayType) =>
+            hasTypeMismatch(from.elementType, to.elementType)
+          case (from, to) => from != to
+        }
+
+        hasTypeMismatch(data.schema, targetSchema)
+      } else {
+        // This will also return true if there are missing/extra nested fields or if nested fields
+        // are in a different order than in the table schema. We don't actually need implicit
+        // casting in these cases since Parquet will automatically fill missing fields with nulls
+        // and resolves fields by name.
+        data.schema.exists { field =>
+          !DataTypeUtils.equalsIgnoreCaseAndNullability(field.dataType, targetTypes(field.name))
+        }
+      }
+
     if (!needCast) return data
 
     val castColumns = data.columns.map { columnName =>
