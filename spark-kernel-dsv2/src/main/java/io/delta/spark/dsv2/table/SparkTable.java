@@ -30,7 +30,9 @@ import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 
-/** A DataSource V2 Table implementation for Delta Lake tables using the Delta Kernel API. */
+/**
+ * DataSource V2 Table implementation for Delta Lake using the Delta Kernel API.
+ */
 public class SparkTable implements Table, SupportsRead {
 
   private static final Set<TableCapability> CAPABILITIES =
@@ -40,10 +42,13 @@ public class SparkTable implements Table, SupportsRead {
   // TODO: [delta-io/delta#5029] Add getProperties() in snapshot to avoid using Impl class.
   private final SnapshotImpl snapshot;
   private final Configuration hadoopConf;
-  private StructType schema;
-  private List<String> partColNames;
-  private StructType dataSchema;
-  private StructType partitionSchema;
+
+  private final StructType schema;
+  private final List<String> partColNames;
+  private final StructType dataSchema;
+  private final StructType partitionSchema;
+  private final Column[] columns;
+  private final Transform[] partitionTransforms;
 
   /**
    * Creates a new DeltaKernelTable instance.
@@ -56,22 +61,23 @@ public class SparkTable implements Table, SupportsRead {
     this.identifier = requireNonNull(identifier, "identifier is null");
     this.snapshot = requireNonNull(snapshot, "snapshot is null");
     this.hadoopConf = requireNonNull(hadoopConf, "hadoop conf is null");
-    this.schema = SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema());
-    this.partColNames = snapshot.getPartitionColumnNames();
-    Set<String> partitionColumnSet = new HashSet<>(this.partColNames);
-    List<StructField> dataFields = new java.util.ArrayList<>();
-    List<StructField> partitionFields = new java.util.ArrayList<>();
 
-    for (StructField field : schema().fields()) {
-      if (partitionColumnSet.contains(field.name())) {
-        partitionFields.add(field);
-      } else {
-        dataFields.add(field);
-      }
+    this.schema = SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema());
+    this.partColNames = Collections.unmodifiableList(new ArrayList<>(snapshot.getPartitionColumnNames()));
+
+    final Set<String> partitionColumnSet = new HashSet<>(partColNames);
+    final List<StructField> dataFields = new ArrayList<>();
+    final List<StructField> partitionFields = new ArrayList<>();
+
+    for (StructField field : schema.fields()) {
+      (partitionColumnSet.contains(field.name()) ? partitionFields : dataFields).add(field);
     }
 
-    dataSchema = new StructType(dataFields.toArray(new StructField[0]));
-    partitionSchema = new StructType(partitionFields.toArray(new StructField[0]));
+    this.dataSchema = new StructType(dataFields.toArray(new StructField[0]));
+    this.partitionSchema = new StructType(partitionFields.toArray(new StructField[0]));
+    this.columns = CatalogV2Util.structTypeToV2Columns(schema);
+    this.partitionTransforms =
+        partColNames.stream().map(Expressions::identity).toArray(Transform[]::new);
   }
 
   @Override
@@ -81,25 +87,22 @@ public class SparkTable implements Table, SupportsRead {
 
   @Override
   public StructType schema() {
-    return SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema());
+    return schema;
   }
 
   @Override
   public Column[] columns() {
-    return CatalogV2Util.structTypeToV2Columns(schema());
+    return columns;
   }
 
   @Override
   public Transform[] partitioning() {
-    // Delta currently just support identity partition
-    return snapshot.getPartitionColumnNames().stream()
-        .map(Expressions::identity)
-        .toArray(Transform[]::new);
+    return partitionTransforms;
   }
 
   @Override
   public Map<String, String> properties() {
-    return snapshot.getMetadata().getConfiguration();
+    return Collections.unmodifiableMap(new HashMap<>(snapshot.getMetadata().getConfiguration()));
   }
 
   @Override
@@ -110,5 +113,10 @@ public class SparkTable implements Table, SupportsRead {
   @Override
   public ScanBuilder newScanBuilder(CaseInsensitiveStringMap options) {
     return new SparkScanBuilder(name(), dataSchema, partitionSchema, snapshot, hadoopConf);
+  }
+
+  @Override
+  public String toString() {
+    return "SparkTable{identifier=" + identifier + '}';
   }
 }
