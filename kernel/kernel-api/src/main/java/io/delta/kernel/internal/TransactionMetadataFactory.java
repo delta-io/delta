@@ -133,7 +133,7 @@ public class TransactionMetadataFactory {
         readSnapshot.getMetadata().getConfiguration().entrySet().stream()
             .filter(
                 e ->
-                    ReplaceTableTransactionBuilderImpl.TABLE_PROPERTY_KEYS_TO_PRESERVE.contains(
+                    ReplaceTableTransactionBuilderV2Impl.TABLE_PROPERTY_KEYS_TO_PRESERVE.contains(
                         e.getKey()))
             .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
     replaceTableProperties.putAll(userInputTableProperties);
@@ -231,6 +231,9 @@ public class TransactionMetadataFactory {
   /**
    * The table properties provided in this transaction. i.e. excludes any properties in the read
    * snapshot.
+   *
+   * <p>This helps validation code understand what the user is trying to do in *this* transaction,
+   * as opposed to what is the current state already in the table.
    */
   private final Map<String, String> originalUserInputProperties;
 
@@ -291,6 +294,7 @@ public class TransactionMetadataFactory {
 
     performProtocolUpgrades(userProvidedLogicalClusteringColumns.isPresent());
     handleCatalogManagedEnablement();
+    handleInCommitTimestampDisablement();
     performIcebergCompatUpgradesAndValidation();
     updateColumnMappingMetadataAndResolveClusteringColumns(userProvidedLogicalClusteringColumns);
     updateRowTrackingMetadata();
@@ -354,7 +358,7 @@ public class TransactionMetadataFactory {
     }
   }
 
-  /** STEP 1.5: Handle catalogManaged enablement. Updates the METADATA if applicable. */
+  /** STEP 1.1: Handle catalogManaged enablement. Updates the METADATA if applicable. */
   private void handleCatalogManagedEnablement() {
     final boolean readVersionSupportsCatalogManaged =
         latestSnapshotOpt
@@ -400,6 +404,31 @@ public class TransactionMetadataFactory {
                 .withMergedConfiguration(
                     Collections.singletonMap(
                         TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.getKey(), "true")));
+  }
+
+  /**
+   * Step 1.2: Handle inCommitTimestamp disablement. Updates the METADATA if applicable.
+   *
+   * <p>If the user explicitly disables inCommitTimestamp in this transaction, we then also
+   * explicitly remove the ICT enablement version and timestamp properties from the metadata.
+   */
+  private void handleInCommitTimestampDisablement() {
+    final String txnIctEnabledValue =
+        originalUserInputProperties.get(TableConfig.IN_COMMIT_TIMESTAMPS_ENABLED.getKey());
+    final boolean txnExplicitlyDisablesICT =
+        txnIctEnabledValue != null && txnIctEnabledValue.equalsIgnoreCase("false");
+
+    if (!txnExplicitlyDisablesICT) {
+      return;
+    }
+
+    final Set<String> ictKeysToRemove =
+        new HashSet<>(
+            Arrays.asList(
+                TableConfig.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.getKey(),
+                TableConfig.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.getKey()));
+
+    newMetadata = Optional.of(getEffectiveMetadata().withConfigurationKeysUnset(ictKeysToRemove));
   }
 
   /**

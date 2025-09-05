@@ -42,6 +42,7 @@ import io.delta.kernel.utils.FileStatus
 
 import org.scalatest.funsuite.AnyFunSuite
 
+// TODO: Have this suite run using both the old and new Table APIs
 class InCommitTimestampSuite extends AnyFunSuite with WriteUtils {
 
   private def removeCommitInfoFromCommit(engine: Engine, version: Long, logPath: Path): Unit = {
@@ -579,6 +580,29 @@ class InCommitTimestampSuite extends AnyFunSuite with WriteUtils {
       assert(ex.getMessage.contains(String.format("Transaction has encountered a conflict and " +
         "can not be committed. Query needs to be re-executed using the latest version of the " +
         "table.")))
+    }
+  }
+
+  test("Disabling ICT removes enablement tracking properties") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // ===== GIVEN =====
+      createTableThenEnableIctAndVerify(engine, tablePath)
+
+      // ===== WHEN =====
+      // Disable ICT. This should remove enablement tracking properties.
+      setTablePropAndVerify(
+        engine = engine,
+        tablePath = tablePath,
+        isNewTable = false,
+        key = IN_COMMIT_TIMESTAMPS_ENABLED,
+        value = "false",
+        expectedValue = false)
+
+      // ===== THEN =====
+      val snapshotV2 = getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath)
+      assertMetadataProp(snapshotV2, IN_COMMIT_TIMESTAMPS_ENABLED, false)
+      assertHasNoMetadataProp(snapshotV2, IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP)
+      assertHasNoMetadataProp(snapshotV2, IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION)
     }
   }
 }

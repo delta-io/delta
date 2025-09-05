@@ -217,9 +217,12 @@ trait DeltaReplaceTableSuiteBase extends AnyFunSuite with AbstractWriteUtils {
       data.flatMap(_._2).flatMap(_.toTestRows))
 
     val snapshot = latestSnapshot(tablePath).asInstanceOf[SnapshotImpl]
+
+    // Check partition columns
     val expectedPartitionColumns = if (partitionColumns == null) Seq() else partitionColumns
     assert(snapshot.getPartitionColumnNames.asScala == expectedPartitionColumns)
 
+    // Check clustering columns
     clusteringColumns match {
       case Some(clusteringCols) =>
         // Check clustering table feature is supported
@@ -243,20 +246,32 @@ trait DeltaReplaceTableSuiteBase extends AnyFunSuite with AbstractWriteUtils {
         }
     }
 
-    assert(snapshot.getMetadata.getConfiguration.asScala ==
-      expectedTableProperties.getOrElse(tableProperties))
+    // Check table properties
+    val actualProperties = snapshot.getMetadata.getConfiguration.asScala
+    val expectedProperties = expectedTableProperties.getOrElse(tableProperties)
+    expectedProperties.foreach { case (key, expectedValue) =>
+      if (expectedValue == "__check_exists__") {
+        assert(actualProperties.contains(key), s"Expected property $key to exist")
+      } else {
+        assert(
+          actualProperties.get(key).contains(expectedValue),
+          s"Property $key: expected $expectedValue, got ${actualProperties.get(key)}")
+      }
+    }
 
+    // Check other domain metadata
     val nonClusteringActiveDomains = snapshot.getActiveDomainMetadataMap.asScala
       .filter { case (domainName, _) =>
         domainName != ClusteringMetadataDomain.DOMAIN_NAME
       }.map { case (domainName, domainMetadata) => (domainName, domainMetadata.getConfiguration) }
     assert(nonClusteringActiveDomains.toSet == domainsToAdd.toSet)
 
+    // Check protocol. In particular, check that we never downgrade the protocol
     val newProtocol = getProtocol(engine, tablePath)
-    // Check that we never downgrade the protocol
     assert(oldProtocol.canUpgradeTo(newProtocol))
     assert(expectedTableFeaturesSupported.forall(newProtocol.supportsFeature))
 
+    // Check CommitInfo.operation
     val row = spark.sql(s"DESCRIBE HISTORY delta.`$tablePath`")
       .filter(s"version = ${snapshot.getVersion}")
       .select("operation")
