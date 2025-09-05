@@ -37,6 +37,7 @@ public class SparkTable implements Table, SupportsRead {
       Collections.unmodifiableSet(EnumSet.of(TableCapability.BATCH_READ));
 
   private final Identifier identifier;
+  private final String tablePath;
   // TODO: [delta-io/delta#5029] Add getProperties() in snapshot to avoid using Impl class.
   private final SnapshotImpl snapshot;
   private final Configuration hadoopConf;
@@ -52,13 +53,17 @@ public class SparkTable implements Table, SupportsRead {
    * Creates a new DeltaKernelTable instance.
    *
    * @param identifier the table identifier
-   * @param snapshot the Delta table snapshot
+   * @param tablePath the table path of the Delta table
    * @param hadoopConf the Hadoop configuration to use for creating the engine
    */
-  public SparkTable(Identifier identifier, SnapshotImpl snapshot, Configuration hadoopConf) {
+  public SparkTable(Identifier identifier, String tablePath, Configuration hadoopConf) {
     this.identifier = requireNonNull(identifier, "identifier is null");
-    this.snapshot = requireNonNull(snapshot, "snapshot is null");
+    this.tablePath = requireNonNull(tablePath, "snapshot is null");
     this.hadoopConf = requireNonNull(hadoopConf, "hadoop conf is null");
+    this.snapshot =
+        (SnapshotImpl)
+            io.delta.kernel.TableManager.loadSnapshot(tablePath)
+                .build(io.delta.kernel.defaults.engine.DefaultEngine.create(hadoopConf));
 
     this.schema = SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema());
     this.partColNames =
@@ -111,7 +116,8 @@ public class SparkTable implements Table, SupportsRead {
 
   @Override
   public ScanBuilder newScanBuilder(CaseInsensitiveStringMap options) {
-    return new SparkScanBuilder(name(), dataSchema, partitionSchema, snapshot, hadoopConf);
+    return new SparkScanBuilder(
+        name(), tablePath, dataSchema, partitionSchema, snapshot, hadoopConf);
   }
 
   @Override

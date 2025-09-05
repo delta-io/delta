@@ -185,7 +185,7 @@ public class Dsv2BasicTest extends QueryTest {
   private void checkTable(String path, List<Row> expected) {
     String tablePath = goldenTablePath(path);
 
-    Dataset<Row> df = spark.sql("SELECT * FROM `delta`.`" + tablePath + "`");
+    Dataset<Row> df = spark.sql("SELECT * FROM `dsv2`.`delta`.`" + tablePath + "`");
     Function0<Dataset<Row>> dfFunc =
         new Function0<Dataset<Row>>() {
           @Override

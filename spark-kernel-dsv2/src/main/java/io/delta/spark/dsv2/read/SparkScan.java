@@ -41,6 +41,7 @@ import scala.collection.JavaConverters;
 public class SparkScan implements Scan, SupportsReportStatistics {
 
   private final String tableName;
+  private final String tablePath;
   private final StructType readDataSchema;
   private final StructType dataSchema;
   private final StructType partitionSchema;
@@ -58,6 +59,7 @@ public class SparkScan implements Scan, SupportsReportStatistics {
 
   public SparkScan(
       String tableName,
+      String tablePath,
       StructType dataSchema,
       StructType partitionSchema,
       StructType readDataSchema,
@@ -67,6 +69,9 @@ public class SparkScan implements Scan, SupportsReportStatistics {
       Configuration hadoopConf) {
 
     this.tableName = Objects.requireNonNull(tableName, "tableName");
+    final String normalizedTablePath = Objects.requireNonNull(tablePath, "tablePath");
+    this.tablePath =
+        normalizedTablePath.endsWith("/") ? normalizedTablePath : normalizedTablePath + "/";
     this.dataSchema = Objects.requireNonNull(dataSchema, "dataSchema");
     this.partitionSchema = Objects.requireNonNull(partitionSchema, "partitionSchema");
     this.readDataSchema = Objects.requireNonNull(readDataSchema, "readDataSchema");
@@ -198,7 +203,7 @@ public class SparkScan implements Scan, SupportsReportStatistics {
           final PartitionedFile partitionedFile =
               new PartitionedFile(
                   getPartitionRow(addFile.getPartitionValues()),
-                  SparkPath.fromUrlString(addFile.getPath()),
+                  SparkPath.fromUrlString(tablePath + addFile.getPath()),
                   0L,
                   addFile.getSize(),
                   locations,

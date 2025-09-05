@@ -54,6 +54,7 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
     SparkScanBuilder builder =
         new SparkScanBuilder(
             tableName,
+            path,
             dataSchema,
             partitionSchema,
             (SnapshotImpl) snapshot,

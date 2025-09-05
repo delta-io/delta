@@ -38,6 +38,7 @@ public class SparkScanBuilder implements ScanBuilder, SupportsPushDownRequiredCo
 
   private final io.delta.kernel.ScanBuilder kernelScanBuilder;
   private final String tableName;
+  private final String tablePath;
   private final StructType dataSchema;
   private final StructType partitionSchema;
   private final Configuration hadoopConf;
@@ -47,12 +48,14 @@ public class SparkScanBuilder implements ScanBuilder, SupportsPushDownRequiredCo
 
   public SparkScanBuilder(
       String tableName,
+      String tablePath,
       StructType dataSchema,
       StructType partitionSchema,
       SnapshotImpl snapshot,
       Configuration hadoopConf) {
     this.kernelScanBuilder = requireNonNull(snapshot, "snapshot is null").getScanBuilder();
     this.tableName = requireNonNull(tableName, "tableName is null");
+    this.tablePath = requireNonNull(tablePath, "tablePath is null");
     this.dataSchema = requireNonNull(dataSchema, "dataSchema is null");
     this.partitionSchema = requireNonNull(partitionSchema, "partitionSchema is null");
     this.hadoopConf = requireNonNull(hadoopConf, "hadoopConf is null");
@@ -79,6 +82,7 @@ public class SparkScanBuilder implements ScanBuilder, SupportsPushDownRequiredCo
     // TODO: Implement predicate pushdown by translating Spark Filters to Delta Kernel Predicates.
     return new SparkScan(
         tableName,
+        tablePath,
         dataSchema,
         partitionSchema,
         requiredDataSchema,
