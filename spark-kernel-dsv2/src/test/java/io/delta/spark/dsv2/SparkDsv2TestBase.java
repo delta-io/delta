@@ -21,7 +21,7 @@ import org.apache.spark.sql.SparkSession;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 
-public abstract class KernelSparkDsv2TestBase {
+public abstract class SparkDsv2TestBase {
 
   protected static SparkSession spark;
   protected static Engine defaultEngine;

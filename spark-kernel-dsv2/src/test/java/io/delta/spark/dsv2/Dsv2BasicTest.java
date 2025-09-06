@@ -17,18 +17,24 @@ package io.delta.spark.dsv2;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.delta.golden.GoldenTableUtils$;
 import java.io.File;
+import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 import org.apache.spark.SparkConf;
 import org.apache.spark.sql.*;
+import org.apache.spark.sql.catalyst.expressions.GenericRow;
 import org.apache.spark.sql.types.DataTypes;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.io.TempDir;
+import scala.Function0;
+import scala.collection.Seq;
 
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
-public class Dsv2BasicTest {
+public class Dsv2BasicTest extends QueryTest {
 
   private SparkSession spark;
   private String nameSpace;
@@ -80,21 +86,20 @@ public class Dsv2BasicTest {
     spark.sql(
         String.format(
             "CREATE TABLE dsv2.%s.batch_read_test (id INT, name STRING, value DOUBLE)", nameSpace));
-    UnsupportedOperationException e =
-        assertThrows(
-            UnsupportedOperationException.class,
-            () ->
-                spark
-                    .sql(String.format("SELECT * FROM dsv2.%s.batch_read_test", nameSpace))
-                    .show());
-    // TODO: update after implementing batch Scan
-    assertTrue(e.getMessage().contains("reader factory is not implemented"));
+
+    // Select and validate the data
+    Dataset<Row> result =
+        spark.sql(String.format("SELECT * FROM dsv2.%s.batch_read_test", nameSpace));
+
+    List<Row> expectedRows = Arrays.asList();
+
+    assertDatasetEquals(result, expectedRows);
   }
 
   @Test
   public void testQueryTableNotExist() {
     AnalysisException e =
-        assertThrows(
+        org.junit.jupiter.api.Assertions.assertThrows(
             AnalysisException.class,
             () -> spark.sql(String.format("SELECT * FROM dsv2.%s.not_found_test", nameSpace)));
     assertEquals(
@@ -135,6 +140,67 @@ public class Dsv2BasicTest {
     assertDatasetEquals(actual, expectedRows);
   }
 
+  @Test
+  public void testTablePrimitives() throws Exception {
+    List<Row> expected = new ArrayList<>();
+    for (int i = 0; i <= 10; i++) {
+      if (i == 10) {
+        expected.add(
+            new GenericRow(
+                new Object[] {null, null, null, null, null, null, null, null, null, null}));
+      } else {
+        expected.add(
+            new GenericRow(
+                new Object[] {
+                  i,
+                  (long) i,
+                  (byte) i,
+                  (short) i,
+                  i % 2 == 0,
+                  (float) i,
+                  (double) i,
+                  Integer.toString(i),
+                  new byte[] {(byte) i, (byte) i},
+                  new BigDecimal(i)
+                }));
+      }
+    }
+
+    checkTable("data-reader-primitives", expected);
+  }
+
+  @Test
+  public void testTableWithNestedStruct() {
+    List<Row> expected = new ArrayList<>();
+    for (int i = 0; i < 10; i++) {
+      Row innerMost = new GenericRow(new Object[] {i, (long) i});
+      Row middle =
+          new GenericRow(new Object[] {Integer.toString(i), Integer.toString(i), innerMost});
+      expected.add(new GenericRow(new Object[] {middle, i}));
+    }
+    // Assuming `checkTable` is made accessible (e.g., protected in base class)
+    checkTable("data-reader-nested-struct", expected);
+  }
+
+  private void checkTable(String path, List<Row> expected) {
+    String tablePath = goldenTablePath(path);
+
+    Dataset<Row> df = spark.sql("SELECT * FROM `dsv2`.`delta`.`" + tablePath + "`");
+    Function0<Dataset<Row>> dfFunc =
+        new Function0<Dataset<Row>>() {
+          @Override
+          public Dataset<Row> apply() {
+            return df;
+          }
+        };
+    Seq<Row> expectedSeq = scala.collection.JavaConverters.asScalaBuffer(expected).toSeq();
+    checkAnswer(dfFunc, expectedSeq);
+  }
+
+  private String goldenTablePath(String name) {
+    return GoldenTableUtils$.MODULE$.goldenTablePath(name);
+  }
+
   //////////////////////
   // Private helpers //
   /////////////////////
@@ -144,5 +210,10 @@ public class Dsv2BasicTest {
         expectedRows,
         actualRows,
         () -> "Datasets differ: expected=" + expectedRows + "\nactual=" + actualRows);
+  }
+
+  @Override
+  public SparkSession spark() {
+    return spark;
   }
 }

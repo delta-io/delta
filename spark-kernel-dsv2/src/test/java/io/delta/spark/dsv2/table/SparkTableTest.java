@@ -19,10 +19,7 @@ import static org.apache.spark.sql.connector.catalog.TableCapability.BATCH_READ;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.delta.kernel.Snapshot;
-import io.delta.kernel.TableManager;
-import io.delta.kernel.internal.SnapshotImpl;
-import io.delta.spark.dsv2.KernelSparkDsv2TestBase;
+import io.delta.spark.dsv2.SparkDsv2TestBase;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -39,7 +36,7 @@ import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
-public class DeltaKernelTableTest extends KernelSparkDsv2TestBase {
+public class SparkTableTest extends SparkDsv2TestBase {
 
   @ParameterizedTest(name = "{0}")
   @MethodSource("tableTestCases")
@@ -47,12 +44,9 @@ public class DeltaKernelTableTest extends KernelSparkDsv2TestBase {
     String path = tempDir.getAbsolutePath();
     String tableName = "test_" + testCase.name.toLowerCase().replace(" ", "_");
     testCase.createTableSql.apply(tableName, path);
-    Snapshot snapshot = TableManager.loadSnapshot(path).build(defaultEngine);
     Identifier identifier = Identifier.of(new String[] {"test_namespace"}, tableName);
 
-    DeltaKernelTable kernelTable =
-        new DeltaKernelTable(
-            identifier, (SnapshotImpl) snapshot, spark.sessionState().newHadoopConf());
+    SparkTable kernelTable = new SparkTable(identifier, path, spark.sessionState().newHadoopConf());
 
     // ===== Test table name =====
     assertEquals(tableName, kernelTable.name());

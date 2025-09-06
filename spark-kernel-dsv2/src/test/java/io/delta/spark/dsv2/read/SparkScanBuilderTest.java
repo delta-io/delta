@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.spark.dsv2.scan;
+package io.delta.spark.dsv2.read;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -21,15 +21,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.TableManager;
 import io.delta.kernel.internal.SnapshotImpl;
-import io.delta.spark.dsv2.KernelSparkDsv2TestBase;
+import io.delta.spark.dsv2.SparkDsv2TestBase;
 import java.io.File;
 import org.apache.spark.sql.connector.read.Scan;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
+import org.apache.spark.sql.types.StructType;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-public class KernelSparkScanBuilderTest extends KernelSparkDsv2TestBase {
+public class SparkScanBuilderTest extends SparkDsv2TestBase {
 
   @Test
   public void testBuild_returnsScanWithExpectedSchema(@TempDir File tempDir) {
@@ -37,21 +38,39 @@ public class KernelSparkScanBuilderTest extends KernelSparkDsv2TestBase {
     String tableName = "scan_builder_test";
     spark.sql(
         String.format(
-            "CREATE TABLE %s (id INT, data STRING) USING delta LOCATION '%s'", tableName, path));
+            "CREATE TABLE %s (id INT, name STRING, dep_id INT) USING delta PARTITIONED BY (dep_id) LOCATION '%s'",
+            tableName, path));
     Snapshot snapshot = TableManager.loadSnapshot(path).build(defaultEngine);
-    KernelSparkScanBuilder builder =
-        new KernelSparkScanBuilder((SnapshotImpl) snapshot, spark.sessionState().newHadoopConf());
+    StructType dataSchema =
+        DataTypes.createStructType(
+            new StructField[] {
+              DataTypes.createStructField("id", DataTypes.IntegerType, true),
+              DataTypes.createStructField("name", DataTypes.StringType, true),
+              DataTypes.createStructField("dep_id", DataTypes.IntegerType, true)
+            });
+    StructType partitionSchema =
+        DataTypes.createStructType(
+            new StructField[] {DataTypes.createStructField("dep_id", DataTypes.IntegerType, true)});
+    SparkScanBuilder builder =
+        new SparkScanBuilder(
+            tableName,
+            path,
+            dataSchema,
+            partitionSchema,
+            (SnapshotImpl) snapshot,
+            spark.sessionState().newHadoopConf());
 
-    org.apache.spark.sql.types.StructType expectedSparkSchema =
+    StructType expectedSparkSchema =
         DataTypes.createStructType(
             new StructField[] {
               DataTypes.createStructField("id", DataTypes.IntegerType, true /*nullable*/),
-              DataTypes.createStructField("data", DataTypes.StringType, true /*nullable*/)
+              DataTypes.createStructField("dep_id", DataTypes.IntegerType, true)
             });
 
+    builder.pruneColumns(expectedSparkSchema);
     Scan scan = builder.build();
 
-    assertTrue(scan instanceof KernelSparkScan);
+    assertTrue(scan instanceof SparkScan);
     assertEquals(expectedSparkSchema, scan.readSchema());
   }
 }
