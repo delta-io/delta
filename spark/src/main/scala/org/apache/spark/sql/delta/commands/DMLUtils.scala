@@ -16,8 +16,14 @@
 
 package org.apache.spark.sql.delta.commands
 
+// scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.DeltaCommitTag
 import org.apache.spark.sql.delta.actions.{Action, FileAction}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION
+
+import org.apache.spark.internal.config.ConfigEntry
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.SparkSession.setActiveSession
 
 object DMLUtils {
 
@@ -36,5 +42,47 @@ object DMLUtils {
 
   object TaggedCommitData {
     def empty[A <: Action]: TaggedCommitData[A] = TaggedCommitData(Seq.empty[A])
+  }
+}
+
+/**
+ * Helper trait to run a block of code with a cloned SparkSession and overwrite SQL configs.
+ */
+trait RunWithClonedSparkSession {
+
+  protected val SQLConfigsToOverwrite: Map[ConfigEntry[Boolean], Boolean]
+
+  def runWithClonedSparkSession[T](spark: SparkSession)(f: SparkSession => T): T = {
+    val clonedSession = spark.cloneSession()
+    SQLConfigsToOverwrite.foreach { case (key, overwriteValue) =>
+      clonedSession.sessionState.conf.setConf(key, overwriteValue)
+    }
+    setActiveSession(clonedSession)
+    try {
+      f(clonedSession)
+    } finally {
+      copyBackLastCommitVersionFromClonedSession(
+        originalSession = spark,
+        clonedSession = clonedSession
+      )
+      setActiveSession(spark)
+    }
+  }
+
+  /**
+   * Copy last commit version from cloned session in case it was updated. This makes sure the
+   * caller will see the updated value using the original session. Any concurrent modification in
+   * the original session would get overwritten. But a similar issue would happen anyways if the
+   * original session was used directly instead of the clone.
+   */
+  private def copyBackLastCommitVersionFromClonedSession(
+      originalSession: SparkSession,
+      clonedSession: SparkSession): Unit = {
+    val copyConfigs = Set(DELTA_LAST_COMMIT_VERSION_IN_SESSION.key)
+    copyConfigs.foreach { config =>
+      clonedSession.conf
+        .getOption(config)
+        .foreach(value => originalSession.conf.set(config, value))
+    }
   }
 }
