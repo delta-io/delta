@@ -40,7 +40,6 @@ import scala.collection.JavaConverters;
 /** Spark DSV2 Scan implementation backed by Delta Kernel. */
 public class SparkScan implements Scan, SupportsReportStatistics {
 
-  private final String tableName;
   private final String tablePath;
   private final StructType readDataSchema;
   private final StructType dataSchema;
@@ -58,7 +57,6 @@ public class SparkScan implements Scan, SupportsReportStatistics {
   private volatile boolean planned = false;
 
   public SparkScan(
-      String tableName,
       String tablePath,
       StructType dataSchema,
       StructType partitionSchema,
@@ -68,7 +66,6 @@ public class SparkScan implements Scan, SupportsReportStatistics {
       io.delta.kernel.Scan kernelScan,
       Configuration hadoopConf) {
 
-    this.tableName = Objects.requireNonNull(tableName, "tableName");
     final String normalizedTablePath = Objects.requireNonNull(tablePath, "tablePath");
     this.tablePath =
         normalizedTablePath.endsWith("/") ? normalizedTablePath : normalizedTablePath + "/";
@@ -101,7 +98,7 @@ public class SparkScan implements Scan, SupportsReportStatistics {
   public Batch toBatch() {
     ensurePlanned();
     return new SparkBatch(
-        tableName,
+        tablePath,
         dataSchema,
         partitionSchema,
         readDataSchema,

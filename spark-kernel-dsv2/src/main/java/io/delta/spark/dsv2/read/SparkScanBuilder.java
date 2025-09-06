@@ -81,7 +81,6 @@ public class SparkScanBuilder implements ScanBuilder, SupportsPushDownRequiredCo
   public org.apache.spark.sql.connector.read.Scan build() {
     // TODO: Implement predicate pushdown by translating Spark Filters to Delta Kernel Predicates.
     return new SparkScan(
-        tableName,
         tablePath,
         dataSchema,
         partitionSchema,

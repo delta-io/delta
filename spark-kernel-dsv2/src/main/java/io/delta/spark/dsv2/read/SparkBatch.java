@@ -41,7 +41,7 @@ import scala.collection.Iterator;
 import scala.collection.JavaConverters;
 
 public class SparkBatch implements Batch {
-  private final String tableName;
+  private final String tablePath;
   private final StructType readDataSchema;
   private final StructType dataSchema;
   private final StructType partitionSchema;
@@ -53,7 +53,7 @@ public class SparkBatch implements Batch {
   private final List<PartitionedFile> partitionedFiles;
 
   public SparkBatch(
-      String tableName,
+      String tablePath,
       StructType dataSchema,
       StructType partitionSchema,
       StructType readDataSchema,
@@ -63,7 +63,7 @@ public class SparkBatch implements Batch {
       long totalBytes,
       Configuration hadoopConf) {
 
-    this.tableName = Objects.requireNonNull(tableName, "tableName");
+    this.tablePath = Objects.requireNonNull(tablePath, "tableName");
     this.dataSchema = Objects.requireNonNull(dataSchema, "dataSchema");
     this.partitionSchema = Objects.requireNonNull(partitionSchema, "partitionSchema");
     this.readDataSchema = Objects.requireNonNull(readDataSchema, "readDataSchema");
@@ -123,7 +123,7 @@ public class SparkBatch implements Batch {
     if (!(obj instanceof SparkBatch)) return false;
 
     SparkBatch that = (SparkBatch) obj;
-    return Objects.equals(this.tableName, that.tableName)
+    return Objects.equals(this.tablePath, that.tablePath)
         && Objects.equals(this.readDataSchema, that.readDataSchema)
         && Objects.equals(this.partitionSchema, that.partitionSchema)
         && Arrays.equals(this.pushedToKernelFilters, that.pushedToKernelFilters)
@@ -133,7 +133,7 @@ public class SparkBatch implements Batch {
 
   @Override
   public int hashCode() {
-    int result = tableName.hashCode();
+    int result = tablePath.hashCode();
     result = 31 * result + readDataSchema.hashCode();
     result = 31 * result + partitionSchema.hashCode();
     result = 31 * result + Arrays.hashCode(pushedToKernelFilters);
