@@ -28,7 +28,8 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 
 trait UpdateCDCTests  extends UpdateSQLMixin
   with DeltaColumnMappingTestUtils
-  with DeltaDMLTestUtilsPathBased {
+  with DeltaDMLTestUtilsPathBased
+  with CDCTestMixin {
   import testImplicits._
 
   test("CDC for unconditional update") {
@@ -41,8 +42,7 @@ trait UpdateCDCTests  extends UpdateSQLMixin
 
     val latestVersion = deltaLog.update().version
     checkAnswer(
-      CDCReader
-        .changesToBatchDF(deltaLog, latestVersion, latestVersion, spark)
+      computeCDC(spark, deltaLog, latestVersion, latestVersion)
         .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
       Row(1, 1, "update_preimage", latestVersion) ::
         Row(1, -1, "update_postimage", latestVersion) ::
@@ -65,8 +65,7 @@ trait UpdateCDCTests  extends UpdateSQLMixin
 
     val latestVersion = deltaLog.update().version
     checkAnswer(
-      CDCReader
-        .changesToBatchDF(deltaLog, latestVersion, latestVersion, spark)
+      computeCDC(spark, deltaLog, latestVersion, latestVersion)
         .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
       Row(1, 1, "update_preimage", latestVersion) ::
         Row(1, -1, "update_postimage", latestVersion) ::
@@ -89,8 +88,7 @@ trait UpdateCDCTests  extends UpdateSQLMixin
 
     val latestVersion = deltaLog.update().version
     checkAnswer(
-      CDCReader
-        .changesToBatchDF(deltaLog, latestVersion, latestVersion, spark)
+      computeCDC(spark, deltaLog, latestVersion, latestVersion)
         .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
       Row(1, 1, "update_preimage", latestVersion) ::
         Row(1, -1, "update_postimage", latestVersion) ::
@@ -107,8 +105,7 @@ trait UpdateCDCTests  extends UpdateSQLMixin
 
     val latestVersion1 = deltaLog.update().version
     checkAnswer(
-      CDCReader
-        .changesToBatchDF(deltaLog, latestVersion1, latestVersion1, spark)
+      computeCDC(spark, deltaLog, latestVersion1, latestVersion1)
         .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
       Row(1, 1, "update_preimage", latestVersion1) ::
         Row(1, -1, "update_postimage", latestVersion1) ::
@@ -121,8 +118,7 @@ trait UpdateCDCTests  extends UpdateSQLMixin
 
     val latestVersion2 = deltaLog.update().version
     checkAnswer(
-      CDCReader
-        .changesToBatchDF(deltaLog, latestVersion1, latestVersion2, spark)
+      computeCDC(spark, deltaLog, latestVersion1, latestVersion2)
         .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
       Row(1, 1, "update_preimage", latestVersion1) ::
         Row(1, -1, "update_postimage", latestVersion1) ::
@@ -143,8 +139,7 @@ trait UpdateCDCTests  extends UpdateSQLMixin
 
     val latestVersion = deltaLog.update().version
     checkAnswer(
-      CDCReader
-        .changesToBatchDF(deltaLog, latestVersion, latestVersion, spark)
+      computeCDC(spark, deltaLog, latestVersion, latestVersion)
         .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
       Row(1, 1, 1, "update_preimage", latestVersion) ::
         Row(1, -1, 1, "update_postimage", latestVersion) ::
@@ -166,11 +161,11 @@ trait UpdateCDCTests  extends UpdateSQLMixin
       sql(s"INSERT INTO $tableName VALUES (4, 4, 4)")
       sql(s"UPDATE $tableName SET partition_column = null WHERE partition_column = 4")
       checkAnswer(
-        CDCReader.changesToBatchDF(
+        computeCDC(spark,
           DeltaLog.forTable(
             spark,
             spark.sessionState.sqlParser.parseTableIdentifier(tableName)
-          ), 1, 3, spark)
+          ), 1, 2)
           .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
         Row(4, 4, 4, "insert", 1) ::
           Row(4, 4, 4, "update_preimage", 2) ::
@@ -179,15 +174,15 @@ trait UpdateCDCTests  extends UpdateSQLMixin
   }
 }
 
-trait UpdateCDCWithDeletionVectorsTests extends UpdateSQLWithDeletionVectorsMixin {
+trait UpdateCDCWithDeletionVectorsTests extends UpdateSQLWithDeletionVectorsMixin
+  with CDCTestMixin {
   test("UPDATE with DV write CDC files explicitly") {
     append(spark.range(0, 10, 1, numPartitions = 2).toDF())
     executeUpdate(tableSQLIdentifier, "id = -1", "id % 4 = 0")
 
     val latestVersion = deltaLog.update().version
     checkAnswer(
-      CDCReader
-        .changesToBatchDF(deltaLog, latestVersion, latestVersion, spark)
+      computeCDC(spark, deltaLog, latestVersion, latestVersion)
         .drop(CDCReader.CDC_COMMIT_TIMESTAMP),
       Row(0, "update_preimage", latestVersion) ::
         Row(-1, "update_postimage", latestVersion) ::
