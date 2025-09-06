@@ -990,7 +990,7 @@ trait SnapshotManagement { self: DeltaLog =>
         catalogTableOpt = catalogTableOpt,
         versionToLoad = None,
         includeMinorCompactions = includeCompactions)
-    val newFiles = newFilesOpt.getOrElse {
+    val newFiles = newFilesOpt.filterNot(_.isEmpty).getOrElse {
       // An empty listing likely implies a list-after-write inconsistency or that somebody clobbered
       // the Delta log.
       return (oldLogSegment, Nil)
