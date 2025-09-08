@@ -15,15 +15,9 @@
  */
 package io.delta.kernel.internal.columndefaults;
 
-import static io.delta.kernel.internal.tablefeatures.TableFeatures.ALLOW_COLUMN_DEFAULTS_W_FEATURE;
-
 import io.delta.kernel.data.Row;
 import io.delta.kernel.exceptions.KernelException;
-import io.delta.kernel.internal.TableConfig;
-import io.delta.kernel.internal.actions.Metadata;
-import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.data.TransactionStateRow;
-import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.SchemaIterable;
 import io.delta.kernel.types.*;
 import java.math.BigDecimal;
@@ -32,7 +26,6 @@ import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
-import java.util.Map;
 import java.util.stream.Stream;
 
 /**
@@ -43,16 +36,6 @@ import java.util.stream.Stream;
 public class ColumnDefaults {
 
   private static final String DEFAULT_VALUE_METADATA_KEY = "CURRENT_DEFAULT";
-
-  public static boolean isEnabled(Map<String, String> properties) {
-    return TableFeatures.isFeaturePropertyOverridden(properties, ALLOW_COLUMN_DEFAULTS_W_FEATURE)
-        && TableConfig.ICEBERG_COMPAT_V3_ENABLED.fromMetadata(properties);
-  }
-
-  public static boolean isEnabled(Protocol protocol, Metadata metadata) {
-    return protocol.supportsFeature(ALLOW_COLUMN_DEFAULTS_W_FEATURE)
-        && TableConfig.ICEBERG_COMPAT_V3_ENABLED.fromMetadata(metadata);
-  }
 
   /** Don't allow data writes to tables with default values */
   public static void blockWriteIfEnabled(Row transactionState) {
@@ -65,26 +48,25 @@ public class ColumnDefaults {
   }
 
   /**
-   * Validate Column Default values in the provided metadata.
-   *
-   * <ul>
-   *   <li>Kernel only supports literal default values. See {validateLiteral}.
-   * </ul>
+   * Validate Column Default values in the provided metadata. Kernel only supports literal default
+   * values. See {validateLiteral}.
    *
    * @param schema target table schema
-   * @param isEnabled When the feature is disabled, no column default is allowed. When it's enabled,
-   *     only literal default value is allowed
-   * @throws IllegalArgumentException when the table contains invalid default value
+   * @param isEnabled When the feature is disabled, no column default is allowed.
+   * @throws KernelException when the table contains invalid default value
    */
-  public static void validate(StructType schema, boolean isEnabled) {
+  public static void validate(
+      StructType schema, boolean isEnabled, boolean isIcebergCompatV3Enabled) {
     Stream<StructField> defaultValues = extractFieldsWithDefaultValues(schema);
     if (!isEnabled) {
       if (defaultValues.findAny().isPresent()) {
         throw new KernelException(
             "This table does not enable table features for setting column defaults");
       }
+    } else if (!isIcebergCompatV3Enabled) {
+      throw new KernelException(
+          "In Delta Kernel, default values table feature requires IcebergCompatV3 to be enabled.");
     } else {
-      // Validate the default value
       defaultValues.forEach(
           field -> {
             try {
