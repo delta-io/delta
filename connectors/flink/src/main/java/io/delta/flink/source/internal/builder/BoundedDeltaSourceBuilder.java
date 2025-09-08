@@ -12,6 +12,7 @@ import org.apache.hadoop.conf.Configuration;
 import static io.delta.flink.source.internal.DeltaSourceOptions.PARQUET_BATCH_SIZE;
 import static io.delta.flink.source.internal.DeltaSourceOptions.TIMESTAMP_AS_OF;
 import static io.delta.flink.source.internal.DeltaSourceOptions.VERSION_AS_OF;
+import static io.delta.flink.source.internal.DeltaSourceOptions.PARTITION_FILTERS;
 
 /**
  * A base class for Delta source builders that should create Delta source instance for {@link
@@ -38,7 +39,8 @@ public abstract class BoundedDeltaSourceBuilder<T, SELF> extends DeltaSourceBuil
         Arrays.asList(
             VERSION_AS_OF.key(),
             TIMESTAMP_AS_OF.key(),
-            PARQUET_BATCH_SIZE.key()
+            PARQUET_BATCH_SIZE.key(),
+                PARTITION_FILTERS.key()
         )
     );
 
@@ -56,6 +58,11 @@ public abstract class BoundedDeltaSourceBuilder<T, SELF> extends DeltaSourceBuil
 
     public SELF timestampAsOf(String snapshotTimestamp) {
         this.option(TIMESTAMP_AS_OF.key(), snapshotTimestamp);
+        return self();
+    }
+
+    public SELF partitionFilter(String partitionFilter) {
+        this.option(PARTITION_FILTERS.key(), partitionFilter);
         return self();
     }
 

@@ -22,6 +22,8 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import static io.delta.flink.source.internal.DeltaSourceOptions.PARTITION_FILTERS;
 import static org.hamcrest.CoreMatchers.equalTo;
 import static org.hamcrest.CoreMatchers.notNullValue;
 import static org.hamcrest.MatcherAssert.assertThat;
@@ -104,6 +106,31 @@ class RowDataBoundedDeltaSourceBuilderTest extends RowDataDeltaSourceBuilderTest
             }
             // as many calls as we had builders
             verify(deltaLog, times(builders.size())).getSnapshotForVersionAsOf(versionAsOf);
+        });
+    }
+
+    @Test
+    public void shouldCreateSourceForPartitionFilter() {
+        StructField[] schema = {new StructField("col1", new StringType())};
+        mockDeltaTableForSchema(schema);
+
+        List<RowDataBoundedDeltaSourceBuilder> builders = Arrays.asList(
+                getBuilderAllColumns().versionAsOf(1).partitionFilter(
+                        "partCol=partVal"),
+                getBuilderAllColumns().versionAsOf(1).option(
+                        PARTITION_FILTERS.key(), "partCol=partVal")
+        );
+
+        when(deltaLog.getSnapshotForVersionAsOf(1)).thenReturn(headSnapshot);
+        assertAll(() -> {
+            for (RowDataBoundedDeltaSourceBuilder builder : builders) {
+                DeltaSource<RowData> source = builder.build();
+
+                assertThat(source, notNullValue());
+                assertThat(source.getBoundedness(), equalTo(Boundedness.BOUNDED));
+                assertThat(source.getSourceConfiguration()
+                        .getValue(PARTITION_FILTERS), equalTo("partCol=partVal"));
+            }
         });
     }
 
