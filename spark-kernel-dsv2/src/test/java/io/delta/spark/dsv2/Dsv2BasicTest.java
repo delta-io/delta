@@ -31,7 +31,6 @@ import org.apache.spark.sql.types.DataTypes;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.io.TempDir;
 import scala.Function0;
-import scala.collection.Seq;
 
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public class Dsv2BasicTest extends QueryTest {
@@ -193,7 +192,9 @@ public class Dsv2BasicTest extends QueryTest {
             return df;
           }
         };
-    Seq<Row> expectedSeq = scala.collection.JavaConverters.asScalaBuffer(expected).toSeq();
+
+    scala.collection.immutable.Seq<Row> expectedSeq =
+        scala.collection.JavaConverters.asScalaBuffer(expected).toList();
     checkAnswer(dfFunc, expectedSeq);
   }
 
