@@ -362,6 +362,20 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
       ExpressionTransformResult rightResult = visit(getRight(predicate));
       Expression left = leftResult.expression;
       Expression right = rightResult.expression;
+
+      if (predicate.getCollationIdentifier().isPresent()) {
+        CollationIdentifier collationIdentifier = predicate.getCollationIdentifier().get();
+        checkIsUTF8BinaryCollation(predicate, collationIdentifier);
+
+        for (DataType dataType : Arrays.asList(leftResult.outputType, rightResult.outputType)) {
+          checkIsStringType(
+              dataType,
+              predicate,
+              format("Predicate %s expects STRING type inputs", predicate.getName()));
+        }
+        return new Predicate(predicate.getName(), left, right, collationIdentifier);
+      }
+
       if (!leftResult.outputType.equivalent(rightResult.outputType)) {
         if (canCastTo(leftResult.outputType, rightResult.outputType)) {
           left = new ImplicitCastExpression(left, rightResult.outputType);

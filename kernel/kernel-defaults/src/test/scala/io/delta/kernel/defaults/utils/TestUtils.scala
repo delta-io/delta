@@ -921,4 +921,11 @@ trait AbstractTestUtils extends Assertions with SQLHelper with TestCommitterUtil
   protected def buildCrcPath(basePath: String, version: Long): java.nio.file.Path = {
     new File(FileNames.checksumFile(new Path(f"$basePath/_delta_log"), version).toString).toPath
   }
+
+  protected def optionToJava[T](option: Option[T]): Optional[T] = {
+    option match {
+      case Some(value) => Optional.of(value)
+      case None => Optional.empty()
+    }
+  }
 }

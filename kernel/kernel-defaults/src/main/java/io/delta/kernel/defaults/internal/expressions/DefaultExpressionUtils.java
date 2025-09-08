@@ -17,18 +17,21 @@ package io.delta.kernel.defaults.internal.expressions;
 
 import static io.delta.kernel.defaults.internal.DefaultEngineErrors.unsupportedExpressionException;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+import static java.lang.String.format;
 
 import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.Literal;
+import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.types.*;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 import java.util.function.Function;
 import java.util.function.IntPredicate;
 import java.util.stream.Collectors;
@@ -500,7 +503,7 @@ class DefaultExpressionUtils {
   }
 
   static void checkIsStringType(DataType dataType, Expression parentExpr, String errorMessage) {
-    if (StringType.STRING.equals(dataType)) {
+    if (dataType instanceof StringType) {
       return;
     }
     throw unsupportedExpressionException(parentExpr, errorMessage);
@@ -509,6 +512,31 @@ class DefaultExpressionUtils {
   static void checkIsLiteral(Expression expr, Expression parentExpr, String errorMessage) {
     if (!(expr instanceof Literal)) {
       throw unsupportedExpressionException(parentExpr, errorMessage);
+    }
+  }
+
+  /** Creates a {@link Predicate} with name, children and optional collation. */
+  static Predicate createPredicate(
+      String name, List<Expression> children, Optional<CollationIdentifier> collationIdentifier) {
+    if (collationIdentifier.isPresent()) {
+      return new Predicate(name, children.get(0), children.get(1), collationIdentifier.get());
+    } else {
+      return new Predicate(name, children);
+    }
+  }
+
+  /**
+   * Checks if the collation is `UTF8_BINARY`, since this is the only collation the default engine
+   * can evaluate.
+   */
+  static void checkIsUTF8BinaryCollation(
+      Predicate predicate, CollationIdentifier collationIdentifier) {
+    if (!collationIdentifier.isSparkUTF8BinaryCollation()) {
+      String msg =
+          format(
+              "Unsupported collation: \"%s\". Default Engine supports just" + " \"%s\" collation.",
+              collationIdentifier, CollationIdentifier.SPARK_UTF8_BINARY);
+      throw unsupportedExpressionException(predicate, msg);
     }
   }
 }

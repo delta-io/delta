@@ -15,11 +15,12 @@
  */
 package io.delta.kernel.expressions;
 
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.engine.ExpressionHandler;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Set;
+import io.delta.kernel.types.CollationIdentifier;
+import java.util.*;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -33,27 +34,27 @@ import java.util.stream.Stream;
  * <ol>
  *   <li>Name: <code>=</code>
  *       <ul>
- *         <li>SQL semantic: <code>expr1 = expr2</code>
+ *         <li>SQL semantic: <code>expr1 = expr2 [COLLATE collationIdentifier]</code>
  *         <li>Since version: 3.0.0
  *       </ul>
  *   <li>Name: <code>&lt;</code>
  *       <ul>
- *         <li>SQL semantic: <code>expr1 &lt; expr2</code>
+ *         <li>SQL semantic: <code>expr1 &lt; expr2 [COLLATE collationIdentifier]</code>
  *         <li>Since version: 3.0.0
  *       </ul>
  *   <li>Name: <code>&lt;=</code>
  *       <ul>
- *         <li>SQL semantic: <code>expr1 &lt;= expr2</code>
+ *         <li>SQL semantic: <code>expr1 &lt;= expr2 [COLLATE collationIdentifier]</code>
  *         <li>Since version: 3.0.0
  *       </ul>
  *   <li>Name: <code>&gt;</code>
  *       <ul>
- *         <li>SQL semantic: <code>expr1 &gt; expr2</code>
+ *         <li>SQL semantic: <code>expr1 &gt; expr2 [COLLATE collationIdentifier]</code>
  *         <li>Since version: 3.0.0
  *       </ul>
  *   <li>Name: <code>&gt;=</code>
  *       <ul>
- *         <li>SQL semantic: <code>expr1 &gt;= expr2</code>
+ *         <li>SQL semantic: <code>expr1 &gt;= expr2 [COLLATE collationIdentifier]</code>
  *         <li>Since version: 3.0.0
  *       </ul>
  *   <li>Name: <code>ALWAYS_TRUE</code>
@@ -98,12 +99,13 @@ import java.util.stream.Stream;
  *       </ul>
  *   <li>Name: <code>IS NOT DISTINCT FROM</code>
  *       <ul>
- *         <li>SQL semantic: <code>expr1 IS NOT DISTINCT FROM expr2</code>
+ *         <li>SQL semantic: <code>expr1 IS NOT DISTINCT FROM expr2 [COLLATE collationIdentifier]
+ *             </code>
  *         <li>Since version: 3.3.0
  *       </ul>
  *   <li>Name: <code>STARTS_WITH</code>
  *       <ul>
- *         <li>SQL semantic: <code>expr STARTS_WITH expr</code>
+ *         <li>SQL semantic: <code>expr STARTS_WITH expr [COLLATE collationIdentifier]</code>
  *         <li>Since version: 3.4.0
  *       </ul>
  * </ol>
@@ -112,8 +114,12 @@ import java.util.stream.Stream;
  */
 @Evolving
 public class Predicate extends ScalarExpression {
+  /** Optional collation to be used for string comparison in this predicate. */
+  private Optional<CollationIdentifier> collationIdentifier;
+
   public Predicate(String name, List<Expression> children) {
     super(name, children);
+    collationIdentifier = Optional.empty();
   }
 
   /** Constructor for a unary Predicate expression */
@@ -126,9 +132,41 @@ public class Predicate extends ScalarExpression {
     this(name, Arrays.asList(left, right));
   }
 
+  /** Constructor for a binary Predicate expression with collation support. */
+  public Predicate(
+      String name, Expression left, Expression right, CollationIdentifier collationIdentifier) {
+    this(name, Arrays.asList(left, right), collationIdentifier);
+  }
+
+  /** Constructor for a binary Predicate expression with collation support. */
+  public Predicate(
+      String name, List<Expression> children, CollationIdentifier collationIdentifier) {
+    this(name, children);
+    checkArgument(
+        COLLATION_SUPPORTED_OPERATORS.contains(this.name),
+        "Collation is not supported for operator %s. Supported operators are %s",
+        this.name,
+        COLLATION_SUPPORTED_OPERATORS);
+    checkArgument(
+        this.children.size() == 2,
+        "Invalid Predicate: collated predicate '%s' requires exactly 2 children, but found %d.",
+        this.name,
+        this.children.size());
+    this.collationIdentifier = Optional.of(collationIdentifier);
+  }
+
+  /** Returns the collation identifier used for this predicate, if specified. */
+  public Optional<CollationIdentifier> getCollationIdentifier() {
+    return collationIdentifier;
+  }
+
   @Override
   public String toString() {
-    if (BINARY_OPERATORS.contains(name)) {
+    if (collationIdentifier.isPresent()) {
+      return String.format(
+          "(%s %s %s COLLATE %s)",
+          children.get(0), name, children.get(1), collationIdentifier.get());
+    } else if (BINARY_OPERATORS.contains(name)) {
       return String.format("(%s %s %s)", children.get(0), name, children.get(1));
     }
     return super.toString();
@@ -147,5 +185,11 @@ public class Predicate extends ScalarExpression {
   }
 
   private static final Set<String> BINARY_OPERATORS =
-      Stream.of("<", "<=", ">", ">=", "=", "AND", "OR").collect(Collectors.toSet());
+      Stream.of("<", "<=", ">", ">=", "=", "AND", "OR", "IS NOT DISTINCT FROM", "STARTS_WITH")
+          .collect(Collectors.toSet());
+
+  /** Operators that support collation-based string comparison. */
+  private static final Set<String> COLLATION_SUPPORTED_OPERATORS =
+      Stream.of("<", "<=", ">", ">=", "=", "IS NOT DISTINCT FROM", "STARTS_WITH")
+          .collect(Collectors.toSet());
 }
