@@ -27,7 +27,7 @@ import io.delta.kernel.exceptions.KernelEngineException
 import io.delta.kernel.internal.actions.Protocol
 import io.delta.kernel.internal.table.SnapshotBuilderImpl
 import io.delta.kernel.internal.util.{Tuple2 => KernelTuple2}
-import io.delta.kernel.test.{ActionUtils, BaseMockJsonHandler, MockFileSystemClientUtils, VectorTestUtils}
+import io.delta.kernel.test.{ActionUtils, BaseMockJsonHandler, MockFileSystemClientUtils, TestFixtures, VectorTestUtils}
 import io.delta.kernel.types.{IntegerType, StructType}
 import io.delta.kernel.utils.CloseableIterator
 
@@ -35,19 +35,15 @@ import org.scalatest.funsuite.AnyFunSuite
 
 class DefaultCommitterSuite extends AnyFunSuite
     with MockFileSystemClientUtils
-    with ActionUtils
+    with TestFixtures
     with VectorTestUtils {
 
   private val protocol12 = new Protocol(1, 2)
 
-  private val basicFileSystemCommitMetadataNoPMChange = new CommitMetadata(
-    1L,
-    "/fake/_delta_log",
-    testCommitInfo(ictEnabled = false),
-    Optional.of(new KernelTuple2(protocol12, basicPartitionedMetadata)),
-    Optional.empty(), // newProtocolOpt
-    Optional.empty() // newMetadataOpt
-  )
+  private val basicFileSystemCommitMetadataNoPMChange = createCommitMetadata(
+    version = 1L,
+    commitInfo = testCommitInfo(ictEnabled = false),
+    readPandMOpt = Optional.of(new KernelTuple2(protocol12, basicPartitionedMetadata)))
 
   Seq(
     (protocol12, protocolWithCatalogManagedSupport, "Upgrade"),
@@ -73,13 +69,11 @@ class DefaultCommitterSuite extends AnyFunSuite
         committer.commit(
           emptyMockEngine,
           emptyActionsIterator,
-          new CommitMetadata(
-            3L,
-            "/fake/_delta_log",
-            testCommitInfo(),
-            Optional.of(new KernelTuple2(readProtocol, metadata)),
-            Optional.of(newProtocol),
-            Optional.of(metadata)))
+          createCommitMetadata(
+            version = 3L,
+            readPandMOpt = Optional.of(new KernelTuple2(readProtocol, metadata)),
+            newProtocolOpt = Optional.of(newProtocol),
+            newMetadataOpt = Optional.of(metadata)))
       }.getMessage
 
       assert(exMsg.contains("No io.delta.kernel.commit.Committer has been provided to Kernel, so " +

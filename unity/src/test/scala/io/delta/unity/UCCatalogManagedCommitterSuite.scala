@@ -30,7 +30,7 @@ import io.delta.kernel.internal.actions.{Metadata, Protocol}
 import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.internal.util.{Tuple2 => KernelTuple2}
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
-import io.delta.kernel.test.{BaseMockJsonHandler, MockFileSystemClientUtils, VectorTestUtils}
+import io.delta.kernel.test.{BaseMockJsonHandler, MockFileSystemClientUtils, TestFixtures, VectorTestUtils}
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 import io.delta.storage.commit.Commit
 import io.delta.storage.commit.uccommitcoordinator.InvalidTargetTableException
@@ -42,6 +42,7 @@ import org.scalatest.funsuite.AnyFunSuite
 class UCCatalogManagedCommitterSuite
     extends AnyFunSuite
     with UCCatalogManagedTestUtils
+    with TestFixtures
     with VectorTestUtils
     with MockFileSystemClientUtils {
 
@@ -67,19 +68,6 @@ class UCCatalogManagedCommitterSuite
       FileUtils.deleteDirectory(tempDir)
     }
   }
-
-  private def createCommitMetadata(
-      version: Long,
-      logPath: String = baseTestLogPath,
-      readPandMOpt: Optional[KernelTuple2[Protocol, Metadata]] = Optional.empty(),
-      newProtocolOpt: Optional[Protocol] = Optional.empty(),
-      newMetadataOpt: Optional[Metadata] = Optional.empty()): CommitMetadata = new CommitMetadata(
-    version,
-    logPath,
-    testCommitInfo(),
-    readPandMOpt,
-    newProtocolOpt,
-    newMetadataOpt)
 
   private def catalogManagedWriteCommitMetadata(
       version: Long,
@@ -190,13 +178,12 @@ class UCCatalogManagedCommitterSuite
       // version > 0 for updates, version = 0 for creates
       val version = if (testCase.readPandMOpt.isPresent) 1L else 0L
 
-      val commitMetadata = new CommitMetadata(
-        version,
-        baseTestLogPath,
-        testCommitInfo(),
-        testCase.readPandMOpt,
-        testCase.newProtocolOpt,
-        testCase.newMetadataOpt)
+      val commitMetadata = createCommitMetadata(
+        version = version,
+        logPath = baseTestLogPath,
+        readPandMOpt = testCase.readPandMOpt,
+        newProtocolOpt = testCase.newProtocolOpt,
+        newMetadataOpt = testCase.newMetadataOpt)
 
       assert(commitMetadata.getCommitType == testCase.expectedCommitType)
 
@@ -245,6 +232,7 @@ class UCCatalogManagedCommitterSuite
       .withFeature(TableFeatures.DELETION_VECTORS_RW_FEATURE)
     val commitMetadata = createCommitMetadata(
       version = 1,
+      logPath = baseTestLogPath,
       readPandMOpt = Optional.of(
         new KernelTuple2[Protocol, Metadata](
           protocolWithCatalogManagedSupport,
@@ -264,6 +252,7 @@ class UCCatalogManagedCommitterSuite
       .withMergedConfiguration(Map("foo" -> "bar").asJava)
     val commitMetadata = createCommitMetadata(
       version = 1,
+      logPath = baseTestLogPath,
       readPandMOpt = Optional.of(
         new KernelTuple2[Protocol, Metadata](
           protocolWithCatalogManagedSupport,
