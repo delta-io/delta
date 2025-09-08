@@ -135,23 +135,12 @@ public class Predicate extends ScalarExpression {
   /** Constructor for a binary Predicate expression with collation support. */
   public Predicate(
       String name, Expression left, Expression right, CollationIdentifier collationIdentifier) {
-    this(name, Arrays.asList(left, right), collationIdentifier);
-  }
-
-  /** Constructor for a binary Predicate expression with collation support. */
-  public Predicate(
-      String name, List<Expression> children, CollationIdentifier collationIdentifier) {
-    this(name, children);
+    this(name, left, right);
     checkArgument(
         COLLATION_SUPPORTED_OPERATORS.contains(this.name),
         "Collation is not supported for operator %s. Supported operators are %s",
         this.name,
         COLLATION_SUPPORTED_OPERATORS);
-    checkArgument(
-        this.children.size() == 2,
-        "Invalid Predicate: collated predicate '%s' requires exactly 2 children, but found %d.",
-        this.name,
-        this.children.size());
     this.collationIdentifier = Optional.of(collationIdentifier);
   }
 
