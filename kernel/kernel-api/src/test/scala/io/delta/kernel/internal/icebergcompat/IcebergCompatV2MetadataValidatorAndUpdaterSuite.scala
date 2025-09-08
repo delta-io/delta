@@ -24,21 +24,20 @@ import io.delta.kernel.internal.actions.{Metadata, Protocol}
 import io.delta.kernel.internal.icebergcompat.IcebergCompatV2MetadataValidatorAndUpdater.validateAndUpdateIcebergCompatV2Metadata
 import io.delta.kernel.internal.tablefeatures.TableFeature
 import io.delta.kernel.internal.tablefeatures.TableFeatures.{COLUMN_MAPPING_RW_FEATURE, ICEBERG_COMPAT_V2_W_FEATURE}
+import io.delta.kernel.test.TestFixtures
 import io.delta.kernel.types._
 
 trait IcebergCompatV2MetadataValidatorAndUpdaterSuiteBase
-    extends IcebergCompatMetadataValidatorAndUpdaterSuiteBase {
+    extends IcebergCompatMetadataValidatorAndUpdaterSuiteBase
+    with TestFixtures {
 
   override def icebergCompatVersion: String = "V2"
 
-  override def supportedDataColumnTypes: Set[DataType] =
-    IcebergCompatMetadataValidatorAndUpdaterSuiteBase.SIMPLE_TYPES ++
-      IcebergCompatMetadataValidatorAndUpdaterSuiteBase.COMPLEX_TYPES
+  override def supportedDataColumnTypes: Set[DataType] = ALL_TYPES.toSet
 
   override def unsupportedDataColumnTypes: Set[DataType] = Set(VariantType.VARIANT)
 
-  override def unsupportedPartitionColumnTypes: Set[DataType] =
-    IcebergCompatMetadataValidatorAndUpdaterSuiteBase.COMPLEX_TYPES
+  override def unsupportedPartitionColumnTypes: Set[DataType] = COMPLEX_TYPES.toSet
 
   override def isDeletionVectorsSupported: Boolean = false
 

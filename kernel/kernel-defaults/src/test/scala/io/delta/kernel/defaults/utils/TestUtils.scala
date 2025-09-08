@@ -42,6 +42,7 @@ import io.delta.kernel.internal.stats.FileSizeHistogram
 import io.delta.kernel.internal.util.FileNames.checksumFile
 import io.delta.kernel.internal.util.Utils
 import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
+import io.delta.kernel.test.TestFixtures
 import io.delta.kernel.types._
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 
@@ -69,7 +70,13 @@ trait TestUtilsWithTableManagerAPIs extends AbstractTestUtils {
   override def getTableManagerAdapter: AbstractTableManagerAdapter = new TableManagerAdapter()
 }
 
-trait AbstractTestUtils extends Assertions with SQLHelper with TestCommitterUtils {
+object TestUtilsWithTableManagerAPIs extends TestUtilsWithTableManagerAPIs
+
+trait AbstractTestUtils
+    extends Assertions
+    with SQLHelper
+    with TestCommitterUtils
+    with TestFixtures {
 
   def getTableManagerAdapter: AbstractTableManagerAdapter
 
@@ -345,28 +352,6 @@ trait AbstractTestUtils extends Assertions with SQLHelper with TestCommitterUtil
       TimeZone.setDefault(currentDefault)
     }
   }
-
-  /** All simple data type used in parameterized tests where type is one of the test dimensions. */
-  val SIMPLE_TYPES = Seq(
-    BooleanType.BOOLEAN,
-    ByteType.BYTE,
-    ShortType.SHORT,
-    IntegerType.INTEGER,
-    LongType.LONG,
-    FloatType.FLOAT,
-    DoubleType.DOUBLE,
-    DateType.DATE,
-    TimestampType.TIMESTAMP,
-    TimestampNTZType.TIMESTAMP_NTZ,
-    StringType.STRING,
-    BinaryType.BINARY,
-    new DecimalType(10, 5))
-
-  /** All types. Used in parameterized tests where type is one of the test dimensions. */
-  val ALL_TYPES = SIMPLE_TYPES ++ Seq(
-    new ArrayType(BooleanType.BOOLEAN, true),
-    new MapType(IntegerType.INTEGER, LongType.LONG, true),
-    new StructType().add("s1", BooleanType.BOOLEAN).add("s2", IntegerType.INTEGER))
 
   /**
    * Compares the rows in the tables latest snapshot with the expected answer and fails if they

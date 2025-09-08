@@ -36,8 +36,6 @@ class DeltaIcebergCompatV3TransactionBuilderV2Suite extends DeltaIcebergCompatV3
 /** This suite tests reading or writing into Delta table that have `icebergCompatV3` enabled. */
 trait DeltaIcebergCompatV3SuiteBase extends DeltaIcebergCompatBaseSuite {
 
-  import io.delta.kernel.internal.icebergcompat.IcebergCompatMetadataValidatorAndUpdaterSuiteBase._
-
   override def icebergCompatVersion: String = "icebergCompatV3"
 
   override def icebergCompatEnabledKey: String = TableConfig.ICEBERG_COMPAT_V3_ENABLED.getKey

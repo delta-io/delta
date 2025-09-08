@@ -21,12 +21,38 @@ import java.util.Optional
 import io.delta.kernel.commit.CommitMetadata
 import io.delta.kernel.internal.actions.{CommitInfo, Metadata, Protocol}
 import io.delta.kernel.internal.util.Tuple2
+import io.delta.kernel.types.{ArrayType, BinaryType, BooleanType, ByteType, DataType, DateType, DecimalType, DoubleType, FloatType, IntegerType, LongType, MapType, ShortType, StringType, StructType, TimestampNTZType, TimestampType}
 
 /**
  * Test fixtures including factory methods and constants for creating test objects with sensible
  * defaults.
  */
 trait TestFixtures extends ActionUtils {
+
+  /** All simple data type used in parameterized tests where type is one of the test dimensions. */
+  val SIMPLE_TYPES = Seq(
+    BooleanType.BOOLEAN,
+    ByteType.BYTE,
+    ShortType.SHORT,
+    IntegerType.INTEGER,
+    LongType.LONG,
+    FloatType.FLOAT,
+    DoubleType.DOUBLE,
+    DateType.DATE,
+    TimestampType.TIMESTAMP,
+    TimestampNTZType.TIMESTAMP_NTZ,
+    StringType.STRING,
+    BinaryType.BINARY,
+    new DecimalType(10, 5))
+
+  val COMPLEX_TYPES: Set[DataType] = Set(
+    new ArrayType(BooleanType.BOOLEAN, true),
+    new MapType(IntegerType.INTEGER, LongType.LONG, true),
+    new StructType().add("s1", BooleanType.BOOLEAN).add("s2", IntegerType.INTEGER))
+
+  /** All types. Used in parameterized tests where type is one of the test dimensions. */
+  val ALL_TYPES = SIMPLE_TYPES ++ COMPLEX_TYPES
+
   def createCommitMetadata(
       version: Long,
       logPath: String = "/fake/_delta_log",
@@ -42,4 +68,5 @@ trait TestFixtures extends ActionUtils {
       newProtocolOpt,
       newMetadataOpt)
   }
+
 }
