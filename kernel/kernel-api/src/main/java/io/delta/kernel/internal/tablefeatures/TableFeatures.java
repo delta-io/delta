@@ -463,11 +463,6 @@ public class TableFeatures {
     AllowColumnDefaultsTableFeature() {
       super("allowColumnDefaults", /* minWriterVersion = */ 7);
     }
-
-    @Override
-    public Set<TableFeature> requiredFeatures() {
-      return Collections.singleton(ICEBERG_WRITER_COMPAT_V3);
-    }
   }
 
   public static final TableFeature ICEBERG_WRITER_COMPAT_V1 = new IcebergWriterCompatV1();

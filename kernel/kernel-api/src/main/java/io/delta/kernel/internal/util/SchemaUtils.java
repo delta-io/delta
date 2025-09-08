@@ -52,10 +52,14 @@ public class SchemaUtils {
    * @param isColumnMappingEnabled whether column mapping is enabled. When column mapping is
    *     enabled, the column names in the schema can contain special characters that are allowed as
    *     column names in the Parquet file
+   * @param isColumnDefaultEnabled whether column defaults is enabled
    * @throws IllegalArgumentException if the schema is invalid
    */
   public static void validateSchema(
-      StructType schema, boolean isColumnMappingEnabled, boolean isColumnDefaultEnabled) {
+      StructType schema,
+      boolean isColumnMappingEnabled,
+      boolean isColumnDefaultEnabled,
+      boolean isIcebergCompatV3Enabled) {
     checkArgument(schema.length() > 0, "Schema should contain at least one column");
 
     List<String> flattenColNames =
@@ -96,12 +100,7 @@ public class SchemaUtils {
     }
 
     validateSupportedType(schema);
-    ColumnDefaults.validate(schema, isColumnDefaultEnabled);
-  }
-
-  /** Override with default param */
-  public static void validateSchema(StructType schema, boolean isColumnMappingEnabled) {
-    validateSchema(schema, isColumnMappingEnabled, false /*isColumnDefaultEnabled*/);
+    ColumnDefaults.validateSchema(schema, isColumnDefaultEnabled, isIcebergCompatV3Enabled);
   }
 
   /**
@@ -136,7 +135,8 @@ public class SchemaUtils {
     validateSchema(
         newMetadata.getSchema(),
         true /*columnMappingEnabled*/,
-        ColumnDefaults.isEnabled(newProtocol, newMetadata));
+        newProtocol.supportsFeature(ALLOW_COLUMN_DEFAULTS_W_FEATURE),
+        TableConfig.ICEBERG_COMPAT_V3_ENABLED.fromMetadata(newMetadata));
     validatePartitionColumns(
         newMetadata.getSchema(), new ArrayList<>(newMetadata.getPartitionColNames()));
     int currentMaxFieldId =
@@ -153,19 +153,6 @@ public class SchemaUtils {
         TableConfig.TYPE_WIDENING_ENABLED.fromMetadata(newMetadata.getConfiguration()));
   }
 
-  /** Override with default params */
-  public static Optional<StructType> validateUpdatedSchemaAndGetUpdatedSchema(
-      Metadata currentMetadata,
-      Metadata newMetadata,
-      Set<String> clusteringColumnPhysicalNames,
-      boolean allowNewRequiredFields) {
-    return validateUpdatedSchemaAndGetUpdatedSchema(
-        currentMetadata,
-        newMetadata,
-        new Protocol(0, 0),
-        clusteringColumnPhysicalNames,
-        allowNewRequiredFields);
-  }
   /**
    * Validates a given schema evolution by using field ID as the source of truth for identifying
    * fields

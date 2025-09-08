@@ -36,9 +36,11 @@ class ColumnDefaultsSuite extends AnyFunSuite with ActionUtils {
     Set(
       TableFeatures.ALLOW_COLUMN_DEFAULTS_W_FEATURE.featureName(),
       TableFeatures.ICEBERG_COMPAT_V3_W_FEATURE.featureName()).asJava)
-  test("validate") {
-    def metadataForDefault(value: String): FieldMetadata =
-      FieldMetadata.builder().putString("CURRENT_DEFAULT", value).build()
+
+  def metadataForDefault(value: String): FieldMetadata =
+    FieldMetadata.builder().putString("CURRENT_DEFAULT", value).build()
+
+  test("validate schema with valid literals") {
     val correctSchema = new StructType()
       .add("id", IntegerType.INTEGER)
       .add("int", IntegerType.INTEGER, metadataForDefault("\"123\""))
@@ -77,11 +79,27 @@ class ColumnDefaultsSuite extends AnyFunSuite with ActionUtils {
         new ArrayType(
           new StructType().add("clid", IntegerType.INTEGER, metadataForDefault("300")),
           false))
-    ColumnDefaults.validate(correctSchema, true)
-    intercept[KernelException] {
-      ColumnDefaults.validate(correctSchema, false)
+    ColumnDefaults.validateSchema(correctSchema, true, true)
+    var e = intercept[KernelException] {
+      ColumnDefaults.validateSchema(correctSchema, true, false)
     }
+    assert(e.getMessage ==
+      "In Delta Kernel, default values table feature requires IcebergCompatV3 to be enabled.")
+    // Validate column default requires v3 even if schema has no defaults
+    e = intercept[KernelException] {
+      ColumnDefaults.validateSchema(new StructType().add("key", IntegerType.INTEGER), true, false)
+    }
+    assert(e.getMessage ==
+      "In Delta Kernel, default values table feature requires IcebergCompatV3 to be enabled.")
 
+    e = intercept[KernelException] {
+      ColumnDefaults.validateSchema(correctSchema, false, true)
+    }
+    assert(e.getMessage == "Found column defaults in the schema but the table does not support" +
+      " the columnDefaults table feature.")
+  }
+
+  test("validate schema with unsupported types") {
     val unsupportedCases = Seq(
       new StructType().add("sub", IntegerType.INTEGER),
       new ArrayType(IntegerType.INTEGER, false),
@@ -91,11 +109,14 @@ class ColumnDefaultsSuite extends AnyFunSuite with ActionUtils {
       val schemaWithUnsupportedType = new StructType()
         .add("id", IntegerType.INTEGER)
         .add("col1", dataType, metadataForDefault("120"))
-      intercept[KernelException] {
-        ColumnDefaults.validate(schemaWithUnsupportedType, true)
+      val e = intercept[KernelException] {
+        ColumnDefaults.validateSchema(schemaWithUnsupportedType, true, true)
       }
+      assert(e.getMessage.contains("Kernel does not support default value for data type"))
     }
+  }
 
+  test("validate schema with invalid literal values") {
     val badCases = Seq(
       (StringType.STRING, "string with no quotes"),
       (BinaryType.BINARY, "string with no quotes"),
@@ -150,9 +171,11 @@ class ColumnDefaultsSuite extends AnyFunSuite with ActionUtils {
             new StructType().add("mapValueId", dataType, metadataForDefault(defaultValue)),
             false))
       Seq(badSchema1, badSchema2, badSchema3, badSchema4).foreach(schema => {
-        intercept[KernelException] {
-          ColumnDefaults.validate(schema, true)
+        val e = intercept[KernelException] {
+          ColumnDefaults.validateSchema(schema, true, true)
         }
+        assert(e.getMessage.contains(
+          "currently only literal values are supported for default values in Kernel."))
       })
     }
   }

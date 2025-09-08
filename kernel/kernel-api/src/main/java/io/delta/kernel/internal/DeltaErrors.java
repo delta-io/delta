@@ -315,6 +315,15 @@ public final class DeltaErrors {
             compatVersion, dataType));
   }
 
+  public static KernelException icebergCompatRequiresLiteralDefaultValue(
+      String compatVersion, String value) {
+    throw new KernelException(
+        format(
+            "%s requires the default value '%s' to be literal "
+                + "with correct data types for the column.",
+            compatVersion, value));
+  }
+
   public static KernelException icebergCompatIncompatibleTableFeatures(
       String compatVersion, Set<TableFeature> incompatibleFeatures) {
     throw new KernelException(
@@ -354,6 +363,39 @@ public final class DeltaErrors {
   }
 
   // End: icebergCompat exceptions
+
+  // Start: Column Defaults Exceptions
+
+  // TODO migrate this to InvalidTableException when table info is available at the call site
+  public static KernelException defaultValueRequiresTableFeature() {
+    return new KernelException(
+        "Found column defaults in the schema but the table does not support the "
+            + "columnDefaults table feature.");
+  }
+
+  public static KernelException defaultValueRequireIcebergV3() {
+    return new KernelException(
+        "In Delta Kernel, default values table feature requires "
+            + "IcebergCompatV3 to be enabled.");
+  }
+
+  public static KernelException unsupportedDataTypeForDefaultValue(
+      String fieldName, String fieldType) {
+    return new KernelException(
+        String.format(
+            "Kernel does not support default value for " + "data type %s: %s",
+            fieldType, fieldName));
+  }
+
+  public static KernelException nonLiteralDefaultValue(String value) {
+    return new KernelException(
+        String.format(
+            "currently only literal values are supported for default values in Kernel."
+                + " %s is an invalid default value",
+            value));
+  }
+
+  // End: Column Defaults Exceptions
 
   public static KernelException partitionColumnMissingInData(
       String tablePath, String partitionColumn) {
