@@ -548,6 +548,13 @@ trait Checkpoints extends DeltaLogging {
     None
   }
 
+  /** Returns whether a checkpoint exists at `version`. */
+  def checkpointExistsAtVersion(version: Long): Boolean = {
+    val upperBoundVersion = Some(CheckpointInstance(version = version + 1))
+    val lastVerifiedCheckpoint = findLastCompleteCheckpointBefore(upperBoundVersion)
+    lastVerifiedCheckpoint.exists(_.version == version)
+  }
+
   /** Returns the last complete checkpoint in the delta log directory (if any) */
   private def findLastCompleteCheckpoint(): Option[CheckpointInstance] = {
     val hadoopConf = newDeltaHadoopConf()
