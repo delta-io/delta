@@ -181,6 +181,98 @@ public class Dsv2BasicTest extends QueryTest {
     checkTable("data-reader-nested-struct", expected);
   }
 
+  @Test
+  public void testPartitionedTable() {
+    // Build expected rows (excluding unsupported partition column `as_timestamp`)
+    List<Row> expected = new ArrayList<>();
+    java.sql.Date fixedDate = java.sql.Date.valueOf("2021-09-08");
+
+    for (int i = 0; i < 2; i++) {
+      // Array field: Seq(TestRow(i), TestRow(i), TestRow(i)) where TestRow(i) => struct(i)
+      List<Row> arrElems =
+          Arrays.asList(
+              new GenericRow(new Object[] {i}),
+              new GenericRow(new Object[] {i}),
+              new GenericRow(new Object[] {i}));
+      Object arrSeq = scala.collection.JavaConverters.asScalaBuffer(arrElems).toList();
+
+      // Nested struct: TestRow(i.toString, i.toString, TestRow(i, i.toLong))
+      Row innerMost = new GenericRow(new Object[] {i, (long) i});
+      Row middle =
+          new GenericRow(new Object[] {Integer.toString(i), Integer.toString(i), innerMost});
+
+      expected.add(
+          new GenericRow(
+              new Object[] {
+                i, // int
+                (long) i, // long
+                (byte) i, // byte
+                (short) i, // short
+                i % 2 == 0, // boolean
+                (float) i, // float
+                (double) i, // double
+                Integer.toString(i), // string
+                "null", // literal string
+                fixedDate, // date (was daysSinceEpoch int)
+                new BigDecimal(i), // decimal
+                arrSeq, // array<struct>
+                middle, // nested struct
+                Integer.toString(i) // final string
+              }));
+    }
+
+    // Null row variant with specific non-null complex fields (matches Scala test)
+    List<Row> nullArrElems =
+        Arrays.asList(
+            new GenericRow(new Object[] {2}),
+            new GenericRow(new Object[] {2}),
+            new GenericRow(new Object[] {2}));
+    Object nullArrSeq = scala.collection.JavaConverters.asScalaBuffer(nullArrElems).toList();
+    Row nullInnerMost = new GenericRow(new Object[] {2, 2L});
+    Row nullMiddle = new GenericRow(new Object[] {"2", "2", nullInnerMost});
+    expected.add(
+        new GenericRow(
+            new Object[] {
+              null,
+              null,
+              null,
+              null,
+              null,
+              null,
+              null,
+              null,
+              null,
+              null,
+              null,
+              nullArrSeq,
+              nullMiddle,
+              "2"
+            }));
+
+    // Read table, drop unsupported column `as_timestamp`
+    String tablePath = goldenTablePath("data-reader-partition-values");
+    Dataset<Row> full = spark.sql("SELECT * FROM `dsv2`.`delta`.`" + tablePath + "`");
+
+    List<String> projectedCols = new ArrayList<>();
+    for (String f : full.schema().fieldNames()) {
+      if (!f.equals("as_timestamp")) {
+        projectedCols.add(f);
+      }
+    }
+    Dataset<Row> df = full.selectExpr(projectedCols.toArray(new String[0]));
+
+    Function0<Dataset<Row>> dfFunc =
+        new Function0<Dataset<Row>>() {
+          @Override
+          public Dataset<Row> apply() {
+            return df;
+          }
+        };
+    scala.collection.immutable.Seq<Row> expectedSeq =
+        scala.collection.JavaConverters.asScalaBuffer(expected).toList();
+    checkAnswer(dfFunc, expectedSeq);
+  }
+
   private void checkTable(String path, List<Row> expected) {
     String tablePath = goldenTablePath(path);
 
