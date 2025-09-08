@@ -77,7 +77,7 @@ class ColumnDefaultsSuite extends AnyFunSuite with WriteUtils {
             "delta.feature.allowColumnDefaults" -> "supported"))
       }
       assert(e.getMessage ==
-        "This table does not enable table features for setting column defaults")
+        "In Delta Kernel, default values table feature requires IcebergCompatV3 to be enabled.")
     }
     withTempDirAndEngine { (tablePath, engine) =>
       val e = intercept[KernelException] {

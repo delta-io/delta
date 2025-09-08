@@ -77,10 +77,17 @@ class ColumnDefaultsSuite extends AnyFunSuite with ActionUtils {
         new ArrayType(
           new StructType().add("clid", IntegerType.INTEGER, metadataForDefault("300")),
           false))
-    ColumnDefaults.validate(correctSchema, true)
-    intercept[KernelException] {
-      ColumnDefaults.validate(correctSchema, false)
+    ColumnDefaults.validate(correctSchema, true, true)
+    val e = intercept[KernelException] {
+      ColumnDefaults.validate(correctSchema, true, false)
     }
+    assert(e.getMessage ==
+      "In Delta Kernel, default values table feature requires IcebergCompatV3 to be enabled.")
+    val e2 = intercept[KernelException] {
+      ColumnDefaults.validate(correctSchema, false, true)
+    }
+    assert(e2.getMessage ==
+      "This table does not enable table features for setting column defaults")
 
     val unsupportedCases = Seq(
       new StructType().add("sub", IntegerType.INTEGER),
@@ -92,7 +99,7 @@ class ColumnDefaultsSuite extends AnyFunSuite with ActionUtils {
         .add("id", IntegerType.INTEGER)
         .add("col1", dataType, metadataForDefault("120"))
       intercept[KernelException] {
-        ColumnDefaults.validate(schemaWithUnsupportedType, true)
+        ColumnDefaults.validate(schemaWithUnsupportedType, true, true)
       }
     }
 
@@ -151,7 +158,7 @@ class ColumnDefaultsSuite extends AnyFunSuite with ActionUtils {
             false))
       Seq(badSchema1, badSchema2, badSchema3, badSchema4).foreach(schema => {
         intercept[KernelException] {
-          ColumnDefaults.validate(schema, true)
+          ColumnDefaults.validate(schema, true, true)
         }
       })
     }

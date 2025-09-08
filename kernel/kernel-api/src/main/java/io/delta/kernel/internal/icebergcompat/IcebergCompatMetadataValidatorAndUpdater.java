@@ -24,7 +24,6 @@ import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
-import io.delta.kernel.internal.columndefaults.ColumnDefaults;
 import io.delta.kernel.internal.tablefeatures.TableFeature;
 import io.delta.kernel.internal.types.TypeWideningChecker;
 import io.delta.kernel.internal.util.ColumnMapping;
@@ -344,9 +343,6 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
           }
         }
       };
-
-  protected static IcebergCompatCheck CHECK_LITERAL_DEFAULT_VALUE =
-      (inputContext) -> ColumnDefaults.validate(inputContext.newMetadata.getSchema(), true);
 
   /////////////////////////////////////////////////////////////////////////////////
   /// Implementation of {@link IcebergCompatMetadataValidatorAndUpdater}        ///
