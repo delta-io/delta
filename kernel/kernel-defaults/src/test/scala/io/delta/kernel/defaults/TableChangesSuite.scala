@@ -173,11 +173,11 @@ class CommitRangeTableChangesSuite extends TableChangesSuite {
 
   test("ICT timestamp resolution") {
     withTempDirAndEngine { (tablePath, engine) =>
-      // Create a table with ICT enabled from the start
+      // Create a table with ICT enabled from the start and commits with specific custom-set ICTs
       val startTime = 1000L
       val clock = new ManualClock(startTime)
 
-      // Create initial table with ICT enabled
+      // Version 0 has ICT=1000L, but modificationTime=approx current time (1757368326512+)
       appendData(
         engine,
         tablePath,
@@ -187,7 +187,7 @@ class CommitRangeTableChangesSuite extends TableChangesSuite {
         clock = clock,
         tableProperties = Map("delta.enableInCommitTimestamps" -> "true"))
 
-      // Create additional commits with specific timestamps
+      // Version 1 has ICT=2000L
       clock.setTime(startTime + 1000)
       appendData(
         engine,
@@ -195,6 +195,7 @@ class CommitRangeTableChangesSuite extends TableChangesSuite {
         data = immutable.Seq(Map.empty[String, Literal] -> (dataBatches1 ++ dataBatches2)),
         clock = clock)
 
+      // Version 2 has ICT=3000L
       clock.setTime(startTime + 2000)
       appendData(
         engine,
@@ -215,7 +216,11 @@ class CommitRangeTableChangesSuite extends TableChangesSuite {
           .build(defaultEngine).getEndVersion == expectedVersion)
       }
 
-      // Test timestamp resolution with ICT
+      // Test that timestamp resolution is done using ICT. Since the file modification times for
+      // this table should all be approx the current time, if we are able to correctly resolve
+      // TS-to-version for the timestamp-range we custom set (~1000L-3000L), we know we are
+      // correctly resolving with ICT.
+
       // startTimestamp is before the earliest available version
       checkStartBoundary(startTime - 500, 0)
       // endTimestamp is before the earliest available version
