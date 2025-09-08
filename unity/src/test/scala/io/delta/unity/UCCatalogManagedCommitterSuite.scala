@@ -17,7 +17,7 @@
 package io.delta.unity
 
 import java.io.IOException
-import java.nio.file.{FileAlreadyExistsException, Files}
+import java.nio.file.Files
 import java.util.{Optional, UUID}
 
 import scala.collection.JavaConverters._
@@ -57,7 +57,7 @@ class UCCatalogManagedCommitterSuite
   private def withTempTableAndLogPathAndStagedCommitFolderCreated(
       f: (String, String) => Unit): Unit = {
     val tempDir = Files.createTempDirectory(UUID.randomUUID().toString).toFile
-    val tablePath = tempDir.getAbsolutePath
+    val tablePath = defaultEngine.getFileSystemClient.resolvePath(tempDir.getAbsolutePath)
     val logPath = s"$tablePath/_delta_log"
 
     // This also creates the _delta_log directory
@@ -221,6 +221,30 @@ class UCCatalogManagedCommitterSuite
       org.apache.hadoop.fs.permission.FsPermission.getFileDefault)
   }
 
+  test("writeDeltaFile returns real FileStatus") {
+    withTempTableAndLogPathAndStagedCommitFolderCreated { case (tablePath, logPath) =>
+      // ===== GIVEN =====
+      val ucClient = new InMemoryUCClient("ucMetastoreId")
+      val committer = new UCCatalogManagedCommitter(ucClient, "ucTableId", tablePath)
+      val testValue = "TEST_FILE_STATUS_DATA"
+      val actionsIterator = getSingleElementRowIter(testValue)
+
+      val commitMetadata = createCommitMetadata(
+        version = 0,
+        logPath = logPath,
+        newProtocolOpt = Optional.of(protocolWithCatalogManagedSupport),
+        newMetadataOpt = Optional.of(basicPartitionedMetadata))
+
+      // ===== WHEN =====
+      val response = committer.commit(defaultEngine, actionsIterator, commitMetadata)
+
+      // ===== THEN =====
+      val fileStatus = response.getCommitLogData.getFileStatus
+      assert(fileStatus.getSize > 0)
+      assert(fileStatus.getModificationTime > 0)
+    }
+  }
+
   // ===============================================================
   // ===================== CATALOG_WRITE Tests =====================
   // ===============================================================
@@ -286,7 +310,7 @@ class UCCatalogManagedCommitterSuite
       val stagedCommitFilePath = response.getCommitLogData.getFileStatus.getPath
 
       // Verify the staged commit file actually exists on disk
-      val file = new java.io.File(stagedCommitFilePath)
+      val file = new java.io.File(new java.net.URI(stagedCommitFilePath))
       assert(file.exists())
       assert(file.isFile())
 
@@ -335,7 +359,7 @@ class UCCatalogManagedCommitterSuite
 
       // ===== THEN =====
       assert(ex.isRetryable && !ex.isConflict)
-      assert(ex.getMessage.contains("Failed to write staged commit file due to: Network error"))
+      assert(ex.getMessage.contains("Failed to write delta file due to: Network error"))
     }
   }
 
@@ -441,7 +465,7 @@ class UCCatalogManagedCommitterSuite
       val expectedFilePath = s"$logPath/00000000000000000000.json"
       assert(publishedDeltaFilePath == expectedFilePath)
 
-      val file = new java.io.File(publishedDeltaFilePath)
+      val file = new java.io.File(new java.net.URI(publishedDeltaFilePath))
       assert(file.exists())
       assert(file.isFile())
 
@@ -452,35 +476,6 @@ class UCCatalogManagedCommitterSuite
       // Validate that UC was not updated for v0
       // TODO: [delta-io/delta#5118] If UC changes CREATE semantics, update logic here.
       assert(!ucClient.getTablesCopy.contains("ucTableId"))
-    }
-  }
-
-  test("CATALOG_CREATE: FileAlreadyExistsException returns success") {
-    withTempTableAndLogPathAndStagedCommitFolderCreated { case (tablePath, logPath) =>
-      // ===== GIVEN =====
-      val ucClient = new InMemoryUCClient("ucMetastoreId")
-      val throwingEngine = mockEngine(jsonHandler = new BaseMockJsonHandler {
-        override def writeJsonFileAtomically(
-            path: String,
-            data: CloseableIterator[Row],
-            overwrite: Boolean): Unit =
-          throw new FileAlreadyExistsException("File already exists")
-      })
-      val committer = new UCCatalogManagedCommitter(ucClient, "ucTableId", tablePath)
-
-      val commitMetadata = createCommitMetadata(
-        version = 0,
-        logPath = logPath,
-        newProtocolOpt = Optional.of(protocolWithCatalogManagedSupport),
-        newMetadataOpt = Optional.of(basicPartitionedMetadata))
-
-      // ===== WHEN =====
-      val response = committer.commit(throwingEngine, emptyActionsIterator, commitMetadata)
-
-      // ===== THEN =====
-      val publishedDeltaFilePath = response.getCommitLogData.getFileStatus.getPath
-      val expectedFilePath = s"$logPath/00000000000000000000.json"
-      assert(publishedDeltaFilePath == expectedFilePath)
     }
   }
 
@@ -510,7 +505,7 @@ class UCCatalogManagedCommitterSuite
 
       // ===== THEN =====
       assert(ex.isRetryable && !ex.isConflict)
-      assert(ex.getMessage.contains("Failed to write published delta file due to: Network hiccup"))
+      assert(ex.getMessage.contains("Failed to write delta file due to: Network hiccup"))
     }
   }
 
