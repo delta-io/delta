@@ -40,9 +40,10 @@ public class PartitionFilterOptionTypeConverter extends BaseOptionTypeConverter<
 
         throw new IllegalArgumentException(
                 String.format(
-                        "PartitionFilterOptionTypeConverter used with a incompatible DeltaConfigOption "
-                                + "option type. This converter must be used only for "
-                                + "DeltaConfigOption::Map however it was used for '%s' with option '%s'",
+                        "PartitionFilterOptionTypeConverter used with a incompatible "
+                                + "DeltaConfigOption option type. This converter must be used "
+                                + " only for DeltaConfigOption::String however it was used for "
+                                + "'%s' with option '%s'",
                         desiredOption.getValueType(), desiredOption.key())
         );
     }

@@ -7,8 +7,8 @@ import io.delta.flink.internal.options.BooleanOptionTypeConverter;
 import io.delta.flink.internal.options.DeltaConfigOption;
 import io.delta.flink.internal.options.DeltaConnectorConfiguration;
 import io.delta.flink.internal.options.NonNegativeNumberTypeConverter;
-import io.delta.flink.internal.options.StartingVersionOptionTypeConverter;
 import io.delta.flink.internal.options.PartitionFilterOptionTypeConverter;
+import io.delta.flink.internal.options.StartingVersionOptionTypeConverter;
 import io.delta.flink.internal.options.TimestampOptionTypeConverter;
 import org.apache.flink.configuration.ConfigOptions;
 

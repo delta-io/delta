@@ -3,6 +3,7 @@ package io.delta.flink.source.internal.enumerator;
 import java.util.Collections;
 import java.util.Map;
 import java.util.Set;
+import static java.util.Collections.emptyList;
 
 import io.delta.flink.internal.options.DeltaConnectorConfiguration;
 import io.delta.flink.internal.options.PartitionFilterOptionTypeConverter;
@@ -76,7 +77,7 @@ public class BoundedSplitEnumeratorProvider implements SplitEnumeratorProvider {
                 fileEnumeratorProvider.create(), Collections.emptySet());
 
         return new BoundedDeltaSourceSplitEnumerator(
-            deltaTablePath, snapshotProcessor, splitAssignerProvider.create(Collections.emptyList()),
+            deltaTablePath, snapshotProcessor, splitAssignerProvider.create(emptyList()),
             enumContext);
     }
 
@@ -104,7 +105,7 @@ public class BoundedSplitEnumeratorProvider implements SplitEnumeratorProvider {
 
         return new BoundedDeltaSourceSplitEnumerator(
             checkpoint.getDeltaTablePath(), snapshotProcessor,
-            splitAssignerProvider.create(Collections.emptyList()), enumContext);
+            splitAssignerProvider.create(emptyList()), enumContext);
     }
 
     @Override

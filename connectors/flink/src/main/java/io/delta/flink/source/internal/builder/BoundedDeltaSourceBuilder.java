@@ -10,9 +10,9 @@ import io.delta.flink.source.internal.enumerator.supplier.BoundedSnapshotSupplie
 import org.apache.flink.core.fs.Path;
 import org.apache.hadoop.conf.Configuration;
 import static io.delta.flink.source.internal.DeltaSourceOptions.PARQUET_BATCH_SIZE;
+import static io.delta.flink.source.internal.DeltaSourceOptions.PARTITION_FILTERS;
 import static io.delta.flink.source.internal.DeltaSourceOptions.TIMESTAMP_AS_OF;
 import static io.delta.flink.source.internal.DeltaSourceOptions.VERSION_AS_OF;
-import static io.delta.flink.source.internal.DeltaSourceOptions.PARTITION_FILTERS;
 
 /**
  * A base class for Delta source builders that should create Delta source instance for {@link
