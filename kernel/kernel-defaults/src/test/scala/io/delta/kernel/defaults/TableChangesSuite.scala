@@ -171,7 +171,99 @@ class CommitRangeTableChangesSuite extends TableChangesSuite {
     }
   }
 
-  // TODO: test ICT-based timestamp-to-version resolution
+  test("ICT timestamp resolution") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // Create a table with ICT enabled from the start and commits with specific custom-set ICTs
+      val startTime = 1000L
+      val clock = new ManualClock(startTime)
+
+      // Version 0 has ICT=1000L, but modificationTime=approx current time (1757368326512+)
+      appendData(
+        engine,
+        tablePath,
+        isNewTable = true,
+        testSchema,
+        data = immutable.Seq(Map.empty[String, Literal] -> dataBatches1),
+        clock = clock,
+        tableProperties = Map("delta.enableInCommitTimestamps" -> "true"))
+
+      // Version 1 has ICT=2000L
+      clock.setTime(startTime + 1000)
+      appendData(
+        engine,
+        tablePath,
+        data = immutable.Seq(Map.empty[String, Literal] -> (dataBatches1 ++ dataBatches2)),
+        clock = clock)
+
+      // Version 2 has ICT=3000L
+      clock.setTime(startTime + 2000)
+      appendData(
+        engine,
+        tablePath,
+        data = immutable.Seq(Map.empty[String, Literal] -> dataBatches1),
+        clock = clock)
+
+      val latestSnapshot = getTableManagerAdapter.getSnapshotAtLatest(defaultEngine, tablePath)
+
+      def checkStartBoundary(timestamp: Long, expectedVersion: Long): Unit = {
+        assert(TableManager.loadCommitRange(tablePath)
+          .withStartBoundary(CommitBoundary.atTimestamp(timestamp, latestSnapshot))
+          .build(defaultEngine).getStartVersion == expectedVersion)
+      }
+      def checkEndBoundary(timestamp: Long, expectedVersion: Long): Unit = {
+        assert(TableManager.loadCommitRange(tablePath)
+          .withEndBoundary(CommitBoundary.atTimestamp(timestamp, latestSnapshot))
+          .build(defaultEngine).getEndVersion == expectedVersion)
+      }
+
+      // Test that timestamp resolution is done using ICT. Since the file modification times for
+      // this table should all be approx the current time, if we are able to correctly resolve
+      // TS-to-version for the timestamp-range we custom set (~1000L-3000L), we know we are
+      // correctly resolving with ICT.
+
+      // startTimestamp is before the earliest available version
+      checkStartBoundary(startTime - 500, 0)
+      // endTimestamp is before the earliest available version
+      intercept[KernelException] {
+        checkEndBoundary(startTime - 500, -1)
+      }
+
+      // startTimestamp is at first commit (ICT enabled)
+      checkStartBoundary(startTime, 0)
+      // endTimestamp is at first commit
+      checkEndBoundary(startTime, 0)
+
+      // startTimestamp is between first and second commit
+      checkStartBoundary(startTime + 500, 1)
+      // endTimestamp is between first and second commit
+      checkEndBoundary(startTime + 500, 0)
+
+      // startTimestamp is at second commit
+      checkStartBoundary(startTime + 1000, 1)
+      // endTimestamp is at second commit
+      checkEndBoundary(startTime + 1000, 1)
+
+      // startTimestamp is between second and third commit
+      checkStartBoundary(startTime + 1500, 2)
+      // endTimestamp is between second and third commit
+      checkEndBoundary(startTime + 1500, 1)
+
+      // startTimestamp is at third commit
+      checkStartBoundary(startTime + 2000, 2)
+      // endTimestamp is at third commit
+      checkEndBoundary(startTime + 2000, 2)
+
+      // startTimestamp is after the last commit
+      intercept[KernelException] {
+        checkStartBoundary(startTime + 3000, -1)
+      }
+      // endTimestamp is after the last commit
+      checkEndBoundary(startTime + 3000, 2)
+
+      // Verify that the changes are correctly retrieved using ICT timestamps
+      testGetChangesVsSpark(tablePath, 0, 2, FULL_ACTION_SET)
+    }
+  }
 }
 
 abstract class TableChangesSuite extends AnyFunSuite with TestUtils with WriteUtils {
