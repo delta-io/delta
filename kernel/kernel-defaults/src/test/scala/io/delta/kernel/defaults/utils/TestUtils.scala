@@ -181,19 +181,15 @@ trait AbstractTestUtils extends Assertions with SQLHelper with TestCommitterUtil
   }
 
   def latestSnapshot(path: String, engine: Engine = defaultEngine): Snapshot = {
-    Table.forPath(engine, path)
-      .getLatestSnapshot(engine)
+    getTableManagerAdapter.getSnapshotAtLatest(engine, path)
   }
 
   def tableSchema(path: String): StructType = {
-    Table.forPath(defaultEngine, path)
-      .getLatestSnapshot(defaultEngine)
-      .getSchema()
+    latestSnapshot(path).getSchema()
   }
 
   def hasTableProperty(tablePath: String, propertyKey: String, expValue: String): Boolean = {
-    val table = Table.forPath(defaultEngine, tablePath)
-    val schema = table.getLatestSnapshot(defaultEngine).getSchema()
+    val schema = tableSchema(tablePath)
     schema.fields().asScala.exists { field =>
       field.getMetadata.getString(propertyKey) == expValue
     }
@@ -297,8 +293,7 @@ trait AbstractTestUtils extends Assertions with SQLHelper with TestCommitterUtil
       engine: Engine,
       tablePath: String,
       readSchema: StructType): Seq[FilteredColumnarBatch] = {
-    val scan = Table.forPath(engine, tablePath)
-      .getLatestSnapshot(engine)
+    val scan = latestSnapshot(tablePath, engine)
       .getScanBuilder()
       .withReadSchema(readSchema)
       .build()
