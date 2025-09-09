@@ -128,6 +128,7 @@ public class TransactionMetadataFactory {
         "Cannot provide both partition columns and clustering columns");
     validateSchemaAndPartColsCreateOrReplace(
         userInputTableProperties, schema, partitionColumns.orElse(emptyList()));
+    validateNotEnablingCatalogManagedOnReplace(userInputTableProperties);
     // In the case of Replace table there are a few delta-specific properties we want to preserve
     Map<String, String> replaceTableProperties =
         readSnapshot.getMetadata().getConfiguration().entrySet().stream()
@@ -418,10 +419,17 @@ public class TransactionMetadataFactory {
     final boolean txnExplicitlyDisablesICT =
         txnIctEnabledValue != null && txnIctEnabledValue.equalsIgnoreCase("false");
 
+    // Case 1: Txn is not explicitly disabling ICT. Exit.
     if (!txnExplicitlyDisablesICT) {
       return;
     }
 
+    // Case 2: Txn is explicitly disabling ICT on a catalogManaged table. Throw.
+    if (getEffectiveProtocol().supportsFeature(TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW)) {
+      throw new KernelException("Cannot disable inCommitTimestamp on a catalogManaged table");
+    }
+
+    // Case 3 (normal case): Txn is explicitly disabling ICT. Remove the ICT enablement properties.
     final Set<String> ictKeysToRemove =
         new HashSet<>(
             Arrays.asList(
@@ -686,5 +694,14 @@ public class TransactionMetadataFactory {
 
     SchemaUtils.validateSchema(schema, isColumnMappingModeEnabled(mappingMode));
     SchemaUtils.validatePartitionColumns(schema, partitionColumns);
+  }
+
+  private static void validateNotEnablingCatalogManagedOnReplace(
+      Map<String, String> userInputTableProperties) {
+    if (TableFeatures.isPropertiesManuallySupportingTableFeature(
+        userInputTableProperties, TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW)) {
+      throw new UnsupportedOperationException(
+          "Cannot enable the catalogManaged feature during a REPLACE command.");
+    }
   }
 }
