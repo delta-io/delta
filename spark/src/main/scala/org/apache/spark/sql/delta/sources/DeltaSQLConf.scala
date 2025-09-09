@@ -708,6 +708,14 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_OPTIMIZE_CONDITIONAL_INCREMENT_METRIC_ENABLED =
+    buildConf("optimize.conditionalIncrementMetric.enabled")
+      .internal()
+      .doc("Whether to enable optimization of ConditionalIncrementMetric expressions with " +
+        "constant conditions.")
+      .booleanConf
+      .createWithDefault(true)
+
   //////////////////////////////////////////////
   // DynamoDB Commit Coordinator-specific configs
   /////////////////////////////////////////////
