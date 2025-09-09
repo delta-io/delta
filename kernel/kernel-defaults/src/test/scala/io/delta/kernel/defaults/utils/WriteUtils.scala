@@ -65,7 +65,8 @@ trait WriteUtilsWithV2Builders extends AbstractWriteUtils with TransactionBuilde
  * example, `commitTransaction` could go into a [[TransactionCommitSupport]] trait since it is
  * overridden in child suites.
  */
-trait AbstractWriteUtils extends TransactionBuilderSupport { self: AbstractTestUtils =>
+trait AbstractWriteUtils extends TestUtils with TransactionBuilderSupport {
+
   val OBJ_MAPPER = new ObjectMapper()
   val testEngineInfo = "test-engine"
 
