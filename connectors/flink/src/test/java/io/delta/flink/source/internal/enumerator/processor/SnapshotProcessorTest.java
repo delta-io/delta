@@ -1,20 +1,22 @@
 package io.delta.flink.source.internal.enumerator.processor;
 
-import io.delta.flink.internal.options.PartitionFilterOptionTypeConverter;
-import io.delta.flink.source.internal.file.AddFileEnumerator;
-import io.delta.flink.source.internal.state.DeltaSourceSplit;
-import io.delta.standalone.Snapshot;
-import io.delta.standalone.actions.AddFile;
-import org.apache.flink.core.fs.Path;
-import org.junit.jupiter.api.Test;
-
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import org.apache.flink.core.fs.Path;
+import org.junit.jupiter.api.Test;
+
+import io.delta.flink.internal.options.PartitionFilterOptionTypeConverter;
+import io.delta.flink.source.internal.file.AddFileEnumerator;
+import io.delta.flink.source.internal.state.DeltaSourceSplit;
+import io.delta.standalone.Snapshot;
+import io.delta.standalone.actions.AddFile;
+
 import static java.util.Arrays.asList;
+
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.core.IsEqual.equalTo;
 import static org.mockito.Mockito.when;
@@ -70,7 +72,8 @@ public class SnapshotProcessorTest {
         partitionSpec3.clear();
         partitionsToFilter.clear();
 
-        partitionsToFilter = PartitionFilterOptionTypeConverter.parseStringToMap(partitionFilterStr);
+        partitionsToFilter =
+                PartitionFilterOptionTypeConverter.parseStringToMap(partitionFilterStr);
         partitionSpec1.put("part1", "p1v1");
         partitionSpec1.put("part2", "p2v1");
         partitionSpec2.put("part1", "p1v2");
@@ -96,7 +99,8 @@ public class SnapshotProcessorTest {
                 new Path("s3://some/path/"),
                 snapshot,
                 (AddFileEnumerator) (context, splitFilter) -> {
-                    ArrayList<DeltaSourceSplit> splitsToReturn = new ArrayList<>(context.getAddFiles().size());
+                    ArrayList<DeltaSourceSplit> splitsToReturn =
+                            new ArrayList<>(context.getAddFiles().size());
 
                     for (AddFile addFile : context.getAddFiles()) {
                         Path path = new Path(addFile.getPath());

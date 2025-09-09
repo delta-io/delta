@@ -1,12 +1,12 @@
 package io.delta.flink.internal.options;
 
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 import static io.delta.flink.internal.options.TestOptions.STRING_OPTION;
 import static org.hamcrest.MatcherAssert.assertThat;
@@ -39,10 +39,14 @@ class PartitionFilterOptionTypeConverterTest {
 
         assertAll(() -> {
             assertThat(typeConverter.convertType(STRING_OPTION, input), equalTo(input));
-            assertThat(PartitionFilterOptionTypeConverter.parseStringToMap(input), equalTo(expectedValue));
-            assertThat(typeConverter.convertType(STRING_OPTION, ""), equalTo(""));
-            assertThat(PartitionFilterOptionTypeConverter.parseStringToMap(""), equalTo(new HashMap<>()));
-            assertThrows(IllegalArgumentException.class, () -> typeConverter.convertType(STRING_OPTION, "invalid_format"));
+            assertThat(PartitionFilterOptionTypeConverter.parseStringToMap(input),
+                    equalTo(expectedValue));
+            assertThat(typeConverter.convertType(STRING_OPTION, ""),
+                    equalTo(""));
+            assertThat(PartitionFilterOptionTypeConverter.parseStringToMap(""),
+                    equalTo(new HashMap<>()));
+            assertThrows(IllegalArgumentException.class,
+                    () -> typeConverter.convertType(STRING_OPTION, "invalid_format"));
         });
     }
 }

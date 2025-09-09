@@ -22,8 +22,6 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import static io.delta.flink.source.internal.DeltaSourceOptions.PARTITION_FILTERS;
 import static org.hamcrest.CoreMatchers.equalTo;
 import static org.hamcrest.CoreMatchers.notNullValue;
 import static org.hamcrest.MatcherAssert.assertThat;
@@ -118,7 +116,7 @@ class RowDataBoundedDeltaSourceBuilderTest extends RowDataDeltaSourceBuilderTest
                 getBuilderAllColumns().versionAsOf(1).partitionFilter(
                         "partCol=partVal"),
                 getBuilderAllColumns().versionAsOf(1).option(
-                        PARTITION_FILTERS.key(), "partCol=partVal")
+                        DeltaSourceOptions.PARTITION_FILTERS.key(), "partCol=partVal")
         );
 
         when(deltaLog.getSnapshotForVersionAsOf(1)).thenReturn(headSnapshot);
@@ -129,7 +127,7 @@ class RowDataBoundedDeltaSourceBuilderTest extends RowDataDeltaSourceBuilderTest
                 assertThat(source, notNullValue());
                 assertThat(source.getBoundedness(), equalTo(Boundedness.BOUNDED));
                 assertThat(source.getSourceConfiguration()
-                        .getValue(PARTITION_FILTERS), equalTo("partCol=partVal"));
+                        .getValue(DeltaSourceOptions.PARTITION_FILTERS), equalTo("partCol=partVal"));
             }
         });
     }
