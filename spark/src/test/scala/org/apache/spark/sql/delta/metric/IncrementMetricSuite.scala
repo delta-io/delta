@@ -23,13 +23,15 @@ import org.apache.spark.SparkConf
 import org.apache.spark.sql.{AnalysisException, Column, DataFrame, QueryTest}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions._
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.BooleanType
 
-abstract class IncrementMetricSuiteBase extends QueryTest with SharedSparkSession {
+abstract class IncrementMetricSuiteBase
+  extends QueryTest with SharedSparkSession with DeltaSQLCommandTest {
   import testImplicits._
   import SQLMetrics._
 

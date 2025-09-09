@@ -114,9 +114,8 @@ class DeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
       new RangePartitionIdRewrite(session)
     }
     // Optimize ConditionalIncrementMetric with constant condition.
-    extensions.injectOptimizerRule{ session =>
-      OptimizeConditionalIncrementMetric
-    }
+    extensions.injectOptimizerRule { _ => OptimizeConditionalIncrementMetric }
+
     extensions.injectPostHocResolutionRule { session =>
       PreprocessTableUpdate(session.sessionState.conf)
     }
