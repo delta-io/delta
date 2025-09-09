@@ -728,6 +728,7 @@ lazy val sparkKernelDsv2 = (project in file("spark-kernel-dsv2"))
   .dependsOn(kernelApi)
   .dependsOn(kernelDefaults)
   .dependsOn(spark % "test->test")
+  .dependsOn(goldenTables % "test")
   .settings(
     name := "delta-spark-dsv2",
     commonSettings,
