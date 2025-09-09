@@ -20,7 +20,7 @@ import java.io.File
 import scala.collection.JavaConverters._
 
 import io.delta.kernel.defaults.engine.DefaultEngine
-import io.delta.kernel.defaults.utils.{AbstractTestUtils, ExpressionTestUtils, TestRow, TestUtils, TestUtilsWithLegacyKernelAPIs, TestUtilsWithTableManagerAPIs}
+import io.delta.kernel.defaults.utils.{AbstractTestUtils, DefaultEngineOfBatchSize2, ExpressionTestUtils, TestRow, TestUtils, TestUtilsWithLegacyKernelAPIs, TestUtilsWithTableManagerAPIs}
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl}
 import io.delta.kernel.internal.checkpoints.CheckpointInstance
