@@ -1086,8 +1086,8 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       new Column("byteCol"),
       Literal.ofByte(0.toByte),
       Literal.ofByte(1.toByte))
-    // testColumnValue generates: [0, 0, 0, 1, null] for ByteType
-    val expOutputByte = booleanVector(Seq[BooleanJ](true, true, true, true, null))
+    // testColumnValue generates: [null, 0, 0, 1, 1] for ByteType (rowId % 8 == 0 for null)
+    val expOutputByte = booleanVector(Seq[BooleanJ](null, true, true, true, true))
     checkBooleanVectors(
       new DefaultExpressionEvaluator(
         byteSchema,
