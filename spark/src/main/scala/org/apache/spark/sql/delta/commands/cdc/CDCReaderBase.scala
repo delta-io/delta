@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.commands.cdc
 import java.sql.Timestamp
 
 import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.DeltaAnalysisException
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
