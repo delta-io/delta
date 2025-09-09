@@ -76,19 +76,17 @@ public class Dsv2BasicTest {
   }
 
   @Test
-  public void testBatchRead() {
+  public void testBatchRead(@TempDir File tempDir) {
+    String path = tempDir.getAbsolutePath();
     spark.sql(
         String.format(
-            "CREATE TABLE dsv2.%s.batch_read_test (id INT, name STRING, value DOUBLE)", nameSpace));
-    UnsupportedOperationException e =
-        assertThrows(
-            UnsupportedOperationException.class,
-            () ->
-                spark
-                    .sql(String.format("SELECT * FROM dsv2.%s.batch_read_test", nameSpace))
-                    .show());
-    // TODO: update after implementing batch Scan
-    assertTrue(e.getMessage().contains("reader factory is not implemented"));
+            "CREATE TABLE delta.`%s` (id INT, name STRING, value DOUBLE) USING delta", path));
+    spark.sql(
+        String.format(
+            "INSERT INTO delta.`%s` VALUES (1, 'Alice', 10.5), (2, 'Bob', 20.5), (3, 'Charlie', 30.5)",
+            path));
+    spark.sql(String.format("SELECT * FROM delta.`%s`", path)).show();
+    spark.sql(String.format("SELECT * FROM dsv2.delta.`%s`", path)).show();
   }
 
   @Test

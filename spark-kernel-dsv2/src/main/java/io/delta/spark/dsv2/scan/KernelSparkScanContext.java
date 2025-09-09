@@ -22,19 +22,32 @@ import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.InternalScanFileUtils;
 import io.delta.kernel.utils.CloseableIterator;
-import io.delta.spark.dsv2.scan.batch.KernelSparkInputPartition;
-import io.delta.spark.dsv2.utils.SerializableKernelRowWrapper;
+import io.delta.kernel.utils.FileStatus;
+import io.delta.spark.dsv2.utils.ScalaUtils;
+import io.delta.spark.dsv2.utils.SerializableReaderFunction;
 import java.io.IOException;
 import java.io.UncheckedIOException;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Optional;
+import java.util.*;
 import java.util.concurrent.atomic.AtomicReference;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.spark.paths.SparkPath;
+import org.apache.spark.sql.SparkSession;
+import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.connector.read.InputPartition;
+import org.apache.spark.sql.execution.datasources.FileFormat;
+import org.apache.spark.sql.execution.datasources.FilePartition;
+import org.apache.spark.sql.execution.datasources.PartitionedFile;
+import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat;
+import org.apache.spark.sql.sources.Filter;
+import org.apache.spark.sql.types.StructType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import scala.Function1;
+import scala.collection.Iterator;
+import scala.collection.JavaConverters;
+import scala.collection.Seq;
 
 /**
  * Shared context for Kernel-based Spark scans that manages scan state and partition planning.
@@ -54,7 +67,9 @@ public class KernelSparkScanContext {
 
   private final Scan kernelScan;
   private final Engine engine;
-  private final SerializableKernelRowWrapper serializedScanState;
+  private final ParquetFileFormat parquetFileFormat;
+  private final Configuration hadoopConf;
+  private final StructType sparkReadSchema;
 
   /**
    * Cached scan file batches from kernel scan to avoid re-reading log files for replay on multiple
@@ -62,11 +77,14 @@ public class KernelSparkScanContext {
    */
   private final AtomicReference<Optional<List<FilteredColumnarBatch>>> cachedScanFileBatches;
 
-  public KernelSparkScanContext(Scan kernelScan, Configuration hadoopConf) {
+  public KernelSparkScanContext(
+      Scan kernelScan, StructType sparkReadSchema, Configuration hadoopConf) {
     this.engine = DefaultEngine.create(requireNonNull(hadoopConf, "hadoopConf is null"));
     this.kernelScan = requireNonNull(kernelScan, "kernelScan is null");
-    this.serializedScanState = new SerializableKernelRowWrapper(kernelScan.getScanState(engine));
+    this.parquetFileFormat = new ParquetFileFormat();
     this.cachedScanFileBatches = new AtomicReference<>(Optional.empty());
+    this.hadoopConf = hadoopConf;
+    this.sparkReadSchema = sparkReadSchema;
   }
 
   /**
@@ -82,6 +100,37 @@ public class KernelSparkScanContext {
   public InputPartition[] planPartitions() {
     final List<FilteredColumnarBatch> batches = loadScanFileBatches();
     return convertBatchesToInputPartitions(batches);
+  }
+
+  /**
+   * Creates a reader function that can read data from partitioned files. This method handles the
+   * creation of ParquetFileFormat and configures it with the appropriate schemas and configuration.
+   *
+   * @return A PreparableReadFunction that can read data from files
+   */
+  public SerializableReaderFunction createReaderFunction() {
+    SparkSession sparkSession = SparkSession.active();
+    Filter[] filtersArray = new Filter[0];
+    Seq<Filter> filters =
+        JavaConverters.asScalaBufferConverter(java.util.Arrays.asList(filtersArray))
+            .asScala()
+            .toSeq();
+    Map<String, String> options = new HashMap<>();
+    options.put(FileFormat.OPTION_RETURNING_BATCH(), String.valueOf(supportColumnar()));
+    Function1<PartitionedFile, Iterator<InternalRow>> scalaReadFunc =
+        parquetFileFormat.buildReaderWithPartitionValues(
+            sparkSession,
+            sparkReadSchema,
+            new StructType(),
+            sparkReadSchema,
+            filters,
+            ScalaUtils.toScalaMap(options),
+            hadoopConf);
+    return (PartitionedFile file) -> scalaReadFunc.apply(file);
+  }
+
+  public boolean supportColumnar() {
+    return parquetFileFormat.supportBatch(SparkSession.active(), sparkReadSchema);
   }
 
   private List<FilteredColumnarBatch> loadScanFileBatches() {
@@ -115,9 +164,9 @@ public class KernelSparkScanContext {
       try (CloseableIterator<Row> rows = batch.getRows()) {
         while (rows.hasNext()) {
           Row row = rows.next();
+          PartitionedFile partitionedFile = partitionedFileFromKernelRow(row);
           partitions.add(
-              new KernelSparkInputPartition(
-                  serializedScanState, new SerializableKernelRowWrapper(row)));
+              new FilePartition(partitions.size(), new PartitionedFile[] {partitionedFile}));
         }
       } catch (IOException e) {
         LOG.warn("Failed to construct input partition", e);
@@ -125,5 +174,30 @@ public class KernelSparkScanContext {
       }
     }
     return partitions.toArray(new InputPartition[0]);
+  }
+
+  /**
+   * Converts a Kernel Row representing a scan file to a Spark PartitionedFile. This method extracts
+   * file information and partition values from the row.
+   *
+   * @param row The Kernel Row containing scan file information
+   * @return A PartitionedFile that can be used by Spark's ParquetFileFormat
+   */
+  private PartitionedFile partitionedFileFromKernelRow(Row row) {
+    FileStatus fileStatus = InternalScanFileUtils.getAddFileStatus(row);
+    SparkPath filePath = SparkPath.fromPathString(fileStatus.getPath());
+    long length = fileStatus.getSize();
+    long modificationTime = fileStatus.getModificationTime();
+    long start = 0;
+    String[] hosts = new String[0];
+    return new PartitionedFile(
+        InternalRow.empty(),
+        filePath, // File path
+        start, // Start offset
+        length, // File length
+        hosts, // Host locations
+        modificationTime, // Last modified time
+        length, // File size
+        ScalaUtils.toScalaMap(new HashMap<>())); // Metadata
   }
 }
