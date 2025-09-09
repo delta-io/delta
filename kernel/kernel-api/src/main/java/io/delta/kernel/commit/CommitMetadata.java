@@ -59,7 +59,7 @@ public class CommitMetadata {
   private final long version;
   private final String logPath;
   private final CommitInfo commitInfo;
-  private final List<DomainMetadata> newDomainMetadtas;
+  private final List<DomainMetadata> newDomainMetadatas;
   private final Optional<Tuple2<Protocol, Metadata>> readPandMOpt;
   private final Optional<Protocol> newProtocolOpt;
   private final Optional<Metadata> newMetadataOpt;
@@ -76,7 +76,7 @@ public class CommitMetadata {
     this.version = version;
     this.logPath = requireNonNull(logPath, "logPath is null");
     this.commitInfo = requireNonNull(commitInfo, "commitInfo is null");
-    this.newDomainMetadtas = requireNonNull(newDomainMetadatas, "newDomainMetadatas is null");
+    this.newDomainMetadatas = requireNonNull(newDomainMetadatas, "newDomainMetadatas is null");
     this.readPandMOpt = requireNonNull(readPandMOpt, "readPandMOpt is null");
     this.newProtocolOpt = requireNonNull(newProtocolOpt, "newProtocolOpt is null");
     this.newMetadataOpt = requireNonNull(newMetadataOpt, "newMetadataOpt is null");
@@ -109,7 +109,7 @@ public class CommitMetadata {
 
   /** The new {@link DomainMetadata}s that are being written as part of this commit. */
   public List<DomainMetadata> getNewDomainMetadatas() {
-    return newDomainMetadtas;
+    return newDomainMetadatas;
   }
 
   /**
