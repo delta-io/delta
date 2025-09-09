@@ -27,25 +27,20 @@ import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat}
 import org.apache.spark.sql.delta.files.{CdcAddFileIndex, TahoeChangeFileIndex, TahoeFileIndexWithSnapshotDescriptor, TahoeRemoveFileIndex}
-import org.apache.spark.sql.delta.logging.DeltaLogKeys
-import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.schema.SchemaUtils
-import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSource, DeltaSourceUtils, DeltaSQLConf}
+import org.apache.spark.sql.delta.sources.DeltaDataSource
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
 import org.apache.spark.sql.util.ScalaExtensions.OptionExt
 
-import org.apache.spark.internal.MDC
 import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.{Column, DataFrame, Dataset, Row, SparkSession, SQLContext}
+import org.apache.spark.sql.{Column, DataFrame, Row, SparkSession, SQLContext}
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
-import org.apache.spark.sql.catalyst.expressions.{And, Attribute, AttributeReference, Expression, Literal}
+import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference, Expression, Literal}
 import org.apache.spark.sql.catalyst.plans.logical.Statistics
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.execution.LogicalRDD
 import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
-import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.sources.{BaseRelation, CatalystScan, Filter}
+import org.apache.spark.sql.sources.BaseRelation
 import org.apache.spark.sql.types.{LongType, StringType, StructType, TimestampType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
