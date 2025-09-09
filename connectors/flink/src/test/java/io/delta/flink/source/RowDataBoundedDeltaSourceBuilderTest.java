@@ -127,7 +127,8 @@ class RowDataBoundedDeltaSourceBuilderTest extends RowDataDeltaSourceBuilderTest
                 assertThat(source, notNullValue());
                 assertThat(source.getBoundedness(), equalTo(Boundedness.BOUNDED));
                 assertThat(source.getSourceConfiguration()
-                        .getValue(DeltaSourceOptions.PARTITION_FILTERS), equalTo("partCol=partVal"));
+                        .getValue(DeltaSourceOptions.PARTITION_FILTERS),
+                        equalTo("partCol=partVal"));
             }
         });
     }

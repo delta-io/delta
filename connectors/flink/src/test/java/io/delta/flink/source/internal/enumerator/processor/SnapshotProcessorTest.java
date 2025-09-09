@@ -5,18 +5,15 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-
-import org.apache.flink.core.fs.Path;
-import org.junit.jupiter.api.Test;
+import static java.util.Arrays.asList;
 
 import io.delta.flink.internal.options.PartitionFilterOptionTypeConverter;
 import io.delta.flink.source.internal.file.AddFileEnumerator;
 import io.delta.flink.source.internal.state.DeltaSourceSplit;
 import io.delta.standalone.Snapshot;
 import io.delta.standalone.actions.AddFile;
-
-import static java.util.Arrays.asList;
-
+import org.apache.flink.core.fs.Path;
+import org.junit.jupiter.api.Test;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.core.IsEqual.equalTo;
 import static org.mockito.Mockito.when;
@@ -82,15 +79,17 @@ public class SnapshotProcessorTest {
         partitionSpec3.put("part2", "p2v3");
         List<AddFile> files = asList(
                 new AddFile("s3://some/path/part1=p1v1/part2=p2v1/file1.parquet",
-                        partitionSpec1, 100, 0L, true, "", new HashMap<>()),
-
-        new AddFile("s3://some/path/part1=p1v1/part2=p2v1/file2.parquet",
-                partitionSpec1, 100, 0L, true, "", new HashMap<>()),
+                        partitionSpec1, 100, 0L, true,
+                        "", new HashMap<>()),
+                new AddFile("s3://some/path/part1=p1v1/part2=p2v1/file2.parquet",
+                        partitionSpec1, 100, 0L, true,
+                        "", new HashMap<>()),
                 new AddFile("s3://some/path/part1=p1v2/part2=p2v2/file3.parquet",
-                        partitionSpec2, 100, 0L, true, "", new HashMap<>()),
+                        partitionSpec2, 100, 0L, true,
+                        "", new HashMap<>()),
                 new AddFile("s3://some/path/part1=p1v3/part2=p2v3/file1.parquet",
-                        partitionSpec3, 100, 0L, true, "", new HashMap<>())
-        );
+                        partitionSpec3, 100, 0L, true,
+                        "", new HashMap<>()));
 
         when(snapshot.getAllFiles()).thenReturn(files);
         when(snapshot.getVersion()).thenReturn(1L);
