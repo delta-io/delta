@@ -26,7 +26,10 @@ import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.types.*;
 import java.math.BigDecimal;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.BiFunction;
@@ -93,7 +96,8 @@ public class InExpressionEvaluator {
                     in,
                     String.format(
                         "IN expression requires all elements to have compatible types. "
-                            + "Value type: %s, incompatible element type at position %d: %s",
+                            + "Value type: %s, incompatible element type at position %d: %s. "
+                            + "Consider casting the incompatible element to a compatible type.",
                         valueType, i, listElementType));
               }
             });
@@ -111,23 +115,16 @@ public class InExpressionEvaluator {
 
   private static void validateStringTypesForCollation(
       Predicate in, List<Expression> childrenExpressions, List<DataType> childrenOutputTypes) {
-    DataType valueType = childrenOutputTypes.get(0);
-    checkIsStringType(
-        valueType, in, "'IN' with collation expects STRING type for the value expression");
 
-    IntStream.range(1, childrenOutputTypes.size())
-        .forEach(
-            i -> {
-              Expression child = childrenExpressions.get(i);
-              DataType listElementType = childrenOutputTypes.get(i);
+    checkIsStringType(childrenOutputTypes.get(0), in,
+        "'IN' with collation expects STRING type for the value expression");
 
-              if (!isNullLiteral(child)) {
-                checkIsStringType(
-                    listElementType,
-                    in,
-                    "'IN' with collation expects STRING type for all list elements");
-              }
-            });
+    for (int i = 1; i < childrenOutputTypes.size(); i++) {
+      if (!isNullLiteral(childrenExpressions.get(i))) {
+        checkIsStringType(childrenOutputTypes.get(i), in,
+            "'IN' with collation expects STRING type for all list elements");
+      }
+    }
   }
 
   private static boolean isNullLiteral(Expression expression) {
@@ -149,6 +146,41 @@ public class InExpressionEvaluator {
     return typeGroup.contains(dataType.getClass());
   }
 
+  // Static comparator cache for performance optimization
+  private static final Map<Class<? extends DataType>, BiFunction<Object, Object, Integer>>
+      COMPARATORS = createComparatorMap();
+
+  private static Map<Class<? extends DataType>, BiFunction<Object, Object, Integer>>
+      createComparatorMap() {
+    Map<Class<? extends DataType>, BiFunction<Object, Object, Integer>> map = new HashMap<>();
+    map.put(BooleanType.class, (v1, v2) -> Boolean.compare((Boolean) v1, (Boolean) v2));
+    map.put(ByteType.class, 
+        (v1, v2) -> Byte.compare(((Number) v1).byteValue(), ((Number) v2).byteValue()));
+    map.put(ShortType.class, 
+        (v1, v2) -> Short.compare(((Number) v1).shortValue(), ((Number) v2).shortValue()));
+    map.put(IntegerType.class, 
+        (v1, v2) -> Integer.compare(((Number) v1).intValue(), ((Number) v2).intValue()));
+    map.put(DateType.class, 
+        (v1, v2) -> Integer.compare(((Number) v1).intValue(), ((Number) v2).intValue()));
+    map.put(LongType.class, 
+        (v1, v2) -> Long.compare(((Number) v1).longValue(), ((Number) v2).longValue()));
+    map.put(TimestampType.class, 
+        (v1, v2) -> Long.compare(((Number) v1).longValue(), ((Number) v2).longValue()));
+    map.put(TimestampNTZType.class, 
+        (v1, v2) -> Long.compare(((Number) v1).longValue(), ((Number) v2).longValue()));
+    map.put(FloatType.class, 
+        (v1, v2) -> Float.compare(((Number) v1).floatValue(), ((Number) v2).floatValue()));
+    map.put(DoubleType.class, 
+        (v1, v2) -> Double.compare(((Number) v1).doubleValue(), ((Number) v2).doubleValue()));
+    map.put(DecimalType.class, 
+        (v1, v2) -> BIGDECIMAL_COMPARATOR.compare((BigDecimal) v1, (BigDecimal) v2));
+    map.put(StringType.class, 
+        (v1, v2) -> STRING_COMPARATOR.compare((String) v1, (String) v2));
+    map.put(BinaryType.class, 
+        (v1, v2) -> BINARY_COMPARTOR.compare((byte[]) v1, (byte[]) v2));
+    return Collections.unmodifiableMap(map);
+  }
+
   // Comparison logic
   private static boolean compareValues(Object value1, Object value2, DataType dataType) {
     if (value1 == null || value2 == null) {
@@ -158,34 +190,31 @@ public class InExpressionEvaluator {
   }
 
   private static BiFunction<Object, Object, Integer> getComparator(DataType dataType) {
-    if (dataType instanceof BooleanType) {
-      return (v1, v2) -> Boolean.compare((Boolean) v1, (Boolean) v2);
-    } else if (dataType instanceof ByteType) {
-      return (v1, v2) -> Byte.compare(((Number) v1).byteValue(), ((Number) v2).byteValue());
-    } else if (dataType instanceof ShortType) {
-      return (v1, v2) -> Short.compare(((Number) v1).shortValue(), ((Number) v2).shortValue());
-    } else if (dataType instanceof IntegerType || dataType instanceof DateType) {
-      return (v1, v2) -> Integer.compare(((Number) v1).intValue(), ((Number) v2).intValue());
-    } else if (dataType instanceof LongType
-        || dataType instanceof TimestampType
-        || dataType instanceof TimestampNTZType) {
-      return (v1, v2) -> Long.compare(((Number) v1).longValue(), ((Number) v2).longValue());
-    } else if (dataType instanceof FloatType) {
-      return (v1, v2) -> Float.compare(((Number) v1).floatValue(), ((Number) v2).floatValue());
-    } else if (dataType instanceof DoubleType) {
-      return (v1, v2) -> Double.compare(((Number) v1).doubleValue(), ((Number) v2).doubleValue());
-    } else if (dataType instanceof DecimalType) {
-      return (v1, v2) -> BIGDECIMAL_COMPARATOR.compare((BigDecimal) v1, (BigDecimal) v2);
-    } else if (dataType instanceof StringType) {
-      return (v1, v2) -> STRING_COMPARATOR.compare((String) v1, (String) v2);
-    } else if (dataType instanceof BinaryType) {
-      return (v1, v2) -> BINARY_COMPARTOR.compare((byte[]) v1, (byte[]) v2);
-    } else {
-      return (v1, v2) -> v1.equals(v2) ? 0 : -1;
+    BiFunction<Object, Object, Integer> comparator = COMPARATORS.get(dataType.getClass());
+    if (comparator != null) {
+      return comparator;
     }
+    // Fallback for unknown types
+    return (v1, v2) -> v1.equals(v2) ? 0 : -1;
   }
 
-  // Inner class for column vector implementation
+  /**
+   * Column vector implementation for IN expression evaluation.
+   *
+   * <p>Implements three-value logic for IN expressions:
+   * <ul>
+   *   <li>TRUE if value matches any non-null element in the list</li>
+   *   <li>FALSE if value doesn't match any element and no nulls in list</li>
+   *   <li>NULL if value is null, or no match found but nulls present in list</li>
+   * </ul>
+   *
+   * <p>Performance considerations:
+   * <ul>
+   *   <li>Uses cached comparators for efficient type-specific comparisons</li>
+   *   <li>Short-circuits on first match found</li>
+   *   <li>Handles type compatibility and collation requirements</li>
+   * </ul>
+   */
   private static class InColumnVector implements ColumnVector {
     private final ColumnVector valueVector;
     private final List<ColumnVector> inListVectors;
@@ -213,15 +242,15 @@ public class InExpressionEvaluator {
 
     @Override
     public boolean getBoolean(int rowId) {
-      return evaluateIn(rowId).orElse(false);
+      return evaluateInLogic(rowId).orElse(false);
     }
 
     @Override
     public boolean isNullAt(int rowId) {
-      return !evaluateIn(rowId).isPresent();
+      return !evaluateInLogic(rowId).isPresent();
     }
 
-    private Optional<Boolean> evaluateIn(int rowId) {
+    private Optional<Boolean> evaluateInLogic(int rowId) {
       if (valueVector.isNullAt(rowId)) {
         return Optional.empty();
       }
