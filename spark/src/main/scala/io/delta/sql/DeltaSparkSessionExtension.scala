@@ -18,7 +18,6 @@ package io.delta.sql
 
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.metric.OptimizeConditionalIncrementMetric
 import org.apache.spark.sql.delta.optimizer.RangePartitionIdRewrite
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -113,9 +112,6 @@ class DeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
     extensions.injectOptimizerRule { session =>
       new RangePartitionIdRewrite(session)
     }
-    // Optimize ConditionalIncrementMetric with constant condition.
-    extensions.injectOptimizerRule { _ => OptimizeConditionalIncrementMetric }
-
     extensions.injectPostHocResolutionRule { session =>
       PreprocessTableUpdate(session.sessionState.conf)
     }
