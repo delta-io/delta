@@ -96,6 +96,20 @@ trait VectorTestUtils {
     }
   }
 
+  protected def byteVector(values: Seq[java.lang.Byte]): ColumnVector = {
+    new ColumnVector {
+      override def getDataType: DataType = ByteType.BYTE
+
+      override def getSize: Int = values.length
+
+      override def close(): Unit = {}
+
+      override def isNullAt(rowId: Int): Boolean = values(rowId) == null
+
+      override def getByte(rowId: Int): Byte = values(rowId)
+    }
+  }
+
   protected def floatVector(values: Seq[FloatJ]): ColumnVector = {
     new ColumnVector {
       override def getDataType: DataType = FloatType.FLOAT

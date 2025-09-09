@@ -1077,8 +1077,8 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
         BooleanType.BOOLEAN).eval(doubleInput),
       expOutputDouble)
 
-    // Test with byte values: col IN (0, 1) - based on testColumnValue generation
-    val byteCol = testColumnVector(5, ByteType.BYTE)
+    // Test with byte values: col IN (0, 1)
+    val byteCol = byteVector(Seq[java.lang.Byte](null, 0.toByte, 0.toByte, 1.toByte, 2.toByte))
     val byteSchema = new StructType().add("byteCol", ByteType.BYTE)
     val byteInput = new DefaultColumnarBatch(byteCol.getSize, byteSchema, Array(byteCol))
 
@@ -1086,8 +1086,8 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       new Column("byteCol"),
       Literal.ofByte(0.toByte),
       Literal.ofByte(1.toByte))
-    // testColumnValue generates: [null, 0, 0, 1, 1] for ByteType (rowId % 8 == 0 for null)
-    val expOutputByte = booleanVector(Seq[BooleanJ](null, true, true, true, true))
+    // Expected: [null, true, true, true, false] for values [null, 0, 0, 1, 2]
+    val expOutputByte = booleanVector(Seq[BooleanJ](null, true, true, true, false))
     checkBooleanVectors(
       new DefaultExpressionEvaluator(
         byteSchema,
