@@ -22,7 +22,7 @@ import scala.collection.immutable.Seq
 
 import io.delta.kernel.{Operation, Table, Transaction, TransactionCommitResult}
 import io.delta.kernel.data.Row
-import io.delta.kernel.defaults.utils.WriteUtils
+import io.delta.kernel.defaults.utils.{AbstractWriteUtils, WriteUtils, WriteUtilsWithV2Builders}
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.expressions.Column
@@ -38,11 +38,17 @@ import org.scalatest.funsuite.AnyFunSuite
 import org.scalatest.prop.TableDrivenPropertyChecks.forAll
 import org.scalatest.prop.Tables
 
+class DeltaTableSchemaEvolutionTransactionBuilderV1Suite extends DeltaTableSchemaEvolutionSuiteBase
+    with WriteUtils {}
+
+class DeltaTableSchemaEvolutionTransactionBuilderV2Suite extends DeltaTableSchemaEvolutionSuiteBase
+    with WriteUtilsWithV2Builders {}
+
 /**
  * ToDo: Clean this up by moving some common schemas to fixtures and abstracting
  * the setup/run schema evolution/assert loop
  */
-class DeltaTableSchemaEvolutionSuite extends AnyFunSuite with WriteUtils
+trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteUtils
     with ColumnMappingSuiteBase {
 
   test("Add nullable column succeeds and correctly updates maxFieldId") {

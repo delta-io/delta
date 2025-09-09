@@ -19,7 +19,7 @@ import scala.collection.JavaConverters._
 import scala.collection.immutable.Seq
 
 import io.delta.kernel.Table
-import io.delta.kernel.defaults.utils.WriteUtils
+import io.delta.kernel.defaults.utils.{AbstractWriteUtils, WriteUtils, WriteUtilsWithV2Builders}
 import io.delta.kernel.exceptions.InvalidConfigurationValueException
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.TableConfig
@@ -28,7 +28,13 @@ import io.delta.kernel.types.{FieldMetadata, IntegerType, StringType, StructFiel
 
 import org.scalatest.funsuite.AnyFunSuite
 
-class DeltaColumnMappingSuite extends AnyFunSuite with WriteUtils
+class DeltaColumnMappingTransactionBuilderV1Suite extends DeltaColumnMappingSuiteBase
+    with WriteUtils {}
+
+class DeltaColumnMappingTransactionBuilderV2Suite extends DeltaColumnMappingSuiteBase
+    with WriteUtilsWithV2Builders {}
+
+trait DeltaColumnMappingSuiteBase extends AnyFunSuite with AbstractWriteUtils
     with ColumnMappingSuiteBase {
 
   val simpleTestSchema = new StructType()
