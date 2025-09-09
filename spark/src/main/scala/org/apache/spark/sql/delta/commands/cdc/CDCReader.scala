@@ -262,7 +262,10 @@ trait CDCReaderImpl extends CDCReaderBase {
     }
 
     val checkSchemaToBlockRead = shouldCheckSchemaToBlockBatchRead(
-      spark, deltaLog, suppressSchemaEvolutionErrors, isStreaming)
+      spark,
+      deltaLog,
+      isStreaming
+    )
 
     var totalBytes = 0L
     var numAddFiles, numRemoveFiles, numAddCRCFiles = 0L

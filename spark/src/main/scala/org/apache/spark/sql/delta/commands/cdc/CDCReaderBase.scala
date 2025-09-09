@@ -286,7 +286,7 @@ trait CDCReaderBase extends DeltaLogging {
       spark.sqlContext,
       catalogTableOpt,
       Some(startingVersion.version),
-      endingVersionOpt.map(_.version),
+      endingVersionOpt.map(_.version)
     )
   }
 
@@ -441,7 +441,6 @@ trait CDCReaderBase extends DeltaLogging {
   def shouldCheckSchemaToBlockBatchRead(
       spark: SparkSession,
       deltaLog: DeltaLog,
-      suppressSchemaEvolutionErrors: Boolean,
       isStreaming: Boolean): Boolean = {
     // Check schema read-compatibility
     val allowUnsafeBatchReadOnIncompatibleSchemaChanges =
