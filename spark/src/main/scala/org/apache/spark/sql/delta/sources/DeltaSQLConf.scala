@@ -1731,6 +1731,14 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_OPTIMIZE_CONDITIONAL_INCREMENT_METRIC_ENABLED =
+    buildConf("optimize.conditionalIncrementMetric.enabled")
+      .internal()
+      .doc("Whether to enable optimization of ConditionalIncrementMetric expressions with " +
+        "constant conditions.")
+      .booleanConf
+      .createWithDefault(true)
+
   val GENERATED_COLUMN_PARTITION_FILTER_OPTIMIZATION_ENABLED =
     buildConf("generatedColumn.partitionFilterOptimization.enabled")
       .internal()
