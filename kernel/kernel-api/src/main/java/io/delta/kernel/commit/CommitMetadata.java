@@ -21,11 +21,13 @@ import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.annotation.Experimental;
 import io.delta.kernel.internal.actions.CommitInfo;
+import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.Tuple2;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -57,6 +59,7 @@ public class CommitMetadata {
   private final long version;
   private final String logPath;
   private final CommitInfo commitInfo;
+  private final List<DomainMetadata> newDomainMetadtas;
   private final Optional<Tuple2<Protocol, Metadata>> readPandMOpt;
   private final Optional<Protocol> newProtocolOpt;
   private final Optional<Metadata> newMetadataOpt;
@@ -65,6 +68,7 @@ public class CommitMetadata {
       long version,
       String logPath,
       CommitInfo commitInfo,
+      List<DomainMetadata> newDomainMetadatas,
       Optional<Tuple2<Protocol, Metadata>> readPandMOpt,
       Optional<Protocol> newProtocolOpt,
       Optional<Metadata> newMetadataOpt) {
@@ -72,6 +76,7 @@ public class CommitMetadata {
     this.version = version;
     this.logPath = requireNonNull(logPath, "logPath is null");
     this.commitInfo = requireNonNull(commitInfo, "commitInfo is null");
+    this.newDomainMetadtas = requireNonNull(newDomainMetadatas, "newDomainMetadatas is null");
     this.readPandMOpt = requireNonNull(readPandMOpt, "readPandMOpt is null");
     this.newProtocolOpt = requireNonNull(newProtocolOpt, "newProtocolOpt is null");
     this.newMetadataOpt = requireNonNull(newMetadataOpt, "newMetadataOpt is null");
@@ -100,6 +105,11 @@ public class CommitMetadata {
   /** The {@link CommitInfo} that is being written as part of this commit. */
   public CommitInfo getCommitInfo() {
     return commitInfo;
+  }
+
+  /** The new {@link DomainMetadata}s that are being written as part of this commit. */
+  public List<DomainMetadata> getNewDomainMetadatas() {
+    return newDomainMetadtas;
   }
 
   /**

@@ -18,8 +18,10 @@ package io.delta.kernel.test
 
 import java.util.Optional
 
+import scala.collection.JavaConverters._
+
 import io.delta.kernel.commit.CommitMetadata
-import io.delta.kernel.internal.actions.{CommitInfo, Metadata, Protocol}
+import io.delta.kernel.internal.actions.{CommitInfo, DomainMetadata, Metadata, Protocol}
 import io.delta.kernel.internal.util.Tuple2
 
 /**
@@ -31,6 +33,7 @@ trait TestFixtures extends ActionUtils {
       version: Long,
       logPath: String = "/fake/_delta_log",
       commitInfo: CommitInfo = testCommitInfo(),
+      newDomainMetadatas: List[DomainMetadata] = List.empty,
       readPandMOpt: Optional[Tuple2[Protocol, Metadata]] = Optional.empty(),
       newProtocolOpt: Optional[Protocol] = Optional.empty(),
       newMetadataOpt: Optional[Metadata] = Optional.empty()): CommitMetadata = {
@@ -38,6 +41,7 @@ trait TestFixtures extends ActionUtils {
       version,
       logPath,
       commitInfo,
+      newDomainMetadatas.asJava,
       readPandMOpt,
       newProtocolOpt,
       newMetadataOpt)
