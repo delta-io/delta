@@ -519,7 +519,7 @@ class DefaultExpressionUtils {
   static Predicate createPredicate(
       String name, List<Expression> children, Optional<CollationIdentifier> collationIdentifier) {
     if (collationIdentifier.isPresent()) {
-      return new Predicate(name, children.get(0), children.get(1), collationIdentifier.get());
+      return new Predicate(name, children, collationIdentifier.get());
     } else {
       return new Predicate(name, children);
     }

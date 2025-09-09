@@ -72,6 +72,8 @@ abstract class ExpressionVisitor<R> {
 
   abstract R visitStartsWith(Predicate predicate);
 
+  abstract R visitIn(Predicate predicate);
+
   final R visit(Expression expression) {
     if (expression instanceof PartitionValueExpression) {
       return visitPartitionValue((PartitionValueExpression) expression);
@@ -132,6 +134,8 @@ abstract class ExpressionVisitor<R> {
         return visitLike(createPredicate(name, children, collationIdentifier));
       case "STARTS_WITH":
         return visitStartsWith(createPredicate(name, children, collationIdentifier));
+      case "IN":
+        return visitIn(createPredicate(name, children, collationIdentifier));
       default:
         throw new UnsupportedOperationException(
             String.format("Scalar expression `%s` is not supported.", name));
