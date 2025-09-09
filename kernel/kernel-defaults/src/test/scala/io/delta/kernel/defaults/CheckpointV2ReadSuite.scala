@@ -20,7 +20,7 @@ import java.io.File
 import scala.collection.JavaConverters._
 
 import io.delta.kernel.defaults.engine.DefaultEngine
-import io.delta.kernel.defaults.utils.{AbstractTestUtils, DefaultEngineOfBatchSize2, ExpressionTestUtils, TestRow, TestUtils, TestUtilsWithLegacyKernelAPIs, TestUtilsWithTableManagerAPIs}
+import io.delta.kernel.defaults.utils.{AbstractTestUtils, ExpressionTestUtils, TestRow, TestUtils, TestUtilsWithLegacyKernelAPIs, TestUtilsWithTableManagerAPIs}
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl}
 import io.delta.kernel.internal.checkpoints.CheckpointInstance
@@ -39,10 +39,14 @@ import org.apache.spark.sql.types.{BooleanType, IntegerType, LongType, MapType, 
 import org.scalatest.funsuite.AnyFunSuite
 
 class LegacyCheckpointV2ReadSuite extends AbstractCheckpointV2ReadSuite
-    with TestUtilsWithLegacyKernelAPIs with DefaultEngineOfBatchSize2
+    with TestUtilsWithLegacyKernelAPIs {
+  override lazy val defaultEngine = defaultEngineBatchSize2
+}
 
 class CheckpointV2ReadSuite extends AbstractCheckpointV2ReadSuite
-    with TestUtilsWithTableManagerAPIs with DefaultEngineOfBatchSize2
+    with TestUtilsWithTableManagerAPIs {
+  override lazy val defaultEngine = defaultEngineBatchSize2
+}
 
 trait AbstractCheckpointV2ReadSuite extends AnyFunSuite with ExpressionTestUtils {
   self: AbstractTestUtils =>

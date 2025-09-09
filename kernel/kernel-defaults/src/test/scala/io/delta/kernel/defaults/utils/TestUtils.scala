@@ -76,6 +76,15 @@ trait AbstractTestUtils extends Assertions with SQLHelper with TestCommitterUtil
   lazy val configuration = new Configuration()
   lazy val defaultEngine = DefaultEngine.create(configuration)
 
+  // Used in child suites to override defaultEngine
+  lazy val defaultEngineBatchSize2 = DefaultEngine.create(new Configuration() {
+    {
+      // Set the batch sizes to small so that we get to test the multiple batch scenarios.
+      set("delta.kernel.default.parquet.reader.batch-size", "2");
+      set("delta.kernel.default.json.reader.batch-size", "2");
+    }
+  })
+
   lazy val spark = SparkSession
     .builder()
     .appName("Spark Test Writer for Delta Kernel")

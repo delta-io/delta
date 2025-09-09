@@ -24,7 +24,7 @@ import scala.collection.JavaConverters._
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel.Table
 import io.delta.kernel.defaults.engine.DefaultEngine
-import io.delta.kernel.defaults.utils.{AbstractTestUtils, DefaultEngineOfBatchSize2, TestRow, TestUtils, TestUtilsWithLegacyKernelAPIs, TestUtilsWithTableManagerAPIs}
+import io.delta.kernel.defaults.utils.{AbstractTestUtils, TestRow, TestUtils, TestUtilsWithLegacyKernelAPIs, TestUtilsWithTableManagerAPIs}
 import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl}
 import io.delta.kernel.internal.data.ScanStateRow
 import io.delta.kernel.internal.fs.Path
@@ -36,11 +36,13 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.conf.Configuration
 import org.scalatest.funsuite.AnyFunSuite
 
-class LogReplaySuite extends AbstractLogReplaySuite with TestUtilsWithTableManagerAPIs
-    with DefaultEngineOfBatchSize2
+class LogReplaySuite extends AbstractLogReplaySuite with TestUtilsWithTableManagerAPIs {
+  override lazy val defaultEngine = defaultEngineBatchSize2
+}
 
-class LegacyLogReplaySuite extends AbstractLogReplaySuite with TestUtilsWithLegacyKernelAPIs
-    with DefaultEngineOfBatchSize2
+class LegacyLogReplaySuite extends AbstractLogReplaySuite with TestUtilsWithLegacyKernelAPIs {
+  override lazy val defaultEngine = defaultEngineBatchSize2
+}
 
 trait AbstractLogReplaySuite extends AnyFunSuite {
   self: AbstractTestUtils =>
