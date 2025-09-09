@@ -39,27 +39,10 @@ import org.apache.spark.sql.types.{BooleanType, IntegerType, LongType, MapType, 
 import org.scalatest.funsuite.AnyFunSuite
 
 class LegacyCheckpointV2ReadSuite extends AbstractCheckpointV2ReadSuite
-    with TestUtilsWithLegacyKernelAPIs {
-
-  override lazy val defaultEngine = DefaultEngine.create(new Configuration() {
-    {
-      // Set the batch sizes to small so that we get to test the multiple batch scenarios.
-      set("delta.kernel.default.parquet.reader.batch-size", "2");
-      set("delta.kernel.default.json.reader.batch-size", "2");
-    }
-  })
-}
+    with TestUtilsWithLegacyKernelAPIs with DefaultEngineOfBatchSize2
 
 class CheckpointV2ReadSuite extends AbstractCheckpointV2ReadSuite
-    with TestUtilsWithTableManagerAPIs {
-  override lazy val defaultEngine = DefaultEngine.create(new Configuration() {
-    {
-      // Set the batch sizes to small so that we get to test the multiple batch scenarios.
-      set("delta.kernel.default.parquet.reader.batch-size", "2");
-      set("delta.kernel.default.json.reader.batch-size", "2");
-    }
-  })
-}
+    with TestUtilsWithTableManagerAPIs with DefaultEngineOfBatchSize2
 
 trait AbstractCheckpointV2ReadSuite extends AnyFunSuite with ExpressionTestUtils {
   self: AbstractTestUtils =>
