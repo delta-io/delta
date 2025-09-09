@@ -336,7 +336,6 @@ class RequireColumnMapping(allowedModes: Seq[DeltaColumnMappingMode])
       isCreatingNewTable: Boolean): Metadata = {
     if (!prevMetadata.configuration.contains(DeltaConfigs.COLUMN_MAPPING_MODE.key) &&
         newMetadata.configuration.contains(DeltaConfigs.COLUMN_MAPPING_MODE.key)) {
-      assert(isCreatingNewTable, "we only auto-upgrade Column Mapping on new tables")
       val tmpNewMetadata = DeltaColumnMapping.assignColumnIdAndPhysicalName(
         newMetadata = newMetadata,
         oldMetadata = prevMetadata,
