@@ -52,9 +52,11 @@ import org.apache.hadoop.fs.Path
 
 /** Default write utilities that use the V1 transaction builders. */
 trait WriteUtils extends AbstractWriteUtils with TransactionBuilderV1Support
+    with TestUtilsWithLegacyKernelAPIs
 
 /** Write utilities that use the V2 transaction builders to create transactions */
 trait WriteUtilsWithV2Builders extends AbstractWriteUtils with TransactionBuilderV2Support
+    with TestUtilsWithTableManagerAPIs
 
 /**
  * Common utility methods for write test suites. For now, this includes mostly concrete
@@ -63,7 +65,7 @@ trait WriteUtilsWithV2Builders extends AbstractWriteUtils with TransactionBuilde
  * example, `commitTransaction` could go into a [[TransactionCommitSupport]] trait since it is
  * overridden in child suites.
  */
-trait AbstractWriteUtils extends TestUtils with TransactionBuilderSupport {
+trait AbstractWriteUtils extends TransactionBuilderSupport { self: AbstractTestUtils =>
   val OBJ_MAPPER = new ObjectMapper()
   val testEngineInfo = "test-engine"
 

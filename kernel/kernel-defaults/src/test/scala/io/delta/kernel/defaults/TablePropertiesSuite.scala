@@ -18,7 +18,7 @@ package io.delta.kernel.defaults
 import scala.collection.JavaConverters._
 
 import io.delta.kernel.{Table, TableManager}
-import io.delta.kernel.defaults.utils.{AbstractWriteUtils, WriteUtils, WriteUtilsWithV2Builders}
+import io.delta.kernel.defaults.utils.{AbstractTestUtils, AbstractWriteUtils, WriteUtils, WriteUtilsWithV2Builders}
 import io.delta.kernel.exceptions.{KernelException, UnknownConfigurationException}
 import io.delta.kernel.utils.CloseableIterable.emptyIterable
 
@@ -77,7 +77,7 @@ class TablePropertiesTransactionBuilderV2Suite extends TablePropertiesSuiteBase
 /**
  * Suite to set or get table properties.
  */
-trait TablePropertiesSuiteBase extends AnyFunSuite with AbstractWriteUtils {
+trait TablePropertiesSuiteBase extends AnyFunSuite with AbstractTestUtils with AbstractWriteUtils {
   test("create/update/replace table - allow arbitrary properties") {
     withTempDir { tempFile =>
       val tablePath = tempFile.getAbsolutePath
