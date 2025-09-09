@@ -990,7 +990,12 @@ trait SnapshotManagement { self: DeltaLog =>
         catalogTableOpt = catalogTableOpt,
         versionToLoad = None,
         includeMinorCompactions = includeCompactions)
-    val newFiles = newFilesOpt.getOrElse {
+    // The file listing may return the following results:
+    // 1. None => implies the log directory does not exist or is completely empty.
+    // 2. Some(empty) => implies the log directory exists but there are no usable files.
+    // 3. Some(non-empty) => implies the log directory exists and there are some usable files.
+    // Therefore, we need to handle both cases (1) and (2) here.
+    val newFiles = newFilesOpt.filter(_.nonEmpty).getOrElse {
       // An empty listing likely implies a list-after-write inconsistency or that somebody clobbered
       // the Delta log.
       return (oldLogSegment, Nil)
