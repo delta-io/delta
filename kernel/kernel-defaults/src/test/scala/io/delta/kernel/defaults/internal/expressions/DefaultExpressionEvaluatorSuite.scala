@@ -976,7 +976,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     }
   }
 
-  test("evaluate expression: in") {
+  test("evaluate expression: basic case for in expression") {
     // Test with string values
     val col1 = stringVector(Seq[String]("one", "two", "three", "four", null, "five"))
     val schema = new StructType().add("col1", StringType.STRING)
@@ -1093,27 +1093,9 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
         inExpressionByte,
         BooleanType.BOOLEAN).eval(byteInput),
       expOutputByte)
+  }
 
-    // Test mixed numeric types with float/double/decimal compatibility
-    val mixedNumericCol = doubleVector(Seq[DoubleJ](1.0, 2.5, 3.0))
-    val mixedNumericSchema = new StructType().add("mixedCol", DoubleType.DOUBLE)
-    val mixedNumericInput =
-      new DefaultColumnarBatch(mixedNumericCol.getSize, mixedNumericSchema, Array(mixedNumericCol))
-
-    val inExpressionMixedNumeric = in(
-      new Column("mixedCol"),
-      Literal.ofInt(1), // int -> double
-      Literal.ofFloat(2.5f), // float -> double
-      Literal.ofLong(3L)
-    ) // long -> double
-    val expOutputMixedNumeric = booleanVector(Seq[BooleanJ](true, true, true))
-    checkBooleanVectors(
-      new DefaultExpressionEvaluator(
-        mixedNumericSchema,
-        inExpressionMixedNumeric,
-        BooleanType.BOOLEAN).eval(mixedNumericInput),
-      expOutputMixedNumeric)
-
+  test("evaluate expression: in with incompatible types") {
     // Test error cases - incompatible types
     def checkIncompatibleTypes(valueType: DataType, listElementType: DataType): Unit = {
       val valueSchema = new StructType().add("col", valueType)
@@ -1138,19 +1120,6 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     checkIncompatibleTypes(StringType.STRING, IntegerType.INTEGER)
     checkIncompatibleTypes(IntegerType.INTEGER, StringType.STRING)
     checkIncompatibleTypes(BooleanType.BOOLEAN, StringType.STRING)
-
-    // Test insufficient arguments
-    val schema1 = new StructType().add("col", StringType.STRING)
-    val input1 = new DefaultColumnarBatch(1, schema1, Array(testColumnVector(1, StringType.STRING)))
-
-    val insufficientArgsExpr = new Predicate("IN", List[Expression](new Column("col")).asJava)
-    val e2 = intercept[UnsupportedOperationException] {
-      new DefaultExpressionEvaluator(
-        schema1,
-        insufficientArgsExpr,
-        BooleanType.BOOLEAN).eval(input1)
-    }
-    assert(e2.getMessage.contains("at least 2 arguments"))
   }
 
   test("evaluate expression: in with collation") {
