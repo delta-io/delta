@@ -60,7 +60,10 @@ trait WriteUtils extends AbstractWriteUtils with TransactionBuilderV1Support
  */
 trait WriteUtilsWithV1Builders extends WriteUtils
 
-/** Write utilities that use the V2 transaction builders to create transactions and TableManager snapshot APIs */
+/**
+ * Write utilities that use the V2 transaction builders to create transactions and TableManager
+ * snapshot APIs
+ */
 trait WriteUtilsWithV2Builders extends AbstractWriteUtils with TransactionBuilderV2Support
     with TestUtilsWithTableManagerAPIs
 
