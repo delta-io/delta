@@ -159,13 +159,9 @@ public class InExpressionEvaluator {
   }
 
   private static boolean belongToSameTypeGroup(DataType type1, DataType type2) {
-    return (isInTypeGroup(type1, NUMERIC_TYPES) && isInTypeGroup(type2, NUMERIC_TYPES))
-        || (isInTypeGroup(type1, TIMESTAMP_TYPES) && isInTypeGroup(type2, TIMESTAMP_TYPES));
-  }
-
-  private static boolean isInTypeGroup(
-      DataType dataType, Set<Class<? extends DataType>> typeGroup) {
-    return typeGroup.contains(dataType.getClass());
+    return (NUMERIC_TYPES.contains(type1.getClass()) && NUMERIC_TYPES.contains(type2.getClass()))
+        || (TIMESTAMP_TYPES.contains(type1.getClass())
+            && TIMESTAMP_TYPES.contains(type2.getClass()));
   }
 
   // Static comparator cache for performance optimization
@@ -212,64 +208,47 @@ public class InExpressionEvaluator {
   }
 
   // Comparison logic
-  private static boolean compareValues(
-      Object value1, Object value2, DataType valueType, DataType listElementType) {
+  private static boolean compareValues(Object value1, Object value2, DataType valueType) {
     if (value1 == null || value2 == null) {
       return false;
     }
-    DataType commonType = findCommonType(valueType, listElementType);
-    return getComparator(commonType).apply(value1, value2) == 0;
+
+    // For numeric types, convert both values to the same type for comparison
+    if (NUMERIC_TYPES.contains(valueType.getClass())) {
+      return compareNumericValues(value1, value2, valueType);
+    }
+
+    return getComparator(valueType).apply(value1, value2) == 0;
   }
 
-  private static DataType findCommonType(DataType type1, DataType type2) {
-    // If types are the same, return it
-    if (type1.getClass().equals(type2.getClass())) {
-      return type1;
+  private static boolean compareNumericValues(Object value1, Object value2, DataType targetType) {
+    // Convert both values to the target type for comparison
+    Number num1 = (Number) value1;
+    Number num2 = (Number) value2;
+
+    if (targetType instanceof ByteType) {
+      return num1.byteValue() == num2.byteValue();
+    } else if (targetType instanceof ShortType) {
+      return num1.shortValue() == num2.shortValue();
+    } else if (targetType instanceof IntegerType || targetType instanceof DateType) {
+      return num1.intValue() == num2.intValue();
+    } else if (targetType instanceof LongType) {
+      return num1.longValue() == num2.longValue();
+    } else if (targetType instanceof FloatType) {
+      return Float.compare(num1.floatValue(), num2.floatValue()) == 0;
+    } else if (targetType instanceof DoubleType) {
+      return Double.compare(num1.doubleValue(), num2.doubleValue()) == 0;
+    } else if (targetType instanceof DecimalType) {
+      // For decimal, convert to BigDecimal for precise comparison
+      BigDecimal bd1 =
+          (value1 instanceof BigDecimal) ? (BigDecimal) value1 : new BigDecimal(num1.toString());
+      BigDecimal bd2 =
+          (value2 instanceof BigDecimal) ? (BigDecimal) value2 : new BigDecimal(num2.toString());
+      return bd1.compareTo(bd2) == 0;
     }
 
-    // Handle numeric type promotion
-    if (isInTypeGroup(type1, NUMERIC_TYPES) && isInTypeGroup(type2, NUMERIC_TYPES)) {
-      return findCommonNumericType(type1, type2);
-    }
-
-    // Handle timestamp type promotion
-    if (isInTypeGroup(type1, TIMESTAMP_TYPES) && isInTypeGroup(type2, TIMESTAMP_TYPES)) {
-      return findCommonTimestampType(type1, type2);
-    }
-
-    // Default to the first type (shouldn't happen if validation is correct)
-    return type1;
-  }
-
-  private static DataType findCommonNumericType(DataType type1, DataType type2) {
-    // Promotion order: Byte < Short < Integer < Long < Float < Double < Decimal
-    DataType[] promotionOrder = {
-      ByteType.BYTE, ShortType.SHORT, IntegerType.INTEGER, DateType.DATE,
-      LongType.LONG, FloatType.FLOAT, DoubleType.DOUBLE, DecimalType.USER_DEFAULT
-    };
-
-    int rank1 = getNumericTypeRank(type1, promotionOrder);
-    int rank2 = getNumericTypeRank(type2, promotionOrder);
-
-    // Return the higher-ranked type
-    return rank1 >= rank2 ? type1 : type2;
-  }
-
-  private static DataType findCommonTimestampType(DataType type1, DataType type2) {
-    // For timestamp types, prefer TimestampType over TimestampNTZType
-    if (type1 instanceof TimestampType || type2 instanceof TimestampType) {
-      return TimestampType.TIMESTAMP;
-    }
-    return type1;
-  }
-
-  private static int getNumericTypeRank(DataType type, DataType[] promotionOrder) {
-    for (int i = 0; i < promotionOrder.length; i++) {
-      if (type.getClass().equals(promotionOrder[i].getClass())) {
-        return i;
-      }
-    }
-    return -1; // Should not happen
+    // Fallback to object comparison
+    return value1.equals(value2);
   }
 
   private static BiFunction<Object, Object, Integer> getComparator(DataType dataType) {
@@ -333,8 +312,7 @@ public class InExpressionEvaluator {
         } else {
           Object inListValue =
               VectorUtils.getValueAsObject(inListVector, inListVector.getDataType(), rowId);
-          if (compareValues(
-              valueToFind, inListValue, valueVector.getDataType(), inListVector.getDataType())) {
+          if (compareValues(valueToFind, inListValue, valueVector.getDataType())) {
             return Optional.of(true);
           }
         }

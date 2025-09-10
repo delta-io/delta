@@ -1215,8 +1215,8 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     val intSchema = new StructType().add("intCol", IntegerType.INTEGER)
     val intInput = new DefaultColumnarBatch(intCol.getSize, intSchema, Array(intCol))
 
-    // Integer value [null, 0, 1, 2, 3] in Long literals (0L, 2L)
-    val intInLongExpr = in(new Column("intCol"), Literal.ofLong(0L), Literal.ofLong(2L))
+    // Integer value [null, 16, 32, 48, 65] in Long literals (16L, 48L)
+    val intInLongExpr = in(new Column("intCol"), Literal.ofLong(16L), Literal.ofLong(48L))
     val intInLongExpected = booleanVector(Seq[BooleanJ](null, true, false, true, false))
     checkBooleanVectors(
       new DefaultExpressionEvaluator(intSchema, intInLongExpr, BooleanType.BOOLEAN).eval(intInput),
@@ -1242,8 +1242,9 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     val floatSchema = new StructType().add("floatCol", FloatType.FLOAT)
     val floatInput = new DefaultColumnarBatch(floatCol.getSize, floatSchema, Array(floatCol))
 
-    // Float value [null, 0.0f, 1.0f, 2.0f] in Double literals (0.0, 2.0)
-    val floatInDoubleExpr = in(new Column("floatCol"), Literal.ofDouble(0.0), Literal.ofDouble(2.0))
+    // Float value [null, 84.08f, 168.16f, 252.24f] in Double literals (84.08, 252.24)
+    val floatInDoubleExpr =
+      in(new Column("floatCol"), Literal.ofDouble(84.08), Literal.ofDouble(252.24))
     val floatInDoubleExpected = booleanVector(Seq[BooleanJ](null, true, false, true))
     checkBooleanVectors(
       new DefaultExpressionEvaluator(
@@ -1279,7 +1280,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
   }
 
   test("evaluate expression: in comprehensive null semantics") {
-    val col1 = testColumnVector(6, StringType.STRING) // [null, "a", "b", "c", "d", "e"]
+    val col1 = testColumnVector(6, StringType.STRING) // [null, "1", null, "3", null, "5"]
     val schema = new StructType().add("col1", StringType.STRING)
     val input = new DefaultColumnarBatch(col1.getSize, schema, Array(col1))
 
@@ -1290,15 +1291,15 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     // 4. Non-null value no match, but nulls in list -> NULL
 
     // Case: value IN (match, null) -> [null, true, null, null, null, null]
-    val inExprMatchWithNull = in(new Column("col1"), Literal.ofString("a"), Literal.ofString(null))
+    val inExprMatchWithNull = in(new Column("col1"), Literal.ofString("1"), Literal.ofString(null))
     val expectedMatchWithNull = booleanVector(Seq[BooleanJ](null, true, null, null, null, null))
     checkBooleanVectors(
       new DefaultExpressionEvaluator(schema, inExprMatchWithNull, BooleanType.BOOLEAN).eval(input),
       expectedMatchWithNull)
 
-    // Case: value IN (no_match1, no_match2) -> [null, false, false, false, false, false]
+    // Case: value IN (no_match1, no_match2) -> [null, false, null, false, null, false]
     val inExprNoMatch = in(new Column("col1"), Literal.ofString("x"), Literal.ofString("y"))
-    val expectedNoMatch = booleanVector(Seq[BooleanJ](null, false, false, false, false, false))
+    val expectedNoMatch = booleanVector(Seq[BooleanJ](null, false, null, false, null, false))
     checkBooleanVectors(
       new DefaultExpressionEvaluator(schema, inExprNoMatch, BooleanType.BOOLEAN).eval(input),
       expectedNoMatch)
