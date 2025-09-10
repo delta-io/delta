@@ -34,6 +34,8 @@ import io.delta.kernel.utils.FileStatus;
 import io.delta.storage.commit.Commit;
 import io.delta.storage.commit.uccommitcoordinator.UCClient;
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorException;
+import io.delta.unity.adapters.MetadataAdapter;
+import io.delta.unity.adapters.ProtocolAdapter;
 import java.io.IOException;
 import java.util.Optional;
 import org.apache.hadoop.fs.Path;
@@ -115,15 +117,6 @@ public class UCCatalogManagedCommitter implements Committer {
       throws CommitFailedException {
     checkArgument(
         commitMetadata.getVersion() > 0, "Can only write staged commit files for versions > 0");
-
-    if (commitMetadata.getNewProtocolOpt().isPresent()) {
-      // TODO: support this
-      throw new UnsupportedOperationException("Protocol change is not yet implemented");
-    }
-    if (commitMetadata.getNewMetadataOpt().isPresent()) {
-      // TODO: support this
-      throw new UnsupportedOperationException("Metadata change is not yet implemented");
-    }
 
     final FileStatus kernelStagedCommitFileStatus =
         writeDeltaFile(engine, finalizedActions, commitMetadata.generateNewStagedCommitFilePath());
@@ -210,8 +203,8 @@ public class UCCatalogManagedCommitter implements Committer {
                 Optional.of(getUcCommitPayload(commitMetadata, kernelStagedCommitFileStatus)),
                 Optional.empty() /* lastKnownBackfilledVersion */, // TODO: take this in as a hint
                 false /* isDisown */,
-                Optional.empty() /* newMetadata */, // TODO: support sending newMetadata
-                Optional.empty()); /* newProtocol */ // TODO: support sending newProtocol
+                commitMetadata.getNewMetadataOpt().map(MetadataAdapter::new),
+                commitMetadata.getNewProtocolOpt().map(ProtocolAdapter::new));
             return null;
           } catch (io.delta.storage.commit.CommitFailedException cfe) {
             throw storageCFEtoKernelCFE(cfe);

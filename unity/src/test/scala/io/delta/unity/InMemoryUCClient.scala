@@ -41,10 +41,12 @@ object InMemoryUCClient {
       private var maxRatifiedVersion: Long = -1L,
       private val commits: ArrayBuffer[Commit] = ArrayBuffer.empty) {
 
+    // For test only, since UC doesn't store these as top-level entities.
+    private var currentProtocolOpt: Option[AbstractProtocol] = None
+    private var currentMetadataOpt: Option[AbstractMetadata] = None
+
     /** @return the maximum ratified version, or -1 if no commits have been made. */
-    def getMaxRatifiedVersion: Long = synchronized {
-      maxRatifiedVersion
-    }
+    def getMaxRatifiedVersion: Long = synchronized { maxRatifiedVersion }
 
     /** @return An immutable list of all commits. */
     def getCommits: List[Commit] = synchronized { commits.toList }
@@ -61,8 +63,17 @@ object InMemoryUCClient {
         .toList
     }
 
-    /** Appends a new commit to this table. */
-    def appendCommit(commit: Commit): Unit = synchronized {
+    /** @return the current protocol. For test only. */
+    def getCurrentProtocolOpt: Option[AbstractProtocol] = synchronized { currentProtocolOpt }
+
+    /** @return the current metadata. For test only. */
+    def getCurrentMetadataOpt: Option[AbstractMetadata] = synchronized { currentMetadataOpt }
+
+    /** Appends a new commit to this table and atomically updates protocol/metadata. */
+    def appendCommit(
+        commit: Commit,
+        newProtocol: Optional[AbstractProtocol] = Optional.empty(),
+        newMetadata: Optional[AbstractMetadata] = Optional.empty()): Unit = synchronized {
       // TODO: [delta-io/delta#5118] If UC changes CREATE semantics, update logic here.
       // For UC, commit 0 is expected to go through the filesystem
       val expectedCommitVersion = if (maxRatifiedVersion == -1L) 1 else maxRatifiedVersion + 1
@@ -74,8 +85,11 @@ object InMemoryUCClient {
           s"Expected commit version $expectedCommitVersion but got ${commit.getVersion}")
       }
 
+      // Atomically update everything
       commits += commit
       maxRatifiedVersion = commit.getVersion
+      if (newProtocol.isPresent) currentProtocolOpt = Some(newProtocol.get())
+      if (newMetadata.isPresent) currentMetadataOpt = Some(newMetadata.get())
     }
   }
 }
@@ -131,9 +145,7 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
 
     Seq(
       (lastKnownBackfilledVersion.isPresent, "lastKnownBackfilledVersion"),
-      (disown, "disown"),
-      (newMetadata.isPresent, "newMetadata"),
-      (newProtocol.isPresent, "newProtocol")).foreach { case (isUnsupported, name) =>
+      (disown, "disown")).foreach { case (isUnsupported, name) =>
       if (isUnsupported) {
         throw new UnsupportedOperationException(s"$name not supported yet in InMemoryUCClient")
       }
@@ -141,7 +153,7 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
 
     if (!commit.isPresent) return
 
-    getOrCreateTableIfNotExists(tableId).appendCommit(commit.get())
+    getOrCreateTableIfNotExists(tableId).appendCommit(commit.get(), newProtocol, newMetadata)
   }
 
   override def getCommits(
