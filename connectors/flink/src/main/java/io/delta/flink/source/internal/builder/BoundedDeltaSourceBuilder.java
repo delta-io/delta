@@ -37,9 +37,9 @@ public abstract class BoundedDeltaSourceBuilder<T, SELF> extends DeltaSourceBuil
 
     protected static final List<String> APPLICABLE_OPTIONS = Collections.unmodifiableList(
         Arrays.asList(
-            VERSION_AS_OF.key(),
-            TIMESTAMP_AS_OF.key(),
-            PARQUET_BATCH_SIZE.key(),
+                VERSION_AS_OF.key(),
+                TIMESTAMP_AS_OF.key(),
+                PARQUET_BATCH_SIZE.key(),
                 PARTITION_FILTERS.key()
         )
     );
