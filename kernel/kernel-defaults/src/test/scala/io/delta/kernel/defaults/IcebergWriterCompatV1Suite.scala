@@ -20,7 +20,7 @@ import scala.collection.immutable.Seq
 
 import io.delta.kernel.{Operation, Table}
 import io.delta.kernel.data.Row
-import io.delta.kernel.defaults.utils.WriteUtils
+import io.delta.kernel.defaults.utils.{AbstractWriteUtils, WriteUtils, WriteUtilsWithV2Builders}
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.TableConfig
@@ -34,7 +34,13 @@ import io.delta.kernel.utils.CloseableIterable.emptyIterable
 import org.assertj.core.api.Assertions.assertThat
 import org.scalatest.funsuite.AnyFunSuite
 
-class IcebergWriterCompatV1Suite extends AnyFunSuite with WriteUtils
+class IcebergWriterCompatV1TransactionBuilderV1Suite extends IcebergWriterCompatV1SuiteBase
+    with WriteUtils {}
+
+class IcebergWriterCompatV1TransactionBuilderV2Suite extends IcebergWriterCompatV1SuiteBase
+    with WriteUtilsWithV2Builders {}
+
+trait IcebergWriterCompatV1SuiteBase extends AnyFunSuite with AbstractWriteUtils
     with ColumnMappingSuiteBase {
 
   private val tblPropertiesIcebergWriterCompatV1Enabled = Map(
@@ -243,10 +249,12 @@ class IcebergWriterCompatV1Suite extends AnyFunSuite with WriteUtils
                 .build())
         }
         val e = intercept[KernelException] {
-          updateTableMetadata(
+          appendData(
             engine,
             tablePath,
+            isNewTable = isNewTable,
             schema = schemaToCommit,
+            data = Seq.empty,
             tableProperties = tblPropertiesIcebergWriterCompatV1Enabled)
         }
         val expectedInvalidColumnId = if (isNewTable) 1 else 2

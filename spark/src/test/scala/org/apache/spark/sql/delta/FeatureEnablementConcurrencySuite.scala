@@ -199,11 +199,12 @@ class FeatureEnablementConcurrencySuite
       .take(1)
       .toList
       .last
+    val dummySummary = WinningCommitSummary.createFromFileStatus(deltaLog, dummyCommit)
 
     val conflictChecker = new ConflictChecker(
       spark,
       initialCurrentTransactionInfo = dummyTransactionInfo,
-      winningCommitFileStatus = dummyCommit,
+      winningCommitSummary = dummySummary,
       isolationLevel = WriteSerializable)
 
     // Test 1: Change 2 configs. One is allowed, the other is not.

@@ -21,7 +21,7 @@ import scala.collection.immutable.Seq
 import io.delta.kernel.{Table, Transaction, TransactionCommitResult}
 import io.delta.kernel.Operation.{CREATE_TABLE, WRITE}
 import io.delta.kernel.data.Row
-import io.delta.kernel.defaults.utils.WriteUtils
+import io.delta.kernel.defaults.utils.{AbstractWriteUtils, WriteUtils, WriteUtilsWithV2Builders}
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.{KernelException, TableAlreadyExistsException}
 import io.delta.kernel.expressions.{Column, Literal}
@@ -42,7 +42,32 @@ import org.apache.spark.sql.delta.clustering.{ClusteringMetadataDomain => SparkC
 import org.apache.hadoop.fs.Path
 import org.scalatest.funsuite.AnyFunSuite
 
-class DeltaTableClusteringSuite extends AnyFunSuite with WriteUtils {
+class DeltaTableClusteringTransactionBuilderV1Suite extends DeltaTableClusteringSuiteBase
+    with WriteUtils {
+
+  // It is not possible on an API level to set both clustering and partition columns in V2 builders
+  test("build table txn: " +
+    "clustering column and partition column cannot be set at same time") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val ex = intercept[IllegalArgumentException] {
+        getCreateTxn(
+          engine,
+          tablePath,
+          testPartitionSchema,
+          partCols = Seq("part1"),
+          clusteringColsOpt = Some(List(new Column("PART1"), new Column("part2"))))
+      }
+      assert(
+        ex.getMessage
+          .contains("Partition Columns and Clustering Columns cannot be set at the same time"))
+    }
+  }
+}
+
+class DeltaTableClusteringTransactionBuilderV2Suite extends DeltaTableClusteringSuiteBase
+    with WriteUtilsWithV2Builders {}
+
+trait DeltaTableClusteringSuiteBase extends AnyFunSuite with AbstractWriteUtils {
 
   private val testingDomainMetadata = new DomainMetadata(
     "delta.clustering",
@@ -74,23 +99,6 @@ class DeltaTableClusteringSuite extends AnyFunSuite with WriteUtils {
           clusteringColsOpt = Some(List(new Column("PART1"), new Column("part3"))))
       }
       assert(ex.getMessage.contains("Column 'column(`part3`)' was not found in the table schema"))
-    }
-  }
-
-  test("build table txn: " +
-    "clustering column and partition column cannot be set at same time") {
-    withTempDirAndEngine { (tablePath, engine) =>
-      val ex = intercept[IllegalArgumentException] {
-        getCreateTxn(
-          engine,
-          tablePath,
-          testPartitionSchema,
-          partCols = Seq("part1"),
-          clusteringColsOpt = Some(List(new Column("PART1"), new Column("part2"))))
-      }
-      assert(
-        ex.getMessage
-          .contains("Partition Columns and Clustering Columns cannot be set at the same time"))
     }
   }
 

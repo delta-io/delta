@@ -21,14 +21,21 @@ import scala.reflect.ClassTag
 
 import io.delta.kernel.Table
 import io.delta.kernel.data.Row
+import io.delta.kernel.defaults.utils.{WriteUtils, WriteUtilsWithV2Builders}
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.TableConfig
 import io.delta.kernel.internal.tablefeatures.{TableFeature, TableFeatures}
 import io.delta.kernel.internal.util.{ColumnMapping, VectorUtils}
 import io.delta.kernel.types.{DataType, DateType, FieldMetadata, StructField, StructType, TimestampNTZType, TypeChange}
 
+class DeltaIcebergCompatV2TransactionBuilderV1Suite extends DeltaIcebergCompatV2SuiteBase
+    with WriteUtils {}
+
+class DeltaIcebergCompatV2TransactionBuilderV2Suite extends DeltaIcebergCompatV2SuiteBase
+    with WriteUtilsWithV2Builders {}
+
 /** This suite tests reading or writing into Delta table that have `icebergCompatV2` enabled. */
-class DeltaIcebergCompatV2Suite extends DeltaIcebergCompatBaseSuite {
+trait DeltaIcebergCompatV2SuiteBase extends DeltaIcebergCompatBaseSuite {
 
   import io.delta.kernel.internal.icebergcompat.IcebergCompatMetadataValidatorAndUpdaterSuiteBase._
 

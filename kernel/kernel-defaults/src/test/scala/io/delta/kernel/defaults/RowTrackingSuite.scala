@@ -31,11 +31,11 @@ import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl, TableConfig, TableImpl}
 import io.delta.kernel.internal.actions.{AddFile, SingleAction}
 import io.delta.kernel.internal.rowtracking.{RowTracking, RowTrackingMetadataDomain}
-import io.delta.kernel.internal.rowtracking.MaterializedRowTrackingColumn.{ROW_COMMIT_VERSION, ROW_ID}
+import io.delta.kernel.internal.rowtracking.MaterializedRowTrackingColumn.{MATERIALIZED_ROW_COMMIT_VERSION, MATERIALIZED_ROW_ID}
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.internal.util.VectorUtils
 import io.delta.kernel.types._
-import io.delta.kernel.utils.CloseableIterable
+import io.delta.kernel.utils.{CloseableIterable, MetadataColumnTestUtils}
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 
 import org.apache.spark.sql.delta.DeltaLog
@@ -49,7 +49,8 @@ class RowTrackingSuite extends AbstractRowTrackingSuite with WriteUtilsWithV2Bui
 /** Runs row tracking tests using the legacy Table snapshot APIs and V1 transaction builders */
 class LegacyRowTrackingSuite extends AbstractRowTrackingSuite with WriteUtilsWithV1Builders
 
-trait AbstractRowTrackingSuite extends AnyFunSuite with ParquetSuiteBase {
+trait AbstractRowTrackingSuite extends AnyFunSuite with ParquetSuiteBase
+    with MetadataColumnTestUtils {
   self: AbstractWriteUtils =>
   private def prepareActionsForCommit(actions: Row*): CloseableIterable[Row] = {
     inMemoryIterable(toCloseableIterator(actions.asJava.iterator()))
@@ -446,7 +447,7 @@ trait AbstractRowTrackingSuite extends AnyFunSuite with ParquetSuiteBase {
           expectedAnswer = Seq(),
           readCols = Seq("id", "_metadata.row_id"),
           metadataCols =
-            Seq(RowTracking.METADATA_ROW_ID_COLUMN, RowTracking.METADATA_ROW_COMMIT_VERSION_COLUMN),
+            Seq(ROW_ID, ROW_COMMIT_VERSION),
           engine = engine)
       }
       assert(e.getMessage.contains("Row tracking is not enabled, but row tracking column"))
@@ -480,7 +481,7 @@ trait AbstractRowTrackingSuite extends AnyFunSuite with ParquetSuiteBase {
           path = tablePath,
           expectedAnswer,
           metadataCols =
-            Seq(RowTracking.METADATA_ROW_ID_COLUMN, RowTracking.METADATA_ROW_COMMIT_VERSION_COLUMN),
+            Seq(ROW_ID, ROW_COMMIT_VERSION),
           expectedSchema = expectedSchema)
       }
     }
@@ -502,7 +503,7 @@ trait AbstractRowTrackingSuite extends AnyFunSuite with ParquetSuiteBase {
         path = tablePath,
         expectedAnswer,
         readCols = Seq("value"),
-        metadataCols = Seq(RowTracking.METADATA_ROW_ID_COLUMN))
+        metadataCols = Seq(ROW_ID))
     }
   }
 
@@ -524,7 +525,7 @@ trait AbstractRowTrackingSuite extends AnyFunSuite with ParquetSuiteBase {
         expectedAnswer,
         readCols = Seq(),
         metadataCols =
-          Seq(RowTracking.METADATA_ROW_COMMIT_VERSION_COLUMN, RowTracking.METADATA_ROW_ID_COLUMN))
+          Seq(ROW_COMMIT_VERSION, ROW_ID))
     }
   }
 
@@ -810,7 +811,7 @@ trait AbstractRowTrackingSuite extends AnyFunSuite with ParquetSuiteBase {
       createTableWithRowTracking(engine, tablePath)
       val config = getMetadata(engine, tablePath).getConfiguration
 
-      Seq(ROW_ID, ROW_COMMIT_VERSION).foreach { rowTrackingColumn =>
+      Seq(MATERIALIZED_ROW_ID, MATERIALIZED_ROW_COMMIT_VERSION).foreach { rowTrackingColumn =>
         assert(config.containsKey(rowTrackingColumn.getMaterializedColumnNameProperty))
         assert(
           config
@@ -831,7 +832,7 @@ trait AbstractRowTrackingSuite extends AnyFunSuite with ParquetSuiteBase {
           createTableWithRowTracking(engine, tablePath, extraProps = columnMappingProp)
           val config = getMetadata(engine, tablePath).getConfiguration
 
-          Seq(ROW_ID, ROW_COMMIT_VERSION).foreach {
+          Seq(MATERIALIZED_ROW_ID, MATERIALIZED_ROW_COMMIT_VERSION).foreach {
             rowTrackingColumn =>
               val colName =
                 config.get(rowTrackingColumn.getMaterializedColumnNameProperty)
@@ -857,7 +858,7 @@ trait AbstractRowTrackingSuite extends AnyFunSuite with ParquetSuiteBase {
 
   test("manually setting materialized row tracking column names is not allowed - new table") {
     withTempDirAndEngine { (tablePath, engine) =>
-      Seq(ROW_ID, ROW_COMMIT_VERSION).foreach { rowTrackingColumn =>
+      Seq(MATERIALIZED_ROW_ID, MATERIALIZED_ROW_COMMIT_VERSION).foreach { rowTrackingColumn =>
         val propName = rowTrackingColumn.getMaterializedColumnNameProperty
         val customTableProps = Map(propName -> "custom_name")
         val e = intercept[KernelException] {
@@ -873,7 +874,7 @@ trait AbstractRowTrackingSuite extends AnyFunSuite with ParquetSuiteBase {
     withTempDirAndEngine { (tablePath, engine) =>
       createTableWithRowTracking(engine, tablePath)
 
-      Seq(ROW_ID, ROW_COMMIT_VERSION).foreach { rowTrackingColumn =>
+      Seq(MATERIALIZED_ROW_ID, MATERIALIZED_ROW_COMMIT_VERSION).foreach { rowTrackingColumn =>
         val propName = rowTrackingColumn.getMaterializedColumnNameProperty
         val customTableProps = Map(propName -> "custom_name")
         val e = intercept[KernelException] {
@@ -896,8 +897,8 @@ trait AbstractRowTrackingSuite extends AnyFunSuite with ParquetSuiteBase {
       val configWithoutMaterializedCols = originalMetadata.getConfiguration.asScala.toMap
         .filterNot {
           case (key, _) =>
-            key == ROW_ID.getMaterializedColumnNameProperty ||
-            key == ROW_COMMIT_VERSION.getMaterializedColumnNameProperty
+            key == MATERIALIZED_ROW_ID.getMaterializedColumnNameProperty ||
+            key == MATERIALIZED_ROW_COMMIT_VERSION.getMaterializedColumnNameProperty
         }
 
       // Create new metadata with row tracking enabled but configs missing
@@ -915,10 +916,11 @@ trait AbstractRowTrackingSuite extends AnyFunSuite with ParquetSuiteBase {
       // Verify that row tracking is enabled but configs are missing
       val metadata = getMetadata(engine, tablePath)
       assert(TableConfig.ROW_TRACKING_ENABLED.fromMetadata(metadata) == true)
-      assert(!metadata.getConfiguration.containsKey(ROW_ID.getMaterializedColumnNameProperty))
+      assert(!metadata.getConfiguration.containsKey(
+        MATERIALIZED_ROW_ID.getMaterializedColumnNameProperty))
       assert(
         !metadata.getConfiguration
-          .containsKey(ROW_COMMIT_VERSION.getMaterializedColumnNameProperty))
+          .containsKey(MATERIALIZED_ROW_COMMIT_VERSION.getMaterializedColumnNameProperty))
 
       // Now try to perform an append operation on this existing table with missing configs
       // This should trigger the validation and throw the expected exception
@@ -930,7 +932,7 @@ trait AbstractRowTrackingSuite extends AnyFunSuite with ParquetSuiteBase {
       assert(
         e.getMessage.contains(
           s"Row tracking is enabled but the materialized column name " +
-            s"`${ROW_ID.getMaterializedColumnNameProperty}` is missing."))
+            s"`${MATERIALIZED_ROW_ID.getMaterializedColumnNameProperty}` is missing."))
     }
   }
 
@@ -1026,7 +1028,7 @@ trait AbstractRowTrackingSuite extends AnyFunSuite with ParquetSuiteBase {
 
         // Assert that materialized row tracking columns are present when row tracking is enabled
         if (enableAfter) {
-          Seq(ROW_ID, ROW_COMMIT_VERSION).foreach { rowTrackingColumn =>
+          Seq(MATERIALIZED_ROW_ID, MATERIALIZED_ROW_COMMIT_VERSION).foreach { rowTrackingColumn =>
             assert(afterConfig.containsKey(rowTrackingColumn.getMaterializedColumnNameProperty))
             assert(
               afterConfig
