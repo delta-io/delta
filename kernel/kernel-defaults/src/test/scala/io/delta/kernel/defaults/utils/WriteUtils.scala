@@ -50,11 +50,17 @@ import org.apache.commons.io.FileUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
-/** Default write utilities that use the V1 transaction builders. */
+/** Default write utilities that use the V1 transaction builders and legacy Table Snapshot APIs */
 trait WriteUtils extends AbstractWriteUtils with TransactionBuilderV1Support
     with TestUtilsWithLegacyKernelAPIs
 
-/** Write utilities that use the V2 transaction builders to create transactions */
+/**
+ * DO NOT MODIFY this trait -- this is just syntactic sugar to clearly indicate we are extending the
+ * "default" TestUtils which happens to use the legacy Kernel APIs
+ */
+trait WriteUtilsWithV1Builders extends WriteUtils
+
+/** Write utilities that use the V2 transaction builders to create transactions and TableManager snapshot APIs */
 trait WriteUtilsWithV2Builders extends AbstractWriteUtils with TransactionBuilderV2Support
     with TestUtilsWithTableManagerAPIs
 
@@ -66,7 +72,6 @@ trait WriteUtilsWithV2Builders extends AbstractWriteUtils with TransactionBuilde
  * overridden in child suites.
  */
 trait AbstractWriteUtils extends TestUtils with TransactionBuilderSupport {
-
   val OBJ_MAPPER = new ObjectMapper()
   val testEngineInfo = "test-engine"
 
@@ -319,10 +324,11 @@ trait AbstractWriteUtils extends TestUtils with TransactionBuilderSupport {
       engine: Engine,
       tablePath: String,
       domainMetadatas: Seq[DomainMetadata],
-      useInternalApi: Boolean = false): Transaction = {
+      useInternalApi: Boolean = false,
+      enableDomainMetadata: Boolean = true): Transaction = {
 
     val txn = if (domainMetadatas.nonEmpty && !useInternalApi) {
-      getUpdateTxn(engine, tablePath, withDomainMetadataSupported = true)
+      getUpdateTxn(engine, tablePath, withDomainMetadataSupported = enableDomainMetadata)
         .asInstanceOf[TransactionImpl]
     } else {
       getUpdateTxn(engine, tablePath).asInstanceOf[TransactionImpl]
