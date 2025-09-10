@@ -10,13 +10,14 @@ import static java.util.Arrays.asList;
 import io.delta.flink.internal.options.PartitionFilterOptionTypeConverter;
 import io.delta.flink.source.internal.file.AddFileEnumerator;
 import io.delta.flink.source.internal.state.DeltaSourceSplit;
-import io.delta.standalone.Snapshot;
-import io.delta.standalone.actions.AddFile;
 import org.apache.flink.core.fs.Path;
 import org.junit.jupiter.api.Test;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.core.IsEqual.equalTo;
 import static org.mockito.Mockito.when;
+
+import io.delta.standalone.Snapshot;
+import io.delta.standalone.actions.AddFile;
 
 public class SnapshotProcessorTest {
 
