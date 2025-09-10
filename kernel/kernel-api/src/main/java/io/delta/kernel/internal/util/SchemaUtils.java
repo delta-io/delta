@@ -100,7 +100,7 @@ public class SchemaUtils {
     }
 
     validateSupportedType(schema);
-    ColumnDefaults.validate(schema, isColumnDefaultEnabled, isIcebergCompatV3Enabled);
+    ColumnDefaults.validateSchema(schema, isColumnDefaultEnabled, isIcebergCompatV3Enabled);
   }
 
   /**
