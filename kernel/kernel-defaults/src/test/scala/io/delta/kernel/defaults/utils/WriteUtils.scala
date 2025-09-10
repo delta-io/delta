@@ -56,7 +56,7 @@ trait WriteUtils extends AbstractWriteUtils with TransactionBuilderV1Support
 
 /**
  * DO NOT MODIFY this trait -- this is just syntactic sugar to clearly indicate we are extending the
- * "default" TestUtils which happens to use the legacy Kernel APIs
+ * "default" WriteUtils which happens to use the legacy Kernel APIs
  */
 trait WriteUtilsWithV1Builders extends WriteUtils
 
