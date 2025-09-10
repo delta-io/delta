@@ -60,8 +60,7 @@ object DeltaTestUtilsBase {
 }
 
 trait CDCTestMixin extends SharedSparkSession {
-  override protected def sparkConf: SparkConf = super.sparkConf
-    .set(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "true")
+  // Setting the spark Conf is left to the test implementation.
 
   def computeCDC(
       spark: SparkSession,
