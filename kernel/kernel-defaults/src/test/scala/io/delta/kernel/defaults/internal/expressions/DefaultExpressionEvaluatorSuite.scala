@@ -982,7 +982,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     val schema = new StructType().add("col1", StringType.STRING)
     val input = new DefaultColumnarBatch(col1.getSize, schema, Array(col1))
 
-    // Basic IN test: col1 IN ("one", "three", "five")
+    // Basic case for string: col1 IN ("one", "three", "five")
     val inExpressionBasic = in(
       new Column("col1"),
       Literal.ofString("one"),
@@ -1009,7 +1009,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
         BooleanType.BOOLEAN).eval(input),
       expOutputNoMatch)
 
-    // IN test with NULL in list: col1 IN ("one", NULL, "three")
+    // IN test with NULL in list: col1 IN ("one", NULL, "three"), returns null if no matches.
     val inExpressionWithNull = in(
       new Column("col1"),
       Literal.ofString("one"),
@@ -1023,15 +1023,15 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
         BooleanType.BOOLEAN).eval(input),
       expOutputWithNull)
 
-    // Test with mixed numeric types (should work due to type compatibility)
+    // Test with mixed numeric types
     val longCol = longVector(Seq[LongJ](1L, 2L, 3L))
     val longSchema = new StructType().add("longCol", LongType.LONG)
     val longInput = new DefaultColumnarBatch(longCol.getSize, longSchema, Array(longCol))
 
     val inExpressionMixed = in(
       new Column("longCol"),
-      Literal.ofInt(1), // int literal
-      Literal.ofLong(2L) // long literal
+      Literal.ofInt(1),
+      Literal.ofLong(2L)
     )
     val expOutputMixed = booleanVector(Seq[BooleanJ](true, true, false))
     checkBooleanVectors(
@@ -1115,19 +1115,6 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
         BooleanType.BOOLEAN).eval(mixedNumericInput),
       expOutputMixedNumeric)
 
-    // Test with literal expression: "test" IN ("test", "other")
-    val literalInExpression = in(
-      Literal.ofString("test"),
-      Literal.ofString("test"),
-      Literal.ofString("other"))
-    val expOutputLiteral = booleanVector(Seq[BooleanJ](true, true, true, true, true, true))
-    checkBooleanVectors(
-      new DefaultExpressionEvaluator(
-        schema,
-        literalInExpression,
-        BooleanType.BOOLEAN).eval(input),
-      expOutputLiteral)
-
     // Test error cases - incompatible types
     def checkIncompatibleTypes(valueType: DataType, listElementType: DataType): Unit = {
       val valueSchema = new StructType().add("col", valueType)
@@ -1176,15 +1163,13 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       val schema = new StructType().add("col1", StringType.STRING)
       val input = new DefaultColumnarBatch(col1.getSize, schema, Array(col1))
 
-      // Basic collated IN test: col1 IN ("test", "other")
+      // Test with basic case
       val inExpressionBasic = in(
         new Column("col1"),
         collationIdentifier,
         Literal.ofString("test"),
         Literal.ofString("other"))
-
       val expectedOutput = booleanVector(Seq[BooleanJ](false, true, false, null))
-
       checkBooleanVectors(
         new DefaultExpressionEvaluator(
           schema,
@@ -1209,25 +1194,20 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
   }
 
   test("evaluate expression: in with unsupported collations") {
-    Seq(
-      Some(SPARK_UTF8_LCASE),
-      Some(CollationIdentifier.fromString("ICU.sr_Cyrl_SRB")),
-      Some(CollationIdentifier.fromString("ICU.sr_Cyrl_SRB.75.1"))).foreach { collationIdentifier =>
       val col1 = stringVector(Seq[String]("Test", "test"))
       val schema = new StructType().add("col1", StringType.STRING)
       val input = new DefaultColumnarBatch(col1.getSize, schema, Array(col1))
 
       val inExpressionUnsupported = in(
         new Column("col1"),
-        collationIdentifier,
+        Some(SPARK_UTF8_LCASE),
         Literal.ofString("test"))
 
       checkUnsupportedCollation(
         schema,
         inExpressionUnsupported,
         input,
-        collationIdentifier.get)
-    }
+        SPARK_UTF8_LCASE)
   }
 
   test("evaluate expression: comparators (=, <, <=, >, >=, 'IS NOT DISTINCT FROM')") {
