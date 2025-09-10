@@ -24,7 +24,7 @@ import scala.collection.immutable.Seq
 import io.delta.kernel.Table
 import io.delta.kernel.data.{FilteredColumnarBatch, Row}
 import io.delta.kernel.defaults.internal.parquet.ParquetSuiteBase
-import io.delta.kernel.defaults.utils.{TestRow, WriteUtils}
+import io.delta.kernel.defaults.utils.{AbstractWriteUtils, TestRow, WriteUtilsWithV1Builders, WriteUtilsWithV2Builders}
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.{ConcurrentWriteException, InvalidTableException, KernelException, MaxCommitRetryLimitReachedException}
 import io.delta.kernel.expressions.Literal
@@ -43,7 +43,14 @@ import org.apache.spark.sql.delta.DeltaLog
 import org.apache.hadoop.fs.Path
 import org.scalatest.funsuite.AnyFunSuite
 
-class RowTrackingSuite extends AnyFunSuite with WriteUtils with ParquetSuiteBase {
+/** Runs row tracking tests using the TableManager snapshot APIs and V2 transaction builders */
+class RowTrackingSuite extends AbstractRowTrackingSuite with WriteUtilsWithV2Builders
+
+/** Runs row tracking tests using the legacy Table snapshot APIs and V1 transaction builders */
+class LegacyRowTrackingSuite extends AbstractRowTrackingSuite with WriteUtilsWithV1Builders
+
+trait AbstractRowTrackingSuite extends AnyFunSuite with ParquetSuiteBase {
+  self: AbstractWriteUtils =>
   private def prepareActionsForCommit(actions: Row*): CloseableIterable[Row] = {
     inMemoryIterable(toCloseableIterator(actions.asJava.iterator()))
   }
@@ -112,8 +119,8 @@ class RowTrackingSuite extends AnyFunSuite with WriteUtils with ParquetSuiteBase
       engine: Engine,
       tablePath: String,
       expectedValue: Seq[Long]): Unit = {
-    val table = TableImpl.forPath(engine, tablePath)
-    val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+    val snapshot =
+      getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath).asInstanceOf[SnapshotImpl]
 
     val scanFileRows = collectScanFileRows(snapshot.getScanBuilder().build())
     val sortedBaseRowIds = scanFileRows
@@ -128,8 +135,8 @@ class RowTrackingSuite extends AnyFunSuite with WriteUtils with ParquetSuiteBase
       engine: Engine,
       tablePath: String,
       expectedValue: Seq[Long]) = {
-    val table = TableImpl.forPath(engine, tablePath)
-    val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+    val snapshot =
+      getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath).asInstanceOf[SnapshotImpl]
 
     val scanFileRows = collectScanFileRows(snapshot.getScanBuilder().build())
     val sortedAddFileDefaultRowCommitVersions = scanFileRows
@@ -141,8 +148,8 @@ class RowTrackingSuite extends AnyFunSuite with WriteUtils with ParquetSuiteBase
   }
 
   private def verifyHighWatermark(engine: Engine, tablePath: String, expectedValue: Long): Unit = {
-    val table = TableImpl.forPath(engine, tablePath)
-    val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+    val snapshot =
+      getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath).asInstanceOf[SnapshotImpl]
     val rowTrackingMetadataDomain = RowTrackingMetadataDomain.fromSnapshot(snapshot)
 
     assert(rowTrackingMetadataDomain.isPresent)
@@ -219,9 +226,8 @@ class RowTrackingSuite extends AnyFunSuite with WriteUtils with ParquetSuiteBase
         data = prepareDataForCommit(dataBatch2)).getVersion
 
       // Checkpoint the table
-      val table = TableImpl.forPath(engine, tablePath)
-      val latestVersion = table.getLatestSnapshot(engine).getVersion()
-      table.checkpoint(engine, latestVersion)
+      val latestVersion = getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath).getVersion()
+      TableImpl.forPath(engine, tablePath).checkpoint(engine, latestVersion)
 
       val commitVersion3 = appendData(
         engine,
@@ -744,7 +750,7 @@ class RowTrackingSuite extends AnyFunSuite with WriteUtils with ParquetSuiteBase
         schema = testSchema,
         tableProperties = ROW_TRACKING_ENABLED_PROP).commit(engine, emptyIterable())
       val snapshot =
-        TableImpl.forPath(engine, tablePath).getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+        getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath).asInstanceOf[SnapshotImpl]
       assertMetadataProp(snapshot, TableConfig.ROW_TRACKING_ENABLED, true)
     }
 
@@ -755,7 +761,7 @@ class RowTrackingSuite extends AnyFunSuite with WriteUtils with ParquetSuiteBase
         schema = testSchema,
         tableProperties = ROW_TRACKING_DISABLED_PROP).commit(engine, emptyIterable())
       val snapshot =
-        TableImpl.forPath(engine, tablePath).getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+        getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath).asInstanceOf[SnapshotImpl]
       assertMetadataProp(snapshot, TableConfig.ROW_TRACKING_ENABLED, false)
     }
   }
@@ -971,7 +977,7 @@ class RowTrackingSuite extends AnyFunSuite with WriteUtils with ParquetSuiteBase
         }
 
         val beforeSnapshot =
-          TableImpl.forPath(engine, tablePath).getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+          getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath).asInstanceOf[SnapshotImpl]
 
         // Create a REPLACE transaction and commit
         val replaceTableProps =
@@ -986,7 +992,7 @@ class RowTrackingSuite extends AnyFunSuite with WriteUtils with ParquetSuiteBase
 
         // Get the latest snapshot of the table after the replace operation
         val afterSnapshot =
-          TableImpl.forPath(engine, tablePath).getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+          getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath).asInstanceOf[SnapshotImpl]
 
         // Assert that row tracking is enabled/disabled as expected
         assertMetadataProp(afterSnapshot, TableConfig.ROW_TRACKING_ENABLED, enableAfter)
