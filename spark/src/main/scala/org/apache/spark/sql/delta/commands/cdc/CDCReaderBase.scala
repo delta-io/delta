@@ -303,7 +303,6 @@ trait CDCReaderBase extends DeltaLogging {
     // that doesn't exist
     if (startingVersion.version > snapshotToUse.version) {
       val allowOutOfRange = conf.getConf(DeltaSQLConf.DELTA_CDF_ALLOW_OUT_OF_RANGE_TIMESTAMP)
-      // LS-129: return an empty relation if start version passed in is beyond latest commit version
       if (allowOutOfRange) {
         return Some(emptyCDFRelation(spark, snapshotToUse, catalogTableOpt, BatchCDFSchemaLegacy))
       }
