@@ -218,13 +218,11 @@ trait AbstractWriteUtils extends TestUtils with TransactionBuilderSupport {
   }
 
   def getMetadata(engine: Engine, tablePath: String): Metadata = {
-    Table.forPath(engine, tablePath).getLatestSnapshot(engine)
-      .asInstanceOf[SnapshotImpl].getMetadata
+    getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath).getMetadata
   }
 
   def getProtocol(engine: Engine, tablePath: String): Protocol = {
-    Table.forPath(engine, tablePath).getLatestSnapshot(engine)
-      .asInstanceOf[SnapshotImpl].getProtocol
+    getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath).getProtocol
   }
 
   /**
@@ -482,8 +480,6 @@ trait AbstractWriteUtils extends TestUtils with TransactionBuilderSupport {
       expectedValue: Any,
       clock: Clock = () => System.currentTimeMillis): Unit = {
 
-    val table = Table.forPath(engine, tablePath)
-
     val txn = if (isNewTable) {
       getCreateTxn(
         engine,
@@ -501,7 +497,7 @@ trait AbstractWriteUtils extends TestUtils with TransactionBuilderSupport {
     }
     commitTransaction(txn, engine, emptyIterable())
 
-    val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+    val snapshot = getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath)
     assertMetadataProp(snapshot, key, expectedValue)
   }
 
@@ -592,7 +588,7 @@ trait AbstractWriteUtils extends TestUtils with TransactionBuilderSupport {
   }
 
   def collectStatsFromAddFiles(engine: Engine, path: String): Seq[String] = {
-    val snapshot = Table.forPath(engine, path).getLatestSnapshot(engine)
+    val snapshot = getTableManagerAdapter.getSnapshotAtLatest(engine, path)
     val scan = snapshot.getScanBuilder.build()
     val scanFiles = scan.asInstanceOf[ScanImpl].getScanFiles(engine, true)
 
