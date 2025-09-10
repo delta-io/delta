@@ -588,7 +588,7 @@ trait AbstractWriteUtils extends TestUtils with TransactionBuilderSupport {
   }
 
   def collectStatsFromAddFiles(engine: Engine, path: String): Seq[String] = {
-    val snapshot = getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath)
+    val snapshot = getTableManagerAdapter.getSnapshotAtLatest(engine, table)
     val scan = snapshot.getScanBuilder.build()
     val scanFiles = scan.asInstanceOf[ScanImpl].getScanFiles(engine, true)
 
