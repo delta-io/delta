@@ -121,5 +121,7 @@ public class IcebergCompatV3MetadataValidatorAndUpdater
   }
 
   protected static IcebergCompatCheck CHECK_LITERAL_DEFAULT_VALUE =
-      (inputContext) -> ColumnDefaults.validate(inputContext.newMetadata.getSchema(), true, true);
+      (inputContext) ->
+          ColumnDefaults.validateSchemaForIcebergCompat(
+              inputContext.newMetadata.getSchema(), ICEBERG_COMPAT_V3_W_FEATURE.featureName());
 }

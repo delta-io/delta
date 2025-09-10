@@ -17,6 +17,7 @@ package io.delta.kernel.internal.columndefaults;
 
 import io.delta.kernel.data.Row;
 import io.delta.kernel.exceptions.KernelException;
+import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.data.TransactionStateRow;
 import io.delta.kernel.internal.util.SchemaIterable;
 import io.delta.kernel.types.*;
@@ -53,29 +54,58 @@ public class ColumnDefaults {
    *
    * @param schema target table schema
    * @param isEnabled When the feature is disabled, no column default is allowed.
+   * @param isIcebergCompatV3Enabled Kernel currently requires IcebergCompatV3 to be enabled when
+   *     using Column Defaults
    * @throws KernelException when the table contains invalid default value
    */
-  public static void validate(
+  public static void validateSchema(
       StructType schema, boolean isEnabled, boolean isIcebergCompatV3Enabled) {
+    if (isEnabled && !isIcebergCompatV3Enabled) {
+      throw new KernelException(
+          "In Delta Kernel, default values table feature requires IcebergCompatV3 to be enabled.");
+    }
     Stream<StructField> defaultValues = extractFieldsWithDefaultValues(schema);
     if (!isEnabled) {
       if (defaultValues.findAny().isPresent()) {
         throw new KernelException(
             "This table does not enable table features for setting column defaults");
       }
-    } else if (!isIcebergCompatV3Enabled) {
-      throw new KernelException(
-          "In Delta Kernel, default values table feature requires IcebergCompatV3 to be enabled.");
     } else {
+      // This check will be relaxed once kernel supports default values with expression
       defaultValues.forEach(
           field -> {
+            String defaultValue = getRawDefaultValue(field);
             try {
-              validateLiteral(field.getDataType(), getRawDefaultValue(field));
-            } catch (IllegalArgumentException | UnsupportedOperationException e) {
-              throw new KernelException("This table contains unsupported default values", e);
+              validateLiteral(field.getDataType(), defaultValue);
+            } catch (DateTimeParseException
+                | IllegalArgumentException
+                | UnsupportedOperationException e) {
+              throw DeltaErrors.nonLiteralDefaultValue(defaultValue);
             }
           });
     }
+  }
+
+  /**
+   * Validate that the schema only contains literal default values as a requirement of
+   * IcebergCompat.
+   *
+   * @param schema table schema
+   */
+  public static void validateSchemaForIcebergCompat(StructType schema, String compatVersion) {
+    extractFieldsWithDefaultValues(schema)
+        .forEach(
+            field -> {
+              String defaultValue = getRawDefaultValue(field);
+              try {
+                validateLiteral(field.getDataType(), defaultValue);
+              } catch (DateTimeParseException
+                  | IllegalArgumentException
+                  | UnsupportedOperationException e) {
+                throw DeltaErrors.icebergCompatRequiresLiteralDefaultValue(
+                    compatVersion, defaultValue);
+              }
+            });
   }
 
   private static Stream<StructField> extractFieldsWithDefaultValues(StructType schema) {
@@ -100,41 +130,37 @@ public class ColumnDefaults {
    * </ul>
    */
   private static void validateLiteral(DataType type, String value) {
-    try {
-      String stripped = stripQuotes(value, false);
-      if ((type instanceof StringType || type instanceof BinaryType)) {
-        // String literals are required to be enclosed in quotes
-        stripQuotes(value, true);
-      } else if (type instanceof LongType) {
-        Long.parseLong(stripped);
-      } else if (type instanceof IntegerType) {
-        Integer.parseInt(stripped);
-      } else if (type instanceof ShortType) {
-        Short.parseShort(stripped);
-      } else if (type instanceof FloatType) {
-        Float.parseFloat(stripped);
-      } else if (type instanceof DoubleType) {
-        Double.parseDouble(stripped);
-      } else if (type instanceof DecimalType) {
-        DecimalType dtype = (DecimalType) type;
-        BigDecimal input = new BigDecimal(stripped);
-        if (input.scale() > dtype.getScale() || input.precision() > dtype.getPrecision()) {
-          throw new IllegalArgumentException("invalid default value " + value + " for " + type);
-        }
-      } else if (type instanceof BooleanType) {
-        Boolean.parseBoolean(stripped);
-      } else if (type instanceof DateType) {
-        LocalDate.parse(stripped, DateTimeFormatter.ISO_LOCAL_DATE);
-      } else if (type instanceof TimestampType) {
-        OffsetDateTime.parse(stripped, DateTimeFormatter.ISO_DATE_TIME);
-      } else if (type instanceof TimestampNTZType) {
-        LocalDateTime.parse(stripped, DateTimeFormatter.ISO_LOCAL_DATE_TIME);
-      } else {
-        throw new UnsupportedOperationException(
-            "Kernel does not support column defaults for " + type.toString());
+    String stripped = stripQuotes(value, false);
+    if ((type instanceof StringType || type instanceof BinaryType)) {
+      // String literals are required to be enclosed in quotes
+      stripQuotes(value, true);
+    } else if (type instanceof LongType) {
+      Long.parseLong(stripped);
+    } else if (type instanceof IntegerType) {
+      Integer.parseInt(stripped);
+    } else if (type instanceof ShortType) {
+      Short.parseShort(stripped);
+    } else if (type instanceof FloatType) {
+      Float.parseFloat(stripped);
+    } else if (type instanceof DoubleType) {
+      Double.parseDouble(stripped);
+    } else if (type instanceof DecimalType) {
+      DecimalType dtype = (DecimalType) type;
+      BigDecimal input = new BigDecimal(stripped);
+      if (input.scale() > dtype.getScale() || input.precision() > dtype.getPrecision()) {
+        throw new IllegalArgumentException("invalid default value " + value + " for " + type);
       }
-    } catch (NumberFormatException | DateTimeParseException e) {
-      throw new IllegalArgumentException("invalid default value " + value + " for " + type);
+    } else if (type instanceof BooleanType) {
+      Boolean.parseBoolean(stripped);
+    } else if (type instanceof DateType) {
+      LocalDate.parse(stripped, DateTimeFormatter.ISO_LOCAL_DATE);
+    } else if (type instanceof TimestampType) {
+      OffsetDateTime.parse(stripped, DateTimeFormatter.ISO_DATE_TIME);
+    } else if (type instanceof TimestampNTZType) {
+      LocalDateTime.parse(stripped, DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+    } else {
+      throw new UnsupportedOperationException(
+          "Kernel does not support column defaults for " + type.toString());
     }
   }
 

@@ -315,6 +315,14 @@ public final class DeltaErrors {
             compatVersion, dataType));
   }
 
+  public static KernelException icebergCompatRequiresLiteralDefaultValue(
+      String compatVersion, String value) {
+    throw new KernelException(
+        format(
+            "%s does not support non-literal default value '%s' for column.",
+            compatVersion, value));
+  }
+
   public static KernelException icebergCompatIncompatibleTableFeatures(
       String compatVersion, Set<TableFeature> incompatibleFeatures) {
     throw new KernelException(
@@ -354,6 +362,18 @@ public final class DeltaErrors {
   }
 
   // End: icebergCompat exceptions
+
+  // Start: Column Defaults Exceptions
+
+  public static KernelException nonLiteralDefaultValue(String value) {
+    return new KernelException(
+        String.format(
+            "currently only literal values are supported for default values in Kernel."
+                + " %s is an invalid default value",
+            value));
+  }
+
+  // End: Column Defaults Exceptions
 
   public static KernelException partitionColumnMissingInData(
       String tablePath, String partitionColumn) {
