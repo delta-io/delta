@@ -12,7 +12,8 @@ import java.util.Set;
 public class PartitionFilterOptionTypeConverter extends BaseOptionTypeConverter<String> {
 
     /**
-     * Converts String values for {@link DeltaConfigOption} with String type and validates the format.
+     * Converts String values for {@link DeltaConfigOption} with String type and validates
+     * the format.
      * E.g. "year=2023;month in (01,02),day=15". The expected format is a map where keys are
      * partition column names and values are sets of accepted values for given partition column.
      *
