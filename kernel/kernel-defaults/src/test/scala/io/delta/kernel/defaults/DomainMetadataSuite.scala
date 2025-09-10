@@ -91,17 +91,14 @@ trait AbstractDomainMetadataSuite extends AnyFunSuite with AbstractWriteUtils
       tablePath: String,
       domainMetadatas: Seq[DomainMetadata],
       expectedValue: Map[String, DomainMetadata],
-      useInternalApi: Boolean = false,
-      enableDomainMetadata: Boolean = false): Unit = {
+      useInternalApi: Boolean = false): Unit = {
     // Create the transaction with domain metadata and commit
 
-    // I think this can actually just not override enableDomainMetadata & remove the arg?...
     val txn = createTxnWithDomainMetadatas(
       engine,
       tablePath,
       domainMetadatas,
-      useInternalApi,
-      enableDomainMetadata = enableDomainMetadata)
+      useInternalApi)
     commitTransaction(txn, engine, emptyIterable())
 
     // Verify the final state includes the expected domain metadata
@@ -235,8 +232,7 @@ trait AbstractDomainMetadataSuite extends AnyFunSuite with AbstractWriteUtils
         engine,
         tablePath,
         domainMetadatas = Seq(dm1),
-        expectedValue = Map("domain1" -> dm1),
-        enableDomainMetadata = true)
+        expectedValue = Map("domain1" -> dm1))
     }
   }
 
