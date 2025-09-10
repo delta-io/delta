@@ -967,21 +967,23 @@ class DeltaTimeTravelSuite extends QueryTest
 
   // 2) SELECT ... CHANGES AS OF
   test("Block CDC beyond deletedFileRetention") {
-    withTestTable { (tbl, t4, t6) =>
-      Seq(
-        s"SELECT * FROM table_changes('$tbl', 2)" -> true,
-        s"SELECT * FROM table_changes('$tbl', '$t4')" -> true,
-        s"SELECT * FROM table_changes('$tbl', 5)" -> false,
-        s"SELECT * FROM table_changes('$tbl', '$t6')" -> false
-      ).foreach { case (sql, fail) => assertBlocked(sql, fail) }
+    withSQLConf("spark.databricks.delta.properties.defaults.enableChangeDataFeed" -> "true") {
+      withTestTable { (tbl, t4, t6) =>
+        Seq(
+          s"SELECT * FROM table_changes('$tbl', 2)" -> true,
+          s"SELECT * FROM table_changes('$tbl', '$t4')" -> true,
+          s"SELECT * FROM table_changes('$tbl', 5)" -> false,
+          s"SELECT * FROM table_changes('$tbl', '$t6')" -> false
+        ).foreach { case (sql, fail) => assertBlocked(sql, fail) }
 
-      spark.sql(s"ALTER TABLE $tbl " +
-        s"SET TBLPROPERTIES ('delta.deletedFileRetentionDuration' = 'interval 0 HOURS')")
-      // After setting it to zero, any previous version will fail
-      Seq(
-        s"SELECT * FROM table_changes('$tbl', 5)" -> true,
-        s"SELECT * FROM table_changes('$tbl', '$t6')" -> true
-      ).foreach { case (sql, fail) => assertBlocked(sql, fail) }
+        spark.sql(s"ALTER TABLE $tbl " +
+          s"SET TBLPROPERTIES ('delta.deletedFileRetentionDuration' = 'interval 0 HOURS')")
+        // After setting it to zero, any previous version will fail
+        Seq(
+          s"SELECT * FROM table_changes('$tbl', 5)" -> true,
+          s"SELECT * FROM table_changes('$tbl', '$t6')" -> true
+        ).foreach { case (sql, fail) => assertBlocked(sql, fail) }
+      }
     }
   }
 

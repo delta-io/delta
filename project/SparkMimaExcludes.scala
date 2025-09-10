@@ -89,8 +89,13 @@ object SparkMimaExcludes {
       // Changes in 4.0.0
       ProblemFilters.exclude[IncompatibleResultTypeProblem]("io.delta.tables.DeltaTable.improveUnsupportedOpError"),
       ProblemFilters.exclude[IncompatibleResultTypeProblem]("io.delta.tables.DeltaMergeBuilder.improveUnsupportedOpError"),
-      ProblemFilters.exclude[IncompatibleResultTypeProblem]("io.delta.tables.DeltaMergeBuilder.execute")
+      ProblemFilters.exclude[IncompatibleResultTypeProblem]("io.delta.tables.DeltaMergeBuilder.execute"),
 
+      // CDC Optimization
+      ProblemFilters.exclude[ReversedMissingMethodProblem]("org.apache.spark.sql.delta.sources.DeltaSQLConfBase.org$apache$spark$sql$delta$sources$DeltaSQLConfBase$_setter_$DELTA_CDF_BATCH_STATIC_READER_="),
+      ProblemFilters.exclude[ReversedMissingMethodProblem]("org.apache.spark.sql.delta.sources.DeltaSQLConfBase.DELTA_CDF_BATCH_STATIC_READER"),
+      ProblemFilters.exclude[ReversedMissingMethodProblem]("org.apache.spark.sql.delta.sources.DeltaSQLConfBase.org$apache$spark$sql$delta$sources$DeltaSQLConfBase$_setter_$DELTA_CDF_BATCH_STATIC_READER_START_ONLY_="),
+      ProblemFilters.exclude[ReversedMissingMethodProblem]("org.apache.spark.sql.delta.sources.DeltaSQLConfBase.DELTA_CDF_BATCH_STATIC_READER_START_ONLY")
       // scalastyle:on line.size.limit
   )
 }

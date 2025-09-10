@@ -47,6 +47,7 @@ class CDCReaderSuite
   with DeltaColumnMappingTestUtils {
 
   override protected def sparkConf: SparkConf = super.sparkConf
+    .set(DeltaSQLConf.DELTA_CDF_BATCH_STATIC_READER.key, "false")
     .set(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "true")
 
   /**
@@ -468,3 +469,93 @@ class CDCReaderSuite
   }
 }
 
+trait CDCStaticReaderSuiteBase extends DeltaSQLCommandTest {
+  override protected def sparkConf: SparkConf = super.sparkConf
+    .set(DeltaSQLConf.DELTA_CDF_BATCH_STATIC_READER.key, "true")
+    .set(DeltaSQLConf.DELTA_CDF_BATCH_STATIC_READER_START_ONLY.key, "true")
+    .set(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "true")
+
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    assert(spark.conf.get(DeltaSQLConf.DELTA_CDF_BATCH_STATIC_READER.key) == "true",
+      s"Expected ${DeltaSQLConf.DELTA_CDF_BATCH_STATIC_READER.key} to be set")
+  }
+}
+
+class CDCReaderWithStaticReaderSuite extends CDCReaderSuite with CDCStaticReaderSuiteBase {
+
+  test("test config DELTA_CDF_BATCH_STATIC_READER") {
+    withTable("table1", "table2") {
+      val p = DeltaTestUtils.withAllPlansCaptured(spark) {
+        spark.conf.set("spark.sql.autoBroadcastJoinThreshold", "-1")
+        spark.range(100).withColumn("value", col("id") + 3)
+          .write.format("delta").mode("overwrite").saveAsTable("table1")
+        spark.range(10).withColumn("value", col("id") + 2)
+        .write.format("delta").mode("overwrite").saveAsTable("table2")
+        spark.sql("DELETE FROM table1 WHERE id = 1")
+        spark.sql("DELETE FROM table2 WHERE id = 2")
+        val sourceDf = spark.sql("SELECT * FROM table_changes('table1', 0, 1)")
+          .dropDuplicates(Seq("id"))
+
+        val dt = io.delta.tables.DeltaTable.forName(spark, "table2")
+        dt
+          .as("tbl2")
+          .merge(
+            sourceDf.as("tbl1"),
+            "tbl1.id = tbl2.id")
+          .whenMatched
+          .updateExpr(Map("value" -> "tbl1.value + 1"))
+          .execute()
+      }
+      val planWithUnion = p.filter { plan =>
+        val planString = plan.executedPlan.toString
+        // Without optimization:
+        // + SortAggregate
+        //   +- SortAggregate
+        //     +- Scan DeltaCDFRelation
+
+        // With optimization:
+        // + SortAggregate
+        //   +- SortAggregate
+        //     +- Union
+        //        :- Scan ExistingRDD
+        //        :- FileScan parquet .. Location: TahoeChangeFileIndex
+        //        :- FileScan parquet .. CdcAddFileIndex
+
+        planString.contains("CdcAddFileIndex") && planString.contains("Union") &&
+          planString.contains("TahoeChangeFileIndex")
+      }
+      // Merge source is materialized by default
+      assert(planWithUnion.size == 1, planWithUnion.toString)
+    }
+  }
+
+  test("test config DELTA_CDF_BATCH_STATIC_READER_START_ONLY") {
+    withTable("table1", "table2") {
+      withSQLConf(
+        DeltaSQLConf.DELTA_CDF_BATCH_STATIC_READER_START_ONLY.key -> "false") {
+        spark.range(10).withColumn("value", col("id") + 2)
+          .write.format("delta").mode("overwrite").saveAsTable("table1")
+        spark.sql("DELETE FROM table1 WHERE id = 1")
+        val df = spark.sql("SELECT * FROM table_changes('table1', 0)")
+        assert(df.filter("_change_type == 'delete'").count() == 1)
+        spark.sql("DELETE FROM table1 WHERE id = 2")
+        assert(df.filter("_change_type == 'delete'").count() == 2)
+        spark.sql("DELETE FROM table1 WHERE id = 3")
+        assert(df.filter("_change_type == 'delete'").count() == 3)
+      }
+      withSQLConf(
+        DeltaSQLConf.DELTA_CDF_BATCH_STATIC_READER_START_ONLY.key -> "true") {
+        spark.range(10).withColumn("value", col("id") + 2)
+          .write.format("delta").mode("overwrite").saveAsTable("table2")
+        spark.sql("DELETE FROM table2 WHERE id = 1")
+        val df = spark.sql("SELECT * FROM table_changes('table2', 0)")
+        assert(df.filter("_change_type == 'delete'").count() == 1)
+        spark.sql("DELETE FROM table2 WHERE id = 2")
+        assert(df.filter("_change_type == 'delete'").count() == 1)
+        spark.sql("DELETE FROM table2 WHERE id = 3")
+        assert(df.filter("_change_type == 'delete'").count() == 1)
+      }
+    }
+  }
+}

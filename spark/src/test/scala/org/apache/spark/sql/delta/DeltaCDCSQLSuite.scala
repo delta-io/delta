@@ -20,10 +20,12 @@ import java.util.Date
 
 import org.apache.spark.sql.delta.DeltaTestUtils.modifyCommitTimestamp
 import org.apache.spark.sql.delta.actions.Protocol
+import org.apache.spark.sql.delta.cdc.CDCStaticReaderSuiteBase
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTableUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
+import org.apache.spark.SparkConf
 import org.apache.spark.sql.{AnalysisException, DataFrame}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.util.DateTimeTestUtils._
@@ -143,8 +145,13 @@ class DeltaCDCSQLSuite extends DeltaCDCSuiteBase with DeltaColumnMappingTestUtil
           spark.range(5)
             .withColumn("_change_type", lit("insert")))
       }
-      assert(plans.map(_.executedPlan).toString
-        .contains("PushedFilters: [*IsNotNull(id), *LessThan(id,5)]"))
+      if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CDF_BATCH_STATIC_READER)) {
+        assert(plans.map(_.executedPlan).toString
+          .contains("PushedFilters: [IsNotNull(id), LessThan(id,5)]"))
+      } else {
+        assert(plans.map(_.executedPlan).toString
+          .contains("PushedFilters: [*IsNotNull(id), *LessThan(id,5)]"))
+      }
     }
   }
 
@@ -396,3 +403,6 @@ class DeltaCDCSQLWithCatalogOwnedBatch2Suite extends DeltaCDCSQLSuite {
 class DeltaCDCSQLWithCatalogOwnedBatch100Suite extends DeltaCDCSQLSuite {
   override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }
+
+class DeltaCDCSQLWithStaticReaderSuite
+  extends DeltaCDCSQLSuite with CDCStaticReaderSuiteBase

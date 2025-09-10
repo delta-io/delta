@@ -26,6 +26,7 @@ import scala.concurrent.duration._
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.DeltaTestUtils.{modifyCommitTimestamp, BOOLEAN_DOMAIN}
 import org.apache.spark.sql.delta.cdc.CDCEnabled
+import org.apache.spark.sql.delta.cdc.CDCStaticReaderSuiteBase
 import org.apache.spark.sql.delta.commands.cdc.CDCReader._
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -709,12 +710,21 @@ abstract class DeltaCDCSuiteBase
       val deltaTable = io.delta.tables.DeltaTable.forName(tableName)
       deltaTable.delete("id > 2")
 
-      checkAnswer(
-        cdcResult.selectExpr("id", "_change_type", "_commit_version"),
-        Row(0, "insert", 0) :: Row(1, "insert", 0) :: Row(2, "insert", 0) ::
-          Row(3, "insert", 0):: Row(4, "insert", 0) ::
-          Row(3, "delete", 1):: Row(4, "delete", 1) :: Nil
-      )
+      if (spark.sessionState.conf.getConf(
+        DeltaSQLConf.DELTA_CDF_BATCH_STATIC_READER)) {
+        checkAnswer(
+          cdcResult.selectExpr("id", "_change_type", "_commit_version"),
+          Row(0, "insert", 0) :: Row(1, "insert", 0) :: Row(2, "insert", 0) ::
+            Row(3, "insert", 0):: Row(4, "insert", 0) :: Nil
+        )
+      } else {
+        checkAnswer(
+          cdcResult.selectExpr("id", "_change_type", "_commit_version"),
+          Row(0, "insert", 0) :: Row(1, "insert", 0) :: Row(2, "insert", 0) ::
+            Row(3, "insert", 0):: Row(4, "insert", 0) ::
+            Row(3, "delete", 1):: Row(4, "delete", 1) :: Nil
+        )
+      }
     }
   }
 
@@ -741,13 +751,23 @@ abstract class DeltaCDCSuiteBase
       sql(s"ALTER TABLE $tableName ADD COLUMN (newCol STRING)")
       sql(s"INSERT INTO $tableName VALUES (5, 'text', 'newColVal')")
 
-      // Just ignoring the new column is pretty weird, but it's what we do for non-CDC dataframes,
-      // so we preserve the behavior rather than adding a special case.
-      checkAnswer(
-        cdcResult.selectExpr("id", "_change_type", "_commit_version"),
-        Row(0, "insert", 0) :: Row(1, "insert", 0) :: Row(2, "insert", 0) ::
-          Row(3, "insert", 0) :: Row(4, "insert", 0) :: Row(5, "insert", 2) :: Nil
-      )
+      if (spark.sessionState.conf.getConf(
+        DeltaSQLConf.DELTA_CDF_BATCH_STATIC_READER)) {
+        // with optimization enabled, the version decided at analyzer.
+        checkAnswer(
+          cdcResult.selectExpr("id", "_change_type", "_commit_version"),
+          Row(0, "insert", 0) :: Row(1, "insert", 0) :: Row(2, "insert", 0) ::
+            Row(3, "insert", 0) :: Row(4, "insert", 0) :: Nil
+        )
+      } else {
+        // Just ignoring the new column is pretty weird, but it's what we do for non-CDC dataframes,
+        // so we preserve the behavior rather than adding a special case.
+        checkAnswer(
+          cdcResult.selectExpr("id", "_change_type", "_commit_version"),
+          Row(0, "insert", 0) :: Row(1, "insert", 0) :: Row(2, "insert", 0) ::
+            Row(3, "insert", 0) :: Row(4, "insert", 0) :: Row(5, "insert", 2) :: Nil
+        )
+      }
     }
   }
 
@@ -1044,8 +1064,13 @@ class DeltaCDCScalaSuite extends DeltaCDCSuiteBase {
           spark.range(5)
             .withColumn("_change_type", lit("insert")))
       }
-      assert(plans.map(_.executedPlan).toString
-        .contains("PushedFilters: [*IsNotNull(id), *LessThan(id,5)]"))
+      if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CDF_BATCH_STATIC_READER)) {
+        assert(plans.map(_.executedPlan).toString
+          .contains("PushedFilters: [IsNotNull(id), LessThan(id,5)]"))
+      } else {
+        assert(plans.map(_.executedPlan).toString
+          .contains("PushedFilters: [*IsNotNull(id), *LessThan(id,5)]"))
+      }
     }
   }
 
@@ -1176,3 +1201,10 @@ class DeltaCDCScalaWithCatalogOwnedBatch2Suite extends DeltaCDCScalaSuite {
 class DeltaCDCScalaWithCatalogOwnedBatch100Suite extends DeltaCDCScalaSuite {
   override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }
+
+class DeltaCDCScalaWithStaticReaderSuite extends DeltaCDCScalaSuite
+  with CDCStaticReaderSuiteBase
+
+class DeltaCDCScalaWithDeletionVectorWithStaticReaderSuite
+    extends DeltaCDCScalaWithDeletionVectorsSuite
+    with CDCStaticReaderSuiteBase
