@@ -137,7 +137,7 @@ public class Predicate extends ScalarExpression {
     this(name, Arrays.asList(left, right));
   }
 
-  /** Constructor for a Predicate expression (binary or multi-child) with collation support. */
+  /** Constructor for a Predicate expression with collation support. */
   public Predicate(
       String name, Expression left, Expression right, CollationIdentifier collationIdentifier) {
     this(name, Arrays.asList(left, right), collationIdentifier);
@@ -189,7 +189,6 @@ public class Predicate extends ScalarExpression {
     } else if (BINARY_OPERATORS.contains(name) || collationIdentifier.isPresent()) {
       return String.format("(%s %s %s%s)", children.get(0), name, children.get(1), collationSuffix);
     }
-
     return super.toString();
   }
 
