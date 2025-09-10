@@ -21,7 +21,7 @@ import scala.collection.immutable.Seq
 import io.delta.kernel._
 import io.delta.kernel.data.Row
 import io.delta.kernel.defaults.internal.parquet.ParquetSuiteBase
-import io.delta.kernel.defaults.utils.WriteUtils
+import io.delta.kernel.defaults.utils.{AbstractWriteUtils, WriteUtils, WriteUtilsWithV1Builders, WriteUtilsWithV2Builders}
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions._
 import io.delta.kernel.expressions.Literal
@@ -40,7 +40,14 @@ import org.apache.spark.sql.delta.test.DeltaTestImplicits.OptimisticTxnTestHelpe
 import org.apache.hadoop.fs.Path
 import org.scalatest.funsuite.AnyFunSuite
 
-class DomainMetadataSuite extends AnyFunSuite with WriteUtils with ParquetSuiteBase {
+/** Runs domain metadata tests using the TableManager snapshot APIs and V2 transaction builders */
+class DomainMetadataSuite extends AbstractDomainMetadataSuite with WriteUtilsWithV2Builders
+
+/** Runs domain metadata tests using the legacy Table snapshot APIs and V1 transaction builders */
+class LegacyDomainMetadataSuite extends AbstractDomainMetadataSuite with WriteUtilsWithV1Builders
+
+trait AbstractDomainMetadataSuite extends AnyFunSuite with AbstractWriteUtils
+    with ParquetSuiteBase {
 
   private def assertDomainMetadata(
       snapshot: SnapshotImpl,
@@ -59,14 +66,13 @@ class DomainMetadataSuite extends AnyFunSuite with WriteUtils with ParquetSuiteB
   }
 
   private def assertDomainMetadata(
-      table: Table,
+      tablePath: String,
       engine: Engine,
       expectedValue: Map[String, DomainMetadata]): Unit = {
-    // Get the latest snapshot of the table
-    val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+    // Get the table and latest snapshot
+    val snapshot = getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath)
     assertDomainMetadata(snapshot, expectedValue)
     // verifyChecksum will check the domain metadata in CRC against the lastest snapshot.
-    val tablePath = table.getPath(engine)
     verifyChecksum(tablePath)
     // Delete CRC and reload snapshot from log.
     deleteChecksumFileForTable(
@@ -74,10 +80,10 @@ class DomainMetadataSuite extends AnyFunSuite with WriteUtils with ParquetSuiteB
       versions = Seq(snapshot.getVersion.toInt))
     // Rebuild table to avoid loading domain metadata from cached crc info.
     assertDomainMetadata(
-      Table.forPath(engine, tablePath).getLatestSnapshot(engine).asInstanceOf[SnapshotImpl],
+      getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath),
       expectedValue)
     // Write CRC back so that subsequence operation could generate CRC incrementally.
-    table.checksum(engine, snapshot.getVersion)
+    Table.forPath(engine, tablePath).checksum(engine, snapshot.getVersion)
   }
 
   private def commitDomainMetadataAndVerify(
@@ -87,12 +93,16 @@ class DomainMetadataSuite extends AnyFunSuite with WriteUtils with ParquetSuiteB
       expectedValue: Map[String, DomainMetadata],
       useInternalApi: Boolean = false): Unit = {
     // Create the transaction with domain metadata and commit
-    val txn = createTxnWithDomainMetadatas(engine, tablePath, domainMetadatas, useInternalApi)
+
+    val txn = createTxnWithDomainMetadatas(
+      engine,
+      tablePath,
+      domainMetadatas,
+      useInternalApi)
     commitTransaction(txn, engine, emptyIterable())
 
     // Verify the final state includes the expected domain metadata
-    val table = Table.forPath(engine, tablePath)
-    assertDomainMetadata(table, engine, expectedValue)
+    assertDomainMetadata(tablePath, engine, expectedValue)
   }
 
   private def createTableWithDomainMetadataSupported(engine: Engine, tablePath: String): Unit = {
@@ -102,7 +112,6 @@ class DomainMetadataSuite extends AnyFunSuite with WriteUtils with ParquetSuiteB
         engine,
         tablePath,
         testSchema,
-        Seq.empty,
         withDomainMetadataSupported = true),
       engine,
       emptyIterable())
@@ -117,7 +126,6 @@ class DomainMetadataSuite extends AnyFunSuite with WriteUtils with ParquetSuiteB
       expectedConflict: Boolean): Unit = {
     // Create table with domain metadata support
     createTableWithDomainMetadataSupported(engine, tablePath)
-    val table = Table.forPath(engine, tablePath)
 
     /**
      * Txn1: i.e. the current transaction that comes later than winning transactions.
@@ -133,12 +141,27 @@ class DomainMetadataSuite extends AnyFunSuite with WriteUtils with ParquetSuiteB
      * t5 ------- Txn3 commits.
      * t6 ------------------------ Txn1 commits (SUCCESS or FAIL).
      */
-    val txn1 = createTxnWithDomainMetadatas(engine, tablePath, currentTxn1DomainMetadatas)
+    // For these txns, set enableDomainMetadata = false since it's already been enabled in the
+    // initial table, and for V2 builders, re-enabling it will commit a new Metadata change (which
+    // will always trigger a conflict!)
+    val txn1 = createTxnWithDomainMetadatas(
+      engine,
+      tablePath,
+      currentTxn1DomainMetadatas,
+      enableDomainMetadata = false)
 
-    val txn2 = createTxnWithDomainMetadatas(engine, tablePath, winningTxn2DomainMetadatas)
+    val txn2 = createTxnWithDomainMetadatas(
+      engine,
+      tablePath,
+      winningTxn2DomainMetadatas,
+      enableDomainMetadata = false)
     commitTransaction(txn2, engine, emptyIterable())
 
-    val txn3 = createTxnWithDomainMetadatas(engine, tablePath, winningTxn3DomainMetadatas)
+    val txn3 = createTxnWithDomainMetadatas(
+      engine,
+      tablePath,
+      winningTxn3DomainMetadatas,
+      enableDomainMetadata = false)
     commitTransaction(txn3, engine, emptyIterable())
 
     if (expectedConflict) {
@@ -157,7 +180,7 @@ class DomainMetadataSuite extends AnyFunSuite with WriteUtils with ParquetSuiteB
         (winningTxn2DomainMetadatas ++ winningTxn3DomainMetadatas ++ currentTxn1DomainMetadatas)
           .groupBy(_.getDomain)
           .mapValues(_.last)
-      assertDomainMetadata(table, engine, expectedMetadata)
+      assertDomainMetadata(tablePath, engine, expectedMetadata)
     }
   }
 
@@ -170,16 +193,14 @@ class DomainMetadataSuite extends AnyFunSuite with WriteUtils with ParquetSuiteB
 
   test("create table w/o domain metadata") {
     withTempDirAndEngine { (tablePath, engine) =>
-      val table = Table.forPath(engine, tablePath)
-
       // Create an empty table
       commitTransaction(
-        getCreateTxn(engine, tablePath, testSchema, Seq.empty),
+        getCreateTxn(engine, tablePath, testSchema),
         engine,
         emptyIterable())
 
       // Verify that the table doesn't have any domain metadata
-      assertDomainMetadata(table, engine, Map.empty)
+      assertDomainMetadata(tablePath, engine, Map.empty)
     }
   }
 
@@ -253,14 +274,12 @@ class DomainMetadataSuite extends AnyFunSuite with WriteUtils with ParquetSuiteB
         expectedValue = Map("domain1" -> dm1, "domain2" -> dm2))
 
       // Restart the table and verify the domain metadata
-      val table2 = Table.forPath(engine, tablePath)
-      assertDomainMetadata(table2, engine, Map("domain1" -> dm1, "domain2" -> dm2))
+      assertDomainMetadata(tablePath, engine, Map("domain1" -> dm1, "domain2" -> dm2))
     }
   }
 
   test("only the latest domain metadata per domain is stored in checkpoints") {
     withTempDirAndEngine { (tablePath, engine) =>
-      val table = Table.forPath(engine, tablePath)
       createTableWithDomainMetadataSupported(engine, tablePath)
 
       val dm1 = new DomainMetadata("domain1", """{"key1":"1"}, {"key2":"2"}""", false)
@@ -281,13 +300,12 @@ class DomainMetadataSuite extends AnyFunSuite with WriteUtils with ParquetSuiteB
       }
 
       // Checkpoint the table
-      val latestVersion = table.getLatestSnapshot(engine).getVersion()
-      table.checkpoint(engine, latestVersion)
+      val latestVersion = getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath).getVersion()
+      Table.forPath(engine, tablePath).checkpoint(engine, latestVersion)
 
       // Verify that only the latest domain metadata is persisted in the checkpoint
-      val table2 = Table.forPath(engine, tablePath)
       assertDomainMetadata(
-        table2,
+        tablePath,
         engine,
         Map("domain1" -> dm1_2, "domain2" -> dm2))
     }
@@ -449,7 +467,7 @@ class DomainMetadataSuite extends AnyFunSuite with WriteUtils with ParquetSuiteB
         val dm3 = new DomainMetadata("testDomain3", "", false)
 
         assertDomainMetadata(
-          Table.forPath(defaultEngine, tablePath),
+          tablePath,
           defaultEngine,
           Map("testDomain1" -> dm1, "testDomain3" -> dm3))
       }
@@ -478,9 +496,9 @@ class DomainMetadataSuite extends AnyFunSuite with WriteUtils with ParquetSuiteB
           data = Seq(Map.empty[String, Literal] -> dataBatches1))
 
         // Checkpoint the table so domain metadata is distributed to both checkpoint and log files
-        val table = Table.forPath(engine, tablePath)
-        val latestVersion = table.getLatestSnapshot(engine).getVersion()
-        table.checkpoint(engine, latestVersion)
+        val latestVersion =
+          getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath).getVersion()
+        Table.forPath(engine, tablePath).checkpoint(engine, latestVersion)
 
         // Manually commit two domain metadata actions
         val dm1_2 = new DomainMetadata("testDomain1", """{"key1":"10"}""", false)
@@ -531,8 +549,7 @@ class DomainMetadataSuite extends AnyFunSuite with WriteUtils with ParquetSuiteB
       )
 
       // Read the RowTrackingMetadataDomain from the table and verify
-      val table = Table.forPath(engine, tablePath)
-      val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+      val snapshot = getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath)
       val rowTrackingMetadataDomainFromSnapshot =
         RowTrackingMetadataDomain.fromSnapshot(snapshot)
 
@@ -557,8 +574,7 @@ class DomainMetadataSuite extends AnyFunSuite with WriteUtils with ParquetSuiteB
         spark.range(20, 100).write.format("delta").mode("append").save(tablePath)
 
         // Read the RowTrackingMetadataDomain from the table using Kernel
-        val table = Table.forPath(engine, tablePath)
-        val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+        val snapshot = getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath)
         val rowTrackingMetadataDomainRead = RowTrackingMetadataDomain.fromSnapshot(snapshot)
 
         assert(rowTrackingMetadataDomainRead.isPresent)
@@ -621,7 +637,7 @@ class DomainMetadataSuite extends AnyFunSuite with WriteUtils with ParquetSuiteB
 
   test("updating domain metadata fails after transaction committed") {
     withTempDirAndEngine { (tablePath, engine) =>
-      val txn = getCreateTxn(engine, tablePath, testSchema, Seq.empty)
+      val txn = getCreateTxn(engine, tablePath, testSchema)
       commitTransaction(txn, engine, emptyIterable())
 
       intercept[IllegalStateException] {

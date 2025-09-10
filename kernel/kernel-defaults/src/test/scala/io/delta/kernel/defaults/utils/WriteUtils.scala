@@ -50,11 +50,22 @@ import org.apache.commons.io.FileUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
-/** Default write utilities that use the V1 transaction builders. */
+/** Default write utilities that use the V1 transaction builders and legacy Table Snapshot APIs */
 trait WriteUtils extends AbstractWriteUtils with TransactionBuilderV1Support
+    with TestUtilsWithLegacyKernelAPIs
 
-/** Write utilities that use the V2 transaction builders to create transactions */
+/**
+ * DO NOT MODIFY this trait -- this is just syntactic sugar to clearly indicate we are extending the
+ * "default" WriteUtils which happens to use the legacy Kernel APIs
+ */
+trait WriteUtilsWithV1Builders extends WriteUtils
+
+/**
+ * Write utilities that use the V2 transaction builders to create transactions and TableManager
+ * snapshot APIs
+ */
 trait WriteUtilsWithV2Builders extends AbstractWriteUtils with TransactionBuilderV2Support
+    with TestUtilsWithTableManagerAPIs
 
 /**
  * Common utility methods for write test suites. For now, this includes mostly concrete
@@ -207,13 +218,11 @@ trait AbstractWriteUtils extends TestUtils with TransactionBuilderSupport {
   }
 
   def getMetadata(engine: Engine, tablePath: String): Metadata = {
-    Table.forPath(engine, tablePath).getLatestSnapshot(engine)
-      .asInstanceOf[SnapshotImpl].getMetadata
+    getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath).getMetadata
   }
 
   def getProtocol(engine: Engine, tablePath: String): Protocol = {
-    Table.forPath(engine, tablePath).getLatestSnapshot(engine)
-      .asInstanceOf[SnapshotImpl].getProtocol
+    getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath).getProtocol
   }
 
   /**
@@ -316,10 +325,11 @@ trait AbstractWriteUtils extends TestUtils with TransactionBuilderSupport {
       engine: Engine,
       tablePath: String,
       domainMetadatas: Seq[DomainMetadata],
-      useInternalApi: Boolean = false): Transaction = {
+      useInternalApi: Boolean = false,
+      enableDomainMetadata: Boolean = true): Transaction = {
 
     val txn = if (domainMetadatas.nonEmpty && !useInternalApi) {
-      getUpdateTxn(engine, tablePath, withDomainMetadataSupported = true)
+      getUpdateTxn(engine, tablePath, withDomainMetadataSupported = enableDomainMetadata)
         .asInstanceOf[TransactionImpl]
     } else {
       getUpdateTxn(engine, tablePath).asInstanceOf[TransactionImpl]
@@ -470,8 +480,6 @@ trait AbstractWriteUtils extends TestUtils with TransactionBuilderSupport {
       expectedValue: Any,
       clock: Clock = () => System.currentTimeMillis): Unit = {
 
-    val table = Table.forPath(engine, tablePath)
-
     val txn = if (isNewTable) {
       getCreateTxn(
         engine,
@@ -489,7 +497,7 @@ trait AbstractWriteUtils extends TestUtils with TransactionBuilderSupport {
     }
     commitTransaction(txn, engine, emptyIterable())
 
-    val snapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
+    val snapshot = getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath)
     assertMetadataProp(snapshot, key, expectedValue)
   }
 
@@ -580,7 +588,7 @@ trait AbstractWriteUtils extends TestUtils with TransactionBuilderSupport {
   }
 
   def collectStatsFromAddFiles(engine: Engine, path: String): Seq[String] = {
-    val snapshot = Table.forPath(engine, path).getLatestSnapshot(engine)
+    val snapshot = getTableManagerAdapter.getSnapshotAtLatest(engine, path)
     val scan = snapshot.getScanBuilder.build()
     val scanFiles = scan.asInstanceOf[ScanImpl].getScanFiles(engine, true)
 
