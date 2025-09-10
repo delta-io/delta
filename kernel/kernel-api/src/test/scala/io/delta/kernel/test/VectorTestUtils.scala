@@ -15,7 +15,7 @@
  */
 package io.delta.kernel.test
 
-import java.lang.{Boolean => BooleanJ, Double => DoubleJ, Float => FloatJ, Long => LongJ}
+import java.lang.{Boolean => BooleanJ, Double => DoubleJ, Float => FloatJ, Integer => IntegerJ, Long => LongJ}
 
 import scala.collection.JavaConverters._
 
@@ -107,6 +107,20 @@ trait VectorTestUtils {
       override def isNullAt(rowId: Int): Boolean = values(rowId) == null
 
       override def getByte(rowId: Int): Byte = values(rowId)
+    }
+  }
+
+  protected def intVector(values: Seq[IntegerJ]): ColumnVector = {
+    new ColumnVector {
+      override def getDataType: DataType = IntegerType.INTEGER
+
+      override def getSize: Int = values.length
+
+      override def close(): Unit = {}
+
+      override def isNullAt(rowId: Int): Boolean = values(rowId) == null
+
+      override def getInt(rowId: Int): Int = values(rowId)
     }
   }
 

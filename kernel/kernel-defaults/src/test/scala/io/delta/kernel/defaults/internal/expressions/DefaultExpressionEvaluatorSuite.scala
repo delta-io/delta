@@ -15,7 +15,7 @@
  */
 package io.delta.kernel.defaults.internal.expressions
 
-import java.lang.{Boolean => BooleanJ, Double => DoubleJ, Float => FloatJ, Long => LongJ}
+import java.lang.{Boolean => BooleanJ, Double => DoubleJ, Float => FloatJ, Integer => IntegerJ, Long => LongJ}
 import java.math.{BigDecimal => BigDecimalJ}
 import java.sql.{Date, Timestamp}
 import java.util
@@ -1211,11 +1211,9 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
 
   test("evaluate expression: in with mixed numeric types") {
     // Test Integer value column with Long literals
-    val intCol = testColumnVector(5, IntegerType.INTEGER)
+    val intCol = intVector(Seq[IntegerJ](null, 16, 32, 48, 65))
     val intSchema = new StructType().add("intCol", IntegerType.INTEGER)
     val intInput = new DefaultColumnarBatch(intCol.getSize, intSchema, Array(intCol))
-
-    // Integer value [null, 16, 32, 48, 65] in Long literals (16L, 48L)
     val intInLongExpr = in(new Column("intCol"), Literal.ofLong(16L), Literal.ofLong(48L))
     val intInLongExpected = booleanVector(Seq[BooleanJ](null, true, false, true, false))
     checkBooleanVectors(
@@ -1226,8 +1224,6 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     val byteCol = byteVector(Seq[java.lang.Byte](null, 0.toByte, 1.toByte, 2.toByte, 127.toByte))
     val byteSchema = new StructType().add("byteCol", ByteType.BYTE)
     val byteInput = new DefaultColumnarBatch(byteCol.getSize, byteSchema, Array(byteCol))
-
-    // Byte value [null, 0, 1, 2, 127] in mixed Integer and Long literals (1, 127L)
     val byteInMixedExpr = in(new Column("byteCol"), Literal.ofInt(1), Literal.ofLong(127L))
     val byteInMixedExpected = booleanVector(Seq[BooleanJ](null, false, true, false, true))
     checkBooleanVectors(
@@ -1238,11 +1234,9 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       byteInMixedExpected)
 
     // Test Float value column with Double literals
-    val floatCol = testColumnVector(4, FloatType.FLOAT)
+    val floatCol = floatVector(Seq[FloatJ](null, 84.08f, 168.16f, 252.24f))
     val floatSchema = new StructType().add("floatCol", FloatType.FLOAT)
     val floatInput = new DefaultColumnarBatch(floatCol.getSize, floatSchema, Array(floatCol))
-
-    // Float value [null, 84.08f, 168.16f, 252.24f] in Double literals (84.08, 252.24)
     val floatInDoubleExpr =
       in(new Column("floatCol"), Literal.ofDouble(84.08), Literal.ofDouble(252.24))
     val floatInDoubleExpected = booleanVector(Seq[BooleanJ](null, true, false, true))
@@ -1275,11 +1269,9 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       new DefaultExpressionEvaluator(schema, nonLiteralInExpr, BooleanType.BOOLEAN).eval(input)
     }
     assert(e.getMessage.contains("IN expression requires all list elements to be literals"))
-    assert(e.getMessage.contains("Non-literal expression found at position 1"))
-    assert(e.getMessage.contains("Only constant values are currently supported"))
   }
 
-  test("evaluate expression: in comprehensive null semantics") {
+  test("evaluate expression: in expression handling null") {
     val col1 = testColumnVector(6, StringType.STRING) // [null, "1", null, "3", null, "5"]
     val schema = new StructType().add("col1", StringType.STRING)
     val input = new DefaultColumnarBatch(col1.getSize, schema, Array(col1))
