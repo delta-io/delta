@@ -137,7 +137,7 @@ public class Predicate extends ScalarExpression {
     this(name, Arrays.asList(left, right));
   }
 
-  /** Constructor for a binary Predicate expression with collation support. */
+  /** Constructor for a Predicate expression (binary or multi-child) with collation support. */
   public Predicate(
       String name, Expression left, Expression right, CollationIdentifier collationIdentifier) {
     this(name, Arrays.asList(left, right), collationIdentifier);
@@ -155,7 +155,7 @@ public class Predicate extends ScalarExpression {
 
     // For operators with multiple children, we need at least 2 children (value + at least one item)
     // For other collated expressions, we require exactly 2 children
-    if (OPERATOR_WITH_MULTIPLE_CHILDREN.contains(this.name)) {
+    if (OPERATORS_WITH_MULTIPLE_CHILDREN.contains(this.name)) {
       checkArgument(
           this.children.size() >= 2,
           "Invalid Predicate: collated predicate '%s' with multiple children requires at least 2 "
@@ -180,7 +180,7 @@ public class Predicate extends ScalarExpression {
   @Override
   public String toString() {
     String collationSuffix = collationIdentifier.map(c -> " COLLATE " + c).orElse("");
-    if (OPERATOR_WITH_MULTIPLE_CHILDREN.contains(name) && children.size() >= 2) {
+    if (OPERATORS_WITH_MULTIPLE_CHILDREN.contains(name) && children.size() >= 2) {
       String inValues =
           children.subList(1, children.size()).stream()
               .map(Object::toString)
@@ -209,7 +209,7 @@ public class Predicate extends ScalarExpression {
       Stream.of("<", "<=", ">", ">=", "=", "AND", "OR", "IS NOT DISTINCT FROM", "STARTS_WITH")
           .collect(Collectors.toSet());
 
-  private static final Set<String> OPERATOR_WITH_MULTIPLE_CHILDREN =
+  private static final Set<String> OPERATORS_WITH_MULTIPLE_CHILDREN =
       Stream.of("IN").collect(Collectors.toSet());
 
   /** Operators that support collation-based string comparison. */
