@@ -141,6 +141,9 @@ trait AbstractDomainMetadataSuite extends AnyFunSuite with AbstractWriteUtils
      * t5 ------- Txn3 commits.
      * t6 ------------------------ Txn1 commits (SUCCESS or FAIL).
      */
+    // For these txns, set enableDomainMetadata = false since it's already been enabled in the
+    // initial table, and for V2 builders, re-enabling it will commit a new Metadata change (which
+    // will always trigger a conflict!)
     val txn1 = createTxnWithDomainMetadatas(
       engine,
       tablePath,
