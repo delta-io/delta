@@ -167,8 +167,7 @@ public class InExpressionEvaluator {
   }
 
   /**
-   * Validates that collation is only used with string types. When collation is specified, all
-   * expressions must be string type or null literals.
+   * Validates that collation is only used with string types and the collation is UTF8Binary.
    */
   private static void validateCollation(
       In in,
