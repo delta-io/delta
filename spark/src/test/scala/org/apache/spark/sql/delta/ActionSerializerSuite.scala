@@ -251,16 +251,14 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
     // Try a couple rounds of round trips.
     val roundTrippedCommitInfo1 = JsonUtils.fromJson[CommitInfo](JsonUtils.toJson(commitInfo))
     assert(roundTrippedCommitInfo1.operationParameters === expectedOperationParameters)
-    assert(
-      roundTrippedCommitInfo1.getLegacyPostDeserializationOperationParameters ===
-        expectedLegacyOperationParameters)
+    assert(CommitInfo.getLegacyPostDeserializationOperationParameters(
+      roundTrippedCommitInfo1.operationParameters) === expectedLegacyOperationParameters)
 
     val roundTrippedCommitInfo2 =
       JsonUtils.fromJson[CommitInfo](JsonUtils.toJson(roundTrippedCommitInfo1))
     assert(roundTrippedCommitInfo2.operationParameters === expectedOperationParameters)
-    assert(
-      roundTrippedCommitInfo2.getLegacyPostDeserializationOperationParameters ===
-        expectedLegacyOperationParameters)
+    assert(CommitInfo.getLegacyPostDeserializationOperationParameters(
+      roundTrippedCommitInfo2.operationParameters) === expectedLegacyOperationParameters)
   }
 
   test("round trip of operation parameters: non-primitive types in operation parameters") {
@@ -295,7 +293,8 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
       // Non-primitive type values are not supported with legacy deserialization.
       // Note that this is not a quirk specific to getLegacyPostDeserializationOperationParameters
       // but rather a quirk of the legacy deserialization.
-      roundTrippedCommitInfo1.getLegacyPostDeserializationOperationParameters
+      CommitInfo.getLegacyPostDeserializationOperationParameters(
+        roundTrippedCommitInfo1.operationParameters)
     }
 
     val roundTrippedCommitInfo2 =
@@ -330,13 +329,13 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
 
     // Try a couple rounds of round trips.
     val roundTrippedCommitInfo1 = JsonUtils.fromJson[CommitInfo](JsonUtils.toJson(commitInfo))
-    assert(roundTrippedCommitInfo1.getLegacyPostDeserializationOperationParameters ===
-      expectedLegacyOperationParameters)
+    assert(CommitInfo.getLegacyPostDeserializationOperationParameters(
+      roundTrippedCommitInfo1.operationParameters) === expectedLegacyOperationParameters)
 
     val roundTrippedCommitInfo2 =
       JsonUtils.fromJson[CommitInfo](JsonUtils.toJson(roundTrippedCommitInfo1))
-    assert(roundTrippedCommitInfo2.getLegacyPostDeserializationOperationParameters ===
-      expectedLegacyOperationParameters)
+    assert(CommitInfo.getLegacyPostDeserializationOperationParameters(
+      roundTrippedCommitInfo2.operationParameters) === expectedLegacyOperationParameters)
   }
 
   testActionSerDe(
@@ -799,7 +798,8 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
     assert(deserialized.readVersion == Some(5))
 
     // Test that getLegacyPostDeserializationOperationParameters works correctly
-    val legacyParams = deserialized.getLegacyPostDeserializationOperationParameters
+    val legacyParams = CommitInfo.getLegacyPostDeserializationOperationParameters(
+      deserialized.operationParameters)
     assert(legacyParams.nonEmpty)
   }
 
@@ -843,7 +843,8 @@ class ActionSerializerSuite extends QueryTest with SharedSparkSession with Delta
     assert(params.contains("predicate"))
 
     // Test legacy operation parameters for backward compatibility
-    val legacyParams = deserialized.getLegacyPostDeserializationOperationParameters
+    val legacyParams = CommitInfo.getLegacyPostDeserializationOperationParameters(
+      deserialized.operationParameters)
     // Legacy parameters should be different due to the broken deserialization that the
     // JsonMapDeserializer fixes
     assert(legacyParams != deserialized.operationParameters)

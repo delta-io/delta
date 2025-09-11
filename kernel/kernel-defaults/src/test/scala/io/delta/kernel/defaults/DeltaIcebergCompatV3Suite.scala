@@ -20,14 +20,21 @@ import scala.collection.immutable.Seq
 
 import io.delta.kernel.Table
 import io.delta.kernel.data.Row
+import io.delta.kernel.defaults.utils.{WriteUtils, WriteUtilsWithV2Builders}
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.TableConfig
 import io.delta.kernel.internal.tablefeatures.{TableFeature, TableFeatures}
 import io.delta.kernel.internal.util.{ColumnMapping, VectorUtils}
 import io.delta.kernel.types.{DataType, DateType, FieldMetadata, IntegerType, LongType, StructField, StructType, TimestampNTZType, TypeChange, VariantType}
 
+class DeltaIcebergCompatV3TransactionBuilderV1Suite extends DeltaIcebergCompatV3SuiteBase
+    with WriteUtils {}
+
+class DeltaIcebergCompatV3TransactionBuilderV2Suite extends DeltaIcebergCompatV3SuiteBase
+    with WriteUtilsWithV2Builders {}
+
 /** This suite tests reading or writing into Delta table that have `icebergCompatV3` enabled. */
-class DeltaIcebergCompatV3Suite extends DeltaIcebergCompatBaseSuite {
+trait DeltaIcebergCompatV3SuiteBase extends DeltaIcebergCompatBaseSuite {
 
   import io.delta.kernel.internal.icebergcompat.IcebergCompatMetadataValidatorAndUpdaterSuiteBase._
 

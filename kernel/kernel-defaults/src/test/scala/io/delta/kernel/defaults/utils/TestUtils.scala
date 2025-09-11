@@ -76,6 +76,15 @@ trait AbstractTestUtils extends Assertions with SQLHelper with TestCommitterUtil
   lazy val configuration = new Configuration()
   lazy val defaultEngine = DefaultEngine.create(configuration)
 
+  // Used in child suites to override defaultEngine
+  lazy val defaultEngineBatchSize2 = DefaultEngine.create(new Configuration() {
+    {
+      // Set the batch sizes to small so that we get to test the multiple batch scenarios.
+      set("delta.kernel.default.parquet.reader.batch-size", "2");
+      set("delta.kernel.default.json.reader.batch-size", "2");
+    }
+  })
+
   lazy val spark = SparkSession
     .builder()
     .appName("Spark Test Writer for Delta Kernel")
@@ -181,19 +190,15 @@ trait AbstractTestUtils extends Assertions with SQLHelper with TestCommitterUtil
   }
 
   def latestSnapshot(path: String, engine: Engine = defaultEngine): Snapshot = {
-    Table.forPath(engine, path)
-      .getLatestSnapshot(engine)
+    getTableManagerAdapter.getSnapshotAtLatest(engine, path)
   }
 
   def tableSchema(path: String): StructType = {
-    Table.forPath(defaultEngine, path)
-      .getLatestSnapshot(defaultEngine)
-      .getSchema()
+    latestSnapshot(path).getSchema()
   }
 
   def hasTableProperty(tablePath: String, propertyKey: String, expValue: String): Boolean = {
-    val table = Table.forPath(defaultEngine, tablePath)
-    val schema = table.getLatestSnapshot(defaultEngine).getSchema()
+    val schema = tableSchema(tablePath)
     schema.fields().asScala.exists { field =>
       field.getMetadata.getString(propertyKey) == expValue
     }
@@ -297,8 +302,7 @@ trait AbstractTestUtils extends Assertions with SQLHelper with TestCommitterUtil
       engine: Engine,
       tablePath: String,
       readSchema: StructType): Seq[FilteredColumnarBatch] = {
-    val scan = Table.forPath(engine, tablePath)
-      .getLatestSnapshot(engine)
+    val scan = latestSnapshot(tablePath, engine)
       .getScanBuilder()
       .withReadSchema(readSchema)
       .build()

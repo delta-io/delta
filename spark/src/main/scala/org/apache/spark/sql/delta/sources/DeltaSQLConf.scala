@@ -708,14 +708,6 @@ trait DeltaSQLConfBase {
       .booleanConf
       .createWithDefault(false)
 
-  val DELTA_OPTIMIZE_CONDITIONAL_INCREMENT_METRIC_ENABLED =
-    buildConf("optimize.conditionalIncrementMetric.enabled")
-      .internal()
-      .doc("Whether to enable optimization of ConditionalIncrementMetric expressions with " +
-        "constant conditions.")
-      .booleanConf
-      .createWithDefault(true)
-
   //////////////////////////////////////////////
   // DynamoDB Commit Coordinator-specific configs
   /////////////////////////////////////////////
@@ -1736,6 +1728,14 @@ trait DeltaSQLConfBase {
         """If true, create udfs used by Delta internally from templates to reduce lock contention
           |caused by Scala Reflection.
           |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_OPTIMIZE_CONDITIONAL_INCREMENT_METRIC_ENABLED =
+    buildConf("optimize.conditionalIncrementMetric.enabled")
+      .internal()
+      .doc("Whether to enable optimization of ConditionalIncrementMetric expressions with " +
+        "constant conditions.")
       .booleanConf
       .createWithDefault(true)
 

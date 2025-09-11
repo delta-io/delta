@@ -18,12 +18,12 @@ package org.apache.spark.sql.delta.metric
 
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{AnalysisException, Column, DataFrame, QueryTest}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions._
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.metric.SQLMetrics
 import org.apache.spark.sql.functions._
@@ -350,7 +350,6 @@ abstract class IncrementMetricSuiteBase
     validatePlan(resultDf.queryExecution.executedPlan)
 
     // The metric should be 0 since all condition values are null.
-    // This tests the Photon optimized path: WithConstexprBool(has_nulls=true) with all nulls.
     assert(metric.value === 0, "All-null condition should count 0 rows")
     assert(numRows === 10)
   }

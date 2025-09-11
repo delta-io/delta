@@ -249,47 +249,41 @@ class UCCatalogManagedCommitterSuite
   // ===================== CATALOG_WRITE Tests =====================
   // ===============================================================
 
-  test("CATALOG_WRITE: protocol change is currently not implemented") {
-    val ucClient = new InMemoryUCClient("ucMetastoreId")
-    val committer = new UCCatalogManagedCommitter(ucClient, "ucTableId", baseTestTablePath)
-    val protocolUpgrade = protocolWithCatalogManagedSupport
-      .withFeature(TableFeatures.DELETION_VECTORS_RW_FEATURE)
-    val commitMetadata = createCommitMetadata(
-      version = 1,
-      logPath = baseTestLogPath,
-      readPandMOpt = Optional.of(
-        new KernelTuple2[Protocol, Metadata](
-          protocolWithCatalogManagedSupport,
-          basicPartitionedMetadata)),
-      newProtocolOpt = Optional.of(protocolUpgrade))
+  test("CATALOG_WRITE: protocol and metadata changes are passed to UC client") {
+    withTempTableAndLogPathAndStagedCommitFolderCreated { case (tablePath, logPath) =>
+      // ===== GIVEN =====
+      val ucClient = new InMemoryUCClient("ucMetastoreId")
+      ucClient.createTableIfNotExistsOrThrow("ucTableId", new TableData(-1, ArrayBuffer[Commit]()))
+      val committer = new UCCatalogManagedCommitter(ucClient, "ucTableId", tablePath)
 
-    val exMsg = intercept[UnsupportedOperationException] {
+      // ===== WHEN =====
+      val protocolUpgrade = protocolWithCatalogManagedSupport
+        .withFeature(TableFeatures.DELETION_VECTORS_RW_FEATURE)
+      val metadataUpgrade = basicPartitionedMetadata
+        .withMergedConfiguration(Map("foo" -> "bar").asJava)
+
+      val commitMetadata = createCommitMetadata(
+        version = 1,
+        logPath = logPath,
+        readPandMOpt = Optional.of(
+          new KernelTuple2[Protocol, Metadata](
+            protocolWithCatalogManagedSupport,
+            basicPartitionedMetadata)),
+        newProtocolOpt = Optional.of(protocolUpgrade),
+        newMetadataOpt = Optional.of(metadataUpgrade))
       committer.commit(defaultEngine, emptyActionsIterator, commitMetadata)
-    }.getMessage
-    assert(exMsg.contains("Protocol change is not yet implemented"))
+
+      // ===== THEN =====
+      val updatedTableData = ucClient.getTablesCopy.get("ucTableId").get
+      val latestProtocol = updatedTableData.getCurrentProtocolOpt.get
+      val latestMetadata = updatedTableData.getCurrentMetadataOpt.get
+      assert(latestProtocol.getReaderFeatures === protocolUpgrade.getReaderFeatures)
+      assert(latestProtocol.getWriterFeatures === protocolUpgrade.getWriterFeatures)
+      assert(latestMetadata.getConfiguration === metadataUpgrade.getConfiguration)
+    }
   }
 
-  test("CATALOG_WRITE: metadata change is currently not implemented") {
-    val ucClient = new InMemoryUCClient("ucMetastoreId")
-    val committer = new UCCatalogManagedCommitter(ucClient, "ucTableId", baseTestTablePath)
-    val metadataUpgrade = basicPartitionedMetadata
-      .withMergedConfiguration(Map("foo" -> "bar").asJava)
-    val commitMetadata = createCommitMetadata(
-      version = 1,
-      logPath = baseTestLogPath,
-      readPandMOpt = Optional.of(
-        new KernelTuple2[Protocol, Metadata](
-          protocolWithCatalogManagedSupport,
-          basicPartitionedMetadata)),
-      newMetadataOpt = Optional.of(metadataUpgrade))
-
-    val exMsg = intercept[UnsupportedOperationException] {
-      committer.commit(defaultEngine, emptyActionsIterator, commitMetadata)
-    }.getMessage
-    assert(exMsg.contains("Metadata change is not yet implemented"))
-  }
-
-  test("CATALOG_WRITE: writes staged commit file and invokes UC client commit API") {
+  test("CATALOG_WRITE: writes staged commit file and invokes UC client commit API (no P&M change") {
     withTempTableAndLogPathAndStagedCommitFolderCreated { case (tablePath, logPath) =>
       // ===== GIVEN =====
       // Set up UC client with initial table with maxRatifiedVersion = -1, numCommits = 0. This
@@ -327,6 +321,10 @@ class UCCatalogManagedCommitterSuite
       val updatedTable = ucClient.getTablesCopy.get("ucTableId").get
       assert(updatedTable.getMaxRatifiedVersion == 1)
       assert(updatedTable.getCommits.size == 1)
+
+      // Assert that no P&M change in this txn => No P&M change sent to UC
+      assert(updatedTable.getCurrentProtocolOpt.isEmpty)
+      assert(updatedTable.getCurrentMetadataOpt.isEmpty)
 
       // Verify the new commit in UC has correct version
       val lastCommit = updatedTable.getCommits.last
