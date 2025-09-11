@@ -29,7 +29,7 @@ import org.apache.spark.sql.delta.commands.WriteIntoDelta
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.util.PartitionUtils
+import org.apache.spark.sql.delta.util.{PartitionUtils, Utils}
 import org.apache.hadoop.fs.Path
 import org.json4s.{Formats, NoTypeHints}
 import org.json4s.jackson.Serialization
@@ -91,21 +91,6 @@ class DeltaDataSource
       .map(catalogTable => DeltaLog.forTableWithSnapshot(
         sparkSession, catalogTable, options = Map.empty[String, String]))
       .getOrElse(DeltaLog.forTableWithSnapshot(sparkSession, path))._2
-  }
-
-  /**
-   * Construct a delta log from either the catalog table or a path.
-   *
-   * If catalogTableOpt is defined, use it to construct the delta log; otherwise, fall back to use
-   * path-based delta log construction.
-   */
-  private def getDeltaLogFromTableOrPath(
-      sparkSession: SparkSession,
-      path: Path,
-      options: Map[String, String]): DeltaLog = {
-    catalogTableOpt
-      .map(catalogTable => DeltaLog.forTable(sparkSession, catalogTable, options))
-      .getOrElse(DeltaLog.forTable(sparkSession, path, options))
   }
 
   def inferSchema: StructType = new StructType() // empty
@@ -254,7 +239,8 @@ class DeltaDataSource
       .map(DeltaDataSource.decodePartitioningColumns)
       .getOrElse(Nil)
 
-    val deltaLog = getDeltaLogFromTableOrPath(sqlContext.sparkSession, new Path(path), parameters)
+    val deltaLog = Utils.getDeltaLogFromTableOrPath(
+      sqlContext.sparkSession, catalogTableOpt, new Path(path), parameters)
     WriteIntoDelta(
       deltaLog = deltaLog,
       mode = mode,
