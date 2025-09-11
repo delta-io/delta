@@ -42,10 +42,14 @@ import io.delta.kernel.utils.FileStatus
 
 import org.scalatest.funsuite.AnyFunSuite
 
-/** Runs in-commit timestamp tests using the TableManager snapshot APIs and V2 transaction builders */
+/**
+ * Runs in-commit timestamp tests using the TableManager snapshot APIs and V2 transaction builders
+ */
 class InCommitTimestampSuite extends AbstractInCommitTimestampSuite with WriteUtilsWithV2Builders
 
-/** Runs in-commit timestamp tests using the legacy Table snapshot APIs and V1 transaction builders */
+/**
+ * Runs in-commit timestamp tests using the legacy Table snapshot APIs and V1 transaction builders
+ */
 class LegacyInCommitTimestampSuite extends AbstractInCommitTimestampSuite
     with WriteUtilsWithV1Builders
 
