@@ -22,12 +22,14 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.utils.CloseableIterator;
+import io.delta.spark.dsv2.utils.ScalaUtils;
 import java.io.IOException;
 import java.time.ZoneId;
 import java.util.*;
 import java.util.stream.Collectors;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.paths.SparkPath;
+import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.connector.read.*;
 import org.apache.spark.sql.execution.datasources.*;
@@ -35,6 +37,7 @@ import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
+import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import scala.collection.JavaConverters;
 
 /** Spark DSV2 Scan implementation backed by Delta Kernel. */
@@ -48,6 +51,8 @@ public class SparkScan implements Scan, SupportsReportStatistics {
   private final Filter[] dataFilters;
   private final io.delta.kernel.Scan kernelScan;
   private final Configuration hadoopConf;
+  private final CaseInsensitiveStringMap options;
+  private final scala.collection.immutable.Map<String, String> scalaOptions;
   private final SQLConf sqlConf;
   private final ZoneId zoneId;
 
@@ -64,19 +69,22 @@ public class SparkScan implements Scan, SupportsReportStatistics {
       Predicate[] pushedToKernelFilters,
       Filter[] dataFilters,
       io.delta.kernel.Scan kernelScan,
-      Configuration hadoopConf) {
+      CaseInsensitiveStringMap options) {
 
-    final String normalizedTablePath = Objects.requireNonNull(tablePath, "tablePath");
+    final String normalizedTablePath = Objects.requireNonNull(tablePath, "tablePath is null");
     this.tablePath =
         normalizedTablePath.endsWith("/") ? normalizedTablePath : normalizedTablePath + "/";
-    this.dataSchema = Objects.requireNonNull(dataSchema, "dataSchema");
-    this.partitionSchema = Objects.requireNonNull(partitionSchema, "partitionSchema");
-    this.readDataSchema = Objects.requireNonNull(readDataSchema, "readDataSchema");
+    this.dataSchema = Objects.requireNonNull(dataSchema, "dataSchema is null");
+    this.partitionSchema = Objects.requireNonNull(partitionSchema, "partitionSchema is null");
+    this.readDataSchema = Objects.requireNonNull(readDataSchema, "readDataSchema is null");
     this.pushedToKernelFilters =
         pushedToKernelFilters == null ? new Predicate[0] : pushedToKernelFilters.clone();
     this.dataFilters = dataFilters == null ? new Filter[0] : dataFilters.clone();
-    this.kernelScan = Objects.requireNonNull(kernelScan, "kernelScan");
-    this.hadoopConf = Objects.requireNonNull(hadoopConf, "hadoopConf");
+    this.kernelScan = Objects.requireNonNull(kernelScan, "kernelScan is null");
+    this.options = Objects.requireNonNull(options, "options is null");
+    this.scalaOptions = ScalaUtils.toScalaMap(options);
+    this.hadoopConf = SparkSession.active().sessionState().newHadoopConfWithOptions(scalaOptions);
+    ;
     this.sqlConf = SQLConf.get();
     this.zoneId = ZoneId.of(sqlConf.sessionLocalTimeZone());
   }
@@ -106,6 +114,7 @@ public class SparkScan implements Scan, SupportsReportStatistics {
         pushedToKernelFilters,
         dataFilters,
         totalBytes,
+        scalaOptions,
         hadoopConf);
   }
 

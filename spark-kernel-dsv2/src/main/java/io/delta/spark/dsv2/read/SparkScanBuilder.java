@@ -23,12 +23,12 @@ import java.util.Arrays;
 import java.util.Locale;
 import java.util.Set;
 import java.util.stream.Collectors;
-import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.connector.read.ScanBuilder;
 import org.apache.spark.sql.connector.read.SupportsPushDownRequiredColumns;
 import org.apache.spark.sql.sources.Filter;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
+import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 
 /**
  * A Spark ScanBuilder implementation that wraps Delta Kernel's ScanBuilder. This allows Spark to
@@ -41,7 +41,7 @@ public class SparkScanBuilder implements ScanBuilder, SupportsPushDownRequiredCo
   private final String tablePath;
   private final StructType dataSchema;
   private final StructType partitionSchema;
-  private final Configuration hadoopConf;
+  private final CaseInsensitiveStringMap options;
   private final Set<String> partitionColumnSet;
   private StructType requiredDataSchema;
   private Predicate[] pushedPredicates;
@@ -52,13 +52,13 @@ public class SparkScanBuilder implements ScanBuilder, SupportsPushDownRequiredCo
       StructType dataSchema,
       StructType partitionSchema,
       SnapshotImpl snapshot,
-      Configuration hadoopConf) {
+      CaseInsensitiveStringMap options) {
     this.kernelScanBuilder = requireNonNull(snapshot, "snapshot is null").getScanBuilder();
     this.tableName = requireNonNull(tableName, "tableName is null");
     this.tablePath = requireNonNull(tablePath, "tablePath is null");
     this.dataSchema = requireNonNull(dataSchema, "dataSchema is null");
     this.partitionSchema = requireNonNull(partitionSchema, "partitionSchema is null");
-    this.hadoopConf = requireNonNull(hadoopConf, "hadoopConf is null");
+    this.options = requireNonNull(options, "options is null");
     this.requiredDataSchema = this.dataSchema;
     this.partitionColumnSet =
         Arrays.stream(this.partitionSchema.fields())
@@ -88,6 +88,6 @@ public class SparkScanBuilder implements ScanBuilder, SupportsPushDownRequiredCo
         pushedPredicates,
         new Filter[0],
         kernelScanBuilder.build(),
-        hadoopConf);
+        options);
   }
 }

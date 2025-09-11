@@ -116,8 +116,7 @@ public class SparkTable implements Table, SupportsRead {
 
   @Override
   public ScanBuilder newScanBuilder(CaseInsensitiveStringMap options) {
-    return new SparkScanBuilder(
-        name(), tablePath, dataSchema, partitionSchema, snapshot, hadoopConf);
+    return new SparkScanBuilder(name(), tablePath, dataSchema, partitionSchema, snapshot, options);
   }
 
   @Override
