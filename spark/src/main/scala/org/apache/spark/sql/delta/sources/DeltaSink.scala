@@ -26,6 +26,7 @@ import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{ImplicitMetadataOperation, SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf.AllowAutomaticWideningMode
+import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.hadoop.fs.Path
 
 // scalastyle:off import.ordering.noEmptyLine
@@ -58,7 +59,8 @@ case class DeltaSink(
     with UpdateExpressionsSupport
     with DeltaLogging {
 
-  private val deltaLog = DeltaLog.forTable(sqlContext.sparkSession, path)
+  private lazy val deltaLog = DeltaUtils.getDeltaLogFromTableOrPath(
+    sqlContext.sparkSession, catalogTable, path)
 
   private val sqlConf = sqlContext.sparkSession.sessionState.conf
 
