@@ -41,8 +41,6 @@ import java.util.stream.Stream;
 /** Utility methods to evaluate {@code IN} expression. */
 public class InExpressionEvaluator {
 
-  private static final int MIN_ARGUMENT_COUNT = 2;
-
   private static final Set<Class<? extends DataType>> NUMERIC_TYPES =
       Stream.of(
               ByteType.class,
@@ -229,17 +227,14 @@ public class InExpressionEvaluator {
             && TIMESTAMP_TYPES.contains(type2.getClass()));
   }
 
-  // Comparison logic
   private static boolean compareValues(Object value1, Object value2, DataType valueType) {
     if (value1 == null || value2 == null) {
       return false;
     }
-
     // For numeric types, convert both values to the same type for comparison
     if (NUMERIC_TYPES.contains(valueType.getClass())) {
       return compareNumericValues(value1, value2, valueType);
     }
-
     return getComparator(valueType).apply(value1, value2) == 0;
   }
 
