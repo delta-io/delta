@@ -24,9 +24,6 @@ import java.util.List;
  * {@code IN} expression
  *
  * <p>Definition:
- *
- * <p>
- *
  * <ul>
  *   <li>SQL semantic: {@code expr IN (expr1, expr2, ...) [COLLATE collationIdentifier]}
  *   <li>Requires the value expression to be evaluated against a list of literal expressions.
@@ -34,7 +31,6 @@ import java.util.List;
  *       nulls, null if the value is null or any comparison results in null.
  *   <li>Supports collation for string comparisons.
  * </ul>
- *
  * @since 4.0.0
  */
 @Evolving
