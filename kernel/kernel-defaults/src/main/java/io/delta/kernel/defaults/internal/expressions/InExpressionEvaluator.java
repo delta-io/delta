@@ -20,12 +20,13 @@ import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUti
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.expressions.Expression;
+import io.delta.kernel.expressions.In;
 import io.delta.kernel.expressions.Literal;
-import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.util.Preconditions;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.types.*;
+import io.delta.kernel.types.CollationIdentifier;
 import java.math.BigDecimal;
 import java.util.Collections;
 import java.util.HashMap;
@@ -98,21 +99,22 @@ public class InExpressionEvaluator {
     return Collections.unmodifiableMap(map);
   }
 
-  /**
-   * Validates and transforms the {@code IN} expression.
-   *
-   * <p>IN expression structure: {@code value IN (literal1, literal2, ...)} - First child: value
-   * expression to be tested - Remaining children: literal values to check against
-   */
-  static Predicate validateAndTransform(
-      Predicate in, List<Expression> childrenExpressions, List<DataType> childrenOutputTypes) {
-
-    validateArgumentCount(in, childrenExpressions);
-    validateAllChildrenAreLiterals(in, childrenExpressions);
-    validateTypeCompatibility(in, childrenOutputTypes);
-    validateCollation(in, childrenExpressions, childrenOutputTypes);
-
-    return createPredicate(in.getName(), childrenExpressions, in.getCollationIdentifier());
+  /** Validates and transforms the {@code IN} expression. */
+  static In validateAndTransform(
+      In in,
+      Expression valueExpression,
+      DataType valueDataType,
+      List<Expression> inListExpressions,
+      List<DataType> inListDataTypes) {
+    validateArgumentCount(in, inListExpressions);
+    validateInListElementsAreLiterals(in, inListExpressions);
+    validateTypeCompatibility(in, valueDataType, inListDataTypes);
+    validateCollation(in, valueDataType, inListExpressions, inListDataTypes);
+    if (in.getCollationIdentifier().isPresent()) {
+      return new In(valueExpression, inListExpressions, in.getCollationIdentifier().get());
+    } else {
+      return new In(valueExpression, inListExpressions);
+    }
   }
 
   /** Evaluates the IN expression on the given column vectors. */
@@ -124,20 +126,18 @@ public class InExpressionEvaluator {
   // Private Helper //
   ////////////////////
 
-  private static void validateArgumentCount(Predicate in, List<Expression> childrenExpressions) {
-    if (childrenExpressions.size() < MIN_ARGUMENT_COUNT) {
+  private static void validateArgumentCount(In in, List<Expression> inListExpressions) {
+    if (inListExpressions.isEmpty()) {
       throw unsupportedExpressionException(
           in,
-          "IN expression requires at least 2 arguments: value and at least one element "
-              + "in the list. Example usage: column IN (value1, value2, ...)");
+          "IN expression requires at least 1 element in the IN list. "
+              + "Example usage: column IN (value1, value2, ...)");
     }
   }
 
-  private static void validateAllChildrenAreLiterals(
-      Predicate in, List<Expression> childrenExpressions) {
-    // Skip the first child (value expression) and validate that all list elements are literals
-    for (int i = 1; i < childrenExpressions.size(); i++) {
-      Expression child = childrenExpressions.get(i);
+  private static void validateInListElementsAreLiterals(In in, List<Expression> inListExpressions) {
+    for (int i = 0; i < inListExpressions.size(); i++) {
+      Expression child = inListExpressions.get(i);
       if (!(child instanceof Literal)) {
         throw unsupportedExpressionException(
             in,
@@ -145,24 +145,23 @@ public class InExpressionEvaluator {
                 "IN expression requires all list elements to be literals. "
                     + "Non-literal expression found at position %d: %s. "
                     + "Only constant values are currently supported in IN lists.",
-                i, child.getClass().getSimpleName()));
+                i + 1, child.getClass().getSimpleName()));
       }
     }
   }
 
-  private static void validateTypeCompatibility(Predicate in, List<DataType> childrenOutputTypes) {
-    DataType valueType = childrenOutputTypes.get(0);
-
-    for (int i = 1; i < childrenOutputTypes.size(); i++) {
-      DataType listElementType = childrenOutputTypes.get(i);
-      if (!areTypesCompatible(valueType, listElementType)) {
+  private static void validateTypeCompatibility(
+      In in, DataType valueDataType, List<DataType> inListDataTypes) {
+    for (int i = 0; i < inListDataTypes.size(); i++) {
+      DataType listElementType = inListDataTypes.get(i);
+      if (!areTypesCompatible(valueDataType, listElementType)) {
         throw unsupportedExpressionException(
             in,
             String.format(
                 "IN expression requires all elements to have compatible types. "
                     + "Value type: %s, incompatible element type at position %d: %s. "
                     + "Consider casting the incompatible element to a compatible type.",
-                valueType, i, listElementType));
+                valueDataType, i + 1, listElementType));
       }
     }
   }
@@ -172,27 +171,30 @@ public class InExpressionEvaluator {
    * expressions must be string type or null literals.
    */
   private static void validateCollation(
-      Predicate in, List<Expression> childrenExpressions, List<DataType> childrenOutputTypes) {
+      In in,
+      DataType valueDataType,
+      List<Expression> inListExpressions,
+      List<DataType> inListDataTypes) {
     in.getCollationIdentifier()
         .ifPresent(
             collationIdentifier -> {
               checkIsUTF8BinaryCollation(in, collationIdentifier);
-              validateStringTypesForCollation(in, childrenExpressions, childrenOutputTypes);
+              validateStringTypesForCollation(
+                  in, valueDataType, inListExpressions, inListDataTypes);
             });
   }
 
   private static void validateStringTypesForCollation(
-      Predicate in, List<Expression> childrenExpressions, List<DataType> childrenOutputTypes) {
-
+      In in,
+      DataType valueDataType,
+      List<Expression> inListExpressions,
+      List<DataType> inListDataTypes) {
     checkIsStringType(
-        childrenOutputTypes.get(0),
-        in,
-        "'IN' with collation expects STRING type for the value expression");
-
-    for (int i = 1; i < childrenOutputTypes.size(); i++) {
-      if (!isNullLiteral(childrenExpressions.get(i))) {
+        valueDataType, in, "'IN' with collation expects STRING type for the value expression");
+    for (int i = 0; i < inListDataTypes.size(); i++) {
+      if (!isNullLiteral(inListExpressions.get(i))) {
         checkIsStringType(
-            childrenOutputTypes.get(i),
+            inListDataTypes.get(i),
             in,
             "'IN' with collation expects STRING type for all list elements");
       }
@@ -201,6 +203,23 @@ public class InExpressionEvaluator {
 
   private static boolean isNullLiteral(Expression expression) {
     return expression instanceof Literal && ((Literal) expression).getValue() == null;
+  }
+
+  private static void checkIsUTF8BinaryCollation(In in, CollationIdentifier collationIdentifier) {
+    if (!"SPARK.UTF8_BINARY".equals(collationIdentifier.toString())) {
+      throw unsupportedExpressionException(
+          in,
+          String.format(
+              "Unsupported collation: \"%s\". "
+                  + "Default Engine supports just \"SPARK.UTF8_BINARY\" collation.",
+              collationIdentifier));
+    }
+  }
+
+  private static void checkIsStringType(DataType dataType, In in, String message) {
+    if (!(dataType instanceof StringType)) {
+      throw unsupportedExpressionException(in, message);
+    }
   }
 
   private static boolean areTypesCompatible(DataType type1, DataType type2) {

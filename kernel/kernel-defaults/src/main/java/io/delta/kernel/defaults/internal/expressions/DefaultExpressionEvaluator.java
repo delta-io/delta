@@ -347,14 +347,17 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
     }
 
     @Override
-    ExpressionTransformResult visitIn(Predicate in) {
-      List<ExpressionTransformResult> children =
-          in.getChildren().stream().map(this::visit).collect(toList());
-      Predicate transformedExpression =
+    ExpressionTransformResult visitIn(In in) {
+      ExpressionTransformResult visitedValue = visit(in.getValueExpression());
+      List<ExpressionTransformResult> visitedInList =
+          in.getInListElements().stream().map(this::visit).collect(toList());
+      In transformedExpression =
           InExpressionEvaluator.validateAndTransform(
               in,
-              children.stream().map(e -> e.expression).collect(toList()),
-              children.stream().map(e -> e.outputType).collect(toList()));
+              visitedValue.expression,
+              visitedValue.outputType,
+              visitedInList.stream().map(e -> e.expression).collect(toList()),
+              visitedInList.stream().map(e -> e.outputType).collect(toList()));
       return new ExpressionTransformResult(transformedExpression, BooleanType.BOOLEAN);
     }
 
@@ -739,7 +742,7 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
     }
 
     @Override
-    ColumnVector visitIn(Predicate in) {
+    ColumnVector visitIn(In in) {
       return InExpressionEvaluator.eval(
           in.getChildren().stream().map(this::visit).collect(toList()));
     }
