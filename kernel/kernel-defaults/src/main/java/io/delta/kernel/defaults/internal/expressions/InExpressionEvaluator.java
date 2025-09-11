@@ -166,9 +166,7 @@ public class InExpressionEvaluator {
     }
   }
 
-  /**
-   * Validates that collation is only used with string types and the collation is UTF8Binary.
-   */
+  /** Validates that collation is only used with string types and the collation is UTF8Binary. */
   private static void validateCollation(
       In in,
       DataType valueDataType,
@@ -250,15 +248,16 @@ public class InExpressionEvaluator {
    * numeric type comparisons by converting both values to the target type and using the appropriate
    * comparator.
    */
-  private static boolean compareNumericValues(Object value1, Object value2, DataType targetType) {
+  private static boolean compareNumericValues(
+      Object value1, Object value2, DataType targetTypeToCompare) {
     Number num1 = (Number) value1;
     Number num2 = (Number) value2;
-    Object convertedValue1 = convertToTargetType(num1, targetType);
-    Object convertedValue2 = convertToTargetType(num2, targetType);
-    return getComparator(targetType).apply(convertedValue1, convertedValue2) == 0;
+    Object convertedValue1 = convertToTargetTypeForCompare(num1, targetTypeToCompare);
+    Object convertedValue2 = convertToTargetTypeForCompare(num2, targetTypeToCompare);
+    return getComparator(targetTypeToCompare).apply(convertedValue1, convertedValue2) == 0;
   }
 
-  private static Object convertToTargetType(Number value, DataType targetType) {
+  private static Object convertToTargetTypeForCompare(Number value, DataType targetType) {
     if (targetType instanceof ByteType) {
       return value.byteValue();
     } else if (targetType instanceof ShortType) {
