@@ -54,7 +54,6 @@ class CatalogManagedWithIcebergWriterCompatV1Suite
         .withTableProperties(
           Map(
             "delta.feature.catalogOwned-preview" -> "supported",
-            "delta.feature.domainMetadata" -> "supported",
             TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey -> "true").asJava)
         .build(engine)
 
