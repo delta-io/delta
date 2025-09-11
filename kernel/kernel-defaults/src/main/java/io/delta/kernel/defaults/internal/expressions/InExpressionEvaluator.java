@@ -35,7 +35,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.function.BiFunction;
 import java.util.stream.Collectors;
-import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
 /** Utility methods to evaluate {@code IN} expression. */
@@ -99,12 +98,17 @@ public class InExpressionEvaluator {
     return Collections.unmodifiableMap(map);
   }
 
-  /** Validates and transforms the {@code IN} expression. */
+  /**
+   * Validates and transforms the {@code IN} expression.
+   *
+   * <p>IN expression structure: {@code value IN (literal1, literal2, ...)} - First child: value
+   * expression to be tested - Remaining children: literal values to check against
+   */
   static Predicate validateAndTransform(
       Predicate in, List<Expression> childrenExpressions, List<DataType> childrenOutputTypes) {
 
     validateArgumentCount(in, childrenExpressions);
-    validateLiteralListChildren(in, childrenExpressions);
+    validateAllChildrenAreLiterals(in, childrenExpressions);
     validateTypeCompatibility(in, childrenOutputTypes);
     validateCollation(in, childrenExpressions, childrenOutputTypes);
 
@@ -129,7 +133,7 @@ public class InExpressionEvaluator {
     }
   }
 
-  private static void validateLiteralListChildren(
+  private static void validateAllChildrenAreLiterals(
       Predicate in, List<Expression> childrenExpressions) {
     // Skip the first child (value expression) and validate that all list elements are literals
     for (int i = 1; i < childrenExpressions.size(); i++) {
@@ -149,22 +153,24 @@ public class InExpressionEvaluator {
   private static void validateTypeCompatibility(Predicate in, List<DataType> childrenOutputTypes) {
     DataType valueType = childrenOutputTypes.get(0);
 
-    IntStream.range(1, childrenOutputTypes.size())
-        .forEach(
-            i -> {
-              DataType listElementType = childrenOutputTypes.get(i);
-              if (!areTypesCompatible(valueType, listElementType)) {
-                throw unsupportedExpressionException(
-                    in,
-                    String.format(
-                        "IN expression requires all elements to have compatible types. "
-                            + "Value type: %s, incompatible element type at position %d: %s. "
-                            + "Consider casting the incompatible element to a compatible type.",
-                        valueType, i, listElementType));
-              }
-            });
+    for (int i = 1; i < childrenOutputTypes.size(); i++) {
+      DataType listElementType = childrenOutputTypes.get(i);
+      if (!areTypesCompatible(valueType, listElementType)) {
+        throw unsupportedExpressionException(
+            in,
+            String.format(
+                "IN expression requires all elements to have compatible types. "
+                    + "Value type: %s, incompatible element type at position %d: %s. "
+                    + "Consider casting the incompatible element to a compatible type.",
+                valueType, i, listElementType));
+      }
+    }
   }
 
+  /**
+   * Validates that collation is only used with string types. When collation is specified, all
+   * expressions must be string type or null literals.
+   */
   private static void validateCollation(
       Predicate in, List<Expression> childrenExpressions, List<DataType> childrenOutputTypes) {
     in.getCollationIdentifier()
@@ -221,34 +227,37 @@ public class InExpressionEvaluator {
     return getComparator(valueType).apply(value1, value2) == 0;
   }
 
+  /**
+   * Compares numeric values by converting both to the target type. This method handles mixed
+   * numeric type comparisons by converting both values to the target type and using the appropriate
+   * comparator.
+   */
   private static boolean compareNumericValues(Object value1, Object value2, DataType targetType) {
-    // Convert both values to the target type for comparison
     Number num1 = (Number) value1;
     Number num2 = (Number) value2;
+    Object convertedValue1 = convertToTargetType(num1, targetType);
+    Object convertedValue2 = convertToTargetType(num2, targetType);
+    return getComparator(targetType).apply(convertedValue1, convertedValue2) == 0;
+  }
 
+  private static Object convertToTargetType(Number value, DataType targetType) {
     if (targetType instanceof ByteType) {
-      return num1.byteValue() == num2.byteValue();
+      return value.byteValue();
     } else if (targetType instanceof ShortType) {
-      return num1.shortValue() == num2.shortValue();
+      return value.shortValue();
     } else if (targetType instanceof IntegerType || targetType instanceof DateType) {
-      return num1.intValue() == num2.intValue();
+      return value.intValue();
     } else if (targetType instanceof LongType) {
-      return num1.longValue() == num2.longValue();
+      return value.longValue();
     } else if (targetType instanceof FloatType) {
-      return Float.compare(num1.floatValue(), num2.floatValue()) == 0;
+      return value.floatValue();
     } else if (targetType instanceof DoubleType) {
-      return Double.compare(num1.doubleValue(), num2.doubleValue()) == 0;
+      return value.doubleValue();
     } else if (targetType instanceof DecimalType) {
       // For decimal, convert to BigDecimal for precise comparison
-      BigDecimal bd1 =
-          (value1 instanceof BigDecimal) ? (BigDecimal) value1 : new BigDecimal(num1.toString());
-      BigDecimal bd2 =
-          (value2 instanceof BigDecimal) ? (BigDecimal) value2 : new BigDecimal(num2.toString());
-      return bd1.compareTo(bd2) == 0;
+      return (value instanceof BigDecimal) ? (BigDecimal) value : new BigDecimal(value.toString());
     }
-
-    // Fallback to object comparison
-    return value1.equals(value2);
+    return value;
   }
 
   private static BiFunction<Object, Object, Integer> getComparator(DataType dataType) {
@@ -290,7 +299,7 @@ public class InExpressionEvaluator {
     public boolean getBoolean(int rowId) {
       Optional<Boolean> result = evaluateInLogic(rowId);
       Preconditions.checkArgument(
-          result.isPresent(), "This method is expected to be called if isNullAt is true");
+          result.isPresent(), "This method is expected to be called only when isNullAt is false");
       return result.get();
     }
 
@@ -306,6 +315,10 @@ public class InExpressionEvaluator {
 
       Object valueToFind =
           VectorUtils.getValueAsObject(valueVector, valueVector.getDataType(), rowId);
+
+      // Track if we encounter any null values in the IN list
+      // SQL semantics: if value is null OR any comparison is null, result is null
+      // Only return false if value is not null and no matches found and no nulls encountered
       boolean foundNull = false;
 
       for (ColumnVector inListVector : inListVectors) {
