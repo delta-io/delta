@@ -276,7 +276,7 @@ These files reside in the `_delta_log/_sidecars` directory.
 ### Log Compaction Files
 
 Log compaction files reside in the `_delta_log` directory. A log compaction
-file from a start version `x` to an end version `y` (`y` should be greater than `x`)
+file from a start version `x` to an end version `y` (`y` must be _greater_ than `x`)
 will have the following name:
 `<x>.<y>.compacted.json`. This contains the aggregated
 actions for commit range `[x, y]`. Similar to commits, each row in the log
