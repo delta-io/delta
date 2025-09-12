@@ -66,13 +66,13 @@ public class SparkBatch implements Batch {
       scala.collection.immutable.Map<String, String> scalaOptions,
       Configuration hadoopConf) {
 
-    this.tablePath = Objects.requireNonNull(tablePath, "tableName");
-    this.dataSchema = Objects.requireNonNull(dataSchema, "dataSchema");
-    this.partitionSchema = Objects.requireNonNull(partitionSchema, "partitionSchema");
-    this.readDataSchema = Objects.requireNonNull(readDataSchema, "readDataSchema");
+    this.tablePath = Objects.requireNonNull(tablePath, "tableName is null");
+    this.dataSchema = Objects.requireNonNull(dataSchema, "dataSchema is null");
+    this.partitionSchema = Objects.requireNonNull(partitionSchema, "partitionSchema is null");
+    this.readDataSchema = Objects.requireNonNull(readDataSchema, "readDataSchema is null");
     this.partitionedFiles =
         java.util.Collections.unmodifiableList(
-            new ArrayList<>(Objects.requireNonNull(partitionedFiles, "partitionedFiles")));
+            new ArrayList<>(Objects.requireNonNull(partitionedFiles, "partitionedFiles is null")));
     this.pushedToKernelFilters =
         pushedToKernelFilters != null
             ? Arrays.copyOf(pushedToKernelFilters, pushedToKernelFilters.length)
@@ -80,8 +80,8 @@ public class SparkBatch implements Batch {
     this.dataFilters =
         dataFilters != null ? Arrays.copyOf(dataFilters, dataFilters.length) : new Filter[0];
     this.totalBytes = totalBytes;
-    this.scalaOptions = Objects.requireNonNull(scalaOptions, "scalaOptions");
-    this.hadoopConf = Objects.requireNonNull(hadoopConf, "hadoopConf");
+    this.scalaOptions = Objects.requireNonNull(scalaOptions, "scalaOptions is null");
+    this.hadoopConf = Objects.requireNonNull(hadoopConf, "hadoopConf is null");
     this.sqlConf = SQLConf.get();
   }
 
