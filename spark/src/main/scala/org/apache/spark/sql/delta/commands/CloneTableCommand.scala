@@ -282,22 +282,28 @@ case class CloneParquetSource(
     .getOrElse(s"parquet.`${tableIdentifier.table}`")
 }
 
+case class TablePolicies(
+    hasRowPolicies: Boolean,
+    hasColumnPolicies: Boolean
+)
+
 /**
  * A iceberg table source to be cloned from
  */
 case class CloneIcebergSource(
-  tableIdentifier: TableIdentifier,
-  sparkTable: Option[Table],
-  deltaSnapshot: Option[Snapshot],
+  metadataLocation: String,
+  tableNameOpt: Option[String],
+  tablePoliciesOpt: Option[TablePolicies],
+  deltaSnapshotOpt: Option[Snapshot],
   spark: SparkSession) extends CloneConvertedSource(spark) {
 
   override lazy val convertTargetTable: ConvertTargetTable =
-    ConvertUtils.getIcebergTable(spark, tableIdentifier.table, sparkTable, deltaSnapshot)
+    ConvertUtils.getIcebergTable(spark, metadataLocation, deltaSnapshotOpt)
 
   override def format: String = CloneSourceFormat.ICEBERG
 
   override def name: String =
-    sparkTable.map(_.name()).getOrElse(s"iceberg.`${tableIdentifier.table}`")
+    tableNameOpt.getOrElse(s"iceberg.`$metadataLocation`")
 
   override def catalogTable: Option[CatalogTable] = None
 }

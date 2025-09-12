@@ -80,12 +80,6 @@ class IcebergTable(
     icebergTable: IcebergTableLike,
     deltaSnapshot: Option[Snapshot],
     convertStats: Boolean) extends ConvertTargetTable {
-  def this(
-      spark: SparkSession,
-      table: Table,
-      deltaSnapshot: Option[Snapshot],
-      convertStats: Boolean) =
-    this(spark, DelegatingIcebergTable(table), deltaSnapshot, convertStats)
 
   def this(spark: SparkSession, basePath: String, deltaTable: Option[Snapshot],
            convertStats: Boolean = true) =
