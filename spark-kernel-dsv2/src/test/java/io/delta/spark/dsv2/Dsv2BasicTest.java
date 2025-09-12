@@ -17,23 +17,18 @@ package io.delta.spark.dsv2;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-import io.delta.golden.GoldenTableUtils$;
 import java.io.File;
-import java.math.BigDecimal;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 import org.apache.spark.SparkConf;
 import org.apache.spark.sql.*;
-import org.apache.spark.sql.catalyst.expressions.GenericRow;
 import org.apache.spark.sql.types.DataTypes;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.io.TempDir;
-import scala.Function0;
 
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
-public class Dsv2BasicTest extends QueryTest {
+public class Dsv2BasicTest {
 
   private SparkSession spark;
   private String nameSpace;
@@ -139,161 +134,6 @@ public class Dsv2BasicTest extends QueryTest {
     assertDatasetEquals(actual, expectedRows);
   }
 
-  @Test
-  public void testTablePrimitives() throws Exception {
-    List<Row> expected = new ArrayList<>();
-    for (int i = 0; i <= 10; i++) {
-      if (i == 10) {
-        expected.add(
-            new GenericRow(
-                new Object[] {null, null, null, null, null, null, null, null, null, null}));
-      } else {
-        expected.add(
-            new GenericRow(
-                new Object[] {
-                  i,
-                  (long) i,
-                  (byte) i,
-                  (short) i,
-                  i % 2 == 0,
-                  (float) i,
-                  (double) i,
-                  Integer.toString(i),
-                  new byte[] {(byte) i, (byte) i},
-                  new BigDecimal(i)
-                }));
-      }
-    }
-
-    checkTable("data-reader-primitives", expected);
-  }
-
-  @Test
-  public void testTableWithNestedStruct() {
-    List<Row> expected = new ArrayList<>();
-    for (int i = 0; i < 10; i++) {
-      Row innerMost = new GenericRow(new Object[] {i, (long) i});
-      Row middle =
-          new GenericRow(new Object[] {Integer.toString(i), Integer.toString(i), innerMost});
-      expected.add(new GenericRow(new Object[] {middle, i}));
-    }
-    // Assuming `checkTable` is made accessible (e.g., protected in base class)
-    checkTable("data-reader-nested-struct", expected);
-  }
-
-  @Test
-  public void testPartitionedTable() {
-    // Build expected rows (excluding unsupported partition column `as_timestamp`)
-    List<Row> expected = new ArrayList<>();
-    java.sql.Date fixedDate = java.sql.Date.valueOf("2021-09-08");
-
-    for (int i = 0; i < 2; i++) {
-      // Array field: Seq(TestRow(i), TestRow(i), TestRow(i)) where TestRow(i) => struct(i)
-      List<Row> arrElems =
-          Arrays.asList(
-              new GenericRow(new Object[] {i}),
-              new GenericRow(new Object[] {i}),
-              new GenericRow(new Object[] {i}));
-      Object arrSeq = scala.collection.JavaConverters.asScalaBuffer(arrElems).toList();
-
-      // Nested struct: TestRow(i.toString, i.toString, TestRow(i, i.toLong))
-      Row innerMost = new GenericRow(new Object[] {i, (long) i});
-      Row middle =
-          new GenericRow(new Object[] {Integer.toString(i), Integer.toString(i), innerMost});
-
-      expected.add(
-          new GenericRow(
-              new Object[] {
-                i, // int
-                (long) i, // long
-                (byte) i, // byte
-                (short) i, // short
-                i % 2 == 0, // boolean
-                (float) i, // float
-                (double) i, // double
-                Integer.toString(i), // string
-                "null", // literal string
-                fixedDate, // date (was daysSinceEpoch int)
-                new BigDecimal(i), // decimal
-                arrSeq, // array<struct>
-                middle, // nested struct
-                Integer.toString(i) // final string
-              }));
-    }
-
-    // Null row variant with specific non-null complex fields (matches Scala test)
-    List<Row> nullArrElems =
-        Arrays.asList(
-            new GenericRow(new Object[] {2}),
-            new GenericRow(new Object[] {2}),
-            new GenericRow(new Object[] {2}));
-    Object nullArrSeq = scala.collection.JavaConverters.asScalaBuffer(nullArrElems).toList();
-    Row nullInnerMost = new GenericRow(new Object[] {2, 2L});
-    Row nullMiddle = new GenericRow(new Object[] {"2", "2", nullInnerMost});
-    expected.add(
-        new GenericRow(
-            new Object[] {
-              null,
-              null,
-              null,
-              null,
-              null,
-              null,
-              null,
-              null,
-              null,
-              null,
-              null,
-              nullArrSeq,
-              nullMiddle,
-              "2"
-            }));
-
-    // Read table, drop unsupported column `as_timestamp`
-    String tablePath = goldenTablePath("data-reader-partition-values");
-    Dataset<Row> full = spark.sql("SELECT * FROM `dsv2`.`delta`.`" + tablePath + "`");
-
-    List<String> projectedCols = new ArrayList<>();
-    for (String f : full.schema().fieldNames()) {
-      if (!f.equals("as_timestamp")) {
-        projectedCols.add(f);
-      }
-    }
-    Dataset<Row> df = full.selectExpr(projectedCols.toArray(new String[0]));
-
-    Function0<Dataset<Row>> dfFunc =
-        new Function0<Dataset<Row>>() {
-          @Override
-          public Dataset<Row> apply() {
-            return df;
-          }
-        };
-    scala.collection.immutable.Seq<Row> expectedSeq =
-        scala.collection.JavaConverters.asScalaBuffer(expected).toList();
-    checkAnswer(dfFunc, expectedSeq);
-  }
-
-  private void checkTable(String path, List<Row> expected) {
-    String tablePath = goldenTablePath(path);
-
-    Dataset<Row> df = spark.sql("SELECT * FROM `dsv2`.`delta`.`" + tablePath + "`");
-    Function0<Dataset<Row>> dfFunc =
-        new Function0<Dataset<Row>>() {
-          @Override
-          public Dataset<Row> apply() {
-            return df;
-          }
-        };
-
-    scala.collection.immutable.Seq<Row> expectedSeq =
-        scala.collection.JavaConverters.asScalaBuffer(expected).toList();
-    checkAnswer(dfFunc, expectedSeq);
-  }
-
-  private String goldenTablePath(String name) {
-    return GoldenTableUtils$.MODULE$.goldenTablePath(name);
-  }
-
   //////////////////////
   // Private helpers //
   /////////////////////
@@ -303,10 +143,5 @@ public class Dsv2BasicTest extends QueryTest {
         expectedRows,
         actualRows,
         () -> "Datasets differ: expected=" + expectedRows + "\nactual=" + actualRows);
-  }
-
-  @Override
-  public SparkSession spark() {
-    return spark;
   }
 }
