@@ -25,23 +25,22 @@ import io.delta.kernel.internal.actions.{Metadata, Protocol}
 import io.delta.kernel.internal.icebergcompat.IcebergCompatV3MetadataValidatorAndUpdater.validateAndUpdateIcebergCompatV3Metadata
 import io.delta.kernel.internal.tablefeatures.TableFeature
 import io.delta.kernel.internal.tablefeatures.TableFeatures.{COLUMN_MAPPING_RW_FEATURE, ICEBERG_COMPAT_V3_W_FEATURE, ROW_TRACKING_W_FEATURE, TYPE_WIDENING_RW_FEATURE}
+import io.delta.kernel.test.TestFixtures
 import io.delta.kernel.types._
 
 import org.assertj.core.util.Maps
 
 trait IcebergCompatV3MetadataValidatorAndUpdaterSuiteBase
-    extends IcebergCompatMetadataValidatorAndUpdaterSuiteBase {
+    extends IcebergCompatMetadataValidatorAndUpdaterSuiteBase
+    with TestFixtures {
 
   override def icebergCompatVersion: String = "V3"
 
-  override def supportedDataColumnTypes: Set[DataType] =
-    IcebergCompatMetadataValidatorAndUpdaterSuiteBase.SIMPLE_TYPES ++
-      IcebergCompatMetadataValidatorAndUpdaterSuiteBase.COMPLEX_TYPES
+  override def supportedDataColumnTypes: Set[DataType] = ALL_TYPES
 
   override def unsupportedDataColumnTypes: Set[DataType] = Set(VariantType.VARIANT)
 
-  override def unsupportedPartitionColumnTypes: Set[DataType] =
-    IcebergCompatMetadataValidatorAndUpdaterSuiteBase.COMPLEX_TYPES
+  override def unsupportedPartitionColumnTypes: Set[DataType] = NESTED_TYPES
 
   override def isDeletionVectorsSupported: Boolean = true
 

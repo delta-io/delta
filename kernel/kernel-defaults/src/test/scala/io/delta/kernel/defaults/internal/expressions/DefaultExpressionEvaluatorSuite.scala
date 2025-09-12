@@ -94,7 +94,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     }
   }
 
-  SIMPLE_TYPES.foreach { dataType =>
+  PRIMITIVE_TYPES.foreach { dataType =>
     test(s"evaluate expression: column of type $dataType") {
       val batchSize = 78;
       val batchSchema = new StructType().add("col1", dataType)
