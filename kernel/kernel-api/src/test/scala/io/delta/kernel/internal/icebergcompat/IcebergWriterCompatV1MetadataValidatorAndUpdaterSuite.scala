@@ -347,7 +347,6 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
 
   Seq(
     // "defaultColumns", add this to this test once we support defaultColumns
-    "rowTracking",
     // "collations", add this to this test once we support collations
     "variantType").foreach { incompatibleFeature =>
     test(s"cannot enable with incompatible feature $incompatibleFeature") {
@@ -410,6 +409,12 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
     getCompatEnabledMetadata(cmTestSchema())
       .withMergedConfiguration(Map("delta.constraints.a" -> "a = b").asJava),
     "checkConstraints")
+
+  /* --- ROW_TRACKING_INACTIVE_CHECK tests --- */
+  testIncompatibleActiveLegacyFeature(
+    getCompatEnabledMetadata(cmTestSchema())
+      .withMergedConfiguration(Map(TableConfig.ROW_TRACKING_ENABLED.getKey -> "true").asJava),
+    "rowTracking")
 
   /* --- IDENTITY_COLUMNS_INACTIVE_CHECK tests --- */
   testIncompatibleActiveLegacyFeature(

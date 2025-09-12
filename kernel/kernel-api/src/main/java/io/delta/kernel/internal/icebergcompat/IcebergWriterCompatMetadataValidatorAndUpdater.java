@@ -83,6 +83,7 @@ abstract class IcebergWriterCompatMetadataValidatorAndUpdater
               // Incompatible, but not active, legacy table features
               INVARIANTS_W_FEATURE,
               CHANGE_DATA_FEED_W_FEATURE,
+              ROW_TRACKING_W_FEATURE,
               CONSTRAINTS_W_FEATURE,
               IDENTITY_COLUMNS_W_FEATURE,
               GENERATED_COLUMNS_W_FEATURE,
@@ -200,6 +201,18 @@ abstract class IcebergWriterCompatMetadataValidatorAndUpdater
         if (TableConfig.CHANGE_DATA_FEED_ENABLED.fromMetadata(inputContext.newMetadata)) {
           throw DeltaErrors.icebergCompatIncompatibleTableFeatures(
               inputContext.compatFeatureName, Collections.singleton(CHANGE_DATA_FEED_W_FEATURE));
+        }
+      };
+
+  /**
+   * Checks that the table feature `rowTracking` is not active in the table, meaning the table
+   * property `delta.enableRowTracking` is not enabled.
+   */
+  protected static final IcebergCompatCheck ROW_TRACKING_INACTIVE_CHECK =
+      (inputContext) -> {
+        if (TableConfig.ROW_TRACKING_ENABLED.fromMetadata(inputContext.newMetadata)) {
+          throw DeltaErrors.icebergCompatIncompatibleTableFeatures(
+              inputContext.compatFeatureName, Collections.singleton(ROW_TRACKING_W_FEATURE));
         }
       };
 
