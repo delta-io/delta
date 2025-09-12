@@ -84,7 +84,6 @@ public class SparkScan implements Scan, SupportsReportStatistics {
     this.options = Objects.requireNonNull(options, "options is null");
     this.scalaOptions = ScalaUtils.toScalaMap(options);
     this.hadoopConf = SparkSession.active().sessionState().newHadoopConfWithOptions(scalaOptions);
-    ;
     this.sqlConf = SQLConf.get();
     this.zoneId = ZoneId.of(sqlConf.sessionLocalTimeZone());
   }
@@ -248,5 +247,9 @@ public class SparkScan implements Scan, SupportsReportStatistics {
 
   CaseInsensitiveStringMap getOptions() {
     return options;
+  }
+
+  Configuration getConfiguration() {
+    return hadoopConf;
   }
 }

@@ -15,6 +15,7 @@
  */
 package io.delta.spark.dsv2.table;
 
+import static io.delta.spark.dsv2.utils.ScalaUtils.toScalaMap;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.internal.SnapshotImpl;
@@ -39,6 +40,7 @@ public class SparkTable implements Table, SupportsRead {
 
   private final Identifier identifier;
   private final String tablePath;
+  private final Map<String, String> options;
   // TODO: [delta-io/delta#5029] Add getProperties() in snapshot to avoid using Impl class.
   private final SnapshotImpl snapshot;
   private final Configuration hadoopConf;
@@ -51,15 +53,28 @@ public class SparkTable implements Table, SupportsRead {
   private final Transform[] partitionTransforms;
 
   /**
-   * Creates a new DeltaKernelTable instance.
+   * Creates a SparkTable backed by a Delta Kernel snapshot and initializes Spark-facing metadata
+   * (schemas, partitioning, capabilities).
    *
-   * @param identifier the table identifier
-   * @param tablePath the table path of the Delta table
+   * <p>Side effects: - Loads the latest snapshot for the given tablePath. - Builds Hadoop
+   * configuration from options for subsequent I/O. - Derives data schema, partition schema, and
+   * full table schema from the snapshot.
+   *
+   * <p>Notes: - Partition column order from the snapshot is preserved for partitioning and appended
+   * after data columns in the public Spark schema, per Spark conventions. - Read-time scan options
+   * are later merged with these options.
+   *
+   * @param identifier logical table identifier used by Spark's catalog
+   * @param tablePath filesystem path to the Delta table root
+   * @param options table options used to configure the Hadoop conf, table reads and writes
+   * @throws NullPointerException if identifier or tablePath is null
    */
-  public SparkTable(Identifier identifier, String tablePath) {
+  public SparkTable(Identifier identifier, String tablePath, Map<String, String> options) {
     this.identifier = requireNonNull(identifier, "identifier is null");
     this.tablePath = requireNonNull(tablePath, "snapshot is null");
-    this.hadoopConf = SparkSession.active().sessionState().newHadoopConf();
+    this.options = options;
+    this.hadoopConf =
+        SparkSession.active().sessionState().newHadoopConfWithOptions(toScalaMap(options));
     this.snapshot =
         (SnapshotImpl)
             io.delta.kernel.TableManager.loadSnapshot(tablePath)
@@ -107,6 +122,18 @@ public class SparkTable implements Table, SupportsRead {
         partColNames.stream().map(Expressions::identity).toArray(Transform[]::new);
   }
 
+  /**
+   * Convenience constructor that uses empty options. See {@link #SparkTable(Identifier, String,
+   * java.util.Map)} for full behavior and notes.
+   *
+   * @param identifier logical table identifier used by Spark's catalog
+   * @param tablePath filesystem path to the Delta table root
+   * @throws NullPointerException if identifier or tablePath is null
+   */
+  public SparkTable(Identifier identifier, String tablePath) {
+    this(identifier, tablePath, Collections.emptyMap());
+  }
+
   @Override
   public String name() {
     return identifier.name();
@@ -129,7 +156,9 @@ public class SparkTable implements Table, SupportsRead {
 
   @Override
   public Map<String, String> properties() {
-    return Collections.unmodifiableMap(new HashMap<>(snapshot.getMetadata().getConfiguration()));
+    Map<String, String> props = new HashMap<>(snapshot.getMetadata().getConfiguration());
+    props.putAll(this.options);
+    return Collections.unmodifiableMap(props);
   }
 
   @Override
@@ -138,8 +167,11 @@ public class SparkTable implements Table, SupportsRead {
   }
 
   @Override
-  public ScanBuilder newScanBuilder(CaseInsensitiveStringMap options) {
-    return new SparkScanBuilder(name(), tablePath, dataSchema, partitionSchema, snapshot, options);
+  public ScanBuilder newScanBuilder(CaseInsensitiveStringMap scanOptions) {
+    Map<String, String> combined = new HashMap<>(this.options);
+    combined.putAll(scanOptions.asCaseSensitiveMap());
+    CaseInsensitiveStringMap merged = new CaseInsensitiveStringMap(combined);
+    return new SparkScanBuilder(name(), tablePath, dataSchema, partitionSchema, snapshot, merged);
   }
 
   @Override

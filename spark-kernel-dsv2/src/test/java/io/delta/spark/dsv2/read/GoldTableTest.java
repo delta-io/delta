@@ -26,6 +26,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
+import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.SparkConf;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.QueryTest;
@@ -77,9 +78,19 @@ public class GoldTableTest extends QueryTest {
   public void testInternalClasses() {
     String tableName = "deltatbl-partition-prune";
     String tablePath = goldenTablePath("hive/" + tableName);
+    CaseInsensitiveStringMap options =
+        new CaseInsensitiveStringMap(
+            new java.util.HashMap<String, String>() {
+              {
+                put("key1", "value1");
+                put("key2", "value2");
+              }
+            });
     SparkTable table =
         new SparkTable(
-            Identifier.of(new String[] {"spark_catalog", "default"}, tableName), tablePath);
+            Identifier.of(new String[] {"spark_catalog", "default"}, tableName),
+            tablePath,
+            options);
     StructType expectedDataSchema =
         DataTypes.createStructType(
             new StructField[] {
@@ -115,17 +126,31 @@ public class GoldTableTest extends QueryTest {
     assertEquals("identity(city)", table.partitioning()[1].toString());
 
     // Check table properties
-    assertTrue(table.properties().isEmpty());
+    assertEquals(options.asCaseSensitiveMap(), table.properties());
 
-    CaseInsensitiveStringMap options =
+    CaseInsensitiveStringMap scanOptions =
         new CaseInsensitiveStringMap(
-            java.util.Collections.singletonMap("some_option_key", "some_option_value"));
-    ScanBuilder builder = table.newScanBuilder(options);
+            new java.util.HashMap<String, String>() {
+              {
+                put("key3", "value3");
+                put("key2", "new_value2");
+              }
+            });
+    ScanBuilder builder = table.newScanBuilder(scanOptions);
     assertTrue((builder instanceof SparkScanBuilder));
     SparkScanBuilder scanBuilder = (SparkScanBuilder) builder;
     assertEquals(expectedDataSchema, scanBuilder.getDataSchema());
     assertEquals(expectedPartitionSchema, scanBuilder.getPartitionSchema());
-    assertEquals(options, scanBuilder.getOptions());
+    CaseInsensitiveStringMap combinedOptions =
+        new CaseInsensitiveStringMap(
+            new java.util.HashMap<String, String>() {
+              {
+                put("key1", "value1");
+                put("key2", "new_value2");
+                put("key3", "value3");
+              }
+            });
+    assertEquals(combinedOptions, scanBuilder.getOptions());
 
     Scan scan1 = scanBuilder.build();
     assertTrue(scan1 instanceof SparkScan);
@@ -133,7 +158,8 @@ public class GoldTableTest extends QueryTest {
     assertEquals(expectedDataSchema, sparkScan1.getDataSchema());
     assertEquals(expectedDataSchema, sparkScan1.getReadDataSchema());
     assertEquals(expectedPartitionSchema, sparkScan1.getPartitionSchema());
-    assertEquals(options, sparkScan1.getOptions());
+    assertEquals(combinedOptions, sparkScan1.getOptions());
+    verifyHadoopConf(sparkScan1.getConfiguration());
 
     StructType prunedSchema =
         DataTypes.createStructType(
@@ -148,36 +174,14 @@ public class GoldTableTest extends QueryTest {
     StructType expectedReadDataSchemaAfterPrune =
         DataTypes.createStructType(new StructField[] {expectedDataSchema.fields()[0]});
     assertEquals(expectedReadDataSchemaAfterPrune, sparkScan2.getReadDataSchema());
-    assertEquals(options, sparkScan2.getOptions());
+    assertEquals(combinedOptions, sparkScan2.getOptions());
+    verifyHadoopConf(sparkScan2.getConfiguration());
   }
 
-  @Test
-  public void testTablePrimitives() throws Exception {
-    List<Row> expected = new ArrayList<>();
-    for (int i = 0; i <= 10; i++) {
-      if (i == 10) {
-        expected.add(
-            new GenericRow(
-                new Object[] {null, null, null, null, null, null, null, null, null, null}));
-      } else {
-        expected.add(
-            new GenericRow(
-                new Object[] {
-                  i,
-                  (long) i,
-                  (byte) i,
-                  (short) i,
-                  i % 2 == 0,
-                  (float) i,
-                  (double) i,
-                  Integer.toString(i),
-                  new byte[] {(byte) i, (byte) i},
-                  new BigDecimal(i)
-                }));
-      }
-    }
-
-    checkTable("data-reader-primitives", expected);
+  private void verifyHadoopConf(Configuration conf) {
+    assertEquals("value1", conf.get("key1"));
+    assertEquals("new_value2", conf.get("key2"));
+    assertEquals("value3", conf.get("key3"));
   }
 
   @Test
@@ -226,6 +230,35 @@ public class GoldTableTest extends QueryTest {
     assertEquals(prunedSchema, sparkScan2.getReadDataSchema());
     assertTrue(sparkScan2.getPartitionSchema().isEmpty());
     assertEquals(options, sparkScan2.getOptions());
+  }
+
+  @Test
+  public void testTablePrimitives() throws Exception {
+    List<Row> expected = new ArrayList<>();
+    for (int i = 0; i <= 10; i++) {
+      if (i == 10) {
+        expected.add(
+            new GenericRow(
+                new Object[] {null, null, null, null, null, null, null, null, null, null}));
+      } else {
+        expected.add(
+            new GenericRow(
+                new Object[] {
+                  i,
+                  (long) i,
+                  (byte) i,
+                  (short) i,
+                  i % 2 == 0,
+                  (float) i,
+                  (double) i,
+                  Integer.toString(i),
+                  new byte[] {(byte) i, (byte) i},
+                  new BigDecimal(i)
+                }));
+      }
+    }
+
+    checkTable("data-reader-primitives", expected);
   }
 
   @Test
