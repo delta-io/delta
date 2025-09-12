@@ -20,7 +20,7 @@ import scala.collection.immutable.Seq
 
 import io.delta.kernel.Table
 import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO
-import io.delta.kernel.defaults.utils.{TestRow, TestUtils, WriteUtils}
+import io.delta.kernel.defaults.utils.{AbstractTestUtils, TestRow, TestUtilsWithLegacyKernelAPIs, TestUtilsWithTableManagerAPIs, WriteUtils}
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.SnapshotImpl
 import io.delta.kernel.internal.TableConfig
@@ -30,7 +30,12 @@ import io.delta.kernel.internal.hook.LogCompactionHook
 import org.apache.hadoop.conf.Configuration
 import org.scalatest.funsuite.AnyFunSuite
 
-class LogCompactionSuite extends AnyFunSuite with WriteUtils with TestUtils {
+class LogCompactionSuite extends AbstractLogCompactionSuite with TestUtilsWithTableManagerAPIs
+
+class LegacyLogCompactionSuite extends AbstractLogCompactionSuite with TestUtilsWithLegacyKernelAPIs
+
+trait AbstractLogCompactionSuite extends AnyFunSuite with WriteUtils {
+  self: AbstractTestUtils =>
 
   test("Compaction containing different action types") {
     withTempDirAndEngine { (tblPath, engine) =>
@@ -68,9 +73,8 @@ class LogCompactionSuite extends AnyFunSuite with WriteUtils with TestUtils {
 
       val hadoopFileIO = new HadoopFileIO(new Configuration())
       val metricEngine = new MetricsEngine(hadoopFileIO)
-      val table = Table.forPath(metricEngine, tblPath)
 
-      val snapshot = table.getLatestSnapshot(metricEngine).asInstanceOf[SnapshotImpl]
+      val snapshot = getTableManagerAdapter.getSnapshotAtLatest(metricEngine, tblPath)
       val checkpointProp =
         snapshot.getMetadata().getConfiguration.get(TableConfig.CHECKPOINT_POLICY.getKey)
       assert(checkpointProp == "v2")
