@@ -539,4 +539,14 @@ class DefaultExpressionUtils {
       throw unsupportedExpressionException(predicate, msg);
     }
   }
+
+  /**
+   * Checks if the given expression is a null literal.
+   *
+   * @param expression The expression to check
+   * @return true if the expression is a Literal with null value, false otherwise
+   */
+  static boolean isNullLiteral(Expression expression) {
+    return expression instanceof Literal && ((Literal) expression).getValue() == null;
+  }
 }

@@ -22,6 +22,7 @@ import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.In;
 import io.delta.kernel.expressions.Literal;
+import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.util.Preconditions;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.internal.util.VectorUtils;
@@ -196,10 +197,6 @@ public class InExpressionEvaluator {
     }
   }
 
-  private static boolean isNullLiteral(Expression expression) {
-    return expression instanceof Literal && ((Literal) expression).getValue() == null;
-  }
-
   private static void checkIsUTF8BinaryCollation(In in, CollationIdentifier collationIdentifier) {
     if (!"SPARK.UTF8_BINARY".equals(collationIdentifier.toString())) {
       throw unsupportedExpressionException(
@@ -217,17 +214,20 @@ public class InExpressionEvaluator {
     }
   }
 
-  private static boolean areTypesCompatible(DataType type1, DataType type2) {
+  @VisibleForTesting
+  static boolean areTypesCompatible(DataType type1, DataType type2) {
     return type1.equivalent(type2) || belongToSameTypeGroup(type1, type2);
   }
 
-  private static boolean belongToSameTypeGroup(DataType type1, DataType type2) {
+  @VisibleForTesting
+  static boolean belongToSameTypeGroup(DataType type1, DataType type2) {
     return (NUMERIC_TYPES.contains(type1.getClass()) && NUMERIC_TYPES.contains(type2.getClass()))
         || (TIMESTAMP_TYPES.contains(type1.getClass())
             && TIMESTAMP_TYPES.contains(type2.getClass()));
   }
 
-  private static boolean compareValues(Object value1, Object value2, DataType valueType) {
+  @VisibleForTesting
+  static boolean compareValues(Object value1, Object value2, DataType valueType) {
     if (value1 == null || value2 == null) {
       return false;
     }
@@ -243,8 +243,8 @@ public class InExpressionEvaluator {
    * numeric type comparisons by converting both values to the target type and using the appropriate
    * comparator.
    */
-  private static boolean compareNumericValues(
-      Object value1, Object value2, DataType targetTypeToCompare) {
+  @VisibleForTesting
+  static boolean compareNumericValues(Object value1, Object value2, DataType targetTypeToCompare) {
     Number num1 = (Number) value1;
     Number num2 = (Number) value2;
     Object convertedValue1 = convertToTargetTypeForCompare(num1, targetTypeToCompare);

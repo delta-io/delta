@@ -1,5 +1,5 @@
 /*
- * Copyright (2023) The Delta Lake Project Authors.
+ * Copyright (2025) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.types.CollationIdentifier;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 /**
  * {@code IN} expression
@@ -70,6 +71,14 @@ public final class In extends Predicate {
   /** @return The list of expressions to check against (right side of IN). */
   public List<Expression> getInListElements() {
     return getChildren().subList(1, getChildren().size());
+  }
+
+  @Override
+  public String toString() {
+    String collationSuffix = getCollationIdentifier().map(c -> " COLLATE " + c).orElse("");
+    String inValues =
+        getInListElements().stream().map(Object::toString).collect(Collectors.joining(", "));
+    return String.format("(%s IN (%s)%s)", getValueExpression(), inValues, collationSuffix);
   }
 
   private static List<Expression> buildChildren(
