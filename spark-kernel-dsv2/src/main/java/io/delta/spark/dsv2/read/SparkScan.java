@@ -233,4 +233,20 @@ public class SparkScan implements Scan, SupportsReportStatistics {
       planned = true;
     }
   }
+
+  StructType getDataSchema() {
+    return dataSchema;
+  }
+
+  StructType getPartitionSchema() {
+    return partitionSchema;
+  }
+
+  StructType getReadDataSchema() {
+    return readDataSchema;
+  }
+
+  CaseInsensitiveStringMap getOptions() {
+    return options;
+  }
 }

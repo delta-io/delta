@@ -37,7 +37,6 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 public class SparkScanBuilder implements ScanBuilder, SupportsPushDownRequiredColumns {
 
   private final io.delta.kernel.ScanBuilder kernelScanBuilder;
-  private final String tableName;
   private final String tablePath;
   private final StructType dataSchema;
   private final StructType partitionSchema;
@@ -54,7 +53,6 @@ public class SparkScanBuilder implements ScanBuilder, SupportsPushDownRequiredCo
       SnapshotImpl snapshot,
       CaseInsensitiveStringMap options) {
     this.kernelScanBuilder = requireNonNull(snapshot, "snapshot is null").getScanBuilder();
-    this.tableName = requireNonNull(tableName, "tableName is null");
     this.tablePath = requireNonNull(tablePath, "tablePath is null");
     this.dataSchema = requireNonNull(dataSchema, "dataSchema is null");
     this.partitionSchema = requireNonNull(partitionSchema, "partitionSchema is null");
@@ -89,5 +87,17 @@ public class SparkScanBuilder implements ScanBuilder, SupportsPushDownRequiredCo
         new Filter[0],
         kernelScanBuilder.build(),
         options);
+  }
+
+  CaseInsensitiveStringMap getOptions() {
+    return options;
+  }
+
+  StructType getDataSchema() {
+    return dataSchema;
+  }
+
+  StructType getPartitionSchema() {
+    return partitionSchema;
   }
 }
