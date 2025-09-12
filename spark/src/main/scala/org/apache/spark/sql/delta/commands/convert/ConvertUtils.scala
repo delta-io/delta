@@ -44,7 +44,7 @@ trait ConvertUtilsBase extends DeltaLogging {
 
   var icebergSparkTableClassPath =
     "org.apache.spark.sql.delta.commands.convert.IcebergTable"
-  var icebergLibTableClassPath = "org.apache.iceberg.Table"
+  var icebergLibTableClassPath = "shadedForDelta.org.apache.iceberg.Table"
 
   /**
    * Creates a source Parquet table for conversion.
@@ -111,6 +111,27 @@ trait ConvertUtilsBase extends DeltaLogging {
         // The better error is within the cause
         throw ExceptionUtils.getRootCause(e)
     }
+  }
+
+  /**
+   * Get Iceberg metadata location from spark catalog resolved Iceberg table,
+   * which means it is a SparkTable
+   * Needs to use reflection because shaded Iceberg classes are not accessible here
+   * It is equivalent to call
+   *  table.asInstanceOf[SparkTable].table().operations().current().metadataFileLocation()
+   * @param table the iceberg table resolved spark catalog
+   * @return metadata location corresponding to table's latest snapshot
+   */
+  def getIcebergMetadataLocationFromSparkTable(table: Table): String = {
+    val tableMethod = table.getClass.getMethod("table")
+    val icebergTable = tableMethod.invoke(table)
+    val operationsMethod = icebergTable.getClass.getMethod("operations")
+    val operations = operationsMethod.invoke(icebergTable)
+    val currentMethod = operations.getClass.getMethod("current")
+    val currentMetadata = currentMethod.invoke(operations)
+    val metadataFileLocationMethod =
+      currentMetadata.getClass.getMethod("metadataFileLocation")
+    metadataFileLocationMethod.invoke(currentMetadata).asInstanceOf[String]
   }
 
   /**

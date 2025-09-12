@@ -31,6 +31,7 @@ import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.catalog.IcebergTablePlaceHolder
 import org.apache.spark.sql.delta.commands._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
+import org.apache.spark.sql.delta.commands.convert.ConvertUtils
 import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils}
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
@@ -349,19 +350,22 @@ class DeltaAnalysis(session: SparkSession)
 
         case DataSourceV2Relation(table, _, _, _, _)
             if table.getClass.getName.endsWith("org.apache.iceberg.spark.source.SparkTable") =>
-          val tableIdent = Try {
+          Try {
             CatalystSqlParser.parseTableIdentifier(table.name())
           } match {
-            case Success(ident) => ident
+            case Success(ident) =>
             case Failure(_: ParseException) =>
               // Fallback to 2-level identifier to make compatible with older Apache spark,
               // this ident will NOT be used to look up the Iceberg tables later.
               CatalystSqlParser.parseMultipartIdentifier(table.name()).tail.asTableIdentifier
             case Failure(e) => throw e
           }
+          val metadataLocation = ConvertUtils.getIcebergMetadataLocationFromSparkTable(table)
           resolveCloneCommand(
             cloneStatement.target,
-            CloneIcebergSource(tableIdent, Some(table), deltaSnapshot = None, session),
+            CloneIcebergSource(
+              TableIdentifier(metadataLocation), sparkTable = None, deltaSnapshot = None, session
+            ),
             cloneStatement)
 
         case u: UnresolvedRelation =>
