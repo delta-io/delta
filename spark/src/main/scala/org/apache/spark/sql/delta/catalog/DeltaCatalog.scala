@@ -22,6 +22,7 @@ import java.util
 import java.util.Locale
 
 import scala.collection.JavaConverters._
+import scala.collection.immutable.ListMap
 import scala.collection.mutable
 
 import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
@@ -649,10 +650,14 @@ class DeltaCatalog extends DelegatingCatalogExtension
     // We also must define an artificial type for SetLocation, since data source V2 considers
     // location just another property but it's special in catalog tables.
     class SetLocation {}
-    val grouped = changes.groupBy {
+    val grouped = ListMap(changes.groupBy {
       case s: SetProperty if s.property() == "location" => classOf[SetLocation]
       case c => c.getClass
-    }
+    }.toSeq.sortBy {
+      // force SetProperty first to handle if other TableChange requires table feature enabled
+      case (cls, _) if cls == classOf[SetProperty] => 0
+      case _ => 1
+    }: _*)
     // Determines whether this DDL SET or UNSET the table redirect property. If it is, the table
     // redirect feature should be disabled to ensure the DDL can be applied onto the source or
     // destination table properly.
