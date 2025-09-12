@@ -181,6 +181,54 @@ public class GoldTableTest extends QueryTest {
   }
 
   @Test
+  public void testInternalClassesNestedStruct() {
+    String tableName = "data-reader-nested-struct";
+    String tablePath = goldenTablePath(tableName);
+    SparkTable table =
+        new SparkTable(
+            Identifier.of(new String[] {"spark_catalog", "default"}, tableName), tablePath);
+
+    StructType expectedSchema =
+        StructType.fromDDL(
+            "a STRUCT<aa: STRING, ab: STRING, ac: STRUCT<aca: INT, acb: BIGINT>>,b INT");
+
+    assertEquals(expectedSchema, table.schema());
+    assertEquals(tableName, table.name());
+    assertEquals(0, table.partitioning().length);
+
+    CaseInsensitiveStringMap options =
+        new CaseInsensitiveStringMap(
+            java.util.Collections.singletonMap("another_option_key", "another_option_value"));
+    ScanBuilder builder = table.newScanBuilder(options);
+    assertTrue((builder instanceof SparkScanBuilder));
+    SparkScanBuilder scanBuilder = (SparkScanBuilder) builder;
+
+    assertEquals(expectedSchema, scanBuilder.getDataSchema());
+    assertTrue(scanBuilder.getPartitionSchema().isEmpty());
+    assertEquals(options, scanBuilder.getOptions());
+
+    // Initial scan (no pruning)
+    Scan scan1 = scanBuilder.build();
+    assertTrue(scan1 instanceof SparkScan);
+    SparkScan sparkScan1 = (SparkScan) scan1;
+    assertEquals(expectedSchema, sparkScan1.getDataSchema());
+    assertEquals(expectedSchema, sparkScan1.getReadDataSchema());
+    assertTrue(sparkScan1.getPartitionSchema().isEmpty());
+    assertEquals(options, sparkScan1.getOptions());
+
+    StructType prunedSchema = StructType.fromDDL("a STRUCT<aa: STRING, ab: STRING>");
+    scanBuilder.pruneColumns(prunedSchema);
+
+    Scan scan2 = scanBuilder.build();
+    assertTrue(scan2 instanceof SparkScan);
+    SparkScan sparkScan2 = (SparkScan) scan2;
+    assertEquals(expectedSchema, sparkScan2.getDataSchema());
+    assertEquals(prunedSchema, sparkScan2.getReadDataSchema());
+    assertTrue(sparkScan2.getPartitionSchema().isEmpty());
+    assertEquals(options, sparkScan2.getOptions());
+  }
+
+  @Test
   public void testTableWithNestedStruct() {
     List<Row> expected = new ArrayList<>();
     for (int i = 0; i < 10; i++) {
