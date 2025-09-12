@@ -47,9 +47,9 @@ trait DeltaIcebergCompatV3SuiteBase extends DeltaIcebergCompatBaseSuite {
 
   override def supportedDataColumnTypes: Seq[DataType] =
     // TODO add VARIANT_TYPE once it is supported
-    (Seq.empty ++ SIMPLE_TYPES ++ COMPLEX_TYPES) // ++ Seq(VariantType.VARIANT))
+    (PRIMITIVE_TYPES.toList ++ NESTED_TYPES.toList) // ++ Seq(VariantType.VARIANT))
 
-  override def supportedPartitionColumnTypes: Seq[DataType] = Seq.empty ++ SIMPLE_TYPES
+  override def supportedPartitionColumnTypes: Seq[DataType] = PRIMITIVE_TYPES.toList
 
   test(s"enable $icebergCompatVersion on a new table - verify row tracking is enabled") {
     withTempDirAndEngine { (tablePath, engine) =>

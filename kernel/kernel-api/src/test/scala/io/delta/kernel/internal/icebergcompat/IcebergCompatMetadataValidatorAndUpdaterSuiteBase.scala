@@ -92,7 +92,7 @@ trait IcebergCompatMetadataValidatorAndUpdaterSuiteBase
       }
   }
 
-  SIMPLE_TYPES.toSet.diff(simpleTypesToSkip).foreach {
+  PRIMITIVE_TYPES.diff(simpleTypesToSkip).foreach {
     dataType: DataType =>
       Seq(true, false).foreach { isNewTable =>
         test(s"allowed partition column types: $dataType, new table = $isNewTable") {

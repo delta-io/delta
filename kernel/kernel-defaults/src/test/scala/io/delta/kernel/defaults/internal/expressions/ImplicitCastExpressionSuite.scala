@@ -43,10 +43,8 @@ class ImplicitCastExpressionSuite extends AnyFunSuite with TestUtils {
     (FloatType.FLOAT, DoubleType.DOUBLE))
 
   test("can cast to") {
-    Seq.range(0, ALL_TYPES.length).foreach { fromTypeIdx =>
-      val fromType: DataType = ALL_TYPES(fromTypeIdx)
-      Seq.range(0, ALL_TYPES.length).foreach { toTypeIdx =>
-        val toType: DataType = ALL_TYPES(toTypeIdx)
+    ALL_TYPES.foreach { fromType =>
+      ALL_TYPES.foreach { toType =>
         assert(canCastTo(fromType, toType) ===
           allowedCasts.contains((fromType, toType)))
       }

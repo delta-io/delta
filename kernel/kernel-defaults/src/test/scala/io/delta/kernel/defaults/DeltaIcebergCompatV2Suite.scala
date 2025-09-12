@@ -45,10 +45,9 @@ trait DeltaIcebergCompatV2SuiteBase extends DeltaIcebergCompatBaseSuite {
     TableFeatures.ICEBERG_COMPAT_V2_W_FEATURE,
     TableFeatures.COLUMN_MAPPING_RW_FEATURE)
 
-  override def supportedDataColumnTypes: Seq[DataType] =
-    (Seq.empty ++ SIMPLE_TYPES ++ COMPLEX_TYPES)
+  override def supportedDataColumnTypes: Seq[DataType] = ALL_TYPES.toList
 
-  override def supportedPartitionColumnTypes: Seq[DataType] = Seq.empty ++ SIMPLE_TYPES
+  override def supportedPartitionColumnTypes: Seq[DataType] = PRIMITIVE_TYPES.toList
 
   ignore("can't enable icebergCompatV2 on a table with icebergCompatv1 enabled") {
     // We can't test this as Kernel throws error when enabling icebergCompatV1

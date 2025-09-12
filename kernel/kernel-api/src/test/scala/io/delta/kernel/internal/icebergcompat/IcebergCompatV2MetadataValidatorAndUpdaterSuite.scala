@@ -33,11 +33,11 @@ trait IcebergCompatV2MetadataValidatorAndUpdaterSuiteBase
 
   override def icebergCompatVersion: String = "V2"
 
-  override def supportedDataColumnTypes: Set[DataType] = ALL_TYPES.toSet
+  override def supportedDataColumnTypes: Set[DataType] = ALL_TYPES
 
   override def unsupportedDataColumnTypes: Set[DataType] = Set(VariantType.VARIANT)
 
-  override def unsupportedPartitionColumnTypes: Set[DataType] = COMPLEX_TYPES.toSet
+  override def unsupportedPartitionColumnTypes: Set[DataType] = NESTED_TYPES
 
   override def isDeletionVectorsSupported: Boolean = false
 

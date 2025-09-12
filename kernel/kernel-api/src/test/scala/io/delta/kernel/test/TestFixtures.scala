@@ -30,7 +30,7 @@ import io.delta.kernel.types.{ArrayType, BinaryType, BooleanType, ByteType, Data
 trait TestFixtures extends ActionUtils {
 
   /** All simple data type used in parameterized tests where type is one of the test dimensions. */
-  val SIMPLE_TYPES = Seq(
+  val PRIMITIVE_TYPES = Set(
     BooleanType.BOOLEAN,
     ByteType.BYTE,
     ShortType.SHORT,
@@ -45,13 +45,13 @@ trait TestFixtures extends ActionUtils {
     BinaryType.BINARY,
     new DecimalType(10, 5))
 
-  val COMPLEX_TYPES: Set[DataType] = Set(
+  val NESTED_TYPES: Set[DataType] = Set(
     new ArrayType(BooleanType.BOOLEAN, true),
     new MapType(IntegerType.INTEGER, LongType.LONG, true),
     new StructType().add("s1", BooleanType.BOOLEAN).add("s2", IntegerType.INTEGER))
 
   /** All types. Used in parameterized tests where type is one of the test dimensions. */
-  val ALL_TYPES = SIMPLE_TYPES ++ COMPLEX_TYPES
+  val ALL_TYPES: Set[DataType] = PRIMITIVE_TYPES ++ NESTED_TYPES
 
   def createCommitMetadata(
       version: Long,

@@ -743,7 +743,7 @@ trait IcebergWriterCompatV1SuiteBase
   // We cannot test enabling icebergCompatV1 since it is not a table feature in Kernel; This is
   // tested in the unit tests in IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
 
-  (SIMPLE_TYPES ++ COMPLEX_TYPES)
+  (PRIMITIVE_TYPES ++ NESTED_TYPES)
     // filter out the types unsupported by icebergWriterCompatV1
     .filter(dataType => dataType != ByteType.BYTE && dataType != ShortType.SHORT)
     .foreach { dataType: DataType =>
