@@ -222,9 +222,9 @@ public class DeltaLogActionUtils {
     final Path logPath = new Path(tablePath, "_delta_log");
 
     logger.info(
-        "Listing log files types={} in path={} starting from {} and ending with {}",
-        fileTypes,
+        "[{}] Listing log files types={} starting from {} and ending with {}",
         logPath,
+        fileTypes,
         startVersion,
         endVersionOpt);
 

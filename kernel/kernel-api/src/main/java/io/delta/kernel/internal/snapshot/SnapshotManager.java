@@ -234,11 +234,6 @@ public class SnapshotManager {
   public LogSegment getLogSegmentForVersion(
       Engine engine, Optional<Long> versionToLoadOpt, List<ParsedLogData> parsedLogDatas) {
     final long versionToLoad = versionToLoadOpt.orElse(Long.MAX_VALUE);
-
-    // Defaulting to listing the files for now. This has low cost. We can make this a configurable
-    // option in the future if we need to.
-    final boolean USE_COMPACTED_FILES = true;
-
     final String versionToLoadStr = versionToLoadOpt.map(String::valueOf).orElse("latest");
     logger.info("Loading log segment for version {}", versionToLoadStr);
     final long logSegmentBuildingStartTimeMillis = System.currentTimeMillis();
@@ -273,13 +268,13 @@ public class SnapshotManager {
     // Step 3: List the files from $startVersion to $versionToLoad //
     /////////////////////////////////////////////////////////////////
 
-    Set<DeltaLogFileType> fileTypes =
+    final Set<DeltaLogFileType> fileTypes =
         new HashSet<>(
             Arrays.asList(
-                DeltaLogFileType.COMMIT, DeltaLogFileType.CHECKPOINT, DeltaLogFileType.CHECKSUM));
-    if (USE_COMPACTED_FILES) {
-      fileTypes.add(DeltaLogFileType.LOG_COMPACTION);
-    }
+                DeltaLogFileType.COMMIT,
+                DeltaLogFileType.CHECKPOINT,
+                DeltaLogFileType.CHECKSUM,
+                DeltaLogFileType.LOG_COMPACTION));
 
     final long listingStartTimeMillis = System.currentTimeMillis();
     final List<FileStatus> listedFileStatuses =
@@ -293,9 +288,11 @@ public class SnapshotManager {
             .toInMemoryList();
 
     logger.info(
-        "{}: Took {}ms to list the files after starting checkpoint",
+        "[{}]: Took {}ms to list all {} log files starting from version {}.",
         tablePath,
-        System.currentTimeMillis() - listingStartTimeMillis);
+        listedFileStatuses.size(),
+        System.currentTimeMillis() - listingStartTimeMillis,
+        listFromStartVersion);
 
     ////////////////////////////////////////////////////////////////////////
     // Step 4: Perform some basic validations on the listed file statuses //
@@ -316,7 +313,7 @@ public class SnapshotManager {
       }
     }
 
-    logDebugFileStatuses("listedFileStatuses", listedFileStatuses);
+    logFileStatuses("listedFileStatuses", listedFileStatuses);
 
     //////////////////////////////////////////////////////////////////////////////////////////
     // Step 5: Partition $listedFileStatuses into the checkpoints, deltas, and compactions. //
@@ -330,6 +327,11 @@ public class SnapshotManager {
                     ParsedLogData::getCategory,
                     LinkedHashMap::new, // Ensure order is maintained
                     Collectors.toList()));
+
+    final List<ParsedLogData> ratifiedStagedCommits =
+        parsedLogDatas.stream()
+            .filter(x -> x.type == ParsedLogType.RATIFIED_STAGED_COMMIT)
+            .collect(Collectors.toList());
 
     final List<ParsedLogData> allPublishedDeltas =
         partitionedFiles.getOrDefault(ParsedLogCategory.DELTA, Collections.emptyList());
@@ -351,10 +353,11 @@ public class SnapshotManager {
             .map(ParsedLogData::getFileStatus)
             .collect(Collectors.toList());
 
-    logDebugParsedLogDatas("allPublishedDeltas", allPublishedDeltas);
-    logDebugFileStatuses("listedCheckpointFileStatuses", listedCheckpointFileStatuses);
-    logDebugFileStatuses("listedCompactionFileStatuses", listedCompactionFileStatuses);
-    logDebugFileStatuses("listedCheckSumFileStatuses", listedChecksumFileStatuses);
+    logParsedLogDatas("ratifiedStagedCommits", ratifiedStagedCommits);
+    logParsedLogDatas("allPublishedDeltas", allPublishedDeltas);
+    logFileStatuses("listedCheckpointFileStatuses", listedCheckpointFileStatuses);
+    logFileStatuses("listedCompactionFileStatuses", listedCompactionFileStatuses);
+    logFileStatuses("listedCheckSumFileStatuses", listedChecksumFileStatuses);
 
     /////////////////////////////////////////////////////////////////////////////////////////////
     // Step 6: Determine the latest complete checkpoint version. The intuition here is that we //
@@ -391,9 +394,12 @@ public class SnapshotManager {
 
     final List<ParsedLogData> allDeltasAfterCheckpoint =
         getAllDeltasAfterCheckpointWithCatalogPriority(
-            allPublishedDeltas, parsedLogDatas, latestCompleteCheckpointVersion, versionToLoad);
+            allPublishedDeltas,
+            ratifiedStagedCommits,
+            latestCompleteCheckpointVersion,
+            versionToLoad);
 
-    logDebugParsedLogDatas("allDeltasAfterCheckpoint", allDeltasAfterCheckpoint);
+    logParsedLogDatas("allDeltasAfterCheckpoint", allDeltasAfterCheckpoint);
 
     //////////////////////////////////////////////////////////////////////////////////
     // Step 8: Grab all compactions in range [$latestCompleteCheckpointVersion + 1, //
@@ -411,7 +417,7 @@ public class SnapshotManager {
                 })
             .collect(Collectors.toList());
 
-    logDebugFileStatuses("compactionsAfterCheckpoint", compactionsAfterCheckpoint);
+    logFileStatuses("compactionsAfterCheckpoint", compactionsAfterCheckpoint);
 
     ////////////////////////////////////////////////////////////////////
     // Step 9: Determine the version of the snapshot we can now load. //
@@ -506,8 +512,6 @@ public class SnapshotManager {
                           .filter(f -> newCheckpointPaths.contains(new Path(f.getPath())))
                           .collect(Collectors.toList());
 
-                  logDebugFileStatuses("newCheckpointFileStatuses", newCheckpointFileStatuses);
-
                   if (newCheckpointFileStatuses.size() != newCheckpointPaths.size()) {
                     final String msg =
                         format(
@@ -526,6 +530,8 @@ public class SnapshotManager {
                 })
             .orElse(Collections.emptyList());
 
+    logFileStatuses("latestCompleteCheckpointFileStatuses", latestCompleteCheckpointFileStatuses);
+
     //////////////////////////////////////////
     // Step 12: Grab the last seen checksum //
     //////////////////////////////////////////
@@ -539,14 +545,11 @@ public class SnapshotManager {
       }
     }
 
+    logger.info("lastSeenChecksumFile: {}", lastSeenChecksumFile);
+
     ///////////////////////////////////////////////////
     // Step 13: Construct the LogSegment and return. //
     ///////////////////////////////////////////////////
-
-    logger.info(
-        "Successfully constructed LogSegment at version {}, took {}ms",
-        newVersion,
-        System.currentTimeMillis() - logSegmentBuildingStartTimeMillis);
 
     // If our LogSegment has deltas (allDeltasAfterCheckpoint), we use the last delta.
     // Else, our LogSegment only has a checkpoint, and we have checked above that if there's a
@@ -556,16 +559,25 @@ public class SnapshotManager {
             ? lazyDeltaAtCheckpointVersionOpt.get().get().getFileStatus()
             : ListUtils.getLast(allDeltasAfterCheckpoint).getFileStatus();
 
-    return new LogSegment(
-        logPath,
+    final LogSegment result =
+        new LogSegment(
+            logPath,
+            newVersion,
+            allDeltasAfterCheckpoint.stream()
+                .map(ParsedLogData::getFileStatus)
+                .collect(Collectors.toList()),
+            compactionsAfterCheckpoint,
+            latestCompleteCheckpointFileStatuses,
+            deltaAtEndVersion,
+            lastSeenChecksumFile);
+
+    logger.info(
+        "[{}] Successfully constructed LogSegment at version {}, took {}ms",
+        tablePath,
         newVersion,
-        allDeltasAfterCheckpoint.stream()
-            .map(ParsedLogData::getFileStatus)
-            .collect(Collectors.toList()),
-        compactionsAfterCheckpoint,
-        latestCompleteCheckpointFileStatuses,
-        deltaAtEndVersion,
-        lastSeenChecksumFile);
+        System.currentTimeMillis() - logSegmentBuildingStartTimeMillis);
+
+    return result;
   }
 
   /////////////////////////
@@ -579,7 +591,7 @@ public class SnapshotManager {
    *
    * <ul>
    *   <li>Assumes that {@code allPublishedDeltas} is sorted and contiguous.
-   *   <li>Assumes that {@code parsedLogDatas} is sorted and contiguous.
+   *   <li>Assumes that {@code ratifiedStagedCommits} is sorted and contiguous.
    *   <li>[delta-io/delta#4765] For now, only accepts parsedLogData of type {@link
    *       ParsedLogType#RATIFIED_STAGED_COMMIT}
    *   <li>If there is both a published Delta and a ratified staged commit for the same version,
@@ -588,7 +600,7 @@ public class SnapshotManager {
    */
   private List<ParsedLogData> getAllDeltasAfterCheckpointWithCatalogPriority(
       List<ParsedLogData> allPublishedDeltas,
-      List<ParsedLogData> parsedLogDatas,
+      List<ParsedLogData> ratifiedStagedCommits,
       long latestCompleteCheckpointVersion,
       long versionToLoad) {
     final List<ParsedLogData> allPublishedDeltasAfterCheckpoint =
@@ -597,12 +609,12 @@ public class SnapshotManager {
             .filter(x -> latestCompleteCheckpointVersion < x.version && x.version <= versionToLoad)
             .collect(Collectors.toList());
 
-    if (parsedLogDatas.isEmpty()) {
+    if (ratifiedStagedCommits.isEmpty()) {
       return allPublishedDeltasAfterCheckpoint;
     }
 
     final List<ParsedLogData> allRatifiedCommitsAfterCheckpoint =
-        parsedLogDatas.stream()
+        ratifiedStagedCommits.stream()
             .filter(x -> x.type == ParsedLogType.RATIFIED_STAGED_COMMIT)
             .filter(x -> latestCompleteCheckpointVersion < x.version && x.version <= versionToLoad)
             .collect(Collectors.toList());
@@ -662,7 +674,12 @@ public class SnapshotManager {
             () -> new Checkpointer(logPath).readLastCheckpointFile(engine).map(x -> x.version));
   }
 
-  private void logDebugFileStatuses(String varName, List<FileStatus> fileStatuses) {
+  private void logFileStatuses(String varName, List<FileStatus> fileStatuses) {
+    final String firstStr = fileStatuses.isEmpty() ? "none" : fileStatuses.get(0).getPath();
+    final String lastStr =
+        fileStatuses.isEmpty() ? "none" : ListUtils.getLast(fileStatuses).getPath();
+    logger.info("{}: size={}, first={}, last={}", varName, fileStatuses.size(), firstStr, lastStr);
+
     if (logger.isDebugEnabled()) {
       logger.debug(
           "{}: {}",
@@ -672,7 +689,11 @@ public class SnapshotManager {
     }
   }
 
-  private void logDebugParsedLogDatas(String varName, List<ParsedLogData> logDatas) {
+  private void logParsedLogDatas(String varName, List<ParsedLogData> logDatas) {
+    final String firstStr = logDatas.isEmpty() ? "none" : logDatas.get(0).toString();
+    final String lastStr = logDatas.isEmpty() ? "none" : ListUtils.getLast(logDatas).toString();
+    logger.info("{}: size={}, first={}, last={}", varName, logDatas.size(), firstStr, lastStr);
+
     if (logger.isDebugEnabled()) {
       logger.debug(
           "{}:\n  {}",
