@@ -69,7 +69,8 @@ private[spark] class TestClientForDeltaFormatSharing(
     TypeWideningPreviewTableFeature,
     TypeWideningTableFeature,
     VariantTypePreviewTableFeature,
-    VariantTypeTableFeature
+    VariantTypeTableFeature,
+    VariantShreddingPreviewTableFeature
   ).map(_.name)
 
   assert(
