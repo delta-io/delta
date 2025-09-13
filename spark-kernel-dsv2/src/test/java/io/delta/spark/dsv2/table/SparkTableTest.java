@@ -46,7 +46,7 @@ public class SparkTableTest extends SparkDsv2TestBase {
     testCase.createTableSql.apply(tableName, path);
     Identifier identifier = Identifier.of(new String[] {"test_namespace"}, tableName);
 
-    SparkTable kernelTable = new SparkTable(identifier, path, spark.sessionState().newHadoopConf());
+    SparkTable kernelTable = new SparkTable(identifier, path);
 
     // ===== Test table name =====
     assertEquals(tableName, kernelTable.name());
