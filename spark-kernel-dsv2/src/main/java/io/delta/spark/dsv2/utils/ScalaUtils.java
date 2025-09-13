@@ -16,16 +16,23 @@
 package io.delta.spark.dsv2.utils;
 
 import java.util.Map;
-import java.util.Objects;
-import scala.Predef;
-import scala.collection.JavaConverters;
+import scala.Tuple2;
+import scala.collection.immutable.Map$;
+import scala.collection.mutable.Builder;
 
-/** A utility class for converting between Java and Scala types. */
-public class ScalaUtils {
+public final class ScalaUtils {
   public static scala.collection.immutable.Map<String, String> toScalaMap(
       Map<String, String> javaMap) {
-    return JavaConverters.mapAsScalaMapConverter(Objects.requireNonNull(javaMap, "options"))
-        .asScala()
-        .toMap(Predef.conforms());
+    if (javaMap == null) throw new NullPointerException("options");
+
+    // Works on Scala 2.12 and 2.13
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    Builder<Tuple2<String, String>, scala.collection.immutable.Map<String, String>> b =
+        (Builder) Map$.MODULE$.newBuilder();
+
+    for (Map.Entry<String, String> e : javaMap.entrySet()) {
+      b.$plus$eq(new Tuple2<>(e.getKey(), e.getValue()));
+    }
+    return b.result();
   }
 }
