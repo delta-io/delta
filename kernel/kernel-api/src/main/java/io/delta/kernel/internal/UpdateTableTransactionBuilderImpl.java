@@ -24,12 +24,16 @@ import io.delta.kernel.Transaction;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.actions.SetTransaction;
+import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
+import io.delta.kernel.internal.util.Clock;
 import io.delta.kernel.transaction.UpdateTableTransactionBuilder;
 import io.delta.kernel.types.StructType;
 import java.util.*;
 
 public class UpdateTableTransactionBuilderImpl implements UpdateTableTransactionBuilder {
+
+  private Clock clock = System::currentTimeMillis;
 
   /** Timestamp when this builder was created, used for populating any {@link SetTransaction} */
   private final long txnBuilderStartTime = System.currentTimeMillis();
@@ -122,6 +126,12 @@ public class UpdateTableTransactionBuilderImpl implements UpdateTableTransaction
     return this;
   }
 
+  @VisibleForTesting
+  public UpdateTableTransactionBuilder withClock(Clock clock) {
+    this.clock = requireNonNull(clock, "clock cannot be null");
+    return this;
+  }
+
   @Override
   public Transaction build(Engine engine) {
     setTxnOpt.ifPresent(
@@ -156,8 +166,7 @@ public class UpdateTableTransactionBuilderImpl implements UpdateTableTransaction
         txnMetadata.physicalNewClusteringColumns,
         userProvidedMaxRetries,
         logCompactionInterval,
-        // TODO: support configuring clock if needed
-        System::currentTimeMillis);
+        clock);
   }
 
   private void validateTablePropertiesAddedRemovedNoOverlap() {

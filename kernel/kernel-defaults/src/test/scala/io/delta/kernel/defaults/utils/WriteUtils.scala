@@ -253,10 +253,10 @@ trait AbstractWriteUtils extends TestUtils with TransactionBuilderSupport {
    *  null, otherwise return null.
    *  TODO: get rid of this and use getProtocol instead
    */
-  def getProtocolActionFromCommit(engine: Engine, table: Table, version: Long): Option[Row] = {
+  def getProtocolActionFromCommit(engine: Engine, tablePath: String, version: Long): Option[Row] = {
     readCommitFile(
       engine,
-      table.getPath(engine),
+      tablePath,
       version,
       (row) => {
         val ord = row.getSchema.indexOf("protocol")

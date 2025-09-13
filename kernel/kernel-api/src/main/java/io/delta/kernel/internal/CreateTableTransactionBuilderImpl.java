@@ -30,12 +30,15 @@ import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.commit.DefaultFileSystemManagedTableOnlyCommitter;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
+import io.delta.kernel.internal.util.Clock;
 import io.delta.kernel.transaction.CreateTableTransactionBuilder;
 import io.delta.kernel.transaction.DataLayoutSpec;
 import io.delta.kernel.types.StructType;
 import java.util.*;
 
 public class CreateTableTransactionBuilderImpl implements CreateTableTransactionBuilder {
+
+  private Clock clock = System::currentTimeMillis;
 
   private final String unresolvedPath;
   private final StructType schema;
@@ -107,6 +110,12 @@ public class CreateTableTransactionBuilderImpl implements CreateTableTransaction
     return this;
   }
 
+  @VisibleForTesting
+  public CreateTableTransactionBuilder withClock(Clock clock) {
+    this.clock = requireNonNull(clock, "clock cannot be null");
+    return this;
+  }
+
   @Override
   public Transaction build(Engine engine) {
     requireNonNull(engine, "engine cannot be null");
@@ -145,7 +154,7 @@ public class CreateTableTransactionBuilderImpl implements CreateTableTransaction
         txnMetadata.physicalNewClusteringColumns,
         userProvidedMaxRetries,
         0, // logCompactionInterval - no compaction for new table
-        System::currentTimeMillis);
+        clock);
   }
 
   @VisibleForTesting
