@@ -2251,19 +2251,20 @@ trait OptimisticTransactionImpl extends TransactionHelper
       attemptVersion: Long,
       currentTransactionInfo: CurrentTransactionInfo,
       isolationLevel: IsolationLevel)
-    : (Long, Snapshot, CurrentTransactionInfo) = lockCommitIfEnabled {
+    : (Long, Snapshot, CurrentTransactionInfo) = recordDeltaOperation(
+      deltaLog, "delta.commit.allAttempts") {
+    lockCommitIfEnabled {
+      var commitVersion = attemptVersion
+      var updatedCurrentTransactionInfo = currentTransactionInfo
+      val isFsToCcCommit =
+        snapshot.metadata.coordinatedCommitsCoordinatorName.isEmpty &&
+          metadata.coordinatedCommitsCoordinatorName.nonEmpty
+      val maxRetryAttempts = spark.conf.get(DeltaSQLConf.DELTA_MAX_RETRY_COMMIT_ATTEMPTS)
+      val maxNonConflictRetryAttempts =
+        spark.conf.get(DeltaSQLConf.DELTA_MAX_NON_CONFLICT_RETRY_COMMIT_ATTEMPTS)
+      var nonConflictAttemptNumber = 0
+      var shouldCheckForConflicts = false
 
-    var commitVersion = attemptVersion
-    var updatedCurrentTransactionInfo = currentTransactionInfo
-    val isFsToCcCommit =
-      snapshot.metadata.coordinatedCommitsCoordinatorName.isEmpty &&
-        metadata.coordinatedCommitsCoordinatorName.nonEmpty
-    val maxRetryAttempts = spark.conf.get(DeltaSQLConf.DELTA_MAX_RETRY_COMMIT_ATTEMPTS)
-    val maxNonConflictRetryAttempts =
-      spark.conf.get(DeltaSQLConf.DELTA_MAX_NON_CONFLICT_RETRY_COMMIT_ATTEMPTS)
-    var nonConflictAttemptNumber = 0
-    var shouldCheckForConflicts = false
-    recordDeltaOperation(deltaLog, "delta.commit.allAttempts") {
       for (attemptNumber <- 0 to maxRetryAttempts) {
         try {
           val postCommitSnapshot = if (!shouldCheckForConflicts) {
@@ -2305,15 +2306,16 @@ trait OptimisticTransactionImpl extends TransactionHelper
             }
         }
       }
+
+      // retries all failed
+      val totalCommitAttemptTime = clock.getTimeMillis() - commitAttemptStartTimeMillis
+      throw DeltaErrors.maxCommitRetriesExceededException(
+        maxRetryAttempts + 1,
+        commitVersion,
+        attemptVersion,
+        updatedCurrentTransactionInfo.finalActionsToCommit.length,
+        totalCommitAttemptTime)
     }
-    // retries all failed
-    val totalCommitAttemptTime = clock.getTimeMillis() - commitAttemptStartTimeMillis
-    throw DeltaErrors.maxCommitRetriesExceededException(
-      maxRetryAttempts + 1,
-      commitVersion,
-      attemptVersion,
-      updatedCurrentTransactionInfo.finalActionsToCommit.length,
-      totalCommitAttemptTime)
   }
 
   /**
