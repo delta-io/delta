@@ -153,9 +153,9 @@ public class Predicate extends ScalarExpression {
         this.name,
         COLLATION_SUPPORTED_OPERATORS);
 
-    // For IN operators, we need at least 2 children (value + at least one item)
+    // For operators with multiple children, we need at least 2 children
     // For other collated expressions, we require exactly 2 children
-    if ("IN".equals(this.name)) {
+    if (OPERATORS_WITH_MULTIPLE_CHILDREN.contains(this.name)) {
       checkArgument(
           this.children.size() >= 2,
           "Invalid Predicate: collated predicate '%s' with multiple children requires at least 2 "
@@ -217,6 +217,9 @@ public class Predicate extends ScalarExpression {
   private static final Set<String> BINARY_OPERATORS =
       Stream.of("<", "<=", ">", ">=", "=", "AND", "OR", "IS NOT DISTINCT FROM", "STARTS_WITH")
           .collect(Collectors.toSet());
+
+  /** Operators that can have multiple children (more than 2). */
+  private static final Set<String> OPERATORS_WITH_MULTIPLE_CHILDREN = Collections.singleton("IN");
 
   /** Operators that support collation-based string comparison. */
   private static final Set<String> COLLATION_SUPPORTED_OPERATORS =
