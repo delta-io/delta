@@ -724,7 +724,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
   ).configureUnidoc(docTitle = "Delta Kernel Defaults")
 
 
-lazy val kernelSpark = (project in file("kernel-spark"))
+lazy val kernelSpark = (project in file("kernel-connectors/spark"))
   .dependsOn(kernelApi)
   .dependsOn(kernelDefaults)
   .dependsOn(spark % "test->test")
