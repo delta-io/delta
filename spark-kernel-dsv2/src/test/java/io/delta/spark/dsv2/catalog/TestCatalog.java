@@ -80,7 +80,7 @@ public class TestCatalog implements TableCatalog {
       throw new NoSuchTableException(ident);
     }
     try {
-      return new SparkTable(ident, tablePath, hadoopConf);
+      return new SparkTable(ident, tablePath);
     } catch (Exception e) {
       throw new RuntimeException("Failed to load table: " + ident, e);
     }
@@ -113,7 +113,7 @@ public class TestCatalog implements TableCatalog {
           .commit(engine, CloseableIterable.emptyIterable());
 
       // Load the created table and return SparkTable
-      return new SparkTable(ident, tablePath, hadoopConf);
+      return new SparkTable(ident, tablePath);
 
     } catch (Exception e) {
       // Remove the table entry if creation fails

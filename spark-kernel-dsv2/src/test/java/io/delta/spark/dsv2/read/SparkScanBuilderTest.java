@@ -27,6 +27,7 @@ import org.apache.spark.sql.connector.read.Scan;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
+import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -58,7 +59,7 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
             dataSchema,
             partitionSchema,
             (SnapshotImpl) snapshot,
-            spark.sessionState().newHadoopConf());
+            CaseInsensitiveStringMap.empty());
 
     StructType expectedSparkSchema =
         DataTypes.createStructType(
