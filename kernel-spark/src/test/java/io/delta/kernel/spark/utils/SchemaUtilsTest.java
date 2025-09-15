@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.delta.spark.dsv2.utils;
+package io.delta.kernel.spark.utils;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 

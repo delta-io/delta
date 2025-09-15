@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.spark.dsv2.table;
+package io.delta.kernel.spark.table;
 
 import static io.delta.spark.dsv2.utils.ScalaUtils.toScalaMap;
 import static java.util.Objects.requireNonNull;
