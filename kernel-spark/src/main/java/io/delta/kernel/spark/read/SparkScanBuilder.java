@@ -45,7 +45,7 @@ public class SparkScanBuilder
   private final CaseInsensitiveStringMap options;
   private final Set<String> partitionColumnSet;
   private StructType requiredDataSchema;
-  private Predicate[] pushedPredicates;
+  private Predicate[] pushedKernelPredicates;
   private Filter[]
       pushedFilters; // same as pushedPredicates, but in Spark Filter, returned by pushedFilters()
   private Filter[] dataFilters;
@@ -67,7 +67,7 @@ public class SparkScanBuilder
         Arrays.stream(this.partitionSchema.fields())
             .map(f -> f.name().toLowerCase(Locale.ROOT))
             .collect(Collectors.toSet());
-    this.pushedPredicates = new Predicate[0];
+    this.pushedKernelPredicates = new Predicate[0];
     this.dataFilters = new Filter[0];
   }
 
@@ -94,12 +94,12 @@ public class SparkScanBuilder
 
     // kernelSupportedFilters will be pushed to kernel, set pushedPredicates
     this.pushedFilters = kernelSupportedFilters.toArray(new Filter[0]);
-    this.pushedPredicates =
+    this.pushedKernelPredicates =
         kernelSupportedFilters.stream()
             .map(f -> ExpressionUtils.translateSparkFilterToKernelPredicate(f).get())
             .toArray(Predicate[]::new);
-    if (this.pushedPredicates.length > 0) {
-      Optional<Predicate> kernelAnd = Arrays.stream(this.pushedPredicates).reduce(And::new);
+    if (this.pushedKernelPredicates.length > 0) {
+      Optional<Predicate> kernelAnd = Arrays.stream(this.pushedKernelPredicates).reduce(And::new);
       this.kernelScanBuilder = this.kernelScanBuilder.withFilter(kernelAnd.get());
     }
 
@@ -138,7 +138,7 @@ public class SparkScanBuilder
         dataSchema,
         partitionSchema,
         requiredDataSchema,
-        pushedPredicates,
+        pushedKernelPredicates,
         dataFilters,
         kernelScanBuilder.build(),
         options);
