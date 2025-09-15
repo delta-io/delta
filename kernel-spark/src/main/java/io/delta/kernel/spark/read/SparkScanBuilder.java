@@ -17,13 +17,14 @@ package io.delta.kernel.spark.read;
 
 import static java.util.Objects.requireNonNull;
 
+import io.delta.kernel.expressions.And;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.SnapshotImpl;
-import java.util.Arrays;
-import java.util.Locale;
-import java.util.Set;
+import io.delta.spark.dsv2.utils.ExpressionUtils;
+import java.util.*;
 import java.util.stream.Collectors;
 import org.apache.spark.sql.connector.read.ScanBuilder;
+import org.apache.spark.sql.connector.read.SupportsPushDownFilters;
 import org.apache.spark.sql.connector.read.SupportsPushDownRequiredColumns;
 import org.apache.spark.sql.sources.Filter;
 import org.apache.spark.sql.types.StructField;
@@ -34,9 +35,10 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap;
  * A Spark ScanBuilder implementation that wraps Delta Kernel's ScanBuilder. This allows Spark to
  * use Delta Kernel for reading Delta tables.
  */
-public class SparkScanBuilder implements ScanBuilder, SupportsPushDownRequiredColumns {
+public class SparkScanBuilder
+    implements ScanBuilder, SupportsPushDownRequiredColumns, SupportsPushDownFilters {
 
-  private final io.delta.kernel.ScanBuilder kernelScanBuilder;
+  private io.delta.kernel.ScanBuilder kernelScanBuilder;
   private final String tablePath;
   private final StructType dataSchema;
   private final StructType partitionSchema;
@@ -44,6 +46,9 @@ public class SparkScanBuilder implements ScanBuilder, SupportsPushDownRequiredCo
   private final Set<String> partitionColumnSet;
   private StructType requiredDataSchema;
   private Predicate[] pushedPredicates;
+  private Filter[]
+      pushedFilters; // same as pushedPredicates, but in Spark Filter, returned by pushedFilters()
+  private Filter[] dataFilters;
 
   public SparkScanBuilder(
       String tableName,
@@ -63,6 +68,7 @@ public class SparkScanBuilder implements ScanBuilder, SupportsPushDownRequiredCo
             .map(f -> f.name().toLowerCase(Locale.ROOT))
             .collect(Collectors.toSet());
     this.pushedPredicates = new Predicate[0];
+    this.dataFilters = new Filter[0];
   }
 
   @Override
@@ -76,15 +82,64 @@ public class SparkScanBuilder implements ScanBuilder, SupportsPushDownRequiredCo
   }
 
   @Override
+  public Filter[] pushFilters(Filter[] filters) {
+    // 1. Split filters into kernel-supported and kernel-unsupported ones
+    Map<Boolean, List<Filter>> partitioned =
+        Arrays.stream(filters)
+            .collect(
+                Collectors.partitioningBy(
+                    f -> ExpressionUtils.translateSparkFilterToKernelPredicate(f).isPresent()));
+    List<Filter> kernelSupportedFilters = partitioned.get(true);
+    List<Filter> kernelUnsupportedFilters = partitioned.get(false);
+
+    // kernelSupportedFilters will be pushed to kernel, set pushedPredicates
+    this.pushedFilters = kernelSupportedFilters.toArray(new Filter[0]);
+    this.pushedPredicates =
+        kernelSupportedFilters.stream()
+            .map(f -> ExpressionUtils.translateSparkFilterToKernelPredicate(f).get())
+            .toArray(Predicate[]::new);
+    if (this.pushedPredicates.length > 0) {
+      Optional<Predicate> kernelAnd = Arrays.stream(this.pushedPredicates).reduce(And::new);
+      this.kernelScanBuilder = this.kernelScanBuilder.withFilter(kernelAnd.get());
+    }
+
+    // 2. Split filters into partition filters and data filters
+    Map<Boolean, List<Filter>> byPartitionUsage =
+        Arrays.stream(filters)
+            .collect(
+                Collectors.partitioningBy(
+                    f -> {
+                      String[] refs = f.references();
+                      return refs != null
+                          && refs.length > 0
+                          && Arrays.stream(refs)
+                              .anyMatch(
+                                  col -> partitionColumnSet.contains(col.toLowerCase(Locale.ROOT)));
+                    }));
+    List<Filter> dataFilters = byPartitionUsage.get(false);
+    this.dataFilters = dataFilters.toArray(new Filter[0]);
+
+    // 3. Return all data filters + kernel-unsupported partition filters
+    // they will be evaluated after scanning
+    Set<Filter> filterSet = new HashSet<>(dataFilters); // deduplicate
+    filterSet.addAll(kernelUnsupportedFilters);
+    return filterSet.toArray(new Filter[0]);
+  }
+
+  @Override
+  public Filter[] pushedFilters() {
+    return this.pushedFilters;
+  }
+
+  @Override
   public org.apache.spark.sql.connector.read.Scan build() {
-    // TODO: Implement predicate pushdown by translating Spark Filters to Delta Kernel Predicates.
     return new SparkScan(
         tablePath,
         dataSchema,
         partitionSchema,
         requiredDataSchema,
         pushedPredicates,
-        new Filter[0],
+        dataFilters,
         kernelScanBuilder.build(),
         options);
   }
