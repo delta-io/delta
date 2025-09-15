@@ -39,7 +39,7 @@ public class Dsv2BasicTest {
     nameSpace = "ns_" + UUID.randomUUID().toString().replace('-', '_');
     SparkConf conf =
         new SparkConf()
-            .set("spark.sql.catalog.dsv2", "io.delta.spark.dsv2.catalog.TestCatalog")
+            .set("spark.sql.catalog.dsv2", "io.delta.kernel.spark.catalog.TestCatalog")
             .set("spark.sql.catalog.dsv2.base_path", tempDir.getAbsolutePath())
             .set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
             .set(

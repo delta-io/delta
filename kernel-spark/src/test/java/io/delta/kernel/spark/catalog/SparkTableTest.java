@@ -19,7 +19,7 @@ import static org.apache.spark.sql.connector.catalog.TableCapability.BATCH_READ;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.delta.spark.dsv2.SparkDsv2TestBase;
+import io.delta.kernel.spark.SparkDsv2TestBase;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.HashMap;

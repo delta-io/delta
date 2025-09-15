@@ -21,7 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.TableManager;
 import io.delta.kernel.internal.SnapshotImpl;
-import io.delta.spark.dsv2.SparkDsv2TestBase;
+import io.delta.kernel.spark.SparkDsv2TestBase;
 import java.io.File;
 import org.apache.spark.sql.connector.read.Scan;
 import org.apache.spark.sql.types.DataTypes;

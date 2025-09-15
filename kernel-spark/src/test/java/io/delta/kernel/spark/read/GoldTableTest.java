@@ -19,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.golden.GoldenTableUtils$;
-import io.delta.spark.dsv2.table.SparkTable;
+import io.delta.kernel.spark.table.SparkTable;
 import java.io.File;
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -58,7 +58,7 @@ public class GoldTableTest extends QueryTest {
     nameSpace = "ns_" + UUID.randomUUID().toString().replace('-', '_');
     SparkConf conf =
         new SparkConf()
-            .set("spark.sql.catalog.dsv2", "io.delta.spark.dsv2.catalog.TestCatalog")
+            .set("spark.sql.catalog.dsv2", "io.delta.kernel.spark.catalog.TestCatalog")
             .set("spark.sql.catalog.dsv2.base_path", tempDir.getAbsolutePath())
             .set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
             .set(

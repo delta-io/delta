@@ -15,12 +15,12 @@
  */
 package io.delta.kernel.spark.table;
 
-import static io.delta.spark.dsv2.utils.ScalaUtils.toScalaMap;
+import static io.delta.kernel.spark.utils.ScalaUtils.toScalaMap;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.internal.SnapshotImpl;
-import io.delta.spark.dsv2.read.SparkScanBuilder;
-import io.delta.spark.dsv2.utils.SchemaUtils;
+import io.delta.kernel.spark.read.SparkScanBuilder;
+import io.delta.kernel.spark.utils.SchemaUtils;
 import java.util.*;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.SparkSession;
