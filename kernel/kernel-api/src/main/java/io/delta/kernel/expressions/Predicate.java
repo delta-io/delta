@@ -196,14 +196,7 @@ public class Predicate extends ScalarExpression {
   @Override
   public String toString() {
     String collationSuffix = collationIdentifier.map(c -> " COLLATE " + c).orElse("");
-    if ("IN".equals(name) && children.size() >= 2) {
-      // Handle IN expressions: (value IN (elem1, elem2, ...))
-      String inValues =
-          children.subList(1, children.size()).stream()
-              .map(Object::toString)
-              .collect(Collectors.joining(", "));
-      return String.format("(%s IN (%s)%s)", children.get(0), inValues, collationSuffix);
-    } else if (BINARY_OPERATORS.contains(name) || collationIdentifier.isPresent()) {
+    if (BINARY_OPERATORS.contains(name) || collationIdentifier.isPresent()) {
       return String.format("(%s %s %s%s)", children.get(0), name, children.get(1), collationSuffix);
     }
     return super.toString();
