@@ -53,7 +53,18 @@ public class SchemaUtils {
    */
   public static void validateSchema(StructType schema, boolean isColumnMappingEnabled) {
     checkArgument(schema.length() > 0, "Schema should contain at least one column");
+    validateColumnNames(schema, isColumnMappingEnabled);
+    validateSupportedType(schema);
+  }
 
+  /**
+   * Validate the column names in the schema (uniqueness, whether the column names can be
+   * represented in Parquet)
+   *
+   * @param schema
+   * @param isColumnMappingEnabled
+   */
+  public static void validateColumnNames(StructType schema, boolean isColumnMappingEnabled) {
     List<String> flattenColNames =
         new SchemaIterable(schema)
             .stream()
@@ -90,8 +101,6 @@ public class SchemaUtils {
             }
           });
     }
-
-    validateSupportedType(schema);
   }
 
   /**
