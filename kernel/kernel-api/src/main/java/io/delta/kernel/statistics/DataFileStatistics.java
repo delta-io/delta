@@ -382,7 +382,7 @@ public class DataFileStatistics {
         field.getDataType() instanceof VariantType ? StringType.STRING : field.getDataType();
     if (literal.getDataType() == null || !literal.getDataType().equals(expectedLiteralType)) {
       throw DeltaErrors.statsTypeMismatch(
-          field.getName(), field.getDataType(), literal.getDataType());
+          field.getName(), expectedLiteralType, literal.getDataType());
     }
   }
 
