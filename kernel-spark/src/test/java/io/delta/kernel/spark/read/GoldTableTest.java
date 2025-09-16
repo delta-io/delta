@@ -366,6 +366,18 @@ public class GoldTableTest extends QueryTest {
     checkAnswer(dfFunc, expectedSeq);
   }
 
+  @Test
+  public void testAllGoldenTables() {
+    List<String> tableNames = getAllGoldenTableNames();
+    for (String tableName : tableNames) {
+      // For simplicity, just check that we can read the table and it has at least one row
+      String tablePath = goldenTablePath(tableName);
+      Dataset<Row> df = spark.sql("SELECT * FROM `spark_catalog`.`delta`.`" + tablePath + "`");
+      Dataset<Row> df2 = spark.sql("SELECT * FROM `dsv2`.`delta`.`" + tablePath + "`");
+      checkAnswer(df.collect(), df2.collect());
+    }
+  }
+
   private void checkTable(String path, List<Row> expected) {
     String tablePath = goldenTablePath(path);
 
@@ -385,5 +397,9 @@ public class GoldTableTest extends QueryTest {
 
   private String goldenTablePath(String name) {
     return GoldenTableUtils$.MODULE$.goldenTablePath(name);
+  }
+
+  private List<String> getAllGoldenTableNames() {
+    return scala.collection.JavaConverters.seqAsJavaList(GoldenTableUtils$.MODULE$.allTableNames());
   }
 }
