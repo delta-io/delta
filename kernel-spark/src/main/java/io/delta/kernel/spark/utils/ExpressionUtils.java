@@ -26,11 +26,6 @@ import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.util.InternalUtils;
 import java.sql.Date;
 import java.sql.Timestamp;
-import java.time.Instant;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.ZoneOffset;
-import java.time.temporal.ChronoUnit;
 import java.util.*;
 import org.apache.spark.sql.sources.*;
 import scala.jdk.CollectionConverters;
@@ -66,10 +61,10 @@ public final class ExpressionUtils {
   }
 
   /**
-   * Converts a Spark SQL filter to a Delta Kernel predicate with partial pushdown control.
-   * When canPartialPushDown is true, AND filters can be partially converted if at least one
-   * operand can be converted. OR filters always require both operands to be convertible. NOT
-   * filters disable partial pushdown for their child to preserve semantic correctness.
+   * Converts a Spark SQL filter to a Delta Kernel predicate with partial pushdown control. When
+   * canPartialPushDown is true, AND filters can be partially converted if at least one operand can
+   * be converted. OR filters always require both operands to be convertible. NOT filters disable
+   * partial pushdown for their child to preserve semantic correctness.
    */
   @VisibleForTesting
   static Optional<Predicate> convertSparkFilterToKernelPredicate(
@@ -181,12 +176,10 @@ public final class ExpressionUtils {
    * <ul>
    *   <li>Primitives: Boolean, Byte, Short, Integer, Long, Float, Double
    *   <li>BigDecimal (with precision and scale preservation)
-   *   <li>String types: String, Character, char[] (all converted to string literals to handle
-   *       different ways Spark may represent string values in filters)
+   *   <li>String (for string literals from Spark V1 filters)
    *   <li>byte[] (binary data)
-   *   <li>Date types: java.sql.Date, java.time.LocalDate (converted to days since epoch)
-   *   <li>Timestamp types: java.sql.Timestamp, java.time.Instant, java.time.LocalDateTime (Spark
-   *       may use different temporal types depending on the data source and query context)
+   *   <li>java.sql.Date (converted to days since epoch)
+   *   <li>java.sql.Timestamp (converted to microseconds since epoch)
    * </ul>
    *
    * <p>Note: null values return empty Optional, which is correct SQL behavior for most operations.
@@ -238,15 +231,6 @@ public final class ExpressionUtils {
       String s = (String) value;
       return Optional.of(Literal.ofString(s));
     }
-    if (value instanceof Character) {
-      Character c = (Character) value;
-      return Optional.of(Literal.ofString(c.toString()));
-    }
-    if (value instanceof char[]) {
-      // Convert char array to string
-      char[] charArray = (char[]) value;
-      return Optional.of(Literal.ofString(String.valueOf(charArray)));
-    }
     if (value instanceof byte[]) {
       byte[] arr = (byte[]) value;
       return Optional.of(Literal.ofBinary(arr));
@@ -260,25 +244,6 @@ public final class ExpressionUtils {
       // Convert java.sql.Timestamp to microseconds since epoch
       Timestamp timestamp = (Timestamp) value;
       return Optional.of(Literal.ofTimestamp(InternalUtils.microsSinceEpoch(timestamp)));
-    }
-    if (value instanceof LocalDate) {
-      // Convert java.time.LocalDate to days since epoch
-      LocalDate localDate = (LocalDate) value;
-      return Optional.of(Literal.ofDate((int) localDate.toEpochDay()));
-    }
-    if (value instanceof Instant) {
-      // Convert java.time.Instant to microseconds since epoch
-      Instant instant = (Instant) value;
-      long micros = ChronoUnit.MICROS.between(Instant.EPOCH, instant);
-      return Optional.of(Literal.ofTimestamp(micros));
-    }
-    if (value instanceof LocalDateTime) {
-      // Convert java.time.LocalDateTime to microseconds since epoch (no timezone)
-      // Following Delta Kernel's approach: assume UTC for the conversion
-      LocalDateTime localDateTime = (LocalDateTime) value;
-      Instant instant = localDateTime.toInstant(ZoneOffset.UTC);
-      long micros = ChronoUnit.MICROS.between(Instant.EPOCH, instant);
-      return Optional.of(Literal.ofTimestampNtz(micros));
     }
 
     // Unsupported type - return empty Optional to skip the conversion.

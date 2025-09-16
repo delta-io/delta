@@ -157,27 +157,18 @@ public class ExpressionUtilsTest {
         // BigDecimal - precision=6, scale=3 for "123.456"
         Arguments.of("BigDecimal", new BigDecimal("123.456"), new DecimalType(6, 3)),
 
-        // String types (all converted to StringType)
+        // String type
         Arguments.of("String", "hello world", StringType.STRING),
-        Arguments.of("Character", 'A', StringType.STRING),
-        Arguments.of("char[]", "test".toCharArray(), StringType.STRING),
 
         // Binary data
         Arguments.of("byte[]", new byte[] {1, 2, 3, 4, 5}, BinaryType.BINARY),
 
-        // Date/time types
+        // Date/time types (java.sql types for V1 Filters)
         Arguments.of("java.sql.Date", java.sql.Date.valueOf("2023-01-15"), DateType.DATE),
         Arguments.of(
             "java.sql.Timestamp",
             java.sql.Timestamp.valueOf("2023-01-15 10:30:00"),
-            TimestampType.TIMESTAMP),
-        Arguments.of("LocalDate", java.time.LocalDate.of(2023, 1, 15), DateType.DATE),
-        Arguments.of(
-            "Instant", java.time.Instant.parse("2023-01-15T10:30:00Z"), TimestampType.TIMESTAMP),
-        Arguments.of(
-            "LocalDateTime",
-            java.time.LocalDateTime.of(2023, 1, 15, 10, 30),
-            TimestampNTZType.TIMESTAMP_NTZ));
+            TimestampType.TIMESTAMP));
   }
 
   @ParameterizedTest(name = "convertValueToKernelLiteral should support {0}")
