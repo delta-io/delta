@@ -50,8 +50,7 @@ class RowTrackingSuite extends AbstractRowTrackingSuite with WriteUtilsWithV2Bui
 class LegacyRowTrackingSuite extends AbstractRowTrackingSuite with WriteUtilsWithV1Builders
 
 trait AbstractRowTrackingSuite extends AnyFunSuite with ParquetSuiteBase
-    with MetadataColumnTestUtils {
-  self: AbstractWriteUtils =>
+    with MetadataColumnTestUtils { self: AbstractWriteUtils =>
   private def prepareActionsForCommit(actions: Row*): CloseableIterable[Row] = {
     inMemoryIterable(toCloseableIterator(actions.asJava.iterator()))
   }
