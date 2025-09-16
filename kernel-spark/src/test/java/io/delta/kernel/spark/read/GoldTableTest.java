@@ -106,19 +106,19 @@ public class GoldTableTest extends QueryTest {
     StructType expectedSchema =
         DataTypes.createStructType(
             new StructField[] {
-              expectedDataSchema.fields()[0],
-              expectedDataSchema.fields()[1],
+              expectedPartitionSchema.fields()[1],
               expectedPartitionSchema.fields()[0],
-              expectedPartitionSchema.fields()[1]
+              expectedDataSchema.fields()[0],
+              expectedDataSchema.fields()[1]
             });
     assertEquals(expectedSchema, table.schema());
     assertEquals(tableName, table.name());
     // Check table columns
     assertEquals(4, table.columns().length);
-    assertEquals("name", table.columns()[0].name());
-    assertEquals("cnt", table.columns()[1].name());
-    assertEquals("date", table.columns()[2].name());
-    assertEquals("city", table.columns()[3].name());
+    assertEquals("city", table.columns()[0].name());
+    assertEquals("date", table.columns()[1].name());
+    assertEquals("name", table.columns()[2].name());
+    assertEquals("cnt", table.columns()[3].name());
 
     // Check table partitioning
     assertEquals(2, table.partitioning().length);
@@ -297,9 +297,6 @@ public class GoldTableTest extends QueryTest {
       expected.add(
           new GenericRow(
               new Object[] {
-                arrSeq, // array<struct>
-                middle, // nested struct
-                Integer.toString(i), // final string
                 i, // int
                 (long) i, // long
                 (byte) i, // byte
@@ -310,7 +307,10 @@ public class GoldTableTest extends QueryTest {
                 Integer.toString(i), // string
                 "null", // literal string
                 fixedDate, // date (was daysSinceEpoch int)
-                new BigDecimal(i) // decimal
+                new BigDecimal(i), // decimal
+                arrSeq, // array<struct>
+                middle, // nested struct
+                Integer.toString(i) // final string
               }));
     }
 
@@ -326,20 +326,20 @@ public class GoldTableTest extends QueryTest {
     expected.add(
         new GenericRow(
             new Object[] {
+              null,
+              null,
+              null,
+              null,
+              null,
+              null,
+              null,
+              null,
+              null,
+              null,
+              null,
               nullArrSeq,
               nullMiddle,
-              "2",
-              null,
-              null,
-              null,
-              null,
-              null,
-              null,
-              null,
-              null,
-              null,
-              null,
-              null
+              "2"
             }));
 
     // Read table, drop unsupported column `as_timestamp`
@@ -407,7 +407,7 @@ public class GoldTableTest extends QueryTest {
       // For simplicity, just check that we can read the table and it has at least one row
       String tablePath = goldenTablePath(tableName);
       // Many golden tables only have corrupted _delta_log subdir. The new kernel table reader will
-      // fail on those.
+      // fail on some of those.
       // TODO: fix the read result of those tables.
       if (hasOnlyDeltaLogSubdir(tablePath)) {
         continue;

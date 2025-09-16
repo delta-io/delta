@@ -42,6 +42,8 @@ object GoldenTableUtils {
     }
 
     val rootPath = root.toPath
+    // Find all directories containing `_delta_log` under the `golden` resource and return their
+    // relative paths (to the golden root), sorted.
     loop(root).map(f => rootPath.relativize(f.toPath).toString).sorted
   }
 }
