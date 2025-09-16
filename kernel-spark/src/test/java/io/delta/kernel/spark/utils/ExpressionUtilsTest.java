@@ -128,37 +128,6 @@ public class ExpressionUtilsTest {
             TimestampType.TIMESTAMP));
   }
 
-  @ParameterizedTest(name = "convertValueToKernelLiteral should support {0}")
-  @MethodSource("valueTypesProvider")
-  public void testConvertValueToKernelLiteral(
-      String typeName, Object value, DataType expectedDataType) {
-    Optional<Literal> result = ExpressionUtils.convertValueToKernelLiteral(value);
-
-    assertTrue(result.isPresent(), "Value of type " + typeName + " should be convertible");
-
-    Literal literal = result.get();
-    assertNotNull(literal, "Literal should not be null");
-    assertNotNull(literal.getDataType(), "DataType should not be null");
-    assertEquals(
-        expectedDataType,
-        literal.getDataType(),
-        "DataType should match expected type for " + typeName);
-  }
-
-  @Test
-  public void testConvertValueToKernelLiteral_NullValue() {
-    Optional<Literal> result = ExpressionUtils.convertValueToKernelLiteral(null);
-    assertFalse(result.isPresent(), "null values should return empty Optional");
-  }
-
-  @Test
-  public void testConvertValueToKernelLiteral_UnsupportedType() {
-    // Test with an unsupported type like a custom object
-    Object unsupportedValue = new Object();
-    Optional<Literal> result = ExpressionUtils.convertValueToKernelLiteral(unsupportedValue);
-    assertFalse(result.isPresent(), "Unsupported types should return empty Optional");
-  }
-
   @Test
   public void testUnsupportedFilter() {
     // Create an unsupported filter (StringContains is not implemented in our conversion method)
@@ -174,14 +143,14 @@ public class ExpressionUtilsTest {
     EqualTo leftFilter = new EqualTo("id", 1);
     GreaterThan rightFilter = new GreaterThan("age", 18);
     org.apache.spark.sql.sources.And andFilter =
-            new org.apache.spark.sql.sources.And(leftFilter, rightFilter);
+        new org.apache.spark.sql.sources.And(leftFilter, rightFilter);
 
     Optional<Predicate> andResult = ExpressionUtils.convertSparkFilterToKernelPredicate(andFilter);
 
     assertTrue(andResult.isPresent(), "And filter should be converted");
     assertTrue(
-            andResult.get() instanceof io.delta.kernel.expressions.And,
-            "Result should be And predicate");
+        andResult.get() instanceof io.delta.kernel.expressions.And,
+        "Result should be And predicate");
     assertEquals(2, andResult.get().getChildren().size());
   }
 
@@ -209,14 +178,6 @@ public class ExpressionUtilsTest {
         "AND filter with partial pushdown should return the convertible operand");
     assertEquals("=", resultWithPartial.get().getName());
     assertEquals(2, resultWithPartial.get().getChildren().size());
-
-    // Default behavior (canPartialPushDown=true)
-    Optional<Predicate> resultDefault =
-        ExpressionUtils.convertSparkFilterToKernelPredicate(andFilter);
-    assertTrue(
-        resultDefault.isPresent(),
-        "AND filter should return the convertible operand (default partial pushdown enabled)");
-    assertEquals("=", resultDefault.get().getName());
   }
 
   @Test
@@ -224,7 +185,6 @@ public class ExpressionUtilsTest {
     // Create an AND filter where right can be converted but left cannot
     Filter unsupportedLeftFilter = new StringContains("unsupported_col", "test");
     GreaterThan rightFilter = new GreaterThan("age", 18);
-
     org.apache.spark.sql.sources.And andFilter =
         new org.apache.spark.sql.sources.And(unsupportedLeftFilter, rightFilter);
 
@@ -248,7 +208,6 @@ public class ExpressionUtilsTest {
     // Create an AND filter where neither side can be converted
     Filter unsupportedLeftFilter = new StringContains("unsupported_col1", "test");
     Filter unsupportedRightFilter = new StringContains("unsupported_col2", "test");
-
     org.apache.spark.sql.sources.And andFilter =
         new org.apache.spark.sql.sources.And(unsupportedLeftFilter, unsupportedRightFilter);
 
@@ -301,7 +260,6 @@ public class ExpressionUtilsTest {
     assertEquals(1, notResult.get().getChildren().size());
   }
 
-
   @Test
   public void testNotFilter_RequiresChildConvertible() {
     // StringContains is not yet supported
@@ -311,33 +269,16 @@ public class ExpressionUtilsTest {
 
     // NOT requires child to be convertible regardless of partial pushdown flag
     Optional<Predicate> resultWithoutPartial =
-        ExpressionUtils.convertSparkFilterToKernelPredicate(notFilter, false);
+        ExpressionUtils.convertSparkFilterToKernelPredicate(notFilter);
     assertFalse(
         resultWithoutPartial.isPresent(),
         "NOT filter with unconvertible child should return empty");
 
-    Optional<Predicate> resultWithPartial =
-        ExpressionUtils.convertSparkFilterToKernelPredicate(notFilter, true);
-    assertFalse(
-        resultWithPartial.isPresent(),
-        "NOT filter with unconvertible child should return empty even with partial pushdown");
-  }
-
-  @Test
-  public void testNotFilter_DisablesPartialPushDownForChild() {
     // Create NOT(A AND B) where A is convertible but B is not
     // This tests that NOT disables partial pushdown for semantic correctness
     EqualTo convertibleFilter = new EqualTo("id", 1);
-    Filter unsupportedFilter = new StringContains("unsupported_col", "test");
     org.apache.spark.sql.sources.And andFilter =
         new org.apache.spark.sql.sources.And(convertibleFilter, unsupportedFilter);
-
-    // First verify that AND alone would return partial result with partial pushdown
-    Optional<Predicate> andAloneWithPartial =
-        ExpressionUtils.convertSparkFilterToKernelPredicate(andFilter, true);
-    assertTrue(
-        andAloneWithPartial.isPresent(),
-        "AND filter alone should return partial result with partial pushdown enabled");
 
     // Now verify that NOT(AND) returns empty because NOT disables partial pushdown
     Not notAndFilter = new Not(andFilter);
@@ -347,5 +288,36 @@ public class ExpressionUtilsTest {
         notResult.isPresent(),
         "NOT(A AND B) should return empty when B is unconvertible, even with partial pushdown enabled"
             + " - this preserves semantic correctness as NOT(A AND B) != NOT(A)");
+  }
+
+  @ParameterizedTest(name = "convertValueToKernelLiteral should support {0}")
+  @MethodSource("valueTypesProvider")
+  public void testConvertValueToKernelLiteral(
+      String typeName, Object value, DataType expectedDataType) {
+    Optional<Literal> result = ExpressionUtils.convertValueToKernelLiteral(value);
+
+    assertTrue(result.isPresent(), "Value of type " + typeName + " should be convertible");
+
+    Literal literal = result.get();
+    assertNotNull(literal, "Literal should not be null");
+    assertNotNull(literal.getDataType(), "DataType should not be null");
+    assertEquals(
+        expectedDataType,
+        literal.getDataType(),
+        "DataType should match expected type for " + typeName);
+  }
+
+  @Test
+  public void testConvertValueToKernelLiteral_NullValue() {
+    Optional<Literal> result = ExpressionUtils.convertValueToKernelLiteral(null);
+    assertFalse(result.isPresent(), "null values should return empty Optional");
+  }
+
+  @Test
+  public void testConvertValueToKernelLiteral_UnsupportedType() {
+    // Test with an unsupported type like a custom object
+    Object unsupportedValue = new Object();
+    Optional<Literal> result = ExpressionUtils.convertValueToKernelLiteral(unsupportedValue);
+    assertFalse(result.isPresent(), "Unsupported types should return empty Optional");
   }
 }
