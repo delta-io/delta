@@ -550,7 +550,7 @@ object DropTableFeatureUtils extends DeltaLogging {
       table: DeltaTableV2,
       snapshotRefreshStartTimeTs: Long): Boolean = {
     val log = table.deltaLog
-    val snapshot = log.update(checkIfUpdatedSinceTs = Some(snapshotRefreshStartTimeTs))
+    val snapshot = table.update(checkIfUpdatedSinceTs = Some(snapshotRefreshStartTimeTs))
 
     def checkpointAndVerify(snapshot: Snapshot): Boolean = {
       try {
@@ -578,7 +578,7 @@ object DropTableFeatureUtils extends DeltaLogging {
       snapshotRefreshStartTs: Long,
       retryOnFailure: Boolean = false): Boolean = {
     val log = table.deltaLog
-    val snapshot = log.update(checkIfUpdatedSinceTs = Some(snapshotRefreshStartTs))
+    val snapshot = table.update(checkIfUpdatedSinceTs = Some(snapshotRefreshStartTs))
     val emptyCommitTS = table.deltaLog.clock.nanoTime()
     log.startTransaction(table.catalogTable, Some(snapshot))
       .commit(Nil, DeltaOperations.EmptyCommit)
@@ -588,7 +588,7 @@ object DropTableFeatureUtils extends DeltaLogging {
     if (retryOnFailure) {
       createCheckpointWithRetries(table, emptyCommitTS)
     } else {
-      log.checkpoint(log.update(checkIfUpdatedSinceTs = Some(emptyCommitTS)))
+      log.checkpoint(table.update(checkIfUpdatedSinceTs = Some(emptyCommitTS)))
       true
     }
   }
