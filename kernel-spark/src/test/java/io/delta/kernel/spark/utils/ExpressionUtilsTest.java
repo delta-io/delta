@@ -99,49 +99,6 @@ public class ExpressionUtilsTest {
     assertEquals(2, nonNullResult.get().getChildren().size());
   }
 
-  @Test
-  public void testAndFilter() {
-    EqualTo leftFilter = new EqualTo("id", 1);
-    GreaterThan rightFilter = new GreaterThan("age", 18);
-    org.apache.spark.sql.sources.And andFilter =
-        new org.apache.spark.sql.sources.And(leftFilter, rightFilter);
-
-    Optional<Predicate> andResult = ExpressionUtils.convertSparkFilterToKernelPredicate(andFilter);
-
-    assertTrue(andResult.isPresent(), "And filter should be converted");
-    assertTrue(
-        andResult.get() instanceof io.delta.kernel.expressions.And,
-        "Result should be And predicate");
-    assertEquals(2, andResult.get().getChildren().size());
-  }
-
-  @Test
-  public void testOrFilter() {
-    EqualTo leftFilter = new EqualTo("id", 1);
-    GreaterThan rightFilter = new GreaterThan("age", 18);
-    org.apache.spark.sql.sources.Or orFilter =
-        new org.apache.spark.sql.sources.Or(leftFilter, rightFilter);
-
-    Optional<Predicate> orResult = ExpressionUtils.convertSparkFilterToKernelPredicate(orFilter);
-
-    assertTrue(orResult.isPresent(), "Or filter should be converted");
-    assertTrue(
-        orResult.get() instanceof io.delta.kernel.expressions.Or, "Result should be Or predicate");
-    assertEquals(2, orResult.get().getChildren().size());
-  }
-
-  @Test
-  public void testNotFilter() {
-    EqualTo leftFilter = new EqualTo("id", 1);
-    Not notFilter = new Not(leftFilter);
-
-    Optional<Predicate> notResult = ExpressionUtils.convertSparkFilterToKernelPredicate(notFilter);
-
-    assertTrue(notResult.isPresent(), "Not filter should be converted");
-    assertEquals("NOT", notResult.get().getName());
-    assertEquals(1, notResult.get().getChildren().size());
-  }
-
   // Test data provider for parameterized literal conversion tests
   static Stream<Arguments> valueTypesProvider() {
     return Stream.of(
@@ -210,6 +167,22 @@ public class ExpressionUtilsTest {
     Optional<Predicate> result =
         ExpressionUtils.convertSparkFilterToKernelPredicate(unsupportedFilter);
     assertFalse(result.isPresent(), "Unsupported filters should return empty Optional");
+  }
+
+  @Test
+  public void testAndFilter() {
+    EqualTo leftFilter = new EqualTo("id", 1);
+    GreaterThan rightFilter = new GreaterThan("age", 18);
+    org.apache.spark.sql.sources.And andFilter =
+            new org.apache.spark.sql.sources.And(leftFilter, rightFilter);
+
+    Optional<Predicate> andResult = ExpressionUtils.convertSparkFilterToKernelPredicate(andFilter);
+
+    assertTrue(andResult.isPresent(), "And filter should be converted");
+    assertTrue(
+            andResult.get() instanceof io.delta.kernel.expressions.And,
+            "Result should be And predicate");
+    assertEquals(2, andResult.get().getChildren().size());
   }
 
   @Test
@@ -315,6 +288,19 @@ public class ExpressionUtilsTest {
         resultWithPartial.isPresent(),
         "OR filter with unconvertible operand should return empty even with partial pushdown");
   }
+
+  @Test
+  public void testNotFilter() {
+    EqualTo leftFilter = new EqualTo("id", 1);
+    Not notFilter = new Not(leftFilter);
+
+    Optional<Predicate> notResult = ExpressionUtils.convertSparkFilterToKernelPredicate(notFilter);
+
+    assertTrue(notResult.isPresent(), "Not filter should be converted");
+    assertEquals("NOT", notResult.get().getName());
+    assertEquals(1, notResult.get().getChildren().size());
+  }
+
 
   @Test
   public void testNotFilter_RequiresChildConvertible() {
