@@ -57,15 +57,23 @@ public final class ExpressionUtils {
    *   <li>Logical operators: And, Or, Not
    * </ul>
    *
-   * <p>For AND operations, partial pushdown is automatically enabled - if only one operand can be
-   * converted, the convertible operand will be returned. OR and NOT operations require all
-   * operands/children to be convertible.
-   *
    * @param filter the Spark SQL filter to convert
    * @return Optional containing the converted Kernel predicate, or empty if conversion is not
    *     supported
    */
   public static Optional<Predicate> convertSparkFilterToKernelPredicate(Filter filter) {
+    return convertSparkFilterToKernelPredicate(filter, true);
+  }
+
+  /**
+   * Converts a Spark SQL filter to a Delta Kernel predicate with partial pushdown control.
+   * When canPartialPushDown is true, AND filters can be partially converted if at least one
+   * operand can be converted. OR filters always require both operands to be convertible. NOT
+   * filters disable partial pushdown for their child to preserve semantic correctness.
+   */
+  @VisibleForTesting
+  static Optional<Predicate> convertSparkFilterToKernelPredicate(
+      Filter filter, boolean canPartialPushDown) {
     if (filter instanceof EqualTo) {
       EqualTo f = (EqualTo) filter;
       return convertValueToKernelLiteral(f.value())
@@ -74,9 +82,7 @@ public final class ExpressionUtils {
     if (filter instanceof EqualNullSafe) {
       EqualNullSafe f = (EqualNullSafe) filter;
       // EqualNullSafe with null value should be translated to IS_NULL
-      // For non-null values, we use "=" operator (not "IS NOT DISTINCT FROM")
-      // because Delta Kernel requires typed null literals for null-safe comparison
-      // but we don't know the column type here
+      // For non-null values, we use "=" operator.
       return f.value() == null
           ? Optional.of(new Predicate("IS_NULL", column(f.attribute())))
           : convertValueToKernelLiteral(f.value())
@@ -112,32 +118,37 @@ public final class ExpressionUtils {
     }
     if (filter instanceof org.apache.spark.sql.sources.And) {
       org.apache.spark.sql.sources.And f = (org.apache.spark.sql.sources.And) filter;
-      Optional<Predicate> left = convertSparkFilterToKernelPredicate(f.left());
-      Optional<Predicate> right = convertSparkFilterToKernelPredicate(f.right());
-
+      Optional<Predicate> left = convertSparkFilterToKernelPredicate(f.left(), canPartialPushDown);
+      Optional<Predicate> right =
+          convertSparkFilterToKernelPredicate(f.right(), canPartialPushDown);
       if (left.isPresent() && right.isPresent()) {
         return Optional.of(new And(left.get(), right.get()));
-      } else if (left.isPresent()) {
-        // Partial pushdown: return the convertible left operand
-        return left;
-      } else if (right.isPresent()) {
-        // Partial pushdown: return the convertible right operand
-        return right;
-      } else {
-        return Optional.empty();
       }
+      if (canPartialPushDown && left.isPresent()) {
+        return left;
+      }
+      if (canPartialPushDown && right.isPresent()) {
+        return right;
+      }
+      return Optional.empty();
     }
     if (filter instanceof org.apache.spark.sql.sources.Or) {
       org.apache.spark.sql.sources.Or f = (org.apache.spark.sql.sources.Or) filter;
-      Optional<Predicate> left = convertSparkFilterToKernelPredicate(f.left());
-      Optional<Predicate> right = convertSparkFilterToKernelPredicate(f.right());
+      Optional<Predicate> left = convertSparkFilterToKernelPredicate(f.left(), canPartialPushDown);
+      Optional<Predicate> right =
+          convertSparkFilterToKernelPredicate(f.right(), canPartialPushDown);
       // OR requires both operands to be convertible for correctness
-      return left.flatMap(l -> right.map(r -> new Or(l, r)));
+      if (!left.isPresent() || !right.isPresent()) {
+        return Optional.empty();
+      }
+      return Optional.of(new Or(left.get(), right.get()));
     }
     if (filter instanceof Not) {
       Not f = (Not) filter;
-      // NOT requires the child predicate to be convertible
-      return convertSparkFilterToKernelPredicate(f.child()).map(c -> new Predicate("NOT", c));
+      // NOT disables partial pushdown for semantic correctness
+      // NOT (A AND B) cannot become NOT A - they have different meanings
+      Optional<Predicate> child = convertSparkFilterToKernelPredicate(f.child(), false);
+      return child.map(c -> new Predicate("NOT", c));
     }
 
     return Optional.empty();

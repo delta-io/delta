@@ -230,13 +230,29 @@ public class ExpressionUtilsTest {
     org.apache.spark.sql.sources.And andFilter =
         new org.apache.spark.sql.sources.And(leftFilter, unsupportedRightFilter);
 
-    // Partial pushdown is always enabled - should return the convertible part
-    Optional<Predicate> result = ExpressionUtils.convertSparkFilterToKernelPredicate(andFilter);
+    // Without partial pushdown - should return empty
+    Optional<Predicate> resultWithoutPartial =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(andFilter, false);
+    assertFalse(
+        resultWithoutPartial.isPresent(),
+        "AND filter with unconvertible operand should return empty without partial pushdown");
+
+    // With partial pushdown - should return the convertible part
+    Optional<Predicate> resultWithPartial =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(andFilter, true);
     assertTrue(
-        result.isPresent(),
-        "AND filter should return the convertible operand (partial pushdown always enabled)");
-    assertEquals("=", result.get().getName());
-    assertEquals(2, result.get().getChildren().size());
+        resultWithPartial.isPresent(),
+        "AND filter with partial pushdown should return the convertible operand");
+    assertEquals("=", resultWithPartial.get().getName());
+    assertEquals(2, resultWithPartial.get().getChildren().size());
+
+    // Default behavior (canPartialPushDown=true)
+    Optional<Predicate> resultDefault =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(andFilter);
+    assertTrue(
+        resultDefault.isPresent(),
+        "AND filter should return the convertible operand (default partial pushdown enabled)");
+    assertEquals("=", resultDefault.get().getName());
   }
 
   @Test
@@ -248,11 +264,19 @@ public class ExpressionUtilsTest {
     org.apache.spark.sql.sources.And andFilter =
         new org.apache.spark.sql.sources.And(unsupportedLeftFilter, rightFilter);
 
-    // Should return the convertible part (right side)
-    Optional<Predicate> result = ExpressionUtils.convertSparkFilterToKernelPredicate(andFilter);
-    assertTrue(result.isPresent(), "AND filter should return the convertible operand");
-    assertEquals(">", result.get().getName());
-    assertEquals(2, result.get().getChildren().size());
+    // With partial pushdown - should return the convertible part (right side)
+    Optional<Predicate> resultWithPartial =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(andFilter, true);
+    assertTrue(resultWithPartial.isPresent(), "AND filter should return the convertible operand");
+    assertEquals(">", resultWithPartial.get().getName());
+    assertEquals(2, resultWithPartial.get().getChildren().size());
+
+    // Without partial pushdown - should return empty
+    Optional<Predicate> resultWithoutPartial =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(andFilter, false);
+    assertFalse(
+        resultWithoutPartial.isPresent(),
+        "AND filter should return empty without partial pushdown");
   }
 
   @Test
@@ -264,10 +288,18 @@ public class ExpressionUtilsTest {
     org.apache.spark.sql.sources.And andFilter =
         new org.apache.spark.sql.sources.And(unsupportedLeftFilter, unsupportedRightFilter);
 
-    // Should return empty if both sides are unconvertible
-    Optional<Predicate> result = ExpressionUtils.convertSparkFilterToKernelPredicate(andFilter);
+    // Should return empty regardless of partial pushdown setting when both sides are unconvertible
+    Optional<Predicate> resultWithPartial =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(andFilter, true);
     assertFalse(
-        result.isPresent(), "AND filter should return empty if both operands are unconvertible");
+        resultWithPartial.isPresent(),
+        "AND filter should return empty if both operands are unconvertible");
+
+    Optional<Predicate> resultWithoutPartial =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(andFilter, false);
+    assertFalse(
+        resultWithoutPartial.isPresent(),
+        "AND filter should return empty if both operands are unconvertible");
   }
 
   @Test
@@ -279,9 +311,18 @@ public class ExpressionUtilsTest {
     org.apache.spark.sql.sources.Or orFilter =
         new org.apache.spark.sql.sources.Or(leftFilter, unsupportedRightFilter);
 
-    // OR requires both operands to be convertible
-    Optional<Predicate> result = ExpressionUtils.convertSparkFilterToKernelPredicate(orFilter);
-    assertFalse(result.isPresent(), "OR filter with unconvertible operand should return empty");
+    // OR requires both operands to be convertible regardless of partial pushdown flag
+    Optional<Predicate> resultWithoutPartial =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(orFilter, false);
+    assertFalse(
+        resultWithoutPartial.isPresent(),
+        "OR filter with unconvertible operand should return empty");
+
+    Optional<Predicate> resultWithPartial =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(orFilter, true);
+    assertFalse(
+        resultWithPartial.isPresent(),
+        "OR filter with unconvertible operand should return empty even with partial pushdown");
   }
 
   @Test
@@ -291,8 +332,43 @@ public class ExpressionUtilsTest {
 
     Not notFilter = new Not(unsupportedFilter);
 
-    // NOT requires child to be convertible
-    Optional<Predicate> result = ExpressionUtils.convertSparkFilterToKernelPredicate(notFilter);
-    assertFalse(result.isPresent(), "NOT filter with unconvertible child should return empty");
+    // NOT requires child to be convertible regardless of partial pushdown flag
+    Optional<Predicate> resultWithoutPartial =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(notFilter, false);
+    assertFalse(
+        resultWithoutPartial.isPresent(),
+        "NOT filter with unconvertible child should return empty");
+
+    Optional<Predicate> resultWithPartial =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(notFilter, true);
+    assertFalse(
+        resultWithPartial.isPresent(),
+        "NOT filter with unconvertible child should return empty even with partial pushdown");
+  }
+
+  @Test
+  public void testNotFilter_DisablesPartialPushDownForChild() {
+    // Create NOT(A AND B) where A is convertible but B is not
+    // This tests that NOT disables partial pushdown for semantic correctness
+    EqualTo convertibleFilter = new EqualTo("id", 1);
+    Filter unsupportedFilter = new StringContains("unsupported_col", "test");
+    org.apache.spark.sql.sources.And andFilter =
+        new org.apache.spark.sql.sources.And(convertibleFilter, unsupportedFilter);
+
+    // First verify that AND alone would return partial result with partial pushdown
+    Optional<Predicate> andAloneWithPartial =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(andFilter, true);
+    assertTrue(
+        andAloneWithPartial.isPresent(),
+        "AND filter alone should return partial result with partial pushdown enabled");
+
+    // Now verify that NOT(AND) returns empty because NOT disables partial pushdown
+    Not notAndFilter = new Not(andFilter);
+    Optional<Predicate> notResult =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(notAndFilter, true);
+    assertFalse(
+        notResult.isPresent(),
+        "NOT(A AND B) should return empty when B is unconvertible, even with partial pushdown enabled"
+            + " - this preserves semantic correctness as NOT(A AND B) != NOT(A)");
   }
 }
