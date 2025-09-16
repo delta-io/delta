@@ -27,6 +27,7 @@ import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.spark.SparkDsv2TestBase;
 import java.io.File;
 import java.lang.reflect.Field;
+import java.util.Optional;
 import org.apache.spark.sql.connector.read.Scan;
 import org.apache.spark.sql.connector.read.streaming.MicroBatchStream;
 import org.apache.spark.sql.sources.*;
@@ -126,14 +127,27 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
     Filter[] filters = {new EqualTo("id", 100)};
     Filter[] postScanFilters = builder.pushFilters(filters);
 
-    // data filter needs post-scan evaluation
+    // check postScanFilters: ata filter needs post-scan evaluation
     assertEquals(1, postScanFilters.length);
     assertArrayEquals(filters, postScanFilters);
+
+    // check pushed filters
     assertArrayEquals(filters, builder.pushedFilters());
 
-    Predicate[] pushedPredicates = getPushedKernelPredicates(builder);
-    assertEquals(1, pushedPredicates.length);
-    assertEquals("=", pushedPredicates[0].getName());
+    // check pushedKernelPredicates
+    Predicate[] pushedKernelPredicates = getPushedKernelPredicates(builder);
+    assertEquals(1, pushedKernelPredicates.length);
+    assertEquals("=", pushedKernelPredicates[0].getName());
+
+    // check dataFilters
+    Filter[] dataFilters = getDataFilters(builder);
+    assertEquals(1, dataFilters.length);
+    assertArrayEquals(filters, dataFilters);
+
+    // check kernelScanBuilder's pushed predicates
+    Optional<Predicate> predicateOpt = getKernelScanBuilderPredicate(builder);
+    assert predicateOpt.isPresent();
+    assertEquals("=", predicateOpt.get().getName());
   }
 
   @Test
@@ -143,12 +157,14 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
     Filter[] filters = {new StringStartsWith("name", "test")};
     Filter[] postScanFilters = builder.pushFilters(filters);
 
-    // unsupported filter needs post-scan evaluation
+    // check postScanFilters: unsupported filter needs post-scan evaluation
     assertEquals(1, postScanFilters.length);
     assertArrayEquals(filters, postScanFilters);
+
+    // check pushed filters
     assertEquals(0, builder.pushedFilters().length);
 
-    // unsupported filter is not pushed
+    // check pushedKernelPredicates: unsupported filter is not pushed
     Predicate[] pushedPredicates = getPushedKernelPredicates(builder);
     assertEquals(0, pushedPredicates.length);
   }
@@ -262,6 +278,16 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
     Field field = SparkScanBuilder.class.getDeclaredField("dataFilters");
     field.setAccessible(true);
     return (Filter[]) field.get(builder);
+  }
+
+  private Optional<Predicate> getKernelScanBuilderPredicate(SparkScanBuilder builder)
+      throws Exception {
+    Field field = SparkScanBuilder.class.getDeclaredField("kernelScanBuilder");
+    field.setAccessible(true);
+    Object kernelScanBuilder = field.get(builder);
+    Field predicateField = kernelScanBuilder.getClass().getDeclaredField("predicate");
+    predicateField.setAccessible(true);
+    return (Optional<Predicate>) predicateField.get(kernelScanBuilder);
   }
 
   private boolean containsFilter(Filter[] filters, Filter target) {
