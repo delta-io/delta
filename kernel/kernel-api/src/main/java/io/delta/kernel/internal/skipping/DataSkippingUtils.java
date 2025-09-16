@@ -27,6 +27,7 @@ import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.*;
 import io.delta.kernel.internal.util.Tuple2;
+import io.delta.kernel.types.CollationIdentifier;
 import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import java.util.*;
@@ -263,10 +264,15 @@ public class DataSkippingUtils {
         if (left instanceof Column && right instanceof Literal) {
           Column leftCol = (Column) left;
           Literal rightLit = (Literal) right;
-          if (schemaHelper.isSkippingEligibleMinMaxColumn(leftCol)
+          if (schemaHelper.isSkippingEligibleMinMaxColumn(
+                  leftCol, dataFilters.getCollationIdentifier().isPresent())
               && schemaHelper.isSkippingEligibleLiteral(rightLit)) {
             return constructComparatorDataSkippingFilters(
-                dataFilters.getName(), leftCol, rightLit, schemaHelper);
+                dataFilters.getName(),
+                leftCol,
+                rightLit,
+                schemaHelper,
+                dataFilters.getCollationIdentifier());
           }
         } else if (right instanceof Column && left instanceof Literal) {
           return constructDataSkippingFilter(reverseComparatorFilter(dataFilters), schemaHelper);
@@ -284,7 +290,11 @@ public class DataSkippingUtils {
 
   /** Construct the skipping predicate for a given comparator */
   private static Optional<DataSkippingPredicate> constructComparatorDataSkippingFilters(
-      String comparator, Column leftCol, Literal rightLit, StatsSchemaHelper schemaHelper) {
+      String comparator,
+      Column leftCol,
+      Literal rightLit,
+      StatsSchemaHelper schemaHelper,
+      Optional<CollationIdentifier> collationIdentifier) {
 
     switch (comparator.toUpperCase(Locale.ROOT)) {
 
@@ -295,35 +305,54 @@ public class DataSkippingUtils {
             new DataSkippingPredicate(
                 "AND",
                 constructBinaryDataSkippingPredicate(
-                    "<=", schemaHelper.getMinColumn(leftCol), rightLit),
+                    "<=",
+                    schemaHelper.getMinColumn(leftCol, collationIdentifier),
+                    rightLit,
+                    collationIdentifier),
                 constructBinaryDataSkippingPredicate(
-                    ">=", schemaHelper.getMaxColumn(leftCol), rightLit)));
+                    ">=",
+                    schemaHelper.getMaxColumn(leftCol, collationIdentifier),
+                    rightLit,
+                    collationIdentifier)));
 
         // Match any file whose min is less than the requested upper bound.
       case "<":
         return Optional.of(
             constructBinaryDataSkippingPredicate(
-                "<", schemaHelper.getMinColumn(leftCol), rightLit));
+                "<",
+                schemaHelper.getMinColumn(leftCol, collationIdentifier),
+                rightLit,
+                collationIdentifier));
 
         // Match any file whose min is less than or equal to the requested upper bound
       case "<=":
         return Optional.of(
             constructBinaryDataSkippingPredicate(
-                "<=", schemaHelper.getMinColumn(leftCol), rightLit));
+                "<=",
+                schemaHelper.getMinColumn(leftCol, collationIdentifier),
+                rightLit,
+                collationIdentifier));
 
         // Match any file whose max is larger than the requested lower bound.
       case ">":
         return Optional.of(
             constructBinaryDataSkippingPredicate(
-                ">", schemaHelper.getMaxColumn(leftCol), rightLit));
+                ">",
+                schemaHelper.getMaxColumn(leftCol, collationIdentifier),
+                rightLit,
+                collationIdentifier));
 
         // Match any file whose max is larger than or equal to the requested lower bound.
       case ">=":
         return Optional.of(
             constructBinaryDataSkippingPredicate(
-                ">=", schemaHelper.getMaxColumn(leftCol), rightLit));
+                ">=",
+                schemaHelper.getMaxColumn(leftCol, collationIdentifier),
+                rightLit,
+                collationIdentifier));
       case "IS NOT DISTINCT FROM":
-        return constructDataSkippingFilter(rewriteEqualNullSafe(leftCol, rightLit), schemaHelper);
+        return constructDataSkippingFilter(
+            rewriteEqualNullSafe(leftCol, rightLit, collationIdentifier), schemaHelper);
       default:
         throw new IllegalArgumentException(
             String.format("Unsupported comparator expression %s", comparator));
@@ -336,11 +365,22 @@ public class DataSkippingUtils {
    * Literal}.
    */
   private static DataSkippingPredicate constructBinaryDataSkippingPredicate(
-      String exprName, Tuple2<Column, Optional<Expression>> colExpr, Literal lit) {
+      String exprName,
+      Tuple2<Column, Optional<Expression>> colExpr,
+      Literal lit,
+      Optional<CollationIdentifier> collationIdentifier) {
     Column column = colExpr._1;
     Expression adjColExpr = colExpr._2.isPresent() ? colExpr._2.get() : column;
-    return new DataSkippingPredicate(
-        exprName, Arrays.asList(adjColExpr, lit), Collections.singleton(column));
+    if (collationIdentifier.isPresent()) {
+      return new DataSkippingPredicate(
+          exprName,
+          Arrays.asList(adjColExpr, lit),
+          collationIdentifier.get(),
+          Collections.singleton(column));
+    } else {
+      return new DataSkippingPredicate(
+          exprName, Arrays.asList(adjColExpr, lit), Collections.singleton(column));
+    }
   }
 
   private static final Map<String, String> REVERSE_COMPARATORS =
@@ -356,15 +396,17 @@ public class DataSkippingUtils {
       };
 
   private static Predicate reverseComparatorFilter(Predicate predicate) {
-    return new Predicate(
+    return createPredicate(
         REVERSE_COMPARATORS.get(predicate.getName().toUpperCase(Locale.ROOT)),
         getRight(predicate),
-        getLeft(predicate));
+        getLeft(predicate),
+        predicate.getCollationIdentifier());
   }
 
   /** Construct the skipping predicate for a NOT expression child if possible */
   private static Optional<DataSkippingPredicate> constructNotDataSkippingFilters(
       Predicate childPredicate, StatsSchemaHelper schemaHelper) {
+    Optional<CollationIdentifier> collationIdentifier = childPredicate.getCollationIdentifier();
     switch (childPredicate.getName().toUpperCase(Locale.ROOT)) {
         // Use deMorgan's law to push the NOT past the AND. This is safe even with SQL
         // tri-valued logic (see below), and is desirable because we cannot generally push
@@ -423,29 +465,36 @@ public class DataSkippingUtils {
                   new DataSkippingPredicate(
                       "OR",
                       constructBinaryDataSkippingPredicate(
-                          "<", schemaHelper.getMinColumn(leftColumn), rightLiteral),
+                          "<",
+                          schemaHelper.getMinColumn(leftColumn, collationIdentifier),
+                          rightLiteral,
+                          collationIdentifier),
                       constructBinaryDataSkippingPredicate(
-                          ">", schemaHelper.getMaxColumn(leftColumn), rightLiteral)));
+                          ">",
+                          schemaHelper.getMaxColumn(leftColumn, collationIdentifier),
+                          rightLiteral,
+                          collationIdentifier)));
             });
       case "<":
         return constructDataSkippingFilter(
-            new Predicate(">=", childPredicate.getChildren()), schemaHelper);
+            createPredicate(">=", childPredicate.getChildren(), collationIdentifier), schemaHelper);
       case "<=":
         return constructDataSkippingFilter(
-            new Predicate(">", childPredicate.getChildren()), schemaHelper);
+            createPredicate(">", childPredicate.getChildren(), collationIdentifier), schemaHelper);
       case ">":
         return constructDataSkippingFilter(
-            new Predicate("<=", childPredicate.getChildren()), schemaHelper);
+            createPredicate("<=", childPredicate.getChildren(), collationIdentifier), schemaHelper);
       case ">=":
         return constructDataSkippingFilter(
-            new Predicate("<", childPredicate.getChildren()), schemaHelper);
+            createPredicate("<", childPredicate.getChildren(), collationIdentifier), schemaHelper);
       case "IS NOT DISTINCT FROM":
         return constructDataSkippingFiltersForNotEqual(
             childPredicate,
             schemaHelper,
             (leftColumn, rightLiteral) ->
                 constructDataSkippingFilter(
-                    new Predicate("NOT", rewriteEqualNullSafe(leftColumn, rightLiteral)),
+                    new Predicate(
+                        "NOT", rewriteEqualNullSafe(leftColumn, rightLiteral, collationIdentifier)),
                     schemaHelper));
       case "NOT":
         // Remove redundant pairs of NOT
@@ -525,12 +574,15 @@ public class DataSkippingUtils {
    * Rewrite `EqualNullSafe(a, NotNullLiteral)` as `And(IsNotNull(a), EqualTo(a, NotNullLiteral))`
    * and rewrite `EqualNullSafe(a, null)` as `IsNull(a)`
    */
-  private static Predicate rewriteEqualNullSafe(Column leftCol, Literal rightLit) {
+  private static Predicate rewriteEqualNullSafe(
+      Column leftCol, Literal rightLit, Optional<CollationIdentifier> collationIdentifier) {
     if (rightLit.getValue() == null) {
       return new Predicate("IS_NULL", leftCol);
     }
     return new Predicate(
-        "AND", new Predicate("IS_NOT_NULL", leftCol), new Predicate("=", leftCol, rightLit));
+        "AND",
+        new Predicate("IS_NOT_NULL", leftCol),
+        createPredicate("=", leftCol, rightLit, collationIdentifier));
   }
 
   /** Helper method for building DataSkippingPredicate for NOT =/IS NOT DISTINCT FROM */
@@ -546,13 +598,20 @@ public class DataSkippingUtils {
     Expression rightChild = getRight(equalPredicate);
     if (rightChild instanceof Column && leftChild instanceof Literal) {
       return constructDataSkippingFilter(
-          new Predicate("NOT", new Predicate(equalPredicate.getName(), rightChild, leftChild)),
+          new Predicate(
+              "NOT",
+              createPredicate(
+                  equalPredicate.getName(),
+                  rightChild,
+                  leftChild,
+                  equalPredicate.getCollationIdentifier())),
           schemaHelper);
     }
     if (leftChild instanceof Column && rightChild instanceof Literal) {
       Column leftCol = (Column) leftChild;
       Literal rightLit = (Literal) rightChild;
-      if (schemaHelper.isSkippingEligibleMinMaxColumn(leftCol)
+      if (schemaHelper.isSkippingEligibleMinMaxColumn(
+              leftCol, equalPredicate.getCollationIdentifier().isPresent())
           && schemaHelper.isSkippingEligibleLiteral(rightLit)) {
         return buildDataSkippingPredicateFunc.apply(leftCol, rightLit);
       }
