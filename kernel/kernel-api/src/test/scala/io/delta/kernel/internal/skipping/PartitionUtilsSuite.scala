@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.internal.util
+package io.delta.kernel.internal.skipping
 
 import java.util
 
@@ -21,7 +21,7 @@ import scala.collection.JavaConverters._
 
 import io.delta.kernel.expressions._
 import io.delta.kernel.expressions.Literal._
-import io.delta.kernel.internal.util.PartitionUtils._
+import io.delta.kernel.internal.skipping.PartitionUtils._
 import io.delta.kernel.types._
 
 import org.scalatest.funsuite.AnyFunSuite
