@@ -20,7 +20,7 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.expressions.And;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.SnapshotImpl;
-import io.delta.spark.dsv2.utils.ExpressionUtils;
+import io.delta.kernel.spark.utils.ExpressionUtils;
 import java.util.*;
 import java.util.stream.Collectors;
 import org.apache.spark.sql.connector.read.ScanBuilder;
@@ -48,7 +48,7 @@ public class SparkScanBuilder
   private Predicate[] pushedKernelPredicates;
   private Filter[]
       pushedFilters; // same as pushedKernelPredicates, but in Spark Filter, returned by
-                     // pushedFilters()
+  // pushedFilters()
   private Filter[] dataFilters;
 
   public SparkScanBuilder(
@@ -89,7 +89,7 @@ public class SparkScanBuilder
         Arrays.stream(filters)
             .collect(
                 Collectors.partitioningBy(
-                    f -> ExpressionUtils.translateSparkFilterToKernelPredicate(f).isPresent()));
+                    f -> ExpressionUtils.convertSparkFilterToKernelPredicate(f).isPresent()));
     List<Filter> kernelSupportedFilters = partitioned.get(true);
     List<Filter> kernelUnsupportedFilters = partitioned.get(false);
 
@@ -97,7 +97,7 @@ public class SparkScanBuilder
     this.pushedFilters = kernelSupportedFilters.toArray(new Filter[0]);
     this.pushedKernelPredicates =
         kernelSupportedFilters.stream()
-            .map(f -> ExpressionUtils.translateSparkFilterToKernelPredicate(f).get())
+            .map(f -> ExpressionUtils.convertSparkFilterToKernelPredicate(f).get())
             .toArray(Predicate[]::new);
     if (this.pushedKernelPredicates.length > 0) {
       Optional<Predicate> kernelAnd = Arrays.stream(this.pushedKernelPredicates).reduce(And::new);

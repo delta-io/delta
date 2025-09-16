@@ -131,7 +131,7 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
     assertArrayEquals(filters, postScanFilters);
     assertArrayEquals(filters, builder.pushedFilters());
 
-    Predicate[] pushedPredicates = getPushedPredicates(builder);
+    Predicate[] pushedPredicates = getPushedKernelPredicates(builder);
     assertEquals(1, pushedPredicates.length);
     assertEquals("=", pushedPredicates[0].getName());
   }
@@ -149,7 +149,7 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
     assertEquals(0, builder.pushedFilters().length);
 
     // unsupported filter is not pushed
-    Predicate[] pushedPredicates = getPushedPredicates(builder);
+    Predicate[] pushedPredicates = getPushedKernelPredicates(builder);
     assertEquals(0, pushedPredicates.length);
   }
 
@@ -169,7 +169,7 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
     // only supported filters are pushed
     Filter[] expectedPushed = {filters[0], filters[2]};
     assertArrayEquals(expectedPushed, builder.pushedFilters());
-    Predicate[] pushedPredicates = getPushedPredicates(builder);
+    Predicate[] pushedPredicates = getPushedKernelPredicates(builder);
     assertEquals(2, pushedPredicates.length);
   }
 
@@ -190,7 +190,7 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
     assertArrayEquals(expectedPost, postScanFilters);
 
     // all filters are pushed
-    Predicate[] pushedPredicates = getPushedPredicates(builder);
+    Predicate[] pushedPredicates = getPushedKernelPredicates(builder);
     assertEquals(3, pushedPredicates.length);
     assertEquals("=", pushedPredicates[0].getName());
     assertEquals("=", pushedPredicates[1].getName());
@@ -252,8 +252,8 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
         CaseInsensitiveStringMap.empty());
   }
 
-  private Predicate[] getPushedPredicates(SparkScanBuilder builder) throws Exception {
-    Field field = SparkScanBuilder.class.getDeclaredField("pushedPredicates");
+  private Predicate[] getPushedKernelPredicates(SparkScanBuilder builder) throws Exception {
+    Field field = SparkScanBuilder.class.getDeclaredField("pushedKernelPredicates");
     field.setAccessible(true);
     return (Predicate[]) field.get(builder);
   }
