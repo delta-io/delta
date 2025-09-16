@@ -35,6 +35,10 @@ import org.apache.spark.sql.catalyst.expressions.GenericRow;
 import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.read.Scan;
 import org.apache.spark.sql.connector.read.ScanBuilder;
+import org.apache.spark.sql.sources.EqualTo;
+import org.apache.spark.sql.sources.Filter;
+import org.apache.spark.sql.sources.StringEndsWith;
+import org.apache.spark.sql.sources.StringStartsWith;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
@@ -157,6 +161,7 @@ public class SparkGoldenTableTest extends QueryTest {
     assertEquals(combinedOptions, sparkScan1.getOptions());
     verifyHadoopConf(sparkScan1.getConfiguration());
 
+    // check SupportsPushDownRequiredColumns
     StructType prunedSchema =
         DataTypes.createStructType(
             new StructField[] {
@@ -172,6 +177,27 @@ public class SparkGoldenTableTest extends QueryTest {
     assertEquals(expectedReadDataSchemaAfterPrune, sparkScan2.getReadDataSchema());
     assertEquals(combinedOptions, sparkScan2.getOptions());
     verifyHadoopConf(sparkScan2.getConfiguration());
+
+    // check SupportsPushDownFilters
+    Filter[] filters = {
+      new StringStartsWith("name", "foo"), // data filter, unsupported
+      new EqualTo("cnt", 100), // data filter, supported
+      new EqualTo("date", "2025-09-01"), // partition filter, supported
+      new StringEndsWith("city", "York") // partition filter, unsupported
+    };
+    Filter[] postScanFilters = scanBuilder.pushFilters(filters);
+    // all data filters and unsupported partition filters need post-scan evaluation
+    assertEquals(3, postScanFilters.length);
+    List<Filter> postScanFilterList = Arrays.asList(postScanFilters);
+    assertTrue(postScanFilterList.contains(filters[0]));
+    assertTrue(postScanFilterList.contains(filters[1]));
+    assertTrue(postScanFilterList.contains(filters[3]));
+    // only supported filters are pushed
+    Filter[] pushedFilters = scanBuilder.pushedFilters();
+    assertEquals(2, pushedFilters.length);
+    List<Filter> pushedFilterList = Arrays.asList(pushedFilters);
+    assertTrue(pushedFilterList.contains(filters[1]));
+    assertTrue(pushedFilterList.contains(filters[2]));
   }
 
   @Test

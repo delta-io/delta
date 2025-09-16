@@ -47,7 +47,8 @@ public class SparkScanBuilder
   private StructType requiredDataSchema;
   private Predicate[] pushedKernelPredicates;
   private Filter[]
-      pushedFilters; // same as pushedPredicates, but in Spark Filter, returned by pushedFilters()
+      pushedFilters; // same as pushedKernelPredicates, but in Spark Filter, returned by
+                     // pushedFilters()
   private Filter[] dataFilters;
 
   public SparkScanBuilder(
