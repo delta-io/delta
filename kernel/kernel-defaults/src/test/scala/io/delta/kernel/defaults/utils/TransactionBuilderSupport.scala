@@ -197,7 +197,8 @@ trait TransactionBuilderV2Support extends TransactionBuilderSupport with TestUti
       tablePath,
       schema,
       "test-engine")
-      .asInstanceOf[CreateTableTransactionBuilderImpl].withClock(clock)
+      .asInstanceOf[CreateTableTransactionBuilderImpl]
+      .withClock(clock)
     if (partCols != null) {
       txnBuilder = txnBuilder.withDataLayoutSpec(
         DataLayoutSpec.partitioned(partCols.map(new Column(_)).asJava))
@@ -234,7 +235,8 @@ trait TransactionBuilderV2Support extends TransactionBuilderSupport with TestUti
     var txnBuilder = TableManager.loadSnapshot(tablePath)
       .build(engine)
       .buildUpdateTableTransaction("test-engine", Operation.WRITE)
-      .asInstanceOf[UpdateTableTransactionBuilderImpl].withClock(clock)
+      .asInstanceOf[UpdateTableTransactionBuilderImpl]
+      .withClock(clock)
     if (schema != null) {
       txnBuilder = txnBuilder.withUpdatedSchema(schema)
     }

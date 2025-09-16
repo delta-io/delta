@@ -57,7 +57,8 @@ trait AbstractInCommitTimestampSuite extends AnyFunSuite {
   self: AbstractWriteUtils =>
 
   private def getLogPath(engine: Engine, tablePath: String): Path = {
-    new Path(Table.forPath(engine, tablePath).getPath(engine), "_delta_log")
+    val resolvedTablePath = engine.getFileSystemClient.resolvePath(tablePath)
+    new Path(resolvedTablePath, "_delta_log")
   }
 
   private def removeCommitInfoFromCommit(engine: Engine, version: Long, logPath: Path): Unit = {
