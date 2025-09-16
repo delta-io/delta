@@ -127,7 +127,7 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
     Filter[] filters = {new EqualTo("id", 100)};
     Filter[] postScanFilters = builder.pushFilters(filters);
 
-    // check postScanFilters: ata filter needs post-scan evaluation
+    // check postScanFilters: data filters need post-scan evaluation
     assertEquals(1, postScanFilters.length);
     assertArrayEquals(filters, postScanFilters);
 
@@ -151,94 +151,211 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
   }
 
   @Test
-  public void testPushFilters_singleUnsupportedFilter(@TempDir File tempDir) throws Exception {
+  public void testPushFilters_singleUnsupportedDataFilter(@TempDir File tempDir) throws Exception {
     SparkScanBuilder builder = createTestScanBuilder(tempDir);
 
     Filter[] filters = {new StringStartsWith("name", "test")};
     Filter[] postScanFilters = builder.pushFilters(filters);
 
-    // check postScanFilters: unsupported filter needs post-scan evaluation
+    // check postScanFilters: unsupported filters need post-scan evaluation
     assertEquals(1, postScanFilters.length);
     assertArrayEquals(filters, postScanFilters);
 
     // check pushed filters
     assertEquals(0, builder.pushedFilters().length);
 
-    // check pushedKernelPredicates: unsupported filter is not pushed
+    // check pushedKernelPredicates: unsupported filters are not pushed
     Predicate[] pushedPredicates = getPushedKernelPredicates(builder);
     assertEquals(0, pushedPredicates.length);
+
+    // check dataFilters
+    Filter[] dataFilters = getDataFilters(builder);
+    assertEquals(1, dataFilters.length);
+    assertArrayEquals(filters, dataFilters);
+
+    // check kernelScanBuilder's pushed predicates
+    Optional<Predicate> predicateOpt = getKernelScanBuilderPredicate(builder);
+    assertFalse(predicateOpt.isPresent());
   }
 
   @Test
-  public void testPushFilters_mixedSupportedAndUnsupported(@TempDir File tempDir) throws Exception {
+  public void testPushFilters_mixedSupportedAndUnsupportedDataFilters(@TempDir File tempDir)
+      throws Exception {
     SparkScanBuilder builder = createTestScanBuilder(tempDir);
 
     Filter[] filters = {
-      new EqualTo("id", 100), new StringStartsWith("name", "test"), new GreaterThan("id", 50)
+      new EqualTo("id", 100), // supported
+      new StringStartsWith("name", "test") // unsupported
     };
     Filter[] postScanFilters = builder.pushFilters(filters);
 
-    // all data filters need post-scan evaluation
-    assertEquals(3, postScanFilters.length);
+    // check postScanFilters: data filters need post-scan evaluation
+    assertEquals(2, postScanFilters.length);
     assertArrayEquals(filters, postScanFilters);
 
-    // only supported filters are pushed
-    Filter[] expectedPushed = {filters[0], filters[2]};
+    // check pushed filters
+    Filter[] expectedPushed = {filters[0]};
     assertArrayEquals(expectedPushed, builder.pushedFilters());
+
+    // check pushedKernelPredicates
     Predicate[] pushedPredicates = getPushedKernelPredicates(builder);
-    assertEquals(2, pushedPredicates.length);
-  }
-
-  @Test
-  public void testPushFilters_mixedDataAndPartitionFilters(@TempDir File tempDir) throws Exception {
-    SparkScanBuilder builder = createTestScanBuilder(tempDir);
-
-    Filter[] filters = {
-      new EqualTo("id", 100), // data filter, supported
-      new EqualTo("dep_id", 1), // partition filter, supported
-      new GreaterThan("id", 50) // data filter, supported
-    };
-    Filter[] postScanFilters = builder.pushFilters(filters);
-
-    // data filters need post-scan evaluation
-    Filter[] expectedPost = {filters[0], filters[2]};
-    assertEquals(2, postScanFilters.length);
-    assertArrayEquals(expectedPost, postScanFilters);
-
-    // all filters are pushed
-    Predicate[] pushedPredicates = getPushedKernelPredicates(builder);
-    assertEquals(3, pushedPredicates.length);
+    assertEquals(1, pushedPredicates.length);
     assertEquals("=", pushedPredicates[0].getName());
-    assertEquals("=", pushedPredicates[1].getName());
-    assertEquals(">", pushedPredicates[2].getName());
-  }
 
-  @Test
-  public void testPushFilters_partitionFilterHandling(@TempDir File tempDir) throws Exception {
-    SparkScanBuilder builder = createTestScanBuilder(tempDir);
-
-    Filter[] filters = {
-      new EqualTo("id", 100), // data filter, supported
-      new EqualTo("dep_id", 1), // partition filter, supported
-      new GreaterThan("dep_id", 0), // partition filter, supported
-      new StringStartsWith("name", "test") // data filter, unsupported
-    };
-    Filter[] postScanFilters = builder.pushFilters(filters);
-
-    // data filters need post-scan evaluation
-    assertEquals(2, postScanFilters.length);
-    assertTrue(containsFilter(postScanFilters, filters[0]));
-    assertTrue(containsFilter(postScanFilters, filters[3]));
-
-    // only supported filters are pushed
-    Filter[] expectedPushed = {filters[0], filters[1], filters[2]};
-    assertArrayEquals(expectedPushed, builder.pushedFilters());
-
-    // check data filters
+    // check dataFilters
     Filter[] dataFilters = getDataFilters(builder);
     assertEquals(2, dataFilters.length);
     assertTrue(containsFilter(dataFilters, filters[0]));
-    assertTrue(containsFilter(dataFilters, filters[3]));
+    assertTrue(containsFilter(dataFilters, filters[1]));
+
+    // check kernelScanBuilder's pushed predicates
+    Optional<Predicate> predicateOpt = getKernelScanBuilderPredicate(builder);
+    assert predicateOpt.isPresent();
+    assertEquals("=", predicateOpt.get().getName());
+  }
+
+  @Test
+  public void testPushFilters_singleSupportedPartitionFilter(@TempDir File tempDir)
+      throws Exception {
+    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+
+    // single supported partition filter on dep_id (partition column)
+    Filter[] filters = {new EqualTo("dep_id", 1)};
+    Filter[] postScanFilters = builder.pushFilters(filters);
+
+    // partition filters are evaluated pre-scan, so no post-scan evaluation needed
+    assertEquals(0, postScanFilters.length);
+
+    // supported partition filters are pushed
+    assertArrayEquals(filters, builder.pushedFilters());
+
+    // pushed kernel predicates should include the partition predicate
+    Predicate[] pushedPredicates = getPushedKernelPredicates(builder);
+    assertEquals(1, pushedPredicates.length);
+    assertEquals("=", pushedPredicates[0].getName());
+
+    // no data filters should be recorded
+    Filter[] dataFilters = getDataFilters(builder);
+    assertEquals(0, dataFilters.length);
+
+    // kernelScanBuilder should carry the pushed predicate
+    Optional<Predicate> predicateOpt = getKernelScanBuilderPredicate(builder);
+    assertTrue(predicateOpt.isPresent());
+    assertEquals("=", predicateOpt.get().getName());
+  }
+
+  @Test
+  public void testPushFilters_singleUnsupportedPartitionFilter(@TempDir File tempDir)
+      throws Exception {
+    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+
+    // unsupported partition filter
+    Filter[] filters = {new StringStartsWith("dep_id", "1")};
+    Filter[] postScanFilters = builder.pushFilters(filters);
+
+    // unsupported partition filters should be left for Spark to evaluate post-scan
+    assertEquals(1, postScanFilters.length);
+    assertArrayEquals(filters, postScanFilters);
+
+    // nothing should be pushed
+    assertEquals(0, builder.pushedFilters().length);
+
+    // no kernel predicates pushed
+    Predicate[] pushedPredicates = getPushedKernelPredicates(builder);
+    assertEquals(0, pushedPredicates.length);
+
+    // still no data filters recorded
+    Filter[] dataFilters = getDataFilters(builder);
+    assertEquals(0, dataFilters.length);
+
+    // kernelScanBuilder should not have a predicate
+    Optional<Predicate> predicateOpt = getKernelScanBuilderPredicate(builder);
+    assertFalse(predicateOpt.isPresent());
+  }
+
+  @Test
+  public void testPushFilters_mixedSupportedAndUnsupportedPartitionFilters(@TempDir File tempDir)
+      throws Exception {
+    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+
+    Filter[] filters = {
+      new EqualTo("dep_id", 1), // supported partition filter
+      new StringStartsWith("dep_id", "1") // unsupported partition filter
+    };
+    Filter[] postScanFilters = builder.pushFilters(filters);
+
+    // only the unsupported partition filter requires post-scan evaluation
+    assertEquals(1, postScanFilters.length);
+    assertTrue(containsFilter(postScanFilters, filters[1]));
+
+    // only the supported partition filter is pushed
+    Filter[] expectedPushed = {filters[0]};
+    assertArrayEquals(expectedPushed, builder.pushedFilters());
+
+    // kernel should have a single pushed predicate from the supported filter
+    Predicate[] pushedPredicates = getPushedKernelPredicates(builder);
+    assertEquals(1, pushedPredicates.length);
+    assertEquals("=", pushedPredicates[0].getName());
+
+    // no data filters here
+    Filter[] dataFilters = getDataFilters(builder);
+    assertEquals(0, dataFilters.length);
+
+    // kernelScanBuilder should have a predicate present
+    Optional<Predicate> predicateOpt = getKernelScanBuilderPredicate(builder);
+    assertTrue(predicateOpt.isPresent());
+    assertEquals("=", predicateOpt.get().getName());
+  }
+
+  @Test
+  public void testPushFilters_mixedFilters(@TempDir File tempDir) throws Exception {
+    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+
+    Filter[] filters = {
+      new EqualTo("id", 100), // data filter, supported
+      new StringStartsWith("name", "foo"), // data filter, unsupported
+      new GreaterThan("dep_id", 1), // partition filter, supported
+      new StringEndsWith("dep_id", "1") // partition filter, unsupported
+    };
+
+    Filter[] postScanFilters = builder.pushFilters(filters);
+
+    // post-scan filters should include: all data filters (supported & unsupported)
+    // plus the unsupported partition filter
+    assertEquals(3, postScanFilters.length);
+    assertTrue(containsFilter(postScanFilters, filters[0]));
+    assertTrue(containsFilter(postScanFilters, filters[1]));
+    assertTrue(containsFilter(postScanFilters, filters[3]));
+
+    // pushed filters should include the supported data filter and the supported partition filter
+    Filter[] expectedPushed = {filters[0], filters[2]};
+    assertArrayEquals(expectedPushed, builder.pushedFilters());
+
+    // pushed kernel predicates should correspond to the two supported filters
+    Predicate[] pushedPredicates = getPushedKernelPredicates(builder);
+    assertEquals(2, pushedPredicates.length);
+    assertEquals("=", pushedPredicates[0].getName());
+    assertEquals(">", pushedPredicates[1].getName());
+
+    // dataFilters recorded on the builder should include ONLY data filters
+    Filter[] dataFilters = getDataFilters(builder);
+    assertEquals(2, dataFilters.length);
+    assertTrue(containsFilter(dataFilters, filters[0]));
+    assertTrue(containsFilter(dataFilters, filters[1]));
+
+    // kernelScanBuilder should have a combined predicate (AND) of the two supported filters.
+    // We don't assert the top-level predicate name to avoid coupling; verify its children.
+    Optional<Predicate> predicateOpt = getKernelScanBuilderPredicate(builder);
+    assertTrue(predicateOpt.isPresent());
+    Predicate combined = predicateOpt.get();
+    assertEquals("AND", combined.getName());
+    assertEquals(2, combined.getChildren().size());
+    assertTrue(combined.getChildren().get(0) instanceof io.delta.kernel.expressions.Predicate);
+    assertTrue(combined.getChildren().get(1) instanceof io.delta.kernel.expressions.Predicate);
+    assertEquals(
+        "=", ((io.delta.kernel.expressions.Predicate) combined.getChildren().get(0)).getName());
+    assertEquals(
+        ">", ((io.delta.kernel.expressions.Predicate) combined.getChildren().get(1)).getName());
   }
 
   private SparkScanBuilder createTestScanBuilder(File tempDir) {
