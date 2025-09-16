@@ -180,8 +180,8 @@ public class SparkGoldenTableTest extends QueryTest {
 
     // check SupportsPushDownFilters
     Filter[] filters = {
-      new StringStartsWith("name", "foo"), // data filter, unsupported
       new EqualTo("cnt", 100), // data filter, supported
+      new StringStartsWith("name", "foo"), // data filter, unsupported
       new EqualTo("date", "2025-09-01"), // partition filter, supported
       new StringEndsWith("city", "York") // partition filter, unsupported
     };
@@ -196,7 +196,7 @@ public class SparkGoldenTableTest extends QueryTest {
     Filter[] pushedFilters = scanBuilder.pushedFilters();
     assertEquals(2, pushedFilters.length);
     List<Filter> pushedFilterList = Arrays.asList(pushedFilters);
-    assertTrue(pushedFilterList.contains(filters[1]));
+    assertTrue(pushedFilterList.contains(filters[0]));
     assertTrue(pushedFilterList.contains(filters[2]));
   }
 
