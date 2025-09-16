@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.internal.util;
+package io.delta.kernel.internal.skipping;
 
 import static io.delta.kernel.expressions.AlwaysFalse.ALWAYS_FALSE;
 import static io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE;
@@ -31,6 +31,10 @@ import io.delta.kernel.internal.DeltaErrorsInternal;
 import io.delta.kernel.internal.InternalScanFileUtils;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.fs.Path;
+import io.delta.kernel.internal.util.ColumnMapping;
+import io.delta.kernel.internal.util.InternalUtils;
+import io.delta.kernel.internal.util.Tuple2;
+import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.types.*;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
@@ -270,11 +274,12 @@ public class PartitionUtils {
    */
   public static Predicate rewritePartitionPredicateOnCheckpointFileSchema(
       Predicate predicate, Map<String, StructField> partitionColNameToField) {
-    return new Predicate(
+    return createPartitionPredicate(
         predicate.getName(),
         predicate.getChildren().stream()
             .map(child -> rewriteColRefOnPartitionValuesParsed(child, partitionColNameToField))
-            .collect(Collectors.toList()));
+            .collect(Collectors.toList()),
+        predicate.getCollationIdentifier());
   }
 
   private static Expression rewriteColRefOnPartitionValuesParsed(
@@ -319,11 +324,12 @@ public class PartitionUtils {
    */
   public static Predicate rewritePartitionPredicateOnScanFileSchema(
       Predicate predicate, Map<String, StructField> partitionColMetadata) {
-    return new Predicate(
+    return createPartitionPredicate(
         predicate.getName(),
         predicate.getChildren().stream()
             .map(child -> rewritePartitionColumnRef(child, partitionColMetadata))
-            .collect(Collectors.toList()));
+            .collect(Collectors.toList()),
+        predicate.getCollationIdentifier());
   }
 
   private static Expression rewritePartitionColumnRef(
@@ -615,5 +621,14 @@ public class PartitionUtils {
       }
     }
     return escaped.toString();
+  }
+
+  private static PartitionPredicate createPartitionPredicate(
+      String name, List<Expression> children, Optional<CollationIdentifier> collationIdentifier) {
+    if (collationIdentifier.isPresent()) {
+      return new PartitionPredicate(name, children, collationIdentifier.get());
+    } else {
+      return new PartitionPredicate(name, children);
+    }
   }
 }

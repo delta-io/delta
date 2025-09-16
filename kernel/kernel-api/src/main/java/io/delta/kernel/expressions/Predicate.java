@@ -119,6 +119,7 @@ public class Predicate extends ScalarExpression {
 
   public Predicate(String name, List<Expression> children) {
     super(name, children);
+    checkArguments(name, children);
     collationIdentifier = Optional.empty();
   }
 
@@ -184,8 +185,51 @@ public class Predicate extends ScalarExpression {
     return this.hashCode() == o.hashCode();
   }
 
+  private void checkArguments(String name, List<Expression> children) {
+    boolean isPredicateSupported =
+        CONSTANT_OPERATORS.contains(this.name)
+            || UNARY_OPERATORS.contains(this.name)
+            || BINARY_OPERATORS.contains(this.name);
+    if (!isPredicateSupported) {
+      throw new IllegalArgumentException(
+          String.format(
+              "Predicate operator '%s' is not supported. Supported operators are %s, %s and %s.",
+              name, CONSTANT_OPERATORS, UNARY_OPERATORS, BINARY_OPERATORS));
+    }
+
+    int expectedNumberOfChildren =
+        CONSTANT_OPERATORS.contains(this.name)
+            ? 0
+            : UNARY_OPERATORS.contains(this.name)
+                ? 1
+                : BINARY_OPERATORS.contains(this.name) ? 2 : -1;
+    if (children.size() != expectedNumberOfChildren) {
+      throw new IllegalArgumentException(
+          String.format(
+              "Invalid Predicate: operator '%s' requires %s children, but found %d.",
+              this.name, expectedNumberOfChildren, children.size()));
+    }
+  }
+
+  private static final Set<String> CONSTANT_OPERATORS =
+      Stream.of("ALWAYS_TRUE", "ALWAYS_FALSE").collect(Collectors.toSet());
+
+  private static final Set<String> UNARY_OPERATORS =
+      Stream.of("NOT", "IS_NULL", "IS_NOT_NULL").collect(Collectors.toSet());
+
   private static final Set<String> BINARY_OPERATORS =
-      Stream.of("<", "<=", ">", ">=", "=", "AND", "OR", "IS NOT DISTINCT FROM", "STARTS_WITH")
+      Stream.of(
+              "<",
+              "<=",
+              ">",
+              ">=",
+              "=",
+              "<>",
+              "AND",
+              "OR",
+              "IS NOT DISTINCT FROM",
+              "STARTS_WITH",
+              "LIKE")
           .collect(Collectors.toSet());
 
   /** Operators that support collation-based string comparison. */

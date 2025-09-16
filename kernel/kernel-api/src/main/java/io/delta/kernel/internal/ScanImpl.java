@@ -16,9 +16,9 @@
 package io.delta.kernel.internal;
 
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineException;
+import static io.delta.kernel.internal.skipping.PartitionUtils.rewritePartitionPredicateOnCheckpointFileSchema;
+import static io.delta.kernel.internal.skipping.PartitionUtils.rewritePartitionPredicateOnScanFileSchema;
 import static io.delta.kernel.internal.skipping.StatsSchemaHelper.getStatsSchema;
-import static io.delta.kernel.internal.util.PartitionUtils.rewritePartitionPredicateOnCheckpointFileSchema;
-import static io.delta.kernel.internal.util.PartitionUtils.rewritePartitionPredicateOnScanFileSchema;
 import static java.util.function.Function.identity;
 import static java.util.stream.Collectors.toMap;
 
@@ -39,6 +39,7 @@ import io.delta.kernel.internal.rowtracking.MaterializedRowTrackingColumn;
 import io.delta.kernel.internal.rowtracking.RowTracking;
 import io.delta.kernel.internal.skipping.DataSkippingPredicate;
 import io.delta.kernel.internal.skipping.DataSkippingUtils;
+import io.delta.kernel.internal.skipping.PartitionUtils;
 import io.delta.kernel.internal.util.*;
 import io.delta.kernel.metrics.ScanReport;
 import io.delta.kernel.metrics.SnapshotReport;
@@ -366,7 +367,8 @@ public class ScanImpl implements Scan {
     // pruning it after is much simpler
     StructType prunedStatsSchema =
         DataSkippingUtils.pruneStatsSchema(
-            getStatsSchema(metadata.getDataSchema()), dataSkippingFilter.getReferencedCols());
+            getStatsSchema(metadata.getDataSchema(), dataSkippingFilter.getReferencedCollations()),
+            dataSkippingFilter.getReferencedCols());
 
     // Skipping happens in two steps:
     // 1. The predicate produces false for any file whose stats prove we can safely skip it. A

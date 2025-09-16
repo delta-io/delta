@@ -15,8 +15,8 @@
  */
 package io.delta.kernel.internal.actions;
 
+import static io.delta.kernel.internal.skipping.PartitionUtils.serializePartitionMap;
 import static io.delta.kernel.internal.util.InternalUtils.relativizePath;
-import static io.delta.kernel.internal.util.PartitionUtils.serializePartitionMap;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.VectorUtils.toJavaMap;
 
