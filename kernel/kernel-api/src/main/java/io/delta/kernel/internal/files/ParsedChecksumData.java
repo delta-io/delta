@@ -39,6 +39,11 @@ public class ParsedChecksumData extends ParsedLogData {
   }
 
   @Override
+  public String getParentCategoryName() {
+    return "Checksum";
+  }
+
+  @Override
   public Class<? extends ParsedLogData> getParentCategoryClass() {
     return ParsedChecksumData.class;
   }

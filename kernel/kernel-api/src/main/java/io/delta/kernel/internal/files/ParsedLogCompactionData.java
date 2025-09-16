@@ -55,6 +55,11 @@ public class ParsedLogCompactionData extends ParsedLogData {
   }
 
   @Override
+  public String getParentCategoryName() {
+    return "LogCompaction";
+  }
+
+  @Override
   public Class<? extends ParsedLogData> getParentCategoryClass() {
     return ParsedLogCompactionData.class;
   }

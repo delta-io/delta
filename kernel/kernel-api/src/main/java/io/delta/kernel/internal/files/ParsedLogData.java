@@ -98,6 +98,8 @@ public abstract class ParsedLogData {
     return inlineDataOpt.get();
   }
 
+  public abstract String getParentCategoryName();
+
   public abstract Class<? extends ParsedLogData> getParentCategoryClass();
 
   /** Protected method for subclasses to override to add output to {@link #toString}. */

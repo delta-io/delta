@@ -25,15 +25,9 @@ import io.delta.kernel.commit.{CommitMetadata, CommitResponse, Committer}
 import io.delta.kernel.data.Row
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.KernelException
-import io.delta.kernel.internal.SnapshotImpl
 import io.delta.kernel.internal.actions.Protocol
-<<<<<<< HEAD:kernel/kernel-api/src/test/scala/io/delta/kernel/internal/catalogManaged/SnapshotBuilderSuite.scala
 import io.delta.kernel.internal.commit.DefaultFileSystemManagedTableOnlyCommitter
-import io.delta.kernel.internal.files.ParsedLogData
-=======
-import io.delta.kernel.internal.files.{ParsedChecksumData, ParsedLogData}
->>>>>>> 7e9f9b0a3 (refactor first pass):kernel/kernel-api/src/test/scala/io/delta/kernel/internal/catalogManaged/ResolvedTableBuilderSuite.scala
-import io.delta.kernel.internal.files.ParsedLogData.ParsedLogType
+import io.delta.kernel.internal.files.{ParsedDeltaData, ParsedLogData}
 import io.delta.kernel.internal.table.SnapshotBuilderImpl
 import io.delta.kernel.test.{ActionUtils, MockFileSystemClientUtils, MockSnapshotUtils, VectorTestUtils}
 import io.delta.kernel.types.{IntegerType, StructType}
@@ -239,10 +233,10 @@ class SnapshotBuilderSuite extends AnyFunSuite
   }
 
   Seq(
-    ParsedChecksumData.forInlineChecksum(1, emptyColumnarBatch),
+    ParsedDeltaData.forInlineData(1, emptyColumnarBatch),
     ParsedLogData.forFileStatus(logCompactionStatus(0, 1))).foreach { parsedLogData =>
-    val suffix = s"- type=${parsedLogData.`type`}"
-    test(s"withLogData: non-DELTA parsed log data throws IllegalArgumentException $suffix") {
+    val suffix = s"- type=${parsedLogData.getParentCategoryName}"
+    test(s"withLogData: non-RATIFIED_STAGED_COMMIT throws IllegalArgumentException $suffix") {
       val builder = TableManager
         .loadSnapshot(dataPath.toString)
         .atVersion(1)
@@ -252,7 +246,7 @@ class SnapshotBuilderSuite extends AnyFunSuite
         builder.build(emptyMockEngine)
       }.getMessage
 
-      assert(exMsg.contains("Only DELTA (commit) log data (written to file) is supported"))
+      assert(exMsg.contains("Only RATIFIED_STAGED_COMMIT log data is supported"))
     }
   }
 

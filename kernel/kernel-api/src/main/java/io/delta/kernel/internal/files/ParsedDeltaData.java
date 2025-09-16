@@ -39,6 +39,11 @@ public class ParsedDeltaData extends ParsedLogData {
   }
 
   @Override
+  public String getParentCategoryName() {
+    return "Delta";
+  }
+
+  @Override
   public Class<? extends ParsedLogData> getParentCategoryClass() {
     return ParsedDeltaData.class;
   }

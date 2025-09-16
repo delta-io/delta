@@ -342,8 +342,7 @@ public class SnapshotManager {
             .collect(Collectors.toList());
 
     final List<FileStatus> listedCompactionFileStatuses =
-        partitionedFiles
-            .getOrDefault(ParsedLogCompactionData.class, Collections.emptyList())
+        partitionedFiles.getOrDefault(ParsedLogCompactionData.class, Collections.emptyList())
             .stream()
             .map(ParsedLogData::getFileStatus)
             .collect(Collectors.toList());

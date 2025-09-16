@@ -31,6 +31,11 @@ public abstract class ParsedCheckpointData extends ParsedLogData
   protected abstract int getCheckpointTypePriority();
 
   @Override
+  public String getParentCategoryName() {
+    return "Checkpoint";
+  }
+
+  @Override
   public Class<? extends ParsedLogData> getParentCategoryClass() {
     return ParsedCheckpointData.class;
   }
