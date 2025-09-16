@@ -155,7 +155,7 @@ public class ExpressionUtilsTest {
   }
 
   @Test
-  public void testAndFilter_PartialPushDown() {
+  public void testAndFilter_PartialPushDownWithLeftConvertible() {
     // Create an AND filter where left can be converted but right cannot
     EqualTo leftFilter = new EqualTo("id", 1);
     Filter unsupportedRightFilter = new StringContains("unsupported_col", "test");
@@ -181,7 +181,7 @@ public class ExpressionUtilsTest {
   }
 
   @Test
-  public void testAndFilter_PartialPushDown_RightConvertible() {
+  public void testAndFilter_PartialPushDownWithRightConvertible() {
     // Create an AND filter where right can be converted but left cannot
     Filter unsupportedLeftFilter = new StringContains("unsupported_col", "test");
     GreaterThan rightFilter = new GreaterThan("age", 18);
