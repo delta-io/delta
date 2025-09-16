@@ -28,6 +28,7 @@ import java.sql.Date;
 import java.sql.Timestamp;
 import java.util.*;
 import org.apache.spark.sql.sources.*;
+import org.apache.spark.unsafe.types.UTF8String;
 import scala.jdk.CollectionConverters;
 
 /**
@@ -226,6 +227,10 @@ public final class ExpressionUtils {
       // Preserve precision and scale from the original BigDecimal
       java.math.BigDecimal bd = (java.math.BigDecimal) value;
       return Optional.of(Literal.ofDecimal(bd, bd.precision(), bd.scale()));
+    }
+    if (value instanceof UTF8String) {
+      UTF8String s = (UTF8String) value;
+      return Optional.of(Literal.ofString(s.toString()));
     }
     if (value instanceof String) {
       String s = (String) value;

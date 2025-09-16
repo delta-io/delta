@@ -26,6 +26,7 @@ import java.util.Optional;
 import java.util.function.Supplier;
 import java.util.stream.Stream;
 import org.apache.spark.sql.sources.*;
+import org.apache.spark.unsafe.types.UTF8String;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -116,6 +117,7 @@ public class ExpressionUtilsTest {
 
         // String type
         Arguments.of("String", "hello world", StringType.STRING),
+        Arguments.of("UTF8String", UTF8String.fromString("hello world"), StringType.STRING),
 
         // Binary data
         Arguments.of("byte[]", new byte[] {1, 2, 3, 4, 5}, BinaryType.BINARY),
