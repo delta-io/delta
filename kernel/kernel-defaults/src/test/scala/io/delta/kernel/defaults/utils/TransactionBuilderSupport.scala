@@ -21,6 +21,7 @@ import io.delta.kernel.{Operation, Table, TableManager, Transaction}
 import io.delta.kernel.commit.Committer
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.expressions.Column
+import io.delta.kernel.internal.{CreateTableTransactionBuilderImpl, UpdateTableTransactionBuilderImpl}
 import io.delta.kernel.internal.{SnapshotImpl, TableImpl}
 import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.internal.util.Clock
@@ -196,6 +197,8 @@ trait TransactionBuilderV2Support extends TransactionBuilderSupport with TestUti
       tablePath,
       schema,
       "test-engine")
+      .asInstanceOf[CreateTableTransactionBuilderImpl]
+      .withClock(clock)
     if (partCols != null) {
       txnBuilder = txnBuilder.withDataLayoutSpec(
         DataLayoutSpec.partitioned(partCols.map(new Column(_)).asJava))
@@ -232,6 +235,8 @@ trait TransactionBuilderV2Support extends TransactionBuilderSupport with TestUti
     var txnBuilder = TableManager.loadSnapshot(tablePath)
       .build(engine)
       .buildUpdateTableTransaction("test-engine", Operation.WRITE)
+      .asInstanceOf[UpdateTableTransactionBuilderImpl]
+      .withClock(clock)
     if (schema != null) {
       txnBuilder = txnBuilder.withUpdatedSchema(schema)
     }

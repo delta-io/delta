@@ -151,7 +151,6 @@ trait DeltaTableFeaturesSuiteBase extends AnyFunSuite with AbstractWriteUtils {
       case (isTimestampNtzEnabled, expectedProtocol) =>
         test(s"Create table with timestampNtz enabled: $isTimestampNtzEnabled") {
           withTempDirAndEngine { (tablePath, engine) =>
-            val table = Table.forPath(engine, tablePath)
             val schema = if (isTimestampNtzEnabled) {
               new StructType().add("tz", TimestampNTZType.TIMESTAMP_NTZ)
             } else {
@@ -164,7 +163,7 @@ trait DeltaTableFeaturesSuiteBase extends AnyFunSuite with AbstractWriteUtils {
             val txnResult = commitTransaction(txn, engine, emptyIterable())
 
             assert(txnResult.getVersion === 0)
-            val protocolRow = getProtocolActionFromCommit(engine, table, 0)
+            val protocolRow = getProtocolActionFromCommit(engine, tablePath, 0)
             assert(protocolRow.isDefined)
             val protocol = KernelProtocol.fromRow(protocolRow.get)
             assert(protocol.getMinReaderVersion === expectedProtocol.getMinReaderVersion)
