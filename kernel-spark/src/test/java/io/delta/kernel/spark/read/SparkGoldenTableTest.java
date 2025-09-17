@@ -25,7 +25,6 @@ import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.UUID;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.SparkConf;
 import org.apache.spark.sql.Dataset;
@@ -47,15 +46,12 @@ import org.junit.jupiter.api.io.TempDir;
 import scala.Function0;
 
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
-public class GoldTableTest extends QueryTest {
+public class SparkGoldenTableTest extends QueryTest {
 
   private SparkSession spark;
-  private String nameSpace;
 
   @BeforeAll
   public void setUp(@TempDir File tempDir) {
-    // Spark doesn't allow '-'
-    nameSpace = "ns_" + UUID.randomUUID().toString().replace('-', '_');
     SparkConf conf =
         new SparkConf()
             .set("spark.sql.catalog.dsv2", "io.delta.kernel.spark.catalog.TestCatalog")
@@ -65,7 +61,7 @@ public class GoldTableTest extends QueryTest {
                 "spark.sql.catalog.spark_catalog",
                 "org.apache.spark.sql.delta.catalog.DeltaCatalog")
             .setMaster("local[*]")
-            .setAppName("Dsv2BasicTest");
+            .setAppName("SparkGoldenTableTest");
     spark = SparkSession.builder().config(conf).getOrCreate();
   }
 
@@ -75,7 +71,7 @@ public class GoldTableTest extends QueryTest {
   }
 
   @Test
-  public void testInternalClasses() {
+  public void testDsv2Internal() {
     String tableName = "deltatbl-partition-prune";
     String tablePath = goldenTablePath("hive/" + tableName);
     CaseInsensitiveStringMap options =
@@ -178,14 +174,8 @@ public class GoldTableTest extends QueryTest {
     verifyHadoopConf(sparkScan2.getConfiguration());
   }
 
-  private void verifyHadoopConf(Configuration conf) {
-    assertEquals("value1", conf.get("key1"));
-    assertEquals("new_value2", conf.get("key2"));
-    assertEquals("value3", conf.get("key3"));
-  }
-
   @Test
-  public void testInternalClassesNestedStruct() {
+  public void testDsv2InteralWithNestedStruct() {
     String tableName = "data-reader-nested-struct";
     String tablePath = goldenTablePath(tableName);
     SparkTable table =
@@ -424,6 +414,12 @@ public class GoldTableTest extends QueryTest {
           },
           df2);
     }
+  }
+
+  private void verifyHadoopConf(Configuration conf) {
+    assertEquals("value1", conf.get("key1"));
+    assertEquals("new_value2", conf.get("key2"));
+    assertEquals("value3", conf.get("key3"));
   }
 
   private boolean hasOnlyDeltaLogSubdir(String path) {
