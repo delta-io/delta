@@ -81,42 +81,90 @@ public class SparkScanBuilder
                 .toArray(StructField[]::new));
   }
 
+  /*
+   * In order to handle partial predicate pushdown of AND filters,
+   * recursively breakdown AND filters into individual filters and add to filterList
+   */
+  private void breakdownAndFilters(Filter filter, List<Filter> filterList) {
+    if (filter instanceof org.apache.spark.sql.sources.And) {
+      org.apache.spark.sql.sources.And andFilter = (org.apache.spark.sql.sources.And) filter;
+      breakdownAndFilters(andFilter.left(), filterList);
+      breakdownAndFilters(andFilter.right(), filterList);
+    } else {
+      filterList.add(filter);
+    }
+  }
+
+  /*
+   * Get all references (column names) from a filter
+   * If the filter is a composite filter (AND/OR/NOT), recursively get references from its children
+   * Else, return filter.references()
+   */
+  private String[] getFilterReferences(Filter filter) {
+    List<String> refs = new ArrayList<>();
+    if (filter instanceof org.apache.spark.sql.sources.And) {
+      org.apache.spark.sql.sources.And andFilter = (org.apache.spark.sql.sources.And) filter;
+      refs.addAll(Arrays.asList(getFilterReferences(andFilter.left())));
+      refs.addAll(Arrays.asList(getFilterReferences(andFilter.right())));
+    } else if (filter instanceof org.apache.spark.sql.sources.Or) {
+      org.apache.spark.sql.sources.Or orFilter = (org.apache.spark.sql.sources.Or) filter;
+      refs.addAll(Arrays.asList(getFilterReferences(orFilter.left())));
+      refs.addAll(Arrays.asList(getFilterReferences(orFilter.right())));
+    } else if (filter instanceof org.apache.spark.sql.sources.Not) {
+      org.apache.spark.sql.sources.Not notFilter = (org.apache.spark.sql.sources.Not) filter;
+      refs.addAll(Arrays.asList(getFilterReferences(notFilter.child())));
+    } else {
+      return filter.references();
+    }
+    return refs.toArray(new String[0]);
+  }
+
   @Override
   public Filter[] pushFilters(Filter[] filters) {
+    // 0. Breakdown AND filters
+    List<Filter> filterList = new ArrayList<>();
+    for (Filter filter : filters) {
+      breakdownAndFilters(filter, filterList);
+    }
+
     // 1. Split filters into kernel-supported and kernel-unsupported ones
-    Map<Boolean, List<Filter>> partitioned =
-        Arrays.stream(filters)
-            .collect(
-                Collectors.partitioningBy(
-                    f -> ExpressionUtils.convertSparkFilterToKernelPredicate(f).isPresent()));
-    List<Filter> kernelSupportedFilters = partitioned.get(true);
-    List<Filter> kernelUnsupportedFilters = partitioned.get(false);
+    List<Filter> kernelSupportedFilters = new ArrayList<>();
+    List<Filter> kernelUnsupportedFilters = new ArrayList<>();
+    List<Predicate> convertedKernelPredicates = new ArrayList<>();
+
+    for (Filter filter : filterList) {
+      Optional<Predicate> convertedOpt =
+          ExpressionUtils.convertSparkFilterToKernelPredicate(filter);
+      if (convertedOpt.isPresent()) {
+        kernelSupportedFilters.add(filter);
+        convertedKernelPredicates.add(convertedOpt.get());
+      } else {
+        kernelUnsupportedFilters.add(filter);
+      }
+    }
 
     // kernelSupportedFilters will be pushed to kernel, set pushedPredicates
     this.pushedFilters = kernelSupportedFilters.toArray(new Filter[0]);
-    this.pushedKernelPredicates =
-        kernelSupportedFilters.stream()
-            .map(f -> ExpressionUtils.convertSparkFilterToKernelPredicate(f).get())
-            .toArray(Predicate[]::new);
+    this.pushedKernelPredicates = convertedKernelPredicates.toArray(new Predicate[0]);
     if (this.pushedKernelPredicates.length > 0) {
       Optional<Predicate> kernelAnd = Arrays.stream(this.pushedKernelPredicates).reduce(And::new);
       this.kernelScanBuilder = this.kernelScanBuilder.withFilter(kernelAnd.get());
     }
 
     // 2. Split filters into partition filters and data filters
-    Map<Boolean, List<Filter>> byPartitionUsage =
-        Arrays.stream(filters)
-            .collect(
-                Collectors.partitioningBy(
-                    f -> {
-                      String[] refs = f.references();
-                      return refs != null
-                          && refs.length > 0
-                          && Arrays.stream(refs)
-                              .anyMatch(
-                                  col -> partitionColumnSet.contains(col.toLowerCase(Locale.ROOT)));
-                    }));
-    List<Filter> dataFilters = byPartitionUsage.get(false);
+    List<Filter> dataFilters = new ArrayList<>();
+    for (Filter filter : filterList) {
+      String[] refs = getFilterReferences(filter);
+      // if refs is not null and all refs are in partitionColumnSet, it's a partition filter
+      if (refs != null
+          && refs.length > 0
+          && Arrays.stream(refs)
+              .allMatch(col -> partitionColumnSet.contains(col.toLowerCase(Locale.ROOT)))) {
+        // partition filter, do nothing
+      } else {
+        dataFilters.add(filter);
+      }
+    }
     this.dataFilters = dataFilters.toArray(new Filter[0]);
 
     // 3. Return all data filters + kernel-unsupported partition filters

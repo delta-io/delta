@@ -344,6 +344,398 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
                     new Predicate(">", new Column("dep_id"), Literal.ofInt(1))))));
   }
 
+  @Test
+  public void testPushFilters_ANDSupportedDataFilters(@TempDir File tempDir) throws Exception {
+    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+
+    checkSupportsPushDownFilters(
+        builder,
+        // input filters
+        new Filter[] {
+          new And(new EqualTo("id", 100), new GreaterThan("id", 50)), // supported
+        },
+        // expected post-scan filters
+        new Filter[] {new EqualTo("id", 100), new GreaterThan("id", 50)},
+        // expected pushed filters
+        new Filter[] {new EqualTo("id", 100), new GreaterThan("id", 50)},
+        // expected pushed kernel predicates
+        new Predicate[] {
+          new Predicate("=", new Column("id"), Literal.ofInt(100)),
+          new Predicate(">", new Column("id"), Literal.ofInt(50))
+        },
+        // expected data filters
+        new Filter[] {new EqualTo("id", 100), new GreaterThan("id", 50)},
+        // expected kernelScanBuilder.predicate
+        Optional.of(
+            new Predicate(
+                "AND",
+                Arrays.asList(
+                    new Predicate("=", new Column("id"), Literal.ofInt(100)),
+                    new Predicate(">", new Column("id"), Literal.ofInt(50))))));
+  }
+
+  @Test
+  public void testPushFilters_ANDUnsupportedDataFilters(@TempDir File tempDir) throws Exception {
+    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+
+    checkSupportsPushDownFilters(
+        builder,
+        // input filters
+        new Filter[] {
+          new And(new StringStartsWith("name", "foo"), new StringEndsWith("name", "bar"))
+        },
+        // expected post-scan filters
+        new Filter[] {new StringStartsWith("name", "foo"), new StringEndsWith("name", "bar")},
+        // expected pushed filters
+        new Filter[] {},
+        // expected pushed kernel predicates
+        new Predicate[] {},
+        // expected data filters
+        new Filter[] {new StringStartsWith("name", "foo"), new StringEndsWith("name", "bar")},
+        // expected kernelScanBuilder.predicate
+        Optional.empty());
+  }
+
+  @Test
+  public void testPushFilters_ANDSupportedAndUnsupportedDataFilters(@TempDir File tempDir)
+      throws Exception {
+    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+
+    checkSupportsPushDownFilters(
+        builder,
+        // input filters
+        new Filter[] {new And(new EqualTo("id", 100), new StringStartsWith("name", "foo"))},
+        // expected post-scan filters
+        new Filter[] {new EqualTo("id", 100), new StringStartsWith("name", "foo")},
+        // expected pushed filters
+        new Filter[] {new EqualTo("id", 100)},
+        // expected pushed kernel predicates
+        new Predicate[] {new Predicate("=", new Column("id"), Literal.ofInt(100))},
+        // expected data filters
+        new Filter[] {new EqualTo("id", 100), new StringStartsWith("name", "foo")},
+        // expected kernelScanBuilder.predicate
+        Optional.of(new Predicate("=", new Column("id"), Literal.ofInt(100))));
+  }
+
+  @Test
+  public void testPushFilters_ANDSupportedPartitionFilters(@TempDir File tempDir) throws Exception {
+    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+
+    checkSupportsPushDownFilters(
+        builder,
+        // input filters
+        new Filter[] {
+          new And(new EqualTo("dep_id", 1), new GreaterThan("dep_id", 0)), // supported
+        },
+        // expected post-scan filters
+        new Filter[] {},
+        // expected pushed filters
+        new Filter[] {new EqualTo("dep_id", 1), new GreaterThan("dep_id", 0)},
+        // expected pushed kernel predicates
+        new Predicate[] {
+          new Predicate("=", new Column("dep_id"), Literal.ofInt(1)),
+          new Predicate(">", new Column("dep_id"), Literal.ofInt(0))
+        },
+        // expected data filters
+        new Filter[] {},
+        // expected kernelScanBuilder.predicate
+        Optional.of(
+            new Predicate(
+                "AND",
+                Arrays.asList(
+                    new Predicate("=", new Column("dep_id"), Literal.ofInt(1)),
+                    new Predicate(">", new Column("dep_id"), Literal.ofInt(0))))));
+  }
+
+  @Test
+  public void testPushFilters_ANDUnsupportedPartitionFilters(@TempDir File tempDir)
+      throws Exception {
+    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+
+    checkSupportsPushDownFilters(
+        builder,
+        // input filters
+        new Filter[] {
+          new And(new StringStartsWith("dep_id", "1"), new StringEndsWith("dep_id", "0"))
+        },
+        // expected post-scan filters
+        new Filter[] {new StringStartsWith("dep_id", "1"), new StringEndsWith("dep_id", "0")},
+        // expected pushed filters
+        new Filter[] {},
+        // expected pushed kernel predicates
+        new Predicate[] {},
+        // expected data filters
+        new Filter[] {},
+        // expected kernelScanBuilder.predicate
+        Optional.empty());
+  }
+
+  @Test
+  public void testPushFilters_ANDSupportedAndUnsupportedPartitionFilters(@TempDir File tempDir)
+      throws Exception {
+    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+
+    checkSupportsPushDownFilters(
+        builder,
+        // input filters
+        new Filter[] {new And(new EqualTo("dep_id", 1), new StringStartsWith("dep_id", "1"))},
+        // expected post-scan filters
+        new Filter[] {new StringStartsWith("dep_id", "1")},
+        // expected pushed filters
+        new Filter[] {new EqualTo("dep_id", 1)},
+        // expected pushed kernel predicates
+        new Predicate[] {new Predicate("=", new Column("dep_id"), Literal.ofInt(1))},
+        // expected data filters
+        new Filter[] {},
+        // expected kernelScanBuilder.predicate
+        Optional.of(new Predicate("=", new Column("dep_id"), Literal.ofInt(1))));
+  }
+
+  @Test
+  public void testPushFilters_ANDSupportedDataAndPartitionFilters(@TempDir File tempDir)
+      throws Exception {
+    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+
+    checkSupportsPushDownFilters(
+        builder,
+        // input filters
+        new Filter[] {
+          new And(new EqualTo("id", 100), new GreaterThan("dep_id", 1)),
+        },
+        // expected post-scan filters
+        new Filter[] {new EqualTo("id", 100)},
+        // expected pushed filters
+        new Filter[] {new EqualTo("id", 100), new GreaterThan("dep_id", 1)},
+        // expected pushed kernel predicates
+        new Predicate[] {
+          new Predicate("=", new Column("id"), Literal.ofInt(100)),
+          new Predicate(">", new Column("dep_id"), Literal.ofInt(1))
+        },
+        // expected data filters
+        new Filter[] {new EqualTo("id", 100)},
+        // expected kernelScanBuilder.predicate
+        Optional.of(
+            new Predicate(
+                "AND",
+                Arrays.asList(
+                    new Predicate("=", new Column("id"), Literal.ofInt(100)),
+                    new Predicate(">", new Column("dep_id"), Literal.ofInt(1))))));
+  }
+
+  @Test
+  public void testPushFilters_ANDSupportedDataAndUnsupportedPartitionFilters(@TempDir File tempDir)
+      throws Exception {
+    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+
+    checkSupportsPushDownFilters(
+        builder,
+        // input filters
+        new Filter[] {
+          new And(new EqualTo("id", 100), new StringStartsWith("dep_id", "1")),
+        },
+        // expected post-scan filters
+        new Filter[] {new EqualTo("id", 100), new StringStartsWith("dep_id", "1")},
+        // expected pushed filters
+        new Filter[] {new EqualTo("id", 100)},
+        // expected pushed kernel predicates
+        new Predicate[] {new Predicate("=", new Column("id"), Literal.ofInt(100))},
+        // expected data filters
+        new Filter[] {new EqualTo("id", 100)},
+        // expected kernelScanBuilder.predicate
+        Optional.of(new Predicate("=", new Column("id"), Literal.ofInt(100))));
+  }
+
+  @Test
+  public void testPushFilters_ANDUnsupportedDataAndSupportedPartitionFilters(@TempDir File tempDir)
+      throws Exception {
+    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+
+    checkSupportsPushDownFilters(
+        builder,
+        // input filters
+        new Filter[] {
+          new And(new StringStartsWith("name", "foo"), new GreaterThan("dep_id", 1)),
+        },
+        // expected post-scan filters
+        new Filter[] {new StringStartsWith("name", "foo")},
+        // expected pushed filters
+        new Filter[] {new GreaterThan("dep_id", 1)},
+        // expected pushed kernel predicates
+        new Predicate[] {new Predicate(">", new Column("dep_id"), Literal.ofInt(1))},
+        // expected data filters
+        new Filter[] {new StringStartsWith("name", "foo")},
+        // expected kernelScanBuilder.predicate
+        Optional.of(new Predicate(">", new Column("dep_id"), Literal.ofInt(1))));
+  }
+
+  @Test
+  public void testPushFilters_ANDUnsupportedDataAndPartitionFilters(@TempDir File tempDir)
+      throws Exception {
+    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+
+    checkSupportsPushDownFilters(
+        builder,
+        // input filters
+        new Filter[] {
+          new And(new StringStartsWith("name", "foo"), new StringEndsWith("dep_id", "1")),
+        },
+        // expected post-scan filters
+        new Filter[] {new StringStartsWith("name", "foo"), new StringEndsWith("dep_id", "1")},
+        // expected pushed filters
+        new Filter[] {},
+        // expected pushed kernel predicates
+        new Predicate[] {},
+        // expected data filters
+        new Filter[] {new StringStartsWith("name", "foo")},
+        // expected kernelScanBuilder.predicate
+        Optional.empty());
+  }
+
+  @Test
+  public void testPushFilters_nestedAnd(@TempDir File tempDir) throws Exception {
+    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+
+    checkSupportsPushDownFilters(
+        builder,
+        // input filters
+        new Filter[] {
+          new And(
+              new And(new GreaterThan("id", 50), new StringEndsWith("dep_id", "1")),
+              new And(new StringStartsWith("name", "foo"), new GreaterThan("dep_id", 1)))
+        },
+        // expected post-scan filters
+        new Filter[] {
+          new GreaterThan("id", 50),
+          new StringEndsWith("dep_id", "1"),
+          new StringStartsWith("name", "foo")
+        },
+        // expected pushed filters
+        new Filter[] {new GreaterThan("id", 50), new GreaterThan("dep_id", 1)},
+        // expected pushed kernel predicates
+        new Predicate[] {
+          new Predicate(">", new Column("id"), Literal.ofInt(50)),
+          new Predicate(">", new Column("dep_id"), Literal.ofInt(1))
+        },
+        // expected data filters
+        new Filter[] {new GreaterThan("id", 50), new StringStartsWith("name", "foo")},
+        // expected kernelScanBuilder.predicate
+        Optional.of(
+            new Predicate(
+                "AND",
+                Arrays.asList(
+                    new Predicate(">", new Column("id"), Literal.ofInt(50)),
+                    new Predicate(">", new Column("dep_id"), Literal.ofInt(1))))));
+  }
+
+  @Test
+  public void testPushFilters_ORFilters(@TempDir File tempDir) throws Exception {
+    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+
+    checkSupportsPushDownFilters(
+        builder,
+        // input filters
+        new Filter[] {new Or(new EqualTo("id", 100), new GreaterThan("id", 50))},
+        // expected post-scan filters
+        new Filter[] {new Or(new EqualTo("id", 100), new GreaterThan("id", 50))},
+        // expected pushed filters
+        new Filter[] {new Or(new EqualTo("id", 100), new GreaterThan("id", 50))},
+        // expected pushed kernel predicates
+        new Predicate[] {
+          new Predicate(
+              "OR",
+              Arrays.asList(
+                  new Predicate("=", new Column("id"), Literal.ofInt(100)),
+                  new Predicate(">", new Column("id"), Literal.ofInt(50))))
+        },
+        // expected data filters
+        new Filter[] {new Or(new EqualTo("id", 100), new GreaterThan("id", 50))},
+        // expected kernelScanBuilder.predicate
+        Optional.of(
+            new Predicate(
+                "OR",
+                Arrays.asList(
+                    new Predicate("=", new Column("id"), Literal.ofInt(100)),
+                    new Predicate(">", new Column("id"), Literal.ofInt(50))))));
+  }
+
+  @Test
+  public void testPushFilters_ORSupportedAndUnsupportedDataFilters(@TempDir File tempDir)
+      throws Exception {
+    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+
+    checkSupportsPushDownFilters(
+        builder,
+        // input filters
+        new Filter[] {new Or(new EqualTo("id", 100), new StringStartsWith("name", "foo"))},
+        // expected post-scan filters
+        new Filter[] {new Or(new EqualTo("id", 100), new StringStartsWith("name", "foo"))},
+        // expected pushed filters
+        new Filter[] {},
+        // expected pushed kernel predicates
+        new Predicate[] {},
+        // expected data filters
+        new Filter[] {new Or(new EqualTo("id", 100), new StringStartsWith("name", "foo"))},
+        // expected kernelScanBuilder.predicate
+        Optional.empty());
+  }
+
+  @Test
+  public void testPushFilters_ORSupportedDataAndPartitionFilters(@TempDir File tempDir)
+      throws Exception {
+    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+
+    checkSupportsPushDownFilters(
+        builder,
+        // input filters
+        new Filter[] {
+          new Or(new EqualTo("id", 100), new GreaterThan("dep_id", 1)),
+        },
+        // expected post-scan filters
+        new Filter[] {new Or(new EqualTo("id", 100), new GreaterThan("dep_id", 1))},
+        // expected pushed filters
+        new Filter[] {new Or(new EqualTo("id", 100), new GreaterThan("dep_id", 1))},
+        // expected pushed kernel predicates
+        new Predicate[] {
+          new Predicate(
+              "OR",
+              Arrays.asList(
+                  new Predicate("=", new Column("id"), Literal.ofInt(100)),
+                  new Predicate(">", new Column("dep_id"), Literal.ofInt(1))))
+        },
+        // expected data filters
+        new Filter[] {new Or(new EqualTo("id", 100), new GreaterThan("dep_id", 1))},
+        // expected kernelScanBuilder.predicate
+        Optional.of(
+            new Predicate(
+                "OR",
+                Arrays.asList(
+                    new Predicate("=", new Column("id"), Literal.ofInt(100)),
+                    new Predicate(">", new Column("dep_id"), Literal.ofInt(1))))));
+  }
+
+  @Test
+  public void testPushFilters_NOTFilters(@TempDir File tempDir) throws Exception {
+    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+
+    checkSupportsPushDownFilters(
+        builder,
+        // input filters
+        new Filter[] {new Not(new EqualTo("id", 100))},
+        // expected post-scan filters
+        new Filter[] {new Not(new EqualTo("id", 100))},
+        // expected pushed filters
+        new Filter[] {new Not(new EqualTo("id", 100))},
+        // expected pushed kernel predicates
+        new Predicate[] {
+          new Predicate("NOT", new Predicate("=", new Column("id"), Literal.ofInt(100)))
+        },
+        // expected data filters
+        new Filter[] {new Not(new EqualTo("id", 100))},
+        // expected kernelScanBuilder.predicate
+        Optional.of(
+            new Predicate("NOT", new Predicate("=", new Column("id"), Literal.ofInt(100)))));
+  }
+
   private void checkSupportsPushDownFilters(
       SparkScanBuilder builder,
       Filter[] inputFilters,
