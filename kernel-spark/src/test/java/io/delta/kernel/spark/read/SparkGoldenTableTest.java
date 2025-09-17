@@ -224,28 +224,95 @@ public class SparkGoldenTableTest extends QueryTest {
               new StringStartsWith("name", "foo")), // unsupported data filter
           new And(
               new EqualTo("date", "2025-09-01"), // supported partition filter
-              new StringEndsWith("city", "York")) // unsupported partition filter
+              new StringEndsWith("city", "York")), // unsupported partition filter
+          new And(
+              new EqualTo("cnt", 50), // supported data filter
+              new EqualTo("date", "2025-10-01") // supported partition filter
+              )
         },
         // expected post-scan filters
         new Filter[] {
-          new And(new GreaterThan("cnt", 10), new StringStartsWith("name", "foo")),
-          new StringEndsWith("city", "York")
+          new GreaterThan("cnt", 10),
+          new StringStartsWith("name", "foo"),
+          new StringEndsWith("city", "York"),
+          new EqualTo("cnt", 50)
         },
         // expected pushed filters
-        new Filter[] {new GreaterThan("cnt", 10), new EqualTo("date", "2025-09-01")},
+        new Filter[] {
+          new GreaterThan("cnt", 10),
+          new EqualTo("date", "2025-09-01"),
+          new EqualTo("cnt", 50),
+          new EqualTo("date", "2025-10-01")
+        },
         // expected pushed kernel predicates
         new Predicate[] {
           new Predicate(">", new Column("cnt"), Literal.ofInt(10)),
-          new Predicate("=", new Column("date"), Literal.ofString("2025-09-01"))
+          new Predicate("=", new Column("date"), Literal.ofString("2025-09-01")),
+          new Predicate("=", new Column("cnt"), Literal.ofInt(50)),
+          new Predicate("=", new Column("date"), Literal.ofString("2025-10-01"))
         },
         // expected data filters
-        new Filter[] {new And(new GreaterThan("cnt", 10), new StringStartsWith("name", "foo"))},
+        new Filter[] {
+          new GreaterThan("cnt", 10), new StringStartsWith("name", "foo"), new EqualTo("cnt", 50)
+        },
         // expected kernel scan builder predicate
         Optional.of(
             new Predicate(
                 "AND",
-                new Predicate(">", new Column("cnt"), Literal.ofInt(10)),
-                new Predicate("=", new Column("date"), Literal.ofString("2025-09-01")))));
+                new Predicate(
+                    "AND",
+                    new Predicate(
+                        "AND",
+                        new Predicate(">", new Column("cnt"), Literal.ofInt(10)),
+                        new Predicate("=", new Column("date"), Literal.ofString("2025-09-01"))),
+                    new Predicate("=", new Column("cnt"), Literal.ofInt(50))),
+                new Predicate("=", new Column("date"), Literal.ofString("2025-10-01")))));
+
+    // case 3: OR and NOT filters
+    checkSupportsPushDownFilters(
+        table,
+        scanOptions,
+        // input filters
+        new Filter[] {
+          new Or(new GreaterThan("cnt", 10), new StringStartsWith("name", "foo")),
+          new Or(new EqualTo("cnt", 50), new EqualTo("date", "2025-10-01")),
+          new Not(new EqualTo("date", "2025-09-01"))
+        },
+        // expected post-scan filters
+        new Filter[] {
+          new Or(new GreaterThan("cnt", 10), new StringStartsWith("name", "foo")),
+          new Or(new EqualTo("cnt", 50), new EqualTo("date", "2025-10-01")),
+        },
+        // expected pushed filters
+        new Filter[] {
+          new Or(new EqualTo("cnt", 50), new EqualTo("date", "2025-10-01")),
+          new Not(new EqualTo("date", "2025-09-01"))
+        },
+        // expected pushed kernel predicates
+        new Predicate[] {
+          new Predicate(
+              "OR",
+              new Predicate("=", new Column("cnt"), Literal.ofInt(50)),
+              new Predicate("=", new Column("date"), Literal.ofString("2025-10-01"))),
+          new Predicate(
+              "NOT", new Predicate("=", new Column("date"), Literal.ofString("2025-09-01")))
+        },
+        // expected data filters
+        new Filter[] {
+          new Or(new GreaterThan("cnt", 10), new StringStartsWith("name", "foo")),
+          new Or(new EqualTo("cnt", 50), new EqualTo("date", "2025-10-01"))
+        },
+        // expected kernel scan builder predicate
+        Optional.of(
+            new Predicate(
+                "AND",
+                new Predicate(
+                    "OR",
+                    new Predicate("=", new Column("cnt"), Literal.ofInt(50)),
+                    new Predicate("=", new Column("date"), Literal.ofString("2025-10-01"))),
+                new Predicate(
+                    "NOT",
+                    new Predicate("=", new Column("date"), Literal.ofString("2025-09-01"))))));
   }
 
   private void checkSupportsPushDownFilters(
