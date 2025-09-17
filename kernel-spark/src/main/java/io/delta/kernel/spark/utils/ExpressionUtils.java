@@ -142,7 +142,7 @@ public final class ExpressionUtils {
     if (filter instanceof Not) {
       Not f = (Not) filter;
       // NOT disables partial pushdown for semantic correctness.
-      // Example: NOT(A AND B) requires both A and B to be convertible.
+      // Example: Pushing down NOT(A AND B) requires both A and B to be convertible.
       // We cannot convert it to just return NOT A if only A is convertible when B is not,
       // because:
       //
