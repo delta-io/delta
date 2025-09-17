@@ -16,6 +16,7 @@
 package io.delta.kernel.spark.read;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.kernel.Snapshot;
@@ -24,6 +25,7 @@ import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.spark.SparkDsv2TestBase;
 import java.io.File;
 import org.apache.spark.sql.connector.read.Scan;
+import org.apache.spark.sql.connector.read.streaming.MicroBatchStream;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
@@ -73,5 +75,43 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
 
     assertTrue(scan instanceof SparkScan);
     assertEquals(expectedSparkSchema, scan.readSchema());
+  }
+
+  @Test
+  public void testToMicroBatchStream_returnsSparkMicroBatchStream(@TempDir File tempDir) {
+    String path = tempDir.getAbsolutePath();
+    String tableName = "microbatch_test";
+    spark.sql(
+        String.format(
+            "CREATE TABLE %s (id INT, name STRING, dep_id INT) USING delta PARTITIONED BY (dep_id) LOCATION '%s'",
+            tableName, path));
+    Snapshot snapshot = TableManager.loadSnapshot(path).build(defaultEngine);
+    StructType dataSchema =
+        DataTypes.createStructType(
+            new StructField[] {
+              DataTypes.createStructField("id", DataTypes.IntegerType, true),
+              DataTypes.createStructField("name", DataTypes.StringType, true),
+              DataTypes.createStructField("dep_id", DataTypes.IntegerType, true)
+            });
+    StructType partitionSchema =
+        DataTypes.createStructType(
+            new StructField[] {DataTypes.createStructField("dep_id", DataTypes.IntegerType, true)});
+    SparkScanBuilder builder =
+        new SparkScanBuilder(
+            tableName,
+            path,
+            dataSchema,
+            partitionSchema,
+            (SnapshotImpl) snapshot,
+            CaseInsensitiveStringMap.empty());
+    Scan scan = builder.build();
+
+    String checkpointLocation = "/tmp/checkpoint";
+    MicroBatchStream microBatchStream = scan.toMicroBatchStream(checkpointLocation);
+
+    assertNotNull(microBatchStream, "MicroBatchStream should not be null");
+    assertTrue(
+        microBatchStream instanceof SparkMicroBatchStream,
+        "MicroBatchStream should be an instance of SparkMicroBatchStream");
   }
 }

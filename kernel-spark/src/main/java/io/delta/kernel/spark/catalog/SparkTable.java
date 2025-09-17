@@ -36,7 +36,8 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 public class SparkTable implements Table, SupportsRead {
 
   private static final Set<TableCapability> CAPABILITIES =
-      Collections.unmodifiableSet(EnumSet.of(TableCapability.BATCH_READ));
+      Collections.unmodifiableSet(
+          EnumSet.of(TableCapability.BATCH_READ, TableCapability.MICRO_BATCH_READ));
 
   private final Identifier identifier;
   private final String tablePath;

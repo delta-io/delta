@@ -23,6 +23,8 @@ import java.util.List;
 import java.util.UUID;
 import org.apache.spark.SparkConf;
 import org.apache.spark.sql.*;
+import org.apache.spark.sql.streaming.StreamingQuery;
+import org.apache.spark.sql.streaming.StreamingQueryException;
 import org.apache.spark.sql.types.DataTypes;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.io.TempDir;
@@ -132,6 +134,49 @@ public class Dsv2BasicTest {
             RowFactory.create("value", "double", null));
 
     assertDatasetEquals(actual, expectedRows);
+  }
+
+  @Test
+  public void testStreamingRead(@TempDir File deltaTablePath) {
+    String tablePath = deltaTablePath.getAbsolutePath();
+    // Create test data using standard Delta Lake
+    Dataset<Row> testData =
+        spark.createDataFrame(
+            Arrays.asList(RowFactory.create(1, "Alice", 100.0), RowFactory.create(2, "Bob", 200.0)),
+            DataTypes.createStructType(
+                Arrays.asList(
+                    DataTypes.createStructField("id", DataTypes.IntegerType, false),
+                    DataTypes.createStructField("name", DataTypes.StringType, false),
+                    DataTypes.createStructField("value", DataTypes.DoubleType, false))));
+    testData.write().format("delta").save(tablePath);
+
+    // Test streaming read using path-based table
+    Dataset<Row> streamingDF =
+        spark.readStream().table(String.format("dsv2.delta.`%s`", tablePath));
+
+    assertTrue(streamingDF.isStreaming(), "Dataset should be streaming");
+    StreamingQueryException exception =
+        assertThrows(
+            StreamingQueryException.class,
+            () -> {
+              StreamingQuery query =
+                  streamingDF
+                      .writeStream()
+                      .format("memory")
+                      .queryName("test_streaming_query")
+                      .outputMode("append")
+                      .start();
+              query.processAllAvailable();
+              query.stop();
+            });
+    Throwable rootCause = exception.getCause();
+    assertTrue(
+        rootCause instanceof UnsupportedOperationException,
+        "Root cause should be UnsupportedOperationException");
+    assertTrue(
+        rootCause.getMessage().contains("is not supported"),
+        "Root cause message should indicate that streaming operation is not supported: "
+            + rootCause.getMessage());
   }
 
   //////////////////////
