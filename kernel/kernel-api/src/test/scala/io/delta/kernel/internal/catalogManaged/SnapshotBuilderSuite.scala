@@ -236,7 +236,7 @@ class SnapshotBuilderSuite extends AnyFunSuite
     ParsedDeltaData.forInlineData(1, emptyColumnarBatch),
     ParsedLogData.forFileStatus(logCompactionStatus(0, 1))).foreach { parsedLogData =>
     val suffix = s"- type=${parsedLogData.getParentCategoryName}"
-    test(s"withLogData: non-RATIFIED_STAGED_COMMIT throws IllegalArgumentException $suffix") {
+    test(s"withLogData: non-staged-ratified-commit throws IllegalArgumentException $suffix") {
       val builder = TableManager
         .loadSnapshot(dataPath.toString)
         .atVersion(1)
@@ -246,7 +246,7 @@ class SnapshotBuilderSuite extends AnyFunSuite
         builder.build(emptyMockEngine)
       }.getMessage
 
-      assert(exMsg.contains("Only RATIFIED_STAGED_COMMIT log data is supported"))
+      assert(exMsg.contains("Only staged ratified commits are supported"))
     }
   }
 
