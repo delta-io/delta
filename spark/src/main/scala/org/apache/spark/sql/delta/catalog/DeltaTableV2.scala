@@ -136,6 +136,15 @@ class DeltaTableV2 private[delta](
    */
   def update(): Snapshot = deltaLog.update(catalogTableOpt = catalogTable)
 
+  def update(checkIfUpdatedSinceTs: Option[Long]): Snapshot =
+    deltaLog.update(checkIfUpdatedSinceTs = checkIfUpdatedSinceTs, catalogTableOpt = catalogTable)
+
+  /**
+   * Gets the snapshot at the given version of this table
+   */
+  def getSnapshotAt(version: Long): Snapshot =
+    deltaLog.getSnapshotAt(version, catalogTableOpt = catalogTable)
+
   def getTableIdentifierIfExists: Option[TableIdentifier] = tableIdentifier.map { tableName =>
     spark.sessionState.sqlParser.parseMultipartIdentifier(tableName).asTableIdentifier
   }

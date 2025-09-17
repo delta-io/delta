@@ -420,7 +420,7 @@ case class AlterTableDropFeatureDeltaCommand(
         }
       }
 
-      val startSnapshotOpt = status.lastCommitVersionOpt.map(deltaLog.getSnapshotAt(_))
+      val startSnapshotOpt = status.lastCommitVersionOpt.map(table.getSnapshotAt(_))
       val txn = table.startTransaction(snapshotOpt = startSnapshotOpt)
       val snapshot = txn.snapshot
 
@@ -534,7 +534,7 @@ case class AlterTableDropFeatureDeltaCommand(
         }
       }
 
-      val startSnapshotOpt = status.lastCommitVersionOpt.map(deltaLog.getSnapshotAt(_))
+      val startSnapshotOpt = status.lastCommitVersionOpt.map(table.getSnapshotAt(_))
       val txn = table.startTransaction(snapshotOpt = startSnapshotOpt)
       val snapshot = txn.snapshot
 

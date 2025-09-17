@@ -208,9 +208,7 @@ case class DeletionVectorsPreDowngradeCommand(table: DeltaTableV2)
     if (!spark.conf.get(DeltaSQLConf.FAST_DROP_FEATURE_GENERATE_DV_TOMBSTONES)) return
 
     val startTimeNs = System.nanoTime()
-    val snapshotToUse = table.deltaLog.update(
-      catalogTableOpt = table.catalogTable,
-      checkIfUpdatedSinceTs = Some(checkIfSnapshotUpdatedSinceTs))
+    val snapshotToUse = table.update(checkIfUpdatedSinceTs = Some(checkIfSnapshotUpdatedSinceTs))
 
     val deletionVectorPath =
         DeletionVectorDescriptor.urlEncodedRelativePathIfExists(
@@ -791,8 +789,7 @@ case class DomainMetadataPreDowngradeCommand(table: DeltaTableV2)
    * @return True if the feature traces are removed. False otherwise.
    */
   override def removeFeatureTracesIfNeeded(spark: SparkSession): PreDowngradeStatus = {
-    val deltaLog = table.deltaLog
-    val snapshot = deltaLog.update()
+    val snapshot = table.update()
     if (DomainMetadataTableFeature.validateDropInvariants(table, snapshot)) {
       return PreDowngradeStatus.DID_NOT_PERFORM_CHANGES
     }
@@ -801,8 +798,8 @@ case class DomainMetadataPreDowngradeCommand(table: DeltaTableV2)
       .domainMetadata
       .map(_.copy(removed = true))
 
-    deltaLog
-      .startTransaction(catalogTableOpt = None)
+    table
+      .startTransaction()
       .commit(actionsToCommit, DeltaOperations.DomainMetadataCleanup(actionsToCommit.length))
     PreDowngradeStatus.PERFORMED_CHANGES
   }
