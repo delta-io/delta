@@ -72,7 +72,7 @@ public abstract class ParsedCheckpointData extends ParsedLogData
    *   <li><strong>Version (most important):</strong> Higher version numbers are always preferred
    *       over lower ones, as newer checkpoints contain more recent data
    *   <li><strong>Checkpoint type:</strong> When versions are equal, prefer by type priority based
-   *       on safety and performance characteristics (V2 > MultiPart > Classic)
+   *       on safety and performance characteristics (V2 &gt; MultiPart &gt; Classic)
    *   <li><strong>Type-specific logic:</strong> When version and type are equal, use type-specific
    *       comparison (e.g., MultiPart prefers more parts for better parallelization)
    * </ol>
