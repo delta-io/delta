@@ -17,6 +17,7 @@ package io.delta.kernel.defaults.internal.expressions;
 
 import static io.delta.kernel.defaults.internal.DefaultEngineErrors.unsupportedExpressionException;
 import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.*;
+import static io.delta.kernel.defaults.internal.expressions.ImplicitCastExpression.canCastTo;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.expressions.Expression;
@@ -34,27 +35,10 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.function.BiFunction;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 /** Utility methods to evaluate {@code IN} expression. */
 public class InExpressionEvaluator {
-
-  private static final Set<Class<? extends DataType>> NUMERIC_TYPES =
-      Stream.of(
-              ByteType.class,
-              ShortType.class,
-              IntegerType.class,
-              LongType.class,
-              FloatType.class,
-              DoubleType.class,
-              DecimalType.class)
-          .collect(Collectors.toSet());
-
-  private static final Set<Class<? extends DataType>> TIMESTAMP_TYPES =
-      Stream.of(TimestampType.class, TimestampNTZType.class).collect(Collectors.toSet());
 
   private static final Map<Class<? extends DataType>, BiFunction<Object, Object, Integer>>
       COMPARATORS = createComparatorMap();
@@ -216,14 +200,20 @@ public class InExpressionEvaluator {
 
   @VisibleForTesting
   static boolean areTypesCompatible(DataType type1, DataType type2) {
-    return type1.equivalent(type2) || belongToSameTypeGroup(type1, type2);
+    // Use the same type compatibility logic as equality comparisons
+    // to ensure semantic consistency: col IN (v1, v2) ≡ col = v1 OR col = v2
+    return type1.equivalent(type2) || canCastTo(type1, type2) || canCastTo(type2, type1);
   }
 
-  @VisibleForTesting
-  static boolean belongToSameTypeGroup(DataType type1, DataType type2) {
-    return (NUMERIC_TYPES.contains(type1.getClass()) && NUMERIC_TYPES.contains(type2.getClass()))
-        || (TIMESTAMP_TYPES.contains(type1.getClass())
-            && TIMESTAMP_TYPES.contains(type2.getClass()));
+  /** Check if a DataType is a numeric type. */
+  private static boolean isNumericType(DataType type) {
+    return type instanceof ByteType
+        || type instanceof ShortType
+        || type instanceof IntegerType
+        || type instanceof LongType
+        || type instanceof FloatType
+        || type instanceof DoubleType
+        || type instanceof DecimalType;
   }
 
   @VisibleForTesting
@@ -232,7 +222,7 @@ public class InExpressionEvaluator {
       return false;
     }
     // For numeric types, convert both values to the same type for comparison
-    if (NUMERIC_TYPES.contains(valueType.getClass())) {
+    if (isNumericType(valueType)) {
       return compareNumericValues(value1, value2, valueType);
     }
     return getComparator(valueType).apply(value1, value2) == 0;

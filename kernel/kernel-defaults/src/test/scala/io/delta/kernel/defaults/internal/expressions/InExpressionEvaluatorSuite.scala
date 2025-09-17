@@ -60,39 +60,14 @@ class InExpressionEvaluatorSuite extends AnyFunSuite {
     assert(InExpressionEvaluator.areTypesCompatible(FloatType.FLOAT, DoubleType.DOUBLE))
   }
 
-  test("areTypesCompatible - timestamp type group") {
-    assert(InExpressionEvaluator.areTypesCompatible(
-      TimestampType.TIMESTAMP,
-      TimestampNTZType.TIMESTAMP_NTZ))
-    assert(InExpressionEvaluator.areTypesCompatible(
-      TimestampNTZType.TIMESTAMP_NTZ,
-      TimestampType.TIMESTAMP))
-  }
+  // Note: TimestampType and TimestampNTZType are no longer compatible
+  // after switching to use ImplicitCastExpression.canCastTo for consistency with "=" comparisons
 
   test("areTypesCompatible - incompatible types") {
     assert(!InExpressionEvaluator.areTypesCompatible(IntegerType.INTEGER, StringType.STRING))
     assert(!InExpressionEvaluator.areTypesCompatible(BooleanType.BOOLEAN, IntegerType.INTEGER))
     assert(!InExpressionEvaluator.areTypesCompatible(DateType.DATE, TimestampType.TIMESTAMP))
     assert(!InExpressionEvaluator.areTypesCompatible(StringType.STRING, BinaryType.BINARY))
-  }
-
-  test("belongToSameTypeGroup - numeric types") {
-    assert(InExpressionEvaluator.belongToSameTypeGroup(ByteType.BYTE, IntegerType.INTEGER))
-    assert(InExpressionEvaluator.belongToSameTypeGroup(ShortType.SHORT, LongType.LONG))
-    assert(InExpressionEvaluator.belongToSameTypeGroup(FloatType.FLOAT, DoubleType.DOUBLE))
-    assert(InExpressionEvaluator.belongToSameTypeGroup(IntegerType.INTEGER, FloatType.FLOAT))
-  }
-
-  test("belongToSameTypeGroup - timestamp types") {
-    assert(InExpressionEvaluator.belongToSameTypeGroup(
-      TimestampType.TIMESTAMP,
-      TimestampNTZType.TIMESTAMP_NTZ))
-  }
-
-  test("belongToSameTypeGroup - different groups") {
-    assert(!InExpressionEvaluator.belongToSameTypeGroup(IntegerType.INTEGER, StringType.STRING))
-    assert(!InExpressionEvaluator.belongToSameTypeGroup(TimestampType.TIMESTAMP, DateType.DATE))
-    assert(!InExpressionEvaluator.belongToSameTypeGroup(BooleanType.BOOLEAN, ByteType.BYTE))
   }
 
   test("compareValues - null values") {
