@@ -105,7 +105,7 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
             (SnapshotImpl) snapshot,
             CaseInsensitiveStringMap.empty());
     Scan scan = builder.build();
-    
+
     String checkpointLocation = "/tmp/checkpoint";
     MicroBatchStream microBatchStream = scan.toMicroBatchStream(checkpointLocation);
 
