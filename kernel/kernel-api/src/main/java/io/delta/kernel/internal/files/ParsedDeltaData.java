@@ -16,6 +16,8 @@
 
 package io.delta.kernel.internal.files;
 
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.utils.FileStatus;
@@ -24,6 +26,11 @@ import java.util.Optional;
 public class ParsedDeltaData extends ParsedLogData {
 
   public static ParsedDeltaData forFileStatus(FileStatus fileStatus) {
+    checkArgument(
+        FileNames.isCommitFile(fileStatus.getPath()),
+        "Expected a Delta file but got %s",
+        fileStatus.getPath());
+
     final String path = fileStatus.getPath();
     final long version = FileNames.deltaVersion(path);
     return new ParsedDeltaData(version, Optional.of(fileStatus), Optional.empty());

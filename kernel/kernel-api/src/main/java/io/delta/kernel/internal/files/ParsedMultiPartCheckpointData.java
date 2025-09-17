@@ -27,6 +27,11 @@ import java.util.Optional;
 
 public class ParsedMultiPartCheckpointData extends ParsedCheckpointData {
   public static ParsedMultiPartCheckpointData forFileStatus(FileStatus fileStatus) {
+    checkArgument(
+        FileNames.isMultiPartCheckpointFile(fileStatus.getPath()),
+        "Expected a multi-part checkpoint file but got %s",
+        fileStatus.getPath());
+
     final long version = FileNames.checkpointVersion(fileStatus.getPath());
     final Tuple2<Integer, Integer> partInfo =
         FileNames.multiPartCheckpointPartAndNumParts(fileStatus.getPath());

@@ -16,6 +16,8 @@
 
 package io.delta.kernel.internal.files;
 
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.utils.FileStatus;
@@ -24,6 +26,11 @@ import java.util.Optional;
 public class ParsedV2CheckpointData extends ParsedCheckpointData {
 
   public static ParsedV2CheckpointData forFileStatus(FileStatus fileStatus) {
+    checkArgument(
+        FileNames.isV2CheckpointFile(fileStatus.getPath()),
+        "Expected a V2 checkpoint file but got %s",
+        fileStatus.getPath());
+
     final String path = fileStatus.getPath();
     final long version = FileNames.checkpointVersion(path);
     return new ParsedV2CheckpointData(version, Optional.of(fileStatus), Optional.empty());

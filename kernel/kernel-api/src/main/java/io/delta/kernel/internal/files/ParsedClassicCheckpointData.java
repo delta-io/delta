@@ -16,6 +16,8 @@
 
 package io.delta.kernel.internal.files;
 
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.utils.FileStatus;
@@ -24,6 +26,11 @@ import java.util.Optional;
 public class ParsedClassicCheckpointData extends ParsedCheckpointData {
 
   public static ParsedClassicCheckpointData forFileStatus(FileStatus fileStatus) {
+    checkArgument(
+        FileNames.isClassicCheckpointFile(fileStatus.getPath()),
+        "Expected a classic checkpoint file but got %s",
+        fileStatus.getPath());
+
     final String path = fileStatus.getPath();
     final long version = FileNames.checkpointVersion(path);
     return new ParsedClassicCheckpointData(version, Optional.of(fileStatus), Optional.empty());

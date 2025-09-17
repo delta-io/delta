@@ -28,6 +28,11 @@ import java.util.Optional;
 // TODO: Add the comparable logic from CheckpointInstance.
 public class ParsedLogCompactionData extends ParsedLogData {
   public static ParsedLogCompactionData forFileStatus(FileStatus fileStatus) {
+    checkArgument(
+        FileNames.isLogCompactionFile(fileStatus.getPath()),
+        "Expected a log compaction file but got %s",
+        fileStatus.getPath());
+
     final Tuple2<Long, Long> startEnd = FileNames.logCompactionVersions(fileStatus.getPath());
     return new ParsedLogCompactionData(
         startEnd._1, startEnd._2, Optional.of(fileStatus), Optional.empty());
