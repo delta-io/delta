@@ -35,7 +35,7 @@ import io.delta.kernel.internal.util.VectorUtils
 import io.delta.kernel.internal.util.VectorUtils.stringStringMapValue
 import io.delta.kernel.statistics.DataFileStatistics
 import io.delta.kernel.test.{MockEngineUtils, VectorTestUtils}
-import io.delta.kernel.types.{DoubleType, FloatType, IntegerType, LongType, StringType, StructType, TimestampType}
+import io.delta.kernel.types.{DoubleType, FloatType, IntegerType, LongType, StringType, StructType, TimestampType, VariantType}
 import io.delta.kernel.utils.{CloseableIterator, DataFileStatus}
 
 import org.scalatest.funsuite.AnyFunSuite
@@ -229,6 +229,22 @@ class TransactionSuite extends AnyFunSuite with VectorTestUtils with MockEngineU
       assert(ex.getMessage.contains(
         "Writing into column mapping enabled table is not supported yet."))
     }
+  }
+
+  test("transformLogicalData: Writing to tables with variant is blocked") {
+    val txnState = testTxnState(new StructType().add("variant", VariantType.VARIANT))
+    val engine = mockEngine()
+
+    val ex = intercept[UnsupportedOperationException] {
+      transformLogicalData(
+        engine,
+        txnState,
+        testData(includePartitionCols = false),
+        Map.empty[String, Literal].asJava /* partition values */ )
+        .forEachRemaining(_ => ()) // consume the iterator
+    }
+    assert(ex.getMessage.contains(
+      "Transforming logical data with variant data is currently unsupported"))
   }
 }
 
