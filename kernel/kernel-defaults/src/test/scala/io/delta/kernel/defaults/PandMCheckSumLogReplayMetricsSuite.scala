@@ -17,19 +17,24 @@
 package io.delta.kernel.defaults
 
 import io.delta.kernel.Table
+import io.delta.kernel.defaults.utils.{TestUtilsWithLegacyKernelAPIs, TestUtilsWithTableManagerAPIs}
 import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.FileNames
+
+class PandMCheckSumLogReplayMetricsSuite extends ChecksumLogReplayMetricsTestBase
+    with TestUtilsWithTableManagerAPIs
 
 /**
  * Suite to test the engine metrics when loading Protocol and Metadata through checksum files.
  */
-class PandMCheckSumLogReplayMetricsSuite extends ChecksumLogReplayMetricsTestBase {
+class LegacyPandMCheckSumLogReplayMetricsSuite extends ChecksumLogReplayMetricsTestBase
+    with TestUtilsWithLegacyKernelAPIs {
 
   /////////////////////////
   // Test Helper Methods //
   /////////////////////////
 
-  override protected def loadSnapshotFieldsCheckMetrics(
+  protected def loadPandMCheckMetricsForTable(
       table: Table,
       engine: MetricsEngine,
       expJsonVersionsRead: Seq[Long],
@@ -37,26 +42,30 @@ class PandMCheckSumLogReplayMetricsSuite extends ChecksumLogReplayMetricsTestBas
       expParquetReadSetSizes: Seq[Long],
       expChecksumReadSet: Seq[Long],
       readVersion: Long = -1): Unit = {
+    engine.resetMetrics()
 
-    loadPandMCheckMetrics(
-      table,
+    readVersion match {
+      case -1 => table.getLatestSnapshot(engine)
+      case ver => table.getSnapshotAsOfVersion(engine, ver)
+    }
+
+    assertMetrics(
       engine,
       expJsonVersionsRead,
       expParquetVersionsRead,
       expParquetReadSetSizes,
-      expChecksumReadSet,
-      readVersion)
+      expChecksumReadSet = expChecksumReadSet)
   }
 
-  //////////
-  // Test //
-  //////////
+  // SnapshotHint tests only apply for the legacy APIs since in the new APIs there is no persistent
+  // Table instance
 
   test("snapshot hint found for read version and crc found at read version => use hint") {
-    withTableWithCrc { (table, _, engine) =>
+    withTableWithCrc { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
       table.getLatestSnapshot(engine)
 
-      loadSnapshotFieldsCheckMetrics(
+      loadPandMCheckMetricsForTable(
         table,
         engine,
         expJsonVersionsRead = Nil,
@@ -67,11 +76,13 @@ class PandMCheckSumLogReplayMetricsSuite extends ChecksumLogReplayMetricsTestBas
   }
 
   test("checksum not found at the read version, but uses snapshot hint lower bound") {
-    withTableWithCrc { (table, tablePath, engine) =>
+    withTableWithCrc { (tablePath, engine) =>
       // Delete checksum files for versions 3 to 6
       deleteChecksumFileForTable(tablePath, (3 to 6).toSeq)
 
-      loadSnapshotFieldsCheckMetrics(
+      val table = Table.forPath(engine, tablePath)
+
+      loadPandMCheckMetricsForTable(
         table,
         engine,
         // There are no checksum files for versions 4. Latest is at version 2.
@@ -85,7 +96,7 @@ class PandMCheckSumLogReplayMetricsSuite extends ChecksumLogReplayMetricsTestBas
       // read version 4 which sets the snapshot P&M hint to 4
 
       // now try to load version 6 and we expect no checksums are read
-      loadSnapshotFieldsCheckMetrics(
+      loadPandMCheckMetricsForTable(
         table,
         engine,
         // We have snapshot P&M hint at version 4, and no checksum after 2
