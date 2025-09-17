@@ -144,10 +144,20 @@ public final class ExpressionUtils {
       // NOT disables partial pushdown for semantic correctness.
       // Example: NOT(A AND B) requires both A and B to be convertible.
       // We cannot convert it to just NOT A if only A is convertible, because:
-      // - NOT(A AND B) = (NOT A) OR (NOT B) by De Morgan's law
-      // - If we only push down NOT A, we lose information about condition B
-      // - This could incorrectly filter data: some rows that should pass the full
-      //   NOT(A AND B) filter might be wrongly excluded based on NOT A alone
+      //
+      // Original: NOT(age < 30 AND name = "John")
+      //
+      // Row 1: age=25, name="John"
+      // Row 2: age=25, name="Mike"
+      // (age < 30 AND name = "John") = (true AND true) = true
+      // (age < 30 AND name = "Mike") = (true AND false) = false
+      // NOT(true) = false → row 1 should be EXCLUDED
+      // NOT(false) = true → row 2 should be INCLUDED
+
+      // But if we naively push down just NOT(age < 30):
+      //
+      // NOT(age < 30) = NOT(true) = false → system excludes both row
+      // We will return incorrect result, then.
       Optional<Predicate> child =
           convertSparkFilterToKernelPredicate(f.child(), false /*canPartialPushDown*/);
       return child.map(c -> new Predicate("NOT", c));
