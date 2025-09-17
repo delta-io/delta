@@ -23,6 +23,13 @@ import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.utils.FileStatus;
 import java.util.Optional;
 
+/**
+ * Version checksum file containing table state information for integrity validation.
+ *
+ * <p>These auxiliary files contain important metadata about the table state at a specific version
+ * to enable detection of non-compliant modifications to Delta files. Contains information like
+ * table size, file counts, and metadata. Example: {@code 00000000000000000001.crc}
+ */
 public class ParsedChecksumData extends ParsedLogData {
 
   public static ParsedChecksumData forFileStatus(FileStatus fileStatus) {

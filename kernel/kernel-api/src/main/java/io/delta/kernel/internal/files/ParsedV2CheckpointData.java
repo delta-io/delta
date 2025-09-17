@@ -23,6 +23,11 @@ import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.utils.FileStatus;
 import java.util.Optional;
 
+/**
+ * V2 checkpoint with UUID-based naming.
+ *
+ * <p>Example: {@code 00000000000000000001.checkpoint.80a083e8-7026-4e79-81be-64bd76c43a11.json}
+ */
 public class ParsedV2CheckpointData extends ParsedCheckpointData {
 
   public static ParsedV2CheckpointData forFileStatus(FileStatus fileStatus) {
@@ -47,6 +52,11 @@ public class ParsedV2CheckpointData extends ParsedCheckpointData {
 
   @Override
   protected int getCheckpointTypePriority() {
-    return 2; // Classic (0) < MultiPart (1) < V2 (2). V2 has the highest priority.
+    return 2; // (V2 > MultiPart > Classic)
+  }
+
+  @Override
+  protected int compareToSameType(ParsedCheckpointData that) {
+    return compareByDataSource(that);
   }
 }

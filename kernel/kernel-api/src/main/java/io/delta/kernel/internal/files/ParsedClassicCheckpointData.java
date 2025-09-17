@@ -23,6 +23,11 @@ import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.utils.FileStatus;
 import java.util.Optional;
 
+/**
+ * Classic checkpoint stored as a single Parquet file.
+ *
+ * <p>Example: {@code 00000000000000000001.checkpoint.parquet}
+ */
 public class ParsedClassicCheckpointData extends ParsedCheckpointData {
 
   public static ParsedClassicCheckpointData forFileStatus(FileStatus fileStatus) {
@@ -47,6 +52,11 @@ public class ParsedClassicCheckpointData extends ParsedCheckpointData {
 
   @Override
   protected int getCheckpointTypePriority() {
-    return 0; // Classic (0) < MultiPart (1) < V2 (2). Classic has the lowest priority.
+    return 0; // (V2 > MultiPart > Classic)
+  }
+
+  @Override
+  protected int compareToSameType(ParsedCheckpointData that) {
+    return compareByDataSource(that);
   }
 }

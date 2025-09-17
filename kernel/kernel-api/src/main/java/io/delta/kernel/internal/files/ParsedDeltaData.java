@@ -23,6 +23,19 @@ import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.utils.FileStatus;
 import java.util.Optional;
 
+/**
+ * Delta commit file represent atomic changes to a table.
+ *
+ * <p>There are different types of Delta files:
+ *
+ * <ul>
+ *   <li><b>Published commits</b>: Normal delta files in {@code _delta_log/} directory like {@code
+ *       00000000000000000001.json}
+ *   <li><b>Staged commits</b>: Files in {@code _delta_log/_staged_commits/} with UUID naming like
+ *       {@code 00000000000000000001.uuid-1234.json}
+ *   <li><b>Inline commits</b>: Content stored directly by the catalog, not as files
+ * </ul>
+ */
 public class ParsedDeltaData extends ParsedLogData {
 
   public static ParsedDeltaData forFileStatus(FileStatus fileStatus) {
@@ -40,7 +53,7 @@ public class ParsedDeltaData extends ParsedLogData {
     return new ParsedDeltaData(version, Optional.empty(), Optional.of(inlineData));
   }
 
-  public ParsedDeltaData(
+  private ParsedDeltaData(
       long version, Optional<FileStatus> fileStatusOpt, Optional<ColumnarBatch> inlineDataOpt) {
     super(version, fileStatusOpt, inlineDataOpt);
   }

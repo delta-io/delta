@@ -16,8 +16,6 @@
 
 package io.delta.kernel.internal.files
 
-import java.util.Optional
-
 import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.test.{MockFileSystemClientUtils, VectorTestUtils}
 import io.delta.kernel.utils.FileStatus
@@ -28,11 +26,13 @@ import org.scalatest.matchers.should.Matchers.convertToAnyShouldWrapper
 
 class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with VectorTestUtils {
 
+  private val emptyInlineData = emptyColumnarBatch
+
   /////////////
   // General //
   /////////////
 
-  test("Throws on unknown log file") {
+  test("ParsedLogData throws on unknown log file") {
     val fileStatus = FileStatus.of("unknown", 0, 0)
     val exMsg = intercept[IllegalArgumentException] {
       ParsedLogData.forFileStatus(fileStatus)
@@ -40,36 +40,34 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
     assert(exMsg.contains("Unknown log file type"))
   }
 
-  test("Throws on version < 0") {
+  test("ParsedLogData (super) throws on version < 0") {
     val exMsg = intercept[IllegalArgumentException] {
-      ParsedDeltaData.forInlineData(-1, emptyColumnarBatch)
+      ParsedDeltaData.forInlineData(-1, emptyInlineData)
     }.getMessage
     assert(exMsg === "version must be non-negative")
   }
 
-  test("Throws on both fileStatusOpt and inlineDataOpt present") {
-    val fileStatusOpt = Optional.of(deltaFileStatus(5))
-    val inlineDataOpt = Optional.of(emptyColumnarBatch)
+  /////////////////////
+  // ParsedDeltaData //
+  /////////////////////
+
+  test("ParsedDeltaData: throws on non-commit file") {
+    val fileStatus = classicCheckpointFileStatus(5)
     val exMsg = intercept[IllegalArgumentException] {
-      // Test with concrete class since ParsedLogData is now abstract
-      new ParsedDeltaData(10, fileStatusOpt, inlineDataOpt)
+      ParsedDeltaData.forFileStatus(fileStatus)
     }.getMessage
-    assert(exMsg === "Exactly one of fileStatusOpt or inlineDataOpt must be present")
+    assert(exMsg.contains("Expected a Delta file but got"))
   }
 
-  test("Throws on both fileStatusOpt and inlineDataOpt empty") {
-    val exMsg = intercept[IllegalArgumentException] {
-      // Test with concrete class since ParsedLogData is now abstract
-      new ParsedDeltaData(10, Optional.empty(), Optional.empty())
-    }.getMessage
-    assert(exMsg === "Exactly one of fileStatusOpt or inlineDataOpt must be present")
+  test("ParsedDeltaData: can construct inline data") {
+    val parsed = ParsedDeltaData.forInlineData(10, emptyInlineData)
+    assert(parsed.version == 10)
+    assert(parsed.isInline)
+    assert(!parsed.isFile)
+    assert(parsed.getInlineData == emptyInlineData)
   }
 
-  ////////////
-  // Deltas //
-  ////////////
-
-  test("Correctly parses published delta file") {
+  test("ParsedDeltaData: correctly parses published delta file") {
     val fileStatus = deltaFileStatus(5)
     val parsed = ParsedLogData.forFileStatus(fileStatus)
 
@@ -80,7 +78,7 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
     assert(parsed.getFileStatus == fileStatus)
   }
 
-  test("Correctly parses staged commit file") {
+  test("ParsedDeltaData: correctly parses staged commit file") {
     val fileStatus = stagedCommitFile(5)
     val parsed = ParsedLogData.forFileStatus(fileStatus)
 
@@ -91,7 +89,7 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
     assert(parsed.getFileStatus == fileStatus)
   }
 
-  test("Delta file equality") {
+  test("ParsedDeltaData: equality") {
     val fileStatus1 = deltaFileStatus(5)
     val fileStatus2 = deltaFileStatus(5)
     val fileStatus3 = deltaFileStatus(6)
@@ -105,11 +103,27 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
     assert(delta1 != delta3)
   }
 
-  /////////////////
-  // Checkpoints //
-  /////////////////
+  //////////////////////////
+  // ParsedCheckpointData //
+  //////////////////////////
 
-  test("Correctly parses classic checkpoint file") {
+  test("ParsedClassicCheckpointData: throws on non-classic checkpoint file") {
+    val fileStatus = deltaFileStatus(5)
+    val exMsg = intercept[IllegalArgumentException] {
+      ParsedClassicCheckpointData.forFileStatus(fileStatus)
+    }.getMessage
+    assert(exMsg.contains("Expected a classic checkpoint file but got"))
+  }
+
+  test("ParsedClassicCheckpointData: can construct inline data") {
+    val parsed = ParsedClassicCheckpointData.forInlineData(10, emptyInlineData)
+    assert(parsed.version == 10)
+    assert(parsed.isInline)
+    assert(!parsed.isFile)
+    assert(parsed.getInlineData == emptyInlineData)
+  }
+
+  test("ParsedClassicCheckpointData: correctly parses classic checkpoint file") {
     val fileStatus = classicCheckpointFileStatus(10)
     val parsed = ParsedLogData.forFileStatus(fileStatus)
 
@@ -121,7 +135,7 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
     assert(parsed.getFileStatus == fileStatus)
   }
 
-  test("Classic checkpoint file equality") {
+  test("ParsedClassicCheckpointData: equality") {
     val cp1 = ParsedLogData.forFileStatus(classicCheckpointFileStatus(10))
     val cp2 = ParsedLogData.forFileStatus(classicCheckpointFileStatus(10))
     val cp3 = ParsedLogData.forFileStatus(classicCheckpointFileStatus(11))
@@ -131,7 +145,23 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
     assert(cp1 != cp3)
   }
 
-  test("Correctly parses V2 checkpoint file") {
+  test("ParsedV2CheckpointData: throws on non-V2 checkpoint file") {
+    val fileStatus = deltaFileStatus(5)
+    val exMsg = intercept[IllegalArgumentException] {
+      ParsedV2CheckpointData.forFileStatus(fileStatus)
+    }.getMessage
+    assert(exMsg.contains("Expected a V2 checkpoint file but got"))
+  }
+
+  test("ParsedV2CheckpointData: can construct inline data") {
+    val parsed = ParsedV2CheckpointData.forInlineData(20, emptyInlineData)
+    assert(parsed.version == 20)
+    assert(parsed.isInline)
+    assert(!parsed.isFile)
+    assert(parsed.getInlineData == emptyInlineData)
+  }
+
+  test("ParsedV2CheckpointData: correctly parses V2 checkpoint file") {
     val fileStatus = v2CheckpointFileStatus(20)
     val parsed = ParsedLogData.forFileStatus(fileStatus)
 
@@ -143,7 +173,7 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
     assert(parsed.getFileStatus == fileStatus)
   }
 
-  test("V2 checkpoint file equality") {
+  test("ParsedV2CheckpointData: equality") {
     val parsed1 = ParsedLogData.forFileStatus(v2CheckpointFileStatus(20, useUUID = false))
     val parsed2 = ParsedLogData.forFileStatus(v2CheckpointFileStatus(20, useUUID = false))
     val parsed3 = ParsedLogData.forFileStatus(v2CheckpointFileStatus(21))
@@ -153,11 +183,29 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
     assert(parsed1 != parsed3)
   }
 
-  ////////////////////////////
-  // Multi-Part Checkpoints //
-  ////////////////////////////
+  ///////////////////////////////////
+  // ParsedMultiPartCheckpointData //
+  ///////////////////////////////////
 
-  test("Correctly parses multi-part checkpoint file") {
+  test("ParsedMultiPartCheckpointData: throws on non-multi-part checkpoint file") {
+    val fileStatus = deltaFileStatus(5)
+    val exMsg = intercept[IllegalArgumentException] {
+      ParsedMultiPartCheckpointData.forFileStatus(fileStatus)
+    }.getMessage
+    assert(exMsg.contains("Expected a multi-part checkpoint file but got"))
+  }
+
+  test("ParsedMultiPartCheckpointData: can construct inline data") {
+    val parsed = ParsedMultiPartCheckpointData.forInlineData(15, 1, 3, emptyInlineData)
+    assert(parsed.version == 15)
+    assert(parsed.part == 1)
+    assert(parsed.numParts == 3)
+    assert(parsed.isInline)
+    assert(!parsed.isFile)
+    assert(parsed.getInlineData == emptyInlineData)
+  }
+
+  test("ParsedMultiPartCheckpointData: correctly parses multi-part checkpoint file") {
     val chkpt_15_1_3 = multiPartCheckpointFileStatus(15, 1, 3)
     val parsed = ParsedLogData.forFileStatus(chkpt_15_1_3)
 
@@ -173,7 +221,7 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
     assert(casted.numParts == 3)
   }
 
-  test("Throws on multi-part checkpoint with part > numParts") {
+  test("ParsedMultiPartCheckpointData: throws on part > numParts") {
     val path = FileNames.multiPartCheckpointFile(logPath, 10, 5, 3) // part = 5, numParts = 3
     val exMsg = intercept[IllegalArgumentException] {
       ParsedLogData.forFileStatus(FileStatus.of(path.toString))
@@ -181,7 +229,7 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
     assert(exMsg === "part must be between 1 and numParts")
   }
 
-  test("Throws on multi-part checkpoint with numParts = 0") {
+  test("ParsedMultiPartCheckpointData: throws on numParts = 0") {
     val path = FileNames.multiPartCheckpointFile(logPath, 10, 0, 0) // part = 0, numParts = 0
     val exMsg = intercept[IllegalArgumentException] {
       ParsedLogData.forFileStatus(FileStatus.of(path.toString))
@@ -189,7 +237,7 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
     assert(exMsg === "numParts must be greater than 0")
   }
 
-  test("Throws on multi-part checkpoint with part = 0") {
+  test("ParsedMultiPartCheckpointData: throws on part = 0") {
     val path = FileNames.multiPartCheckpointFile(logPath, 10, 0, 3) // part = 0, numParts = 3
     val exMsg = intercept[IllegalArgumentException] {
       ParsedLogData.forFileStatus(FileStatus.of(path.toString))
@@ -197,7 +245,7 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
     assert(exMsg === "part must be between 1 and numParts")
   }
 
-  test("Multi-part checkpoint file equality") {
+  test("ParsedMultiPartCheckpointData: equality") {
     val parsed_15_1_3_a = ParsedLogData.forFileStatus(multiPartCheckpointFileStatus(15, 1, 3))
     val parsed_15_1_3_b = ParsedLogData.forFileStatus(multiPartCheckpointFileStatus(15, 1, 3))
     val parsed_15_2_3 = ParsedLogData.forFileStatus(multiPartCheckpointFileStatus(15, 2, 3))
@@ -229,11 +277,11 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
     val v2_12_m: ParsedCheckpointData =
       ParsedV2CheckpointData.forFileStatus(v2CheckpointFileStatus(12))
     val classic_12_i: ParsedCheckpointData =
-      ParsedClassicCheckpointData.forInlineData(12, emptyColumnarBatch)
+      ParsedClassicCheckpointData.forInlineData(12, emptyInlineData)
     val v2_12_i: ParsedCheckpointData =
-      ParsedV2CheckpointData.forInlineData(12, emptyColumnarBatch)
+      ParsedV2CheckpointData.forInlineData(12, emptyInlineData)
     val multi_12_3_i: ParsedCheckpointData =
-      ParsedMultiPartCheckpointData.forInlineData(12, 1, 3, emptyColumnarBatch)
+      ParsedMultiPartCheckpointData.forInlineData(12, 1, 3, emptyInlineData)
     val multi_12_4_m: ParsedCheckpointData =
       ParsedMultiPartCheckpointData.forFileStatus(multiPartCheckpointFileStatus(12, 1, 4))
     val v2_aaa: ParsedCheckpointData = ParsedV2CheckpointData.forFileStatus(
@@ -262,15 +310,29 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
     v2_bbb should be > v2_aaa
   }
 
-  /////////////////////
-  // Log compactions //
-  /////////////////////
+  ////////////////////////////
+  // ParsedLogCompactionData //
+  ////////////////////////////
 
-  test("Can construct inline log compaction using forInlineData") {
-    ParsedLogCompactionData.forInlineData(10, 20, emptyColumnarBatch)
+  test("ParsedLogCompactionData: throws on non-log-compaction file") {
+    val fileStatus = deltaFileStatus(5)
+    val exMsg = intercept[IllegalArgumentException] {
+      ParsedLogCompactionData.forFileStatus(fileStatus)
+    }.getMessage
+    assert(exMsg.contains("Expected a log compaction file but got"))
   }
 
-  test("Correctly parses log compaction file") {
+  test("ParsedLogCompactionData: can construct inline data") {
+    val parsed = ParsedLogCompactionData.forInlineData(10, 20, emptyInlineData)
+    assert(parsed.version == 20)
+    assert(parsed.startVersion == 10)
+    assert(parsed.endVersion == 20)
+    assert(parsed.isInline)
+    assert(!parsed.isFile)
+    assert(parsed.getInlineData == emptyInlineData)
+  }
+
+  test("ParsedLogCompactionData: correctly parses log compaction file") {
     val fileStatus = logCompactionStatus(25, 30)
     val parsed = ParsedLogData.forFileStatus(fileStatus)
 
@@ -286,28 +348,28 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
     assert(casted.endVersion == 30)
   }
 
-  test("Throws on log compaction with startVersion < 0") {
+  test("ParsedLogCompactionData: throws on startVersion < 0") {
     val exMsg = intercept[IllegalArgumentException] {
-      ParsedLogCompactionData.forInlineData(-1, 3, emptyColumnarBatch)
+      ParsedLogCompactionData.forInlineData(-1, 3, emptyInlineData)
     }.getMessage
     assert(exMsg === "startVersion and endVersion must be non-negative")
   }
 
-  test("Throws on log compaction with endVersion < 0") {
+  test("ParsedLogCompactionData: throws on endVersion < 0") {
     val exMsg = intercept[IllegalArgumentException] {
-      ParsedLogCompactionData.forInlineData(1, -1, emptyColumnarBatch)
+      ParsedLogCompactionData.forInlineData(1, -1, emptyInlineData)
     }.getMessage
     assert(exMsg === "version must be non-negative")
   }
 
-  test("Throws on log compaction with startVersion > endVersion") {
+  test("ParsedLogCompactionData: throws on startVersion > endVersion") {
     val exMsg = intercept[IllegalArgumentException] {
-      ParsedLogCompactionData.forInlineData(3, 1, emptyColumnarBatch)
+      ParsedLogCompactionData.forInlineData(3, 1, emptyInlineData)
     }.getMessage
     assert(exMsg === "startVersion must be less than endVersion")
   }
 
-  test("Log compaction file equality") {
+  test("ParsedLogCompactionData: equality") {
     val fileStatus1 = logCompactionStatus(25, 30)
     val fileStatus2 = logCompactionStatus(25, 30)
     val fileStatus3 = logCompactionStatus(31, 32)
@@ -321,16 +383,28 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
     assert(parsed1 != parsed3)
   }
 
-  //////////////
-  // Checksum //
-  //////////////
+  ////////////////////////
+  // ParsedChecksumData //
+  ////////////////////////
 
-  test("Can construct checksum file using forInlineData") {
-    val parsed = ParsedChecksumData.forInlineData(5, emptyColumnarBatch)
-    assert(parsed.isInstanceOf[ParsedChecksumData])
+  test("ParsedChecksumData: throws on non-checksum file") {
+    val fileStatus = deltaFileStatus(5)
+    val exMsg = intercept[IllegalArgumentException] {
+      ParsedChecksumData.forFileStatus(fileStatus)
+    }.getMessage
+    assert(exMsg.contains("Expected a checksum file but got"))
   }
 
-  test("Correctly parses checksum file") {
+  test("ParsedChecksumData: can construct inline data") {
+    val parsed = ParsedChecksumData.forInlineData(5, emptyInlineData)
+    assert(parsed.isInstanceOf[ParsedChecksumData])
+    assert(parsed.version == 5)
+    assert(parsed.isInline)
+    assert(!parsed.isFile)
+    assert(parsed.getInlineData == emptyInlineData)
+  }
+
+  test("ParsedChecksumData: correctly parses checksum file") {
     val fileStatus = checksumFileStatus(5)
     val parsed = ParsedLogData.forFileStatus(fileStatus)
 
@@ -340,7 +414,7 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
     assert(parsed.getFileStatus == fileStatus)
   }
 
-  test("Checksum file equality") {
+  test("ParsedChecksumData: equality") {
     val fileStatus1 = checksumFileStatus(5)
     val fileStatus2 = checksumFileStatus(5)
     val fileStatus3 = checksumFileStatus(6)
@@ -358,7 +432,7 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
   // toString //
   //////////////
 
-  test("delta toString") {
+  test("ParsedDeltaData: toString") {
     val parsed = ParsedLogData.forFileStatus(deltaFileStatus(5))
     // scalastyle:off line.size.limit
     val expected =
@@ -367,9 +441,9 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
     assert(parsed.toString === expected)
   }
 
-  test("multi-part checkpoint toString") {
+  test("ParsedMultiPartCheckpointData: toString") {
     val parsed =
-      ParsedMultiPartCheckpointData.forInlineData(10, 1, 3, emptyColumnarBatch)
+      ParsedMultiPartCheckpointData.forInlineData(10, 1, 3, emptyInlineData)
     // scalastyle:off line.size.limit
     val expected =
       "ParsedMultiPartCheckpointData{version=10, source=inline, part=1, numParts=3}"
@@ -377,8 +451,8 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
     assert(parsed.toString === expected)
   }
 
-  test("log compaction toString") {
-    val parsed = ParsedLogCompactionData.forInlineData(10, 20, emptyColumnarBatch)
+  test("ParsedLogCompactionData: toString") {
+    val parsed = ParsedLogCompactionData.forInlineData(10, 20, emptyInlineData)
     // scalastyle:off line.size.limit
     val expected =
       "ParsedLogCompactionData{version=20, source=inline, startVersion=10}"

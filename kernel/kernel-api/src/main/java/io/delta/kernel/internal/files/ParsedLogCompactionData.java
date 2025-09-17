@@ -25,6 +25,14 @@ import io.delta.kernel.utils.FileStatus;
 import java.util.Objects;
 import java.util.Optional;
 
+/**
+ * Log compaction file containing compacted delta entries across a version range.
+ *
+ * <p>These files compact multiple delta files into a single JSON file to reduce the number of files
+ * readers need to process. Example: {@code
+ * 00000000000000000001.00000000000000000009.compacted.json} represents compacted entries from
+ * version 1 to 9.
+ */
 // TODO: Add the comparable logic from CheckpointInstance.
 public class ParsedLogCompactionData extends ParsedLogData {
   public static ParsedLogCompactionData forFileStatus(FileStatus fileStatus) {

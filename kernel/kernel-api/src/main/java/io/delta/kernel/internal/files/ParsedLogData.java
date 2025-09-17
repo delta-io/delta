@@ -26,8 +26,20 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * Represents a Delta Log "file" - the actual content may be written to disk as a file or stored
- * inline as a columnar batch.
+ * Abstract representation of any valid file type in a Delta log.
+ *
+ * <p>Content may be stored as a file on disk or inline as a columnar batch in memory. Supported log
+ * file types include:
+ *
+ * <ul>
+ *   <li>Delta commit files: {@code 00000000000000000001.json}
+ *   <li>Checkpoint files: {@code 00000000000000000001.checkpoint.parquet}
+ *   <li>V2 checkpoint files: {@code 00000000000000000001.checkpoint.uuid-1234.json}
+ *   <li>Multi-part checkpoint files: {@code
+ *       00000000000000000001.checkpoint.0000000001.0000000010.parquet}
+ *   <li>Log compaction files: {@code 00000000000000000001.00000000000000000009.compacted.json}
+ *   <li>Checksum files: {@code 00000000000000000001.crc}
+ * </ul>
  */
 // TODO: Move this to be a public API
 public abstract class ParsedLogData {
