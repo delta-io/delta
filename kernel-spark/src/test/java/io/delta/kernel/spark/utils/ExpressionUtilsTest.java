@@ -308,4 +308,38 @@ public class ExpressionUtilsTest {
     Optional<Literal> result = ExpressionUtils.convertValueToKernelLiteral(unsupportedValue);
     assertFalse(result.isPresent(), "Unsupported types should return empty Optional");
   }
+
+  @Test
+  public void testNestedFieldParsing() {
+    EqualTo nestedFieldFilter = new EqualTo("user.profile.name", "John");
+
+    Optional<Predicate> result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(nestedFieldFilter);
+
+    assertTrue(result.isPresent(), "Nested field filter should be convertible");
+    Predicate predicate = result.get();
+    io.delta.kernel.expressions.Column column =
+        (io.delta.kernel.expressions.Column) predicate.getChildren().get(0);
+    assertArrayEquals(
+        new String[] {"user", "profile", "name"},
+        column.getNames(),
+        "Nested field names should be parsed correctly");
+  }
+
+  @Test
+  public void testSingleColumnNameWithDots() {
+    EqualTo singleColumnFilter = new EqualTo("`user.profile.name`", "value");
+
+    Optional<Predicate> result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(singleColumnFilter);
+
+    assertTrue(result.isPresent(), "Single column filter should be convertible");
+    Predicate predicate = result.get();
+    io.delta.kernel.expressions.Column column =
+        (io.delta.kernel.expressions.Column) predicate.getChildren().get(0);
+    assertArrayEquals(
+        new String[] {"user.profile.name"},
+        column.getNames(),
+        "Single column name with dots should be preserved as-is");
+  }
 }

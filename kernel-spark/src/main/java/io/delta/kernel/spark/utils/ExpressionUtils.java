@@ -58,7 +58,7 @@ public final class ExpressionUtils {
    *     supported
    */
   public static Optional<Predicate> convertSparkFilterToKernelPredicate(Filter filter) {
-    return convertSparkFilterToKernelPredicate(filter, true);
+    return convertSparkFilterToKernelPredicate(filter, true /*canPartialPushDown*/);
   }
 
   /**
@@ -73,44 +73,44 @@ public final class ExpressionUtils {
     if (filter instanceof EqualTo) {
       EqualTo f = (EqualTo) filter;
       return convertValueToKernelLiteral(f.value())
-          .map(l -> new Predicate("=", column(f.attribute()), l));
+          .map(l -> new Predicate("=", kernelColumn(f.attribute()), l));
     }
     if (filter instanceof EqualNullSafe) {
       EqualNullSafe f = (EqualNullSafe) filter;
       // EqualNullSafe with null value should be translated to IS_NULL
       // For non-null values, we use "=" operator.
       return f.value() == null
-          ? Optional.of(new Predicate("IS_NULL", column(f.attribute())))
+          ? Optional.of(new Predicate("IS_NULL", kernelColumn(f.attribute())))
           : convertValueToKernelLiteral(f.value())
-              .map(l -> new Predicate("=", column(f.attribute()), l));
+              .map(l -> new Predicate("=", kernelColumn(f.attribute()), l));
     }
     if (filter instanceof GreaterThan) {
       GreaterThan f = (GreaterThan) filter;
       return convertValueToKernelLiteral(f.value())
-          .map(l -> new Predicate(">", column(f.attribute()), l));
+          .map(l -> new Predicate(">", kernelColumn(f.attribute()), l));
     }
     if (filter instanceof GreaterThanOrEqual) {
       GreaterThanOrEqual f = (GreaterThanOrEqual) filter;
       return convertValueToKernelLiteral(f.value())
-          .map(l -> new Predicate(">=", column(f.attribute()), l));
+          .map(l -> new Predicate(">=", kernelColumn(f.attribute()), l));
     }
     if (filter instanceof LessThan) {
       LessThan f = (LessThan) filter;
       return convertValueToKernelLiteral(f.value())
-          .map(l -> new Predicate("<", column(f.attribute()), l));
+          .map(l -> new Predicate("<", kernelColumn(f.attribute()), l));
     }
     if (filter instanceof LessThanOrEqual) {
       LessThanOrEqual f = (LessThanOrEqual) filter;
       return convertValueToKernelLiteral(f.value())
-          .map(l -> new Predicate("<=", column(f.attribute()), l));
+          .map(l -> new Predicate("<=", kernelColumn(f.attribute()), l));
     }
     if (filter instanceof IsNull) {
       IsNull f = (IsNull) filter;
-      return Optional.of(new Predicate("IS_NULL", column(f.attribute())));
+      return Optional.of(new Predicate("IS_NULL", kernelColumn(f.attribute())));
     }
     if (filter instanceof IsNotNull) {
       IsNotNull f = (IsNotNull) filter;
-      return Optional.of(new Predicate("IS_NOT_NULL", column(f.attribute())));
+      return Optional.of(new Predicate("IS_NOT_NULL", kernelColumn(f.attribute())));
     }
     if (filter instanceof org.apache.spark.sql.sources.And) {
       org.apache.spark.sql.sources.And f = (org.apache.spark.sql.sources.And) filter;
@@ -141,9 +141,15 @@ public final class ExpressionUtils {
     }
     if (filter instanceof Not) {
       Not f = (Not) filter;
-      // NOT disables partial pushdown for semantic correctness
-      // NOT (A AND B) cannot become NOT A - they have different meanings
-      Optional<Predicate> child = convertSparkFilterToKernelPredicate(f.child(), false);
+      // NOT disables partial pushdown for semantic correctness.
+      // Example: NOT(A AND B) requires both A and B to be convertible.
+      // We cannot convert it to just NOT A if only A is convertible, because:
+      // - NOT(A AND B) = (NOT A) OR (NOT B) by De Morgan's law
+      // - If we only push down NOT A, we lose information about condition B
+      // - This could incorrectly filter data: some rows that should pass the full
+      //   NOT(A AND B) filter might be wrongly excluded based on NOT A alone
+      Optional<Predicate> child =
+          convertSparkFilterToKernelPredicate(f.child(), false /*canPartialPushDown*/);
       return child.map(c -> new Predicate("NOT", c));
     }
 
@@ -154,12 +160,20 @@ public final class ExpressionUtils {
    * Creates a Delta Kernel Column from a Spark SQL column attribute name.
    *
    * <p>This method handles nested column references (e.g., "user.profile.name") by parsing the
-   * dot-separated path into an array of field names.
+   * dot-separated path into an array of field names using Spark's column path parser.
+   *
+   * <p>If a column name contains literal dots that should not be treated as field separators, it
+   * must be properly quoted/escaped in the original Spark SQL. For example:
+   *
+   * <ul>
+   *   <li>{@code `my.column.with.dots`} - treats the entire string as a single column name
+   *   <li>{@code my.nested.field} - treats this as nested field access: my -> nested -> field
+   * </ul>
    *
    * @param attribute the column attribute name, potentially dot-separated for nested fields
-   * @return Delta Kernel Column object
+   * @return Delta Kernel Column object representing the parsed column path
    */
-  private static Column column(String attribute) {
+  private static Column kernelColumn(String attribute) {
     scala.collection.Seq<String> seq = parseColumnPath(attribute);
     String[] parts = CollectionConverters.asJavaCollection(seq).toArray(new String[0]);
     return new Column(parts);
