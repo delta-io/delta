@@ -374,97 +374,6 @@ class RowTrackingRemovalConcurrencySuite
     }
   }
 
-  /*
-   * -------------------------------------------> TIME ------------------------------------------->
-   *
-   * Drop Feature
-   * Command        Metadata ----------- Unbackfill -- Unbackfill----------------- Downgrade Commit
-   *                Upgrade              Batch 1       Batch 2
-   *                prep+commit          prep+commit   Prepare          commit     prep+commit
-   *
-   *
-   * Business Txn               prepare                          commit
-   *
-   * -------------------------------------------> TIME ------------------------------------------->
-   */
-  for (op <- Seq("insert", "update", "delete"))
-  test(s"Unbackfill batches interleave $op") {
-    withTempDir { dir =>
-      val deltaLog = createTestTable(dir, numPartitions = 3)
-      val ctx = new TestContext(deltaLog)
-      val table = s"delta.`${dir.getAbsolutePath}`"
-      val dropRowTrackingFn = () => dropRowTrackingTransaction(table)
-
-      withSQLConf(DeltaSQLConf.DELTA_BACKFILL_MAX_NUM_FILES_PER_COMMIT.key -> "2") {
-        val Seq(dropFuture) = runFunctionsWithOrderingFromObserver(Seq(dropRowTrackingFn)) {
-          case (updateMetadataDropObserver :: Nil) =>
-            val unbackfillBatch1DropObserver = new TransactionObserver(
-              OptimisticTransactionPhases.forName("unbackfill-batch-1-drop-txn"))
-            val unbackfillBatch2DropObserver = new TransactionObserver(
-              OptimisticTransactionPhases.forName("unbackfill-batch-2-drop-txn"))
-            val downgradeDropObserver = new TransactionObserver(
-              OptimisticTransactionPhases.forName("downgrade-drop-txn"))
-
-            updateMetadataDropObserver.setNextObserver(
-              unbackfillBatch1DropObserver, autoAdvance = true)
-            unbackfillBatch1DropObserver.setNextObserver(
-              unbackfillBatch2DropObserver, autoAdvance = true)
-            unbackfillBatch2DropObserver.setNextObserver(
-              downgradeDropObserver, autoAdvance = true)
-
-            prepareAndCommitWithNextObserverSet(updateMetadataDropObserver)
-
-            val businessTxn = op match {
-              case "insert" => ThirdPartyInsert(start = 100, end = 200)
-              case "update" => ThirdPartyUpdate(set = "id = 200", condition = "id = 10")
-              case "delete" => ThirdPartyDelete("id = 10")
-            }
-            val businessTxnFn = () => {
-              businessTxn.execute(ctx)
-              Array.empty[Row]
-            }
-
-            val Seq(businessTxnFuture) = runFunctionsWithOrderingFromObserver(Seq(businessTxnFn)) {
-              case (businessTxnObserver :: Nil) =>
-                unblockUntilPreCommit(businessTxnObserver)
-                waitForPrecommit(businessTxnObserver)
-                busyWaitFor(businessTxnObserver.phases.commitPhase.hasReached, timeout)
-
-                // Make sure DELTA_ROW_TRACKING_IGNORE_SUSPENSION is false for unbackfill.
-                withSQLConf(DeltaSQLConf.DELTA_ROW_TRACKING_IGNORE_SUSPENSION.key ->  "false") {
-                  prepareAndCommitWithNextObserverSet(unbackfillBatch1DropObserver)
-
-                  unblockUntilPreCommit(unbackfillBatch2DropObserver)
-                  waitForPrecommit(unbackfillBatch2DropObserver)
-                  busyWaitFor(unbackfillBatch2DropObserver.phases.commitPhase.hasReached, timeout)
-                }
-
-                unblockCommit(businessTxnObserver)
-                waitForCommit(businessTxnObserver)
-
-                unblockCommit(unbackfillBatch2DropObserver)
-                unbackfillBatch2DropObserver.phases.postCommitPhase.leave()
-                waitForCommit(unbackfillBatch2DropObserver)
-            }
-            ThreadUtils.awaitResult(businessTxnFuture, timeout)
-            validateRowTrackingMetadataInAddFiles(deltaLog, expectedFileCountWithRowIDs = 0)
-
-            prepareAndCommit(downgradeDropObserver)
-        }
-        ThreadUtils.awaitResult(dropFuture, timeout)
-        validateRowTrackingMetadataInAddFiles(deltaLog, expectedFileCountWithRowIDs = 0)
-        validateRowTrackingState(deltaLog, isPresent = false)
-
-        val targetTable = io.delta.tables.DeltaTable.forPath(dir.getAbsolutePath)
-        val expectedValues = op match {
-          case "insert" => (0 to 199)
-          case "update" => (0 to 99).filterNot(_ == 10) :+ 200
-          case "delete" => (0 to 99).filterNot(_ == 10)
-        }
-        checkAnswer(targetTable.toDF, expectedValues.map(Row(_)))
-      }
-    }
-  }
 
   /*
    * -------------------------------------------> TIME ------------------------------------------->
@@ -722,6 +631,48 @@ class RowTrackingRemovalConcurrencySuite
       // Unbackfill conflict should be resolved and the downgrade should proceed.
       DowngradeProtocol(RowTrackingFeature).execute(ctx)
       validateRowTrackingState(deltaLog, isPresent = false)
+    }
+  }
+
+  /*
+   * -------------------------------------------> TIME ------------------------------------------->
+   *
+   * Unbackfill Batch                       prepare + commit
+   * Business Txn               prepare                           commit
+   *
+   * -------------------------------------------> TIME ------------------------------------------->
+   */
+  for (op <- Seq("insert", "update", "delete"))
+  test(s"Single Unbackfill batch interleaves $op") {
+    withTempDir { dir =>
+      val deltaLog = createTestTable(dir, numPartitions = 3)
+      val ctx = new TestContext(deltaLog)
+      disableRowTracking(dir.getAbsolutePath)
+
+      val businessTxn = op match {
+        case "insert" => ThirdPartyInsert(start = 100, end = 200)
+        case "update" => ThirdPartyUpdate(set = "id = 200", condition = "id = 10")
+        case "delete" => ThirdPartyDelete("id = 10")
+      }
+
+      businessTxn.start(ctx)
+      UnbackfillBatch().execute(ctx)
+      businessTxn.commit(ctx)
+
+      val expectedFileCountWithRowIDs = op match {
+        case "insert" => 2
+        case "update" => if (areDVsEnabled) 2 else 1
+        case "delete" => 1
+      }
+      validateRowTrackingMetadataInAddFiles(deltaLog, expectedFileCountWithRowIDs)
+
+      val targetTable = io.delta.tables.DeltaTable.forPath(dir.getAbsolutePath)
+      val expectedValues = op match {
+        case "insert" => (0 to 199)
+        case "update" => (0 to 99).filterNot(_ == 10) :+ 200
+        case "delete" => (0 to 99).filterNot(_ == 10)
+      }
+      checkAnswer(targetTable.toDF, expectedValues.map(Row(_)))
     }
   }
 
