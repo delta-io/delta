@@ -30,7 +30,7 @@ import java.util.Optional;
  * to enable detection of non-compliant modifications to Delta files. Contains information like
  * table size, file counts, and metadata. Example: {@code 00000000000000000001.crc}
  */
-public class ParsedChecksumData extends ParsedLogData {
+public final class ParsedChecksumData extends ParsedLogData {
 
   public static ParsedChecksumData forFileStatus(FileStatus fileStatus) {
     checkArgument(

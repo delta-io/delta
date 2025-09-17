@@ -36,7 +36,7 @@ import java.util.Optional;
  *   <li><b>Inline commits</b>: Content stored directly by the catalog, not as files
  * </ul>
  */
-public class ParsedDeltaData extends ParsedLogData {
+public final class ParsedDeltaData extends ParsedLogData {
 
   public static ParsedDeltaData forFileStatus(FileStatus fileStatus) {
     checkArgument(

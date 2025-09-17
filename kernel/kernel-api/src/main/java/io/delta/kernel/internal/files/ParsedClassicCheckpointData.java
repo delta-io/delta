@@ -28,7 +28,7 @@ import java.util.Optional;
  *
  * <p>Example: {@code 00000000000000000001.checkpoint.parquet}
  */
-public class ParsedClassicCheckpointData extends ParsedCheckpointData {
+public final class ParsedClassicCheckpointData extends ParsedCheckpointData {
 
   public static ParsedClassicCheckpointData forFileStatus(FileStatus fileStatus) {
     checkArgument(

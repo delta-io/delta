@@ -28,7 +28,7 @@ import java.util.Optional;
  *
  * <p>Example: {@code 00000000000000000001.checkpoint.80a083e8-7026-4e79-81be-64bd76c43a11.json}
  */
-public class ParsedV2CheckpointData extends ParsedCheckpointData {
+public final class ParsedV2CheckpointData extends ParsedCheckpointData {
 
   public static ParsedV2CheckpointData forFileStatus(FileStatus fileStatus) {
     checkArgument(

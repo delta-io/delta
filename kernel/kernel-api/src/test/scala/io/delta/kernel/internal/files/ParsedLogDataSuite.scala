@@ -47,6 +47,20 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
     assert(exMsg === "version must be non-negative")
   }
 
+  test("ParsedLogData: different types are not equal") {
+    val delta = ParsedLogData.forFileStatus(deltaFileStatus(5))
+    val checksum = ParsedLogData.forFileStatus(checksumFileStatus(5))
+    val checkpoint = ParsedLogData.forFileStatus(classicCheckpointFileStatus(5))
+    val logCompaction = ParsedLogData.forFileStatus(logCompactionStatus(5, 10))
+
+    assert(delta != checksum)
+    assert(delta != checkpoint)
+    assert(delta != logCompaction)
+    assert(checksum != checkpoint)
+    assert(checksum != logCompaction)
+    assert(checkpoint != logCompaction)
+  }
+
   /////////////////////
   // ParsedDeltaData //
   /////////////////////
@@ -441,22 +455,44 @@ class ParsedLogDataSuite extends AnyFunSuite with MockFileSystemClientUtils with
     assert(parsed.toString === expected)
   }
 
-  test("ParsedMultiPartCheckpointData: toString") {
-    val parsed =
-      ParsedMultiPartCheckpointData.forInlineData(10, 1, 3, emptyInlineData)
+  test("ParsedLogCompactionData: toString") {
+    val parsed = ParsedLogCompactionData.forInlineData(10, 20, emptyInlineData)
     // scalastyle:off line.size.limit
-    val expected =
-      "ParsedMultiPartCheckpointData{version=10, source=inline, part=1, numParts=3}"
+    val expected = "ParsedLogCompactionData{version=20, source=inline, startVersion=10}"
     // scalastyle:on line.size.limit
     assert(parsed.toString === expected)
   }
 
-  test("ParsedLogCompactionData: toString") {
-    val parsed = ParsedLogCompactionData.forInlineData(10, 20, emptyInlineData)
+  test("ParsedChecksumData: toString") {
+    val parsed = ParsedLogData.forFileStatus(checksumFileStatus(5))
     // scalastyle:off line.size.limit
     val expected =
-      "ParsedLogCompactionData{version=20, source=inline, startVersion=10}"
+      "ParsedChecksumData{version=5, source=FileStatus{path='/fake/path/to/table/_delta_log/00000000000000000005.crc', size=10, modificationTime=10}}"
     // scalastyle:on line.size.limit
     assert(parsed.toString === expected)
+  }
+
+  test("ParsedClassicCheckpointData: toString") {
+    val parsed = ParsedLogData.forFileStatus(classicCheckpointFileStatus(10))
+    // scalastyle:off line.size.limit
+    val expected =
+      "ParsedClassicCheckpointData{version=10, source=FileStatus{path='/fake/path/to/table/_delta_log/00000000000000000010.checkpoint.parquet', size=10, modificationTime=100}}"
+    // scalastyle:on line.size.limit
+    assert(parsed.toString === expected)
+  }
+
+  test("ParsedMultiPartCheckpointData: toString") {
+    val parsed = ParsedMultiPartCheckpointData.forInlineData(10, 1, 3, emptyInlineData)
+    val expected = "ParsedMultiPartCheckpointData{version=10, source=inline, part=1, numParts=3}"
+    assert(parsed.toString === expected)
+  }
+
+  test("ParsedV2CheckpointData: toString") {
+    val parsed = ParsedLogData.forFileStatus(v2CheckpointFileStatus(20))
+    // scalastyle:off line.size.limit
+    val expectedPattern =
+      """ParsedV2CheckpointData\{version=20, source=FileStatus\{path='/fake/path/to/table/_delta_log/00000000000000000020\.checkpoint\.[a-f0-9-]+\.json', size=20, modificationTime=200\}\}""".r
+    // scalastyle:on line.size.limit
+    assert(expectedPattern.findFirstIn(parsed.toString).isDefined)
   }
 }

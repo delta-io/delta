@@ -34,7 +34,7 @@ import java.util.Optional;
  * version 1 to 9.
  */
 // TODO: Add the comparable logic from CheckpointInstance.
-public class ParsedLogCompactionData extends ParsedLogData {
+public final class ParsedLogCompactionData extends ParsedLogData {
   public static ParsedLogCompactionData forFileStatus(FileStatus fileStatus) {
     checkArgument(
         FileNames.isLogCompactionFile(fileStatus.getPath()),

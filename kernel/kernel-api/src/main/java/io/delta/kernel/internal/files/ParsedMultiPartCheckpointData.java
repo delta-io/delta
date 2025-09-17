@@ -30,7 +30,7 @@ import java.util.Optional;
  *
  * <p>Example: {@code 00000000000000000001.checkpoint.0000000001.0000000010.parquet}
  */
-public class ParsedMultiPartCheckpointData extends ParsedCheckpointData {
+public final class ParsedMultiPartCheckpointData extends ParsedCheckpointData {
   public static ParsedMultiPartCheckpointData forFileStatus(FileStatus fileStatus) {
     checkArgument(
         FileNames.isMultiPartCheckpointFile(fileStatus.getPath()),
