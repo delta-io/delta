@@ -230,8 +230,8 @@ public class SnapshotManager {
   }
 
   /**
-   * [delta-io/delta#4765]: Right now, we are only supporting sorted and contiguous log datas of
-   * type {@link ParsedDeltaData}s (written to file).
+   * [delta-io/delta#4765]: Right now, we only support sorted and contiguous ratified commit log
+   * data.
    */
   public LogSegment getLogSegmentForVersion(
       Engine engine, Optional<Long> versionToLoadOpt, List<ParsedLogData> parsedLogDatas) {
@@ -333,8 +333,10 @@ public class SnapshotManager {
                     LinkedHashMap::new, // Ensure order is maintained
                     Collectors.toList()));
 
-    final List<ParsedLogData> allPublishedDeltas =
-        partitionedFiles.getOrDefault(ParsedDeltaData.class, Collections.emptyList());
+    final List<ParsedDeltaData> allPublishedDeltas =
+        partitionedFiles.getOrDefault(ParsedDeltaData.class, Collections.emptyList()).stream()
+            .map(ParsedDeltaData.class::cast)
+            .collect(Collectors.toList());
 
     final List<FileStatus> listedCheckpointFileStatuses =
         partitionedFiles.getOrDefault(ParsedCheckpointData.class, Collections.emptyList()).stream()
@@ -390,7 +392,7 @@ public class SnapshotManager {
     // Step 7: Grab all deltas in range [$latestCompleteCheckpointVersion + 1, $versionToLoad] //
     /////////////////////////////////////////////////////////////////////////////////////////////
 
-    final List<ParsedLogData> allDeltasAfterCheckpoint =
+    final List<ParsedDeltaData> allDeltasAfterCheckpoint =
         getAllDeltasAfterCheckpointWithCatalogPriority(
             allPublishedDeltas, parsedLogDatas, latestCompleteCheckpointVersion, versionToLoad);
 
@@ -435,7 +437,7 @@ public class SnapshotManager {
           tablePath.toString(), "No complete checkpoint found and no delta files found");
     }
 
-    final Lazy<Optional<ParsedLogData>> lazyDeltaAtCheckpointVersionOpt =
+    final Lazy<Optional<ParsedDeltaData>> lazyDeltaAtCheckpointVersionOpt =
         new Lazy<>(
             () ->
                 allPublishedDeltas.stream()
@@ -587,14 +589,14 @@ public class SnapshotManager {
    *       prioritizes the ratified staged commit
    * </ul>
    */
-  private List<ParsedLogData> getAllDeltasAfterCheckpointWithCatalogPriority(
-      List<ParsedLogData> allPublishedDeltas,
+  private List<ParsedDeltaData> getAllDeltasAfterCheckpointWithCatalogPriority(
+      List<ParsedDeltaData> allPublishedDeltas,
       List<ParsedLogData> parsedLogDatas,
       long latestCompleteCheckpointVersion,
       long versionToLoad) {
-    final List<ParsedLogData> allPublishedDeltasAfterCheckpoint =
+    final List<ParsedDeltaData> allPublishedDeltasAfterCheckpoint =
         allPublishedDeltas.stream()
-            .filter(x -> x instanceof ParsedDeltaData && x.isFile())
+            .filter(x -> x.isFile())
             .filter(x -> latestCompleteCheckpointVersion < x.version && x.version <= versionToLoad)
             .collect(Collectors.toList());
 
@@ -602,10 +604,11 @@ public class SnapshotManager {
       return allPublishedDeltasAfterCheckpoint;
     }
 
-    final List<ParsedLogData> allRatifiedCommitsAfterCheckpoint =
+    final List<ParsedDeltaData> allRatifiedCommitsAfterCheckpoint =
         parsedLogDatas.stream()
             .filter(x -> x instanceof ParsedDeltaData && x.isFile())
             .filter(x -> latestCompleteCheckpointVersion < x.version && x.version <= versionToLoad)
+            .map(ParsedDeltaData.class::cast)
             .collect(Collectors.toList());
 
     if (allRatifiedCommitsAfterCheckpoint.isEmpty()) {
@@ -673,7 +676,7 @@ public class SnapshotManager {
     }
   }
 
-  private void logDebugParsedLogDatas(String varName, List<ParsedLogData> logDatas) {
+  private void logDebugParsedLogDatas(String varName, List<? extends ParsedLogData> logDatas) {
     if (logger.isDebugEnabled()) {
       logger.debug(
           "{}:\n  {}",
