@@ -246,6 +246,24 @@ class TransactionSuite extends AnyFunSuite with VectorTestUtils with MockEngineU
     assert(ex.getMessage.contains(
       "Transforming logical data with variant data is currently unsupported"))
   }
+
+  test("transformLogicalData: Writing to tables with nested variant is blocked") {
+    val txnState = testTxnState(new StructType().add(
+      "nested",
+      new StructType().add("nested_variant", VariantType.VARIANT)))
+    val engine = mockEngine()
+
+    val ex = intercept[UnsupportedOperationException] {
+      transformLogicalData(
+        engine,
+        txnState,
+        testData(includePartitionCols = false),
+        Map.empty[String, Literal].asJava /* partition values */ )
+        .forEachRemaining(_ => ()) // consume the iterator
+    }
+    assert(ex.getMessage.contains(
+      "Transforming logical data with variant data is currently unsupported"))
+  }
 }
 
 object TransactionSuite extends VectorTestUtils with MockEngineUtils {
