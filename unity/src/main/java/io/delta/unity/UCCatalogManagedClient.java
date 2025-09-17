@@ -230,9 +230,9 @@ public class UCCatalogManagedClient {
    * loading a Delta table.
    */
   @VisibleForTesting
-  static List<ParsedDeltaData> getSortedKernelParsedDeltaDataFromRatifiedCommits(
+  static List<ParsedLogData> getSortedKernelParsedDeltaDataFromRatifiedCommits(
       String ucTableId, List<Commit> commits) {
-    final List<ParsedDeltaData> result =
+    final List<ParsedLogData> result =
         timeUncheckedOperation(
             logger,
             "Sort and convert UC ratified commits into Kernel ParsedLogData",
