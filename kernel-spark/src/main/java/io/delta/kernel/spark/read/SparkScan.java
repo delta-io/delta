@@ -32,6 +32,7 @@ import org.apache.spark.paths.SparkPath;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.connector.read.*;
+import org.apache.spark.sql.connector.read.streaming.MicroBatchStream;
 import org.apache.spark.sql.execution.datasources.*;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
@@ -115,6 +116,11 @@ public class SparkScan implements Scan, SupportsReportStatistics {
         totalBytes,
         scalaOptions,
         hadoopConf);
+  }
+
+  @Override
+  public MicroBatchStream toMicroBatchStream(String checkpointLocation) {
+    return new SparkMicroBatchStream();
   }
 
   @Override
