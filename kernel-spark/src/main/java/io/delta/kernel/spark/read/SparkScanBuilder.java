@@ -46,9 +46,8 @@ public class SparkScanBuilder
   private final Set<String> partitionColumnSet;
   private StructType requiredDataSchema;
   private Predicate[] pushedKernelPredicates;
-  private Filter[]
-      pushedFilters; // same as pushedKernelPredicates, but in Spark Filter, returned by
-  // pushedFilters()
+  // pushedFilters: same as pushedKernelPredicates, but in Spark's {@link Filter}
+  private Filter[] pushedFilters;
   private Filter[] dataFilters;
 
   public SparkScanBuilder(

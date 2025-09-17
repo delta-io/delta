@@ -19,8 +19,12 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.golden.GoldenTableUtils$;
+import io.delta.kernel.expressions.Column;
+import io.delta.kernel.expressions.Literal;
+import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.spark.table.SparkTable;
 import java.io.File;
+import java.lang.reflect.Field;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -35,10 +39,7 @@ import org.apache.spark.sql.catalyst.expressions.GenericRow;
 import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.read.Scan;
 import org.apache.spark.sql.connector.read.ScanBuilder;
-import org.apache.spark.sql.sources.EqualTo;
-import org.apache.spark.sql.sources.Filter;
-import org.apache.spark.sql.sources.StringEndsWith;
-import org.apache.spark.sql.sources.StringStartsWith;
+import org.apache.spark.sql.sources.*;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
@@ -179,25 +180,131 @@ public class SparkGoldenTableTest extends QueryTest {
     verifyHadoopConf(sparkScan2.getConfiguration());
 
     // check SupportsPushDownFilters
-    Filter[] filters = {
-      new EqualTo("cnt", 100), // data filter, supported
-      new StringStartsWith("name", "foo"), // data filter, unsupported
-      new EqualTo("date", "2025-09-01"), // partition filter, supported
-      new StringEndsWith("city", "York") // partition filter, unsupported
-    };
-    Filter[] postScanFilters = scanBuilder.pushFilters(filters);
-    // all data filters and unsupported partition filters need post-scan evaluation
-    assertEquals(3, postScanFilters.length);
-    List<Filter> postScanFilterList = Arrays.asList(postScanFilters);
-    assertTrue(postScanFilterList.contains(filters[0]));
-    assertTrue(postScanFilterList.contains(filters[1]));
-    assertTrue(postScanFilterList.contains(filters[3]));
-    // only supported filters are pushed
-    Filter[] pushedFilters = scanBuilder.pushedFilters();
-    assertEquals(2, pushedFilters.length);
-    List<Filter> pushedFilterList = Arrays.asList(pushedFilters);
-    assertTrue(pushedFilterList.contains(filters[0]));
-    assertTrue(pushedFilterList.contains(filters[2]));
+    // case 1: mix of supported and unsupported, data and partition filters
+    checkSupportsPushDownFilters(
+        table,
+        scanOptions,
+        // input filters
+        new Filter[] {
+          new GreaterThan("cnt", 10), // supported data filter
+          new StringStartsWith("name", "foo"), // unsupported data filter
+          new EqualTo("date", "2025-09-01"), // supported partition filter
+          new StringEndsWith("city", "York"), // unsupported partition filter
+        },
+        // expected post-scan filters
+        new Filter[] {
+          new GreaterThan("cnt", 10),
+          new StringStartsWith("name", "foo"),
+          new StringEndsWith("city", "York"),
+        },
+        // expected pushed filters
+        new Filter[] {new GreaterThan("cnt", 10), new EqualTo("date", "2025-09-01")},
+        // expected pushed kernel predicates
+        new Predicate[] {
+          new Predicate(">", new Column("cnt"), Literal.ofInt(10)),
+          new Predicate("=", new Column("date"), Literal.ofString("2025-09-01"))
+        },
+        // expected data filters
+        new Filter[] {new GreaterThan("cnt", 10), new StringStartsWith("name", "foo")},
+        // expected kernel scan builder predicate
+        Optional.of(
+            new Predicate(
+                "AND",
+                new Predicate(">", new Column("cnt"), Literal.ofInt(10)),
+                new Predicate("=", new Column("date"), Literal.ofString("2025-09-01")))));
+
+    // case 2: partial pushdown of AND filters
+    checkSupportsPushDownFilters(
+        table,
+        scanOptions,
+        // input filters
+        new Filter[] {
+          new And(
+              new GreaterThan("cnt", 10), // supported data filter
+              new StringStartsWith("name", "foo")), // unsupported data filter
+          new And(
+              new EqualTo("date", "2025-09-01"), // supported partition filter
+              new StringEndsWith("city", "York")) // unsupported partition filter
+        },
+        // expected post-scan filters
+        new Filter[] {
+          new And(new GreaterThan("cnt", 10), new StringStartsWith("name", "foo")),
+          new StringEndsWith("city", "York")
+        },
+        // expected pushed filters
+        new Filter[] {new GreaterThan("cnt", 10), new EqualTo("date", "2025-09-01")},
+        // expected pushed kernel predicates
+        new Predicate[] {
+          new Predicate(">", new Column("cnt"), Literal.ofInt(10)),
+          new Predicate("=", new Column("date"), Literal.ofString("2025-09-01"))
+        },
+        // expected data filters
+        new Filter[] {new And(new GreaterThan("cnt", 10), new StringStartsWith("name", "foo"))},
+        // expected kernel scan builder predicate
+        Optional.of(
+            new Predicate(
+                "AND",
+                new Predicate(">", new Column("cnt"), Literal.ofInt(10)),
+                new Predicate("=", new Column("date"), Literal.ofString("2025-09-01")))));
+  }
+
+  private void checkSupportsPushDownFilters(
+      SparkTable table,
+      CaseInsensitiveStringMap scanOptions,
+      Filter[] inputFilters,
+      Filter[] expectedPostScanFilters,
+      Filter[] expectedPushedFilters,
+      Predicate[] expectedPushedKernelPredicates,
+      Filter[] expectedDataFilters,
+      Optional<Predicate> expectedKernelScanBuilderPredicate)
+      throws Exception {
+    ScanBuilder newBuilder = table.newScanBuilder(scanOptions);
+    SparkScanBuilder builder = (SparkScanBuilder) newBuilder;
+
+    Filter[] postScanFilters = builder.pushFilters(inputFilters);
+
+    assertEquals(
+        new HashSet<>(Arrays.asList(expectedPostScanFilters)),
+        new HashSet<>(Arrays.asList(postScanFilters)));
+
+    assertEquals(
+        new HashSet<>(Arrays.asList(expectedPushedFilters)),
+        new HashSet<>(Arrays.asList(builder.pushedFilters())));
+
+    Predicate[] pushedPredicates = getPushedKernelPredicates(builder);
+    assertEquals(
+        new HashSet<>(Arrays.asList(expectedPushedKernelPredicates)),
+        new HashSet<>(Arrays.asList(pushedPredicates)));
+
+    Filter[] dataFilters = getDataFilters(builder);
+    assertEquals(
+        new HashSet<>(Arrays.asList(expectedDataFilters)),
+        new HashSet<>(Arrays.asList(dataFilters)));
+
+    Optional<Predicate> predicateOpt = getKernelScanBuilderPredicate(builder);
+    assertEquals(expectedKernelScanBuilderPredicate, predicateOpt);
+  }
+
+  private Predicate[] getPushedKernelPredicates(SparkScanBuilder builder) throws Exception {
+    Field field = SparkScanBuilder.class.getDeclaredField("pushedKernelPredicates");
+    field.setAccessible(true);
+    return (Predicate[]) field.get(builder);
+  }
+
+  private Filter[] getDataFilters(SparkScanBuilder builder) throws Exception {
+    Field field = SparkScanBuilder.class.getDeclaredField("dataFilters");
+    field.setAccessible(true);
+    return (Filter[]) field.get(builder);
+  }
+
+  private Optional<Predicate> getKernelScanBuilderPredicate(SparkScanBuilder builder)
+      throws Exception {
+    Field field = SparkScanBuilder.class.getDeclaredField("kernelScanBuilder");
+    field.setAccessible(true);
+    Object kernelScanBuilder = field.get(builder);
+    Field predicateField = kernelScanBuilder.getClass().getDeclaredField("predicate");
+    predicateField.setAccessible(true);
+    return (Optional<Predicate>) predicateField.get(kernelScanBuilder);
   }
 
   @Test
