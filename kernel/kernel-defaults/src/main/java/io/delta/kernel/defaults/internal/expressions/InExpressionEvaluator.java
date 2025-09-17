@@ -89,6 +89,7 @@ public class InExpressionEvaluator {
       DataType valueDataType,
       List<Expression> inListExpressions,
       List<DataType> inListDataTypes) {
+    // TODO: [delta-io/delta#5227] Try to reuse Implicit cast and simplify comparison logic
     validateArgumentCount(in, inListExpressions);
     validateInListElementsAreLiterals(in, inListExpressions);
     validateTypeCompatibility(in, valueDataType, inListDataTypes);
