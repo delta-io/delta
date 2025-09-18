@@ -61,6 +61,22 @@ public final class ExpressionUtils {
     return convertSparkFilterToKernelPredicate(filter, true /*canPartialPushDown*/);
   }
 
+  /**
+   * Converts a Spark SQL filter to a Delta Kernel predicate.
+   *
+   * <p>Supported filter types:
+   *
+   * <ul>
+   *   <li>Comparison: EqualTo, GreaterThan, LessThan, etc.
+   *   <li>Null tests: IsNull, IsNotNull
+   *   <li>Null-safe comparison: EqualNullSafe
+   *   <li>Logical operators: And, Or, Not
+   * </ul>
+   *
+   * @param filter the Spark SQL filter to convert
+   * @return ConvertedPredicate containing the converted Kernel predicate, or empty if conversion is
+   *     not supported, along with a boolean indicating whether the conversion was partial
+   */
   public static ConvertedPredicate convertSparkFilterToConvertedKernelPredicate(Filter filter) {
     return convertSparkFilterToConvertedKernelPredicate(filter, true /*canPartialPushDown*/);
   }
@@ -78,6 +94,16 @@ public final class ExpressionUtils {
         .getConvertedPredicate();
   }
 
+  /**
+   * Converts a Spark SQL filter to a Delta Kernel predicate with partial pushdown control. When
+   * canPartialPushDown is true, AND filters can be partially converted if at least one operand can
+   * be converted. OR filters always require both operands to be convertible. NOT filters disable
+   * partial pushdown for their child to preserve semantic correctness.
+   *
+   * <p>Return a ConvertedPredicate object, which contains: - Optional<Predicate>: the converted
+   * Kernel predicate, or empty if conversion is not supported - boolean isPartial: indicates
+   * whether the conversion was partial
+   */
   static ConvertedPredicate convertSparkFilterToConvertedKernelPredicate(
       Filter filter, boolean canPartialPushDown) {
     if (filter instanceof EqualTo) {
@@ -303,6 +329,10 @@ public final class ExpressionUtils {
     return Optional.empty();
   }
 
+  /*
+   * Wrapper class to hold the result of converting a Spark Filter to a Kernel Predicate,
+   * including a boolean indicator for whether the conversion was partial.
+   */
   public static final class ConvertedPredicate {
     private final Optional<Predicate> convertedPredicate;
     private final boolean isPartial;
