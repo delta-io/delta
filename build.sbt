@@ -56,7 +56,6 @@ val LATEST_RELEASED_SPARK_VERSION = "3.5.3"
 val SPARK_MASTER_VERSION = "4.0.2-SNAPSHOT"
 val sparkVersion = settingKey[String]("Spark version")
 spark / sparkVersion := getSparkVersion()
-kernelSpark / sparkVersion := getSparkVersion()
 connectCommon / sparkVersion := getSparkVersion()
 connectClient / sparkVersion := getSparkVersion()
 connectServer / sparkVersion := getSparkVersion()
@@ -435,6 +434,9 @@ lazy val deltaSuiteGenerator = (project in file("spark/delta-suite-generator"))
 
 lazy val spark = (project in file("spark"))
   .dependsOn(storage)
+  .dependsOn(kernelApi)
+  .dependsOn(kernelDefaults)
+  .dependsOn(goldenTables % "test")
   .enablePlugins(Antlr4Plugin)
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings (
@@ -444,6 +446,9 @@ lazy val spark = (project in file("spark"))
     sparkMimaSettings,
     releaseSettings,
     crossSparkSettings(),
+    // Include kernel-spark source directories
+    Compile / unmanagedSourceDirectories += baseDirectory.value.getParentFile / "kernel-spark" / "src" / "main" / "java",
+    Test / unmanagedSourceDirectories += baseDirectory.value.getParentFile / "kernel-spark" / "src" / "test" / "java",
     libraryDependencies ++= Seq(
       // Adding test classifier seems to break transitive resolution of the core dependencies
       "org.apache.spark" %% "spark-hive" % sparkVersion.value % "provided",
@@ -463,6 +468,11 @@ lazy val spark = (project in file("spark"))
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
       "org.apache.spark" %% "spark-hive" % sparkVersion.value % "test" classifier "tests",
       "org.mockito" % "mockito-inline" % "4.11.0" % "test",
+      // KernelSpark dependencies
+      "org.junit.jupiter" % "junit-jupiter-api" % "5.8.2" % "test",
+      "org.junit.jupiter" % "junit-jupiter-engine" % "5.8.2" % "test",
+      "org.junit.jupiter" % "junit-jupiter-params" % "5.8.2" % "test",
+      "net.aichler" % "jupiter-interface" % "0.11.1" % "test",
     ),
     Compile / packageBin / mappings := (Compile / packageBin / mappings).value ++
         listPythonFiles(baseDirectory.value.getParentFile / "python"),
@@ -683,7 +693,6 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
   .dependsOn(kernelApi % "test->test")
   .dependsOn(storage)
   .dependsOn(storage % "test->test") // Required for InMemoryCommitCoordinator for tests
-  .dependsOn(spark % "test->test")
   .dependsOn(goldenTables % "test")
   .settings(
     name := "delta-kernel-defaults",
@@ -716,6 +725,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
       "org.apache.spark" %% "spark-sql" % defaultSparkVersion % "test" classifier "tests",
       "org.apache.spark" %% "spark-core" % defaultSparkVersion % "test" classifier "tests",
       "org.apache.spark" %% "spark-catalyst" % defaultSparkVersion % "test" classifier "tests",
+      "io.delta" %% "delta-spark" % "3.3.2" % "test"
     ),
     MultiShardMultiJVMTestParallelization.settings,
     javaCheckstyleSettings("dev/kernel-checkstyle.xml"),
@@ -724,30 +734,6 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
   ).configureUnidoc(docTitle = "Delta Kernel Defaults")
 
 
-lazy val kernelSpark = (project in file("kernel-spark"))
-  .dependsOn(kernelApi)
-  .dependsOn(kernelDefaults)
-  .dependsOn(spark % "test->test")
-  .dependsOn(goldenTables % "test")
-  .settings(
-    name := "kernel-spark",
-    commonSettings,
-    javafmtCheckSettings,
-    skipReleaseSettings,
-    Test / javaOptions ++= Seq("-ea"),
-    libraryDependencies ++= Seq(
-      "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
-      "org.apache.spark" %% "spark-core" % sparkVersion.value % "provided",
-      "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
-
-      "org.junit.jupiter" % "junit-jupiter-api" % "5.8.2" % "test",
-      "org.junit.jupiter" % "junit-jupiter-engine" % "5.8.2" % "test",
-      "org.junit.jupiter" % "junit-jupiter-params" % "5.8.2" % "test",
-      "net.aichler" % "jupiter-interface" % "0.11.1" % "test"
-    ),
-    Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a")
-  )
-  // TODO to enable unit doc for kernelSpark.
 
 lazy val unity = (project in file("unity"))
   .enablePlugins(ScalafmtPlugin)
@@ -1467,7 +1453,6 @@ lazy val compatibility = (project in file("connectors/oss-compatibility-tests"))
  */
 
 lazy val goldenTables = (project in file("connectors/golden-tables"))
-  .dependsOn(spark % "test") // depends on delta-spark
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings(
     name := "golden-tables",
@@ -1480,7 +1465,8 @@ lazy val goldenTables = (project in file("connectors/golden-tables"))
       "org.apache.spark" %% "spark-sql" % defaultSparkVersion % "test",
       "org.apache.spark" %% "spark-catalyst" % defaultSparkVersion % "test" classifier "tests",
       "org.apache.spark" %% "spark-core" % defaultSparkVersion % "test" classifier "tests",
-      "org.apache.spark" %% "spark-sql" % defaultSparkVersion % "test" classifier "tests"
+      "org.apache.spark" %% "spark-sql" % defaultSparkVersion % "test" classifier "tests",
+      "io.delta" %% "delta-spark" % "3.3.2" % "test"
     )
   )
 
@@ -1658,7 +1644,7 @@ val createTargetClassesDir = taskKey[Unit]("create target classes dir")
 
 // Don't use these groups for any other projects
 lazy val sparkGroup = project
-  .aggregate(spark, kernelSpark, contribs, storage, storageS3DynamoDB, sharing, hudi)
+  .aggregate(spark, contribs, storage, storageS3DynamoDB, sharing, hudi)
   .settings(
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,

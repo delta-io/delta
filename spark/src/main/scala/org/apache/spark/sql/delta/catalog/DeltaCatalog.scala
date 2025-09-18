@@ -61,6 +61,7 @@ import org.apache.spark.sql.execution.datasources.{DataSource, PartitioningUtils
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.sources.InsertableRelation
 import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
+import io.delta.kernel.spark.utils.PathBasedUtils
 
 
 /**
@@ -313,8 +314,9 @@ class DeltaCatalog extends DelegatingCatalogExtension
     }
   }
 
-  protected def newDeltaPathTable(ident: Identifier): DeltaTableV2 = {
-    DeltaTableV2(spark, new Path(ident.name()))
+  protected def newDeltaPathTable(ident: Identifier): Table = {
+    PathBasedUtils.wrapWithDsv2Table(
+      ident, ident.name(), DeltaTableV2(spark, new Path(ident.name())))
   }
 
   private def getProvider(properties: util.Map[String, String]): String = {

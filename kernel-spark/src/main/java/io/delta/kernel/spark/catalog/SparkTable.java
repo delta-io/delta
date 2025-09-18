@@ -13,17 +13,20 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.kernel.spark.table;
+package io.delta.kernel.spark.catalog;
 
 import static io.delta.kernel.spark.utils.ScalaUtils.toScalaMap;
 import static java.util.Objects.requireNonNull;
 
+import io.delta.kernel.TableManager;
+import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.spark.read.SparkScanBuilder;
 import io.delta.kernel.spark.utils.SchemaUtils;
 import java.util.*;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.SparkSession;
+import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.connector.catalog.*;
 import org.apache.spark.sql.connector.expressions.Expressions;
 import org.apache.spark.sql.connector.expressions.Transform;
@@ -43,7 +46,7 @@ public class SparkTable implements Table, SupportsRead {
   private final Map<String, String> options;
   // TODO: [delta-io/delta#5029] Add getProperties() in snapshot to avoid using Impl class.
   private final SnapshotImpl snapshot;
-  private final Configuration hadoopConf;
+  private final Optional<CatalogTable> v1CatalogTable;
 
   private final StructType schema;
   private final List<String> partColNames;
@@ -69,16 +72,14 @@ public class SparkTable implements Table, SupportsRead {
    * @param options table options used to configure the Hadoop conf, table reads and writes
    * @throws NullPointerException if identifier or tablePath is null
    */
-  public SparkTable(Identifier identifier, String tablePath, Map<String, String> options) {
+  public SparkTable(Identifier identifier, SnapshotImpl snapshot, Map<String, String> options, Optional<CatalogTable> v1CatalogTable) {
     this.identifier = requireNonNull(identifier, "identifier is null");
-    this.tablePath = requireNonNull(tablePath, "snapshot is null");
+    this.tablePath = requireNonNull(snapshot.getPath(), "snapshot is null");
     this.options = options;
-    this.hadoopConf =
+      this.v1CatalogTable = v1CatalogTable;
+      this.hadoopConf =
         SparkSession.active().sessionState().newHadoopConfWithOptions(toScalaMap(options));
-    this.snapshot =
-        (SnapshotImpl)
-            io.delta.kernel.TableManager.loadSnapshot(tablePath)
-                .build(io.delta.kernel.defaults.engine.DefaultEngine.create(hadoopConf));
+    this.snapshot = snapshot;
 
     StructType snapshotSchema = SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema());
     this.partColNames =
@@ -122,6 +123,11 @@ public class SparkTable implements Table, SupportsRead {
         partColNames.stream().map(Expressions::identity).toArray(Transform[]::new);
   }
 
+  public SparkTable(Identifier identifier, String tablePath, Map<String, String> options, Optional<CatalogTable> v1CatalogTable) {
+    this(identifier, (SnapshotImpl) TableManager.loadSnapshot(tablePath).build(
+            DefaultEngine.create(SparkSession.active().sessionState().newHadoopConfWithOptions(toScalaMap(options)))), options, v1CatalogTable);
+  }
+
   /**
    * Convenience constructor that uses empty options. See {@link #SparkTable(Identifier, String,
    * java.util.Map)} for full behavior and notes.
@@ -130,8 +136,8 @@ public class SparkTable implements Table, SupportsRead {
    * @param tablePath filesystem path to the Delta table root
    * @throws NullPointerException if identifier or tablePath is null
    */
-  public SparkTable(Identifier identifier, String tablePath) {
-    this(identifier, tablePath, Collections.emptyMap());
+  public SparkTable(Identifier identifier, String tablePath, Optional<CatalogTable> v1CatalogTable) {
+    this(identifier, tablePath, Collections.emptyMap(), v1CatalogTable);
   }
 
   @Override

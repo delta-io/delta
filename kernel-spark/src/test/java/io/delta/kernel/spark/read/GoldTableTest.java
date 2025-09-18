@@ -19,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.golden.GoldenTableUtils$;
-import io.delta.kernel.spark.table.SparkTable;
+import io.delta.kernel.spark.catalog.SparkTable;
 import java.io.File;
 import java.math.BigDecimal;
 import java.util.ArrayList;
