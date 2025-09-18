@@ -429,6 +429,57 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
                     new Predicate(">", new Column("dep_id"), Literal.ofInt(1))))));
   }
 
+  /*
+   * (supportedPartitionFilterA AND unsupportedPartitionFilterB) OR supportedPartitionFilterC
+   * will be converted to A OR C, because of the partial pushdown of AND
+   *
+   * Expected post-scan filters: (A AND B) OR C
+   * Expected pushed filters: A OR C
+   * Expected pushed kernel predicates: A OR C
+   * Expected data filters: none
+   * Expected kernelScanBuilder.predicate: A OR C
+   */
+  @Test
+  public void testPushFilters_mixedORandAND(@TempDir File tempDir) throws Exception {
+    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+
+    // (supportedPartitionFilterA AND unsupportedPartitionFilterB) OR supportedPartitionFilterC
+
+    checkSupportsPushDownFilters(
+        builder,
+        // input filters
+        new Filter[] {
+          new Or(
+              new And(new EqualTo("dep_id", 1), new StringStartsWith("dep_id", "1")),
+              new GreaterThan("dep_id", 2))
+        },
+        // expected post-scan filters
+        new Filter[] {
+          new Or(
+              new And(new EqualTo("dep_id", 1), new StringStartsWith("dep_id", "1")),
+              new GreaterThan("dep_id", 2))
+        },
+        // expected pushed filters
+        new Filter[] {new Or(new EqualTo("dep_id", 1), new GreaterThan("dep_id", 2))},
+        // expected pushed kernel predicates
+        new Predicate[] {
+          new Predicate(
+              "OR",
+              Arrays.asList(
+                  new Predicate("=", new Column("dep_id"), Literal.ofInt(1)),
+                  new Predicate(">", new Column("dep_id"), Literal.ofInt(2))))
+        },
+        // expected data filters
+        new Filter[] {},
+        // expected kernelScanBuilder.predicate
+        Optional.of(
+            new Predicate(
+                "OR",
+                Arrays.asList(
+                    new Predicate("=", new Column("dep_id"), Literal.ofInt(1)),
+                    new Predicate(">", new Column("dep_id"), Literal.ofInt(2))))));
+  }
+
   @Test
   public void testPushFilters_NOTFilters(@TempDir File tempDir) throws Exception {
     SparkScanBuilder builder = createTestScanBuilder(tempDir);

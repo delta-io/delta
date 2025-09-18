@@ -92,12 +92,21 @@ public class SparkScanBuilder
     List<Predicate> convertedKernelPredicates = new ArrayList<>();
 
     for (Filter filter : filters) {
-      Optional<Predicate> convertedOpt =
-          ExpressionUtils.convertSparkFilterToKernelPredicate(filter);
-      if (convertedOpt.isPresent()) {
-        kernelSupportedFilters.add(filter);
-        convertedKernelPredicates.add(convertedOpt.get());
+      ExpressionUtils.ConvertedPredicate convertedPredicate =
+          ExpressionUtils.convertSparkFilterToConvertedKernelPredicate(filter);
+      if (convertedPredicate.isPresent()) {
+        // if converted is present, we can push the filter to kernel
+        convertedKernelPredicates.add(convertedPredicate.get());
+        if (convertedPredicate.isPartial()) {
+          // if the converted predicate is only partial of the original filter,
+          // it should be added to unsupported filters
+          // to make sure the remaining part is evaluated again after scanning
+          kernelUnsupportedFilters.add(filter);
+        } else {
+          kernelSupportedFilters.add(filter);
+        }
       } else {
+        // if converted is not present
         kernelUnsupportedFilters.add(filter);
       }
     }
@@ -114,7 +123,7 @@ public class SparkScanBuilder
     List<Filter> dataFilters = new ArrayList<>();
     for (Filter filter : filters) {
       String[] refs = filter.references();
-      // if refs is not null and all refs are in partitionColumnSet, it's a partition filter
+      // if refs is not null and all refs are in partitionColumnSet, it is a partition filter
       if (refs != null
           && refs.length > 0
           && Arrays.stream(refs)
