@@ -47,11 +47,10 @@ public class SparkScanBuilder
   private StructType requiredDataSchema;
   // pushedKernelPredicates: Predicates that have been pushed down to the Delta Kernel for
   // evaluation.
-  // pushedFilters: The same pushed predicates, but represented using Spark’s {@link Filter} API
-  //                (needed because Spark operates on Filter objects while the Kernel uses
-  // Predicate)
+  // pushedSparkFilters: The same pushed predicates, but represented using Spark’s {@link Filter}
+  // API (needed because Spark operates on Filter objects while the Kernel uses Predicate)
   private Predicate[] pushedKernelPredicates;
-  private Filter[] pushedFilters;
+  private Filter[] pushedSparkFilters;
   private Filter[] dataFilters;
 
   public SparkScanBuilder(
@@ -85,28 +84,8 @@ public class SparkScanBuilder
                 .toArray(StructField[]::new));
   }
 
-  //  /*
-  //   * In order to handle partial predicate pushdown of AND filters,
-  //   * recursively breakdown AND filters into individual filters and add to filterList
-  //   */
-  //  private void breakdownAndFilters(Filter filter, List<Filter> filterList) {
-  //    if (filter instanceof org.apache.spark.sql.sources.And) {
-  //      org.apache.spark.sql.sources.And andFilter = (org.apache.spark.sql.sources.And) filter;
-  //      breakdownAndFilters(andFilter.left(), filterList);
-  //      breakdownAndFilters(andFilter.right(), filterList);
-  //    } else {
-  //      filterList.add(filter);
-  //    }
-  //  }
-
   @Override
   public Filter[] pushFilters(Filter[] filters) {
-    //    // 0. Breakdown AND filters
-    //    List<Filter> filterList = new ArrayList<>();
-    //    for (Filter filter : filters) {
-    //      breakdownAndFilters(filter, filterList);
-    //    }
-
     // 1. Split filters into kernel-supported and kernel-unsupported ones
     List<Filter> kernelSupportedFilters = new ArrayList<>();
     List<Filter> kernelUnsupportedFilters = new ArrayList<>();
@@ -124,7 +103,7 @@ public class SparkScanBuilder
     }
 
     // kernelSupportedFilters will be pushed to kernel, set pushedPredicates
-    this.pushedFilters = kernelSupportedFilters.toArray(new Filter[0]);
+    this.pushedSparkFilters = kernelSupportedFilters.toArray(new Filter[0]);
     this.pushedKernelPredicates = convertedKernelPredicates.toArray(new Predicate[0]);
     if (this.pushedKernelPredicates.length > 0) {
       Optional<Predicate> kernelAnd = Arrays.stream(this.pushedKernelPredicates).reduce(And::new);
@@ -156,7 +135,7 @@ public class SparkScanBuilder
 
   @Override
   public Filter[] pushedFilters() {
-    return this.pushedFilters;
+    return this.pushedSparkFilters;
   }
 
   @Override
