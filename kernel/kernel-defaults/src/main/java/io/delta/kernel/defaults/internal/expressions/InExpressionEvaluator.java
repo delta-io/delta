@@ -28,11 +28,7 @@ import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.types.*;
 import io.delta.kernel.types.CollationIdentifier;
 import java.math.BigDecimal;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
 import java.util.function.BiFunction;
 
 /** Utility methods to evaluate {@code IN} expression. */
@@ -109,6 +105,7 @@ public class InExpressionEvaluator {
   ////////////////////
 
   private static void validateArgumentCount(In in, List<Expression> inListExpressions) {
+    Objects.requireNonNull(inListExpressions);
     if (inListExpressions.isEmpty()) {
       throw unsupportedExpressionException(
           in,

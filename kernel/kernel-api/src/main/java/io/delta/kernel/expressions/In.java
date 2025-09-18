@@ -18,6 +18,7 @@ package io.delta.kernel.expressions;
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.types.CollationIdentifier;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -70,7 +71,8 @@ public final class In extends Predicate {
 
   /** @return The list of expressions to check against (right side of IN). */
   public List<Expression> getInListElements() {
-    return getChildren().subList(1, getChildren().size());
+    return Collections.unmodifiableList(
+        new ArrayList<>(getChildren().subList(1, getChildren().size())));
   }
 
   @Override
