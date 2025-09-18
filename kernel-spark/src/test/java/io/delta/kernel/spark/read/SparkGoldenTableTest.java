@@ -381,7 +381,12 @@ public class SparkGoldenTableTest extends QueryTest {
     Object kernelScanBuilder = field.get(builder);
     Field predicateField = kernelScanBuilder.getClass().getDeclaredField("predicate");
     predicateField.setAccessible(true);
-    return (Optional<Predicate>) predicateField.get(kernelScanBuilder);
+    Object raw = predicateField.get(kernelScanBuilder);
+    if (raw == null) {
+      return Optional.empty();
+    }
+    Optional<?> opt = (Optional<?>) raw;
+    return opt.map(Predicate.class::cast);
   }
 
   @Test
