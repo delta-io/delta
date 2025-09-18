@@ -57,14 +57,14 @@ public class UCCatalogManagedClient {
    * add this table feature to Kernel's protocol. This property won't be written to the delta
    * metadata.
    */
-  private static final String CATALOG_MANAGED_ENABLEMENT_KEY =
+  protected static final String CATALOG_MANAGED_ENABLEMENT_KEY =
       TableFeatures.SET_TABLE_FEATURE_SUPPORTED_PREFIX
           + TableFeatures.CATALOG_MANAGED_R_W_FEATURE_PREVIEW.featureName();
 
   /** Key for identifying Unity Catalog table ID. */
-  private static final String UC_TABLE_ID_KEY = "ucTableId";
+  protected static final String UC_TABLE_ID_KEY = "ucTableId";
 
-  private final UCClient ucClient;
+  protected final UCClient ucClient;
 
   public UCCatalogManagedClient(UCClient ucClient) {
     this.ucClient = Objects.requireNonNull(ucClient, "ucClient is null");

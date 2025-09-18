@@ -55,9 +55,9 @@ public class UCCatalogManagedCommitter implements Committer {
 
   private static final Logger logger = LoggerFactory.getLogger(UCCatalogManagedCommitter.class);
 
-  private final UCClient ucClient;
-  private final String ucTableId;
-  private final Path tablePath;
+  protected final UCClient ucClient;
+  protected final String ucTableId;
+  protected final Path tablePath;
 
   /**
    * Creates a new UCCatalogManagedCommitter for the specified Unity Catalog-managed Delta table.
