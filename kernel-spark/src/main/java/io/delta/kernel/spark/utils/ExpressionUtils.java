@@ -29,7 +29,6 @@ import java.sql.Timestamp;
 import java.util.*;
 import org.apache.spark.sql.sources.*;
 import org.apache.spark.unsafe.types.UTF8String;
-import scala.jdk.CollectionConverters;
 
 /**
  * Utility class for converting Spark SQL filter expressions to Delta Kernel predicates.
@@ -186,8 +185,10 @@ public final class ExpressionUtils {
    */
   private static Column kernelColumn(String attribute) {
     scala.collection.Seq<String> seq = parseColumnPath(attribute);
-    java.util.List<String> javaList = CollectionConverters.asJava(seq);
-    String[] parts = javaList.toArray(new String[0]);
+    String[] parts = new String[seq.length()];
+    for (int i = 0; i < seq.length(); i++) {
+      parts[i] = seq.apply(i);
+    }
     return new Column(parts);
   }
 
