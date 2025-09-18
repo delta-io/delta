@@ -377,9 +377,12 @@ public class DataFileStatistics {
    * @throws KernelException if the data types don't match
    */
   private void validateLiteralType(StructField field, Literal literal) {
-    if (literal.getDataType() == null || !literal.getDataType().equals(field.getDataType())) {
+    // Variant stats in JSON are Z85 encoded strings, all other stats should match the field type
+    DataType expectedLiteralType =
+        field.getDataType() instanceof VariantType ? StringType.STRING : field.getDataType();
+    if (literal.getDataType() == null || !literal.getDataType().equals(expectedLiteralType)) {
       throw DeltaErrors.statsTypeMismatch(
-          field.getName(), field.getDataType(), literal.getDataType());
+          field.getName(), expectedLiteralType, literal.getDataType());
     }
   }
 

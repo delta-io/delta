@@ -1513,7 +1513,7 @@ abstract class CommitCoordinatorSuiteBase
       assert(unbackfilled.map(FileNames.deltaVersion) === expectedUnbackfilledCommits)
     }
     val updateCountEvents = if (updateExpected) 1 else 0
-    assert(filterUsageRecords(usageRecords, "delta.log.update").size === updateCountEvents)
+    assert(filterUsageRecords(usageRecords, "deltaLog.update").size === updateCountEvents)
   }
 
   testWithDefaultCommitCoordinatorUnset("DeltaLog.getChangeLogFile with and" +

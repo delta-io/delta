@@ -254,6 +254,13 @@ public class JsonUtils {
         long epochMicros = ChronoUnit.MICROS.between(EPOCH.toLocalDateTime(), localDateTime);
         return Literal.ofTimestampNtz(epochMicros);
 
+      } else if (dataType instanceof VariantType) {
+        if (!valueNode.isTextual()) {
+          throw new KernelException(
+              String.format("Expected variant as string value but got: %s", valueNode));
+        }
+        String textValue = valueNode.asText();
+        return Literal.ofString(textValue);
       } else {
         throw unsupportedStatsDataType(dataType);
       }

@@ -16,14 +16,47 @@
 
 package io.delta.kernel.defaults
 import io.delta.kernel.Table
+import io.delta.kernel.defaults.utils.{AbstractTestUtils, TestUtilsWithLegacyKernelAPIs, TestUtilsWithTableManagerAPIs}
+
+class LegacyDomainMetadataCheckSumReplayMetricsSuite
+    extends AbstractDomainMetadataCheckSumReplayMetricsSuite
+    with TestUtilsWithLegacyKernelAPIs {
+
+  // SnapshotHint tests only apply for the legacy APIs since in the new APIs there is no persistent
+  // Table instance
+  test("read domain metadata fro checksum even if snapshot hint exists") {
+    withTableWithCrc { (tablePath, engine) =>
+      val readVersion = 11
+      val table = Table.forPath(engine, tablePath)
+      // Get snapshot to produce a snapshot hit at version 11.
+      table.getLatestSnapshot(engine)
+
+      engine.resetMetrics()
+      table.getLatestSnapshot(engine).getDomainMetadata("foo")
+
+      assertMetrics(
+        engine,
+        expJsonVersionsRead = Nil,
+        expParquetVersionsRead = Nil,
+        expParquetReadSetSizes = Seq(),
+        expChecksumReadSet = Seq(readVersion))
+    }
+  }
+
+}
+
+class DomainMetadataCheckSumReplayMetricsSuite
+    extends AbstractDomainMetadataCheckSumReplayMetricsSuite
+    with TestUtilsWithTableManagerAPIs
 
 /**
  * Suite to test the engine metrics when loading Domain Metadata through checksum files.
  */
-class DomainMetadataCheckSumReplayMetricsSuite extends ChecksumLogReplayMetricsTestBase {
+trait AbstractDomainMetadataCheckSumReplayMetricsSuite extends ChecksumLogReplayMetricsTestBase {
+  self: AbstractTestUtils =>
 
-  override protected def loadSnapshotFieldsCheckMetrics(
-      table: Table,
+  override protected def loadPandMCheckMetrics(
+      tablePath: String,
       engine: MetricsEngine,
       expJsonVersionsRead: Seq[Long],
       expParquetVersionsRead: Seq[Long],
@@ -34,8 +67,12 @@ class DomainMetadataCheckSumReplayMetricsSuite extends ChecksumLogReplayMetricsT
     engine.resetMetrics()
 
     readVersion match {
-      case -1 => table.getLatestSnapshot(engine).getDomainMetadata("foo")
-      case ver => table.getSnapshotAsOfVersion(engine, ver).getDomainMetadata("foo")
+      case -1 =>
+        getTableManagerAdapter.getSnapshotAtLatest(engine, tablePath).getDomainMetadata("foo")
+      case ver => getTableManagerAdapter.getSnapshotAtVersion(
+          engine,
+          tablePath,
+          ver).getDomainMetadata("foo")
     }
 
     assertMetrics(
@@ -54,29 +91,13 @@ class DomainMetadataCheckSumReplayMetricsSuite extends ChecksumLogReplayMetricsT
     sizes.flatMap(size => Seq(size, size))
   }
 
-  test("read domain metadata fro checksum even if snapshot hint exists") {
-    withTableWithCrc { (table, _, engine) =>
-      val readVersion = 11
-      // Get snapshot to produce a snapshot hit at version 11.
-      table.getLatestSnapshot(engine)
-
-      loadSnapshotFieldsCheckMetrics(
-        table,
-        engine,
-        expJsonVersionsRead = Nil,
-        expParquetVersionsRead = Nil,
-        expParquetReadSetSizes = Seq(),
-        expChecksumReadSet = Seq(readVersion))
-    }
-  }
-
   test("checksum doesn't contain domain metadata => read from logs") {
-    withTableWithCrc { (table, tablePath, engine) =>
+    withTableWithCrc { (tablePath, engine) =>
       val readVersion = 5L
       rewriteChecksumFileToExcludeDomainMetadata(engine, tablePath, readVersion)
 
-      loadSnapshotFieldsCheckMetrics(
-        table,
+      loadPandMCheckMetrics(
+        tablePath,
         engine,
         expJsonVersionsRead = Seq.range(readVersion, -1, -1),
         expParquetVersionsRead = Nil,
