@@ -45,8 +45,12 @@ public class SparkScanBuilder
   private final CaseInsensitiveStringMap options;
   private final Set<String> partitionColumnSet;
   private StructType requiredDataSchema;
+  // pushedKernelPredicates: Predicates that have been pushed down to the Delta Kernel for
+  // evaluation.
+  // pushedFilters: The same pushed predicates, but represented using Spark’s {@link Filter} API
+  //                (needed because Spark operates on Filter objects while the Kernel uses
+  // Predicate)
   private Predicate[] pushedKernelPredicates;
-  // pushedFilters: same as pushedKernelPredicates, but in Spark's {@link Filter}
   private Filter[] pushedFilters;
   private Filter[] dataFilters;
 
