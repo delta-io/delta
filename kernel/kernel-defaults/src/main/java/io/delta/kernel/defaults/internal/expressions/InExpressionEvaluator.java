@@ -17,7 +17,6 @@ package io.delta.kernel.defaults.internal.expressions;
 
 import static io.delta.kernel.defaults.internal.DefaultEngineErrors.unsupportedExpressionException;
 import static io.delta.kernel.defaults.internal.expressions.DefaultExpressionUtils.*;
-import static io.delta.kernel.defaults.internal.expressions.ImplicitCastExpression.canCastTo;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.expressions.Expression;
@@ -138,13 +137,13 @@ public class InExpressionEvaluator {
       In in, DataType valueDataType, List<DataType> inListDataTypes) {
     for (int i = 0; i < inListDataTypes.size(); i++) {
       DataType listElementType = inListDataTypes.get(i);
-      if (!areTypesCompatible(valueDataType, listElementType)) {
+      if (!valueDataType.equivalent(listElementType)) {
         throw unsupportedExpressionException(
             in,
             String.format(
-                "IN expression requires all elements to have compatible types. "
+                "IN expression requires all elements to have the same type as the value. "
                     + "Value type: %s, incompatible element type at position %d: %s. "
-                    + "Consider casting the incompatible element to a compatible type.",
+                    + "Consider casting the incompatible element to the value type.",
                 valueDataType, i + 1, listElementType));
       }
     }
@@ -200,67 +199,11 @@ public class InExpressionEvaluator {
   }
 
   @VisibleForTesting
-  static boolean areTypesCompatible(DataType type1, DataType type2) {
-    // Use the same type compatibility logic as equality comparisons
-    // to ensure semantic consistency: col IN (v1, v2) ≡ col = v1 OR col = v2
-    return type1.equivalent(type2) || canCastTo(type1, type2) || canCastTo(type2, type1);
-  }
-
-  /** Check if a DataType is a numeric type. */
-  private static boolean isNumericType(DataType type) {
-    return type instanceof ByteType
-        || type instanceof ShortType
-        || type instanceof IntegerType
-        || type instanceof LongType
-        || type instanceof FloatType
-        || type instanceof DoubleType
-        || type instanceof DecimalType;
-  }
-
-  @VisibleForTesting
   static boolean compareValues(Object value1, Object value2, DataType valueType) {
     if (value1 == null || value2 == null) {
       return false;
     }
-    // For numeric types, convert both values to the same type for comparison
-    if (isNumericType(valueType)) {
-      return compareNumericValues(value1, value2, valueType);
-    }
     return getComparator(valueType).apply(value1, value2) == 0;
-  }
-
-  /**
-   * Compares numeric values by converting both to the target type. This method handles mixed
-   * numeric type comparisons by converting both values to the target type and using the appropriate
-   * comparator.
-   */
-  @VisibleForTesting
-  static boolean compareNumericValues(Object value1, Object value2, DataType targetTypeToCompare) {
-    Number num1 = (Number) value1;
-    Number num2 = (Number) value2;
-    Object convertedValue1 = convertToTargetTypeForCompare(num1, targetTypeToCompare);
-    Object convertedValue2 = convertToTargetTypeForCompare(num2, targetTypeToCompare);
-    return getComparator(targetTypeToCompare).apply(convertedValue1, convertedValue2) == 0;
-  }
-
-  private static Object convertToTargetTypeForCompare(Number value, DataType targetType) {
-    if (targetType instanceof ByteType) {
-      return value.byteValue();
-    } else if (targetType instanceof ShortType) {
-      return value.shortValue();
-    } else if (targetType instanceof IntegerType || targetType instanceof DateType) {
-      return value.intValue();
-    } else if (targetType instanceof LongType) {
-      return value.longValue();
-    } else if (targetType instanceof FloatType) {
-      return value.floatValue();
-    } else if (targetType instanceof DoubleType) {
-      return value.doubleValue();
-    } else if (targetType instanceof DecimalType) {
-      // For decimal, convert to BigDecimal for precise comparison
-      return (value instanceof BigDecimal) ? (BigDecimal) value : new BigDecimal(value.toString());
-    }
-    return value;
   }
 
   private static BiFunction<Object, Object, Integer> getComparator(DataType dataType) {
@@ -330,12 +273,13 @@ public class InExpressionEvaluator {
         } else {
           Object inListValue =
               VectorUtils.getValueAsObject(inListVector, inListVector.getDataType(), rowId);
+          Preconditions.checkArgument(
+              valueVector.getDataType().equivalent(inListVector.getDataType()));
           if (compareValues(valueToFind, inListValue, valueVector.getDataType())) {
             return Optional.of(true);
           }
         }
       }
-
       return foundNull ? Optional.empty() : Optional.of(false);
     }
   }

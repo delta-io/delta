@@ -1023,23 +1023,6 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
         BooleanType.BOOLEAN).eval(input),
       expOutputWithNull)
 
-    // Test with mixed numeric types
-    val longCol = longVector(Seq[LongJ](1L, 2L, 3L))
-    val longSchema = new StructType().add("longCol", LongType.LONG)
-    val longInput = new DefaultColumnarBatch(longCol.getSize, longSchema, Array(longCol))
-
-    val inExpressionMixed = in(
-      new Column("longCol"),
-      Literal.ofInt(1),
-      Literal.ofLong(2L))
-    val expOutputMixed = booleanVector(Seq[BooleanJ](true, true, false))
-    checkBooleanVectors(
-      new DefaultExpressionEvaluator(
-        longSchema,
-        inExpressionMixed,
-        BooleanType.BOOLEAN).eval(longInput),
-      expOutputMixed)
-
     // Test with float values: col IN (1.5f, 2.5f, 3.5f)
     val floatCol = floatVector(Seq[FloatJ](1.5f, 2.5f, 3.5f, 4.5f, null))
     val floatSchema = new StructType().add("floatCol", FloatType.FLOAT)
@@ -1112,8 +1095,7 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
           incompatibleInExpr,
           BooleanType.BOOLEAN).eval(valueInput)
       }
-      assert(e.getMessage.contains("incompatible types") ||
-        e.getMessage.contains("compatible types"))
+      assert(e.getMessage.contains("IN expression requires all elements to have the same type"))
     }
 
     // Test incompatible type combinations
@@ -1176,45 +1158,6 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       inExpressionUnsupported,
       input,
       SPARK_UTF8_LCASE)
-  }
-
-  test("evaluate expression: in with mixed numeric types") {
-    // Test Integer value column with Long literals
-    val intCol = intVector(Seq[IntegerJ](null, 16, 32, 48, 65))
-    val intSchema = new StructType().add("intCol", IntegerType.INTEGER)
-    val intInput = new DefaultColumnarBatch(intCol.getSize, intSchema, Array(intCol))
-    val intInLongExpr = in(new Column("intCol"), Literal.ofLong(16L), Literal.ofLong(48L))
-    val intInLongExpected = booleanVector(Seq[BooleanJ](null, true, false, true, false))
-    checkBooleanVectors(
-      new DefaultExpressionEvaluator(intSchema, intInLongExpr, BooleanType.BOOLEAN).eval(intInput),
-      intInLongExpected)
-
-    // Test Byte value column with Integer and Long literals
-    val byteCol = byteVector(Seq[java.lang.Byte](null, 0.toByte, 1.toByte, 2.toByte, 127.toByte))
-    val byteSchema = new StructType().add("byteCol", ByteType.BYTE)
-    val byteInput = new DefaultColumnarBatch(byteCol.getSize, byteSchema, Array(byteCol))
-    val byteInMixedExpr = in(new Column("byteCol"), Literal.ofInt(1), Literal.ofLong(127L))
-    val byteInMixedExpected = booleanVector(Seq[BooleanJ](null, false, true, false, true))
-    checkBooleanVectors(
-      new DefaultExpressionEvaluator(
-        byteSchema,
-        byteInMixedExpr,
-        BooleanType.BOOLEAN).eval(byteInput),
-      byteInMixedExpected)
-
-    // Test Float value column with Double literals
-    val floatCol = floatVector(Seq[FloatJ](null, 84.08f, 168.16f, 252.24f))
-    val floatSchema = new StructType().add("floatCol", FloatType.FLOAT)
-    val floatInput = new DefaultColumnarBatch(floatCol.getSize, floatSchema, Array(floatCol))
-    val floatInDoubleExpr =
-      in(new Column("floatCol"), Literal.ofDouble(84.08), Literal.ofDouble(252.24))
-    val floatInDoubleExpected = booleanVector(Seq[BooleanJ](null, true, false, true))
-    checkBooleanVectors(
-      new DefaultExpressionEvaluator(
-        floatSchema,
-        floatInDoubleExpr,
-        BooleanType.BOOLEAN).eval(floatInput),
-      floatInDoubleExpected)
   }
 
   test("evaluate expression: in with non-literal list elements") {
