@@ -22,7 +22,6 @@ import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.In;
 import io.delta.kernel.expressions.Literal;
-import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.util.Preconditions;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.internal.util.VectorUtils;
@@ -198,8 +197,8 @@ public class InExpressionEvaluator {
     }
   }
 
-  @VisibleForTesting
-  static boolean compareValues(Object value1, Object value2, DataType valueType) {
+  private static boolean compareValues(Object value1, Object value2, DataType valueType) {
+    Preconditions.checkArgument(value1 != null || value2 != null);
     if (value1 == null || value2 == null) {
       return false;
     }
