@@ -27,6 +27,7 @@ import io.delta.kernel.commit.CommitResponse;
 import io.delta.kernel.commit.Committer;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.files.ParsedLogData;
 import io.delta.kernel.utils.CloseableIterator;
@@ -37,6 +38,8 @@ import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorException;
 import io.delta.unity.adapters.MetadataAdapter;
 import io.delta.unity.adapters.ProtocolAdapter;
 import java.io.IOException;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Optional;
 import org.apache.hadoop.fs.Path;
 import org.slf4j.Logger;
@@ -47,6 +50,9 @@ import org.slf4j.LoggerFactory;
  * Catalog. That is, these Delta tables must have the catalogManaged table feature supported.
  */
 public class UCCatalogManagedCommitter implements Committer {
+  public static final String UC_METASTORE_LAST_UPDATE_VERSION = "delta.lastUpdateVersion";
+  public static final String UC_METASTORE_LAST_COMMIT_TIMESTAMP = "delta.lastCommitTimestamp";
+
   private static final Logger logger = LoggerFactory.getLogger(UCCatalogManagedCommitter.class);
 
   private final UCClient ucClient;
@@ -126,6 +132,35 @@ public class UCCatalogManagedCommitter implements Committer {
     return new CommitResponse(ParsedLogData.forFileStatus(kernelStagedCommitFileStatus));
   }
 
+  /////////////////////////////////////////
+  // Protected Methods for Extensibility //
+  /////////////////////////////////////////
+
+  /**
+   * Generates the metadata payload for UC commit operations.
+   *
+   * <p>This method allows subclasses to customize or enhance metadata before sending to Unity
+   * Catalog.
+   */
+  protected Optional<Metadata> generateMetadataPayloadOpt(CommitMetadata commitMetadata) {
+    final Map<String, String> additionalUcProperties = new HashMap<>();
+
+    additionalUcProperties.put(
+        UC_METASTORE_LAST_UPDATE_VERSION, String.valueOf(commitMetadata.getVersion()));
+
+    additionalUcProperties.put(
+        UC_METASTORE_LAST_COMMIT_TIMESTAMP,
+        String.valueOf(commitMetadata.getCommitInfo().getInCommitTimestamp().get()));
+
+    commitMetadata
+        .getCommitterPropertiesOpt()
+        .ifPresent(props -> additionalUcProperties.putAll(props.get()));
+
+    return commitMetadata
+        .getNewMetadataOpt()
+        .map(metadata -> metadata.withMergedConfiguration(additionalUcProperties));
+  }
+
   ////////////////////
   // Helper methods //
   ////////////////////
@@ -203,7 +238,7 @@ public class UCCatalogManagedCommitter implements Committer {
                 Optional.of(getUcCommitPayload(commitMetadata, kernelStagedCommitFileStatus)),
                 Optional.empty() /* lastKnownBackfilledVersion */, // TODO: take this in as a hint
                 false /* isDisown */,
-                commitMetadata.getNewMetadataOpt().map(MetadataAdapter::new),
+                generateMetadataPayloadOpt(commitMetadata).map(MetadataAdapter::new),
                 commitMetadata.getNewProtocolOpt().map(ProtocolAdapter::new));
             return null;
           } catch (io.delta.storage.commit.CommitFailedException cfe) {

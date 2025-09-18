@@ -23,6 +23,7 @@ import io.delta.kernel.Snapshot;
 import io.delta.kernel.SnapshotBuilder;
 import io.delta.kernel.TableManager;
 import io.delta.kernel.annotation.Experimental;
+import io.delta.kernel.commit.Committer;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.files.ParsedLogData;
@@ -112,7 +113,7 @@ public class UCCatalogManagedClient {
           }
 
           return snapshotBuilder
-              .withCommitter(new UCCatalogManagedCommitter(ucClient, ucTableId, tablePath))
+              .withCommitter(createUCCommitter(ucClient, ucTableId, tablePath))
               .withLogData(logData)
               .build(engine);
         });
@@ -142,8 +143,22 @@ public class UCCatalogManagedClient {
     Objects.requireNonNull(engineInfo, "engineInfo is null");
 
     return TableManager.buildCreateTableTransaction(tablePath, schema, engineInfo)
-        .withCommitter(new UCCatalogManagedCommitter(ucClient, ucTableId, tablePath))
+        .withCommitter(createUCCommitter(ucClient, ucTableId, tablePath))
         .withTableProperties(getRequiredTablePropertiesForCreate(ucTableId));
+  }
+
+  /////////////////////////////////////////
+  // Protected Methods for Extensibility //
+  /////////////////////////////////////////
+
+  /**
+   * Creates a UC committer instance for the specified table.
+   *
+   * <p>This method allows subclasses to provide custom committer implementations for specialized
+   * use cases.
+   */
+  protected Committer createUCCommitter(UCClient ucClient, String ucTableId, String tablePath) {
+    return new UCCatalogManagedCommitter(ucClient, ucTableId, tablePath);
   }
 
   ////////////////////
