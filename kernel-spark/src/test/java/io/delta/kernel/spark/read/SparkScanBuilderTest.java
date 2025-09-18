@@ -15,7 +15,6 @@
  */
 package io.delta.kernel.spark.read;
 
-import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -736,6 +735,132 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
             new Predicate("NOT", new Predicate("=", new Column("id"), Literal.ofInt(100)))));
   }
 
+  @Test
+  public void testPushFilters_NOTSupportedDataANDSupportedPartitionFilters(@TempDir File tempDir)
+      throws Exception {
+    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+
+    checkSupportsPushDownFilters(
+        builder,
+        // input filters
+        new Filter[] {
+          new Not(new And(new EqualTo("id", 100), new GreaterThan("dep_id", 1))),
+        },
+        // expected post-scan filters
+        new Filter[] {
+          new Not(new And(new EqualTo("id", 100), new GreaterThan("dep_id", 1))),
+        },
+        // expected pushed filters
+        new Filter[] {
+          new Not(new And(new EqualTo("id", 100), new GreaterThan("dep_id", 1))),
+        },
+        // expected pushed kernel predicates
+        new Predicate[] {
+          new Predicate(
+              "NOT",
+              new Predicate(
+                  "AND",
+                  Arrays.asList(
+                      new Predicate("=", new Column("id"), Literal.ofInt(100)),
+                      new Predicate(">", new Column("dep_id"), Literal.ofInt(1)))))
+        },
+        // expected data filters
+        new Filter[] {
+          new Not(new And(new EqualTo("id", 100), new GreaterThan("dep_id", 1))),
+        },
+        // expected kernelScanBuilder.predicate
+        Optional.of(
+            new Predicate(
+                "NOT",
+                new Predicate(
+                    "AND",
+                    Arrays.asList(
+                        new Predicate("=", new Column("id"), Literal.ofInt(100)),
+                        new Predicate(">", new Column("dep_id"), Literal.ofInt(1)))))));
+  }
+
+  @Test
+  public void testPushFilters_NOTSupportedDataANDUnsupportedDataFilters(@TempDir File tempDir)
+      throws Exception {
+    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+
+    checkSupportsPushDownFilters(
+        builder,
+        // input filters
+        new Filter[] {new Not(new And(new EqualTo("id", 100), new StringEndsWith("name", "bar")))},
+        // expected post-scan filters
+        new Filter[] {new Not(new And(new EqualTo("id", 100), new StringEndsWith("name", "bar")))},
+        // expected pushed filters
+        new Filter[] {},
+        // expected pushed kernel predicates
+        new Predicate[] {},
+        // expected data filters
+        new Filter[] {new Not(new And(new EqualTo("id", 100), new StringEndsWith("name", "bar")))},
+        // expected kernelScanBuilder.predicate
+        Optional.empty());
+  }
+
+  @Test
+  public void testPushFilters_NOTSupportedDataORSupportedPartitionFilters(@TempDir File tempDir)
+      throws Exception {
+    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+
+    checkSupportsPushDownFilters(
+        builder,
+        // input filters
+        new Filter[] {
+          new Not(new Or(new EqualTo("id", 100), new GreaterThan("dep_id", 1))),
+        },
+        // expected post-scan filters
+        new Filter[] {new Not(new Or(new EqualTo("id", 100), new GreaterThan("dep_id", 1)))},
+        // expected pushed filters
+        new Filter[] {new Not(new Or(new EqualTo("id", 100), new GreaterThan("dep_id", 1)))},
+        // expected pushed kernel predicates
+        new Predicate[] {
+          new Predicate(
+              "NOT",
+              new Predicate(
+                  "OR",
+                  Arrays.asList(
+                      new Predicate("=", new Column("id"), Literal.ofInt(100)),
+                      new Predicate(">", new Column("dep_id"), Literal.ofInt(1)))))
+        },
+        // expected data filters
+        new Filter[] {new Not(new Or(new EqualTo("id", 100), new GreaterThan("dep_id", 1)))},
+        // expected kernelScanBuilder.predicate
+        Optional.of(
+            new Predicate(
+                "NOT",
+                new Predicate(
+                    "OR",
+                    Arrays.asList(
+                        new Predicate("=", new Column("id"), Literal.ofInt(100)),
+                        new Predicate(">", new Column("dep_id"), Literal.ofInt(1)))))));
+  }
+
+  @Test
+  public void testPushFilters_NOTSupportedDataORUnsupportedDataFilters(@TempDir File tempDir)
+      throws Exception {
+    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+
+    checkSupportsPushDownFilters(
+        builder,
+        // input filters
+        new Filter[] {
+          new Not(new Or(new EqualTo("id", 100), new StringStartsWith("name", "foo"))),
+        },
+        // expected post-scan filters
+        new Filter[] {new Not(new Or(new EqualTo("id", 100), new StringStartsWith("name", "foo")))},
+        // expected pushed filters
+        new Filter[] {},
+        // expected pushed kernel predicates
+        new Predicate[] {},
+        // expected data filters
+        new Filter[] {new Not(new Or(new EqualTo("id", 100), new StringStartsWith("name", "foo")))},
+        // expected kernelScanBuilder.predicate
+        Optional.empty());
+  }
+
   private void checkSupportsPushDownFilters(
       SparkScanBuilder builder,
       Filter[] inputFilters,
@@ -813,8 +938,14 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
     Field field = SparkScanBuilder.class.getDeclaredField("kernelScanBuilder");
     field.setAccessible(true);
     Object kernelScanBuilder = field.get(builder);
+
     Field predicateField = kernelScanBuilder.getClass().getDeclaredField("predicate");
     predicateField.setAccessible(true);
-    return (Optional<Predicate>) predicateField.get(kernelScanBuilder);
+    Object raw = predicateField.get(kernelScanBuilder);
+    if (raw == null) {
+      return Optional.empty();
+    }
+    Optional<?> opt = (Optional<?>) raw;
+    return opt.map(Predicate.class::cast);
   }
 }
