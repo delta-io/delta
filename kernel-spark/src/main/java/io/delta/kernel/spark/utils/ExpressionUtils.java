@@ -78,7 +78,7 @@ public final class ExpressionUtils {
         .getConvertedPredicate();
   }
 
-  private static ConvertedPredicate convertSparkFilterToConvertedKernelPredicate(
+  static ConvertedPredicate convertSparkFilterToConvertedKernelPredicate(
       Filter filter, boolean canPartialPushDown) {
     if (filter instanceof EqualTo) {
       EqualTo f = (EqualTo) filter;

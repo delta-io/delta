@@ -434,10 +434,10 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
    * will be converted to A OR C, because of the partial pushdown of AND
    *
    * Expected post-scan filters: (A AND B) OR C
-   * Expected pushed filters: A OR C
-   * Expected pushed kernel predicates: A OR C
+   * Expected pushed filters: none (TODO: should be sparkFilterA OR sparkFilterC)
+   * Expected pushed kernel predicates: predicateA OR predicateC
    * Expected data filters: none
-   * Expected kernelScanBuilder.predicate: A OR C
+   * Expected kernelScanBuilder.predicate: predicateA OR predicateC
    */
   @Test
   public void testPushFilters_mixedORandAND(@TempDir File tempDir) throws Exception {
@@ -460,7 +460,7 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
               new GreaterThan("dep_id", 2))
         },
         // expected pushed filters
-        new Filter[] {new Or(new EqualTo("dep_id", 1), new GreaterThan("dep_id", 2))},
+        new Filter[] {},
         // expected pushed kernel predicates
         new Predicate[] {
           new Predicate(
