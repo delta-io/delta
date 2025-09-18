@@ -26,9 +26,7 @@ import io.delta.kernel.spark.table.SparkTable;
 import java.io.File;
 import java.lang.reflect.Field;
 import java.math.BigDecimal;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
+import java.util.*;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.SparkConf;
 import org.apache.spark.sql.Dataset;
@@ -76,7 +74,7 @@ public class SparkGoldenTableTest extends QueryTest {
   }
 
   @Test
-  public void testDsv2Internal() {
+  public void testDsv2Internal() throws Exception {
     String tableName = "deltatbl-partition-prune";
     String tablePath = goldenTablePath("hive/" + tableName);
     CaseInsensitiveStringMap options =
@@ -276,17 +274,20 @@ public class SparkGoldenTableTest extends QueryTest {
         new Filter[] {
           new Or(new GreaterThan("cnt", 10), new StringStartsWith("name", "foo")),
           new Or(new EqualTo("cnt", 50), new EqualTo("date", "2025-10-01")),
-          new Not(new EqualTo("date", "2025-09-01"))
+          new Not(new And(new GreaterThan("cnt", 100), new EqualTo("date", "2025-09-01"))),
+          new Not(new Or(new EqualTo("name", "foo"), new StringStartsWith("city", "New")))
         },
         // expected post-scan filters
         new Filter[] {
           new Or(new GreaterThan("cnt", 10), new StringStartsWith("name", "foo")),
           new Or(new EqualTo("cnt", 50), new EqualTo("date", "2025-10-01")),
+          new Not(new And(new GreaterThan("cnt", 100), new EqualTo("date", "2025-09-01"))),
+          new Not(new Or(new EqualTo("name", "foo"), new StringStartsWith("city", "New")))
         },
         // expected pushed filters
         new Filter[] {
           new Or(new EqualTo("cnt", 50), new EqualTo("date", "2025-10-01")),
-          new Not(new EqualTo("date", "2025-09-01"))
+          new Not(new And(new GreaterThan("cnt", 100), new EqualTo("date", "2025-09-01"))),
         },
         // expected pushed kernel predicates
         new Predicate[] {
@@ -295,12 +296,18 @@ public class SparkGoldenTableTest extends QueryTest {
               new Predicate("=", new Column("cnt"), Literal.ofInt(50)),
               new Predicate("=", new Column("date"), Literal.ofString("2025-10-01"))),
           new Predicate(
-              "NOT", new Predicate("=", new Column("date"), Literal.ofString("2025-09-01")))
+              "NOT",
+              new Predicate(
+                  "AND",
+                  new Predicate(">", new Column("cnt"), Literal.ofInt(100)),
+                  new Predicate("=", new Column("date"), Literal.ofString("2025-09-01"))))
         },
         // expected data filters
         new Filter[] {
           new Or(new GreaterThan("cnt", 10), new StringStartsWith("name", "foo")),
-          new Or(new EqualTo("cnt", 50), new EqualTo("date", "2025-10-01"))
+          new Or(new EqualTo("cnt", 50), new EqualTo("date", "2025-10-01")),
+          new Not(new And(new GreaterThan("cnt", 100), new EqualTo("date", "2025-09-01"))),
+          new Not(new Or(new EqualTo("name", "foo"), new StringStartsWith("city", "New")))
         },
         // expected kernel scan builder predicate
         Optional.of(
@@ -312,7 +319,10 @@ public class SparkGoldenTableTest extends QueryTest {
                     new Predicate("=", new Column("date"), Literal.ofString("2025-10-01"))),
                 new Predicate(
                     "NOT",
-                    new Predicate("=", new Column("date"), Literal.ofString("2025-09-01"))))));
+                    new Predicate(
+                        "AND",
+                        new Predicate(">", new Column("cnt"), Literal.ofInt(100)),
+                        new Predicate("=", new Column("date"), Literal.ofString("2025-09-01")))))));
   }
 
   private void checkSupportsPushDownFilters(
