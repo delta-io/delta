@@ -51,8 +51,8 @@ public final class ParsedV2CheckpointData extends ParsedCheckpointData {
   }
 
   @Override
-  protected int getCheckpointTypePriority() {
-    return 2; // (V2 > MultiPart > Classic)
+  protected CheckpointTypePriority getCheckpointTypePriority() {
+    return CheckpointTypePriority.V2;
   }
 
   @Override

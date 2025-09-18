@@ -26,36 +26,32 @@ import java.util.Optional;
 public abstract class ParsedCheckpointData extends ParsedLogData
     implements Comparable<ParsedCheckpointData> {
 
+  /**
+   * Enum representing checkpoint type priorities for comparison when multiple checkpoint types
+   * exist at the same version. Higher ordinal values indicate higher priority.
+   */
+  protected enum CheckpointTypePriority {
+    CLASSIC, // priority 0 - least preferred
+    MULTIPART, // priority 1 - better than classic
+    V2 // priority 2 - most preferred
+  }
+
   protected ParsedCheckpointData(
       long version, Optional<FileStatus> fileStatusOpt, Optional<ColumnarBatch> inlineDataOpt) {
     super(version, fileStatusOpt, inlineDataOpt);
   }
 
   /**
-   * Returns the priority of this checkpoint type for Kernel's checkpoint preference ranking. Higher
-   * values indicate higher priority (preferred checkpoints).
-   *
-   * <p>This priority is only used to break ties when multiple checkpoint types exist at the same
-   * version. The ordering is based on safety and parallelizability of reading:
-   *
-   * <ul>
-   *   <li>V2 (priority 2): Best and safest checkpoint format
-   *   <li>MultiPart (priority 1): Better than classic due to parallelizable reading
-   *   <li>Classic (priority 0): Least preferred due to lower performance (single file)
-   * </ul>
+   * Returns the checkpoint type priority used as a tiebreaker when multiple checkpoint types exist
+   * at the same version.
    */
-  protected abstract int getCheckpointTypePriority();
+  protected abstract CheckpointTypePriority getCheckpointTypePriority();
 
   /**
-   * Compares two checkpoints of the same type and priority. Subclasses should implement
-   * type-specific comparison logic.
+   * Compares two checkpoints of the same version and same type. Subclasses should implement
+   * type-specific comparison logic for final tiebreaking.
    */
   protected abstract int compareToSameType(ParsedCheckpointData that);
-
-  @Override
-  public String getParentCategoryName() {
-    return "Checkpoint";
-  }
 
   @Override
   public Class<? extends ParsedLogData> getParentCategoryClass() {
@@ -85,10 +81,10 @@ public abstract class ParsedCheckpointData extends ParsedLogData
     }
 
     // 2. Compare types by priority (V2 > MultiPart > Classic)
-    int thisTypePriority = this.getCheckpointTypePriority();
-    int thatTypePriority = that.getCheckpointTypePriority();
+    CheckpointTypePriority thisTypePriority = this.getCheckpointTypePriority();
+    CheckpointTypePriority thatTypePriority = that.getCheckpointTypePriority();
     if (thisTypePriority != thatTypePriority) {
-      return Integer.compare(thisTypePriority, thatTypePriority);
+      return thisTypePriority.compareTo(thatTypePriority);
     }
 
     // 3. Use type-specific comparison when version and type are the same

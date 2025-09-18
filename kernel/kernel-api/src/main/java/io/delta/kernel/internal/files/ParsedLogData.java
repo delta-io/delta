@@ -83,10 +83,18 @@ public abstract class ParsedLogData {
     this.inlineDataOpt = inlineDataOpt;
   }
 
+  /**
+   * Returns true if this log data is stored as a file on disk. When false, the data is stored
+   * inline.
+   */
   public boolean isFile() {
     return fileStatusOpt.isPresent();
   }
 
+  /**
+   * Returns true if this log data is stored inline as a ColumnarBatch. When false, the data is
+   * stored as a file on disk.
+   */
   public boolean isInline() {
     return inlineDataOpt.isPresent();
   }
@@ -109,8 +117,15 @@ public abstract class ParsedLogData {
     return inlineDataOpt.get();
   }
 
-  public abstract String getParentCategoryName();
+  /**
+   * Returns a human-readable name for the parent category class. Used as a helper utility for
+   * debugging and print statements.
+   */
+  public String getParentCategoryName() {
+    return getParentCategoryClass().getSimpleName();
+  }
 
+  /** Returns the parent category class used for grouping collections of ParsedLogData instances. */
   public abstract Class<? extends ParsedLogData> getParentCategoryClass();
 
   /** Protected method for subclasses to override to add output to {@link #toString}. */
