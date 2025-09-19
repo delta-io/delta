@@ -84,46 +84,6 @@ public class SparkScanBuilder
                 .toArray(StructField[]::new));
   }
 
-  private static class FilterClassificationResult {
-    public final Boolean isKernelSupported;
-    public final Boolean isPartialConversion;
-    public final Boolean isDataFilter;
-    public final Optional<Predicate> kernelPredicate;
-
-    public FilterClassificationResult(
-        Boolean isKernelSupported,
-        Boolean isPartialConversion,
-        Boolean isDataFilter,
-        Optional<Predicate> kernelPredicate) {
-      this.isKernelSupported = isKernelSupported;
-      this.isPartialConversion = isPartialConversion;
-      this.isDataFilter = isDataFilter;
-      this.kernelPredicate = kernelPredicate;
-    }
-  }
-
-  private FilterClassificationResult classifyFilter(Filter filter) {
-    // try to convert Spark filter to Kernel Predicate
-    ExpressionUtils.ConvertedPredicate convertedPredicate =
-        ExpressionUtils.convertSparkFilterToConvertedKernelPredicate(filter);
-
-    boolean isKernelSupported = convertedPredicate.isPresent();
-    boolean isPartialConversion = convertedPredicate.isPartial();
-    Optional<Predicate> kernelPredicate = convertedPredicate.getConvertedPredicate();
-
-    // check if the filter is a data filter
-    // A data filter is a filter that references at least one non-partition column.
-    String[] refs = filter.references();
-    boolean isDataFilter =
-        refs != null
-            && refs.length > 0
-            && Arrays.stream(refs)
-                .anyMatch((col -> !partitionColumnSet.contains(col.toLowerCase(Locale.ROOT))));
-
-    return new FilterClassificationResult(
-        isKernelSupported, isPartialConversion, isDataFilter, kernelPredicate);
-  }
-
   @Override
   public Filter[] pushFilters(Filter[] filters) {
     List<Filter> kernelSupportedFilters = new ArrayList<>();
@@ -132,7 +92,8 @@ public class SparkScanBuilder
     List<Filter> postScanFilters = new ArrayList<>();
 
     for (Filter filter : filters) {
-      FilterClassificationResult classification = classifyFilter(filter);
+      ExpressionUtils.FilterClassificationResult classification =
+          ExpressionUtils.classifyFilter(filter, partitionColumnSet);
       // Collect kernel predicates if supported
       if (classification.isKernelSupported) {
         convertedKernelPredicates.add(classification.kernelPredicate.get());

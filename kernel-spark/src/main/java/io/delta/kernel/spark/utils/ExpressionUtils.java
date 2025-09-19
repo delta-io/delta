@@ -365,5 +365,64 @@ public final class ExpressionUtils {
     }
   }
 
+  /*
+   * Helper class to hold the classification result of a Filter
+   */
+  public static class FilterClassificationResult {
+    public final Boolean isKernelSupported;
+    public final Boolean isPartialConversion;
+    public final Boolean isDataFilter;
+    public final Optional<Predicate> kernelPredicate;
+
+    public FilterClassificationResult(
+        Boolean isKernelSupported,
+        Boolean isPartialConversion,
+        Boolean isDataFilter,
+        Optional<Predicate> kernelPredicate) {
+      this.isKernelSupported = isKernelSupported;
+      this.isPartialConversion = isPartialConversion;
+      this.isDataFilter = isDataFilter;
+      this.kernelPredicate = kernelPredicate;
+    }
+  }
+
+  /**
+   * Classifies a Spark Filter based on its convertibility to a Kernel Predicate and whether it is a
+   * data filter (i.e., references non-partition columns).
+   *
+   * @param filter the Spark Filter to classify
+   * @param partitionColumnSet a set of partition column names (in lower case) for identifying data
+   *     filters
+   * @return FilterClassificationResult containing:
+   *     <ul>
+   *       <li>isKernelSupported: true if the filter can be converted to a Kernel Predicate
+   *       <li>isPartialConversion: true if the conversion was partial (for AND filters)
+   *       <li>isDataFilter: true if the filter references at least one non-partition column
+   *       <li>kernelPredicate: Optional containing the converted Kernel Predicate, if any
+   *     </ul>
+   */
+  public static FilterClassificationResult classifyFilter(
+      Filter filter, Set<String> partitionColumnSet) {
+    // try to convert Spark filter to Kernel Predicate
+    ExpressionUtils.ConvertedPredicate convertedPredicate =
+        ExpressionUtils.convertSparkFilterToConvertedKernelPredicate(filter);
+
+    boolean isKernelSupported = convertedPredicate.isPresent();
+    boolean isPartialConversion = convertedPredicate.isPartial();
+    Optional<Predicate> kernelPredicate = convertedPredicate.getConvertedPredicate();
+
+    // check if the filter is a data filter
+    // A data filter is a filter that references at least one non-partition column.
+    String[] refs = filter.references();
+    boolean isDataFilter =
+        refs != null
+            && refs.length > 0
+            && Arrays.stream(refs)
+                .anyMatch((col -> !partitionColumnSet.contains(col.toLowerCase(Locale.ROOT))));
+
+    return new FilterClassificationResult(
+        isKernelSupported, isPartialConversion, isDataFilter, kernelPredicate);
+  }
+
   private ExpressionUtils() {}
 }
