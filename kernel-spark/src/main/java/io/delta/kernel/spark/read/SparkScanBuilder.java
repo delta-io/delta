@@ -155,6 +155,7 @@ public class SparkScanBuilder
         postScanFilters.add(filter);
       }
     }
+
     this.pushedSparkFilters = kernelSupportedFilters.toArray(new Filter[0]);
     this.pushedKernelPredicates = convertedKernelPredicates.toArray(new Predicate[0]);
     if (this.pushedKernelPredicates.length > 0) {
