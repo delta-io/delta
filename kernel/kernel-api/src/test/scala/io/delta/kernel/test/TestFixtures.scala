@@ -16,7 +16,9 @@
 
 package io.delta.kernel.test
 
+import java.util.{Map => JMap}
 import java.util.Optional
+import java.util.function.Supplier
 
 import io.delta.kernel.commit.CommitMetadata
 import io.delta.kernel.internal.actions.{CommitInfo, Metadata, Protocol}
@@ -59,14 +61,17 @@ trait TestFixtures extends ActionUtils {
       commitInfo: CommitInfo = testCommitInfo(),
       readPandMOpt: Optional[Tuple2[Protocol, Metadata]] = Optional.empty(),
       newProtocolOpt: Optional[Protocol] = Optional.empty(),
-      newMetadataOpt: Optional[Metadata] = Optional.empty()): CommitMetadata = {
+      newMetadataOpt: Optional[Metadata] = Optional.empty(),
+      committerPropertiesOpt: Optional[Supplier[JMap[String, String]]] =
+        Optional.empty()): CommitMetadata = {
     new CommitMetadata(
       version,
       logPath,
       commitInfo,
       readPandMOpt,
       newProtocolOpt,
-      newMetadataOpt)
+      newMetadataOpt,
+      committerPropertiesOpt)
   }
 
 }

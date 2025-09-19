@@ -26,7 +26,9 @@ import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.Tuple2;
+import java.util.Map;
 import java.util.Optional;
+import java.util.function.Supplier;
 
 /**
  * Contains all information (excluding the iterator of finalized actions) required to commit changes
@@ -60,6 +62,7 @@ public class CommitMetadata {
   private final Optional<Tuple2<Protocol, Metadata>> readPandMOpt;
   private final Optional<Protocol> newProtocolOpt;
   private final Optional<Metadata> newMetadataOpt;
+  private final Optional<Supplier<Map<String, String>>> committerPropertiesOpt;
 
   public CommitMetadata(
       long version,
@@ -67,7 +70,8 @@ public class CommitMetadata {
       CommitInfo commitInfo,
       Optional<Tuple2<Protocol, Metadata>> readPandMOpt,
       Optional<Protocol> newProtocolOpt,
-      Optional<Metadata> newMetadataOpt) {
+      Optional<Metadata> newMetadataOpt,
+      Optional<Supplier<Map<String, String>>> committerPropertiesOpt) {
     checkArgument(version >= 0, "version must be non-negative: %d", version);
     this.version = version;
     this.logPath = requireNonNull(logPath, "logPath is null");
@@ -75,6 +79,8 @@ public class CommitMetadata {
     this.readPandMOpt = requireNonNull(readPandMOpt, "readPandMOpt is null");
     this.newProtocolOpt = requireNonNull(newProtocolOpt, "newProtocolOpt is null");
     this.newMetadataOpt = requireNonNull(newMetadataOpt, "newMetadataOpt is null");
+    this.committerPropertiesOpt =
+        requireNonNull(committerPropertiesOpt, "committerPropertiesSupplierOpt is null");
 
     checkArgument(
         readPandMOpt.isPresent() || newProtocolOpt.isPresent(),
@@ -132,6 +138,14 @@ public class CommitMetadata {
    */
   public Optional<Metadata> getNewMetadataOpt() {
     return newMetadataOpt;
+  }
+
+  /**
+   * Returns custom properties provided by the connector to be passed through to the committer.
+   * These properties are not inspected by Kernel and are used for catalog-specific functionality.
+   */
+  public Optional<Supplier<Map<String, String>>> getCommitterPropertiesOpt() {
+    return committerPropertiesOpt;
   }
 
   /**
