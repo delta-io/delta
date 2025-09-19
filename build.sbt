@@ -443,6 +443,16 @@ lazy val spark = (project in file("spark"))
     name := "delta-spark",
     commonSettings,
     scalaStyleSettings,
+    // Add assembly merge strategy to handle file conflicts
+    assembly / assemblyMergeStrategy := {
+      case "module-info.class" => MergeStrategy.discard
+      case "META-INF/MANIFEST.MF" => MergeStrategy.discard
+      case PathList("META-INF", "versions", xs @ _*) => MergeStrategy.discard
+      case PathList("META-INF", xs @ _*) => MergeStrategy.discard
+      case x => MergeStrategy.first
+    },
+    // Set custom assembly jar name without "assembly" suffix
+    assembly / assemblyJarName := s"${name.value}_${scalaBinaryVersion.value}-${version.value}.jar",
     sparkMimaSettings,
     releaseSettings,
     crossSparkSettings(),
