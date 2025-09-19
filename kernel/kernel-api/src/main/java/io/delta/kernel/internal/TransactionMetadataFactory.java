@@ -627,7 +627,9 @@ public class TransactionMetadataFactory {
                     oldMetadata,
                     getEffectiveMetadata(),
                     clusteringColumnPhysicalNames,
-                    false /* allowNewRequiredFields */);
+                    false /* allowNewRequiredFields */,
+                    getEffectiveProtocol()
+                        .getImplicitlyAndExplicitlySupportedReaderWriterFeatures());
 
             schemaWithTypeWidening.ifPresent(
                 structType ->
@@ -664,7 +666,8 @@ public class TransactionMetadataFactory {
                 emptySet() /* clusteringCols */,
                 // We allow new non-null fields in REPLACE since we know all existing data is
                 // removed
-                true /* allowNewRequiredFields */);
+                true /* allowNewRequiredFields */,
+                getEffectiveProtocol().getImplicitlyAndExplicitlySupportedReaderWriterFeatures());
         schemaWithTypeWidening.ifPresent(
             structType ->
                 newMetadata = Optional.of(getEffectiveMetadata().withNewSchema(structType)));
