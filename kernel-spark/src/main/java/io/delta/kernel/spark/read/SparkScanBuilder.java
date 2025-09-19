@@ -142,66 +142,6 @@ public class SparkScanBuilder
     return postScanFilters.toArray(new Filter[0]);
   }
 
-  //  @Override
-  //  public Filter[] pushFilters(Filter[] filters) {
-  //    // 1. Split filters into kernel-supported and kernel-unsupported ones
-  //    List<Filter> kernelSupportedFilters = new ArrayList<>();
-  //    List<Filter> kernelUnsupportedFilters = new ArrayList<>();
-  //    List<Predicate> convertedKernelPredicates = new ArrayList<>();
-  //
-  //    for (Filter filter : filters) {
-  //      ExpressionUtils.ConvertedPredicate convertedPredicate =
-  //          ExpressionUtils.convertSparkFilterToConvertedKernelPredicate(filter);
-  //      if (convertedPredicate.isPresent()) {
-  //        // if converted is present, we can push the filter to kernel
-  //        convertedKernelPredicates.add(convertedPredicate.get());
-  //        if (convertedPredicate.isPartial()) {
-  //          // if the converted predicate is only partial of the original filter,
-  //          // it should be added to unsupported filters
-  //          // to make sure the remaining part is evaluated again after scanning
-  //          kernelUnsupportedFilters.add(filter);
-  //        } else {
-  //          kernelSupportedFilters.add(filter);
-  //        }
-  //      } else {
-  //        // if converted is not present
-  //        kernelUnsupportedFilters.add(filter);
-  //      }
-  //    }
-  //
-  //    // kernelSupportedFilters will be pushed to kernel, set pushedPredicates
-  //    this.pushedSparkFilters = kernelSupportedFilters.toArray(new Filter[0]);
-  //    this.pushedKernelPredicates = convertedKernelPredicates.toArray(new Predicate[0]);
-  //    if (this.pushedKernelPredicates.length > 0) {
-  //      Optional<Predicate> kernelAnd =
-  // Arrays.stream(this.pushedKernelPredicates).reduce(And::new);
-  //      this.kernelScanBuilder = this.kernelScanBuilder.withFilter(kernelAnd.get());
-  //    }
-  //
-  //    // 2. Set dataFilters and return postScanFilters
-  //    List<Filter> dataFilterList = new ArrayList<>();
-  //    List<Filter> postScanFilters = new ArrayList<>();
-  //    for (Filter filter : filters) {
-  //      String[] refs = filter.references();
-  //      // if refs is not null and all refs are in partitionColumnSet, it is a partition filter
-  //      if (refs != null
-  //          && refs.length > 0
-  //          && Arrays.stream(refs)
-  //              .allMatch(col -> partitionColumnSet.contains(col.toLowerCase(Locale.ROOT)))) {
-  //        // if partition filter is not supported by kernel, it also needs post-scan evaluation
-  //        if (kernelUnsupportedFilters.contains(filter)) {
-  //          postScanFilters.add(filter);
-  //        }
-  //      } else {
-  //        // If the filter is a data filter, it should be evaluated after scanning
-  //        dataFilterList.add(filter);
-  //        postScanFilters.add(filter);
-  //      }
-  //    }
-  //    this.dataFilters = dataFilterList.toArray(new Filter[0]);
-  //    return postScanFilters.toArray(new Filter[0]);
-  //  }
-
   @Override
   public Filter[] pushedFilters() {
     return this.pushedSparkFilters;
