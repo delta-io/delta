@@ -54,16 +54,14 @@ public class ReadMetadataRunner implements WorkloadRunner {
 
   @Override
   public void setup() {
-    // 1) Resolve the table root using
     String workloadTableRoot = workloadSpec.getTableRoot();
+    // If this is not a URI, treat it as a relative path under the base workload directory
     if (!workloadTableRoot.contains("://")) {
-      // If this is not a URI, treat it as a relative path under the base workload directory
       // This uses a hard-coded base directory for workload tables. In the future, this could be
       // made configurable.
       workloadTableRoot = baseWorkloadDirPath.resolve(Paths.get(workloadTableRoot)).toString();
     }
 
-    // 2) Load the snapshot, and build the scan
     SnapshotBuilder builder = TableManager.loadSnapshot(workloadTableRoot);
     if (workloadSpec.getSnapshotVersion() != null) {
       builder.atVersion(workloadSpec.getSnapshotVersion());
