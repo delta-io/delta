@@ -1,9 +1,12 @@
 package io.delta.flink.source.internal.enumerator;
 
 import java.util.Collections;
+import java.util.Map;
+import java.util.Set;
 import static java.util.Collections.emptyList;
 
 import io.delta.flink.internal.options.DeltaConnectorConfiguration;
+import io.delta.flink.internal.options.PartitionFilterOptionTypeConverter;
 import io.delta.flink.source.internal.enumerator.processor.SnapshotProcessor;
 import io.delta.flink.source.internal.file.AddFileEnumerator;
 import io.delta.flink.source.internal.state.DeltaEnumeratorStateCheckpoint;
@@ -14,7 +17,10 @@ import org.apache.flink.api.connector.source.SplitEnumeratorContext;
 import org.apache.flink.connector.file.src.assigners.FileSplitAssigner;
 import org.apache.flink.core.fs.Path;
 import org.apache.hadoop.conf.Configuration;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import static io.delta.flink.source.internal.DeltaSourceOptions.LOADED_SCHEMA_SNAPSHOT_VERSION;
+import static io.delta.flink.source.internal.DeltaSourceOptions.PARTITION_FILTERS;
 
 import io.delta.standalone.DeltaLog;
 import io.delta.standalone.Snapshot;
@@ -24,6 +30,7 @@ import io.delta.standalone.Snapshot;
  * BoundedSplitEnumerator} used for {@link Boundedness#BOUNDED} mode.
  */
 public class BoundedSplitEnumeratorProvider implements SplitEnumeratorProvider {
+    private static final Logger LOG = LoggerFactory.getLogger(BoundedSplitEnumeratorProvider.class);
 
     private final FileSplitAssigner.Provider splitAssignerProvider;
 
@@ -59,6 +66,12 @@ public class BoundedSplitEnumeratorProvider implements SplitEnumeratorProvider {
         Snapshot initSnapshot = deltaLog.getSnapshotForVersionAsOf(
             sourceConfiguration.getValue(LOADED_SCHEMA_SNAPSHOT_VERSION));
 
+        Map<String, Set<String>> partitionsToFilter =
+                PartitionFilterOptionTypeConverter.parseStringToMap(
+                        sourceConfiguration.getValue(PARTITION_FILTERS));
+        LOG.info("Initialized provider with partitions to filter: {}",
+                partitionsToFilter);
+
         SnapshotProcessor snapshotProcessor =
             new SnapshotProcessor(deltaTablePath, initSnapshot,
                 fileEnumeratorProvider.create(), Collections.emptySet());
@@ -78,10 +91,17 @@ public class BoundedSplitEnumeratorProvider implements SplitEnumeratorProvider {
         DeltaLog deltaLog = DeltaLog.forTable(configuration,
             SourceUtils.pathToString(checkpoint.getDeltaTablePath()));
 
+        Map<String, Set<String>> partitionsToFilter =
+                PartitionFilterOptionTypeConverter.parseStringToMap(
+                        sourceConfiguration.getValue(PARTITION_FILTERS));
+        LOG.info("Created provider from checkpoint with partitions to filter: {}",
+                partitionsToFilter);
+
         SnapshotProcessor snapshotProcessor =
             new SnapshotProcessor(checkpoint.getDeltaTablePath(),
-                deltaLog.getSnapshotForVersionAsOf(checkpoint.getSnapshotVersion()),
-                fileEnumeratorProvider.create(), checkpoint.getAlreadyProcessedPaths());
+                    deltaLog.getSnapshotForVersionAsOf(checkpoint.getSnapshotVersion()),
+                    fileEnumeratorProvider.create(), checkpoint.getAlreadyProcessedPaths(),
+                    partitionsToFilter);
 
         return new BoundedDeltaSourceSplitEnumerator(
             checkpoint.getDeltaTablePath(), snapshotProcessor,
