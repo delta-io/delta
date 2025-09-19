@@ -92,7 +92,7 @@ class DeltaSparkSessionExtension extends (SparkSessionExtensions => Unit) {
       PreprocessTimeTravel(session)
     }
     extensions.injectResolutionRule { session =>
-
+      new MaybeFallbackV1Connector(session)
     }
     extensions.injectResolutionRule { session =>
       // To ensure the parquet field id reader is turned on, these fields are required to support

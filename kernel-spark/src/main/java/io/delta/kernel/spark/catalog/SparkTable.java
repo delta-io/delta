@@ -76,11 +76,8 @@ public class SparkTable implements Table, SupportsRead {
     this.identifier = requireNonNull(identifier, "identifier is null");
     this.tablePath = requireNonNull(snapshot.getPath(), "snapshot is null");
     this.options = options;
-      this.v1CatalogTable = v1CatalogTable;
-      this.hadoopConf =
-        SparkSession.active().sessionState().newHadoopConfWithOptions(toScalaMap(options));
+    this.v1CatalogTable = v1CatalogTable;
     this.snapshot = snapshot;
-
     StructType snapshotSchema = SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema());
     this.partColNames =
         Collections.unmodifiableList(new ArrayList<>(snapshot.getPartitionColumnNames()));
@@ -184,4 +181,8 @@ public class SparkTable implements Table, SupportsRead {
   public String toString() {
     return "SparkTable{identifier=" + identifier + '}';
   }
+
+    public Optional<CatalogTable> getV1CatalogTable() {
+        return v1CatalogTable;
+    }
 }

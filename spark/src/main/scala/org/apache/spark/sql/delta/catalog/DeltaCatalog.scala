@@ -19,12 +19,10 @@ package org.apache.spark.sql.delta.catalog
 // scalastyle:off import.ordering.noEmptyLine
 import java.sql.Timestamp
 import java.util
-import java.util.Locale
-
+import java.util.{Locale, Optional}
 import scala.collection.JavaConverters._
 import scala.collection.immutable.ListMap
 import scala.collection.mutable
-
 import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterBy, ClusterBySpec}
 import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterByTransform => TempClusterByTransform}
@@ -37,14 +35,13 @@ import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.redirect.RedirectFeature
 import org.apache.spark.sql.delta.schema.SchemaUtils
-import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSourceUtils, DeltaSQLConf}
+import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSQLConf, DeltaSourceUtils}
 import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.spark.sql.delta.tablefeatures.DropFeature
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.PartitionUtils
 import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.hadoop.fs.Path
-
 import org.apache.spark.SparkException
 import org.apache.spark.internal.{Logging, MDC}
 import org.apache.spark.sql.{AnalysisException, DataFrame, SparkSession}
@@ -61,7 +58,7 @@ import org.apache.spark.sql.execution.datasources.{DataSource, PartitioningUtils
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.sources.InsertableRelation
 import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
-import io.delta.kernel.spark.utils.PathBasedUtils
+import io.delta.kernel.spark.catalog.SparkTable
 
 
 /**
@@ -315,8 +312,7 @@ class DeltaCatalog extends DelegatingCatalogExtension
   }
 
   protected def newDeltaPathTable(ident: Identifier): Table = {
-    PathBasedUtils.wrapWithDsv2Table(
-      ident, ident.name(), DeltaTableV2(spark, new Path(ident.name())))
+    new SparkTable(ident, ident.name(), Optional.empty())
   }
 
   private def getProvider(properties: util.Map[String, String]): String = {
