@@ -119,8 +119,9 @@ public class SparkScanBuilder
       this.kernelScanBuilder = this.kernelScanBuilder.withFilter(kernelAnd.get());
     }
 
-    // 2. Split filters into partition filters and data filters
+    // 2. Set dataFilters and return postScanFilters
     List<Filter> dataFilterList = new ArrayList<>();
+    List<Filter> postScanFilters = new ArrayList<>();
     for (Filter filter : filters) {
       String[] refs = filter.references();
       // if refs is not null and all refs are in partitionColumnSet, it is a partition filter
@@ -128,18 +129,18 @@ public class SparkScanBuilder
           && refs.length > 0
           && Arrays.stream(refs)
               .allMatch(col -> partitionColumnSet.contains(col.toLowerCase(Locale.ROOT)))) {
-        // partition filter, do nothing
+        // if partition filter is not supported by kernel, it also needs post-scan evaluation
+        if (kernelUnsupportedFilters.contains(filter)) {
+          postScanFilters.add(filter);
+        }
       } else {
+        // If the filter is a data filter, it should be evaluated after scanning
         dataFilterList.add(filter);
+        postScanFilters.add(filter);
       }
     }
     this.dataFilters = dataFilterList.toArray(new Filter[0]);
-
-    // 3. Return all data filters + kernel-unsupported partition filters
-    // they will be evaluated after scanning
-    Set<Filter> filterSet = new HashSet<>(dataFilterList); // deduplicate
-    filterSet.addAll(kernelUnsupportedFilters);
-    return filterSet.toArray(new Filter[0]);
+    return postScanFilters.toArray(new Filter[0]);
   }
 
   @Override
