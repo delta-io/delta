@@ -18,23 +18,21 @@ package io.delta.kernel.internal.util
 import java.util
 import java.util.{Locale, Optional}
 import java.util.Collections.emptySet
-
 import scala.collection.JavaConverters._
 import scala.collection.JavaConverters.mapAsJavaMapConverter
 import scala.reflect.ClassTag
-
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.TableConfig
 import io.delta.kernel.internal.actions.{Format, Metadata}
+import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.internal.types.DataTypeJsonSerDe
 import io.delta.kernel.internal.util.ColumnMapping.{COLUMN_MAPPING_ID_KEY, COLUMN_MAPPING_MODE_KEY, COLUMN_MAPPING_PHYSICAL_NAME_KEY}
 import io.delta.kernel.internal.util.SchemaUtils.{computeSchemaChangesById, validateSchema, validateUpdatedSchemaAndGetUpdatedSchema}
 import io.delta.kernel.internal.util.VectorUtils.stringStringMapValue
-import io.delta.kernel.types.{ArrayType, ByteType, DataType, DoubleType, FieldMetadata, IntegerType, LongType, MapType, StringType, StructField, StructType, TypeChange}
+import io.delta.kernel.types.{ArrayType, ByteType, DataType, DoubleType, FieldMetadata, IntegerType, LongType, MapType, StringType, StructField, StructType, TypeChange, VariantType}
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.LongType.LONG
 import io.delta.kernel.types.TimestampType.TIMESTAMP
-
 import org.scalatest.funsuite.AnyFunSuite
 import org.scalatest.prop.TableDrivenPropertyChecks.forAll
 import org.scalatest.prop.TableFor2
@@ -494,7 +492,8 @@ class SchemaUtilsSuite extends AnyFunSuite {
         metadata(current, properties = tblProperties),
         metadata(updated, properties = tblProperties),
         emptySet(),
-        false // allowNewRequiredFields
+        false, // allowNewRequiredFields
+        emptySet()
       )
     }
 
@@ -691,7 +690,8 @@ class SchemaUtilsSuite extends AnyFunSuite {
           metadata(schemaBefore),
           metadata(schemaAfter),
           emptySet(),
-          false /* allowNewRequiredFields */ )
+          false, /* allowNewRequiredFields */
+          emptySet())
       }
 
       assert(e.getMessage.matches("Field duplicate_id with id .* already exists"))
@@ -744,7 +744,8 @@ class SchemaUtilsSuite extends AnyFunSuite {
         metadata(schemaBefore),
         metadata(schemaAfter),
         emptySet(),
-        false /* allowNewRequiredFields */ )
+        false, /* allowNewRequiredFields */
+        emptySet())
     }
   }
 
@@ -804,7 +805,8 @@ class SchemaUtilsSuite extends AnyFunSuite {
         metadata(schemaBefore),
         metadata(schemaAfter),
         emptySet(),
-        true /* allowNewRequiredFields */ )
+        true, /* allowNewRequiredFields */
+        emptySet())
     }
   }
 
@@ -1041,7 +1043,8 @@ class SchemaUtilsSuite extends AnyFunSuite {
         metadata(schemaBefore),
         metadata(schemaAfter),
         emptySet(),
-        false /* allowNewRequiredFields */ )
+        false, /* allowNewRequiredFields */
+        emptySet())
     }
   }
 
@@ -1079,7 +1082,8 @@ class SchemaUtilsSuite extends AnyFunSuite {
         metadata(schemaBefore),
         metadata(schemaAfter),
         emptySet(),
-        false /* allowNewRequiredFields */ )
+        false, /* allowNewRequiredFields */
+        emptySet())
     }
   }
 
@@ -1183,7 +1187,8 @@ class SchemaUtilsSuite extends AnyFunSuite {
           metadata(schemaBefore, tableProperties),
           metadata(schemaAfter, tableProperties),
           emptySet(),
-          allowNewRequiredFields)
+          allowNewRequiredFields,
+          emptySet())
       }
 
       assert(e.getMessage.matches(expectedMessage), s"${e.getMessage} ~= $expectedMessage")
@@ -1443,7 +1448,8 @@ class SchemaUtilsSuite extends AnyFunSuite {
             metadata(schemaBefore, tblProperties),
             metadata(schemaAfter, tblProperties),
             emptySet(),
-            false /* allowNewRequiredFields */
+            false, /* allowNewRequiredFields */
+            emptySet()
           )
         } else {
           // Should throw an exception
@@ -1452,7 +1458,8 @@ class SchemaUtilsSuite extends AnyFunSuite {
               metadata(schemaBefore, tblProperties),
               metadata(schemaAfter, tblProperties),
               emptySet(),
-              false /* allowNewRequiredFields */
+              false, /* allowNewRequiredFields */
+              emptySet()
             )
           }
           assert(e.getMessage.contains("Cannot change the type of existing field"))
@@ -1530,5 +1537,41 @@ class SchemaUtilsSuite extends AnyFunSuite {
       updatedSchemasWithChangedMaps,
       "Cannot change the type key of Map field map from .*",
       tableProperties = tblProperties)
+  }
+
+  test("Validate succeeds when adding variant column and variant feature is enabled") {
+    val tableProperties = Map(ColumnMapping.COLUMN_MAPPING_MODE_KEY -> "id")
+    val before = new StructType().add("id", IntegerType.INTEGER, false,
+      fieldMetadata(id = 1, physicalName = "id"))
+
+    val schemaWithVariant = before.add("variant", VariantType.VARIANT, true,
+      fieldMetadata(id = 2, physicalName = "variant"))
+
+    validateUpdatedSchemaAndGetUpdatedSchema(
+      metadata(before, tableProperties),
+      metadata(schemaWithVariant, tableProperties),
+      emptySet(),
+      false,
+      Set(TableFeatures.VARIANT_RW_FEATURE).asJava)
+  }
+
+  test("Validate fails adding variant column when variant feature is not enabled") {
+    val tableProperties = Map(ColumnMapping.COLUMN_MAPPING_MODE_KEY -> "id")
+    val before = new StructType().add("id", IntegerType.INTEGER, false,
+      fieldMetadata(id = 1, physicalName = "id"))
+
+    val schemaWithVariant = before.add("variant", VariantType.VARIANT, true,
+      fieldMetadata(id = 2, physicalName = "variant"))
+
+    val e = intercept[KernelException] {
+      validateUpdatedSchemaAndGetUpdatedSchema(
+        metadata(before, tableProperties),
+        metadata(schemaWithVariant, tableProperties),
+        emptySet(),
+        false,
+        emptySet())
+    }
+
+    assert(e.getMessage.contains("Kernel doesn't support writing data of type: variant"))
   }
 }

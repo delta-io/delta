@@ -28,6 +28,8 @@ import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.skipping.StatsSchemaHelper;
+import io.delta.kernel.internal.tablefeatures.TableFeature;
+import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.types.TypeWideningChecker;
 import io.delta.kernel.types.*;
 import java.util.*;
@@ -52,9 +54,26 @@ public class SchemaUtils {
    * @throws IllegalArgumentException if the schema is invalid
    */
   public static void validateSchema(StructType schema, boolean isColumnMappingEnabled) {
+    Set<TableFeature> features =
+        isColumnMappingEnabled
+            ? new HashSet<>(Collections.singletonList(TableFeatures.COLUMN_MAPPING_RW_FEATURE))
+            : new HashSet<>();
+    validateSchema(schema, features);
+  }
+
+  /**
+   * Validate the schema against the set of provided features. This method checks if the schema has
+   * no duplicate columns, the names contain only valid characters and the data types are supported.
+   *
+   * @param schema the schema to validate
+   * @param features the table features to validate the schema against
+   * @throws IllegalArgumentException if the schema is invalid
+   */
+  public static void validateSchema(StructType schema, Set<TableFeature> features) {
     checkArgument(schema.length() > 0, "Schema should contain at least one column");
-    validateColumnNames(schema, isColumnMappingEnabled);
-    validateSupportedType(schema);
+    checkArgument(features != null, "Table features should not be null");
+    validateColumnNames(schema, features.contains(TableFeatures.COLUMN_MAPPING_RW_FEATURE));
+    validateSupportedType(schema, features);
   }
 
   /**
@@ -126,12 +145,14 @@ public class SchemaUtils {
       Metadata currentMetadata,
       Metadata newMetadata,
       Set<String> clusteringColumnPhysicalNames,
-      boolean allowNewRequiredFields) {
+      boolean allowNewRequiredFields,
+      Set<TableFeature> tableFeatures) {
     checkArgument(
         isColumnMappingModeEnabled(
             ColumnMapping.getColumnMappingMode(newMetadata.getConfiguration())),
         "Cannot validate updated schema when column mapping is disabled");
-    validateSchema(newMetadata.getSchema(), true /*columnMappingEnabled*/);
+
+    validateSchema(newMetadata.getSchema(), tableFeatures);
     validatePartitionColumns(
         newMetadata.getSchema(), new ArrayList<>(newMetadata.getPartitionColNames()));
     int currentMaxFieldId =
@@ -781,7 +802,7 @@ public class SchemaUtils {
    *
    * @param dataType the data type to validate
    */
-  protected static void validateSupportedType(DataType dataType) {
+  protected static void validateSupportedType(DataType dataType, Set<TableFeature> features) {
     if (dataType instanceof BooleanType
         || dataType instanceof ByteType
         || dataType instanceof ShortType
@@ -794,16 +815,19 @@ public class SchemaUtils {
         || dataType instanceof BinaryType
         || dataType instanceof DateType
         || dataType instanceof TimestampType
-        || dataType instanceof TimestampNTZType) {
+        || dataType instanceof TimestampNTZType
+        || dataType instanceof VariantType && features.contains(TableFeatures.VARIANT_RW_FEATURE)) {
       // supported types
       return;
     } else if (dataType instanceof StructType) {
-      ((StructType) dataType).fields().forEach(field -> validateSupportedType(field.getDataType()));
+      ((StructType) dataType)
+          .fields()
+          .forEach(field -> validateSupportedType(field.getDataType(), features));
     } else if (dataType instanceof ArrayType) {
-      validateSupportedType(((ArrayType) dataType).getElementType());
+      validateSupportedType(((ArrayType) dataType).getElementType(), features);
     } else if (dataType instanceof MapType) {
-      validateSupportedType(((MapType) dataType).getKeyType());
-      validateSupportedType(((MapType) dataType).getValueType());
+      validateSupportedType(((MapType) dataType).getKeyType(), features);
+      validateSupportedType(((MapType) dataType).getValueType(), features);
     } else {
       throw unsupportedDataType(dataType);
     }
