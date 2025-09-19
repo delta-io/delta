@@ -66,6 +66,7 @@ public class SnapshotFactory {
             .computeTimestampToVersionTotalDurationTimer
             .time(
                 () ->
+                    // TODO provide catalogCommits to support ccv2 time-travel
                     DeltaHistoryManager.getActiveCommitAtTimestamp(
                             engine,
                             latestSnapshot,
@@ -73,7 +74,8 @@ public class SnapshotFactory {
                             millisSinceEpochUTC,
                             true /* mustBeRecreatable */,
                             false /* canReturnLastCommit */,
-                            false /* canReturnEarliestCommit */)
+                            false /* canReturnEarliestCommit */,
+                            Optional.empty())
                         .getVersion());
 
     snapshotQueryCtx.setResolvedVersion(resolvedVersionToLoad);

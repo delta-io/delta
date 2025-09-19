@@ -129,6 +129,10 @@ public class ParsedLogData {
     this.inlineDataOpt = inlineDataOpt;
   }
 
+  public long getVersion() {
+    return version;
+  }
+
   public boolean isMaterialized() {
     return fileStatusOpt.isPresent();
   }

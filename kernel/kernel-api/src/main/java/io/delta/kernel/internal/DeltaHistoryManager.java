@@ -18,6 +18,7 @@ package io.delta.kernel.internal;
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 import static io.delta.kernel.internal.TableConfig.*;
 import static io.delta.kernel.internal.fs.Path.getName;
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.KernelException;
@@ -25,6 +26,7 @@ import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.checkpoints.CheckpointInstance;
+import io.delta.kernel.internal.files.ParsedLogData;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.InCommitTimestampUtils;
@@ -35,6 +37,7 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.*;
+import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -62,6 +65,7 @@ public final class DeltaHistoryManager {
    * @return latest commit that happened at or before {@code timestamp}.
    * @throws KernelException if the timestamp is more than the timestamp of any committed version
    */
+  // TODO: update to accept parsedLogDatas
   public static long getVersionAtOrAfterTimestamp(
       Engine engine, Path logPath, long millisSinceEpochUTC, SnapshotImpl latestSnapshot) {
     DeltaHistoryManager.Commit commit =
@@ -76,7 +80,8 @@ public final class DeltaHistoryManager {
             false, /* canReturnLastCommit */
             // e.g. we give time T-1 and first commit has time T, then we DO want that earliest
             // commit
-            true /* canReturnEarliestCommit */);
+            true /* canReturnEarliestCommit */,
+            Optional.empty());
 
     if (commit.getTimestamp() >= millisSinceEpochUTC) {
       return commit.getVersion();
@@ -106,6 +111,7 @@ public final class DeltaHistoryManager {
    * @return latest commit that happened before or at {@code timestamp}.
    * @throws KernelException if the timestamp is less than the timestamp of any committed version
    */
+  // TODO: update to accept parsedLogDatas
   public static long getVersionBeforeOrAtTimestamp(
       Engine engine, Path logPath, long millisSinceEpochUTC, SnapshotImpl latestSnapshot) {
     return DeltaHistoryManager.getActiveCommitAtTimestamp(
@@ -118,7 +124,8 @@ public final class DeltaHistoryManager {
             true, /* canReturnLastCommit */
             // e.g. we give time T-1 and first commit has time T, then do NOT want that earliest
             // commit
-            false /* canReturnEarliestCommit */)
+            false /* canReturnEarliestCommit */,
+            Optional.empty())
         .getVersion();
   }
 
@@ -150,16 +157,86 @@ public final class DeltaHistoryManager {
       long timestamp,
       boolean mustBeRecreatable,
       boolean canReturnLastCommit,
-      boolean canReturnEarliestCommit)
+      boolean canReturnEarliestCommit) {
+    return getActiveCommitAtTimestamp(
+        engine,
+        latestSnapshot,
+        logPath,
+        timestamp,
+        mustBeRecreatable,
+        canReturnLastCommit,
+        canReturnEarliestCommit,
+        Optional.empty());
+  }
+
+  /**
+   * Returns the latest commit that happened at or before {@code timestamp}.
+   *
+   * <p>If the timestamp is outside the range of [earliestCommit, latestCommit] then use parameters
+   * {@code canReturnLastCommit} and {@code canReturnEarliestCommit} to control whether an exception
+   * is thrown or the corresponding earliest/latest commit is returned.
+   *
+   * @param engine instance of {@link Engine} to use
+   * @param logPath the _delta_log path of the table
+   * @param timestamp the timestamp find the version for in milliseconds since the unix epoch
+   * @param mustBeRecreatable whether the state at the returned commit should be recreatable
+   * @param canReturnLastCommit whether we can return the latest version of the table if the
+   *     provided timestamp is after the latest commit
+   * @param canReturnEarliestCommit whether we can return the earliest version of the table if the
+   *     provided timestamp is before the earliest commit
+   * @param parsedLogDatas parsed log Deltas to use
+   * @throws KernelException if the provided timestamp is before the earliest commit and
+   *     canReturnEarliestCommit is false
+   * @throws KernelException if the provided timestamp is after the latest commit and
+   *     canReturnLastCommit is false
+   * @throws TableNotFoundException when there is no Delta table at the given path
+   */
+  public static Commit getActiveCommitAtTimestamp(
+      Engine engine,
+      SnapshotImpl latestSnapshot,
+      Path logPath,
+      long timestamp,
+      boolean mustBeRecreatable,
+      boolean canReturnLastCommit,
+      boolean canReturnEarliestCommit,
+      // TODO: update this to be ParsedLogDelta after #4805 is merged
+      Optional<List<ParsedLogData>> parsedLogDatas)
       throws TableNotFoundException {
+
+    // For now, we only accept ratified staged commits
+    parsedLogDatas.ifPresent(
+        logDatas ->
+            checkArgument(
+                logDatas.stream()
+                    .allMatch(
+                        logData ->
+                            logData.isMaterialized()
+                                && FileNames.isStagedDeltaFile(logData.getFileStatus().getPath())),
+                "Currently getActiveCommitAtTimestamp only accepts ratified staged commits"));
+
+    // Create a mapper for delta version -> file status that takes into account ratified commits
+    Function<Long, FileStatus> versionToFileStatusFunction =
+        getVersionToFileStatusFunctionWithParsedLogDelta(
+            parsedLogDatas.orElse(Collections.emptyList()), logPath);
+    Optional<Long> earliestRatifiedCommitVersion =
+        parsedLogDatas.flatMap(
+            logDatas -> logDatas.stream().map(ParsedLogData::getVersion).min(Long::compare));
 
     long earliestVersion =
         (mustBeRecreatable)
-            ? getEarliestRecreatableCommit(engine, logPath)
-            : getEarliestDeltaFile(engine, logPath);
+            ? getEarliestRecreatableCommit(engine, logPath, earliestRatifiedCommitVersion)
+            : getEarliestDeltaFile(engine, logPath, earliestRatifiedCommitVersion);
 
     Commit placeholderEarliestCommit = new Commit(earliestVersion, -1L /* timestamp */);
     Commit ictEnablementCommit = getICTEnablementCommit(latestSnapshot, placeholderEarliestCommit);
+    // Validate our assumptions: ICT must be enabled for all catalog-provided commits
+    earliestRatifiedCommitVersion.ifPresent(
+        v ->
+            checkArgument(
+                ictEnablementCommit.version <= v,
+                "catalogManaged tables must have ICT enabled but given catalog-provided commit "
+                    + "with version < ictEnablementVersion"));
+
     Commit searchResult;
     if (ictEnablementCommit.getTimestamp() <= timestamp) {
       // The target commit is in the ICT range.
@@ -185,7 +262,8 @@ public final class DeltaHistoryManager {
                   searchWindowLowerBound,
                   latestSnapshot.getVersion(),
                   engine,
-                  latestSnapshot.getLogPath());
+                  latestSnapshot.getLogPath(),
+                  versionToFileStatusFunction);
         } catch (IOException e) {
           throw new RuntimeException(
               "There was an error while reading a historical commit while performing a timestamp-"
@@ -204,10 +282,15 @@ public final class DeltaHistoryManager {
         // Else, when `canReturnEarliestCommit` is `true`, the earliest commit
         // is the desired result.
         long ict =
-            CommitInfo.unsafeGetRequiredIctFromPublishedDeltaFile(
-                engine, logPath, placeholderEarliestCommit.getVersion());
+            CommitInfo.getRequiredIctFromDeltaFile(
+                engine,
+                logPath.getParent(),
+                versionToFileStatusFunction.apply(placeholderEarliestCommit.getVersion()),
+                placeholderEarliestCommit.getVersion());
         searchResult = new Commit(placeholderEarliestCommit.getVersion(), ict);
       } else {
+        // We know the table was not catalogManaged here since ICT was not enabled ==> we don't
+        // need to worry about catalogCommits
         // start non-ICT linear search over [earliestVersion, )
         List<Commit> commits = getCommits(engine, logPath, earliestVersion);
         searchResult =
@@ -250,7 +333,8 @@ public final class DeltaHistoryManager {
       long startCommitVersionInclusive,
       long endCommitVersionInclusive,
       Engine engine,
-      Path logPath)
+      Path logPath,
+      Function<Long, FileStatus> versionToFileStatusFunction)
       throws IOException {
     // Now we have a range of commits to search through. We can use binary search to find the
     // commit that is closest to the search timestamp.
@@ -260,12 +344,19 @@ public final class DeltaHistoryManager {
             startCommitVersionInclusive,
             endCommitVersionInclusive,
             version ->
-                CommitInfo.unsafeGetRequiredIctFromPublishedDeltaFile(engine, logPath, version));
+                CommitInfo.getRequiredIctFromDeltaFile(
+                    engine,
+                    logPath.getParent(),
+                    versionToFileStatusFunction.apply(version),
+                    version));
     // This indicates that the search timestamp is less than the earliest commit.
     if (!greatestLowerBoundOpt.isPresent()) {
       long startIct =
-          CommitInfo.unsafeGetRequiredIctFromPublishedDeltaFile(
-              engine, logPath, startCommitVersionInclusive);
+          CommitInfo.getRequiredIctFromDeltaFile(
+              engine,
+              logPath.getParent(),
+              versionToFileStatusFunction.apply(startCommitVersionInclusive),
+              startCommitVersionInclusive);
       return new Commit(startCommitVersionInclusive, startIct);
     }
     Tuple2<Long, Long> greatestLowerBound = greatestLowerBoundOpt.get();
@@ -317,8 +408,17 @@ public final class DeltaHistoryManager {
    * <p>We search for the earliest checkpoint we have, or whether we have the 0th delta file. This
    * method assumes that the commits are contiguous.
    */
-  public static long getEarliestRecreatableCommit(Engine engine, Path logPath)
+  public static long getEarliestRecreatableCommit(
+      Engine engine, Path logPath, Optional<Long> earliestRatifiedCommitVersion)
       throws TableNotFoundException {
+    // For a catalogManaged table, the only time no published commits exist is when v0 has not yet
+    // been published. Otherwise, since checkpoints must have a published delta file, and log clean
+    // up
+    // must always preserve a checkpoint, there must be published commits present on the file-system
+    if (earliestRatifiedCommitVersion.isPresent() && earliestRatifiedCommitVersion.get() == 0) {
+      return 0;
+    }
+    // Thus, if there is no v0 ratified commit, then there must be published commit
     try (CloseableIterator<FileStatus> files =
         listFrom(engine, logPath, 0)
             .filter(
@@ -395,9 +495,19 @@ public final class DeltaHistoryManager {
    * exist when performing an action as a concurrent operation can delete the file during cleanup.
    * This value must be used as a lower bound.
    */
-  public static long getEarliestDeltaFile(Engine engine, Path logPath)
+  public static long getEarliestDeltaFile(
+      Engine engine, Path logPath, Optional<Long> earliestRatifiedCommitVersion)
       throws TableNotFoundException {
-
+    // For a catalogManaged table, the only time no published commits exist is when v0 has not yet
+    // been published. Otherwise, since checkpoints must have a published delta file, and log clean
+    // up
+    // must always preserve a checkpoint, there must be published commits present on the file-system
+    if (earliestRatifiedCommitVersion.isPresent() && earliestRatifiedCommitVersion.get() == 0) {
+      return 0;
+    }
+    // Thus, if there is no v0 ratified commit, then there must be published commit.
+    // Due to *ordered backfill* we know the following:
+    // minFSPublishedCommitVersion <= minCatalogProvidedCommitVersion
     try (CloseableIterator<FileStatus> files =
         listFrom(engine, logPath, 0).filter(fs -> FileNames.isCommitFile(getName(fs.getPath())))) {
 
@@ -529,5 +639,23 @@ public final class DeltaHistoryManager {
     public int hashCode() {
       return Objects.hash(version, timestamp);
     }
+  }
+
+  private static Function<Long, FileStatus> getVersionToFileStatusFunctionWithParsedLogDelta(
+      List<ParsedLogData> parsedLogDatas, Path logPath) {
+    Map<Long, FileStatus> versionToFileStatusMap = new HashMap<>();
+    for (ParsedLogData parsedLogData : parsedLogDatas) {
+      versionToFileStatusMap.put(parsedLogData.getVersion(), parsedLogData.getFileStatus());
+    }
+    return version -> {
+      if (versionToFileStatusMap.containsKey(version)) {
+        return versionToFileStatusMap.get(version);
+      } else {
+        return FileStatus.of(
+            FileNames.deltaFile(logPath, version), /* path */
+            0, /* size */
+            0 /* modification time */);
+      }
+    };
   }
 }
