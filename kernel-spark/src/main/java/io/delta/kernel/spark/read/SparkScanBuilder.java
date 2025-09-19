@@ -120,7 +120,7 @@ public class SparkScanBuilder
     }
 
     // 2. Split filters into partition filters and data filters
-    List<Filter> dataFilters = new ArrayList<>();
+    List<Filter> dataFilterList = new ArrayList<>();
     for (Filter filter : filters) {
       String[] refs = filter.references();
       // if refs is not null and all refs are in partitionColumnSet, it is a partition filter
@@ -130,14 +130,14 @@ public class SparkScanBuilder
               .allMatch(col -> partitionColumnSet.contains(col.toLowerCase(Locale.ROOT)))) {
         // partition filter, do nothing
       } else {
-        dataFilters.add(filter);
+        dataFilterList.add(filter);
       }
     }
-    this.dataFilters = dataFilters.toArray(new Filter[0]);
+    this.dataFilters = dataFilterList.toArray(new Filter[0]);
 
     // 3. Return all data filters + kernel-unsupported partition filters
     // they will be evaluated after scanning
-    Set<Filter> filterSet = new HashSet<>(dataFilters); // deduplicate
+    Set<Filter> filterSet = new HashSet<>(dataFilterList); // deduplicate
     filterSet.addAll(kernelUnsupportedFilters);
     return filterSet.toArray(new Filter[0]);
   }
