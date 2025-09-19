@@ -393,6 +393,7 @@ public class TableConfig<T> {
               addConfig(this, UNIVERSAL_FORMAT_ENABLED_FORMATS);
               addConfig(this, MATERIALIZED_ROW_ID_COLUMN_NAME);
               addConfig(this, MATERIALIZED_ROW_COMMIT_VERSION_COLUMN_NAME);
+              addConfig(this, VARIANT_SHREDDING_ENABLED);
             }
           });
 
