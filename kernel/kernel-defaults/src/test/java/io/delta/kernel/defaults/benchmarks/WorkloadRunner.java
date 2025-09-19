@@ -20,8 +20,9 @@ import org.openjdk.jmh.infra.Blackhole;
 
 /**
  * A runner that can execute a specific workload as a benchmark. A WorkloadRunner is created from a
- * WorkloadSpec and is responsible for setting up any state necessary to execute the workload as a
- * benchmark, as well as executing the workload itself.
+ * {@link WorkloadSpec} and is responsible for setting up any state necessary to execute the workload as a
+ * benchmark using {@link WorkloadRunner#setup()}, as well as executing the workload itself using
+ * {@link WorkloadRunner#executeAsBenchmark(Blackhole)}.
  */
 public interface WorkloadRunner {
   /** @return the name of this workload derived from the contents of the workload specification. */
