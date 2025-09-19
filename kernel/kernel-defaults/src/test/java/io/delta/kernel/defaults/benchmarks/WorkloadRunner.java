@@ -18,6 +18,33 @@ package io.delta.kernel.defaults.benchmarks;
 
 import org.openjdk.jmh.infra.Blackhole;
 
+/**
+ * A runner that can execute a specific workload as a benchmark. A WorkloadRunner is created from a
+ * WorkloadSpec and is responsible for setting up any state necessary to execute the workload as a
+ * benchmark, as well as executing the workload itself.
+ */
 public interface WorkloadRunner {
+  /** @return the name of this workload derived from the contents of the workload specification. */
+  String getName();
+
+  /** @return The workload specification used to create this runner. */
+  WorkloadSpec getWorkloadSpec();
+
+  /**
+   * Sets up any state necessary to execute this workload as a benchmark. This method must be called
+   * before {@link #executeAsBenchmark(Blackhole)}.
+   *
+   * @throws Exception if any error occurs during setup.
+   */
+  void setup() throws Exception;
+
+  /**
+   * Executes the workload as a benchmark, consuming any output via the provided Blackhole to
+   * prevent dead code elimination by the JIT compiler. The {@link #setup()} method must be called
+   * before invoking this method.
+   *
+   * @param blackhole the Blackhole provided by JMH to consume output.
+   * @throws Exception if any error occurs during execution.
+   */
   void executeAsBenchmark(Blackhole blackhole) throws Exception;
 }

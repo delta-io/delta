@@ -16,88 +16,72 @@
 
 package io.delta.kernel.defaults.benchmarks;
 
-import io.delta.kernel.Scan;
-import io.delta.kernel.ScanBuilder;
-import io.delta.kernel.Snapshot;
-import io.delta.kernel.Table;
+import io.delta.kernel.*;
 import io.delta.kernel.data.FilteredColumnarBatch;
-import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.utils.CloseableIterator;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import org.apache.hadoop.conf.Configuration;
 import org.openjdk.jmh.infra.Blackhole;
 
+/**
+ * A WorkloadRunner that can execute the read_metadata workload as a benchmark. This runner is
+ * created from a {@link ReadMetadataSpec}. The workload performs a scan of the table's metadata, at
+ * the specified snapshot version (or latest if not specified).
+ *
+ * <p>If run as a benchmark using {@link #executeAsBenchmark(Blackhole)}, this measures the time to
+ * perform the metadata scan and consume all results. It does not include the time to load the
+ * snapshot or set up the scan, which is done in {@link #setup()}.
+ */
 public class ReadMetadataRunner implements WorkloadRunner {
+  private Scan scan;
   private final Engine engine;
-  private final Scan scan;
+  private final Path baseWorkloadDirPath;
+  private final ReadMetadataSpec workloadSpec;
 
   /**
    * Constructs the ReadMetadataRunner from the workload spec and the base workload directory
-   * containing test tables. This initializes any state necessary to execute this workload as a
-   * benchmark.
+   * containing test tables.
    *
    * @param baseWorkloadDirPath The base directory containing workload tables.
-   * @param workload The read_metadata workload specification.
+   * @param workloadSpec The read_metadata workload specification.
    */
-  public ReadMetadataRunner(Path baseWorkloadDirPath, ReadMetadata workload) {
-    String resolvedTableRoot = getResolvedTableRoot(baseWorkloadDirPath, workload.getTableRoot());
-    engine = DefaultEngine.create(new Configuration());
-    scan = getScanFromWorkloadSpec(engine, workload, resolvedTableRoot);
+  public ReadMetadataRunner(String baseWorkloadDirPath, ReadMetadataSpec workloadSpec, Engine engine) {
+    this.baseWorkloadDirPath = Paths.get(baseWorkloadDirPath);
+    this.workloadSpec = workloadSpec;
+    this.engine = engine;
   }
 
-  /**
-   * Resolves the table root path based on whether it's a URI or a relative path. If it is a
-   * relative path, it is resolved based on the workload base directory.
-   *
-   * @param baseWorkloadDirPath The base directory containing workload tables.
-   * @param workloadTableRoot The table root path from the workload spec.
-   * @return The resolved table root path.
-   */
-  private static String getResolvedTableRoot(Path baseWorkloadDirPath, String workloadTableRoot) {
-    String resolvedTableRoot = workloadTableRoot;
-    // If this is not a URI, treat it as a relative path under the base workload directory
+  @Override
+  public void setup() {
+    // 1) Resolve the table root using
+    String workloadTableRoot = workloadSpec.getTableRoot();
     if (!workloadTableRoot.contains("://")) {
+      // If this is not a URI, treat it as a relative path under the base workload directory
       // This uses a hard-coded base directory for workload tables. In the future, this could be
       // made configurable.
-      resolvedTableRoot = baseWorkloadDirPath.resolve(Paths.get(workloadTableRoot)).toString();
+      workloadTableRoot = baseWorkloadDirPath.resolve(Paths.get(workloadTableRoot)).toString();
     }
-    return resolvedTableRoot;
+
+    // 2) Load the snapshot, and build the scan
+    SnapshotBuilder builder = TableManager.loadSnapshot(workloadTableRoot);
+    if (workloadSpec.getSnapshotVersion() != null) {
+      builder.atVersion(workloadSpec.getSnapshotVersion());
+    }
+    Snapshot snapshot = builder.build(engine);
+    scan = snapshot.getScanBuilder().build();
   }
 
-  /**
-   * Constructs the Scan from the workload specification for this runner.
-   *
-   * @param engine The kernel engine to use for table operations.
-   * @param workload The read_metadata workload specification.
-   * @param resolvedTableRoot The resolved table root path.
-   * @return The Scan object used to execute the workload.
-   */
-  private static Scan getScanFromWorkloadSpec(
-      Engine engine, ReadMetadata workload, String resolvedTableRoot) {
-    Table table = Table.forPath(engine, resolvedTableRoot);
-    // Get snapshot (use specified version or latest)
-    Snapshot snapshot;
-    if (workload.getSnapshotVersion() != null) {
-      snapshot = table.getSnapshotAsOfVersion(engine, workload.getSnapshotVersion());
-    } else {
-      snapshot = table.getLatestSnapshot(engine);
-    }
-    // Build scan
-    ScanBuilder scanBuilder = snapshot.getScanBuilder();
-    // in the read_metadata workload spec
-    return scanBuilder.build();
+  /** @return the name of this workload derived from the workload specification. */
+  @Override
+  public String getName() {
+    return "read_metadata/" + workloadSpec.name;
   }
 
-  /**
-   * Executes the read_metadata workload, returning an iterator over the results. This must be fully
-   * consumed by the caller to ensure the workload is fully executed.
-   *
-   * @return Iterator of results from the read_metadata workload.
-   */
-  public CloseableIterator<FilteredColumnarBatch> execute() {
-    return scan.getScanFiles(engine);
+  /** @return The workload specification used to create this runner. */
+  @Override
+  public WorkloadSpec getWorkloadSpec() {
+    return workloadSpec;
   }
 
   /**
@@ -118,5 +102,19 @@ public class ReadMetadataRunner implements WorkloadRunner {
     } catch (Exception e) {
       throw new RuntimeException("Error during benchmark execution", e);
     }
+  }
+
+  /**
+   * Executes the read_metadata workload, returning an iterator over the results. This must be fully
+   * consumed by the caller to ensure the workload is fully executed.
+   *
+   * @return Iterator of results from the read_metadata workload.
+   */
+  private CloseableIterator<FilteredColumnarBatch> execute() {
+    if (scan == null) {
+      throw new IllegalStateException(
+              "ReadMetadataRunner not initialized. Call setup() before executing.");
+    }
+    return scan.getScanFiles(engine);
   }
 }

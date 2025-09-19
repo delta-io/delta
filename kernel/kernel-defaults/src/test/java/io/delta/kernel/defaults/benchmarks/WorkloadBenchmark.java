@@ -18,10 +18,12 @@ package io.delta.kernel.defaults.benchmarks;
 
 import static io.delta.kernel.defaults.benchmarks.BenchmarkUtils.*;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import java.io.File;
-import java.util.List;
+import io.delta.kernel.defaults.engine.DefaultEngine;
+import io.delta.kernel.engine.Engine;
+import java.io.IOException;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
+import org.apache.hadoop.conf.Configuration;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.infra.Blackhole;
 import org.openjdk.jmh.results.format.ResultFormatType;
@@ -47,12 +49,21 @@ public class WorkloadBenchmark {
    */
   @State(Scope.Thread)
   public static class BenchmarkState {
-    // This parameter will be set dynamically in the main method to include all workload spec paths.
+    /**
+     * The json representation of the workload specification. Note: This parameter will be set
+     * dynamically by JMH. The value is set in the main method.
+     */
     @Param({})
-    private String workloadPath;
+    private String workloadSpecJson;
 
-    private static final ObjectMapper objectMapper = new ObjectMapper();
-    private WorkloadSpec workload;
+    /**
+     * The base directory containing workload tables. This is used to resolve relative table paths.
+     * Note: This parameter will be set dynamically by JMH. The value is set in the main method.
+     */
+    @Param({})
+    private String baseWorkloadDir;
+
+    /** The workload runner initialized for this benchmark invocation. */
     private WorkloadRunner runner;
 
     /**
@@ -63,13 +74,15 @@ public class WorkloadBenchmark {
      */
     @Setup(Level.Invocation)
     public void setup() throws Exception {
-      workload = objectMapper.readValue(new File(workloadPath), WorkloadSpec.class);
-      runner = workload.getRunner(RESOURCES_DIR);
+      WorkloadSpec spec = WorkloadSpec.fromJsonString(workloadSpecJson);
+      Engine engine = DefaultEngine.create(new Configuration());
+      runner = spec.getRunner(baseWorkloadDir, engine);
+      runner.setup();
     }
 
     /** @return The workload specification for this benchmark invocation. */
     public WorkloadSpec getWorkloadSpecification() {
-      return workload;
+      return getRunner().getWorkloadSpec();
     }
 
     /** @return The workload runner initialized for this benchmark invocation. */
@@ -79,19 +92,20 @@ public class WorkloadBenchmark {
   }
 
   /**
-   * Benchmark method that executes the workload specified in the state.
+   * Benchmark method that executes the workload runner specified in the state as a benchmark.
    *
    * @param state The benchmark state containing the workload specification and runner.
-   * @param blackhole The Blackhole to consume results and prevent dead code elimination.
+   * @param blackhole The Blackhole provided by JMH to consume results and prevent dead code
+   *     elimination.
    * @throws Exception If any error occurs during workload execution.
    */
   @Benchmark
   public void benchmarkWorkload(BenchmarkState state, Blackhole blackhole) throws Exception {
-    WorkloadRunner workload = state.getRunner();
-    workload.executeAsBenchmark(blackhole);
+    WorkloadRunner runner = state.getRunner();
+    runner.executeAsBenchmark(blackhole);
   }
 
-  public static void main(String[] args) throws RunnerException {
+  public static void main(String[] args) throws RunnerException, IOException {
     // Get workload specs from the workloads directory
     List<String> workloadSpecPaths = BenchmarkUtils.loadAllWorkloads(WORKLOAD_SPECS_DIR);
     if (workloadSpecPaths.isEmpty()) {
@@ -99,14 +113,22 @@ public class WorkloadBenchmark {
           "No workloads found. Please add workload specs to the workloads directory.");
     }
 
-    // Convert paths into a String array for JMH. JMH requires that parameters be of type String[].
-    String[] paths = workloadSpecPaths.toArray(new String[0]);
+    // Parse the Json specs from the json paths
+    List<WorkloadSpec> specs = new ArrayList<>();
+    for (String path : workloadSpecPaths) {
+      WorkloadSpec spec = WorkloadSpec.fromJsonPath(path);
+      specs.add(spec);
+    }
 
-    // Create and run the benchmark
+    // Convert paths into a String array for JMH. JMH requires that parameters be of type String[].
+    String[] workloadSpecs = specs.stream().map(WorkloadSpec::toJsonString).toArray(String[]::new);
+
+    // Configure and run JMH benchmark with the loaded workload specs
     Options opt =
         new OptionsBuilder()
             .include(WorkloadBenchmark.class.getSimpleName())
-            .param("workloadPath", paths)
+            .param("workloadSpecJson", workloadSpecs)
+            .param("baseWorkloadDir", RESOURCES_DIR.toString())
             .forks(1)
             .warmupIterations(3)
             .measurementIterations(5)

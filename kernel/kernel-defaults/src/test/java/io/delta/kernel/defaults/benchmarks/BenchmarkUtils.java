@@ -24,6 +24,7 @@ import java.util.List;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+/** Useful utilities and values for benchmarks. */
 public class BenchmarkUtils {
   public static final Path RESOURCES_DIR =
       Paths.get(System.getProperty("user.dir") + "/src/test/resources");
@@ -36,7 +37,6 @@ public class BenchmarkUtils {
    * @throws RuntimeException if the workloads directory doesn't exist
    */
   public static List<String> loadAllWorkloads(Path specDirPath) {
-
     try (Stream<Path> files = Files.list(specDirPath)) {
       return files
           .map(Path::toString)
