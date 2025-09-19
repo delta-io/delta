@@ -978,10 +978,18 @@ private[delta] class ConflictChecker(
    * row IDs and default row commit versions, since backfill is only done after table feature
    * support is added. Removing duplicate AddFiles is handled in
    * [[resolveRowTrackingBackfillConflicts]].
+   *
+   * RowTrackingUnBackfill behaves in a similar way. It does not do any data change. When it is
+   * the winning commit, the current transaction does not need to read its AddFiles. However, when
+   * unbackfill it is the current transaction, it pulls the addFiles added by the winning
+   * transaction and unbackfills them. Again, this is a metadata only change. AddFile deduplication
+   * is handled in [[resolveRowTrackingUnBackfillConflicts]].
    */
   protected def skipCheckedAppendsIfExistsRowTrackingBackfillTransaction(): Boolean = {
     if (winningCommitSummary.isRowTrackingBackfillTxn ||
-        currentTransactionInfo.isRowTrackingBackfillTxn) {
+        winningCommitSummary.isRowTrackingUnBackfillTxn ||
+        currentTransactionInfo.isRowTrackingBackfillTxn ||
+        currentTransactionInfo.isRowTrackingUnBackfillTxn) {
       recordSkippedPhase("checked-appends")
       return true
     }
