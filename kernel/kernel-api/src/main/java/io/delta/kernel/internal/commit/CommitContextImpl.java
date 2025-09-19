@@ -101,7 +101,8 @@ public class CommitContextImpl implements CommitContext {
         commitInfo,
         txnState.readTableOpt.map(x -> new Tuple2<>(x.getProtocol(), x.getMetadata())),
         txnState.updatedProtocolOpt,
-        txnState.isMetadataUpdate() ? Optional.of(metadata) : Optional.empty());
+        txnState.isMetadataUpdate() ? Optional.of(metadata) : Optional.empty(),
+        txnState.readTableOpt.flatMap(s -> s.getLastBackfilledVersion()));
   }
 
   ////////////////////

@@ -21,6 +21,7 @@ import static io.delta.kernel.internal.util.Preconditions.checkState;
 import static io.delta.unity.utils.OperationTimer.timeCheckedOperation;
 import static java.util.Objects.requireNonNull;
 
+import io.delta.kernel.Snapshot;
 import io.delta.kernel.commit.CommitFailedException;
 import io.delta.kernel.commit.CommitMetadata;
 import io.delta.kernel.commit.CommitResponse;
@@ -29,6 +30,7 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.files.ParsedLogData;
+import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import io.delta.storage.commit.Commit;
@@ -37,6 +39,8 @@ import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorException;
 import io.delta.unity.adapters.MetadataAdapter;
 import io.delta.unity.adapters.ProtocolAdapter;
 import java.io.IOException;
+import java.util.Comparator;
+import java.util.List;
 import java.util.Optional;
 import org.apache.hadoop.fs.Path;
 import org.slf4j.Logger;
@@ -197,11 +201,15 @@ public class UCCatalogManagedCommitter implements Committer {
               "Only supported commit type is CATALOG_WRITE, but got: %s");
 
           try {
+            logger.info(
+                "Committing version {} to UC with lastBackfilledVersion hint: {}",
+                commitMetadata.getVersion(),
+                commitMetadata.getLastBackfilledVersionOpt().orElse(null));
             ucClient.commit(
                 ucTableId,
                 tablePath.toUri(),
                 Optional.of(getUcCommitPayload(commitMetadata, kernelStagedCommitFileStatus)),
-                Optional.empty() /* lastKnownBackfilledVersion */, // TODO: take this in as a hint
+                commitMetadata.getLastBackfilledVersionOpt(),
                 false /* isDisown */,
                 commitMetadata.getNewMetadataOpt().map(MetadataAdapter::new),
                 commitMetadata.getNewProtocolOpt().map(ProtocolAdapter::new));
@@ -246,6 +254,73 @@ public class UCCatalogManagedCommitter implements Committer {
         "unknown" /* owner */,
         "unknown" /* group */,
         new org.apache.hadoop.fs.Path(kernelFileStatus.getPath()) /* path */);
+  }
+
+  @Override
+  public long publish(Engine engine, Snapshot snapshot) {
+    requireNonNull(engine, "engine is null");
+    requireNonNull(snapshot, "snapshot is null");
+
+    // Get ratified commits that need publishing
+    List<ParsedLogData> ratifiedCommits = snapshot.getRatifiedCommits();
+    if (ratifiedCommits.isEmpty()) {
+      logger.info("No ratified commits to publish for table at {}", tablePath);
+      return -1;
+    }
+
+    // Sort commits by version to maintain contiguity (publish from LOW to HIGH)
+    ratifiedCommits.sort(Comparator.comparingLong(commit -> commit.version));
+
+    long lastPublishedVersion = -1;
+    Path logPath = new Path(tablePath, "_delta_log");
+
+    for (ParsedLogData ratifiedCommit : ratifiedCommits) {
+      try {
+        // Determine source (staged) and destination (published) paths
+        String srcPath = ratifiedCommit.getFileStatus().getPath();
+        String destPath = FileNames.deltaFile(logPath.toString(), ratifiedCommit.version);
+
+        // Check contiguity - only publish if this is the next contiguous version
+        if (lastPublishedVersion != -1 && ratifiedCommit.version != lastPublishedVersion + 1) {
+          // Gap detected, stop publishing to maintain contiguity
+          logger.info(
+              "Gap detected at version {} (last published: {}), "
+                  + "stopping publish to maintain contiguity",
+              ratifiedCommit.version,
+              lastPublishedVersion);
+          break;
+        }
+
+        // Copy the staged commit file to published location
+        logger.info(
+            "Publishing commit version {} from {} to {}",
+            ratifiedCommit.version,
+            srcPath,
+            destPath);
+
+        try {
+          engine.getFileSystemClient().copy(srcPath, destPath, false /* overwrite */);
+          lastPublishedVersion = ratifiedCommit.version;
+          logger.info("Successfully published commit version {}", ratifiedCommit.version);
+        } catch (java.nio.file.FileAlreadyExistsException e) {
+          // File already exists, this is fine - consider it published
+          logger.info("Commit version {} already published, continuing", ratifiedCommit.version);
+          lastPublishedVersion = ratifiedCommit.version;
+        }
+
+      } catch (IOException e) {
+        logger.error(
+            "Failed to publish commit version {} due to: {}",
+            ratifiedCommit.version,
+            e.getMessage());
+        // Stop publishing on failure to maintain contiguity
+        break;
+      }
+    }
+
+    logger.info(
+        "Published commits up to version {} for table at {}", lastPublishedVersion, tablePath);
+    return lastPublishedVersion;
   }
 
   private static CommitFailedException storageCFEtoKernelCFE(

@@ -59,14 +59,16 @@ trait TestFixtures extends ActionUtils {
       commitInfo: CommitInfo = testCommitInfo(),
       readPandMOpt: Optional[Tuple2[Protocol, Metadata]] = Optional.empty(),
       newProtocolOpt: Optional[Protocol] = Optional.empty(),
-      newMetadataOpt: Optional[Metadata] = Optional.empty()): CommitMetadata = {
+      newMetadataOpt: Optional[Metadata] = Optional.empty(),
+      lastBackfilledVersionOpt: Optional[java.lang.Long] = Optional.empty()): CommitMetadata = {
     new CommitMetadata(
       version,
       logPath,
       commitInfo,
       readPandMOpt,
       newProtocolOpt,
-      newMetadataOpt)
+      newMetadataOpt,
+      lastBackfilledVersionOpt)
   }
 
 }

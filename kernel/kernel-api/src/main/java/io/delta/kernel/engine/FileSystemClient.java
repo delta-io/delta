@@ -94,4 +94,22 @@ public interface FileSystemClient {
    * @throws IOException for any IO error.
    */
   FileStatus getFileStatus(String path) throws IOException;
+
+  /**
+   * Copy a file from source path to destination path.
+   *
+   * <p>This operation should be atomic when possible. If the destination file already exists and
+   * {@code overwrite} is false, the behavior depends on the implementation but typically should not
+   * modify the destination file.
+   *
+   * @param srcPath Fully qualified path to the source file
+   * @param destPath Fully qualified path to the destination file
+   * @param overwrite Whether to overwrite the destination file if it exists
+   * @throws IOException for any IO error during the copy operation
+   * @throws UnsupportedOperationException if the implementation doesn't support file copying
+   * @since 3.4.0
+   */
+  default void copy(String srcPath, String destPath, boolean overwrite) throws IOException {
+    throw new UnsupportedOperationException("File copying is not supported by this implementation");
+  }
 }

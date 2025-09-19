@@ -51,6 +51,15 @@ public class SnapshotQueryContext {
         tablePath, Optional.empty(), Optional.empty(), Optional.of(timestamp));
   }
 
+  /**
+   * Creates a {@link SnapshotQueryContext} for a post-commit snapshot that represents updating from
+   * a base snapshot version to a new version with new commits.
+   */
+  public static SnapshotQueryContext forPostCommitSnapshot(
+      String tablePath, long fromVersion, long toVersion) {
+    return new PostCommitSnapshotQueryContext(tablePath, fromVersion, toVersion);
+  }
+
   private final String tablePath;
 
   /** The version provided in a time-travel-by-version query, if any. */
@@ -75,7 +84,7 @@ public class SnapshotQueryContext {
    * @param providedTimestamp the provided timestamp for a time-travel-by-timestamp query, empty if
    *     this is not a time-travel-by-timestamp query
    */
-  private SnapshotQueryContext(
+  protected SnapshotQueryContext(
       String tablePath,
       Optional<Long> providedVersion,
       Optional<Long> checkpointVersion,
@@ -154,5 +163,37 @@ public class SnapshotQueryContext {
         "SnapshotQueryContext(tablePath=%s, version=%s, providedTimestamp=%s, "
             + "checkpointVersion=%s, snapshotMetric=%s)",
         tablePath, resolvedVersion, providedTimestamp, checkpointVersion, snapshotMetrics);
+  }
+}
+
+/**
+ * A specialized {@link SnapshotQueryContext} for post-commit snapshots that represents updating
+ * from a base snapshot version to a new version with new commits.
+ */
+class PostCommitSnapshotQueryContext extends SnapshotQueryContext {
+  private final long fromVersion;
+
+  PostCommitSnapshotQueryContext(String tablePath, long fromVersion, long toVersion) {
+    super(tablePath, Optional.of(toVersion), Optional.empty(), Optional.empty());
+    this.fromVersion = fromVersion;
+  }
+
+  @Override
+  public String getQueryDisplayStr() {
+    return String.format(
+        "POST-COMMIT UPDATE (FROM VERSION %d TO VERSION %d)",
+        fromVersion, getResolvedVersion().orElse(-1L));
+  }
+
+  @Override
+  public String toString() {
+    return String.format(
+        "PostCommitSnapshotQueryContext(tablePath=%s, fromVersion=%d, toVersion=%s, "
+            + "checkpointVersion=%s, snapshotMetric=%s)",
+        getTablePath(),
+        fromVersion,
+        getResolvedVersion(),
+        getCheckpointVersion(),
+        getSnapshotMetrics());
   }
 }
