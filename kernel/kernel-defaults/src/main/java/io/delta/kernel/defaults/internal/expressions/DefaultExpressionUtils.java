@@ -519,7 +519,7 @@ class DefaultExpressionUtils {
   static Predicate createPredicate(
       String name, List<Expression> children, Optional<CollationIdentifier> collationIdentifier) {
     if (collationIdentifier.isPresent()) {
-      return new Predicate(name, children.get(0), children.get(1), collationIdentifier.get());
+      return new Predicate(name, children, collationIdentifier.get());
     } else {
       return new Predicate(name, children);
     }
@@ -538,5 +538,15 @@ class DefaultExpressionUtils {
               collationIdentifier, CollationIdentifier.SPARK_UTF8_BINARY);
       throw unsupportedExpressionException(predicate, msg);
     }
+  }
+
+  /**
+   * Checks if the given expression is a null literal.
+   *
+   * @param expression The expression to check
+   * @return true if the expression is a Literal with null value, false otherwise
+   */
+  static boolean isNullLiteral(Expression expression) {
+    return expression instanceof Literal && ((Literal) expression).getValue() == null;
   }
 }
