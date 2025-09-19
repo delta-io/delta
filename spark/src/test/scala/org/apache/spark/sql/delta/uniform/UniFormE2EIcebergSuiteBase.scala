@@ -106,6 +106,31 @@ abstract class UniFormE2EIcebergSuiteBase extends UniFormE2ETest {
   }
 
   compatVersions.foreach { compatVersion =>
+    Seq(false, true).foreach { isShallowClone =>
+      test(s"CLONE - compatV$compatVersion" + ", isShallowClone=" + isShallowClone) {
+        withTable(testTableName, "source") {
+          write("CREATE TABLE source (col1 INT) USING DELTA TBLPROPERTIES (" +
+            "'delta.columnMapping.mode' = 'name')")
+          write("INSERT INTO source VALUES (1), (2), (3)")
+          write(
+            s"""CREATE TABLE `$testTableName`
+               |${if (isShallowClone) "SHALLOW" else ""} CLONE source
+               |TBLPROPERTIES (
+               |  'delta.enableIcebergCompatV$compatVersion' = 'true',
+               |  'delta.universalFormat.enabledFormats' = 'iceberg'
+               |  ${extraTableProperties(compatVersion)}
+               |)""".stripMargin)
+          readAndVerify(testTableName, "col1", "col1", Seq(Row(1), Row(2), Row(3)))
+          write(s"UPDATE `$testTableName` SET col1 = 100 WHERE col1 = 1")
+          readAndVerify(testTableName, "col1", "col1", Seq(Row(2), Row(3), Row(100)))
+          write(s"DELETE FROM `$testTableName` WHERE col1 = 3")
+          readAndVerify(testTableName, "col1", "col1", Seq(Row(2), Row(100)))
+        }
+      }
+    }
+  }
+
+  compatVersions.foreach { compatVersion =>
     test(s"Table with partition - compatV$compatVersion") {
       withTable(testTableName) {
         write(
@@ -115,6 +140,7 @@ abstract class UniFormE2EIcebergSuiteBase extends UniFormE2ETest {
              |  'delta.columnMapping.mode' = 'name',
              |  'delta.enableIcebergCompatV$compatVersion' = 'true',
              |  'delta.universalFormat.enabledFormats' = 'iceberg'
+             |  ${extraTableProperties(compatVersion)}
              |)""".stripMargin)
         write(s"INSERT INTO `$testTableName` VALUES (123, 'p1'), (456, 'p2'), (789, 'p1')")
         readAndVerify(testTableName, "id, part", "id",
