@@ -24,6 +24,7 @@ import scala.reflect.ClassTag
 
 import io.delta.kernel.TransactionSuite.testSchema
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
+import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.exceptions.TableNotFoundException
 import io.delta.kernel.internal.actions.{Format, Metadata, Protocol}
@@ -46,6 +47,27 @@ import org.scalatest.funsuite.AnyFunSuite
 
 class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
 
+  // Helper function for non-catalog-managed tables (no staged commits)
+  private def getActiveCommitAtTimestamp(
+      engine: Engine,
+      latestSnapshot: SnapshotImpl,
+      logPath: Path,
+      timestamp: Long,
+      mustBeRecreatable: Boolean = true,
+      canReturnLastCommit: Boolean = false,
+      canReturnEarliestCommit: Boolean = false): DeltaHistoryManager.Commit = {
+    DeltaHistoryManager.getActiveCommitAtTimestamp(
+      engine,
+      latestSnapshot,
+      logPath,
+      timestamp,
+      mustBeRecreatable,
+      canReturnLastCommit,
+      canReturnEarliestCommit,
+      Optional.empty() /* parsedLogDelta */
+    )
+  }
+
   def checkGetActiveCommitAtTimestamp(
       fileList: Seq[FileStatus],
       timestamp: Long,
@@ -55,7 +77,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
       canReturnEarliestCommit: Boolean = false): Unit = {
     val lastDelta = fileList.map(_.getPath).filter(FileNames.isCommitFile).last
     val latestVersion = FileNames.getFileVersion(new Path(lastDelta))
-    val activeCommit = DeltaHistoryManager.getActiveCommitAtTimestamp(
+    val activeCommit = getActiveCommitAtTimestamp(
       createMockFSListFromEngine(fileList),
       getMockSnapshot(dataPath, latestVersion = latestVersion),
       logPath,
@@ -70,7 +92,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     if (mustBeRecreatable) {
       // When mustBeRecreatable=true, we should have the same answer as mustBeRecreatable=false
       // for valid queries that do not throw an error
-      val activeCommit = DeltaHistoryManager.getActiveCommitAtTimestamp(
+      val activeCommit = getActiveCommitAtTimestamp(
         createMockFSListFromEngine(fileList),
         getMockSnapshot(dataPath, latestVersion),
         logPath,
@@ -93,7 +115,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
       canReturnLastCommit: Boolean = false,
       canReturnEarliestCommit: Boolean = false)(implicit classTag: ClassTag[T]): Unit = {
     val e = intercept[T] {
-      DeltaHistoryManager.getActiveCommitAtTimestamp(
+      getActiveCommitAtTimestamp(
         createMockFSListFromEngine(fileList),
         getMockSnapshot(dataPath, latestVersion = latestVersion),
         logPath,
@@ -220,26 +242,18 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
   test("getActiveCommitAtTimestamp: throws table not found exception") {
     // Non-existent path
     intercept[TableNotFoundException](
-      DeltaHistoryManager.getActiveCommitAtTimestamp(
+      getActiveCommitAtTimestamp(
         createMockFSListFromEngine(p => throw new FileNotFoundException(p)),
         getMockSnapshot(dataPath, latestVersion = 1L),
         logPath,
-        0,
-        true, // mustBeRecreatable
-        false, // canReturnLastCommit
-        false // canReturnEarliestCommit
-      ))
+        0))
     // Empty _delta_log directory
     intercept[TableNotFoundException](
-      DeltaHistoryManager.getActiveCommitAtTimestamp(
+      getActiveCommitAtTimestamp(
         createMockFSListFromEngine(p => Seq()),
         getMockSnapshot(dataPath, latestVersion = 1L),
         logPath,
-        0,
-        true, // mustBeRecreatable
-        false, // canReturnLastCommit
-        false // canReturnEarliestCommit
-      ))
+        0))
   }
 
   // TODO: corrects commit timestamps for increasing commits (monotonizeCommitTimestamps)?
@@ -323,26 +337,19 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     /* ---------- TABLE NOT FOUND --------- */
     // Non-existent path
     intercept[TableNotFoundException](
-      DeltaHistoryManager.getActiveCommitAtTimestamp(
+      getActiveCommitAtTimestamp(
         createMockFSListFromEngine(p => throw new FileNotFoundException(p)),
         getMockSnapshot(dataPath, latestVersion = 1L),
         logPath,
         0,
-        false, // mustBeRecreatable
-        false, // canReturnLastCommit
-        false // canReturnEarliestCommit
-      ))
+        mustBeRecreatable = false))
     // Empty _delta_log directory
     intercept[TableNotFoundException](
-      DeltaHistoryManager.getActiveCommitAtTimestamp(
+      getActiveCommitAtTimestamp(
         createMockFSListFromEngine(p => Seq()),
         getMockSnapshot(dataPath, latestVersion = 1L),
         logPath,
-        0,
-        true, // mustBeRecreatable
-        false, // canReturnLastCommit
-        false // canReturnEarliestCommit
-      ))
+        0))
     /* ---------- CORRUPT LISTINGS --------- */
     // No commit files at all (only checkpoint files)
     checkGetActiveCommitAtTimestampError[RuntimeException](
@@ -388,7 +395,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     flagCombinations.foreach {
       case (mustBeRecreatable, canReturnLastCommit, canReturnEarliestCommit) =>
         if (shouldSucceed) {
-          val activeCommit = DeltaHistoryManager.getActiveCommitAtTimestamp(
+          val activeCommit = getActiveCommitAtTimestamp(
             createMockFSListFromEngine(fileList),
             getMockSnapshot(dataPath, latestVersion = latestVersion, ictEnablementInfoOpt),
             logPath,
@@ -405,7 +412,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
               s"canReturnEarliestCommit=$canReturnEarliestCommit")
         } else {
           val e = intercept[Exception] {
-            DeltaHistoryManager.getActiveCommitAtTimestamp(
+            getActiveCommitAtTimestamp(
               createMockFSListFromEngine(fileList),
               getMockSnapshot(dataPath, latestVersion = latestVersion, ictEnablementInfoOpt),
               logPath,
@@ -449,15 +456,11 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
       Some((ictEnablementVersion, deltaToICTMap(ictEnablementVersion))))
 
     testCases.foreach { case (timestamp, expectedVersion, description) =>
-      val activeCommit = DeltaHistoryManager.getActiveCommitAtTimestamp(
+      val activeCommit = getActiveCommitAtTimestamp(
         engine,
         mockSnapshot,
         logPath,
-        timestamp,
-        true, /* mustBeRecreatable */
-        false, /* canReturnLastCommit */
-        false /* canReturnEarliestCommit */
-      )
+        timestamp)
       assert(
         activeCommit.getVersion == expectedVersion,
         s"$description: Expected version $expectedVersion " +
@@ -544,50 +547,40 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
       Some((0L, deltaToICTMap(0L))))
 
     // Test timestamp exactly at ICT enablement
-    val activeCommit1 = DeltaHistoryManager.getActiveCommitAtTimestamp(
+    val activeCommit1 = getActiveCommitAtTimestamp(
       engine,
       mockSnapshot,
       logPath,
-      10L, /* timestamp */
-      true, /* mustBeRecreatable */
-      false, /* canReturnLastCommit */
-      false /* canReturnEarliestCommit */ )
+      timestamp = 10L)
     assert(activeCommit1.getVersion == 0L)
     assert(activeCommit1.getTimestamp == 10L)
 
     // Test timestamp just before first ICT
-    val activeCommit2 = DeltaHistoryManager.getActiveCommitAtTimestamp(
+    val activeCommit2 = getActiveCommitAtTimestamp(
       engine,
       mockSnapshot,
       logPath,
-      9L, /* timestamp */
-      true, /* mustBeRecreatable */
-      false, /* canReturnLastCommit */
-      true /* canReturnEarliestCommit */ )
+      timestamp = 9L,
+      canReturnEarliestCommit = true)
     assert(activeCommit2.getVersion == 0L) // Should return earliest commit
     assert(activeCommit2.getTimestamp == 10L)
 
     // Test timestamp just after last ICT
     intercept[io.delta.kernel.exceptions.KernelException] {
-      DeltaHistoryManager.getActiveCommitAtTimestamp(
+      getActiveCommitAtTimestamp(
         engine,
         mockSnapshot,
         logPath,
-        51L, /* timestamp */
-        true, /* mustBeRecreatable */
-        false, /* canReturnLastCommit */
-        false /* canReturnEarliestCommit */ )
+        51L)
     }
 
     // Test with canReturnLastCommit=true
-    val activeCommit3 = DeltaHistoryManager.getActiveCommitAtTimestamp(
+    val activeCommit3 = getActiveCommitAtTimestamp(
       engine,
       mockSnapshot,
       logPath,
-      51L, /* timestamp */
-      true, /* mustBeRecreatable */
-      true, /* canReturnLastCommit */
-      false /* canReturnEarliestCommit */ )
+      timestamp = 51L,
+      canReturnLastCommit = true)
     assert(activeCommit3.getVersion == 4L)
     assert(activeCommit3.getTimestamp == 50L)
   }
@@ -608,38 +601,30 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
       Some((0L, deltaToICTMap(0L))))
 
     // Test timestamp equal to latest snapshot timestamp
-    val activeCommit1 = DeltaHistoryManager.getActiveCommitAtTimestamp(
+    val activeCommit1 = getActiveCommitAtTimestamp(
       engine,
       mockSnapshot,
       logPath,
-      30L, /* timestamp */
-      true, /* mustBeRecreatable */
-      false, /* canReturnLastCommit */
-      false /* canReturnEarliestCommit */ )
+      timestamp = 30L)
     assert(activeCommit1.getVersion == 2L)
     assert(activeCommit1.getTimestamp == 30L)
 
     // Test timestamp greater than latest snapshot timestamp
     intercept[io.delta.kernel.exceptions.KernelException] {
-      DeltaHistoryManager.getActiveCommitAtTimestamp(
+      getActiveCommitAtTimestamp(
         engine,
         mockSnapshot,
         logPath,
-        35L, /* timestamp */
-        true, /* mustBeRecreatable */
-        false, /* canReturnLastCommit */
-        false /* canReturnEarliestCommit */ )
+        timestamp = 35L)
     }
 
     // Test with canReturnLastCommit=true
-    val activeCommit2 = DeltaHistoryManager.getActiveCommitAtTimestamp(
+    val activeCommit2 = getActiveCommitAtTimestamp(
       engine,
       mockSnapshot,
       logPath,
-      35L, /* timestamp */
-      true, /* mustBeRecreatable */
-      true, /* canReturnLastCommit */
-      false /* canReturnEarliestCommit */ )
+      timestamp = 35L,
+      canReturnLastCommit = true)
     assert(activeCommit2.getVersion == 2L)
     assert(activeCommit2.getTimestamp == 30L)
   }
@@ -669,38 +654,29 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     ) // ICT enabled at version 2
 
     // Test timestamp before ICT enablement (should use modification time)
-    val activeCommit1 = DeltaHistoryManager.getActiveCommitAtTimestamp(
+    val activeCommit1 = getActiveCommitAtTimestamp(
       engine,
       mockSnapshot,
       logPath,
-      150L, /* timestamp */
-      true, /* mustBeRecreatable */
-      false, /* canReturnLastCommit */
-      false /* canReturnEarliestCommit */ )
+      timestamp = 150L)
     assert(activeCommit1.getVersion == 1L)
     assert(activeCommit1.getTimestamp == 150L) // modification time
 
     // Test timestamp after ICT enablement (should use ICT)
-    val activeCommit2 = DeltaHistoryManager.getActiveCommitAtTimestamp(
+    val activeCommit2 = getActiveCommitAtTimestamp(
       engine,
       mockSnapshot,
       logPath,
-      300L, /* timestamp */
-      true, /* mustBeRecreatable */
-      false, /* canReturnLastCommit */
-      false /* canReturnEarliestCommit */ )
+      timestamp = 300L)
     assert(activeCommit2.getVersion == 2L)
     assert(activeCommit2.getTimestamp == 300L) // ICT
 
     // Test timestamp between ICT commits
-    val activeCommit3 = DeltaHistoryManager.getActiveCommitAtTimestamp(
+    val activeCommit3 = getActiveCommitAtTimestamp(
       engine,
       mockSnapshot,
       logPath,
-      350L, /* timestamp */
-      true, /* mustBeRecreatable */
-      false, /* canReturnLastCommit */
-      false /* canReturnEarliestCommit */ )
+      timestamp = 350L)
     assert(activeCommit3.getVersion == 2L)
     assert(activeCommit3.getTimestamp == 300L) // Should return previous ICT commit
   }
@@ -731,27 +707,22 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
 
     // Test timestamp before ICT enablement but non-ICT commits are missing
     // Should return earliest available commit with its ICT
-    val activeCommit1 = DeltaHistoryManager.getActiveCommitAtTimestamp(
+    val activeCommit1 = getActiveCommitAtTimestamp(
       engine,
       mockSnapshot,
       logPath,
-      50L, /* timestamp */
-      true, /* mustBeRecreatable */
-      false, /* canReturnLastCommit */
-      true /* canReturnEarliestCommit */ )
+      timestamp = 50L,
+      canReturnEarliestCommit = true)
     assert(activeCommit1.getVersion == 2L)
     assert(activeCommit1.getTimestamp == 300L) // ICT of earliest available commit
 
     // Test error case when canReturnEarliestCommit=false
     intercept[io.delta.kernel.exceptions.KernelException] {
-      DeltaHistoryManager.getActiveCommitAtTimestamp(
+      getActiveCommitAtTimestamp(
         engine,
         mockSnapshot,
         logPath,
-        50L, /* timestamp */
-        true, /* mustBeRecreatable */
-        false, /* canReturnLastCommit */
-        false /* canReturnEarliestCommit */ )
+        timestamp = 50L)
     }
   }
 
@@ -770,36 +741,30 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
       Some((0L, deltaToICTMap(0L))))
 
     // Test searchTimestamp is the exact match with the middle commit
-    val activeCommit1 = DeltaHistoryManager.getActiveCommitAtTimestamp(
+    val activeCommit1 = getActiveCommitAtTimestamp(
       engine,
       mockSnapshot,
       logPath,
-      31L, /* timestamp */ // Exact match with version 3
-      true, /* mustBeRecreatable */
-      false, /* canReturnLastCommit */
-      false /* canReturnEarliestCommit */ )
+      timestamp = 31L // Exact match with version 3
+    )
     assert(activeCommit1.getVersion == 3L)
 
     // Test searchTimestamp = start case
-    val activeCommit2 = DeltaHistoryManager.getActiveCommitAtTimestamp(
+    val activeCommit2 = getActiveCommitAtTimestamp(
       engine,
       mockSnapshot,
       logPath,
-      1L, /* timestamp */ // First ICT
-      true, /* mustBeRecreatable */
-      false, /* canReturnLastCommit */
-      false /* canReturnEarliestCommit */ )
+      timestamp = 1L // First ICT
+    )
     assert(activeCommit2.getVersion == 0L)
 
     // Test searchTimestamp = end case
-    val activeCommit3 = DeltaHistoryManager.getActiveCommitAtTimestamp(
+    val activeCommit3 = getActiveCommitAtTimestamp(
       engine,
       mockSnapshot,
       logPath,
-      70L, /* timestamp */ // Last ICT
-      true, /* mustBeRecreatable */
-      false, /* canReturnLastCommit */
-      false /* canReturnEarliestCommit */ )
+      timestamp = 70L // Last ICT
+    )
     assert(activeCommit3.getVersion == 6L)
 
     // Test with even number of commits
@@ -815,14 +780,12 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
       latestVersion = ictsEven.size - 1,
       Some((0L, deltaToICTMapEven(0L))))
 
-    val activeCommit4 = DeltaHistoryManager.getActiveCommitAtTimestamp(
+    val activeCommit4 = getActiveCommitAtTimestamp(
       engineEven,
       mockSnapshotEven,
       logPath,
-      25L, /* timestamp */ // Between version 2 and 3
-      true, /* mustBeRecreatable */
-      false, /* canReturnLastCommit */
-      false /* canReturnEarliestCommit */ )
+      timestamp = 25L // Between version 2 and 3
+    )
     assert(activeCommit4.getVersion == 2L)
     assert(activeCommit4.getTimestamp == 21L)
   }
@@ -843,38 +806,31 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
       Some((0L, deltaToICTMap(0L))))
 
     // Test exact match
-    val activeCommit1 = DeltaHistoryManager.getActiveCommitAtTimestamp(
+    val activeCommit1 = getActiveCommitAtTimestamp(
       engine,
       mockSnapshot,
       logPath,
-      100L, /* timestamp */
-      true, /* mustBeRecreatable */
-      false, /* canReturnLastCommit */
-      false /* canReturnEarliestCommit */ )
+      timestamp = 100L)
     assert(activeCommit1.getVersion == 0L)
     assert(activeCommit1.getTimestamp == 100L)
 
     // Test timestamp before single commit
-    val activeCommit2 = DeltaHistoryManager.getActiveCommitAtTimestamp(
+    val activeCommit2 = getActiveCommitAtTimestamp(
       engine,
       mockSnapshot,
       logPath,
-      50L, /* timestamp */
-      true, /* mustBeRecreatable */
-      false, /* canReturnLastCommit */
-      true /* canReturnEarliestCommit */ )
+      timestamp = 50L,
+      canReturnEarliestCommit = true)
     assert(activeCommit2.getVersion == 0L)
     assert(activeCommit2.getTimestamp == 100L)
 
     // Test timestamp after single commit
-    val activeCommit3 = DeltaHistoryManager.getActiveCommitAtTimestamp(
+    val activeCommit3 = getActiveCommitAtTimestamp(
       engine,
       mockSnapshot,
       logPath,
-      150L, /* timestamp */
-      true, /* mustBeRecreatable */
-      true, /* canReturnLastCommit */
-      false /* canReturnEarliestCommit */ )
+      timestamp = 150L,
+      canReturnLastCommit = true)
     assert(activeCommit3.getVersion == 0L)
     assert(activeCommit3.getTimestamp == 100L)
   }
@@ -918,11 +874,11 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
 
     flagCombinations.foreach {
       case (mustBeRecreatable, canReturnLastCommit, canReturnEarliestCommit) =>
-        val activeCommit = DeltaHistoryManager.getActiveCommitAtTimestamp(
+        val activeCommit = getActiveCommitAtTimestamp(
           engine,
           mockSnapshot,
           logPath,
-          20L, /* timestamp */
+          timestamp = 20L,
           mustBeRecreatable,
           canReturnLastCommit,
           canReturnEarliestCommit)
@@ -935,22 +891,22 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     flagCombinations.foreach {
       case (mustBeRecreatable, canReturnLastCommit, canReturnEarliestCommit) =>
         if (canReturnEarliestCommit) {
-          val activeCommit = DeltaHistoryManager.getActiveCommitAtTimestamp(
+          val activeCommit = getActiveCommitAtTimestamp(
             engine,
             mockSnapshot,
             logPath,
-            5L, /* timestamp */
+            timestamp = 5L,
             mustBeRecreatable,
             canReturnLastCommit,
             canReturnEarliestCommit)
           assert(activeCommit.getVersion == 0L)
         } else {
           intercept[io.delta.kernel.exceptions.KernelException] {
-            DeltaHistoryManager.getActiveCommitAtTimestamp(
+            getActiveCommitAtTimestamp(
               engine,
               mockSnapshot,
               logPath,
-              5L, /* timestamp */
+              timestamp = 5L,
               mustBeRecreatable,
               canReturnLastCommit,
               canReturnEarliestCommit)
@@ -962,22 +918,22 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     flagCombinations.foreach {
       case (mustBeRecreatable, canReturnLastCommit, canReturnEarliestCommit) =>
         if (canReturnLastCommit) {
-          val activeCommit = DeltaHistoryManager.getActiveCommitAtTimestamp(
+          val activeCommit = getActiveCommitAtTimestamp(
             engine,
             mockSnapshot,
             logPath,
-            35L, /* timestamp */
+            timestamp = 35L,
             mustBeRecreatable,
             canReturnLastCommit,
             canReturnEarliestCommit)
           assert(activeCommit.getVersion == 2L)
         } else {
           intercept[io.delta.kernel.exceptions.KernelException] {
-            DeltaHistoryManager.getActiveCommitAtTimestamp(
+            getActiveCommitAtTimestamp(
               engine,
               mockSnapshot,
               logPath,
-              35L, /* timestamp */
+              timestamp = 35L,
               mustBeRecreatable,
               canReturnLastCommit,
               canReturnEarliestCommit)
@@ -998,14 +954,11 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
 
     // Test with ICT not enabled
     val nonICTSnapshot = getMockSnapshot(dataPath, latestVersion = 2L, None)
-    val activeCommit1 = DeltaHistoryManager.getActiveCommitAtTimestamp(
+    val activeCommit1 = getActiveCommitAtTimestamp(
       createMockFSListFromEngine(deltasWithModTimes),
       nonICTSnapshot,
       logPath,
-      15L, /* timestamp */
-      true, /* mustBeRecreatable */
-      false, /* canReturnLastCommit */
-      false /* canReturnEarliestCommit */ )
+      timestamp = 15L)
     assert(activeCommit1.getVersion == 1L)
     assert(activeCommit1.getTimestamp == 15L) // Should use modification time
 
@@ -1045,14 +998,11 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
       SnapshotQueryContext.forLatestSnapshot(dataPath.toString))
 
     intercept[IllegalStateException] {
-      DeltaHistoryManager.getActiveCommitAtTimestamp(
+      getActiveCommitAtTimestamp(
         engine,
         malformedSnapshot,
         logPath,
-        15L, /* timestamp */
-        true, /* mustBeRecreatable */
-        false, /* canReturnLastCommit */
-        false /* canReturnEarliestCommit */ )
+        timestamp = 15L)
     }
   }
 

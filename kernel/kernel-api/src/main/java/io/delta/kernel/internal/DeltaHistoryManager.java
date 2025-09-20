@@ -144,46 +144,6 @@ public final class DeltaHistoryManager {
    *     provided timestamp is after the latest commit
    * @param canReturnEarliestCommit whether we can return the earliest version of the table if the
    *     provided timestamp is before the earliest commit
-   * @throws KernelException if the provided timestamp is before the earliest commit and
-   *     canReturnEarliestCommit is false
-   * @throws KernelException if the provided timestamp is after the latest commit and
-   *     canReturnLastCommit is false
-   * @throws TableNotFoundException when there is no Delta table at the given path
-   */
-  public static Commit getActiveCommitAtTimestamp(
-      Engine engine,
-      SnapshotImpl latestSnapshot,
-      Path logPath,
-      long timestamp,
-      boolean mustBeRecreatable,
-      boolean canReturnLastCommit,
-      boolean canReturnEarliestCommit) {
-    return getActiveCommitAtTimestamp(
-        engine,
-        latestSnapshot,
-        logPath,
-        timestamp,
-        mustBeRecreatable,
-        canReturnLastCommit,
-        canReturnEarliestCommit,
-        Optional.empty());
-  }
-
-  /**
-   * Returns the latest commit that happened at or before {@code timestamp}.
-   *
-   * <p>If the timestamp is outside the range of [earliestCommit, latestCommit] then use parameters
-   * {@code canReturnLastCommit} and {@code canReturnEarliestCommit} to control whether an exception
-   * is thrown or the corresponding earliest/latest commit is returned.
-   *
-   * @param engine instance of {@link Engine} to use
-   * @param logPath the _delta_log path of the table
-   * @param timestamp the timestamp find the version for in milliseconds since the unix epoch
-   * @param mustBeRecreatable whether the state at the returned commit should be recreatable
-   * @param canReturnLastCommit whether we can return the latest version of the table if the
-   *     provided timestamp is after the latest commit
-   * @param canReturnEarliestCommit whether we can return the earliest version of the table if the
-   *     provided timestamp is before the earliest commit
    * @param parsedLogDatas parsed log Deltas to use
    * @throws KernelException if the provided timestamp is before the earliest commit and
    *     canReturnEarliestCommit is false
