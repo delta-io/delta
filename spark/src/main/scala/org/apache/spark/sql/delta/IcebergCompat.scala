@@ -259,6 +259,13 @@ case class IcebergCompatVersionBase(knownVersions: Set[IcebergCompatBase]) {
     )
 
   /**
+   * Get the IcebergCompat by Iceberg formatVersion.
+   * @return the IcebergCompatVx object, None if not supported.
+   */
+  def getForIcebergFormatVersion(formatVersion: Int): Option[IcebergCompatBase] =
+    knownVersions.find(_.icebergFormatVersion == formatVersion)
+
+  /**
    * @return any enabled IcebergCompat in the conf
    */
   def anyEnabled(conf: Map[String, String]): Option[IcebergCompatBase] =
