@@ -1622,7 +1622,7 @@ When Type Widening is supported (when the `readerFeatures` field of a table's `p
 This section documents additional requirements that writers must follow in order to preserve some of the higher level guarantees that Delta provides.
 
 ## Creation of New Log Entries
- - Writers MUST never overwrite an existing log entry. When ever possible they should use atomic primitives of the underlying filesystem to ensure concurrent writers do not overwrite each other's entries.
+ - Writers MUST never overwrite an existing log entry. When ever possible they should use atomic primitives of the underlying filesystem to ensure concurrent writers do not overwrite each others' entries.
 
 ## Consistency Between Table Metadata and Data Files
  - Any column that exists in a data file present in the table MUST also be present in the metadata of the table.
