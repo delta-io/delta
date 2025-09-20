@@ -114,7 +114,7 @@ abstract class UniFormE2EIcebergSuiteBase extends UniFormE2ETest {
           write("INSERT INTO source VALUES (1), (2), (3)")
           write(
             s"""CREATE TABLE `$testTableName`
-               |${if (isShallowClone) "SHALLOW" else ""} CLONE source
+               |${if (isShallowClone) "SHALLOW" else "DEEP"} CLONE source
                |TBLPROPERTIES (
                |  'delta.enableIcebergCompatV$compatVersion' = 'true',
                |  'delta.universalFormat.enabledFormats' = 'iceberg'
