@@ -25,6 +25,7 @@ import io.delta.kernel.TableManager;
 import io.delta.kernel.annotation.Experimental;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
+import io.delta.kernel.internal.files.ParsedDeltaData;
 import io.delta.kernel.internal.files.ParsedLogData;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.transaction.CreateTableTransactionBuilder;
@@ -98,7 +99,7 @@ public class UCCatalogManagedClient {
     versionOpt.ifPresent(
         version -> validateLoadTableVersionExists(ucTableId, version, ucTableVersion));
     final List<ParsedLogData> logData =
-        getSortedKernelLogDataFromRatifiedCommits(ucTableId, response.getCommits());
+        getSortedKernelParsedDeltaDataFromRatifiedCommits(ucTableId, response.getCommits());
 
     return timeUncheckedOperation(
         logger,
@@ -229,7 +230,7 @@ public class UCCatalogManagedClient {
    * loading a Delta table.
    */
   @VisibleForTesting
-  static List<ParsedLogData> getSortedKernelLogDataFromRatifiedCommits(
+  static List<ParsedLogData> getSortedKernelParsedDeltaDataFromRatifiedCommits(
       String ucTableId, List<Commit> commits) {
     final List<ParsedLogData> result =
         timeUncheckedOperation(
@@ -241,7 +242,7 @@ public class UCCatalogManagedClient {
                     .sorted(Comparator.comparingLong(Commit::getVersion))
                     .map(
                         commit ->
-                            ParsedLogData.forFileStatus(
+                            ParsedDeltaData.forFileStatus(
                                 hadoopFileStatusToKernelFileStatus(commit.getFileStatus())))
                     .collect(Collectors.toList()));
 

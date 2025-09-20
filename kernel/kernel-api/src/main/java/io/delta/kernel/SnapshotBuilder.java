@@ -22,7 +22,6 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.files.ParsedLogData;
-import io.delta.kernel.internal.files.ParsedLogData.ParsedLogType;
 import java.util.List;
 
 /**
@@ -97,8 +96,8 @@ public interface SnapshotBuilder {
    * Provides parsed log data to optimize table resolution.
    *
    * <p>When log data is provided, Kernel can avoid reading from the filesystem for information that
-   * is already available in the parsed data, improving performance. Currently, only log data of
-   * type {@link ParsedLogType#RATIFIED_STAGED_COMMIT} is supported.
+   * is already available in the parsed data, improving performance. Currently, only ratified staged
+   * commits are supported.
    *
    * @param logData the parsed log data to use for optimization
    * @return a new builder instance with the provided log data

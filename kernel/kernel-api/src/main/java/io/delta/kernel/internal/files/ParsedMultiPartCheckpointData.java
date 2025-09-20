@@ -25,8 +25,18 @@ import io.delta.kernel.utils.FileStatus;
 import java.util.Objects;
 import java.util.Optional;
 
-public class ParsedMultiPartCheckpointData extends ParsedCheckpointData {
+/**
+ * Multi-part checkpoint split across multiple Parquet files for parallel reading.
+ *
+ * <p>Example: {@code 00000000000000000001.checkpoint.0000000001.0000000010.parquet}
+ */
+public final class ParsedMultiPartCheckpointData extends ParsedCheckpointData {
   public static ParsedMultiPartCheckpointData forFileStatus(FileStatus fileStatus) {
+    checkArgument(
+        FileNames.isMultiPartCheckpointFile(fileStatus.getPath()),
+        "Expected a multi-part checkpoint file but got %s",
+        fileStatus.getPath());
+
     final long version = FileNames.checkpointVersion(fileStatus.getPath());
     final Tuple2<Integer, Integer> partInfo =
         FileNames.multiPartCheckpointPartAndNumParts(fileStatus.getPath());
@@ -49,11 +59,29 @@ public class ParsedMultiPartCheckpointData extends ParsedCheckpointData {
       int numParts,
       Optional<FileStatus> fileStatusOpt,
       Optional<ColumnarBatch> inlineDataOpt) {
-    super(version, ParsedLogType.MULTIPART_CHECKPOINT, fileStatusOpt, inlineDataOpt);
+    super(version, fileStatusOpt, inlineDataOpt);
     checkArgument(numParts > 0, "numParts must be greater than 0");
     checkArgument(part > 0 && part <= numParts, "part must be between 1 and numParts");
     this.part = part;
     this.numParts = numParts;
+  }
+
+  @Override
+  protected CheckpointTypePriority getCheckpointTypePriority() {
+    return CheckpointTypePriority.MULTIPART;
+  }
+
+  @Override
+  protected int compareToSameType(ParsedCheckpointData that) {
+    // For multi-part checkpoints, prefer more parts as they enable better parallelization
+    if (that instanceof ParsedMultiPartCheckpointData) {
+      ParsedMultiPartCheckpointData other = (ParsedMultiPartCheckpointData) that;
+      int numPartsComparison = Integer.compare(this.numParts, other.numParts);
+      if (numPartsComparison != 0) {
+        return numPartsComparison;
+      }
+    }
+    return compareByDataSource(that);
   }
 
   @Override
@@ -76,14 +104,5 @@ public class ParsedMultiPartCheckpointData extends ParsedCheckpointData {
   @Override
   public int hashCode() {
     return Objects.hash(super.hashCode(), part, numParts);
-  }
-
-  public int compareToMultiPart(ParsedMultiPartCheckpointData that) {
-    final int numPartsComparison = Long.compare(this.numParts, that.numParts);
-    if (numPartsComparison != 0) {
-      return numPartsComparison;
-    } else {
-      return getTieBreaker(that);
-    }
   }
 }
