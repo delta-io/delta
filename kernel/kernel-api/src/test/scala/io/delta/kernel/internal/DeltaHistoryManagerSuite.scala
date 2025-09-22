@@ -1284,7 +1284,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
       3)
   }
 
-  test("getActiveCommitAtTimestamp with staged commits: v0 published and staged") {
+  test("getActiveCommitAtTimestamp with staged commits: v0 published and staged + prefer staged") {
     // Published commits: V0
     // Ratified commits: V0
     val stagedCommitFiles = Seq(stagedCommitFile(0L))
@@ -1312,7 +1312,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
     }
   }
 
-  test("getActiveCommitAtTimestamp with staged commits: overlap") {
+  test("getActiveCommitAtTimestamp with staged commits: overlap + prefer staged") {
     // Published commits: V10, V11
     // Ratified commits: V11, V12
     val stagedCommitFiles = Seq(stagedCommitFile(11), stagedCommitFile(12))
@@ -1370,7 +1370,8 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
       add10ToICTForStagedFiles = true)
   }
 
-  test("getActiveCommitAtTimestamp with staged commits: discontinuous catalog commits") {
+  test("getActiveCommitAtTimestamp with staged commits: " +
+    "discontinuous catalog commits + prefer staged") {
     // Published commits: V0, V1, V2
     // Ratified commits: V0, V2
     val stagedCommitFiles = Seq(stagedCommitFile(0), stagedCommitFile(2))
