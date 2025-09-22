@@ -1183,7 +1183,7 @@ trait SnapshotManagement { self: DeltaLog =>
       initialTableCommitCoordinatorClient: Option[TableCommitCoordinatorClient],
       catalogTableOpt: Option[CatalogTable],
       isAsync: Boolean): Snapshot = {
-    var newSnapshot = getSnapshotForLogSegmentInternal(
+    var newSnapshot = getSnapshotForLogSegment(
       oldSnapshotOpt,
       initialSegmentForNewSnapshot,
       initialTableCommitCoordinatorClient,
@@ -1211,7 +1211,7 @@ trait SnapshotManagement { self: DeltaLog =>
         newSnapshot,
         catalogTableOpt,
         commitCoordinatorOpt)
-      newSnapshot = getSnapshotForLogSegmentInternal(
+      newSnapshot = getSnapshotForLogSegment(
         Some(newSnapshot),
         segmentOpt,
         commitCoordinatorOpt,
@@ -1221,15 +1221,53 @@ trait SnapshotManagement { self: DeltaLog =>
     newSnapshot
   }
 
-  /** Creates a Snapshot for the given `segmentOpt` */
-  protected def getSnapshotForLogSegmentInternal(
+
+  /**
+   * Creates a Snapshot for the given `segmentOpt` and handles log segment equality.
+   */
+  protected def getSnapshotForLogSegment(
       previousSnapshotOpt: Option[Snapshot],
       segmentOpt: Option[LogSegment],
       tableCommitCoordinatorClientOpt: Option[TableCommitCoordinatorClient],
       catalogTableOpt: Option[CatalogTable],
       isAsync: Boolean): Snapshot = {
+    val logSegmentsEqual = previousSnapshotOpt.nonEmpty &&
+      segmentOpt.nonEmpty &&
+      previousSnapshotOpt.get.logSegment == segmentOpt.get
+    getSnapshotForLogSegmentInternal(
+        previousSnapshotOpt,
+        segmentOpt,
+        tableCommitCoordinatorClientOpt,
+        catalogTableOpt,
+        previousSnapshotLogSegmentEquals = logSegmentsEqual,
+        isAsync)
+  }
+
+  /**
+   * Creates a Snapshot for the given `segmentOpt`
+   *
+   * @param previousSnapshotOpt The previous snapshot, if any.
+   * @param segmentOpt The log segment to create a snapshot for.
+   * @param tableCommitCoordinatorClientOpt The commit coordinator client to use.
+   * @param catalogTableOpt The catalog table to use.
+   * @param prefetchedCheckpoint The prefetched checkpoint and metadata.
+   * @param previousSnapshotLogSegmentEquals Whether the previous snapshot log segment equals the
+   *                                         given segment. If `previousSnapshotOpt` or `segmentOpt`
+   *                                         is empty, this should be false.
+   * @param isAsync Whether the update is async - if so, the checksum will also be computed.
+   * @return The new snapshot.
+   */
+  protected def getSnapshotForLogSegmentInternal(
+      previousSnapshotOpt: Option[Snapshot],
+      segmentOpt: Option[LogSegment],
+      tableCommitCoordinatorClientOpt: Option[TableCommitCoordinatorClient],
+      catalogTableOpt: Option[CatalogTable],
+      previousSnapshotLogSegmentEquals: Boolean,
+      isAsync: Boolean): Snapshot = {
     segmentOpt.map { segment =>
-      if (previousSnapshotOpt.exists(_.logSegment == segment)) {
+      if (previousSnapshotLogSegmentEquals) {
+        // If the previous snapshot log segment equals the given segment, the previous snapshot must
+        // be defined.
         val previousSnapshot = previousSnapshotOpt.get
         previousSnapshot.updateLastKnownBackfilledVersion(segment.lastBackfilledVersionInSegment)
         previousSnapshot

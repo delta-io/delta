@@ -18,6 +18,9 @@ package org.apache.spark.sql.delta
 
 import java.util.UUID
 
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
+
 import org.apache.spark.sql.{DataFrame, QueryTest, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 
@@ -62,13 +65,15 @@ trait IcebergCompatUtilsBase extends QueryTest {
   protected def executeSql(sqlStr: String): DataFrame
 
   protected def getProperties(tableId: String): Map[String, String] = {
-    DeltaLog.forTable(spark, TableIdentifier(tableId)).update().getProperties.toMap
+    val table = DeltaTableV2(spark, TableIdentifier(tableId))
+    table.update.getProperties.toMap
   }
 
   protected def assertIcebergCompatProtocolAndProperties(
       tableId: String,
       compatObj: IcebergCompatBase = compatObject): Unit = {
-    val snapshot = DeltaLog.forTable(spark, TableIdentifier(tableId)).update()
+    val table = DeltaTableV2(spark, TableIdentifier(tableId))
+    val snapshot = table.update
     val protocol = snapshot.protocol
     val tblProperties = snapshot.getProperties
     val tableFeature = compatObj.tableFeature

@@ -36,7 +36,8 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 public class SparkTable implements Table, SupportsRead {
 
   private static final Set<TableCapability> CAPABILITIES =
-      Collections.unmodifiableSet(EnumSet.of(TableCapability.BATCH_READ));
+      Collections.unmodifiableSet(
+          EnumSet.of(TableCapability.BATCH_READ, TableCapability.MICRO_BATCH_READ));
 
   private final Identifier identifier;
   private final String tablePath;
@@ -80,7 +81,7 @@ public class SparkTable implements Table, SupportsRead {
             io.delta.kernel.TableManager.loadSnapshot(tablePath)
                 .build(io.delta.kernel.defaults.engine.DefaultEngine.create(hadoopConf));
 
-    StructType snapshotSchema = SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema());
+    this.schema = SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema());
     this.partColNames =
         Collections.unmodifiableList(new ArrayList<>(snapshot.getPartitionColumnNames()));
 
@@ -89,7 +90,7 @@ public class SparkTable implements Table, SupportsRead {
 
     // Build a map for O(1) field lookups to improve performance
     Map<String, StructField> fieldMap = new HashMap<>();
-    for (StructField field : snapshotSchema.fields()) {
+    for (StructField field : schema.fields()) {
       fieldMap.put(field.name(), field);
     }
 
@@ -106,17 +107,14 @@ public class SparkTable implements Table, SupportsRead {
 
     // Add remaining fields as data fields (non-partition columns)
     // These are fields that exist in the schema but are not partition columns
-    for (StructField field : snapshotSchema.fields()) {
+    for (StructField field : schema.fields()) {
       if (!partColNames.contains(field.name())) {
         dataFields.add(field);
       }
     }
     this.dataSchema = new StructType(dataFields.toArray(new StructField[0]));
     this.partitionSchema = new StructType(partitionFields.toArray(new StructField[0]));
-    // For Spark, the table schema is always data columns plus partition columns.
-    // This is different from the schema from snapshot which is partition columns plus data columns.
-    dataFields.addAll(partitionFields);
-    this.schema = new StructType(dataFields.toArray(new StructField[0]));
+
     this.columns = CatalogV2Util.structTypeToV2Columns(schema);
     this.partitionTransforms =
         partColNames.stream().map(Expressions::identity).toArray(Transform[]::new);

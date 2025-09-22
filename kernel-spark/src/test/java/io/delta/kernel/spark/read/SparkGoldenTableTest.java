@@ -25,7 +25,6 @@ import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.UUID;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.SparkConf;
 import org.apache.spark.sql.Dataset;
@@ -47,15 +46,12 @@ import org.junit.jupiter.api.io.TempDir;
 import scala.Function0;
 
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
-public class GoldTableTest extends QueryTest {
+public class SparkGoldenTableTest extends QueryTest {
 
   private SparkSession spark;
-  private String nameSpace;
 
   @BeforeAll
   public void setUp(@TempDir File tempDir) {
-    // Spark doesn't allow '-'
-    nameSpace = "ns_" + UUID.randomUUID().toString().replace('-', '_');
     SparkConf conf =
         new SparkConf()
             .set("spark.sql.catalog.dsv2", "io.delta.kernel.spark.catalog.TestCatalog")
@@ -65,7 +61,7 @@ public class GoldTableTest extends QueryTest {
                 "spark.sql.catalog.spark_catalog",
                 "org.apache.spark.sql.delta.catalog.DeltaCatalog")
             .setMaster("local[*]")
-            .setAppName("Dsv2BasicTest");
+            .setAppName("SparkGoldenTableTest");
     spark = SparkSession.builder().config(conf).getOrCreate();
   }
 
@@ -75,7 +71,7 @@ public class GoldTableTest extends QueryTest {
   }
 
   @Test
-  public void testInternalClasses() {
+  public void testDsv2Internal() {
     String tableName = "deltatbl-partition-prune";
     String tablePath = goldenTablePath("hive/" + tableName);
     CaseInsensitiveStringMap options =
@@ -106,19 +102,19 @@ public class GoldTableTest extends QueryTest {
     StructType expectedSchema =
         DataTypes.createStructType(
             new StructField[] {
-              expectedDataSchema.fields()[0],
-              expectedDataSchema.fields()[1],
+              expectedPartitionSchema.fields()[1],
               expectedPartitionSchema.fields()[0],
-              expectedPartitionSchema.fields()[1]
+              expectedDataSchema.fields()[0],
+              expectedDataSchema.fields()[1]
             });
     assertEquals(expectedSchema, table.schema());
     assertEquals(tableName, table.name());
     // Check table columns
     assertEquals(4, table.columns().length);
-    assertEquals("name", table.columns()[0].name());
-    assertEquals("cnt", table.columns()[1].name());
-    assertEquals("date", table.columns()[2].name());
-    assertEquals("city", table.columns()[3].name());
+    assertEquals("city", table.columns()[0].name());
+    assertEquals("date", table.columns()[1].name());
+    assertEquals("name", table.columns()[2].name());
+    assertEquals("cnt", table.columns()[3].name());
 
     // Check table partitioning
     assertEquals(2, table.partitioning().length);
@@ -178,14 +174,8 @@ public class GoldTableTest extends QueryTest {
     verifyHadoopConf(sparkScan2.getConfiguration());
   }
 
-  private void verifyHadoopConf(Configuration conf) {
-    assertEquals("value1", conf.get("key1"));
-    assertEquals("new_value2", conf.get("key2"));
-    assertEquals("value3", conf.get("key3"));
-  }
-
   @Test
-  public void testInternalClassesNestedStruct() {
+  public void testDsv2InteralWithNestedStruct() {
     String tableName = "data-reader-nested-struct";
     String tablePath = goldenTablePath(tableName);
     SparkTable table =
@@ -297,9 +287,6 @@ public class GoldTableTest extends QueryTest {
       expected.add(
           new GenericRow(
               new Object[] {
-                arrSeq, // array<struct>
-                middle, // nested struct
-                Integer.toString(i), // final string
                 i, // int
                 (long) i, // long
                 (byte) i, // byte
@@ -310,7 +297,10 @@ public class GoldTableTest extends QueryTest {
                 Integer.toString(i), // string
                 "null", // literal string
                 fixedDate, // date (was daysSinceEpoch int)
-                new BigDecimal(i) // decimal
+                new BigDecimal(i), // decimal
+                arrSeq, // array<struct>
+                middle, // nested struct
+                Integer.toString(i) // final string
               }));
     }
 
@@ -326,20 +316,20 @@ public class GoldTableTest extends QueryTest {
     expected.add(
         new GenericRow(
             new Object[] {
+              null,
+              null,
+              null,
+              null,
+              null,
+              null,
+              null,
+              null,
+              null,
+              null,
+              null,
               nullArrSeq,
               nullMiddle,
-              "2",
-              null,
-              null,
-              null,
-              null,
-              null,
-              null,
-              null,
-              null,
-              null,
-              null,
-              null
+              "2"
             }));
 
     // Read table, drop unsupported column `as_timestamp`
@@ -366,6 +356,87 @@ public class GoldTableTest extends QueryTest {
     checkAnswer(dfFunc, expectedSeq);
   }
 
+  @Test
+  public void testAllGoldenTables() {
+    List<String> tableNames = getAllGoldenTableNames();
+    List<String> unsupportedTables =
+        Arrays.asList(
+            "canonicalized-paths-normal-a",
+            "canonicalized-paths-normal-b",
+            "canonicalized-paths-special-a",
+            "canonicalized-paths-special-b",
+            "checkpoint",
+            "corrupted-last-checkpoint",
+            "data-reader-absolute-paths-escaped-chars",
+            "data-reader-escaped-chars",
+            "data-reader-timestamp_ntz-id-mode",
+            "data-reader-timestamp_ntz-name-mode",
+            "data-skipping-basic-stats-all-types-columnmapping-id",
+            "data-skipping-basic-stats-all-types-columnmapping-name",
+            // File delete-re-add-same-file-different-transactions/bar does not exist
+            "delete-re-add-same-file-different-transactions",
+            // Root node at key schemaString is null but field isn't nullable
+            "deltalog-commit-info",
+            // [DELTA_INVALID_PROTOCOL_VERSION] Unsupported Delta protocol version
+            "deltalog-invalid-protocol-version",
+            // [DELTA_STATE_RECOVER_ERROR] The metadata of your Delta table could not be recovered
+            // while Reconstructing
+            "deltalog-state-reconstruction-from-checkpoint-missing-metadata",
+            // [DELTA_STATE_RECOVER_ERROR] The protocol of your Delta table could not be recovered
+            // while Reconstructing
+            "deltalog-state-reconstruction-from-checkpoint-missing-protocol",
+            // Answer mismatch
+            "dv-partitioned-with-checkpoint",
+            "dv-with-columnmapping");
+
+    for (String tableName : tableNames) {
+      if (unsupportedTables.contains(tableName)) {
+        continue;
+      }
+
+      // For simplicity, just check that we can read the table and it has at least one row
+      String tablePath = goldenTablePath(tableName);
+      // Many golden tables only have corrupted _delta_log subdir. The new kernel table reader will
+      // fail on some of those.
+      // TODO: fix the read result of those tables.
+      if (hasOnlyDeltaLogSubdir(tablePath)) {
+        continue;
+      }
+      Dataset<Row> df = spark.sql("SELECT * FROM `spark_catalog`.`delta`.`" + tablePath + "`");
+      Dataset<Row> df2 = spark.sql("SELECT * FROM `dsv2`.`delta`.`" + tablePath + "`");
+      assertEquals(df.schema(), df2.schema(), "Schema mismatch for table: " + tableName);
+      checkAnswer(
+          new Function0<Dataset<Row>>() {
+            @Override
+            public Dataset<Row> apply() {
+              return df;
+            }
+          },
+          df2);
+    }
+  }
+
+  private void verifyHadoopConf(Configuration conf) {
+    assertEquals("value1", conf.get("key1"));
+    assertEquals("new_value2", conf.get("key2"));
+    assertEquals("value3", conf.get("key3"));
+  }
+
+  private boolean hasOnlyDeltaLogSubdir(String path) {
+    File dir = new File(path);
+    if (!dir.exists() || !dir.isDirectory()) {
+      return false;
+    }
+
+    File[] subFiles = dir.listFiles(File::isDirectory);
+    if (subFiles == null) {
+      return false;
+    }
+
+    // Check: only one subdirectory, and it is "_delta_log"
+    return subFiles.length == 1 && "_delta_log".equals(subFiles[0].getName());
+  }
+
   private void checkTable(String path, List<Row> expected) {
     String tablePath = goldenTablePath(path);
 
@@ -385,5 +456,9 @@ public class GoldTableTest extends QueryTest {
 
   private String goldenTablePath(String name) {
     return GoldenTableUtils$.MODULE$.goldenTablePath(name);
+  }
+
+  private List<String> getAllGoldenTableNames() {
+    return scala.collection.JavaConverters.seqAsJavaList(GoldenTableUtils$.MODULE$.allTableNames());
   }
 }

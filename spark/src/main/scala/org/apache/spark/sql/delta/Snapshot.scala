@@ -182,7 +182,7 @@ class Snapshot(
    * check, if we can reuse the post commit snapshot or if we need to create a new snapshot.
    * The update performs a listing and creates a new LogSegment and the criteria for
    * keeping or replacing the old snapshot is whether the old snapshot's LogSegment is equal
-   * to the LogSegment created by the update() call (see getSnapshotForLogSegmentInternal).
+   * to the LogSegment created by the update() call (see getSnapshotForLogSegment).
    *
    * If an unbackfilled commit has been backfilled before update() is called, the new LogSegment
    * would contain the backfilled version of this commit and so the old and new LogSegments are
