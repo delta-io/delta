@@ -97,7 +97,6 @@ public class SparkScanBuilder
       // Collect kernel predicates if supported
       if (classification.isKernelSupported) {
         convertedKernelPredicates.add(classification.kernelPredicate.get());
-
         if (!classification.isPartialConversion) {
           // Add filter to kernelSupportedFilters if it is fully converted
           // TODO: add partially converted Spark filter as well
@@ -105,11 +104,24 @@ public class SparkScanBuilder
           kernelSupportedFilters.add(filter);
         }
       }
+
       // Collect data filters
       if (classification.isDataFilter) {
         dataFilterList.add(filter);
       }
+
       // Collect post-scan filters
+
+      // Filters with the following characteristics need to be evaluated after delta kernel scan:
+      // 1. filters that are not supported by delta kernel, thus kernel cannot apply them during
+      // scan
+      // 2. filters that are not fully converted to kernel predicates, thus the unconverted part
+      // needs to be evaluated after scan
+      // 3. filters that are data filters, as kernel only evaluate data filter based on min/max
+      // stats, thus need to be evaluated with actual data after scan
+      //
+      // Fully converted partition filters are used to prune partitions during scan. Only the
+      // partitions that satisfy the filters will be scanned, so no need for post-scan evaluation.
       if (!classification.isKernelSupported
           || classification.isPartialConversion
           || classification.isDataFilter) {
