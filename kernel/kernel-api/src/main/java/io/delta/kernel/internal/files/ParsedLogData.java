@@ -83,13 +83,10 @@ public abstract class ParsedLogData {
     this.inlineDataOpt = inlineDataOpt;
   }
 
-  /**
-   * Return the version of this log data.
-   */
+  /** Return the version of this log data. */
   public long getVersion() {
     return version;
   }
-
 
   /**
    * Returns true if this log data is stored as a file on disk. When false, the data is stored

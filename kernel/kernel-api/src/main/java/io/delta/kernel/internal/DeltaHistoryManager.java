@@ -26,6 +26,7 @@ import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.checkpoints.CheckpointInstance;
+import io.delta.kernel.internal.files.ParsedDeltaData;
 import io.delta.kernel.internal.files.ParsedLogData;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.FileNames;
@@ -159,8 +160,7 @@ public final class DeltaHistoryManager {
       boolean mustBeRecreatable,
       boolean canReturnLastCommit,
       boolean canReturnEarliestCommit,
-      // TODO: update this to be ParsedLogDelta after #4805 is merged
-      Optional<List<ParsedLogData>> parsedLogDatas)
+      Optional<List<ParsedDeltaData>> parsedLogDatas)
       throws TableNotFoundException {
 
     // For now, we only accept ratified staged commits
@@ -170,7 +170,7 @@ public final class DeltaHistoryManager {
                 logDatas.stream()
                     .allMatch(
                         logData ->
-                            logData.isMaterialized()
+                            logData.isFile()
                                 && FileNames.isStagedDeltaFile(logData.getFileStatus().getPath())),
                 "Currently getActiveCommitAtTimestamp only accepts ratified staged commits"));
 
@@ -602,9 +602,9 @@ public final class DeltaHistoryManager {
   }
 
   private static Function<Long, FileStatus> getVersionToFileStatusFunctionWithParsedLogDelta(
-      List<ParsedLogData> parsedLogDatas, Path logPath) {
+      List<ParsedDeltaData> parsedLogDatas, Path logPath) {
     Map<Long, FileStatus> versionToFileStatusMap = new HashMap<>();
-    for (ParsedLogData parsedLogData : parsedLogDatas) {
+    for (ParsedDeltaData parsedLogData : parsedLogDatas) {
       versionToFileStatusMap.put(parsedLogData.getVersion(), parsedLogData.getFileStatus());
     }
     return version -> {
