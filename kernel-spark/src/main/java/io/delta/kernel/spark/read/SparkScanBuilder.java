@@ -111,7 +111,6 @@ public class SparkScanBuilder
       }
 
       // Collect post-scan filters
-
       // Filters with the following characteristics need to be evaluated after delta kernel scan:
       // 1. filters that are not supported by delta kernel, thus kernel cannot apply them during
       // scan
