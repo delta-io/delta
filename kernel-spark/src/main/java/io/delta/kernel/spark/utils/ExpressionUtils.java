@@ -54,44 +54,11 @@ public final class ExpressionUtils {
    * </ul>
    *
    * @param filter the Spark SQL filter to convert
-   * @return Optional containing the converted Kernel predicate, or empty if conversion is not
-   *     supported
-   */
-  public static Optional<Predicate> convertSparkFilterToKernelPredicate(Filter filter) {
-    return convertSparkFilterToKernelPredicate(filter, true /*canPartialPushDown*/);
-  }
-
-  /**
-   * Converts a Spark SQL filter to a Delta Kernel predicate.
-   *
-   * <p>Supported filter types:
-   *
-   * <ul>
-   *   <li>Comparison: EqualTo, GreaterThan, LessThan, etc.
-   *   <li>Null tests: IsNull, IsNotNull
-   *   <li>Null-safe comparison: EqualNullSafe
-   *   <li>Logical operators: And, Or, Not
-   * </ul>
-   *
-   * @param filter the Spark SQL filter to convert
    * @return ConvertedPredicate containing the converted Kernel predicate, or empty if conversion is
    *     not supported, along with a boolean indicating whether the conversion was partial
    */
-  public static ConvertedPredicate convertSparkFilterToConvertedKernelPredicate(Filter filter) {
-    return convertSparkFilterToConvertedKernelPredicate(filter, true /*canPartialPushDown*/);
-  }
-
-  /**
-   * Converts a Spark SQL filter to a Delta Kernel predicate with partial pushdown control. When
-   * canPartialPushDown is true, AND filters can be partially converted if at least one operand can
-   * be converted. OR filters always require both operands to be convertible. NOT filters disable
-   * partial pushdown for their child to preserve semantic correctness.
-   */
-  @VisibleForTesting
-  static Optional<Predicate> convertSparkFilterToKernelPredicate(
-      Filter filter, boolean canPartialPushDown) {
-    return convertSparkFilterToConvertedKernelPredicate(filter, canPartialPushDown)
-        .getConvertedPredicate();
+  public static ConvertedPredicate convertSparkFilterToKernelPredicate(Filter filter) {
+    return convertSparkFilterToKernelPredicate(filter, true /*canPartialPushDown*/);
   }
 
   /**
@@ -104,7 +71,8 @@ public final class ExpressionUtils {
    * Kernel predicate, or empty if conversion is not supported - boolean isPartial: indicates
    * whether the conversion was partial
    */
-  static ConvertedPredicate convertSparkFilterToConvertedKernelPredicate(
+  @VisibleForTesting
+  static ConvertedPredicate convertSparkFilterToKernelPredicate(
       Filter filter, boolean canPartialPushDown) {
     if (filter instanceof EqualTo) {
       EqualTo f = (EqualTo) filter;
@@ -158,10 +126,8 @@ public final class ExpressionUtils {
     }
     if (filter instanceof org.apache.spark.sql.sources.And) {
       org.apache.spark.sql.sources.And f = (org.apache.spark.sql.sources.And) filter;
-      ConvertedPredicate left =
-          convertSparkFilterToConvertedKernelPredicate(f.left(), canPartialPushDown);
-      ConvertedPredicate right =
-          convertSparkFilterToConvertedKernelPredicate(f.right(), canPartialPushDown);
+      ConvertedPredicate left = convertSparkFilterToKernelPredicate(f.left(), canPartialPushDown);
+      ConvertedPredicate right = convertSparkFilterToKernelPredicate(f.right(), canPartialPushDown);
       boolean isPartial = left.isPartial() || right.isPartial();
       if (left.isPresent() && right.isPresent()) {
         return new ConvertedPredicate(Optional.of(new And(left.get(), right.get())), isPartial);
@@ -176,10 +142,8 @@ public final class ExpressionUtils {
     }
     if (filter instanceof org.apache.spark.sql.sources.Or) {
       org.apache.spark.sql.sources.Or f = (org.apache.spark.sql.sources.Or) filter;
-      ConvertedPredicate left =
-          convertSparkFilterToConvertedKernelPredicate(f.left(), canPartialPushDown);
-      ConvertedPredicate right =
-          convertSparkFilterToConvertedKernelPredicate(f.right(), canPartialPushDown);
+      ConvertedPredicate left = convertSparkFilterToKernelPredicate(f.left(), canPartialPushDown);
+      ConvertedPredicate right = convertSparkFilterToKernelPredicate(f.right(), canPartialPushDown);
       // OR requires both operands to be convertible for correctness
       boolean isPartial = left.isPartial() || right.isPartial();
       if (!left.isPresent() || !right.isPresent()) {
@@ -208,7 +172,7 @@ public final class ExpressionUtils {
       // NOT(age < 30) = NOT(true) = false → system excludes both row
       // We will return incorrect result, then.
       ConvertedPredicate child =
-          convertSparkFilterToConvertedKernelPredicate(f.child(), false /*canPartialPushDown*/);
+          convertSparkFilterToKernelPredicate(f.child(), false /*canPartialPushDown*/);
       return new ConvertedPredicate(
           child.getConvertedPredicate().map(c -> new Predicate("NOT", c)), child.isPartial());
     }
@@ -405,7 +369,7 @@ public final class ExpressionUtils {
       Filter filter, Set<String> partitionColumnSet) {
     // try to convert Spark filter to Kernel Predicate
     ExpressionUtils.ConvertedPredicate convertedPredicate =
-        ExpressionUtils.convertSparkFilterToConvertedKernelPredicate(filter);
+        ExpressionUtils.convertSparkFilterToKernelPredicate(filter);
 
     boolean isKernelSupported = convertedPredicate.isPresent();
     boolean isPartialConversion = convertedPredicate.isPartial();
