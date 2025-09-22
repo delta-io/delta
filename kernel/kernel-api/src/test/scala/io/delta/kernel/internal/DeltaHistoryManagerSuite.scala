@@ -1144,7 +1144,8 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
       Optional.of(stagedCommits.asJava))
     assert(
       activeCommit.getVersion == expectedVersion,
-      s"Expected version $expectedVersion but got ${activeCommit.getVersion} for timestamp=$timestampToQuery")
+      s"Expected version $expectedVersion but got ${activeCommit.getVersion} " +
+        s"for timestamp=$timestampToQuery")
   }
 
   test("getActiveCommitAtTimestamp with staged commits: empty log, 1 staged commit") {
