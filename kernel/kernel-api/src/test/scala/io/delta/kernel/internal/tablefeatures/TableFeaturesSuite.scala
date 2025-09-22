@@ -573,7 +573,7 @@ class TableFeaturesSuite extends AnyFunSuite {
       s"validateKernelCanWriteToTable: protocol 7 with $feature, " +
         s"metadata contains $feature",
       new Protocol(3, 7, singleton(feature), singleton(feature)),
-      testMetadata(includeInvariant = true))
+      testMetadata(includeVariantTypeCol = true))
   }
 
   checkWriteSupported(
