@@ -25,6 +25,7 @@ import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.SparkConf;
@@ -90,7 +91,8 @@ public class GoldTableTest extends QueryTest {
         new SparkTable(
             Identifier.of(new String[] {"spark_catalog", "default"}, tableName),
             tablePath,
-            options);
+            options.asCaseSensitiveMap(),
+            Optional.empty());
     StructType expectedDataSchema =
         DataTypes.createStructType(
             new StructField[] {
@@ -190,7 +192,7 @@ public class GoldTableTest extends QueryTest {
     String tablePath = goldenTablePath(tableName);
     SparkTable table =
         new SparkTable(
-            Identifier.of(new String[] {"spark_catalog", "default"}, tableName), tablePath);
+            Identifier.of(new String[] {"spark_catalog", "default"}, tableName), tablePath, Optional.empty());
 
     StructType expectedSchema =
         StructType.fromDDL(

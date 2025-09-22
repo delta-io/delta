@@ -24,6 +24,7 @@ import io.delta.kernel.utils.CloseableIterable;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import org.apache.hadoop.conf.Configuration;
@@ -80,7 +81,7 @@ public class TestCatalog implements TableCatalog {
       throw new NoSuchTableException(ident);
     }
     try {
-      return new SparkTable(ident, tablePath);
+      return new SparkTable(ident, tablePath, Optional.empty());
     } catch (Exception e) {
       throw new RuntimeException("Failed to load table: " + ident, e);
     }
@@ -113,7 +114,7 @@ public class TestCatalog implements TableCatalog {
           .commit(engine, CloseableIterable.emptyIterable());
 
       // Load the created table and return SparkTable
-      return new SparkTable(ident, tablePath);
+      return new SparkTable(ident, tablePath, Optional.empty());
 
     } catch (Exception e) {
       // Remove the table entry if creation fails

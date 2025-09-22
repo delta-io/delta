@@ -25,6 +25,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.function.BiFunction;
 import java.util.stream.Stream;
 import org.apache.spark.sql.connector.catalog.Column;
@@ -46,7 +47,7 @@ public class SparkTableTest extends SparkDsv2TestBase {
     testCase.createTableSql.apply(tableName, path);
     Identifier identifier = Identifier.of(new String[] {"test_namespace"}, tableName);
 
-    SparkTable kernelTable = new SparkTable(identifier, path);
+    SparkTable kernelTable = new SparkTable(identifier, path, Optional.empty());
 
     // ===== Test table name =====
     assertEquals(tableName, kernelTable.name());
