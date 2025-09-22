@@ -18,11 +18,10 @@ package io.delta.kernel.internal.commit
 
 import java.util.Optional
 
-import io.delta.kernel.commit.CommitMetadata
 import io.delta.kernel.commit.CommitMetadata.CommitType
-import io.delta.kernel.internal.actions.{Metadata, Protocol}
+import io.delta.kernel.internal.actions.{DomainMetadata, Metadata, Protocol}
 import io.delta.kernel.internal.util.{Tuple2 => KernelTuple2}
-import io.delta.kernel.test.{ActionUtils, TestFixtures, VectorTestUtils}
+import io.delta.kernel.test.{TestFixtures, VectorTestUtils}
 import io.delta.kernel.types.{IntegerType, StructType}
 
 import org.scalatest.funsuite.AnyFunSuite
@@ -56,6 +55,14 @@ class CommitMetadataSuite extends AnyFunSuite
         version = updateVersionNonZero,
         commitInfo = null,
         readPandMOpt = Optional.of(new KernelTuple2(protocol12, basicPartitionedMetadata)))
+    }
+
+    intercept[NullPointerException] {
+      createCommitMetadata(
+        version = createVersion0,
+        commitDomainMetadatas = null,
+        newProtocolOpt = Optional.of(protocol12),
+        newMetadataOpt = Optional.of(basicPartitionedMetadata))
     }
   }
 
@@ -98,6 +105,23 @@ class CommitMetadataSuite extends AnyFunSuite
     }.getMessage
 
     assert(exMsg.contains("InCommitTimestamp must be present for commits to catalogManaged tables"))
+  }
+
+  test("getNewDomainMetadatas returns provided domain metadata") {
+    val domainMetadata1 = new DomainMetadata("domain1", """{"key":"value"}""", false)
+    val domainMetadata2 = new DomainMetadata("domain2", "", false)
+    val domainMetadatas = List(domainMetadata1, domainMetadata2)
+
+    val commitMetadata = createCommitMetadata(
+      version = createVersion0,
+      commitDomainMetadatas = domainMetadatas,
+      newProtocolOpt = Optional.of(protocol12),
+      newMetadataOpt = Optional.of(basicPartitionedMetadata))
+
+    val returnedMetadatas = commitMetadata.getCommitDomainMetadatas
+    assert(returnedMetadatas.size() == 2)
+    assert(returnedMetadatas.contains(domainMetadata1))
+    assert(returnedMetadatas.contains(domainMetadata2))
   }
 
   test("getEffectiveProtocol returns new protocol when present") {
@@ -225,4 +249,5 @@ class CommitMetadataSuite extends AnyFunSuite
     }.getMessage
     assert(exMsg.contains("existing table writes (version > 0) require present readPandMOpt"))
   }
+
 }
