@@ -60,7 +60,7 @@ class CommitMetadataSuite extends AnyFunSuite
     intercept[NullPointerException] {
       createCommitMetadata(
         version = createVersion0,
-        newDomainMetadatas = null,
+        commitDomainMetadatas = null,
         newProtocolOpt = Optional.of(protocol12),
         newMetadataOpt = Optional.of(basicPartitionedMetadata))
     }
@@ -114,11 +114,11 @@ class CommitMetadataSuite extends AnyFunSuite
 
     val commitMetadata = createCommitMetadata(
       version = createVersion0,
-      newDomainMetadatas = domainMetadatas,
+      commitDomainMetadatas = domainMetadatas,
       newProtocolOpt = Optional.of(protocol12),
       newMetadataOpt = Optional.of(basicPartitionedMetadata))
 
-    val returnedMetadatas = commitMetadata.getNewDomainMetadatas
+    val returnedMetadatas = commitMetadata.getCommitDomainMetadatas
     assert(returnedMetadatas.size() == 2)
     assert(returnedMetadatas.contains(domainMetadata1))
     assert(returnedMetadatas.contains(domainMetadata2))

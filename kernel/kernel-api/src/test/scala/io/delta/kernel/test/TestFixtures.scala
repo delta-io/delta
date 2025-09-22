@@ -33,7 +33,7 @@ trait TestFixtures extends ActionUtils {
       version: Long,
       logPath: String = "/fake/_delta_log",
       commitInfo: CommitInfo = testCommitInfo(),
-      newDomainMetadatas: List[DomainMetadata] = List.empty,
+      commitDomainMetadatas: List[DomainMetadata] = List.empty,
       readPandMOpt: Optional[Tuple2[Protocol, Metadata]] = Optional.empty(),
       newProtocolOpt: Optional[Protocol] = Optional.empty(),
       newMetadataOpt: Optional[Metadata] = Optional.empty()): CommitMetadata = {
@@ -41,7 +41,7 @@ trait TestFixtures extends ActionUtils {
       version,
       logPath,
       commitInfo,
-      newDomainMetadatas.asJava,
+      commitDomainMetadatas.asJava,
       readPandMOpt,
       newProtocolOpt,
       newMetadataOpt)

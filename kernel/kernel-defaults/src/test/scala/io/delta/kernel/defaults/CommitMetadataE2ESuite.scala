@@ -66,7 +66,7 @@ class CommitMetadataE2ESuite extends AnyFunSuite
 
       // ===== THEN (Case 1: Add domain metadata) =====
       val addedDomainMetadata =
-        capturingCommitter.capturedCommitMetadatas.head.getNewDomainMetadatas.get(0)
+        capturingCommitter.capturedCommitMetadatas.head.getCommitDomainMetadatas.get(0)
       assert(addedDomainMetadata.getDomain == "test.domain1")
       assert(addedDomainMetadata.getConfiguration == """{"key1":"value1"}""")
       assert(!addedDomainMetadata.isRemoved)
@@ -80,7 +80,7 @@ class CommitMetadataE2ESuite extends AnyFunSuite
 
       // ===== THEN (Case 2: Remove domain metadata) =====
       val removedDomainMetadata =
-        capturingCommitter.capturedCommitMetadatas(1).getNewDomainMetadatas.get(0)
+        capturingCommitter.capturedCommitMetadatas(1).getCommitDomainMetadatas.get(0)
       assert(removedDomainMetadata.getDomain == "test.domain1")
       assert(removedDomainMetadata.isRemoved)
     }
@@ -99,7 +99,7 @@ class CommitMetadataE2ESuite extends AnyFunSuite
       commitTransaction(txn, engine, emptyIterable()) // No domain metadata added
 
       // ===== THEN =====
-      assert(capturingCommitter.capturedCommitMetadatas.head.getNewDomainMetadatas.isEmpty)
+      assert(capturingCommitter.capturedCommitMetadatas.head.getCommitDomainMetadatas.isEmpty)
     }
 
   }
