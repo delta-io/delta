@@ -36,71 +36,87 @@ class CommitMetadataE2ESuite extends AnyFunSuite
     with TestCommitterUtils {
 
   private class CapturingCommitter extends Committer {
-    val capturedCommitMetadatas = ListBuffer[CommitMetadata]()
+    var latestCommitMetadata: Option[CommitMetadata] = None
 
     override def commit(
         engine: Engine,
         finalizedActions: CloseableIterator[Row],
         commitMetadata: CommitMetadata): CommitResponse = {
-      capturedCommitMetadatas.append(commitMetadata)
+      latestCommitMetadata = Some(commitMetadata)
 
       committerUsingPutIfAbsent.commit(engine, finalizedActions, commitMetadata)
     }
   }
 
-  test("transaction passes domain metadata to committer for add and remove") {
+  test("transaction passes added and removed (and not existing) domain metadatas to committer") {
     withTempDirAndEngine { (tablePath, engine) =>
+      // ===== TEST HELPER SETUP =====
+      val capturingCommitter = new CapturingCommitter()
+
+      def createTxnAtLatest(): Transaction =
+        TableManager
+          .loadSnapshot(tablePath)
+          .withCommitter(capturingCommitter)
+          .build(engine)
+          .buildUpdateTableTransaction("engineInfo", Operation.WRITE)
+          .build(engine)
+
       // ===== GIVEN =====
       val txn0 = TableManager.buildCreateTableTransaction(tablePath, testSchema, "engineInfo")
         .withTableProperties(Map("delta.feature.domainMetadata" -> "supported").asJava)
         .build(engine)
+      txn0.addDomainMetadata("foo", "bar")
       commitTransaction(txn0, engine, emptyIterable())
 
-      // ===== WHEN (Case 1: Add domain metadata) =====
-      val capturingCommitter = new CapturingCommitter()
-      val snapshot1 =
-        TableManager.loadSnapshot(tablePath).withCommitter(capturingCommitter).build(engine)
-      val txn1 = snapshot1.buildUpdateTableTransaction("engineInfo", Operation.WRITE).build(engine)
-      txn1.addDomainMetadata("test.domain1", """{"key1":"value1"}""")
+      // ===== WHEN (Case 1: No domain metadata change on table with existing domain metadata) =====
+      val txn1 = createTxnAtLatest()
       commitTransaction(txn1, engine, emptyIterable())
 
-      // ===== THEN (Case 1: Add domain metadata) =====
-      val addedDomainMetadata =
-        capturingCommitter.capturedCommitMetadatas.head.getCommitDomainMetadatas.get(0)
-      assert(addedDomainMetadata.getDomain == "test.domain1")
-      assert(addedDomainMetadata.getConfiguration == """{"key1":"value1"}""")
-      assert(!addedDomainMetadata.isRemoved)
+      // ===== THEN (Case 1) =====
+      {
+        val commitMetadata = capturingCommitter.latestCommitMetadata.get
+        assert(commitMetadata.getVersion === 1)
+        assert(commitMetadata.getCommitDomainMetadatas.isEmpty)
+      }
 
-      // ===== WHEN (Case 2: Remove domain metadata) =====
-      val snapshot2 =
-        TableManager.loadSnapshot(tablePath).withCommitter(capturingCommitter).build(engine)
-      val txn2 = snapshot2.buildUpdateTableTransaction("engineInfo", Operation.WRITE).build(engine)
-      txn2.removeDomainMetadata("test.domain1")
+      // ===== WHEN (Case 2: Add domain metadata) =====
+      val txn2 = createTxnAtLatest()
+      txn2.addDomainMetadata("zip", "zap")
       commitTransaction(txn2, engine, emptyIterable())
 
-      // ===== THEN (Case 2: Remove domain metadata) =====
-      val removedDomainMetadata =
-        capturingCommitter.capturedCommitMetadatas(1).getCommitDomainMetadatas.get(0)
-      assert(removedDomainMetadata.getDomain == "test.domain1")
-      assert(removedDomainMetadata.isRemoved)
+      // ===== THEN (Case 2) =====
+      {
+        val commitMetadata = capturingCommitter.latestCommitMetadata.get
+        assert(commitMetadata.getVersion === 2)
+
+        val commitDomainMetadatas = commitMetadata.getCommitDomainMetadatas
+        assert(commitDomainMetadatas.size() === 1)
+
+        val dm = commitDomainMetadatas.asScala.head
+        assert(dm.getDomain === "zip")
+        assert(dm.getConfiguration === "zap")
+        assert(!dm.isRemoved)
+      }
+
+      // ===== WHEN (Case 3: Remove domain metadata) =====
+      val txn3 = createTxnAtLatest()
+      txn3.removeDomainMetadata("zip")
+      commitTransaction(txn3, engine, emptyIterable())
+
+      // ===== THEN (Case 3: Remove domain metadata) =====
+      {
+        val commitMetadata = capturingCommitter.latestCommitMetadata.get
+        assert(commitMetadata.getVersion === 3)
+
+        val commitDomainMetadatas = commitMetadata.getCommitDomainMetadatas
+        assert(commitDomainMetadatas.size() === 1)
+
+        val dm = commitDomainMetadatas.get(0)
+        assert(dm.getDomain === "zip")
+        assert(dm.isRemoved)
+      }
+
     }
   }
 
-  test("transaction passes no domain metadatas to committer if none added in transaction") {
-    withTempDirAndEngine { (tablePath, engine) =>
-      // ===== GIVEN =====
-      val capturingCommitter = new CapturingCommitter()
-      val txn = TableManager.buildCreateTableTransaction(tablePath, testSchema, "engineInfo")
-        .withTableProperties(Map("delta.feature.domainMetadata" -> "supported").asJava)
-        .withCommitter(capturingCommitter)
-        .build(engine)
-
-      // ===== WHEN =====
-      commitTransaction(txn, engine, emptyIterable()) // No domain metadata added
-
-      // ===== THEN =====
-      assert(capturingCommitter.capturedCommitMetadatas.head.getCommitDomainMetadatas.isEmpty)
-    }
-
-  }
 }
