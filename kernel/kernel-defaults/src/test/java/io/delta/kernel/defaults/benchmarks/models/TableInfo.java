@@ -29,6 +29,7 @@ public class TableInfo {
 
   /**
    * Creates a TableInfo instance by reading from a JSON file at the specified path.
+   *
    * @param jsonPath Path to the JSON file containing the TableInfo.
    * @param tableRoot The root path of the table to set in the TableInfo.
    * @return The TableInfo instance populated from the JSON file and tableRoot.
