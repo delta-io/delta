@@ -31,7 +31,6 @@ import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.snapshot.SnapshotManager;
-
 import java.util.Collections;
 import java.util.Optional;
 import org.slf4j.Logger;
