@@ -1,0 +1,5 @@
+{
+  "type": "read",
+  "version": 0,
+  "expected_data": "expected_data.parquet"
+}

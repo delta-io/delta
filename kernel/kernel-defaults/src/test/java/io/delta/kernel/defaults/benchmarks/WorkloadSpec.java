@@ -16,13 +16,14 @@
 
 package io.delta.kernel.defaults.benchmarks;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
-import com.fasterxml.jackson.annotation.JsonSubTypes;
-import com.fasterxml.jackson.annotation.JsonTypeInfo;
+import com.fasterxml.jackson.annotation.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.delta.kernel.defaults.benchmarks.models.ReadSpec;
 import io.delta.kernel.engine.Engine;
 import java.io.File;
 import java.io.IOException;
+import java.util.Collections;
+import java.util.List;
 
 /**
  * Base class for all workload specifications. Workload specifications define workloads and their
@@ -33,18 +34,20 @@ import java.io.IOException;
  * field in the JSON.
  */
 @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, include = JsonTypeInfo.As.PROPERTY, property = "type")
-@JsonSubTypes({@JsonSubTypes.Type(value = ReadMetadataSpec.class, name = "read")})
+@JsonSubTypes({@JsonSubTypes.Type(value = ReadSpec.class, name = "read")})
 public abstract class WorkloadSpec {
   /**
    * The type of workload (e.g., "read_metadata") This is used by Jackson's polymorphic
    * deserialization to automatically instantiate the correct subclass based on the "type" field in
    * the JSON.
    */
-  private String type;
+  protected String type;
 
-  /** The name of the workload */
-  @JsonProperty("name")
-  public String name;
+  @JsonProperty("table_root")
+  protected String tableRoot;
+
+  @JsonProperty("case_name")
+  protected String caseName;
 
   private static final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -56,8 +59,28 @@ public abstract class WorkloadSpec {
   }
 
   /** @return the type of this workload. */
+  @JsonIgnore
   public String getType() {
     return type;
+  }
+
+  /** @return the case name of this workload. */
+  public String getCaseName() {
+    return caseName;
+  }
+
+  public void setCaseName(String caseName) {
+    this.caseName = caseName;
+  }
+
+  /** @return the table root path. */
+  public String getTableRoot() {
+    return tableRoot;
+  }
+
+  /** Sets the table root path. */
+  public void setTableRoot(String tableRoot) {
+    this.tableRoot = tableRoot;
   }
 
   /**
@@ -66,11 +89,11 @@ public abstract class WorkloadSpec {
    * @param baseWorkloadDirPath The base directory containing workload tables. This is used to
    *     resolve relative table paths if present.
    * @param engine The engine to use for executing the workload.
+   * @param operation The specific operation to run for this workload.
    * @return the WorkloadRunner instance for this workload specification.
    */
-  public abstract WorkloadRunner getRunner(String baseWorkloadDirPath, Engine engine);
-
-  // JSON Serialization/Deserialization
+  public abstract WorkloadRunner getRunner(
+      String baseWorkloadDirPath, Engine engine, String operation);
 
   /**
    * Loads a WorkloadSpec from the given JSON file path.
@@ -79,8 +102,19 @@ public abstract class WorkloadSpec {
    * @return the WorkloadSpec instance parsed from the JSON file.
    * @throws IOException if there is an error reading or parsing the file.
    */
-  public static WorkloadSpec fromJsonPath(String workloadPath) throws IOException {
-    return objectMapper.readValue(new File(workloadPath), WorkloadSpec.class);
+  public static WorkloadSpec fromJsonPath(String workloadPath, String tableRoot, String caseName)
+      throws IOException {
+
+    WorkloadSpec spec = objectMapper.readValue(new File(workloadPath), WorkloadSpec.class);
+    spec.setTableRoot(tableRoot);
+    spec.setCaseName(caseName);
+    return spec;
+  }
+
+  /** @return the list of operations that can be performed by this workload. */
+  @JsonIgnore
+  public List<String> getBenchmarkOperations() {
+    return Collections.singletonList(type);
   }
 
   /**
@@ -91,6 +125,7 @@ public abstract class WorkloadSpec {
    * @throws IOException if there is an error parsing the JSON.
    */
   public static WorkloadSpec fromJsonString(String json) throws IOException {
+    //    System.out.println("Deserializing WorkloadSpec from JSON: " + json);
     return objectMapper.readValue(json, WorkloadSpec.class);
   }
 
@@ -101,6 +136,7 @@ public abstract class WorkloadSpec {
    */
   public String toJsonString() {
     try {
+      System.out.println("Serializing WorkloadSpec to JSON: " + this);
       return objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(this);
     } catch (IOException e) {
       throw new RuntimeException("Failed to serialize WorkloadSpec to JSON", e);

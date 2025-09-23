@@ -1,6 +1,0 @@
-{
-  "type": "read",
-  "name": "read-basic-with-checkpoint-at-v10",
-  "table_root": "basic-with-checkpoint",
-  "snapshot_version": 10
-}

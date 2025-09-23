@@ -1,5 +1,0 @@
-{
-  "type": "read",
-  "name": "read-basic-with-checkpoint-latest",
-  "table_root": "basic-with-checkpoint"
-}
