@@ -58,6 +58,18 @@ public final class ParsedDeltaData extends ParsedLogData {
     super(version, fileStatusOpt, inlineDataOpt);
   }
 
+  /** Whether this ParsedDeltaData is a ratified commit. False if it's published. */
+  public boolean isRatifiedCommit() {
+    if (isFile()) {
+      return FileNames.isStagedDeltaFile(getFileStatus().getPath());
+    } else if (isInline()) {
+      // TODO: revisit whether we can have inline data of a published delta file
+      return true;
+    } else {
+      throw new IllegalStateException("ParsedDeltaData must be either isFile or isInline");
+    }
+  }
+
   @Override
   public String getParentCategoryName() {
     return "Delta";
