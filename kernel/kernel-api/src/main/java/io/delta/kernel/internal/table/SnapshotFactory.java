@@ -31,6 +31,8 @@ import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.snapshot.SnapshotManager;
+
+import java.util.Collections;
 import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -75,7 +77,7 @@ public class SnapshotFactory {
                             true /* mustBeRecreatable */,
                             false /* canReturnLastCommit */,
                             false /* canReturnEarliestCommit */,
-                            Optional.empty())
+                            Collections.emptyList() /* parsedDeltaDatas */)
                         .getVersion());
 
     snapshotQueryCtx.setResolvedVersion(resolvedVersionToLoad);
