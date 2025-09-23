@@ -690,12 +690,14 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
   }
 
   private Predicate[] getPushedKernelPredicates(SparkScanBuilder builder) throws Exception {
+    // TODO: replace reflection with other testing manners, possibly Mockito ArgumentCaptor
     Field field = SparkScanBuilder.class.getDeclaredField("pushedKernelPredicates");
     field.setAccessible(true);
     return (Predicate[]) field.get(builder);
   }
 
   private Filter[] getDataFilters(SparkScanBuilder builder) throws Exception {
+    // TODO: replace reflection with other testing manners, possibly Mockito ArgumentCaptor
     Field field = SparkScanBuilder.class.getDeclaredField("dataFilters");
     field.setAccessible(true);
     return (Filter[]) field.get(builder);
@@ -703,6 +705,7 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
 
   private Optional<Predicate> getKernelScanBuilderPredicate(SparkScanBuilder builder)
       throws Exception {
+    // TODO: replace reflection with other testing manners, possibly Mockito ArgumentCaptor
     Field field = SparkScanBuilder.class.getDeclaredField("kernelScanBuilder");
     field.setAccessible(true);
     Object kernelScanBuilder = field.get(builder);
