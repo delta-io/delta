@@ -18,12 +18,14 @@ package io.delta.kernel.defaults.benchmarks;
 
 import static io.delta.kernel.defaults.benchmarks.BenchmarkUtils.*;
 
+import io.delta.kernel.defaults.benchmarks.models.WorkloadSpec;
+import io.delta.kernel.defaults.benchmarks.workloadRunners.WorkloadRunner;
+import io.delta.kernel.defaults.engine.DefaultEngine;
+import io.delta.kernel.engine.Engine;
 import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
-
-import io.delta.kernel.defaults.benchmarks.models.WorkloadSpec;
-import io.delta.kernel.defaults.benchmarks.workloadRunners.WorkloadRunner;
+import org.apache.hadoop.conf.Configuration;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.infra.Blackhole;
 import org.openjdk.jmh.results.format.ResultFormatType;
@@ -44,6 +46,18 @@ import org.openjdk.jmh.runner.options.TimeValue;
 @Measurement(iterations = 5, time = 1)
 public class WorkloadBenchmark<T> {
 
+  /** Default implementation of BenchmarkState that supports only the "default" engine. */
+  public static class DefaultBenchmarkState extends AbstractBenchmarkState {
+    @Override
+    protected Engine getEngine(String engineName) {
+      if (engineName.equals("default")) {
+        return DefaultEngine.create(new Configuration());
+      } else {
+        throw new IllegalArgumentException("Unsupported engine: " + engineName);
+      }
+    }
+  }
+
   /**
    * Benchmark method that executes the workload runner specified in the state as a benchmark.
    *
@@ -53,8 +67,7 @@ public class WorkloadBenchmark<T> {
    * @throws Exception If any error occurs during workload execution.
    */
   @Benchmark
-  public void benchmarkWorkload(BenchmarkState.DefaultBenchmarkState state, Blackhole blackhole)
-      throws Exception {
+  public void benchmarkWorkload(DefaultBenchmarkState state, Blackhole blackhole) throws Exception {
     WorkloadRunner runner = state.getRunner();
     runner.executeAsBenchmark(blackhole);
   }
