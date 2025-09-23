@@ -18,10 +18,7 @@ package io.delta.kernel.commit
 
 import scala.collection.JavaConverters._
 
-import io.delta.kernel.commit.CatalogCommitterUtils
-import io.delta.kernel.internal.TableConfig
 import io.delta.kernel.internal.actions.Protocol
-import io.delta.kernel.internal.tablefeatures.TableFeatures
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -36,8 +33,8 @@ class CatalogCommitterUtilsSuite extends AnyFunSuite {
 
     // ===== THEN =====
     assert(properties.size === 2)
-    assert(properties(TableConfig.MIN_READER_VERSION.getKey) === "1")
-    assert(properties(TableConfig.MIN_WRITER_VERSION.getKey) === "2")
+    assert(properties("delta.minReaderVersion") === "1")
+    assert(properties("delta.minWriterVersion") === "2")
   }
 
   test("extractProtocolProperties - protocol with overlapping reader and writer features") {
@@ -51,13 +48,10 @@ class CatalogCommitterUtilsSuite extends AnyFunSuite {
 
     // ===== THEN =====
     assert(properties.size === 2 + 3) // minReader + minWriter + 3 unique features
-    assert(properties(TableConfig.MIN_READER_VERSION.getKey) === "3")
-    assert(properties(TableConfig.MIN_WRITER_VERSION.getKey) === "7")
-
-    val expectedFeatures = readerFeatures ++ writerFeatures
-    expectedFeatures.foreach { featureName =>
-      val key = TableFeatures.SET_TABLE_FEATURE_SUPPORTED_PREFIX + featureName
-      assert(properties(key) === TableFeatures.SET_TABLE_FEATURE_SUPPORTED_VALUE)
-    }
+    assert(properties("delta.minReaderVersion") === "3")
+    assert(properties("delta.minWriterVersion") === "7")
+    assert(properties("delta.feature.columnMapping") === "supported")
+    assert(properties("delta.feature.deletionVectors") === "supported")
+    assert(properties("delta.feature.appendOnly") === "supported")
   }
 }
