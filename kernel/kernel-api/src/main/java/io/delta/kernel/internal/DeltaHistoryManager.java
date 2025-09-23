@@ -171,7 +171,7 @@ public final class DeltaHistoryManager {
 
     // Create a mapper for delta version -> file status that takes into account ratified commits
     Function<Long, FileStatus> versionToFileStatusFunction =
-        getVersionToFileStatusFunctionWithParsedDeltaData(parsedDeltaDatas, logPath);
+        getVersionToFileStatusFunction(parsedDeltaDatas, logPath);
     Optional<Long> earliestRatifiedCommitVersion =
         parsedDeltaDatas.stream().map(ParsedLogData::getVersion).min(Long::compare);
 
@@ -594,7 +594,7 @@ public final class DeltaHistoryManager {
     }
   }
 
-  private static Function<Long, FileStatus> getVersionToFileStatusFunctionWithParsedDeltaData(
+  private static Function<Long, FileStatus> getVersionToFileStatusFunction(
       List<ParsedDeltaData> parsedDeltaDatas, Path logPath) {
     Map<Long, FileStatus> versionToFileStatusMap = new HashMap<>();
     for (ParsedDeltaData parsedDeltaData : parsedDeltaDatas) {
