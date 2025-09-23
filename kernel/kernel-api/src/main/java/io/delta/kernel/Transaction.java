@@ -113,7 +113,8 @@ public interface Transaction {
 
   /**
    * Adds custom properties that will be passed through to the committer. These properties allow
-   * connectors to inject catalog-specific metadata without Kernel inspection.
+   * connectors to inject catalog-specific metadata without Kernel inspection. Repeated calls to
+   * this method will overwrite any previously set properties.
    */
   void withCommitterProperties(Supplier<Map<String, String>> committerProperties);
 
