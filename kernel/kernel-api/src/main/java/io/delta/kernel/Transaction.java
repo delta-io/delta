@@ -50,6 +50,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Supplier;
 
 /**
  * Represents a transaction to mutate a Delta table.
@@ -109,6 +110,13 @@ public interface Transaction {
    */
   TransactionCommitResult commit(Engine engine, CloseableIterable<Row> dataActions)
       throws ConcurrentWriteException;
+
+  /**
+   * Adds custom properties that will be passed through to the committer. These properties allow
+   * connectors to inject catalog-specific metadata without Kernel inspection. Repeated calls to
+   * this method will overwrite any previously set properties.
+   */
+  void withCommitterProperties(Supplier<Map<String, String>> committerProperties);
 
   /**
    * Commit the provided domain metadata as part of this transaction. If this is called more than
