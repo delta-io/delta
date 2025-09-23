@@ -167,11 +167,11 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite with TestUtilsWithTableMana
     }
   }
 
-  test("time-travel by ts read of catalogOwned-preview table with staged ratified commits") {
+  test("time-travel by ts read of catalogOwned-preview table with ratified commits") {
     withCatalogOwnedPreviewTestTable { (tablePath, parsedLogData) =>
       val v0Ts = 1749830855993L // published commit
-      val v1Ts = 1749830871085L // staged commit
-      val v2Ts = 1749830881799L // staged commit
+      val v1Ts = 1749830871085L // ratified staged commit
+      val v2Ts = 1749830881799L // ratified staged commit
 
       val latestSnapshot = TableManager
         .loadSnapshot(tablePath)
@@ -192,14 +192,17 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite with TestUtilsWithTableMana
         assert(snapshot.getTimestamp(defaultEngine) == expectedSnapshotTimestamp)
       }
 
-      // Between v0 and v1 should return v0 (between published & staged)
+      // Between v0 and v1 should return v0 (between published & ratified)
       checkTimeTravelByTimestamp(v0Ts + 1, 0, v0Ts)
 
       // Exactly v1 should return v1
       checkTimeTravelByTimestamp(v1Ts, 1, v1Ts)
 
-      // Between v1 and v2 should return v1 (between 2 staged commits)
+      // Between v1 and v2 should return v1 (between 2 ratified commits)
       checkTimeTravelByTimestamp(v1Ts + 1, 1, v1Ts)
+
+      // Exactly v2 should return v2
+      checkTimeTravelByTimestamp(v2Ts, 2, v2Ts)
 
       // After v2 should fail
       val e = intercept[KernelException] {
