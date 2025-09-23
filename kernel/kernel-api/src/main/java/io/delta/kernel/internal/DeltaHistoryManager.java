@@ -166,11 +166,8 @@ public final class DeltaHistoryManager {
     // For now, we only accept ratified staged commits
     checkArgument(
         parsedDeltaDatas.stream()
-            .allMatch(
-                logData ->
-                    logData.isFile()
-                        && FileNames.isStagedDeltaFile(logData.getFileStatus().getPath())),
-        "Currently getActiveCommitAtTimestamp only accepts ratified staged commits");
+            .allMatch(deltaData -> deltaData.isFile() && deltaData.isRatifiedCommit()),
+        "Currently getActiveCommitAtTimestamp only accepts ratified staged file commits");
 
     // Create a mapper for delta version -> file status that takes into account ratified commits
     Function<Long, FileStatus> versionToFileStatusFunction =
