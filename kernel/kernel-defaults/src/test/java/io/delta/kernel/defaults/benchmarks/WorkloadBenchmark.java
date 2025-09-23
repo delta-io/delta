@@ -142,7 +142,7 @@ public class WorkloadBenchmark {
             .include(WorkloadBenchmark.class.getSimpleName())
             .param("workloadSpecJson", workloadSpecsArray)
             .param("baseWorkloadDir", RESOURCES_DIR.toString())
-            // In the future, this can be extended to support multiple engines.
+            // TODO: In the future, this can be extended to support multiple engines.
             .param("engineName", "default")
             .forks(1)
             .warmupIterations(3)
