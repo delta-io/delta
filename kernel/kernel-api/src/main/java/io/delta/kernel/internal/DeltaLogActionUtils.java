@@ -293,7 +293,8 @@ public class DeltaLogActionUtils {
                 if (fileVersion > endVersion) {
                   if (mustBeRecreatable && !hasReturnedCommitOrCheckpoint.get()) {
                     final long earliestVersion =
-                        DeltaHistoryManager.getEarliestRecreatableCommit(engine, logPath);
+                        DeltaHistoryManager.getEarliestRecreatableCommit(
+                            engine, logPath, Optional.empty());
                     throw DeltaErrors.versionBeforeFirstAvailableCommit(
                         tablePath.toString(), endVersion, earliestVersion);
                   } else {
