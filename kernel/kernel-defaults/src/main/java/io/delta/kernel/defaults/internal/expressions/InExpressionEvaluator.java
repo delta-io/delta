@@ -134,10 +134,7 @@ public class InExpressionEvaluator {
     // Check for nested types which are not supported
     if (isNestedType(valueDataType)) {
       throw unsupportedExpressionException(
-          in,
-          String.format(
-              "IN expression does not support nested types.",
-              valueDataType));
+          in, String.format("IN expression does not support nested types.", valueDataType));
     }
 
     for (int i = 0; i < inListDataTypes.size(); i++) {
