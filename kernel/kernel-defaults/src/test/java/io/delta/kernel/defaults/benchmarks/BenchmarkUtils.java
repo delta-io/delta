@@ -20,9 +20,11 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import org.jetbrains.annotations.NotNull;
 
 /** Useful utilities and values for benchmarks. */
 public class BenchmarkUtils {
@@ -36,14 +38,50 @@ public class BenchmarkUtils {
    * @return List of loaded workload specifications
    * @throws RuntimeException if the workloads directory doesn't exist
    */
-  public static List<String> loadAllWorkloads(Path specDirPath) {
+  public static List<WorkloadSpec> loadAllWorkloads(Path specDirPath) {
+    List<WorkloadSpec> workloadSpecs = new ArrayList<>();
     try (Stream<Path> files = Files.list(specDirPath)) {
-      return files
-          .map(Path::toString)
-          .filter(string -> string.endsWith(".json"))
-          .collect(Collectors.toList());
+      List<Path> tablePaths =
+          files.collect(Collectors.toList()).stream()
+              .filter(Files::isDirectory)
+              .collect(Collectors.toList());
+      if (tablePaths.isEmpty()) {
+        throw new RuntimeException("No tables found in " + specDirPath);
+      }
+      // Check that the delta and specs directories exist
+      Path deltaDir = tablePaths.get(0).resolve("delta");
+      Path specsDir = tablePaths.get(0).resolve("specs");
+      if (!Files.exists(deltaDir) || !Files.isDirectory(deltaDir)) {
+        throw new RuntimeException("Delta directory not found in " + tablePaths.get(0));
+      }
+
+      // List directories under specs dir and return their names
+
+      try (Stream<Path> specDirs = Files.list(specsDir)) {
+        @NotNull
+        List<Path> specCases = specDirs.filter(Files::isDirectory).collect(Collectors.toList());
+        if (specCases.isEmpty()) {
+          throw new RuntimeException("No spec cases found in " + specsDir);
+        }
+
+        // Read the spec.json file in each spec case directory
+        for (Path specCase : specCases) {
+          Path specFile = specCase.resolve("spec.json");
+          if (!Files.exists(specFile) || !Files.isRegularFile(specFile)) {
+            throw new RuntimeException("spec.json not found in " + specCase);
+          }
+          // Read the workloadSpec, and inject the table root = deltaDir
+          WorkloadSpec workloadSpec =
+              WorkloadSpec.fromJsonPath(
+                  specFile.toString(), deltaDir.toString(), specCase.getFileName().toString());
+          System.out.println("Loaded workload spec: " + workloadSpec);
+          workloadSpecs.add(workloadSpec);
+        }
+      }
+
     } catch (IOException e) {
       throw new RuntimeException("Failed to scan workloads directory", e);
     }
+    return workloadSpecs;
   }
 }

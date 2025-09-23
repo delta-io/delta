@@ -14,10 +14,15 @@
  * limitations under the License.
  */
 
-package io.delta.kernel.defaults.benchmarks;
+package io.delta.kernel.defaults.benchmarks.models;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import io.delta.kernel.defaults.benchmarks.ReadMetadataRunner;
+import io.delta.kernel.defaults.benchmarks.WorkloadRunner;
+import io.delta.kernel.defaults.benchmarks.WorkloadSpec;
 import io.delta.kernel.engine.Engine;
+import java.util.Arrays;
+import java.util.List;
 
 /**
  * Workload specification for read_metadata benchmarks. This workload reads the metadata of the
@@ -25,7 +30,7 @@ import io.delta.kernel.engine.Engine;
  * at that version is read; otherwise, the latest metadata is read.
  *
  * <p>To run this workload, you can construct a {@link ReadMetadataRunner} from this spec using
- * {@link #getRunner(String, Engine)}.
+ * {@link WorkloadSpec#getRunner(String, Engine, String)}.
  *
  * <p>Sample JSON specification for local delta table at specific version: { "type":
  * "read_metadata", "name": "read-basic-checkpoint-at-v5", "table_root": "basic-checkpoint-table",
@@ -35,22 +40,18 @@ import io.delta.kernel.engine.Engine;
  * "name": "read-basic-checkpoint-at-latest", "table_root":
  * "s3:///my-bucket/delta-tables/basic-checkpoint-table" }
  */
-public class ReadMetadataSpec extends WorkloadSpec {
-
-  /**
-   * The path to the root of the table. If it is a URI, this must be treated as an absolute path.
-   * Otherwise, the path is relative to the base workload directory.
-   */
-  @JsonProperty("table_root")
-  private String tableRoot;
+public class ReadSpec extends WorkloadSpec {
 
   /** The snapshot version to read. If null, the latest version must be read. */
-  @JsonProperty("snapshot_version")
-  private Long snapshotVersion;
+  @JsonProperty("version")
+  private Long version;
+
+  @JsonProperty("expected_data")
+  private String expectedData;
 
   // Default constructor for Jackson
-  public ReadMetadataSpec() {
-    super("read_metadata");
+  public ReadSpec() {
+    super("read");
   }
 
   /** @return the table root path as specified in the workload spec. */
@@ -59,18 +60,26 @@ public class ReadMetadataSpec extends WorkloadSpec {
   }
 
   /** @return the snapshot version to read, or null if the latest version should be read. */
-  public Long getSnapshotVersion() {
-    return snapshotVersion;
+  public Long getVersion() {
+    return version;
   }
 
   @Override
-  public WorkloadRunner getRunner(String baseWorkloadDirPath, Engine engine) {
-    return new ReadMetadataRunner(baseWorkloadDirPath, this, engine);
+  public WorkloadRunner getRunner(String baseWorkloadDirPath, Engine engine, String operation) {
+    if (operation.equals("read_metadata")) {
+      return new ReadMetadataRunner(baseWorkloadDirPath, this, engine);
+    } else {
+      throw new IllegalArgumentException("Unsupported operation for ReadSpec: " + operation);
+    }
+  }
+
+  @Override
+  public List<String> getBenchmarkOperations() {
+    return Arrays.asList("read_metadata", "read_data");
   }
 
   @Override
   public String toString() {
-    return String.format(
-        "ReadMetadata{tableRoot='%s', snapshotVersion=%s}", tableRoot, snapshotVersion);
+    return String.format("ReadMetadata{tableRoot='%s', snapshotVersion=%s}", tableRoot, version);
   }
 }

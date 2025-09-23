@@ -18,6 +18,7 @@ package io.delta.kernel.defaults.benchmarks;
 
 import io.delta.kernel.*;
 import io.delta.kernel.data.FilteredColumnarBatch;
+import io.delta.kernel.defaults.benchmarks.models.ReadSpec;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.utils.CloseableIterator;
 import java.nio.file.Path;
@@ -26,8 +27,8 @@ import org.openjdk.jmh.infra.Blackhole;
 
 /**
  * A WorkloadRunner that can execute the read_metadata workload as a benchmark. This runner is
- * created from a {@link ReadMetadataSpec}. The workload performs a scan of the table's metadata, at
- * the specified snapshot version (or latest if not specified).
+ * created from a {@link ReadSpec}. The workload performs a scan of the table's metadata, at the
+ * specified snapshot version (or latest if not specified).
  *
  * <p>If run as a benchmark using {@link #executeAsBenchmark(Blackhole)}, this measures the time to
  * perform the metadata scan and consume all results. It does not include the time to load the
@@ -37,7 +38,7 @@ public class ReadMetadataRunner implements WorkloadRunner {
   private Scan scan;
   private final Engine engine;
   private final Path baseWorkloadDirPath;
-  private final ReadMetadataSpec workloadSpec;
+  private final ReadSpec workloadSpec;
 
   /**
    * Constructs the ReadMetadataRunner from the workload spec and the base workload directory
@@ -46,7 +47,7 @@ public class ReadMetadataRunner implements WorkloadRunner {
    * @param baseWorkloadDirPath The base directory containing workload tables.
    * @param workloadSpec The read_metadata workload specification.
    */
-  public ReadMetadataRunner(String baseWorkloadDirPath, ReadMetadataSpec workloadSpec, Engine engine) {
+  public ReadMetadataRunner(String baseWorkloadDirPath, ReadSpec workloadSpec, Engine engine) {
     this.baseWorkloadDirPath = Paths.get(baseWorkloadDirPath);
     this.workloadSpec = workloadSpec;
     this.engine = engine;
@@ -63,8 +64,8 @@ public class ReadMetadataRunner implements WorkloadRunner {
     }
 
     SnapshotBuilder builder = TableManager.loadSnapshot(workloadTableRoot);
-    if (workloadSpec.getSnapshotVersion() != null) {
-      builder.atVersion(workloadSpec.getSnapshotVersion());
+    if (workloadSpec.getVersion() != null) {
+      builder.atVersion(workloadSpec.getVersion());
     }
     Snapshot snapshot = builder.build(engine);
     scan = snapshot.getScanBuilder().build();
@@ -73,7 +74,7 @@ public class ReadMetadataRunner implements WorkloadRunner {
   /** @return the name of this workload derived from the workload specification. */
   @Override
   public String getName() {
-    return "read_metadata/" + workloadSpec.name;
+    return "read_metadata/";
   }
 
   /** @return The workload specification used to create this runner. */
@@ -111,7 +112,7 @@ public class ReadMetadataRunner implements WorkloadRunner {
   private CloseableIterator<FilteredColumnarBatch> execute() {
     if (scan == null) {
       throw new IllegalStateException(
-              "ReadMetadataRunner not initialized. Call setup() before executing.");
+          "ReadMetadataRunner not initialized. Call setup() before executing.");
     }
     return scan.getScanFiles(engine);
   }
