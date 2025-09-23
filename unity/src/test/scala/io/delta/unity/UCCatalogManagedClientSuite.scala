@@ -196,9 +196,9 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
       .getSortedKernelParsedDeltaDataFromRatifiedCommits("ucTableId", ucCommitsUnsorted)
 
     assert(kernelParsedLogData.size() == 3)
-    assert(kernelParsedLogData.get(0).version == 1)
-    assert(kernelParsedLogData.get(1).version == 2)
-    assert(kernelParsedLogData.get(2).version == 3)
+    assert(kernelParsedLogData.get(0).getVersion == 1)
+    assert(kernelParsedLogData.get(1).getVersion == 2)
+    assert(kernelParsedLogData.get(2).getVersion == 3)
   }
 
   test("creates snapshot with UCCatalogManagedCommitter") {

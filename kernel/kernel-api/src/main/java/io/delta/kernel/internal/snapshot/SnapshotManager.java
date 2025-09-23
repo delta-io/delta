@@ -423,7 +423,7 @@ public class SnapshotManager {
     final long newVersion =
         allDeltasAfterCheckpoint.isEmpty()
             ? latestCompleteCheckpointVersion
-            : ListUtils.getLast(allDeltasAfterCheckpoint).version;
+            : ListUtils.getLast(allDeltasAfterCheckpoint).getVersion();
 
     logger.info("New version to load: {}", newVersion);
 
@@ -441,7 +441,7 @@ public class SnapshotManager {
         new Lazy<>(
             () ->
                 allPublishedDeltas.stream()
-                    .filter(x -> x.version == latestCompleteCheckpointVersion)
+                    .filter(x -> x.getVersion() == latestCompleteCheckpointVersion)
                     .findFirst());
 
     // Check that, for a checkpoint at version N, there's a delta file at N, too.
@@ -470,12 +470,12 @@ public class SnapshotManager {
       verifyDeltaVersionsContiguous(
           // TODO: refactor `verifyDeltaVersionsContiguous` to operate on ParsedLogData so we can
           //      avoid making an entirely new list here
-          allDeltasAfterCheckpoint.stream().map(x -> x.version).collect(Collectors.toList()),
+          allDeltasAfterCheckpoint.stream().map(x -> x.getVersion()).collect(Collectors.toList()),
           tablePath);
 
       // Check that the delta versions start with $latestCompleteCheckpointVersion + 1. If they
       // don't, then we have a gap in between the checkpoint and the first delta file.
-      if (allDeltasAfterCheckpoint.get(0).version != latestCompleteCheckpointVersion + 1) {
+      if (allDeltasAfterCheckpoint.get(0).getVersion() != latestCompleteCheckpointVersion + 1) {
         throw new InvalidTableException(
             tablePath.toString(),
             String.format(
@@ -597,7 +597,10 @@ public class SnapshotManager {
     final List<ParsedDeltaData> allPublishedDeltasAfterCheckpoint =
         allPublishedDeltas.stream()
             .filter(x -> x.isFile())
-            .filter(x -> latestCompleteCheckpointVersion < x.version && x.version <= versionToLoad)
+            .filter(
+                x ->
+                    latestCompleteCheckpointVersion < x.getVersion()
+                        && x.getVersion() <= versionToLoad)
             .collect(Collectors.toList());
 
     if (parsedLogDatas.isEmpty()) {
@@ -607,7 +610,10 @@ public class SnapshotManager {
     final List<ParsedDeltaData> allRatifiedCommitsAfterCheckpoint =
         parsedLogDatas.stream()
             .filter(x -> x instanceof ParsedDeltaData && x.isFile())
-            .filter(x -> latestCompleteCheckpointVersion < x.version && x.version <= versionToLoad)
+            .filter(
+                x ->
+                    latestCompleteCheckpointVersion < x.getVersion()
+                        && x.getVersion() <= versionToLoad)
             .map(ParsedDeltaData.class::cast)
             .collect(Collectors.toList());
 
@@ -619,13 +625,13 @@ public class SnapshotManager {
       return allRatifiedCommitsAfterCheckpoint;
     }
 
-    final long firstRatified = allRatifiedCommitsAfterCheckpoint.get(0).version;
-    final long lastRatified = ListUtils.getLast(allRatifiedCommitsAfterCheckpoint).version;
+    final long firstRatified = allRatifiedCommitsAfterCheckpoint.get(0).getVersion();
+    final long lastRatified = ListUtils.getLast(allRatifiedCommitsAfterCheckpoint).getVersion();
 
     return Stream.of(
-            allPublishedDeltasAfterCheckpoint.stream().filter(x -> x.version < firstRatified),
+            allPublishedDeltasAfterCheckpoint.stream().filter(x -> x.getVersion() < firstRatified),
             allRatifiedCommitsAfterCheckpoint.stream(),
-            allPublishedDeltasAfterCheckpoint.stream().filter(x -> x.version > lastRatified))
+            allPublishedDeltasAfterCheckpoint.stream().filter(x -> x.getVersion() > lastRatified))
         .flatMap(Function.identity())
         .collect(Collectors.toList());
   }
