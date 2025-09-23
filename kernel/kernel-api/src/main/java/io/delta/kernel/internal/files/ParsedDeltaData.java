@@ -53,9 +53,24 @@ public final class ParsedDeltaData extends ParsedLogData {
     return new ParsedDeltaData(version, Optional.empty(), Optional.of(inlineData));
   }
 
+  /* Stores whether this delta is a ratified commit. Stored to avoid repeated Path parsing */
+  private final boolean isRatifiedCommit;
+
   private ParsedDeltaData(
       long version, Optional<FileStatus> fileStatusOpt, Optional<ColumnarBatch> inlineDataOpt) {
     super(version, fileStatusOpt, inlineDataOpt);
+    // Compute and store whether this is a ratified commit
+    if (isFile()) {
+      isRatifiedCommit = FileNames.isStagedDeltaFile(getFileStatus().getPath());
+    } else { // isInline
+      // TODO: revisit whether we can have inline data of a published delta file
+      isRatifiedCommit = true;
+    }
+  }
+
+  /** Whether this ParsedDeltaData is a ratified commit. False if it's published. */
+  public boolean isRatifiedCommit() {
+    return isRatifiedCommit;
   }
 
   @Override

@@ -68,9 +68,9 @@ public abstract class ParsedLogData {
   // Member fields and methods //
   ///////////////////////////////
 
-  public final long version;
-  public final Optional<FileStatus> fileStatusOpt;
-  public final Optional<ColumnarBatch> inlineDataOpt;
+  protected final long version;
+  protected final Optional<FileStatus> fileStatusOpt;
+  protected final Optional<ColumnarBatch> inlineDataOpt;
 
   protected ParsedLogData(
       long version, Optional<FileStatus> fileStatusOpt, Optional<ColumnarBatch> inlineDataOpt) {
@@ -97,6 +97,11 @@ public abstract class ParsedLogData {
    */
   public boolean isInline() {
     return inlineDataOpt.isPresent();
+  }
+
+  /** Return the version of this log data. */
+  public long getVersion() {
+    return version;
   }
 
   /**

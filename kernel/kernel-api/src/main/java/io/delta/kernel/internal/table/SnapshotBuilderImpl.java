@@ -193,7 +193,7 @@ public class SnapshotBuilderImpl implements SnapshotBuilder {
         final ParsedLogData prev = ctx.logDatas.get(i - 1);
         final ParsedLogData curr = ctx.logDatas.get(i);
         checkArgument(
-            prev.version + 1 == curr.version,
+            prev.getVersion() + 1 == curr.getVersion(),
             String.format(
                 "Log data must be sorted and contiguous, but found: %s and %s", prev, curr));
       }
