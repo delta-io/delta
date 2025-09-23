@@ -1,5 +1,7 @@
 package io.delta.kernel.defaults.benchmarks;
 
+import io.delta.kernel.defaults.benchmarks.models.WorkloadSpec;
+import io.delta.kernel.defaults.benchmarks.workloadRunners.WorkloadRunner;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import org.apache.hadoop.conf.Configuration;

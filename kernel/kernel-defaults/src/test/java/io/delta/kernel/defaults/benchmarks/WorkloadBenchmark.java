@@ -21,6 +21,9 @@ import static io.delta.kernel.defaults.benchmarks.BenchmarkUtils.*;
 import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
+
+import io.delta.kernel.defaults.benchmarks.models.WorkloadSpec;
+import io.delta.kernel.defaults.benchmarks.workloadRunners.WorkloadRunner;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.infra.Blackhole;
 import org.openjdk.jmh.results.format.ResultFormatType;

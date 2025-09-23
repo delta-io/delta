@@ -17,9 +17,8 @@
 package io.delta.kernel.defaults.benchmarks.models;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
-import io.delta.kernel.defaults.benchmarks.ReadMetadataRunner;
-import io.delta.kernel.defaults.benchmarks.WorkloadRunner;
-import io.delta.kernel.defaults.benchmarks.WorkloadSpec;
+import io.delta.kernel.defaults.benchmarks.workloadRunners.ReadMetadataRunner;
+import io.delta.kernel.defaults.benchmarks.workloadRunners.WorkloadRunner;
 import io.delta.kernel.engine.Engine;
 import java.util.ArrayList;
 import java.util.List;

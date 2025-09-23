@@ -14,10 +14,11 @@
  * limitations under the License.
  */
 
-package io.delta.kernel.defaults.benchmarks;
+package io.delta.kernel.defaults.benchmarks.workloadRunners;
 
 import io.delta.kernel.*;
 import io.delta.kernel.data.FilteredColumnarBatch;
+import io.delta.kernel.defaults.benchmarks.models.WorkloadSpec;
 import io.delta.kernel.defaults.benchmarks.models.ReadSpec;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.utils.CloseableIterator;
