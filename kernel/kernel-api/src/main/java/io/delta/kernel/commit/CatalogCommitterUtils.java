@@ -61,9 +61,11 @@ public class CatalogCommitterUtils {
     final Map<String, String> properties = new HashMap<>();
 
     properties.put(
-        TableConfig.MIN_READER_VERSION.getKey(), String.valueOf(protocol.getMinReaderVersion()));
+        TableConfig.MIN_PROTOCOL_READER_VERSION_KEY,
+        String.valueOf(protocol.getMinReaderVersion()));
     properties.put(
-        TableConfig.MIN_WRITER_VERSION.getKey(), String.valueOf(protocol.getMinWriterVersion()));
+        TableConfig.MIN_PROTOCOL_WRITER_VERSION_KEY,
+        String.valueOf(protocol.getMinWriterVersion()));
 
     if (protocol.supportsReaderFeatures() || protocol.supportsWriterFeatures()) {
       for (String featureName : protocol.getReaderAndWriterFeatures()) {

@@ -31,6 +31,10 @@ import java.util.function.Predicate;
  */
 public class TableConfig<T> {
 
+  public static final String MIN_PROTOCOL_READER_VERSION_KEY = "delta.minReaderVersion";
+
+  public static final String MIN_PROTOCOL_WRITER_VERSION_KEY = "delta.minWriterVersion";
+
   //////////////////
   // TableConfigs //
   //////////////////
@@ -365,26 +369,6 @@ public class TableConfig<T> {
           "need to be a string.",
           false);
 
-  /** The minimum reader version of the Delta protocol. */
-  public static final TableConfig<Integer> MIN_READER_VERSION =
-      new TableConfig<>(
-          "delta.minReaderVersion",
-          "1",
-          Integer::valueOf,
-          value -> value >= 1,
-          "needs to be a positive integer.",
-          false);
-
-  /** The minimum writer version of the Delta protocol. */
-  public static final TableConfig<Integer> MIN_WRITER_VERSION =
-      new TableConfig<>(
-          "delta.minWriterVersion",
-          "1",
-          Integer::valueOf,
-          value -> value >= 1,
-          "needs to be a positive integer.",
-          false);
-
   /** All the valid properties that can be set on the table. */
   private static final Map<String, TableConfig<?>> VALID_PROPERTIES =
       Collections.unmodifiableMap(
@@ -414,8 +398,6 @@ public class TableConfig<T> {
               addConfig(this, MATERIALIZED_ROW_ID_COLUMN_NAME);
               addConfig(this, MATERIALIZED_ROW_COMMIT_VERSION_COLUMN_NAME);
               addConfig(this, VARIANT_SHREDDING_ENABLED);
-              addConfig(this, MIN_READER_VERSION);
-              addConfig(this, MIN_WRITER_VERSION);
             }
           });
 
