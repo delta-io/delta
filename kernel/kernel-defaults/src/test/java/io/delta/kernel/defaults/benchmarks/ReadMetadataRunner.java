@@ -21,8 +21,6 @@ import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.defaults.benchmarks.models.ReadSpec;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.utils.CloseableIterator;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import org.openjdk.jmh.infra.Blackhole;
 
 /**
@@ -37,34 +35,22 @@ import org.openjdk.jmh.infra.Blackhole;
 public class ReadMetadataRunner implements WorkloadRunner {
   private Scan scan;
   private final Engine engine;
-  private final Path baseWorkloadDirPath;
   private final ReadSpec workloadSpec;
 
   /**
    * Constructs the ReadMetadataRunner from the workload spec and the base workload directory
    * containing test tables.
    *
-   * @param baseWorkloadDirPath The base directory containing workload tables.
    * @param workloadSpec The read_metadata workload specification.
    */
-  public ReadMetadataRunner(String baseWorkloadDirPath, ReadSpec workloadSpec, Engine engine) {
-    this.baseWorkloadDirPath = Paths.get(baseWorkloadDirPath);
+  public ReadMetadataRunner(ReadSpec workloadSpec, Engine engine) {
     this.workloadSpec = workloadSpec;
     this.engine = engine;
   }
 
   @Override
   public void setup() {
-    String workloadTableRoot = workloadSpec.getTableRoot();
-    //    // If this is not a URI, treat it as a relative path under the base workload directory
-    //    if (!workloadTableRoot.contains("://")) {
-    //      // This uses a hard-coded base directory for workload tables. In the future, this could
-    // be
-    //      // made configurable.
-    //      workloadTableRoot =
-    // baseWorkloadDirPath.resolve(Paths.get(workloadTableRoot)).toString();
-    //    }
-
+    String workloadTableRoot = workloadSpec.getTableInfo().getTableRoot();
     SnapshotBuilder builder = TableManager.loadSnapshot(workloadTableRoot);
     if (workloadSpec.getVersion() != null) {
       builder.atVersion(workloadSpec.getVersion());

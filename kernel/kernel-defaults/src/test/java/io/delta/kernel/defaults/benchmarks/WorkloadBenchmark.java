@@ -57,13 +57,6 @@ public class WorkloadBenchmark {
     private String workloadSpecJson;
 
     /**
-     * The base directory containing workload tables. This is used to resolve relative table paths.
-     * Note: This parameter will be set dynamically by JMH. The value is set in the main method.
-     */
-    @Param({})
-    private String baseWorkloadDir;
-
-    /**
      * The engine to use for this benchmark. Note: This parameter will be set dynamically by JMH.
      * The value is set in the main method.
      */
@@ -88,7 +81,7 @@ public class WorkloadBenchmark {
       } else {
         throw new IllegalArgumentException("Unsupported engine: " + engineName);
       }
-      runner = spec.getRunner(baseWorkloadDir, engine);
+      runner = spec.getRunner(engine);
       runner.setup();
     }
 
@@ -141,7 +134,6 @@ public class WorkloadBenchmark {
         new OptionsBuilder()
             .include(WorkloadBenchmark.class.getSimpleName())
             .param("workloadSpecJson", workloadSpecsArray)
-            .param("baseWorkloadDir", RESOURCES_DIR.toString())
             // TODO: In the future, this can be extended to support multiple engines.
             .param("engineName", "default")
             .forks(1)
