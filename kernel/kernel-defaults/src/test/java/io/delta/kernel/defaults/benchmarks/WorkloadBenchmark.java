@@ -18,12 +18,9 @@ package io.delta.kernel.defaults.benchmarks;
 
 import static io.delta.kernel.defaults.benchmarks.BenchmarkUtils.*;
 
-import io.delta.kernel.defaults.engine.DefaultEngine;
-import io.delta.kernel.engine.Engine;
 import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
-import org.apache.hadoop.conf.Configuration;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.infra.Blackhole;
 import org.openjdk.jmh.results.format.ResultFormatType;
@@ -42,70 +39,19 @@ import org.openjdk.jmh.runner.options.TimeValue;
 @Fork(value = 1, warmups = 1)
 @Warmup(iterations = 3, time = 1)
 @Measurement(iterations = 5, time = 1)
-public class WorkloadBenchmark {
-
-  /**
-   * Dynamic benchmark state that reads the workload specification and sets up the workload runner
-   */
-  @State(Scope.Thread)
-  public static class BenchmarkState {
-    /**
-     * The json representation of the workload specification. Note: This parameter will be set
-     * dynamically by JMH. The value is set in the main method.
-     */
-    @Param({})
-    private String workloadSpecJson;
-
-    /**
-     * The engine to use for this benchmark. Note: This parameter will be set dynamically by JMH.
-     * The value is set in the main method.
-     */
-    @Param({})
-    private String engineName;
-
-    /** The workload runner initialized for this benchmark invocation. */
-    private WorkloadRunner runner;
-
-    /**
-     * Setup method that runs before each benchmark invocation. Reads the workload specification
-     * from the given path and initializes the corresponding workload runner.
-     *
-     * @throws Exception If any error occurs during setup.
-     */
-    @Setup(Level.Invocation)
-    public void setup() throws Exception {
-      WorkloadSpec spec = WorkloadSpec.fromJsonString(workloadSpecJson);
-      Engine engine;
-      if (engineName.equals("default")) {
-        engine = DefaultEngine.create(new Configuration());
-      } else {
-        throw new IllegalArgumentException("Unsupported engine: " + engineName);
-      }
-      runner = spec.getRunner(engine);
-      runner.setup();
-    }
-
-    /** @return The workload specification for this benchmark invocation. */
-    public WorkloadSpec getWorkloadSpecification() {
-      return getRunner().getWorkloadSpec();
-    }
-
-    /** @return The workload runner initialized for this benchmark invocation. */
-    public WorkloadRunner getRunner() {
-      return runner;
-    }
-  }
+public class WorkloadBenchmark<T> {
 
   /**
    * Benchmark method that executes the workload runner specified in the state as a benchmark.
    *
-   * @param state The benchmark state containing the workload specification and runner.
+   * @param state The benchmark state containing the workload runner to execute.
    * @param blackhole The Blackhole provided by JMH to consume results and prevent dead code
    *     elimination.
    * @throws Exception If any error occurs during workload execution.
    */
   @Benchmark
-  public void benchmarkWorkload(BenchmarkState state, Blackhole blackhole) throws Exception {
+  public void benchmarkWorkload(BenchmarkState.DefaultBenchmarkState state, Blackhole blackhole)
+      throws Exception {
     WorkloadRunner runner = state.getRunner();
     runner.executeAsBenchmark(blackhole);
   }
