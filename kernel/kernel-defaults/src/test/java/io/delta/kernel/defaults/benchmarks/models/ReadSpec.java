@@ -21,7 +21,7 @@ import io.delta.kernel.defaults.benchmarks.ReadMetadataRunner;
 import io.delta.kernel.defaults.benchmarks.WorkloadRunner;
 import io.delta.kernel.defaults.benchmarks.WorkloadSpec;
 import io.delta.kernel.engine.Engine;
-import java.util.Arrays;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -30,7 +30,7 @@ import java.util.List;
  * at that version is read; otherwise, the latest metadata is read.
  *
  * <p>To run this workload, you can construct a {@link ReadMetadataRunner} from this spec using
- * {@link WorkloadSpec#getRunner(String, Engine, String)}.
+ * {@link WorkloadSpec#getRunner(String, Engine)}.
  *
  * <p>Sample JSON specification for local delta table at specific version: { "type":
  * "read_metadata", "name": "read-basic-checkpoint-at-v5", "table_root": "basic-checkpoint-table",
@@ -49,9 +49,22 @@ public class ReadSpec extends WorkloadSpec {
   @JsonProperty("expected_data")
   private String expectedData;
 
+  @JsonProperty("operation_type")
+  private String operationType;
+
   // Default constructor for Jackson
   public ReadSpec() {
     super("read");
+  }
+
+  public ReadSpec(
+      String tableRoot, String caseName, Long version, String expectedData, String operationType) {
+    super("read");
+    this.tableRoot = tableRoot;
+    this.version = version;
+    this.caseName = caseName;
+    this.expectedData = expectedData;
+    this.operationType = operationType;
   }
 
   /** @return the table root path as specified in the workload spec. */
@@ -65,21 +78,32 @@ public class ReadSpec extends WorkloadSpec {
   }
 
   @Override
-  public WorkloadRunner getRunner(String baseWorkloadDirPath, Engine engine, String operation) {
-    if (operation.equals("read_metadata")) {
+  public WorkloadRunner getRunner(String baseWorkloadDirPath, Engine engine) {
+    if (operationType.equals("read_metadata")) {
       return new ReadMetadataRunner(baseWorkloadDirPath, this, engine);
     } else {
-      throw new IllegalArgumentException("Unsupported operation for ReadSpec: " + operation);
+      throw new IllegalArgumentException("Unsupported operation for ReadSpec: " + operationType);
     }
   }
 
   @Override
-  public List<String> getBenchmarkOperations() {
-    return Arrays.asList("read_metadata", "read_data");
+  public List<WorkloadSpec> getBenchmarkVariants() {
+    // TODO: In the future, we will support the read_data operation as well.
+    String[] operationTypes = {"read_metadata"};
+    List<WorkloadSpec> out = new ArrayList<>();
+    for (String opType : operationTypes) {
+      ReadSpec specVariant =
+          new ReadSpec(this.tableRoot, this.caseName, this.version, this.expectedData, opType);
+      System.out.println("Created ReadSpec variant: " + specVariant);
+      out.add(specVariant);
+    }
+    return out;
   }
 
   @Override
   public String toString() {
-    return String.format("ReadMetadata{tableRoot='%s', snapshotVersion=%s}", tableRoot, version);
+    return String.format(
+        "Read{operationType='%s', tableRoot='%s', snapshotVersion=%s}",
+        operationType, tableRoot, version);
   }
 }

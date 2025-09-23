@@ -57,18 +57,18 @@ public class WorkloadBenchmark {
     private String workloadSpecJson;
 
     /**
-     * The operation to benchmark within the workload specification. Note: This parameter will be
-     * set dynamically by JMH. The value is set in the main method.
-     */
-    @Param({})
-    private String operation;
-
-    /**
      * The base directory containing workload tables. This is used to resolve relative table paths.
      * Note: This parameter will be set dynamically by JMH. The value is set in the main method.
      */
     @Param({})
     private String baseWorkloadDir;
+
+    /**
+     * The engine to use for this benchmark. Note: This parameter will be set dynamically by JMH.
+     * The value is set in the main method.
+     */
+    @Param({})
+    private String engineName;
 
     /** The workload runner initialized for this benchmark invocation. */
     private WorkloadRunner runner;
@@ -82,8 +82,13 @@ public class WorkloadBenchmark {
     @Setup(Level.Invocation)
     public void setup() throws Exception {
       WorkloadSpec spec = WorkloadSpec.fromJsonString(workloadSpecJson);
-      Engine engine = DefaultEngine.create(new Configuration());
-      runner = spec.getRunner(baseWorkloadDir, engine, operation);
+      Engine engine;
+      if (engineName.equals("default")) {
+        engine = DefaultEngine.create(new Configuration());
+      } else {
+        throw new IllegalArgumentException("Unsupported engine: " + engineName);
+      }
+      runner = spec.getRunner(baseWorkloadDir, engine);
       runner.setup();
     }
 
@@ -122,29 +127,23 @@ public class WorkloadBenchmark {
 
     // Parse the Json specs from the json paths
     List<WorkloadSpec> specs = new ArrayList<>();
-    List<String> operations = new ArrayList<>();
     for (WorkloadSpec spec : workloadSpecs) {
-      for (String op : spec.getBenchmarkOperations()) {
-        // TODO: In the future, we could filter workloads based on command line args
-        if (op.equals("read_metadata")) {
-          operations.add(op);
-          specs.add(spec);
-        }
-      }
+      // TODO: In the future, we can filter specific workloads using command line args here.
+      specs.addAll(spec.getBenchmarkVariants());
     }
 
     // Convert paths into a String array for JMH. JMH requires that parameters be of type String[].
     String[] workloadSpecsArray =
         specs.stream().map(WorkloadSpec::toJsonString).toArray(String[]::new);
-    String[] operationNames = operations.toArray(new String[0]);
 
     // Configure and run JMH benchmark with the loaded workload specs
     Options opt =
         new OptionsBuilder()
             .include(WorkloadBenchmark.class.getSimpleName())
             .param("workloadSpecJson", workloadSpecsArray)
-            .param("operation", operationNames)
             .param("baseWorkloadDir", RESOURCES_DIR.toString())
+            // In the future, this can be extended to support multiple engines.
+            .param("engineName", "default")
             .forks(1)
             .warmupIterations(3)
             .measurementIterations(5)
