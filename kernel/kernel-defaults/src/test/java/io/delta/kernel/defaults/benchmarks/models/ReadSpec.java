@@ -30,7 +30,7 @@ import java.util.List;
  * at that version is read; otherwise, the latest metadata is read.
  *
  * <p>To run this workload, you can construct a {@link ReadMetadataRunner} from this spec using
- * {@link WorkloadSpec#getRunner(String, Engine)}.
+ * {@link WorkloadSpec#getRunner(Engine)}.
  *
  * <p>Sample JSON specification for local delta table at specific version: { "type":
  * "read_metadata", "name": "read-basic-checkpoint-at-v5", "table_root": "basic-checkpoint-table",
@@ -59,18 +59,17 @@ public class ReadSpec extends WorkloadSpec {
 
   // Copy constructor
   public ReadSpec(
-      String tableRoot, String caseName, Long version, String expectedData, String operationType) {
+      TableInfo tableInfo,
+      String caseName,
+      Long version,
+      String expectedData,
+      String operationType) {
     super("read");
-    this.tableRoot = tableRoot;
+    this.tableInfo = tableInfo;
     this.version = version;
     this.caseName = caseName;
     this.expectedData = expectedData;
     this.operationType = operationType;
-  }
-
-  /** @return the table root path as specified in the workload spec. */
-  public String getTableRoot() {
-    return tableRoot;
   }
 
   /** @return the snapshot version to read, or null if the latest version should be read. */
@@ -79,9 +78,9 @@ public class ReadSpec extends WorkloadSpec {
   }
 
   @Override
-  public WorkloadRunner getRunner(String baseWorkloadDirPath, Engine engine) {
+  public WorkloadRunner getRunner(Engine engine) {
     if (operationType.equals("read_metadata")) {
-      return new ReadMetadataRunner(baseWorkloadDirPath, this, engine);
+      return new ReadMetadataRunner(this, engine);
     } else {
       throw new IllegalArgumentException("Unsupported operation for ReadSpec: " + operationType);
     }
@@ -94,7 +93,7 @@ public class ReadSpec extends WorkloadSpec {
     List<WorkloadSpec> out = new ArrayList<>();
     for (String opType : operationTypes) {
       ReadSpec specVariant =
-          new ReadSpec(this.tableRoot, this.caseName, this.version, this.expectedData, opType);
+          new ReadSpec(this.tableInfo, this.caseName, this.version, this.expectedData, opType);
       System.out.println("Created ReadSpec variant: " + specVariant);
       out.add(specVariant);
     }
@@ -104,7 +103,7 @@ public class ReadSpec extends WorkloadSpec {
   @Override
   public String toString() {
     return String.format(
-        "Read{caseName='%s', operationType='%s', tableRoot='%s', snapshotVersion=%s}",
-        caseName, operationType, tableRoot, version);
+        "Read{caseName='%s', operationType='%s', snapshotVersion=%s, tableInfo='%s'}",
+        caseName, operationType, version, tableInfo);
   }
 }

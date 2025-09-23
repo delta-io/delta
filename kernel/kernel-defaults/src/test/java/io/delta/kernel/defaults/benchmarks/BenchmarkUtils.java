@@ -13,75 +13,151 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package io.delta.kernel.defaults.benchmarks;
 
+import io.delta.kernel.defaults.benchmarks.models.TableInfo;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
-import org.jetbrains.annotations.NotNull;
 
 /** Useful utilities and values for benchmarks. */
 public class BenchmarkUtils {
+
   public static final Path RESOURCES_DIR =
       Paths.get(System.getProperty("user.dir") + "/src/test/resources");
   public static final Path WORKLOAD_SPECS_DIR = RESOURCES_DIR.resolve("workload_specs");
 
+  private static final String DELTA_DIR_NAME = "delta";
+  private static final String SPECS_DIR_NAME = "specs";
+  private static final String SPEC_FILE_NAME = "spec.json";
+  private static final String TABLE_INFO_FILE_NAME = "table_info.json";
+
   /**
    * Scans the workloads directory and loads all JSON workload specifications.
    *
+   * @param specDirPath Path to the directory containing workload specifications
    * @return List of loaded workload specifications
-   * @throws RuntimeException if the workloads directory doesn't exist
+   * @throws WorkloadLoadException if workloads cannot be loaded
    */
   public static List<WorkloadSpec> loadAllWorkloads(Path specDirPath) {
-    List<WorkloadSpec> workloadSpecs = new ArrayList<>();
-    try (Stream<Path> files = Files.list(specDirPath)) {
-      List<Path> tablePaths =
-          files.collect(Collectors.toList()).stream()
-              .filter(Files::isDirectory)
-              .collect(Collectors.toList());
-      if (tablePaths.isEmpty()) {
-        throw new RuntimeException("No tables found in " + specDirPath);
-      }
-      // Check that the delta and specs directories exist
-      Path deltaDir = tablePaths.get(0).resolve("delta");
-      Path specsDir = tablePaths.get(0).resolve("specs");
-      if (!Files.exists(deltaDir) || !Files.isDirectory(deltaDir)) {
-        throw new RuntimeException("Delta directory not found in " + tablePaths.get(0));
-      }
+    validateWorkloadDirectory(specDirPath);
 
-      // List directories under specs dir and return their names
+    List<Path> tableDirectories = findTableDirectories(specDirPath);
 
-      try (Stream<Path> specDirs = Files.list(specsDir)) {
-        @NotNull
-        List<Path> specCases = specDirs.filter(Files::isDirectory).collect(Collectors.toList());
-        if (specCases.isEmpty()) {
-          throw new RuntimeException("No spec cases found in " + specsDir);
-        }
+    return tableDirectories.stream()
+        .flatMap(tableDir -> loadSpecsFromTable(tableDir).stream())
+        .collect(Collectors.toList());
+  }
 
-        // Read the spec.json file in each spec case directory
-        for (Path specCase : specCases) {
-          Path specFile = specCase.resolve("spec.json");
-          if (!Files.exists(specFile) || !Files.isRegularFile(specFile)) {
-            throw new RuntimeException("spec.json not found in " + specCase);
-          }
-          // Read the workloadSpec, and inject the table root = deltaDir
-          WorkloadSpec workloadSpec =
-              WorkloadSpec.fromJsonPath(
-                  specFile.toString(), deltaDir.toString(), specCase.getFileName().toString());
-          System.out.println("Loaded workload spec: " + workloadSpec);
-          workloadSpecs.add(workloadSpec);
-        }
-      }
-
-    } catch (IOException e) {
-      throw new RuntimeException("Failed to scan workloads directory", e);
+  /** Validates that the workload directory exists and is accessible. */
+  private static void validateWorkloadDirectory(Path specDirPath) {
+    if (!Files.exists(specDirPath)) {
+      throw new WorkloadLoadException("Workload directory does not exist: " + specDirPath);
     }
-    return workloadSpecs;
+
+    if (!Files.isDirectory(specDirPath)) {
+      throw new WorkloadLoadException("Path is not a directory: " + specDirPath);
+    }
+
+    if (!Files.isReadable(specDirPath)) {
+      throw new WorkloadLoadException("Cannot read workload directory: " + specDirPath);
+    }
+  }
+
+  /** Finds all table directories within the workload specifications directory. */
+  private static List<Path> findTableDirectories(Path specDirPath) {
+    try (Stream<Path> files = Files.list(specDirPath)) {
+      List<Path> tableDirectories = files.filter(Files::isDirectory).collect(Collectors.toList());
+
+      if (tableDirectories.isEmpty()) {
+        throw new WorkloadLoadException("No table directories found in " + specDirPath);
+      }
+
+      return tableDirectories;
+    } catch (IOException e) {
+      throw new WorkloadLoadException("Failed to list table directories in " + specDirPath, e);
+    }
+  }
+
+  /** Loads all workload specifications from a single table directory. */
+  private static List<WorkloadSpec> loadSpecsFromTable(Path tableDir) {
+    validateTableStructure(tableDir);
+
+    Path tableInfoPath = tableDir.resolve(TABLE_INFO_FILE_NAME);
+    Path deltaDir = tableDir.resolve(DELTA_DIR_NAME);
+    Path specsDir = tableDir.resolve(SPECS_DIR_NAME);
+
+    TableInfo tableInfo =
+        TableInfo.fromJsonPath(tableInfoPath.toString(), deltaDir.toAbsolutePath().toString());
+    System.out.println("Loading specs for table: " + tableInfo);
+
+    return findSpecDirectories(specsDir).stream()
+        .map(specDir -> loadSingleSpec(specDir, tableInfo))
+        .collect(Collectors.toList());
+  }
+
+  /** Validates that a table directory has the required structure. */
+  private static void validateTableStructure(Path tableDir) {
+    Path deltaDir = tableDir.resolve(DELTA_DIR_NAME);
+    Path specsDir = tableDir.resolve(SPECS_DIR_NAME);
+
+    if (!Files.exists(deltaDir) || !Files.isDirectory(deltaDir)) {
+      throw new WorkloadLoadException("Delta directory not found: " + deltaDir);
+    }
+
+    if (!Files.exists(specsDir) || !Files.isDirectory(specsDir)) {
+      throw new WorkloadLoadException("Specs directory not found: " + specsDir);
+    }
+  }
+
+  /** Finds all specification directories within the specs directory. */
+  private static List<Path> findSpecDirectories(Path specsDir) {
+    try (Stream<Path> specDirs = Files.list(specsDir)) {
+      List<Path> specDirectories = specDirs.filter(Files::isDirectory).collect(Collectors.toList());
+
+      if (specDirectories.isEmpty()) {
+        throw new WorkloadLoadException("No spec directories found in " + specsDir);
+      }
+
+      return specDirectories;
+    } catch (IOException e) {
+      throw new WorkloadLoadException("Failed to list spec directories in " + specsDir, e);
+    }
+  }
+
+  /** Loads a single workload specification from a spec directory. */
+  private static WorkloadSpec loadSingleSpec(Path specDir, TableInfo tableInfo) {
+    Path specFile = specDir.resolve(SPEC_FILE_NAME);
+
+    if (!Files.exists(specFile) || !Files.isRegularFile(specFile)) {
+      throw new WorkloadLoadException("Spec file not found: " + specFile);
+    }
+
+    try {
+      String specName = specDir.getFileName().toString();
+      WorkloadSpec workloadSpec =
+          WorkloadSpec.fromJsonPath(specFile.toString(), specName, tableInfo);
+
+      System.out.println("Loaded workload spec: " + workloadSpec);
+      return workloadSpec;
+
+    } catch (Exception e) {
+      throw new WorkloadLoadException("Failed to parse spec file: " + specFile, e);
+    }
+  }
+
+  /** Custom exception for workload loading errors. */
+  public static class WorkloadLoadException extends RuntimeException {
+    public WorkloadLoadException(String message) {
+      super(message);
+    }
+
+    public WorkloadLoadException(String message, Throwable cause) {
+      super(message, cause);
+    }
   }
 }
