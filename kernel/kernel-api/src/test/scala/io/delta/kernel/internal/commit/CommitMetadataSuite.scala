@@ -18,6 +18,8 @@ package io.delta.kernel.internal.commit
 
 import java.util.Optional
 
+import scala.collection.JavaConverters._
+
 import io.delta.kernel.commit.CommitMetadata.CommitType
 import io.delta.kernel.internal.actions.{DomainMetadata, Metadata, Protocol}
 import io.delta.kernel.internal.util.{Tuple2 => KernelTuple2}
@@ -63,6 +65,13 @@ class CommitMetadataSuite extends AnyFunSuite
         commitDomainMetadatas = null,
         newProtocolOpt = Optional.of(protocol12),
         newMetadataOpt = Optional.of(basicPartitionedMetadata))
+    }
+
+    intercept[NullPointerException] {
+      createCommitMetadata(
+        version = updateVersionNonZero,
+        readPandMOpt = Optional.of(new KernelTuple2(protocol12, basicPartitionedMetadata)),
+        committerProperties = null)
     }
   }
 
@@ -122,6 +131,17 @@ class CommitMetadataSuite extends AnyFunSuite
     assert(returnedMetadatas.size() == 2)
     assert(returnedMetadatas.contains(domainMetadata1))
     assert(returnedMetadatas.contains(domainMetadata2))
+  }
+
+  test("getCommitterProperties returns provided supplier") {
+    val props = Map("key1" -> "value1", "key2" -> "value2").asJava
+
+    val commitMetadata = createCommitMetadata(
+      version = updateVersionNonZero,
+      readPandMOpt = Optional.of(new KernelTuple2(protocol12, basicPartitionedMetadata)),
+      committerProperties = () => props)
+
+    assert(commitMetadata.getCommitterProperties.get() == props)
   }
 
   test("getEffectiveProtocol returns new protocol when present") {
