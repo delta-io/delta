@@ -246,14 +246,14 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
         createMockFSListFromEngine(p => throw new FileNotFoundException(p)),
         getMockSnapshot(dataPath, latestVersion = 1L),
         logPath,
-        0))
+        timestamp = 0))
     // Empty _delta_log directory
     intercept[TableNotFoundException](
       getActiveCommitAtTimestamp(
         createMockFSListFromEngine(p => Seq()),
         getMockSnapshot(dataPath, latestVersion = 1L),
         logPath,
-        0))
+        timestamp = 0))
   }
 
   // TODO: corrects commit timestamps for increasing commits (monotonizeCommitTimestamps)?
@@ -341,7 +341,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
         createMockFSListFromEngine(p => throw new FileNotFoundException(p)),
         getMockSnapshot(dataPath, latestVersion = 1L),
         logPath,
-        0,
+        timestamp = 0,
         mustBeRecreatable = false))
     // Empty _delta_log directory
     intercept[TableNotFoundException](
@@ -349,7 +349,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
         createMockFSListFromEngine(p => Seq()),
         getMockSnapshot(dataPath, latestVersion = 1L),
         logPath,
-        0))
+        timestamp = 0))
     /* ---------- CORRUPT LISTINGS --------- */
     // No commit files at all (only checkpoint files)
     checkGetActiveCommitAtTimestampError[RuntimeException](
@@ -571,7 +571,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
         engine,
         mockSnapshot,
         logPath,
-        51L)
+        timestamp = 51L)
     }
 
     // Test with canReturnLastCommit=true
