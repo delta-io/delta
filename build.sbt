@@ -435,6 +435,7 @@ lazy val deltaSuiteGenerator = (project in file("spark/delta-suite-generator"))
 
 lazy val spark = (project in file("spark"))
   .dependsOn(storage, kernelApi, kernelDefaults)
+  .dependsOn(goldenTables % "test")
   .enablePlugins(Antlr4Plugin)
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings (
