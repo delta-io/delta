@@ -14,8 +14,9 @@
  * limitations under the License.
  */
 
-package io.delta.kernel.defaults.benchmarks;
+package io.delta.kernel.defaults.benchmarks.workloadRunners;
 
+import io.delta.kernel.defaults.benchmarks.models.WorkloadSpec;
 import org.openjdk.jmh.infra.Blackhole;
 
 /**
