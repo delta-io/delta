@@ -64,7 +64,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
       mustBeRecreatable,
       canReturnLastCommit,
       canReturnEarliestCommit,
-      Optional.empty() /* parsedLogDelta */
+      Seq.empty.asJava /* parsedLogDelta */
     )
   }
 
@@ -1141,7 +1141,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
       false,
       canReturnLastCommit,
       canReturnEarliestCommit,
-      Optional.of(stagedCommits.asJava))
+      stagedCommits.asJava)
     assert(
       activeCommit.getVersion == expectedVersion,
       s"Expected version $expectedVersion but got ${activeCommit.getVersion} " +
@@ -1576,7 +1576,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
         false,
         false,
         false,
-        Optional.of(inlineData))
+        inlineData)
     }
 
     // Test 2: Published deltas in ParsedLogData should be rejected (only staged commits allowed)
@@ -1593,7 +1593,7 @@ class DeltaHistoryManagerSuite extends AnyFunSuite with MockFileSystemClientUtil
         false,
         false,
         false,
-        Optional.of(publishedData))
+        publishedData)
     }
   }
 }

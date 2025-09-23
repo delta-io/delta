@@ -66,7 +66,6 @@ public final class DeltaHistoryManager {
    * @return latest commit that happened at or before {@code timestamp}.
    * @throws KernelException if the timestamp is more than the timestamp of any committed version
    */
-  // TODO: update to accept parsedLogDatas
   public static long getVersionAtOrAfterTimestamp(
       Engine engine, Path logPath, long millisSinceEpochUTC, SnapshotImpl latestSnapshot) {
     DeltaHistoryManager.Commit commit =
@@ -82,7 +81,8 @@ public final class DeltaHistoryManager {
             // e.g. we give time T-1 and first commit has time T, then we DO want that earliest
             // commit
             true /* canReturnEarliestCommit */,
-            Optional.empty());
+            // TODO: pass through parsedDeltaData for ccv2
+            Collections.emptyList() /* parsedDeltaDatas */);
 
     if (commit.getTimestamp() >= millisSinceEpochUTC) {
       return commit.getVersion();
@@ -112,7 +112,6 @@ public final class DeltaHistoryManager {
    * @return latest commit that happened before or at {@code timestamp}.
    * @throws KernelException if the timestamp is less than the timestamp of any committed version
    */
-  // TODO: update to accept parsedLogDatas
   public static long getVersionBeforeOrAtTimestamp(
       Engine engine, Path logPath, long millisSinceEpochUTC, SnapshotImpl latestSnapshot) {
     return DeltaHistoryManager.getActiveCommitAtTimestamp(
@@ -126,7 +125,8 @@ public final class DeltaHistoryManager {
             // e.g. we give time T-1 and first commit has time T, then do NOT want that earliest
             // commit
             false /* canReturnEarliestCommit */,
-            Optional.empty())
+            // TODO: pass through parsedDeltaData for ccv2
+            Collections.emptyList() /* parsedDeltaDatas */)
         .getVersion();
   }
 
@@ -145,7 +145,7 @@ public final class DeltaHistoryManager {
    *     provided timestamp is after the latest commit
    * @param canReturnEarliestCommit whether we can return the earliest version of the table if the
    *     provided timestamp is before the earliest commit
-   * @param parsedLogDatas parsed log Deltas to use
+   * @param parsedDeltaDatas parsed log Deltas to use
    * @throws KernelException if the provided timestamp is before the earliest commit and
    *     canReturnEarliestCommit is false
    * @throws KernelException if the provided timestamp is after the latest commit and
@@ -160,27 +160,23 @@ public final class DeltaHistoryManager {
       boolean mustBeRecreatable,
       boolean canReturnLastCommit,
       boolean canReturnEarliestCommit,
-      Optional<List<ParsedDeltaData>> parsedLogDatas)
+      List<ParsedDeltaData> parsedDeltaDatas)
       throws TableNotFoundException {
 
     // For now, we only accept ratified staged commits
-    parsedLogDatas.ifPresent(
-        logDatas ->
-            checkArgument(
-                logDatas.stream()
-                    .allMatch(
-                        logData ->
-                            logData.isFile()
-                                && FileNames.isStagedDeltaFile(logData.getFileStatus().getPath())),
-                "Currently getActiveCommitAtTimestamp only accepts ratified staged commits"));
+    checkArgument(
+        parsedDeltaDatas.stream()
+            .allMatch(
+                logData ->
+                    logData.isFile()
+                        && FileNames.isStagedDeltaFile(logData.getFileStatus().getPath())),
+        "Currently getActiveCommitAtTimestamp only accepts ratified staged commits");
 
     // Create a mapper for delta version -> file status that takes into account ratified commits
     Function<Long, FileStatus> versionToFileStatusFunction =
-        getVersionToFileStatusFunctionWithParsedLogDelta(
-            parsedLogDatas.orElse(Collections.emptyList()), logPath);
+        getVersionToFileStatusFunctionWithParsedDeltaData(parsedDeltaDatas, logPath);
     Optional<Long> earliestRatifiedCommitVersion =
-        parsedLogDatas.flatMap(
-            logDatas -> logDatas.stream().map(ParsedLogData::getVersion).min(Long::compare));
+        parsedDeltaDatas.stream().map(ParsedLogData::getVersion).min(Long::compare);
 
     long earliestVersion =
         (mustBeRecreatable)
@@ -373,8 +369,8 @@ public final class DeltaHistoryManager {
       throws TableNotFoundException {
     // For a catalogManaged table, the only time no published commits exist is when v0 has not yet
     // been published. Otherwise, since checkpoints must have a published delta file, and log clean
-    // up
-    // must always preserve a checkpoint, there must be published commits present on the file-system
+    // up must always preserve a checkpoint, there must be published commits present on the
+    // file-system
     if (earliestRatifiedCommitVersion.isPresent() && earliestRatifiedCommitVersion.get() == 0) {
       return 0;
     }
@@ -460,8 +456,8 @@ public final class DeltaHistoryManager {
       throws TableNotFoundException {
     // For a catalogManaged table, the only time no published commits exist is when v0 has not yet
     // been published. Otherwise, since checkpoints must have a published delta file, and log clean
-    // up
-    // must always preserve a checkpoint, there must be published commits present on the file-system
+    // up must always preserve a checkpoint, there must be published commits present on the
+    // file-system
     if (earliestRatifiedCommitVersion.isPresent() && earliestRatifiedCommitVersion.get() == 0) {
       return 0;
     }
@@ -601,11 +597,11 @@ public final class DeltaHistoryManager {
     }
   }
 
-  private static Function<Long, FileStatus> getVersionToFileStatusFunctionWithParsedLogDelta(
-      List<ParsedDeltaData> parsedLogDatas, Path logPath) {
+  private static Function<Long, FileStatus> getVersionToFileStatusFunctionWithParsedDeltaData(
+      List<ParsedDeltaData> parsedDeltaDatas, Path logPath) {
     Map<Long, FileStatus> versionToFileStatusMap = new HashMap<>();
-    for (ParsedDeltaData parsedLogData : parsedLogDatas) {
-      versionToFileStatusMap.put(parsedLogData.getVersion(), parsedLogData.getFileStatus());
+    for (ParsedDeltaData parsedDeltaData : parsedDeltaDatas) {
+      versionToFileStatusMap.put(parsedDeltaData.getVersion(), parsedDeltaData.getFileStatus());
     }
     return version -> {
       if (versionToFileStatusMap.containsKey(version)) {
