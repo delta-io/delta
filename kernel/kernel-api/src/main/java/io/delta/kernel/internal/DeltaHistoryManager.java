@@ -598,14 +598,14 @@ public final class DeltaHistoryManager {
    * Returns a function for resolving version-to-file-status given a list of ratified staged
    * commits. We prefer to read a ratified commit over the published file whenever it is present.
    *
-   * <p> Note, this assumes that for any version provided to the function, it has already been
+   * <p>Note, this assumes that for any version provided to the function, it has already been
    * validated that the version _should_ exist by listing the _delta_log and finding the earliest
    * available commit.
    *
-   * <p>DeltaHistoryManager doesn't, and has never, done a full LIST of the _delta_log. Instead,
-   * it only lists to find the earliest commit, exists early, and then relies on the assumption
-   * that any commits after the earliest commit exist and are contiguous. With CCV2, we continue
-   * this assumption, such that for any version after the earliest available commit, the commit must
+   * <p>DeltaHistoryManager doesn't, and has never, done a full LIST of the _delta_log. Instead, it
+   * only lists to find the earliest commit, exists early, and then relies on the assumption that
+   * any commits after the earliest commit exist and are contiguous. With CCV2, we continue this
+   * assumption, such that for any version after the earliest available commit, the commit must
    * exist either in the list of ratified commits provided by the catalog or on the file-system.
    */
   private static Function<Long, FileStatus> getVersionToFileStatusFunction(
