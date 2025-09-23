@@ -220,7 +220,10 @@ public class TableFeatures {
 
     @Override
     public boolean hasKernelWriteSupport(Metadata metadata) {
-      return false; // TODO: yet to be implemented in Kernel
+      // Kernel supports writing Delta metadata with variant but not actual data yet.
+      // In case there's data attempting to be written when variant is in the schema, Kernel fails
+      // during logical data transformation in Transaction#transformLogicalData
+      return true;
     }
   }
 
