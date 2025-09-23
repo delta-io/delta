@@ -127,12 +127,10 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite with TestUtilsWithTableMana
         assert(activeCommit.getVersion == expectedVersion)
       }
 
-      // ===== WHEN =====
       val v0Ts = 1749830855993L // published commit
       val v1Ts = 1749830871085L // staged commit
       val v2Ts = 1749830881799L // staged commit
 
-      // ===== THEN =====
       // Query a timestamp before V0 should fail if canReturnEarliestCommit = false
       val e1 = intercept[KernelException] {
         checkGetActiveCommitAtTimestamp(v0Ts - 1, 0)
