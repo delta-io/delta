@@ -19,6 +19,7 @@ package io.delta.kernel.defaults.benchmarks;
 import com.fasterxml.jackson.annotation.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.delta.kernel.defaults.benchmarks.models.ReadSpec;
+import io.delta.kernel.defaults.benchmarks.models.TableInfo;
 import io.delta.kernel.engine.Engine;
 import java.io.File;
 import java.io.IOException;
@@ -35,7 +36,7 @@ import java.util.List;
  */
 @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, include = JsonTypeInfo.As.PROPERTY, property = "type")
 @JsonSubTypes({@JsonSubTypes.Type(value = ReadSpec.class, name = "read")})
-public abstract class WorkloadSpec implements Cloneable {
+public abstract class WorkloadSpec {
   /**
    * The type of workload (e.g., "read_metadata") This is used by Jackson's polymorphic
    * deserialization to automatically instantiate the correct subclass based on the "type" field in
@@ -43,8 +44,8 @@ public abstract class WorkloadSpec implements Cloneable {
    */
   protected String type;
 
-  @JsonProperty("table_root")
-  protected String tableRoot;
+  @JsonProperty("table_info")
+  protected TableInfo tableInfo;
 
   @JsonProperty("case_name")
   protected String caseName;
@@ -73,25 +74,22 @@ public abstract class WorkloadSpec implements Cloneable {
     this.caseName = caseName;
   }
 
-  /** @return the table root path. */
-  public String getTableRoot() {
-    return tableRoot;
+  public TableInfo getTableInfo() {
+    return tableInfo;
   }
 
   /** Sets the table root path. */
-  public void setTableRoot(String tableRoot) {
-    this.tableRoot = tableRoot;
+  public void setTableInfo(TableInfo tableInfo) {
+    this.tableInfo = tableInfo;
   }
 
   /**
    * Creates a WorkloadRunner for this workload specification.
    *
-   * @param baseWorkloadDirPath The base directory containing workload tables. This is used to
-   *     resolve relative table paths if present.
    * @param engine The engine to use for executing the workload.
    * @return the WorkloadRunner instance for this workload specification.
    */
-  public abstract WorkloadRunner getRunner(String baseWorkloadDirPath, Engine engine);
+  public abstract WorkloadRunner getRunner(Engine engine);
 
   /**
    * Loads a WorkloadSpec from the given JSON file path.
@@ -100,18 +98,16 @@ public abstract class WorkloadSpec implements Cloneable {
    * @return the WorkloadSpec instance parsed from the JSON file.
    * @throws IOException if there is an error reading or parsing the file.
    */
-  public static WorkloadSpec fromJsonPath(String workloadPath, String tableRoot, String caseName)
+  public static WorkloadSpec fromJsonPath(String workloadPath, String caseName, TableInfo tableInfo)
       throws IOException {
 
     WorkloadSpec spec = objectMapper.readValue(new File(workloadPath), WorkloadSpec.class);
-    spec.setTableRoot(tableRoot);
+    spec.setTableInfo(tableInfo);
     spec.setCaseName(caseName);
     return spec;
   }
 
-  /**
-   *  @return Returns a list of benchmark variants for this workload specification.
-   */
+  /** @return Returns a list of benchmark variants for this workload specification. */
   @JsonIgnore
   public List<WorkloadSpec> getBenchmarkVariants() {
     return Collections.singletonList(this);
