@@ -1026,6 +1026,47 @@ trait DeltaTableCreationTests
     }
   }
 
+ test("create table with table properties - delta.randomizeFilePrefixes") {
+    withTable("delta_test") {
+      sql(s"""
+             |CREATE TABLE delta_test(a LONG, b String)
+             |USING delta
+             |TBLPROPERTIES(
+             |  'delta.randomizeFilePrefixes' = 'true',
+             |  'delta.randomPrefixLength' = '5'
+             |)
+          """.stripMargin)
+
+      val deltaLog = getDeltaLog("delta_test")
+      val snapshot = deltaLog.update()
+
+      // Verify the properties are set correctly
+      assertEqual(snapshot.metadata.configuration, Map(
+        "delta.randomizeFilePrefixes" -> "true",
+        "delta.randomPrefixLength" -> "5"
+      ))
+
+      // Insert some data to create files
+      sql("INSERT INTO delta_test VALUES (1, 'test1'), (2, 'test2'), (3, 'test3')")
+
+      val updatedSnapshot = deltaLog.update()
+      val allFiles = updatedSnapshot.allFiles.collect()
+
+      // Verify that files exist and have random prefixes
+      assert(allFiles.nonEmpty, "Table should have data files")
+
+      // Check that file paths contain 5-character random prefix pattern
+      val prefixLength = DeltaConfigs.RANDOM_PREFIX_LENGTH.fromMetaData(updatedSnapshot.metadata)
+      assert(prefixLength == 5, s"Expected prefix length of 5, but got $prefixLength")
+
+      val pattern = s"[A-Za-z0-9]{$prefixLength}/.*part-.*parquet"
+      allFiles.foreach { file =>
+        logInfo("yingyi - " + file.path)
+        assert(file.path.matches(pattern),
+          s"File path '${file.path}' does not match expected random prefix pattern '$pattern'")
+      }
+    }
+  }
 
   test("schema mismatch between DDL and table location should throw an error") {
     withTempDir { tempDir =>
