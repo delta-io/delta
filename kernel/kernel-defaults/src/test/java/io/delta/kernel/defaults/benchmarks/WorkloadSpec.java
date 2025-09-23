@@ -35,7 +35,7 @@ import java.util.List;
  */
 @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, include = JsonTypeInfo.As.PROPERTY, property = "type")
 @JsonSubTypes({@JsonSubTypes.Type(value = ReadSpec.class, name = "read")})
-public abstract class WorkloadSpec {
+public abstract class WorkloadSpec implements Cloneable {
   /**
    * The type of workload (e.g., "read_metadata") This is used by Jackson's polymorphic
    * deserialization to automatically instantiate the correct subclass based on the "type" field in
@@ -89,11 +89,9 @@ public abstract class WorkloadSpec {
    * @param baseWorkloadDirPath The base directory containing workload tables. This is used to
    *     resolve relative table paths if present.
    * @param engine The engine to use for executing the workload.
-   * @param operation The specific operation to run for this workload.
    * @return the WorkloadRunner instance for this workload specification.
    */
-  public abstract WorkloadRunner getRunner(
-      String baseWorkloadDirPath, Engine engine, String operation);
+  public abstract WorkloadRunner getRunner(String baseWorkloadDirPath, Engine engine);
 
   /**
    * Loads a WorkloadSpec from the given JSON file path.
@@ -113,8 +111,8 @@ public abstract class WorkloadSpec {
 
   /** @return the list of operations that can be performed by this workload. */
   @JsonIgnore
-  public List<String> getBenchmarkOperations() {
-    return Collections.singletonList(type);
+  public List<WorkloadSpec> getBenchmarkVariants() {
+    return Collections.singletonList(this);
   }
 
   /**
