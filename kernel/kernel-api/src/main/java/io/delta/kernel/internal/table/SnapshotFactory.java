@@ -25,14 +25,17 @@ import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.commit.DefaultFileSystemManagedTableOnlyCommitter;
+import io.delta.kernel.internal.files.ParsedDeltaData;
+import io.delta.kernel.internal.files.ParsedLogData;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.metrics.SnapshotQueryContext;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.snapshot.SnapshotManager;
-import java.util.Collections;
+import java.util.List;
 import java.util.Optional;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -60,14 +63,23 @@ public class SnapshotFactory {
       Engine engine,
       SnapshotQueryContext snapshotQueryCtx,
       SnapshotImpl latestSnapshot,
-      long millisSinceEpochUTC) {
+      long millisSinceEpochUTC,
+      List<ParsedLogData> logDatas) {
+
+    // Filter out only the ratified staged commits as that is all that DeltaHistoryManager supports
+    List<ParsedDeltaData> parsedDeltaDatas =
+        logDatas.stream()
+            .filter(logData -> logData instanceof ParsedDeltaData)
+            .map(logData -> (ParsedDeltaData) logData)
+            .filter(deltaData -> deltaData.isFile() && deltaData.isRatifiedCommit())
+            .collect(Collectors.toList());
+
     final long resolvedVersionToLoad =
         snapshotQueryCtx
             .getSnapshotMetrics()
             .computeTimestampToVersionTotalDurationTimer
             .time(
                 () ->
-                    // TODO provide catalogCommits to support ccv2 time-travel
                     DeltaHistoryManager.getActiveCommitAtTimestamp(
                             engine,
                             latestSnapshot,
@@ -76,7 +88,7 @@ public class SnapshotFactory {
                             true /* mustBeRecreatable */,
                             false /* canReturnLastCommit */,
                             false /* canReturnEarliestCommit */,
-                            Collections.emptyList() /* parsedDeltaDatas */)
+                            parsedDeltaDatas)
                         .getVersion());
 
     snapshotQueryCtx.setResolvedVersion(resolvedVersionToLoad);
@@ -186,7 +198,8 @@ public class SnapshotFactory {
               engine,
               snapshotCtx,
               ctx.timestampQueryContextOpt.get()._1,
-              ctx.timestampQueryContextOpt.get()._2));
+              ctx.timestampQueryContextOpt.get()._2,
+              ctx.logDatas));
     } else if (ctx.versionOpt.isPresent()) {
       return ctx.versionOpt;
     }
