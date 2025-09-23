@@ -57,6 +57,7 @@ public class ReadSpec extends WorkloadSpec {
     super("read");
   }
 
+  // Copy constructor
   public ReadSpec(
       String tableRoot, String caseName, Long version, String expectedData, String operationType) {
     super("read");
@@ -103,7 +104,7 @@ public class ReadSpec extends WorkloadSpec {
   @Override
   public String toString() {
     return String.format(
-        "Read{operationType='%s', tableRoot='%s', snapshotVersion=%s}",
-        operationType, tableRoot, version);
+        "Read{caseName='%s', operationType='%s', tableRoot='%s', snapshotVersion=%s}",
+        caseName, operationType, tableRoot, version);
   }
 }

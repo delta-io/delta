@@ -109,7 +109,9 @@ public abstract class WorkloadSpec implements Cloneable {
     return spec;
   }
 
-  /** @return the list of operations that can be performed by this workload. */
+  /**
+   *  @return Returns a list of benchmark variants for this workload specification.
+   */
   @JsonIgnore
   public List<WorkloadSpec> getBenchmarkVariants() {
     return Collections.singletonList(this);
